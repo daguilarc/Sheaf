@@ -1871,8 +1871,13 @@ bool FromJSON(JSON json, MidiInstrumentConfig& out) {
 
 MidiControllerProfileResult CreateMidiControllerProfile(
     const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
-    ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider, std::size_t sinkIx) {
+    ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider,
+    std::size_t sinkIx, AbsoluteFeedbackCoordinator* absoluteFeedback, std::size_t controllerSlot) {
     MidiControllerProfileResult result;
+    const EncoderMode feedbackMode =
+        config.encoderInput.has_value() ? config.encoderInput->mode : EncoderMode::Signed7Bit;
+    AbsoluteFeedbackCoordinator* activeAbsoluteFeedback =
+        feedbackMode == EncoderMode::Absolute ? absoluteFeedback : nullptr;
     MidiInProcessor* tail = nullptr;
     auto appendInput = [&](std::unique_ptr<MidiInProcessor> processor) {
         processor->SetMessageInBus(bus);
@@ -1888,7 +1893,8 @@ MidiControllerProfileResult CreateMidiControllerProfile(
     };
 
     if (config.encoderInput.has_value()) {
-        appendInput(std::make_unique<EncoderMidiInProcessor>(*config.encoderInput, bus));
+        appendInput(std::make_unique<EncoderMidiInProcessor>(
+            *config.encoderInput, bus, activeAbsoluteFeedback, controllerSlot));
     }
     if (config.analogInput.has_value()) {
         appendInput(std::make_unique<AnalogMidiInProcessor>(*config.analogInput, bus));
@@ -1910,12 +1916,14 @@ MidiControllerProfileResult CreateMidiControllerProfile(
     if (config.encoderOutput.has_value()) {
         switch (config.encoderOutput->protocol) {
         case EncoderMidiOutProtocol::WrldBldr:
-            result.outputs.push_back(
-                std::make_unique<WrldBldrMidiOutProcessor>(*config.encoderOutput, sender, uiState, sinkIx));
+            result.outputs.push_back(std::make_unique<WrldBldrMidiOutProcessor>(
+                *config.encoderOutput, sender, uiState, sinkIx, feedbackMode,
+                activeAbsoluteFeedback, controllerSlot));
             break;
         case EncoderMidiOutProtocol::Twister:
-            result.outputs.push_back(
-                std::make_unique<TwisterMidiOutProcessor>(*config.encoderOutput, sender, uiState, sinkIx));
+            result.outputs.push_back(std::make_unique<TwisterMidiOutProcessor>(
+                *config.encoderOutput, sender, uiState, sinkIx, feedbackMode,
+                activeAbsoluteFeedback, controllerSlot));
             break;
         }
     }

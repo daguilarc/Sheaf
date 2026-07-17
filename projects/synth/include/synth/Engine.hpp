@@ -47,6 +47,7 @@ public:
         , patchInputBus_()
         , patchOutputBus_()
         , midiSender_()
+        , absoluteFeedbackCoordinator_()
         , patchManager_(&patchInputBus_, &patchOutputBus_, initialArenaCapacity)
         , instrumentConfig_()
         , defaultInstrumentConfig_()
@@ -600,7 +601,8 @@ public:
         rebuilt.reserve(controllers.size());
         for (std::size_t ix = 0; ix < controllers.size(); ++ix) {
             rebuilt.push_back(CreateMidiControllerProfile(controllers[ix].config, &midiBus_, &midiSender_,
-                                                           uiState_.get(), timestampProvider_, ix));
+                                                           uiState_.get(), timestampProvider_, ix,
+                                                           &absoluteFeedbackCoordinator_, ix));
         }
         midiProcessors_ = std::move(rebuilt);
     }
@@ -783,6 +785,10 @@ private:
     PatchMessageInBus patchInputBus_;
     MessageOutBus patchOutputBus_;
     MidiSender midiSender_;
+    // Runtime-lifetime causal state shared by rebuilt absolute input/output
+    // processor chains. Route records retain keys and pending expectations;
+    // processors keep only non-owning pointers back to this stable owner.
+    AbsoluteFeedbackCoordinator absoluteFeedbackCoordinator_;
     PatchManager patchManager_;
     // Engine-owned MIDI instrument (sar-3): the source
     // RebuildMidiProcessors() builds midiProcessors_ from (one

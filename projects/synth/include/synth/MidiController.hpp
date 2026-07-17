@@ -722,11 +722,15 @@ struct MidiInstrumentConfig {
 // Defaults to 0 for every caller that predates per-controller sink routing
 // (the three whole-profile factories below, and every direct test call);
 // Engine::RebuildMidiProcessors() is the only caller that passes a
-// controller-slot-specific index.
+// controller-slot-specific index. The optional coordinator/controllerSlot
+// pair is likewise supplied by Engine: it is active only when encoderInput
+// explicitly selects Absolute mode. Relative and output-only profiles keep
+// their source-compatible, post-modulation feedback behavior.
 MidiControllerProfileResult CreateMidiControllerProfile(
     const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
     ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider = {},
-    std::size_t sinkIx = 0);
+    std::size_t sinkIx = 0, AbsoluteFeedbackCoordinator* absoluteFeedback = nullptr,
+    std::size_t controllerSlot = 0);
 
 struct WrldBldrDefaultProfileOptions {
     std::size_t slotIx = 0;

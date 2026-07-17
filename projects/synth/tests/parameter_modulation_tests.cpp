@@ -6865,6 +6865,124 @@ TEST_CASE(midi_controller_profile_builds_chained_input_processors) {
     REQUIRE_TRUE(message.timestamp == 88);
 }
 
+TEST_CASE(midi_controller_profile_threads_absolute_route_identity_and_mode) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0, 0, 0);
+    PublishEncoderCell(ui, /*displayValue=*/0.9f, /*rawValue=*/0.25f,
+                       /*processedEpoch=*/0);
+
+    synth::MessageInBus bus(nullptr, 16);
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    synth::MidiControllerProfileConfig config;
+    config.encoderInput = synth::EncoderMidiInConfig{
+        .mode = synth::EncoderMode::Absolute,
+        .turns = {{.control = {.channel = 0, .cc = 7}, .slotIx = 0, .position = 0}},
+    };
+    config.encoderOutput = synth::EncoderMidiOutConfig{
+        .protocol = synth::EncoderMidiOutProtocol::Twister,
+        .mappings = {{.slotIx = 0, .position = 0, .cc = 7}},
+    };
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(3, &sink);
+    sender.Start();
+    synth::MidiControllerProfileResult profile = synth::CreateMidiControllerProfile(
+        config, &bus, &sender, &ui, [] { return 101; }, /*sinkIx=*/3,
+        &coordinator, /*controllerSlot=*/6);
+
+    profile.input->Process(synth::BasicMidi::CC(0, 0, 7, 32));
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, 101));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::ParamSetAbsolute);
+    REQUIRE_TRUE(message.absoluteEpoch != 0);
+    const auto route = coordinator.ReserveRoute({.controllerSlot = 6, .parameterSlot = 0, .position = 0});
+    const auto expectation = coordinator.Snapshot(route);
+    REQUIRE_TRUE(expectation.has_value());
+    REQUIRE_TRUE(expectation->pending);
+    REQUIRE_TRUE(expectation->epoch == message.absoluteEpoch);
+    REQUIRE_TRUE(expectation->receivedValue == 32);
+
+    // A second controller addressing the same cell retains independent route
+    // state while allocating from the coordinator's one global epoch stream.
+    auto secondProfile = synth::CreateMidiControllerProfile(
+        config, &bus, &sender, &ui, [] { return 101; }, /*sinkIx=*/3,
+        &coordinator, /*controllerSlot=*/7);
+    secondProfile.input->Process(synth::BasicMidi::CC(0, 0, 7, 64));
+    synth::MessageIn secondMessage;
+    REQUIRE_TRUE(bus.Pop(secondMessage, 101));
+    REQUIRE_TRUE(secondMessage.absoluteEpoch > message.absoluteEpoch);
+    const auto secondRoute =
+        coordinator.ReserveRoute({.controllerSlot = 7, .parameterSlot = 0, .position = 0});
+    const auto secondExpectation = coordinator.Snapshot(secondRoute);
+    REQUIRE_TRUE(secondExpectation.has_value());
+    REQUIRE_TRUE(secondExpectation->pending);
+    REQUIRE_TRUE(secondExpectation->epoch == secondMessage.absoluteEpoch);
+    REQUIRE_TRUE(secondExpectation->receivedValue == 64);
+
+    profile.outputs.front()->Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    sender.Stop();
+    REQUIRE_TRUE(CountPositionMessages(sink) == 0);
+}
+
+TEST_CASE(midi_controller_profile_keeps_relative_and_output_only_feedback_uncoordinated) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0, 0, 0);
+    PublishEncoderCell(ui, /*displayValue=*/0.75f, /*rawValue=*/0.25f,
+                       /*processedEpoch=*/0);
+
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    const auto relativeRoute =
+        coordinator.ReserveRoute({.controllerSlot = 4, .parameterSlot = 0, .position = 0});
+    synth::MessageInBus bus(nullptr, 16);
+    synth::MidiControllerProfileConfig relativeConfig;
+    relativeConfig.encoderInput = synth::EncoderMidiInConfig{
+        .mode = synth::EncoderMode::DirectionOnly,
+        .turns = {{.control = {.channel = 0, .cc = 9}, .slotIx = 0, .position = 0}},
+    };
+    relativeConfig.encoderOutput = synth::EncoderMidiOutConfig{
+        .protocol = synth::EncoderMidiOutProtocol::Twister,
+        .mappings = {{.slotIx = 0, .position = 0, .cc = 9}},
+    };
+
+    FakeMidiSink relativeSink;
+    synth::MidiSender relativeSender;
+    relativeSender.SetSink(0, &relativeSink);
+    relativeSender.Start();
+    auto relativeProfile = synth::CreateMidiControllerProfile(
+        relativeConfig, &bus, &relativeSender, &ui, [] { return 102; }, 0,
+        &coordinator, /*controllerSlot=*/4);
+    relativeProfile.input->Process(synth::BasicMidi::CC(0, 0, 9, 127));
+    synth::MessageIn relativeMessage;
+    REQUIRE_TRUE(bus.Pop(relativeMessage, 102));
+    REQUIRE_TRUE(relativeMessage.type == synth::MessageIn::Type::ParamIncDec);
+    REQUIRE_TRUE(relativeMessage.absoluteEpoch == 0);
+    const auto untouched = coordinator.Snapshot(relativeRoute);
+    REQUIRE_TRUE(untouched.has_value());
+    REQUIRE_TRUE(!untouched->pending);
+    relativeProfile.outputs.front()->Process();
+    REQUIRE_TRUE(relativeSender.FlushForTests(std::chrono::milliseconds(500)));
+    relativeSender.Stop();
+    REQUIRE_TRUE(LastPositionValue(relativeSink).has_value());
+    REQUIRE_TRUE(*LastPositionValue(relativeSink) == 95);
+
+    synth::MidiControllerProfileConfig outputOnlyConfig;
+    outputOnlyConfig.encoderOutput = relativeConfig.encoderOutput;
+    FakeMidiSink outputOnlySink;
+    synth::MidiSender outputOnlySender;
+    outputOnlySender.SetSink(0, &outputOnlySink);
+    outputOnlySender.Start();
+    auto outputOnlyProfile = synth::CreateMidiControllerProfile(
+        outputOnlyConfig, nullptr, &outputOnlySender, &ui, {}, 0,
+        &coordinator, /*controllerSlot=*/5);
+    outputOnlyProfile.outputs.front()->Process();
+    REQUIRE_TRUE(outputOnlySender.FlushForTests(std::chrono::milliseconds(500)));
+    outputOnlySender.Stop();
+    REQUIRE_TRUE(LastPositionValue(outputOnlySink).has_value());
+    REQUIRE_TRUE(*LastPositionValue(outputOnlySink) == 95);
+}
+
 TEST_CASE(midi_controller_profile_routes_launchpad_only_system_associations) {
     synth::MessageInBus bus(nullptr, 16);
     synth::ParameterManager::UIState ui;

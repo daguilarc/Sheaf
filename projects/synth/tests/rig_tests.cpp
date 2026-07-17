@@ -73,6 +73,7 @@ struct RigTestApp {
     synth::ParameterGroup* group = nullptr;
     synth::ParameterId levelId = 0;
     synth::ParameterId toneId = 0;
+    synth::Parameter* levelModDepth = nullptr;
 
     static synth::RuntimeConfig Config() {
         synth::RuntimeConfig config;
@@ -87,7 +88,7 @@ struct RigTestApp {
     void Init(synth::AppContext* ctx) {
         context = ctx;
         group = &ctx->parameterManager->CreateGroup({.numVoices = 1,
-                                                     .numModulators = 0,
+                                                     .numModulators = 1,
                                                      .numScenes = 2,
                                                      .maxParameters = 8,
                                                      .processLiteAlpha = 0.5f,
@@ -96,6 +97,7 @@ struct RigTestApp {
         auto& tone = ctx->parameterManager->CreateParameter(*group, {.name = "Tone", .defaultValue = 0.5f});
         levelId = level.Id();
         toneId = tone.Id();
+        levelModDepth = level.EnsureModulationDepth(0);
 
         auto& bank = ctx->parameterManager->CreateBank();
         bank.AddMapping(/*encoderId=*/0, level);
@@ -126,6 +128,12 @@ struct RigTestApp {
                 block.outputs[0][0] = std::nanf("");
             }
         }
+    }
+
+    void EnableLevelModulation(float source = 1.0f) {
+        levelModDepth->SceneCenter(0) = 0.75f;
+        levelModDepth->SceneCenter(1) = 0.75f;
+        group->GetModulators().Value(0, 0) = source;
     }
 };
 
@@ -353,6 +361,42 @@ synth::MidiInstrumentConfig SingleControllerInstrument(synth::MidiControllerProf
     return instrument;
 }
 
+synth::MidiControllerProfileConfig EncoderFeedbackProfile(synth::EncoderMode mode) {
+    synth::MidiControllerProfileConfig config;
+    config.encoderInput = synth::EncoderMidiInConfig{
+        .mode = mode,
+        .turnStep = 1.0f / 128.0f,
+        .turns = {{.control = {.channel = 0, .cc = 0}, .slotIx = 0, .position = 0}},
+    };
+    config.encoderOutput = synth::EncoderMidiOutConfig{
+        .protocol = synth::EncoderMidiOutProtocol::Twister,
+        .mappings = {{.slotIx = 0, .position = 0, .cc = 0}},
+    };
+    return config;
+}
+
+synth::MidiInstrumentConfig TwoAbsoluteControllersOneCellInstrument() {
+    synth::MidiInstrumentConfig instrument;
+    for (std::size_t ix = 0; ix < 2; ++ix) {
+        synth::MidiControllerSlot slot;
+        slot.name = "absolute-" + std::to_string(ix);
+        slot.kind = synth::MidiProfileKind::Generic;
+        slot.config = EncoderFeedbackProfile(synth::EncoderMode::Absolute);
+        instrument.controllers.push_back(std::move(slot));
+    }
+    return instrument;
+}
+
+std::vector<std::uint8_t> PositionValues(const FakeSink& sink) {
+    std::vector<std::uint8_t> values;
+    for (const synth::BasicMidi& midi : sink.received) {
+        if (midi.IsCC() && midi.Channel() == 0) {
+            values.push_back(midi.GetValue());
+        }
+    }
+    return values;
+}
+
 // MIDI CC -> profile -> parameter: install the default WrldBldr profile
 // (encoder turns on channel 0, CC 0..15 -> slot 0 positions 0..15, see
 // EncoderMidiInConfig::WrldBldrDefault / RowMajorInputDefault), then send a
@@ -376,6 +420,111 @@ TEST_CASE(rig_midi_cc_routes_through_profile_to_parameter) {
     rig.RunBlocks(8);
 
     REQUIRE_TRUE(rig.ParameterValue(rig.Application().levelId) > before);
+}
+
+TEST_CASE(rig_absolute_feedback_follows_real_acknowledgement_and_ignores_modulation) {
+    synth_rig::SynthRig<RigTestApp> rig;
+    rig.InstallInstrumentForTest(
+        SingleControllerInstrument(EncoderFeedbackProfile(synth::EncoderMode::Absolute)));
+
+    FakeSink sink;
+    synth::MidiSender* sender = rig.Engine().Context().midiSender;
+    REQUIRE_TRUE(sender != nullptr);
+    sender->SetSink(0, &sink);
+    sender->Start();
+    rig.RunBlocks(64);
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    sink.received.clear();
+
+    rig.SendMidi(0, synth::BasicMidi::CC(0, 0, 0, 96));
+    // Output polls before the audio consumer has run. The alert published by
+    // the callback must already gate the old UI snapshot.
+    rig.Engine().MessageThreadTick();
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(PositionValues(sink).empty());
+
+    rig.RunBlocks(64);
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(PositionValues(sink).empty());
+    REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), 96.0f / 127.0f, 0.00001f);
+
+    // Modulation changes the published display value, but absolute feedback
+    // remains debounced at the modulation-free raw center.
+    rig.Application().EnableLevelModulation();
+    rig.RunBlocks(64);
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    auto& cell = rig.UIState().slots[0].cells[0];
+    REQUIRE_TRUE(std::fabs(cell.values[0].load() - cell.rawKnobValue.load()) > 0.05f);
+    REQUIRE_TRUE(PositionValues(sink).empty());
+
+    // Reset rejects the new absolute edit. Its epoch is still acknowledged,
+    // forcing one correction to the actual center even though that byte is
+    // already the output processor's cached value.
+    rig.SetReset(true);
+    rig.SendMidi(0, synth::BasicMidi::CC(0, 0, 0, 20));
+    rig.RunBlocks(64);
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    sender->Stop();
+    const auto corrections = PositionValues(sink);
+    REQUIRE_TRUE(corrections.size() == 1);
+    REQUIRE_TRUE(corrections.front() == 96);
+}
+
+TEST_CASE(rig_relative_feedback_stays_modulation_aware_through_real_engine_path) {
+    synth_rig::SynthRig<RigTestApp> rig;
+    rig.InstallInstrumentForTest(
+        SingleControllerInstrument(EncoderFeedbackProfile(synth::EncoderMode::Signed7Bit)));
+
+    FakeSink sink;
+    synth::MidiSender* sender = rig.Engine().Context().midiSender;
+    REQUIRE_TRUE(sender != nullptr);
+    sender->SetSink(0, &sink);
+    sender->Start();
+    rig.RunBlocks(64);
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    sink.received.clear();
+
+    rig.Application().EnableLevelModulation();
+    rig.RunBlocks(64);
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    sender->Stop();
+    const auto values = PositionValues(sink);
+    REQUIRE_TRUE(!values.empty());
+    REQUIRE_TRUE(values.back() != 32);
+}
+
+TEST_CASE(rig_two_absolute_controllers_share_cell_with_independent_pending_feedback) {
+    synth_rig::SynthRig<RigTestApp> rig;
+    rig.InstallInstrumentForTest(TwoAbsoluteControllersOneCellInstrument());
+
+    FakeSink sink0;
+    FakeSink sink1;
+    synth::MidiSender* sender = rig.Engine().Context().midiSender;
+    REQUIRE_TRUE(sender != nullptr);
+    sender->SetSink(0, &sink0);
+    sender->SetSink(1, &sink1);
+    sender->Start();
+    rig.RunBlocks(64);
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    sink0.received.clear();
+    sink1.received.clear();
+
+    rig.SendMidi(0, synth::BasicMidi::CC(0, 0, 0, 32));
+    rig.SendMidi(1, synth::BasicMidi::CC(0, 0, 0, 96));
+    rig.Engine().MessageThreadTick();
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(PositionValues(sink0).empty());
+    REQUIRE_TRUE(PositionValues(sink1).empty());
+
+    rig.RunBlocks(64);
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    sender->Stop();
+    const auto controller0 = PositionValues(sink0);
+    const auto controller1 = PositionValues(sink1);
+    REQUIRE_TRUE(controller0.size() == 1);
+    REQUIRE_TRUE(controller0.front() == 96);
+    REQUIRE_TRUE(controller1.empty());
+    REQUIRE_NEAR(rig.ParameterValue(rig.Application().levelId), 96.0f / 127.0f, 0.00001f);
 }
 
 // Determinism: two rigs driven through an identical script (turns, scene

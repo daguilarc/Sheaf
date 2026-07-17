@@ -79,6 +79,7 @@ struct EngineTestApp {
     synth::AppContext* context = nullptr;
     synth::ParameterId probeId = 0;
     synth::BankSlot* probeSlot = nullptr;
+    synth::Bank* emptyBank = nullptr;
     int processBlockCalls = 0;
     float lastProbeDuringBlock = -1.0f;
     float lastProbeSceneCenterDuringBlock = -1.0f;
@@ -118,6 +119,7 @@ struct EngineTestApp {
         probeSlot = &ctx->parameterManager->CreateBankSlot();
         probeSlot->AddPhysicalEncoder(/*encoderId=*/0);
         probeSlot->SelectBank(&bank);
+        emptyBank = &ctx->parameterManager->CreateBank();
     }
     void PrepareToPlay(double sampleRate, int blockSize) {
         preparedSampleRate = sampleRate;
@@ -502,6 +504,22 @@ struct TestBlockBuffers {
         return block;
     }
 };
+
+struct EngineFakeMidiSink final : synth::IMidiOutputSink {
+    std::vector<synth::BasicMidi> received;
+
+    void Send(const synth::BasicMidi& midi) override { received.push_back(midi); }
+};
+
+std::vector<std::uint8_t> EnginePositionValues(const EngineFakeMidiSink& sink) {
+    std::vector<std::uint8_t> values;
+    for (const synth::BasicMidi& midi : sink.received) {
+        if (midi.IsCC() && midi.Channel() == 0) {
+            values.push_back(midi.GetValue());
+        }
+    }
+    return values;
+}
 
 }  // namespace
 
@@ -1842,6 +1860,69 @@ TEST_CASE(engine_rebuild_midi_processors_observes_fully_applied_edit_snapshot) {
     REQUIRE_TRUE(engine.MidiInputProcessor(0) == nullptr);
 
     EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
+}
+
+TEST_CASE(engine_rebuild_retains_pending_absolute_feedback_across_bank_route_change) {
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = false;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{77}; });
+    engine.Initialize();
+
+    synth::MidiControllerProfileConfig profile;
+    profile.encoderInput = synth::EncoderMidiInConfig{
+        .mode = synth::EncoderMode::Absolute,
+        .turns = {{.control = {.channel = 0, .cc = 0}, .slotIx = 0, .position = 0}},
+    };
+    profile.encoderOutput = synth::EncoderMidiOutConfig{
+        .protocol = synth::EncoderMidiOutProtocol::Twister,
+        .mappings = {{.slotIx = 0, .position = 0, .cc = 0}},
+    };
+    synth::MidiControllerSlot slot;
+    slot.name = "absolute";
+    slot.kind = synth::MidiProfileKind::Generic;
+    slot.config = std::move(profile);
+    engine.LiveInstrument().controllers = {std::move(slot)};
+    engine.RebuildMidiProcessorsForTest();
+
+    EngineFakeMidiSink sink;
+    synth::MidiSender* sender = engine.Context().midiSender;
+    REQUIRE_TRUE(sender != nullptr);
+    sender->SetSink(0, &sink);
+    sender->Start();
+
+    TestBlockBuffers buffers(2, 4);
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, 77);
+    }
+    engine.MessageThreadTick();
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    sink.received.clear();
+
+    synth::MidiInProcessor* input = engine.MidiInputProcessor(0);
+    REQUIRE_TRUE(input != nullptr);
+    input->Process(synth::BasicMidi::CC(0, 0, 0, 96));
+    engine.RebuildMidiProcessors();
+    REQUIRE_TRUE(engine.Application().emptyBank != nullptr);
+    engine.Application().probeSlot->SelectBank(engine.Application().emptyBank);
+
+    // The rebuilt output chain sees the still-pending expectation and must
+    // remain gated before the audio thread consumes and publishes it.
+    engine.MessageThreadTick();
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(EnginePositionValues(sink).empty());
+
+    {
+        synth::AudioBlock block = buffers.Block(4);
+        engine.ProcessBlock(block, 77);
+    }
+    engine.MessageThreadTick();
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    sender->Stop();
+
+    const auto positions = EnginePositionValues(sink);
+    REQUIRE_TRUE(positions.size() == 1);
+    REQUIRE_TRUE(positions.front() == 0);
 }
 
 TEST_CASE(engine_instrument_snapshot_is_deep_copy_equal_to_live_instrument) {
