@@ -34,6 +34,7 @@ namespace synth {
 // --- D1: per-kind system-message address schema ---------------------------
 
 enum class SystemAddressField {
+    AddressType,
     Channel,
     WrldBldrX,
     WrldBldrY,
@@ -56,7 +57,7 @@ enum class SystemAddressField {
 //   wrldbldr:  Channel, WrldBldrX, WrldBldrY
 //   launchpad: LaunchpadX, LaunchpadY
 //   twister:   Button
-//   generic:   Channel, Cc
+//   generic:   AddressType, Channel, Cc
 std::vector<SystemAddressField> SystemAddressSchema(MidiProfileKind kind);
 
 // --- D2: canonical ordering -------------------------------------------------
@@ -91,9 +92,10 @@ struct SystemMessageSortKey {
     bool hasBoolValue = false;
     bool boolValue = false;
     // Kind's address tuple, flattened to a comparable form regardless of
-    // kind (channel, x, y, cc) -- fields not meaningful for a given
+    // kind (type, channel, x, y, cc) -- fields not meaningful for a given
     // association's kind stay at 0, which is fine since the tie-break only
     // discriminates within a single kind's own associations.
+    MidiControlType addrType = MidiControlType::Cc;
     std::uint8_t addrChannel = 0;
     std::uint8_t addrX = 0;
     std::uint8_t addrY = 0;
@@ -127,6 +129,7 @@ struct EncoderBlock {  // turn or push
     std::uint8_t endCc = 0;
     std::size_t slotIx = 0;
     std::size_t startPosition = 0;
+    MidiControlType controlType = MidiControlType::Cc;
 };
 
 struct AnalogBlock {
@@ -171,6 +174,7 @@ struct SystemBlock {
     // ProMk3-only edge coordinate like (x=8, y=-1) was wrongly rejected).
     // Irrelevant for other kinds.
     LaunchpadController launchpadController = LaunchpadController::LaunchpadX;
+    MidiControlType controlType = MidiControlType::Cc;
 
     // Number of cells this block denotes (endCc - startCc for the generic
     // form; the exclusive-end rectangle's cell count for the 2-D forms).

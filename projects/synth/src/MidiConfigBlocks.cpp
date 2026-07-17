@@ -16,7 +16,7 @@ std::vector<SystemAddressField> SystemAddressSchema(MidiProfileKind kind) {
         case MidiProfileKind::MfTwister:
             return {SystemAddressField::Button};
         case MidiProfileKind::Generic:
-            return {SystemAddressField::Channel, SystemAddressField::Cc};
+            return {SystemAddressField::AddressType, SystemAddressField::Channel, SystemAddressField::Cc};
     }
     return {};
 }
@@ -31,8 +31,8 @@ int TypeOrder(MessageIn::Type type) {
 }
 
 auto SortKeyTuple(const SystemMessageSortKey& key) {
-    return std::tie(key.typeOrder, key.arg1, key.arg2, key.hasBoolValue, key.boolValue, key.addrChannel, key.addrX,
-                    key.addrY, key.addrCc);
+    return std::tie(key.typeOrder, key.arg1, key.arg2, key.hasBoolValue, key.boolValue, key.addrType,
+                    key.addrChannel, key.addrX, key.addrY, key.addrCc);
 }
 
 }  // namespace
@@ -49,6 +49,9 @@ SystemMessageSortKey ComputeSystemMessageSortKey(const MidiControllerSystemMessa
     SystemMessageSortKey key;
     const MessageIn& message = association.press;
     key.typeOrder = TypeOrder(message.type);
+    if (association.control.has_value()) {
+        key.addrType = association.control->type;
+    }
 
     switch (message.type) {
         case MessageIn::Type::SceneSelect:
@@ -224,6 +227,10 @@ std::size_t SystemBlock::CellCount() const {
 }
 
 bool ExpandEncoderBlock(const EncoderBlock& block, std::vector<EncoderMidiMapping>& out, std::string* reason) {
+    if (!block.isPush && block.controlType == MidiControlType::Note) {
+        SetReason(reason, "encoder turn blocks must use CC addresses");
+        return false;
+    }
     if (block.endCc <= block.startCc) {
         SetReason(reason, "encoder block cc range must be non-empty (endCc > startCc)");
         return false;
@@ -248,6 +255,7 @@ bool ExpandEncoderBlock(const EncoderBlock& block, std::vector<EncoderMidiMappin
         EncoderMidiMapping mapping;
         mapping.control.channel = block.channel;
         mapping.control.cc = static_cast<std::uint8_t>(block.startCc + ix);
+        mapping.control.type = block.controlType;
         mapping.slotIx = block.slotIx;
         mapping.position = block.startPosition + ix;
         result.push_back(mapping);
@@ -406,7 +414,8 @@ bool ExpandSystemBlock(const SystemBlock& block, std::vector<MidiControllerSyste
                     association.wrldBldrPosition = position;
                     association.control =
                         MidiControlAddress{.channel = block.channel,
-                                           .cc = WrldBldrPositionToCC(position.x, position.y)};
+                                           .cc = WrldBldrPositionToCC(position.x, position.y),
+                                           .type = block.controlType};
                     result.push_back(std::move(association));
                 } else {
                     // Finding 4: shape-checked against and stamped with the
@@ -451,7 +460,9 @@ bool ExpandSystemBlock(const SystemBlock& block, std::vector<MidiControllerSyste
         for (std::size_t ix = 0; ix < count; ++ix) {
             MidiControllerSystemMessageAssociation association = buildCell(ix);
             association.control =
-                MidiControlAddress{.channel = block.channel, .cc = static_cast<std::uint8_t>(block.startCc + ix)};
+                MidiControlAddress{.channel = block.channel,
+                                   .cc = static_cast<std::uint8_t>(block.startCc + ix),
+                                   .type = block.controlType};
             result.push_back(std::move(association));
         }
     }
@@ -490,6 +501,7 @@ std::vector<ReconstructedEncoderRow> ReconstructEncoderBlocks(const std::vector<
             const EncoderMidiMapping& prev = mappings[runEnd - 1];
             const EncoderMidiMapping& cur = mappings[runEnd];
             const bool continues = cur.slotIx == prev.slotIx && cur.control.channel == prev.control.channel &&
+                                   cur.control.type == prev.control.type &&
                                    IsWrapSafeSuccessor(prev.position, cur.position) &&
                                    static_cast<int>(cur.control.cc) == static_cast<int>(prev.control.cc) + 1;
             if (!continues) {
@@ -508,6 +520,7 @@ std::vector<ReconstructedEncoderRow> ReconstructEncoderBlocks(const std::vector<
             row.block.endCc = static_cast<std::uint8_t>(mappings[ix].control.cc + runLength);
             row.block.slotIx = mappings[ix].slotIx;
             row.block.startPosition = mappings[ix].position;
+            row.block.controlType = mappings[ix].control.type;
             for (std::size_t k = ix; k < runEnd; ++k) {
                 row.indices.push_back(k);
             }
@@ -593,6 +606,10 @@ std::size_t BlockableArg(const MidiControllerSystemMessageAssociation& associati
     return 0;
 }
 
+MidiControlType ControlTypeOf(const MidiControllerSystemMessageAssociation& association) {
+    return association.control.has_value() ? association.control->type : MidiControlType::Cc;
+}
+
 // True when cell `cur` satisfies the pairwise checks to continue a candidate
 // run started by cells classified the same as `prev` (D4 point 1): arg
 // exactly +1 from prev's, same bankSlotIx (BankSelect only), and constant
@@ -609,6 +626,9 @@ bool ContinuesCandidateRun(const MidiControllerSystemMessageAssociation& prev,
         return false;
     }
     if (message == BlockableMessage::BankSelect && prev.press.slotIx != cur.press.slotIx) {
+        return false;
+    }
+    if (ControlTypeOf(cur) != ControlTypeOf(prev)) {
         return false;
     }
     if (cur.outputFeedback != prev.outputFeedback) {
@@ -675,9 +695,11 @@ void FitGenericStrips(const std::vector<MidiControllerSystemMessageAssociation>&
             const auto& cur = sorted[stripEnd];
             const bool sameChannel =
                 prev.control.has_value() && cur.control.has_value() && prev.control->channel == cur.control->channel;
+            const bool sameType = prev.control.has_value() && cur.control.has_value() &&
+                                  prev.control->type == cur.control->type;
             const bool ccConsecutive = prev.control.has_value() && cur.control.has_value() &&
                                        static_cast<int>(cur.control->cc) == static_cast<int>(prev.control->cc) + 1;
-            if (!sameChannel || !ccConsecutive) {
+            if (!sameChannel || !sameType || !ccConsecutive) {
                 break;
             }
             ++stripEnd;
@@ -695,6 +717,7 @@ void FitGenericStrips(const std::vector<MidiControllerSystemMessageAssociation>&
             row.block.startCc = sorted[ix].control->cc;
             row.block.endCc = static_cast<std::uint8_t>(sorted[ix].control->cc + stripLength);
             row.block.outputFeedback = sorted[ix].outputFeedback;
+            row.block.controlType = sorted[ix].control->type;
             for (std::size_t k = ix; k < stripEnd; ++k) {
                 row.indices.push_back(k);
             }
@@ -743,6 +766,7 @@ void FitRectangles(const std::vector<MidiControllerSystemMessageAssociation>& so
         int y;
         std::uint8_t channel;
         LaunchpadController launchpadController;
+        MidiControlType controlType;
     };
     std::vector<Row> physicalRows;
     {
@@ -754,7 +778,8 @@ void FitRectangles(const std::vector<MidiControllerSystemMessageAssociation>& so
                   xOf(stripEnd) == xOf(stripEnd - 1) + 1) {
                 ++stripEnd;
             }
-            physicalRows.push_back({ix, stripEnd - ix, xOf(ix), yOf(ix), channelOf(ix), launchpadControllerOf(ix)});
+            physicalRows.push_back({ix, stripEnd - ix, xOf(ix), yOf(ix), channelOf(ix), launchpadControllerOf(ix),
+                                    ControlTypeOf(sorted[ix])});
             ix = stripEnd;
         }
     }
@@ -768,7 +793,8 @@ void FitRectangles(const std::vector<MidiControllerSystemMessageAssociation>& so
             const Row& second = physicalRows[rowIx + 1];
             const int delta = static_cast<int>(second.y) - static_cast<int>(first.y);
             if (second.count == first.count && second.x0 == first.x0 && second.channel == first.channel &&
-                second.launchpadController == first.launchpadController && (delta == 1 || delta == -1)) {
+                second.launchpadController == first.launchpadController && second.controlType == first.controlType &&
+                (delta == 1 || delta == -1)) {
                 yDir = delta;
                 height = 2;
                 std::size_t nextRowIx = rowIx + 2;
@@ -778,7 +804,8 @@ void FitRectangles(const std::vector<MidiControllerSystemMessageAssociation>& so
                     const int candidateDelta = static_cast<int>(candidate.y) - static_cast<int>(prevRow.y);
                     if (candidate.count == first.count && candidate.x0 == first.x0 &&
                         candidate.channel == first.channel &&
-                        candidate.launchpadController == first.launchpadController && candidateDelta == yDir) {
+                        candidate.launchpadController == first.launchpadController &&
+                        candidate.controlType == first.controlType && candidateDelta == yDir) {
                         ++height;
                         ++nextRowIx;
                     } else {
@@ -801,6 +828,7 @@ void FitRectangles(const std::vector<MidiControllerSystemMessageAssociation>& so
             row.block.outputFeedback = sorted[first.start].outputFeedback;
             row.block.channel = first.channel;
             row.block.launchpadController = first.launchpadController;
+            row.block.controlType = first.controlType;
             // Exclusive ends: endX = maxX + 1 = x0 + width. endY = lastRowY +
             // rowDir -- rowDir is 0 only when height == 1 (no second row set
             // it), in which case a single-row block uses d = +1 (per D3's

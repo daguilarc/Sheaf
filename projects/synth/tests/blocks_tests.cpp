@@ -57,6 +57,7 @@ using synth::LaunchpadController;
 using synth::LaunchpadShapeSupports;
 using synth::MessageIn;
 using synth::MidiControlAddress;
+using synth::MidiControlType;
 using synth::MidiControllerSystemMessageAssociation;
 using synth::MidiProfileKind;
 using synth::NormalizeMidiProfileConfig;
@@ -203,7 +204,8 @@ TEST_CASE(SchemaTwisterIsButtonOnly) {
 
 TEST_CASE(SchemaGenericIsChannelCc) {
     const auto schema = SystemAddressSchema(MidiProfileKind::Generic);
-    const std::vector<SystemAddressField> expected = {SystemAddressField::Channel, SystemAddressField::Cc};
+    const std::vector<SystemAddressField> expected = {SystemAddressField::AddressType, SystemAddressField::Channel,
+                                                       SystemAddressField::Cc};
     REQUIRE_TRUE(schema == expected);
 }
 
@@ -311,6 +313,21 @@ TEST_CASE(SortKeyTiesBreakByAddressTuple) {
     REQUIRE_TRUE(keyB < keyA);  // cc 1 < cc 9, same message
 }
 
+TEST_CASE(SortKeyDistinguishesGenericCcAndNoteAddresses) {
+    MidiControllerSystemMessageAssociation cc;
+    cc.control = MidiControlAddress{.channel = 1, .cc = 60, .type = MidiControlType::Cc};
+    cc.press = MessageIn::SceneSelect(0, 0);
+    cc.feedback = cc.press;
+
+    MidiControllerSystemMessageAssociation note = cc;
+    note.control->type = MidiControlType::Note;
+
+    const auto ccKey = ComputeSystemMessageSortKey(cc, MidiProfileKind::Generic);
+    const auto noteKey = ComputeSystemMessageSortKey(note, MidiProfileKind::Generic);
+    REQUIRE_TRUE(!(ccKey == noteKey));
+    REQUIRE_TRUE(ccKey < noteKey);
+}
+
 TEST_CASE(NormalizeSortsEncoderTurnsAndPushesBySlotThenPosition) {
     MidiControllerProfileConfig config;
     config.encoderInput = synth::EncoderMidiInConfig{};
@@ -402,6 +419,43 @@ TEST_CASE(ExpandEncoderBlockProducesConsecutiveCcToPositionMapping) {
         REQUIRE_TRUE(out[ix].slotIx == 5);
         REQUIRE_TRUE(out[ix].position == 100 + ix);
     }
+}
+
+TEST_CASE(ExpandEncoderPushBlockPreservesNoteControlType) {
+    EncoderBlock pushBlock{.isPush = true,
+                           .channel = 1,
+                           .startCc = 60,
+                           .endCc = 62,
+                           .slotIx = 0,
+                           .startPosition = 0,
+                           .controlType = MidiControlType::Note};
+
+    std::vector<EncoderMidiMapping> out;
+    std::string reason;
+    REQUIRE_TRUE(ExpandEncoderBlock(pushBlock, out, &reason));
+    REQUIRE_TRUE(out.size() == 2);
+    REQUIRE_TRUE(out[0].control.type == MidiControlType::Note);
+    REQUIRE_TRUE(out[1].control.type == MidiControlType::Note);
+}
+
+TEST_CASE(ExpandEncoderTurnBlockRejectsNoteControlTypeWithoutMutatingOutput) {
+    EncoderBlock turnBlock{.isPush = false,
+                           .channel = 1,
+                           .startCc = 60,
+                           .endCc = 62,
+                           .slotIx = 0,
+                           .startPosition = 0,
+                           .controlType = MidiControlType::Note};
+    std::vector<EncoderMidiMapping> out = {
+        {.control = {.channel = 9, .cc = 9}, .slotIx = 9, .position = 9},
+    };
+    std::string reason;
+    REQUIRE_TRUE(!ExpandEncoderBlock(turnBlock, out, &reason));
+    REQUIRE_TRUE(!reason.empty());
+    REQUIRE_TRUE(out.size() == 1);
+    REQUIRE_TRUE((out[0].control == MidiControlAddress{.channel = 9, .cc = 9}));
+    REQUIRE_TRUE(out[0].slotIx == 9);
+    REQUIRE_TRUE(out[0].position == 9);
 }
 
 TEST_CASE(ExpandEncoderBlockRejectsInvertedRange) {
@@ -543,6 +597,24 @@ TEST_CASE(ExpandSystemBlockGenericSceneSelectProducesCcRunWithFeedbackEqualsPres
         REQUIRE_TRUE(out[ix].feedback.sceneIx == 2 + ix);
         REQUIRE_TRUE(out[ix].outputFeedback == true);
     }
+}
+
+TEST_CASE(ExpandSystemBlockGenericPreservesNoteControlType) {
+    SystemBlock block;
+    block.kind = MidiProfileKind::Generic;
+    block.message = BlockableMessage::SceneSelect;
+    block.startArg = 0;
+    block.channel = 1;
+    block.startCc = 60;
+    block.endCc = 62;
+    block.controlType = MidiControlType::Note;
+
+    std::vector<MidiControllerSystemMessageAssociation> out;
+    std::string reason;
+    REQUIRE_TRUE(ExpandSystemBlock(block, out, &reason));
+    REQUIRE_TRUE(out.size() == 2);
+    REQUIRE_TRUE(out[0].control->type == MidiControlType::Note);
+    REQUIRE_TRUE(out[1].control->type == MidiControlType::Note);
 }
 
 TEST_CASE(ExpandSystemBlockGenericBankSelectCarriesBankSlotIx) {
@@ -1037,6 +1109,35 @@ TEST_CASE(ReconstructEncoderBlocksRequiresConstantSlotAndChannel) {
     REQUIRE_TRUE(!rows[1].isBlock);
 }
 
+TEST_CASE(ReconstructEncoderBlocksRequiresConstantControlType) {
+    std::vector<EncoderMidiMapping> mappings = {
+        {.control = {.channel = 1, .cc = 60, .type = MidiControlType::Cc}, .slotIx = 0, .position = 0},
+        {.control = {.channel = 1, .cc = 61, .type = MidiControlType::Note}, .slotIx = 0, .position = 1},
+    };
+    const auto rows = ReconstructEncoderBlocks(mappings, true);
+    REQUIRE_TRUE(rows.size() == 2);
+    REQUIRE_TRUE(!rows[0].isBlock);
+    REQUIRE_TRUE(!rows[1].isBlock);
+}
+
+TEST_CASE(ReconstructedEncoderNoteBlockExpandsBackToNotes) {
+    std::vector<EncoderMidiMapping> mappings = {
+        {.control = {.channel = 1, .cc = 60, .type = MidiControlType::Note}, .slotIx = 0, .position = 0},
+        {.control = {.channel = 1, .cc = 61, .type = MidiControlType::Note}, .slotIx = 0, .position = 1},
+    };
+    const auto rows = ReconstructEncoderBlocks(mappings, true);
+    REQUIRE_TRUE(rows.size() == 1);
+    REQUIRE_TRUE(rows[0].isBlock);
+    REQUIRE_TRUE(rows[0].block.controlType == MidiControlType::Note);
+
+    std::vector<EncoderMidiMapping> expanded;
+    std::string reason;
+    REQUIRE_TRUE(ExpandEncoderBlock(rows[0].block, expanded, &reason));
+    REQUIRE_TRUE(expanded.size() == 2);
+    REQUIRE_TRUE(expanded[0].control.type == MidiControlType::Note);
+    REQUIRE_TRUE(expanded[1].control.type == MidiControlType::Note);
+}
+
 TEST_CASE(ReconstructEncoderBlocksRequiresConstantCcOffset) {
     // Positions consecutive, but cc jumps by 2 instead of 1 -- not a
     // constant-offset run.
@@ -1117,6 +1218,47 @@ TEST_CASE(ReconstructSystemBlocksGenericSceneSelectRun) {
     REQUIRE_TRUE(rows[0].block.startArg == 0);
     REQUIRE_TRUE(rows[0].block.startCc == 10);
     REQUIRE_TRUE(rows[0].block.endCc == 14);
+}
+
+TEST_CASE(ReconstructSystemBlocksRequiresConstantControlType) {
+    std::vector<MidiControllerSystemMessageAssociation> associations;
+    for (std::size_t ix = 0; ix < 2; ++ix) {
+        MidiControllerSystemMessageAssociation association;
+        association.control = MidiControlAddress{.channel = 1,
+                                                  .cc = static_cast<std::uint8_t>(60 + ix),
+                                                  .type = ix == 0 ? MidiControlType::Cc : MidiControlType::Note};
+        association.press = MessageIn::SceneSelect(0, ix);
+        association.feedback = association.press;
+        associations.push_back(association);
+    }
+    const auto rows = ReconstructSystemBlocks(associations, MidiProfileKind::Generic);
+    REQUIRE_TRUE(rows.size() == 2);
+    REQUIRE_TRUE(!rows[0].isBlock);
+    REQUIRE_TRUE(!rows[1].isBlock);
+}
+
+TEST_CASE(ReconstructedSystemNoteBlockExpandsBackToNotes) {
+    std::vector<MidiControllerSystemMessageAssociation> associations;
+    for (std::size_t ix = 0; ix < 2; ++ix) {
+        MidiControllerSystemMessageAssociation association;
+        association.control = MidiControlAddress{.channel = 1,
+                                                  .cc = static_cast<std::uint8_t>(60 + ix),
+                                                  .type = MidiControlType::Note};
+        association.press = MessageIn::SceneSelect(0, ix);
+        association.feedback = association.press;
+        associations.push_back(association);
+    }
+    const auto rows = ReconstructSystemBlocks(associations, MidiProfileKind::Generic);
+    REQUIRE_TRUE(rows.size() == 1);
+    REQUIRE_TRUE(rows[0].isBlock);
+    REQUIRE_TRUE(rows[0].block.controlType == MidiControlType::Note);
+
+    std::vector<MidiControllerSystemMessageAssociation> expanded;
+    std::string reason;
+    REQUIRE_TRUE(ExpandSystemBlock(rows[0].block, expanded, &reason));
+    REQUIRE_TRUE(expanded.size() == 2);
+    REQUIRE_TRUE(expanded[0].control->type == MidiControlType::Note);
+    REQUIRE_TRUE(expanded[1].control->type == MidiControlType::Note);
 }
 
 TEST_CASE(ReconstructSystemBlocksNonBlockableStayIndividual) {
