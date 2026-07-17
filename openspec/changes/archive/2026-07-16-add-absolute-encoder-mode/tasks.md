@@ -31,5 +31,5 @@
 ## 6. Invariant and Completion Verification
 
 - [x] 6.1 Add a deterministic independent model/property test over randomized scene blends, scene centers, gesture masks, gesture weights, gesture values, ranges, and targets that checks post-arming `ComputeRawCenter(scene)` error at most `1e-5` before target-center slew, range safety, same-message arming, and unrelated-storage preservation after every absolute edit.
-- [x] 6.2 Update synth requirement-to-test coverage documentation for `spm-31`, `spm-52`, `spm-75`, `spm-76`, and `sru-26`, including the mathematical helper and randomized invariant tests.
+- [x] 6.2 Update synth requirement-to-test coverage documentation for `spm-31`, `spm-52`, `spm-76`, `spm-77`, and `sru-26`, including the mathematical helper and randomized invariant tests.
 - [x] 6.3 Run formatting/static checks, focused parameter/MIDI/view-model tests, the complete synth test target, and `openspec validate add-absolute-encoder-mode --strict`; resolve every failure before marking the change complete.

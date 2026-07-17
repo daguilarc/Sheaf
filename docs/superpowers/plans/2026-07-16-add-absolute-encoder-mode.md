@@ -184,7 +184,7 @@ The implementation may refine names/types, but tests must be able to exercise th
 - [ ] For every case, assert same-message arming, all changed latent values in range, unrelated inactive storage bitwise unchanged where appropriate, production `ComputeRawCenter(scene)` before slew within `1e-5`, and deterministic completion. The oracle must not reuse the production projection or coefficient-builder output for expected effective values.
 - [ ] Run RED first by making the new invariant exercise at least one not-yet-covered topology and capture its failure before any required production correction. If Tasks 1–5 already satisfy it on first run, document that the new test was RED at compile time before its test seam/helper was exposed; do not introduce a synthetic product defect.
 - [ ] Run GREEN twice: `make -C projects/synth build/parameter_modulation_tests && projects/synth/build/parameter_modulation_tests && projects/synth/build/parameter_modulation_tests`. Expect exit 0 both times.
-- [ ] Update `projects/synth/docs/coverage.md` for `spm-31`, `spm-52`, `spm-75`, `spm-76`, and `sru-26`, naming the exact deterministic tests and the independent oracle.
+- [ ] Update `projects/synth/docs/coverage.md` for `spm-31`, `spm-52`, `spm-76`, `spm-77`, and `sru-26`, naming the exact deterministic tests and the independent oracle.
 - [ ] Run UI boundary/static check: `make -C projects/synth check-ui-boundary`. Expect exit 0.
 - [ ] Run the complete synth suite: `make -C projects/synth test`. Expect exit 0.
 - [ ] Run `openspec validate add-absolute-encoder-mode --strict`. Expect `Change 'add-absolute-encoder-mode' is valid` and exit 0.

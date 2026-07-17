@@ -90,7 +90,7 @@ WHEN MIDI controller profile configuration is saved, THE synth parameter modulat
 
 ## ADDED Requirements
 
-### Requirement: spm-75 — Edits: exact absolute scene and gesture distribution
+### Requirement: spm-76 — Edits: exact absolute scene and gesture distribution
 WHEN `Parameter::HandleSetAbsolute(scene, normalizedTarget)` is called with a finite normalized target, THE parameter SHALL clamp the target to `[0, 1]`, map it to the parameter range, arm every selected inactive gesture for the touched scene endpoints by copying the matching parent scene values, rebuild the contribution coefficients after arming, include those newly armed gestures and every already-active gesture with positive effective weight regardless of current selection, and apply a range-constrained minimum-change weighted projection to the distinct contributing scene-center and gesture-value storage locations such that production `ComputeRawCenter(scene)` before target-center slew yields the mapped target within absolute tolerance `1e-5`, every changed latent value remains in range, and unrelated storage remains unchanged. The routed production handler SHALL be `noexcept`, SHALL use no dynamic allocation, SHALL use a fixed-capacity workspace supporting the exact maximum `2 + 2 * 64 = 130` latent locations, and SHALL leave scene centers, gesture values, and gesture-active masks unchanged when internal scene, topology, storage, weight, capacity, or projection invariants reject the edit.
 
 #### Scenario: Endpoint absolute edit
@@ -142,7 +142,7 @@ WHEN `Parameter::HandleSetAbsolute(scene, normalizedTarget)` is called with a fi
 - **THEN** it returns without throwing or dynamically allocating
 - **AND** scene centers, gesture values, and gesture-active masks are unchanged
 
-### Requirement: spm-76 — Messaging: absolute parameter routing
+### Requirement: spm-77 — Messaging: absolute parameter routing
 WHEN a `MessageIn::ParamSetAbsolute(timestamp, slotIx, position, normalizedValue)` reaches `MessageInBus`, THE synth parameter modulation system SHALL route it by slot and position through `ParameterManager`, `BankSlot`, and the selected `Bank` to the parameter or modulation-depth control currently visible in that cell's `HandleSetAbsolute`, SHALL use that parameter's owning scene and gesture context, SHALL ignore the edit while any effective modifier is active in the same manner as `ParamIncDec`, and SHALL leave state unchanged when the slot, position, cell, or parameter is not mapped.
 
 #### Scenario: Absolute message reaches visible parameter
