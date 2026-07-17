@@ -5864,6 +5864,57 @@ struct FakeMidiSink : synth::IMidiOutputSink {
     }
 };
 
+void PublishEncoderCell(synth::ParameterManager::UIState& ui, float displayValue, float rawValue,
+                        std::uint64_t processedEpoch, bool connected = true,
+                        synth::Color baseColor = synth::Color::Green,
+                        synth::Color indicatorColor = synth::Color::Cyan) {
+    auto& cell = ui.slots[0].cells[0];
+    const std::uint32_t revision = cell.revision.load(std::memory_order_relaxed);
+    cell.revision.store(revision | 1u, std::memory_order_release);
+    cell.connected.store(connected, std::memory_order_relaxed);
+    cell.bipolar.store(false, std::memory_order_relaxed);
+    cell.voiceCount.store(connected ? 1u : 0u, std::memory_order_relaxed);
+    cell.values[0].store(displayValue, std::memory_order_relaxed);
+    cell.rawKnobValue.store(rawValue, std::memory_order_relaxed);
+    cell.processedAbsoluteEpoch.store(processedEpoch, std::memory_order_relaxed);
+    cell.baseColor.Store(baseColor, std::memory_order_relaxed);
+    cell.indicatorColors[0].Store(indicatorColor, std::memory_order_relaxed);
+    cell.revision.store((revision | 1u) + 1u, std::memory_order_release);
+}
+
+std::unique_ptr<synth::MidiOutputProcessor> MakeEncoderOutput(
+    synth::EncoderMidiOutProtocol protocol, synth::EncoderMode feedbackMode,
+    synth::MidiSender* sender, synth::ParameterManager::UIState* ui,
+    synth::AbsoluteFeedbackCoordinator* coordinator = nullptr,
+    std::size_t controllerSlot = 0) {
+    synth::EncoderMidiOutConfig config = protocol == synth::EncoderMidiOutProtocol::Twister
+                                             ? synth::EncoderMidiOutConfig::TwisterDefault(0)
+                                             : synth::EncoderMidiOutConfig::WrldBldrDefault(0);
+    config.KeepFirstPositions(1);
+    if (protocol == synth::EncoderMidiOutProtocol::Twister) {
+        return std::make_unique<synth::TwisterMidiOutProcessor>(
+            config, sender, ui, 0, feedbackMode, coordinator, controllerSlot);
+    }
+    return std::make_unique<synth::WrldBldrMidiOutProcessor>(
+        config, sender, ui, 0, feedbackMode, coordinator, controllerSlot);
+}
+
+std::size_t CountPositionMessages(const FakeMidiSink& sink, std::size_t begin = 0) {
+    return static_cast<std::size_t>(std::count_if(
+        sink.sent.begin() + static_cast<std::ptrdiff_t>(begin), sink.sent.end(),
+        [](const synth::BasicMidi& midi) { return midi.IsCC() && midi.Channel() == 0; }));
+}
+
+std::optional<std::uint8_t> LastPositionValue(const FakeMidiSink& sink, std::size_t begin = 0) {
+    for (std::size_t ix = sink.sent.size(); ix > begin; --ix) {
+        const synth::BasicMidi& midi = sink.sent[ix - 1];
+        if (midi.IsCC() && midi.Channel() == 0) {
+            return midi.GetValue();
+        }
+    }
+    return std::nullopt;
+}
+
 TEST_CASE(midi_basic_helpers_expose_raw_bytes_and_sizes) {
     const synth::BasicMidi cc = synth::BasicMidi::CC(10, 2, 7, 99);
     REQUIRE_TRUE(cc.timestamp == 10);
@@ -7364,18 +7415,19 @@ TEST_CASE(twister_output_debounces_reset_and_uses_channels) {
     synth::TwisterMidiOutProcessor processor(config, &sender, ui.get());
     processor.Process();
     sender.FlushForTests(std::chrono::milliseconds(500));
-    REQUIRE_TRUE(sink.sent.size() == 5);
+    REQUIRE_TRUE(sink.sent.size() == 4);
     REQUIRE_TRUE(sink.sent[0].Channel() == 1);
     REQUIRE_TRUE(sink.sent[0].GetCC() == 0);
     REQUIRE_TRUE(sink.sent[0].GetValue() != 0);
     REQUIRE_TRUE(sink.sent[1].Channel() == 2);
     REQUIRE_TRUE(sink.sent[1].GetValue() == synth::FullBrightnessAnimationValue());
-    REQUIRE_TRUE(sink.sent[2].Channel() == 4);
-    REQUIRE_TRUE(sink.sent[2].GetValue() == 64);
-    REQUIRE_TRUE(sink.sent[3].Channel() == 5);
-    REQUIRE_TRUE(sink.sent[3].GetValue() == 95);
-    REQUIRE_TRUE(sink.sent[4].Channel() == 0);
-    REQUIRE_TRUE(sink.sent[4].GetValue() == 64);
+    REQUIRE_TRUE(sink.sent[2].Channel() == 5);
+    REQUIRE_TRUE(sink.sent[2].GetValue() == 95);
+    REQUIRE_TRUE(sink.sent[3].Channel() == 0);
+    REQUIRE_TRUE(sink.sent[3].GetValue() == 64);
+    REQUIRE_TRUE(std::none_of(sink.sent.begin(), sink.sent.end(), [](const synth::BasicMidi& midi) {
+        return midi.IsCC() && midi.Channel() == 4;
+    }));
     const std::size_t afterFirst = sink.sent.size();
 
     processor.Process();
@@ -7385,7 +7437,7 @@ TEST_CASE(twister_output_debounces_reset_and_uses_channels) {
     processor.Reset();
     processor.Process();
     sender.FlushForTests(std::chrono::milliseconds(500));
-    REQUIRE_TRUE(sink.sent.size() == afterFirst + 5);
+    REQUIRE_TRUE(sink.sent.size() == afterFirst + 4);
     sender.Stop();
 }
 
@@ -7422,7 +7474,7 @@ TEST_CASE(twister_output_skips_unstable_snapshot_without_cache_update) {
     processor.Process();
     sender.FlushForTests(std::chrono::milliseconds(500));
     sender.Stop();
-    REQUIRE_TRUE(sink.sent.size() == 5);
+    REQUIRE_TRUE(sink.sent.size() == 4);
 }
 
 TEST_CASE(twister_output_blanks_disconnected_mapped_cells_with_brightness_off_values_once) {
@@ -7439,22 +7491,20 @@ TEST_CASE(twister_output_blanks_disconnected_mapped_cells_with_brightness_off_va
 
     processor.Process();
     sender.FlushForTests(std::chrono::milliseconds(500));
-    REQUIRE_TRUE(sink.sent.size() == 5);
+    REQUIRE_TRUE(sink.sent.size() == 4);
     REQUIRE_TRUE(sink.sent[0].Channel() == 1);
     REQUIRE_TRUE(sink.sent[0].GetValue() == 0);
     REQUIRE_TRUE(sink.sent[1].Channel() == 2);
     REQUIRE_TRUE(sink.sent[1].GetValue() == 17);
-    REQUIRE_TRUE(sink.sent[2].Channel() == 4);
-    REQUIRE_TRUE(sink.sent[2].GetValue() == 0);
-    REQUIRE_TRUE(sink.sent[3].Channel() == 5);
-    REQUIRE_TRUE(sink.sent[3].GetValue() == 65);
-    REQUIRE_TRUE(sink.sent[4].Channel() == 0);
-    REQUIRE_TRUE(sink.sent[4].GetValue() == 0);
+    REQUIRE_TRUE(sink.sent[2].Channel() == 5);
+    REQUIRE_TRUE(sink.sent[2].GetValue() == 65);
+    REQUIRE_TRUE(sink.sent[3].Channel() == 0);
+    REQUIRE_TRUE(sink.sent[3].GetValue() == 0);
 
     processor.Process();
     sender.FlushForTests(std::chrono::milliseconds(500));
     sender.Stop();
-    REQUIRE_TRUE(sink.sent.size() == 5);
+    REQUIRE_TRUE(sink.sent.size() == 4);
 }
 
 TEST_CASE(twister_output_blanks_mapped_encoder_beyond_visible_cell_capacity_with_brightness_off_values_once) {
@@ -7477,32 +7527,29 @@ TEST_CASE(twister_output_blanks_mapped_encoder_beyond_visible_cell_capacity_with
 
     processor.Process();
     sender.FlushForTests(std::chrono::milliseconds(500));
-    REQUIRE_TRUE(sink.sent.size() == 10);
+    REQUIRE_TRUE(sink.sent.size() == 8);
     REQUIRE_TRUE(sink.sent[0].GetCC() == 0);
     REQUIRE_TRUE(sink.sent[0].GetValue() != 0);
     REQUIRE_TRUE(sink.sent[1].Channel() == 2);
     REQUIRE_TRUE(sink.sent[1].GetCC() == 0);
     REQUIRE_TRUE(sink.sent[1].GetValue() == synth::FullBrightnessAnimationValue());
-    REQUIRE_TRUE(sink.sent[5].Channel() == 1);
+    REQUIRE_TRUE(sink.sent[4].Channel() == 1);
+    REQUIRE_TRUE(sink.sent[4].GetCC() == 1);
+    REQUIRE_TRUE(sink.sent[4].GetValue() == 0);
+    REQUIRE_TRUE(sink.sent[5].Channel() == 2);
     REQUIRE_TRUE(sink.sent[5].GetCC() == 1);
-    REQUIRE_TRUE(sink.sent[5].GetValue() == 0);
-    REQUIRE_TRUE(sink.sent[6].Channel() == 2);
+    REQUIRE_TRUE(sink.sent[5].GetValue() == 17);
+    REQUIRE_TRUE(sink.sent[6].Channel() == 5);
     REQUIRE_TRUE(sink.sent[6].GetCC() == 1);
-    REQUIRE_TRUE(sink.sent[6].GetValue() == 17);
-    REQUIRE_TRUE(sink.sent[7].Channel() == 4);
+    REQUIRE_TRUE(sink.sent[6].GetValue() == 65);
+    REQUIRE_TRUE(sink.sent[7].Channel() == 0);
     REQUIRE_TRUE(sink.sent[7].GetCC() == 1);
     REQUIRE_TRUE(sink.sent[7].GetValue() == 0);
-    REQUIRE_TRUE(sink.sent[8].Channel() == 5);
-    REQUIRE_TRUE(sink.sent[8].GetCC() == 1);
-    REQUIRE_TRUE(sink.sent[8].GetValue() == 65);
-    REQUIRE_TRUE(sink.sent[9].Channel() == 0);
-    REQUIRE_TRUE(sink.sent[9].GetCC() == 1);
-    REQUIRE_TRUE(sink.sent[9].GetValue() == 0);
 
     processor.Process();
     sender.FlushForTests(std::chrono::milliseconds(500));
     sender.Stop();
-    REQUIRE_TRUE(sink.sent.size() == 10);
+    REQUIRE_TRUE(sink.sent.size() == 8);
 }
 
 TEST_CASE(twister_output_ignores_unmapped_encoder_without_blanking) {
@@ -7527,7 +7574,7 @@ TEST_CASE(twister_output_ignores_unmapped_encoder_without_blanking) {
     sender.FlushForTests(std::chrono::milliseconds(500));
     sender.Stop();
 
-    REQUIRE_TRUE(sink.sent.size() == 5);
+    REQUIRE_TRUE(sink.sent.size() == 4);
     for (const synth::BasicMidi& message : sink.sent) {
         REQUIRE_TRUE(message.GetCC() == 0);
     }
@@ -7554,11 +7601,11 @@ TEST_CASE(twister_output_uses_full_brightness_for_connected_cells) {
     sender.FlushForTests(std::chrono::milliseconds(500));
     sender.Stop();
 
-    REQUIRE_TRUE(sink.sent.size() == 5);
+    REQUIRE_TRUE(sink.sent.size() == 4);
     REQUIRE_TRUE(sink.sent[1].Channel() == 2);
     REQUIRE_TRUE(sink.sent[1].GetValue() == 47);
-    REQUIRE_TRUE(sink.sent[3].Channel() == 5);
-    REQUIRE_TRUE(sink.sent[3].GetValue() == 95);
+    REQUIRE_TRUE(sink.sent[2].Channel() == 5);
+    REQUIRE_TRUE(sink.sent[2].GetValue() == 95);
 }
 
 TEST_CASE(wrld_bldr_output_sends_value_and_source_derived_sysex) {
@@ -7715,6 +7762,343 @@ TEST_CASE(wrld_bldr_output_blanks_positions_beyond_cell_capacity) {
     }
     REQUIRE_TRUE(blanked0);
     REQUIRE_TRUE(blanked1);
+}
+
+TEST_CASE(absolute_encoder_output_gates_until_acknowledged_and_suppresses_exact_echo_for_both_protocols) {
+    for (const synth::EncoderMidiOutProtocol protocol : {
+             synth::EncoderMidiOutProtocol::Twister,
+             synth::EncoderMidiOutProtocol::WrldBldr,
+         }) {
+        synth::ParameterManager::UIState ui;
+        ui.Configure(1, 1, 1, 0, 0);
+        PublishEncoderCell(ui, 0.9f, 64.0f / 127.0f, 0);
+
+        synth::AbsoluteFeedbackCoordinator coordinator;
+        const auto route = coordinator.ReserveRoute({.controllerSlot = 2, .parameterSlot = 0, .position = 0});
+        const auto alert = coordinator.BeginInput(route, 64);
+        FakeMidiSink sink;
+        synth::MidiSender sender;
+        sender.SetSink(0, &sink);
+        sender.Start();
+        auto processor = MakeEncoderOutput(protocol, synth::EncoderMode::Absolute, &sender, &ui, &coordinator, 2);
+
+        processor->Process();
+        REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+        REQUIRE_TRUE(CountPositionMessages(sink) == 0);
+        REQUIRE_TRUE(!sink.sent.empty());
+        const auto pending = coordinator.Snapshot(route);
+        REQUIRE_TRUE(pending.has_value() && pending->pending);
+
+        PublishEncoderCell(ui, 0.9f, 64.0f / 127.0f, alert.Epoch() + 1);
+        processor->Process();
+        REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+        REQUIRE_TRUE(CountPositionMessages(sink) == 0);
+        const auto resolved = coordinator.Snapshot(route);
+        REQUIRE_TRUE(resolved.has_value() && !resolved->pending);
+
+        const std::size_t afterResolution = sink.sent.size();
+        processor->Process();
+        REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+        REQUIRE_TRUE(sink.sent.size() == afterResolution);
+        sender.Stop();
+    }
+}
+
+TEST_CASE(absolute_encoder_output_forces_rejection_correction_even_when_actual_matches_old_cache) {
+    for (const synth::EncoderMidiOutProtocol protocol : {
+             synth::EncoderMidiOutProtocol::Twister,
+             synth::EncoderMidiOutProtocol::WrldBldr,
+         }) {
+        synth::ParameterManager::UIState ui;
+        ui.Configure(1, 1, 1, 0, 0);
+        PublishEncoderCell(ui, 0.8f, 0.25f, 0);
+        synth::AbsoluteFeedbackCoordinator coordinator;
+        const auto route = coordinator.ReserveRoute({.controllerSlot = 3, .parameterSlot = 0, .position = 0});
+        FakeMidiSink sink;
+        synth::MidiSender sender;
+        sender.SetSink(0, &sink);
+        sender.Start();
+        auto processor = MakeEncoderOutput(protocol, synth::EncoderMode::Absolute, &sender, &ui, &coordinator, 3);
+
+        processor->Process();
+        REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+        REQUIRE_TRUE(CountPositionMessages(sink) == 1);
+        REQUIRE_TRUE(LastPositionValue(sink) == 32);
+        const std::size_t beforeCorrection = sink.sent.size();
+
+        const auto alert = coordinator.BeginInput(route, 96);
+        PublishEncoderCell(ui, 0.8f, 0.25f, alert.Epoch());
+        processor->Process();
+        REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+        REQUIRE_TRUE(CountPositionMessages(sink, beforeCorrection) == 1);
+        REQUIRE_TRUE(LastPositionValue(sink, beforeCorrection) == 32);
+        const auto resolved = coordinator.Snapshot(route);
+        REQUIRE_TRUE(resolved.has_value() && !resolved->pending);
+
+        const std::size_t afterCorrection = sink.sent.size();
+        processor->Process();
+        REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+        REQUIRE_TRUE(sink.sent.size() == afterCorrection);
+        sender.Stop();
+    }
+}
+
+TEST_CASE(absolute_encoder_output_resolves_only_latest_rapid_expectation_and_disconnected_blank) {
+    for (const synth::EncoderMidiOutProtocol protocol : {
+             synth::EncoderMidiOutProtocol::Twister,
+             synth::EncoderMidiOutProtocol::WrldBldr,
+         }) {
+        synth::ParameterManager::UIState ui;
+        ui.Configure(1, 1, 1, 0, 0);
+        PublishEncoderCell(ui, 0.75f, 0.75f, 0);
+        synth::AbsoluteFeedbackCoordinator coordinator;
+        const auto route = coordinator.ReserveRoute({.controllerSlot = 4, .parameterSlot = 0, .position = 0});
+        const auto first = coordinator.BeginInput(route, 16);
+        const auto second = coordinator.BeginInput(route, 48);
+        const auto latest = coordinator.BeginInput(route, 80);
+        REQUIRE_TRUE(first.Epoch() < second.Epoch() && second.Epoch() < latest.Epoch());
+
+        FakeMidiSink sink;
+        synth::MidiSender sender;
+        sender.SetSink(0, &sink);
+        sender.Start();
+        auto processor = MakeEncoderOutput(protocol, synth::EncoderMode::Absolute, &sender, &ui, &coordinator, 4);
+
+        PublishEncoderCell(ui, 0.75f, 80.0f / 127.0f, second.Epoch());
+        processor->Process();
+        REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+        REQUIRE_TRUE(CountPositionMessages(sink) == 0);
+        REQUIRE_TRUE(coordinator.Snapshot(route)->pending);
+
+        PublishEncoderCell(ui, 0.75f, 80.0f / 127.0f, latest.Epoch());
+        processor->Process();
+        REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+        REQUIRE_TRUE(CountPositionMessages(sink) == 0);
+        REQUIRE_TRUE(!coordinator.Snapshot(route)->pending);
+
+        const auto disconnected = coordinator.BeginInput(route, 64);
+        PublishEncoderCell(ui, 0.75f, 0.0f, disconnected.Epoch(), false);
+        const std::size_t beforeBlank = sink.sent.size();
+        processor->Process();
+        REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+        REQUIRE_TRUE(CountPositionMessages(sink, beforeBlank) == 1);
+        REQUIRE_TRUE(LastPositionValue(sink, beforeBlank) == 0);
+        REQUIRE_TRUE(!coordinator.Snapshot(route)->pending);
+        sender.Stop();
+    }
+}
+
+TEST_CASE(absolute_encoder_output_rejects_unstable_revision_without_resolving_or_changing_cache) {
+    for (const synth::EncoderMidiOutProtocol protocol : {
+             synth::EncoderMidiOutProtocol::Twister,
+             synth::EncoderMidiOutProtocol::WrldBldr,
+         }) {
+        synth::ParameterManager::UIState ui;
+        ui.Configure(1, 1, 1, 0, 0);
+        PublishEncoderCell(ui, 0.2f, 0.2f, 0);
+        synth::AbsoluteFeedbackCoordinator coordinator;
+        const auto route = coordinator.ReserveRoute({.controllerSlot = 5, .parameterSlot = 0, .position = 0});
+        FakeMidiSink sink;
+        synth::MidiSender sender;
+        sender.SetSink(0, &sink);
+        sender.Start();
+        auto processor = MakeEncoderOutput(protocol, synth::EncoderMode::Absolute, &sender, &ui, &coordinator, 5);
+        processor->Process();
+        REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+        const std::size_t afterInitial = sink.sent.size();
+
+        const auto alert = coordinator.BeginInput(route, 96);
+        auto& cell = ui.slots[0].cells[0];
+        cell.revision.store(3, std::memory_order_release);
+        cell.rawKnobValue.store(0.6f, std::memory_order_relaxed);
+        cell.processedAbsoluteEpoch.store(alert.Epoch(), std::memory_order_relaxed);
+        processor->Process();
+        REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(200)));
+        REQUIRE_TRUE(sink.sent.size() == afterInitial);
+        REQUIRE_TRUE(coordinator.Snapshot(route)->pending);
+
+        cell.revision.store(4, std::memory_order_release);
+        processor->Process();
+        REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+        REQUIRE_TRUE(CountPositionMessages(sink, afterInitial) == 1);
+        REQUIRE_TRUE(LastPositionValue(sink, afterInitial) == 76);
+        REQUIRE_TRUE(!coordinator.Snapshot(route)->pending);
+        sender.Stop();
+    }
+}
+
+TEST_CASE(relative_encoder_output_modes_ignore_absolute_raw_epochs_and_continue_post_modulation_feedback) {
+    for (const synth::EncoderMidiOutProtocol protocol : {
+             synth::EncoderMidiOutProtocol::Twister,
+             synth::EncoderMidiOutProtocol::WrldBldr,
+         }) {
+        for (const synth::EncoderMode mode : {
+                 synth::EncoderMode::Signed7Bit,
+                 synth::EncoderMode::DirectionOnly,
+             }) {
+            synth::ParameterManager::UIState ui;
+            ui.Configure(1, 1, 1, 0, 0);
+            PublishEncoderCell(ui, 0.25f, 0.9f, 0);
+            synth::AbsoluteFeedbackCoordinator coordinator;
+            const auto route = coordinator.ReserveRoute({.controllerSlot = 6, .parameterSlot = 0, .position = 0});
+            const auto alert = coordinator.BeginInput(route, 100);
+            FakeMidiSink sink;
+            synth::MidiSender sender;
+            sender.SetSink(0, &sink);
+            sender.Start();
+            auto processor = MakeEncoderOutput(protocol, mode, &sender, &ui, &coordinator, 6);
+
+            processor->Process();
+            REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+            REQUIRE_TRUE(LastPositionValue(sink) == 32);
+            const std::size_t afterFirst = sink.sent.size();
+
+            PublishEncoderCell(ui, 0.75f, 0.9f, alert.Epoch());
+            processor->Process();
+            REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+            REQUIRE_TRUE(CountPositionMessages(sink, afterFirst) == 1);
+            REQUIRE_TRUE(LastPositionValue(sink, afterFirst) == 95);
+            const auto unchanged = coordinator.Snapshot(route);
+            REQUIRE_TRUE(unchanged.has_value() && unchanged->pending);
+            sender.Stop();
+        }
+    }
+}
+
+TEST_CASE(absolute_encoder_output_retries_failed_correction_without_resolving_or_caching) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0, 0);
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    const auto route = coordinator.ReserveRoute({.controllerSlot = 7, .parameterSlot = 0, .position = 0});
+    const auto alert = coordinator.BeginInput(route, 96);
+    PublishEncoderCell(ui, 0.9f, 0.25f, alert.Epoch());
+
+    FakeMidiSink sink;
+    synth::MidiSender sender(1);
+    sender.SetSink(0, &sink);
+    REQUIRE_TRUE(sender.Enqueue(0, synth::BasicMidi::CC(0, 9, 9, 9)));
+    auto processor = MakeEncoderOutput(synth::EncoderMidiOutProtocol::Twister, synth::EncoderMode::Absolute,
+                                       &sender, &ui, &coordinator, 7);
+    processor->Process();
+    const auto afterFailure = coordinator.Snapshot(route);
+    REQUIRE_TRUE(afterFailure.has_value() && afterFailure->pending);
+
+    sender.Start();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    const std::size_t beforeRetry = sink.sent.size();
+    processor->Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(CountPositionMessages(sink, beforeRetry) == 1);
+    REQUIRE_TRUE(LastPositionValue(sink, beforeRetry) == 32);
+    REQUIRE_TRUE(!coordinator.Snapshot(route)->pending);
+    sender.Stop();
+}
+
+TEST_CASE(absolute_encoder_output_retries_failed_ordinary_raw_center_enqueue_without_caching) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0, 0);
+    PublishEncoderCell(ui, 0.9f, 0.25f, 0);
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    coordinator.ReserveRoute({.controllerSlot = 0, .parameterSlot = 0, .position = 0});
+    FakeMidiSink sink;
+    synth::MidiSender sender(1);
+    sender.SetSink(0, &sink);
+    REQUIRE_TRUE(sender.Enqueue(0, synth::BasicMidi::CC(0, 9, 9, 9)));
+    auto processor = MakeEncoderOutput(synth::EncoderMidiOutProtocol::Twister, synth::EncoderMode::Absolute,
+                                       &sender, &ui, &coordinator, 0);
+    processor->Process();
+
+    sender.Start();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    const std::size_t beforeRetry = sink.sent.size();
+    processor->Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(CountPositionMessages(sink, beforeRetry) == 1);
+    REQUIRE_TRUE(LastPositionValue(sink, beforeRetry) == 32);
+    sender.Stop();
+}
+
+TEST_CASE(concurrent_absolute_alert_and_position_output_linearize_before_alert_or_after_acknowledgement) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0, 0);
+    PublishEncoderCell(ui, 0.25f, 0.25f, 0);
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    const auto route = coordinator.ReserveRoute({.controllerSlot = 1, .parameterSlot = 0, .position = 0});
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(0, &sink);
+    sender.Start();
+    auto processor = MakeEncoderOutput(synth::EncoderMidiOutProtocol::Twister, synth::EncoderMode::Absolute,
+                                       &sender, &ui, &coordinator, 1);
+    processor->Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    const std::size_t beforeRace = sink.sent.size();
+
+    PublishEncoderCell(ui, 0.5f, 0.5f, 0);
+    auto senderGuard = sender.GuardQueueForTests();
+    std::thread output([&] { processor->Process(); });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!coordinator.RouteGuardHeldForTests(route) && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    const bool outputReachedGuardedEnqueue = coordinator.RouteGuardHeldForTests(route);
+
+    if (!outputReachedGuardedEnqueue) {
+        senderGuard.Release();
+        output.join();
+        sender.Stop();
+        REQUIRE_TRUE(outputReachedGuardedEnqueue);
+    }
+
+    synth::AbsoluteFeedbackCoordinator::InputAlert alert;
+    std::thread input([&] { alert = coordinator.BeginInput(route, 96); });
+    senderGuard.Release();
+    output.join();
+    input.join();
+    REQUIRE_TRUE(alert.IsPublished());
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(CountPositionMessages(sink, beforeRace) == 1);
+    REQUIRE_TRUE(LastPositionValue(sink, beforeRace) == 64);
+
+    const std::size_t afterBeforeAlertEnqueue = sink.sent.size();
+    processor->Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(sink.sent.size() == afterBeforeAlertEnqueue);
+    REQUIRE_TRUE(coordinator.Snapshot(route)->pending);
+
+    PublishEncoderCell(ui, 0.6f, 0.6f, alert.Epoch());
+    processor->Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(CountPositionMessages(sink, afterBeforeAlertEnqueue) == 1);
+    REQUIRE_TRUE(LastPositionValue(sink, afterBeforeAlertEnqueue) == 76);
+    REQUIRE_TRUE(!coordinator.Snapshot(route)->pending);
+    sender.Stop();
+}
+
+TEST_CASE(untracked_absolute_encoder_output_uses_ordinary_raw_center_debounce) {
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    for (std::size_t ix = 0; ix < synth::AbsoluteFeedbackCoordinator::kMaxRoutes; ++ix) {
+        REQUIRE_TRUE(coordinator.ReserveRoute({.controllerSlot = 0, .parameterSlot = ix, .position = 0}).IsTracked());
+    }
+    REQUIRE_TRUE(!coordinator.ReserveRoute({.controllerSlot = 7, .parameterSlot = 0, .position = 0}).IsTracked());
+
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0, 0);
+    PublishEncoderCell(ui, 0.9f, 0.25f, 0);
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(0, &sink);
+    sender.Start();
+    auto processor = MakeEncoderOutput(synth::EncoderMidiOutProtocol::Twister, synth::EncoderMode::Absolute,
+                                       &sender, &ui, &coordinator, 7);
+    processor->Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(LastPositionValue(sink) == 32);
+    const std::size_t afterFirst = sink.sent.size();
+    processor->Process();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(sink.sent.size() == afterFirst);
+    sender.Stop();
 }
 
 TEST_CASE(message_bus_single_producer_single_consumer_threaded_order) {

@@ -24,9 +24,14 @@ std::uint8_t TwisterRgbBrightnessValue(float brightness) {
     return Clamp7Bit(static_cast<int>(std::lround(17.0f + std::clamp(brightness, 0.0f, 1.0f) * 30.0f)));
 }
 
-std::uint8_t TwisterIndicatorBrightnessValue(float brightness) {
+std::uint8_t TwisterRingBrightnessValue(float brightness) {
     return Clamp7Bit(static_cast<int>(std::lround(65.0f + std::clamp(brightness, 0.0f, 1.0f) * 30.0f)));
 }
+
+constexpr std::uint8_t kTwisterEncoderRingChannel = 0;
+constexpr std::uint8_t kTwisterRgbColorChannel = 1;
+constexpr std::uint8_t kTwisterRgbBrightnessChannel = 2;
+constexpr std::uint8_t kTwisterRingBrightnessChannel = 5;
 
 EncoderMidiInConfig RowMajorInputDefault(std::size_t slotIx) {
     EncoderMidiInConfig config;
@@ -479,6 +484,11 @@ AbsoluteFeedbackCoordinator::GuardRoute(RouteReservation route) {
     return RouteGuard(&routes_[route.index_]);
 }
 
+bool AbsoluteFeedbackCoordinator::RouteGuardHeldForTests(RouteReservation route) const {
+    return route.IsTracked() && routes_[route.index_].occupied &&
+           routes_[route.index_].guard.test(std::memory_order_acquire);
+}
+
 AbsoluteFeedbackCoordinator::InputAlert
 AbsoluteFeedbackCoordinator::BeginInput(RouteReservation route, std::uint8_t receivedValue) {
     InputAlert alert;
@@ -886,14 +896,22 @@ void EncoderMidiOutConfig::KeepFirstPositions(std::size_t count) {
 }
 
 MidiOutProcessor::MidiOutProcessor(EncoderMidiOutConfig config, MidiSender* sender, ParameterManager::UIState* uiState,
-                                   std::size_t sinkIx)
+                                   std::size_t sinkIx, EncoderMode feedbackMode,
+                                   AbsoluteFeedbackCoordinator* absoluteFeedback,
+                                   std::size_t controllerSlot)
     : config_(std::move(config)),
       sender_(sender),
       uiState_(uiState),
-      sinkIx_(sinkIx) {}
+      sinkIx_(sinkIx),
+      feedbackMode_(feedbackMode),
+      absoluteFeedback_(absoluteFeedback),
+      controllerSlot_(controllerSlot) {
+    ReserveAbsoluteRoutes();
+}
 
 void MidiOutProcessor::SetConfig(EncoderMidiOutConfig config) {
     config_ = std::move(config);
+    ReserveAbsoluteRoutes();
     Reset();
 }
 
@@ -928,12 +946,75 @@ std::optional<MidiOutProcessor::CellSnapshot> MidiOutProcessor::LoadCellSnapshot
             snapshot.value = state.values[0].load(std::memory_order_relaxed);
             snapshot.indicatorColor = state.indicatorColors[0].Load(std::memory_order_relaxed);
         }
+        if (feedbackMode_ == EncoderMode::Absolute) {
+            snapshot.rawKnobValue = state.rawKnobValue.load(std::memory_order_relaxed);
+            snapshot.processedAbsoluteEpoch =
+                state.processedAbsoluteEpoch.load(std::memory_order_relaxed);
+        }
         const std::uint32_t endRevision = state.revision.load(std::memory_order_acquire);
         if (startRevision == endRevision && (endRevision & 1u) == 0) {
             return snapshot;
         }
     }
     return std::nullopt;
+}
+
+void MidiOutProcessor::ReserveAbsoluteRoutes() {
+    absoluteRoutes_.clear();
+    if (feedbackMode_ != EncoderMode::Absolute || absoluteFeedback_ == nullptr) {
+        return;
+    }
+    absoluteRoutes_.reserve(config_.mappings.size());
+    for (const EncoderMidiOutMapping& mapping : config_.mappings) {
+        absoluteRoutes_.push_back(absoluteFeedback_->ReserveRoute({
+            .controllerSlot = controllerSlot_,
+            .parameterSlot = mapping.slotIx,
+            .position = mapping.position,
+        }));
+    }
+}
+
+void MidiOutProcessor::ProcessPosition(std::size_t mappingIx,
+                                       const EncoderMidiOutMapping& mapping,
+                                       const CellSnapshot& snapshot, bool blank,
+                                       bool& cacheValid, std::uint8_t& cachedValue) {
+    const std::uint8_t value = feedbackMode_ == EncoderMode::Absolute
+                                   ? (blank ? 0 : FloatTo7Bit(snapshot.rawKnobValue))
+                                   : (blank ? 0 : FloatTo7Bit(NormalizeForDisplay(snapshot.value, snapshot.bipolar)));
+    if (feedbackMode_ == EncoderMode::Absolute && absoluteFeedback_ != nullptr &&
+        mappingIx < absoluteRoutes_.size() && absoluteRoutes_[mappingIx].IsTracked()) {
+        auto guard = absoluteFeedback_->GuardRoute(absoluteRoutes_[mappingIx]);
+        const AbsoluteFeedbackCoordinator::Expectation expectation = guard.Snapshot();
+        if (expectation.pending) {
+            if (snapshot.processedAbsoluteEpoch < expectation.epoch) {
+                return;
+            }
+            if (value != expectation.receivedValue &&
+                !Enqueue(BasicMidi::CC(0, kTwisterEncoderRingChannel, mapping.cc, value))) {
+                return;
+            }
+            if (guard.Resolve(expectation.epoch)) {
+                cachedValue = value;
+                cacheValid = true;
+            }
+            return;
+        }
+        if (!cacheValid || cachedValue != value) {
+            if (Enqueue(BasicMidi::CC(0, kTwisterEncoderRingChannel, mapping.cc, value))) {
+                cachedValue = value;
+                cacheValid = true;
+            }
+        }
+        return;
+    }
+
+    if (!cacheValid || cachedValue != value) {
+        const bool enqueued = Enqueue(BasicMidi::CC(0, kTwisterEncoderRingChannel, mapping.cc, value));
+        if (feedbackMode_ != EncoderMode::Absolute || enqueued) {
+            cachedValue = value;
+            cacheValid = true;
+        }
+    }
 }
 
 bool MidiOutProcessor::Enqueue(const BasicMidi& midi) {
@@ -960,34 +1041,25 @@ void TwisterMidiOutProcessor::Process() {
             continue;
         }
         const bool blank = !snapshot->connected || snapshot->voiceCount == 0;
-        const std::uint8_t value = blank ? 0 : FloatTo7Bit(NormalizeForDisplay(snapshot->value, snapshot->bipolar));
-        const std::uint8_t color = blank ? 0 : ColorToTwister(snapshot->baseColor);
-        const std::uint8_t brightness = TwisterRgbBrightnessValue(blank ? 0.0f : 1.0f);
-        // Twister uses channel 4 for the indicator/ring position, mirroring the value ring.
-        const std::uint8_t indicatorValue = value;
-        const std::uint8_t indicatorBrightness = TwisterIndicatorBrightnessValue(blank ? 0.0f : 1.0f);
+        const std::uint8_t rgbColor = blank ? 0 : ColorToTwister(snapshot->baseColor);
+        const std::uint8_t rgbBrightness = TwisterRgbBrightnessValue(blank ? 0.0f : 1.0f);
+        const std::uint8_t ringBrightness = TwisterRingBrightnessValue(blank ? 0.0f : 1.0f);
         CacheEntry& cache = cache_[ix];
-        if (!cache.valid || cache.color != color) {
-            Enqueue(BasicMidi::CC(0, 1, mapping.cc, color));
+        if (!cache.valid || cache.rgbColor != rgbColor) {
+            Enqueue(BasicMidi::CC(0, kTwisterRgbColorChannel, mapping.cc, rgbColor));
         }
-        if (!cache.valid || cache.brightness != brightness) {
-            Enqueue(BasicMidi::CC(0, 2, mapping.cc, brightness));
+        if (!cache.valid || cache.rgbBrightness != rgbBrightness) {
+            Enqueue(BasicMidi::CC(0, kTwisterRgbBrightnessChannel, mapping.cc, rgbBrightness));
         }
-        if (!cache.valid || cache.indicatorValue != indicatorValue) {
-            Enqueue(BasicMidi::CC(0, 4, mapping.cc, indicatorValue));
+        if (!cache.valid || cache.ringBrightness != ringBrightness) {
+            Enqueue(BasicMidi::CC(0, kTwisterRingBrightnessChannel, mapping.cc, ringBrightness));
         }
-        if (!cache.valid || cache.indicatorBrightness != indicatorBrightness) {
-            Enqueue(BasicMidi::CC(0, 5, mapping.cc, indicatorBrightness));
-        }
-        if (!cache.valid || cache.value != value) {
-            Enqueue(BasicMidi::CC(0, 0, mapping.cc, value));
-        }
-        cache = {.valid = true,
-                 .value = value,
-                 .color = color,
-                 .brightness = brightness,
-                 .indicatorValue = indicatorValue,
-                 .indicatorBrightness = indicatorBrightness};
+        cache.valid = true;
+        cache.rgbColor = rgbColor;
+        cache.rgbBrightness = rgbBrightness;
+        cache.ringBrightness = ringBrightness;
+        ProcessPosition(ix, mapping, *snapshot, blank,
+                        cache.encoderRingValueValid, cache.encoderRingValue);
     }
 }
 
@@ -1010,14 +1082,10 @@ void WrldBldrMidiOutProcessor::Process() {
         }
 
         const bool blank = !snapshot->connected || snapshot->voiceCount == 0;
-        const std::uint8_t value = blank ? 0 : FloatTo7Bit(NormalizeForDisplay(snapshot->value, snapshot->bipolar));
         const Color buttonColor = blank ? Color::Off : snapshot->baseColor;
         const Color indicatorColor = blank ? Color::Off : snapshot->indicatorColor;
         CacheEntry& cache = cache_[ix];
-        if (!cache.valid || cache.value != value) {
-            Enqueue(BasicMidi::CC(0, 0, mapping.cc, value));
-            cache.value = value;
-        }
+        ProcessPosition(ix, mapping, *snapshot, blank, cache.valueValid, cache.value);
         if (!cache.valid || cache.buttonColor != buttonColor) {
             cache.buttonColor = buttonColor;
             cache.pendingButtonColor = true;

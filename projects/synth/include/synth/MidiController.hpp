@@ -165,6 +165,9 @@ public:
     bool Rollback(const InputAlert& alert);
     std::optional<Expectation> Snapshot(RouteReservation route);
     RouteGuard GuardRoute(RouteReservation route);
+    // Deterministic concurrency-test seam. Observing the existing guard does
+    // not add work to normal alert/output critical sections.
+    bool RouteGuardHeldForTests(RouteReservation route) const;
 
 private:
     struct RouteRecord {
@@ -313,6 +316,20 @@ class MidiSender {
 public:
     static constexpr std::size_t kMaxSinks = 8;
 
+    class QueueGuardForTests {
+    public:
+        QueueGuardForTests(QueueGuardForTests&&) = default;
+        QueueGuardForTests& operator=(QueueGuardForTests&&) = default;
+        void Release() { lock_.unlock(); }
+
+    private:
+        friend class MidiSender;
+        explicit QueueGuardForTests(std::mutex& mutex)
+            : lock_(mutex) {}
+
+        std::unique_lock<std::mutex> lock_;
+    };
+
     explicit MidiSender(std::size_t capacity = 4096);
     ~MidiSender();
 
@@ -348,6 +365,9 @@ public:
     bool Enqueue(std::size_t sinkIx, const BasicMidi& midi);
     bool IsRunning() const;
     bool FlushForTests(std::chrono::milliseconds timeout);
+    // Deterministic concurrency-test seam. It uses the sender's existing
+    // queue mutex and leaves the production Enqueue path unchanged.
+    QueueGuardForTests GuardQueueForTests() { return QueueGuardForTests(mutex_); }
 
 private:
     struct QueueEntry {
@@ -409,7 +429,9 @@ struct EncoderMidiOutConfig {
 class MidiOutProcessor : public MidiOutputProcessor {
 public:
     MidiOutProcessor(EncoderMidiOutConfig config, MidiSender* sender, ParameterManager::UIState* uiState,
-                     std::size_t sinkIx = 0);
+                     std::size_t sinkIx = 0, EncoderMode feedbackMode = EncoderMode::Signed7Bit,
+                     AbsoluteFeedbackCoordinator* absoluteFeedback = nullptr,
+                     std::size_t controllerSlot = 0);
     virtual ~MidiOutProcessor() = default;
 
     void SetSender(MidiSender* sender) { sender_ = sender; }
@@ -426,13 +448,19 @@ protected:
         bool bipolar = false;
         std::size_t voiceCount = 0;
         float value = 0.0f;
+        float rawKnobValue = 0.0f;
+        std::uint64_t processedAbsoluteEpoch = 0;
         Color baseColor = Color::Off;
         Color indicatorColor = Color::Off;
     };
 
     std::optional<CellSnapshot> LoadCellSnapshot(const EncoderMidiOutMapping& mapping) const;
+    void ProcessPosition(std::size_t mappingIx, const EncoderMidiOutMapping& mapping,
+                         const CellSnapshot& snapshot, bool blank,
+                         bool& cacheValid, std::uint8_t& cachedValue);
     bool Enqueue(const BasicMidi& midi);
     static float NormalizeForDisplay(float value, bool bipolar);
+    void ReserveAbsoluteRoutes();
 
     EncoderMidiOutConfig config_;
     MidiSender* sender_ = nullptr;
@@ -443,6 +471,10 @@ protected:
     // rebuild. Defaults to 0 for every direct/legacy construction site that
     // predates per-controller routing.
     std::size_t sinkIx_ = 0;
+    EncoderMode feedbackMode_ = EncoderMode::Signed7Bit;
+    AbsoluteFeedbackCoordinator* absoluteFeedback_ = nullptr;
+    std::size_t controllerSlot_ = 0;
+    std::vector<AbsoluteFeedbackCoordinator::RouteReservation> absoluteRoutes_;
 };
 
 class TwisterMidiOutProcessor final : public MidiOutProcessor {
@@ -455,11 +487,11 @@ public:
 private:
     struct CacheEntry {
         bool valid = false;
-        std::uint8_t value = 0;
-        std::uint8_t color = 0;
-        std::uint8_t brightness = 0;
-        std::uint8_t indicatorValue = 0;
-        std::uint8_t indicatorBrightness = 0;
+        bool encoderRingValueValid = false;
+        std::uint8_t encoderRingValue = 0;
+        std::uint8_t rgbColor = 0;
+        std::uint8_t rgbBrightness = 0;
+        std::uint8_t ringBrightness = 0;
     };
 
     std::vector<CacheEntry> cache_;
@@ -475,6 +507,7 @@ public:
 private:
     struct CacheEntry {
         bool valid = false;
+        bool valueValid = false;
         std::uint8_t value = 0;
         Color buttonColor = Color::Off;
         Color indicatorColor = Color::Off;
