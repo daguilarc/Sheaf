@@ -23,6 +23,17 @@ juce::Rectangle<int> SurfaceBoundsOf(const juce::Component& surface,
     return surface.getLocalArea(&child, child.getLocalBounds());
 }
 
+juce::Image RenderComponent(juce::Component& component)
+{
+    juce::Image image(juce::Image::ARGB,
+                      std::max(1, component.getWidth()),
+                      std::max(1, component.getHeight()),
+                      true);
+    juce::Graphics graphics(image);
+    component.paintEntireComponent(graphics, true);
+    return image;
+}
+
 struct RecordingSurface final : synth::ui::Surface
 {
     synth::ui::NodeTree BuildTree() override
@@ -349,6 +360,70 @@ int main()
         component.RefreshFromSurface();
         Require(viewport->getViewPositionX() == 0 && viewport->getViewPositionY() == 0,
                 "viewport position is clamped when content shrinks");
+    }
+
+    {
+        RecordingSurface drawCoordinateSurface;
+        drawCoordinateSurface.tree.nodes = {
+            {.id = synth::ui::NodeId("root"),
+             .kind = synth::ui::NodeKind::Root,
+             .bounds = {0.0f, 0.0f, 240.0f, 230.0f},
+             .children = {synth::ui::NodeId("row")}},
+            {.id = synth::ui::NodeId("row"),
+             .kind = synth::ui::NodeKind::Row,
+             .bounds = {10.0f, 10.0f, 220.0f, 210.0f},
+             .children = {synth::ui::NodeId("surface.draw"),
+                          synth::ui::NodeId("local.draw"),
+                          synth::ui::NodeId("surface.line"),
+                          synth::ui::NodeId("fractional.local")}},
+            {.id = synth::ui::NodeId("surface.draw"),
+             .kind = synth::ui::NodeKind::Draw,
+             .bounds = {10.0f, 10.0f, 40.0f, 30.0f},
+             .drawCommands = {synth::ui::DrawCommand::Fill(
+                 {20.0f, 20.0f, 40.0f, 30.0f}, synth::Color::Rgb(220, 40, 30))}},
+            {.id = synth::ui::NodeId("local.draw"),
+             .kind = synth::ui::NodeKind::Draw,
+             .bounds = {70.0f, 10.0f, 40.0f, 30.0f},
+             .drawCommands = {
+                 synth::ui::DrawCommand::FillEllipse({}, synth::Color::Rgb(10, 20, 30)),
+                 synth::ui::DrawCommand::Fill(
+                     {0.0f, 0.0f, 40.0f, 30.0f}, synth::Color::Rgb(30, 180, 70))}},
+            {.id = synth::ui::NodeId("surface.line"),
+             .kind = synth::ui::NodeKind::Draw,
+             .bounds = {20.0f, 40.0f, 160.0f, 100.0f},
+             .drawCommands = {
+                 synth::ui::DrawCommand::Line(
+                     {35.0f, 65.0f},
+                     {100.0f, 65.0f},
+                     synth::Color::Rgb(230, 170, 30),
+                     3.0f),
+                 synth::ui::DrawCommand::Line(
+                     {35.0f, 75.0f},
+                     {185.0f, 75.0f},
+                     synth::Color::Rgb(40, 100, 230),
+                     3.0f)}},
+            {.id = synth::ui::NodeId("fractional.local"),
+             .kind = synth::ui::NodeKind::Draw,
+             .bounds = {20.0f, 160.0f, 40.4f, 20.4f},
+             .drawCommands = {synth::ui::DrawCommand::Fill(
+                 {0.0f, 0.0f, 40.25f, 20.25f}, synth::Color::Rgb(150, 70, 210))}},
+        };
+
+        synth_juce::PortableComponent drawCoordinateComponent(drawCoordinateSurface);
+        drawCoordinateComponent.setSize(240, 230);
+        drawCoordinateComponent.RefreshFromSurface();
+        const juce::Image image = RenderComponent(drawCoordinateComponent);
+
+        Require(image.getPixelAt(40, 35) == juce::Colour(220, 40, 30),
+                "surface-space draw commands paint once inside a nested hosted component");
+        Require(image.getPixelAt(100, 35) == juce::Colour(30, 180, 70),
+                "node-local draw commands paint once inside a nested hosted component");
+        Require(image.getPixelAt(35, 75) == juce::Colour(40, 100, 230),
+                "a surface-space line is classified as one command, not one endpoint at a time");
+        Require(image.getPixelAt(35, 65) == juce::Colour(230, 170, 30),
+                "one surface-space command classifies the complete draw-node buffer");
+        Require(image.getPixelAt(30, 170) == juce::Colour(150, 70, 210),
+                "fractional node dimensions classify against portable precision");
     }
 
     {

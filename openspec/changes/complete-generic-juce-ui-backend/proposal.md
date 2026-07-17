@@ -7,6 +7,7 @@ The shared desktop runtime now renders every portable surface through the generi
 - Make the generic JUCE portable backend preserve semantic parent/child structure and resolve explicit bounds in the same coordinate model as the browser backend.
 - Render every generic `ScrollArea` as a real JUCE viewport with independent visible bounds and content extent, including horizontal and vertical scrolling.
 - Preserve stable component identity, focus, actions, drawing, and nested-root auto-flow while moving controls into their semantic parents.
+- Apply one node-level draw-coordinate contract in both generic backends so ambiguous paths cannot be translated differently, while preserving existing application-page geometry and drawing in browser and JUCE hosts.
 - Add generic-backend and desktop-shell regression coverage using the real shared Controllers page tree, including non-overlap and reachability of content beyond the viewport.
 - Remove the obsolete Controllers-specific renderer/harness path once the harness and tests exercise the production generic backend.
 
@@ -22,6 +23,6 @@ None.
 
 ## Impact
 
-- Affected code: `projects/synth/juce/PortableJuceBackend.hpp`, its JUCE tests, the desktop runtime-shell integration tests, and the Controllers harness/backend files that currently exercise a non-production renderer.
-- Affected systems: desktop JUCE rendering for all portable applications and runtime pages; browser rendering remains behaviorally unchanged and supplies the parity reference.
+- Affected code: `projects/synth/juce/PortableJuceBackend.hpp`, `projects/synth/browser/src/ui.ts`, their backend tests, the desktop runtime-shell integration tests, and the Controllers harness/backend files that currently exercise a non-production renderer.
+- Affected systems: generic browser and desktop JUCE rendering for all portable applications and runtime pages. Ambiguous draw buffers gain one shared node-level interpretation; existing browser and JUCE application pages must remain visually and behaviorally unchanged.
 - Dependencies and serialized formats: no new dependency, public persistence format, MIDI contract, or application-specific UI branch.

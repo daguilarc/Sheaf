@@ -62,9 +62,85 @@ inline bool HasExplicitBounds(const synth::ui::Bounds& bounds)
     return bounds.width > 0.0f && bounds.height > 0.0f;
 }
 
+inline bool DrawBoundsLookLocal(const synth::ui::Bounds& bounds,
+                                juce::Rectangle<float> nodeBounds)
+{
+    return HasExplicitBounds(bounds) && bounds.x >= 0.0f && bounds.y >= 0.0f
+           && bounds.x + bounds.width <= nodeBounds.getWidth()
+           && bounds.y + bounds.height <= nodeBounds.getHeight();
+}
+
+inline juce::Rectangle<float> ResolveDrawBounds(const synth::ui::Bounds& bounds,
+                                                juce::Rectangle<float> nodeBounds,
+                                                bool nodeLocal)
+{
+    juce::Rectangle<float> resolved = UiToJuceRectF(bounds);
+    if (nodeLocal)
+    {
+        resolved.translate(nodeBounds.getX(), nodeBounds.getY());
+    }
+    return resolved;
+}
+
+inline bool DrawPointLooksLocal(const synth::ui::Point& point,
+                                juce::Rectangle<float> nodeBounds)
+{
+    return point.x >= 0.0f && point.y >= 0.0f && point.x <= nodeBounds.getWidth()
+           && point.y <= nodeBounds.getHeight();
+}
+
+inline bool DrawCommandLooksLocal(const synth::ui::DrawCommand& command,
+                                  juce::Rectangle<float> nodeBounds)
+{
+    switch (command.kind)
+    {
+        case synth::ui::DrawCommand::Kind::Fill:
+            return !HasExplicitBounds(command.bounds) || DrawBoundsLookLocal(command.bounds, nodeBounds);
+        case synth::ui::DrawCommand::Kind::StrokeRect:
+        case synth::ui::DrawCommand::Kind::Arc:
+        case synth::ui::DrawCommand::Kind::Text:
+        case synth::ui::DrawCommand::Kind::FillEllipse:
+        case synth::ui::DrawCommand::Kind::StrokeEllipse:
+        case synth::ui::DrawCommand::Kind::FillRoundedRect:
+        case synth::ui::DrawCommand::Kind::StrokeRoundedRect:
+            return !HasExplicitBounds(command.bounds)
+                   || DrawBoundsLookLocal(command.bounds, nodeBounds);
+        case synth::ui::DrawCommand::Kind::Line:
+            return DrawPointLooksLocal(command.from, nodeBounds)
+                   && DrawPointLooksLocal(command.to, nodeBounds);
+        case synth::ui::DrawCommand::Kind::Polyline:
+        case synth::ui::DrawCommand::Kind::FillPolygon:
+            return std::all_of(command.points.begin(),
+                               command.points.end(),
+                               [&](const synth::ui::Point& point) {
+                                   return DrawPointLooksLocal(point, nodeBounds);
+                               });
+    }
+    return false;
+}
+
+inline bool DrawCommandsLookLocal(const std::vector<synth::ui::DrawCommand>& commands,
+                                  juce::Rectangle<float> nodeBounds)
+{
+    return std::all_of(commands.begin(),
+                       commands.end(),
+                       [&](const synth::ui::DrawCommand& command) {
+                           return DrawCommandLooksLocal(command, nodeBounds);
+                       });
+}
+
+inline juce::Point<float> ResolveDrawPoint(const synth::ui::Point& point,
+                                           juce::Rectangle<float> nodeBounds,
+                                           bool local)
+{
+    return {point.x + (local ? nodeBounds.getX() : 0.0f),
+            point.y + (local ? nodeBounds.getY() : 0.0f)};
+}
+
 inline void PaintDrawCommand(juce::Graphics& graphics,
                              const synth::ui::DrawCommand& command,
-                             juce::Rectangle<float> nodeBounds)
+                             juce::Rectangle<float> nodeBounds,
+                             bool nodeLocal)
 {
     switch (command.kind)
     {
@@ -72,31 +148,35 @@ inline void PaintDrawCommand(juce::Graphics& graphics,
         {
             graphics.setColour(UiToJuceColour(command.color));
             const juce::Rectangle<float> fillBounds =
-                HasExplicitBounds(command.bounds) ? UiToJuceRectF(command.bounds) : nodeBounds;
+                HasExplicitBounds(command.bounds)
+                    ? ResolveDrawBounds(command.bounds, nodeBounds, nodeLocal)
+                    : nodeBounds;
             graphics.fillRect(fillBounds);
             break;
         }
         case synth::ui::DrawCommand::Kind::StrokeRect:
         {
             graphics.setColour(UiToJuceColour(command.color));
-            const auto rect = UiToJuceRectF(command.bounds);
+            const auto rect = ResolveDrawBounds(command.bounds, nodeBounds, nodeLocal);
             graphics.drawRect(rect, command.strokeWidth);
             break;
         }
         case synth::ui::DrawCommand::Kind::Line:
         {
             graphics.setColour(UiToJuceColour(command.color));
-            graphics.drawLine(command.from.x,
-                              command.from.y,
-                              command.to.x,
-                              command.to.y,
+            const juce::Point<float> from = ResolveDrawPoint(command.from, nodeBounds, nodeLocal);
+            const juce::Point<float> to = ResolveDrawPoint(command.to, nodeBounds, nodeLocal);
+            graphics.drawLine(from.x,
+                              from.y,
+                              to.x,
+                              to.y,
                               command.strokeWidth);
             break;
         }
         case synth::ui::DrawCommand::Kind::Arc:
         {
             graphics.setColour(UiToJuceColour(command.color));
-            const auto rect = UiToJuceRectF(command.bounds);
+            const auto rect = ResolveDrawBounds(command.bounds, nodeBounds, nodeLocal);
             juce::Path path;
             path.addCentredArc(rect.getCentreX(),
                                rect.getCentreY(),
@@ -114,7 +194,7 @@ inline void PaintDrawCommand(juce::Graphics& graphics,
         }
         case synth::ui::DrawCommand::Kind::Text:
         {
-            const auto rect = UiToJuceRectF(command.bounds);
+            const auto rect = ResolveDrawBounds(command.bounds, nodeBounds, nodeLocal);
             graphics.setColour(UiToJuceColour(command.textStyle.color));
             graphics.setFont(juce::Font(juce::FontOptions(command.textStyle.size)));
             graphics.drawText(command.text,
@@ -126,28 +206,30 @@ inline void PaintDrawCommand(juce::Graphics& graphics,
         case synth::ui::DrawCommand::Kind::FillEllipse:
         {
             graphics.setColour(UiToJuceColour(command.color));
-            const auto rect = HasExplicitBounds(command.bounds) ? UiToJuceRectF(command.bounds) : nodeBounds;
+            const auto rect = HasExplicitBounds(command.bounds)
+                                  ? ResolveDrawBounds(command.bounds, nodeBounds, nodeLocal)
+                                  : nodeBounds;
             graphics.fillEllipse(rect);
             break;
         }
         case synth::ui::DrawCommand::Kind::StrokeEllipse:
         {
             graphics.setColour(UiToJuceColour(command.color));
-            const auto rect = UiToJuceRectF(command.bounds);
+            const auto rect = ResolveDrawBounds(command.bounds, nodeBounds, nodeLocal);
             graphics.drawEllipse(rect, command.strokeWidth);
             break;
         }
         case synth::ui::DrawCommand::Kind::FillRoundedRect:
         {
             graphics.setColour(UiToJuceColour(command.color));
-            const auto rect = UiToJuceRectF(command.bounds);
+            const auto rect = ResolveDrawBounds(command.bounds, nodeBounds, nodeLocal);
             graphics.fillRoundedRectangle(rect, command.cornerRadius);
             break;
         }
         case synth::ui::DrawCommand::Kind::StrokeRoundedRect:
         {
             graphics.setColour(UiToJuceColour(command.color));
-            const auto rect = UiToJuceRectF(command.bounds);
+            const auto rect = ResolveDrawBounds(command.bounds, nodeBounds, nodeLocal);
             graphics.drawRoundedRectangle(rect, command.cornerRadius, command.strokeWidth);
             break;
         }
@@ -159,10 +241,12 @@ inline void PaintDrawCommand(juce::Graphics& graphics,
             }
             graphics.setColour(UiToJuceColour(command.color));
             juce::Path path;
-            path.startNewSubPath(command.points.front().x, command.points.front().y);
+            const juce::Point<float> first = ResolveDrawPoint(command.points.front(), nodeBounds, nodeLocal);
+            path.startNewSubPath(first.x, first.y);
             for (std::size_t pointIx = 1; pointIx < command.points.size(); ++pointIx)
             {
-                path.lineTo(command.points[pointIx].x, command.points[pointIx].y);
+                const juce::Point<float> point = ResolveDrawPoint(command.points[pointIx], nodeBounds, nodeLocal);
+                path.lineTo(point.x, point.y);
             }
             graphics.strokePath(path, juce::PathStrokeType(command.strokeWidth));
             break;
@@ -175,10 +259,12 @@ inline void PaintDrawCommand(juce::Graphics& graphics,
             }
             graphics.setColour(UiToJuceColour(command.color));
             juce::Path path;
-            path.startNewSubPath(command.points.front().x, command.points.front().y);
+            const juce::Point<float> first = ResolveDrawPoint(command.points.front(), nodeBounds, nodeLocal);
+            path.startNewSubPath(first.x, first.y);
             for (std::size_t pointIx = 1; pointIx < command.points.size(); ++pointIx)
             {
-                path.lineTo(command.points[pointIx].x, command.points[pointIx].y);
+                const juce::Point<float> point = ResolveDrawPoint(command.points[pointIx], nodeBounds, nodeLocal);
+                path.lineTo(point.x, point.y);
             }
             path.closeSubPath();
             graphics.fillPath(path);
@@ -407,11 +493,14 @@ private:
 
         void SetNode(synth::ui::NodeId id,
                      std::vector<synth::ui::DrawCommand> commands,
+                     juce::Rectangle<float> surfaceBounds,
                      bool acceptsDrag,
                      bool acceptsDoubleClick)
         {
             id_ = std::move(id);
             commands_ = std::move(commands);
+            surfaceBounds_ = surfaceBounds;
+            commandsAreNodeLocal_ = DrawCommandsLookLocal(commands_, surfaceBounds_);
             acceptsDrag_ = acceptsDrag;
             acceptsDoubleClick_ = acceptsDoubleClick;
             setInterceptsMouseClicks(acceptsDrag_ || acceptsDoubleClick_, false);
@@ -420,10 +509,14 @@ private:
 
         void paint(juce::Graphics& graphics) override
         {
+            graphics.saveState();
+            graphics.addTransform(juce::AffineTransform::translation(
+                -surfaceBounds_.getX(), -surfaceBounds_.getY()));
             for (const synth::ui::DrawCommand& command : commands_)
             {
-                PaintDrawCommand(graphics, command, getLocalBounds().toFloat());
+                PaintDrawCommand(graphics, command, surfaceBounds_, commandsAreNodeLocal_);
             }
+            graphics.restoreState();
         }
 
         void mouseDown(const juce::MouseEvent& event) override
@@ -464,6 +557,8 @@ private:
     private:
         synth::ui::NodeId id_;
         std::vector<synth::ui::DrawCommand> commands_;
+        juce::Rectangle<float> surfaceBounds_;
+        bool commandsAreNodeLocal_ = true;
         juce::Point<float> lastMousePosition_;
         std::function<void(const synth::ui::NodeId&, float)> dragDispatch_;
         std::function<void(const synth::ui::NodeId&)> doubleClickDispatch_;
@@ -1315,8 +1410,16 @@ private:
             case synth::ui::NodeKind::Draw:
             {
                 auto& draw = static_cast<RetainedDrawComponent&>(component);
+                juce::Rectangle<float> drawSurfaceBounds =
+                    m_resolvedByNodeId.at(node.id.value).surfaceBounds.toFloat();
+                if (HasExplicitBounds(node.bounds))
+                {
+                    drawSurfaceBounds.setWidth(node.bounds.width);
+                    drawSurfaceBounds.setHeight(node.bounds.height);
+                }
                 draw.SetNode(node.id,
                              node.drawCommands,
+                             drawSurfaceBounds,
                              node.pointerDragAction.has_value(),
                              node.doubleClickAction.has_value());
                 break;

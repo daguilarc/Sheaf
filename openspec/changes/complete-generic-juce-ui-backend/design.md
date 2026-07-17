@@ -37,9 +37,11 @@ The generic backend will use an internal scroll host containing a `juce::Viewpor
 
 Using the native viewport is preferred over translating sibling controls manually because it supplies clipping, input routing, and both scrollbars as one coherent contract.
 
-### 4. Make draw nodes real hosted components
+### 4. Make draw nodes real hosted components without changing the portable coordinate contract
 
-Each draw node will be represented by a reusable component that owns its commands, paints the existing node-local draw-command coordinates against a local `{0, 0, width, height}` node rectangle, and optionally handles the existing drag and double-click actions. This puts drawing under the same semantic parent, viewport clipping, and scroll translation as controls. Root-level painting plus a transparent interaction overlay was rejected because scrolled drawing would require a second layout and clipping implementation.
+Each draw node will be represented by a reusable component that owns its command buffer, resolved surface bounds, and optional drag/double-click actions. A portable draw node uses one coordinate space for its complete command buffer: when every explicit bound and point fits within the node rectangle the buffer is node-local; otherwise the buffer is surface-space. Geometry-free commands do not vote, and both backends classify against the portable floating-point node dimensions before host pixel rounding. Classifying the complete buffer prevents separate waveform segments—or separate endpoints within one line—from being sheared into different coordinate spaces when some surface values also happen to fit the node dimensions. Both generic backends apply the same normalization. The JUCE component normalizes a node-local buffer against the resolved node origin, translates the graphics context by the negative resolved origin, and paints against the resolved surface rectangle, so either representation lands once in component-local pixels. This preserves existing MiniApp surface-space commands while putting nested drawing under the same semantic parent, viewport clipping, and scroll translation as controls.
+
+Changing application builders to emit a JUCE-specific coordinate form was rejected because portable UI consumers cannot branch by backend. Treating every command as node-local was also rejected because the existing MiniApp and scope builders emit surface-space commands. Root-level painting plus a transparent interaction overlay remains rejected because scrolled drawing would require a second layout and clipping implementation.
 
 ### 5. Delete the alternate Controllers renderer after parity is proven
 
@@ -47,9 +49,9 @@ Backend unit tests will first pin hierarchy, nested-root translation, viewport/c
 
 ## Risks / Trade-offs
 
-- [The existing local-versus-absolute heuristic is structurally ambiguous for some unusual trees] → Pin the current browser rule as the cross-backend contract, add nested-root and nested-container tests, and fail loudly on invalid parent graphs rather than adding page heuristics.
+- [The local-versus-absolute heuristic is structurally ambiguous for isolated commands] → Classify each draw node's complete command buffer in one coordinate space, pin that generic rule across both backends, add nested-root and nested-container tests, and fail loudly on invalid parent graphs rather than adding page heuristics.
 - [Reparenting retained JUCE controls can disturb focus or callbacks] → Key reuse by stable ID/kind, update callbacks from the current node at dispatch time, reparent only when the resolved semantic host changes, and add focused-editor/draft regression coverage.
-- [Changing draw nodes from root painting to child components can alter z-order] → Preserve semantic child order within each host and test a nested interactive draw node alongside ordinary controls.
+- [Changing draw nodes from root painting to child components can alter z-order or double-translate surface-space commands] → Preserve semantic child order, mirror the browser's draw-coordinate normalization, render the real MiniApp `PortableComponent` into an image, and assert both node-local nested drawing and the complete surface-space scope/encoder layout.
 - [Viewport scrollbar thickness can reduce the effective visible client area] → Treat node bounds as viewport bounds and declared content extents as content size; assert reachability rather than hard-coding platform scrollbar pixels.
 - [Removing the dedicated renderer reduces an immediate fallback] → Remove it only after generic backend, runtime-shell, Controllers simulation, and harness builds pass; source control remains the rollback mechanism.
 

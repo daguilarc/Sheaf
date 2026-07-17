@@ -290,19 +290,19 @@ export class BrowserUiBackend {
     canvas.style.width = "100%"; canvas.style.height = "100%";
     const context = canvas.getContext("2d")!;
     context.translate(-bounds.x, -bounds.y);
-    for (const command of commands) this.draw(context, command, bounds);
+    const commandsAreNodeLocal = drawCommandsLookLocal(commands, bounds);
+    for (const command of commands) this.draw(context, command, bounds, commandsAreNodeLocal);
   }
 
-  private draw(context: CanvasRenderingContext2D, command: DrawCommand, nodeBounds: Bounds) {
-    const fill = colorCss(command.color); const stroke = colorCss(command.color); const b = drawBounds(command.bounds, nodeBounds);
+  private draw(context: CanvasRenderingContext2D, command: DrawCommand, nodeBounds: Bounds, nodeLocal: boolean) {
+    const fill = colorCss(command.color); const stroke = colorCss(command.color); const b = drawBounds(command.bounds, nodeBounds, nodeLocal);
     const hasBounds = b.width > 0 && b.height > 0;
     context.fillStyle = fill; context.strokeStyle = stroke; context.lineWidth = command.strokeWidth;
     switch (command.kind) {
       case DrawKind.Fill: context.fillRect(hasBounds ? b.x : nodeBounds.x, hasBounds ? b.y : nodeBounds.y, hasBounds ? b.width : nodeBounds.width, hasBounds ? b.height : nodeBounds.height); break;
       case DrawKind.StrokeRect: context.strokeRect(b.x, b.y, b.width, b.height); break;
       case DrawKind.Line: {
-        const from = drawPoint(command.from, nodeBounds);
-        const to = drawPoint(command.to, nodeBounds);
+        const [from, to] = drawPoints([command.from, command.to], nodeBounds, nodeLocal);
         context.beginPath(); context.moveTo(from.x, from.y); context.lineTo(to.x, to.y); context.stroke(); break;
       }
       case DrawKind.Arc:
@@ -319,8 +319,8 @@ export class BrowserUiBackend {
       case DrawKind.StrokeEllipse: context.beginPath(); context.ellipse(b.x + b.width / 2, b.y + b.height / 2, b.width / 2, b.height / 2, 0, 0, Math.PI * 2); context.stroke(); break;
       case DrawKind.FillRoundedRect: roundedRect(context, b, command.cornerRadius); context.fill(); break;
       case DrawKind.StrokeRoundedRect: roundedRect(context, b, command.cornerRadius); context.stroke(); break;
-      case DrawKind.Polyline: path(context, drawPoints(command.points, nodeBounds)); context.stroke(); break;
-      case DrawKind.FillPolygon: path(context, drawPoints(command.points, nodeBounds)); context.fill(); break;
+      case DrawKind.Polyline: path(context, drawPoints(command.points, nodeBounds, nodeLocal)); context.stroke(); break;
+      case DrawKind.FillPolygon: path(context, drawPoints(command.points, nodeBounds, nodeLocal)); context.fill(); break;
     }
   }
 }
@@ -463,21 +463,39 @@ function boundsLookLocal(bounds: Bounds, nodeBounds: Bounds) {
   return bounds.width > 0 && bounds.height > 0 && bounds.x >= 0 && bounds.y >= 0 &&
     bounds.x + bounds.width <= nodeBounds.width && bounds.y + bounds.height <= nodeBounds.height;
 }
-function drawBounds(bounds: Bounds, nodeBounds: Bounds): Bounds {
-  return boundsLookLocal(bounds, nodeBounds)
+function drawBounds(bounds: Bounds, nodeBounds: Bounds, nodeLocal: boolean): Bounds {
+  return nodeLocal
     ? { x: nodeBounds.x + bounds.x, y: nodeBounds.y + bounds.y, width: bounds.width, height: bounds.height }
     : bounds;
 }
 function pointLooksLocal(point: { x: number; y: number }, nodeBounds: Bounds) {
   return point.x >= 0 && point.y >= 0 && point.x <= nodeBounds.width && point.y <= nodeBounds.height;
 }
-function drawPoint(point: { x: number; y: number }, nodeBounds: Bounds) {
-  return pointLooksLocal(point, nodeBounds) ? { x: nodeBounds.x + point.x, y: nodeBounds.y + point.y } : point;
-}
-function drawPoints(points: Array<{ x: number; y: number }>, nodeBounds: Bounds) {
-  return points.length > 0 && points.every((point) => pointLooksLocal(point, nodeBounds))
+function drawPoints(points: Array<{ x: number; y: number }>, nodeBounds: Bounds, nodeLocal: boolean) {
+  return nodeLocal
     ? points.map((point) => ({ x: nodeBounds.x + point.x, y: nodeBounds.y + point.y }))
     : points;
+}
+function drawCommandLooksLocal(command: DrawCommand, nodeBounds: Bounds) {
+  switch (command.kind) {
+    case DrawKind.Fill: return !hasExplicitBounds(command.bounds) || boundsLookLocal(command.bounds, nodeBounds);
+    case DrawKind.StrokeRect:
+    case DrawKind.Arc:
+    case DrawKind.Text:
+    case DrawKind.FillEllipse:
+    case DrawKind.StrokeEllipse:
+    case DrawKind.FillRoundedRect:
+    case DrawKind.StrokeRoundedRect:
+      return !hasExplicitBounds(command.bounds) || boundsLookLocal(command.bounds, nodeBounds);
+    case DrawKind.Line:
+      return pointLooksLocal(command.from, nodeBounds) && pointLooksLocal(command.to, nodeBounds);
+    case DrawKind.Polyline:
+    case DrawKind.FillPolygon:
+      return command.points.every((point) => pointLooksLocal(point, nodeBounds));
+  }
+}
+function drawCommandsLookLocal(commands: DrawCommand[], nodeBounds: Bounds) {
+  return commands.every((command) => drawCommandLooksLocal(command, nodeBounds));
 }
 function acceptsPointerEvents(node: Node) {
   return node.kind === NodeKind.Button || node.kind === NodeKind.Toggle || node.kind === NodeKind.Slider ||

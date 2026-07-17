@@ -12,3 +12,8 @@
 
 - [x] 3.1 Add desktop runtime-shell coverage that opens the real shared Controllers page and verifies non-overlap plus final-row reachability; move the standalone Controllers harness/simulation onto `PortableComponent`, updating overlap assertions to compare surface-space bounds through a shared parent-walk conversion helper; remove the obsolete Controllers-specific renderer, host alias, and dead renderer tests.
 - [x] 3.2 Run the complete synth JUCE suite, JUCE-free synth suite, Controllers simulation/harness build, and browser TypeScript/backend tests; confirm the generic boundary contains no application-specific node IDs or branches and record coverage for `sprs-9` through `sprs-11`.
+
+## 4. Cross-backend draw-coordinate correction
+
+- [x] 4.1 Add a failing real-component JUCE regression that renders the MiniApp through `PortableComponent` and proves both scopes plus the complete encoder grid paint inside their unchanged resolved bounds; add generic coverage for both node-local and surface-space draw commands inside a semantic host.
+- [x] 4.2 Mirror the browser backend's generic draw-bound and draw-point normalization in JUCE without application-specific branches, then pass the full JUCE, browser, synth, OpenSpec, and UI-boundary verification matrix with no main-page geometry or rendering regression.

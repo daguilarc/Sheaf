@@ -24,7 +24,7 @@ WHEN the browser backend renders a composite frame, THE backend SHALL treat reso
 ## ADDED Requirements
 
 ### Requirement: sprs-9 — JUCE layout: hierarchical generic portable backend
-WHEN the generic JUCE backend renders a portable node tree, THE backend SHALL retain semantic `Row`, `Section`, and `ScrollArea` parentage; SHALL resolve parent-local explicit bounds exactly once while preserving surface-absolute bounds and nested-root coordinate spaces; SHALL resolve unbounded controls within their nearest root before translating them into their resolved semantic host; and SHALL render labels, controls, panels, and node-local draw commands in the resolved location and clipping hierarchy without application-specific node IDs or page branches.
+WHEN the generic JUCE backend renders a portable node tree, THE backend SHALL retain semantic `Row`, `Section`, and `ScrollArea` parentage; SHALL resolve parent-local explicit bounds exactly once while preserving surface-absolute bounds and nested-root coordinate spaces; SHALL resolve unbounded controls within their nearest root before translating them into their resolved semantic host; and SHALL render labels, controls, panels, and draw commands in the resolved location and clipping hierarchy without application-specific node IDs or page branches. Both generic backends SHALL apply one portable draw-coordinate rule per draw node: when every explicit bound and point in the node's complete command buffer fits within the draw node, the buffer is node-local; otherwise the complete buffer is surface-space. Commands without explicit geometry SHALL NOT determine that classification, and containment SHALL use the portable floating-point node dimensions before backend pixel rounding. Either representation SHALL be normalized into the hosted draw component exactly once.
 
 #### Scenario: Parent-local rows do not overlap
 - **WHEN** two rows have different bounds in a scroll area's content coordinates and each row contains controls at local y zero
@@ -44,6 +44,27 @@ WHEN the generic JUCE backend renders a portable node tree, THE backend SHALL re
 #### Scenario: Nested drawing follows its container
 - **WHEN** a draw node is inside a row, section, or scrolling content subtree
 - **THEN** its painting and interactive pointer target use the same resolved bounds and clipping as sibling controls
+
+#### Scenario: Surface-space application drawing is not double-translated
+- **WHEN** an application supplies draw-node bounds and draw commands in established surface-space coordinates
+- **THEN** the JUCE backend positions the hosted draw component at the resolved node bounds
+- **AND** normalizes the commands into that component without applying the node origin twice
+- **AND** the application's scopes and complete encoder grid retain their pre-change surface positions
+
+#### Scenario: A draw node does not mix coordinate spaces internally
+- **WHEN** one endpoint of a surface-space line could also be interpreted as node-local but the other endpoint cannot
+- **THEN** the browser and JUCE backends treat both endpoints as surface-space
+- **AND** the line retains its intended geometry
+
+#### Scenario: Separate paths in one node use the same coordinate space
+- **WHEN** one surface-space path happens to fit within the draw node but another path in the same command buffer does not
+- **THEN** the browser and JUCE backends treat the complete buffer as surface-space
+- **AND** the paths retain their relative geometry
+
+#### Scenario: Browser and JUCE main pages remain unchanged
+- **WHEN** the generic hierarchy and scrolling implementation is applied
+- **THEN** the existing browser application page remains behaviorally and visually unchanged
+- **AND** the existing JUCE application page retains the same resolved geometry and rendered output as before the change
 
 #### Scenario: Refresh preserves live controls
 - **WHEN** a stable node ID and kind survive a surface refresh while its text editor is focused or contains an uncommitted draft

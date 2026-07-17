@@ -43,6 +43,46 @@ const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const char*
     return nullptr;
 }
 
+struct StaticSurface final : synth::ui::Surface
+{
+    synth::ui::NodeTree BuildTree() override
+    {
+        return tree;
+    }
+
+    void SetActionHandler(ActionHandler handler) override
+    {
+        handler_ = std::move(handler);
+    }
+
+    void DispatchAction(const synth::ui::Action&) override {}
+
+    synth::ui::NodeTree tree;
+    ActionHandler handler_;
+};
+
+juce::Image RenderComponent(juce::Component& component)
+{
+    juce::Image image(juce::Image::ARGB,
+                      std::max(1, component.getWidth()),
+                      std::max(1, component.getHeight()),
+                      true);
+    juce::Graphics graphics(image);
+    component.paintEntireComponent(graphics, true);
+    return image;
+}
+
+void RequireDrawStartsInsideResolvedBounds(const juce::Image& image,
+                                           juce::Rectangle<int> bounds,
+                                           const char* label)
+{
+    const juce::Colour rootBackground(18, 20, 22);
+    const int x = bounds.getX() + 2;
+    const int y = bounds.getY() + 2;
+    Require(image.getBounds().contains(x, y), label);
+    Require(image.getPixelAt(x, y) != rootBackground, label);
+}
+
 }  // namespace
 
 int main()
@@ -65,9 +105,13 @@ int main()
     juce::Graphics predictiveGraphics(predictiveImage);
     std::size_t predictivePolylines = 0;
     std::size_t predictiveDots = 0;
+    const juce::Rectangle<float> predictiveBounds{0.0f, 0.0f, 160.0f, 80.0f};
+    const bool predictiveCommandsAreLocal =
+        synth_juce::DrawCommandsLookLocal(predictiveCommands, predictiveBounds);
     for (const auto& command : predictiveCommands)
     {
-        synth_juce::PaintDrawCommand(predictiveGraphics, command, {0.0f, 0.0f, 160.0f, 80.0f});
+        synth_juce::PaintDrawCommand(
+            predictiveGraphics, command, predictiveBounds, predictiveCommandsAreLocal);
         predictivePolylines += command.kind == synth::ui::DrawCommand::Kind::Polyline ? 1u : 0u;
         predictiveDots += command.kind == synth::ui::DrawCommand::Kind::FillEllipse ? 1u : 0u;
     }
@@ -120,12 +164,16 @@ int main()
     for (const synth::ui::Node* panel : {vcoPanel, lfoPanel})
     {
         Require(!panel->drawCommands.empty(), "each MiniApp scope supplies portable draw commands");
+        const juce::Rectangle<float> panelBounds = synth_juce::UiToJuceRectF(panel->bounds);
+        const bool panelCommandsAreLocal =
+            synth_juce::DrawCommandsLookLocal(panel->drawCommands, panelBounds);
         for (const auto& command : panel->drawCommands)
         {
             synth_juce::PaintDrawCommand(
                 panelGraphics,
                 command,
-                synth_juce::UiToJuceRectF(panel->bounds));
+                panelBounds,
+                panelCommandsAreLocal);
         }
     }
 
@@ -166,6 +214,46 @@ int main()
                 expectedEncoderFifteen.height,
                 0.0001f,
                 "encoder fifteen height through backend tree");
+
+    StaticSurface paintedGridSurface;
+    paintedGridSurface.tree = tree;
+    for (std::size_t encoderIx = 0; encoderIx < synth_miniapp::EncoderGridLayout::kEncoderCount; ++encoderIx)
+    {
+        const std::string encoderId = synth_miniapp::MiniAppNodeIds::Encoder(encoderIx);
+        for (synth::ui::Node& node : paintedGridSurface.tree.nodes)
+        {
+            if (node.id == synth::ui::NodeId(encoderId))
+            {
+                node.drawCommands.push_back(
+                    synth::ui::DrawCommand::Fill(node.bounds, synth::Color::Rgb(90, 120, 160)));
+                break;
+            }
+        }
+    }
+    synth_juce::PortableComponent paintedGridComponent(paintedGridSurface);
+    paintedGridComponent.setSize(config.uiWidth, config.uiHeight);
+    paintedGridComponent.RefreshFromSurface();
+    const juce::Image paintedGridImage = RenderComponent(paintedGridComponent);
+
+    for (std::size_t encoderIx = 0; encoderIx < synth_miniapp::EncoderGridLayout::kEncoderCount; ++encoderIx)
+    {
+        const std::string encoderId = synth_miniapp::MiniAppNodeIds::Encoder(encoderIx);
+        const synth::ui::Node* node = FindNodeById(tree, encoderId.c_str());
+        Require(node != nullptr, "each MiniApp encoder remains in the portable tree");
+        const juce::Rectangle<int> expectedBounds = synth_juce::UiToJuceRect(node->bounds);
+        Require(paintedGridComponent.SurfaceBoundsForNode(encoderId) == expectedBounds,
+                "each hosted MiniApp encoder retains its pre-change surface bounds");
+        RequireDrawStartsInsideResolvedBounds(paintedGridImage,
+                                               expectedBounds,
+                                               "each MiniApp encoder paints at its resolved origin");
+    }
+    const juce::Image renderedComponent = RenderComponent(component);
+    RequireDrawStartsInsideResolvedBounds(renderedComponent,
+                                           synth_juce::UiToJuceRect(vcoPanel->bounds),
+                                           "VCO scope paints at its unchanged resolved origin");
+    RequireDrawStartsInsideResolvedBounds(renderedComponent,
+                                           synth_juce::UiToJuceRect(lfoPanel->bounds),
+                                           "LFO scope paints at its unchanged resolved origin");
 
     auto* startButton = dynamic_cast<juce::TextButton*>(component.FindByNodeId(synth_miniapp::MiniAppNodeIds::kStart));
     Require(startButton != nullptr, "start node is a TextButton");

@@ -842,6 +842,74 @@ test("paints surface-space draw commands into positioned canvases", async ({ pag
   expect(pixel).toEqual([12, 34, 56, 255]);
 });
 
+test("classifies both endpoints of a line in one coordinate space", async ({ page }) => {
+  const positionedFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 220, 180], children: ["draw"] },
+    { id: "draw", kind: NodeKind.Draw, bounds: [30, 70, 160, 100], draws: [
+      { kind: DrawKind.Line,
+        from: { x: 35, y: 90 },
+        to: { x: 185, y: 90 },
+        color: [40, 100, 230, 255],
+        strokeWidth: 3 },
+    ] },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const pixel = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const context = document.querySelector<HTMLCanvasElement>('[data-synth-node-id="draw"] canvas')!.getContext("2d")!;
+    return Array.from(context.getImageData(5, 20, 1, 1).data);
+  }, Array.from(new Uint8Array(positionedFrame)));
+
+  expect(pixel).toEqual([40, 100, 230, 255]);
+});
+
+test("classifies a complete draw-node buffer in one coordinate space", async ({ page }) => {
+  const positionedFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 220, 180], children: ["draw"] },
+    { id: "draw", kind: NodeKind.Draw, bounds: [30, 70, 160, 100], draws: [
+      { kind: DrawKind.Line,
+        from: { x: 35, y: 90 },
+        to: { x: 100, y: 90 },
+        color: [230, 170, 30, 255],
+        strokeWidth: 3 },
+      { kind: DrawKind.Line,
+        from: { x: 100, y: 100 },
+        to: { x: 185, y: 100 },
+        color: [40, 100, 230, 255],
+        strokeWidth: 3 },
+    ] },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const pixel = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const context = document.querySelector<HTMLCanvasElement>('[data-synth-node-id="draw"] canvas')!.getContext("2d")!;
+    return Array.from(context.getImageData(5, 20, 1, 1).data);
+  }, Array.from(new Uint8Array(positionedFrame)));
+
+  expect(pixel).toEqual([230, 170, 30, 255]);
+});
+
+test("ignores geometry-free commands when classifying a draw-node buffer", async ({ page }) => {
+  const positionedFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 100, 100], children: ["draw"] },
+    { id: "draw", kind: NodeKind.Draw, bounds: [30, 40, 40, 30], draws: [
+      { kind: DrawKind.FillEllipse, color: [10, 20, 30, 255] },
+      { kind: DrawKind.Fill, bounds: [0, 0, 40, 30], color: [30, 180, 70, 255] },
+    ] },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const pixel = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const context = document.querySelector<HTMLCanvasElement>('[data-synth-node-id="draw"] canvas')!.getContext("2d")!;
+    return Array.from(context.getImageData(1, 1, 1, 1).data);
+  }, Array.from(new Uint8Array(positionedFrame)));
+
+  expect(pixel).toEqual([30, 180, 70, 255]);
+});
+
 test("fits a fixed portable surface into a narrow browser viewport", async ({ page }) => {
   await page.setViewportSize({ width: 342, height: 500 });
   const fixedFrame = makeCommandBuffer([

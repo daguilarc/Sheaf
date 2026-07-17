@@ -221,7 +221,19 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
   `draw node is hosted by its semantic row`, and
   `focused text field is retained after moving semantic parents` cover retained
   semantic hosts, parent-local resolution, nested roots, nested drawing, and
-  stable editor reparenting.
+  stable editor reparenting. The rendered-image assertions
+  `surface-space draw commands paint once inside a nested hosted component`,
+  `node-local draw commands paint once inside a nested hosted component`,
+  `a surface-space line is classified as one command, not one endpoint at a time`,
+  `one surface-space command classifies the complete draw-node buffer`, and
+  `fractional node dimensions classify against portable precision`
+  cover the shared node-level draw-coordinate contract.
+- [`ui-backend.spec.ts`](../browser/tests/ui-backend.spec.ts):
+  `paints surface-space draw commands into positioned canvases`,
+  `classifies both endpoints of a line in one coordinate space`, and
+  `classifies a complete draw-node buffer in one coordinate space`, plus
+  `ignores geometry-free commands when classifying a draw-node buffer`, pin
+  the same generic normalization in the browser backend.
 
 ### `sprs-10` - Real Generic JUCE Scroll Areas
 
@@ -409,8 +421,9 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
   [`PortableDrawGeometryTests.cpp`](../juce/PortableDrawGeometryTests.cpp)
   checks the exact four grid corners; and
   [`MiniAppJuceBackendParityTests.cpp`](../juce/MiniAppJuceBackendParityTests.cpp)
-  covers two-scope paint output, all sixteen hosted encoder nodes, and position
-  `15` push routing through the production JUCE backend.
+  covers two-scope paint output, unchanged rendered origins for both scopes and
+  all sixteen hosted encoder nodes, and position `15` push routing through the
+  production JUCE backend.
 
 ### `sdsp-33` - MiniApp Scope Visualizers At `4/5/6`
 
