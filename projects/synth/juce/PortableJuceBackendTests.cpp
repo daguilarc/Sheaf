@@ -17,6 +17,12 @@ void Require(bool condition, const char* label)
     }
 }
 
+juce::Rectangle<int> SurfaceBoundsOf(const juce::Component& surface,
+                                     const juce::Component& child)
+{
+    return surface.getLocalArea(&child, child.getLocalBounds());
+}
+
 struct RecordingSurface final : synth::ui::Surface
 {
     synth::ui::NodeTree BuildTree() override
@@ -158,6 +164,116 @@ int main()
                 "unbounded sidebar control flows from the nested sidebar root at x 900");
         Require(sidebarControl->getY() == 128,
                 "sibling-root draw filtering uses only the sidebar root's draw bounds");
+    }
+
+    {
+        RecordingSurface hierarchySurface;
+        hierarchySurface.tree.nodes = {
+            {.id = synth::ui::NodeId("root"),
+             .kind = synth::ui::NodeKind::Root,
+             .bounds = {0.0f, 0.0f, 996.0f, 300.0f},
+             .children = {synth::ui::NodeId("section"), synth::ui::NodeId("sidebar.root")}},
+            {.id = synth::ui::NodeId("section"),
+             .kind = synth::ui::NodeKind::Section,
+             .bounds = {20.0f, 20.0f, 840.0f, 220.0f},
+             .children = {synth::ui::NodeId("row.a"), synth::ui::NodeId("row.b")}},
+            {.id = synth::ui::NodeId("row.a"),
+             .kind = synth::ui::NodeKind::Row,
+             .bounds = {10.0f, 10.0f, 800.0f, 60.0f},
+             .children = {synth::ui::NodeId("field.a"),
+                          synth::ui::NodeId("flow"),
+                          synth::ui::NodeId("draw"),
+                          synth::ui::NodeId("paint")}},
+            {.id = synth::ui::NodeId("row.b"),
+             .kind = synth::ui::NodeKind::Row,
+             .bounds = {10.0f, 90.0f, 800.0f, 60.0f},
+             .children = {synth::ui::NodeId("field.b")}},
+            {.id = synth::ui::NodeId("field.a"),
+             .kind = synth::ui::NodeKind::TextField,
+             .bounds = {8.0f, 8.0f, 120.0f, 28.0f},
+             .label = "A",
+             .text = "saved",
+             .action = synth::ui::Action::Named("field.a")},
+            {.id = synth::ui::NodeId("field.b"),
+             .kind = synth::ui::NodeKind::TextField,
+             .bounds = {8.0f, 8.0f, 120.0f, 28.0f},
+             .label = "B",
+             .text = "other",
+             .action = synth::ui::Action::Named("field.b")},
+            {.id = synth::ui::NodeId("flow"),
+             .kind = synth::ui::NodeKind::Button,
+             .label = "Flow",
+             .action = synth::ui::Action::Named("flow")},
+            {.id = synth::ui::NodeId("draw"),
+             .kind = synth::ui::NodeKind::Draw,
+             .bounds = {300.0f, 8.0f, 80.0f, 40.0f},
+             .pointerDragAction = synth::ui::Action::Named("draw.drag"),
+             .drawCommands = {synth::ui::DrawCommand::Fill(synth::Color::Rgb(10, 20, 30))}},
+            {.id = synth::ui::NodeId("paint"),
+             .kind = synth::ui::NodeKind::Draw,
+             .bounds = {400.0f, 8.0f, 80.0f, 40.0f},
+             .drawCommands = {synth::ui::DrawCommand::Fill(synth::Color::Rgb(30, 20, 10))}},
+            {.id = synth::ui::NodeId("sidebar.root"),
+             .kind = synth::ui::NodeKind::Root,
+             .bounds = {900.0f, 0.0f, 96.0f, 240.0f},
+             .children = {synth::ui::NodeId("sidebar.button")}},
+            {.id = synth::ui::NodeId("sidebar.button"),
+             .kind = synth::ui::NodeKind::Button,
+             .bounds = {12.0f, 128.0f, 72.0f, 28.0f},
+             .label = "Side",
+             .action = synth::ui::Action::Named("sidebar")},
+        };
+
+        synth_juce::PortableComponent hierarchyComponent(hierarchySurface);
+        hierarchyComponent.setSize(996, 300);
+        hierarchyComponent.addToDesktop(0);
+        hierarchyComponent.setVisible(true);
+        hierarchyComponent.RefreshFromSurface();
+
+        auto* section = hierarchyComponent.FindByNodeId("section");
+        auto* rowA = hierarchyComponent.FindByNodeId("row.a");
+        auto* rowB = hierarchyComponent.FindByNodeId("row.b");
+        auto* fieldA = dynamic_cast<juce::TextEditor*>(hierarchyComponent.FindByNodeId("field.a"));
+        auto* fieldB = dynamic_cast<juce::TextEditor*>(hierarchyComponent.FindByNodeId("field.b"));
+        auto* flowButton = hierarchyComponent.FindByNodeId("flow");
+        auto* draw = hierarchyComponent.FindByNodeId("draw");
+        auto* paint = hierarchyComponent.FindByNodeId("paint");
+        auto* sidebarButton = hierarchyComponent.FindByNodeId("sidebar.button");
+        Require(section != nullptr && rowA != nullptr && rowB != nullptr && fieldA != nullptr
+                    && fieldB != nullptr && flowButton != nullptr && draw != nullptr && paint != nullptr
+                    && sidebarButton != nullptr,
+                "hierarchy fixture nodes are all retained");
+        Require(rowA->getParentComponent() == section, "row A is hosted by its semantic section");
+        Require(fieldA->getParentComponent() == rowA, "field A is hosted by its semantic row");
+        Require(SurfaceBoundsOf(hierarchyComponent, *fieldA).getY()
+                    != SurfaceBoundsOf(hierarchyComponent, *fieldB).getY(),
+                "parent-local row fields occupy distinct surface rows");
+        Require(SurfaceBoundsOf(hierarchyComponent, *sidebarButton).getX() == 912,
+                "absolute sidebar offset is applied exactly once");
+        Require(SurfaceBoundsOf(hierarchyComponent, *flowButton)
+                    == hierarchyComponent.SurfaceBoundsForNode("flow"),
+                "root-flow bounds survive translation into the semantic host");
+        Require(draw->getParentComponent() == rowA, "draw node is hosted by its semantic row");
+        Require(paint->getParentComponent() == rowA, "non-interactive draw node is hosted by its semantic row");
+
+        juce::Component* retainedFieldA = fieldA;
+        fieldA->grabKeyboardFocus();
+        fieldA->setText("draft", false);
+        hierarchyComponent.RefreshFromSurface();
+        fieldA = dynamic_cast<juce::TextEditor*>(hierarchyComponent.FindByNodeId("field.a"));
+        Require(fieldA == retainedFieldA, "focused text field is retained with the same parent");
+        Require(fieldA->hasKeyboardFocus(true), "focused text field keeps focus with the same parent");
+        Require(fieldA->getText() == juce::String("draft"), "focused text field keeps its draft with the same parent");
+
+        hierarchySurface.tree.nodes[2].children.erase(hierarchySurface.tree.nodes[2].children.begin());
+        hierarchySurface.tree.nodes[3].children.push_back(synth::ui::NodeId("field.a"));
+        hierarchyComponent.RefreshFromSurface();
+        fieldA = dynamic_cast<juce::TextEditor*>(hierarchyComponent.FindByNodeId("field.a"));
+        rowB = hierarchyComponent.FindByNodeId("row.b");
+        Require(fieldA == retainedFieldA, "focused text field is retained after moving semantic parents");
+        Require(fieldA->getParentComponent() == rowB, "moved text field is hosted by its new semantic row");
+        Require(fieldA->hasKeyboardFocus(true), "focused text field keeps focus after moving semantic parents");
+        Require(fieldA->getText() == juce::String("draft"), "focused text field keeps its draft after moving semantic parents");
     }
 
     {

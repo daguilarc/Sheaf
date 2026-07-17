@@ -26,6 +26,12 @@ void Require(bool condition, const std::string& label)
     }
 }
 
+juce::Rectangle<int> SurfaceBoundsOf(const juce::Component& surface,
+                                     const juce::Component& child)
+{
+    return surface.getLocalArea(&child, child.getLocalBounds());
+}
+
 const synth::ui::Node* FindNode(const synth::ui::NodeTree& tree, const synth::ui::NodeId& id)
 {
     for (const synth::ui::Node& node : tree.nodes)
@@ -207,7 +213,7 @@ void VerifyTreeAndRenderer(synth::runtime_ui::FilePageSurface& surface,
                     actionDescription);
         Require(ComponentIsExpectedBroadKind(node, *component),
                 "step " + std::to_string(step) + " component broad kind mismatch for " + node.id.value);
-        Require(renderer.getLocalBounds().contains(component->getBounds()),
+        Require(renderer.getLocalBounds().contains(SurfaceBoundsOf(renderer, *component)),
                 "step " + std::to_string(step) + " component escapes root " + node.id.value + " after " +
                     actionDescription);
         Require(BoundsContain(root->bounds, node.bounds),
@@ -228,7 +234,8 @@ void VerifyTreeAndRenderer(synth::runtime_ui::FilePageSurface& surface,
         juce::Component* parentComponent = renderer.FindByNodeId(parentNode->id.value);
         Require(parentComponent != nullptr,
                 "step " + std::to_string(step) + " missing parent component " + parentNode->id.value);
-        Require(parentComponent->getBounds().contains(component->getBounds()),
+        Require(SurfaceBoundsOf(renderer, *parentComponent)
+                    .contains(SurfaceBoundsOf(renderer, *component)),
                 "step " + std::to_string(step) + " component escapes semantic parent " + node.id.value +
                     " after " + actionDescription);
         Require(BoundsContain(parentNode->bounds, node.bounds),

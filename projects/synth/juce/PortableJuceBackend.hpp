@@ -12,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -196,6 +197,13 @@ struct PortableControlEntry
 class PortableComponent final : public juce::Component
 {
 public:
+    struct ResolvedNode
+    {
+        juce::Rectangle<int> surfaceBounds;
+        std::optional<synth::ui::NodeId> parentId;
+        synth::ui::NodeId nearestRootId;
+    };
+
     explicit PortableComponent(synth::ui::Surface& surface)
         : m_surface(surface)
     {
@@ -204,6 +212,7 @@ public:
     void RefreshFromSurface()
     {
         m_tree = m_surface.BuildTree();
+        ResolveTree();
         RebuildControls();
         LayoutControls();
         repaint();
@@ -223,6 +232,13 @@ public:
         return m_controls[it->second].component.get();
     }
 
+    juce::Rectangle<int> SurfaceBoundsForNode(const std::string& id) const
+    {
+        const auto resolved = m_resolvedByNodeId.find(id);
+        return resolved != m_resolvedByNodeId.end() ? resolved->second.surfaceBounds
+                                                    : juce::Rectangle<int>();
+    }
+
     void resized() override
     {
         LayoutControls();
@@ -231,19 +247,6 @@ public:
     void paint(juce::Graphics& graphics) override
     {
         graphics.fillAll(juce::Colour(18, 20, 22));
-
-        for (const std::size_t nodeIndex : m_drawNodeIndices)
-        {
-            const synth::ui::Node& node = m_tree.nodes[nodeIndex];
-            const juce::Rectangle<float> nodeBounds = ResolveNodeBounds(node).toFloat();
-            graphics.saveState();
-            graphics.reduceClipRegion(nodeBounds.toNearestInt());
-            for (const synth::ui::DrawCommand& command : node.drawCommands)
-            {
-                PaintDrawCommand(graphics, command, nodeBounds);
-            }
-            graphics.restoreState();
-        }
     }
 
 private:
@@ -337,32 +340,52 @@ private:
         }
     };
 
-    class InteractiveDrawComponent final : public juce::Component
+    class RetainedDrawComponent final : public juce::Component
     {
     public:
-        explicit InteractiveDrawComponent(std::function<void(const synth::ui::NodeId&, float)> dragDispatch,
-                                          std::function<void(const synth::ui::NodeId&)> doubleClickDispatch)
+        explicit RetainedDrawComponent(std::function<void(const synth::ui::NodeId&, float)> dragDispatch,
+                                       std::function<void(const synth::ui::NodeId&)> doubleClickDispatch)
             : dragDispatch_(std::move(dragDispatch))
             , doubleClickDispatch_(std::move(doubleClickDispatch))
         {
-            setInterceptsMouseClicks(true, true);
             setPaintingIsUnclipped(true);
         }
 
-        void SetNodeId(synth::ui::NodeId id)
+        void SetNode(synth::ui::NodeId id,
+                     std::vector<synth::ui::DrawCommand> commands,
+                     bool acceptsDrag,
+                     bool acceptsDoubleClick)
         {
             id_ = std::move(id);
+            commands_ = std::move(commands);
+            acceptsDrag_ = acceptsDrag;
+            acceptsDoubleClick_ = acceptsDoubleClick;
+            setInterceptsMouseClicks(acceptsDrag_ || acceptsDoubleClick_, false);
+            repaint();
         }
 
-        void paint(juce::Graphics&) override {}
+        void paint(juce::Graphics& graphics) override
+        {
+            for (const synth::ui::DrawCommand& command : commands_)
+            {
+                PaintDrawCommand(graphics, command, getLocalBounds().toFloat());
+            }
+        }
 
         void mouseDown(const juce::MouseEvent& event) override
         {
-            lastMousePosition_ = event.position;
+            if (acceptsDrag_)
+            {
+                lastMousePosition_ = event.position;
+            }
         }
 
         void mouseDrag(const juce::MouseEvent& event) override
         {
+            if (!acceptsDrag_)
+            {
+                return;
+            }
             const auto deltaPoint = event.position - lastMousePosition_;
             const float delta = (deltaPoint.x - deltaPoint.y) * kPointerDragSensitivity;
             if (std::abs(delta) < kPointerDragThreshold)
@@ -378,7 +401,7 @@ private:
 
         void mouseDoubleClick(const juce::MouseEvent&) override
         {
-            if (doubleClickDispatch_)
+            if (acceptsDoubleClick_ && doubleClickDispatch_)
             {
                 doubleClickDispatch_(id_);
             }
@@ -386,18 +409,21 @@ private:
 
     private:
         synth::ui::NodeId id_;
+        std::vector<synth::ui::DrawCommand> commands_;
         juce::Point<float> lastMousePosition_;
         std::function<void(const synth::ui::NodeId&, float)> dragDispatch_;
         std::function<void(const synth::ui::NodeId&)> doubleClickDispatch_;
+        bool acceptsDrag_ = false;
+        bool acceptsDoubleClick_ = false;
     };
 
     const synth::ui::Node* RootNode() const
     {
-        if (m_tree.nodes.empty())
+        if (!m_rootNodeId.has_value())
         {
             return nullptr;
         }
-        return &m_tree.nodes.front();
+        return FindNode(*m_rootNodeId);
     }
 
     const synth::ui::Node* FindNode(const synth::ui::NodeId& id) const
@@ -412,40 +438,10 @@ private:
         return nullptr;
     }
 
-    juce::Rectangle<int> ContentBounds() const
+    juce::Rectangle<int> DefaultSizeForNode(const synth::ui::Node& node,
+                                            int availableWidth) const
     {
-        const auto local = getLocalBounds();
-        if (const synth::ui::Node* root = RootNode(); root != nullptr && HasExplicitBounds(root->bounds))
-        {
-            return UiToJuceRect(root->bounds).constrainedWithin(local);
-        }
-        return local;
-    }
-
-    juce::Rectangle<int> ResolveNodeBounds(const synth::ui::Node& node) const
-    {
-        if (HasExplicitBounds(node.bounds))
-        {
-            return UiToJuceRect(node.bounds);
-        }
-        return {};
-    }
-
-    std::optional<std::size_t> FindNodeIndex(const synth::ui::NodeId& id) const
-    {
-        for (std::size_t ix = 0; ix < m_tree.nodes.size(); ++ix)
-        {
-            if (m_tree.nodes[ix].id == id)
-            {
-                return ix;
-            }
-        }
-        return std::nullopt;
-    }
-
-    juce::Rectangle<int> DefaultSizeForKind(synth::ui::NodeKind kind) const
-    {
-        switch (kind)
+        switch (node.kind)
         {
             case synth::ui::NodeKind::Slider:
                 return {0, 0, kDefaultSliderWidth, kDefaultSliderHeight};
@@ -455,33 +451,282 @@ private:
                 return {0, 0, kDefaultTextFieldWidth, kDefaultButtonHeight};
             case synth::ui::NodeKind::Label:
             case synth::ui::NodeKind::StatusText:
-                return {0, 0, 120, kDefaultLabelHeight};
+            {
+                const std::string& text = node.text.empty() ? node.label : node.text;
+                const int width = static_cast<int>(std::lround(text.size() * 6.5 + 12.0));
+                return {0, 0, std::min(availableWidth, std::max(120, width)), kDefaultLabelHeight};
+            }
             case synth::ui::NodeKind::Button:
+            {
+                const int width = static_cast<int>(std::lround(node.label.size() * 6.5 + 24.0));
+                return {0, 0, std::max(kDefaultButtonWidth, width), kDefaultButtonHeight};
+            }
             case synth::ui::NodeKind::Toggle:
+            {
+                const int width = static_cast<int>(std::lround(node.label.size() * 6.5 + 25.0));
+                return {0, 0, std::max(kDefaultButtonWidth, width), kDefaultButtonHeight};
+            }
             default:
                 return {0, 0, kDefaultButtonWidth, kDefaultButtonHeight};
         }
     }
 
-    int AutoLayoutStartY(const synth::ui::NodeId& rootId,
-                         const juce::Rectangle<int>& rootBounds) const
+    void ResolveTree()
     {
-        int maxDrawBottom = rootBounds.getY() + kControlMargin;
-        for (const std::size_t nodeIndex : m_drawNodeIndices)
+        m_parentByNodeId.clear();
+        m_nearestRootByNodeId.clear();
+        m_resolvedByNodeId.clear();
+        m_rootNodeId.reset();
+
+        std::unordered_map<std::string, const synth::ui::Node*> nodesById;
+        nodesById.reserve(m_tree.nodes.size());
+        for (const synth::ui::Node& node : m_tree.nodes)
         {
-            const synth::ui::Node& node = m_tree.nodes[nodeIndex];
-            const auto rootIt = m_nearestRootByNodeId.find(node.id.value);
-            if (rootIt == m_nearestRootByNodeId.end() || rootIt->second != rootId)
+            if (!nodesById.emplace(node.id.value, &node).second)
+            {
+                throw std::runtime_error("duplicate node id in portable JUCE frame: " + node.id.value);
+            }
+        }
+
+        std::optional<std::string> multipleParentError;
+        for (const synth::ui::Node& node : m_tree.nodes)
+        {
+            for (const synth::ui::NodeId& childId : node.children)
+            {
+                if (nodesById.find(childId.value) == nodesById.end())
+                {
+                    throw std::runtime_error("unknown child node in portable JUCE frame: " + childId.value);
+                }
+                const auto existing = m_parentByNodeId.find(childId.value);
+                if (existing != m_parentByNodeId.end() && existing->second != node.id)
+                {
+                    if (!multipleParentError.has_value())
+                    {
+                        multipleParentError = "node " + childId.value + " has multiple parents";
+                    }
+                }
+                else
+                {
+                    m_parentByNodeId[childId.value] = node.id;
+                }
+            }
+        }
+
+        std::vector<const synth::ui::Node*> roots;
+        for (const synth::ui::Node& node : m_tree.nodes)
+        {
+            if (m_parentByNodeId.find(node.id.value) == m_parentByNodeId.end())
+            {
+                roots.push_back(&node);
+            }
+        }
+        if (!m_tree.nodes.empty() && roots.size() != 1)
+        {
+            throw std::runtime_error("portable JUCE frame requires one parentless root, found "
+                                     + std::to_string(roots.size()));
+        }
+        if (!roots.empty() && roots.front()->kind != synth::ui::NodeKind::Root)
+        {
+            throw std::runtime_error("parentless portable JUCE node must be a root");
+        }
+
+        std::unordered_map<std::string, int> validationState;
+        std::function<void(const synth::ui::Node&)> validate = [&](const synth::ui::Node& node) {
+            const int state = validationState[node.id.value];
+            if (state == 1)
+            {
+                throw std::runtime_error("cycle in portable JUCE frame at " + node.id.value);
+            }
+            if (state == 2)
+            {
+                return;
+            }
+            validationState[node.id.value] = 1;
+            for (const synth::ui::NodeId& childId : node.children)
+            {
+                validate(*nodesById.at(childId.value));
+            }
+            validationState[node.id.value] = 2;
+        };
+        for (const synth::ui::Node& node : m_tree.nodes)
+        {
+            validate(node);
+        }
+        if (multipleParentError.has_value())
+        {
+            throw std::runtime_error(*multipleParentError);
+        }
+        if (roots.empty())
+        {
+            return;
+        }
+
+        m_rootNodeId = roots.front()->id;
+        std::function<void(const synth::ui::Node&, const synth::ui::NodeId&)> assignNearestRoot =
+            [&](const synth::ui::Node& node, const synth::ui::NodeId& nearestRootId) {
+                const synth::ui::NodeId nextRootId =
+                    node.kind == synth::ui::NodeKind::Root ? node.id : nearestRootId;
+                m_nearestRootByNodeId[node.id.value] = nextRootId;
+                for (const synth::ui::NodeId& childId : node.children)
+                {
+                    assignNearestRoot(*nodesById.at(childId.value), nextRootId);
+                }
+            };
+        assignNearestRoot(*roots.front(), roots.front()->id);
+
+        for (const synth::ui::Node& node : m_tree.nodes)
+        {
+            const auto parent = m_parentByNodeId.find(node.id.value);
+            m_resolvedByNodeId[node.id.value] = {
+                UiToJuceRect(node.bounds),
+                parent == m_parentByNodeId.end() ? std::optional<synth::ui::NodeId>()
+                                                 : std::optional<synth::ui::NodeId>(parent->second),
+                m_nearestRootByNodeId.at(node.id.value)};
+        }
+
+        std::unordered_map<std::string, int> explicitVisitState;
+        for (const synth::ui::Node& node : m_tree.nodes)
+        {
+            if (HasExplicitBounds(node.bounds) || node.kind == synth::ui::NodeKind::Root)
+            {
+                ResolveExplicitNode(node, explicitVisitState);
+            }
+        }
+
+        struct FlowCursor
+        {
+            int x = 0;
+            int y = 0;
+            int rowHeight = 0;
+            int right = 0;
+            int availableWidth = 0;
+        };
+        std::unordered_map<std::string, FlowCursor> cursors;
+        for (const synth::ui::Node& node : m_tree.nodes)
+        {
+            if (HasExplicitBounds(node.bounds) || node.kind == synth::ui::NodeKind::Root)
             {
                 continue;
             }
-            if (HasExplicitBounds(node.bounds))
+
+            const synth::ui::NodeId& nearestRootId = m_nearestRootByNodeId.at(node.id.value);
+            const synth::ui::Node* nearestRoot = nodesById.at(nearestRootId.value);
+            auto [cursorIt, inserted] = cursors.try_emplace(nearestRootId.value);
+            FlowCursor& cursor = cursorIt->second;
+            if (inserted)
             {
-                maxDrawBottom = std::max(maxDrawBottom,
-                                         static_cast<int>(std::lround(node.bounds.y + node.bounds.height)));
+                const juce::Rectangle<int> rootBounds = m_resolvedByNodeId.at(nearestRootId.value).surfaceBounds;
+                int maxDrawBottom = rootBounds.getY() + kControlMargin;
+                for (const synth::ui::Node& candidate : m_tree.nodes)
+                {
+                    if (candidate.kind == synth::ui::NodeKind::Draw
+                        && m_nearestRootByNodeId.at(candidate.id.value) == nearestRootId
+                        && HasExplicitBounds(candidate.bounds))
+                    {
+                        maxDrawBottom = std::max(
+                            maxDrawBottom,
+                            static_cast<int>(std::lround(candidate.bounds.y + candidate.bounds.height)));
+                    }
+                }
+                cursor.x = rootBounds.getX() + kControlMargin;
+                cursor.y = maxDrawBottom + kControlGap;
+                cursor.right = rootBounds.getRight() - kControlMargin;
+                cursor.availableWidth = std::max(0, rootBounds.getWidth() - kControlMargin * 2);
+            }
+
+            juce::Rectangle<int> bounds = DefaultSizeForNode(node, cursor.availableWidth);
+            if (cursor.x + bounds.getWidth() > cursor.right && cursor.rowHeight > 0)
+            {
+                const juce::Rectangle<int> rootBounds = m_resolvedByNodeId.at(nearestRoot->id.value).surfaceBounds;
+                cursor.x = rootBounds.getX() + kControlMargin;
+                cursor.y += cursor.rowHeight + kControlGap;
+                cursor.rowHeight = 0;
+            }
+            bounds.setPosition(cursor.x, cursor.y);
+            m_resolvedByNodeId.at(node.id.value).surfaceBounds = bounds;
+            cursor.x += bounds.getWidth() + kControlGap;
+            cursor.rowHeight = std::max(cursor.rowHeight, bounds.getHeight());
+        }
+    }
+
+    juce::Rectangle<int> ResolveExplicitNode(const synth::ui::Node& node,
+                                             std::unordered_map<std::string, int>& visitState)
+    {
+        const int state = visitState[node.id.value];
+        if (state == 1)
+        {
+            throw std::runtime_error("cycle resolving portable JUCE bounds at " + node.id.value);
+        }
+        if (state == 2)
+        {
+            return m_resolvedByNodeId.at(node.id.value).surfaceBounds;
+        }
+        visitState[node.id.value] = 1;
+
+        juce::Rectangle<int> bounds = UiToJuceRect(node.bounds);
+        const auto parent = m_parentByNodeId.find(node.id.value);
+        if (parent != m_parentByNodeId.end() && node.kind != synth::ui::NodeKind::Root)
+        {
+            const synth::ui::Node* parentNode = FindNode(parent->second);
+            if (parentNode == nullptr)
+            {
+                throw std::runtime_error("missing parent while resolving portable JUCE bounds");
+            }
+            const juce::Rectangle<int> parentBounds = ResolveExplicitNode(*parentNode, visitState);
+            if (ExplicitBoundsAreParentLocal(node, *parentNode))
+            {
+                bounds.translate(parentBounds.getX(), parentBounds.getY());
             }
         }
-        return maxDrawBottom + kControlGap;
+
+        m_resolvedByNodeId.at(node.id.value).surfaceBounds = bounds;
+        visitState[node.id.value] = 2;
+        return bounds;
+    }
+
+    bool ExplicitBoundsAreParentLocal(const synth::ui::Node& node,
+                                      const synth::ui::Node& parent) const
+    {
+        const float parentWidth = parent.kind == synth::ui::NodeKind::ScrollArea
+                                      ? std::max(parent.bounds.width, parent.scrollContentWidth)
+                                      : parent.bounds.width;
+        const float parentHeight = parent.kind == synth::ui::NodeKind::ScrollArea
+                                       ? std::max(parent.bounds.height, parent.scrollContentHeight)
+                                       : parent.bounds.height;
+        return node.bounds.x >= 0.0f && node.bounds.y >= 0.0f
+               && node.bounds.x + node.bounds.width <= parentWidth
+               && node.bounds.y + node.bounds.height <= parentHeight;
+    }
+
+    juce::Component* SemanticHostFor(const ResolvedNode& resolved)
+    {
+        std::optional<synth::ui::NodeId> parentId = resolved.parentId;
+        while (parentId.has_value())
+        {
+            const auto control = m_controlIndexById.find(parentId->value);
+            if (control != m_controlIndexById.end()
+                && IsSemanticHostKind(m_controls[control->second].kind))
+            {
+                return m_controls[control->second].component.get();
+            }
+            const auto parentResolved = m_resolvedByNodeId.find(parentId->value);
+            parentId = parentResolved != m_resolvedByNodeId.end()
+                           ? parentResolved->second.parentId
+                           : std::optional<synth::ui::NodeId>();
+        }
+        return this;
+    }
+
+    static bool IsSemanticHostKind(synth::ui::NodeKind kind)
+    {
+        return kind == synth::ui::NodeKind::Row || kind == synth::ui::NodeKind::Section
+               || kind == synth::ui::NodeKind::ScrollArea;
+    }
+
+    juce::Rectangle<int> HostLocalBounds(const ResolvedNode& resolved,
+                                         const juce::Component& host) const
+    {
+        return host.getLocalArea(this, resolved.surfaceBounds);
     }
 
     void DispatchBackendAction(const synth::ui::Action& action)
@@ -549,9 +794,6 @@ private:
 
     void RebuildControls()
     {
-        m_drawNodeIndices.clear();
-        m_nearestRootByNodeId.clear();
-
         const synth::ui::Node* root = RootNode();
         if (root == nullptr)
         {
@@ -597,97 +839,57 @@ private:
             newIndexById[node->id.value] = nextControls.size() - 1;
         }
 
-        for (auto& entry : nextControls)
-        {
-            if (entry.component->getParentComponent() != this)
-            {
-                addAndMakeVisible(*entry.component);
-            }
-        }
-
-        for (const PortableControlEntry& entry : m_controls)
-        {
-            bool stillUsed = false;
-            for (const PortableControlEntry& nextEntry : nextControls)
-            {
-                if (nextEntry.id == entry.id)
-                {
-                    stillUsed = true;
-                    break;
-                }
-            }
-            if (!stillUsed && entry.component != nullptr)
-            {
-                removeChildComponent(entry.component.get());
-            }
-        }
-
         m_controls = std::move(nextControls);
         m_controlIndexById = std::move(newIndexById);
-    }
-
-    void LayoutControls()
-    {
-        const synth::ui::Node* root = RootNode();
-        if (root == nullptr)
-        {
-            return;
-        }
-
-        struct FlowCursor
-        {
-            juce::Rectangle<int> bounds;
-            int x = 0;
-            int y = 0;
-            int rowHeight = 0;
-        };
-        std::unordered_map<std::string, FlowCursor> cursors;
 
         for (const synth::ui::NodeId& nodeId : m_renderedNodeIds)
         {
-            const synth::ui::Node* node = FindNode(nodeId);
-            if (node == nullptr || !IsRenderableKind(node->kind))
+            const auto controlIt = m_controlIndexById.find(nodeId.value);
+            const auto resolvedIt = m_resolvedByNodeId.find(nodeId.value);
+            if (controlIt == m_controlIndexById.end() || resolvedIt == m_resolvedByNodeId.end())
             {
                 continue;
             }
 
-            const auto controlIt = m_controlIndexById.find(node->id.value);
-            if (controlIt == m_controlIndexById.end())
+            juce::Component& component = *m_controls[controlIt->second].component;
+            juce::Component* host = SemanticHostFor(resolvedIt->second);
+            if (host == nullptr)
+            {
+                host = this;
+            }
+            const bool hadKeyboardFocus = component.hasKeyboardFocus(true);
+            juce::Component::SafePointer<juce::Component> safeComponent(&component);
+            if (component.getParentComponent() != host)
+            {
+                host->addAndMakeVisible(component);
+            }
+            component.setBounds(HostLocalBounds(resolvedIt->second, *host));
+            component.toFront(false);
+            if (hadKeyboardFocus && safeComponent != nullptr
+                && !safeComponent->hasKeyboardFocus(true))
+            {
+                safeComponent->grabKeyboardFocus();
+            }
+        }
+    }
+
+    void LayoutControls()
+    {
+        for (const synth::ui::NodeId& nodeId : m_renderedNodeIds)
+        {
+            const auto controlIt = m_controlIndexById.find(nodeId.value);
+            const auto resolvedIt = m_resolvedByNodeId.find(nodeId.value);
+            if (controlIt == m_controlIndexById.end() || resolvedIt == m_resolvedByNodeId.end())
             {
                 continue;
             }
 
             juce::Component& control = *m_controls[controlIt->second].component;
-            juce::Rectangle<int> bounds = ResolveNodeBounds(*node);
-            if (bounds.isEmpty())
+            juce::Component* host = control.getParentComponent();
+            if (host != nullptr)
             {
-                const auto nearestRootIt = m_nearestRootByNodeId.find(node->id.value);
-                const synth::ui::NodeId& nearestRootId =
-                    nearestRootIt != m_nearestRootByNodeId.end() ? nearestRootIt->second : root->id;
-                auto [cursorIt, inserted] = cursors.try_emplace(nearestRootId.value);
-                FlowCursor& cursor = cursorIt->second;
-                if (inserted)
-                {
-                    const synth::ui::Node* nearestRoot = FindNode(nearestRootId);
-                    cursor.bounds = nearestRoot != nullptr && HasExplicitBounds(nearestRoot->bounds)
-                                        ? UiToJuceRect(nearestRoot->bounds)
-                                        : ContentBounds();
-                    cursor.x = cursor.bounds.getX() + kControlMargin;
-                    cursor.y = AutoLayoutStartY(nearestRootId, cursor.bounds);
-                }
-
-                bounds = DefaultSizeForKind(node->kind);
-                if (cursor.x + bounds.getWidth() > cursor.bounds.getRight() - kControlMargin)
-                {
-                    cursor.x = cursor.bounds.getX() + kControlMargin;
-                    cursor.y += cursor.rowHeight + kControlGap;
-                    cursor.rowHeight = 0;
-                }
-                bounds.setPosition(cursor.x, cursor.y);
-                cursor.x += bounds.getWidth() + kControlGap;
-                cursor.rowHeight = std::max(cursor.rowHeight, bounds.getHeight());
+                control.setBounds(HostLocalBounds(resolvedIt->second, *host));
             }
-            control.setBounds(bounds);
         }
     }
 
@@ -705,32 +907,13 @@ private:
             const synth::ui::NodeId& childRootId =
                 node->kind == synth::ui::NodeKind::Root ? node->id : nearestRootId;
 
-            if (node->kind == synth::ui::NodeKind::Draw)
+            if (IsRenderableKind(node->kind))
             {
-                m_nearestRootByNodeId[node->id.value] = childRootId;
-                if (const std::optional<std::size_t> nodeIndex = FindNodeIndex(node->id); nodeIndex.has_value())
-                {
-                    m_drawNodeIndices.push_back(*nodeIndex);
-                }
-                if (IsInteractiveDrawNode(*node))
-                {
-                    m_renderedNodeIds.push_back(node->id);
-                }
-            }
-            else if (IsRenderableKind(node->kind))
-            {
-                m_nearestRootByNodeId[node->id.value] = childRootId;
                 m_renderedNodeIds.push_back(node->id);
             }
 
             CollectRenderableDescendants(*node, childRootId);
         }
-    }
-
-    bool IsInteractiveDrawNode(const synth::ui::Node& node) const
-    {
-        return node.kind == synth::ui::NodeKind::Draw
-               && (node.pointerDragAction.has_value() || node.doubleClickAction.has_value());
     }
 
     static bool IsRenderableKind(synth::ui::NodeKind kind)
@@ -949,15 +1132,14 @@ private:
             }
             case synth::ui::NodeKind::Draw:
             {
-                auto overlay = std::make_unique<InteractiveDrawComponent>(
+                auto draw = std::make_unique<RetainedDrawComponent>(
                     [this](const synth::ui::NodeId& id, float delta) {
                         DispatchCurrentNodePointerDragAction(id, delta);
                     },
                     [this](const synth::ui::NodeId& id) {
                         DispatchCurrentNodeDoubleClickAction(id);
                     });
-                overlay->SetNodeId(node.id);
-                return overlay;
+                return draw;
             }
             default:
                 return std::make_unique<juce::Component>();
@@ -1053,8 +1235,11 @@ private:
             }
             case synth::ui::NodeKind::Draw:
             {
-                auto& overlay = static_cast<InteractiveDrawComponent&>(component);
-                overlay.SetNodeId(node.id);
+                auto& draw = static_cast<RetainedDrawComponent&>(component);
+                draw.SetNode(node.id,
+                             node.drawCommands,
+                             node.pointerDragAction.has_value(),
+                             node.doubleClickAction.has_value());
                 break;
             }
             default:
@@ -1066,8 +1251,10 @@ private:
     synth::ui::NodeTree m_tree;
     std::vector<PortableControlEntry> m_controls;
     std::unordered_map<std::string, std::size_t> m_controlIndexById;
+    std::unordered_map<std::string, synth::ui::NodeId> m_parentByNodeId;
     std::unordered_map<std::string, synth::ui::NodeId> m_nearestRootByNodeId;
-    std::vector<std::size_t> m_drawNodeIndices;
+    std::unordered_map<std::string, ResolvedNode> m_resolvedByNodeId;
+    std::optional<synth::ui::NodeId> m_rootNodeId;
     std::vector<synth::ui::NodeId> m_renderedNodeIds;
     bool m_suppressActionDispatch = false;
 };
