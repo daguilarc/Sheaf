@@ -5098,6 +5098,7 @@ TEST_CASE(processed_absolute_epoch_follows_slot_position_across_bank_and_modulat
         .maxParameters = 4,
         .targetCenterAlpha = 1.0f,
     });
+    MarkAllModulatorsConnectedForUi(group);
     auto& first = manager.CreateParameter(group, {.name = "First", .defaultValue = 0.2f});
     auto& second = manager.CreateParameter(group, {.name = "Second", .defaultValue = 0.6f});
     auto& depth = manager.CreateParameter(group, {.name = "Depth", .defaultValue = 0.4f});
@@ -5280,6 +5281,7 @@ TEST_CASE(param_set_absolute_edits_visible_modulation_depth_not_hidden_parent) {
         .maxParameters = 3,
         .targetCenterAlpha = 1.0f,
     });
+    MarkAllModulatorsConnectedForUi(group);
     auto& parent = manager.CreateParameter(group, {.name = "Parent", .defaultValue = 0.2f});
     auto& depth = manager.CreateParameter(group, {.name = "Depth", .defaultValue = 0.3f});
     REQUIRE_TRUE(parent.AssignModulationDepth(0, &depth));
