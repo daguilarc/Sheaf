@@ -21,6 +21,7 @@
 #include "MiniAppDraw.hpp"
 
 #include "synth/AppContext.hpp"
+#include "synth/ButtonGrid.hpp"
 #include "synth/DspScope.hpp"
 #include "synth/MidiController.hpp"
 #include "synth/Modules.hpp"
@@ -31,6 +32,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <vector>
 
 namespace synth_miniapp {
@@ -60,6 +62,9 @@ public:
 
     void Init(synth::AppContext* context) {
         context_ = context;
+        if (context_ == nullptr || context_->gridManager == nullptr) {
+            throw std::logic_error("MiniApp requires an initialization-time grid manager");
+        }
 
         context_->parameterManager->SetGestureCount(1);
         auto& group = context_->parameterManager->CreateGroup({
@@ -156,6 +161,39 @@ public:
         lfoModule_.SetScopeColor(0, synth::Color::Green);
         lfoModule_.SetScopeColor(1, synth::Color::Yellow);
 
+        const auto ratioRange = synth::GridRange::Create(0, 8, 0, 2);
+        if (!ratioRange.has_value()) {
+            throw std::logic_error("MiniApp ratio grid range creation failed");
+        }
+        const auto ratioGridIx = context_->gridManager->CreateGrid(*ratioRange);
+        if (!ratioGridIx.has_value()) {
+            throw std::logic_error("MiniApp ratio grid creation failed");
+        }
+        const auto ratioSlotIx = context_->gridManager->CreateSlot(*ratioRange);
+        if (!ratioSlotIx.has_value()) {
+            throw std::logic_error("MiniApp ratio grid slot creation failed");
+        }
+        synth::Grid* const ratioGrid = context_->gridManager->GridAt(*ratioGridIx);
+        synth::GridSlot* const ratioSlot = context_->gridManager->SlotAt(*ratioSlotIx);
+        if (ratioGrid == nullptr || ratioSlot == nullptr) {
+            throw std::logic_error("MiniApp ratio grid topology lookup failed");
+        }
+        for (std::size_t y = 0; y < ratioSelections_.size(); ++y) {
+            for (std::size_t x = 0; x < kJiRatios.size(); ++x) {
+                const synth::Color ratioColor = kJiRatioColors[x];
+                auto cell = std::make_unique<synth::StateCell<std::size_t>>(
+                    ratioColor.AdjustBrightness(0.35f), ratioColor,
+                    &ratioSelections_[y], x, 0,
+                    synth::StateCell<std::size_t>::Mode::SetOnly);
+                if (cell == nullptr || !ratioGrid->RegisterCell(static_cast<int>(x), static_cast<int>(y), std::move(cell))) {
+                    throw std::logic_error("MiniApp ratio grid cell registration failed");
+                }
+            }
+        }
+        if (!context_->gridManager->SelectGridForSlot(*ratioSlotIx, *ratioGridIx)) {
+            throw std::logic_error("MiniApp ratio grid selection failed");
+        }
+
         // Install the shared default instrument. Apps may expose fewer scenes
         // or on-screen encoders than the default WRLD.Bldr profile maps; the
         // input path ignores out-of-range messages and output feedback blanks
@@ -192,6 +230,10 @@ public:
         for (std::size_t frame = 0; frame < block.numFrames; ++frame) {
             ProcessParameters(*group_, block.startSample + frame);
             vcoModule_.SetInput(*context_->parameterManager);
+            for (std::size_t voiceIx = 0; voiceIx < kVoiceCount; ++voiceIx) {
+                vcoModule_.CurrentInput().voices[voiceIx].vco.freq *=
+                    kJiRatios[ratioSelections_[voiceIx]];
+            }
             vcoModule_.Process();
             filterModule_.SetInput(*context_->parameterManager);
             for (std::size_t voiceIx = 0; voiceIx < kVoiceCount; ++voiceIx) {
@@ -255,6 +297,17 @@ public:
     }
 
 private:
+    static constexpr std::array<float, 8> kJiRatios{
+        1.0f / 2.0f, 3.0f / 4.0f, 2.0f / 3.0f, 1.0f,
+        5.0f / 4.0f, 3.0f / 2.0f, 4.0f / 3.0f, 2.0f,
+    };
+    static constexpr std::array<synth::Color, 8> kJiRatioColors{
+        synth::Color::Rgb(220, 80, 80), synth::Color::Rgb(220, 140, 72),
+        synth::Color::Rgb(218, 200, 68), synth::Color::Rgb(84, 200, 112),
+        synth::Color::Rgb(72, 190, 190), synth::Color::Rgb(84, 128, 220),
+        synth::Color::Rgb(128, 96, 220), synth::Color::Rgb(220, 220, 220),
+    };
+
     synth::AppContext* context_ = nullptr;
     synth::ParameterGroup* group_ = nullptr;
     synth::Parameter* tune_ = nullptr;
@@ -273,6 +326,7 @@ private:
     synth::Bank* vcoBank_ = nullptr;
     synth::Bank* lfoBank_ = nullptr;
     synth::BankSlot* slot_ = nullptr;
+    std::array<std::size_t, kVoiceCount> ratioSelections_{3, 3};
 
     synth::ScopeWriter scopeWriter_{4, kScopeFrames};
     std::array<synth::ScopeWriterHolder, 4> scopeHolders_;

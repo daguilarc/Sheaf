@@ -298,14 +298,109 @@ synth::ui::NodeTree BuildMiniAppTree(synth_rig::SynthRig<synth_miniapp::MiniAppC
 
 }  // namespace
 
-TEST_CASE(miniapp_existing_surface_keeps_parameter_ui_contract_without_grid_integration) {
+TEST_CASE(miniapp_ratio_grid_declares_independent_set_only_rows_and_feedback) {
     synth_rig::SynthRig<synth_miniapp::MiniApp> rig(
-        64, UseScratchRuntimeDataPaths("runtime-ui-facade-no-grid"));
+        64, UseScratchRuntimeDataPaths("ratio_grid_topology_and_interaction"));
     REQUIRE_TRUE(rig.Engine().Context().uiState == rig.Engine().RuntimeUIStateForTest().parameters);
-    REQUIRE_TRUE(rig.Engine().RuntimeUIStateForTest().grids != nullptr);
-    REQUIRE_TRUE(rig.Engine().RuntimeUIStateForTest().grids->slots.empty());
+    const auto& grids = *rig.Engine().RuntimeUIStateForTest().grids;
+    REQUIRE_TRUE(grids.slots.size() == 1);
+    REQUIRE_TRUE(grids.slots[0]->range == *synth::GridRange::Create(0, 8, 0, 2));
+    REQUIRE_TRUE(grids.slots[0]->colors.size() == 16);
+    REQUIRE_TRUE(rig.Engine().GridManagerForTest().SlotAt(0)->SelectedGrid() != nullptr);
     REQUIRE_TRUE(rig.Engine().GridManagerForTest().Finalized());
     REQUIRE_TRUE(rig.Application().Context()->uiState == rig.Engine().Context().uiState);
+
+    const auto& range = grids.slots[0]->range;
+    auto colorAt = [&grids, &range](int x, int y) {
+        return grids.slots[0]->colors[*range.IndexOf(x, y)].Load();
+    };
+    auto requireNonBlackRgb = [](synth::Color color) {
+        REQUIRE_TRUE(color.r != 0 || color.g != 0 || color.b != 0);
+    };
+
+    // Engine publishes initial grid feedback during Initialize(), before the
+    // first audio block. Both rows start at the unity (x=3) ratio.
+    for (int y = 0; y < 2; ++y) {
+        for (int x = 0; x < 8; ++x) {
+            const synth::Color color = colorAt(x, y);
+            requireNonBlackRgb(color);
+            REQUIRE_TRUE(color.a == (x == 3 ? 1 : 0));
+        }
+    }
+
+    const synth::Color initialUnityFull = colorAt(3, 0);
+    const synth::Color initialUnityFullOtherRow = colorAt(3, 1);
+    REQUIRE_TRUE(initialUnityFull == initialUnityFullOtherRow);
+
+    rig.Engine().GridManagerForTest().HandlePress(0, 0, 0, 100);
+    rig.Engine().GridManagerForTest().HandlePress(0, 6, 1, 100);
+    // The rig prepares MiniApp at 48 kHz/64 frames and publishes UI at 30 Hz,
+    // so one published UI frame takes 25 audio blocks.
+    rig.RunBlocks(25);
+
+    for (int y = 0; y < 2; ++y) {
+        const int selectedX = y == 0 ? 0 : 6;
+        for (int x = 0; x < 8; ++x) {
+            const synth::Color color = colorAt(x, y);
+            requireNonBlackRgb(color);
+            REQUIRE_TRUE(color.a == (x == selectedX ? 1 : 0));
+        }
+    }
+
+    // A selected cell is full brightness, and the matching unselected row is
+    // the same hue family at lower RGB brightness (not alpha dimming).
+    const synth::Color row0Selected = colorAt(0, 0);
+    const synth::Color row0Unselected = colorAt(0, 1);
+    const synth::Color row1Selected = colorAt(6, 1);
+    const synth::Color row1Unselected = colorAt(6, 0);
+    for (const auto [full, dim] : {std::pair{row0Selected, row0Unselected},
+                                   std::pair{row1Selected, row1Unselected},
+                                   std::pair{initialUnityFull, colorAt(3, 0)},
+                                   std::pair{initialUnityFullOtherRow, colorAt(3, 1)}}) {
+        REQUIRE_TRUE(full.a == 1);
+        REQUIRE_TRUE(dim.a == 0);
+        REQUIRE_TRUE(dim.r <= full.r && dim.g <= full.g && dim.b <= full.b);
+        REQUIRE_TRUE(dim.r != full.r || dim.g != full.g || dim.b != full.b);
+    }
+
+    const std::array<synth::Color, 16> afterPress{
+        colorAt(0, 0), colorAt(1, 0), colorAt(2, 0), colorAt(3, 0),
+        colorAt(4, 0), colorAt(5, 0), colorAt(6, 0), colorAt(7, 0),
+        colorAt(0, 1), colorAt(1, 1), colorAt(2, 1), colorAt(3, 1),
+        colorAt(4, 1), colorAt(5, 1), colorAt(6, 1), colorAt(7, 1),
+    };
+    rig.Engine().GridManagerForTest().HandleRelease(0, 0, 0);
+    rig.Engine().GridManagerForTest().HandlePressureChange(0, 6, 1, 127);
+    rig.RunBlocks(25);
+    for (int y = 0; y < 2; ++y) {
+        for (int x = 0; x < 8; ++x) {
+            REQUIRE_TRUE(colorAt(x, y) == afterPress[*range.IndexOf(x, y)]);
+        }
+    }
+}
+
+TEST_CASE(miniapp_ratio_grid_applies_independent_voice_pitch_offsets_without_mutating_tune) {
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        64, UseScratchRuntimeDataPaths("ratio_grid_independent_pitch_offsets"));
+
+    rig.RunBlocks(1);
+    const auto& vcoBeforeSelection = rig.Application().VcoModuleInstance().CurrentInput();
+    const float baseVoice0Frequency = vcoBeforeSelection.voices[0].vco.freq;
+    const float baseVoice1Frequency = vcoBeforeSelection.voices[1].vco.freq;
+    REQUIRE_NEAR(baseVoice0Frequency, baseVoice1Frequency, 1e-7f);
+
+    const synth::ParameterId tuneId = rig.Application().VcoParameterIds().tune;
+    const float tuneBeforeGridPress = rig.ParameterValue(tuneId);
+    rig.Engine().GridManagerForTest().HandlePress(0, 0, 0, 100);  // 1/2
+    rig.Engine().GridManagerForTest().HandlePress(0, 7, 1, 100);  // 2/1
+    REQUIRE_NEAR(rig.ParameterValue(tuneId), tuneBeforeGridPress, 0.0f);
+
+    rig.RunBlocks(1);
+    const auto& vcoAfterSelection = rig.Application().VcoModuleInstance().CurrentInput();
+    REQUIRE_NEAR(vcoAfterSelection.voices[0].vco.freq, baseVoice0Frequency * 0.5f, 1e-7f);
+    REQUIRE_NEAR(vcoAfterSelection.voices[1].vco.freq, baseVoice1Frequency * 2.0f, 1e-7f);
+    REQUIRE_TRUE(vcoAfterSelection.voices[0].vco.freq != vcoAfterSelection.voices[1].vco.freq);
+    REQUIRE_NEAR(rig.ParameterValue(tuneId), tuneBeforeGridPress, 0.0f);
 }
 
 TEST_CASE(miniapp_registration_declares_launcher_metadata_and_launch_callable) {
@@ -334,6 +429,7 @@ TEST_CASE(miniapp_portable_surface_exposes_stable_ids_and_routes_actions) {
 
     synth::ParameterManager manager;
     synth::MessageInBus uiBus(&manager);
+    synth::GridManager gridManager;
     synth::RuntimeConfig config = synth_miniapp::MiniAppCore::Config();
     synth::MidiInstrumentConfig instrument;
     synth::AppContext context;
@@ -341,6 +437,7 @@ TEST_CASE(miniapp_portable_surface_exposes_stable_ids_and_routes_actions) {
     context.uiBus = &uiBus;
     context.config = &config;
     context.instrument = &instrument;
+    context.gridManager = &gridManager;
 
     std::uint64_t timestamp = 1000;
     context.now = [&timestamp]() { return timestamp++; };
