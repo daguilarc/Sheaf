@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:cloudflare-pages": "bash scripts/cloudflare-pages-build.sh",
+    "publish:site": "npm run build && node src/publish-site.mjs",
     "test": "npm run build && npm run check:generic-runtime && node --test dist/tests/*.test.mjs && playwright test",
     "check:generic-runtime": "node tests/check-generic-runtime.mjs",
     "test:unit": "npm run build && node --test dist/tests/*.test.mjs"

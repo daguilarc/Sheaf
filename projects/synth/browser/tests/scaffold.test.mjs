@@ -21,11 +21,28 @@ test("emscripten browser builds enable pthreads for engine midi sender", async (
   assert.equal((makefile.match(/\$\(PTHREAD_FLAGS\)/g) ?? []).length, 2);
 });
 
+test("cloudflare pages build script bootstraps emscripten before publishing", async () => {
+  const browserRoot = await findBrowserRoot();
+  const packageJson = JSON.parse(await readFile(path.join(browserRoot, "package.json"), "utf8"));
+  assert.equal(packageJson.scripts["build:cloudflare-pages"], "bash scripts/cloudflare-pages-build.sh");
+
+  const script = await readFile(path.join(browserRoot, "scripts/cloudflare-pages-build.sh"), "utf8");
+  assert.match(script, /emsdk" install latest/);
+  assert.match(script, /emsdk" activate latest/);
+  assert.match(script, /make .*browser-miniapp/);
+  assert.match(script, /npm .*run publish:site/);
+});
+
 async function readBrowserMakefile() {
+  return await readFile(path.join(await findBrowserRoot(), "Makefile"), "utf8");
+}
+
+async function findBrowserRoot() {
   let directory = path.dirname(fileURLToPath(import.meta.url));
   for (;;) {
     try {
-      return await readFile(path.join(directory, "Makefile"), "utf8");
+      await readFile(path.join(directory, "Makefile"), "utf8");
+      return directory;
     } catch (error) {
       if (path.dirname(directory) === directory) {
         throw error;
