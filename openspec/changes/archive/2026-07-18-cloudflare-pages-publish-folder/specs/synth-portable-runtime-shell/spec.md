@@ -1,6 +1,6 @@
 ## ADDED Requirements
 
-### Requirement: sprs-9 — Deployment: Cloudflare Pages publish artifact
+### Requirement: sprs-12 — Deployment: Cloudflare Pages publish artifact
 WHEN the browser runtime has been built and its browser application artifact is present, THE synth browser package SHALL provide a deterministic static publish step that assembles a Cloudflare Pages-compatible publish directory containing the HTML/CSS shell, compiled browser runtime modules, browser application WASM sidecar files, and a `_headers` file that preserves cross-origin isolation, Web MIDI permissions, and WASM content typing.
 
 #### Scenario: Publish directory contains deployable assets
