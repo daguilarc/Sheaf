@@ -135,6 +135,67 @@ int main()
     Require(surface.lastAction.value == "b2", "combo dispatches refreshed option id");
 
     {
+        RecordingSurface valueSurface;
+        synth::ui::Builder valueBuilder;
+        valueBuilder.Root("value.root", synth::ui::Bounds{0.0f, 0.0f, 320.0f, 240.0f})
+            .ComboBox("value.combo",
+                      "Input",
+                      {{"a2", "Built In 2"}, {"b2", "External 2"}},
+                      "a2",
+                      synth::ui::Action::WithValue("controller.input", "controller:input"))
+            .TextField("value.text",
+                       "Mapping",
+                       "63",
+                       synth::ui::Action::WithValue("controller.mapping", "controller:mapping:0"))
+            .Toggle("value.toggle",
+                    "Enabled",
+                    false,
+                    synth::ui::Action::WithValue("controller.mapping", "controller:mapping:1"))
+            .Slider("value.slider",
+                    "Depth",
+                    0.0f,
+                    0.0f,
+                    1.0f,
+                    0.01f,
+                    synth::ui::Action::WithValue("controller.depth", "controller:depth"));
+        valueSurface.tree = valueBuilder.Build();
+
+        synth_juce::PortableComponent valueComponent(valueSurface);
+        valueComponent.setSize(320, 240);
+        valueComponent.RefreshFromSurface();
+
+        auto* valueCombo = dynamic_cast<juce::ComboBox*>(valueComponent.FindByNodeId("value.combo"));
+        Require(valueCombo != nullptr, "prefixed combo node is a ComboBox");
+        valueCombo->setSelectedId(2, juce::sendNotificationSync);
+        Require(valueSurface.lastAction.value == "controller:input:b2",
+                "combo appends the selected option id to the current action prefix");
+
+        auto* valueText = dynamic_cast<juce::TextEditor*>(valueComponent.FindByNodeId("value.text"));
+        Require(valueText != nullptr, "prefixed text node is a TextEditor");
+        valueText->setText("64", false);
+        const int dispatchesBeforeTextCommit = valueSurface.dispatchCount;
+        valueText->onReturnKey();
+        Require(valueSurface.lastAction.value == "controller:mapping:0:64",
+                "text field appends committed text to its action prefix");
+        valueText->onFocusLost();
+        Require(valueSurface.dispatchCount == dispatchesBeforeTextCommit + 1,
+                "text field dispatches once when Return is followed by unchanged focus loss");
+
+        auto* valueToggle = dynamic_cast<juce::ToggleButton*>(valueComponent.FindByNodeId("value.toggle"));
+        Require(valueToggle != nullptr, "prefixed toggle node is a ToggleButton");
+        valueToggle->setToggleState(true, juce::dontSendNotification);
+        valueToggle->onClick();
+        Require(valueSurface.lastAction.value == "controller:mapping:1:1",
+                "toggle appends its checked state to its action prefix");
+
+        auto* valueSlider = dynamic_cast<juce::Slider*>(valueComponent.FindByNodeId("value.slider"));
+        Require(valueSlider != nullptr, "prefixed slider node is a Slider");
+        valueSlider->setValue(0.75, juce::sendNotificationSync);
+        Require(valueSurface.lastAction.value.starts_with("controller:depth:"),
+                "slider appends its value to its action prefix");
+    }
+
+    {
         RecordingSurface compositeSurface;
         synth::ui::Builder compositeBuilder;
         compositeBuilder.Root("runtime.main.root", synth::ui::Bounds{0.0f, 0.0f, 996.0f, 240.0f})

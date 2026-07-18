@@ -204,6 +204,30 @@ int main()
     renderer.setSize(980, 720);
     renderer.RefreshFromSurface();
 
+    auto* inputCombo = dynamic_cast<juce::ComboBox*>(
+        renderer.FindByNodeId(synth::runtime_ui::NodeIds::ControllerInput(0)));
+    Require(inputCombo != nullptr, "controller zero input node is a ComboBox");
+    int twisterInputIndex = -1;
+    for (int optionIx = 0; optionIx < inputCombo->getNumItems(); ++optionIx)
+    {
+        if (inputCombo->getItemText(optionIx) == juce::String("Twister In"))
+        {
+            twisterInputIndex = optionIx;
+            break;
+        }
+    }
+    Require(twisterInputIndex >= 0, "controller zero input includes Twister In");
+    inputCombo->setSelectedItemIndex(twisterInputIndex, juce::sendNotificationSync);
+    surface.RefreshOnTick();
+    renderer.RefreshFromSurface();
+    auto* refreshedCombo = dynamic_cast<juce::ComboBox*>(
+        renderer.FindByNodeId(synth::runtime_ui::NodeIds::ControllerInput(0)));
+    Require(refreshedCombo != nullptr, "refreshed controller zero input node is a ComboBox");
+    Require(fixture.state.instrument.controllers[0].input.identifier == "twister-in-id",
+            "JUCE endpoint selection commits the selected device");
+    Require(refreshedCombo->getText() == juce::String("Twister In"),
+            "JUCE endpoint selection remains selected after refresh");
+
     int controllerNameSuffix = 0;
     std::string lastAction = "initial";
     for (int step = 0; step < 250; ++step)
