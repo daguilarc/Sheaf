@@ -12,4 +12,4 @@
 ## 3. Verification and traceability
 
 - [x] 3.1 Run focused Engine/MiniApp tests, full synth and MiniApp suites, strict OpenSpec validation, and diff/placeholder checks.
-- [x] 3.2 Update the MiniApp ratio-grid spec coverage and mark these OpenSpec tasks complete only after reviewed verification passes.
+- [ ] 3.2 Update the MiniApp ratio-grid spec coverage and mark these OpenSpec tasks complete only after reviewed verification passes.
