@@ -910,12 +910,17 @@ private:
         }
     }
 
-    void DispatchCurrentNodeActionWithValue(const synth::ui::NodeId& id, std::string value)
+    void DispatchCurrentNodeActionWithAppendedValue(const synth::ui::NodeId& id,
+                                                    std::string value)
     {
         if (const synth::ui::Node* node = FindNode(id); node != nullptr && node->action.has_value())
         {
             synth::ui::Action dispatched = *node->action;
-            dispatched.value = std::move(value);
+            if (!dispatched.value.empty())
+            {
+                dispatched.value += ':';
+            }
+            dispatched.value += value;
             DispatchBackendAction(dispatched);
         }
     }
@@ -1208,8 +1213,9 @@ private:
             {
                 auto toggle = std::make_unique<juce::ToggleButton>(node.label);
                 const synth::ui::NodeId id = node.id;
-                toggle->onClick = [this, id] {
-                    DispatchCurrentNodeAction(id);
+                toggle->onClick = [this, toggle = toggle.get(), id] {
+                    DispatchCurrentNodeActionWithAppendedValue(
+                        id, toggle->getToggleState() ? "1" : "0");
                 };
                 ScopedDispatchSuppression suppress(m_suppressActionDispatch);
                 toggle->setToggleState(node.checked, juce::dontSendNotification);
@@ -1230,7 +1236,8 @@ private:
                     {
                         return;
                     }
-                    DispatchCurrentNodeActionWithValue(id, juce::String(slider->getValue()).toStdString());
+                    DispatchCurrentNodeActionWithAppendedValue(
+                        id, juce::String(slider->getValue()).toStdString());
                 };
                 ScopedDispatchSuppression suppress(m_suppressActionDispatch);
                 slider->setValue(node.value, juce::dontSendNotification);
@@ -1269,9 +1276,8 @@ private:
                     {
                         return;
                     }
-                    synth::ui::Action dispatched = *current->action;
-                    dispatched.value = current->options[static_cast<std::size_t>(selected)].id;
-                    DispatchBackendAction(dispatched);
+                    DispatchCurrentNodeActionWithAppendedValue(
+                        id, current->options[static_cast<std::size_t>(selected)].id);
                 };
                 ScopedDispatchSuppression suppress(m_suppressActionDispatch);
                 if (selectedIndex > 0)
@@ -1289,11 +1295,24 @@ private:
                     editor->setTextToShowWhenEmpty(node.label, juce::Colours::grey);
                 }
                 const synth::ui::NodeId id = node.id;
-                editor->onReturnKey = [this, editor = editor.get(), id] {
-                    DispatchCurrentNodeActionWithValue(id, editor->getText().toStdString());
+                auto textCommitted = std::make_shared<bool>(false);
+                const auto commitText = [this, editor = editor.get(), id, textCommitted] {
+                    if (*textCommitted)
+                    {
+                        return;
+                    }
+                    *textCommitted = true;
+                    DispatchCurrentNodeActionWithAppendedValue(id, editor->getText().toStdString());
                 };
-                editor->onFocusLost = [this, editor = editor.get(), id] {
-                    DispatchCurrentNodeActionWithValue(id, editor->getText().toStdString());
+                editor->onTextChange = [textCommitted] {
+                    *textCommitted = false;
+                };
+                editor->onReturnKey = [editor = editor.get(), commitText] {
+                    commitText();
+                    editor->giveAwayKeyboardFocus();
+                };
+                editor->onFocusLost = [commitText] {
+                    commitText();
                 };
                 return editor;
             }
