@@ -150,6 +150,55 @@ struct EngineTestApp {
     }
 };
 
+class InitTopologyCell final : public synth::Cell {
+public:
+    void OnPress(std::uint8_t) override {}
+    void OnRelease() override {}
+    void OnPressureChange(std::uint8_t) override {}
+    synth::Color GetColor() const override { return synth::Color::Rgb(10, 20, 30); }
+    bool GetOnOff() const override { return true; }
+};
+
+struct InitTopologyApp {
+    static inline bool sawGridManagerDuringInit = false;
+    static inline bool declaredTopologyDuringInit = false;
+    static inline std::size_t declaredSlotIx = 0;
+
+    static synth::RuntimeConfig Config() {
+        synth::RuntimeConfig config;
+        config.appName = "InitTopology";
+        return config;
+    }
+
+    void Init(synth::AppContext* ctx) {
+        sawGridManagerDuringInit = ctx->gridManager != nullptr;
+        if (ctx->gridManager == nullptr) {
+            return;
+        }
+
+        const auto range = synth::GridRange::Create(0, 1, 0, 1);
+        if (!range.has_value()) {
+            return;
+        }
+        const auto gridIx = ctx->gridManager->CreateGrid(*range);
+        const auto slotIx = ctx->gridManager->CreateSlot(*range);
+        if (!gridIx.has_value() || !slotIx.has_value()) {
+            return;
+        }
+        if (!ctx->gridManager->GridAt(*gridIx)->RegisterCell(
+                0, 0, std::make_unique<InitTopologyCell>())) {
+            return;
+        }
+        if (!ctx->gridManager->SelectGridForSlot(*slotIx, *gridIx)) {
+            return;
+        }
+        declaredSlotIx = *slotIx;
+        declaredTopologyDuringInit = true;
+    }
+
+    void ProcessBlock(synth::AudioBlock&) {}
+};
+
 // Builds a patch JSON document (matching EngineTestApp's Init topology, i.e.
 // a single group with the "Probe" parameter) with Probe set to probeValue,
 // and writes it as a version file in patchDir via SavePatchVersionInDirectory
@@ -218,6 +267,24 @@ TEST_CASE(engine_initialize_orders_init_before_ui_state) {
     REQUIRE_TRUE(EngineTestApp::sawNullUiStateDuringInit);
     REQUIRE_TRUE(engine.Context().uiState != nullptr);
     REQUIRE_TRUE(EngineTestApp::initCalls >= 1);
+}
+
+TEST_CASE(engine_exposes_grid_topology_declaration_during_init) {
+    InitTopologyApp::sawGridManagerDuringInit = false;
+    InitTopologyApp::declaredTopologyDuringInit = false;
+
+    synth::Engine<InitTopologyApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+
+    REQUIRE_TRUE(InitTopologyApp::sawGridManagerDuringInit);
+    REQUIRE_TRUE(InitTopologyApp::declaredTopologyDuringInit);
+    REQUIRE_TRUE(engine.GridManagerForTest().Finalized());
+    const synth::RuntimeUIState& state = engine.RuntimeUIStateForTest();
+    REQUIRE_TRUE(state.grids != nullptr);
+    REQUIRE_TRUE(state.grids->slots.size() == 1);
+    REQUIRE_TRUE(state.grids->slots[InitTopologyApp::declaredSlotIx]->colors.size() == 1);
+    REQUIRE_TRUE(state.grids->slots[InitTopologyApp::declaredSlotIx]->colors[0].Load() ==
+                 synth::Color::Rgba(10, 20, 30, 1));
 }
 
 TEST_CASE(engine_prepare_forwards_negotiated_values) {

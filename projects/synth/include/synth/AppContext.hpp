@@ -18,6 +18,8 @@
 
 namespace synth {
 
+class GridManager;
+
 // Static configuration supplied by the application (sar-2). Audio fields are
 // a request: the host negotiates actual values with the device and reports
 // them through the application's prepare hook.
@@ -90,6 +92,10 @@ struct AppContext {
     const MidiInstrumentConfig* defaultInstrument = nullptr; // immutable after init
     const RuntimeConfig* config = nullptr;          // immutable after construction
     ParameterManager::UIState* uiState = nullptr;   // null during Init; set before MIDI/audio/UI start
+    // Init-only topology declaration; Engine owns this manager. Do not use it
+    // for application runtime mutation after Engine finalizes grid topology.
+    // Message thread during Init only.
+    GridManager* gridManager = nullptr;
 
     // Shared monotonic timestamp source, the same one passed to the owning
     // synth::Engine<App>'s constructor (Runtime.hpp's NowMicros() under the

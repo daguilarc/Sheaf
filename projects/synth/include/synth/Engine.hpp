@@ -88,6 +88,7 @@ public:
         context_.defaultInstrument = &defaultInstrumentConfig_;
         context_.config = &config_;
         context_.uiState = nullptr;
+        context_.gridManager = &gridManager_;
         context_.now = timestampProvider_;
     }
 
