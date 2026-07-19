@@ -1,3 +1,4 @@
+#include "synth/DspAdsr.hpp"
 #include "synth/DspBuffers.hpp"
 #include "synth/DspConstant.hpp"
 #include "synth/DspDegrade.hpp"
@@ -1419,6 +1420,88 @@ TEST_CASE(correlated_increments_reject_invalid_config) {
     invalid = valid;
     invalid.internalSigmaHz = std::numeric_limits<double>::quiet_NaN();
     REQUIRE_TRUE(rejects(48000.0, invalid));
+}
+
+TEST_CASE(adsr_processor_runs_linear_stages_and_exact_endpoints) {
+    synth::AdsrProcessor adsr;
+    synth::AdsrProcessor::Input input{
+        .attackIncrement = 0.5,
+        .decayIncrement = 0.5,
+        .sustain = 0.25f,
+        .releaseIncrement = 0.5,
+        .gate = false,
+    };
+
+    REQUIRE_TRUE(adsr.GetState() == synth::AdsrProcessor::State::Idle);
+    REQUIRE_NEAR(adsr.Process(input), 0.0f, 0.0f);
+
+    input.gate = true;
+    REQUIRE_NEAR(adsr.Process(input), 0.5f, 0.000001f);
+    REQUIRE_TRUE(adsr.GetState() == synth::AdsrProcessor::State::Attack);
+    REQUIRE_NEAR(adsr.Process(input), 1.0f, 0.0f);
+    REQUIRE_TRUE(adsr.GetState() == synth::AdsrProcessor::State::Decay);
+    REQUIRE_NEAR(adsr.Process(input), 0.625f, 0.000001f);
+    REQUIRE_NEAR(adsr.Process(input), 0.25f, 0.0f);
+    REQUIRE_TRUE(adsr.GetState() == synth::AdsrProcessor::State::Sustain);
+
+    input.gate = false;
+    REQUIRE_NEAR(adsr.Process(input), 0.125f, 0.000001f);
+    REQUIRE_NEAR(adsr.Process(input), 0.0f, 0.0f);
+    REQUIRE_TRUE(adsr.GetState() == synth::AdsrProcessor::State::Idle);
+}
+
+TEST_CASE(adsr_processor_interrupts_and_retriggers_from_current_value) {
+    synth::AdsrProcessor adsr;
+    synth::AdsrProcessor::Input input{
+        .attackIncrement = 0.25,
+        .decayIncrement = 0.25,
+        .sustain = 0.2f,
+        .releaseIncrement = 0.25,
+        .gate = true,
+    };
+
+    REQUIRE_NEAR(adsr.Process(input), 0.25f, 0.000001f);
+    REQUIRE_NEAR(adsr.Process(input), 0.5f, 0.000001f);
+
+    input.gate = false;
+    REQUIRE_NEAR(adsr.Process(input), 0.375f, 0.000001f);
+    REQUIRE_TRUE(adsr.GetState() == synth::AdsrProcessor::State::Release);
+
+    input.gate = true;
+    REQUIRE_NEAR(adsr.Process(input), 0.53125f, 0.000001f);
+    REQUIRE_TRUE(adsr.GetState() == synth::AdsrProcessor::State::Attack);
+}
+
+TEST_CASE(adsr_processor_holds_zero_increments_and_tracks_live_sustain) {
+    synth::AdsrProcessor adsr;
+    synth::AdsrProcessor::Input input{
+        .attackIncrement = 0.0,
+        .decayIncrement = 0.5,
+        .sustain = 0.5f,
+        .releaseIncrement = 1.0,
+        .gate = true,
+    };
+
+    REQUIRE_NEAR(adsr.Process(input), 0.0f, 0.0f);
+    REQUIRE_TRUE(adsr.GetState() == synth::AdsrProcessor::State::Attack);
+    REQUIRE_NEAR(adsr.Process(input), 0.0f, 0.0f);
+
+    input.attackIncrement = 1.0;
+    REQUIRE_NEAR(adsr.Process(input), 1.0f, 0.0f);
+    REQUIRE_TRUE(adsr.GetState() == synth::AdsrProcessor::State::Decay);
+    REQUIRE_NEAR(adsr.Process(input), 0.75f, 0.000001f);
+
+    input.sustain = 0.25f;
+    REQUIRE_NEAR(adsr.Process(input), 0.25f, 0.0f);
+    REQUIRE_TRUE(adsr.GetState() == synth::AdsrProcessor::State::Sustain);
+    input.sustain = 0.6f;
+    REQUIRE_NEAR(adsr.Process(input), 0.6f, 0.0f);
+    REQUIRE_TRUE(adsr.GetState() == synth::AdsrProcessor::State::Sustain);
+
+    input.gate = false;
+    REQUIRE_NEAR(adsr.Process(input), 0.0f, 0.0f);
+    REQUIRE_TRUE(adsr.GetState() == synth::AdsrProcessor::State::Idle);
+    REQUIRE_TRUE(adsr.Output() >= 0.0f && adsr.Output() <= 1.0f);
 }
 
 TEST_CASE(ganged_random_lfo_voice_runs_wait_move_and_done_states) {
