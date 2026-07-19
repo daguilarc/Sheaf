@@ -1,0 +1,3 @@
+Committed successfully.
+
+Status: Done. Commit 74ed497 — "fix(synth): snapshot app default MIDI profile at init and assert miniapp output effects". Both findings fixed: (1) `Engine::Initialize()` now snapshots `defaultMidiProfileConfig_`/`defaultEndpoints_` right after `app_.Init()`, with a new engine regression test; (2) Tune/Shape miniapp tests now assert output-window material differences via a new `CaptureSettledOutputWindow`/`OutputWindowsDifferMaterially` helper pair, keeping parameter checks secondary. Tests: 208 passed, 0 failed, 0 compiler warnings (`make -C projects/synth test`); `make -C projects/synth/apps/miniapp` clean-rebuilds and links. Round-1 notes appended to `.superpowers/sdd/p3-task-5-report.md` (gitignored, not committed). No concerns.

@@ -1,0 +1,34 @@
+### Spec Compliance
+
+- **ssm-1 (Ownership)** — **PASS**. `StandardModulators<VoiceCount>` deletes all four special member functions (`StandardModulators.hpp:56-59`), retains a non-owning `ParameterGroup*` (`StandardModulators.hpp:43,171`), and owns all required storage as direct members: four `GangedRandomLfoProcessor<VoiceCount>`, four output/pointer rows, `NoiseModulatorProcessor`, `ConstantModulatorProcessor`, four random visualizers, one noise visualizer, one constant visualizer (`StandardModulators.hpp:239-249`). Compile-time non-copy/move assertions exist for `<1>`, `<2>`, `<4>` (`dsp_tests.cpp:405-416`). Address-stability of output rows/visualizers across `Register()` is asserted directly (`dsp_tests.cpp:504-511`, `629-634`).
+- **ssm-2 (Editable MIN-16 defaults)** — **PASS**. Defaults match exactly: random indexes `[0,1,2,3]`, constant `11`, noise `14`, names/short names/colors, and voice palette `{Cyan,Orange,Green,Yellow}` truncated to `VoiceCount` (`StandardModulators.hpp:197-224`, verified against `dsp_tests.cpp:521-593`). `Config()` throws `std::logic_error` after registration while `const Config()` remains available (`StandardModulators.hpp:65-72`, exercised at `dsp_tests.cpp:736-748`). Overrides of indexes/metadata/inputs/palette/visualizer-pointer-and-connected fields before `Register()` are honored end-to-end (`dsp_tests.cpp:659-734`).
+- **ssm-3 (Derived timing)** — **PASS**. `DefaultRandomInput` (`StandardModulators.hpp:181-195`) computes waiting `(W, 0.1W, 0.1/W)` and moving `(W/2, 0.05W, 0.2/W)`, which is algebraically identical to the spec's `(0.1·(W/2), 0.1/(W/2))` form. Hand-checked against all four spec scenarios (500 ms, 2 s, 6 s, 16 s) — every value matches exactly, and matches the processor's own `ValidateRandomTimingConfig` tolerance semantics (`DspRandomLfo.hpp:26-41`).
+- **ssm-4 (Validated registration)** — **PASS**. `ValidateConfiguration()` checks exact group shape, palette size, and active-index range/uniqueness before any mutation (`StandardModulators.hpp:251-277`); mono excludes the constant index from validation and installation via `if constexpr (VoiceCount > 1)` at both sites (`StandardModulators.hpp:109-116`, `278-281`). Rejection tests assert full atomicity by checking **all 15** modulator slots remain disconnected/unnamed after every failure mode — shape mismatch, out-of-range index, duplicate index, invalid timing, empty metadata, wrong palette size (`dsp_tests.cpp:451-458`, `750-888`). Mono constant-collision exclusion and full omission are both directly tested (`dsp_tests.cpp:890-915`). Double registration is rejected without mutation (`dsp_tests.cpp:917-933`).
+- **JUCE independence** — **PASS**. All new/touched headers (`ConstantBarVisualizer.hpp`, `NoiseWaveformVisualizer.hpp`, `GangedRandomLfoVisualizer.hpp`) include only `PortableUI.hpp`/DSP headers/stdlib; `StandardModulators.hpp` is included ahead of `dsp_tests.cpp`'s pre-existing `#ifdef JUCE_MAJOR_VERSION #error` guard (`dsp_tests.cpp:383-387`), so any transitive JUCE leak would already fail compilation.
+- **Task 2 scope** — **PASS**. No `Prepare`/`Process`/`PublishUiState`/`IsPrepared` appear anywhere in the diff; only `Config()`, `Register()`, `IsRegistered()`, and bounded inspection accessors are present. Only the three files the brief authorized (`Makefile`, `StandardModulators.hpp`, `dsp_tests.cpp`) were touched; `openspec/changes/add-standard-modulators/tasks.md` was not modified.
+
+### Strengths
+
+- Atomicity is proven, not asserted: every rejection test scans the *entire* 15-slot metadata array for `connected`, `visualizer`, `name`, `shortName`, giving strong confidence that no partial state leaks on any failure path.
+- Validation logic in `ValidateTiming`/`ValidateInput` deliberately mirrors the existing `GangedRandomLfoProcessor`'s own `detail::ValidateRandomTimingConfig` semantics (finite mean, nonnegative sigma/internal-sigma), so no divergent contract was introduced.
+- Pointer/address-stability tests capture addresses before `Register()` and re-check identity after, directly validating the "no reallocation on registration" ownership claim rather than trusting it.
+- Mono's `if constexpr (VoiceCount > 1)` is applied symmetrically at both validation and installation, cleanly preventing the "monophonic constant zero" leak called out in design.md's risk list.
+- Test helper `RequireStandardModulatorOwnedShape<VoiceCount>()` is reused across `<1>`, `<2>`, `<4>` rather than duplicated per specialization.
+
+### Issues
+
+**Critical:** None.
+
+**Important:** None.
+
+**Minor:**
+- `StandardModulators.hpp:51-52` — `noiseVisualizer_` and `constantVisualizer_` are constructed with hardcoded `Color::White`/`Color::Yellow` and never re-derived from `config_.noiseMetadata.sourceColor`/`config_.constantMetadata.sourceColor` at `Register()` time, unlike the random voice palette, which *is* reapplied from config at `StandardModulators.hpp:96`. A caller who overrides the noise/constant source color pre-registration (as `dsp_tests.cpp:679-683` itself does) gets a group metadata badge that reflects the override but a wrapper-owned visualizer that silently keeps rendering the old default — no accessor currently exists to even observe or test this. Low real-world impact for Task 1 (no downstream task overrides these colors), but worth a follow-up fix or an explicit non-goal note before Task 3/4 adopt customized palettes.
+- `StandardModulators.hpp:15` — `#include <span>` is unused in this header (no `std::span` usage in the file).
+- `Makefile:29` — `STANDARD_MODULATOR_HEADERS` omits `include/synth/ParameterModulation.hpp` even though `StandardModulators.hpp` includes it and depends on `ModulatorMetadata`/`ParameterGroup`; a change to that header won't trigger a `dsp_tests` rebuild. This mirrors a pre-existing gap in `DSP_HEADERS` (not a regression introduced by this diff), so it's not blocking.
+- Build/test execution (RED/GREEN claims, "-Wall -Wextra -Wpedantic clean") was not independently re-run per this review's read-only scope; treated as an unverified implementer claim rather than confirmed fact.
+
+### Assessment
+
+Task quality: **Approved**
+
+All four in-scope requirements (ssm-1 through ssm-4) are satisfied with strong, atomicity-proving test coverage, correct pointer/address stability, correct mono-constant exclusion, and correctly derived timing formulas. No Task 2 lifecycle behavior leaked into this commit. The one substantive gap found (noise/constant visualizer color not tracking a metadata override) is cosmetic, untested, and has no current consumer — flag it for a quick fix alongside Task 2/3 rather than blocking this task.

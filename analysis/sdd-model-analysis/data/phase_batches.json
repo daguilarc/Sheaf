@@ -1,0 +1,1097 @@
+[
+ {
+  "batch": 0,
+  "items": [
+   {
+    "session_key": "claude-agent-a02e6151ab016836c",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a02e6151ab016836c.md",
+    "bytes": 24024
+   },
+   {
+    "session_key": "claude-agent-a03122e3e6903e2f7",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a03122e3e6903e2f7.md",
+    "bytes": 22142
+   },
+   {
+    "session_key": "claude-agent-a0a1215d50d384b80",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a0a1215d50d384b80.md",
+    "bytes": 42937
+   },
+   {
+    "session_key": "claude-agent-a0b33496fbc77d098",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a0b33496fbc77d098.md",
+    "bytes": 28094
+   },
+   {
+    "session_key": "claude-agent-a0da9df871bb862e0",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a0da9df871bb862e0.md",
+    "bytes": 7564
+   },
+   {
+    "session_key": "claude-agent-a215cf9fcbb04b8ed",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a215cf9fcbb04b8ed.md",
+    "bytes": 15620
+   },
+   {
+    "session_key": "claude-agent-a221f1c6394488b70",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a221f1c6394488b70.md",
+    "bytes": 26053
+   },
+   {
+    "session_key": "claude-agent-a2b11bae89d75c8f7",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a2b11bae89d75c8f7.md",
+    "bytes": 53676
+   },
+   {
+    "session_key": "claude-agent-a2f8aed674fe3f8c1",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a2f8aed674fe3f8c1.md",
+    "bytes": 16361
+   },
+   {
+    "session_key": "claude-agent-a305238380cc52008",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a305238380cc52008.md",
+    "bytes": 40337
+   },
+   {
+    "session_key": "claude-agent-a30b552aff140d01d",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a30b552aff140d01d.md",
+    "bytes": 4531
+   },
+   {
+    "session_key": "claude-agent-a37941a68ece2dca7",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a37941a68ece2dca7.md",
+    "bytes": 21104
+   }
+  ]
+ },
+ {
+  "batch": 1,
+  "items": [
+   {
+    "session_key": "claude-agent-a448414c293366831",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a448414c293366831.md",
+    "bytes": 73692
+   },
+   {
+    "session_key": "claude-agent-a4f80471e23f06661",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a4f80471e23f06661.md",
+    "bytes": 39285
+   },
+   {
+    "session_key": "claude-agent-a61cc908fe05041df",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a61cc908fe05041df.md",
+    "bytes": 51558
+   },
+   {
+    "session_key": "claude-agent-a6d6bbbd0a44f415e",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a6d6bbbd0a44f415e.md",
+    "bytes": 49715
+   },
+   {
+    "session_key": "claude-agent-a7451cb17e2e8b3ad",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a7451cb17e2e8b3ad.md",
+    "bytes": 103276
+   },
+   {
+    "session_key": "claude-agent-a785a8022a530eefa",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a785a8022a530eefa.md",
+    "bytes": 69777
+   },
+   {
+    "session_key": "claude-agent-a8be0b03961aa7d62",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a8be0b03961aa7d62.md",
+    "bytes": 63925
+   },
+   {
+    "session_key": "claude-agent-a90d130e9ef749719",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-a90d130e9ef749719.md",
+    "bytes": 11423
+   },
+   {
+    "session_key": "claude-agent-aa42764075a43edb0",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-aa42764075a43edb0.md",
+    "bytes": 25970
+   },
+   {
+    "session_key": "claude-agent-aaaea8fe711eb2e99",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-aaaea8fe711eb2e99.md",
+    "bytes": 17874
+   },
+   {
+    "session_key": "claude-agent-aac1d811c01f33fdd",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-aac1d811c01f33fdd.md",
+    "bytes": 107408
+   },
+   {
+    "session_key": "claude-agent-aac2bd83498af74fd",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-aac2bd83498af74fd.md",
+    "bytes": 9439
+   }
+  ]
+ },
+ {
+  "batch": 2,
+  "items": [
+   {
+    "session_key": "claude-agent-aadbcfa4cee0b84de",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-aadbcfa4cee0b84de.md",
+    "bytes": 15017
+   },
+   {
+    "session_key": "claude-agent-aae1325e84ee1f568",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-aae1325e84ee1f568.md",
+    "bytes": 34182
+   },
+   {
+    "session_key": "claude-agent-ab8fc30b0c3562ca4",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-ab8fc30b0c3562ca4.md",
+    "bytes": 12918
+   },
+   {
+    "session_key": "claude-agent-ab916ab3e45d47378",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-ab916ab3e45d47378.md",
+    "bytes": 8514
+   },
+   {
+    "session_key": "claude-agent-abdea4639dbf9b9a8",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-abdea4639dbf9b9a8.md",
+    "bytes": 9564
+   },
+   {
+    "session_key": "claude-agent-abe1e2fba0b467fd1",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-abe1e2fba0b467fd1.md",
+    "bytes": 14794
+   },
+   {
+    "session_key": "claude-agent-abe66b7f712bd2f9f",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-abe66b7f712bd2f9f.md",
+    "bytes": 27927
+   },
+   {
+    "session_key": "claude-agent-abe7c41d955486561",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-abe7c41d955486561.md",
+    "bytes": 4552
+   },
+   {
+    "session_key": "claude-agent-abfc4b7f5535a85a8",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-abfc4b7f5535a85a8.md",
+    "bytes": 29062
+   },
+   {
+    "session_key": "claude-agent-ac3653d20a6fc2fa4",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-ac3653d20a6fc2fa4.md",
+    "bytes": 113043
+   },
+   {
+    "session_key": "claude-agent-ac5d17f97973c83d2",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-ac5d17f97973c83d2.md",
+    "bytes": 29970
+   },
+   {
+    "session_key": "claude-agent-ad22419af3cfe028c",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-ad22419af3cfe028c.md",
+    "bytes": 67305
+   }
+  ]
+ },
+ {
+  "batch": 3,
+  "items": [
+   {
+    "session_key": "claude-agent-ad29d6f6a1800e686",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-ad29d6f6a1800e686.md",
+    "bytes": 55162
+   },
+   {
+    "session_key": "claude-agent-ad7ef9d72f28539ea",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-ad7ef9d72f28539ea.md",
+    "bytes": 48177
+   },
+   {
+    "session_key": "claude-agent-adc8f78dd2c9aa873",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-adc8f78dd2c9aa873.md",
+    "bytes": 27866
+   },
+   {
+    "session_key": "claude-agent-adddbb6b98d36ce78",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-adddbb6b98d36ce78.md",
+    "bytes": 41643
+   },
+   {
+    "session_key": "claude-agent-adddda5ec5dabdbd9",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-adddda5ec5dabdbd9.md",
+    "bytes": 43379
+   },
+   {
+    "session_key": "claude-agent-adeae0e1b67ef447d",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-adeae0e1b67ef447d.md",
+    "bytes": 74926
+   },
+   {
+    "session_key": "claude-agent-ae01c59c941d80862",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-ae01c59c941d80862.md",
+    "bytes": 26368
+   },
+   {
+    "session_key": "claude-agent-ae6cdef597f355757",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-ae6cdef597f355757.md",
+    "bytes": 19927
+   },
+   {
+    "session_key": "claude-agent-af33e30b263abdbd6",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-af33e30b263abdbd6.md",
+    "bytes": 43959
+   },
+   {
+    "session_key": "claude-agent-af700f5cde93d8fcf",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-af700f5cde93d8fcf.md",
+    "bytes": 13330
+   },
+   {
+    "session_key": "claude-agent-af9829819efc1bfb1",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/claude-agent-af9829819efc1bfb1.md",
+    "bytes": 14954
+   },
+   {
+    "session_key": "codex-019ed4a7-9e19-7971-ad92-625a5d0c40e0",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019ed4a7-9e19-7971-ad92-625a5d0c40e0.md",
+    "bytes": 14711
+   }
+  ]
+ },
+ {
+  "batch": 4,
+  "items": [
+   {
+    "session_key": "codex-019ed4b6-b099-76e1-b098-e94a957e6a3c",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019ed4b6-b099-76e1-b098-e94a957e6a3c.md",
+    "bytes": 22462
+   },
+   {
+    "session_key": "codex-019ed4c7-1851-7581-a282-b8ef335b4eaa",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019ed4c7-1851-7581-a282-b8ef335b4eaa.md",
+    "bytes": 47453
+   },
+   {
+    "session_key": "codex-019edbbf-dbfe-7022-bd7c-ccd929883c21",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019edbbf-dbfe-7022-bd7c-ccd929883c21.md",
+    "bytes": 20941
+   },
+   {
+    "session_key": "codex-019edbcf-22ac-7981-bfcd-42a0a560cbcd",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019edbcf-22ac-7981-bfcd-42a0a560cbcd.md",
+    "bytes": 19157
+   },
+   {
+    "session_key": "codex-019ede99-9c32-7c81-8392-83b74723e1a6",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019ede99-9c32-7c81-8392-83b74723e1a6.md",
+    "bytes": 25461
+   },
+   {
+    "session_key": "codex-019ee8e1-0bf9-7533-aaf7-3595077b43f7",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019ee8e1-0bf9-7533-aaf7-3595077b43f7.md",
+    "bytes": 20233
+   },
+   {
+    "session_key": "codex-019ee8e9-871b-7743-a16e-94bddd8f533c",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019ee8e9-871b-7743-a16e-94bddd8f533c.md",
+    "bytes": 48654
+   },
+   {
+    "session_key": "codex-019ee8fa-8f69-7251-9f5b-552ad26b31b1",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019ee8fa-8f69-7251-9f5b-552ad26b31b1.md",
+    "bytes": 34015
+   },
+   {
+    "session_key": "codex-019ee907-a9b5-7973-a0c3-d4a6b379a71f",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019ee907-a9b5-7973-a0c3-d4a6b379a71f.md",
+    "bytes": 14974
+   },
+   {
+    "session_key": "codex-019ee90d-0127-7f50-bffe-7c20f919d8b4",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019ee90d-0127-7f50-bffe-7c20f919d8b4.md",
+    "bytes": 17333
+   },
+   {
+    "session_key": "codex-019ee915-7617-7761-af05-344708f30622",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019ee915-7617-7761-af05-344708f30622.md",
+    "bytes": 2738
+   },
+   {
+    "session_key": "codex-019efcab-f35d-7302-a083-aadd31ba3bf2",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019efcab-f35d-7302-a083-aadd31ba3bf2.md",
+    "bytes": 10921
+   }
+  ]
+ },
+ {
+  "batch": 5,
+  "items": [
+   {
+    "session_key": "codex-019f15be-722b-75f0-92de-b1db736bf91d",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f15be-722b-75f0-92de-b1db736bf91d.md",
+    "bytes": 23516
+   },
+   {
+    "session_key": "codex-019f15ce-d9e7-7a01-a124-08689310df52",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f15ce-d9e7-7a01-a124-08689310df52.md",
+    "bytes": 23418
+   },
+   {
+    "session_key": "codex-019f19d7-64c1-7282-821f-cc9b1a43a1d2",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f19d7-64c1-7282-821f-cc9b1a43a1d2.md",
+    "bytes": 24462
+   },
+   {
+    "session_key": "codex-019f19e3-d2f9-78c3-851b-0002e860a5b3",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f19e3-d2f9-78c3-851b-0002e860a5b3.md",
+    "bytes": 32088
+   },
+   {
+    "session_key": "codex-019f242b-aa6c-7f71-a5a4-c36dc0f1cedf",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f242b-aa6c-7f71-a5a4-c36dc0f1cedf.md",
+    "bytes": 16455
+   },
+   {
+    "session_key": "codex-019f2430-9906-70e3-bb9e-da570d566589",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f2430-9906-70e3-bb9e-da570d566589.md",
+    "bytes": 21033
+   },
+   {
+    "session_key": "codex-019f243f-2331-7100-852b-d09a4be8a5d3",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f243f-2331-7100-852b-d09a4be8a5d3.md",
+    "bytes": 25116
+   },
+   {
+    "session_key": "codex-019f244e-3236-7992-973c-c0db679c4945",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f244e-3236-7992-973c-c0db679c4945.md",
+    "bytes": 28426
+   },
+   {
+    "session_key": "codex-019f25d0-e973-7ba2-a1c6-cc901e6a0d3d",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f25d0-e973-7ba2-a1c6-cc901e6a0d3d.md",
+    "bytes": 14403
+   },
+   {
+    "session_key": "codex-019f25d7-9ab4-74f3-bc42-b219a591e6d9",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f25d7-9ab4-74f3-bc42-b219a591e6d9.md",
+    "bytes": 27694
+   },
+   {
+    "session_key": "codex-019f25e5-478e-7c32-aece-c3814b824b9c",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f25e5-478e-7c32-aece-c3814b824b9c.md",
+    "bytes": 47520
+   },
+   {
+    "session_key": "codex-019f25f3-ceb3-7990-9e68-064d4e249e85",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f25f3-ceb3-7990-9e68-064d4e249e85.md",
+    "bytes": 25370
+   }
+  ]
+ },
+ {
+  "batch": 6,
+  "items": [
+   {
+    "session_key": "codex-019f2fdb-00c5-7101-b84b-8bc0b8ab03c6",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f2fdb-00c5-7101-b84b-8bc0b8ab03c6.md",
+    "bytes": 32440
+   },
+   {
+    "session_key": "codex-019f3855-805a-7920-a696-ec5184bac3a0",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3855-805a-7920-a696-ec5184bac3a0.md",
+    "bytes": 17574
+   },
+   {
+    "session_key": "codex-019f3859-d99c-7700-bbf3-5e4b6830ad38",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3859-d99c-7700-bbf3-5e4b6830ad38.md",
+    "bytes": 10652
+   },
+   {
+    "session_key": "codex-019f385e-16b6-7353-a76e-fecd998634fb",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f385e-16b6-7353-a76e-fecd998634fb.md",
+    "bytes": 12477
+   },
+   {
+    "session_key": "codex-019f3864-6c93-7921-9191-20ada0efcc64",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3864-6c93-7921-9191-20ada0efcc64.md",
+    "bytes": 26554
+   },
+   {
+    "session_key": "codex-019f3871-4968-73a3-b9ce-e612a05f4665",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3871-4968-73a3-b9ce-e612a05f4665.md",
+    "bytes": 48712
+   },
+   {
+    "session_key": "codex-019f396d-f392-7041-82b1-1650c491ce38",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f396d-f392-7041-82b1-1650c491ce38.md",
+    "bytes": 28288
+   },
+   {
+    "session_key": "codex-019f3977-f1a9-7e31-b42f-c2bab8a23c2f",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3977-f1a9-7e31-b42f-c2bab8a23c2f.md",
+    "bytes": 23481
+   },
+   {
+    "session_key": "codex-019f3981-f269-7be1-9259-add86209df37",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3981-f269-7be1-9259-add86209df37.md",
+    "bytes": 19655
+   },
+   {
+    "session_key": "codex-019f398a-857b-7ae3-88bf-9d028f75697f",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f398a-857b-7ae3-88bf-9d028f75697f.md",
+    "bytes": 25137
+   },
+   {
+    "session_key": "codex-019f3991-88c4-7e81-956d-e8913d410165",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3991-88c4-7e81-956d-e8913d410165.md",
+    "bytes": 16915
+   },
+   {
+    "session_key": "codex-019f3995-63a0-72b2-a6cf-a01da441e245",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3995-63a0-72b2-a6cf-a01da441e245.md",
+    "bytes": 21614
+   }
+  ]
+ },
+ {
+  "batch": 7,
+  "items": [
+   {
+    "session_key": "codex-019f3b0b-ad9b-7920-b92b-599bb8628d7f",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3b0b-ad9b-7920-b92b-599bb8628d7f.md",
+    "bytes": 16464
+   },
+   {
+    "session_key": "codex-019f3b14-737a-7270-8abc-cce6a0cf110e",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3b14-737a-7270-8abc-cce6a0cf110e.md",
+    "bytes": 19246
+   },
+   {
+    "session_key": "codex-019f3b1e-1749-7d31-a2cd-31eb96aa9540",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3b1e-1749-7d31-a2cd-31eb96aa9540.md",
+    "bytes": 25041
+   },
+   {
+    "session_key": "codex-019f3b29-e3bd-7b32-a2cf-213a1a54e767",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3b29-e3bd-7b32-a2cf-213a1a54e767.md",
+    "bytes": 25327
+   },
+   {
+    "session_key": "codex-019f3b34-7605-70f1-8ad3-dd8beae85b6b",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3b34-7605-70f1-8ad3-dd8beae85b6b.md",
+    "bytes": 21219
+   },
+   {
+    "session_key": "codex-019f3b44-c982-75a3-8081-ef6e05726eef",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3b44-c982-75a3-8081-ef6e05726eef.md",
+    "bytes": 27306
+   },
+   {
+    "session_key": "codex-019f3f0f-9681-7602-9eb3-b0ac453e1cda",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3f0f-9681-7602-9eb3-b0ac453e1cda.md",
+    "bytes": 18033
+   },
+   {
+    "session_key": "codex-019f3f15-8726-7fa3-b003-a460a0966133",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3f15-8726-7fa3-b003-a460a0966133.md",
+    "bytes": 15426
+   },
+   {
+    "session_key": "codex-019f3f19-fb4c-7a02-ae11-5fa671e5d465",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3f19-fb4c-7a02-ae11-5fa671e5d465.md",
+    "bytes": 32579
+   },
+   {
+    "session_key": "codex-019f3f2b-c074-7363-9fa3-00e3ce442ef6",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3f2b-c074-7363-9fa3-00e3ce442ef6.md",
+    "bytes": 17130
+   },
+   {
+    "session_key": "codex-019f4027-0b1a-7fa2-8d19-97d2ad9e20a6",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4027-0b1a-7fa2-8d19-97d2ad9e20a6.md",
+    "bytes": 1855
+   },
+   {
+    "session_key": "codex-019f4039-39a5-7c10-8891-2ddc1b81130d",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4039-39a5-7c10-8891-2ddc1b81130d.md",
+    "bytes": 24299
+   }
+  ]
+ },
+ {
+  "batch": 8,
+  "items": [
+   {
+    "session_key": "codex-019f4040-9448-7773-af62-cd485b35bdd0",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4040-9448-7773-af62-cd485b35bdd0.md",
+    "bytes": 25299
+   },
+   {
+    "session_key": "codex-019f4047-9462-77a0-bbda-3183a7cb7c14",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4047-9462-77a0-bbda-3183a7cb7c14.md",
+    "bytes": 33373
+   },
+   {
+    "session_key": "codex-019f4050-9438-7c61-8a55-05dfea08df19",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4050-9438-7c61-8a55-05dfea08df19.md",
+    "bytes": 31157
+   },
+   {
+    "session_key": "codex-019f4059-d5e6-78b1-ae5f-7bc2e66717cc",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4059-d5e6-78b1-ae5f-7bc2e66717cc.md",
+    "bytes": 33949
+   },
+   {
+    "session_key": "codex-019f4063-c063-7a23-8803-8a914412c9ed",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4063-c063-7a23-8803-8a914412c9ed.md",
+    "bytes": 30516
+   },
+   {
+    "session_key": "codex-019f406f-0e11-78c3-9458-095f07760771",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f406f-0e11-78c3-9458-095f07760771.md",
+    "bytes": 17350
+   },
+   {
+    "session_key": "codex-019f4073-889d-72c1-91eb-d9690f669477",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4073-889d-72c1-91eb-d9690f669477.md",
+    "bytes": 23238
+   },
+   {
+    "session_key": "codex-019f4078-b7d8-7fd2-8b6d-4a44b8f69b63",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4078-b7d8-7fd2-8b6d-4a44b8f69b63.md",
+    "bytes": 45159
+   },
+   {
+    "session_key": "codex-019f487c-1c1a-7960-9e9b-e878320badf7",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f487c-1c1a-7960-9e9b-e878320badf7.md",
+    "bytes": 11098
+   },
+   {
+    "session_key": "codex-019f4886-772b-7c61-bf6f-ad614bef226d",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4886-772b-7c61-bf6f-ad614bef226d.md",
+    "bytes": 6409
+   },
+   {
+    "session_key": "codex-019f488c-a225-7342-85cd-973d56ed0932",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f488c-a225-7342-85cd-973d56ed0932.md",
+    "bytes": 7725
+   },
+   {
+    "session_key": "codex-019f489c-5a68-7390-9568-4eb783d61d33",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f489c-5a68-7390-9568-4eb783d61d33.md",
+    "bytes": 12023
+   }
+  ]
+ },
+ {
+  "batch": 9,
+  "items": [
+   {
+    "session_key": "codex-019f48ab-592c-7d63-b1b7-8ed029f4e6cf",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f48ab-592c-7d63-b1b7-8ed029f4e6cf.md",
+    "bytes": 5758
+   },
+   {
+    "session_key": "codex-019f48b0-9cf9-75d2-81e3-8577b341f95d",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f48b0-9cf9-75d2-81e3-8577b341f95d.md",
+    "bytes": 18394
+   },
+   {
+    "session_key": "codex-019f48b2-803e-73a1-a715-52aebe437030",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f48b2-803e-73a1-a715-52aebe437030.md",
+    "bytes": 11808
+   },
+   {
+    "session_key": "codex-019f48c7-f823-7161-9a3a-8707dd863316",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f48c7-f823-7161-9a3a-8707dd863316.md",
+    "bytes": 11280
+   },
+   {
+    "session_key": "codex-019f48da-6781-7973-b7e6-cfd1595cb45e",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f48da-6781-7973-b7e6-cfd1595cb45e.md",
+    "bytes": 5119
+   },
+   {
+    "session_key": "codex-019f48de-81f9-70a0-966b-de455deaf7fc",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f48de-81f9-70a0-966b-de455deaf7fc.md",
+    "bytes": 14164
+   },
+   {
+    "session_key": "codex-019f48f7-d9fe-7801-aab7-3524ce5878b4",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f48f7-d9fe-7801-aab7-3524ce5878b4.md",
+    "bytes": 11952
+   },
+   {
+    "session_key": "codex-019f4909-8511-7aa2-b7bd-a5508c13e877",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4909-8511-7aa2-b7bd-a5508c13e877.md",
+    "bytes": 20599
+   },
+   {
+    "session_key": "codex-019f4aa7-1de9-7e50-973f-924cf6766e80",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4aa7-1de9-7e50-973f-924cf6766e80.md",
+    "bytes": 9417
+   },
+   {
+    "session_key": "codex-019f4abc-f898-7233-9629-1089b3e5c73e",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4abc-f898-7233-9629-1089b3e5c73e.md",
+    "bytes": 6953
+   },
+   {
+    "session_key": "codex-019f4ac5-b183-79c2-b052-5b4028a972e0",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4ac5-b183-79c2-b052-5b4028a972e0.md",
+    "bytes": 26275
+   },
+   {
+    "session_key": "codex-019f4d0e-fc36-7532-9676-a8abe9bba126",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4d0e-fc36-7532-9676-a8abe9bba126.md",
+    "bytes": 4068
+   }
+  ]
+ },
+ {
+  "batch": 10,
+  "items": [
+   {
+    "session_key": "codex-019f4d5c-8587-7c63-831e-f7abc13d2897",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4d5c-8587-7c63-831e-f7abc13d2897.md",
+    "bytes": 19006
+   },
+   {
+    "session_key": "codex-019f4d64-6090-7830-a007-4bcb770fc663",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4d64-6090-7830-a007-4bcb770fc663.md",
+    "bytes": 28444
+   },
+   {
+    "session_key": "codex-019f4d78-c055-7352-9403-5cf917e8b3f6",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4d78-c055-7352-9403-5cf917e8b3f6.md",
+    "bytes": 9414
+   },
+   {
+    "session_key": "codex-019f4d7f-3ef9-7591-8201-d149d82d8f10",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4d7f-3ef9-7591-8201-d149d82d8f10.md",
+    "bytes": 15227
+   },
+   {
+    "session_key": "codex-019f4e52-09ba-7921-8ff0-930b010f5931",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4e52-09ba-7921-8ff0-930b010f5931.md",
+    "bytes": 22152
+   },
+   {
+    "session_key": "codex-019f4e5e-3956-7ab0-a100-de86179af2b6",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4e5e-3956-7ab0-a100-de86179af2b6.md",
+    "bytes": 37339
+   },
+   {
+    "session_key": "codex-019f4e75-f047-70f2-95c3-40ceb3fc71bd",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4e75-f047-70f2-95c3-40ceb3fc71bd.md",
+    "bytes": 19453
+   },
+   {
+    "session_key": "codex-019f4eb2-5571-7813-ac99-22828cf2c7e2",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4eb2-5571-7813-ac99-22828cf2c7e2.md",
+    "bytes": 58282
+   },
+   {
+    "session_key": "codex-019f4f94-411f-7db2-adeb-e41991fdf2e5",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4f94-411f-7db2-adeb-e41991fdf2e5.md",
+    "bytes": 3854
+   },
+   {
+    "session_key": "codex-019f4f97-628e-76e2-bf30-a22815a34de9",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4f97-628e-76e2-bf30-a22815a34de9.md",
+    "bytes": 4765
+   },
+   {
+    "session_key": "codex-019f4f9a-b69d-7961-957c-e922eb422d1b",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4f9a-b69d-7961-957c-e922eb422d1b.md",
+    "bytes": 6058
+   },
+   {
+    "session_key": "codex-019f4f9f-b755-7ee0-b350-2a985cdbb6ca",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4f9f-b755-7ee0-b350-2a985cdbb6ca.md",
+    "bytes": 4619
+   }
+  ]
+ },
+ {
+  "batch": 11,
+  "items": [
+   {
+    "session_key": "codex-019f53ef-97ef-7b22-a962-ae50e218ca43",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f53ef-97ef-7b22-a962-ae50e218ca43.md",
+    "bytes": 7467
+   },
+   {
+    "session_key": "codex-019f53f8-da87-7691-9587-3fa25eadfae3",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f53f8-da87-7691-9587-3fa25eadfae3.md",
+    "bytes": 3483
+   },
+   {
+    "session_key": "codex-019f53fe-068d-76a0-8443-4c0e70ad57bb",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f53fe-068d-76a0-8443-4c0e70ad57bb.md",
+    "bytes": 7761
+   },
+   {
+    "session_key": "codex-019f540b-3f98-7782-ae84-55fefdad5ad5",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f540b-3f98-7782-ae84-55fefdad5ad5.md",
+    "bytes": 2645
+   },
+   {
+    "session_key": "codex-019f5413-467f-7050-9031-428f582905f4",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5413-467f-7050-9031-428f582905f4.md",
+    "bytes": 3768
+   },
+   {
+    "session_key": "codex-019f5419-42e8-79a0-98f3-161dd1652c0e",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5419-42e8-79a0-98f3-161dd1652c0e.md",
+    "bytes": 1270
+   },
+   {
+    "session_key": "codex-019f541a-80bc-70b0-abd0-474cd6693949",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f541a-80bc-70b0-abd0-474cd6693949.md",
+    "bytes": 6138
+   },
+   {
+    "session_key": "codex-019f5422-2424-74c0-8c59-3bea9860bf11",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5422-2424-74c0-8c59-3bea9860bf11.md",
+    "bytes": 1341
+   },
+   {
+    "session_key": "codex-019f5423-92ef-74e0-a1ed-1cf58d6ae00e",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5423-92ef-74e0-a1ed-1cf58d6ae00e.md",
+    "bytes": 3935
+   },
+   {
+    "session_key": "codex-019f5428-ce1d-7610-a94d-744c351f7ce5",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5428-ce1d-7610-a94d-744c351f7ce5.md",
+    "bytes": 2071
+   },
+   {
+    "session_key": "codex-019f542a-8822-7e82-8dd7-ef639e9dab4b",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f542a-8822-7e82-8dd7-ef639e9dab4b.md",
+    "bytes": 4035
+   },
+   {
+    "session_key": "codex-019f572f-9552-78d1-b83b-1b85b5d19210",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f572f-9552-78d1-b83b-1b85b5d19210.md",
+    "bytes": 17200
+   }
+  ]
+ },
+ {
+  "batch": 12,
+  "items": [
+   {
+    "session_key": "codex-019f5771-373f-75e2-8cd6-6d3ef2cd8e0f",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5771-373f-75e2-8cd6-6d3ef2cd8e0f.md",
+    "bytes": 25406
+   },
+   {
+    "session_key": "codex-019f5779-22ee-76d1-862b-2bf75b7118af",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5779-22ee-76d1-862b-2bf75b7118af.md",
+    "bytes": 24723
+   },
+   {
+    "session_key": "codex-019f5780-2555-7202-91fa-41d5ba958cff",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5780-2555-7202-91fa-41d5ba958cff.md",
+    "bytes": 27473
+   },
+   {
+    "session_key": "codex-019f578a-bc61-7780-8728-1d83c373c2d4",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f578a-bc61-7780-8728-1d83c373c2d4.md",
+    "bytes": 22002
+   },
+   {
+    "session_key": "codex-019f5791-aebb-7093-b292-86f7e9de4903",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5791-aebb-7093-b292-86f7e9de4903.md",
+    "bytes": 15387
+   },
+   {
+    "session_key": "codex-019f595c-357f-7ad0-8f6e-1d68cf112041",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f595c-357f-7ad0-8f6e-1d68cf112041.md",
+    "bytes": 4609
+   },
+   {
+    "session_key": "codex-019f5965-a8ae-7111-8f9c-5d48959ce732",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5965-a8ae-7111-8f9c-5d48959ce732.md",
+    "bytes": 6488
+   },
+   {
+    "session_key": "codex-019f5974-3c22-7032-8d2e-16dc5ce44c7a",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5974-3c22-7032-8d2e-16dc5ce44c7a.md",
+    "bytes": 14831
+   },
+   {
+    "session_key": "codex-019f5979-c89b-7103-8efa-b35f953fb043",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5979-c89b-7103-8efa-b35f953fb043.md",
+    "bytes": 3424
+   },
+   {
+    "session_key": "codex-019f5989-da17-7bd1-8c62-9eb6142edb68",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5989-da17-7bd1-8c62-9eb6142edb68.md",
+    "bytes": 8825
+   },
+   {
+    "session_key": "codex-019f59a2-51e6-7820-b055-96e0e0c82bf1",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f59a2-51e6-7820-b055-96e0e0c82bf1.md",
+    "bytes": 10698
+   },
+   {
+    "session_key": "codex-019f59a8-4d91-7c40-9857-67ed2c88c59f",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f59a8-4d91-7c40-9857-67ed2c88c59f.md",
+    "bytes": 5151
+   }
+  ]
+ },
+ {
+  "batch": 13,
+  "items": [
+   {
+    "session_key": "codex-019f59b4-0be9-7fd2-9ce1-087cc62bda7a",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f59b4-0be9-7fd2-9ce1-087cc62bda7a.md",
+    "bytes": 13873
+   },
+   {
+    "session_key": "codex-019f59b9-bed1-7c33-8aa6-055df84220e0",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f59b9-bed1-7c33-8aa6-055df84220e0.md",
+    "bytes": 2939
+   },
+   {
+    "session_key": "codex-019f59c6-d8ef-70d2-b4ab-d56d3ab9d5ba",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f59c6-d8ef-70d2-b4ab-d56d3ab9d5ba.md",
+    "bytes": 6543
+   },
+   {
+    "session_key": "codex-019f68cd-bbdf-73c3-ba1e-b095f7a45dee",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f68cd-bbdf-73c3-ba1e-b095f7a45dee.md",
+    "bytes": 3179
+   },
+   {
+    "session_key": "codex-019f68dd-e7bf-70e3-9b27-0884d0bc65b2",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f68dd-e7bf-70e3-9b27-0884d0bc65b2.md",
+    "bytes": 3802
+   },
+   {
+    "session_key": "codex-019f68e8-2c23-7300-b501-6625567e2414",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f68e8-2c23-7300-b501-6625567e2414.md",
+    "bytes": 3317
+   },
+   {
+    "session_key": "codex-019f68f8-1f87-7072-8dc3-7c8b6cfcbd69",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f68f8-1f87-7072-8dc3-7c8b6cfcbd69.md",
+    "bytes": 14524
+   },
+   {
+    "session_key": "codex-019f691d-cd73-75e2-ae9e-bd7fc362c01d",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f691d-cd73-75e2-ae9e-bd7fc362c01d.md",
+    "bytes": 10428
+   },
+   {
+    "session_key": "codex-019f69e8-f215-7fa0-97b5-5ec264497dea",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f69e8-f215-7fa0-97b5-5ec264497dea.md",
+    "bytes": 15686
+   },
+   {
+    "session_key": "codex-019f6a05-d70d-7cf3-a706-7ea475500310",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6a05-d70d-7cf3-a706-7ea475500310.md",
+    "bytes": 9326
+   },
+   {
+    "session_key": "codex-019f6a1e-2f8f-78d3-91b4-8466769dcb34",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6a1e-2f8f-78d3-91b4-8466769dcb34.md",
+    "bytes": 4070
+   },
+   {
+    "session_key": "codex-019f6a29-f513-7023-ae2d-a9583df69a4a",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6a29-f513-7023-ae2d-a9583df69a4a.md",
+    "bytes": 6594
+   }
+  ]
+ },
+ {
+  "batch": 14,
+  "items": [
+   {
+    "session_key": "codex-019f6bd7-76d9-7041-b380-4525d33f61ed",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6bd7-76d9-7041-b380-4525d33f61ed.md",
+    "bytes": 17802
+   },
+   {
+    "session_key": "codex-019f6db7-49ee-7122-b93a-a47ab3b2fa51",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6db7-49ee-7122-b93a-a47ab3b2fa51.md",
+    "bytes": 2939
+   },
+   {
+    "session_key": "codex-019f6dc4-2c74-7f50-9987-6eab4a1dccfb",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6dc4-2c74-7f50-9987-6eab4a1dccfb.md",
+    "bytes": 4823
+   },
+   {
+    "session_key": "codex-019f6dd3-3cda-74a1-a37c-427af6fc0265",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6dd3-3cda-74a1-a37c-427af6fc0265.md",
+    "bytes": 5897
+   },
+   {
+    "session_key": "codex-019f6e79-8489-7251-8ba9-d41c669700a7",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6e79-8489-7251-8ba9-d41c669700a7.md",
+    "bytes": 10720
+   },
+   {
+    "session_key": "codex-019f6e93-cd3f-7b20-abce-b0413b0bb9b0",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6e93-cd3f-7b20-abce-b0413b0bb9b0.md",
+    "bytes": 12140
+   },
+   {
+    "session_key": "codex-019f6ea3-a030-7533-8a41-08b6ebf1b4c4",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6ea3-a030-7533-8a41-08b6ebf1b4c4.md",
+    "bytes": 7708
+   },
+   {
+    "session_key": "codex-019f6ebb-9dd9-7fa2-8fd7-b39316e860fd",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6ebb-9dd9-7fa2-8fd7-b39316e860fd.md",
+    "bytes": 6652
+   },
+   {
+    "session_key": "codex-019f6ec7-145a-7820-a766-6d755b8b75a9",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6ec7-145a-7820-a766-6d755b8b75a9.md",
+    "bytes": 2396
+   },
+   {
+    "session_key": "codex-019f6ed0-adcc-7551-baf0-339f894cde27",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6ed0-adcc-7551-baf0-339f894cde27.md",
+    "bytes": 8752
+   },
+   {
+    "session_key": "codex-019f6ee9-7d8b-7061-81b6-94ae9fe1e16d",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6ee9-7d8b-7061-81b6-94ae9fe1e16d.md",
+    "bytes": 4564
+   },
+   {
+    "session_key": "codex-019f76ef-8711-7671-ab52-4f82109b6012",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f76ef-8711-7671-ab52-4f82109b6012.md",
+    "bytes": 3922
+   }
+  ]
+ },
+ {
+  "batch": 15,
+  "items": [
+   {
+    "session_key": "codex-019f76f6-d88c-76c0-9a5e-8b071bac21f8",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f76f6-d88c-76c0-9a5e-8b071bac21f8.md",
+    "bytes": 5197
+   },
+   {
+    "session_key": "codex-019f76ff-0f4d-7412-a30c-3799cbd4fca3",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f76ff-0f4d-7412-a30c-3799cbd4fca3.md",
+    "bytes": 4884
+   },
+   {
+    "session_key": "codex-019f78eb-2dd9-7242-8208-e5014ee9009e",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f78eb-2dd9-7242-8208-e5014ee9009e.md",
+    "bytes": 8224
+   },
+   {
+    "session_key": "codex-019f7901-0819-75c1-b313-9dad9630aca1",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7901-0819-75c1-b313-9dad9630aca1.md",
+    "bytes": 11701
+   },
+   {
+    "session_key": "codex-019f7906-df49-7831-be73-c38dc144f71b",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7906-df49-7831-be73-c38dc144f71b.md",
+    "bytes": 4342
+   },
+   {
+    "session_key": "codex-019f7909-c04a-79e3-8c5f-ca958e48b739",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7909-c04a-79e3-8c5f-ca958e48b739.md",
+    "bytes": 1864
+   },
+   {
+    "session_key": "codex-019f7910-6565-7082-8163-ace7bc0a517a",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7910-6565-7082-8163-ace7bc0a517a.md",
+    "bytes": 5412
+   },
+   {
+    "session_key": "codex-019f7919-3381-7bc0-89d1-3c6136d99d53",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7919-3381-7bc0-89d1-3c6136d99d53.md",
+    "bytes": 7491
+   },
+   {
+    "session_key": "codex-019f7923-9cec-7760-be50-bfc11795ccd9",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7923-9cec-7760-be50-bfc11795ccd9.md",
+    "bytes": 16273
+   },
+   {
+    "session_key": "codex-019f7926-7bc3-7163-84b9-0d44ed464f8b",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7926-7bc3-7163-84b9-0d44ed464f8b.md",
+    "bytes": 4980
+   },
+   {
+    "session_key": "codex-019f794c-27eb-71b3-8d33-d17ccedaa4f9",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f794c-27eb-71b3-8d33-d17ccedaa4f9.md",
+    "bytes": 15528
+   },
+   {
+    "session_key": "codex-019f7972-1684-7841-94b4-9a9a4cc2ebe5",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7972-1684-7841-94b4-9a9a4cc2ebe5.md",
+    "bytes": 8548
+   }
+  ]
+ },
+ {
+  "batch": 16,
+  "items": [
+   {
+    "session_key": "codex-019f7986-74b2-7361-a7bc-ecdad22b8f72",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7986-74b2-7361-a7bc-ecdad22b8f72.md",
+    "bytes": 17328
+   },
+   {
+    "session_key": "codex-019f79ad-075d-7f23-8dd9-9dfa1a0779b9",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f79ad-075d-7f23-8dd9-9dfa1a0779b9.md",
+    "bytes": 21723
+   },
+   {
+    "session_key": "codex-019f79da-f0f2-7a02-878d-595b7e251f80",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f79da-f0f2-7a02-878d-595b7e251f80.md",
+    "bytes": 5601
+   },
+   {
+    "session_key": "codex-019f79e6-4945-7a91-a2fe-96f54f53f371",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f79e6-4945-7a91-a2fe-96f54f53f371.md",
+    "bytes": 17708
+   },
+   {
+    "session_key": "codex-019f7b54-482d-7672-aed0-69c651433c7d",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7b54-482d-7672-aed0-69c651433c7d.md",
+    "bytes": 13575
+   },
+   {
+    "session_key": "codex-019f7b73-7617-7ad3-8313-77936213fc22",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7b73-7617-7ad3-8313-77936213fc22.md",
+    "bytes": 13187
+   },
+   {
+    "session_key": "codex-019f7b8c-81b8-7ef0-a105-f9741b299944",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7b8c-81b8-7ef0-a105-f9741b299944.md",
+    "bytes": 23287
+   },
+   {
+    "session_key": "codex-019f7bb0-866f-77c2-b03c-6332e2c26a1b",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7bb0-866f-77c2-b03c-6332e2c26a1b.md",
+    "bytes": 15430
+   },
+   {
+    "session_key": "codex-019f7bca-b761-7033-8059-742ae53b5bf4",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7bca-b761-7033-8059-742ae53b5bf4.md",
+    "bytes": 8976
+   },
+   {
+    "session_key": "codex-019f7bda-3282-7310-a118-0dfeacc4b7f8",
+    "timeline": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7bda-3282-7310-a118-0dfeacc4b7f8.md",
+    "bytes": 41552
+   }
+  ]
+ }
+]

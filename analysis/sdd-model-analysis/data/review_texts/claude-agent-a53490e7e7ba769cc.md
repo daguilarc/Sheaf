@@ -1,0 +1,3 @@
+Committed cleanly. Those remaining untracked files are pre-existing and unrelated to this task.
+
+Status: DONE. Commit `4a41b6d` — "fix(synth): move rebuilt-callback dispatch to tick and startup-load sites". Test summary: full `make -C projects/synth test` (clean build) — 189 passed, 0 failed, 0 warnings; `engine_tests` binary specifically all 15 cases green, including 2 new `engine_initialize_*` callback tests and the restructured `engine_tick_grows_arena_and_retries_stashed_patch_message`. Concerns: none — all three findings addressed and verified; report appended under "## Fix Round 1" in p2-task-5-report.md.

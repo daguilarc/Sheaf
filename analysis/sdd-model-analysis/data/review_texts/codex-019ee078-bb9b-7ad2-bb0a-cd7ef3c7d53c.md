@@ -1,0 +1,9 @@
+SPEC_FAIL
+
+Findings:
+
+1. Wrld.Bldr controller MIDI ingress is broken for normal 3-byte messages. [NonagonWrapper.hpp](/Users/joyo/.codex/worktrees/37b8e1a2-98d5-4adf-9044-b17fcc6ce7a8/theallelectricsmartgrid/JUCE/SmartGridOne/Source/NonagonWrapper.hpp:259) now sends raw `BasicMidi` to the Wrld.Bldr bus, whose input handler default route is `-1`; [MessageInBus.hpp](/Users/joyo/.codex/worktrees/37b8e1a2-98d5-4adf-9044-b17fcc6ce7a8/theallelectricsmartgrid/private/src/MessageInBus.hpp:37) converts it through generic `MidiToMessageIn`, and [MidiToMessageIn.hpp](/Users/joyo/.codex/worktrees/37b8e1a2-98d5-4adf-9044-b17fcc6ce7a8/theallelectricsmartgrid/private/src/MidiToMessageIn.hpp:42) turns route `-1` into `NoMessage`. This bypasses the required `WrldBLDRMidi::FromMidi` channel-to-route mapping in [controller-midi-io spec](/Users/joyo/.codex/worktrees/37b8e1a2-98d5-4adf-9044-b17fcc6ce7a8/theallelectricsmartgrid/openspec/specs/controller-midi-io/spec.md:20).
+
+2. External clock loop multipliers are read from sample slot `0`, not the current sample. [TheNonagonSquiggleBoy.hpp](/Users/joyo/.codex/worktrees/37b8e1a2-98d5-4adf-9044-b17fcc6ce7a8/theallelectricsmartgrid/private/src/TheNonagonSquiggleBoy.hpp:205) calls `GetLoopExternalMultiplier(0, loopIndex)`, but the delta spec requires `M = GetLoopExternalMultiplier(currentSample, selectedLoop)` in [phasor-timebase spec](/Users/joyo/.codex/worktrees/37b8e1a2-98d5-4adf-9044-b17fcc6ce7a8/theallelectricsmartgrid/openspec/changes/add-midi-clock-sync-pll/specs/phasor-timebase/spec.md:75). This can feed stale/wrong expected and equivalence multipliers when topology state differs across the microblock.
+
+Focused tests run: `midi realtime:*`, `ExternalClockFollower*`, `TimeRig:*`, and `SmartGridOneEncoders:*` all passed, but they do not cover these spec violations.

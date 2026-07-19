@@ -1,0 +1,1 @@
+Status: DONE. Commit hash: `07e34f840adae715b39ea0087b6b0ffad51723b2`. Test summary: full `make -C projects/synth build test` suite passes with 0 failures, including both new regression tests and all three default-profile-factory validity tests.

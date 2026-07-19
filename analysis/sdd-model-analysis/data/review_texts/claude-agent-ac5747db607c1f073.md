@@ -1,0 +1,3 @@
+Status: Done. Commit 1525a2c — "fix(synth): make exhausted patch stash a drain barrier with retry-first ordering". Tests: `projects/synth/build/engine_tests` (10/10 pass, including new `engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering`), plus full `make -C projects/synth test` clean (184 PASS, 0 FAIL, zero warnings under -Wall -Wextra -Wpedantic).
+
+Concerns: added two small test-only public accessors (`HasStashedPatchMessageForTest`, `IsArenaGrowPendingForTest`) since `PatchManager::HasPendingSave()` proved unreliable as an observable (it resets at dispatch time, independent of the engine drain); flagged in the report for review. Report appended at `.superpowers/sdd/p2-task-4-report.md` (gitignored, not committed).

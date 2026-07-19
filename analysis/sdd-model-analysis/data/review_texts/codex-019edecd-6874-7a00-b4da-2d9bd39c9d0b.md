@@ -1,0 +1,5 @@
+SPEC_FAIL
+
+- [private/src/MessageInBus.hpp](/Users/joyo/.codex/worktrees/37b8e1a2-98d5-4adf-9044-b17fcc6ce7a8/theallelectricsmartgrid/private/src/MessageInBus.hpp:51): `Pop` scans the whole queue for any visible message and removes it, even if the queue head is future-stamped. This violates the OpenSpec timestamp-gating requirement that `Pop` peeks only the queue head and returns false while that head is not visible: [controller-midi-io spec](/Users/joyo/.codex/worktrees/37b8e1a2-98d5-4adf-9044-b17fcc6ce7a8/theallelectricsmartgrid/openspec/changes/add-midi-clock-sync-pll/specs/controller-midi-io/spec.md:24). The added test at [private/test/unit/midi_realtime_input.cpp](/Users/joyo/.codex/worktrees/37b8e1a2-98d5-4adf-9044-b17fcc6ce7a8/theallelectricsmartgrid/private/test/unit/midi_realtime_input.cpp:73) codifies the opposite behavior.
+
+Focused tests run: `midi realtime:*`, `ExternalClockFollower*`, `TimeRig:*`, and `SmartGridOneEncoders:*` all passed.

@@ -1,0 +1,3648 @@
+[
+ {
+  "batch": 0,
+  "items": [
+   {
+    "task_key": "add-autoscope-density-raster__task-1",
+    "change": "add-autoscope-density-raster",
+    "task": "task-1",
+    "brief_file": "/Users/joyo/.codex/worktrees/e0e6ecd7-cd4a-47e8-985c-2e066fda34aa/Sheaf/.superpowers/sdd/task-1-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:edc377cf-4e4f-4598-83bf-7f7dc0098a81",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-15T17:45:25.999Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-edc377cf-4e4f-4598-83bf-7f7dc0098a81.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-autoscope-density-raster__task-2",
+    "change": "add-autoscope-density-raster",
+    "task": "task-2",
+    "brief_file": "/Users/joyo/.codex/worktrees/e0e6ecd7-cd4a-47e8-985c-2e066fda34aa/Sheaf/.superpowers/sdd/task-2-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:dadde526-0654-45bf-8057-717248e06871",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-13T03:08:01.385Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-dadde526-0654-45bf-8057-717248e06871.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-autoscope-density-raster__task-3",
+    "change": "add-autoscope-density-raster",
+    "task": "task-3",
+    "brief_file": "/Users/joyo/.codex/worktrees/e0e6ecd7-cd4a-47e8-985c-2e066fda34aa/Sheaf/.superpowers/sdd/task-3-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:b86d6a80-a7ef-49b4-97e4-3bf8d17d214b",
+      "kind": "reviewer-rereview",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-13T03:31:14.555Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-b86d6a80-a7ef-49b4-97e4-3bf8d17d214b.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:80d5b2f8-25b4-45e4-baa2-bdd0d09489d6",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-13T19:31:42.232Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-80d5b2f8-25b4-45e4-baa2-bdd0d09489d6.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:cf21cade-a172-40f3-990b-6f0c6e2512ef",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-15T18:49:04.727Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-cf21cade-a172-40f3-990b-6f0c6e2512ef.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-autoscope-density-raster__task-4",
+    "change": "add-autoscope-density-raster",
+    "task": "task-4",
+    "brief_file": "/Users/joyo/.codex/worktrees/e0e6ecd7-cd4a-47e8-985c-2e066fda34aa/Sheaf/.superpowers/sdd/task-4-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:e5e7c633-3eee-4abe-91f3-f2c9c50e0a9d",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-13T03:44:55.657Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-e5e7c633-3eee-4abe-91f3-f2c9c50e0a9d.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     },
+     {
+      "sid": "claude:543bd592-c4f0-4307-8a31-f6f576c1fd26",
+      "kind": "reviewer-rereview",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-13T03:58:11.413Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-543bd592-c4f0-4307-8a31-f6f576c1fd26.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-autoscope-density-raster__task-5",
+    "change": "add-autoscope-density-raster",
+    "task": "task-5",
+    "brief_file": "/Users/joyo/.codex/worktrees/e0e6ecd7-cd4a-47e8-985c-2e066fda34aa/Sheaf/.superpowers/sdd/task-5-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:bbac4492-73da-4e44-b638-2c651dab9d70",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-13T04:14:50.082Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-bbac4492-73da-4e44-b638-2c651dab9d70.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     },
+     {
+      "sid": "claude:9b51b419-9863-421d-9832-5a2812278e09",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-13T20:05:44.851Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-9b51b419-9863-421d-9832-5a2812278e09.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:91da254d-0241-4553-a9a4-168eea6b3bb1",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-15T19:03:22.569Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-91da254d-0241-4553-a9a4-168eea6b3bb1.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-autoscope-density-raster__task-6",
+    "change": "add-autoscope-density-raster",
+    "task": "task-6",
+    "brief_file": "/Users/joyo/.codex/worktrees/e0e6ecd7-cd4a-47e8-985c-2e066fda34aa/Sheaf/.superpowers/sdd/task-6-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:08d4e43b-06a5-41fa-9e68-cc082761082b",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-13T04:31:09.615Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-08d4e43b-06a5-41fa-9e68-cc082761082b.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     },
+     {
+      "sid": "claude:ccf6f929-5927-4d30-9144-8334925c0348",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-13T04:38:35.822Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ccf6f929-5927-4d30-9144-8334925c0348.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:fb238430-0d1c-4cdd-839c-08c4e7e2f655",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-15T19:28:58.898Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-fb238430-0d1c-4cdd-839c-08c4e7e2f655.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     },
+     {
+      "sid": "claude:85e90b53-793f-4370-9c92-b756c2f76cb3",
+      "kind": "reviewer-rereview",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-15T19:32:06.461Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-85e90b53-793f-4370-9c92-b756c2f76cb3.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-autoscope-density-raster__task-7",
+    "change": "add-autoscope-density-raster",
+    "task": "task-7",
+    "brief_file": "/Users/joyo/.codex/worktrees/e0e6ecd7-cd4a-47e8-985c-2e066fda34aa/Sheaf/.superpowers/sdd/task-7-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:cbcfa9d2-f08c-44cb-8a55-a255ecd869fc",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-13T04:52:07.477Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-cbcfa9d2-f08c-44cb-8a55-a255ecd869fc.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec"
+      }
+     },
+     {
+      "sid": "claude:c0bf6c06-1462-4d2f-858a-332082ab35aa",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-13T05:01:24.741Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-c0bf6c06-1462-4d2f-858a-332082ab35aa.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:83876c4e-e62c-4c7d-becf-52eb3029a4a7",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-15T19:57:23.797Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-83876c4e-e62c-4c7d-becf-52eb3029a4a7.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-browser-wasm-runtime__task-1",
+    "change": "add-browser-wasm-runtime",
+    "task": "task-1",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:97033eff-4210-4961-b170-dcf5b5087913",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-09T20:11:54.692Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-97033eff-4210-4961-b170-dcf5b5087913.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:923df609-dbbb-4495-93c5-1a479af0bcd1",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-09T20:20:45.025Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-923df609-dbbb-4495-93c5-1a479af0bcd1.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:ee76d4b1-7bcf-4b4f-a151-c88759e55391",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T06:22:45.187Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ee76d4b1-7bcf-4b4f-a151-c88759e55391.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec"
+      }
+     },
+     {
+      "sid": "claude:9447e09f-fa78-427c-af51-1466d9fc4212",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T06:26:46.656Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-9447e09f-fa78-427c-af51-1466d9fc4212.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     },
+     {
+      "sid": "claude:49ce41a6-0a9f-41cf-8df8-ca894adacce1",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T06:40:50.969Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-49ce41a6-0a9f-41cf-8df8-ca894adacce1.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "batch": 1,
+  "items": [
+   {
+    "task_key": "add-browser-wasm-runtime__task-2",
+    "change": "add-browser-wasm-runtime",
+    "task": "task-2",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:7b38b69c-0d5f-4bb7-b61a-8855e0b1f97d",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-09T20:30:49.642Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-7b38b69c-0d5f-4bb7-b61a-8855e0b1f97d.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:0d12aa3e-fe15-4ad5-a15a-83239f193c5c",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-09T20:37:22.447Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-0d12aa3e-fe15-4ad5-a15a-83239f193c5c.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:7fb2591b-de9d-4e36-a7ea-9d41996a2e9f",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T15:00:35.938Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-7fb2591b-de9d-4e36-a7ea-9d41996a2e9f.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec"
+      }
+     },
+     {
+      "sid": "claude:b7cfc553-8c7b-4df8-b31e-f32b10589e06",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T15:25:04.133Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-b7cfc553-8c7b-4df8-b31e-f32b10589e06.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-browser-wasm-runtime__task-3",
+    "change": "add-browser-wasm-runtime",
+    "task": "task-3",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:43c83fe6-5fd9-4636-86d1-5f10bca3ecc5",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-09T20:52:20.535Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-43c83fe6-5fd9-4636-86d1-5f10bca3ecc5.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:ff81ec8c-3e61-4a05-8091-332fff555c5c",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-09T21:00:10.859Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ff81ec8c-3e61-4a05-8091-332fff555c5c.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:ff13ebc6-b0df-4750-9b48-3ead4875cb0b",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T15:52:17.324Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ff13ebc6-b0df-4750-9b48-3ead4875cb0b.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     },
+     {
+      "sid": "claude:cacaba8e-1805-4cd3-a0f1-23009cf293ca",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T16:08:49.624Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-cacaba8e-1805-4cd3-a0f1-23009cf293ca.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-browser-wasm-runtime__task-4",
+    "change": "add-browser-wasm-runtime",
+    "task": "task-4",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:2a336588-31a7-4258-b45c-a68b64fb164d",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-09T21:17:29.701Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-2a336588-31a7-4258-b45c-a68b64fb164d.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:a4e2b126-6ebd-4671-8364-a88040e85322",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-09T21:23:33.773Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-a4e2b126-6ebd-4671-8364-a88040e85322.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:7bceca44-aba4-4a8f-96f5-2f4fd6126c5e",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T16:56:12.324Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-7bceca44-aba4-4a8f-96f5-2f4fd6126c5e.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-browser-wasm-runtime__task-5",
+    "change": "add-browser-wasm-runtime",
+    "task": "task-5",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:73e01fcb-7c18-4c18-9f28-d6ba84106028",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-09T21:38:00.416Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-73e01fcb-7c18-4c18-9f28-d6ba84106028.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:fdba54d1-455c-47b5-b9e8-4722f5033bf5",
+      "kind": "reviewer-rereview",
+      "model": "claude-haiku-4-5-20251001",
+      "started_at": "2026-07-09T21:46:49.837Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-fdba54d1-455c-47b5-b9e8-4722f5033bf5.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:2d706743-2773-4336-aff3-ab7a6a2758a5",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T17:38:36.068Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-2d706743-2773-4336-aff3-ab7a6a2758a5.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:b42c3ed0-af01-477b-922c-237b9d35952e",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T17:41:43.541Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-b42c3ed0-af01-477b-922c-237b9d35952e.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     },
+     {
+      "sid": "claude:c607b587-3052-4cac-94a2-9df34054303e",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T18:11:50.815Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-c607b587-3052-4cac-94a2-9df34054303e.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     },
+     {
+      "sid": "claude:436f0b24-2f3a-4c24-8f3a-0ffdf9f13468",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T18:17:33.544Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-436f0b24-2f3a-4c24-8f3a-0ffdf9f13468.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-browser-wasm-runtime__task-6",
+    "change": "add-browser-wasm-runtime",
+    "task": "task-6",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:cfc7eae8-5333-475e-9f37-e7a6032f83e3",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-09T22:08:47.066Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-cfc7eae8-5333-475e-9f37-e7a6032f83e3.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:d58e5516-49cc-4606-8e2f-2c92c1f9dbec",
+      "kind": "reviewer-rereview",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-09T22:15:26.204Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-d58e5516-49cc-4606-8e2f-2c92c1f9dbec.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-browser-wasm-runtime__task-7",
+    "change": "add-browser-wasm-runtime",
+    "task": "task-7",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:4ac5c7dc-0fc8-4ecf-b8f2-be8ae3876a68",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-09T22:29:25.007Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-4ac5c7dc-0fc8-4ecf-b8f2-be8ae3876a68.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:5585077e-6ddc-424b-b5bc-998efc36f9e4",
+      "kind": "reviewer-rereview",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-09T22:36:35.698Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-5585077e-6ddc-424b-b5bc-998efc36f9e4.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-browser-wasm-runtime__task-8",
+    "change": "add-browser-wasm-runtime",
+    "task": "task-8",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:f40ebd9d-741f-43c0-9829-12855d303c09",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-09T22:51:12.277Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-f40ebd9d-741f-43c0-9829-12855d303c09.md",
+      "traits": {
+       "scope": "final",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:28fd9659-5e51-4083-a8f1-0a8932a5c4ad",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-09T23:04:21.731Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-28fd9659-5e51-4083-a8f1-0a8932a5c4ad.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:53afe2af-e7c2-4e8c-9532-b1b261538837",
+      "kind": "reviewer-rereview",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-09T23:21:41.175Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-53afe2af-e7c2-4e8c-9532-b1b261538837.md",
+      "traits": {
+       "scope": "final",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-browser-wasm-synth-runtime__task-1",
+    "change": "add-browser-wasm-synth-runtime",
+    "task": "task-1",
+    "brief_file": "/Users/joyo/.codex/worktrees/9209/Sheaf/.superpowers/sdd/task-1-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:2cfb38ea-bb54-425c-b164-6c73b4900fa9",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-08T05:41:13.192Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-2cfb38ea-bb54-425c-b164-6c73b4900fa9.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "batch": 2,
+  "items": [
+   {
+    "task_key": "add-browser-wasm-synth-runtime__task-2",
+    "change": "add-browser-wasm-synth-runtime",
+    "task": "task-2",
+    "brief_file": "/Users/joyo/.codex/worktrees/9209/Sheaf/.superpowers/sdd/task-2-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:602665ec-9ec9-46b7-ac3a-875243386d1c",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-08T05:48:42.938Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-602665ec-9ec9-46b7-ac3a-875243386d1c.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-browser-wasm-synth-runtime__task-3",
+    "change": "add-browser-wasm-synth-runtime",
+    "task": "task-3",
+    "brief_file": "/Users/joyo/.codex/worktrees/9209/Sheaf/.superpowers/sdd/task-3-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:93b1efd2-d5de-474d-a88a-a45558c25618",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-08T05:58:52.625Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-93b1efd2-d5de-474d-a88a-a45558c25618.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-browser-wasm-synth-runtime__task-4",
+    "change": "add-browser-wasm-synth-runtime",
+    "task": "task-4",
+    "brief_file": "/Users/joyo/.codex/worktrees/9209/Sheaf/.superpowers/sdd/task-4-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:9014380d-019b-4504-84b2-bd8ec86d3611",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-08T06:08:55.520Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-9014380d-019b-4504-84b2-bd8ec86d3611.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-browser-wasm-synth-runtime__task-5",
+    "change": "add-browser-wasm-synth-runtime",
+    "task": "task-5",
+    "brief_file": "/Users/joyo/.codex/worktrees/9209/Sheaf/.superpowers/sdd/task-5-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:aa8d699b-2c96-4f14-baf8-74dda7630bd1",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-08T06:19:18.153Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-aa8d699b-2c96-4f14-baf8-74dda7630bd1.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-browser-wasm-synth-runtime__task-6",
+    "change": "add-browser-wasm-synth-runtime",
+    "task": "task-6",
+    "brief_file": "/Users/joyo/.codex/worktrees/9209/Sheaf/.superpowers/sdd/task-6-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:78f6493d-b86c-4cea-a099-e1fe05a75ab3",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-08T06:32:12.408Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-78f6493d-b86c-4cea-a099-e1fe05a75ab3.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:2b550690-b7ae-4e6c-97fd-cc220af16a83",
+      "kind": "reviewer-rereview",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-08T06:37:39.872Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-2b550690-b7ae-4e6c-97fd-cc220af16a83.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-browser-wasm-synth-runtime__task-7",
+    "change": "add-browser-wasm-synth-runtime",
+    "task": "task-7",
+    "brief_file": "/Users/joyo/.codex/worktrees/9209/Sheaf/.superpowers/sdd/task-7-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:199a0ae6-b65a-4462-8c6e-898921e8e9b1",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-08T06:43:07.000Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-199a0ae6-b65a-4462-8c6e-898921e8e9b1.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-browser-wasm-synth-runtime__task-8",
+    "change": "add-browser-wasm-synth-runtime",
+    "task": "task-8",
+    "brief_file": "/Users/joyo/.codex/worktrees/9209/Sheaf/.superpowers/sdd/task-8-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:e647da94-c27d-40fa-8346-7cd83bbe9cf8",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-08T06:59:32.723Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-e647da94-c27d-40fa-8346-7cd83bbe9cf8.md",
+      "traits": {
+       "scope": "final",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-dresden-4-synth-app__task-1",
+    "change": "add-dresden-4-synth-app",
+    "task": "task-1",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:92110f39-f6ec-4501-a60d-86f0532d2927",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T18:54:39.142Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-92110f39-f6ec-4501-a60d-86f0532d2927.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "batch": 3,
+  "items": [
+   {
+    "task_key": "add-dresden-4-synth-app__task-2",
+    "change": "add-dresden-4-synth-app",
+    "task": "task-2",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:0a84b6f2-56f2-4450-b26c-772863eece73",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T19:04:32.852Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-0a84b6f2-56f2-4450-b26c-772863eece73.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:7fc75acc-fb72-457b-b753-b31b46a4c267",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T19:11:35.694Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-7fc75acc-fb72-457b-b753-b31b46a4c267.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:1aa1a270-73fc-4b6e-970b-c2ea2b43ca7c",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T19:17:11.177Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-1aa1a270-73fc-4b6e-970b-c2ea2b43ca7c.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-dresden-4-synth-app__task-3",
+    "change": "add-dresden-4-synth-app",
+    "task": "task-3",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:520d26d7-d39b-429a-97f4-a77777550f4d",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T19:37:18.714Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-520d26d7-d39b-429a-97f4-a77777550f4d.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-dresden-4-synth-app__task-4",
+    "change": "add-dresden-4-synth-app",
+    "task": "task-4",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:a580cc4f-8518-43bf-ab63-ab247c5f6686",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T20:18:14.209Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-a580cc4f-8518-43bf-ab63-ab247c5f6686.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:b99b0616-e12b-4a3c-8138-894aa22f8052",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T20:26:55.117Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-b99b0616-e12b-4a3c-8138-894aa22f8052.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-dresden-4-synth-app__task-5",
+    "change": "add-dresden-4-synth-app",
+    "task": "task-5",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:ed7921a0-5d09-4d49-a97e-34b56d7aa77b",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T22:57:28.286Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ed7921a0-5d09-4d49-a97e-34b56d7aa77b.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:0c54f16d-d6dc-4400-be09-250243dcef84",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T23:09:26.539Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-0c54f16d-d6dc-4400-be09-250243dcef84.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-dresden-4-synth-app__task-6",
+    "change": "add-dresden-4-synth-app",
+    "task": "task-6",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:c039384e-8e45-4cad-a889-874eefa8f394",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T23:25:20.980Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-c039384e-8e45-4cad-a889-874eefa8f394.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-dresden-4-synth-app__task-7",
+    "change": "add-dresden-4-synth-app",
+    "task": "task-7",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:bfeaa048-8936-4a92-a123-7eba5dd24c65",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T23:39:05.265Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-bfeaa048-8936-4a92-a123-7eba5dd24c65.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     },
+     {
+      "sid": "claude:7e4b6ac7-88bb-43a5-8c66-af4bcce4d7ad",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-10T23:52:55.276Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-7e4b6ac7-88bb-43a5-8c66-af4bcce4d7ad.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-dresden-4-synth-app__task-8",
+    "change": "add-dresden-4-synth-app",
+    "task": "task-8",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:d2261f03-8926-4a32-8a8f-d65ee9f18f1a",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-11T00:01:17.486Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-d2261f03-8926-4a32-8a8f-d65ee9f18f1a.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-dresden-4-synth-app__task-9",
+    "change": "add-dresden-4-synth-app",
+    "task": "task-9",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:60c7e9e6-a6ad-464c-8782-959a54937716",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-11T01:14:24.256Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-60c7e9e6-a6ad-464c-8782-959a54937716.md",
+      "traits": {
+       "scope": "final",
+       "focus": "spec+quality"
+      }
+     },
+     {
+      "sid": "claude:1865166c-244d-4fe4-9f15-f7ef5585d67c",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-11T01:25:05.192Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-1865166c-244d-4fe4-9f15-f7ef5585d67c.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "batch": 4,
+  "items": [
+   {
+    "task_key": "add-note-system-message-mappings__task-1",
+    "change": "add-note-system-message-mappings",
+    "task": "task-1",
+    "brief_file": "/Users/joyo/.codex/worktrees/855578f6-f7d6-459c-be71-80ad98429fcc/Sheaf/.superpowers/sdd/task-1-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:f6a8782f-c85e-4d4c-b266-c388ffa72185",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-17T06:28:53.318Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-f6a8782f-c85e-4d4c-b266-c388ffa72185.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     },
+     {
+      "sid": "claude:0df13741-88a5-4f45-8e0f-53242d75799c",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-17T07:18:06.860Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-0df13741-88a5-4f45-8e0f-53242d75799c.md",
+      "traits": {
+       "scope": "final",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-note-system-message-mappings__task-2",
+    "change": "add-note-system-message-mappings",
+    "task": "task-2",
+    "brief_file": "/Users/joyo/.codex/worktrees/855578f6-f7d6-459c-be71-80ad98429fcc/Sheaf/.superpowers/sdd/task-2-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:adf280d9-7917-4208-8fca-b78ade10d85f",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-17T06:39:17.758Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-adf280d9-7917-4208-8fca-b78ade10d85f.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-note-system-message-mappings__task-3",
+    "change": "add-note-system-message-mappings",
+    "task": "task-3",
+    "brief_file": "/Users/joyo/.codex/worktrees/855578f6-f7d6-459c-be71-80ad98429fcc/Sheaf/.superpowers/sdd/task-3-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:09c2e8a6-75c2-4cd0-89ce-2d3ea3085fc3",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-17T06:57:36.088Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-09c2e8a6-75c2-4cd0-89ce-2d3ea3085fc3.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:12bfe854-dd44-4c3a-8ae5-c6c5c683855e",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-17T07:07:46.137Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-12bfe854-dd44-4c3a-8ae5-c6c5c683855e.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-note-system-message-mappings__task-4",
+    "change": "add-note-system-message-mappings",
+    "task": "task-4",
+    "brief_file": "/Users/joyo/.codex/worktrees/855578f6-f7d6-459c-be71-80ad98429fcc/Sheaf/.superpowers/sdd/task-4-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:591cb84e-cc45-47dd-8f02-8aa25f9086d0",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-17T07:15:32.971Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-591cb84e-cc45-47dd-8f02-8aa25f9086d0.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-portable-modulator-visualizers__task-1",
+    "change": "add-portable-modulator-visualizers",
+    "task": "task-1",
+    "brief_file": "/Users/joyo/.codex/worktrees/353ecde4-be23-402c-adcc-071fe31f4638/Sheaf/.superpowers/sdd/task-1-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:9c9f542f-240c-4fc7-909a-bae4c3544e62",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-12T17:54:38.766Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-9c9f542f-240c-4fc7-909a-bae4c3544e62.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-portable-modulator-visualizers__task-2",
+    "change": "add-portable-modulator-visualizers",
+    "task": "task-2",
+    "brief_file": "/Users/joyo/.codex/worktrees/353ecde4-be23-402c-adcc-071fe31f4638/Sheaf/.superpowers/sdd/task-2-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:543ab449-63db-4024-b5ee-04d0ed8f409f",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-12T18:01:20.043Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-543ab449-63db-4024-b5ee-04d0ed8f409f.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-portable-modulator-visualizers__task-3",
+    "change": "add-portable-modulator-visualizers",
+    "task": "task-3",
+    "brief_file": "/Users/joyo/.codex/worktrees/353ecde4-be23-402c-adcc-071fe31f4638/Sheaf/.superpowers/sdd/task-3-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:560eb030-bce8-4e77-a208-1415c78f4f55",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-12T18:10:09.471Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-560eb030-bce8-4e77-a208-1415c78f4f55.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-portable-modulator-visualizers__task-4",
+    "change": "add-portable-modulator-visualizers",
+    "task": "task-4",
+    "brief_file": "/Users/joyo/.codex/worktrees/353ecde4-be23-402c-adcc-071fe31f4638/Sheaf/.superpowers/sdd/task-4-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:c67dd9b1-e265-4ef0-a870-a3d9890ce1ae",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-12T18:20:26.476Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-c67dd9b1-e265-4ef0-a870-a3d9890ce1ae.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "batch": 5,
+  "items": [
+   {
+    "task_key": "add-portable-modulator-visualizers__task-5",
+    "change": "add-portable-modulator-visualizers",
+    "task": "task-5",
+    "brief_file": "/Users/joyo/.codex/worktrees/353ecde4-be23-402c-adcc-071fe31f4638/Sheaf/.superpowers/sdd/task-5-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:a1356a8c-21e4-4e35-87ff-6e74d6c66ba1",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-12T18:26:24.318Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-a1356a8c-21e4-4e35-87ff-6e74d6c66ba1.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     },
+     {
+      "sid": "claude:2b49a97c-9aa8-41f3-878d-8a66f903bcba",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-12T18:29:09.564Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-2b49a97c-9aa8-41f3-878d-8a66f903bcba.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-portable-modulator-visualizers__task-6",
+    "change": "add-portable-modulator-visualizers",
+    "task": "task-6",
+    "brief_file": "/Users/joyo/.codex/worktrees/353ecde4-be23-402c-adcc-071fe31f4638/Sheaf/.superpowers/sdd/task-6-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:738a8d33-1515-436d-a76e-523044571082",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-12T18:37:25.708Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-738a8d33-1515-436d-a76e-523044571082.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:eedb5ef6-873a-4b73-b6b8-35f77ca5a6a9",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-12T18:40:21.167Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-eedb5ef6-873a-4b73-b6b8-35f77ca5a6a9.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:014688f3-3d95-4501-b4be-c9656e8f1fc1",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-12T18:41:50.244Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-014688f3-3d95-4501-b4be-c9656e8f1fc1.md",
+      "traits": {
+       "scope": "final",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-runtime-button-grids__task-1",
+    "change": "add-runtime-button-grids",
+    "task": "task-1",
+    "brief_file": "/Users/joyo/.codex/worktrees/a228f651-3426-4ead-b96c-f8b690dc5e84/Sheaf/.superpowers/sdd/task-1-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:01eff6b8-4f52-410a-9f2f-c69eca50f679",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-17T00:22:16.863Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-01eff6b8-4f52-410a-9f2f-c69eca50f679.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     },
+     {
+      "sid": "claude:39657238-c26c-45e8-ba7a-16e5b93425fe",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-17T03:32:35.837Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-39657238-c26c-45e8-ba7a-16e5b93425fe.md",
+      "traits": {
+       "scope": "final",
+       "focus": "spec"
+      }
+     },
+     {
+      "sid": "claude:fbd921aa-f784-4bf3-8489-f1c0813ffc63",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-18T20:38:43.772Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-fbd921aa-f784-4bf3-8489-f1c0813ffc63.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-runtime-button-grids__task-2",
+    "change": "add-runtime-button-grids",
+    "task": "task-2",
+    "brief_file": "/Users/joyo/.codex/worktrees/a228f651-3426-4ead-b96c-f8b690dc5e84/Sheaf/.superpowers/sdd/task-2-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:5eb976c8-8ce2-4526-ae84-74531a2c77ab",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-17T00:39:33.093Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-5eb976c8-8ce2-4526-ae84-74531a2c77ab.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     },
+     {
+      "sid": "claude:7565c889-a204-416a-94e6-ead0beb45bb6",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-18T20:47:17.461Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-7565c889-a204-416a-94e6-ead0beb45bb6.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-runtime-button-grids__task-3",
+    "change": "add-runtime-button-grids",
+    "task": "task-3",
+    "brief_file": "/Users/joyo/.codex/worktrees/a228f651-3426-4ead-b96c-f8b690dc5e84/Sheaf/.superpowers/sdd/task-3-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:afc29cdd-5ba6-487c-95af-94dc2e1a3afb",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-17T01:02:00.646Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-afc29cdd-5ba6-487c-95af-94dc2e1a3afb.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     },
+     {
+      "sid": "claude:2f5842ee-9c2b-4946-90e4-9f3f62dc497b",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-18T20:54:33.088Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-2f5842ee-9c2b-4946-90e4-9f3f62dc497b.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:662f1f6e-4af2-4c0c-8e29-2e1f1ff58758",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-18T20:57:40.288Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-662f1f6e-4af2-4c0c-8e29-2e1f1ff58758.md",
+      "traits": {
+       "scope": "final",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-standard-modulators__task-1",
+    "change": "add-standard-modulators",
+    "task": "task-1",
+    "brief_file": "/Users/joyo/.codex/worktrees/df43a042-cd18-489e-a742-04c9807cc6c9/Sheaf/.superpowers/sdd/task-1-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:a927abe4-06be-4db2-aa4a-98c725afde9c",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T02:52:42.852Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-a927abe4-06be-4db2-aa4a-98c725afde9c.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     },
+     {
+      "sid": "claude:12b42ccd-1007-4ccb-8e84-76ae3a1fde5b",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-16T08:03:10.337Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-12b42ccd-1007-4ccb-8e84-76ae3a1fde5b.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec"
+      }
+     },
+     {
+      "sid": "claude:d2cd9247-6d2b-468c-a15d-d8753aa1cd1b",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T08:08:28.591Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-d2cd9247-6d2b-468c-a15d-d8753aa1cd1b.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec"
+      }
+     },
+     {
+      "sid": "claude:dc6705fd-f306-4322-9194-4df565dd7aed",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T08:12:15.044Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-dc6705fd-f306-4322-9194-4df565dd7aed.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     },
+     {
+      "sid": "claude:bea671a3-8457-43b8-a8f6-a9254335747e",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T08:20:47.657Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-bea671a3-8457-43b8-a8f6-a9254335747e.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     },
+     {
+      "sid": "claude:482d3cc1-31ff-4253-83c7-de89ce4ed63f",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T08:31:49.820Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-482d3cc1-31ff-4253-83c7-de89ce4ed63f.md",
+      "traits": {
+       "scope": "final",
+       "focus": "spec"
+      }
+     },
+     {
+      "sid": "claude:da99892d-7ac0-4de6-9740-b185f2b5be4d",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T08:36:25.348Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-da99892d-7ac0-4de6-9740-b185f2b5be4d.md",
+      "traits": {
+       "scope": "final",
+       "focus": "quality"
+      }
+     },
+     {
+      "sid": "claude:a1e91e12-4283-4500-88db-378d642f518e",
+      "kind": "auditor",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-16T08:49:07.893Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-a1e91e12-4283-4500-88db-378d642f518e.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "add-standard-modulators__task-2",
+    "change": "add-standard-modulators",
+    "task": "task-2",
+    "brief_file": "/Users/joyo/.codex/worktrees/df43a042-cd18-489e-a742-04c9807cc6c9/Sheaf/.superpowers/sdd/task-2-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:cf3a3470-de31-4c55-8ef4-a601cb8bbb21",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T03:06:07.996Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-cf3a3470-de31-4c55-8ef4-a601cb8bbb21.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     },
+     {
+      "sid": "claude:1a6f3afe-b747-416b-aba5-ceb8b86ed2d0",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T08:44:40.204Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-1a6f3afe-b747-416b-aba5-ceb8b86ed2d0.md",
+      "traits": {
+       "scope": "final",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:baea5bbe-609c-46b7-9d3b-18864396734f",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T19:07:42.790Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-baea5bbe-609c-46b7-9d3b-18864396734f.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec"
+      }
+     },
+     {
+      "sid": "claude:55a26e94-20b4-4b28-8140-07f6b90e8b66",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T19:09:16.141Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-55a26e94-20b4-4b28-8140-07f6b90e8b66.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-standard-modulators__task-3",
+    "change": "add-standard-modulators",
+    "task": "task-3",
+    "brief_file": "/Users/joyo/.codex/worktrees/df43a042-cd18-489e-a742-04c9807cc6c9/Sheaf/.superpowers/sdd/task-3-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:8d9566aa-ce31-4a8f-8367-cdbba1f27c19",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T03:21:20.940Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-8d9566aa-ce31-4a8f-8367-cdbba1f27c19.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     },
+     {
+      "sid": "claude:e0aae1db-083b-4a20-880c-e93e87a54b09",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T19:23:32.206Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-e0aae1db-083b-4a20-880c-e93e87a54b09.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec"
+      }
+     },
+     {
+      "sid": "claude:9a56ea96-274f-4f1d-8656-eeb78edf0e62",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T19:27:16.744Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-9a56ea96-274f-4f1d-8656-eeb78edf0e62.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "batch": 6,
+  "items": [
+   {
+    "task_key": "add-standard-modulators__task-4",
+    "change": "add-standard-modulators",
+    "task": "task-4",
+    "brief_file": "/Users/joyo/.codex/worktrees/df43a042-cd18-489e-a742-04c9807cc6c9/Sheaf/.superpowers/sdd/task-4-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:6f4509c9-5b51-4a94-a241-28a3747bd693",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T03:52:42.856Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-6f4509c9-5b51-4a94-a241-28a3747bd693.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:ee950464-e6a8-4763-bc2a-145708c13fe4",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T04:06:40.701Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ee950464-e6a8-4763-bc2a-145708c13fe4.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:ed203d11-3c05-4dcf-aaaf-191e7e62c9e6",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T19:40:16.696Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ed203d11-3c05-4dcf-aaaf-191e7e62c9e6.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec"
+      }
+     },
+     {
+      "sid": "claude:eecb7070-9252-4b7a-b34f-439aa6a88edd",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-16T19:43:28.505Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-eecb7070-9252-4b7a-b34f-439aa6a88edd.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-synth-runtime-data-directory__task-4",
+    "change": "add-synth-runtime-data-directory",
+    "task": "task-4",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:39ade1d7-a109-4d9e-be19-d9e141c5d6ad",
+      "kind": "reviewer-rereview",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-05T01:37:49.276Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-39ade1d7-a109-4d9e-be19-d9e141c5d6ad.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "add-target-center-alpha__task-1",
+    "change": "add-target-center-alpha",
+    "task": "task-1",
+    "brief_file": "/Users/joyo/.codex/worktrees/3fc5984e-25f3-4931-a725-3e159790c66e/Sheaf/.superpowers/sdd/task-1-brief.md",
+    "reviews": [
+     {
+      "sid": "codex:019f4f96-1ab7-7613-89f5-ffaeb8f57048",
+      "kind": "reviewer",
+      "model": "gpt-5.6-terra",
+      "started_at": "2026-07-11T05:11:06.059Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f4f96-1ab7-7613-89f5-ffaeb8f57048.md",
+      "traits": null
+     },
+     {
+      "sid": "codex:019f4f99-987e-79f1-ab12-51f54b1e5c46",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.6-terra",
+      "started_at": "2026-07-11T05:14:54.815Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f4f99-987e-79f1-ab12-51f54b1e5c46.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "add-target-center-alpha__task-2",
+    "change": "add-target-center-alpha",
+    "task": "task-2",
+    "brief_file": "/Users/joyo/.codex/worktrees/3fc5984e-25f3-4931-a725-3e159790c66e/Sheaf/.superpowers/sdd/task-2-brief.md",
+    "reviews": [
+     {
+      "sid": "codex:019f4f9e-6cb7-71a2-a1cd-71b972056500",
+      "kind": "reviewer",
+      "model": "gpt-5.6-terra",
+      "started_at": "2026-07-11T05:20:11.456Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f4f9e-6cb7-71a2-a1cd-71b972056500.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "add-target-center-alpha__task-3",
+    "change": "add-target-center-alpha",
+    "task": "task-3",
+    "brief_file": "/Users/joyo/.codex/worktrees/3fc5984e-25f3-4931-a725-3e159790c66e/Sheaf/.superpowers/sdd/task-3-brief.md",
+    "reviews": [
+     {
+      "sid": "codex:019f4fa2-635a-7a80-80d5-16a2d8eb028e",
+      "kind": "reviewer",
+      "model": "gpt-5.6-luna",
+      "started_at": "2026-07-11T05:24:31.234Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f4fa2-635a-7a80-80d5-16a2d8eb028e.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "configure-dictator-audio-input__task-2",
+    "change": "configure-dictator-audio-input",
+    "task": "task-2",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019edbc7-82cb-7f60-8c28-0d49a7e10c5e",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-06-18T17:29:06.381Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019edbc7-82cb-7f60-8c28-0d49a7e10c5e.md",
+      "traits": null
+     },
+     {
+      "sid": "codex:019edbcb-858f-7123-9c92-04a67a7ecf08",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-06-18T17:33:29.218Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019edbcb-858f-7123-9c92-04a67a7ecf08.md",
+      "traits": null
+     },
+     {
+      "sid": "codex:019edbcd-f681-7512-9e48-8eab47e8c890",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-06-18T17:36:09.147Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019edbcd-f681-7512-9e48-8eab47e8c890.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "decouple-encoder-block-rate__task-1",
+    "change": "decouple-encoder-block-rate",
+    "task": "task-1",
+    "brief_file": "/Users/joyo/.codex/worktrees/3d2b5420-ab17-4045-82c2-acece1bdc544/Sheaf/.superpowers/sdd/task-1-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:d79c24f5-7322-46c7-b44b-a13e5478d6fa",
+      "kind": "reviewer",
+      "model": "claude-sonnet-4-6",
+      "started_at": "2026-07-06T22:03:03.903Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-d79c24f5-7322-46c7-b44b-a13e5478d6fa.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:c4c1b18c-1812-4a65-b185-14cea4402c13",
+      "kind": "reviewer-rereview",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-06T22:44:08.482Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-c4c1b18c-1812-4a65-b185-14cea4402c13.md",
+      "traits": {
+       "scope": "final",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "decouple-encoder-block-rate__task-2",
+    "change": "decouple-encoder-block-rate",
+    "task": "task-2",
+    "brief_file": "/Users/joyo/.codex/worktrees/3d2b5420-ab17-4045-82c2-acece1bdc544/Sheaf/.superpowers/sdd/task-2-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:e256b866-e0d5-4ce7-8fff-c7dfb3c4d72b",
+      "kind": "reviewer",
+      "model": "claude-sonnet-4-6",
+      "started_at": "2026-07-06T22:13:12.883Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-e256b866-e0d5-4ce7-8fff-c7dfb3c4d72b.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:67583065-4766-40bf-92da-7388adda3b95",
+      "kind": "reviewer",
+      "model": "claude-sonnet-4-6",
+      "started_at": "2026-07-06T22:21:55.204Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-67583065-4766-40bf-92da-7388adda3b95.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "batch": 7,
+  "items": [
+   {
+    "task_key": "decouple-encoder-block-rate__task-3",
+    "change": "decouple-encoder-block-rate",
+    "task": "task-3",
+    "brief_file": "/Users/joyo/.codex/worktrees/3d2b5420-ab17-4045-82c2-acece1bdc544/Sheaf/.superpowers/sdd/task-3-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:8ba1222d-0aa4-4e8d-a41b-0f56d1d5cc77",
+      "kind": "reviewer",
+      "model": "claude-sonnet-4-6",
+      "started_at": "2026-07-06T22:31:19.067Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-8ba1222d-0aa4-4e8d-a41b-0f56d1d5cc77.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "filter-braid4-parameter-values__task-1",
+    "change": "filter-braid4-parameter-values",
+    "task": "task-1",
+    "brief_file": "/Users/joyo/.codex/worktrees/edd67dd3-c1c6-412c-9f9a-efaadbef43d2/Sheaf/.superpowers/sdd/task-1-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:fa979540-0cbd-4e68-8426-5bfdcfbf8f86",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-19T06:24:32.621Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-fa979540-0cbd-4e68-8426-5bfdcfbf8f86.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "filter-braid4-parameter-values__task-2",
+    "change": "filter-braid4-parameter-values",
+    "task": "task-2",
+    "brief_file": "/Users/joyo/.codex/worktrees/edd67dd3-c1c6-412c-9f9a-efaadbef43d2/Sheaf/.superpowers/sdd/task-2-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:47edf5a6-bb5e-4809-bd14-1102f9ad7b9c",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-19T06:34:24.612Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-47edf5a6-bb5e-4809-bd14-1102f9ad7b9c.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "filter-braid4-parameter-values__task-3",
+    "change": "filter-braid4-parameter-values",
+    "task": "task-3",
+    "brief_file": "/Users/joyo/.codex/worktrees/edd67dd3-c1c6-412c-9f9a-efaadbef43d2/Sheaf/.superpowers/sdd/task-3-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:354ee31c-977f-49a4-8c0c-a962243621df",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-19T06:49:02.832Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-354ee31c-977f-49a4-8c0c-a962243621df.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "filter-braid4-parameter-values__task-4",
+    "change": "filter-braid4-parameter-values",
+    "task": "task-4",
+    "brief_file": "/Users/joyo/.codex/worktrees/edd67dd3-c1c6-412c-9f9a-efaadbef43d2/Sheaf/.superpowers/sdd/task-4-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:2afd5663-9d42-471d-9636-4dba8a414434",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-19T06:59:15.093Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-2afd5663-9d42-471d-9636-4dba8a414434.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "fix-agent-review-hunk-navigation__task-2",
+    "change": "fix-agent-review-hunk-navigation",
+    "task": "task-2",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019ed4b0-f910-79f0-8e2a-4d13817eb8c7",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-06-17T08:27:08.716Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019ed4b0-f910-79f0-8e2a-4d13817eb8c7.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "fix-agent-review-hunk-navigation__task-4",
+    "change": "fix-agent-review-hunk-navigation",
+    "task": "task-4",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019ed4de-1210-79a0-94c6-93ff07c57fa1",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-06-17T09:16:24.303Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019ed4de-1210-79a0-94c6-93ff07c57fa1.md",
+      "traits": null
+     },
+     {
+      "sid": "codex:019ed4ea-2855-7ec1-a296-c689963c15bc",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-06-17T09:29:36.393Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019ed4ea-2855-7ec1-a296-c689963c15bc.md",
+      "traits": null
+     },
+     {
+      "sid": "codex:019ed4ea-477e-7342-84a8-15b8a2b93ce4",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-06-17T09:29:44.347Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019ed4ea-477e-7342-84a8-15b8a2b93ce4.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-1",
+    "change": "fix-browser-native-audio-and-generic-app-packaging",
+    "task": "task-1",
+    "brief_file": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-1-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:e792121a-4d26-4550-a026-e7f9afed3695",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-19T06:04:00.984Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-e792121a-4d26-4550-a026-e7f9afed3695.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:c61c3a9c-32a5-4456-85dd-1a873390c22d",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-19T17:30:23.795Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-c61c3a9c-32a5-4456-85dd-1a873390c22d.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "batch": 8,
+  "items": [
+   {
+    "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-2",
+    "change": "fix-browser-native-audio-and-generic-app-packaging",
+    "task": "task-2",
+    "brief_file": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-2-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:a1b723c1-1ea4-485a-b4ea-92578f3c0030",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-19T06:27:58.156Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-a1b723c1-1ea4-485a-b4ea-92578f3c0030.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:8385d13d-ae5a-428d-8c75-a0d80554e1db",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-19T17:58:44.150Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-8385d13d-ae5a-428d-8c75-a0d80554e1db.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-3",
+    "change": "fix-browser-native-audio-and-generic-app-packaging",
+    "task": "task-3",
+    "brief_file": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-3-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:9dd9c61c-4e8e-46bf-add1-19c9800a35a4",
+      "kind": "reviewer-rereview",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-19T07:19:12.499Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-9dd9c61c-4e8e-46bf-add1-19c9800a35a4.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:ac9cafa7-27c9-41a4-9c4d-3d47730613e5",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-19T18:32:38.441Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ac9cafa7-27c9-41a4-9c4d-3d47730613e5.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-4",
+    "change": "fix-browser-native-audio-and-generic-app-packaging",
+    "task": "task-4",
+    "brief_file": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-4-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:d97cfd25-7c0e-4b1f-90a7-49c4e31704d4",
+      "kind": "reviewer-rereview",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-19T08:07:42.117Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-d97cfd25-7c0e-4b1f-90a7-49c4e31704d4.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:d2d28547-6643-45fc-8484-6f0e7b688ac7",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-19T19:03:23.932Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-d2d28547-6643-45fc-8484-6f0e7b688ac7.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-5",
+    "change": "fix-browser-native-audio-and-generic-app-packaging",
+    "task": "task-5",
+    "brief_file": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-5-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:e3c3dd54-a228-414b-90de-5a9dfbcec8c4",
+      "kind": "reviewer-rereview",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-19T08:32:42.488Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-e3c3dd54-a228-414b-90de-5a9dfbcec8c4.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-6",
+    "change": "fix-browser-native-audio-and-generic-app-packaging",
+    "task": "task-6",
+    "brief_file": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-6-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:2769d191-cb33-48ec-a491-f054245abaa3",
+      "kind": "reviewer-rereview",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-19T09:12:23.111Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-2769d191-cb33-48ec-a491-f054245abaa3.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:9f47ba04-482f-4af2-b25e-8595afafd046",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-19T19:59:10.518Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-9f47ba04-482f-4af2-b25e-8595afafd046.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:a6773fd2-a9f5-4369-b8d8-f39e7d7e6ca8",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-19T20:06:18.247Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-a6773fd2-a9f5-4369-b8d8-f39e7d7e6ca8.md",
+      "traits": {
+       "scope": "final",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-7",
+    "change": "fix-browser-native-audio-and-generic-app-packaging",
+    "task": "task-7",
+    "brief_file": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-7-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:cf6a9b8c-ba9e-401d-b685-d826a67b1341",
+      "kind": "reviewer-rereview",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-19T09:51:50.333Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-cf6a9b8c-ba9e-401d-b685-d826a67b1341.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-8",
+    "change": "fix-browser-native-audio-and-generic-app-packaging",
+    "task": "task-8",
+    "brief_file": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-8-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:310cad1d-3a78-4f01-a645-56382e99718e",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-19T10:17:39.297Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-310cad1d-3a78-4f01-a645-56382e99718e.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-9",
+    "change": "fix-browser-native-audio-and-generic-app-packaging",
+    "task": "task-9",
+    "brief_file": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-9-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:66169c9d-dcef-4375-b676-0292fb4ea49d",
+      "kind": "reviewer-rereview",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-19T10:39:49.148Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-66169c9d-dcef-4375-b676-0292fb4ea49d.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "batch": 9,
+  "items": [
+   {
+    "task_key": "midi-config-blocks__p1-task-1",
+    "change": "midi-config-blocks",
+    "task": "p1-task-1",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2595-9eb7-7532-8a5b-3b56097bb5a6",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T01:26:43.168Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2595-9eb7-7532-8a5b-3b56097bb5a6.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-ac5bd2dc867313eba",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-03T01:30:02.586Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-ac5bd2dc867313eba.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "midi-config-blocks__p1-task-2",
+    "change": "midi-config-blocks",
+    "task": "p1-task-2",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f25a3-5001-74c1-bcd0-27babd3f63cf",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T01:41:37.661Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f25a3-5001-74c1-bcd0-27babd3f63cf.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "midi-config-blocks__p1-task-3",
+    "change": "midi-config-blocks",
+    "task": "p1-task-3",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f25b9-2e4c-7080-bbc2-c28e83661cec",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T02:06:14.177Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f25b9-2e4c-7080-bbc2-c28e83661cec.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "midi-config-blocks__p1-task-4",
+    "change": "midi-config-blocks",
+    "task": "p1-task-4",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f25cd-6c55-7d43-8af9-e04146b41c78",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T02:28:06.503Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f25cd-6c55-7d43-8af9-e04146b41c78.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-a6ab9f977ec756a78",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-03T02:32:12.704Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-a6ab9f977ec756a78.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f25d5-4c9a-7293-9a63-b1495df3c560",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T02:36:09.973Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f25d5-4c9a-7293-9a63-b1495df3c560.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-aaee4360a4f278a13",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-03T02:39:09.325Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-aaee4360a4f278a13.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f25dc-4c34-7203-bf50-ebc042589f93",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T02:44:09.102Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f25dc-4c34-7203-bf50-ebc042589f93.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "midi-config-blocks__p2-task-1",
+    "change": "midi-config-blocks",
+    "task": "p2-task-1",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f25e5-68ab-7e20-85c0-b90e0a239a99",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T02:54:18.484Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f25e5-68ab-7e20-85c0-b90e0a239a99.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "midi-config-blocks__p2-task-2",
+    "change": "midi-config-blocks",
+    "task": "p2-task-2",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2601-29a1-7991-b86a-06e1d7a9a160",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T03:24:31.747Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2601-29a1-7991-b86a-06e1d7a9a160.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "midi-config-blocks__p2-task-3",
+    "change": "midi-config-blocks",
+    "task": "p2-task-3",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2609-06a7-78a3-8eb7-48cadb1b4408",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T03:32:55.897Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2609-06a7-78a3-8eb7-48cadb1b4408.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-aa9fb94e2182a27ba",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-03T03:35:17.350Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-aa9fb94e2182a27ba.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f2610-236a-7282-9d2d-366a117742c7",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T03:40:30.837Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2610-236a-7282-9d2d-366a117742c7.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "midi-config-blocks__p3-task-1",
+    "change": "midi-config-blocks",
+    "task": "p3-task-1",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f261a-36e5-7631-b8c5-ce488dda9333",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T03:51:51.039Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f261a-36e5-7631-b8c5-ce488dda9333.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-a74aaa734bd50bd20",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-03T03:55:01.844Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-a74aaa734bd50bd20.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f2625-7453-7862-91fd-9ff28122569e",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T04:04:10.987Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2625-7453-7862-91fd-9ff28122569e.md",
+      "traits": null
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "batch": 10,
+  "items": [
+   {
+    "task_key": "midi-config-blocks__p3-task-2",
+    "change": "midi-config-blocks",
+    "task": "p3-task-2",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2645-6ad9-72e2-ac09-e10bd2ec63d4",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T04:39:57.800Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2645-6ad9-72e2-ac09-e10bd2ec63d4.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-ae1f994d45a427f9c",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-03T04:44:47.041Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-ae1f994d45a427f9c.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f2658-98c7-77f2-a035-070debc03aa0",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T04:59:48.428Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2658-98c7-77f2-a035-070debc03aa0.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "midi-config-blocks__p3-task-3",
+    "change": "midi-config-blocks",
+    "task": "p3-task-3",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2666-a2e9-72a0-983f-fcd931d99757",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T05:15:19.114Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2666-a2e9-72a0-983f-fcd931d99757.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-a1b90592f6b5c126c",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-03T05:18:28.396Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-a1b90592f6b5c126c.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f2674-5410-7bf3-b3a8-72e8c626add9",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T05:30:04.879Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2674-5410-7bf3-b3a8-72e8c626add9.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "midi-config-blocks__p4-task-1",
+    "change": "midi-config-blocks",
+    "task": "p4-task-1",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2685-4036-7773-a061-9d3052f449b0",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T05:48:28.939Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2685-4036-7773-a061-9d3052f449b0.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-a8fcd6350de4d4cc1",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-03T05:52:16.151Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-a8fcd6350de4d4cc1.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f2692-20ea-79e3-8dd6-723818df8e82",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T06:02:20.579Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2692-20ea-79e3-8dd6-723818df8e82.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-a87dc50be09b7a233",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-03T06:06:17.654Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-a87dc50be09b7a233.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f269b-a089-7fc2-8b16-6e90b61bf0d1",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T06:13:30.116Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f269b-a089-7fc2-8b16-6e90b61bf0d1.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "midi-config-blocks__p4-task-2",
+    "change": "midi-config-blocks",
+    "task": "p4-task-2",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f26a9-ccab-76d0-a832-b8833d65d536",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T06:28:26.193Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f26a9-ccab-76d0-a832-b8833d65d536.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "midi-config-blocks__p4-task-3",
+    "change": "midi-config-blocks",
+    "task": "p4-task-3",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f26b8-c3f4-7571-a625-17b40dd8eb41",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T06:45:15.904Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f26b8-c3f4-7571-a625-17b40dd8eb41.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-abc160a7e7a3bb2d4",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-03T06:48:47.565Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-abc160a7e7a3bb2d4.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "midi-config-blocks__p4-task-4",
+    "change": "midi-config-blocks",
+    "task": "p4-task-4",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f26cb-41c0-79c0-9407-fcbfe6899db3",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T07:05:02.807Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f26cb-41c0-79c0-9407-fcbfe6899db3.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-ab5276767c093c9e0",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-03T07:08:47.208Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-ab5276767c093c9e0.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f26e2-a702-7a60-8ac5-b92fc9dc40d2",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T07:30:34.826Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f26e2-a702-7a60-8ac5-b92fc9dc40d2.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "midi-config-blocks__p4-task-5",
+    "change": "midi-config-blocks",
+    "task": "p4-task-5",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f26ea-c905-7313-9d62-097c3a889d9a",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-03T07:39:33.652Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f26ea-c905-7313-9d62-097c3a889d9a.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-ad73f901ddeeb7872",
+      "kind": "reviewer",
+      "model": "claude-haiku-4-5-20251001",
+      "started_at": "2026-07-03T07:41:44.295Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-ad73f901ddeeb7872.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "restore-encoder-mouse-interaction__task-1",
+    "change": "restore-encoder-mouse-interaction",
+    "task": "task-1",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:55f7ab1f-e810-4bc8-9dbd-c5f3b9dbcbc4",
+      "kind": "reviewer",
+      "model": "claude-sonnet-4-6",
+      "started_at": "2026-07-08T00:14:23.477Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-55f7ab1f-e810-4bc8-9dbd-c5f3b9dbcbc4.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "batch": 11,
+  "items": [
+   {
+    "task_key": "restore-encoder-mouse-interaction__task-2",
+    "change": "restore-encoder-mouse-interaction",
+    "task": "task-2",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:73157ac6-d991-4bd9-a502-018282aaeb28",
+      "kind": "reviewer",
+      "model": "claude-sonnet-4-6",
+      "started_at": "2026-07-08T00:19:33.651Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-73157ac6-d991-4bd9-a502-018282aaeb28.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "restore-encoder-mouse-interaction__task-3",
+    "change": "restore-encoder-mouse-interaction",
+    "task": "task-3",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:93d6d1f9-53b1-4161-879f-7b0788efe10b",
+      "kind": "reviewer",
+      "model": "claude-sonnet-4-6",
+      "started_at": "2026-07-08T00:28:58.008Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-93d6d1f9-53b1-4161-879f-7b0788efe10b.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     },
+     {
+      "sid": "claude:5a511222-fbe7-4eb4-897b-70cc76beaad3",
+      "kind": "reviewer-rereview",
+      "model": "claude-sonnet-4-6",
+      "started_at": "2026-07-08T00:39:04.604Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-5a511222-fbe7-4eb4-897b-70cc76beaad3.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "restore-encoder-mouse-interaction__task-4",
+    "change": "restore-encoder-mouse-interaction",
+    "task": "task-4",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:d1897653-522e-4caf-af32-b6a85b664388",
+      "kind": "reviewer",
+      "model": "claude-haiku-4-5-20251001",
+      "started_at": "2026-07-08T00:46:18.850Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-d1897653-522e-4caf-af32-b6a85b664388.md",
+      "traits": {
+       "scope": "task",
+       "focus": "spec+quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "synchronize-absolute-encoder-feedback__task-1",
+    "change": "synchronize-absolute-encoder-feedback",
+    "task": "task-1",
+    "brief_file": "/Users/joyo/.codex/worktrees/fdbad985-650c-46f4-95a9-ed8acdcafbd0/Sheaf/.superpowers/sdd/task-1-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:043265df-3baf-40ed-b67a-8db236000ec9",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-17T01:45:14.105Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-043265df-3baf-40ed-b67a-8db236000ec9.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     },
+     {
+      "sid": "claude:8c8b598e-d80c-492e-93ad-ddb278a6e142",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-17T02:59:07.114Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-8c8b598e-d80c-492e-93ad-ddb278a6e142.md",
+      "traits": {
+       "scope": "final",
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "claude:390e3f42-9513-4dda-95d5-305db201ef97",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-17T04:02:08.581Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-390e3f42-9513-4dda-95d5-305db201ef97.md",
+      "traits": {
+       "scope": "final",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "synchronize-absolute-encoder-feedback__task-2",
+    "change": "synchronize-absolute-encoder-feedback",
+    "task": "task-2",
+    "brief_file": "/Users/joyo/.codex/worktrees/fdbad985-650c-46f4-95a9-ed8acdcafbd0/Sheaf/.superpowers/sdd/task-2-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:46b588d6-c800-4335-a995-f485e363b161",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-17T01:59:37.099Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-46b588d6-c800-4335-a995-f485e363b161.md",
+      "traits": {
+       "scope": "task",
+       "focus": "quality"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "synchronize-absolute-encoder-feedback__task-3",
+    "change": "synchronize-absolute-encoder-feedback",
+    "task": "task-3",
+    "brief_file": "/Users/joyo/.codex/worktrees/fdbad985-650c-46f4-95a9-ed8acdcafbd0/Sheaf/.superpowers/sdd/task-3-brief.md",
+    "reviews": [
+     {
+      "sid": "claude:015be842-34fe-4876-b11f-3941f9797f45",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-17T02:26:05.831Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-015be842-34fe-4876-b11f-3941f9797f45.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__p2-task-1",
+    "change": "synth-app-runtime",
+    "task": "p2-task-1",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2120-7ca4-7971-a6bd-4c1d1c0fd069",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T04:40:41.331Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2120-7ca4-7971-a6bd-4c1d1c0fd069.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__p2-task-2",
+    "change": "synth-app-runtime",
+    "task": "p2-task-2",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2125-a07e-7af1-bc44-65b7ab4e5d47",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T04:46:14.742Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2125-a07e-7af1-bc44-65b7ab4e5d47.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-ae0ca2105366c1784",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-02T04:49:10.644Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-ae0ca2105366c1784.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f212b-39d7-7120-830f-f61d936a6dab",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T04:52:29.915Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f212b-39d7-7120-830f-f61d936a6dab.md",
+      "traits": null
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "batch": 12,
+  "items": [
+   {
+    "task_key": "synth-app-runtime__p2-task-3",
+    "change": "synth-app-runtime",
+    "task": "p2-task-3",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2133-cabc-7533-bba5-2c5bb7629366",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T05:01:55.689Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2133-cabc-7533-bba5-2c5bb7629366.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__p2-task-4",
+    "change": "synth-app-runtime",
+    "task": "p2-task-4",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f213e-de62-7572-899c-cba7490f3fe4",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T05:14:01.114Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f213e-de62-7572-899c-cba7490f3fe4.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-ac5747db607c1f073",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-02T05:17:16.319Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-ac5747db607c1f073.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f214c-5f4a-7150-85f8-f2ce0230987f",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T05:28:37.162Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f214c-5f4a-7150-85f8-f2ce0230987f.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__p2-task-5",
+    "change": "synth-app-runtime",
+    "task": "p2-task-5",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2157-c4ee-7590-ae3f-9b471d0e0e6e",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T05:40:52.443Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2157-c4ee-7590-ae3f-9b471d0e0e6e.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-a53490e7e7ba769cc",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-02T05:43:57.399Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-a53490e7e7ba769cc.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f215f-2a24-7fd3-949e-079a3566a4ec",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T05:48:52.577Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f215f-2a24-7fd3-949e-079a3566a4ec.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__p2-task-6",
+    "change": "synth-app-runtime",
+    "task": "p2-task-6",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2169-54cf-7460-9265-da44fa1bc98f",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T06:00:08.681Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2169-54cf-7460-9265-da44fa1bc98f.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-ac1f7774cd6975e90",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-02T06:02:50.546Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-ac1f7774cd6975e90.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f216f-b740-77a1-a38e-2f1b708a28d2",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T06:06:51.901Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f216f-b740-77a1-a38e-2f1b708a28d2.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__p2-task-7",
+    "change": "synth-app-runtime",
+    "task": "p2-task-7",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2179-3152-76b3-82a8-164830a23d8d",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T06:17:14.141Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2179-3152-76b3-82a8-164830a23d8d.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-afe83c78fa44b4714",
+      "kind": "reviewer",
+      "model": "claude-haiku-4-5-20251001",
+      "started_at": "2026-07-02T06:19:52.221Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-afe83c78fa44b4714.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f217c-dea1-7f00-b836-0d04b2ef2a2f",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T06:21:12.850Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f217c-dea1-7f00-b836-0d04b2ef2a2f.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__p3-task-1",
+    "change": "synth-app-runtime",
+    "task": "p3-task-1",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2187-917e-7e13-a4fd-02b8d695ee90",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T06:33:02.756Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2187-917e-7e13-a4fd-02b8d695ee90.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-a1c8b83c4f5d4f7aa",
+      "kind": "reviewer",
+      "model": "claude-haiku-4-5-20251001",
+      "started_at": "2026-07-02T06:35:41.253Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-a1c8b83c4f5d4f7aa.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f218e-ea2f-7850-b55d-6942a9513d38",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T06:40:56.882Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f218e-ea2f-7850-b55d-6942a9513d38.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__p3-task-2",
+    "change": "synth-app-runtime",
+    "task": "p3-task-2",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2199-8c72-71b3-988f-d4648749732b",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T06:52:32.529Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2199-8c72-71b3-988f-d4648749732b.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__p3-task-3",
+    "change": "synth-app-runtime",
+    "task": "p3-task-3",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2368-10b4-7371-95c4-75ee72e65e6a",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T15:17:33.857Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2368-10b4-7371-95c4-75ee72e65e6a.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-ac0f4d3a4a89c74d1",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-02T15:19:50.645Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-ac0f4d3a4a89c74d1.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f236f-8b40-7c63-be7b-bd3f28aed2e7",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T15:25:47.579Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f236f-8b40-7c63-be7b-bd3f28aed2e7.md",
+      "traits": null
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "batch": 13,
+  "items": [
+   {
+    "task_key": "synth-app-runtime__p3-task-4",
+    "change": "synth-app-runtime",
+    "task": "p3-task-4",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f237a-a135-72e0-9574-d6b0f194b2f2",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T15:37:49.043Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f237a-a135-72e0-9574-d6b0f194b2f2.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-aa3ee5c37898e66c7",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-02T15:40:26.484Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-aa3ee5c37898e66c7.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f237f-2e53-7f70-9908-316052470116",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T15:42:52.591Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f237f-2e53-7f70-9908-316052470116.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__p3-task-5",
+    "change": "synth-app-runtime",
+    "task": "p3-task-5",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f238a-b6b5-7fd0-be85-96b01b94f0b1",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T15:55:23.360Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f238a-b6b5-7fd0-be85-96b01b94f0b1.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-a32df363eb24064b2",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-02T15:58:11.953Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-a32df363eb24064b2.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f2393-22e5-72e3-88c3-2361e67e5f95",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T16:04:38.484Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2393-22e5-72e3-88c3-2361e67e5f95.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-a758a9eeb3a9f5683",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-02T16:06:39.750Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-a758a9eeb3a9f5683.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f2397-e370-7c63-9779-65bbfb53fd13",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T16:09:54.545Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2397-e370-7c63-9779-65bbfb53fd13.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-acb0c6a1034344118",
+      "kind": "reviewer",
+      "model": "claude-haiku-4-5-20251001",
+      "started_at": "2026-07-02T16:11:48.451Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-acb0c6a1034344118.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f239b-5b6c-7ee1-97c2-15dab17da9d6",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T16:13:45.689Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f239b-5b6c-7ee1-97c2-15dab17da9d6.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__p3-task-6",
+    "change": "synth-app-runtime",
+    "task": "p3-task-6",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f23b3-2a9f-7f70-a490-536323d825c5",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T16:39:48.565Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f23b3-2a9f-7f70-a490-536323d825c5.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__p4-task-1",
+    "change": "synth-app-runtime",
+    "task": "p4-task-1",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2407-b9a7-7be1-880b-3057b08488c3",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T18:12:08.145Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2407-b9a7-7be1-880b-3057b08488c3.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__p4-task-2",
+    "change": "synth-app-runtime",
+    "task": "p4-task-2",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2410-6170-7c63-982c-8b8deafdb922",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T18:21:47.055Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2410-6170-7c63-982c-8b8deafdb922.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-a1845bfbb704c8e76",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-02T18:24:19.093Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-a1845bfbb704c8e76.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f2416-d6f7-7220-9037-fbbb9265b276",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T18:28:35.479Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2416-d6f7-7220-9037-fbbb9265b276.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-ae2a0e6534cb1a5c5",
+      "kind": "reviewer",
+      "model": "claude-haiku-4-5-20251001",
+      "started_at": "2026-07-02T18:30:39.831Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-ae2a0e6534cb1a5c5.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f241a-cdf9-7ba0-8d40-630efb0fc2b1",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T18:32:55.859Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f241a-cdf9-7ba0-8d40-630efb0fc2b1.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__p4-task-3",
+    "change": "synth-app-runtime",
+    "task": "p4-task-3",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f242a-8d92-7bc1-8105-3850deafc2c5",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T18:50:21.808Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f242a-8d92-7bc1-8105-3850deafc2c5.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-a3ecad69b22c4130d",
+      "kind": "reviewer",
+      "model": "claude-sonnet-5",
+      "started_at": "2026-07-02T18:54:04.251Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-a3ecad69b22c4130d.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f2438-dc15-7cd0-9275-5ef85e8f0325",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T19:06:08.564Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2438-dc15-7cd0-9275-5ef85e8f0325.md",
+      "traits": null
+     },
+     {
+      "sid": "codex:019f2446-0c49-7060-9ad5-376d0823309c",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T19:20:34.199Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2446-0c49-7060-9ad5-376d0823309c.md",
+      "traits": null
+     },
+     {
+      "sid": "claude:agent-a55bcfcc032de1526",
+      "kind": "reviewer",
+      "model": "claude-haiku-4-5-20251001",
+      "started_at": "2026-07-02T19:22:51.706Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-agent-a55bcfcc032de1526.md",
+      "traits": {
+       "scope": null,
+       "focus": "general"
+      }
+     },
+     {
+      "sid": "codex:019f244a-fc42-7c61-a56d-0f127645b2e8",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T19:25:39.437Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f244a-fc42-7c61-a56d-0f127645b2e8.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__p4-task-4",
+    "change": "synth-app-runtime",
+    "task": "p4-task-4",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2450-092b-7ba2-ba60-b9d5de9ad6c6",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T19:31:25.790Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2450-092b-7ba2-ba60-b9d5de9ad6c6.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__task-1",
+    "change": "synth-app-runtime",
+    "task": "task-1",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f209a-3be0-7e83-9ff1-7d67becb273c",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T02:13:28.697Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f209a-3be0-7e83-9ff1-7d67becb273c.md",
+      "traits": null
+     },
+     {
+      "sid": "codex:019f209b-8468-7c31-b97c-b47cae549403",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T02:14:53.427Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f209b-8468-7c31-b97c-b47cae549403.md",
+      "traits": null
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "batch": 14,
+  "items": [
+   {
+    "task_key": "synth-app-runtime__task-2",
+    "change": "synth-app-runtime",
+    "task": "task-2",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f20a0-8916-72a0-bc46-90480ced92cf",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T02:20:22.841Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f20a0-8916-72a0-bc46-90480ced92cf.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__task-3",
+    "change": "synth-app-runtime",
+    "task": "task-3",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f20a3-97f0-7523-8a79-f72f7439e8e5",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T02:23:44.589Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f20a3-97f0-7523-8a79-f72f7439e8e5.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__task-4",
+    "change": "synth-app-runtime",
+    "task": "task-4",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f20a8-8c3d-7013-bbaa-4dbfd4848de0",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T02:29:16.890Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f20a8-8c3d-7013-bbaa-4dbfd4848de0.md",
+      "traits": null
+     },
+     {
+      "sid": "codex:019f2111-0598-7d30-922c-17a4fcd5640f",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T04:23:43.041Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2111-0598-7d30-922c-17a4fcd5640f.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__task-5",
+    "change": "synth-app-runtime",
+    "task": "task-5",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2115-ce9d-70b3-b869-da9c4b9afc2b",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T04:28:58.472Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2115-ce9d-70b3-b869-da9c4b9afc2b.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "synth-app-runtime__unmatched",
+    "change": "synth-app-runtime",
+    "task": "unmatched",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "codex:019f2077-93ad-7871-84cd-7cf59cabd9b0",
+      "kind": "reviewer",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T01:35:39.747Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f2077-93ad-7871-84cd-7cf59cabd9b0.md",
+      "traits": null
+     },
+     {
+      "sid": "codex:019f23c3-f45c-7a23-9b5d-c2f069823b54",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T16:58:03.341Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f23c3-f45c-7a23-9b5d-c2f069823b54.md",
+      "traits": null
+     },
+     {
+      "sid": "codex:019f23de-1e1f-7fd3-b5a9-0ced841902a9",
+      "kind": "reviewer-rereview",
+      "model": "gpt-5.5",
+      "started_at": "2026-07-02T17:27:00.519Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f23de-1e1f-7fd3-b5a9-0ced841902a9.md",
+      "traits": null
+     }
+    ]
+   },
+   {
+    "task_key": "wt:d37c__task-1",
+    "change": "wt:d37c",
+    "task": "task-1",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:933a3c3a-8931-4644-a960-397d15a03968",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-07T05:34:38.814Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-933a3c3a-8931-4644-a960-397d15a03968.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "wt:d37c__task-2",
+    "change": "wt:d37c",
+    "task": "task-2",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:236e80a1-4b2b-41ee-bacf-69eff8d23d9d",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-07T05:44:46.349Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-236e80a1-4b2b-41ee-bacf-69eff8d23d9d.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "wt:d37c__task-3",
+    "change": "wt:d37c",
+    "task": "task-3",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:79a6af34-cc53-4313-9036-2530577a8f50",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-07T05:57:22.168Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-79a6af34-cc53-4313-9036-2530577a8f50.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "batch": 15,
+  "items": [
+   {
+    "task_key": "wt:d37c__task-4",
+    "change": "wt:d37c",
+    "task": "task-4",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:8ff935dc-b737-404e-9708-2f07f0f1eea6",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-07T06:09:27.880Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-8ff935dc-b737-404e-9708-2f07f0f1eea6.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   },
+   {
+    "task_key": "wt:d37c__task-5",
+    "change": "wt:d37c",
+    "task": "task-5",
+    "brief_file": null,
+    "reviews": [
+     {
+      "sid": "claude:ce5c42b1-7f6f-4b0c-90d7-10d3ad3a8e10",
+      "kind": "reviewer",
+      "model": "claude-opus-4-8",
+      "started_at": "2026-07-07T06:19:55.000Z",
+      "review_text": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ce5c42b1-7f6f-4b0c-90d7-10d3ad3a8e10.md",
+      "traits": {
+       "scope": "task",
+       "focus": "general"
+      }
+     }
+    ]
+   }
+  ]
+ }
+]

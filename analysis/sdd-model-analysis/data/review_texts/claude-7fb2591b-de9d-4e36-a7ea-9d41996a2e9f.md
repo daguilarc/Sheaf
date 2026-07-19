@@ -1,0 +1,14 @@
+## SPEC APPROVED
+
+Verified each Task 2 requirement against `review-5ab2ad23..0e837e3a.diff` and the surrounding (unmodified) source:
+
+- **`JuceRuntimeMainServices<App>`** (`projects/synth/runtime/JuceRuntimeMainServices.hpp`) implements every method required by Task 1's `RuntimeMainServices` concept (`RuntimeMainComponent.hpp:30-45`): `MakeControllersCallbacks`, `RefreshAudio`/`DispatchAudio`, `RefreshFile`/`DispatchFile`, `RefreshControllers`, `DeadlineSamplePercent` (delegates to `Runtime::DeadlineSamplePct()`, confirmed no other call sites remain), `SaveRuntimeConfiguration`. Constructor installs Audio status/sync + MIDI-rebuild hooks; destructor clears all three (RAII cleanup) — hook cleanup requirement met.
+- **`MainPane`** (`MainPane.hpp:817-838`) declares members in exactly the required order (`runtime_`, `services_`, `mainComponent_`, `renderer_`) with matching initializer-list order — safe lifetime order (renderer destroyed before shared component before services). `RefreshOnTick()` calls `mainComponent_.Refresh()` then `renderer_.RefreshFromSurface()`; `IntrinsicBounds()` returns `mainComponent_.IntrinsicBounds()`.
+- **Public wrappers** `Page`, `ShowPage(Page)`, `CurrentPage()` remain, mapping to `RuntimeMainComponent`'s `RuntimeMainPage`.
+- **Shell width**: `RuntimeMainComponent::IntrinsicBounds()` returns `uiWidth + Layout::kSidebarWidth` (96.0f, confirmed at `RuntimePages.hpp:165`) — matches brief and both `RuntimeShellSession` and `MainWindow` size from this after `runtime_->Start()`.
+- **Deadline write**: `ShellComponent::RepaintAll`'s separate `WriteDeadlineSample` call is removed; `RuntimeMainComponent::Refresh()` samples and writes the rolling max exactly once via `services_.DeadlineSamplePercent()`.
+- **`PortableJuceBackend::LayoutControls`**: now maintains one `FlowCursor` per nearest `NodeKind::Root` (`m_nearestRootByNodeId`, populated in `CollectRenderableDescendants`), each using that root's absolute bounds via `UiToJuceRect(nearestRoot->bounds)`; controls remain direct children of `PortableComponent`.
+- **Tests**: `RuntimeShellSessionTests.cpp` asserts width `= uiWidth+96`, exactly one `PortableComponent` renderer, discoverability of `runtime.main.root`/encoder/`kSidebarAudio` through it, Audio→Back state-preserving navigation, and a full-width (900px) draw node reaching x=900 unclipped. `PortableJuceBackendTests.cpp` adds the composite 900px-nested-root fixture proving app controls wrap within the app root while the sidebar flows from its own root at x=900.
+- **Scope**: grep for `MiniApp`/concrete-app markers in `JuceRuntimeMainServices.hpp`, `MainPane.hpp`, `Shell.hpp`, `PortableJuceBackend.hpp` returns nothing — zero concrete-app production logic. Diff's changed-files list contains only the 8 Task 2 files; no browser or audio-scheduler files touched.
+
+No deviations found.

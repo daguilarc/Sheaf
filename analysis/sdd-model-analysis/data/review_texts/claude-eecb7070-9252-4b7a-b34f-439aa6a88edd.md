@@ -1,0 +1,27 @@
+## Findings
+
+**Critical:** none
+
+**Important:** none
+
+**Minor**
+
+1. `projects/synth/apps/miniapp/MiniAppDraw.hpp:15` — `kGangedRandomLfoVoiceCount` is now a misleading name. Before this commit it served double duty (gang-panel snapshot size + `MiniAppCore::kVoiceCount`); after `BuildGangedRandomLfoPanelCommands`/`MiniAppGangedRandomLfoSnapshot` were deleted, MiniApp no longer has a ganged-random panel at all, yet `MiniAppCore.hpp:40` (`static constexpr std::size_t kVoiceCount = kGangedRandomLfoVoiceCount;`) still derives the app's general voice count from a constant named after the removed feature. Purely cosmetic — no behavior or topology change — but a future reader could mistake it for still meaning something gang-LFO-specific. Not blocking.
+
+**Uncertainty flagged:** I did not rerun the build/test commands (per read-only instructions), so I'm relying on `random-grid-task-4-report.md`'s stated exit codes for the actual pass/fail evidence rather than reproducing it myself.
+
+### Checks performed against the review criteria
+
+- **API cleanup safety**: `git grep` across `projects/synth` for `GangedRandomLfoInstance`, `BuildGangedRandomLfoPanelCommands`, `MiniAppGangedRandomLfoSnapshot`, and the removed `using GangedRandomLfo = …` alias returns zero hits — the removed wrapper/accessor code was genuinely dead, not referenced from any production or test file left in the tree.
+- **Scope of deletion**: Only the MiniApp-only wrapper (`BuildGangedRandomLfoPanelCommands`, its snapshot alias, its includes) and the MiniApp-only accessor overloads (`GangedRandomLfoInstance()`/`const` overload, `using GangedRandomLfo`) were removed. The generic `synth::ui::BuildGangedRandomLfoCommands`, `GangedRandomLfoSnapshot`, `GangedRandomLfoGeometry`, and `StandardModulators` visualizer code are untouched.
+- **Browser command-tree test strength**: `TestMiniAppTwoScopeCommandsUseExistingBrowserSchema` (browser_command_buffer_tests.cpp:226-263) checks `decoded.nodes.size() == 3` (root+VCO+LFO), unchanged `kCommandBufferVersion`, empty `diagnostics`, and non-zero draw counts for both scope nodes — matches the brief exactly and is at least as strong as the assertions it replaced, minus the gang-specific ellipse-count check, which is appropriately dropped along with the removed gang node (not a coverage loss — see below).
+- **Unchanged version/diagnostics assertions**: version and diagnostics-empty assertions are present and semantically identical in intent to the prior test; no protocol file is touched by this diff (diff --stat confirms only the 5 expected files changed).
+- **Generic ganged-random coverage preserved**: `BuildGangedRandomLfoCommands` is still exercised 1x in browser_command_buffer_tests.cpp (`TestPredictiveGangedLfoUsesExistingDrawSchema`, unchanged, still asserts `ellipses == 2`) and 10x in portable_ui_tests.cpp covering snapshot/moving/boundary/fail-closed(`invalid`)/resize cases — none of these call sites were touched. `TestStandardModulatorUnderlaysUseExistingBrowserSchema` is also unchanged.
+- **Coverage documentation accuracy**: Verified the `ssm-3` row/detail text ("unchanged means/target sigmas, tripled waiting/moving external sigmas, doubled waiting/moving internal sigmas") against `dsp_tests.cpp:305-313` and against commit `bf378b23`'s diff (0.1→0.3 and 0.05→0.15 external = tripled; 0.1→0.2 and 0.2→0.4 internal = doubled; means/target sigmas untouched) — accurate. Verified `spm-71` detail-section test-name citations (`miniapp_main_layout_draws_bounded_scope_stack_and_complete_encoder_grid` in `miniapp_system_tests.cpp:472`, encoder-15 push routing in `projects/synth/juce/MiniAppJuceBackendParityTests.cpp`) exist and match the described behavior. The old "three-panel main waveform row" claim is correctly removed (that test name no longer exists anywhere).
+- **Includes/type aliases after deletion**: `MiniAppDraw.hpp` dropped `GangedRandomLfoVisualizer.hpp` and `ParameterModulation.hpp`; grep confirms neither remaining function in the file needs them, and the retained `kGangedRandomLfoVoiceCount` constant is still consumed by `MiniAppCore.hpp:40` (see Minor finding above). `browser_command_buffer_tests.cpp` still needs and keeps `GangedRandomLfoVisualizer.hpp` for its own retained generic test.
+- **Scope discipline**: diff touches exactly the 5 files named in the brief/report; `openspec/changes/add-standard-modulators/tasks.md` has no diff, consistent with "deferred to root" and the report's stated intent.
+- **No test weakening**: the only assertions removed are ones whose subject (the MiniApp gang panel) no longer exists; equivalent/generic coverage for the underlying `BuildGangedRandomLfoCommands` path remains fully intact elsewhere in both files.
+- **No topology/protocol changes**: `MiniAppCore::kVoiceCount`'s value is unchanged (only the alias name feeding it moved from `kGangedRandomLfoVoiceCount`... to itself, unchanged), no browser protocol/version file is in the diff, and JUCE parity test files (`MiniAppJuceBackendParityTests.cpp`, `PortableDrawGeometryTests.cpp`) show zero diff between the two commits, confirming Task 3's JUCE assertions were left alone as required.
+- Makefile header-dependency debt and the `make -B` force-rebuild are correctly out of scope per the prompt, and I did not flag them.
+
+CODE QUALITY: PASS

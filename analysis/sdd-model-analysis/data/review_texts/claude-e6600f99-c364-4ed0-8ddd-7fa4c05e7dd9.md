@@ -1,0 +1,13 @@
+## Review: Task 1 — Runtime 4:1 FIR and AutoScope test target
+
+**Scope verified:** diff `01d32ef7..758c5e7f` touches exactly `projects/synth/Makefile`, `projects/synth/include/synth/DspLogStructuredBuffer.hpp` (new), `projects/synth/tests/autoscope_tests.cpp` (new) — matches the task-1-brief file list exactly. No changes to `DspBuffers.hpp`/`FirDecimator`/287-tap coefficients, no touches to `projects/synth/miniapp/` or `.superpowers/sdd/progress.md`, consistent with the report's claims and the plan's global constraints.
+
+**Correctness (worked the math by hand):** Traced the polyphase decomposition symbolically. Writing `y[n] = Σ_k c[k]·x[n-k]`, decomposing `k = 4t+r`, the code's `historyPhase = kFactor-1-coefficientPhase` mapping combined with the circular-buffer offset (`writeIndices_[historyPhase] + size - 1 - phaseTap`) reproduces exactly `Σ_t c[4t+r]·x[4(m-t)+(3-r)]` for each `r∈{0..3}` at output index `n=4m+3` — i.e. the full untruncated FIR convolution, with the zero-filled startup history correctly standing in for missing past samples. This independently confirms the impulse test (`emitted[m] == coefficients[4m+3]`), the DC/reset/split-block equivalence tests, and the "no allocation in `Process`/`Reset`" requirement (all buffers preallocated in the constructor after validation, which runs before any `resize`/`push_back`).
+
+**Spec alignment:** `design.md` (lines 48-50) independently states the same 31-tap/cutoff-0.09/beta-5.0 design analytically yields ~0.35 dB ripple, -23.97 dB at 0.125, -59.61 dB worst alias — comfortably inside the pinned 0.5/20/55 dB test bounds implemented verbatim in `autoscope_tests.cpp`. The Makefile integration (`AUTOSCOPE_TEST_BIN`, compile rule with explicit `| $(BUILD_SENTINEL)` since it doesn't route through `$(LIB)`, inclusion in `test` prerequisites and recipe) follows the existing pattern used by other header-only-adjacent test binaries. `noexcept` is enforced both by signature and `static_assert`. TDD evidence (RED via missing-header build failure, GREEN with 8/8 new tests + retained 57 `dsp_tests` passing, no warnings under `-Wall -Wextra -Wpedantic`) is present and consistent with the diff.
+
+**Finding (Minor, reported via ReportFindings):** `DspLogStructuredBuffer.hpp:192-203` re-implements `BesselI0`/π instead of reusing the existing `constexpr synth::detail::FirBesselI0`/`kFirDesignPi` in `DspBuffers.hpp` — a DRY/maintenance nit, not a correctness issue.
+
+No Critical or Important findings.
+
+**PASS**

@@ -1,0 +1,28 @@
+## CHANGES REQUESTED
+
+The production density-raster implementation is correct across the entire checklist — moment algebra, NCC normalization, splat/index arithmetic, cache key, invalidation, allocation-free steady paths, overflow guards, and finite/NaN safety all hold up (details below). The one item that warrants a fix is **spec concern 3**: a testing-only anchor divergence that makes a coordinate-invariant test vacuous and encodes a *false* invariant. Concerns 1 and 2 are real but do not require fixes.
+
+### Required fix — Concern 3: divergent anchor helper produces a vacuous, false-invariant test
+
+- `DspAutoScope.hpp:800` — `DensityReaderForSourceTesting` sets `diagnostics_.anchorBase = CommonDensityAnchorBase()`, which returns level-0 `newest-1` and **ignores its `source`/`level` arguments**.
+- Production instead uses `DensityAnchorBase(level, source)` everywhere — the accumulation anchor in `BuildDensityRaster` (`DspAutoScope.hpp:1875`) and both diagnostics assignments (`DspAutoScope.hpp:2083`, `2162`). For `SummaryRms` this is `stride*(newest-1)+0.5*(stride-1)`; for `Signed` it is `EffectiveBaseIndex` = arrival − group delay (`DspAutoScope.hpp:1480-1490`). These **differ by the FIR group delay at any level > 0.**
+- Consequence at `autoscope_tests.cpp:1964-1968`: `signedReader` and `summaryReader` are built at level 2 with different sources, then `REQUIRE_NEAR(signedReader.AnchorBase(), summaryReader.AnchorBase(), 1e-12)`. Because the helper feeds both the same source/level-independent constant, the assertion is **tautologically true and tests nothing**. Worse, the property it claims — signed and summary anchors coincide at level 2 — is *false* in production (they diverge by group delay). If the helper were corrected to `DensityAnchorBase(level, source)`, this test would fail.
+- The genuinely meaningful invariant (scalar/summary base-time round-trip) is already covered by the first half of the same test (`autoscope_tests.cpp:1956-1961`), so the fix is low-risk: point the helper at `DensityAnchorBase(level, source)` and drop/correct the now-false equality assertion.
+
+### Concern 1 — global runner-up prominence: real limitation, no fix required
+
+`DensityAlignmentAccepted` (`DspAutoScope.hpp:1708-1712`) gates on `peak - runnerUp >= alignmentProminence` where `runnerUp` is the global second-best over the 17 offsets (`DspAutoScope.hpp:1922-1927`). Because correlation-vs-offset is smooth, the runner-up is almost always the peak's immediate neighbor, so prominence collapses toward zero for narrowband/near-sinusoidal spans — genuine alignments get suppressed. This is **graceful**: rejection just leaves `alignmentOffset = 0`, and the span still accumulates at its natural (already phase-coherent) position; no data is dropped. Broadband/motif recurrence, where alignment actually matters, decorrelates fast enough to clear prominence and is exercised (`auto_scope_density_registers_uniquely_correlated_shifted_history` asserts `AcceptedAlignments() > 0`). Net effect is only slightly blurrier detuned ribbons — a quality tradeoff, not a correctness defect. Fine to defer.
+
+### Concern 2 — diagnostics counting a rejected span: cannot manifest
+
+`alignmentOffsetEvaluations` (`DspAutoScope.hpp:1921`) and `acceptedAlignments` (`1946`) increment before `AccumulateDensitySpan`; if accumulation broke, `completeSpans` (`1966`) would lag and the test invariant `AlignmentOffsetEvaluations == (completeSpans-1)*(2R+1)` would break. It can't: the offset search only runs after the offset-0 `SampleDensityAlignmentWindow` succeeds, which requires the full span in `[oldest,newest]`; `AccumulateDensitySpan` reads the identical range via the same readers, so it always contributes. The counters are consistent in every reachable state. No fix needed.
+
+### Everything else verified sound
+- **Moment kernel** (`MakeDensityMomentKernel`): 3-point {a,m,b} weights preserve mean and second moment exactly (`wa(m−a)=wb(b−m)=var/range`), `wm=1−var/maxVariance≥0` since variance is clamped to `(m−a)(b−m)`; degenerate `a==b`/non-strict-interior collapses to a single point. Verified against `..._occupancy_math_is_exact`.
+- **NCC**: windows and template are both mean-removed, unit-RMS; correlation is a true Pearson coefficient, clamped to [−1,1]; zero-energy windows score −1 and are never selected; template EMA updates *after* alignment use and re-normalizes.
+- **Splat/index/alpha**: bins clamped to `[0,height-1]`, `height==1` handled, accumulator indices bounded; per-column normalization keeps probability in [0,1]; `DensityAlphaForProbability` saturates at 4× (p≥0.25→255) deterministically.
+- **Cache key**: `generation` (quantized), `span`, `minY`/`maxY` (bit_cast), `discontinuityEpoch`, `level`, `width`, `height`, `requestedCycles`, `source`; reuse guarded on `!empty && viewportValid`; `Reset` and discontinuity bump invalidate; diagnostics reset via `densityDiagnostics_ = {}` each rebuild so counters never accumulate.
+- **Construction/allocation**: `alignmentOffsetRadius`/`templateSamples` overflow-checked (`kMaximumDensityCells`, scratch-byte `CheckedMultiply`/`CheckedAdd`), tested via `numeric_limits::max()` rejections; `BuildDensityRaster` only `std::fill`s preallocated buffers and copy-assigns equal-capacity vectors — the allocation-counter test confirms zero allocations on rebuild and hit paths.
+- **Reader lifetime**: `densityRaster_` is construction-sized and never resized, so `reader.alpha_` stays valid for the owner's lifetime (existing contract).
+
+Fix the concern-3 helper/test; concerns 1 and 2 and the remainder can ship as-is.

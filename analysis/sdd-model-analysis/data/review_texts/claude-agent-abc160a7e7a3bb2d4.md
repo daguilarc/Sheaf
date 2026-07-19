@@ -1,0 +1,5 @@
+Confirmed — that directory is intentionally gitignored (working-file scratch area), so no commit is needed for the report. Everything is done.
+
+Status: complete. Commit hash: `6efc657`.
+
+Fixed the Important reviewer finding in `projects/synth/runtime/AudioConfigPage.hpp` by splitting the single `statusLabel_` into `deviceLine_` (routine device+rate/block text, refreshed every tick/sync as before) and a sticky `statusLine_` (last runtime-reported event message, written only by `SetStatus()`, never touched by `Refresh()`/`RefreshStatus()`/`RefreshOnTick()`) — no changes needed in `Runtime.hpp`. Build is clean (383 tests pass, zero warnings), `apps` links, and an 8s launch smoke test stayed alive with a clean startup log. No automated UI test exists for the sticky-status behavior itself; verified by code-reading every `SetAudioStatus` call site plus the build/test/launch checks — noted as a gap for the next interactive pass in the appended report at `/Users/joyo/Sheaf/.claude/worktrees/silly-meninsky-138d3d/.superpowers/sdd/p4-task-3-report.md` (gitignored working file, not committed).

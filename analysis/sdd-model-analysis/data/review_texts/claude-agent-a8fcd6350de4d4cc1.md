@@ -1,0 +1,11 @@
+Status: complete. All four reviewer findings fixed with TDD, `.superpowers/sdd/p4-task-1-report.md` updated (local/gitignored per project convention).
+
+**Commit:** `fcbef533d52a8ac2077ff4488942dc5e093273eb` — "fix(synth): view model message catalog, paired WrldBldr addresses, validated edits"
+
+**Test summary:** `make -C projects/synth build test` (clean rebuild) — 378 `[PASS]`, 0 `[FAIL]`, exit 0, zero compiler warnings (`-Wall -Wextra -Wpedantic`). 21 new tests added to `viewmodel_tests.cpp`.
+
+**What changed:**
+- `MidiConfigViewModel.hpp`/`.cpp`: added `SystemMessageChoice`/`SystemMessageCatalog()` (fixed catalog covering `SetShift`, `SceneSelect 0-7`, `SelectParamBank 0-15`, `SetGestureSelect 0-7` — sized against actual default-profile output, verified via an ad hoc probe that every WrldBldr (25 rows) and Launchpad (17 rows) default-profile system-message row round-trips) and `SystemMessageChoiceIndex()`; `ApplyMappingEdit` now handles `PressMessage`/`ReleaseMessage` via the catalog, keeps WrldBldr `control` in sync with `wrldBldrPosition` via `WrldBldrPositionToCC`, and validates every numeric field (Channel 0-15, Cc 0-127, non-negative integers for slot/position/gesture indices, positive-finite TurnStep, `LaunchpadShapeSupports`-checked Launchpad coords, 0-7 WrldBldr coords) before casting, returning specific reason strings on refusal.
+- `tests/viewmodel_tests.cpp`: 21 new tests covering the catalog, round-trip, paired-address fix, each validation refusal, and a permanent pin that every `editableFields` entry succeeds across all four kinds' default profiles (plus a dedicated MfTwister side-button test, since the shared four-kind fixture's twister has zero system-message rows by default).
+
+**Concerns carried into the report:** `SelectParamBank` catalog entries hardcode `slotIx=0` (matches every current default-profile call site — no test or factory passes non-zero); a future non-zero-slotIx controller's SelectParamBank rows would show "no match" in `SystemMessageChoiceIndex` even though `ApplyMappingEdit` would still work for every other field. `const` qualifiers on the edit methods were left untouched as instructed.
