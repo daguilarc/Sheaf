@@ -277,3 +277,62 @@ Adjacent focused gates rerun:
 ### Remaining Coverage Note
 
 The current Task 3 suite proves the Emscripten import-meta worker rewrite deterministically and proves remote typed entry/WASM startup through the isolated two-origin fixture. It does not yet execute a real remotely materialized pthread and AudioWorklet end to end. Per controller classification, that live integration coverage belongs to Task 6/9 and is not a Task 3 blocker.
+
+---
+
+# Task 3 Report — Ordinary First-Party App Publication
+
+## Status
+
+DONE. Implemented the Task 3 brief in commit `c8d8bb1c` (`feat(synth-browser): publish ordinary apps generically`). The OpenSpec checklist and orchestration progress were intentionally not edited.
+
+## Scope Implemented
+
+- Replaced the template- and app-specific publisher with `buildFirstPartyCatalog({ browserRoot, outputRoot })`, which reads the production emission report, requires its manifest digest and publisher identity to exactly match the current manifest, validates an exact ordered app set and exact role schema, then assembles each app through the generic package contract.
+- Made package identities sensitive to role-to-path mappings, retained browser ABI v2, wrote packages from the already inventoried bytes, and rejected undeclared emitted files and cross-app source aliases.
+- Derived the catalog version from the ordered `{ appId, buildId }` set and atomically replaces the validated complete catalog tree.
+- Made browser app compilation generation-atomic. Production app bytes and `emissions.json` swap as one unit, while fixture builds use `dist/wasm/fixture-apps` and cannot replace or race the production report.
+- Made site and Pages publication app-generic: one rollback page per catalog app from a single template, generic immutable-package headers, exact package/catalog validation, and staged atomic replacement.
+- Removed `catalog.template.json` and the generic-runtime transitional exclusions for the publisher implementation.
+- Preserved `projects/synth/apps/braid-4` as ordinary manifest data with no source change.
+
+## TDD Evidence
+
+### RED
+
+- Initial focused command (`npm run build` plus package-contract and publish-site Node tests): 5 passed / 8 failed. The failures demonstrated the old template/miniapp branches, acceptance of an undeclared emitted file, and missing two-app generic publication.
+- Fixture isolation test failed because the requested output root was ignored and fixture generation used the production app directory.
+- Whole-generation failure test demonstrated a partial production mutation: alpha bytes changed and beta disappeared while the old emission report remained.
+- Package role-mapping test demonstrated the same build ID after swapping entry and worker role mappings.
+- Cross-app alias test demonstrated that two app records could point at one app's source directory.
+
+### GREEN
+
+- Each RED was made green by the scoped implementation: isolated fixture roots, whole-generation staging and replacement, role-sensitive package IDs, strict exact-file validation, exact manifest/report validation, dedicated per-app source directories, and generic two-app catalog/site publication.
+- The final required focused Node gate passed 30/30 tests.
+- The broader browser Node suite passed 72/72 tests.
+
+## Final Verification
+
+- `make -C projects/synth/browser browser-apps`: exit 0; compiled the real Braid 4 and Mini emissions. Only existing Emscripten pthread/memory-growth and deprecated `USE_PTHREADS` warnings were emitted.
+- `npm --prefix projects/synth/browser run publish:site`: exit 0.
+- `npm --prefix projects/synth/browser run publish:pages`: exit 0.
+- `node --test projects/synth/browser/dist/tests/package-contract.test.mjs projects/synth/browser/dist/tests/publish-site.test.mjs projects/synth/browser/dist/tests/github-pages-workflow.test.mjs`: exit 0, 30/30 passed.
+- `npm --prefix projects/synth/browser run test:unit`: exit 0, 72/72 passed.
+- `npm --prefix projects/synth/browser run check:generic-runtime`: exit 0.
+- `git diff --check`: exit 0.
+- `git diff --exit-code 3c66ba2b -- projects/synth/apps/braid-4`: exit 0; Braid 4 source is unchanged.
+- Real artifact inspection confirmed an ABI-v2 two-app catalog ordered `braid-4`, `miniapp`; valid JS/WASM package files; Pages containing only catalogs/packages; and rollback pages only at `rollback/apps/<appId>/index.html`.
+
+## Persistent Opus Review
+
+- Run: `xrun_20260719183237589_ab3f66a2`
+- Range: `2ae3359bc540cc48060c64f0176dba52bb8ab7d4..c8d8bb1c`
+- Verdict: **PASS**.
+- Exact actionable-finding summary: “No actionable correctness, security, atomicity, race/TOCTOU, schema-validation, or test-gap findings.”
+- No remediation or re-review was required.
+- Non-blocking observations: catalog-version computation is duplicated between build and validation; the package header glob intentionally assumes the currently enforced flat emission filenames; standalone catalog/source-map replacement is not jointly atomic, while the production publisher supplies a fresh staged output root and swaps the complete site atomically.
+
+## Scope and Concerns
+
+No blocking concerns. `projects/synth/browser/package-lock.json` and `projects/synth/miniapp/` remain untracked and were never staged or committed. Static-site Playwright expectation changes remain Task 4 scope per the implementation plan.

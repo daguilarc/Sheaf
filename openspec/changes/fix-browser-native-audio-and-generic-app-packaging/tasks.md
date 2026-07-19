@@ -14,15 +14,15 @@
 
 ## 3. Generic Multi-App Packaging
 
-- [ ] 3.1 Add failing deterministic multi-app catalog/package tests that contain no privileged application assumptions.
-- [ ] 3.2 Generalize first-party catalog assembly to iterate structured app emissions, validate every file, package every app immutably, and derive catalog version from the complete ordered package set.
-- [ ] 3.3 Remove the single-app catalog template shape, Mini App filename checks, special package branches, and publication assumptions.
-- [ ] 3.4 Preserve atomic site/pages artifact replacement so any app failure leaves the prior validated output untouched.
+- [x] 3.1 Add failing deterministic multi-app catalog/package tests that contain no privileged application assumptions.
+- [x] 3.2 Generalize first-party catalog assembly to iterate structured app emissions, validate every file, package every app immutably, and derive catalog version from the complete ordered package set.
+- [x] 3.3 Remove the single-app catalog template shape, Mini App filename checks, special package branches, and publication assumptions.
+- [x] 3.4 Preserve atomic site/pages artifact replacement so any app failure leaves the prior validated output untouched.
 
 ## 4. Braid 4 as an Ordinary App
 
-- [ ] 4.1 Add Braid 4 only as a declarative app-manifest record and verify static checks find no Braid 4 browser source, branch, adapter, or custom build recipe.
-- [ ] 4.2 Compile and package the unchanged Braid 4 `SynthApplication` under the common memory/runtime policy and validate its immutable package metadata.
+- [x] 4.1 Add Braid 4 only as a declarative app-manifest record and verify static checks find no Braid 4 browser source, branch, adapter, or custom build recipe.
+- [x] 4.2 Compile and package the unchanged Braid 4 `SynthApplication` under the common memory/runtime policy and validate its immutable package metadata.
 - [ ] 4.3 Add a real Chromium Braid 4 launch proving portable UI rendering, one-click native callback progress, finite deadline data, non-silent output, and isolated persistence.
 
 ## 5. Shared Launcher and Publication Acceptance
