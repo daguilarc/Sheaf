@@ -8,17 +8,17 @@
 
 - [x] 2.1 Add deterministic tests for prepare/default state, BPM-to-output-sample-increment conversion, rejected invalid tempo, external-authority rejection, manual-tempo restoration, stopped/running affine queries, half-open endpoints, exact inter-block anchor continuity, immutable current-plan behavior, and timestamp mapping through bounded plan history.
 - [x] 2.2 Implement MasterClock preparation, manual tempo authority, one affine `ClockBlockPlan` commit per output block, a bounded compact plan-descriptor history, direct integer/fractional output-sample queries with no sample buffer, and finite-positive slope changes that apply only to future plans.
-- [ ] 2.3 Add transition tests for internal and external Start/Continue, timestamped time-zero first clock and first-plan phase projection, next-plan Stop/zeroing, repeated commands, and the distinction between current-run time and MIDI song position.
-- [ ] 2.4 Implement the Stopped/ArmedStart/ArmedContinue/Running state machine and first-clock-after-transport semantics.
-- [ ] 2.5 Add tests for analytically enumerated stopped lifetime ticks and running transport ticks, fractional crossing positions, half-open endpoint ownership, internal and timestamp-separated external Start/Continue ordering, output-only transition splices, no duplicate zero tick, Stop switch priming, and phase-safe PPQN changes.
-- [ ] 2.6 Implement MasterClock's owned `Phasor2Tick`, crossing-count-rate detector advancement, lifetime/transport source switching, timestamped output-only transition splices, cutoff-aware phase-generation invalidation, and scheduled-event production seam.
+- [x] 2.3 Add transition tests for internal and external Start/Continue, timestamped time-zero first clock and first-plan phase projection, next-plan Stop/zeroing, repeated commands, and the distinction between current-run time and MIDI song position.
+- [x] 2.4 Implement the Stopped/ArmedStart/ArmedContinue/Running state machine and first-clock-after-transport semantics.
+- [x] 2.5 Add tests for analytically enumerated stopped lifetime ticks and running transport ticks, fractional crossing positions, half-open endpoint ownership, internal and timestamp-separated external Start/Continue ordering, output-only transition splices, no duplicate zero tick, Stop switch priming, and phase-safe PPQN changes.
+- [x] 2.6 Implement MasterClock's owned `Phasor2Tick`, crossing-count-rate detector advancement, lifetime/transport source switching, timestamped output-only transition splices, cutoff-aware phase-generation invalidation, and scheduled-event production seam.
 
 ## 3. External Clock Recovery
 
-- [ ] 3.1 Add timestamp-trace tests for 24-PPQN tempo acquisition within `0.1 BPM` after 64 exact stable intervals, five-interval median plus `1/8` EWMA, alternating jitter, duplicate/out-of-order input, one-to-eight missed pulses, bounded phase correction, hard reacquisition, and free-run dropout.
-- [ ] 3.2 Implement the isolated external-clock estimator/PLL policy and wire its disciplined period, phase correction, lock state, and counters into MasterClock without audio-thread allocation or locks.
-- [ ] 3.3 Add multi-controller tests for first-source acquisition, foreign-source rejection, provisional transport ownership, timeout `max(500 ms, four periods)`, takeover, and continuity across source changes.
-- [ ] 3.4 Implement controller-slot source arbitration and coherent lock/source/BPM diagnostics publication.
+- [x] 3.1 Add timestamp-trace tests for 24-PPQN tempo acquisition within `0.1 BPM` after 64 exact stable intervals, five-interval median plus `1/8` EWMA, alternating jitter, duplicate/out-of-order input, one-to-eight missed pulses, bounded phase correction, hard reacquisition, and free-run dropout.
+- [x] 3.2 Implement the isolated external-clock estimator/PLL policy and wire its disciplined period, phase correction, lock state, and counters into MasterClock without audio-thread allocation or locks.
+- [x] 3.3 Add multi-controller tests for first-source acquisition, foreign-source rejection, provisional transport ownership, timeout `max(500 ms, four periods)`, takeover, and continuity across source changes.
+- [x] 3.4 Implement controller-slot source arbitration and coherent lock/source/BPM diagnostics publication.
 
 ## 4. Realtime MIDI Input and Message Dispatch
 
