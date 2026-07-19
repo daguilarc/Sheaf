@@ -74,3 +74,92 @@ Result: exit 0. Parameter modulation, rig, MiniApp system, and Braid4 system sui
 ## Concerns
 
 None.
+
+# Browser App Catalog Task 4: Selection Activation Lease
+
+## Result
+
+IMPLEMENTED — OpenSpec 4.1–4.5 behavior is covered. Per controller instruction,
+the OpenSpec checkboxes and `.superpowers/sdd/progress.md` remain unchanged for
+review/coordination to update separately.
+
+## Commits
+
+- Phase A: `17ef3271` (`feat(synth-browser): acquire activation resources before launch`)
+- Phase B: `feat(synth-browser): launch packages from one activation gesture`
+
+## TDD Evidence
+
+Phase A RED was captured with four focused activation tests failing because
+`dist/src/activation.js` did not exist. Phase A then implemented synchronous
+audio construction/resume and sysex MIDI request ownership, one-shot consume,
+partial-failure cleanup, idempotent disposal, leased AudioBridge context
+injection, and leased MIDI reconciliation. Before the Phase A commit, the
+focused suites passed in order: activation 4/4, audio 7/7, MIDI 7/7.
+
+Phase B RED was captured with four new integration cases failing against the
+placeholder launcher selection path: no same-stack acquire/materialize/version
+forwarding, no package-failure retry cleanup, no runtime-init cleanup, and no
+leased unload teardown. Converting the generic fake-app gate also exposed a
+structured-clone failure when a `MaterializedPackage.dispose` function crossed
+the Worker boundary; the production fix sends only the serializable
+`MaterializedRuntimeModule` fields while retaining package disposal with the
+active app.
+
+## Implementation
+
+- `SheafPatchLauncher` invokes its supplied selection boundary synchronously in
+  the click stack, then settles the returned promise separately while preserving
+  the Task 2 pending-shell/root-ownership guards.
+- The production selection callback calls `ActivationLease.acquire()` before
+  entering package materialization, so AudioContext construction/resume and the
+  `{sysex:true}` MIDI request start before the first await.
+- `installSynthBrowserApp` consumes one lease, passes declared catalog versions
+  through the existing Task 3 runtime negotiation boundary, injects the exact
+  leased AudioContext and MIDI access, and creates one runtime only after
+  activation succeeds.
+- Package failure, runtime initialization failure, active-page unload, and
+  repeated disposal release the package URLs, runtime, UI, AudioBridge node,
+  AudioContext, MIDI bindings, and MIDI ports without duplicate acquisition.
+- Generic fake-app and real miniapp acceptance now enter through catalog rows,
+  verified materialization, activation lease consumption, and generic runtime
+  installation. Counters assert one context, resume, MIDI request, runtime,
+  materialization/import load, and input binding.
+- Focused direct AudioBridge, native Wasm AudioWorklet, MIDI manager, and direct
+  runtime installation APIs remain callable and covered.
+
+## Controller-Approved Audio Variance
+
+The brief's phrase “runtime-owned Wasm AudioWorklet” cannot attach to a
+JavaScript-created AudioContext through the current native ABI without changing
+native files outside Task 4. The controller approved the binding OpenSpec
+`sbac-6` implementation: launcher-selected apps use the existing host
+AudioBridge/shared-ring path on the exact leased host AudioContext and never
+invoke `runtime.startAudioWorklet` or create a second context. The focused direct
+native Wasm AudioWorklet path is preserved unchanged.
+
+## Final Verification
+
+After `npm run build` and `git diff --check`, the prescribed Chromium gates ran
+in the exact required order and passed:
+
+1. `tests/activation-lease.spec.ts`: 8/8
+2. `tests/audio-flow.spec.ts`: 7/7
+3. `tests/midi-flow.spec.ts`: 7/7
+4. `tests/fake-app.e2e.spec.ts`: 3/3
+5. `tests/miniapp-smoke.spec.ts`: 6/6
+
+`npm run check:generic-runtime` passed, followed by
+`tests/launcher.spec.ts tests/runtime-core.spec.ts` at 13/13. The miniapp smoke
+spec unconditionally rewrites its two tracked screenshot paths; because Task 4
+has no intended pixel delta, both generated PNG changes were restored from HEAD
+after the successful normal-mode run.
+
+## Scope and Concerns
+
+- No Task 5 persistence identity/path work was started.
+- The pre-existing untracked `projects/synth/browser/package-lock.json` and
+  `projects/synth/miniapp/` tree were preserved and never staged.
+- No OpenSpec task checkbox or progress-ledger entry was edited.
+- No unresolved implementation concern remains; the native-worklet wording
+  variance is explicit above for reviewer attention.

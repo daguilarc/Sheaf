@@ -61,7 +61,7 @@ export class AudioBridge {
       this.renderTimer = globalThis.setInterval(() => this.requestRender(), Math.max(1, Math.round(this.blockSize * 1000 / context.sampleRate)));
       return { started: true };
     } catch (error) {
-      if (this.ownsContext) void context.close();
+      if (this.ownsContext) void Promise.resolve(context.close()).catch(() => {});
       this.ownsContext = false;
       throw error;
     }
@@ -73,7 +73,7 @@ export class AudioBridge {
     this.renderTimer = undefined;
     this.node?.disconnect();
     this.node = undefined;
-    if (this.ownsContext) void this.context?.close();
+    if (this.ownsContext) void Promise.resolve(this.context?.close()).catch(() => {});
     this.context = undefined;
     this.ownsContext = false;
   }

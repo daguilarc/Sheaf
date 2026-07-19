@@ -208,7 +208,7 @@ test("does not overwrite runtime DOM that replaces the exact pending-selection s
   await expect(page.getByRole("heading", { name: "SheafPatch" })).toHaveCount(0);
 });
 
-test("reports selection failure on its row and allows retry", async ({ page }) => {
+test("reports package selection failure on its row and allows retry", async ({ page }) => {
   await routeSources(page, [firstCatalogUrl]);
   await page.route(firstCatalogUrl, (route) => route.fulfill({ json: catalog("publisher") }));
   await page.goto("http://127.0.0.1:4173/public/index.html");
@@ -216,6 +216,6 @@ test("reports selection failure on its row and allows retry", async ({ page }) =
   await page.getByRole("button", { name: /launch aurora/i }).click();
 
   const row = page.getByRole("listitem").filter({ hasText: "Aurora" });
-  await expect(row).toContainText(/launch is not available/i);
+  await expect(row).toContainText(/package file .* fetch failed/i);
   await expect(row.getByRole("button", { name: /retry aurora/i })).toBeEnabled();
 });

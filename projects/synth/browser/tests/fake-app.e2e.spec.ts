@@ -11,6 +11,44 @@ type FrameObservation = { nodes: FrameNode[] };
 
 const fakeAcceptance = { shell: false, gestures: false, narrow: false };
 
+async function builtFakeCatalogApp() {
+  const { createHash } = await (new Function("return import('node:crypto')")() as Promise<{
+    createHash(name: string): { update(bytes: Uint8Array): { digest(encoding: "hex"): string } };
+  }>);
+  const { readFile } = await (new Function("return import('node:fs/promises')")() as Promise<{
+    readFile(path: URL): Promise<Uint8Array>;
+  }>);
+  const buildId = "fake-browser-app-build-1";
+  const packageRoot = `packages/fake-browser-app/${buildId}`;
+  const files = await Promise.all([
+    ["fake_browser_app.js", "text/javascript"],
+    ["fake_browser_app.wasm", "application/wasm"],
+  ].map(async ([name, mediaType]) => ({
+    path: `${packageRoot}/${name}`,
+    url: `http://127.0.0.1:4174/dist/wasm/${name}`,
+    mediaType,
+    sha256: createHash("sha256").update(await readFile(new URL(`../dist/wasm/${name}`, import.meta.url))).digest("hex"),
+  })));
+  return {
+    globalId: "test/fake-browser-app",
+    catalogUrl: "https://test.example/catalog.json",
+    publisher: { id: "test", name: "Generic Test Publisher" },
+    appId: "fake-browser-app",
+    displayName: "Generic Fake App",
+    author: "Sheaf Tests",
+    category: "Instrument",
+    buildId,
+    browser: {
+      abiVersion: 1,
+      uiProtocolVersion: 1,
+      runtimeConfigVersion: 1,
+      entry: `${packageRoot}/fake_browser_app.js`,
+      entryUrl: files[0].url,
+      files,
+    },
+  };
+}
+
 test.afterAll(async () => {
   if (!Object.values(fakeAcceptance).every(Boolean)) return;
   const processInfo = (globalThis as any).process as { env: Record<string, string | undefined>; ppid: number };
@@ -22,21 +60,36 @@ test.afterAll(async () => {
 });
 
 async function installRealFakeApp(page: Page): Promise<void> {
+  const application = await builtFakeCatalogApp();
   await page.route("**/dist/src/main.js*", (route) => {
     if (new URL(route.request().url()).search) return route.continue();
     return route.fulfill({ status: 200, contentType: "application/javascript", body: "" });
   });
   await page.goto("http://127.0.0.1:4174/public/index.html");
-  await page.evaluate(async () => {
-    document.querySelector<HTMLElement>("#synth-root")!.dataset.synthAuto = "false";
-    const main = await (new Function("return import('/dist/src/main.js?task5')")() as Promise<any>);
+  await page.evaluate(async (application) => {
+    const root = document.querySelector<HTMLElement>("#synth-root")!;
+    root.dataset.synthAuto = "false";
+    root.dataset.synthLauncher = "false";
+    const main = await (new Function("return import('/dist/src/main.js?task4-fake')")() as Promise<any>);
     const { decodeCommandBuffer } = await (new Function("return import('/dist/src/protocol.js')")() as Promise<any>);
+    const { materializePackage } = await (new Function("return import('/dist/src/package-loader.js')")() as Promise<any>);
     const client = main.createWorkerRuntimeClient();
     const observations = {
       commands: [] as Array<{ type: string; name?: string; value?: string }>,
       responses: [] as Array<{ type: string; error?: string }>,
       frames: [] as FrameObservation[],
       terminated: false,
+    };
+    const resources = {
+      contexts: 0,
+      resumes: 0,
+      closes: 0,
+      midiRequests: 0,
+      runtimeClients: 0,
+      nodeConnects: 0,
+      nodeDisconnects: 0,
+      materializations: 0,
+      packageDisposals: 0,
     };
     const observingClient = {
       async request(command: { type: string; name?: string; value?: string }) {
@@ -55,31 +108,63 @@ async function installRealFakeApp(page: Page): Promise<void> {
         client.terminate?.();
       },
     };
-    const moduleUrl = new URL("/dist/wasm/fake_browser_app.js", location.href).href;
-    const app = await main.installSynthBrowserApp(document.querySelector("#synth-root")!, {
-      module: {
-        entryUrl: moduleUrl,
-        locateFile: {
-          "fake_browser_app.js": moduleUrl,
-          "fake_browser_app.wasm": new URL("/dist/wasm/fake_browser_app.wasm", location.href).href,
-        },
-        mainScriptUrlOrBlob: moduleUrl,
+    class TestAudioContext {
+      readonly sampleRate = 48_000;
+      readonly destination = {};
+      readonly audioWorklet = { addModule: async () => {} };
+      constructor() { resources.contexts += 1; }
+      async resume() { resources.resumes += 1; }
+      async close() { resources.closes += 1; }
+    }
+    Object.defineProperty(globalThis, "AudioContext", { configurable: true, value: TestAudioContext });
+    Object.defineProperty(navigator, "requestMIDIAccess", {
+      configurable: true,
+      value: async () => {
+        resources.midiRequests += 1;
+        return { inputs: new Map(), outputs: new Map(), onstatechange: null };
+      },
+    });
+    await main.installSheafPatchLauncher(root, {
+      client: { loadSources: async () => ({ apps: [application], diagnostics: [], duplicateDiagnostics: [] }) },
+      runtimeClientFactory: () => { resources.runtimeClients += 1; return observingClient; },
+      materializePackage: async (app: unknown) => {
+        resources.materializations += 1;
+        const packageLease = await materializePackage(app);
+        let disposed = false;
+        return {
+          ...packageLease,
+          dispose() {
+            if (disposed) return;
+            disposed = true;
+            resources.packageDisposals += 1;
+            packageLease.dispose();
+          },
+        };
+      },
+      audioOptions: {
+        audioContextFactory: () => { throw new Error("second AudioContext"); },
+        audioWorkletNodeFactory: () => ({
+          connect() { resources.nodeConnects += 1; },
+          disconnect() { resources.nodeDisconnects += 1; },
+        }),
       },
       frameIntervalMs: 60_000,
-      runtimeClient: observingClient,
     });
-    if (observations.frames.length === 0) throw new Error(JSON.stringify(observations.responses));
-    (window as any).__task5Fake = { app, observations };
-  });
+    (window as any).__task4Fake = { observations, resources };
+  }, application);
+  await page.getByRole("button", { name: /launch generic fake app/i }).click();
+  await expect(page.locator('[data-synth-node-id="fake-browser-root"]')).toBeVisible();
 }
 
 test.afterEach(async ({ page }) => {
   await page.evaluate(() => {
-    const state = (window as any).__task5Fake;
+    const state = (window as any).__task4Fake;
     if (!state) return;
-    state.app.stop();
+    dispatchEvent(new Event("pagehide"));
     if (!state.observations.terminated) throw new Error("SynthBrowserApp.stop() did not terminate the runtime client");
-    delete (window as any).__task5Fake;
+    if (state.resources.closes !== 1 || state.resources.nodeDisconnects !== 1 || state.resources.packageDisposals !== 1)
+      throw new Error(`runtime resources were not released exactly once: ${JSON.stringify(state.resources)}`);
+    delete (window as any).__task4Fake;
   });
 });
 
@@ -119,7 +204,7 @@ test("real fake-app WASM renders and refreshes the shared runtime shell", async 
   }
 
   const frameShape = await page.evaluate(() => {
-    const frames = (window as any).__task5Fake.observations.frames as FrameObservation[];
+    const frames = (window as any).__task4Fake.observations.frames as FrameObservation[];
     const initial = frames[0];
     const childIds = new Set(initial.nodes.flatMap((node) => node.children));
     return {
@@ -129,13 +214,27 @@ test("real fake-app WASM renders and refreshes the shared runtime shell", async 
   });
   expect(frameShape.roots).toEqual(["runtime.main.root"]);
   expect(frameShape.frameCount).toBeGreaterThanOrEqual(7);
+  expect(await page.evaluate(() => (window as any).__task4Fake.resources)).toEqual({
+    contexts: 1,
+    resumes: 1,
+    closes: 0,
+    midiRequests: 1,
+    runtimeClients: 1,
+    nodeConnects: 1,
+    nodeDisconnects: 0,
+    materializations: 1,
+    packageDisposals: 0,
+  });
+  expect(await page.evaluate(() =>
+    (window as any).__task4Fake.observations.commands.filter((command: { type: string }) => command.type === "load").length,
+  )).toBe(1);
   fakeAcceptance.shell = true;
 });
 
 test("real fake-app WASM dispatches incremental drag and double-click actions", async ({ page }) => {
   await installRealFakeApp(page);
   const gesture = await page.evaluate(() => {
-    const frame = ((window as any).__task5Fake.observations.frames as FrameObservation[])[0];
+    const frame = ((window as any).__task4Fake.observations.frames as FrameObservation[])[0];
     const drag = frame.nodes.find((node) => node.pointerDragAction);
     const doubleClick = frame.nodes.find((node) => node.doubleClickAction);
     return {
@@ -159,10 +258,10 @@ test("real fake-app WASM dispatches incremental drag and double-click actions", 
   await page.locator(`[data-synth-node-id="${gesture.doubleClickId}"] canvas`).dispatchEvent("dblclick");
 
   await expect.poll(() => page.evaluate(() =>
-    (window as any).__task5Fake.observations.commands.filter((command: { type: string }) => command.type === "dispatch-action").length,
+    (window as any).__task4Fake.observations.commands.filter((command: { type: string }) => command.type === "dispatch-action").length,
   )).toBeGreaterThanOrEqual(3);
   const actions = await page.evaluate(() =>
-    (window as any).__task5Fake.observations.commands.filter((command: { type: string }) => command.type === "dispatch-action"),
+    (window as any).__task4Fake.observations.commands.filter((command: { type: string }) => command.type === "dispatch-action"),
   );
   expect(actions.length, JSON.stringify(actions)).toBeGreaterThanOrEqual(3);
   expect(actions.filter((action: { name?: string }) => action.name === gesture.dragAction).length).toBeGreaterThanOrEqual(2);

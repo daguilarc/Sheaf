@@ -10,6 +10,44 @@ type FrameNode = {
 
 type FrameObservation = { nodes: FrameNode[] };
 
+async function builtMiniappCatalogApp() {
+  const { createHash } = await (new Function("return import('node:crypto')")() as Promise<{
+    createHash(name: string): { update(bytes: Uint8Array): { digest(encoding: "hex"): string } };
+  }>);
+  const { readFile } = await (new Function("return import('node:fs/promises')")() as Promise<{
+    readFile(path: URL): Promise<Uint8Array>;
+  }>);
+  const buildId = "miniapp-build-1";
+  const packageRoot = `packages/miniapp/${buildId}`;
+  const files = await Promise.all([
+    ["miniapp.js", "text/javascript"],
+    ["miniapp.wasm", "application/wasm"],
+  ].map(async ([name, mediaType]) => ({
+    path: `${packageRoot}/${name}`,
+    url: `http://127.0.0.1:4174/dist/wasm/${name}`,
+    mediaType,
+    sha256: createHash("sha256").update(await readFile(new URL(`../dist/wasm/${name}`, import.meta.url))).digest("hex"),
+  })));
+  return {
+    globalId: "sheaf/miniapp",
+    catalogUrl: "https://sheaf.example/catalog.json",
+    publisher: { id: "sheaf", name: "Sheaf" },
+    appId: "miniapp",
+    displayName: "Mini App",
+    author: "Sheaf",
+    category: "Instrument",
+    buildId,
+    browser: {
+      abiVersion: 1,
+      uiProtocolVersion: 1,
+      runtimeConfigVersion: 1,
+      entry: `${packageRoot}/miniapp.js`,
+      entryUrl: files[0].url,
+      files,
+    },
+  };
+}
+
 test.beforeAll(async () => {
   const processInfo = (globalThis as any).process as { env: Record<string, string | undefined>; ppid: number };
   if (processInfo.env.SYNTH_BROWSER_FAKE_GATE_CONFIRMED === "1") return;
@@ -28,42 +66,67 @@ test.beforeAll(async () => {
 });
 
 async function installRealMiniapp(page: Page, options: { fakeMidi?: boolean; frameIntervalMs?: number } = {}): Promise<void> {
+  const application = await builtMiniappCatalogApp();
   await page.route("**/dist/src/main.js*", (route) => {
     if (new URL(route.request().url()).search) return route.continue();
     return route.fulfill({ status: 200, contentType: "application/javascript", body: "" });
   });
   await page.goto("http://127.0.0.1:4174/public/index.html");
-  await page.evaluate(async ({ fakeMidi, frameIntervalMs }) => {
-    document.querySelector<HTMLElement>("#synth-root")!.dataset.synthAuto = "false";
-    const main = await (new Function("return import('/dist/src/main.js?task5-miniapp')")() as Promise<any>);
+  await page.evaluate(async ({ application, fakeMidi, frameIntervalMs }) => {
+    const root = document.querySelector<HTMLElement>("#synth-root")!;
+    root.dataset.synthAuto = "false";
+    root.dataset.synthLauncher = "false";
+    const main = await (new Function("return import('/dist/src/main.js?task4-miniapp')")() as Promise<any>);
     const { decodeCommandBuffer } = await (new Function("return import('/dist/src/protocol.js')")() as Promise<any>);
-    if (fakeMidi) {
-      class InputPort {
+    const { materializePackage } = await (new Function("return import('/dist/src/package-loader.js')")() as Promise<any>);
+    const resources = {
+      contexts: 0,
+      resumes: 0,
+      closes: 0,
+      midiRequests: 0,
+      portCloses: 0,
+      inputBindings: 0,
+      runtimeClients: 0,
+      nodeConnects: 0,
+      nodeDisconnects: 0,
+      materializations: 0,
+      packageDisposals: 0,
+    };
+    class InputPort {
         readonly type = "input";
         state = "connected";
-        onmidimessage: ((event: { data: Uint8Array; timeStamp: number }) => void) | null = null;
+        private handler: ((event: { data: Uint8Array; timeStamp: number }) => void) | null = null;
+        get onmidimessage() { return this.handler; }
+        set onmidimessage(value: ((event: { data: Uint8Array; timeStamp: number }) => void) | null) {
+          if (value && value !== this.handler) resources.inputBindings += 1;
+          this.handler = value;
+        }
         constructor(readonly id: string, readonly name: string) {}
-        emit(bytes: number[]) { this.onmidimessage?.({ data: Uint8Array.from(bytes), timeStamp: 17 }); }
+        emit(bytes: number[]) { this.handler?.({ data: Uint8Array.from(bytes), timeStamp: 17 }); }
+        async close() { resources.portCloses += 1; }
       }
-      class OutputPort {
+    class OutputPort {
         readonly type = "output";
         state = "connected";
         readonly sent: number[][] = [];
         constructor(readonly id: string, readonly name: string) {}
         send(bytes: number[] | Uint8Array) { this.sent.push(Array.from(bytes)); }
+        async close() { resources.portCloses += 1; }
       }
-      const input = new InputPort("in-a", "Input A");
-      const output = new OutputPort("out-a", "Output A");
-      const access = { inputs: new Map([[input.id, input]]), outputs: new Map([[output.id, output]]), onstatechange: null };
-      Object.defineProperty(navigator, "requestMIDIAccess", {
-        configurable: true,
-        value: async (request: unknown) => {
-          (window as any).__task5MidiRequest = request;
-          return access;
-        },
-      });
-      (window as any).__task5MidiPorts = { input, output };
-    }
+    const input = new InputPort("in-a", "Input A");
+    const output = new OutputPort("out-a", "Output A");
+    const access = fakeMidi
+      ? { inputs: new Map([[input.id, input]]), outputs: new Map([[output.id, output]]), onstatechange: null }
+      : { inputs: new Map(), outputs: new Map(), onstatechange: null };
+    Object.defineProperty(navigator, "requestMIDIAccess", {
+      configurable: true,
+      value: async (request: unknown) => {
+        resources.midiRequests += 1;
+        (window as any).__task4MidiRequest = request;
+        return access;
+      },
+    });
+    (window as any).__task4MidiPorts = { input, output };
     const client = main.createWorkerRuntimeClient();
     const observations = {
       commands: [] as Array<{ type: string; name?: string; value?: string }>,
@@ -89,47 +152,63 @@ async function installRealMiniapp(page: Page, options: { fakeMidi?: boolean; fra
         client.terminate?.();
       },
     };
+    let leasedContext: TestAudioContext | undefined;
     class TestAudioContext {
       readonly sampleRate = 48_000;
       readonly destination = {};
       readonly audioWorklet = { addModule: async () => {} };
-      async resume() {}
-      async close() {}
+      constructor() { resources.contexts += 1; leasedContext = this; }
+      async resume() { resources.resumes += 1; }
+      async close() { resources.closes += 1; }
     }
-    class TestAudioWorkletNode {
-      readonly port = { postMessage() {} };
-      connect() {}
-      disconnect() {}
-    }
-    const moduleUrl = new URL("/dist/wasm/miniapp.js", location.href).href;
-    const app = await main.installSynthBrowserApp(document.querySelector("#synth-root")!, {
-      module: {
-        entryUrl: moduleUrl,
-        locateFile: {
-          "miniapp.js": moduleUrl,
-          "miniapp.wasm": new URL("/dist/wasm/miniapp.wasm", location.href).href,
-        },
-        mainScriptUrlOrBlob: moduleUrl,
+    Object.defineProperty(globalThis, "AudioContext", { configurable: true, value: TestAudioContext });
+    await main.installSheafPatchLauncher(root, {
+      client: { loadSources: async () => ({ apps: [application], diagnostics: [], duplicateDiagnostics: [] }) },
+      runtimeClientFactory: () => { resources.runtimeClients += 1; return runtimeClient; },
+      materializePackage: async (app: unknown) => {
+        resources.materializations += 1;
+        const packageLease = await materializePackage(app);
+        let disposed = false;
+        return {
+          ...packageLease,
+          dispose() {
+            if (disposed) return;
+            disposed = true;
+            resources.packageDisposals += 1;
+            packageLease.dispose();
+          },
+        };
       },
       frameIntervalMs: frameIntervalMs ?? 60_000,
-      runtimeClient,
       audioOptions: {
-        audioContextFactory: () => new TestAudioContext(),
-        audioWorkletNodeFactory: () => new TestAudioWorkletNode(),
+        audioContextFactory: () => { throw new Error("second AudioContext"); },
+        audioWorkletNodeFactory: (context: unknown) => ({
+          connect() {
+            if (context !== leasedContext) throw new Error("audio attached to wrong context");
+            resources.nodeConnects += 1;
+          },
+          disconnect() { resources.nodeDisconnects += 1; },
+        }),
       },
     });
-    if (observations.frames.length === 0) throw new Error("miniapp did not produce an initial UI frame");
-    (window as any).__task5Miniapp = { app, observations };
-  }, options);
+    (window as any).__task4Miniapp = { observations, resources, expectedPortCloses: fakeMidi ? 2 : 0 };
+  }, { application, ...options });
+  await page.getByRole("button", { name: /launch mini app/i }).click();
+  await expect(page.locator('[data-synth-node-id="miniapp.root"]')).toBeVisible();
 }
 
 async function stopRealMiniapp(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const state = (window as any).__task5Miniapp;
+  await page.evaluate(async () => {
+    const state = (window as any).__task4Miniapp;
     if (!state) return;
-    state.app.stop();
+    dispatchEvent(new Event("pagehide"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
     if (!state.observations.terminated) throw new Error("SynthBrowserApp.stop() did not terminate the runtime client");
-    delete (window as any).__task5Miniapp;
+    if (state.resources.closes !== 1 || state.resources.nodeDisconnects !== 1 || state.resources.packageDisposals !== 1)
+      throw new Error(`runtime resources were not released exactly once: ${JSON.stringify(state.resources)}`);
+    if (state.resources.portCloses !== state.expectedPortCloses)
+      throw new Error(`MIDI ports were not released exactly once: ${JSON.stringify(state.resources)}`);
+    delete (window as any).__task4Miniapp;
   });
 }
 
@@ -169,6 +248,22 @@ test("real miniapp WASM renders the complete shared shell and portable pages", a
   await expect(page.locator('[data-synth-node-id="miniapp.lfo.scope"] canvas')).toBeVisible();
   await expect(page.locator('[data-synth-node-id="miniapp.bank.vco"]')).toBeVisible();
   await expect(page.locator('[data-synth-node-id="miniapp.scene.blend"]')).toBeVisible();
+  expect(await page.evaluate(() => (window as any).__task4Miniapp.resources)).toEqual({
+    contexts: 1,
+    resumes: 1,
+    closes: 0,
+    midiRequests: 1,
+    portCloses: 0,
+    inputBindings: 0,
+    runtimeClients: 1,
+    nodeConnects: 1,
+    nodeDisconnects: 0,
+    materializations: 1,
+    packageDisposals: 0,
+  });
+  expect(await page.evaluate(() =>
+    (window as any).__task4Miniapp.observations.commands.filter((command: { type: string }) => command.type === "load").length,
+  )).toBe(1);
 
   const geometry = await page.evaluate(() => {
     const app = document.querySelector<HTMLElement>('[data-synth-node-id="miniapp.root"]')!.getBoundingClientRect();
@@ -190,7 +285,7 @@ test("real miniapp WASM renders the complete shared shell and portable pages", a
   }
 
   const rootIds = await page.evaluate(() => {
-    const frame = ((window as any).__task5Miniapp.observations.frames as FrameObservation[])[0];
+    const frame = ((window as any).__task4Miniapp.observations.frames as FrameObservation[])[0];
     const children = new Set(frame.nodes.flatMap((node) => node.children));
     return frame.nodes.filter((node) => !children.has(node.id)).map((node) => node.id);
   });
@@ -203,7 +298,7 @@ test("real miniapp WASM renders the complete shared shell and portable pages", a
 test("real miniapp WASM preserves gestures across fresh frames", async ({ page }) => {
   await installRealMiniapp(page);
   const gesture = await page.evaluate(() => {
-    const frame = ((window as any).__task5Miniapp.observations.frames as FrameObservation[])[0];
+    const frame = ((window as any).__task4Miniapp.observations.frames as FrameObservation[])[0];
     const drag = frame.nodes.find((node) => node.pointerDragAction && !node.id.startsWith("runtime."));
     const doubleClick = frame.nodes.find((node) => node.doubleClickAction && !node.id.startsWith("runtime."));
     return { dragId: drag?.id, dragAction: drag?.pointerDragAction?.name,
@@ -221,10 +316,10 @@ test("real miniapp WASM preserves gestures across fresh frames", async ({ page }
   await page.mouse.up();
   await page.locator(`[data-synth-node-id="${gesture.doubleClickId}"] canvas`).dispatchEvent("dblclick");
   await expect.poll(() => page.evaluate(() =>
-    (window as any).__task5Miniapp.observations.commands.filter((command: { type: string }) => command.type === "dispatch-action").length,
+    (window as any).__task4Miniapp.observations.commands.filter((command: { type: string }) => command.type === "dispatch-action").length,
   )).toBeGreaterThanOrEqual(3);
   const actions = await page.evaluate(() =>
-    (window as any).__task5Miniapp.observations.commands.filter((command: { type: string }) => command.type === "dispatch-action"),
+    (window as any).__task4Miniapp.observations.commands.filter((command: { type: string }) => command.type === "dispatch-action"),
   );
   expect(actions.filter((action: { name?: string }) => action.name === gesture.dragAction).length).toBeGreaterThanOrEqual(2);
   expect(actions.some((action: { name?: string }) => action.name === gesture.doubleClickAction)).toBe(true);
@@ -234,16 +329,16 @@ test("real miniapp controller page selects Web MIDI endpoints through visible co
   await installRealMiniapp(page, { fakeMidi: true, frameIntervalMs: 25 });
   await page.locator('[data-synth-node-id="runtime.sidebar.controllers"]').click();
   await expect(page.locator('[data-synth-node-id="runtime.controllers.root"]')).toBeVisible();
-  await expect.poll(() => page.evaluate(() => (window as any).__task5MidiRequest)).toEqual({ sysex: true });
+  await expect.poll(() => page.evaluate(() => (window as any).__task4MidiRequest)).toEqual({ sysex: true });
   await expect.poll(() => page.evaluate(() =>
-    (window as any).__task5Miniapp.observations.commands
+    (window as any).__task4Miniapp.observations.commands
       .filter((command: { type: string }) => command.type === "midi-endpoints")
       .flatMap((command: { endpoints?: Array<{ identifier: string }> }) => command.endpoints?.map((endpoint) => endpoint.identifier) ?? []),
   )).toEqual(expect.arrayContaining(["in-a", "out-a"]));
   await page.locator('[data-synth-node-id="runtime.controllers.add_name"] input').fill("webctl");
   await page.locator('[data-synth-node-id="runtime.controllers.add_kind"] select').selectOption("generic");
   await expect.poll(() => page.evaluate(() =>
-    (window as any).__task5Miniapp.observations.commands
+    (window as any).__task4Miniapp.observations.commands
       .filter((command: { type: string }) => command.type === "dispatch-action")
       .map((command: { name?: string; value?: string }) => [command.name, command.value]),
   )).toEqual(expect.arrayContaining([
@@ -259,11 +354,12 @@ test("real miniapp controller page selects Web MIDI endpoints through visible co
   await page.locator('[data-synth-node-id="runtime.controllers.row.0.output"] select').selectOption("out-a");
   await expect.poll(() => page.locator('[data-synth-node-id="runtime.controllers.status"]').textContent())
     .toMatch(/Selected (Input|Output) A/);
+  await expect.poll(() => page.evaluate(() => (window as any).__task4Miniapp.resources.inputBindings)).toBe(1);
 
   await page.locator('[data-synth-node-id="runtime.controllers.add_name"] input').fill("webpad");
   await page.locator('[data-synth-node-id="runtime.controllers.add_kind"] select').selectOption("launchpad");
   await expect.poll(() => page.evaluate(() =>
-    (window as any).__task5Miniapp.observations.commands
+    (window as any).__task4Miniapp.observations.commands
       .filter((command: { type: string }) => command.type === "dispatch-action")
       .map((command: { name?: string; value?: string }) => [command.name, command.value]),
   )).toEqual(expect.arrayContaining([
@@ -279,7 +375,7 @@ test("real miniapp controller page selects Web MIDI endpoints through visible co
   await variantSelect.selectOption("1");
 
   await expect.poll(() => page.evaluate(() =>
-    (window as any).__task5Miniapp.observations.commands
+    (window as any).__task4Miniapp.observations.commands
       .filter((command: { type: string }) => command.type === "dispatch-action")
       .map((command: { name?: string; value?: string }) => [command.name, command.value]),
   )).toEqual(expect.arrayContaining([
@@ -307,7 +403,7 @@ test("real miniapp patch saves survive browser runtime restart through IDBFS", a
   await expect.poll(() => page.locator('[data-synth-node-id="runtime.file.patch_name"]').textContent())
     .toBe(patchName);
   await expect.poll(() => page.evaluate(() =>
-    (window as any).__task5Miniapp.observations.statuses
+    (window as any).__task4Miniapp.observations.statuses
       .filter((status: { type: string; status?: string }) => status.type === "page-status" && status.status === "persistence succeeded").length,
   )).toBeGreaterThanOrEqual(2);
 
@@ -327,7 +423,7 @@ test("real miniapp shared shell scales as one non-overlapping narrow surface", a
   await page.locator('[data-synth-node-id="runtime.audio.back"]').click();
   await expect(page.locator('[data-synth-node-id="miniapp.root"]')).toBeVisible();
   const encoderRendering = await page.evaluate(() => {
-    const frame = ((window as any).__task5Miniapp.observations.frames as FrameObservation[]).at(-1)!;
+    const frame = ((window as any).__task4Miniapp.observations.frames as FrameObservation[]).at(-1)!;
     const encoderNodeIds = Array.from({ length: 7 }, (_, index) => `miniapp.encoder.${index}`);
     const drawCounts = encoderNodeIds.map(
       (id) => frame.nodes.find((node) => node.id === id)?.drawCount ?? 0,

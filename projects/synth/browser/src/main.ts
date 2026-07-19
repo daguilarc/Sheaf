@@ -1,11 +1,13 @@
 import { AudioBridge, AudioBridgeOptions, BrowserAudioWorker } from "./audio.js";
+import { ActivationLease } from "./activation.js";
 import { CatalogClient } from "./catalog-client.js";
 import type { CatalogApp } from "./catalog.js";
 import { SheafPatchLauncher } from "./launcher.js";
 import { BrowserMidiManager, BrowserMidiWorkerRuntime } from "./midi.js";
-import type { MaterializedRuntimeModule } from "./package-loader.js";
+import { materializePackage as materializeCatalogPackage } from "./package-loader.js";
+import type { MaterializedPackage, MaterializedRuntimeModule } from "./package-loader.js";
 import { BrowserUiBackend } from "./ui.js";
-import type { RuntimeCommand, RuntimeModuleLoader, RuntimeResponse } from "./worker.js";
+import type { RuntimeCommand, RuntimeModuleLoader, RuntimeResponse, RuntimeVersions } from "./worker.js";
 import { BrowserRuntimeWorker, loadEmscriptenRuntime } from "./worker.js";
 
 export type RuntimeClient = {
@@ -21,7 +23,11 @@ export type SynthBrowserAppOptions = {
   dataRoot?: string;
   frameIntervalMs?: number;
   runtimeClient?: RuntimeClient;
+  runtimeClientFactory?: () => RuntimeClient;
   runtimeModuleLoader?: RuntimeModuleLoader;
+  runtimeVersions?: RuntimeVersions;
+  activationLease?: ActivationLease;
+  disposeModule?: () => void;
   audioOptions?: AudioBridgeOptions;
 };
 
@@ -30,6 +36,12 @@ export type SynthBrowserLauncherOptions = {
   client?: CatalogClient;
   select?: (app: CatalogApp) => Promise<void>;
   navigateToLauncher?: () => void;
+  activationLeaseFactory?: () => ActivationLease;
+  materializePackage?: (app: CatalogApp) => Promise<MaterializedPackage>;
+  installApp?: typeof installSynthBrowserApp;
+  runtimeClientFactory?: () => RuntimeClient;
+  audioOptions?: AudioBridgeOptions;
+  frameIntervalMs?: number;
 };
 
 const DEFAULT_MODULE_URL = "/dist/wasm/app.js";
@@ -126,12 +138,16 @@ export class SynthBrowserApp {
   private activationStarted = false;
   private frameInFlight = false;
   private frameRequested = false;
+  private stopped = false;
+  private unloadInstalled = false;
+  private readonly unload = () => this.stop();
 
   constructor(
     private readonly root: HTMLElement,
     private readonly runtime: RuntimeClient,
     private readonly options: Required<Pick<SynthBrowserAppOptions, "module" | "dataRoot" | "frameIntervalMs">> &
-      Pick<SynthBrowserAppOptions, "audioOptions">,
+      Pick<SynthBrowserAppOptions, "audioOptions" | "runtimeVersions" | "activationLease" | "disposeModule"> &
+      Readonly<{ claimRuntimeRoot: () => void; midiAccess?: Awaited<ReturnType<ActivationLease["consume"]>>["midiAccess"] }>,
   ) {
     this.ui = new BrowserUiBackend(root, (action) => {
       void this.dispatchAction(action);
@@ -143,8 +159,13 @@ export class SynthBrowserApp {
 
   async start(): Promise<void> {
     this.renderStatus({ type: "status", status: "starting" });
-    await this.expectOk(await this.runtime.request({ type: "load", module: this.options.module }));
-    await this.runtime.request({ type: "create" });
+    const module: MaterializedRuntimeModule = {
+      entryUrl: this.options.module.entryUrl,
+      locateFile: this.options.module.locateFile,
+      mainScriptUrlOrBlob: this.options.module.mainScriptUrlOrBlob,
+    };
+    await this.expectOk(await this.runtime.request({ type: "load", module, versions: this.options.runtimeVersions }));
+    await this.expectOk(await this.runtime.request({ type: "create" }));
     await this.expectOk(await this.runtime.request({ type: "initialize", dataRoot: this.options.dataRoot }));
     const audioConfig = await this.runtime.request({ type: "audio-config" });
     if (audioConfig.type !== "audio-config") throw new Error("runtime did not return audio configuration");
@@ -154,17 +175,41 @@ export class SynthBrowserApp {
     };
     if (this.runtime.startAudioWorklet) audioWorker.startAudioWorklet = () => this.runtime.startAudioWorklet!();
     this.audio = new AudioBridge(audioWorker, { ...this.options.audioOptions, channels });
+    if (this.options.midiAccess) {
+      this.activationStarted = true;
+      const [audio, midi] = await Promise.all([
+        this.audio.startFromUserActivation(),
+        this.midi.startWithAccess(this.options.midiAccess),
+      ]);
+      if (!audio.started) throw new Error(`audio activation failed: ${audio.diagnostic}`);
+      if (midi.status !== "online") throw new Error(`MIDI activation failed: ${midi.reason ?? "unavailable"}`);
+      this.renderStatus({ type: "status", status: "audio:online; midi:online" });
+    }
+    this.options.claimRuntimeRoot();
     await this.renderFrame();
     this.frameTimer = setInterval(() => { this.requestFrame(); }, this.options.frameIntervalMs);
+    addEventListener("pagehide", this.unload);
+    addEventListener("beforeunload", this.unload);
+    this.unloadInstalled = true;
     this.renderStatus({ type: "status", status: "running" });
   }
 
   stop(): void {
+    if (this.stopped) return;
+    this.stopped = true;
+    if (this.unloadInstalled) {
+      removeEventListener("pagehide", this.unload);
+      removeEventListener("beforeunload", this.unload);
+      this.unloadInstalled = false;
+    }
     if (this.frameTimer !== undefined) clearInterval(this.frameTimer);
     this.frameTimer = undefined;
+    this.ui.dispose();
     this.audio?.shutdown();
     this.midi.stop();
     this.runtime.terminate?.();
+    this.options.activationLease?.dispose();
+    this.options.disposeModule?.();
   }
 
   private async startUserActivation(): Promise<void> {
@@ -219,19 +264,35 @@ export class SynthBrowserApp {
 }
 
 export async function installSynthBrowserApp(root: HTMLElement, options: SynthBrowserAppOptions = {}): Promise<SynthBrowserApp> {
-  claimRoot(root);
   const moduleUrl = options.moduleUrl ?? root.dataset.synthModule ?? DEFAULT_MODULE_URL;
   const module = options.module ?? directModuleMapping(moduleUrl);
   const dataRoot = options.dataRoot ?? DEFAULT_DATA_ROOT;
-  const runtime = options.runtimeClient ?? createDirectRuntimeClient(options.runtimeModuleLoader ?? loadEmscriptenRuntime);
-  const app = new SynthBrowserApp(root, runtime, {
-    module,
-    dataRoot,
-    frameIntervalMs: options.frameIntervalMs ?? 1000 / 30,
-    audioOptions: options.audioOptions,
-  });
-  await app.start();
-  return app;
+  let app: SynthBrowserApp | undefined;
+  try {
+    const resources = options.activationLease ? await options.activationLease.consume() : undefined;
+    const runtime = options.runtimeClient ?? options.runtimeClientFactory?.() ??
+      createDirectRuntimeClient(options.runtimeModuleLoader ?? loadEmscriptenRuntime);
+    app = new SynthBrowserApp(root, runtime, {
+      module,
+      dataRoot,
+      frameIntervalMs: options.frameIntervalMs ?? 1000 / 30,
+      audioOptions: resources ? { ...options.audioOptions, audioContext: resources.audioContext } : options.audioOptions,
+      runtimeVersions: options.runtimeVersions,
+      activationLease: options.activationLease,
+      disposeModule: options.disposeModule,
+      midiAccess: resources?.midiAccess,
+      claimRuntimeRoot: () => { claimRoot(root); },
+    });
+    await app.start();
+    return app;
+  } catch (error) {
+    if (app) app.stop();
+    else {
+      options.activationLease?.dispose();
+      options.disposeModule?.();
+    }
+    throw error;
+  }
 }
 
 export function installBrowserAudioActivation(
@@ -250,14 +311,49 @@ export async function installSheafPatchLauncher(
 ): Promise<SheafPatchLauncher> {
   const ownsRoot = claimRoot(root);
   const sourcesUrl = options.sourcesUrl ?? root.dataset.synthCatalogSources ?? "/catalog-sources.json";
+  const select = options.select ?? ((app: CatalogApp) => {
+    // This callback is invoked synchronously by SheafPatchLauncher's DOM event
+    // handler. Acquire both gesture-bound resources before entering async work.
+    const activationLease = options.activationLeaseFactory?.() ?? ActivationLease.acquire();
+    return launchCatalogApplication(root, app, activationLease, options);
+  });
   const launcher = new SheafPatchLauncher(root, {
     client: options.client ?? new CatalogClient({ sourcesUrl }),
-    select: options.select ?? (async () => { throw new Error("Application launch is not available in this build"); }),
+    select,
     navigateToLauncher: options.navigateToLauncher,
     ownsRoot,
   });
   await launcher.start();
   return launcher;
+}
+
+async function launchCatalogApplication(
+  root: HTMLElement,
+  app: CatalogApp,
+  activationLease: ActivationLease,
+  options: SynthBrowserLauncherOptions,
+): Promise<void> {
+  let materialized: MaterializedPackage | undefined;
+  try {
+    materialized = await (options.materializePackage ?? materializeCatalogPackage)(app);
+    await (options.installApp ?? installSynthBrowserApp)(root, {
+      module: materialized,
+      runtimeVersions: {
+        abiVersion: app.browser.abiVersion,
+        uiProtocolVersion: app.browser.uiProtocolVersion,
+        runtimeConfigVersion: app.browser.runtimeConfigVersion,
+      },
+      activationLease,
+      disposeModule: () => materialized!.dispose(),
+      runtimeClientFactory: options.runtimeClientFactory,
+      audioOptions: options.audioOptions,
+      frameIntervalMs: options.frameIntervalMs,
+    });
+  } catch (error) {
+    materialized?.dispose();
+    activationLease.dispose();
+    throw error;
+  }
 }
 
 const root = document.querySelector<HTMLElement>("#synth-root");

@@ -18,7 +18,7 @@ function closeMidiAccess(access: MidiAccess): void {
   ]);
   for (const port of ports) {
     try {
-      void port.close?.();
+      void Promise.resolve(port.close?.()).catch(() => {});
     } catch {
       // Teardown is best-effort across browser and test MIDI port implementations.
     }
@@ -80,7 +80,7 @@ export class ActivationLease {
     if (this.disposed) return;
     this.disposed = true;
     try {
-      void this.audioContext.close();
+      void Promise.resolve(this.audioContext.close()).catch(() => {});
     } catch {
       // A rejected close cannot restore a failed or unloaded application session.
     }

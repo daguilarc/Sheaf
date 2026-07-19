@@ -149,7 +149,7 @@ export class SheafPatchLauncher {
     const button = element("button", "synth-launcher__launch", buttonLabel);
     button.type = "button";
     button.disabled = this.selectionPending || this.selectionComplete;
-    button.addEventListener("click", () => { void this.select(app); });
+    button.addEventListener("click", () => { this.select(app); });
     row.append(button);
     if (selected && this.selectionError) {
       const error = element("p", "synth-launcher__app-error", this.selectionError);
@@ -159,20 +159,29 @@ export class SheafPatchLauncher {
     return row;
   }
 
-  private async select(app: CatalogApp): Promise<void> {
+  private select(app: CatalogApp): void {
     if (!this.ownsRoot() || this.selectionPending || this.selectionComplete) return;
     this.selectionPending = true;
     this.selectedId = app.globalId;
     this.selectionError = undefined;
     const pendingShell = this.render();
+    let selection: Promise<void>;
     try {
-      await this.options.select(app);
-      this.selectionComplete = true;
+      // Invoke the supplied boundary in the DOM event call stack. The production
+      // callback acquires activation resources here, before returning a promise.
+      selection = this.options.select(app);
     } catch (error) {
       this.selectionError = errorMessage(error);
-    } finally {
       this.selectionPending = false;
       if (pendingShell && this.ownsRoot() && this.root.firstElementChild === pendingShell) this.render();
+      return;
     }
+    void Promise.resolve(selection).then(
+      () => { this.selectionComplete = true; },
+      (error) => { this.selectionError = errorMessage(error); },
+    ).finally(() => {
+      this.selectionPending = false;
+      if (pendingShell && this.ownsRoot() && this.root.firstElementChild === pendingShell) this.render();
+    });
   }
 }
