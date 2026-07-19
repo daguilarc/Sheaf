@@ -52,8 +52,8 @@
 
 ## 8. Final verification and contract documentation
 
-- [ ] 8.1 Document catalog schema version 1, application package layout, browser ABI/version policy, trusted-publisher model, update/cache behavior, and instructions for a second repository that publishes multiple apps.
-- [ ] 8.2 Update synth browser coverage/architecture documentation to map `sbac-1` through `sbac-12` and modified `sprs-12` to unit, native contract, Playwright, publish, and deployed-origin tests.
+- [x] 8.1 Document catalog schema version 1, application package layout, browser ABI/version policy, trusted-publisher model, update/cache behavior, and instructions for a second repository that publishes multiple apps.
+- [x] 8.2 Update synth browser coverage/architecture documentation to map `sbac-1` through `sbac-12` and modified `sprs-12` to unit, native contract, Playwright, publish, and deployed-origin tests.
 - [ ] 8.3 Run the complete synth native contract/system suite and browser TypeScript/unit suite, fixing every regression introduced by the catalog and activation boundaries.
 - [ ] 8.4 Run generic fake-app two-origin acceptance, real miniapp launcher smoke, audio deadline/non-silence, bidirectional sysex MIDI, persistence, desktop/narrow UI, and Cloudflare publish tests in the required order.
 - [ ] 8.5 Inspect the final production artifact to confirm the root page is only the launcher, startup fetches catalogs but no package bytes, the first entry points back to this repository's miniapp package, and no app-specific launcher code remains.
