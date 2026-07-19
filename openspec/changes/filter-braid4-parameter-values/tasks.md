@@ -17,12 +17,12 @@
 
 ## 4. Braid 4 Oscillator-Owned Filtering
 
-- [ ] 4.1 Add Braid system tests that identify all 80 filtered states and prove ownership for every audible/LFO quad voice, Cutoff/Frequency control, and every matrix row/column entry while proving only X/Y and nested modulation-depth parameters are excluded.
-- [ ] 4.2 Add response tests proving each oscillator computes cutoff from its pre-Mod-LPF phase-1 cutoff cache after ordinary parameter-state slew over the exponential `0.1..20000 Hz` range at the internal sample rate, reuses that one alpha across its ten independent states including the cutoff itself and all four owned matrix entries, and does not apply the LFO frequency octave shift to cutoff.
-- [ ] 4.3 Add integration tests proving phase-1 raw caches are replaced before phase 2, DSP mappings and UI smoothing observe the same filtered cache, phase offset has no outside damping, and filter reset seeds current caches without a zero-origin transient.
-- [ ] 4.4 Implement compile-time-sized audible/LFO oscillator filter bundles and explicit parameter-ID ownership tables in Braid 4, including output-row matrix ownership and cache seeding during initialization/prepare/reset.
-- [ ] 4.5 Split Braid's internal parameter step around coefficient calculation and cache filtering, preserving standard-modulator ordering, exact one-internal-sample matrix feedback publication timing, allocation-free processing, and existing debug-counter observability.
-- [ ] 4.6 Update Braid bank, color, UI snapshot, persistence, and old-saved-value coverage for Cutoff controls at positions `8..11` with stable parameter count/order and new semantics.
+- [x] 4.1 Add Braid system tests that identify all 80 filtered states and prove ownership for every audible/LFO quad voice, Cutoff/Frequency control, and every matrix row/column entry while proving only X/Y and nested modulation-depth parameters are excluded.
+- [x] 4.2 Add response tests proving each oscillator computes cutoff from its pre-Mod-LPF phase-1 cutoff cache after ordinary parameter-state slew over the exponential `0.1..20000 Hz` range at the internal sample rate, reuses that one alpha across its ten independent states including the cutoff itself and all four owned matrix entries, and does not apply the LFO frequency octave shift to cutoff.
+- [x] 4.3 Add integration tests proving phase-1 raw caches are replaced before phase 2, DSP mappings and UI smoothing observe the same filtered cache, phase offset has no outside damping, and filter reset seeds current caches without a zero-origin transient.
+- [x] 4.4 Implement compile-time-sized audible/LFO oscillator filter bundles and explicit parameter-ID ownership tables in Braid 4, including output-row matrix ownership and cache seeding during initialization/prepare/reset.
+- [x] 4.5 Split Braid's internal parameter step around coefficient calculation and cache filtering, preserving standard-modulator ordering, exact one-internal-sample matrix feedback publication timing, allocation-free processing, and existing debug-counter observability.
+- [x] 4.6 Update Braid bank, color, UI snapshot, persistence, and old-saved-value coverage for Cutoff controls at positions `8..11` with stable parameter count/order and new semantics.
 
 ## 5. Verification and Documentation
 
