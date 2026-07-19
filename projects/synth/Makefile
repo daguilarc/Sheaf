@@ -7,6 +7,7 @@ LIB := $(BUILD_DIR)/libsynth.a
 TEST_BIN := $(BUILD_DIR)/parameter_modulation_tests
 BUTTON_GRID_TEST_BIN := $(BUILD_DIR)/button_grid_tests
 DSP_TEST_BIN := $(BUILD_DIR)/dsp_tests
+MASTER_CLOCK_TEST_BIN := $(BUILD_DIR)/master_clock_tests
 MODULE_TEST_BIN := $(BUILD_DIR)/module_tests
 INSTRUMENT_TEST_BIN := $(BUILD_DIR)/instrument_tests
 CONTRACT_TEST_BIN := $(BUILD_DIR)/contract_tests
@@ -30,16 +31,16 @@ BROWSER_CONTRACT_TEST_BIN := $(BUILD_DIR)/browser_runtime_contract_tests
 BROWSER_COMMAND_BUFFER_TEST_BIN := $(BUILD_DIR)/browser_command_buffer_tests
 BROWSER_AUDIO_DEVICE_TEST_BIN := $(BUILD_DIR)/browser_audio_device_tests
 BROWSER_MIDI_BRIDGE_TEST_BIN := $(BUILD_DIR)/browser_midi_bridge_tests
-SRC := src/ParameterModulation.cpp src/ButtonGrid.cpp src/MidiController.cpp src/PatchPersistence.cpp src/DspWavetable.cpp src/Modules.cpp src/MidiReconcile.cpp src/MidiDevicePoller.cpp src/MidiConfigViewModel.cpp src/MidiConfigBlocks.cpp
-OBJ := $(BUILD_DIR)/ParameterModulation.o $(BUILD_DIR)/ButtonGrid.o $(BUILD_DIR)/MidiController.o $(BUILD_DIR)/PatchPersistence.o $(BUILD_DIR)/DspWavetable.o $(BUILD_DIR)/Modules.o $(BUILD_DIR)/MidiReconcile.o $(BUILD_DIR)/MidiDevicePoller.o $(BUILD_DIR)/MidiConfigViewModel.o $(BUILD_DIR)/MidiConfigBlocks.o
-DSP_HEADERS := include/synth/DspMath.hpp include/synth/DspNumbers.hpp include/synth/DspTransferFunction.hpp include/synth/DspFilters.hpp include/synth/DspScope.hpp include/synth/DspWavetable.hpp include/synth/DspOscillators.hpp include/synth/DspBuffers.hpp include/synth/DspAdsr.hpp include/synth/DspConstant.hpp include/synth/DspDegrade.hpp include/synth/DspMetering.hpp include/synth/DspNoise.hpp include/synth/DspOla.hpp include/synth/DspResynthesis.hpp include/synth/DspSpectral.hpp
+SRC := src/ParameterModulation.cpp src/ButtonGrid.cpp src/MidiController.cpp src/PatchPersistence.cpp src/DspWavetable.cpp src/Modules.cpp src/MidiReconcile.cpp src/MidiDevicePoller.cpp src/MidiConfigViewModel.cpp src/MidiConfigBlocks.cpp src/MasterClock.cpp
+OBJ := $(BUILD_DIR)/ParameterModulation.o $(BUILD_DIR)/ButtonGrid.o $(BUILD_DIR)/MidiController.o $(BUILD_DIR)/PatchPersistence.o $(BUILD_DIR)/DspWavetable.o $(BUILD_DIR)/Modules.o $(BUILD_DIR)/MidiReconcile.o $(BUILD_DIR)/MidiDevicePoller.o $(BUILD_DIR)/MidiConfigViewModel.o $(BUILD_DIR)/MidiConfigBlocks.o $(BUILD_DIR)/MasterClock.o
+DSP_HEADERS := include/synth/DspMath.hpp include/synth/DspNumbers.hpp include/synth/DspTransferFunction.hpp include/synth/DspFilters.hpp include/synth/DspScope.hpp include/synth/DspWavetable.hpp include/synth/DspOscillators.hpp include/synth/DspBuffers.hpp include/synth/DspAdsr.hpp include/synth/DspConstant.hpp include/synth/DspDegrade.hpp include/synth/DspMetering.hpp include/synth/DspNoise.hpp include/synth/DspOla.hpp include/synth/DspResynthesis.hpp include/synth/DspSpectral.hpp include/synth/DspPhasor2Tick.hpp
 RANDOM_LFO_HEADERS := include/synth/DspRandomLfo.hpp include/synth/GangedRandomLfoVisualizer.hpp
 STANDARD_MODULATOR_HEADERS := include/synth/StandardModulators.hpp include/synth/ParameterModulation.hpp include/synth/ConstantBarVisualizer.hpp include/synth/NoiseWaveformVisualizer.hpp include/synth/DspConstant.hpp include/synth/DspNoise.hpp $(RANDOM_LFO_HEADERS)
 APPS_DIR := apps
 MINIAPP_DIR := $(APPS_DIR)/miniapp
 SHEAF_PATCH_DIR := $(APPS_DIR)/sheaf-patch
 
-.PHONY: all build test check-ui-boundary miniapp sheaf-patch apps browser browser-apps browser-fixture-app browser-apps-run browser-apps-smoke browser-unit-test browser-command-buffer-test browser-audio-device-test browser-midi-bridge-test clean
+.PHONY: all build test dsp_tests master_clock_tests contract_tests engine_tests check-ui-boundary miniapp sheaf-patch apps browser browser-apps browser-fixture-app browser-apps-run browser-apps-smoke browser-unit-test browser-command-buffer-test browser-audio-device-test browser-midi-bridge-test clean
 
 all: build test
 
@@ -82,6 +83,9 @@ $(BUILD_DIR)/MidiConfigViewModel.o: src/MidiConfigViewModel.cpp include/synth/Mi
 $(BUILD_DIR)/MidiConfigBlocks.o: src/MidiConfigBlocks.cpp include/synth/MidiConfigBlocks.hpp include/synth/MidiController.hpp | $(BUILD_SENTINEL)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
+$(BUILD_DIR)/MasterClock.o: src/MasterClock.cpp include/synth/MasterClock.hpp | $(BUILD_SENTINEL)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+
 $(LIB): $(OBJ)
 	ar rcs $@ $^
 
@@ -93,6 +97,21 @@ $(BUTTON_GRID_TEST_BIN): tests/button_grid_tests.cpp include/synth/ButtonGrid.hp
 
 $(DSP_TEST_BIN): tests/dsp_tests.cpp $(LIB) $(DSP_HEADERS) $(STANDARD_MODULATOR_HEADERS)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
+
+$(MASTER_CLOCK_TEST_BIN): tests/master_clock_tests.cpp $(LIB) include/synth/MasterClock.hpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
+
+dsp_tests: $(DSP_TEST_BIN)
+	$(DSP_TEST_BIN)
+
+master_clock_tests: $(MASTER_CLOCK_TEST_BIN)
+	$(MASTER_CLOCK_TEST_BIN)
+
+contract_tests: $(CONTRACT_TEST_BIN)
+	$(CONTRACT_TEST_BIN)
+
+engine_tests: $(ENGINE_TEST_BIN)
+	$(ENGINE_TEST_BIN)
 
 # -Iapps/miniapp is added for this rule only: DemoModulation.hpp lives under
 # apps/miniapp/ (JUCE-free), and MiniAppCore uses its group-level per-sample
@@ -182,10 +201,11 @@ browser-audio-device-test: $(BROWSER_AUDIO_DEVICE_TEST_BIN)
 browser-midi-bridge-test: $(BROWSER_MIDI_BRIDGE_TEST_BIN)
 	$(BROWSER_MIDI_BRIDGE_TEST_BIN)
 
-test: check-ui-boundary $(TEST_BIN) $(BUTTON_GRID_TEST_BIN) $(DSP_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(BRAID4_SYSTEM_TEST_BIN) $(BRAID4_DEADLINE_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN) $(MIDI_SENDER_TEST_BIN) $(VIEWMODEL_TEST_BIN) $(BLOCKS_TEST_BIN) $(PORTABLE_UI_TEST_BIN) $(RUNTIME_MAIN_COMPONENT_TEST_BIN) $(RUNTIME_FILE_SERVICE_TEST_BIN) $(CONTROLLERS_PAGE_UI_TEST_BIN) $(BROWSER_COMMAND_BUFFER_TEST_BIN) $(BROWSER_AUDIO_DEVICE_TEST_BIN)
+test: check-ui-boundary $(TEST_BIN) $(BUTTON_GRID_TEST_BIN) $(DSP_TEST_BIN) $(MASTER_CLOCK_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(BRAID4_SYSTEM_TEST_BIN) $(BRAID4_DEADLINE_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN) $(MIDI_SENDER_TEST_BIN) $(VIEWMODEL_TEST_BIN) $(BLOCKS_TEST_BIN) $(PORTABLE_UI_TEST_BIN) $(RUNTIME_MAIN_COMPONENT_TEST_BIN) $(RUNTIME_FILE_SERVICE_TEST_BIN) $(CONTROLLERS_PAGE_UI_TEST_BIN) $(BROWSER_COMMAND_BUFFER_TEST_BIN) $(BROWSER_AUDIO_DEVICE_TEST_BIN)
 	$(TEST_BIN)
 	$(BUTTON_GRID_TEST_BIN)
 	$(DSP_TEST_BIN)
+	$(MASTER_CLOCK_TEST_BIN)
 	$(MODULE_TEST_BIN)
 	$(INSTRUMENT_TEST_BIN)
 	$(CONTRACT_TEST_BIN)

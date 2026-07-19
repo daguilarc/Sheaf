@@ -9,6 +9,7 @@
 #include "synth/DspNumbers.hpp"
 #include "synth/DspOla.hpp"
 #include "synth/DspOscillators.hpp"
+#include "synth/DspPhasor2Tick.hpp"
 #include "synth/DspRandomLfo.hpp"
 #include "synth/DspResynthesis.hpp"
 #include "synth/DspScope.hpp"
@@ -24,12 +25,15 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <complex>
+#include <cstdlib>
 #include <cstdint>
 #include <exception>
 #include <iostream>
 #include <limits>
+#include <new>
 #include <numbers>
 #include <sstream>
 #include <stdexcept>
@@ -37,6 +41,43 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+namespace allocation_probe {
+
+std::atomic<bool> enabled{false};
+std::atomic<std::size_t> count{0};
+
+} // namespace allocation_probe
+
+void* operator new(std::size_t size) {
+    if (allocation_probe::enabled.load(std::memory_order_relaxed)) {
+        allocation_probe::count.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (void* memory = std::malloc(size)) {
+        return memory;
+    }
+    throw std::bad_alloc();
+}
+
+void* operator new[](std::size_t size) {
+    return ::operator new(size);
+}
+
+void operator delete(void* memory) noexcept {
+    std::free(memory);
+}
+
+void operator delete[](void* memory) noexcept {
+    std::free(memory);
+}
+
+void operator delete(void* memory, std::size_t) noexcept {
+    std::free(memory);
+}
+
+void operator delete[](void* memory, std::size_t) noexcept {
+    std::free(memory);
+}
 
 namespace {
 
@@ -92,6 +133,10 @@ static_assert(!std::is_copy_constructible_v<synth::StandardModulators<4>>);
 static_assert(!std::is_copy_assignable_v<synth::StandardModulators<4>>);
 static_assert(!std::is_move_constructible_v<synth::StandardModulators<4>>);
 static_assert(!std::is_move_assignable_v<synth::StandardModulators<4>>);
+static_assert(noexcept(std::declval<synth::Phasor2Tick&>().Prime({0.0, 24})));
+static_assert(noexcept(std::declval<synth::Phasor2Tick&>().Process({0.0, 24})));
+static_assert(noexcept(std::declval<const synth::Phasor2Tick&>().Tick()));
+static_assert(std::is_trivially_copyable_v<synth::Phasor2Tick>);
 
 struct TestCase {
     const char* name;
@@ -272,6 +317,78 @@ void RequireStandardModulatorOwnedShape() {
 }
 
 } // namespace
+
+TEST_CASE(phasor2tick_priming_and_same_cell_processing_are_silent) {
+    synth::Phasor2Tick detector;
+
+    REQUIRE_TRUE(detector.Prime({1.25, 4}));
+    REQUIRE_TRUE(detector.IsPrimed());
+    REQUIRE_TRUE(!detector.Tick());
+    REQUIRE_TRUE(!detector.Process({1.25, 4}));
+    REQUIRE_TRUE(!detector.Process({1.499999, 4}));
+    REQUIRE_TRUE(!detector.Tick());
+}
+
+TEST_CASE(phasor2tick_emits_exactly_when_the_floored_cell_changes) {
+    synth::Phasor2Tick detector;
+    REQUIRE_TRUE(detector.Prime({0.999, 24}));
+
+    REQUIRE_TRUE(detector.Process({1.0, 24}));
+    REQUIRE_TRUE(detector.Tick());
+    REQUIRE_TRUE(!detector.Process({1.01, 24}));
+    REQUIRE_TRUE(!detector.Tick());
+}
+
+TEST_CASE(phasor2tick_detects_backward_time_and_multi_cell_jumps_once_per_call) {
+    synth::Phasor2Tick detector;
+    REQUIRE_TRUE(detector.Prime({2.0, 8}));
+
+    REQUIRE_TRUE(detector.Process({1.99, 8}));
+    REQUIRE_TRUE(!detector.Process({1.98, 8}));
+    REQUIRE_TRUE(detector.Process({4.0, 8}));
+    REQUIRE_TRUE(!detector.Process({4.01, 8}));
+}
+
+TEST_CASE(phasor2tick_rejects_invalid_inputs_without_corrupting_its_cell) {
+    synth::Phasor2Tick detector;
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double infinity = std::numeric_limits<double>::infinity();
+
+    REQUIRE_TRUE(!detector.Prime({nan, 24}));
+    REQUIRE_TRUE(!detector.Prime({0.0, 0}));
+    REQUIRE_TRUE(!detector.Prime({0.0, -1}));
+    REQUIRE_TRUE(!detector.IsPrimed());
+
+    REQUIRE_TRUE(detector.Prime({0.25, 24}));
+    REQUIRE_TRUE(!detector.Process({infinity, 24}));
+    REQUIRE_TRUE(!detector.Process({0.25, 0}));
+    REQUIRE_TRUE(!detector.Process({std::numeric_limits<double>::max(), 24}));
+    REQUIRE_TRUE(!detector.Tick());
+    REQUIRE_TRUE(!detector.Process({0.26, 24}));
+    REQUIRE_TRUE(detector.PreviousCell() == 6.0);
+}
+
+TEST_CASE(phasor2tick_first_valid_process_silently_primes) {
+    synth::Phasor2Tick detector;
+
+    REQUIRE_TRUE(!detector.Process({-0.25, 4}));
+    REQUIRE_TRUE(detector.IsPrimed());
+    REQUIRE_TRUE(detector.PreviousCell() == -1.0);
+}
+
+TEST_CASE(phasor2tick_processing_performs_no_dynamic_allocation) {
+    synth::Phasor2Tick detector;
+    REQUIRE_TRUE(detector.Prime({0.0, 960}));
+
+    allocation_probe::count.store(0, std::memory_order_relaxed);
+    allocation_probe::enabled.store(true, std::memory_order_release);
+    for (int index = 1; index <= 10000; ++index) {
+        (void)detector.Process({static_cast<double>(index) / 48000.0, 960});
+    }
+    allocation_probe::enabled.store(false, std::memory_order_release);
+
+    REQUIRE_TRUE(allocation_probe::count.load(std::memory_order_relaxed) == 0);
+}
 
 TEST_CASE(standard_modulators_defaults_match_min16_contract) {
     synth::ParameterManager manager;
