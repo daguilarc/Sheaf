@@ -21,4 +21,4 @@ fi
 
 npm --prefix "$BROWSER_ROOT" install --no-package-lock
 make -C "$BROWSER_ROOT" EMSDK="$EMSDK_DIR" browser-apps
-npm --prefix "$BROWSER_ROOT" run publish:site
+npm --prefix "$BROWSER_ROOT" run publish:site -- --catalog-source https://jvictor0.github.io/Sheaf/catalogs/sheaf/catalog.json

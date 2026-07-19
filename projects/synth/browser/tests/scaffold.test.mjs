@@ -79,6 +79,7 @@ test("cloudflare pages build script bootstraps emscripten before publishing", as
   assert.match(script, /emsdk" install latest/);
   assert.match(script, /emsdk" activate latest/);
   assert.match(script, /npm .*run publish:site/);
+  assert.match(script, /--catalog-source https:\/\/jvictor0\.github\.io\/Sheaf\/catalogs\/sheaf\/catalog\.json/);
 
   const makefile = await readBrowserMakefile();
   assert.match(makefile, /browser-apps-smoke:/);

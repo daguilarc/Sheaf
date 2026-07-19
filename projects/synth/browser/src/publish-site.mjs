@@ -34,9 +34,6 @@ export const cloudflareHeaders = `/*
   Content-Type: text/javascript
 `;
 
-// The Cloudflare launcher stays independent from the first-party publisher.
-// The checked-in relative source list is retained for localhost development;
-// publication substitutes this deployed publisher URL into the launcher asset.
 export const publishedCatalogSource = "https://jvictor0.github.io/Sheaf/catalogs/sheaf/catalog.json";
 
 function defaultBrowserRoot() {
@@ -138,7 +135,7 @@ function rollbackHtml(catalog, app) {
 `;
 }
 
-export async function validatePublishedSite({ publishRoot }) {
+export async function validatePublishedSite({ publishRoot, catalogSource } = {}) {
   for (const relativePath of [
     "index.html",
     "synth-browser.css",
@@ -160,9 +157,12 @@ export async function validatePublishedSite({ publishRoot }) {
     JSON.parse(await readFile(path.join(publishRoot, "catalog-sources.json"), "utf8")),
     deploymentBase,
   );
-  if (sources[0]?.catalogUrl !== publishedCatalogSource)
-    throw new Error(`First catalog reference must resolve to ${publishedCatalogSource}; received ${String(sources[0]?.catalogUrl)}`);
   const localCatalogUrl = new URL(CANONICAL_CATALOG_PATH, deploymentBase).href;
+  const expectedCatalogSource = catalogSource === undefined
+    ? localCatalogUrl
+    : parseCatalogSources([catalogSource], deploymentBase)[0].catalogUrl;
+  if (sources[0]?.catalogUrl !== expectedCatalogSource)
+    throw new Error(`First catalog reference must resolve to ${expectedCatalogSource}; received ${String(sources[0]?.catalogUrl)}`);
   const catalog = parseCatalog(
     JSON.parse(await readFile(path.join(publishRoot, CANONICAL_CATALOG_PATH), "utf8")),
     localCatalogUrl,
@@ -251,6 +251,7 @@ export async function publishSite({
   browserRoot = defaultBrowserRoot(),
   publishRoot = path.join(browserRoot, "dist", "site"),
   catalogBuilder = buildFirstPartyCatalog,
+  catalogSource,
 } = {}) {
   for (const relativePath of [
     "public/index.html",
@@ -273,10 +274,12 @@ export async function publishSite({
       path.join(stagingRoot, "dist", "src", moduleName),
     )));
     const { catalog } = await catalogBuilder({ browserRoot, outputRoot: stagingRoot });
-    await writeFile(
-      path.join(stagingRoot, "catalog-sources.json"),
-      `${JSON.stringify([publishedCatalogSource], null, 2)}\n`,
-    );
+    if (catalogSource !== undefined) {
+      await writeFile(
+        path.join(stagingRoot, "catalog-sources.json"),
+        `${JSON.stringify([catalogSource], null, 2)}\n`,
+      );
+    }
 
     for (const app of catalog.apps) {
       const rollbackRoot = path.join(stagingRoot, "rollback", "apps", app.appId);
@@ -284,7 +287,7 @@ export async function publishSite({
       await writeFile(path.join(rollbackRoot, "index.html"), rollbackHtml(catalog, app));
     }
     await writeFile(path.join(stagingRoot, "_headers"), cloudflareHeaders);
-    await validatePublishedSite({ publishRoot: stagingRoot });
+    await validatePublishedSite({ publishRoot: stagingRoot, catalogSource });
     await replaceDestination(stagingRoot, publishRoot);
     staged = false;
     return Object.freeze({ publishRoot });
@@ -330,11 +333,17 @@ export async function publishPublisherArtifact({
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  if (process.argv[2] === "--publisher-only") {
+  const [command, value] = process.argv.slice(2);
+  if (command === "--publisher-only" && value === undefined) {
     const { pagesRoot } = await publishPublisherArtifact();
     console.log(`Published browser catalogs to ${path.relative(process.cwd(), pagesRoot)}`);
-  } else {
+  } else if (command === "--catalog-source" && value !== undefined) {
+    const { publishRoot } = await publishSite({ catalogSource: value });
+    console.log(`Published browser site to ${path.relative(process.cwd(), publishRoot)}`);
+  } else if (command === undefined) {
     const { publishRoot } = await publishSite();
     console.log(`Published browser site to ${path.relative(process.cwd(), publishRoot)}`);
+  } else {
+    throw new Error("Usage: publish-site.mjs [--publisher-only | --catalog-source <catalog-url>]");
   }
 }

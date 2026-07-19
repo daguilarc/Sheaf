@@ -172,7 +172,7 @@ test("publishes launcher assets, both packages, and one generic rollback page pe
   await assert.rejects(stat(path.join(publishRoot, "rollback", "direct-miniapp")), { code: "ENOENT" });
 
   const sourceList = JSON.parse(await readFile(path.join(publishRoot, "catalog-sources.json"), "utf8"));
-  assert.deepEqual(sourceList, [publishedCatalogSource]);
+  assert.deepEqual(sourceList, ["catalogs/sheaf/catalog.json"]);
   assert.deepEqual(
     JSON.parse(await readFile(path.join(browserRoot, "catalog-sources.json"), "utf8")),
     ["catalogs/sheaf/catalog.json"],
@@ -203,6 +203,24 @@ test("publishes launcher assets, both packages, and one generic rollback page pe
   assert.doesNotMatch(headers, /direct-miniapp|rollback\/apps\/[a-z0-9-]+/);
 
   const validated = await validatePublishedSite({ publishRoot });
+  assert.deepEqual(validated.catalog.apps.map(({ appId }) => appId), ["alpha", "beta"]);
+});
+
+test("publishes a Cloudflare launcher with an explicitly configured remote catalog source", async () => {
+  const { browserRoot, publishRoot } = await createPublishFixture("remote-source");
+
+  await publishSite({ browserRoot, publishRoot, catalogSource: publishedCatalogSource });
+
+  assert.deepEqual(
+    JSON.parse(await readFile(path.join(publishRoot, "catalog-sources.json"), "utf8")),
+    [publishedCatalogSource],
+  );
+  assert.deepEqual(
+    JSON.parse(await readFile(path.join(browserRoot, "catalog-sources.json"), "utf8")),
+    ["catalogs/sheaf/catalog.json"],
+    "the checked-in source list remains suitable for localhost development",
+  );
+  const validated = await validatePublishedSite({ publishRoot, catalogSource: publishedCatalogSource });
   assert.deepEqual(validated.catalog.apps.map(({ appId }) => appId), ["alpha", "beta"]);
 });
 
