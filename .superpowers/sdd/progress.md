@@ -121,3 +121,22 @@ Workspace: managed linked worktree, detached HEAD
 - Task 5: complete (commits `4f7b613e` and boundary correction `2ea3a279`; separate expansion/reconstruction REDs plus duplicate-append audit RED observed; Blocks/ViewModel and full synth suites GREEN; initial xagent Claude Sonnet review found an Important task-boundary violation caused by the root dispatch over-scoping view-model work into Task 5; the same implementer restored all three view-model files byte-for-byte to base, and the same reviewer independently verified the corrected exact three-file delta and returned PASS with no Critical/Important findings; OpenSpec 6.1-6.3 checked). Minor ledger: the public append API's duplicate-against-existing-accumulator check is not exercised by current production callers but intentionally preserves all-or-nothing behavior for non-empty caller accumulators.
 - Task 6: complete (commit `5b9653a1`; separate ViewModel, portable, generic-JUCE, malformed-number simulation, and hidden-orphan candidate-placement REDs observed; focused headless and MiniApp/JUCE suites GREEN with deterministic grid simulation seed `0x6a1d2026`, 320 operations/200 accepted; full functional suite and UI boundary GREEN, while the unrelated 96 kHz deadline p99 benchmark was host-scheduling-sensitive under full-suite load and passed immediately in isolation; xagent Claude Opus independently reran headless/JUCE/deadline verification and returned PASS with no Critical/Important findings; OpenSpec 6.4-6.6 checked). Minor ledger: failed edits preserve committed state atomically but leave the attempted value in the open in-session row, matching pre-existing block-editor behavior.
 - Task 7: complete (commit `f9da0bc7` plus traceability review fix; focused core/message/MIDI/persistence/engine/Controllers suites, full synth suite, warning-enabled app build, UI boundary, generic JUCE backend/runtime-shell coverage and seeded simulation, strict OpenSpec validation/status, placeholder/diff checks, finalized-grid storage/pointer stability, unchanged MIDI output goldens, and all 52 normative scenario mappings passed; final reviewer requested only that verified OpenSpec 7.1-7.4 and this progress entry be recorded, which the follow-up completed; application-level grid exposure remains an intentional non-goal).
+
+# Browser App Catalog Launcher SDD Progress
+
+Plan: `docs/superpowers/plans/2026-07-18-browser-app-catalog-launcher.md`
+OpenSpec change: `add-browser-app-catalog-launcher`
+Branch: `codex/browser-app-catalog-launcher`
+Implementation base: `d0d14472`
+
+- Plan review: xagent Claude Opus run `xrun_20260719053557460_5b0c3142` approved after correcting active server/config paths, native contract-test scope, package MIME headers, activation-task phasing, loader threading, and command working directories.
+- Baseline: `make test` in `projects/synth` and the browser TypeScript/Node/Playwright suite (64/64 after building fake-app and miniapp WASM fixtures) exited 0 before implementation.
+- Task 1: complete (commit `72d4c928`; 20/20 Node catalog/scaffold tests, 6/6 runtime-core Playwright tests, generic-runtime check, and native `browser-unit-test` GREEN; persistent xagent Claude Sonnet run `xrun_20260719060400106_e0067e21` returned spec compliant and Task quality Approved; OpenSpec 1.1–1.4 checked). Controller resolved cross-app package-path reuse as allowed within trusted publisher catalogs and catalog-version-to-worker threading as deferred to Task 4 after Task 3 materialization. Minor ledger for final review: identifiers have an implementation cap of 200 characters beyond the normative character-pattern constraint.
+- Task 2: pending.
+- Task 3: pending.
+- Task 4: pending.
+- Task 5: pending.
+- Task 6: pending.
+- Task 7: pending.
+- Task 8: pending.
+- Task 9: pending.

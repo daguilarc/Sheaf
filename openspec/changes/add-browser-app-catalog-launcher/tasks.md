@@ -1,9 +1,9 @@
 ## 1. Catalog and compatibility contracts
 
-- [ ] 1.1 Add TypeScript catalog/source/package types, supported schema/ABI/UI/runtime-config version constants, and strict validation for IDs, metadata, relative URLs, immutable build IDs, media types, and SHA-256 digests.
-- [ ] 1.2 Add catalog validation fixtures and unit tests covering valid multi-app catalogs, unsupported versions, malformed identities, missing files, invalid relative URLs, and traversal-like input.
-- [ ] 1.3 Add deterministic catalog registry merging with `<publisher-id>/<app-id>` identities, configured-source precedence, duplicate diagnostics, and display-name/global-ID sorting, with unit tests.
-- [ ] 1.4 Expose browser ABI, UI command-buffer, and runtime-config versions from the generic C++/Emscripten adapter before runtime creation, and test compatible and incompatible facade negotiation.
+- [x] 1.1 Add TypeScript catalog/source/package types, supported schema/ABI/UI/runtime-config version constants, and strict validation for IDs, metadata, relative URLs, immutable build IDs, media types, and SHA-256 digests.
+- [x] 1.2 Add catalog validation fixtures and unit tests covering valid multi-app catalogs, unsupported versions, malformed identities, missing files, invalid relative URLs, and traversal-like input.
+- [x] 1.3 Add deterministic catalog registry merging with `<publisher-id>/<app-id>` identities, configured-source precedence, duplicate diagnostics, and display-name/global-ID sorting, with unit tests.
+- [x] 1.4 Expose browser ABI, UI command-buffer, and runtime-config versions from the generic C++/Emscripten adapter before runtime creation, and test compatible and incompatible facade negotiation.
 
 ## 2. Trusted catalog discovery and launcher UI
 
