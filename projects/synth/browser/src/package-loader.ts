@@ -148,6 +148,8 @@ export async function materializePackage(
     return Object.freeze({
       entryUrl,
       locateFile: Object.freeze(mappings),
+      // Keep the original verified entry blob here even when entryUrl is rewritten;
+      // Emscripten's pthread/worker sidecars resolve through the explicit locateFile map.
       mainScriptUrlOrBlob: entry.url,
       dispose() {
         if (disposed) return;

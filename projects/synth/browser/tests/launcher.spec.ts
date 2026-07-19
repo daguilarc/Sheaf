@@ -110,14 +110,13 @@ test("preserves the last healthy app list when source-list revalidation fails", 
   expect(sourceAttempts).toBe(2);
 });
 
-test("locks selection after success and returns through generic top-level navigation", async ({ page }) => {
+test("locks selection after success without rendering an in-page return control", async ({ page }) => {
   await page.goto("http://127.0.0.1:4173/dist/src/launcher.js");
   await page.setContent('<main id="launcher-root"></main>');
   await page.evaluate(async () => {
     const { SheafPatchLauncher } = await (new Function("return import('/dist/src/launcher.js')")() as Promise<any>);
     const selected: string[] = [];
-    const navigated: string[] = [];
-    (window as any).__launcherTest = { selected, navigated };
+    (window as any).__launcherTest = { selected };
     const makeApp = (appId: string, displayName: string) => ({
       globalId: `example/${appId}`,
       catalogUrl: "https://publisher.example/catalog.json",
@@ -146,7 +145,6 @@ test("locks selection after success and returns through generic top-level naviga
     const launcher = new SheafPatchLauncher(document.querySelector("#launcher-root"), {
       client,
       select: async (app: any) => { selected.push(app.globalId); },
-      navigateToLauncher: () => { navigated.push("reload"); },
     });
     await launcher.start();
   });
@@ -154,12 +152,10 @@ test("locks selection after success and returns through generic top-level naviga
   await page.getByRole("button", { name: /launch aurora/i }).click();
   await expect(page.getByRole("button", { name: /launch aurora/i })).toBeDisabled();
   await expect(page.getByRole("button", { name: /launch borealis/i })).toBeDisabled();
-  await expect(page.getByRole("button", { name: /back to launcher/i })).toBeVisible();
-  await page.getByRole("button", { name: /back to launcher/i }).click();
+  await expect(page.getByRole("button", { name: /back to launcher/i })).toHaveCount(0);
 
   expect(await page.evaluate(() => (window as any).__launcherTest)).toEqual({
     selected: ["example/one"],
-    navigated: ["reload"],
   });
 });
 

@@ -265,7 +265,8 @@ test("package failure disposes the lease once and a retry acquires fresh resourc
   const row = page.getByRole("listitem").filter({ hasText: "Portable App" });
   await expect(row).toContainText("package unavailable");
   await page.getByRole("button", { name: /retry portable app/i }).click();
-  await expect(page.getByRole("button", { name: /back to launcher/i })).toBeVisible();
+  await expect(row.getByRole("button", { name: /launch portable app/i })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /back to launcher/i })).toHaveCount(0);
   expect(await page.evaluate(() => (window as any).__failureCounters)).toEqual({
     leases: 2,
     leaseDisposals: 1,

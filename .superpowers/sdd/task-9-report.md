@@ -20,6 +20,12 @@ Task 9 changes are limited to:
 - `projects/synth/browser/Makefile`
 - `projects/synth/browser/playwright.config.mjs`
 - `projects/synth/browser/src/build-first-party-catalog.mjs`
+- `projects/synth/browser/src/launcher.ts`
+- `projects/synth/browser/src/main.ts`
+- `projects/synth/browser/src/package-loader.ts`
+- `projects/synth/browser/docs/catalog-schema-v1.md`
+- `projects/synth/browser/tests/activation-lease.spec.ts`
+- `projects/synth/browser/tests/launcher.spec.ts`
 - `projects/synth/browser/tests/publish-site.test.mjs`
 - `projects/synth/browser/tests/scaffold.test.mjs`
 - `projects/synth/tests/browser_runtime_contract_tests.cpp`
@@ -59,6 +65,14 @@ One initial command, `npm run build` from the repository root, exited 254 with `
 | `npx playwright test --workers=1` | 101 passed, 1 skipped; the only skip was the opt-in live `deployed-origin.spec.ts` because no live URL was supplied |
 
 The first standalone Miniapp command was run without the confirmed-gate environment after the separately invoked fake-app command. It exited 1 before Miniapp behavior ran because the default handoff filename contains Playwright's parent PID, which differs across CLI processes. Root-cause inspection showed that the repository's ordered Make target intentionally sets `SYNTH_BROWSER_FAKE_GATE_CONFIRMED=1` only after its fake-app prerequisite succeeds. The already-green 3/3 fake-app result therefore authorized the supported handoff above; the rerun passed 7/7. No product change was made for this fixture-only command-boundary failure.
+
+### Final-review focused evidence
+
+Production ownership inspection established that `SynthBrowserApp.start()` claims the runtime root before the selection promise resolves. The launcher's `.finally` render therefore runs only after `ownsRoot()` becomes false, making its successful-selection `Back to launcher` branch unreachable in the production composition. A focused launcher test was changed first to require the supported state: both choices remain locked after success and no launcher-owned in-page return control is rendered. Before the production change it failed 1/6 because the button was still present; after removing that dead branch and its `navigateToLauncher` option, the suite passed 6/6. The catalog contract now states explicitly that return is by top-level navigation/reload after the runtime takes ownership of the root.
+
+The first affected-suite run then passed 37/38; its sole failure was the lease-retry test's stale expectation for that same removed button. The test retained its lease/package/install counter assertions and now checks the successful locked-selection state with no in-page return control. Its focused suite passed 8/8, and the combined launcher, package-loader, activation-lease, runtime-core, and static-site run passed 38/38.
+
+The package materializer also documents at `mainScriptUrlOrBlob` that the original verified entry blob is intentional even when `entryUrl` is rewritten: Emscripten pthread/worker sidecars resolve through the explicit `locateFile` map. This is an invariant comment only; package behavior is unchanged.
 
 ### Publication, workflow, and final gates
 
@@ -142,10 +156,10 @@ The only published `app.js` under `dist/site` is `rollback/direct-miniapp/app.js
 | `dist/src/audio.js` | 3,177 | `88bf6a8338ee1d5213bec95d6e43bc3fa485c4cb040ecee3100f3f40f39c63f6` |
 | `dist/src/catalog-client.js` | 2,519 | `f6ba9c5cfa45337cd3f0b4dc3fd95d62497daf093169dec6d4544472ba6a3584` |
 | `dist/src/catalog.js` | 10,747 | `1c4ac155d2bf28e7c4c591ff54560559fc92c7c9c5917fecf2c9f039d9132b40` |
-| `dist/src/launcher.js` | 7,482 | `e59fb68abd8d0edc893f75a852f5d849936b6deef0629f8d3bd49346869b95b8` |
-| `dist/src/main.js` | 13,861 | `237b704302995943f4c91ada0f05adbadcea1802d8e39465d670d6ebfe89e1e7` |
+| `dist/src/launcher.js` | 7,164 | `63def6b62897f68bbac37d576fd46186c88b54161f78be204037c74bd35138c0` |
+| `dist/src/main.js` | 13,805 | `ff736fe5cc2d63827e02a91a558764d7a41eeea17108318467bfd6e74153306e` |
 | `dist/src/midi.js` | 7,446 | `3c363ec55cc69c64c25691151138cbbac45695e58950c2fada65af66e570f9db` |
-| `dist/src/package-loader.js` | 7,076 | `49e0cab2cfea513ffbd1556b3aef6813da36cb27b3c47e4d5595acdd05afd5cf` |
+| `dist/src/package-loader.js` | 7,264 | `ddbb9564c14264b89a420cd5b14a6a752108de0d008e4bbb3c1ea5906bbef9fa` |
 | `dist/src/persistence.js` | 4,031 | `b3d460427662fab2d24665ce8d26191c1be0fe439ddcbcb92b2fafd5d0ac3159` |
 | `dist/src/protocol.js` | 13,471 | `19db10800104194f4bf63bf2f6d77225db12e5fb7b560fa3a6a7c5b255780b68` |
 | `dist/src/ui.js` | 28,471 | `dd952d87349da651442a83be2a96b2cc84c3917cb61dc07000eea5c01d224af0` |

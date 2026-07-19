@@ -36,7 +36,6 @@ export type SynthBrowserLauncherOptions = {
   sourcesUrl?: string;
   client?: CatalogClient;
   select?: (app: CatalogApp) => Promise<void>;
-  navigateToLauncher?: () => void;
   activationLeaseFactory?: () => ActivationLease;
   materializePackage?: (app: CatalogApp) => Promise<MaterializedPackage>;
   installApp?: typeof installSynthBrowserApp;
@@ -325,7 +324,6 @@ export async function installSheafPatchLauncher(
   const launcher = new SheafPatchLauncher(root, {
     client: options.client ?? new CatalogClient({ sourcesUrl }),
     select,
-    navigateToLauncher: options.navigateToLauncher,
     ownsRoot,
   });
   await launcher.start();

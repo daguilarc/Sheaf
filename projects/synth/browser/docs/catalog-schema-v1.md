@@ -123,7 +123,8 @@ disposal. Integrity proves bytes only: it is not a code sandbox.
 Only one app is active per navigation. Selection begins host-owned audio and
 sysex MIDI activation in that user gesture, before package work; returning to
 the launcher is a top-level navigation/reload that releases the prior audio and
-MIDI ownership.
+MIDI ownership. The running runtime owns the root after selection, so the
+launcher does not render an in-page return control into that runtime surface.
 
 ## Updates and operating limits
 

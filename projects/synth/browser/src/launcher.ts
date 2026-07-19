@@ -6,7 +6,6 @@ type CatalogLoader = Pick<CatalogClient, "loadSources">;
 export type SheafPatchLauncherOptions = Readonly<{
   client: CatalogLoader;
   select: (app: CatalogApp) => Promise<void>;
-  navigateToLauncher?: () => void;
   ownsRoot?: () => boolean;
 }>;
 
@@ -113,12 +112,6 @@ export class SheafPatchLauncher {
       shell.append(retry);
     }
 
-    if (this.selectionComplete) {
-      const back = element("button", "synth-launcher__back", "Back to launcher");
-      back.type = "button";
-      back.addEventListener("click", () => (this.options.navigateToLauncher ?? (() => location.reload()))());
-      shell.append(back);
-    }
     this.root.append(shell);
     return shell;
   }
