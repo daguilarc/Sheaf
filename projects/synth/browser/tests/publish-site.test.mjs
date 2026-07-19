@@ -10,6 +10,7 @@ import { buildFirstPartyCatalog } from "../src/build-first-party-catalog.mjs";
 import {
   browserRuntimeModules,
   cloudflareHeaders,
+  publishedCatalogSource,
   publishPublisherArtifact,
   publishSite,
   validatePublishedSite,
@@ -171,7 +172,12 @@ test("publishes launcher assets, both packages, and one generic rollback page pe
   await assert.rejects(stat(path.join(publishRoot, "rollback", "direct-miniapp")), { code: "ENOENT" });
 
   const sourceList = JSON.parse(await readFile(path.join(publishRoot, "catalog-sources.json"), "utf8"));
-  assert.deepEqual(sourceList, ["catalogs/sheaf/catalog.json"]);
+  assert.deepEqual(sourceList, [publishedCatalogSource]);
+  assert.deepEqual(
+    JSON.parse(await readFile(path.join(browserRoot, "catalog-sources.json"), "utf8")),
+    ["catalogs/sheaf/catalog.json"],
+    "the checked-in source list remains suitable for localhost development",
+  );
   const catalog = JSON.parse(await readFile(path.join(publishRoot, "catalogs", "sheaf", "catalog.json"), "utf8"));
   assert.deepEqual(catalog.apps.map(({ appId }) => appId), ["alpha", "beta"]);
   assert.equal(catalog.catalogVersion, catalogVersion(catalog.apps));

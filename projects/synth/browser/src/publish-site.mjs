@@ -34,6 +34,11 @@ export const cloudflareHeaders = `/*
   Content-Type: text/javascript
 `;
 
+// The Cloudflare launcher stays independent from the first-party publisher.
+// The checked-in relative source list is retained for localhost development;
+// publication substitutes this deployed publisher URL into the launcher asset.
+export const publishedCatalogSource = "https://jvictor0.github.io/Sheaf/catalogs/sheaf/catalog.json";
+
 function defaultBrowserRoot() {
   const directory = path.dirname(fileURLToPath(import.meta.url));
   return path.basename(path.dirname(directory)) === "dist"
@@ -155,13 +160,12 @@ export async function validatePublishedSite({ publishRoot }) {
     JSON.parse(await readFile(path.join(publishRoot, "catalog-sources.json"), "utf8")),
     deploymentBase,
   );
-  const canonicalUrl = new URL(CANONICAL_CATALOG_PATH, deploymentBase).href;
-  if (sources[0]?.catalogUrl !== canonicalUrl)
-    throw new Error(`First catalog reference must resolve to ${CANONICAL_CATALOG_PATH}; received ${String(sources[0]?.catalogUrl)}`);
-  const catalogRelativePath = pathFromDeploymentUrl(sources[0].catalogUrl, new URL(deploymentBase).origin);
+  if (sources[0]?.catalogUrl !== publishedCatalogSource)
+    throw new Error(`First catalog reference must resolve to ${publishedCatalogSource}; received ${String(sources[0]?.catalogUrl)}`);
+  const localCatalogUrl = new URL(CANONICAL_CATALOG_PATH, deploymentBase).href;
   const catalog = parseCatalog(
-    JSON.parse(await readFile(path.join(publishRoot, catalogRelativePath), "utf8")),
-    sources[0].catalogUrl,
+    JSON.parse(await readFile(path.join(publishRoot, CANONICAL_CATALOG_PATH), "utf8")),
+    localCatalogUrl,
   );
   if (catalog.publisher.id !== "sheaf") throw new Error("First-party catalog publisher must be sheaf");
   const orderedAppIds = catalog.apps.map(({ appId }) => appId);
@@ -269,6 +273,10 @@ export async function publishSite({
       path.join(stagingRoot, "dist", "src", moduleName),
     )));
     const { catalog } = await catalogBuilder({ browserRoot, outputRoot: stagingRoot });
+    await writeFile(
+      path.join(stagingRoot, "catalog-sources.json"),
+      `${JSON.stringify([publishedCatalogSource], null, 2)}\n`,
+    );
 
     for (const app of catalog.apps) {
       const rollbackRoot = path.join(stagingRoot, "rollback", "apps", app.appId);
