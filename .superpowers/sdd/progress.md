@@ -170,3 +170,25 @@ Implementation base: `9060b347`
 - Task 2: complete (commits `e8a5b0e1` and review fix `df225c3c`; focused build plus `parameter_modulation_tests`, `blocks_tests`, and `viewmodel_tests` GREEN; xagent Claude Sonnet run `xrun_20260724055638083_f83e37d1` returned spec compliant and Task quality Approved, then same-context re-review confirmed its lone stale-comment Minor resolved with no findings remaining; OpenSpec 1.4-1.5, 3.1-3.4, and 4.2 checked). The full suite's only reported failures were two unrelated 96 kHz Braid 4 deadline-performance thresholds; controller verification will rerun the suite.
 - Controller verification: fresh focused rebuild plus all three focused binaries GREEN; complete `make -C projects/synth test` GREEN, including all 44.1/48/96 kHz Braid 4 deadline cases; exhaustive relative/absolute bank switch audit complete; strict OpenSpec validation passed; implementation diff check clean; OpenSpec 5.1-5.3 checked.
 - Final whole-change review: fresh xagent Claude Opus run `xrun_20260724060705924_a7f32b1d` returned spec PASS and merge APPROVE with no Critical/Important findings. Commit `5a897f63` corrected the enum-index comment, made RandomMod precedence uniquely observable, and added invalid-slot relative navigation to the randomized oracle; the same Opus context re-reviewed the complete package, confirmed all three Minors resolved with no new findings, and repeated APPROVE. Fresh controller verification at final head passed the three focused binaries, complete synth suite, strict OpenSpec validation at 17/17 tasks, and diff hygiene.
+
+# Synth Master Clock and MIDI Sync SDD Progress
+
+Plan: `docs/superpowers/plans/2026-07-19-synth-master-clock-midi-sync.md`
+OpenSpec change: `add-synth-master-clock-midi-sync`
+Implementation base: `5426bb41fb5228cbc725f6356c59aa86cbe1aeb1`
+Workspace: managed linked worktree, detached HEAD
+
+- Spec review: persistent xagent Claude Opus returned PASS after the numeric timing tolerances, output sample/time epoch mapper, cross-bus ordering, ADSR publication, `Phasor2Tick` authority, and exact `AudioBlock` plan identity were tightened; strict OpenSpec validation passed.
+- Plan review: persistent Opus returned REVISE after finding a mistranscribed PLL phase policy and an implicit scheduled-event seam. The plan now uses the normative quarter-error/quarter-pulse/two-pulse policy, defines the Task 2 producer interface used by Task 3's test sink and Task 4's concrete lane, and requires three-part Task 3 evidence; same-session re-review returned PASS with no remaining Critical or Important findings.
+- Execution policy: eight coarse sequential tasks; native Codex Sol for Tasks 1–5 and 8, Terra for Tasks 6–7 unless discovered coupling warrants Sol; same implementer handles small review fixes; one persistent Opus reviewer handles every task review/re-review and the final whole-change review.
+- Persistent reviewer: xagent run `xrun_20260719190651915_18a4113c` (kept open through completion).
+- Baseline: browser WASM build plus unsandboxed `npm test` passed all 64 Playwright cases and 6 Node cases. Core functional binaries passed; the existing Braid wall-clock deadline gate failed intermittently inside the full suite while other agent/browser processes were active, then the unchanged isolated deadline binary passed all five rate/sparsity cases. Treat that benchmark as load-sensitive and require isolated timing verification.
+- Task 1 (clock primitives, affine plans, mapper): pending.
+- Task 2 (transport, PLL, arbitration, crossings): pending.
+- Task 3 (MIDI ingress, Engine, SynthRig, config v2): pending.
+- Task 4 (scheduled sender and JUCE): pending.
+- Task 5 (browser timestamped MIDI): pending.
+- Task 6 (portable Sync page): pending.
+- Task 7 (MiniApp ADSR and tempo): pending.
+- Task 8 (traces, docs, whole-system hardening): pending.
+- Safety: preserve unrelated untracked `projects/synth/miniapp/` and `projects/synth/browser/package-lock.json`.
