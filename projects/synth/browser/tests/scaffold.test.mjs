@@ -21,6 +21,7 @@ test("browser apps and the fixture use the same generic builder with no rollback
   }
   assert.equal((makefile.match(/dist\/src\/build-browser-apps\.mjs/g) ?? []).length, 2);
   assert.doesNotMatch(makefile, /browser-miniapp|browser-fake-app|dist\/wasm\/app\.js|miniapp_entry|fake_app_entry/);
+  assert.match(makefile, /browser-fixture-app:[\s\S]*--output-root dist\/wasm\/fixture-apps/);
   assert.match(makefile, /browser-apps-smoke: browser-fixture-app\n\t\$\(MAKE\) browser-apps/);
 
   const browserRoot = await findBrowserRoot();
@@ -78,7 +79,7 @@ test("cloudflare pages build script bootstraps emscripten before publishing", as
   assert.equal(packageJson.scripts["publish:site"], "npm run build && node dist/src/publish-site.mjs");
   assert.equal(packageJson.scripts["compile:browser-apps"], "node dist/src/build-browser-apps.mjs");
   assert.equal(packageJson.scripts["compile:browser-fixture"],
-    "node dist/src/build-browser-apps.mjs --manifest tests/fixtures/fake-browser-apps.json --allowed-source-root tests/fixtures/cpp");
+    "node dist/src/build-browser-apps.mjs --manifest tests/fixtures/fake-browser-apps.json --allowed-source-root tests/fixtures/cpp --output-root dist/wasm/fixture-apps");
 });
 
 async function readBuilder() {

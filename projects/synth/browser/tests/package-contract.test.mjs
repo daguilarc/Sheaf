@@ -29,7 +29,6 @@ async function fixture() {
   await writeFile(path.join(sourceDirectory, "workers", "pthread.js"), "postMessage('pthread');\n");
   await writeFile(path.join(sourceDirectory, "workers", "wasm-worker.js"), "postMessage('wasm-worker');\n");
   await writeFile(path.join(sourceDirectory, "worklets", "audio.js"), "registerProcessor('audio', class {});\n");
-  await writeFile(path.join(sourceDirectory, "runtime.data"), Uint8Array.from([7, 8, 9]));
   return {
     root,
     sourceDirectory,
@@ -77,12 +76,11 @@ test("assembles identical emitted files into byte-for-byte stable immutable pack
       abiVersion: one.browser.abiVersion,
       uiProtocolVersion: one.browser.uiProtocolVersion,
       runtimeConfigVersion: one.browser.runtimeConfigVersion,
-    }, { abiVersion: 1, uiProtocolVersion: 1, runtimeConfigVersion: 1 });
+    }, { abiVersion: 2, uiProtocolVersion: 1, runtimeConfigVersion: 1 });
     assert.equal(one.browser.entry, `packages/test-app/${one.buildId}/app.js`);
     assert.deepEqual(one.browser.files.map(({ path: filePath }) => filePath), [
       `packages/test-app/${one.buildId}/app.js`,
       `packages/test-app/${one.buildId}/app.wasm`,
-      `packages/test-app/${one.buildId}/runtime.data`,
       `packages/test-app/${one.buildId}/workers/pthread.js`,
       `packages/test-app/${one.buildId}/workers/wasm-worker.js`,
       `packages/test-app/${one.buildId}/worklets/audio.js`,
@@ -96,7 +94,7 @@ test("assembles identical emitted files into byte-for-byte stable immutable pack
   }
 });
 
-test("changes the content-derived build ID when any emitted file changes", async () => {
+test("changes the content-derived build ID when an emitted role file changes", async () => {
   const setup = await fixture();
   try {
     const before = await assemblePackage({
@@ -105,7 +103,7 @@ test("changes the content-derived build ID when any emitted file changes", async
       outputDirectory: setup.outputDirectory,
       artifacts: REQUIRED_ARTIFACTS,
     });
-    await writeFile(path.join(setup.sourceDirectory, "runtime.data"), Uint8Array.from([7, 8, 10]));
+    await writeFile(path.join(setup.sourceDirectory, "worklets", "audio.js"), "registerProcessor('changed', class {});\n");
     const after = await assemblePackage({
       appId: "test-app",
       sourceDirectory: setup.sourceDirectory,
@@ -114,8 +112,54 @@ test("changes the content-derived build ID when any emitted file changes", async
     });
 
     assert.notEqual(after.buildId, before.buildId);
-    assert.notEqual(after.browser.files.find((file) => file.path.endsWith("runtime.data")).sha256,
-      before.browser.files.find((file) => file.path.endsWith("runtime.data")).sha256);
+    assert.notEqual(after.browser.files.find((file) => file.path.endsWith("worklets/audio.js")).sha256,
+      before.browser.files.find((file) => file.path.endsWith("worklets/audio.js")).sha256);
+  } finally {
+    await setup.dispose();
+  }
+});
+
+test("changes the content-derived build ID when artifact roles change", async () => {
+  const setup = await fixture();
+  try {
+    const before = await assemblePackage({
+      appId: "test-app",
+      sourceDirectory: setup.sourceDirectory,
+      outputDirectory: setup.outputDirectory,
+      artifacts: REQUIRED_ARTIFACTS,
+    });
+    const after = await assemblePackage({
+      appId: "test-app",
+      sourceDirectory: setup.sourceDirectory,
+      outputDirectory: setup.outputDirectory,
+      artifacts: {
+        ...REQUIRED_ARTIFACTS,
+        entry: REQUIRED_ARTIFACTS.pthreadWorker,
+        pthreadWorker: REQUIRED_ARTIFACTS.entry,
+      },
+    });
+
+    assert.notEqual(after.buildId, before.buildId);
+    assert.equal(after.browser.entry, `packages/test-app/${after.buildId}/workers/pthread.js`);
+  } finally {
+    await setup.dispose();
+  }
+});
+
+test("rejects emitted files that are not named by a required artifact role", async () => {
+  const setup = await fixture();
+  try {
+    await writeFile(path.join(setup.sourceDirectory, "stale-fixture.js"), "throw new Error('stale');\n");
+
+    await assert.rejects(
+      assemblePackage({
+        appId: "test-app",
+        sourceDirectory: setup.sourceDirectory,
+        outputDirectory: setup.outputDirectory,
+        artifacts: REQUIRED_ARTIFACTS,
+      }),
+      /unexpected.*stale-fixture\.js|stale-fixture\.js.*not.*role/i,
+    );
   } finally {
     await setup.dispose();
   }
@@ -185,6 +229,10 @@ test("never reads or writes an artifact path outside the package roots", async (
 test("package-app command assembles aliased Emscripten roles and prints the catalog record", async () => {
   const setup = await fixture();
   try {
+    await Promise.all([
+      rm(path.join(setup.sourceDirectory, "workers"), { recursive: true }),
+      rm(path.join(setup.sourceDirectory, "worklets"), { recursive: true }),
+    ]);
     const command = fileURLToPath(new URL("../src/package-app.mjs", import.meta.url));
     const { stdout, stderr } = await execFileAsync(process.execPath, [
       command,

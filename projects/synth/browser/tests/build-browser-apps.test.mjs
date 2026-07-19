@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -76,7 +77,9 @@ test("builds every record through one argument-vector compiler policy and writes
     assert.ok(args.includes("-lidbfs.js"));
     assert.ok(args.some((arg) => arg.includes("emscriptenRegisterAudioObject")));
     assert.ok(args.some((arg) => arg.includes("_synth_browser_start_audio_worklet")));
-    assert.equal(outputPath(args), path.join(fx.browserRoot, "dist", "wasm", "apps", appId, `${appId}.js`));
+    assert.match(outputPath(args), new RegExp(
+      `dist\\/wasm\\/\\.apps\\.stage-[^/]+\\/${appId}\\/${appId}\\.js$`,
+    ));
 
     const emission = report.apps[index];
     assert.deepEqual(emission, {
@@ -97,7 +100,7 @@ test("builds every record through one argument-vector compiler policy and writes
       if (args[index] === "-I") {
         index += 1;
       } else if (!args[index].includes("dist/generated/browser-apps/") &&
-                 !args[index].includes("dist/wasm/apps/")) {
+                 !args[index].includes("dist/wasm/")) {
         invariant.push(args[index]);
       }
     }
@@ -113,13 +116,26 @@ test("builds every record through one argument-vector compiler policy and writes
     JSON.parse(await readFile(path.join(fx.browserRoot, "dist", "wasm", "apps", "emissions.json"), "utf8")),
     report,
   );
+  for (const appId of ["alpha", "beta"]) {
+    assert.equal(
+      await readFile(path.join(fx.browserRoot, "dist", "wasm", "apps", appId, `${appId}.js`), "utf8"),
+      "export default function Module() {}\n",
+    );
+  }
 });
 
 test("does not replace the last complete emission report when a compile fails", async () => {
   const fx = await fixture();
   const reportPath = path.join(fx.browserRoot, "dist", "wasm", "apps", "emissions.json");
   await mkdir(path.dirname(reportPath), { recursive: true });
+  for (const appId of ["alpha", "beta"]) {
+    const appRoot = path.join(fx.browserRoot, "dist", "wasm", "apps", appId);
+    await mkdir(appRoot, { recursive: true });
+    await writeFile(path.join(appRoot, `${appId}.js`), `known-good ${appId} js\n`);
+    await writeFile(path.join(appRoot, `${appId}.wasm`), `known-good ${appId} wasm\n`);
+  }
   await writeFile(reportPath, "known-good\n");
+  const before = await snapshotTree(path.dirname(reportPath));
   let calls = 0;
 
   await assert.rejects(buildBrowserApps({
@@ -136,7 +152,56 @@ test("does not replace the last complete emission report when a compile fails", 
     },
   }), /compiler failed/);
 
-  assert.equal(await readFile(reportPath, "utf8"), "known-good\n");
+  assert.deepEqual(await snapshotTree(path.dirname(reportPath)), before);
+});
+
+async function snapshotTree(root) {
+  const snapshot = [];
+  async function visit(directory, prefix = "") {
+    const entries = await readdir(directory, { withFileTypes: true });
+    entries.sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+    for (const entry of entries) {
+      const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+      const filename = path.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(filename, relativePath);
+      else snapshot.push([
+        relativePath,
+        createHash("sha256").update(await readFile(filename)).digest("hex"),
+      ]);
+    }
+  }
+  await visit(root);
+  return snapshot;
+}
+
+test("can isolate fixture emissions and their report from the production output root", async () => {
+  const fx = await fixture();
+  const outputRoot = path.join(fx.browserRoot, "dist", "wasm", "fixture-apps");
+  const report = await buildBrowserApps({
+    browserRoot: fx.browserRoot,
+    manifestPath: fx.manifestPath,
+    allowedSourceRoots: [fx.sourceRoot],
+    outputRoot,
+    runCommand: async (_executable, args) => {
+      const output = outputPath(args);
+      await mkdir(path.dirname(output), { recursive: true });
+      await writeFile(output, "js");
+      await writeFile(output.replace(/\.js$/, ".wasm"), "wasm");
+    },
+  });
+
+  assert.deepEqual(report.apps.map(({ artifacts }) => artifacts.entry), [
+    "fixture-apps/alpha/alpha.js",
+    "fixture-apps/beta/beta.js",
+  ]);
+  assert.deepEqual(
+    JSON.parse(await readFile(path.join(outputRoot, "emissions.json"), "utf8")),
+    report,
+  );
+  await assert.rejects(
+    readFile(path.join(fx.browserRoot, "dist", "wasm", "apps", "emissions.json")),
+    { code: "ENOENT" },
+  );
 });
 
 test("rejects a successful compiler invocation that omits required artifacts", async () => {

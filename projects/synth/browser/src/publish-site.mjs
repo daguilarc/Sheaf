@@ -27,52 +27,11 @@ export const cloudflareHeaders = `/*
   Cross-Origin-Embedder-Policy: require-corp
   Permissions-Policy: midi=(self)
 
-/catalogs/sheaf/packages/*.wasm
+/catalogs/sheaf/packages/*/*/*.wasm
   Content-Type: application/wasm
 
-/catalogs/sheaf/packages/*.js
+/catalogs/sheaf/packages/*/*/*.js
   Content-Type: text/javascript
-
-/rollback/direct-miniapp/*.wasm
-  Content-Type: application/wasm
-
-/rollback/direct-miniapp/*.js
-  Content-Type: text/javascript
-`;
-
-const rollbackIndex = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Sheaf Synth Direct Rollback</title>
-    <link rel="stylesheet" href="../../synth-browser.css">
-  </head>
-  <body>
-    <main id="synth-root"></main>
-    <script type="module">
-      import { installSynthBrowserApp } from "../../dist/src/main.js";
-
-      const root = document.querySelector("#synth-root");
-      const entryUrl = new URL("./app.js", import.meta.url).href;
-      const workerUrl = new URL("./miniapp.js", import.meta.url).href;
-      const wasmUrl = new URL("./miniapp.wasm", import.meta.url).href;
-      installSynthBrowserApp(root, {
-        module: {
-          entryUrl,
-          locateFile: {
-            "app.js": entryUrl,
-            "miniapp.js": workerUrl,
-            "miniapp.wasm": wasmUrl,
-          },
-          mainScriptUrlOrBlob: entryUrl,
-        },
-      }).catch((error) => {
-        root.dataset.synthStatus = error instanceof Error ? error.message : "direct rollback startup failed";
-      });
-    </script>
-  </body>
-</html>
 `;
 
 function defaultBrowserRoot() {
@@ -99,10 +58,79 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function compareCodeUnits(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function expectedCatalogVersion(apps) {
+  const identities = apps.map(({ appId, buildId }) => ({ appId, buildId }));
+  return `first-party-${sha256(JSON.stringify(identities))}`;
+}
+
 function pathFromDeploymentUrl(url, deploymentOrigin) {
   const parsed = new URL(url);
   if (parsed.origin !== deploymentOrigin) throw new Error(`Published reference leaves deployment origin: ${url}`);
   return parsed.pathname.replace(/^\/+/, "");
+}
+
+async function inventoryFiles(root, prefix = "") {
+  const files = [];
+  const entries = await readdir(root, { withFileTypes: true });
+  entries.sort((left, right) => compareCodeUnits(left.name, right.name));
+  for (const entry of entries) {
+    const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+    const filename = path.join(root, entry.name);
+    if (entry.isDirectory()) files.push(...await inventoryFiles(filename, relativePath));
+    else if (entry.isFile()) files.push(relativePath);
+    else throw new Error(`Published artifact is not a regular file: ${relativePath}`);
+  }
+  return files;
+}
+
+function rollbackHtml(catalog, app) {
+  const prefix = `packages/${app.appId}/${app.buildId}/`;
+  const packagePaths = {};
+  for (const file of app.browser.files) {
+    const relativePath = file.path.slice(prefix.length);
+    const deploymentPath = `../../../catalogs/${catalog.publisher.id}/${file.path}`;
+    packagePaths[relativePath] = deploymentPath;
+    packagePaths[path.posix.basename(relativePath)] = deploymentPath;
+  }
+  const entryRelativePath = app.browser.entry.slice(prefix.length);
+  const runtimeIdentity = {
+    publisherId: catalog.publisher.id,
+    appId: app.appId,
+    runtimeConfigVersion: app.browser.runtimeConfigVersion,
+  };
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>${app.displayName} rollback</title>
+    <link rel="stylesheet" href="../../../synth-browser.css">
+  </head>
+  <body>
+    <main id="synth-root"></main>
+    <script type="module">
+      import { installSynthBrowserApp } from "../../../dist/src/main.js";
+
+      const root = document.querySelector("#synth-root");
+      const packagePaths = ${JSON.stringify(packagePaths, null, 6)};
+      const locateFile = Object.fromEntries(Object.entries(packagePaths).map(
+        ([requestedPath, deploymentPath]) => [requestedPath, new URL(deploymentPath, import.meta.url).href],
+      ));
+      const entryUrl = locateFile[${JSON.stringify(entryRelativePath)}];
+      installSynthBrowserApp(root, {
+        module: { entryUrl, locateFile, mainScriptUrlOrBlob: entryUrl },
+        runtimeIdentity: ${JSON.stringify(runtimeIdentity)},
+      }).catch((error) => {
+        root.dataset.synthStatus = error instanceof Error ? error.message : "rollback startup failed";
+      });
+    </script>
+  </body>
+</html>
+`;
 }
 
 export async function validatePublishedSite({ publishRoot }) {
@@ -114,16 +142,12 @@ export async function validatePublishedSite({ publishRoot }) {
     "dist/src/main.js",
     "dist/src/worker.js",
     "dist/src/package-loader.js",
-    "rollback/direct-miniapp/index.html",
-    "rollback/direct-miniapp/app.js",
-    "rollback/direct-miniapp/miniapp.js",
-    "rollback/direct-miniapp/miniapp.wasm",
     "_headers",
   ]) await assertExists(path.join(publishRoot, relativePath), relativePath, { nonempty: true });
 
   const rootHtml = await readFile(path.join(publishRoot, "index.html"), "utf8");
   if (!/data-synth-launcher="true"/.test(rootHtml)) throw new Error("Published root index.html is not a catalog launcher");
-  if (/data-synth-auto|rollback|miniapp/i.test(rootHtml))
+  if (/data-synth-auto|rollback\/apps\//i.test(rootHtml))
     throw new Error("Published root index.html contains a direct application dependency");
 
   const deploymentBase = "https://deployment.invalid/catalog-sources.json";
@@ -135,40 +159,65 @@ export async function validatePublishedSite({ publishRoot }) {
   if (sources[0]?.catalogUrl !== canonicalUrl)
     throw new Error(`First catalog reference must resolve to ${CANONICAL_CATALOG_PATH}; received ${String(sources[0]?.catalogUrl)}`);
   const catalogRelativePath = pathFromDeploymentUrl(sources[0].catalogUrl, new URL(deploymentBase).origin);
-  await assertExists(path.join(publishRoot, catalogRelativePath), catalogRelativePath, { nonempty: true });
   const catalog = parseCatalog(
     JSON.parse(await readFile(path.join(publishRoot, catalogRelativePath), "utf8")),
     sources[0].catalogUrl,
   );
-  if (catalog.publisher.id !== "sheaf" || catalog.apps.length !== 1 || catalog.apps[0].globalId !== "sheaf/miniapp")
-    throw new Error("First-party catalog must contain exactly sheaf/miniapp");
-  const app = catalog.apps[0];
-  for (const file of app.browser.files) {
-    const relativePath = pathFromDeploymentUrl(file.url, new URL(deploymentBase).origin);
-    const expectedPrefix = `catalogs/sheaf/packages/${app.appId}/${app.buildId}/`;
-    if (!relativePath.startsWith(expectedPrefix))
-      throw new Error(`Catalog package reference ${relativePath} is outside immutable first-party package ${expectedPrefix}`);
-    const filename = path.join(publishRoot, relativePath);
-    const metadata = await assertExists(filename, relativePath, { nonempty: true });
-    if (metadata.size !== file.size)
-      throw new Error(`Package file ${file.path} size mismatch: expected ${file.size}, received ${metadata.size}`);
-    const actualDigest = sha256(await readFile(filename));
-    if (actualDigest !== file.sha256)
-      throw new Error(`Package file ${file.path} SHA-256 mismatch: expected ${file.sha256}, received ${actualDigest}`);
-    if (file.mediaType === "application/wasm" && !relativePath.endsWith(".wasm"))
-      throw new Error(`Package file ${file.path} has inconsistent WASM media type`);
-    if (file.mediaType === "text/javascript" && !/\.(?:m?js)$/.test(relativePath))
-      throw new Error(`Package file ${file.path} has inconsistent JavaScript media type`);
+  if (catalog.publisher.id !== "sheaf") throw new Error("First-party catalog publisher must be sheaf");
+  const orderedAppIds = catalog.apps.map(({ appId }) => appId);
+  if (orderedAppIds.some((appId, index) => index > 0 && compareCodeUnits(orderedAppIds[index - 1], appId) >= 0))
+    throw new Error("First-party catalog apps must be in deterministic appId order");
+  const expectedVersion = expectedCatalogVersion(catalog.apps);
+  if (catalog.catalogVersion !== expectedVersion)
+    throw new Error(`First-party catalog version mismatch: expected ${expectedVersion}, received ${catalog.catalogVersion}`);
+
+  const expectedPackageFiles = [];
+  for (const app of catalog.apps) {
+    const packagePaths = new Set(app.browser.files.map(({ path: filePath }) => filePath));
+    if (!packagePaths.has(app.browser.entry)) throw new Error(`Catalog entry ${app.browser.entry} is not a package file`);
+    for (const file of app.browser.files) {
+      const relativePath = pathFromDeploymentUrl(file.url, new URL(deploymentBase).origin);
+      const expectedPrefix = `catalogs/${catalog.publisher.id}/packages/${app.appId}/${app.buildId}/`;
+      if (!relativePath.startsWith(expectedPrefix))
+        throw new Error(`Catalog package reference ${relativePath} is outside immutable first-party package ${expectedPrefix}`);
+      expectedPackageFiles.push(file.path);
+      const filename = path.join(publishRoot, relativePath);
+      const metadata = await assertExists(filename, relativePath, { nonempty: true });
+      if (metadata.size !== file.size)
+        throw new Error(`Package file ${file.path} size mismatch: expected ${file.size}, received ${metadata.size}`);
+      const actualDigest = sha256(await readFile(filename));
+      if (actualDigest !== file.sha256)
+        throw new Error(`Package file ${file.path} SHA-256 mismatch: expected ${file.sha256}, received ${actualDigest}`);
+      if (file.mediaType === "application/wasm" && !relativePath.endsWith(".wasm"))
+        throw new Error(`Package file ${file.path} has inconsistent WASM media type`);
+      if (file.mediaType === "text/javascript" && !/\.(?:m?js)$/.test(relativePath))
+        throw new Error(`Package file ${file.path} has inconsistent JavaScript media type`);
+    }
+  }
+  const packageRoot = path.join(publishRoot, "catalogs", catalog.publisher.id, "packages");
+  const actualPackageFiles = (await inventoryFiles(packageRoot)).map((relativePath) => `packages/${relativePath}`);
+  expectedPackageFiles.sort(compareCodeUnits);
+  if (JSON.stringify(actualPackageFiles) !== JSON.stringify(expectedPackageFiles))
+    throw new Error("Published package tree contains missing or undeclared files");
+
+  const rollbackRoot = path.join(publishRoot, "rollback", "apps");
+  const rollbackEntries = await readdir(rollbackRoot, { withFileTypes: true });
+  const rollbackIds = rollbackEntries.map(({ name }) => name).sort(compareCodeUnits);
+  if (rollbackEntries.some((entry) => !entry.isDirectory()) ||
+      JSON.stringify(rollbackIds) !== JSON.stringify([...orderedAppIds].sort(compareCodeUnits))) {
+    throw new Error("Rollback app pages do not match the complete first-party catalog");
+  }
+  for (const app of catalog.apps) {
+    const relativePath = `rollback/apps/${app.appId}/index.html`;
+    await assertExists(path.join(publishRoot, relativePath), relativePath, { nonempty: true });
+    const rollbackFiles = await inventoryFiles(path.join(rollbackRoot, app.appId));
+    if (rollbackFiles.length !== 1 || rollbackFiles[0] !== "index.html")
+      throw new Error(`Rollback page ${app.appId} contains undeclared files`);
   }
 
-  const packagePaths = new Set(app.browser.files.map(({ path: filePath }) => filePath));
-  if (!packagePaths.has(app.browser.entry)) throw new Error(`Catalog entry ${app.browser.entry} is not a package file`);
-  const rollbackApp = await readFile(path.join(publishRoot, "rollback/direct-miniapp/app.js"));
-  const rollbackEntry = await readFile(path.join(publishRoot, "rollback/direct-miniapp/miniapp.js"));
-  if (!rollbackApp.equals(rollbackEntry)) throw new Error("Rollback app.js does not match its complete miniapp.js sidecar");
   const headers = await readFile(path.join(publishRoot, "_headers"), "utf8");
   if (headers !== cloudflareHeaders) throw new Error("Published _headers does not match the Cloudflare runtime policy");
-  return Object.freeze({ catalog, app });
+  return Object.freeze({ catalog, apps: catalog.apps });
 }
 
 async function replaceDestination(stagingRoot, publishRoot) {
@@ -203,10 +252,8 @@ export async function publishSite({
     "public/index.html",
     "public/synth-browser.css",
     "catalog-sources.json",
-    "catalogs/sheaf/catalog.template.json",
-    "dist/wasm/app.js",
-    "dist/wasm/miniapp.js",
-    "dist/wasm/miniapp.wasm",
+    "first-party-apps.json",
+    "dist/wasm/apps/emissions.json",
   ]) await assertExists(path.join(browserRoot, relativePath), relativePath, { nonempty: true });
   for (const moduleName of browserRuntimeModules)
     await assertExists(path.join(browserRoot, "dist", "src", moduleName), `dist/src/${moduleName}`, { nonempty: true });
@@ -221,19 +268,13 @@ export async function publishSite({
       path.join(browserRoot, "dist", "src", moduleName),
       path.join(stagingRoot, "dist", "src", moduleName),
     )));
-    await catalogBuilder({ browserRoot, outputRoot: stagingRoot });
+    const { catalog } = await catalogBuilder({ browserRoot, outputRoot: stagingRoot });
 
-    const rollbackRoot = path.join(stagingRoot, "rollback", "direct-miniapp");
-    await mkdir(rollbackRoot, { recursive: true });
-    await Promise.all([
-      ["app.js", "app.js"],
-      ["miniapp.js", "miniapp.js"],
-      ["miniapp.wasm", "miniapp.wasm"],
-    ].map(([source, destination]) => cp(
-      path.join(browserRoot, "dist", "wasm", source),
-      path.join(rollbackRoot, destination),
-    )));
-    await writeFile(path.join(rollbackRoot, "index.html"), rollbackIndex);
+    for (const app of catalog.apps) {
+      const rollbackRoot = path.join(stagingRoot, "rollback", "apps", app.appId);
+      await mkdir(rollbackRoot, { recursive: true });
+      await writeFile(path.join(rollbackRoot, "index.html"), rollbackHtml(catalog, app));
+    }
     await writeFile(path.join(stagingRoot, "_headers"), cloudflareHeaders);
     await validatePublishedSite({ publishRoot: stagingRoot });
     await replaceDestination(stagingRoot, publishRoot);

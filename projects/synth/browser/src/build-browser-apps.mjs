@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -106,65 +106,102 @@ async function atomicWriteJson(filename, value) {
   }
 }
 
+async function replaceOutputRoot(stagingRoot, outputRoot) {
+  const parent = path.dirname(outputRoot);
+  const backupRoot = await mkdtemp(path.join(parent, `.${path.basename(outputRoot)}.previous-`));
+  await rm(backupRoot, { recursive: true, force: true });
+  let movedPrevious = false;
+  try {
+    try {
+      await rename(outputRoot, backupRoot);
+      movedPrevious = true;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+    await rename(stagingRoot, outputRoot);
+    if (movedPrevious) await rm(backupRoot, { recursive: true, force: true });
+  } catch (error) {
+    if (movedPrevious) {
+      await rm(outputRoot, { recursive: true, force: true });
+      await rename(backupRoot, outputRoot);
+    }
+    throw error;
+  }
+}
+
 export async function buildBrowserApps({
   browserRoot,
   manifestPath = path.join(browserRoot, "first-party-apps.json"),
   allowedSourceRoots,
+  outputRoot = path.join(browserRoot, "dist", "wasm", "apps"),
   runCommand = defaultRunCommand,
 }) {
   const manifest = await readAppBuildManifest({ browserRoot, manifestPath, allowedSourceRoots });
   const generatedRoot = path.join(browserRoot, "dist", "generated", "browser-apps");
-  const appsRoot = path.join(browserRoot, "dist", "wasm", "apps");
-  await mkdir(generatedRoot, { recursive: true });
-  await mkdir(appsRoot, { recursive: true });
-
-  const emissions = [];
-  for (const app of manifest.apps) {
-    const bindingPath = path.join(generatedRoot, `${app.appId}.cpp`);
-    const outputDirectory = path.join(appsRoot, app.appId);
-    const outputPath = path.join(outputDirectory, `${app.appId}.js`);
-    const wasmPath = path.join(outputDirectory, `${app.appId}.wasm`);
-    await writeFile(bindingPath, generateBrowserBinding(app));
-    await rm(outputDirectory, { recursive: true, force: true });
-    await mkdir(outputDirectory, { recursive: true });
-    await runCommand(process.env.EMXX || "em++", compilerArgs(browserRoot, app, bindingPath, outputPath), {
-      cwd: browserRoot,
-      env: process.env,
-      shell: false,
-    });
-    await requireArtifact(outputPath, app.appId, "entry");
-    await requireArtifact(wasmPath, app.appId, "wasm");
-
-    const entry = `apps/${app.appId}/${app.appId}.js`;
-    emissions.push({
-      appId: app.appId,
-      artifacts: {
-        entry,
-        wasm: `apps/${app.appId}/${app.appId}.wasm`,
-        pthreadWorker: entry,
-        wasmWorker: entry,
-        audioWorklet: entry,
-      },
-    });
+  const wasmRoot = path.resolve(browserRoot, "dist", "wasm");
+  const appsRoot = path.resolve(outputRoot);
+  const outputPrefix = path.relative(wasmRoot, appsRoot);
+  if (outputPrefix === "" || outputPrefix === ".." || outputPrefix.startsWith(`..${path.sep}`) || path.isAbsolute(outputPrefix)) {
+    throw new Error("outputRoot must be a dedicated directory beneath dist/wasm");
   }
+  const reportPrefix = outputPrefix.split(path.sep).join("/");
+  await mkdir(generatedRoot, { recursive: true });
+  await mkdir(path.dirname(appsRoot), { recursive: true });
+  const stagingRoot = await mkdtemp(path.join(path.dirname(appsRoot), `.${path.basename(appsRoot)}.stage-`));
+  let staged = true;
+  try {
+    const emissions = [];
+    for (const app of manifest.apps) {
+      const bindingPath = path.join(generatedRoot, `${app.appId}.cpp`);
+      const outputDirectory = path.join(stagingRoot, app.appId);
+      const outputPath = path.join(outputDirectory, `${app.appId}.js`);
+      const wasmPath = path.join(outputDirectory, `${app.appId}.wasm`);
+      await writeFile(bindingPath, generateBrowserBinding(app));
+      await mkdir(outputDirectory, { recursive: true });
+      await runCommand(process.env.EMXX || "em++", compilerArgs(browserRoot, app, bindingPath, outputPath), {
+        cwd: browserRoot,
+        env: process.env,
+        shell: false,
+      });
+      await requireArtifact(outputPath, app.appId, "entry");
+      await requireArtifact(wasmPath, app.appId, "wasm");
 
-  const report = {
-    schemaVersion: 1,
-    manifestDigest: manifest.digest,
-    publisher: manifest.publisher,
-    apps: emissions,
-  };
-  await atomicWriteJson(path.join(appsRoot, "emissions.json"), report);
-  return report;
+      const entry = `${reportPrefix}/${app.appId}/${app.appId}.js`;
+      emissions.push({
+        appId: app.appId,
+        artifacts: {
+          entry,
+          wasm: `${reportPrefix}/${app.appId}/${app.appId}.wasm`,
+          pthreadWorker: entry,
+          wasmWorker: entry,
+          audioWorklet: entry,
+        },
+      });
+    }
+
+    const report = {
+      schemaVersion: 1,
+      manifestDigest: manifest.digest,
+      publisher: manifest.publisher,
+      apps: emissions,
+    };
+    await atomicWriteJson(path.join(stagingRoot, "emissions.json"), report);
+    await replaceOutputRoot(stagingRoot, appsRoot);
+    staged = false;
+    return report;
+  } finally {
+    if (staged) await rm(stagingRoot, { recursive: true, force: true });
+  }
 }
 
 function parseCliArguments(argv, browserRoot) {
   let manifestPath = path.join(browserRoot, "first-party-apps.json");
+  let outputRoot = path.join(browserRoot, "dist", "wasm", "apps");
   const allowedSourceRoots = [];
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index];
     const value = argv[index + 1];
-    if ((option === "--manifest" || option === "--allowed-source-root") && value === undefined) {
+    if (["--manifest", "--allowed-source-root", "--output-root"].includes(option) && value === undefined) {
       throw new Error(`${option} requires a path`);
     }
     if (option === "--manifest") {
@@ -173,12 +210,16 @@ function parseCliArguments(argv, browserRoot) {
     } else if (option === "--allowed-source-root") {
       allowedSourceRoots.push(path.resolve(browserRoot, value));
       index += 1;
+    } else if (option === "--output-root") {
+      outputRoot = path.resolve(browserRoot, value);
+      index += 1;
     } else {
       throw new Error(`Unknown option: ${option}`);
     }
   }
   return {
     manifestPath,
+    outputRoot,
     allowedSourceRoots: allowedSourceRoots.length > 0 ? allowedSourceRoots : undefined,
   };
 }

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFile, lstat, mkdir, readFile, readdir, realpath } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -61,7 +61,7 @@ async function inventoryDirectory(sourceDirectory) {
       const bytes = await readFile(filename);
       files.push(Object.freeze({
         relativePath,
-        filename,
+        bytes,
         mediaType: mediaTypeFor(relativePath),
         size: bytes.byteLength,
         sha256: sha256(bytes),
@@ -89,9 +89,9 @@ function validateArtifactRoles(artifacts, filesByPath) {
   return Object.freeze(normalized);
 }
 
-function contentBuildId(files) {
+function contentBuildId(files, roles) {
   const digest = createHash("sha256");
-  digest.update("sheaf-browser-package-v1\0");
+  digest.update("sheaf-browser-package-v2\0");
   for (const file of files) {
     digest.update(file.relativePath);
     digest.update("\0");
@@ -102,12 +102,18 @@ function contentBuildId(files) {
     digest.update(file.sha256);
     digest.update("\0");
   }
+  for (const role of REQUIRED_ARTIFACT_ROLES) {
+    digest.update(role);
+    digest.update("\0");
+    digest.update(roles[role]);
+    digest.update("\0");
+  }
   return digest.digest("hex");
 }
 
 /**
- * Inventories a dedicated Emscripten emission directory and copies its entire
- * regular-file tree into an immutable packages/<app-id>/<build-id>/ directory.
+ * Inventories a dedicated Emscripten emission directory and copies every file
+ * named by an artifact role into packages/<app-id>/<build-id>/.
  * Required roles may alias one emitted file, as current Emscripten builds reuse
  * the entry module for pthread, Wasm-worker, and AudioWorklet bootstrapping.
  */
@@ -132,17 +138,23 @@ export async function assemblePackage({ appId, sourceDirectory, outputDirectory,
     names.set(basename, file.relativePath);
   }
   const roles = validateArtifactRoles(artifacts, filesByPath);
+  const roleFiles = new Set(Object.values(roles));
+  const unexpected = files
+    .map(({ relativePath }) => relativePath)
+    .filter((relativePath) => !roleFiles.has(relativePath));
+  if (unexpected.length > 0)
+    throw new Error(`Unexpected emitted artifacts not named by a required role: ${unexpected.join(", ")}`);
   if (filesByPath.get(roles.entry).mediaType !== "text/javascript") throw new Error("artifacts.entry must name a JavaScript module");
   if (filesByPath.get(roles.wasm).mediaType !== "application/wasm") throw new Error("artifacts.wasm must name a WASM binary");
 
-  const buildId = contentBuildId(files);
+  const buildId = contentBuildId(files, roles);
   const packagePrefix = `packages/${appId}/${buildId}`;
   const packageRoot = path.join(resolvedOutput, "packages", appId, buildId);
   await Promise.all(files.map(async (file) => {
     const destination = path.resolve(packageRoot, ...file.relativePath.split("/"));
     if (!destination.startsWith(`${packageRoot}${path.sep}`)) throw new Error(`artifact path ${file.relativePath} escapes package root`);
     await mkdir(path.dirname(destination), { recursive: true });
-    await copyFile(file.filename, destination);
+    await writeFile(destination, file.bytes);
   }));
 
   return Object.freeze({

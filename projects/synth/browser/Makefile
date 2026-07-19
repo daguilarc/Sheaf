@@ -35,7 +35,7 @@ browser-apps: build | $(EM_CACHE)
 	$(EMSDK_ENV) EMXX="$(EMXX)" node dist/src/build-browser-apps.mjs
 
 browser-fixture-app: build | $(EM_CACHE)
-	$(EMSDK_ENV) EMXX="$(EMXX)" node dist/src/build-browser-apps.mjs --manifest tests/fixtures/fake-browser-apps.json --allowed-source-root tests/fixtures/cpp
+	$(EMSDK_ENV) EMXX="$(EMXX)" node dist/src/build-browser-apps.mjs --manifest tests/fixtures/fake-browser-apps.json --allowed-source-root tests/fixtures/cpp --output-root dist/wasm/fixture-apps
 
 browser-apps-run: browser-apps
 	node dist/src/static-server.mjs

@@ -44,13 +44,6 @@ const roots = [
   path.join(synthRoot, "Makefile"),
 ];
 
-// Multi-app publication is migrated in Task 3. These legacy publisher files
-// remain excluded only until they consume this task's manifest/emission report.
-const skipped = new Set([
-  path.join(browserRoot, "src", "build-first-party-catalog.mjs"),
-  path.join(browserRoot, "src", "publish-site.mjs"),
-]);
-
 async function* filesUnder(root) {
   const metadata = await stat(root);
   if (metadata.isFile()) {
@@ -71,7 +64,6 @@ async function* filesUnder(root) {
 const violations = [];
 for (const root of roots) {
   for await (const file of filesUnder(root)) {
-    if (skipped.has(file)) continue;
     const text = await readFile(file, "utf8");
     const lines = text.split(/\r?\n/);
     const synthMakeBrowserStart = file === path.join(synthRoot, "Makefile")
