@@ -779,14 +779,19 @@ private:
 
     void HandleEndpointSelect(const std::string& value)
     {
-        const auto parts = Split(value, ':');
-        if (parts.size() != 3)
+        const std::size_t firstSeparator = value.find(':');
+        if (firstSeparator == std::string::npos)
         {
             return;
         }
-        const std::size_t controllerIx = ParseIndex(parts[0]);
-        const bool output = parts[1] == "output";
-        const std::string& optionId = parts[2];
+        const std::size_t secondSeparator = value.find(':', firstSeparator + 1);
+        if (secondSeparator == std::string::npos)
+        {
+            return;
+        }
+        const std::size_t controllerIx = ParseIndex(value.substr(0, firstSeparator));
+        const bool output = value.substr(firstSeparator + 1, secondSeparator - firstSeparator - 1) == "output";
+        const std::string optionId = value.substr(secondSeparator + 1);
 
         if (optionId == kEndpointOfflineOptionId)
         {

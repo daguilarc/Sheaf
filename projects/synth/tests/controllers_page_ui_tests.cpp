@@ -100,6 +100,7 @@ struct TestHarness
     {
         devices.inputs.push_back({"wrldbldr-in-id", "WRLD.Bldr In"});
         devices.outputs.push_back({"wrldbldr-out-id", "WRLD.Bldr Out"});
+        devices.outputs.push_back({"uid:782494201", "Midi Fighter Twister"});
     }
 
     synth::runtime_ui::ControllersPageSurface MakeSurface()
@@ -253,10 +254,10 @@ int main()
     Require(harness.commits == 2, "endpoint clear commits");
     Require(harness.instrument.controllers[0].output.identifier.empty(), "endpoint cleared");
     surface.DispatchAction(synth::ui::Action::WithValue(
-        synth::runtime_ui::Actions::kEndpointSelect, "0:output:wrldbldr-out-id"));
+        synth::runtime_ui::Actions::kEndpointSelect, "0:output:uid:782494201"));
     Require(harness.commits == 3, "endpoint device selection commits");
-    Require(harness.instrument.controllers[0].output.identifier == "wrldbldr-out-id", "endpoint device selected");
-    Require(harness.status == "Selected WRLD.Bldr Out", "endpoint device selection status");
+    Require(harness.instrument.controllers[0].output.identifier == "uid:782494201", "endpoint device selected");
+    Require(harness.status == "Selected Midi Fighter Twister", "endpoint device selection status");
     surface.DispatchAction(synth::ui::Action::WithValue(
         synth::runtime_ui::Actions::kEndpointSelect, "1:input:keep_offline"));
     Require(harness.commits == 3, "offline endpoint keep is a no-op");
