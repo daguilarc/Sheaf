@@ -44,11 +44,11 @@
 
 ## 7. GitHub Actions and GitHub Pages publisher path
 
-- [ ] 7.1 Add a pinned GitHub Actions workflow that installs Node and Emscripten, builds/tests the browser launcher and packages, and creates a GitHub Pages artifact containing publisher catalogs and immutable app packages.
-- [ ] 7.2 Configure the workflow's official `configure-pages`, `upload-pages-artifact`, and `deploy-pages` jobs with required permissions, default-branch/environment gating, concurrency, and manual dispatch support.
-- [ ] 7.3 Add post-deploy validation that checks catalog CORS access, `.wasm` `application/wasm` delivery, catalog/package consistency, and the deployed build ID.
-- [ ] 7.4 Add a production-like Chromium smoke job that launches the GitHub Pages generic package from a cross-origin-isolated host and fails readiness when remote entry, WASM, worker, AudioWorklet, or audio startup fails.
-- [ ] 7.5 Document the one-time repository Pages setting, published catalog URL, publisher build contract, GitHub Pages limits, and why the Cloudflare site remains the top-level launcher.
+- [x] 7.1 Add a pinned GitHub Actions workflow that installs Node and Emscripten, builds/tests the browser launcher and packages, and creates a GitHub Pages artifact containing publisher catalogs and immutable app packages.
+- [x] 7.2 Configure the workflow's official `configure-pages`, `upload-pages-artifact`, and `deploy-pages` jobs with required permissions, default-branch/environment gating, concurrency, and manual dispatch support.
+- [x] 7.3 Add post-deploy validation that checks catalog CORS access, `.wasm` `application/wasm` delivery, catalog/package consistency, and the deployed build ID.
+- [x] 7.4 Add a production-like Chromium smoke job that launches the GitHub Pages generic package from a cross-origin-isolated host and fails readiness when remote entry, WASM, worker, AudioWorklet, or audio startup fails.
+- [x] 7.5 Document the one-time repository Pages setting, published catalog URL, publisher build contract, GitHub Pages limits, and why the Cloudflare site remains the top-level launcher.
 
 ## 8. Final verification and contract documentation
 
