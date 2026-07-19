@@ -119,16 +119,16 @@
 
 **Required behavior:**
 
-- [ ] Add deterministic tests for the independent fixed-capacity SPSC realtime lane, broadcast snapshots, deadline priority, feedback isolation, transport-before-clock ties, phase-generation cutoffs, offline/reconnected sinks, newest-drop overflow counters, late counters, and clean shutdown.
-- [ ] Preserve the current mutex feedback lane and `ClearSinkSync` safety contract while adding realtime worker arbitration that never blocks the producer.
-- [ ] Implement the Task 2 `IScheduledMidiEventSink` producer contract with `MidiSender`'s dedicated fixed-capacity SPSC lane and retain its newest-drop/overflow semantics through worker consumption.
-- [ ] Extend `IMidiOutputSink` with scheduled delivery and explicit epoch conversion. Immediate controller feedback must remain compatible.
-- [ ] Submit future timestamps using JUCE's timestamp/background MIDI output facility; do not use `sendMessageNow` for scheduled clock. Implement a documented worker-wait fallback only for sinks without future scheduling.
-- [ ] Integrate mapper-derived deadlines and latency `max(2 * block duration, 5 ms)`, including transition cutoffs and current-sink broadcast at send time.
-- [ ] Prove the numeric deadline/spacing/fixed-offset tolerances and distinguish calculated deadline accuracy from observable physical lateness.
-- [ ] Verify sender lifecycle begins before audio/MIDI ingress and ends only after producers stop; retain reconnect-safe teardown.
-- [ ] Run focused sender, reconcile, poller, JUCE runtime/shell/component tests, then core regression tests.
-- [ ] Commit only the task files after review and verification.
+- [x] Add deterministic tests for the independent fixed-capacity SPSC realtime lane, broadcast snapshots, deadline priority, feedback isolation, transport-before-clock ties, phase-generation cutoffs, offline/reconnected sinks, newest-drop overflow counters, late counters, and clean shutdown.
+- [x] Preserve the current mutex feedback lane and `ClearSinkSync` safety contract while adding realtime worker arbitration that never blocks the producer.
+- [x] Implement the Task 2 `IScheduledMidiEventSink` producer contract with `MidiSender`'s dedicated fixed-capacity SPSC lane and retain its newest-drop/overflow semantics through worker consumption.
+- [x] Extend `IMidiOutputSink` with scheduled delivery and explicit epoch conversion. Immediate controller feedback must remain compatible.
+- [x] Submit future timestamps using JUCE's timestamp/background MIDI output facility; do not use `sendMessageNow` for scheduled clock. Implement a documented worker-wait fallback only for sinks without future scheduling.
+- [x] Integrate mapper-derived deadlines and latency `max(2 * block duration, 5 ms)`, including transition cutoffs and current-sink broadcast at send time.
+- [x] Prove the numeric deadline/spacing/fixed-offset tolerances and distinguish calculated deadline accuracy from observable physical lateness.
+- [x] Verify sender lifecycle begins before audio/MIDI ingress and ends only after producers stop; retain reconnect-safe teardown.
+- [x] Run focused sender, reconcile, poller, JUCE runtime/shell/component tests, then core regression tests.
+- [x] Commit only the task files after review and verification.
 
 ## Task 5: Browser Timestamped MIDI End to End (Sol)
 

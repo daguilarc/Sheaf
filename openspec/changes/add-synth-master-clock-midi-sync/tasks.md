@@ -42,11 +42,11 @@
 
 ## 7. Scheduled MIDI Sender and JUCE Output
 
-- [ ] 7.1 Add deterministic `MidiSender` tests for fixed-capacity SPSC realtime enqueue, broadcast to all open sinks, feedback-lane isolation, deadline priority, equal-time ordering, cutoff-aware generation invalidation that preserves earlier events, offline sinks, overflow counters, and clean shutdown.
-- [ ] 7.2 Implement the scheduled realtime lane and worker arbitration while preserving existing mutex-backed per-controller feedback behavior and reconnect-safe sink clearing.
-- [ ] 7.3 Extend the sink contract with scheduled delivery and epoch conversion; add JUCE adapter tests/seams for future-timestamp submission, immediate-feedback compatibility, late-event accounting, and unsupported-host fallback.
-- [ ] 7.4 Implement JUCE timestamped/background delivery, worker fallback waiting, and lifecycle start/stop ordering without `sendMessageNow` on scheduled clock events.
-- [ ] 7.5 Implement the continuous five-error-median/`1/32`-EWMA `AudioSampleTimeMapper` with `±500 ppm` future-slope slew, integrate MasterClock output latency `max(2 * block duration, 5 ms)`, and add fractional-crossing tests proving `≤1 µs` deadline error, `≤2 µs` spacing error plus bounded slew, `≤1 µs` fixed-offset regeneration error, exact half-open ownership, transition handoff without a clock hole, discontinuity handling, and observable late-event fallback.
+- [x] 7.1 Add deterministic `MidiSender` tests for fixed-capacity SPSC realtime enqueue, broadcast to all open sinks, feedback-lane isolation, deadline priority, equal-time ordering, cutoff-aware generation invalidation that preserves earlier events, offline sinks, overflow counters, and clean shutdown.
+- [x] 7.2 Implement the scheduled realtime lane and worker arbitration while preserving existing mutex-backed per-controller feedback behavior and reconnect-safe sink clearing.
+- [x] 7.3 Extend the sink contract with scheduled delivery and epoch conversion; add JUCE adapter tests/seams for future-timestamp submission, immediate-feedback compatibility, late-event accounting, and unsupported-host fallback.
+- [x] 7.4 Implement JUCE timestamped/background delivery, worker fallback waiting, and lifecycle start/stop ordering without `sendMessageNow` on scheduled clock events.
+- [x] 7.5 Implement the continuous five-error-median/`1/32`-EWMA `AudioSampleTimeMapper` with `±500 ppm` future-slope slew, integrate MasterClock output latency `max(2 * block duration, 5 ms)`, and add fractional-crossing tests proving `≤1 µs` deadline error, `≤2 µs` spacing error plus bounded slew, `≤1 µs` fixed-offset regeneration error, exact half-open ownership, transition handoff without a clock hole, discontinuity handling, and observable late-event fallback.
 
 ## 8. Browser Scheduled MIDI
 
