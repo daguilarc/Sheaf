@@ -268,6 +268,58 @@ float Scene0(const synth::ParameterManager& manager, synth::ParameterId id) {
     return manager.ParameterById(id).SceneCenter(0);
 }
 
+struct OwnedParameterRef {
+    synth::Parameter* parameter = nullptr;
+    std::size_t voiceIx = 0;
+};
+
+OwnedParameterRef OwnedParameter(synth_braid4::Braid4Core& core, bool lfo,
+                                 std::size_t oscillatorIx, std::size_t ownedIx) {
+    auto& manager = *core.Context()->parameterManager;
+    const auto& module = lfo ? core.LfoModule() : core.BraidModule();
+    const auto& matrix = lfo ? core.LfoMatrixModule() : core.MatrixModule();
+    const auto& ids = module.Parameters();
+    synth::ParameterId id = 0;
+    std::size_t voiceIx = 0;
+    switch (ownedIx) {
+    case 0:
+        id = ids.quad.tune;
+        voiceIx = oscillatorIx;
+        break;
+    case 1:
+        id = ids.quad.phase;
+        voiceIx = oscillatorIx;
+        break;
+    case 2:
+        id = ids.quad.shape;
+        voiceIx = oscillatorIx;
+        break;
+    case 3:
+        id = ids.quad.gain;
+        voiceIx = oscillatorIx;
+        break;
+    case 4:
+        id = ids.modulationCutoff.at(oscillatorIx);
+        break;
+    case 5:
+        id = ids.frequency.at(oscillatorIx);
+        break;
+    default:
+        id = matrix.Parameters().at(oscillatorIx * synth_braid4::Braid4Core::kOscillatorCount + ownedIx - 6);
+        break;
+    }
+    return {&manager.ParameterById(id), voiceIx};
+}
+
+float FilterAlpha(const synth_braid4::Braid4Core& core, float normalizedCutoff) {
+    const float cutoffHz = synth::Braid4VcoModule::kMinModulationCutoffHz *
+        std::pow(synth::Braid4VcoModule::kMaxModulationCutoffHz /
+                     synth::Braid4VcoModule::kMinModulationCutoffHz,
+                 normalizedCutoff);
+    return synth::OnePoleLowPass::AlphaFromNatFreq(
+        cutoffHz / static_cast<float>(core.InternalSampleRate()));
+}
+
 const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const char* id) {
     for (const synth::ui::Node& node : tree.nodes) {
         if (node.id == synth::ui::NodeId(id)) {
@@ -412,7 +464,7 @@ void RequireModulePalette(const synth::ParameterManager& manager,
     }
 
     for (std::size_t oscIx = 0; oscIx < shades.size(); ++oscIx) {
-        for (const synth::ParameterId id : {ids.pmIndex[oscIx], ids.frequency[oscIx]}) {
+        for (const synth::ParameterId id : {ids.modulationCutoff[oscIx], ids.frequency[oscIx]}) {
             const synth::Parameter& parameter = manager.ParameterById(id);
             REQUIRE_TRUE(parameter.BaseColor() == shades[oscIx]);
             REQUIRE_TRUE(parameter.IndicatorColor(0) == shades[oscIx]);
@@ -633,14 +685,198 @@ TEST_CASE(braid_and_matrix_banks_expose_required_encoder_cells) {
         REQUIRE_TRUE(lfoMatrixParam != nullptr);
         REQUIRE_TRUE(lfoMatrixParam->BaseColor() == synth_braid4::Braid4Core::LfoMatrixDiagonalColor() ||
                      lfoMatrixParam->BaseColor() == synth::Color::Yellow);
+
+        if (position >= 8 && position <= 11) {
+            REQUIRE_TRUE(braidParam->Name().find("Mod LPF Cutoff") != std::string::npos);
+            REQUIRE_TRUE(braidParam->ShortName().find("Mod LPF") != std::string::npos);
+            const synth::Parameter* lfoParam = core.LfoBank()->VisibleParameter(encoderId);
+            REQUIRE_TRUE(lfoParam != nullptr);
+            REQUIRE_TRUE(lfoParam->Name().find("Mod LPF Cutoff") != std::string::npos);
+            REQUIRE_TRUE(lfoParam->ShortName().find("Mod LPF") != std::string::npos);
+        }
     }
 
     REQUIRE_TRUE(core.MatrixModule().Parameters()[0] == core.MonoGroup()->ParameterByLocalIndex(8).Id());
     REQUIRE_TRUE(core.MatrixModule().Parameters()[15] == core.MonoGroup()->ParameterByLocalIndex(23).Id());
-    REQUIRE_TRUE(core.LfoModule().Parameters().pmIndex[0] == core.MonoGroup()->ParameterByLocalIndex(24).Id());
+    REQUIRE_TRUE(core.LfoModule().Parameters().modulationCutoff[0] == core.MonoGroup()->ParameterByLocalIndex(24).Id());
     REQUIRE_TRUE(core.LfoModule().Parameters().frequency[3] == core.MonoGroup()->ParameterByLocalIndex(31).Id());
     REQUIRE_TRUE(core.LfoMatrixModule().Parameters()[0] == core.MonoGroup()->ParameterByLocalIndex(32).Id());
     REQUIRE_TRUE(core.LfoMatrixModule().Parameters()[15] == core.MonoGroup()->ParameterByLocalIndex(47).Id());
+}
+
+TEST_CASE(braid4_filter_storage_seeds_all_eighty_owned_caches_and_excludes_xy_and_nested_depths) {
+    synth_rig::SynthRig<synth_braid4::Braid4Core> rig(
+        64,
+        UseScratchRuntimeDataPaths(
+            "braid4_filter_storage_seeds_all_eighty_owned_caches_and_excludes_xy_and_nested_depths"));
+    auto& core = rig.Engine().Application();
+    auto& manager = rig.Engine().Manager();
+
+    std::array<float, 80> seeded{};
+    std::size_t stateIx = 0;
+    for (const bool lfo : {false, true}) {
+        for (std::size_t oscillatorIx = 0; oscillatorIx < 4; ++oscillatorIx) {
+            for (std::size_t ownedIx = 0; ownedIx < 10; ++ownedIx) {
+                const float value = static_cast<float>(stateIx + 1) / 81.0f;
+                OwnedParameterRef owned = OwnedParameter(core, lfo, oscillatorIx, ownedIx);
+                owned.parameter->ReplaceCachedKnobValue(owned.voiceIx, value);
+                seeded[stateIx++] = value;
+            }
+        }
+    }
+
+    synth::Parameter& x = manager.ParameterById(core.BraidModule().Parameters().x);
+    synth::Parameter& y = manager.ParameterById(core.LfoModule().Parameters().y);
+    x.ReplaceCachedKnobValue(0, 0.123f);
+    y.ReplaceCachedKnobValue(1, 0.876f);
+    synth::Parameter& phase = manager.ParameterById(core.BraidModule().Parameters().quad.phase);
+    synth::Parameter* nestedDepth = phase.EnsureModulationDepth(4);
+    REQUIRE_TRUE(nestedDepth != nullptr);
+    nestedDepth->ReplaceCachedKnobValue(0, 0.731f);
+
+    core.PrepareToPlay(48000.0, 64);
+
+    REQUIRE_TRUE(core.FilteredParameterStateCountForTest() == 80);
+    stateIx = 0;
+    for (const bool lfo : {false, true}) {
+        for (std::size_t oscillatorIx = 0; oscillatorIx < 4; ++oscillatorIx) {
+            for (std::size_t ownedIx = 0; ownedIx < 10; ++ownedIx) {
+                REQUIRE_NEAR(core.ParameterFilterOutputForTest(lfo, oscillatorIx, ownedIx),
+                             seeded[stateIx++], 0.000001);
+            }
+        }
+    }
+    REQUIRE_NEAR(x.CachedKnobValue(0), 0.123f, 0.000001);
+    REQUIRE_NEAR(y.CachedKnobValue(1), 0.876f, 0.000001);
+    REQUIRE_NEAR(nestedDepth->CachedKnobValue(0), 0.731f, 0.000001);
+}
+
+TEST_CASE(braid4_owned_caches_share_row_cutoff_alpha_but_keep_independent_filter_state) {
+    synth_rig::SynthRig<synth_braid4::Braid4Core> rig(
+        1,
+        UseScratchRuntimeDataPaths(
+            "braid4_owned_caches_share_row_cutoff_alpha_but_keep_independent_filter_state"));
+    auto& core = rig.Engine().Application();
+    auto& manager = rig.Engine().Manager();
+    constexpr std::array<float, 4> kCutoffs{0.28f, 0.46f, 0.64f, 0.82f};
+
+    for (const bool lfo : {false, true}) {
+        auto& module = lfo ? core.LfoModule() : core.BraidModule();
+        const auto& ids = module.Parameters();
+        SetScenePairAndSettle(manager, ids.x, lfo ? 0.67f : 0.33f);
+        SetScenePairAndSettle(manager, ids.y, lfo ? 0.59f : 0.41f);
+        for (std::size_t oscillatorIx = 0; oscillatorIx < 4; ++oscillatorIx) {
+            SetScenePairAndSettle(manager, ids.modulationCutoff[oscillatorIx], kCutoffs[oscillatorIx]);
+            SetScenePairAndSettle(manager, ids.frequency[oscillatorIx],
+                                  0.18f + 0.07f * static_cast<float>(oscillatorIx) + (lfo ? 0.03f : 0.0f));
+        }
+        SetScenePairAndSettle(manager, ids.quad.tune, lfo ? 0.69f : 0.31f);
+        SetScenePairAndSettle(manager, ids.quad.phase, lfo ? 0.61f : 0.39f);
+        SetScenePairAndSettle(manager, ids.quad.shape, lfo ? 0.73f : 0.27f);
+        SetScenePairAndSettle(manager, ids.quad.gain, lfo ? 0.57f : 0.43f);
+        const auto& matrixIds = (lfo ? core.LfoMatrixModule() : core.MatrixModule()).Parameters();
+        for (std::size_t matrixIx = 0; matrixIx < matrixIds.size(); ++matrixIx) {
+            SetScenePairAndSettle(manager, matrixIds[matrixIx],
+                                  0.12f + 0.7f * static_cast<float>(matrixIx) /
+                                              static_cast<float>(matrixIds.size() - 1));
+        }
+    }
+
+    std::array<float, 80> seeds{};
+    std::array<float, 80> phase1Inputs{};
+    std::size_t stateIx = 0;
+    for (const bool lfo : {false, true}) {
+        for (std::size_t oscillatorIx = 0; oscillatorIx < 4; ++oscillatorIx) {
+            for (std::size_t ownedIx = 0; ownedIx < 10; ++ownedIx) {
+                OwnedParameterRef owned = OwnedParameter(core, lfo, oscillatorIx, ownedIx);
+                const float seed = 0.02f + 0.96f * static_cast<float>(stateIx) / 79.0f;
+                owned.parameter->ReplaceCachedKnobValue(owned.voiceIx, seed);
+                seeds[stateIx] = seed;
+                phase1Inputs[stateIx] = owned.parameter->GetRaw(owned.voiceIx);
+                ++stateIx;
+            }
+        }
+    }
+
+    core.PrepareToPlay(48000.0, 1);
+    const auto& audibleIds = core.BraidModule().Parameters();
+    synth::Parameter& audibleTune = manager.ParameterById(audibleIds.quad.tune);
+    const float uiCenterBefore = audibleTune.UIDisplayCenter(0);
+
+    std::array<float, 1> left{};
+    std::array<float, 1> right{};
+    std::array<float*, 2> outputs{left.data(), right.data()};
+    synth::AudioBlock block{
+        .outputs = outputs.data(),
+        .numOutputChannels = 2,
+        .numFrames = 1,
+    };
+    core.ProcessBlock(block);
+
+    stateIx = 0;
+    for (const bool lfo : {false, true}) {
+        for (std::size_t oscillatorIx = 0; oscillatorIx < 4; ++oscillatorIx) {
+            const std::size_t cutoffSourceIx = (lfo ? 40 : 0) + oscillatorIx * 10 + 4;
+            const float alpha = FilterAlpha(core, phase1Inputs[cutoffSourceIx]);
+            for (std::size_t ownedIx = 0; ownedIx < 10; ++ownedIx) {
+                const float expected = phase1Inputs[stateIx] +
+                    (seeds[stateIx] - phase1Inputs[stateIx]) *
+                        std::pow(1.0f - alpha, static_cast<float>(synth_braid4::Braid4Core::kOversampleFactor));
+                OwnedParameterRef owned = OwnedParameter(core, lfo, oscillatorIx, ownedIx);
+                REQUIRE_NEAR(core.ParameterFilterAlphaForTest(lfo, oscillatorIx, ownedIx), alpha, 0.000001);
+                REQUIRE_NEAR(core.ParameterFilterOutputForTest(lfo, oscillatorIx, ownedIx), expected, 0.000002);
+                REQUIRE_NEAR(owned.parameter->CachedKnobValue(owned.voiceIx), expected, 0.000002);
+                ++stateIx;
+            }
+            for (std::size_t column = 1; column < 4; ++column) {
+                REQUIRE_NEAR(core.ParameterFilterAlphaForTest(lfo, oscillatorIx, 6),
+                             core.ParameterFilterAlphaForTest(lfo, oscillatorIx, 6 + column),
+                             0.000001);
+                REQUIRE_TRUE(core.ParameterFilterOutputForTest(lfo, oscillatorIx, 6) !=
+                             core.ParameterFilterOutputForTest(lfo, oscillatorIx, 6 + column));
+            }
+        }
+    }
+
+    for (std::size_t oscillatorIx = 0; oscillatorIx < 4; ++oscillatorIx) {
+        REQUIRE_NEAR(core.ParameterFilterAlphaForTest(false, oscillatorIx, 4),
+                     core.ParameterFilterAlphaForTest(true, oscillatorIx, 4), 0.000001);
+        if (oscillatorIx != 0) {
+            REQUIRE_TRUE(core.ParameterFilterAlphaForTest(false, 0, 6) !=
+                         core.ParameterFilterAlphaForTest(false, oscillatorIx, 6));
+        }
+    }
+
+    for (const auto* module : {&core.BraidModule(), &core.LfoModule()}) {
+        for (const synth::ParameterId id : {module->Parameters().x, module->Parameters().y}) {
+            const synth::Parameter& xy = manager.ParameterById(id);
+            for (std::size_t voiceIx = 0; voiceIx < 2; ++voiceIx) {
+                REQUIRE_NEAR(xy.CachedKnobValue(voiceIx), xy.GetRaw(voiceIx), 0.000001);
+            }
+        }
+    }
+
+    const float tuneFiltered = audibleTune.CachedKnobValue(0);
+    float expectedUiCenter = uiCenterBefore;
+    float filterOutput = seeds[0];
+    const float tuneAlpha = FilterAlpha(core, phase1Inputs[4]);
+    for (std::size_t subframe = 0; subframe < synth_braid4::Braid4Core::kOversampleFactor; ++subframe) {
+        filterOutput += tuneAlpha * (phase1Inputs[0] - filterOutput);
+        expectedUiCenter += core.QuadGroup()->Config().uiDisplayCenterAlpha *
+                            (filterOutput - expectedUiCenter);
+    }
+    REQUIRE_NEAR(audibleTune.UIDisplayCenter(0), expectedUiCenter, 0.000002);
+    REQUIRE_NEAR(core.BraidModule().CurrentInput().oscillators[0].tuneMultiplier,
+                 manager.GetExponential(0.5f, 2.0f, 0, audibleIds.quad.tune), 0.000001);
+    REQUIRE_NEAR(core.BraidModule().CurrentInput().oscillators[0].phaseCycles,
+                 manager.GetBipolarLinear(1.0f, 0, audibleIds.quad.phase), 0.000001);
+    REQUIRE_NEAR(core.BraidModule().CurrentInput().oscillators[0].vco.phaseOffset,
+                 core.BraidModule().CurrentInput().oscillators[0].phaseCycles, 0.000001);
+    REQUIRE_NEAR(tuneFiltered, core.ParameterFilterOutputForTest(false, 0, 0), 0.000001);
+    REQUIRE_NEAR(core.MatrixModule().Gain(0, 0),
+                 manager.GetBipolarZeroBasedExponential(
+                     1.0f, 0.25f, 0, core.MatrixModule().Parameters()[0]),
+                 0.000001);
 }
 
 TEST_CASE(braid4_parameter_processing_ignores_materialized_local_depths) {
@@ -1316,7 +1552,8 @@ TEST_CASE(matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_con
         REQUIRE_NEAR(core.QuadGroup()->GetModulators().Value(oscIx, 4),
                      counters.lastConsumedMatrixSources[oscIx],
                      0.000001);
-        REQUIRE_NEAR(shape.CachedKnobValue(oscIx), shape.GetRaw(oscIx), 0.000001);
+        REQUIRE_NEAR(shape.CachedKnobValue(oscIx),
+                     core.ParameterFilterOutputForTest(false, oscIx, 2), 0.000001);
         REQUIRE_NEAR(core.BraidModule().CurrentInput().oscillators[oscIx].shape,
                      shape.CachedKnobValue(oscIx),
                      0.000001);
@@ -1370,7 +1607,7 @@ TEST_CASE(patch_save_perturb_load_round_trips_representative_braid_and_matrix_va
     SetScenePair(manager, braidIds.x, 0.20f);
     SetScenePair(manager, braidIds.y, 0.80f);
     SetScenePair(manager, braidIds.quad.phase, -0.30f);
-    SetScenePair(manager, braidIds.pmIndex[2], 0.70f);
+    SetScenePair(manager, braidIds.modulationCutoff[2], 0.70f);
     SetScenePair(manager, braidIds.frequency[3], 0.40f);
     SetScenePair(manager, matrixIds[0], 0.55f);
     SetScenePair(manager, matrixIds[7], -0.45f);
@@ -1379,7 +1616,7 @@ TEST_CASE(patch_save_perturb_load_round_trips_representative_braid_and_matrix_va
         {braidIds.x, Scene0(manager, braidIds.x)},
         {braidIds.y, Scene0(manager, braidIds.y)},
         {braidIds.quad.phase, Scene0(manager, braidIds.quad.phase)},
-        {braidIds.pmIndex[2], Scene0(manager, braidIds.pmIndex[2])},
+        {braidIds.modulationCutoff[2], Scene0(manager, braidIds.modulationCutoff[2])},
         {braidIds.frequency[3], Scene0(manager, braidIds.frequency[3])},
         {matrixIds[0], Scene0(manager, matrixIds[0])},
         {matrixIds[7], Scene0(manager, matrixIds[7])},
@@ -1391,7 +1628,7 @@ TEST_CASE(patch_save_perturb_load_round_trips_representative_braid_and_matrix_va
     SetScenePair(manager, braidIds.x, 0.90f);
     SetScenePair(manager, braidIds.y, 0.10f);
     SetScenePair(manager, braidIds.quad.phase, 0.30f);
-    SetScenePair(manager, braidIds.pmIndex[2], 0.10f);
+    SetScenePair(manager, braidIds.modulationCutoff[2], 0.10f);
     SetScenePair(manager, braidIds.frequency[3], 0.90f);
     SetScenePair(manager, matrixIds[0], -0.20f);
     SetScenePair(manager, matrixIds[7], 0.35f);

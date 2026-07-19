@@ -7,6 +7,7 @@
 
 #include "synth/AppContext.hpp"
 #include "synth/DspBuffers.hpp"
+#include "synth/DspFilters.hpp"
 #include "synth/DspScope.hpp"
 #include "synth/Modules.hpp"
 #include "synth/ParameterModulation.hpp"
@@ -27,6 +28,9 @@ class Braid4Core {
 public:
     static constexpr std::size_t kOscillatorCount = 4;
     static constexpr std::size_t kOversampleFactor = 4;
+    static constexpr std::size_t kParameterFilterStatesPerOscillator = 10;
+    static constexpr std::size_t kFilteredParameterStateCount =
+        2 * kOscillatorCount * kParameterFilterStatesPerOscillator;
     static constexpr std::size_t kScopeFrames = 6'553'600;
     static constexpr std::uint64_t kNoInternalSampleIndex = std::numeric_limits<std::uint64_t>::max();
 
@@ -290,6 +294,18 @@ public:
     }
     const DebugCounterState& DebugCounters() const { return debugCounters_; }
 
+    static constexpr std::size_t FilteredParameterStateCountForTest() {
+        return kFilteredParameterStateCount;
+    }
+    float ParameterFilterOutputForTest(bool lfo, std::size_t oscillatorIx,
+                                       std::size_t ownedIx) const {
+        return ParameterFilterForTest(lfo, oscillatorIx, ownedIx).m_output;
+    }
+    float ParameterFilterAlphaForTest(bool lfo, std::size_t oscillatorIx,
+                                      std::size_t ownedIx) const {
+        return ParameterFilterForTest(lfo, oscillatorIx, ownedIx).m_alpha;
+    }
+
     void SetRawMatrixOutputForTest(std::size_t index, float value) { rawMatrixOutputs_.at(index) = value; }
     void SetRawLfoMatrixOutputForTest(std::size_t index, float value) { rawLfoMatrixOutputs_.at(index) = value; }
     void SetRawAudioStereoOutputForTest(float left, float right) {
@@ -372,6 +388,7 @@ private:
         normalizedAudioMonoSource_ = 0.5f;
         normalizedLfoMonoSource_ = 0.5f;
         matrixOutputPublicationInternalIndex_ = kNoInternalSampleIndex;
+        SeedParameterFilters();
     }
 
     static float NormalizeMatrixOutput(float value) {
@@ -407,7 +424,9 @@ private:
         quadGroup_->UpdateModValues();
         monoGroup_->UpdateModValues();
 
-        ProcessParameters(internalIndex);
+        ProcessParameterPhase1(internalIndex);
+        FilterParameterCaches();
+        ProcessParameterPhase2();
 
         braidModule_.SetInput(*context_->parameterManager);
         braidModule_.Process();
@@ -441,10 +460,159 @@ private:
         return {braidModule_.OutputLeft(), braidModule_.OutputRight()};
     }
 
-    void ProcessParameters(std::uint64_t internalIndex) {
-        stereoGroup_->ProcessSample(internalIndex);
-        quadGroup_->ProcessSample(internalIndex);
-        monoGroup_->ProcessSample(internalIndex);
+    struct OscillatorParameterFilters {
+        std::array<synth::OnePoleLowPass, 4> quad;
+        synth::OnePoleLowPass cutoff;
+        synth::OnePoleLowPass frequency;
+        std::array<synth::OnePoleLowPass, 4> matrixRow;
+    };
+
+    using ParameterFilterFamily = std::array<OscillatorParameterFilters, kOscillatorCount>;
+
+    static synth::OnePoleLowPass& ParameterFilterAt(OscillatorParameterFilters& filters,
+                                                     std::size_t ownedIx) {
+        if (ownedIx < 4) {
+            return filters.quad.at(ownedIx);
+        }
+        if (ownedIx == 4) {
+            return filters.cutoff;
+        }
+        if (ownedIx == 5) {
+            return filters.frequency;
+        }
+        return filters.matrixRow.at(ownedIx - 6);
+    }
+
+    static const synth::OnePoleLowPass& ParameterFilterAt(const OscillatorParameterFilters& filters,
+                                                           std::size_t ownedIx) {
+        if (ownedIx < 4) {
+            return filters.quad.at(ownedIx);
+        }
+        if (ownedIx == 4) {
+            return filters.cutoff;
+        }
+        if (ownedIx == 5) {
+            return filters.frequency;
+        }
+        return filters.matrixRow.at(ownedIx - 6);
+    }
+
+    const synth::OnePoleLowPass& ParameterFilterForTest(bool lfo, std::size_t oscillatorIx,
+                                                         std::size_t ownedIx) const {
+        const ParameterFilterFamily& family = lfo ? lfoParameterFilters_ : braidParameterFilters_;
+        return ParameterFilterAt(family.at(oscillatorIx), ownedIx);
+    }
+
+    void ProcessParameterPhase1(std::uint64_t internalIndex) {
+        stereoGroup_->ProcessSamplePhase1(internalIndex);
+        quadGroup_->ProcessSamplePhase1(internalIndex);
+        monoGroup_->ProcessSamplePhase1(internalIndex);
+    }
+
+    void ProcessParameterPhase2() {
+        stereoGroup_->ProcessSamplePhase2();
+        quadGroup_->ProcessSamplePhase2();
+        monoGroup_->ProcessSamplePhase2();
+    }
+
+    void FilterParameterCaches() {
+        FilterParameterFamily(braidModule_, matrixModule_, braidParameterFilters_);
+        FilterParameterFamily(lfoModule_, lfoMatrixModule_, lfoParameterFilters_);
+    }
+
+    void FilterParameterFamily(VcoModule& module, MatrixModuleType& matrix,
+                               ParameterFilterFamily& filters) {
+        synth::ParameterManager& manager = *context_->parameterManager;
+        const VcoModule::ParameterIds& ids = module.Parameters();
+        const std::array<synth::ParameterId, 4> quadIds{
+            ids.quad.tune,
+            ids.quad.phase,
+            ids.quad.shape,
+            ids.quad.gain,
+        };
+        const MatrixModuleType::ParameterIds& matrixIds = matrix.Parameters();
+
+        for (std::size_t oscillatorIx = 0; oscillatorIx < kOscillatorCount; ++oscillatorIx) {
+            OscillatorParameterFilters& oscillatorFilters = filters[oscillatorIx];
+            synth::Parameter& cutoffParameter =
+                manager.ParameterById(ids.modulationCutoff[oscillatorIx]);
+            const float normalizedCutoff = cutoffParameter.CachedKnobValue(0);
+            const float cutoffHz = VcoModule::kMinModulationCutoffHz *
+                std::pow(VcoModule::kMaxModulationCutoffHz /
+                             VcoModule::kMinModulationCutoffHz,
+                         normalizedCutoff);
+            const float alpha = synth::OnePoleLowPass::AlphaFromNatFreq(
+                cutoffHz / static_cast<float>(internalSampleRate_));
+
+            for (std::size_t quadIx = 0; quadIx < quadIds.size(); ++quadIx) {
+                synth::Parameter& parameter = manager.ParameterById(quadIds[quadIx]);
+                parameter.ReplaceCachedKnobValue(
+                    oscillatorIx,
+                    oscillatorFilters.quad[quadIx].ProcessWithAlpha(
+                        parameter.CachedKnobValue(oscillatorIx), alpha));
+            }
+
+            cutoffParameter.ReplaceCachedKnobValue(
+                0,
+                oscillatorFilters.cutoff.ProcessWithAlpha(
+                    cutoffParameter.CachedKnobValue(0), alpha));
+
+            synth::Parameter& frequencyParameter =
+                manager.ParameterById(ids.frequency[oscillatorIx]);
+            frequencyParameter.ReplaceCachedKnobValue(
+                0,
+                oscillatorFilters.frequency.ProcessWithAlpha(
+                    frequencyParameter.CachedKnobValue(0), alpha));
+
+            for (std::size_t column = 0; column < kOscillatorCount; ++column) {
+                synth::Parameter& matrixParameter = manager.ParameterById(
+                    matrixIds[oscillatorIx * kOscillatorCount + column]);
+                matrixParameter.ReplaceCachedKnobValue(
+                    0,
+                    oscillatorFilters.matrixRow[column].ProcessWithAlpha(
+                        matrixParameter.CachedKnobValue(0), alpha));
+            }
+        }
+    }
+
+    void SeedParameterFilters() {
+        if (context_ == nullptr || context_->parameterManager == nullptr ||
+            !braidModule_.Registered() || !lfoModule_.Registered() ||
+            !matrixModule_.Registered() || !lfoMatrixModule_.Registered()) {
+            return;
+        }
+        SeedParameterFilterFamily(braidModule_, matrixModule_, braidParameterFilters_);
+        SeedParameterFilterFamily(lfoModule_, lfoMatrixModule_, lfoParameterFilters_);
+    }
+
+    void SeedParameterFilterFamily(const VcoModule& module, const MatrixModuleType& matrix,
+                                   ParameterFilterFamily& filters) {
+        synth::ParameterManager& manager = *context_->parameterManager;
+        const VcoModule::ParameterIds& ids = module.Parameters();
+        const std::array<synth::ParameterId, 4> quadIds{
+            ids.quad.tune,
+            ids.quad.phase,
+            ids.quad.shape,
+            ids.quad.gain,
+        };
+        const MatrixModuleType::ParameterIds& matrixIds = matrix.Parameters();
+
+        for (std::size_t oscillatorIx = 0; oscillatorIx < kOscillatorCount; ++oscillatorIx) {
+            OscillatorParameterFilters& oscillatorFilters = filters[oscillatorIx];
+            for (std::size_t quadIx = 0; quadIx < quadIds.size(); ++quadIx) {
+                oscillatorFilters.quad[quadIx].Reset(
+                    manager.ParameterById(quadIds[quadIx]).CachedKnobValue(oscillatorIx));
+            }
+            oscillatorFilters.cutoff.Reset(
+                manager.ParameterById(ids.modulationCutoff[oscillatorIx]).CachedKnobValue(0));
+            oscillatorFilters.frequency.Reset(
+                manager.ParameterById(ids.frequency[oscillatorIx]).CachedKnobValue(0));
+            for (std::size_t column = 0; column < kOscillatorCount; ++column) {
+                oscillatorFilters.matrixRow[column].Reset(
+                    manager.ParameterById(matrixIds[oscillatorIx * kOscillatorCount + column])
+                        .CachedKnobValue(0));
+            }
+        }
     }
 
     void RecordInternalIndex(std::uint64_t internalIndex) {
@@ -492,6 +660,8 @@ private:
     VcoModule lfoModule_;
     MatrixModuleType matrixModule_;
     MatrixModuleType lfoMatrixModule_;
+    ParameterFilterFamily braidParameterFilters_{};
+    ParameterFilterFamily lfoParameterFilters_{};
     VcoModule::UIState vcoUiState_;
     VcoModule::UIState lfoUiState_;
     OutputStage outputStage_{Decimator{synth::FourToOneDecimatorCoefficients()}};
