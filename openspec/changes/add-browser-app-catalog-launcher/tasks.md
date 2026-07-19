@@ -36,11 +36,11 @@
 
 ## 6. First-party launcher, catalog, and Cloudflare publication
 
-- [ ] 6.1 Add the repository-owned `sheaf` catalog source/package metadata and generate its initial immutable miniapp build through the generic package assembler.
-- [ ] 6.2 Replace the production browser HTML auto-launch marker with launcher bootstrap and configure the first catalog source to resolve back to the deployed first-party catalog.
-- [ ] 6.3 Update the deterministic Cloudflare publish step to include launcher assets, `catalog-sources.json`, first-party catalog, immutable miniapp package, runtime modules, and existing COOP/COEP/MIDI/WASM headers.
-- [ ] 6.4 Update publish validation/tests to reject missing or inconsistent catalog/package references and prove the deployed first-party miniapp is reached only through the generic catalog path.
-- [ ] 6.5 Retain a rollback-capable direct miniapp artifact until launcher end-to-end gates pass, then remove production dependence on `dist/wasm/app.js` and document static deployment rollback.
+- [x] 6.1 Add the repository-owned `sheaf` catalog source/package metadata and generate its initial immutable miniapp build through the generic package assembler.
+- [x] 6.2 Replace the production browser HTML auto-launch marker with launcher bootstrap and configure the first catalog source to resolve back to the deployed first-party catalog.
+- [x] 6.3 Update the deterministic Cloudflare publish step to include launcher assets, `catalog-sources.json`, first-party catalog, immutable miniapp package, runtime modules, and existing COOP/COEP/MIDI/WASM headers.
+- [x] 6.4 Update publish validation/tests to reject missing or inconsistent catalog/package references and prove the deployed first-party miniapp is reached only through the generic catalog path.
+- [x] 6.5 Retain a rollback-capable direct miniapp artifact until launcher end-to-end gates pass, then remove production dependence on `dist/wasm/app.js` and document static deployment rollback.
 
 ## 7. GitHub Actions and GitHub Pages publisher path
 
