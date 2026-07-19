@@ -18,12 +18,18 @@ test("routes a portable action through the runtime worker facade without app HTM
   ]);
 
   const result = await page.evaluate(async (bytes) => {
-    const loadWorker = new Function("return import('/dist/src/worker.js')") as () => Promise<{ BrowserRuntimeWorker: new (loadModule: unknown) => { handle(command: unknown): Promise<unknown> } }>;
+    const loadWorker = new Function("return import('/dist/src/worker.js')") as () => Promise<{
+      BrowserRuntimeWorker: new (loadModule: unknown) => {
+        handle(command: unknown): Promise<unknown>;
+        startAudioWorklet(context?: AudioContext): Promise<unknown>;
+      };
+    }>;
     const { BrowserRuntimeWorker } = await loadWorker();
     const calls: Array<[string, ...unknown[]]> = [];
     let nextHandle = 1;
+    let audioStarted = false;
     const worker = new BrowserRuntimeWorker(async () => ({
-      abiVersion: 1,
+      abiVersion: 2,
       uiProtocolVersion: 1,
       runtimeConfigVersion: 1,
       create() { calls.push(["create"]); return nextHandle++; },
@@ -31,7 +37,8 @@ test("routes a portable action through the runtime worker facade without app HTM
       initialize(handle: number, identity: unknown) { calls.push(["initialize", handle, identity]); return 0; },
       prepare(handle: number, sampleRate: number, blockSize: number) { calls.push(["prepare", handle, sampleRate, blockSize]); return 0; },
       process(handle: number, frames: number, timestampMicros: number) { calls.push(["process", handle, frames, timestampMicros]); return 0; },
-      startAudioWorklet(handle: number) { calls.push(["startAudioWorklet", handle]); return 0; },
+      startAudioWorklet(handle: number, context?: AudioContext) { calls.push(["startAudioWorklet", handle, context ? "supplied" : "direct"]); audioStarted = true; return 0; },
+      audioWorkletStats() { return { blocks: audioStarted ? 1 : 0, peakMicrounits: 0, deadlineMicrounits: 1 }; },
       messageTick(handle: number, timestampMicros: number) { calls.push(["messageTick", handle, timestampMicros]); return 0; },
       buildUiFrame(handle: number) { calls.push(["buildUiFrame", handle]); return Uint8Array.from(bytes).buffer; },
       dispatchAction(handle: number, name: string, value: string) { calls.push(["dispatchAction", handle, name, value]); return 0; },
@@ -46,7 +53,7 @@ test("routes a portable action through the runtime worker facade without app HTM
     });
     await worker.handle({ type: "prepare", sampleRate: 48000, blockSize: 128 });
     await worker.handle({ type: "process", frames: 128, timestampMicros: 10 });
-    await worker.handle({ type: "start-audio-worklet" });
+    await worker.startAudioWorklet();
     await worker.handle({ type: "message-tick", timestampMicros: 11 });
     await worker.handle({ type: "dispatch-action", name: "generic.trigger", value: "pressed" });
     const uiFrame = await worker.handle({ type: "build-ui-frame" });
@@ -59,7 +66,7 @@ test("routes a portable action through the runtime worker facade without app HTM
   expect(result.calls).toEqual([
     ["create"], ["initialize", 1, { publisherId: "example", appId: "portable-app", runtimeConfigVersion: 1 }],
     ["prepare", 1, 48000, 128], ["process", 1, 128, 10],
-    ["startAudioWorklet", 1],
+    ["startAudioWorklet", 1, "direct"],
     ["messageTick", 1, 11], ["dispatchAction", 1, "generic.trigger", "pressed"],
     ["buildUiFrame", 1], ["buildUiFrame", 1], ["destroy", 1],
   ]);
@@ -75,10 +82,12 @@ test("reads Emscripten browser contract versions without creating a runtime", as
     const { emscriptenRuntimeFacade } = await (new Function("return import('/dist/src/worker.js')")() as Promise<any>);
     const calls: string[] = [];
     const facade = emscriptenRuntimeFacade({
-      _synth_browser_abi_version() { calls.push("abiVersion"); return 1; },
+      _synth_browser_abi_version() { calls.push("abiVersion"); return 2; },
       _synth_browser_ui_protocol_version() { calls.push("uiProtocolVersion"); return 1; },
       _synth_browser_runtime_config_version() { calls.push("runtimeConfigVersion"); return 1; },
       _synth_browser_create() { calls.push("create"); return 1; },
+      emscriptenRegisterAudioObject() { calls.push("registerAudioContext"); return 91; },
+      _synth_browser_start_audio_worklet() { calls.push("startAudioWorklet"); return 0; },
     } as any);
     return {
       versions: {
@@ -90,8 +99,67 @@ test("reads Emscripten browser contract versions without creating a runtime", as
     };
   });
 
-  expect(result.versions).toEqual({ abiVersion: 1, uiProtocolVersion: 1, runtimeConfigVersion: 1 });
+  expect(result.versions).toEqual({ abiVersion: 2, uiProtocolVersion: 1, runtimeConfigVersion: 1 });
   expect(result.calls).toEqual(["abiVersion", "uiProtocolVersion", "runtimeConfigVersion"]);
+});
+
+test("registers a supplied AudioContext module-locally and preserves direct handle zero", async ({ page }) => {
+  await blockProductAutoBoot(page);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+
+  const result = await page.evaluate(async () => {
+    const { emscriptenRuntimeFacade } = await (new Function("return import('/dist/src/worker.js')")() as Promise<any>);
+    const calls: unknown[][] = [];
+    const context = { sampleRate: 48_000 };
+    const facade = emscriptenRuntimeFacade({
+      _synth_browser_abi_version: () => 2,
+      _synth_browser_ui_protocol_version: () => 1,
+      _synth_browser_runtime_config_version: () => 1,
+      emscriptenRegisterAudioObject(received: unknown) { calls.push(["register", received === context]); return 73; },
+      _synth_browser_start_audio_worklet(handle: number, contextHandle: number) {
+        calls.push(["start", handle, contextHandle]);
+        return 0;
+      },
+    } as any);
+    facade.startAudioWorklet(41);
+    facade.startAudioWorklet(41, context);
+    return calls;
+  });
+
+  expect(result).toEqual([
+    ["start", 41, 0],
+    ["register", true],
+    ["start", 41, 73],
+  ]);
+});
+
+test("rejects modules missing context registration or native startup support", async ({ page }) => {
+  await blockProductAutoBoot(page);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+
+  const result = await page.evaluate(async () => {
+    const { emscriptenRuntimeFacade } = await (new Function("return import('/dist/src/worker.js')")() as Promise<any>);
+    const failures: string[] = [];
+    for (const omitted of ["register", "start"]) {
+      try {
+        emscriptenRuntimeFacade({
+          _synth_browser_abi_version: () => 2,
+          _synth_browser_ui_protocol_version: () => 1,
+          _synth_browser_runtime_config_version: () => 1,
+          emscriptenRegisterAudioObject: omitted === "register" ? undefined : () => 1,
+          _synth_browser_start_audio_worklet: omitted === "start" ? undefined : () => 0,
+        } as any);
+      } catch (error) {
+        failures.push((error as Error).message);
+      }
+    }
+    return failures;
+  });
+
+  expect(result).toEqual([
+    expect.stringMatching(/context registration/i),
+    expect.stringMatching(/native AudioWorklet startup/i),
+  ]);
 });
 
 test("rejects incompatible modules before creation or persistence setup", async ({ page }) => {
@@ -103,7 +171,8 @@ test("rejects incompatible modules before creation or persistence setup", async 
     const fields = ["abiVersion", "uiProtocolVersion", "runtimeConfigVersion"];
     return await Promise.all(fields.map(async (field) => {
       const calls: string[] = [];
-      const versions = { abiVersion: 1, uiProtocolVersion: 1, runtimeConfigVersion: 1, [field]: 2 };
+      const supported = { abiVersion: 2, uiProtocolVersion: 1, runtimeConfigVersion: 1 };
+      const versions = { ...supported, [field]: supported[field as keyof typeof supported] === 2 ? 1 : 2 };
       const worker = new BrowserRuntimeWorker(
         async () => ({
           ...versions,
@@ -124,7 +193,7 @@ test("rejects incompatible modules before creation or persistence setup", async 
   for (const result of results) {
     expect(result.loaded).toEqual({
       type: "error",
-      error: expect.stringMatching(new RegExp(`${result.field}.*required 2.*supported 1|${result.field}.*supported 1.*received 2`, "i")),
+      error: expect.stringMatching(new RegExp(`${result.field}.*incompatible|${result.field}.*mismatch`, "i")),
     });
     expect(result.created).toEqual({ type: "error", error: "runtime module is not loaded" });
     expect(result.calls).toEqual([]);
@@ -142,11 +211,12 @@ test("main bootstrap composes runtime, UI, audio channels, and actions generical
   const result = await page.evaluate(async (bytes) => {
     const { installSynthBrowserApp } = await (new Function("return import('/dist/src/main.js')")() as Promise<any>);
     const calls: Array<[string, ...unknown[]]> = [];
+    let audioStarted = false;
     const app = await installSynthBrowserApp(document.querySelector("#synth-root")!, {
       module: { entryUrl: "blob:test-app", locateFile: {}, mainScriptUrlOrBlob: "blob:test-app" },
       frameIntervalMs: 100000,
       runtimeModuleLoader: async () => ({
-        abiVersion: 1,
+        abiVersion: 2,
         uiProtocolVersion: 1,
         runtimeConfigVersion: 1,
         filesystem: {
@@ -160,11 +230,8 @@ test("main bootstrap composes runtime, UI, audio channels, and actions generical
         initialize(handle: number, identity: unknown) { calls.push(["initialize", handle, identity]); return 0; },
         prepare(handle: number, sampleRate: number, blockSize: number) { calls.push(["prepare", handle, sampleRate, blockSize]); return 0; },
         process() { return 0; },
-        startAudioWorklet(handle: number) { calls.push(["startAudioWorklet", handle]); return 0; },
-        renderAudio(_handle: number, channels: number, frames: number) {
-          calls.push(["renderAudio", channels, frames]);
-          return { status: 0, outputs: [new Float32Array(frames).fill(0.125)] };
-        },
+        startAudioWorklet(handle: number, context?: AudioContext) { calls.push(["startAudioWorklet", handle, context ? "supplied" : "direct"]); audioStarted = true; return 0; },
+        audioWorkletStats() { return { blocks: audioStarted ? 1 : 0, peakMicrounits: 125_000, deadlineMicrounits: 1 }; },
         messageTick() { return 0; },
         buildUiFrame(handle: number) { calls.push(["buildUiFrame", handle]); return Uint8Array.from(bytes).buffer; },
         dispatchAction(handle: number, name: string, value: string) { calls.push(["dispatchAction", handle, name, value]); return 0; },
@@ -194,9 +261,9 @@ test("main bootstrap composes runtime, UI, audio channels, and actions generical
   expect(result.text).toBe("Booted");
   expect(result.status).toMatch(/audio:online; midi:(online|offline)/);
   expect(result.calls).toContainEqual(["audioOutputChannels", 11]);
-  expect(result.calls).toContainEqual(["startAudioWorklet", 11]);
+  expect(result.calls).toContainEqual(["startAudioWorklet", 11, "direct"]);
   expect(result.calls).not.toContainEqual(["prepare", 11, 48000, 128]);
-  expect(result.calls).not.toContainEqual(["renderAudio", 1, 128]);
+  expect(result.calls.some((call) => call[0] === "renderAudio")).toBe(false);
   expect(result.calls).toContainEqual(["dispatchAction", 11, "generic.boot", "pressed"]);
   expect(result.calls).toContainEqual(["destroy", 11]);
 });
@@ -246,7 +313,7 @@ test("direct runtime installation supersedes delayed launcher auto-boot across f
       category: "Instrument",
       buildId: "portable-app-build-1",
       browser: {
-        abiVersion: 1,
+        abiVersion: 2,
         uiProtocolVersion: 1,
         runtimeConfigVersion: 1,
         entry: "packages/portable-app/portable-app-build-1/app.js",
@@ -282,7 +349,7 @@ test("production bootstrap discovers catalogs without loading an application mod
         category: "Instrument",
         buildId: "portable-app-build-1",
         browser: {
-          abiVersion: 1,
+          abiVersion: 2,
           uiProtocolVersion: 1,
           runtimeConfigVersion: 1,
           entry: "packages/portable-app/portable-app-build-1/app.js",

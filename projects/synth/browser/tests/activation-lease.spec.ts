@@ -11,7 +11,7 @@ const launcherApp = {
   category: "Instrument",
   buildId: "portable-app-build-1",
   browser: {
-    abiVersion: 1,
+    abiVersion: 2,
     uiProtocolVersion: 1,
     runtimeConfigVersion: 1,
     entry: "packages/portable-app/portable-app-build-1/app.js",
@@ -231,7 +231,7 @@ test("launcher acquires once before package work and forwards one materialized p
   expect(result.events).toEqual(["lease:acquire", "package:begin", "package:ready", "runtime:install"]);
   expect(result.moduleIsMaterialized).toBe(true);
   expect(result.leasePresent).toBe(true);
-  expect(result.versions).toEqual({ abiVersion: 1, uiProtocolVersion: 1, runtimeConfigVersion: 1 });
+  expect(result.versions).toEqual({ abiVersion: 2, uiProtocolVersion: 1, runtimeConfigVersion: 1 });
   expect(result.launcherPresent).toBe(true);
 });
 
@@ -342,7 +342,8 @@ test("successful leased app unload is idempotent and releases one context, MIDI 
     const { ActivationLease } = await (new Function("return import('/dist/src/activation.js')")() as Promise<any>);
     const counters = {
       contexts: 0, resumes: 0, contextCloses: 0, midiRequests: 0, portCloses: 0,
-      runtimeStarts: 0, runtimeTerminates: 0, nodeConnects: 0, nodeDisconnects: 0, packageDisposals: 0,
+      runtimeStarts: 0, nativeStarts: 0, runtimeTerminates: 0, ringCommands: 0,
+      fallbackNodes: 0, packageDisposals: 0,
     };
     const context = {
       sampleRate: 48_000,
@@ -368,13 +369,18 @@ test("successful leased app unload is idempotent and releases one context, MIDI 
     const runtime = {
       async request(command: { type: string }) {
         if (command.type === "create") { counters.runtimeStarts += 1; return { type: "created", handle: 1 }; }
+        if (command.type === "configure-audio" || command.type === "render-audio") counters.ringCommands += 1;
         if (command.type === "audio-config") return { type: "audio-config", channels: 2 };
         if (command.type === "build-ui-frame") return { type: "ui-frame", frame: bytes };
         if (command.type === "midi-endpoints") return { type: "midi-actions", actions: [] };
         if (command.type === "drain-midi-output") return { type: "midi-output" };
         return { type: "ok" };
       },
-      async startAudioWorklet() { counters.runtimeStarts += 100; return { started: true }; },
+      async startAudioWorklet(received?: AudioContext) {
+        if (received !== context as unknown as AudioContext) throw new Error("leased context was not passed to native startup");
+        counters.nativeStarts += 1;
+        return { started: true };
+      },
       terminate() { counters.runtimeTerminates += 1; },
     };
     let packageDisposed = false;
@@ -388,10 +394,7 @@ test("successful leased app unload is idempotent and releases one context, MIDI 
       },
       audioOptions: {
         audioContextFactory: () => { throw new Error("second context"); },
-        audioWorkletNodeFactory: (attachedContext: unknown) => ({
-          connect() { if (attachedContext !== context) throw new Error("wrong context"); counters.nodeConnects += 1; },
-          disconnect() { counters.nodeDisconnects += 1; },
-        }),
+        audioWorkletNodeFactory: () => { counters.fallbackNodes += 1; throw new Error("JavaScript AudioWorklet fallback"); },
       },
     });
     dispatchEvent(new Event("pagehide"));
@@ -408,9 +411,10 @@ test("successful leased app unload is idempotent and releases one context, MIDI 
     midiRequests: 1,
     portCloses: 1,
     runtimeStarts: 1,
+    nativeStarts: 1,
     runtimeTerminates: 1,
-    nodeConnects: 1,
-    nodeDisconnects: 1,
+    ringCommands: 0,
+    fallbackNodes: 0,
     packageDisposals: 1,
   });
 });

@@ -3,6 +3,7 @@ import path from "node:path";
 import process from "node:process";
 
 const forbidden = /\b(MiniApp|miniapp|synth_miniapp|Vco|FilterModule|LfoBank)\b/;
+const forbiddenAudioFallback = /renderTimer|configure-audio|render-audio|SharedRingBuffer|synth-audio-ring-buffer/;
 const roots = ["src", "../include/synth/browser", "cpp"];
 // Concrete application identity is permitted only at native entry and
 // first-party publication boundaries; launcher/runtime implementation remains
@@ -38,6 +39,9 @@ for (const root of roots) {
     for (let index = 0; index < lines.length; index += 1) {
       if (forbidden.test(lines[index])) {
         violations.push(`${path.relative(process.cwd(), file)}:${index + 1}: ${lines[index].trim()}`);
+      }
+      if (forbiddenAudioFallback.test(lines[index])) {
+        violations.push(`${path.relative(process.cwd(), file)}:${index + 1}: forbidden audio fallback: ${lines[index].trim()}`);
       }
     }
   }

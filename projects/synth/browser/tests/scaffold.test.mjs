@@ -24,7 +24,7 @@ test("fake and miniapp builds cannot race the rollback app alias", async () => {
 
 test("emscripten runtime facade exports string and persistence helpers", async () => {
   const makefile = await readBrowserMakefile();
-  assert.match(makefile, /EXPORTED_RUNTIME_METHODS := '\["stringToUTF8","lengthBytesUTF8","FS","IDBFS","HEAPU8","HEAPF32"\]'/);
+  assert.match(makefile, /EXPORTED_RUNTIME_METHODS := '\["stringToUTF8","lengthBytesUTF8","FS","IDBFS","HEAPU8","HEAPF32","emscriptenRegisterAudioObject"\]'/);
   assert.match(makefile, /FILESYSTEM_FLAGS := -lidbfs\.js/);
   assert.equal((makefile.match(/-sEXPORTED_RUNTIME_METHODS=\$\(EXPORTED_RUNTIME_METHODS\)/g) ?? []).length, 2);
 });

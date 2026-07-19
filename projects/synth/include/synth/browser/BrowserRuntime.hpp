@@ -24,6 +24,10 @@
 #include <string>
 #include <utility>
 
+#ifndef __EMSCRIPTEN__
+using EMSCRIPTEN_WEBAUDIO_T = int;
+#endif
+
 namespace synth_browser {
 
 class AudioWorkletDeadlineMeter final {
@@ -149,19 +153,22 @@ public:
         services_.RecordAudioNegotiation(sampleRate, blockSize);
     }
 
-    bool StartAudioWorklet()
+    bool StartAudioWorklet(EMSCRIPTEN_WEBAUDIO_T suppliedContext = 0)
     {
 #ifdef __EMSCRIPTEN__
         RequireStarted();
         if (audioContext_ != 0) {
             return true;
         }
-        EmscriptenWebAudioCreateAttributes attributes{
-            .latencyHint = "interactive",
-            .sampleRate = 0,
-            .renderSizeHint = AUDIO_CONTEXT_RENDER_SIZE_DEFAULT,
-        };
-        audioContext_ = emscripten_create_audio_context(&attributes);
+        audioContext_ = suppliedContext;
+        if (audioContext_ == 0) {
+            EmscriptenWebAudioCreateAttributes attributes{
+                .latencyHint = "interactive",
+                .sampleRate = 0,
+                .renderSizeHint = AUDIO_CONTEXT_RENDER_SIZE_DEFAULT,
+            };
+            audioContext_ = emscripten_create_audio_context(&attributes);
+        }
         if (audioContext_ == 0) {
             return false;
         }
@@ -188,6 +195,7 @@ public:
                                                          this);
         return true;
 #else
+        (void)suppliedContext;
         return false;
 #endif
     }
@@ -470,7 +478,7 @@ public:
     virtual int Prepare(double sampleRate, std::size_t blockSize) = 0;
     virtual int Process(float** outputs, std::size_t outputChannels, std::size_t frames,
                         std::uint64_t timestampMicros) = 0;
-    virtual int StartAudioWorklet() = 0;
+    virtual int StartAudioWorklet(std::uint32_t audioContextHandle) = 0;
     virtual std::uint32_t AudioWorkletBlockCount() const = 0;
     virtual std::uint32_t AudioWorkletPeakMicrounits() const = 0;
     virtual std::uint32_t AudioWorkletDeadlineMicrounits() const = 0;
@@ -520,10 +528,11 @@ public:
         });
     }
 
-    int StartAudioWorklet() override
+    int StartAudioWorklet(std::uint32_t audioContextHandle) override
     {
-        return Invoke([this] {
-            if (!runtime_.StartAudioWorklet()) {
+        return Invoke([this, audioContextHandle] {
+            if (!runtime_.StartAudioWorklet(
+                    static_cast<EMSCRIPTEN_WEBAUDIO_T>(audioContextHandle))) {
                 throw std::runtime_error("browser runtime failed to start AudioWorklet");
             }
         });
@@ -708,7 +717,8 @@ std::size_t synth_browser_audio_output_channels(synth_browser_runtime* runtime);
 int synth_browser_prepare(synth_browser_runtime* runtime, double sampleRate, std::size_t blockSize);
 int synth_browser_process(synth_browser_runtime* runtime, float** outputs, std::size_t outputChannels,
                           std::size_t frames, std::uint64_t timestampMicros);
-int synth_browser_start_audio_worklet(synth_browser_runtime* runtime);
+int synth_browser_start_audio_worklet(synth_browser_runtime* runtime,
+                                      std::uint32_t audioContextHandle);
 std::uint32_t synth_browser_audio_worklet_block_count(synth_browser_runtime* runtime);
 std::uint32_t synth_browser_audio_worklet_peak_microunits(synth_browser_runtime* runtime);
 std::uint32_t synth_browser_audio_worklet_deadline_microunits(synth_browser_runtime* runtime);

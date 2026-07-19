@@ -1,74 +1,13 @@
 export const COMMAND_BUFFER_MAGIC = "SBCB";
-export const SUPPORTED_BROWSER_ABI_VERSION = 1;
+export const SUPPORTED_BROWSER_ABI_VERSION = 2;
 export const SUPPORTED_UI_PROTOCOL_VERSION = 1;
 export const SUPPORTED_RUNTIME_CONFIG_VERSION = 1;
 export const COMMAND_BUFFER_VERSION = SUPPORTED_UI_PROTOCOL_VERSION;
-
-export const AUDIO_RING_STATE = {
-  readFrame: 0,
-  writeFrame: 1,
-  availableFrames: 2,
-  underflowCount: 3,
-  shutdown: 4,
-  wordCount: 5,
-} as const;
-
-export type AudioBridgeDescriptor = {
-  channels: number;
-  capacityFrames: number;
-  samples: SharedArrayBuffer;
-  state: SharedArrayBuffer;
-};
 
 export type MidiEndpoint = { identifier: string; name: string; kind: "input" | "output" };
 export type MidiActionType = "open-input" | "open-output" | "close-input" | "close-output" | "update-input-ref" | "update-output-ref" | "resync";
 export type MidiAction = { type: MidiActionType; controllerIx: number; identifier?: string; name?: string };
 export type MidiOutput = { controllerIx: number; bytes: number[] };
-
-export class SharedRingBuffer {
-  private readonly sampleData: Float32Array;
-  private readonly stateWords: Int32Array;
-
-  private constructor(private readonly bridge: AudioBridgeDescriptor) {
-    if (!Number.isInteger(bridge.channels) || bridge.channels <= 0) throw new Error("audio bridge requires output channels");
-    if (!Number.isInteger(bridge.capacityFrames) || bridge.capacityFrames <= 0) throw new Error("audio bridge requires capacity");
-    if (bridge.samples.byteLength !== bridge.channels * bridge.capacityFrames * Float32Array.BYTES_PER_ELEMENT)
-      throw new Error("audio bridge sample storage size is invalid");
-    if (bridge.state.byteLength < AUDIO_RING_STATE.wordCount * Int32Array.BYTES_PER_ELEMENT)
-      throw new Error("audio bridge state storage size is invalid");
-    this.sampleData = new Float32Array(bridge.samples);
-    this.stateWords = new Int32Array(bridge.state);
-  }
-
-  static create(channels: number, capacityFrames: number): SharedRingBuffer {
-    return new SharedRingBuffer({
-      channels,
-      capacityFrames,
-      samples: new SharedArrayBuffer(channels * capacityFrames * Float32Array.BYTES_PER_ELEMENT),
-      state: new SharedArrayBuffer(AUDIO_RING_STATE.wordCount * Int32Array.BYTES_PER_ELEMENT),
-    });
-  }
-
-  static fromDescriptor(bridge: AudioBridgeDescriptor): SharedRingBuffer { return new SharedRingBuffer(bridge); }
-  descriptor(): AudioBridgeDescriptor { return this.bridge; }
-
-  write(channels: readonly Float32Array[], frames: number): number {
-    if (Atomics.load(this.stateWords, AUDIO_RING_STATE.shutdown) !== 0) return 0;
-    const frameCount = Math.max(0, Math.min(Math.floor(frames), this.bridge.capacityFrames));
-    const available = Atomics.load(this.stateWords, AUDIO_RING_STATE.availableFrames);
-    const count = Math.min(frameCount, this.bridge.capacityFrames - available);
-    const writeFrame = Atomics.load(this.stateWords, AUDIO_RING_STATE.writeFrame);
-    for (let channel = 0; channel < this.bridge.channels; channel++) {
-      const source = channels[channel];
-      const base = channel * this.bridge.capacityFrames;
-      for (let frame = 0; frame < count; frame++)
-        this.sampleData[base + ((writeFrame + frame) % this.bridge.capacityFrames)] = source?.[frame] ?? 0;
-    }
-    Atomics.store(this.stateWords, AUDIO_RING_STATE.writeFrame, (writeFrame + count) % this.bridge.capacityFrames);
-    Atomics.add(this.stateWords, AUDIO_RING_STATE.availableFrames, count);
-    return count;
-  }
-}
 
 export enum NodeKind {
   Root,

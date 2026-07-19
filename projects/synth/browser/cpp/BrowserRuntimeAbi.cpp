@@ -13,7 +13,7 @@ synth_browser::RuntimeAbi* RuntimeFor(synth_browser_runtime* handle)
 
 extern "C" std::uint32_t synth_browser_abi_version()
 {
-    return 1;
+    return 2;
 }
 
 extern "C" std::uint32_t synth_browser_ui_protocol_version()
@@ -56,9 +56,12 @@ extern "C" int synth_browser_process(synth_browser_runtime* runtime, float** out
                                                                                timestampMicros);
 }
 
-extern "C" int synth_browser_start_audio_worklet(synth_browser_runtime* runtime)
+extern "C" int synth_browser_start_audio_worklet(synth_browser_runtime* runtime,
+                                                  std::uint32_t audioContextHandle)
 {
-    return RuntimeFor(runtime) == nullptr ? -1 : RuntimeFor(runtime)->StartAudioWorklet();
+    return RuntimeFor(runtime) == nullptr
+               ? -1
+               : RuntimeFor(runtime)->StartAudioWorklet(audioContextHandle);
 }
 
 extern "C" std::uint32_t synth_browser_audio_worklet_block_count(synth_browser_runtime* runtime)

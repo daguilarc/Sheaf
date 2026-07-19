@@ -42,7 +42,7 @@ async function builtMiniappCatalogApp() {
     category: "Instrument",
     buildId,
     browser: {
-      abiVersion: 1,
+      abiVersion: 2,
       uiProtocolVersion: 1,
       runtimeConfigVersion: 1,
       entry: `${packageRoot}/miniapp.js`,
@@ -81,6 +81,7 @@ async function installRealMiniapp(page: Page, options: { fakeMidi?: boolean; fra
     root.dataset.synthAuto = "false";
     root.dataset.synthLauncher = "false";
     const main = await (new Function("return import('/dist/src/main.js?task4-miniapp')")() as Promise<any>);
+    const { ActivationLease } = await (new Function("return import('/dist/src/activation.js')")() as Promise<any>);
     const { decodeCommandBuffer } = await (new Function("return import('/dist/src/protocol.js')")() as Promise<any>);
     const { materializePackage } = await (new Function("return import('/dist/src/package-loader.js')")() as Promise<any>);
     const resources = {
@@ -91,10 +92,9 @@ async function installRealMiniapp(page: Page, options: { fakeMidi?: boolean; fra
       portCloses: 0,
       inputBindings: 0,
       runtimeClients: 0,
-      nodeConnects: 0,
-      nodeDisconnects: 0,
       materializations: 0,
       packageDisposals: 0,
+      teardown: [] as string[],
     };
     class InputPort {
         readonly type = "input";
@@ -131,7 +131,7 @@ async function installRealMiniapp(page: Page, options: { fakeMidi?: boolean; fra
       },
     });
     (window as any).__task4MidiPorts = { input, output };
-    const client = main.createWorkerRuntimeClient();
+    const client = main.createDirectRuntimeClient();
     const observations = {
       commands: [] as Array<{ type: string; name?: string; value?: string }>,
       statuses: [] as Array<{ type: string; status?: string }>,
@@ -151,23 +151,39 @@ async function installRealMiniapp(page: Page, options: { fakeMidi?: boolean; fra
         observations.statuses.push(response);
         handler(response);
       }),
-      terminate: () => {
+      startAudioWorklet: (context?: AudioContext) => client.startAudioWorklet!(context),
+      terminate: async () => {
+        resources.teardown.push("runtime:destroy:begin");
+        await client.terminate?.();
+        resources.teardown.push("runtime:destroy:end");
         observations.terminated = true;
-        client.terminate?.();
       },
     };
-    let leasedContext: TestAudioContext | undefined;
-    class TestAudioContext {
-      readonly sampleRate = 48_000;
-      readonly destination = {};
-      readonly audioWorklet = { addModule: async () => {} };
-      constructor() { resources.contexts += 1; leasedContext = this; }
-      async resume() { resources.resumes += 1; }
-      async close() { resources.closes += 1; }
-    }
-    Object.defineProperty(globalThis, "AudioContext", { configurable: true, value: TestAudioContext });
+    let leasedContext: AudioContext | undefined;
     await main.installSheafPatchLauncher(root, {
       client: { loadSources: async () => ({ apps: [application], diagnostics: [], duplicateDiagnostics: [] }) },
+      activationLeaseFactory: () => {
+        if (leasedContext) throw new Error("second AudioContext");
+        const context = new AudioContext();
+        leasedContext = context;
+        resources.contexts += 1;
+        const resume = context.resume.bind(context);
+        const close = context.close.bind(context);
+        context.resume = async () => { resources.resumes += 1; await resume(); };
+        context.close = async () => {
+          resources.closes += 1;
+          resources.teardown.push("context:close");
+          await close();
+        };
+        return ActivationLease.acquire({
+          audioContextFactory: () => context,
+          requestMIDIAccess: async (request: unknown) => {
+            resources.midiRequests += 1;
+            (window as any).__task4MidiRequest = request;
+            return access;
+          },
+        });
+      },
       runtimeClientFactory: () => { resources.runtimeClients += 1; return runtimeClient; },
       materializePackage: async (app: unknown) => {
         resources.materializations += 1;
@@ -179,26 +195,34 @@ async function installRealMiniapp(page: Page, options: { fakeMidi?: boolean; fra
             if (disposed) return;
             disposed = true;
             resources.packageDisposals += 1;
+            resources.teardown.push("package:dispose");
             packageLease.dispose();
           },
         };
       },
       frameIntervalMs: frameIntervalMs ?? 60_000,
-      audioOptions: {
-        audioContextFactory: () => { throw new Error("second AudioContext"); },
-        audioWorkletNodeFactory: (context: unknown) => ({
-          connect() {
-            if (context !== leasedContext) throw new Error("audio attached to wrong context");
-            resources.nodeConnects += 1;
-          },
-          disconnect() { resources.nodeDisconnects += 1; },
-        }),
-      },
     });
-    (window as any).__task4Miniapp = { observations, resources, expectedPortCloses: fakeMidi ? 2 : 0 };
+    (window as any).__task4Miniapp = {
+      observations,
+      resources,
+      expectedPortCloses: fakeMidi ? 2 : 0,
+      leasedContext,
+      runtimeClient,
+    };
   }, { application, ...options });
   await page.getByRole("button", { name: /launch mini app/i }).click();
   await expect(page.locator('[data-synth-node-id="miniapp.root"]')).toBeVisible();
+  await page.evaluate(async () => {
+    const state = (window as any).__task4Miniapp;
+    const first = await state.runtimeClient.request({ type: "audio-worklet-stats" });
+    if (first.type !== "audio-worklet-stats") throw new Error(first.error ?? "missing initial AudioWorklet stats");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const second = await state.runtimeClient.request({ type: "audio-worklet-stats" });
+    if (second.type !== "audio-worklet-stats") throw new Error(second.error ?? "missing follow-up AudioWorklet stats");
+    if (!(second.blocks > first.blocks) || !Number.isFinite(second.deadlineMicrounits))
+      throw new Error(`native AudioWorklet callback did not advance: ${JSON.stringify({ first, second })}`);
+    state.callbackStats = { first, second };
+  });
 }
 
 async function stopRealMiniapp(page: Page): Promise<void> {
@@ -206,12 +230,17 @@ async function stopRealMiniapp(page: Page): Promise<void> {
     const state = (window as any).__task4Miniapp;
     if (!state) return;
     dispatchEvent(new Event("pagehide"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    const deadline = performance.now() + 5_000;
+    while (performance.now() < deadline &&
+           (!state.observations.terminated || state.resources.closes !== 1 || state.resources.packageDisposals !== 1))
+      await new Promise((resolve) => setTimeout(resolve, 10));
     if (!state.observations.terminated) throw new Error("SynthBrowserApp.stop() did not terminate the runtime client");
-    if (state.resources.closes !== 1 || state.resources.nodeDisconnects !== 1 || state.resources.packageDisposals !== 1)
+    if (state.resources.closes !== 1 || state.resources.packageDisposals !== 1)
       throw new Error(`runtime resources were not released exactly once: ${JSON.stringify(state.resources)}`);
     if (state.resources.portCloses !== state.expectedPortCloses)
       throw new Error(`MIDI ports were not released exactly once: ${JSON.stringify(state.resources)}`);
+    if (state.resources.teardown.join(",") !== "runtime:destroy:begin,runtime:destroy:end,context:close,package:dispose")
+      throw new Error(`runtime teardown did not precede activation/package disposal: ${JSON.stringify(state.resources.teardown)}`);
     delete (window as any).__task4Miniapp;
   });
 }
@@ -272,6 +301,7 @@ test("catalog-selected remote miniapp materializes its real worker bootstrap and
       blobFetches: [] as string[],
       audioWorkletModules: [] as string[],
       audioWorkletNodes: 0,
+      audioWorkletNodeNames: [] as string[],
     };
 
     const nativeFetch = globalThis.fetch.bind(globalThis);
@@ -296,6 +326,7 @@ test("catalog-selected remote miniapp materializes its real worker bootstrap and
       value: new Proxy(NativeAudioWorkletNode, {
         construct(target, argumentsList) {
           observations.audioWorkletNodes += 1;
+          observations.audioWorkletNodeNames.push(String(argumentsList[1]));
           return Reflect.construct(target, argumentsList);
         },
       }),
@@ -374,8 +405,11 @@ test("catalog-selected remote miniapp materializes its real worker bootstrap and
   expect(observations.loadMainScriptUrlOrBlob).toBe(observations.mainScriptUrlOrBlob);
   expect(observations.workerUrls).toContain(observations.mainScriptUrlOrBlob);
   expect(observations.blobFetches).toContain(observations.wasmMapping);
-  expect(observations.audioWorkletModules.some((url: string) => url.endsWith("/dist/src/audio-worklet.js"))).toBe(true);
-  expect(observations.audioWorkletNodes).toBe(1);
+  expect(observations.audioWorkletModules).toHaveLength(1);
+  expect(observations.audioWorkletModules[0]).not.toMatch(/\/dist\/src\/audio-worklet\.js$/);
+  expect(observations.audioWorkletNodes).toBeGreaterThanOrEqual(1);
+  expect(observations.audioWorkletNodeNames).toContain("sheaf-synth-audio");
+  expect(observations.audioWorkletNodeNames).not.toContain("synth-audio-ring-buffer");
   expect(remoteRequests.filter((pathname) => pathname.includes("/packages/"))).toEqual(expect.arrayContaining([
     expect.stringMatching(/^\/dist\/site\/catalogs\/sheaf\/packages\/miniapp\/[0-9a-f]{64}\/miniapp\.js$/),
     expect.stringMatching(/^\/dist\/site\/catalogs\/sheaf\/packages\/miniapp\/[0-9a-f]{64}\/miniapp\.wasm$/),
@@ -399,19 +433,22 @@ test("real miniapp WASM renders the complete shared shell and portable pages", a
   await expect(page.locator('[data-synth-node-id="miniapp.lfo.scope"] canvas')).toBeVisible();
   await expect(page.locator('[data-synth-node-id="miniapp.bank.vco"]')).toBeVisible();
   await expect(page.locator('[data-synth-node-id="miniapp.scene.blend"]')).toBeVisible();
-  expect(await page.evaluate(() => (window as any).__task4Miniapp.resources)).toEqual({
+  const resources = await page.evaluate(() => (window as any).__task4Miniapp.resources);
+  expect(resources).toEqual(expect.objectContaining({
     contexts: 1,
-    resumes: 1,
     closes: 0,
     midiRequests: 1,
     portCloses: 0,
     inputBindings: 0,
     runtimeClients: 1,
-    nodeConnects: 1,
-    nodeDisconnects: 0,
     materializations: 1,
     packageDisposals: 0,
-  });
+    teardown: [],
+  }));
+  expect(resources.resumes).toBeGreaterThanOrEqual(1);
+  const callbackStats = await page.evaluate(() => (window as any).__task4Miniapp.callbackStats);
+  expect(callbackStats.second.blocks).toBeGreaterThan(callbackStats.first.blocks);
+  expect(Number.isFinite(callbackStats.second.deadlineMicrounits)).toBe(true);
   expect(await page.evaluate(() =>
     (window as any).__task4Miniapp.observations.commands.filter((command: { type: string }) => command.type === "load").length,
   )).toBe(1);

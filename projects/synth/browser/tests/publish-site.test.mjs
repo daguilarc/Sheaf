@@ -207,7 +207,6 @@ async function createPublishFixture(name) {
     "public/synth-browser.css": "body { margin: 0; }\n",
     "dist/src/main.js": "export const launcher = true;\n",
     "dist/src/activation.js": "export const activation = true;\n",
-    "dist/src/audio-worklet.js": "export const audioWorklet = true;\n",
     "dist/src/audio.js": "export const audio = true;\n",
     "dist/src/catalog-client.js": "export const catalogClient = true;\n",
     "dist/src/catalog.js": "export const catalog = true;\n",

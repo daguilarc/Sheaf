@@ -2,9 +2,8 @@ import {
   SUPPORTED_BROWSER_ABI_VERSION,
   SUPPORTED_RUNTIME_CONFIG_VERSION,
   SUPPORTED_UI_PROTOCOL_VERSION,
-  SharedRingBuffer,
 } from "./protocol.js";
-import type { AudioBridgeDescriptor, MidiAction, MidiEndpoint, MidiOutput } from "./protocol.js";
+import type { MidiAction, MidiEndpoint, MidiOutput } from "./protocol.js";
 import { validateBrowserRuntimeIdentity } from "./catalog.js";
 import type { BrowserRuntimeIdentity } from "./catalog.js";
 import { BROWSER_PERSISTENCE_STATUS_PATH, BrowserPersistence } from "./persistence.js";
@@ -18,9 +17,6 @@ export type RuntimeCommand =
   | { type: "audio-config" }
   | { type: "prepare"; sampleRate: number; blockSize: number }
   | { type: "process"; frames: number; timestampMicros: number }
-  | { type: "configure-audio"; sampleRate: number; blockSize: number; bridge: AudioBridgeDescriptor }
-  | { type: "render-audio"; timestampMicros: number }
-  | { type: "start-audio-worklet" }
   | { type: "audio-worklet-stats" }
   | { type: "message-tick"; timestampMicros: number }
   | { type: "build-ui-frame" }
@@ -56,8 +52,7 @@ export interface RuntimeModuleFacade {
   initialize(handle: number, identity: BrowserRuntimeIdentity): number;
   prepare(handle: number, sampleRate: number, blockSize: number): number;
   process(handle: number, frames: number, timestampMicros: number): number;
-  renderAudio?(handle: number, channels: number, frames: number, timestampMicros: number): { status: number; outputs: Float32Array[] };
-  startAudioWorklet?(handle: number): number;
+  startAudioWorklet?(handle: number, context?: AudioContext): number;
   audioWorkletStats?(handle: number): { blocks: number; peakMicrounits: number; deadlineMicrounits: number };
   messageTick(handle: number, timestampMicros: number): number;
   buildUiFrame(handle: number): ArrayBuffer;
@@ -112,6 +107,7 @@ type EmscriptenModule = {
   _free(pointer: number): void;
   lengthBytesUTF8(value: string): number;
   stringToUTF8(value: string, pointer: number, maxBytesToWrite: number): void;
+  emscriptenRegisterAudioObject?(context: AudioContext): number;
   _synth_browser_abi_version(): number;
   _synth_browser_ui_protocol_version(): number;
   _synth_browser_runtime_config_version(): number;
@@ -125,7 +121,7 @@ type EmscriptenModule = {
   ): number;
   _synth_browser_prepare(handle: number, sampleRate: number, blockSize: number): number;
   _synth_browser_process(handle: number, outputs: number, outputChannels: number, frames: number, timestampMicros: bigint): number;
-  _synth_browser_start_audio_worklet?(handle: number): number;
+  _synth_browser_start_audio_worklet?(handle: number, audioContextHandle: number): number;
   _synth_browser_audio_worklet_block_count?(handle: number): number;
   _synth_browser_audio_worklet_peak_microunits?(handle: number): number;
   _synth_browser_audio_worklet_deadline_microunits?(handle: number): number;
@@ -181,6 +177,10 @@ function decodeUtf8(module: EmscriptenModule, pointer: number, size: number): st
 }
 
 export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModuleFacade {
+  if (typeof module.emscriptenRegisterAudioObject !== "function")
+    throw new Error("runtime module does not expose AudioContext registration");
+  if (typeof module._synth_browser_start_audio_worklet !== "function")
+    throw new Error("runtime module does not expose native AudioWorklet startup");
   return {
     abiVersion: module._synth_browser_abi_version(),
     uiProtocolVersion: module._synth_browser_ui_protocol_version(),
@@ -192,9 +192,12 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
         module._synth_browser_initialize(handle, publisherId, appId, identity.runtimeConfigVersion))),
     prepare: (handle, sampleRate, blockSize) => module._synth_browser_prepare(handle, sampleRate, blockSize),
     process: (handle, frames, timestampMicros) => module._synth_browser_process(handle, 0, 0, frames, BigInt(timestampMicros)),
-    startAudioWorklet: module._synth_browser_start_audio_worklet
-      ? (handle) => module._synth_browser_start_audio_worklet!(handle)
-      : undefined,
+    startAudioWorklet: (handle, context) => {
+      const audioContextHandle = context === undefined ? 0 : module.emscriptenRegisterAudioObject!(context);
+      if (!Number.isInteger(audioContextHandle) || audioContextHandle < 0 || (context !== undefined && audioContextHandle === 0))
+        throw new Error("runtime module failed to register AudioContext");
+      return module._synth_browser_start_audio_worklet!(handle, audioContextHandle);
+    },
     audioWorkletStats: module._synth_browser_audio_worklet_block_count &&
       module._synth_browser_audio_worklet_peak_microunits &&
       module._synth_browser_audio_worklet_deadline_microunits
@@ -204,19 +207,6 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
         deadlineMicrounits: module._synth_browser_audio_worklet_deadline_microunits!(handle),
       })
       : undefined,
-    renderAudio: (handle, channels, frames, timestampMicros) => {
-      const outputPointers = module._malloc(channels * Uint32Array.BYTES_PER_ELEMENT);
-      const channelPointers = Array.from({ length: channels }, () => module._malloc(frames * Float32Array.BYTES_PER_ELEMENT));
-      try {
-        const pointers = new DataView(module.HEAPU8.buffer);
-        channelPointers.forEach((pointer, index) => pointers.setUint32(outputPointers + index * Uint32Array.BYTES_PER_ELEMENT, pointer, true));
-        const status = module._synth_browser_process(handle, outputPointers, channels, frames, BigInt(timestampMicros));
-        return { status, outputs: channelPointers.map((pointer) => module.HEAPF32.slice(pointer / Float32Array.BYTES_PER_ELEMENT, pointer / Float32Array.BYTES_PER_ELEMENT + frames)) };
-      } finally {
-        channelPointers.forEach((pointer) => module._free(pointer));
-        module._free(outputPointers);
-      }
-    },
     messageTick: (handle, timestampMicros) => module._synth_browser_message_tick(handle, BigInt(timestampMicros)),
     buildUiFrame: (handle) => {
       const sizePointer = module._malloc(4);
@@ -331,8 +321,6 @@ export async function loadEmscriptenRuntime(
 export class BrowserRuntimeWorker {
   private module: RuntimeModuleFacade | undefined;
   private handleValue: number | undefined;
-  private audioBridge: SharedRingBuffer | undefined;
-  private audioBlockSize: number | undefined;
   private persistence: BrowserPersistence | undefined;
   private destroyed = false;
 
@@ -341,6 +329,30 @@ export class BrowserRuntimeWorker {
     private readonly createPersistence: BrowserPersistenceFactory | undefined = undefined,
     private readonly emitStatus: (response: RuntimeResponse) => void = () => {},
   ) {}
+
+  async startAudioWorklet(context?: AudioContext): Promise<RuntimeResponse> {
+    try {
+      if (this.destroyed) throw new Error("runtime is destroyed");
+      const module = this.requireModule();
+      if (!module.startAudioWorklet)
+        throw new Error("runtime does not expose native AudioWorklet startup");
+      if (!module.audioWorkletStats) throw new Error("runtime does not expose AudioWorklet stats");
+      const handle = this.requireHandle();
+      const initialBlocks = module.audioWorkletStats(handle).blocks;
+      if (module.startAudioWorklet(handle, context) !== 0)
+        throw new Error("runtime operation failed");
+      const deadline = performance.now() + 5_000;
+      while (performance.now() < deadline) {
+        const stats = module.audioWorkletStats(handle);
+        if (stats.blocks > initialBlocks && Number.isFinite(stats.deadlineMicrounits))
+          return { type: "ok" };
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error("native AudioWorklet callback did not make progress");
+    } catch (error) {
+      return { type: "error", error: error instanceof Error ? error.message : "runtime operation failed" };
+    }
+  }
 
   async handle(command: RuntimeCommand): Promise<RuntimeResponse> {
     try {
@@ -382,27 +394,6 @@ export class BrowserRuntimeWorker {
           return this.call((module, handle) => module.prepare(handle, command.sampleRate, command.blockSize));
         case "process":
           return this.call((module, handle) => module.process(handle, command.frames, command.timestampMicros));
-        case "configure-audio":
-          this.audioBridge = SharedRingBuffer.fromDescriptor(command.bridge);
-          this.audioBlockSize = command.blockSize;
-          return this.call((module, handle) => module.prepare(handle, command.sampleRate, command.blockSize));
-        case "render-audio": {
-          const bridge = this.audioBridge;
-          const frames = this.audioBlockSize;
-          if (!bridge || !frames) throw new Error("audio bridge is not configured");
-          const module = this.requireModule();
-          const handle = this.requireHandle();
-          if (!module.renderAudio) throw new Error("runtime does not support audio output buffers");
-          const rendered = module.renderAudio(handle, bridge.descriptor().channels, frames, command.timestampMicros);
-          if (rendered.status !== 0) throw new Error("runtime operation failed");
-          bridge.write(rendered.outputs, frames);
-          return { type: "ok" };
-        }
-        case "start-audio-worklet": {
-          const module = this.requireModule();
-          if (!module.startAudioWorklet) throw new Error("runtime does not support AudioWorklet callback");
-          return this.call((module, handle) => module.startAudioWorklet!(handle));
-        }
         case "audio-worklet-stats": {
           const module = this.requireModule();
           if (!module.audioWorkletStats) throw new Error("runtime does not expose AudioWorklet stats");

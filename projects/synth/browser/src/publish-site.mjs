@@ -9,7 +9,6 @@ import { parseCatalog, parseCatalogSources } from "./catalog.js";
 
 export const browserRuntimeModules = Object.freeze([
   "activation.js",
-  "audio-worklet.js",
   "audio.js",
   "catalog-client.js",
   "catalog.js",

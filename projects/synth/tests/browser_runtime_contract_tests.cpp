@@ -11,6 +11,7 @@
 #endif
 
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -525,12 +526,78 @@ void TestAudioWorkletDeadlineMeterAveragesQuantizedTimerSamples()
 
 void TestBrowserContractVersionsAreReadableBeforeRuntimeCreation()
 {
-    Require(synth_browser_abi_version() == 1,
+    Require(synth_browser_abi_version() == 2,
             "browser ABI version is available before runtime creation");
     Require(synth_browser_ui_protocol_version() == 1,
             "browser UI protocol version is available before runtime creation");
     Require(synth_browser_runtime_config_version() == 1,
             "browser runtime-config version is available before runtime creation");
+}
+
+class AudioContextHandleCapture final : public synth_browser::RuntimeAbi
+{
+public:
+    std::size_t AudioOutputChannels() const override { return 0; }
+    int Initialize(const char*, const char*, std::uint32_t) override { return 0; }
+    int Prepare(double, std::size_t) override { return 0; }
+    int Process(float**, std::size_t, std::size_t, std::uint64_t) override { return 0; }
+    int StartAudioWorklet(std::uint32_t audioContextHandle) override
+    {
+        observedHandles.push_back(audioContextHandle);
+        return 0;
+    }
+    std::uint32_t AudioWorkletBlockCount() const override { return 0; }
+    std::uint32_t AudioWorkletPeakMicrounits() const override { return 0; }
+    std::uint32_t AudioWorkletDeadlineMicrounits() const override { return 0; }
+    int MessageTick(std::uint64_t) override { return 0; }
+    const std::uint8_t* BuildUiFrame(std::size_t*) override { return nullptr; }
+    int DispatchAction(const char*, const char*) override { return 0; }
+    bool ConsumePersistenceDirty() override { return false; }
+    int SubmitMidiEndpoints(const synth_browser::MidiEndpointDescriptor*, std::uint32_t) override { return 0; }
+    int DequeueMidiAction(synth_browser::MidiActionDescriptor*) override { return 0; }
+    int DeliverMidi(std::uint32_t, const std::uint8_t*, std::uint32_t, std::uint64_t) override { return 0; }
+    const std::uint8_t* DequeueMidiOutput(std::uint32_t*, std::uint32_t*) override { return nullptr; }
+    void Destroy() override {}
+
+    std::vector<std::uint32_t> observedHandles;
+};
+
+void TestBrowserAbiPreservesSuppliedAudioContextHandleAndDirectZero()
+{
+    AudioContextHandleCapture capture;
+    auto* runtime = reinterpret_cast<synth_browser_runtime*>(&capture);
+    Require(synth_browser_start_audio_worklet(runtime, 0) == 0,
+            "direct audio startup reaches the ABI");
+    Require(synth_browser_start_audio_worklet(runtime, 73) == 0,
+            "supplied-context audio startup reaches the ABI");
+    Require(capture.observedHandles == std::vector<std::uint32_t>{0, 73},
+            "browser ABI preserves direct zero and the supplied context handle");
+}
+
+void TestNativeAudioCallbackRemainsTheSoleProcessImplementation()
+{
+    const std::filesystem::path candidates[] = {
+        "projects/synth/include/synth/browser/BrowserRuntime.hpp",
+        "include/synth/browser/BrowserRuntime.hpp",
+    };
+    std::string source;
+    for (const auto& candidate : candidates)
+    {
+        std::ifstream input(candidate);
+        if (input)
+        {
+            source.assign(std::istreambuf_iterator<char>(input),
+                          std::istreambuf_iterator<char>());
+            break;
+        }
+    }
+    Require(!source.empty(), "browser runtime source is available to the contract test");
+    const std::string callback = "static bool ProcessAudioWorklet";
+    const auto first = source.find(callback);
+    Require(first != std::string::npos && source.find(callback, first + callback.size()) == std::string::npos,
+            "ProcessAudioWorklet remains the sole native callback implementation");
+    Require(source.find("runtime->Process(channelPointers.data()", first) != std::string::npos,
+            "ProcessAudioWorklet still delegates DSP to Runtime::Process");
 }
 
 void TestBrowserRuntimeAdapterRejectsIncompatibleRuntimeConfigVersion()
@@ -593,6 +660,8 @@ int main()
     static_assert(!synth_browser::BrowserApplication<MissingSurface>);
     static_assert(!synth::SynthApplication<MissingSurface>);
     TestBrowserContractVersionsAreReadableBeforeRuntimeCreation();
+    TestBrowserAbiPreservesSuppliedAudioContextHandleAndDirectZero();
+    TestNativeAudioCallbackRemainsTheSoleProcessImplementation();
     TestBrowserRuntimeAdapterRejectsIncompatibleRuntimeConfigVersion();
     TestBrowserPersistenceIdentityDerivesSharedAndIsolatedRoots();
     TestBrowserRuntimeUsesSharedFrameAndActionRouting();

@@ -1,208 +1,188 @@
-# Task 1 Report: Catalog Contract and Registry
+# Task 1 Report: Native Browser Audio
 
 ## Result
 
 - Status: `DONE`
-- OpenSpec mapping: `1.1`–`1.4`
-- Commit message: `feat(synth-browser): define catalog and browser ABI contracts` (hash returned to the controller)
-- Required catalog, facade/runtime-core, generic-boundary, and native contract gates pass.
-- OpenSpec checkboxes were not modified; controller review owns acceptance and checkbox updates.
+- Commit message: `fix(synth-browser): restore native callback audio`
+- The browser launcher now uses the Emscripten runtime's native AudioWorklet callback path exclusively.
+- The JavaScript ring-buffer producer/consumer path and launcher-owned worklet module were removed.
+- A supplied activation-lease `AudioContext` is registered module-locally and passed to the native runtime as a WebAudio handle; direct native ownership still uses handle `0`.
+- Audio startup is not considered online until native block progress is observed.
+- OpenSpec checkboxes were not modified.
 - The pre-existing `.superpowers/sdd/progress.md` edit, `projects/synth/browser/package-lock.json`, and `projects/synth/miniapp/` artifacts were preserved and excluded from staging.
+- This report is included in the task commit; its SHA is returned to the controller because a commit cannot contain its own final SHA.
+
+## Pinned Emscripten Adoption Probe
+
+The repository CI pin is Emscripten `6.0.3`. The exact SDK was cloned into `/private/tmp/sheaf-task1-emsdk-603`, installed, and activated before production changes.
+
+Pinned toolchain identity:
+
+```text
+emcc 6.0.3 (283e2d130132859fde6a4e4c87fd254b38127651)
+Emscripten toolchain release SDK: 9074aa...
+emsdk git revision: c68d67a...
+```
+
+The probe inspected the pinned `libwebaudio.js` implementation of `emscriptenRegisterAudioObject`, then compiled a disposable native AudioWorklet callback with the production flags:
+
+```text
+-pthread
+-sUSE_PTHREADS=1
+-sPTHREAD_POOL_SIZE=1
+-sINITIAL_MEMORY=268435456
+-sSTACK_SIZE=16777216
+-sAUDIO_WORKLET=1
+-sWASM_WORKERS=1
+-sMODULARIZE=1
+-sEXPORT_ES6=1
+-sENVIRONMENT=web,worker
+-sWASM_BIGINT
+-sEXPORTED_RUNTIME_METHODS=["emscriptenRegisterAudioObject"]
+```
+
+The first Chromium attempt was blocked by the macOS sandbox's Mach-port restriction. The unchanged probe was rerun outside the sandbox and exited `0`:
+
+```json
+{"registrationCallable":true,"handle":1,"validHandle":true,"accepted":true,"nativeStatus":3,"observedContext":1,"sampleRate":48000,"quantum":128,"blocks":8,"contextState":"running","sameContextHandle":true}
+```
+
+This proved that Emscripten 6.0.3 can register the already-resumed leased context, return a valid module-local handle, start the native callback on that exact context, and advance native DSP blocks. The stop gate therefore passed before implementation.
 
 ## Implementation
 
-### Strict catalog/source contract
+### Native callback ownership
 
-- Added supported schema/browser ABI/UI protocol/runtime-config constants, all version `1`.
-- Added readonly validated source, publisher, package-file, browser-package, app, catalog, duplicate-diagnostic, and registry types.
-- Added `parseCatalogSources(value)` for a nonempty, unique list of absolute HTTPS catalog URLs without credentials or fragments.
-- Added `parseCatalog(value, catalogUrl)` with strict schema-owned keys and required fields at every v1 object level.
-- Enforced the agreed minimal v1 contract:
-  - `catalogVersion`: trimmed, nonempty string, maximum 128 characters.
-  - publisher/app/build IDs: `[a-z0-9]+(?:-[a-z0-9]+)*`.
-  - publisher name and app display name/author/category: trimmed, nonempty strings, maximum 200 characters.
-  - package media types: `text/javascript`, `application/wasm`, or `application/octet-stream`.
-  - SHA-256: exactly 64 lowercase hexadecimal characters.
-  - normalized relative package paths only; absolute, backslash, percent-encoded, query/fragment, empty-segment, dot-segment, and traversal-like forms are rejected before URL resolution.
-  - nonempty app/file inventories, unique local app IDs and file paths, and an entry path naming a declared `text/javascript` file.
-- Resolved validated entry/file URLs only after path validation and against the catalog response URL.
-- Returned recursively frozen records/arrays without mutating input values.
+- Bumped the browser ABI to `2` and changed `synth_browser_start_audio_worklet` to accept a WebAudio context handle.
+- Extended `BrowserRuntime::StartAudioWorklet` to use a nonzero supplied handle or create a runtime-owned context for handle `0`.
+- Preserved `BrowserRuntime::ProcessAudioWorklet` as the sole native DSP callback path.
+- Exported `emscriptenRegisterAudioObject` from both browser build variants.
+- Required the Emscripten facade to expose both context registration and native startup before runtime creation.
+- Registered a supplied `AudioContext` in the loaded module's own JS realm and passed the resulting handle to native code.
 
-### Deterministic registry merge
+### Fail-closed startup and lifecycle
 
-- Added `mergeCatalogs(results)` returning readonly `{ apps, diagnostics }`.
-- Preserved configured-source input order as precedence.
-- Retained the first `<publisher-id>/<app-id>` registration and emitted a frozen `duplicate-app` diagnostic for every later duplicate with accepted/rejected catalog URLs.
-- Sorted final accepted apps by display name and then global ID using deterministic JavaScript code-unit ordering rather than locale collation.
+- Removed `configure-audio`, `render-audio`, and `start-audio-worklet` worker commands, shared ring descriptors, render timers, and the launcher `AudioWorkletProcessor` module.
+- Replaced the audio bridge with a thin native-start coordinator; there is no JavaScript DSP fallback.
+- Added direct-realm startup progress gating: native block count must advance and the callback deadline must remain finite before startup resolves.
+- Reused the single activation-lease `AudioContext`; the launcher does not create a second context.
+- Made teardown await runtime destruction before closing the leased context and disposing the package.
+- Kept the browser worker/package contract generic and extended the generic-runtime scan to reject legacy fallback identifiers.
 
-### Pre-creation browser ABI negotiation
+### Packaging and real smoke coverage
 
-- Added native C exports:
-  - `synth_browser_abi_version()`
-  - `synth_browser_ui_protocol_version()`
-  - `synth_browser_runtime_config_version()`
-- Declared the exports in the browser runtime header and added them to the Emscripten export list.
-- Added corresponding required numeric values to `RuntimeModuleFacade`; `emscriptenRuntimeFacade` reads all three before `create` is called.
-- Added `RuntimeVersions`, frozen `SUPPORTED_RUNTIME_VERSIONS`, and `negotiateRuntimeVersions(actual, required)`.
-- Moved worker load assignment and persistence-factory creation behind successful negotiation. A mismatch leaves the worker without a loaded module, so subsequent creation cannot run.
-- Added optional declared versions to the load command; when omitted, the module's reported requirements must still equal all host-supported versions.
-- Updated existing injected facade fixtures to explicitly implement ABI v1.
-- Linked the real C adapter into the native contract binary so the pre-creation export assertions exercise production definitions.
+- Removed launcher publication of `audio-worklet.js`; package-owned Emscripten runtime helpers remain ordinary package artifacts.
+- Updated publish/scaffold contracts for the native runtime helper.
+- Updated the real miniapp smoke test to use the direct runtime, one leased context, native progress evidence, and explicit teardown-order assertions.
 
 ## TDD RED Evidence
 
-### Catalog RED
+### Browser lifecycle RED
 
-Command from `projects/synth/browser` after adding `tests/catalog.test.mjs` and before creating production `src/catalog.ts`:
-
-```text
-npm run build && node --test dist/tests/catalog.test.mjs
-```
-
-Observed: TypeScript build exited successfully; Node exited nonzero with the expected missing-feature error:
+After changing the focused contracts and before production implementation:
 
 ```text
-Error [ERR_MODULE_NOT_FOUND]: Cannot find module '.../dist/src/catalog.js'
-✖ dist/tests/catalog.test.mjs
-tests 1; pass 0; fail 1
+npm run build && npx playwright test tests/audio-flow.spec.ts tests/activation-lease.spec.ts tests/runtime-core.spec.ts
 ```
+
+Observed: exit nonzero, `19 passed`, `3 failed`. The missing-native-support and leased-context cases entered the old JavaScript fallback and attempted `context.audioWorklet.addModule`; the lifecycle case reported `JavaScript AudioWorklet fallback`. This proved the ring/fallback path was still active.
 
 ### Native ABI RED
 
-Command from `projects/synth` after adding native assertions and linking the production adapter, before adding the exports:
+After changing the native contract test and before changing production declarations:
 
 ```text
-make browser-unit-test
+make -C projects/synth build/browser_runtime_contract_tests
 ```
 
-Observed: compilation failed at the three expected missing declarations:
+Observed: compilation failed because the test override expected `StartAudioWorklet(uint32_t)` while production still exposed the zero-argument method. This proved the native context-handle boundary was absent.
+
+### Direct runtime RED
+
+After adding the direct-start contract and before adding the production method:
 
 ```text
-error: use of undeclared identifier 'synth_browser_abi_version'
-error: use of undeclared identifier 'synth_browser_ui_protocol_version'
-error: use of undeclared identifier 'synth_browser_runtime_config_version'
-make: *** [build/browser_runtime_contract_tests] Error 1
+npm run build && npx playwright test tests/runtime-core.spec.ts
 ```
 
-### Browser facade/negotiation RED
-
-The first sandboxed Playwright attempt failed solely because macOS denied Chromium's Mach-port bootstrap. Per repository policy, the unchanged test was rerun with Chromium outside the sandbox.
-
-Meaningful RED command from `projects/synth/browser`:
-
-```text
-npx playwright test tests/runtime-core.spec.ts
-```
-
-Observed: 4 existing tests passed and exactly the 2 new tests failed:
-
-```text
-reads Emscripten browser contract versions without creating a runtime:
-  expected version 1 values, received undefined
-
-rejects incompatible modules before creation or persistence setup:
-  expected incompatibility, received "persistence must not be created"
-
-2 failed; 4 passed
-```
-
-This proved both missing facade exposure and the incorrect pre-fix ordering where persistence setup occurred before negotiation.
+Observed: TypeScript compilation failed because `BrowserRuntimeWorker` did not expose `startAudioWorklet`. This proved native startup was not yet reachable from the direct module realm.
 
 ## GREEN Evidence
 
-### Catalog GREEN
-
-Command from `projects/synth/browser`:
+### Required native contracts
 
 ```text
-npm run build && node --test dist/tests/catalog.test.mjs
+make -C projects/synth build/browser_runtime_contract_tests
+projects/synth/build/browser_runtime_contract_tests
 ```
 
-Observed: exit `0`; all 15 catalog tests passed.
+Observed: both exited `0`; the production ABI adapter linked successfully and all native assertions passed.
 
-### ABI GREEN
-
-Commands:
+### Required browser gates
 
 ```text
-npx playwright test tests/runtime-core.spec.ts
-make browser-unit-test
+npm --prefix projects/synth/browser run build
+npm --prefix projects/synth/browser run check:generic-runtime
+npx --prefix projects/synth/browser playwright test tests/audio-flow.spec.ts tests/activation-lease.spec.ts tests/runtime-core.spec.ts
 ```
 
-Observed: runtime-core exited `0` with 6/6 tests passed. Native build linked `browser/cpp/BrowserRuntimeAbi.cpp`, then `build/browser_runtime_contract_tests` exited `0`.
+Observed: all exited `0`; TypeScript and the generic-runtime scan passed, and focused Playwright reported `23 passed`.
 
-### Collateral facade-fixture GREEN
+### Real pinned-toolchain smoke
 
-Command from `projects/synth/browser`:
+The miniapp module was rebuilt with the exact Emscripten 6.0.3 SDK and the production browser flags, then the publication/scaffold and full miniapp smoke gates ran:
 
 ```text
-npm run build && npx playwright test tests/static-site.spec.ts tests/persistence.spec.ts tests/midi-flow.spec.ts --grep-invert "real miniapp WASM"
+make browser-miniapp EMXX=/private/tmp/sheaf-task1-emsdk-603/upstream/emscripten/em++ EMSDK=/private/tmp/sheaf-task1-emsdk-603 EM_CACHE=/private/tmp/sheaf-task1-production-em-cache
+npm run build && node --test dist/tests/publish-site.test.mjs dist/tests/scaffold.test.mjs
+SYNTH_BROWSER_FAKE_GATE_CONFIRMED=1 npx playwright test tests/miniapp-smoke.spec.ts
 ```
 
-Observed: exit `0`; 11/11 existing static, persistence, and generic MIDI tests passed with their v1 facade fixtures. The generated real-miniapp artifact test was deliberately excluded because the task instructions require preserving pre-existing build artifacts; a newly generated package will carry the new exports through the changed Emscripten export list.
+Observed: build exited `0`; Node reported `14 passed`; Playwright reported `7 passed`. The real callback block counter advanced on the leased context and all deadline samples were finite.
 
-### Final Required Gate (Fresh, Before Commit)
-
-From `projects/synth/browser`:
+### Final hygiene
 
 ```text
-npm run build && node --test dist/tests/catalog.test.mjs dist/tests/scaffold.test.mjs && npm run check:generic-runtime && npx playwright test tests/runtime-core.spec.ts
-```
-
-Observed: exit `0`.
-
-- TypeScript build: passed.
-- Node catalog/scaffold tests: 20/20 passed, 0 failed.
-- Generic runtime boundary check: passed.
-- Runtime-core Playwright: 6/6 passed, 0 failed.
-
-From `projects/synth`:
-
-```text
-make browser-unit-test
-```
-
-Observed: exit `0`; `build/browser_runtime_contract_tests` ran successfully.
-
-Additional final hygiene:
-
-```text
+rg -n 'renderTimer|configure-audio|render-audio|SharedRingBuffer|synth-audio-ring-buffer' projects/synth/browser/src
 git diff --check
 ```
 
-Observed: exit `0`, no whitespace errors.
+Observed: the fallback scan returned no matches; `git diff --check` exited `0`.
 
 ## Files Changed
 
 - `.superpowers/sdd/task-1-report.md`
-- `projects/synth/Makefile`
 - `projects/synth/browser/Makefile`
 - `projects/synth/browser/cpp/BrowserRuntimeAbi.cpp`
-- `projects/synth/browser/src/catalog.ts`
+- `projects/synth/browser/src/audio-worklet.ts` (removed)
+- `projects/synth/browser/src/audio.ts`
+- `projects/synth/browser/src/main.ts`
 - `projects/synth/browser/src/protocol.ts`
+- `projects/synth/browser/src/publish-site.mjs`
 - `projects/synth/browser/src/worker.ts`
-- `projects/synth/browser/tests/catalog.test.mjs`
-- `projects/synth/browser/tests/midi-flow.spec.ts`
-- `projects/synth/browser/tests/persistence.spec.ts`
+- `projects/synth/browser/tests/activation-lease.spec.ts`
+- `projects/synth/browser/tests/audio-flow.spec.ts`
+- `projects/synth/browser/tests/check-generic-runtime.mjs`
+- `projects/synth/browser/tests/miniapp-smoke.spec.ts`
+- `projects/synth/browser/tests/publish-site.test.mjs`
 - `projects/synth/browser/tests/runtime-core.spec.ts`
 - `projects/synth/browser/tests/scaffold.test.mjs`
-- `projects/synth/browser/tests/static-site.spec.ts`
 - `projects/synth/include/synth/browser/BrowserRuntime.hpp`
 - `projects/synth/tests/browser_runtime_contract_tests.cpp`
 
 ## Self-Review
 
-- Re-read Task 1, OpenSpec `sbac-2`, `sbac-3`, `sbac-5`, and `sbac-9`, plus design decisions D2/D3.
-- Confirmed all compatibility values are exactly `1` in TypeScript and native exports.
-- Confirmed validation is performed before URL resolution and no input object/array is modified.
-- Confirmed the parser rejects unknown schema-owned keys rather than silently carrying extension data into v1.
-- Confirmed source precedence is independent of display sorting and a later duplicate cannot replace the accepted object.
-- Confirmed incompatible module load does not assign the module, call `create`, or construct persistence.
-- Confirmed direct/runtime worker fixtures explicitly declare v1 rather than weakening production negotiation for legacy mocks.
-- Confirmed no application-specific names or branches were introduced into runtime code.
-- Confirmed `git diff --check` passes.
-- Confirmed the pre-existing progress edit, package lock, and miniapp artifacts remain unstaged.
+- Re-read the Task 1 brief, OpenSpec proposal/design/tasks, and affected specifications after implementation.
+- Confirmed one exact Emscripten 6.0.3 adoption probe ran before production edits and exercised the supplied-context native callback path.
+- Confirmed browser ABI `2` is consistent in TypeScript, native exports, and tests.
+- Confirmed handle `0` retains direct native context ownership and nonzero handles are module-local registrations of the already-resumed leased context.
+- Confirmed native progress, not successful setup alone, is the online gate.
+- Confirmed there is no ring-buffer transport, JavaScript sample production loop, launcher AudioWorklet processor, or fallback branch in browser source.
+- Confirmed teardown order is runtime destruction, leased context close, then package disposal.
+- Confirmed package publication remains generic and contains no application-specific runtime branch.
+- Confirmed generated screenshot/result artifacts were restored or removed before staging.
+- Confirmed the protected progress edit, package lock, and miniapp directory remain unstaged.
 
 ## Concerns
 
-None for the source contract. Any already-generated browser WASM artifact predating this commit must be rebuilt before a real-package browser test can observe the new version exports; the Makefile now exports them for both fake and miniapp builds. No generated artifact was modified or staged in this task.
+None. Generated Emscripten output remains intentionally untracked; verification rebuilt and exercised it from the changed source and pinned toolchain.

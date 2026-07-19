@@ -13,9 +13,9 @@ import { BrowserRuntimeWorker, loadEmscriptenRuntime } from "./worker.js";
 
 export type RuntimeClient = {
   request(command: RuntimeCommand): Promise<RuntimeResponse>;
-  startAudioWorklet?(): Promise<{ started: true } | { started: false; diagnostic: string }>;
+  startAudioWorklet?(context?: AudioContext): Promise<{ started: true } | { started: false; diagnostic: string }>;
   onStatus?(handler: (response: RuntimeResponse) => void): void;
-  terminate?(): void;
+  terminate?(): void | Promise<void>;
 };
 
 export type SynthBrowserAppOptions = {
@@ -92,13 +92,13 @@ export function createDirectRuntimeClient(loadModule: RuntimeModuleLoader = load
 
   return {
     request,
-    startAudioWorklet: async () => {
-      const response = await request({ type: "start-audio-worklet" });
+    startAudioWorklet: async (context) => {
+      const response = await runtime.startAudioWorklet(context);
       if (response.type === "ok") return { started: true };
       return { started: false, diagnostic: response.type === "error" ? response.error : "audio-worklet-start-failed" };
     },
     onStatus: (handler) => { statusHandlers.add(handler); },
-    terminate: () => { void request({ type: "destroy" }); },
+    terminate: async () => { await request({ type: "destroy" }); },
   };
 }
 
@@ -129,7 +129,10 @@ export function createWorkerRuntimeClient(workerUrl = new URL("./worker.js", imp
   return {
     request,
     onStatus: (handler) => { statusHandlers.add(handler); },
-    terminate: () => worker.terminate(),
+    terminate: async () => {
+      await request({ type: "destroy" });
+      worker.terminate();
+    },
   };
 }
 
@@ -142,8 +145,9 @@ export class SynthBrowserApp {
   private frameInFlight = false;
   private frameRequested = false;
   private stopped = false;
+  private stopPromise: Promise<void> | undefined;
   private unloadInstalled = false;
-  private readonly unload = () => this.stop();
+  private readonly unload = () => { void this.stop(); };
 
   constructor(
     private readonly root: HTMLElement,
@@ -172,12 +176,10 @@ export class SynthBrowserApp {
     await this.expectOk(await this.runtime.request({ type: "initialize", identity: this.options.runtimeIdentity }));
     const audioConfig = await this.runtime.request({ type: "audio-config" });
     if (audioConfig.type !== "audio-config") throw new Error("runtime did not return audio configuration");
-    const channels = audioConfig.channels;
-    const audioWorker: BrowserAudioWorker = {
-      postMessage: (message) => { void this.runtime.request(message); },
-    };
-    if (this.runtime.startAudioWorklet) audioWorker.startAudioWorklet = () => this.runtime.startAudioWorklet!();
-    this.audio = new AudioBridge(audioWorker, { ...this.options.audioOptions, channels });
+    const audioWorker: BrowserAudioWorker = {};
+    if (this.runtime.startAudioWorklet)
+      audioWorker.startAudioWorklet = (context) => this.runtime.startAudioWorklet!(context);
+    this.audio = new AudioBridge(audioWorker, this.options.audioOptions);
     if (this.options.midiAccess) {
       this.activationStarted = true;
       const [audio, midi] = await Promise.all([
@@ -197,8 +199,8 @@ export class SynthBrowserApp {
     this.renderStatus({ type: "status", status: "running" });
   }
 
-  stop(): void {
-    if (this.stopped) return;
+  stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
     this.stopped = true;
     if (this.unloadInstalled) {
       removeEventListener("pagehide", this.unload);
@@ -210,9 +212,17 @@ export class SynthBrowserApp {
     this.ui.dispose();
     this.audio?.shutdown();
     this.midi.stop();
-    this.runtime.terminate?.();
-    this.options.activationLease?.dispose();
-    this.options.disposeModule?.();
+    this.stopPromise = this.finishStop();
+    return this.stopPromise;
+  }
+
+  private async finishStop(): Promise<void> {
+    try {
+      await this.runtime.terminate?.();
+    } finally {
+      this.options.activationLease?.dispose();
+      this.options.disposeModule?.();
+    }
   }
 
   private async startUserActivation(): Promise<void> {
@@ -290,7 +300,7 @@ export async function installSynthBrowserApp(root: HTMLElement, options: SynthBr
     await app.start();
     return app;
   } catch (error) {
-    if (app) app.stop();
+    if (app) await app.stop();
     else {
       options.activationLease?.dispose();
       options.disposeModule?.();
