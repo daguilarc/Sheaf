@@ -132,15 +132,24 @@ export function runtimeIdentityForCatalogApp(
   });
 }
 
-function httpsUrl(value: unknown, path: string): string {
+function isLoopbackHttp(parsed: URL): boolean {
+  return parsed.protocol === "http:" && (
+    parsed.hostname === "127.0.0.1" || parsed.hostname === "localhost" || parsed.hostname === "[::1]"
+  );
+}
+
+function trustedCatalogUrl(value: unknown, path: string, baseUrl?: string): string {
   const text = boundedString(value, path, 2048);
   let parsed: URL;
   try {
-    parsed = new URL(text);
+    parsed = baseUrl === undefined ? new URL(text) : new URL(text, baseUrl);
   } catch {
-    fail(path, "must be an absolute HTTPS URL");
+    fail(path, baseUrl === undefined
+      ? "must be an absolute HTTPS URL or have an explicit trusted base URL"
+      : "must resolve against the trusted base URL");
   }
-  if (parsed.protocol !== "https:") fail(path, "must be an HTTPS URL");
+  if (parsed.protocol !== "https:" && !isLoopbackHttp(parsed))
+    fail(path, "must be an HTTPS URL (loopback HTTP is allowed only for local browser tests)");
   if (parsed.hash !== "") fail(path, "must not contain a fragment");
   if (parsed.username !== "" || parsed.password !== "") fail(path, "must not contain credentials");
   return parsed.href;
@@ -160,11 +169,14 @@ function resolvePath(path: string, catalogUrl: string): string {
   return new URL(path, catalogUrl).href;
 }
 
-export function parseCatalogSources(value: unknown): readonly CatalogSource[] {
+export function parseCatalogSources(value: unknown, trustedBaseUrl?: string): readonly CatalogSource[] {
   if (!Array.isArray(value) || value.length === 0) fail("catalog sources", "expected a nonempty array");
+  const baseUrl = trustedBaseUrl === undefined
+    ? undefined
+    : trustedCatalogUrl(trustedBaseUrl, "catalog source trusted base URL");
   const seen = new Set<string>();
   const sources = value.map((source, index) => {
-    const catalogUrl = httpsUrl(source, `catalog sources[${index}]`);
+    const catalogUrl = trustedCatalogUrl(source, `catalog sources[${index}]`, baseUrl);
     if (seen.has(catalogUrl)) fail(`catalog sources[${index}]`, `duplicate catalog URL ${catalogUrl}`);
     seen.add(catalogUrl);
     return Object.freeze({ catalogUrl });
@@ -240,7 +252,7 @@ function parseApp(value: unknown, index: number, publisher: CatalogPublisher, ca
 }
 
 export function parseCatalog(value: unknown, catalogUrl: string): Catalog {
-  const resolvedCatalogUrl = httpsUrl(catalogUrl, "catalogUrl");
+  const resolvedCatalogUrl = trustedCatalogUrl(catalogUrl, "catalogUrl");
   const input = record(value, "catalog");
   exactKeys(input, ["schemaVersion", "catalogVersion", "publisher", "apps"], "catalog");
   const schemaVersion = exactVersion(input.schemaVersion, SUPPORTED_CATALOG_SCHEMA_VERSION, "catalog.schemaVersion");

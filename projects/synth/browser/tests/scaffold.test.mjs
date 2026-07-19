@@ -40,8 +40,12 @@ test("cloudflare pages build script bootstraps emscripten before publishing", as
   const script = await readFile(path.join(browserRoot, "scripts/cloudflare-pages-build.sh"), "utf8");
   assert.match(script, /emsdk" install latest/);
   assert.match(script, /emsdk" activate latest/);
-  assert.match(script, /make .*browser-miniapp/);
+  assert.match(script, /make .*browser-fake-app browser-miniapp/);
   assert.match(script, /npm .*run publish:site/);
+
+  const makefile = await readBrowserMakefile();
+  assert.match(makefile, /browser-miniapp-smoke:[\s\S]*npm run publish:site[\s\S]*tests\/miniapp-smoke\.spec\.ts/);
+  assert.equal(packageJson.scripts["publish:site"], "npm run build && node dist/src/publish-site.mjs");
 });
 
 async function readBrowserMakefile() {

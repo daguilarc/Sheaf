@@ -237,6 +237,153 @@ test("miniapp smoke wiring keeps the generic fake-app gate first", async () => {
   expect(entry).toBe('#include "MiniApp.hpp"\n#include "synth/browser/BrowserAppEntry.hpp"\n\nSYNTH_BROWSER_APP(synth_miniapp::MiniApp)\n');
 });
 
+test("catalog-selected remote miniapp materializes its real worker bootstrap and AudioWorklet sidecars", async ({ page }) => {
+  const remoteRequests: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.origin === "http://127.0.0.1:4174" && url.pathname.startsWith("/dist/site/"))
+      remoteRequests.push(url.pathname);
+  });
+  await page.route("**/dist/src/main.js*", (route) => {
+    if (new URL(route.request().url()).search) return route.continue();
+    return route.fulfill({ status: 200, contentType: "application/javascript", body: "" });
+  });
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await page.evaluate(async () => {
+    const main = await (new Function("return import('/dist/src/main.js?task6-remote-miniapp')")() as Promise<any>);
+    const { ActivationLease } = await (new Function("return import('/dist/src/activation.js')")() as Promise<any>);
+    const { CatalogClient } = await (new Function("return import('/dist/src/catalog-client.js')")() as Promise<any>);
+    const { materializePackage } = await (new Function("return import('/dist/src/package-loader.js')")() as Promise<any>);
+    const root = document.querySelector<HTMLElement>("#synth-root")!;
+    root.dataset.synthLauncher = "false";
+    const observations = {
+      selectedGlobalId: "",
+      entryUrl: "",
+      mainScriptUrlOrBlob: "",
+      mainScriptMapping: "",
+      wasmMapping: "",
+      loadEntryUrl: "",
+      loadMainScriptUrlOrBlob: "",
+      workerUrls: [] as string[],
+      blobFetches: [] as string[],
+      audioWorkletModules: [] as string[],
+      audioWorkletNodes: 0,
+    };
+
+    const nativeFetch = globalThis.fetch.bind(globalThis);
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" || input instanceof URL ? String(input) : input.url;
+      if (url.startsWith("blob:")) observations.blobFetches.push(url);
+      return nativeFetch(input, init);
+    }) as typeof fetch;
+    const NativeWorker = globalThis.Worker;
+    Object.defineProperty(globalThis, "Worker", {
+      configurable: true,
+      value: new Proxy(NativeWorker, {
+        construct(target, argumentsList) {
+          observations.workerUrls.push(String(argumentsList[0]));
+          return Reflect.construct(target, argumentsList);
+        },
+      }),
+    });
+    const NativeAudioWorkletNode = globalThis.AudioWorkletNode;
+    Object.defineProperty(globalThis, "AudioWorkletNode", {
+      configurable: true,
+      value: new Proxy(NativeAudioWorkletNode, {
+        construct(target, argumentsList) {
+          observations.audioWorkletNodes += 1;
+          return Reflect.construct(target, argumentsList);
+        },
+      }),
+    });
+
+    let runtimeClient: any;
+    await main.installSheafPatchLauncher(root, {
+      client: new CatalogClient({
+        sourcesUrl: "http://127.0.0.1:4174/dist/site/catalog-sources.json",
+      }),
+      activationLeaseFactory: () => {
+        const context = new AudioContext();
+        const addModule = context.audioWorklet.addModule.bind(context.audioWorklet);
+        context.audioWorklet.addModule = async (url: string | URL, options?: WorkletOptions) => {
+          observations.audioWorkletModules.push(String(url));
+          return addModule(url, options);
+        };
+        return ActivationLease.acquire({
+          audioContextFactory: () => context,
+          requestMIDIAccess: async () => ({ inputs: new Map(), outputs: new Map(), onstatechange: null }),
+        });
+      },
+      materializePackage: async (app: any) => {
+        observations.selectedGlobalId = app.globalId;
+        const materialized = await materializePackage(app);
+        observations.entryUrl = materialized.entryUrl;
+        observations.mainScriptUrlOrBlob = materialized.mainScriptUrlOrBlob;
+        observations.mainScriptMapping = materialized.locateFile["miniapp.js"];
+        observations.wasmMapping = materialized.locateFile["miniapp.wasm"];
+        return materialized;
+      },
+      runtimeClientFactory: () => {
+        const client = main.createDirectRuntimeClient();
+        runtimeClient = {
+          ...client,
+          async request(command: any) {
+            if (command.type === "load") {
+              observations.loadEntryUrl = command.module.entryUrl;
+              observations.loadMainScriptUrlOrBlob = command.module.mainScriptUrlOrBlob;
+            }
+            return client.request(command);
+          },
+        };
+        (window as any).__task6RemoteMiniapp.runtimeClient = runtimeClient;
+        return runtimeClient;
+      },
+      frameIntervalMs: 25,
+    });
+    (window as any).__task6RemoteMiniapp = { observations, runtimeClient };
+  });
+
+  await expect(page.locator('.synth-launcher__app[data-synth-app-id="sheaf/miniapp"]')).toHaveCount(1);
+  const beforeSelection = [...remoteRequests];
+  expect(beforeSelection).toEqual([
+    "/dist/site/catalog-sources.json",
+    "/dist/site/catalogs/sheaf/catalog.json",
+  ]);
+  await page.getByRole("button", { name: /launch mini app/i }).click();
+  await expect(page.locator('[data-synth-node-id="miniapp.root"]')).toBeVisible();
+  await page.evaluate(async () => {
+    const state = (window as any).__task6RemoteMiniapp;
+    const response = await state.runtimeClient.request({
+      type: "midi-input", controllerIx: 0, bytes: [0x90, 60, 100], timestampMicros: 1_000,
+    });
+    if (response.type !== "ok") throw new Error(response.error ?? `unexpected MIDI response ${response.type}`);
+  });
+
+  const observations = await page.evaluate(() => (window as any).__task6RemoteMiniapp.observations);
+  expect(observations.selectedGlobalId).toBe("sheaf/miniapp");
+  expect(observations.entryUrl).toMatch(/^blob:/);
+  expect(observations.mainScriptUrlOrBlob).toMatch(/^blob:/);
+  expect(observations.entryUrl).not.toBe(observations.mainScriptUrlOrBlob);
+  expect(observations.mainScriptMapping).toBe(observations.mainScriptUrlOrBlob);
+  expect(observations.wasmMapping).toMatch(/^blob:/);
+  expect(observations.loadEntryUrl).toBe(observations.entryUrl);
+  expect(observations.loadMainScriptUrlOrBlob).toBe(observations.mainScriptUrlOrBlob);
+  expect(observations.workerUrls).toContain(observations.mainScriptUrlOrBlob);
+  expect(observations.blobFetches).toContain(observations.wasmMapping);
+  expect(observations.audioWorkletModules.some((url: string) => url.endsWith("/dist/src/audio-worklet.js"))).toBe(true);
+  expect(observations.audioWorkletNodes).toBe(1);
+  expect(remoteRequests.filter((pathname) => pathname.includes("/packages/"))).toEqual(expect.arrayContaining([
+    expect.stringMatching(/^\/dist\/site\/catalogs\/sheaf\/packages\/miniapp\/[0-9a-f]{64}\/miniapp\.js$/),
+    expect.stringMatching(/^\/dist\/site\/catalogs\/sheaf\/packages\/miniapp\/[0-9a-f]{64}\/miniapp\.wasm$/),
+  ]));
+  expect(remoteRequests.some((pathname) => pathname.includes("/rollback/"))).toBe(false);
+
+  await page.evaluate(() => {
+    dispatchEvent(new Event("pagehide"));
+    delete (window as any).__task6RemoteMiniapp;
+  });
+});
+
 test("real miniapp WASM renders the complete shared shell and portable pages", async ({ page }) => {
   await page.setViewportSize({ width: 1200, height: 800 });
   await installRealMiniapp(page);

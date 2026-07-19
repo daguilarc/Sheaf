@@ -225,7 +225,11 @@ test("direct runtime installation supersedes delayed launcher auto-boot across f
     };
     (window as any).__reviewDirectApp = await main.installSynthBrowserApp(
       document.querySelector("#synth-root"),
-      { runtimeClient, frameIntervalMs: 60_000 },
+      {
+        module: { entryUrl: "blob:direct-owner", locateFile: {}, mainScriptUrlOrBlob: "blob:direct-owner" },
+        runtimeClient,
+        frameIntervalMs: 60_000,
+      },
     );
   }, Array.from(new Uint8Array(frame)));
   await expect(page.locator('[data-synth-node-id="button"]')).toHaveText("Direct owner");

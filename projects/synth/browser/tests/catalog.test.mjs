@@ -67,6 +67,27 @@ test("parses HTTPS catalog sources into immutable records", () => {
   assert.throws(() => parseCatalogSources(["https://publisher.example/catalog.json", "https://publisher.example/catalog.json"]), /duplicate/i);
 });
 
+test("resolves reviewed same-deployment catalog sources only with an explicit trusted source-list URL", () => {
+  const sources = parseCatalogSources(
+    ["catalogs/sheaf/catalog.json", "https://friend.example/catalog.json"],
+    "https://launcher.example/catalog-sources.json",
+  );
+
+  assert.deepEqual(sources, [
+    { catalogUrl: "https://launcher.example/catalogs/sheaf/catalog.json" },
+    { catalogUrl: "https://friend.example/catalog.json" },
+  ]);
+  assert.throws(() => parseCatalogSources(["catalogs/sheaf/catalog.json"]), /absolute HTTPS|trusted base/i);
+  assert.throws(
+    () => parseCatalogSources(["catalogs/sheaf/catalog.json"], "http://launcher.example/catalog-sources.json"),
+    /HTTPS/i,
+  );
+  assert.deepEqual(
+    parseCatalogSources(["catalogs/sheaf/catalog.json"], "http://127.0.0.1:4173/catalog-sources.json"),
+    [{ catalogUrl: "http://127.0.0.1:4173/catalogs/sheaf/catalog.json" }],
+  );
+});
+
 test("parses a valid multi-app catalog and resolves package URLs against the catalog", () => {
   const input = catalog("sheaf", [app("miniapp", "Mini App"), app("braid-4", "Braid 4")]);
   const original = clone(input);

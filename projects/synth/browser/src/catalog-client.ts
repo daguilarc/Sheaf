@@ -34,14 +34,16 @@ export class CatalogClient {
   private readonly fetcher: typeof fetch;
 
   constructor(options: CatalogClientOptions) {
-    this.sourcesUrl = options.sourcesUrl;
+    this.sourcesUrl = typeof location === "object"
+      ? new URL(options.sourcesUrl, location.href).href
+      : options.sourcesUrl;
     this.fetcher = options.fetcher ?? ((input, init) => fetch(input, init));
   }
 
   async loadSources({ cacheMode }: { cacheMode: RequestCache }): Promise<CatalogLoadResult> {
     const sourcesResponse = await this.fetcher(this.sourcesUrl, { cache: cacheMode });
     if (!sourcesResponse.ok) throw new Error(`catalog sources unavailable: HTTP ${sourcesResponse.status}`);
-    const sources = parseCatalogSources(await sourcesResponse.json());
+    const sources = parseCatalogSources(await sourcesResponse.json(), this.sourcesUrl);
     const loaded = await Promise.all(sources.map(async ({ catalogUrl }) => {
       let response: Response;
       try {

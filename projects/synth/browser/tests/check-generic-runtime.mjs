@@ -4,7 +4,14 @@ import process from "node:process";
 
 const forbidden = /\b(MiniApp|miniapp|synth_miniapp|Vco|FilterModule|LfoBank)\b/;
 const roots = ["src", "../include/synth/browser", "cpp"];
-const skipped = new Set([path.resolve("cpp/miniapp_entry.cpp")]);
+// Concrete application identity is permitted only at native entry and
+// first-party publication boundaries; launcher/runtime implementation remains
+// covered by the scan.
+const skipped = new Set([
+  path.resolve("cpp/miniapp_entry.cpp"),
+  path.resolve("src/build-first-party-catalog.mjs"),
+  path.resolve("src/publish-site.mjs"),
+]);
 
 async function* filesUnder(root) {
   const absoluteRoot = path.resolve(root);

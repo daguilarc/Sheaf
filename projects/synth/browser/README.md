@@ -14,9 +14,10 @@ native helper, or server-side synth process.
 - Allow MIDI for the site with `Permissions-Policy: midi=(self)`. The runtime
   requests Web MIDI using `{ sysex: true }`, so the user must grant sysex
   access before MIDI ports can come online.
-- Serve `.wasm` files as `application/wasm`. All browser runtime files are
-  static assets under `public/` and `dist/`; persistence remains in browser
-  IDBFS/IndexedDB storage under `/data`.
+- Serve `.wasm` files as `application/wasm` and package JavaScript, including
+  worker and worklet sidecars, as `text/javascript`. All browser runtime files
+  are static assets; persistence remains in browser IDBFS/IndexedDB storage
+  under `/data`.
 - The browser audio catalog exposes only `System Default` (`system_default`).
   Named output selection and `AudioContext.setSinkId()` are intentionally not
   used. Audio input is unsupported and remains skipped.
@@ -50,3 +51,61 @@ The smoke target builds `dist/wasm/miniapp.js` solely from
 `cpp/miniapp_entry.cpp` plus the generic browser runtime sources. Its fake-app
 build/test prerequisite must succeed before the miniapp artifact is built and
 opened.
+
+## First-Party Catalog Publication
+
+Build the generic acceptance app and real miniapp, then assemble the exact
+Cloudflare Pages directory:
+
+```sh
+make -C projects/synth/browser browser-fake-app browser-miniapp
+npm --prefix projects/synth/browser run publish:site
+```
+
+`dist/site` is replaced only after a staging tree passes reference, media-type,
+and SHA-256 validation. Repeating the command with identical inputs produces a
+byte-identical tree:
+
+```text
+index.html
+catalog-sources.json
+catalogs/sheaf/catalog.json
+catalogs/sheaf/packages/miniapp/<content-build-id>/miniapp.js
+catalogs/sheaf/packages/miniapp/<content-build-id>/miniapp.wasm
+dist/src/
+rollback/direct-miniapp/
+_headers
+```
+
+The checked-in source list uses `catalogs/sheaf/catalog.json`, resolved against
+the deployed source-list URL. The catalog's `packages/...` records therefore
+resolve beside that catalog. The generated package declares entry, WASM,
+pthread worker, Wasm-worker, and AudioWorklet roles through the generic
+assembler. The current Emscripten emission has two physical files: the three
+worker/worklet roles deliberately alias the hashed `miniapp.js` bootstrap.
+
+Production `index.html` is launcher-only. Startup downloads the source list and
+catalog metadata, but no package bytes. Selecting `sheaf/miniapp` downloads and
+verifies the immutable package through the same generic loader used for remote
+publishers. Launcher/runtime source contains no miniapp branch and has no
+dependency on the rollback directory or `dist/wasm/app.js`.
+
+The `_headers` file applies COOP, COEP, and the MIDI permission policy to every
+route. Additional catalog-package and rollback globs explicitly preserve WASM
+and JavaScript media types for entry, pthread/Wasm-worker, and AudioWorklet
+paths.
+
+### Temporary Direct Rollback
+
+`dist/wasm/app.js` is only an input to the documented rollback bundle. The
+published `rollback/direct-miniapp/` contains `index.html`, `app.js`, the real
+`miniapp.js` worker/worklet bootstrap, and `miniapp.wasm`; no normal production
+asset references it.
+
+The preferred rollback is to republish the previous known-good Cloudflare
+Pages artifact. For a temporary direct rollback from the current artifact,
+make a copy of `dist/site`, replace that copy's root `index.html` with
+`rollback/direct-miniapp/index.html`, and copy the three rollback JS/WASM files
+to the copy's root before publishing the copy. Do not edit or overwrite the
+validated catalog artifact in place. Return to the launcher by republishing the
+unchanged validated `dist/site` output.

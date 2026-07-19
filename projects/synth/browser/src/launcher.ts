@@ -125,6 +125,7 @@ export class SheafPatchLauncher {
 
   private renderApp(app: CatalogApp): HTMLLIElement {
     const row = element("li", "synth-launcher__app");
+    row.dataset.synthAppId = app.globalId;
     const details = element("div", "synth-launcher__app-details");
     details.append(element("h2", "synth-launcher__app-name", app.displayName));
     const metadata = element("dl", "synth-launcher__metadata");

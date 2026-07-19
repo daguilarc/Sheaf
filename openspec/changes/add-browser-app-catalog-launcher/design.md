@@ -119,12 +119,17 @@ The existing Cloudflare publish directory changes from `index.html + app.js` to:
 index.html                         launcher
 catalog-sources.json               trusted catalog URLs
 catalogs/sheaf/catalog.json        first-party catalog
-packages/miniapp/<build-id>/...    first-party app package
+catalogs/sheaf/packages/miniapp/
+  <build-id>/...                   first-party app package
 dist/src/...                       generic launcher/runtime modules
 _headers                           COOP/COEP/MIDI/WASM policies
 ```
 
 The first source URL resolves back to the deployed first-party catalog. The catalog's miniapp entry resolves back to the package in the same deployment. This makes production exercise the exact catalog contract without requiring GitHub Pages availability.
+The package lives beside the catalog because schema v1 package paths are
+normalized relative paths resolved against the catalog response URL; this keeps
+the checked-in source and package references honest without a root alias or a
+duplicate package copy.
 
 ### D9 — Use GitHub Actions and Pages as an additional publisher path
 

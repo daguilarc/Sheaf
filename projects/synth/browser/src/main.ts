@@ -45,7 +45,6 @@ export type SynthBrowserLauncherOptions = {
   frameIntervalMs?: number;
 };
 
-const DEFAULT_MODULE_URL = "/dist/wasm/app.js";
 const DEFAULT_RUNTIME_IDENTITY: BrowserRuntimeIdentity = Object.freeze({
   publisherId: "sheaf",
   appId: "direct-runtime",
@@ -269,8 +268,9 @@ export class SynthBrowserApp {
 }
 
 export async function installSynthBrowserApp(root: HTMLElement, options: SynthBrowserAppOptions = {}): Promise<SynthBrowserApp> {
-  const moduleUrl = options.moduleUrl ?? root.dataset.synthModule ?? DEFAULT_MODULE_URL;
-  const module = options.module ?? directModuleMapping(moduleUrl);
+  const moduleUrl = options.moduleUrl ?? root.dataset.synthModule;
+  if (!options.module && !moduleUrl) throw new Error("a materialized runtime module or explicit moduleUrl is required");
+  const module = options.module ?? directModuleMapping(moduleUrl!);
   const runtimeIdentity = validateBrowserRuntimeIdentity(options.runtimeIdentity ?? DEFAULT_RUNTIME_IDENTITY);
   let app: SynthBrowserApp | undefined;
   try {

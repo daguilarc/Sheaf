@@ -206,3 +206,246 @@ findings.
 No Task 6 correctness concern. The sole transient full-suite failure is the
 existing fixed-temp-directory collision described above; the complete rerun is
 green and no change was made outside task scope to mask it.
+
+---
+
+# Browser App Catalog Task 6: First-Party Production Deployment
+
+## Status
+
+DONE — OpenSpec 6.1–6.5 are implemented and locally verified. Per controller
+instruction, the OpenSpec checkboxes and `.superpowers/sdd/progress.md` remain
+unchanged pending external review. The planned commit message is
+`feat(synth-browser): publish catalog launcher and miniapp package`.
+
+## Contract Implemented
+
+- Added the checked-in same-deployment source
+  `catalogs/sheaf/catalog.json` and deterministic first-party metadata for
+  `sheaf/miniapp`.
+- Added a first-party generator that copies the real two-file Emscripten
+  emission into a dedicated temporary emission directory, invokes the generic
+  package assembler, and writes an immutable content-addressed package under
+  `catalogs/sheaf/packages/miniapp/<build-id>/`.
+- Declared and validated entry, WASM, pthread worker, Wasm-worker, and
+  AudioWorklet roles. The actual emission contains `miniapp.js` and
+  `miniapp.wasm`; all three worker/worklet roles deliberately alias the hashed
+  JavaScript bootstrap, matching the current Emscripten output.
+- Extended the trusted source parser to resolve reviewed relative entries only
+  against an explicit source-list URL. Resolved production URLs must remain
+  HTTPS; loopback HTTP is accepted only for local browser tests. Existing
+  absolute HTTPS publisher sources remain unchanged.
+- Made publication transactional: it assembles a sibling staging tree,
+  validates launcher/source/catalog/package/rollback references and every
+  package digest, then swaps the destination with restoration of the prior tree
+  on replacement failure.
+- Published only the 13 generic browser modules used at runtime, rather than
+  leaking Node build/publish modules into the production artifact.
+- Kept the production root launcher-only. Startup loads source/catalog JSON but
+  no package bytes; selection fetches the immutable first-party package through
+  the generic loader. Generic rows expose their global identity as
+  `data-synth-app-id` for observable acceptance without an app branch.
+- Removed the runtime fallback to `/dist/wasm/app.js`. Direct installation now
+  requires a materialized module or explicit `moduleUrl`, so normal production
+  code has no direct-artifact dependency.
+- Added the temporary complete rollback bundle under
+  `rollback/direct-miniapp/`: direct index, `app.js`, real `miniapp.js`
+  worker/worklet bootstrap, and `miniapp.wasm`. Its direct bootstrap supplies
+  an explicit locator map for the differently named `app.js` entry and
+  `miniapp.*` sidecars. README instructions describe previous-artifact
+  republish as preferred and a copy-based direct fallback; no normal HTML,
+  catalog, or runtime module references the rollback directory.
+- Updated Cloudflare headers for global COOP/COEP/MIDI plus explicit
+  `text/javascript` and `application/wasm` rules across canonical immutable
+  package and rollback paths. The Cloudflare build creates fake and miniapp
+  emissions, leaves miniapp as the direct rollback input, and publishes only
+  after validation.
+- Corrected OpenSpec design D8 to place package files beside the nested catalog.
+  This follows schema v1's normalized catalog-relative path contract without a
+  root alias or duplicate package copy.
+
+## Strict TDD Evidence
+
+### RED — publication/validation boundary
+
+```sh
+cd projects/synth/browser
+npm run build && node --test dist/tests/publish-site.test.mjs
+```
+
+Exit `1`: the requested `validatePublishedSite` export did not exist. The new
+suite already specified complete deployment/rollback layouts, same-deployment
+resolution, byte-identical rebuilds, digest failures, bad references, and
+destination preservation.
+
+### RED — same-deployment trusted sources
+
+```sh
+npm run build && node --test dist/tests/catalog.test.mjs \
+  dist/tests/catalog-client.test.mjs
+```
+
+Exit `1`, 19 passed / 2 failed. Relative
+`catalogs/sheaf/catalog.json` was rejected as not absolute HTTPS by both the
+catalog contract and live client path.
+
+### RED — exact published browser root
+
+```sh
+npx playwright test tests/static-site.spec.ts
+```
+
+Exit `1`, 4 passed / 1 failed: the exact `dist/site` server origin did not yet
+exist. After adding that production-tree server, the next focused RED reached
+the launcher but had no generic global-ID attribute. A further real page run
+found relative source parsing still received `/catalog-sources.json` instead of
+an absolute browser URL; `CatalogClient` now canonicalizes it against
+`location.href` before trust validation.
+
+### RED — no production direct fallback
+
+```sh
+npm run build && \
+  npx playwright test tests/static-site.spec.ts -g application-generic
+```
+
+Exit `1`: `src/main.ts` still named `/dist/wasm/app.js`. The fallback was
+removed, and the existing direct-owner test now supplies an explicit
+materialized module.
+
+### RED — Cloudflare/smoke wiring
+
+```sh
+npm run build && node --test dist/tests/scaffold.test.mjs
+```
+
+Exit `1`, 4 passed / 1 failed because the Cloudflare script had not yet built
+the generic fake emission before miniapp, and the miniapp smoke target had not
+yet published the catalog artifact.
+
+### RED — production runtime-module allowlist
+
+```sh
+npm run build && node --test dist/tests/publish-site.test.mjs
+```
+
+Exit `1`: `browserRuntimeModules` did not exist. Publication now copies an
+explicit generic runtime allowlist; exact inspection shows no build-only `.mjs`
+files in deployed `dist/src`.
+
+### RED — complete direct rollback mapping
+
+The first generated rollback browser smoke reached `app.js` but failed because
+the generic filename-derived locator would map that entry to nonexistent
+`app.wasm`, while the copied Emscripten sidecar is named `miniapp.wasm`. The
+rollback bootstrap now provides a complete explicit map for `app.js`,
+`miniapp.js`, and `miniapp.wasm`; the regression exercises the generated page,
+not a source-string approximation.
+
+The first remote-miniapp instrumentation run successfully discovered,
+materialized, selected, and rendered the app, then errored only because the test
+captured its runtime-client property before selection. Correcting that test
+harness reference produced the intended behavioral evidence without a product
+change.
+
+## GREEN Evidence
+
+Required build and deterministic publication:
+
+```sh
+make browser-fake-app browser-miniapp
+npm run publish:site
+node --test dist/tests/publish-site.test.mjs
+```
+
+All exited `0`; publish tests passed 5/5.
+
+Focused contract/unit gates:
+
+```sh
+npm run test:unit
+npm run check:generic-runtime
+```
+
+All exited `0`; Node tests passed 36/36 and the generic runtime scan passed
+with only the exact native entry and first-party build/publish metadata excluded.
+
+Published static root:
+
+```sh
+npx playwright test tests/static-site.spec.ts
+```
+
+Exit `0`, 5/5. The production-root test proves discovery requests exactly the
+source list and canonical catalog before selection, the first row is
+`sheaf/miniapp`, selection requests its immutable JS/WASM files, and no rollback
+path is requested. After adding the direct rollback regression, the complete
+static-site suite was rerun and passed 6/6; the sixth test loads the generated
+rollback page and verifies its explicit entry, worker, worklet, and WASM map.
+
+Prescribed fake-first real miniapp gate:
+
+```sh
+make browser-miniapp-smoke
+```
+
+Exit `0`: fake app 3/3, then miniapp 7/7. The added real remote test selects
+`sheaf/miniapp` from the generated catalog on the second origin, proves the
+verified Emscripten `new URL("miniapp.js", import.meta.url)` bootstrap is
+rewritten to a distinct blob `entryUrl`, proves the original verified entry blob
+is passed as `mainScriptUrlOrBlob`, observes the real pthread worker start from
+that blob, observes WASM fetched from its verified blob mapping, loads the
+generic AudioWorklet module, creates its node, renders the real miniapp, and
+delivers MIDI. No fake package stands in for this path.
+
+Complete browser regression:
+
+```sh
+npm test
+```
+
+Exit `0`: 36/36 serialized Node tests and 99/99 Playwright-discovered tests
+passed before the final rollback regression was added. As previously documented
+in Task 5, Playwright's discovery imports the Node `*.test.mjs` files and prints
+a non-gating parallel `package-app` failure marker; the canonical serial Node
+gate passes that test, Playwright reports all 99 tests passed, and the command
+exits successfully. The subsequent rollback change passed publish tests 5/5,
+its focused browser regression 1/1, and the complete static-site suite 6/6.
+
+OpenSpec and hygiene:
+
+```sh
+openspec validate add-browser-app-catalog-launcher --strict
+git diff --check
+```
+
+Both exited `0`.
+
+## Exact Production Artifact Inspection
+
+The final generated content build is
+`db7b6e56b8fbffe20ef24d6b7347d712f0194eb62b152a0c6e2657256373e40a`.
+
+- `miniapp.js`: SHA-256
+  `64b162b9c4d894d0a3cfbc7e2fa5745bf0186ca863a0603062675887e3e9974c`
+- `miniapp.wasm`: SHA-256
+  `021072e87c12bc65c2f7bdca3d95b87286db7dff050ea6bf582850898af8ebbb`
+- Both catalog digests matched fresh `shasum -a 256` output.
+- `dist/site` contains root launcher/CSS/source list, canonical nested catalog
+  and immutable package, exactly 13 generic runtime modules, `_headers`, and the
+  four-file rollback bundle.
+- It contains no production `dist/wasm/app.js` and no root catalog/package alias.
+- `rg` found no `miniapp`, rollback path, or `/dist/wasm/app.js` reference in
+  production `index.html` or deployed runtime modules.
+
+## Files and Bookkeeping
+
+The pre-existing untracked `projects/synth/browser/package-lock.json` and
+`projects/synth/miniapp/` remain unstaged. Smoke-test screenshot rewrites were
+restored and are not part of Task 6. No Task 7 workflow was created. No OpenSpec
+checkbox or SDD progress entry was edited.
+
+## Concerns
+
+No blocking Task 6 concern. Live Cloudflare response behavior is not claimed;
+this task validates the generated `_headers` and exact static artifact locally.

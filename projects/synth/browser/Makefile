@@ -57,6 +57,7 @@ browser-miniapp-run: build browser-miniapp
 
 browser-miniapp-smoke: browser-fake-app-test
 	$(MAKE) browser-miniapp
+	npm run publish:site
 	SYNTH_BROWSER_FAKE_GATE_CONFIRMED=1 npx playwright test tests/miniapp-smoke.spec.ts
 
 $(BROWSER_BUILD_DIR) $(EM_CACHE):

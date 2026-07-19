@@ -156,3 +156,24 @@ test("rejects an invalid trusted source list before requesting any catalog", asy
   await assert.rejects(() => client.loadSources({ cacheMode: "default" }), /HTTPS/i);
   assert.deepEqual(calls, [sourcesUrl]);
 });
+
+test("resolves the checked-in first-party source against the fetched source list", async () => {
+  const loopbackSources = "http://127.0.0.1:4173/catalog-sources.json";
+  const catalogUrl = "http://127.0.0.1:4173/catalogs/sheaf/catalog.json";
+  const calls = [];
+  const client = new CatalogClient({
+    sourcesUrl: loopbackSources,
+    fetcher: async (url) => {
+      calls.push(String(url));
+      if (String(url) === loopbackSources) return json(["catalogs/sheaf/catalog.json"]);
+      return json(catalog("sheaf"));
+    },
+  });
+
+  const result = await client.loadSources({ cacheMode: "default" });
+
+  assert.deepEqual(calls, [loopbackSources, catalogUrl]);
+  assert.deepEqual(result.apps.map(({ globalId, catalogUrl: loadedUrl }) => ({ globalId, loadedUrl })), [
+    { globalId: "sheaf/one", loadedUrl: catalogUrl },
+  ]);
+});

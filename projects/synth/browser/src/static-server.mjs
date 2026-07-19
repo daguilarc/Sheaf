@@ -12,6 +12,7 @@ const staticRoots = new Map([
   ["/packages/", path.join(browserRoot, "packages")],
   ["/public/", path.join(browserRoot, "public")],
 ]);
+const publishedRoot = path.join(browserRoot, "dist", "site");
 
 const packageFixtureWasm = Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]);
 const packageFixtureEntry = Buffer.from(`export default async function createRemoteFake(options) {
@@ -88,12 +89,19 @@ export function contentTypeForPath(filename) {
   return "application/octet-stream";
 }
 
-function staticFileFor(requestUrl) {
+function staticFileFor(requestUrl, published) {
   let pathname;
   try {
     pathname = decodeURIComponent(new URL(requestUrl ?? "/", "http://localhost").pathname);
   } catch {
     return undefined;
+  }
+  if (published) {
+    if (pathname === "/") pathname = "/index.html";
+    if (pathname.includes("\0") || pathname.split("/").includes("..")) return undefined;
+    const filename = path.resolve(publishedRoot, `.${pathname}`);
+    if (filename === publishedRoot || !filename.startsWith(`${publishedRoot}${path.sep}`)) return undefined;
+    return filename;
   }
   if (pathname === "/") pathname = "/public/index.html";
   if (pathname.includes("\0") || pathname.split("/").includes("..")) return undefined;
@@ -106,7 +114,7 @@ function staticFileFor(requestUrl) {
   return undefined;
 }
 
-export function createStaticServer({ isolated = true } = {}) {
+export function createStaticServer({ isolated = true, published = false } = {}) {
   return createServer(async (request, response) => {
     const headers = {
       "Access-Control-Allow-Origin": "*",
@@ -130,7 +138,7 @@ export function createStaticServer({ isolated = true } = {}) {
       }).end(fixture.bytes);
       return;
     }
-    const filename = staticFileFor(request.url);
+    const filename = staticFileFor(request.url, published);
     if (!filename) {
       response.writeHead(404, headers).end();
       return;
@@ -148,4 +156,5 @@ export function createStaticServer({ isolated = true } = {}) {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   createStaticServer().listen(4173, "127.0.0.1");
   createStaticServer().listen(4174, "127.0.0.1");
+  createStaticServer({ published: true }).listen(4175, "127.0.0.1");
 }
