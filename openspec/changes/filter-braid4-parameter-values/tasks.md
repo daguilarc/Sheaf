@@ -1,8 +1,8 @@
 ## 1. Two-Phase Parameter Processing
 
-- [ ] 1.1 Add focused parameter-modulation tests for phase-1 slewing/cache sampling, cache replacement and clamping, phase-2 UI smoothing, wrapper equivalence, cadence-controlled per-sample phase 1, and top-level-only group phase traversal.
-- [ ] 1.2 Add `Parameter` lite/per-sample phase APIs and normalized cached-knob replacement, retaining `ProcessLite()` and `ProcessSample()` as consecutive two-phase wrappers.
-- [ ] 1.3 Add matching `ParameterGroup` phase traversal APIs, preserve processing-observer/top-level visit semantics, and update the deterministic simulation oracle and randomized coverage for the split contract.
+- [x] 1.1 Add focused parameter-modulation tests for phase-1 slewing/cache sampling, cache replacement and clamping, phase-2 UI smoothing, wrapper equivalence, cadence-controlled per-sample phase 1, and top-level-only group phase traversal.
+- [x] 1.2 Add `Parameter` lite/per-sample phase APIs and normalized cached-knob replacement, retaining `ProcessLite()` and `ProcessSample()` as consecutive two-phase wrappers.
+- [x] 1.3 Add matching `ParameterGroup` phase traversal APIs, preserve processing-observer/top-level visit semantics, and update the deterministic simulation oracle and randomized coverage for the split contract.
 
 ## 2. Reusable One-Pole Hot Path
 
