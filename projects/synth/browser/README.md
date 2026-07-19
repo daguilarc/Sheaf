@@ -4,6 +4,10 @@ This directory builds and tests the Chrome-targeted static WebAssembly host for
 portable synth applications. It has no dynamic HTTP API, WebSocket service,
 native helper, or server-side synth process.
 
+The catalog contract and a multi-app publisher example are in
+[docs/catalog-schema-v1.md](docs/catalog-schema-v1.md) and
+[docs/publisher-guide.md](docs/publisher-guide.md).
+
 ## Browser And Hosting Requirements
 
 - Use a current Chrome or Chromium release in a secure context. Production

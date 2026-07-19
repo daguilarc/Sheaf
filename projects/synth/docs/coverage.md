@@ -85,6 +85,24 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
 
 ## Requirement Mappings
 
+### Browser app catalog launcher
+
+| Requirement | Covered gates |
+| --- | --- |
+| `sbac-1` | `tests/catalog-client.test.mjs`: `loads configured catalogs concurrently and reports every healthy source`, `keeps healthy apps when sibling sources have network and version failures`, and `revalidates stable URLs on retry and discovers newly added manifest entries`; Playwright `tests/launcher.spec.ts`: `shows loading then accessible app metadata without requesting package files`. |
+| `sbac-2` | Node `tests/catalog.test.mjs`: `parses a valid multi-app catalog and resolves package URLs against the catalog`, `rejects unknown schema-owned fields at every object level`, and `validates paths before URL resolution and rejects absolute or traversal-like paths`. |
+| `sbac-3` | Node `tests/catalog.test.mjs`: `merges in configured source order, diagnoses duplicates, and sorts by display name then global ID` and `mergeCatalogs does not mutate source catalogs or depend on locale collation`. |
+| `sbac-4` | Playwright `tests/package-loader.spec.ts`: `fetches and verifies every declared package file with CORS before creating object URLs` and `rejects stale or hash-mismatched WASM before importing the verified entry`; Node `tests/package-contract.test.mjs`: `changes the content-derived build ID when any emitted file changes`. |
+| `sbac-5` | Native `projects/synth/tests/browser_runtime_contract_tests.cpp` and Playwright `tests/runtime-core.spec.ts`: `reads Emscripten browser contract versions without creating a runtime` and `rejects incompatible modules before creation or persistence setup`. |
+| `sbac-6` | Playwright `tests/activation-lease.spec.ts` and `tests/launcher.spec.ts`: `reports package selection failure on its row and allows retry`. |
+| `sbac-7` | Playwright `tests/package-loader.spec.ts`: `passes explicit immutable mappings to the Emscripten factory and refuses document-relative fallback`, `rewrites verified Emscripten import-meta worker bootstraps to typed object URLs`, and `revokes every materialized object URL exactly once when dispose is repeated`; `tests/two-origin-package.spec.ts`: `starts a generic verified package from the isolated launcher's second origin`. |
+| `sbac-8` | Playwright `tests/launcher.spec.ts`: `locks selection after success and returns through generic top-level navigation`; `tests/static-site.spec.ts`: `launcher and runtime source remain application-generic`. |
+| `sbac-9` | Playwright `tests/persistence.spec.ts`: `derives stable app-isolated patch roots from validated catalog identity` and `rejects incompatible runtime-config identity before filesystem or runtime initialization`; `tests/miniapp-smoke.spec.ts`: `real miniapp patch saves survive browser runtime restart through IDBFS`. |
+| `sbac-10` | Node `tests/publish-site.test.mjs`: `publishes one deterministic first-party catalog deployment with complete package and rollback layouts`; Playwright `tests/static-site.spec.ts`: `published root discovers sheaf/miniapp without package bytes and selection uses only its immutable package`. |
+| `sbac-11` | Node `tests/github-pages-workflow.test.mjs`: `workflow separates build, deploy, post-deploy validation, and cross-origin smoke responsibilities`, `deployed validator accepts one CORS-readable internally consistent immutable package`, and `deployed validator rejects incorrect live WASM MIME delivery`; workflow `.github/workflows/synth-browser-pages.yml` runs `validate-deployed-catalog.mjs` and `tests/deployed-origin.spec.ts` after deployment. |
+| `sbac-12` | `npm --prefix projects/synth/browser test`; `make -C projects/synth/browser browser-miniapp-smoke` (generic fake-app gate first); Node `tests/catalog-client.test.mjs`: `revalidates stable URLs on retry and discovers newly added manifest entries`; Playwright `tests/two-origin-package.spec.ts` and `tests/activation-lease.spec.ts`. |
+| `sprs-12` (modified) | `npm --prefix projects/synth/browser run publish:site`; Node `tests/publish-site.test.mjs`: `publishing the same inputs twice produces byte-identical trees`, `validation rejects missing package files and inconsistent package digests`, and `publish failure leaves the previous destination untouched and exposes the invalid reference`; `.github/workflows/synth-browser-pages.yml` and `scripts/cloudflare-pages-build.sh` are the publish/build gates. |
+
 ### `sprs-1` - Shared Portable Composition
 
 - [`runtime_main_component_tests.cpp`](../tests/runtime_main_component_tests.cpp):
