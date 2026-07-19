@@ -14,7 +14,7 @@ function app(appId: string, displayName: string) {
     category: "Instrument",
     buildId,
     browser: {
-      abiVersion: 1,
+      abiVersion: 2,
       uiProtocolVersion: 1,
       runtimeConfigVersion: 1,
       entry,
@@ -23,7 +23,7 @@ function app(appId: string, displayName: string) {
   };
 }
 
-function catalog(publisherId: string, apps = [app("one", "Aurora")]) {
+function catalog(publisherId: string, apps = [app("two", "Borealis"), app("one", "Aurora")]) {
   return {
     schemaVersion: 1,
     catalogVersion: "revision-1",
@@ -59,6 +59,11 @@ test("shows loading then accessible app metadata without requesting package file
   await expect(row).toContainText("Ada Example");
   await expect(row).toContainText("Instrument");
   await expect(row).toContainText("Compatible");
+  await expect(page.getByRole("listitem").filter({ hasText: "Borealis" })
+    .getByRole("button", { name: /launch borealis/i })).toBeEnabled();
+  await expect.poll(() => page.locator(".synth-launcher__app").evaluateAll((rows) =>
+    rows.map((element) => (element as HTMLElement).dataset.synthAppId)))
+    .toEqual(["publisher/one", "publisher/two"]);
   expect(packageRequests).toEqual([]);
 });
 
@@ -127,7 +132,7 @@ test("locks selection after success without rendering an in-page return control"
       category: "Instrument",
       buildId: `${appId}-build-1`,
       browser: {
-        abiVersion: 1,
+        abiVersion: 2,
         uiProtocolVersion: 1,
         runtimeConfigVersion: 1,
         entry: `${appId}.js`,
@@ -177,7 +182,7 @@ test("does not overwrite runtime DOM that replaces the exact pending-selection s
       category: "Instrument",
       buildId: "one-build-1",
       browser: {
-        abiVersion: 1,
+        abiVersion: 2,
         uiProtocolVersion: 1,
         runtimeConfigVersion: 1,
         entry: "one.js",

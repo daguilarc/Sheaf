@@ -19,6 +19,12 @@ function identifier(value, label) {
   return value;
 }
 
+function boundedString(value, label) {
+  if (typeof value !== "string" || value.length === 0 || value.length > 128 || value.trim() !== value)
+    throw new Error(`${label} must be a trimmed string of 1 to 128 characters`);
+  return value;
+}
+
 function relativePath(value, label) {
   if (typeof value !== "string" || value.length === 0 || value.includes("\\") || value.includes("%") ||
       value.includes("?") || value.includes("#") || value.includes(":"))
@@ -81,12 +87,12 @@ function parseFiles(app, catalogUrl) {
   return files;
 }
 
-export async function validateDeployedCatalog({ catalogUrl, expectedBuildId, fetchImpl = fetch } = {}) {
+export async function validateDeployedCatalog({ catalogUrl, expectedCatalogVersion, fetchImpl = fetch } = {}) {
   if (typeof catalogUrl !== "string" || catalogUrl.length === 0) throw new Error("catalogUrl is required");
   const parsedUrl = new URL(catalogUrl);
   const loopback = parsedUrl.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(parsedUrl.hostname);
   if (parsedUrl.protocol !== "https:" && !loopback) throw new Error("catalogUrl must use HTTPS (loopback HTTP is allowed for tests)");
-  identifier(expectedBuildId, "expected build ID");
+  boundedString(expectedCatalogVersion, "expected catalog version");
 
   const catalogBytes = await fetchReadable(parsedUrl.href, "catalog", "application/json", fetchImpl);
   let catalog;
@@ -96,6 +102,9 @@ export async function validateDeployedCatalog({ catalogUrl, expectedBuildId, fet
     throw new Error(`catalog JSON is invalid: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (catalog.schemaVersion !== 1) throw new Error(`catalog schema version ${String(catalog.schemaVersion)} is unsupported`);
+  const catalogVersion = boundedString(catalog.catalogVersion, "catalog version");
+  if (catalogVersion !== expectedCatalogVersion)
+    throw new Error(`expected catalog version ${expectedCatalogVersion}; deployed catalog version is ${catalogVersion}`);
   if (!Array.isArray(catalog.apps) || catalog.apps.length === 0) throw new Error("catalog apps must be a nonempty array");
   const apps = catalog.apps.map((value, index) => {
     const app = record(value, `catalog app ${index}`);
@@ -103,10 +112,6 @@ export async function validateDeployedCatalog({ catalogUrl, expectedBuildId, fet
     identifier(app.buildId, `catalog app ${index} build ID`);
     return { ...app, files: parseFiles(app, parsedUrl.href) };
   });
-  const deployedBuildIds = apps.map(({ buildId }) => buildId);
-  if (!deployedBuildIds.includes(expectedBuildId))
-    throw new Error(`expected build ID ${expectedBuildId}; deployed catalog contains ${deployedBuildIds.join(", ")}`);
-
   let fileCount = 0;
   let wasmCount = 0;
   await Promise.all(apps.flatMap((app) => app.files.map(async (file) => {
@@ -123,7 +128,7 @@ export async function validateDeployedCatalog({ catalogUrl, expectedBuildId, fet
     fileCount += 1;
   })));
   if (wasmCount === 0) throw new Error("deployed catalog contains no application/wasm package response");
-  return { catalogUrl: parsedUrl.href, expectedBuildId, appCount: apps.length, fileCount };
+  return { catalogUrl: parsedUrl.href, expectedCatalogVersion, appCount: apps.length, fileCount };
 }
 
 function commandLineArguments(argv) {
@@ -131,15 +136,18 @@ function commandLineArguments(argv) {
   for (let index = 0; index < argv.length; index += 2) {
     const name = argv[index];
     const value = argv[index + 1];
-    if (!["--catalog-url", "--expected-build-id"].includes(name) || value === undefined)
-      throw new Error("usage: validate-deployed-catalog.mjs --catalog-url <url> --expected-build-id <id>");
+    if (!["--catalog-url", "--expected-catalog-version"].includes(name) || value === undefined)
+      throw new Error("usage: validate-deployed-catalog.mjs --catalog-url <url> --expected-catalog-version <version>");
     if (values.has(name)) throw new Error(`duplicate argument ${name}`);
     values.set(name, value);
   }
-  return { catalogUrl: values.get("--catalog-url"), expectedBuildId: values.get("--expected-build-id") };
+  return {
+    catalogUrl: values.get("--catalog-url"),
+    expectedCatalogVersion: values.get("--expected-catalog-version"),
+  };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const result = await validateDeployedCatalog(commandLineArguments(process.argv.slice(2)));
-  console.log(`Validated ${result.catalogUrl} at build ${result.expectedBuildId}: ${result.appCount} apps, ${result.fileCount} files`);
+  console.log(`Validated ${result.catalogUrl} at catalog ${result.expectedCatalogVersion}: ${result.appCount} apps, ${result.fileCount} files`);
 }

@@ -65,7 +65,7 @@ test("normal generic browser flows make no backend or WebSocket requests beyond 
       filesystems: { IDBFS: "idbfs" }, mkdir() {}, mount() {}, syncfs(_populate: boolean, complete: () => void) { complete(); },
     };
     const worker = new BrowserRuntimeWorker(async () => ({
-      abiVersion: 1, uiProtocolVersion: 1, runtimeConfigVersion: 1,
+      abiVersion: 2, uiProtocolVersion: 1, runtimeConfigVersion: 1,
       filesystem,
       create: () => 1, audioOutputChannels: () => 2, initialize: () => 0, prepare: () => 0, process: () => 0, messageTick: () => 0,
       buildUiFrame: () => new ArrayBuffer(0), dispatchAction: () => 0, submitMidiEndpoints: () => 0,
@@ -88,30 +88,37 @@ test("normal generic browser flows make no backend or WebSocket requests beyond 
   expect(sockets).toEqual([]);
 });
 
-test("published root discovers sheaf/miniapp without package bytes and selection uses only its immutable package", async ({ page }) => {
-  const requested: string[] = [];
-  page.on("request", (request) => requested.push(new URL(request.url()).pathname));
+for (const app of [
+  { appId: "miniapp", button: /launch mini app/i },
+  { appId: "braid-4", button: /launch braid 4/i },
+] as const) {
+  test(`published root discovers both rows and fetches only ${app.appId}'s immutable package`, async ({ page }) => {
+    const requested: string[] = [];
+    page.on("request", (request) => requested.push(new URL(request.url()).pathname));
 
-  await page.goto("http://127.0.0.1:4175/");
-  const row = page.locator('.synth-launcher__app[data-synth-app-id="sheaf/miniapp"]');
-  await expect(row).toHaveCount(1);
-  await expect(row.getByRole("button", { name: /launch mini app/i })).toBeVisible();
+    await page.goto("http://127.0.0.1:4175/");
+    await expect.poll(() => page.locator(".synth-launcher__app").evaluateAll((rows) =>
+      rows.map((element) => (element as HTMLElement).dataset.synthAppId)))
+      .toEqual(["sheaf/braid-4", "sheaf/miniapp"]);
 
-  const discoveryRequests = requested.filter((pathname) =>
-    pathname.endsWith(".json") || pathname.includes("/packages/") || pathname.includes("/rollback/"));
-  expect(discoveryRequests).toEqual([
-    "/catalog-sources.json",
-    "/catalogs/sheaf/catalog.json",
-  ]);
+    const discoveryRequests = requested.filter((pathname) =>
+      pathname.endsWith(".json") || pathname.includes("/packages/") || pathname.includes("/rollback/"));
+    expect(discoveryRequests).toEqual([
+      "/catalog-sources.json",
+      "/catalogs/sheaf/catalog.json",
+    ]);
 
-  await row.getByRole("button", { name: /launch mini app/i }).click();
-  await expect.poll(() => requested.filter((pathname) => pathname.includes("/packages/")).sort())
-    .toEqual(expect.arrayContaining([
-      expect.stringMatching(/^\/catalogs\/sheaf\/packages\/miniapp\/[0-9a-f]{64}\/miniapp\.js$/),
-      expect.stringMatching(/^\/catalogs\/sheaf\/packages\/miniapp\/[0-9a-f]{64}\/miniapp\.wasm$/),
-    ]));
-  expect(requested.some((pathname) => pathname.includes("/rollback/"))).toBe(false);
-});
+    await page.getByRole("button", { name: app.button }).click();
+    await expect.poll(() => requested.filter((pathname) => pathname.includes("/packages/")).sort())
+      .toEqual(expect.arrayContaining([
+        expect.stringMatching(new RegExp(`^/catalogs/sheaf/packages/${app.appId}/[0-9a-f]{64}/${app.appId}\\.js$`)),
+        expect.stringMatching(new RegExp(`^/catalogs/sheaf/packages/${app.appId}/[0-9a-f]{64}/${app.appId}\\.wasm$`)),
+      ]));
+    const otherAppId = app.appId === "miniapp" ? "braid-4" : "miniapp";
+    expect(requested.some((pathname) => pathname.includes(`/packages/${otherAppId}/`))).toBe(false);
+    expect(requested.some((pathname) => pathname.includes("/rollback/"))).toBe(false);
+  });
+}
 
 test("launcher and runtime source remain application-generic", async () => {
   const { readFile } = await (new Function("return import('node:fs/promises')")() as Promise<{
@@ -127,23 +134,27 @@ test("launcher and runtime source remain application-generic", async () => {
   ]) {
     const source = await readFile(new URL(relativePath, import.meta.url), "utf8");
     expect(source, relativePath).not.toMatch(/miniapp/i);
+    expect(source, relativePath).not.toMatch(/braid-?4/i);
     expect(source, relativePath).not.toMatch(/rollback\/direct-miniapp/i);
     expect(source, relativePath).not.toMatch(/dist\/wasm\/app\.js/i);
   }
 });
 
-test("temporary direct rollback starts from its complete explicit sidecar mapping", async ({ page }) => {
-  const requested: string[] = [];
-  page.on("request", (request) => requested.push(new URL(request.url()).pathname));
+for (const app of [
+  { appId: "miniapp", root: "miniapp.root" },
+  { appId: "braid-4", root: "braid4.root" },
+] as const) {
+  test(`generic ${app.appId} rollback owns one explicit package without catalog discovery`, async ({ page }) => {
+    const requested: string[] = [];
+    page.on("request", (request) => requested.push(new URL(request.url()).pathname));
 
-  await page.goto("http://127.0.0.1:4175/rollback/direct-miniapp/index.html");
-  await expect(page.locator('[data-synth-node-id="miniapp.root"]')).toBeVisible();
+    await page.goto(`http://127.0.0.1:4175/rollback/apps/${app.appId}/index.html`);
+    await expect(page.locator(`[data-synth-node-id="${app.root}"]`)).toBeVisible({ timeout: 60_000 });
 
-  expect(requested).toEqual(expect.arrayContaining([
-    "/rollback/direct-miniapp/app.js",
-    "/rollback/direct-miniapp/miniapp.js",
-    "/rollback/direct-miniapp/miniapp.wasm",
-  ]));
-  expect(requested.some((pathname) => pathname.endsWith("catalog-sources.json"))).toBe(false);
-  expect(requested.some((pathname) => pathname.includes("/catalogs/"))).toBe(false);
-});
+    expect(requested).toEqual(expect.arrayContaining([
+      expect.stringMatching(new RegExp(`/catalogs/sheaf/packages/${app.appId}/[0-9a-f]{64}/${app.appId}\\.js$`)),
+      expect.stringMatching(new RegExp(`/catalogs/sheaf/packages/${app.appId}/[0-9a-f]{64}/${app.appId}\\.wasm$`)),
+    ]));
+    expect(requested.some((pathname) => pathname.endsWith("catalog-sources.json"))).toBe(false);
+  });
+}

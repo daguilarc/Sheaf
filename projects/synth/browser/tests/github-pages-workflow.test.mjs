@@ -14,7 +14,7 @@ import { parse } from "yaml";
 const repositoryRoot = fileURLToPath(new URL("../../../../../", import.meta.url));
 const workflowPath = path.join(repositoryRoot, ".github", "workflows", "synth-browser-pages.yml");
 const browserReadmePath = path.join(repositoryRoot, "projects", "synth", "browser", "README.md");
-const expectedBuildId = "publisher-build-1";
+const expectedCatalogVersion = "first-party-catalog-1";
 const execFileAsync = promisify(execFile);
 
 function sha256(bytes) {
@@ -31,33 +31,39 @@ async function loadDeployedValidator() {
 }
 
 async function deployedFixture(t, options = {}) {
-  const entryBytes = Buffer.from("export default async function packageEntry() {}\n");
-  const wasmBytes = Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]);
-  const packagePrefix = `packages/miniapp/${expectedBuildId}`;
-  const files = [
-    {
-      path: `${packagePrefix}/miniapp.js`,
-      mediaType: "text/javascript",
-      size: entryBytes.byteLength,
-      sha256: sha256(entryBytes),
-    },
-    {
-      path: `${packagePrefix}/miniapp.wasm`,
-      mediaType: "application/wasm",
-      size: wasmBytes.byteLength,
-      sha256: sha256(wasmBytes),
-    },
-  ];
+  const appFixtures = [
+    { appId: "miniapp", displayName: "Mini App", buildId: "miniapp-build-1", wasmMarker: 1 },
+    { appId: "braid-4", displayName: "Braid 4", buildId: "braid-build-1", wasmMarker: 2 },
+  ].map(({ appId, displayName, buildId, wasmMarker }) => {
+    const entryBytes = Buffer.from(`export default async function ${appId.replace("-", "")}Entry() {}\n`);
+    const wasmBytes = Buffer.from([0, 97, 115, 109, 1, 0, 0, wasmMarker]);
+    const packagePrefix = `packages/${appId}/${buildId}`;
+    const files = [
+      {
+        path: `${packagePrefix}/${appId}.js`,
+        mediaType: "text/javascript",
+        size: entryBytes.byteLength,
+        sha256: sha256(entryBytes),
+      },
+      {
+        path: `${packagePrefix}/${appId}.wasm`,
+        mediaType: "application/wasm",
+        size: wasmBytes.byteLength,
+        sha256: sha256(wasmBytes),
+      },
+    ];
+    return { appId, displayName, buildId, entryBytes, wasmBytes, packagePrefix, files };
+  });
   const catalog = {
     schemaVersion: 1,
-    catalogVersion: `first-party-${expectedBuildId}`,
+    catalogVersion: expectedCatalogVersion,
     publisher: { id: "sheaf", name: "Sheaf" },
-    apps: [{
-      appId: "miniapp",
-      displayName: "Mini App",
+    apps: appFixtures.map(({ appId, displayName, buildId, files }) => ({
+      appId,
+      displayName,
       author: "Sheaf",
       category: "Instrument",
-      buildId: expectedBuildId,
+      buildId,
       browser: {
         abiVersion: 2,
         uiProtocolVersion: 1,
@@ -65,14 +71,23 @@ async function deployedFixture(t, options = {}) {
         entry: files[0].path,
         files,
       },
-    }],
+    })),
   };
   options.mutateCatalog?.(catalog);
-  const routes = new Map([
-    ["/catalog.json", { bytes: Buffer.from(`${JSON.stringify(catalog)}\n`), mediaType: "application/json" }],
-    [`/${packagePrefix}/miniapp.js`, { bytes: entryBytes, mediaType: "text/javascript" }],
-    [`/${packagePrefix}/miniapp.wasm`, { bytes: options.wasmBytes ?? wasmBytes, mediaType: options.wasmMediaType ?? "application/wasm" }],
-  ]);
+  const routes = new Map([["/catalog.json", {
+    bytes: Buffer.from(`${JSON.stringify(catalog)}\n`),
+    mediaType: "application/json",
+  }]]);
+  for (const fixture of appFixtures) {
+    routes.set(`/${fixture.packagePrefix}/${fixture.appId}.js`, {
+      bytes: fixture.entryBytes,
+      mediaType: "text/javascript",
+    });
+    routes.set(`/${fixture.packagePrefix}/${fixture.appId}.wasm`, {
+      bytes: fixture.appId === "miniapp" && options.wasmBytes ? options.wasmBytes : fixture.wasmBytes,
+      mediaType: fixture.appId === "miniapp" && options.wasmMediaType ? options.wasmMediaType : "application/wasm",
+    });
+  }
   const server = createServer((request, response) => {
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
     const route = routes.get(pathname);
@@ -162,7 +177,7 @@ test("jobs declare only their required token permissions", async () => {
   assert.deepEqual(jobs.smoke.permissions, { contents: "read" });
 });
 
-test("build installs pinned toolchains, runs local gates, derives the build ID, and uploads only the publisher artifact", async () => {
+test("build installs pinned toolchains, runs local gates, derives the catalog version, and uploads only the publisher artifact", async () => {
   const { build } = (await readWorkflow()).jobs;
   const buildUses = uses(build);
   const buildCommands = commands(build);
@@ -177,13 +192,15 @@ test("build installs pinned toolchains, runs local gates, derives the build ID, 
   assert.match(buildCommands, /npm --prefix projects\/synth\/browser run build/);
   assert.match(buildCommands, /npm --prefix projects\/synth\/browser run check:generic-runtime/);
   assert.match(buildCommands, /node --test projects\/synth\/browser\/dist\/tests\/\*\.test\.mjs/);
-  assert.match(buildCommands, /make -C projects\/synth\/browser browser-fixture-app browser-apps/);
+  assert.match(buildCommands, /make -C projects\/synth\/browser browser-apps/);
+  assert.doesNotMatch(buildCommands, /browser-fixture-app/);
   assert.match(buildCommands, /npm --prefix projects\/synth\/browser run publish:site/);
   assert.match(buildCommands, /npm --prefix projects\/synth\/browser run publish:pages/);
   assert.match(buildCommands, /tests\/two-origin-package\.spec\.ts/);
   assert.match(buildCommands, /tests\/deployed-origin\.spec\.ts/);
   assert.match(buildCommands, /catalogs\/sheaf\/catalog\.json/);
-  assert.equal(build.outputs["build-id"], "${{ steps.publisher.outputs.build-id }}");
+  assert.equal(build.outputs["catalog-version"], "${{ steps.publisher.outputs.catalog-version }}");
+  assert.deepEqual(Object.keys(build.outputs), ["catalog-version"]);
   assert.deepEqual(upload.with, { path: "projects/synth/browser/dist/pages" });
 });
 
@@ -199,33 +216,45 @@ test("deployment, validation, and smoke form a strict post-upload readiness chai
   assert.deepEqual(validate.needs, ["build", "deploy"]);
   assert.match(validateCommands, /validate-deployed-catalog\.mjs/);
   assert.match(validateCommands, /--catalog-url "\$SYNTH_BROWSER_REMOTE_CATALOG_URL"/);
-  assert.match(validateCommands, /--expected-build-id "\$SYNTH_BROWSER_EXPECTED_BUILD_ID"/);
-  assert.equal(validate.env.SYNTH_BROWSER_EXPECTED_BUILD_ID, "${{ needs.build.outputs.build-id }}");
+  assert.match(validateCommands, /--expected-catalog-version "\$SYNTH_BROWSER_EXPECTED_CATALOG_VERSION"/);
+  assert.equal(validate.env.SYNTH_BROWSER_EXPECTED_CATALOG_VERSION, "${{ needs.build.outputs.catalog-version }}");
   assert.match(validate.env.SYNTH_BROWSER_REMOTE_CATALOG_URL, /needs\.deploy\.outputs\.page-url/);
   assert.equal(smoke.needs, "validate");
-  assert.equal(smoke.env.SYNTH_BROWSER_EXPECTED_BUILD_ID, "${{ needs.validate.outputs.build-id }}");
+  assert.equal(smoke.env.SYNTH_BROWSER_EXPECTED_CATALOG_VERSION, "${{ needs.validate.outputs.catalog-version }}");
   assert.equal(smoke.env.SYNTH_BROWSER_REMOTE_CATALOG_URL, "${{ needs.validate.outputs.catalog-url }}");
   assert.match(smokeCommands, /playwright test tests\/deployed-origin\.spec\.ts/);
 });
 
-test("deployed validator accepts one CORS-readable internally consistent immutable package", async (t) => {
+test("deployed validator accepts every file in a complete CORS-readable catalog", async (t) => {
   const catalogUrl = await deployedFixture(t);
   const { validateDeployedCatalog } = await loadDeployedValidator();
 
-  const result = await validateDeployedCatalog({ catalogUrl, expectedBuildId });
+  const result = await validateDeployedCatalog({ catalogUrl, expectedCatalogVersion });
 
-  assert.deepEqual(result, { catalogUrl, expectedBuildId, appCount: 1, fileCount: 2 });
+  assert.deepEqual(result, { catalogUrl, expectedCatalogVersion, appCount: 2, fileCount: 4 });
 });
 
 test("deployed validator rejects a package response without CORS", async (t) => {
   const catalogUrl = await deployedFixture(t, {
-    missingCorsPath: `/packages/miniapp/${expectedBuildId}/miniapp.js`,
+    missingCorsPath: "/packages/miniapp/miniapp-build-1/miniapp.js",
   });
   const { validateDeployedCatalog } = await loadDeployedValidator();
 
   await assert.rejects(
-    validateDeployedCatalog({ catalogUrl, expectedBuildId }),
+    validateDeployedCatalog({ catalogUrl, expectedCatalogVersion }),
     /miniapp\.js.*Access-Control-Allow-Origin/i,
+  );
+});
+
+test("deployed validator checks the second app's package responses too", async (t) => {
+  const catalogUrl = await deployedFixture(t, {
+    missingCorsPath: "/packages/braid-4/braid-build-1/braid-4.wasm",
+  });
+  const { validateDeployedCatalog } = await loadDeployedValidator();
+
+  await assert.rejects(
+    validateDeployedCatalog({ catalogUrl, expectedCatalogVersion }),
+    /braid-4\.wasm.*Access-Control-Allow-Origin/i,
   );
 });
 
@@ -234,18 +263,18 @@ test("deployed validator rejects incorrect live WASM MIME delivery", async (t) =
   const { validateDeployedCatalog } = await loadDeployedValidator();
 
   await assert.rejects(
-    validateDeployedCatalog({ catalogUrl, expectedBuildId }),
+    validateDeployedCatalog({ catalogUrl, expectedCatalogVersion }),
     /miniapp\.wasm.*application\/octet-stream.*application\/wasm/i,
   );
 });
 
-test("deployed validator rejects an unexpected deployed build ID", async (t) => {
+test("deployed validator rejects an unexpected whole catalog version", async (t) => {
   const catalogUrl = await deployedFixture(t);
   const { validateDeployedCatalog } = await loadDeployedValidator();
 
   await assert.rejects(
-    validateDeployedCatalog({ catalogUrl, expectedBuildId: "other-build" }),
-    /build ID.*other-build.*publisher-build-1/i,
+    validateDeployedCatalog({ catalogUrl, expectedCatalogVersion: "other-catalog" }),
+    /catalog version.*other-catalog.*first-party-catalog-1/i,
   );
 });
 
@@ -258,7 +287,7 @@ test("deployed validator rejects package references outside the app build root",
   const { validateDeployedCatalog } = await loadDeployedValidator();
 
   await assert.rejects(
-    validateDeployedCatalog({ catalogUrl, expectedBuildId }),
+    validateDeployedCatalog({ catalogUrl, expectedCatalogVersion }),
     /other-build.*outside immutable package root/i,
   );
 });
@@ -270,7 +299,7 @@ test("deployed validator rejects a declared package size mismatch", async (t) =>
   const { validateDeployedCatalog } = await loadDeployedValidator();
 
   await assert.rejects(
-    validateDeployedCatalog({ catalogUrl, expectedBuildId }),
+    validateDeployedCatalog({ catalogUrl, expectedCatalogVersion }),
     /miniapp\.js.*size.*expected/i,
   );
 });
@@ -280,7 +309,7 @@ test("deployed validator rejects changed package bytes by exact SHA-256", async 
   const { validateDeployedCatalog } = await loadDeployedValidator();
 
   await assert.rejects(
-    validateDeployedCatalog({ catalogUrl, expectedBuildId }),
+    validateDeployedCatalog({ catalogUrl, expectedCatalogVersion }),
     /miniapp\.wasm.*SHA-256 mismatch/i,
   );
 });

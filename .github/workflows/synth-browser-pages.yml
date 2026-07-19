@@ -16,7 +16,7 @@ jobs:
       contents: read
       pages: read
     outputs:
-      build-id: ${{ steps.publisher.outputs.build-id }}
+      catalog-version: ${{ steps.publisher.outputs.catalog-version }}
     steps:
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -38,21 +38,21 @@ jobs:
           npm --prefix projects/synth/browser run check:generic-runtime
           node --test projects/synth/browser/dist/tests/*.test.mjs
       - name: Build immutable browser packages
-        run: make -C projects/synth/browser browser-fixture-app browser-apps
+        run: make -C projects/synth/browser browser-apps
       - name: Assemble validated publication artifacts
         run: |
           npm --prefix projects/synth/browser run publish:site
           npm --prefix projects/synth/browser run publish:pages
-      - name: Capture expected publisher build
+      - name: Capture expected publisher catalog
         id: publisher
         run: |
-          build_id="$(node -e 'const fs=require("node:fs"); const catalog=JSON.parse(fs.readFileSync("projects/synth/browser/dist/pages/catalogs/sheaf/catalog.json", "utf8")); process.stdout.write(catalog.apps[0].buildId)')"
-          test -n "$build_id"
-          echo "build-id=$build_id" >> "$GITHUB_OUTPUT"
+          catalog_version="$(node -e 'const fs=require("node:fs"); const catalog=JSON.parse(fs.readFileSync("projects/synth/browser/dist/pages/catalogs/sheaf/catalog.json", "utf8")); process.stdout.write(catalog.catalogVersion)')"
+          test -n "$catalog_version"
+          echo "catalog-version=$catalog_version" >> "$GITHUB_OUTPUT"
       - name: Run local cross-origin publication gates
         env:
           SYNTH_BROWSER_REMOTE_CATALOG_URL: http://127.0.0.1:4174/dist/pages/catalogs/sheaf/catalog.json
-          SYNTH_BROWSER_EXPECTED_BUILD_ID: ${{ steps.publisher.outputs.build-id }}
+          SYNTH_BROWSER_EXPECTED_CATALOG_VERSION: ${{ steps.publisher.outputs.catalog-version }}
         run: npx --prefix projects/synth/browser playwright test tests/two-origin-package.spec.ts tests/deployed-origin.spec.ts
       - name: Configure GitHub Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
@@ -83,10 +83,10 @@ jobs:
       contents: read
     env:
       SYNTH_BROWSER_REMOTE_CATALOG_URL: ${{ format('{0}catalogs/sheaf/catalog.json', needs.deploy.outputs.page-url) }}
-      SYNTH_BROWSER_EXPECTED_BUILD_ID: ${{ needs.build.outputs.build-id }}
+      SYNTH_BROWSER_EXPECTED_CATALOG_VERSION: ${{ needs.build.outputs.catalog-version }}
     outputs:
       catalog-url: ${{ steps.inputs.outputs.catalog-url }}
-      build-id: ${{ steps.inputs.outputs.build-id }}
+      catalog-version: ${{ steps.inputs.outputs.catalog-version }}
     steps:
       - name: Check out validator
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -98,12 +98,12 @@ jobs:
         id: inputs
         run: |
           echo "catalog-url=$SYNTH_BROWSER_REMOTE_CATALOG_URL" >> "$GITHUB_OUTPUT"
-          echo "build-id=$SYNTH_BROWSER_EXPECTED_BUILD_ID" >> "$GITHUB_OUTPUT"
+          echo "catalog-version=$SYNTH_BROWSER_EXPECTED_CATALOG_VERSION" >> "$GITHUB_OUTPUT"
       - name: Validate deployed catalog and packages
         run: >-
           node projects/synth/browser/src/validate-deployed-catalog.mjs
           --catalog-url "$SYNTH_BROWSER_REMOTE_CATALOG_URL"
-          --expected-build-id "$SYNTH_BROWSER_EXPECTED_BUILD_ID"
+          --expected-catalog-version "$SYNTH_BROWSER_EXPECTED_CATALOG_VERSION"
   smoke:
     needs: validate
     runs-on: ubuntu-latest
@@ -111,7 +111,7 @@ jobs:
       contents: read
     env:
       SYNTH_BROWSER_REMOTE_CATALOG_URL: ${{ needs.validate.outputs.catalog-url }}
-      SYNTH_BROWSER_EXPECTED_BUILD_ID: ${{ needs.validate.outputs.build-id }}
+      SYNTH_BROWSER_EXPECTED_CATALOG_VERSION: ${{ needs.validate.outputs.catalog-version }}
     steps:
       - name: Check out launcher
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

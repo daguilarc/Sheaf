@@ -19,6 +19,6 @@ if [ -f "$EMSDK_DIR/emsdk_env.sh" ]; then
   . "$EMSDK_DIR/emsdk_env.sh" >/dev/null
 fi
 
-npm --prefix "$BROWSER_ROOT" install
-make -C "$BROWSER_ROOT" EMSDK="$EMSDK_DIR" browser-fixture-app browser-apps
+npm --prefix "$BROWSER_ROOT" install --no-package-lock
+make -C "$BROWSER_ROOT" EMSDK="$EMSDK_DIR" browser-apps
 npm --prefix "$BROWSER_ROOT" run publish:site

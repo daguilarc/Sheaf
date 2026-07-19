@@ -1,6 +1,11 @@
 import { expect, test } from "@playwright/test";
 
 test("starts a generic verified package from the isolated launcher's second origin", async ({ page }) => {
+  const remoteRequests: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.origin === "http://127.0.0.1:4174") remoteRequests.push(url.pathname);
+  });
   await page.goto("http://127.0.0.1:4173/public/index.html");
 
   const result = await page.evaluate(async () => {
@@ -18,7 +23,7 @@ test("starts a generic verified package from the isolated launcher's second orig
         locateFile: materialized.locateFile,
         mainScriptUrlOrBlob: materialized.mainScriptUrlOrBlob,
       },
-      versions: { abiVersion: 1, uiProtocolVersion: 1, runtimeConfigVersion: 1 },
+      versions: { abiVersion: 2, uiProtocolVersion: 1, runtimeConfigVersion: 1 },
     });
     const created = await runtime.request({ type: "create" });
     const audio = await runtime.request({ type: "audio-config" });
@@ -38,6 +43,11 @@ test("starts a generic verified package from the isolated launcher's second orig
   expect(result.loaded).toEqual({ type: "ok" });
   expect(result.created).toEqual({ type: "created", handle: 41 });
   expect(result.audio).toEqual({ type: "audio-config", channels: 2 });
+  expect(remoteRequests).toEqual([
+    "/package-fixture/catalog.json",
+    "/package-fixture/remote-fake.js",
+    "/package-fixture/remote-fake.wasm",
+  ]);
   expect(result.remoteFactory.wasmUrl).toMatch(/^blob:/);
   expect(result.remoteFactory.mainScriptUrlOrBlob).toMatch(/^blob:/);
   expect(result.remoteFactory.entryOrigin).toBe("http://127.0.0.1:4173");

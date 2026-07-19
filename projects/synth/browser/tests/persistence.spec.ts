@@ -29,7 +29,7 @@ test("syncs IDBFS before runtime initialization and flushes patch/config updates
       },
     };
     const worker = new BrowserRuntimeWorker(async () => ({
-      abiVersion: 1,
+      abiVersion: 2,
       uiProtocolVersion: 1,
       runtimeConfigVersion: 1,
       filesystem,
@@ -139,7 +139,7 @@ test("flushes runtime-reported persistence changes after actions and ticks", asy
       },
     };
     const worker = new BrowserRuntimeWorker(async () => ({
-      abiVersion: 1,
+      abiVersion: 2,
       uiProtocolVersion: 1,
       runtimeConfigVersion: 1,
       filesystem,
@@ -222,14 +222,14 @@ test("derives stable app-isolated patch roots from validated catalog identity", 
   const result = await page.evaluate(async () => {
     const catalog = await (new Function("return import('/dist/src/catalog.js')")() as Promise<any>);
     const persistence = await (new Function("return import('/dist/src/persistence.js')")() as Promise<any>);
-    const app = (publisherId: string, buildId: string) => ({
+    const app = (publisherId: string, appId: string, buildId: string) => ({
       publisher: { id: publisherId },
-      appId: "miniapp",
+      appId,
       buildId,
       browser: { runtimeConfigVersion: 1 },
     });
-    const paths = (publisherId: string, buildId: string) => persistence.deriveBrowserPersistencePaths(
-      catalog.runtimeIdentityForCatalogApp(app(publisherId, buildId)),
+    const paths = (publisherId: string, appId: string, buildId: string) => persistence.deriveBrowserPersistencePaths(
+      catalog.runtimeIdentityForCatalogApp(app(publisherId, appId, buildId)),
     );
     const rejects = (identity: unknown) => {
       try {
@@ -240,9 +240,10 @@ test("derives stable app-isolated patch roots from validated catalog identity", 
       }
     };
     return {
-      firstBuild: paths("sheaf", "build-one"),
-      nextBuild: paths("sheaf", "build-two"),
-      otherPublisher: paths("friend", "build-one"),
+      firstBuild: paths("sheaf", "miniapp", "build-one"),
+      nextBuild: paths("sheaf", "miniapp", "build-two"),
+      braid: paths("sheaf", "braid-4", "build-one"),
+      otherPublisher: paths("friend", "miniapp", "build-one"),
       rejectsTraversal: rejects({ publisherId: "../sheaf", appId: "miniapp", runtimeConfigVersion: 1 }),
       rejectsExtraPathInput: rejects({ publisherId: "sheaf", appId: "miniapp", runtimeConfigVersion: 1, patchesRoot: "/tmp" }),
     };
@@ -256,6 +257,8 @@ test("derives stable app-isolated patch roots from validated catalog identity", 
     configFile: "/data/config.json",
   });
   expect(result.otherPublisher.patchesRoot).toBe("/data/patches/friend/miniapp");
+  expect(result.braid.patchesRoot).toBe("/data/patches/sheaf/braid-4");
+  expect(result.braid.patchesRoot).not.toBe(result.firstBuild.patchesRoot);
   expect(result.otherPublisher.configFile).toBe(result.firstBuild.configFile);
   expect(result.otherPublisher.logsRoot).toBe(result.firstBuild.logsRoot);
   expect(result.rejectsTraversal).toBe(true);
@@ -268,7 +271,7 @@ test("rejects incompatible runtime-config identity before filesystem or runtime 
     const { BrowserRuntimeWorker } = await (new Function("return import('/dist/src/worker.js')")() as Promise<any>);
     const calls: string[] = [];
     const worker = new BrowserRuntimeWorker(async () => ({
-      abiVersion: 1,
+      abiVersion: 2,
       uiProtocolVersion: 1,
       runtimeConfigVersion: 1,
       filesystem: {
