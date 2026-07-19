@@ -23,12 +23,16 @@ async function builtFakeCatalogApp() {
   const files = await Promise.all([
     ["fake_browser_app.js", "text/javascript"],
     ["fake_browser_app.wasm", "application/wasm"],
-  ].map(async ([name, mediaType]) => ({
-    path: `${packageRoot}/${name}`,
-    url: `http://127.0.0.1:4174/dist/wasm/${name}`,
-    mediaType,
-    sha256: createHash("sha256").update(await readFile(new URL(`../dist/wasm/${name}`, import.meta.url))).digest("hex"),
-  })));
+  ].map(async ([name, mediaType]) => {
+    const bytes = await readFile(new URL(`../dist/wasm/${name}`, import.meta.url));
+    return {
+      path: `${packageRoot}/${name}`,
+      url: `http://127.0.0.1:4174/dist/wasm/${name}`,
+      mediaType,
+      size: bytes.byteLength,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    };
+  }));
   return {
     globalId: "test/fake-browser-app",
     catalogUrl: "https://test.example/catalog.json",

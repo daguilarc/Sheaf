@@ -22,12 +22,16 @@ async function builtMiniappCatalogApp() {
   const files = await Promise.all([
     ["miniapp.js", "text/javascript"],
     ["miniapp.wasm", "application/wasm"],
-  ].map(async ([name, mediaType]) => ({
-    path: `${packageRoot}/${name}`,
-    url: `http://127.0.0.1:4174/dist/wasm/${name}`,
-    mediaType,
-    sha256: createHash("sha256").update(await readFile(new URL(`../dist/wasm/${name}`, import.meta.url))).digest("hex"),
-  })));
+  ].map(async ([name, mediaType]) => {
+    const bytes = await readFile(new URL(`../dist/wasm/${name}`, import.meta.url));
+    return {
+      path: `${packageRoot}/${name}`,
+      url: `http://127.0.0.1:4174/dist/wasm/${name}`,
+      mediaType,
+      size: bytes.byteLength,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    };
+  }));
   return {
     globalId: "sheaf/miniapp",
     catalogUrl: "https://sheaf.example/catalog.json",

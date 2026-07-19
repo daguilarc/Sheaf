@@ -28,9 +28,9 @@ function app(appId, displayName = appId) {
       runtimeConfigVersion: SUPPORTED_RUNTIME_CONFIG_VERSION,
       entry,
       files: [
-        { path: entry, mediaType: "text/javascript", sha256: digest },
-        { path: `packages/${appId}/${buildId}/${appId}.wasm`, mediaType: "application/wasm", sha256: digest },
-        { path: `packages/${appId}/${buildId}/${appId}.data`, mediaType: "application/octet-stream", sha256: digest },
+        { path: entry, mediaType: "text/javascript", size: 1, sha256: digest },
+        { path: `packages/${appId}/${buildId}/${appId}.wasm`, mediaType: "application/wasm", size: 1, sha256: digest },
+        { path: `packages/${appId}/${buildId}/${appId}.data`, mediaType: "application/octet-stream", size: 1, sha256: digest },
       ],
     },
   };
@@ -197,6 +197,17 @@ test("rejects malformed SHA-256 digests and unsupported package media types", ()
   }
 });
 
+test("requires each package file to declare a nonnegative safe-integer size", () => {
+  const parsed = parseCatalog(catalog(), "https://publisher.example/catalog.json");
+  assert.deepEqual(parsed.apps[0].browser.files.map(({ size }) => size), [1, 1, 1]);
+
+  for (const value of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, "1", null]) {
+    const input = catalog();
+    input.apps[0].browser.files[0].size = value;
+    assert.throws(() => parseCatalog(input, "https://publisher.example/catalog.json"), /size/i);
+  }
+});
+
 test("validates paths before URL resolution and rejects absolute or traversal-like paths", () => {
   for (const path of [
     "/packages/app.js",
@@ -220,7 +231,7 @@ test("validates paths before URL resolution and rejects absolute or traversal-li
 
 test("requires a nonempty unique file inventory containing the JavaScript entry", () => {
   for (const files of [undefined, [], [
-    { path: "packages/miniapp/miniapp-build-1/miniapp.wasm", mediaType: "application/wasm", sha256: digest },
+    { path: "packages/miniapp/miniapp-build-1/miniapp.wasm", mediaType: "application/wasm", size: 1, sha256: digest },
   ]]) {
     const input = catalog();
     input.apps[0].browser.files = files;

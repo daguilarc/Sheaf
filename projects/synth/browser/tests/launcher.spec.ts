@@ -18,7 +18,7 @@ function app(appId: string, displayName: string) {
       uiProtocolVersion: 1,
       runtimeConfigVersion: 1,
       entry,
-      files: [{ path: entry, mediaType: "text/javascript", sha256: digest }],
+      files: [{ path: entry, mediaType: "text/javascript", size: 1, sha256: digest }],
     },
   };
 }

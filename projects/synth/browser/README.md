@@ -62,9 +62,9 @@ make -C projects/synth/browser browser-fake-app browser-miniapp
 npm --prefix projects/synth/browser run publish:site
 ```
 
-`dist/site` is replaced only after a staging tree passes reference, media-type,
-and SHA-256 validation. Repeating the command with identical inputs produces a
-byte-identical tree:
+`dist/site` is replaced only after a staging tree passes reference, declared
+size, media-type, and SHA-256 validation. Repeating the command with identical
+inputs produces a byte-identical tree:
 
 ```text
 index.html
@@ -94,6 +94,50 @@ The `_headers` file applies COOP, COEP, and the MIDI permission policy to every
 route. Additional catalog-package and rollback globs explicitly preserve WASM
 and JavaScript media types for entry, pthread/Wasm-worker, and AudioWorklet
 paths.
+
+## GitHub Pages Catalog Publisher
+
+The one-time repository setup is intentionally manual: in GitHub repository
+**Settings → Pages**, set **Build and deployment → Source** to **GitHub
+Actions**. Keep the `github-pages` environment limited to the default branch.
+The workflow does not enable Pages, change repository settings, or deploy from
+feature branches.
+
+Once repository Pages is enabled, the stable first-party catalog URL is:
+
+```text
+https://jvictor0.github.io/Sheaf/catalogs/sheaf/catalog.json
+```
+
+This URL documents the configured publication contract; it is not a claim that
+the deployment is currently live. `.github/workflows/synth-browser-pages.yml`
+builds and validates the existing Cloudflare artifact, derives `dist/pages`
+from it, and uploads catalogs and immutable packages only. The Pages artifact
+has no root launcher, `catalog-sources.json`, rollback page, runtime module
+tree, or Cloudflare-only `_headers` file. A publisher update changes the stable
+catalog's build record and adds a content-addressed package directory; it never
+mutates an older package directory.
+
+Every public catalog and package response must remain readable with
+`Access-Control-Allow-Origin: *`. Catalog file records declare the exact byte
+size, media type, and SHA-256 digest. Live JavaScript responses must use
+`text/javascript`, and live `.wasm` responses must use `application/wasm`.
+After deployment, the workflow passes the catalog URL and build ID explicitly
+to the validator, then runs the opt-in Chromium smoke with
+`SYNTH_BROWSER_REMOTE_CATALOG_URL` and `SYNTH_BROWSER_EXPECTED_BUILD_ID`.
+
+GitHub Pages remains a publisher origin, not the top-level runtime host. The
+Cloudflare site remains the launcher because its `_headers` contract supplies
+COOP (`Cross-Origin-Opener-Policy`), COEP
+(`Cross-Origin-Embedder-Policy`), and the Web MIDI `Permissions-Policy` needed
+by the cross-origin-isolated audio runtime. A Pages package is fetched with
+CORS and materialized by that isolated launcher.
+
+Local tests prove deterministic artifact contents, validator rejection paths,
+and a production-like two-origin launch. Local tests cannot prove live Pages
+CORS or MIME behavior; those live properties are proven only when CI validates
+the newly deployed Pages URL. This task also does not claim any live Cloudflare
+header behavior or a live deployment on either host.
 
 ### Temporary Direct Rollback
 

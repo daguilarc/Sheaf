@@ -156,6 +156,7 @@ export async function assemblePackage({ appId, sourceDirectory, outputDirectory,
       files: Object.freeze(files.map((file) => Object.freeze({
         path: `${packagePrefix}/${file.relativePath}`,
         mediaType: file.mediaType,
+        size: file.size,
         sha256: file.sha256,
       }))),
     }),

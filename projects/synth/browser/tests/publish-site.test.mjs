@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   browserRuntimeModules,
   cloudflareHeaders,
+  publishPublisherArtifact,
   publishSite,
   validatePublishedSite,
 } from "../src/publish-site.mjs";
@@ -104,6 +105,29 @@ test("publishing the same inputs twice produces byte-identical trees", async () 
   assert.deepEqual(await snapshotTree(first), await snapshotTree(second));
 });
 
+test("derives a deterministic Pages publisher artifact containing catalogs and immutable packages only", async () => {
+  const { browserRoot, publishRoot, root } = await createPublishFixture("pages-publisher");
+  const pagesRoot = path.join(root, "pages");
+  await publishSite({ browserRoot, publishRoot });
+
+  const result = await publishPublisherArtifact({ publishRoot, pagesRoot });
+
+  assert.equal(result.pagesRoot, pagesRoot);
+  const catalog = JSON.parse(await readFile(path.join(pagesRoot, "catalogs/sheaf/catalog.json"), "utf8"));
+  const buildId = catalog.apps[0].buildId;
+  assert.deepEqual((await snapshotTree(pagesRoot)).map(([relativePath]) => relativePath), [
+    "catalogs/sheaf/catalog.json",
+    `catalogs/sheaf/packages/miniapp/${buildId}/miniapp.js`,
+    `catalogs/sheaf/packages/miniapp/${buildId}/miniapp.wasm`,
+  ]);
+  for (const forbidden of ["index.html", "catalog-sources.json", "_headers", "rollback", "dist"])
+    await assert.rejects(stat(path.join(pagesRoot, forbidden)), { code: "ENOENT" });
+
+  const second = path.join(root, "pages-second");
+  await publishPublisherArtifact({ publishRoot, pagesRoot: second });
+  assert.deepEqual(await snapshotTree(pagesRoot), await snapshotTree(second));
+});
+
 test("validation rejects missing package files and inconsistent package digests", async () => {
   const { browserRoot, publishRoot } = await createPublishFixture("invalid-package");
   await publishSite({ browserRoot, publishRoot });
@@ -113,14 +137,14 @@ test("validation rejects missing package files and inconsistent package digests"
 
   await assert.rejects(
     () => validatePublishedSite({ publishRoot }),
-    /miniapp\.wasm.*SHA-256|SHA-256.*miniapp\.wasm/i,
+    /miniapp\.wasm.*(?:size|SHA-256)|(?:size|SHA-256).*miniapp\.wasm/i,
   );
 
   const missing = path.join(publishRoot, "catalogs/sheaf", catalog.apps[0].browser.files[0].path);
   await writeFile(missing, "");
   await assert.rejects(
     () => validatePublishedSite({ publishRoot }),
-    /miniapp\.js.*(?:SHA-256|empty)|(?:SHA-256|empty).*miniapp\.js/i,
+    /miniapp\.js.*(?:size|SHA-256|empty)|(?:size|SHA-256|empty).*miniapp\.js/i,
   );
 });
 

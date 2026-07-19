@@ -26,7 +26,7 @@ function app(appId, displayName = appId) {
       uiProtocolVersion: SUPPORTED_UI_PROTOCOL_VERSION,
       runtimeConfigVersion: SUPPORTED_RUNTIME_CONFIG_VERSION,
       entry,
-      files: [{ path: entry, mediaType: "text/javascript", sha256: digest }],
+      files: [{ path: entry, mediaType: "text/javascript", size: 1, sha256: digest }],
     },
   };
 }

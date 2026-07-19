@@ -8,6 +8,7 @@
     "build:cloudflare-pages": "bash scripts/cloudflare-pages-build.sh",
     "package:app": "node dist/src/package-app.mjs",
     "publish:site": "npm run build && node dist/src/publish-site.mjs",
+    "publish:pages": "node dist/src/publish-site.mjs --publisher-only",
     "test": "npm run build && npm run check:generic-runtime && node --test dist/tests/*.test.mjs && playwright test",
     "check:generic-runtime": "node tests/check-generic-runtime.mjs",
     "test:unit": "npm run build && node --test dist/tests/*.test.mjs",
@@ -15,6 +16,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "yaml": "2.8.1"
   }
 }

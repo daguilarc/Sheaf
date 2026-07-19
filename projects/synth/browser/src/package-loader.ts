@@ -90,6 +90,8 @@ async function verifiedBytes(file: CatalogFile, fetcher: PackageFetcher): Promis
   if (actualMediaType !== file.mediaType)
     throw new Error(`package file ${file.path} media type ${actualMediaType || "<missing>"}; expected ${file.mediaType}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength !== file.size)
+    throw new Error(`package file ${file.path} size ${bytes.byteLength}; expected ${file.size}`);
   const contentLength = response.headers.get("Content-Length");
   if (contentLength !== null) {
     if (!/^(0|[1-9][0-9]*)$/.test(contentLength)) throw new Error(`package file ${file.path} has invalid Content-Length ${contentLength}`);

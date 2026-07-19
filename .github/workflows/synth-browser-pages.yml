@@ -1,0 +1,128 @@
+name: Synth browser Pages publisher
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: synth-browser-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+    outputs:
+      build-id: ${{ steps.publisher.outputs.build-id }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.17.1
+      - name: Set up Emscripten
+        uses: emscripten-core/setup-emsdk@4528d102f7230f0e7b276855c01ea1159be0e984 # v16
+        with:
+          version: 6.0.3
+      - name: Install browser dependencies
+        run: npm --prefix projects/synth/browser install --no-package-lock
+      - name: Install Chromium
+        run: npx --prefix projects/synth/browser playwright install --with-deps chromium
+      - name: Run TypeScript, contract, and generic runtime gates
+        run: |
+          npm --prefix projects/synth/browser run build
+          npm --prefix projects/synth/browser run check:generic-runtime
+          node --test projects/synth/browser/dist/tests/*.test.mjs
+      - name: Build immutable browser packages
+        run: make -C projects/synth/browser browser-fake-app browser-miniapp
+      - name: Assemble validated publication artifacts
+        run: |
+          npm --prefix projects/synth/browser run publish:site
+          npm --prefix projects/synth/browser run publish:pages
+      - name: Capture expected publisher build
+        id: publisher
+        run: |
+          build_id="$(node -e 'const fs=require("node:fs"); const catalog=JSON.parse(fs.readFileSync("projects/synth/browser/dist/pages/catalogs/sheaf/catalog.json", "utf8")); process.stdout.write(catalog.apps[0].buildId)')"
+          test -n "$build_id"
+          echo "build-id=$build_id" >> "$GITHUB_OUTPUT"
+      - name: Run local cross-origin publication gates
+        env:
+          SYNTH_BROWSER_REMOTE_CATALOG_URL: http://127.0.0.1:4174/dist/pages/catalogs/sheaf/catalog.json
+          SYNTH_BROWSER_EXPECTED_BUILD_ID: ${{ steps.publisher.outputs.build-id }}
+        run: npx --prefix projects/synth/browser playwright test tests/two-origin-package.spec.ts tests/deployed-origin.spec.ts
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: Upload publisher artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: projects/synth/browser/dist/pages
+  deploy:
+    needs: build
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page-url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy publisher artifact
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
+  validate:
+    needs: [build, deploy]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SYNTH_BROWSER_REMOTE_CATALOG_URL: ${{ format('{0}catalogs/sheaf/catalog.json', needs.deploy.outputs.page-url) }}
+      SYNTH_BROWSER_EXPECTED_BUILD_ID: ${{ needs.build.outputs.build-id }}
+    outputs:
+      catalog-url: ${{ steps.inputs.outputs.catalog-url }}
+      build-id: ${{ steps.inputs.outputs.build-id }}
+    steps:
+      - name: Check out validator
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.17.1
+      - name: Preserve explicit validation inputs
+        id: inputs
+        run: |
+          echo "catalog-url=$SYNTH_BROWSER_REMOTE_CATALOG_URL" >> "$GITHUB_OUTPUT"
+          echo "build-id=$SYNTH_BROWSER_EXPECTED_BUILD_ID" >> "$GITHUB_OUTPUT"
+      - name: Validate deployed catalog and packages
+        run: >-
+          node projects/synth/browser/src/validate-deployed-catalog.mjs
+          --catalog-url "$SYNTH_BROWSER_REMOTE_CATALOG_URL"
+          --expected-build-id "$SYNTH_BROWSER_EXPECTED_BUILD_ID"
+  smoke:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      SYNTH_BROWSER_REMOTE_CATALOG_URL: ${{ needs.validate.outputs.catalog-url }}
+      SYNTH_BROWSER_EXPECTED_BUILD_ID: ${{ needs.validate.outputs.build-id }}
+    steps:
+      - name: Check out launcher
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.17.1
+      - name: Install browser smoke dependencies
+        run: |
+          npm --prefix projects/synth/browser install --no-package-lock
+          npx --prefix projects/synth/browser playwright install --with-deps chromium
+          npm --prefix projects/synth/browser run build
+      - name: Run deployed-origin readiness smoke
+        run: npx --prefix projects/synth/browser playwright test tests/deployed-origin.spec.ts

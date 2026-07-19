@@ -253,6 +253,7 @@ test("direct runtime installation supersedes delayed launcher auto-boot across f
         files: [{
           path: "packages/portable-app/portable-app-build-1/app.js",
           mediaType: "text/javascript",
+          size: 1,
           sha256: "0123456789abcdef".repeat(4),
         }],
       },
@@ -288,6 +289,7 @@ test("production bootstrap discovers catalogs without loading an application mod
           files: [{
             path: "packages/portable-app/portable-app-build-1/app.js",
             mediaType: "text/javascript",
+            size: 1,
             sha256: "0123456789abcdef".repeat(4),
           }],
         },

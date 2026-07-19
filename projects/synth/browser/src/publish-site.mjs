@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -150,7 +150,9 @@ export async function validatePublishedSite({ publishRoot }) {
     if (!relativePath.startsWith(expectedPrefix))
       throw new Error(`Catalog package reference ${relativePath} is outside immutable first-party package ${expectedPrefix}`);
     const filename = path.join(publishRoot, relativePath);
-    await assertExists(filename, relativePath, { nonempty: true });
+    const metadata = await assertExists(filename, relativePath, { nonempty: true });
+    if (metadata.size !== file.size)
+      throw new Error(`Package file ${file.path} size mismatch: expected ${file.size}, received ${metadata.size}`);
     const actualDigest = sha256(await readFile(filename));
     if (actualDigest !== file.sha256)
       throw new Error(`Package file ${file.path} SHA-256 mismatch: expected ${file.sha256}, received ${actualDigest}`);
@@ -243,7 +245,48 @@ export async function publishSite({
   }
 }
 
+export async function publishPublisherArtifact({
+  browserRoot = defaultBrowserRoot(),
+  publishRoot = path.join(browserRoot, "dist", "site"),
+  pagesRoot = path.join(browserRoot, "dist", "pages"),
+} = {}) {
+  const { catalog } = await validatePublishedSite({ publishRoot });
+  await mkdir(path.dirname(pagesRoot), { recursive: true });
+  const stagingRoot = await mkdtemp(path.join(path.dirname(pagesRoot), `.${path.basename(pagesRoot)}.stage-`));
+  let staged = true;
+  try {
+    await cp(path.join(publishRoot, "catalogs"), path.join(stagingRoot, "catalogs"), { recursive: true });
+    const roots = await readdir(stagingRoot);
+    if (roots.length !== 1 || roots[0] !== "catalogs")
+      throw new Error(`Pages publisher artifact must contain only catalogs; received ${roots.join(", ")}`);
+    for (const app of catalog.apps) {
+      const prefix = `catalogs/${catalog.publisher.id}/packages/${app.appId}/${app.buildId}/`;
+      for (const file of app.browser.files) {
+        const relativePath = `catalogs/${catalog.publisher.id}/${file.path}`;
+        if (!relativePath.startsWith(prefix))
+          throw new Error(`Pages package reference ${relativePath} is outside immutable package ${prefix}`);
+        const metadata = await assertExists(path.join(stagingRoot, relativePath), relativePath, { nonempty: true });
+        if (metadata.size !== file.size)
+          throw new Error(`Pages package file ${file.path} size mismatch: expected ${file.size}, received ${metadata.size}`);
+        const digest = sha256(await readFile(path.join(stagingRoot, relativePath)));
+        if (digest !== file.sha256)
+          throw new Error(`Pages package file ${file.path} SHA-256 mismatch: expected ${file.sha256}, received ${digest}`);
+      }
+    }
+    await replaceDestination(stagingRoot, pagesRoot);
+    staged = false;
+    return Object.freeze({ pagesRoot });
+  } finally {
+    if (staged) await rm(stagingRoot, { recursive: true, force: true });
+  }
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const { publishRoot } = await publishSite();
-  console.log(`Published browser site to ${path.relative(process.cwd(), publishRoot)}`);
+  if (process.argv[2] === "--publisher-only") {
+    const { pagesRoot } = await publishPublisherArtifact();
+    console.log(`Published browser catalogs to ${path.relative(process.cwd(), pagesRoot)}`);
+  } else {
+    const { publishRoot } = await publishSite();
+    console.log(`Published browser site to ${path.relative(process.cwd(), publishRoot)}`);
+  }
 }

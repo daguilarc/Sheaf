@@ -23,6 +23,7 @@ export type CatalogFile = Readonly<{
   path: string;
   url: string;
   mediaType: typeof SUPPORTED_PACKAGE_MEDIA_TYPES[number];
+  size: number;
   sha256: string;
 }>;
 export type CatalogBrowserPackage = Readonly<{
@@ -195,16 +196,19 @@ function parsePublisher(value: unknown): CatalogPublisher {
 
 function parseFile(value: unknown, path: string, catalogUrl: string): CatalogFile {
   const input = record(value, path);
-  exactKeys(input, ["path", "mediaType", "sha256"], path);
+  exactKeys(input, ["path", "mediaType", "size", "sha256"], path);
   const packagePath = relativePath(input.path, `${path}.path`);
   if (typeof input.mediaType !== "string" || !SUPPORTED_PACKAGE_MEDIA_TYPES.includes(input.mediaType as never))
     fail(`${path}.mediaType`, `unsupported media type ${String(input.mediaType)}`);
+  if (typeof input.size !== "number" || !Number.isSafeInteger(input.size) || input.size < 0)
+    fail(`${path}.size`, "must be a nonnegative safe integer");
   if (typeof input.sha256 !== "string" || !SHA256_PATTERN.test(input.sha256))
     fail(`${path}.sha256`, "must be 64 lowercase hexadecimal characters");
   return Object.freeze({
     path: packagePath,
     url: resolvePath(packagePath, catalogUrl),
     mediaType: input.mediaType as CatalogFile["mediaType"],
+    size: input.size,
     sha256: input.sha256,
   });
 }

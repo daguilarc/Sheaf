@@ -25,6 +25,7 @@ test("fetches and verifies every declared package file with CORS before creating
       path: `packages/test-app/build-1/${name}`,
       url: `https://publisher.example/packages/test-app/build-1/${name}`,
       mediaType: name.endsWith(".wasm") ? "application/wasm" : "text/javascript",
+      size: bytes.byteLength,
       sha256: await hex(bytes),
     })));
     const requests: Array<{ url: string; mode?: RequestMode; credentials?: RequestCredentials }> = [];
@@ -99,8 +100,8 @@ test("rejects missing worker files before creating any object URL", async ({ pag
           entry: "packages/test-app/build-1/app.js",
           entryUrl: "https://publisher.example/packages/test-app/build-1/app.js",
           files: [
-            { path: "packages/test-app/build-1/app.js", url: "https://publisher.example/packages/test-app/build-1/app.js", mediaType: "text/javascript", sha256: digest },
-            { path: "packages/test-app/build-1/pthread.worker.js", url: "https://publisher.example/packages/test-app/build-1/pthread.worker.js", mediaType: "text/javascript", sha256: digest },
+            { path: "packages/test-app/build-1/app.js", url: "https://publisher.example/packages/test-app/build-1/app.js", mediaType: "text/javascript", size: bytes.byteLength, sha256: digest },
+            { path: "packages/test-app/build-1/pthread.worker.js", url: "https://publisher.example/packages/test-app/build-1/pthread.worker.js", mediaType: "text/javascript", size: bytes.byteLength, sha256: digest },
           ],
         },
       } as any, async (url: string) => url.endsWith("pthread.worker.js")
@@ -132,7 +133,7 @@ test("rejects wrong response media types", async ({ page }) => {
       browser: {
         entry: "packages/test-app/build-1/app.js",
         entryUrl: "https://publisher.example/packages/test-app/build-1/app.js",
-        files: [{ path: "packages/test-app/build-1/app.js", url: "https://publisher.example/packages/test-app/build-1/app.js", mediaType: "text/javascript", sha256: digest }],
+        files: [{ path: "packages/test-app/build-1/app.js", url: "https://publisher.example/packages/test-app/build-1/app.js", mediaType: "text/javascript", size: bytes.byteLength, sha256: digest }],
       },
     };
     try {
@@ -162,7 +163,7 @@ test("accepts advisory transfer lengths when decoded bytes match the digest", as
       browser: {
         entry: "packages/test-app/build-1/app.js",
         entryUrl: "https://publisher.example/packages/test-app/build-1/app.js",
-        files: [{ path: "packages/test-app/build-1/app.js", url: "https://publisher.example/packages/test-app/build-1/app.js", mediaType: "text/javascript", sha256: digest }],
+        files: [{ path: "packages/test-app/build-1/app.js", url: "https://publisher.example/packages/test-app/build-1/app.js", mediaType: "text/javascript", size: bytes.byteLength, sha256: digest }],
       },
     };
     const materialized = await materializePackage(app as any, async () => new Response(bytes, {
@@ -174,6 +175,42 @@ test("accepts advisory transfer lengths when decoded bytes match the digest", as
   });
 
   expect(result).toBe("accepted");
+});
+
+test("rejects decoded bytes that do not match the catalog's declared package size", async ({ page }) => {
+  await openTestPage(page);
+  const result = await page.evaluate(async () => {
+    const { materializePackage } = await (new Function("return import('/dist/src/package-loader.js')")() as Promise<any>);
+    const bytes = new TextEncoder().encode("export default async () => ({});\n");
+    const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)))
+      .map((value) => value.toString(16).padStart(2, "0")).join("");
+    const app = {
+      appId: "test-app",
+      buildId: "build-1",
+      browser: {
+        entry: "packages/test-app/build-1/app.js",
+        entryUrl: "https://publisher.example/packages/test-app/build-1/app.js",
+        files: [{
+          path: "packages/test-app/build-1/app.js",
+          url: "https://publisher.example/packages/test-app/build-1/app.js",
+          mediaType: "text/javascript",
+          size: bytes.byteLength + 1,
+          sha256: digest,
+        }],
+      },
+    };
+    try {
+      await materializePackage(app as any, async () => new Response(bytes, {
+        status: 200,
+        headers: { "Content-Type": "text/javascript", "Content-Length": String(bytes.byteLength) },
+      }));
+      return "accepted";
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  });
+
+  expect(result).toMatch(/app\.js.*size.*expected/i);
 });
 
 test("rejects stale or hash-mismatched WASM before importing the verified entry", async ({ page }) => {
@@ -203,6 +240,7 @@ test("rejects stale or hash-mismatched WASM before importing the verified entry"
             path: `packages/test-app/build-1/${file.name}`,
             url: `https://publisher.example/packages/test-app/build-1/${file.name}`,
             mediaType: file.mediaType,
+            size: file.bytes.byteLength,
             sha256: await digest(file.bytes),
           }))),
         },
@@ -321,6 +359,7 @@ test("rewrites verified Emscripten import-meta worker bootstraps to typed object
           path: `packages/test-app/build-1/${file.name}`,
           url: `https://publisher.example/packages/test-app/build-1/${file.name}`,
           mediaType: file.mediaType,
+          size: file.bytes.byteLength,
           sha256: await digest(file.bytes),
         }))),
       },
@@ -373,6 +412,7 @@ test("rejects ambiguous filename mappings instead of guessing", async ({ page })
             path: `packages/test-app/build-1/${name}`,
             url: `https://publisher.example/packages/test-app/build-1/${name}`,
             mediaType: "text/javascript",
+            size: bytes.byteLength,
             sha256: digest,
           })),
         },
@@ -401,7 +441,7 @@ test("revokes every materialized object URL exactly once when dispose is repeate
       browser: {
         entry: "packages/test-app/build-1/app.js",
         entryUrl: "https://publisher.example/packages/test-app/build-1/app.js",
-        files: [{ path: "packages/test-app/build-1/app.js", url: "https://publisher.example/packages/test-app/build-1/app.js", mediaType: "text/javascript", sha256: digest }],
+        files: [{ path: "packages/test-app/build-1/app.js", url: "https://publisher.example/packages/test-app/build-1/app.js", mediaType: "text/javascript", size: bytes.byteLength, sha256: digest }],
       },
     } as any, async () => new Response(bytes, { status: 200, headers: { "Content-Type": "text/javascript" } }), {
       createObjectURL() { next += 1; return `blob:verified/${next}`; },

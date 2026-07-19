@@ -63,6 +63,7 @@ function packageFixture(request) {
     path: `${packageRoot}/${name}`,
     url: `${origin}/package-fixture/${name}`,
     mediaType,
+    size: bytes.byteLength,
     sha256: fixtureDigest(bytes),
   }));
   const bytes = Buffer.from(`${JSON.stringify({
