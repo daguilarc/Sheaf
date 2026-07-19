@@ -74,6 +74,13 @@ struct AudioBlock {
     int numOutputChannels = 0;
     std::size_t numFrames = 0;
     std::uint64_t startSample = 0;
+    // Non-owning view of the exact MasterClock::CurrentPlan() committed for
+    // this callback. Non-null only when the MasterClock was successfully
+    // prepared and this nonzero, contiguous block commit succeeded. It is
+    // null in default-constructed views, before successful clock preparation,
+    // for zero-frame callbacks, or when MasterClock rejects the commit. Apps
+    // must null-check and must not retain it as an immutable snapshot beyond
+    // this callback: the next successful commit replaces the pointed-to plan.
     const ClockBlockPlan* clockPlan = nullptr;
 };
 

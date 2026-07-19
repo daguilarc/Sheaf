@@ -241,7 +241,9 @@ public:
     //   4. sampleCounter_.fetch_add(block.numFrames, relaxed), store the
     //      returned pre-increment value as block.startSample, commit exactly
     //      one MasterClock plan, enqueue its analytical crossings through the
-    //      injected sink, and publish CurrentPlan() as block.clockPlan.
+    //      injected sink, and publish CurrentPlan() as block.clockPlan. A
+    //      rejected commit leaves block.clockPlan null under AudioBlock's
+    //      documented contract; app delegation still occurs exactly once.
     //   5. if the app opts in via the HasProcessFrame concept, app_.ProcessFrame()
     //      exactly once: the optional once-per-block control-rate hook. Runs
     //      after message routing and clock commit (so it observes the exact

@@ -746,6 +746,40 @@ TEST_CASE(engine_owns_one_stable_clock_prepares_before_app_and_publishes_exact_c
     REQUIRE_TRUE(engine.Application().processBlockCalls == 2);
 }
 
+TEST_CASE(engine_delegates_with_null_clock_plan_before_prepare_and_for_zero_frame_blocks) {
+    EngineTestApp::processLiteAlpha = 1.0f;
+
+    synth::Engine<EngineTestApp> unprepared([] { return std::uint64_t{1000}; });
+    unprepared.Initialize();
+    TestBlockBuffers unpreparedBuffers(2, 64);
+    synth::AudioBlock unpreparedBlock = unpreparedBuffers.Block(64);
+    unprepared.ProcessBlock(unpreparedBlock, 1000);
+    REQUIRE_TRUE(unpreparedBlock.clockPlan == nullptr);
+    REQUIRE_TRUE(unprepared.Application().lastClockPlan == nullptr);
+    REQUIRE_TRUE(unprepared.Application().processBlockCalls == 1);
+    REQUIRE_TRUE(unprepared.Clock().CurrentPlan() == nullptr);
+
+    synth::Engine<EngineTestApp> zeroFrames([] { return std::uint64_t{2000}; });
+    zeroFrames.Initialize();
+    zeroFrames.Prepare(48000.0, 64);
+    TestBlockBuffers zeroFrameBuffers(2, 64);
+    synth::AudioBlock zeroFrameBlock = zeroFrameBuffers.Block(0);
+    zeroFrames.ProcessBlock(zeroFrameBlock, 2000);
+    REQUIRE_TRUE(zeroFrameBlock.clockPlan == nullptr);
+    REQUIRE_TRUE(zeroFrames.Application().lastClockPlan == nullptr);
+    REQUIRE_TRUE(zeroFrames.Application().processBlockCalls == 1);
+    REQUIRE_TRUE(zeroFrames.Clock().CurrentPlan() == nullptr);
+
+    // A zero-frame callback consumes no sample position and does not prevent
+    // the following ordinary block from committing the initial [0, 64) plan.
+    synth::AudioBlock firstNonzeroBlock = zeroFrameBuffers.Block(64);
+    zeroFrames.ProcessBlock(firstNonzeroBlock, 3000);
+    REQUIRE_TRUE(firstNonzeroBlock.startSample == 0);
+    REQUIRE_TRUE(firstNonzeroBlock.clockPlan != nullptr);
+    REQUIRE_TRUE(firstNonzeroBlock.clockPlan == zeroFrames.Clock().CurrentPlan());
+    REQUIRE_TRUE(zeroFrames.Application().processBlockCalls == 2);
+}
+
 TEST_CASE(engine_merges_realtime_messages_across_buses_with_deterministic_ties) {
     EngineTestApp::processLiteAlpha = 1.0f;
     synth::Engine<EngineTestApp> engine([] { return std::uint64_t{100}; });
