@@ -39,6 +39,11 @@ function mediaTypeEssence(response) {
   return (response.headers.get("Content-Type") ?? "").split(";", 1)[0].trim().toLowerCase();
 }
 
+function matchesMediaType(actualMediaType, expectedMediaType) {
+  if (actualMediaType === expectedMediaType) return true;
+  return expectedMediaType === "text/javascript" && actualMediaType === "application/javascript";
+}
+
 function requireCors(response, label) {
   const origin = response.headers.get("Access-Control-Allow-Origin");
   if (origin?.trim() !== "*")
@@ -55,7 +60,7 @@ async function fetchReadable(url, label, expectedMediaType, fetchImpl) {
   if (!response.ok) throw new Error(`${label} returned HTTP ${response.status}`);
   requireCors(response, label);
   const actualMediaType = mediaTypeEssence(response);
-  if (actualMediaType !== expectedMediaType)
+  if (!matchesMediaType(actualMediaType, expectedMediaType))
     throw new Error(`${label} media type ${actualMediaType || "<missing>"}; expected ${expectedMediaType}`);
   return new Uint8Array(await response.arrayBuffer());
 }

@@ -81,7 +81,7 @@ async function deployedFixture(t, options = {}) {
   for (const fixture of appFixtures) {
     routes.set(`/${fixture.packagePrefix}/${fixture.appId}.js`, {
       bytes: fixture.entryBytes,
-      mediaType: "text/javascript",
+      mediaType: options.javascriptMediaType ?? "text/javascript",
     });
     routes.set(`/${fixture.packagePrefix}/${fixture.appId}.wasm`, {
       bytes: fixture.appId === "miniapp" && options.wasmBytes ? options.wasmBytes : fixture.wasmBytes,
@@ -233,6 +233,15 @@ test("deployment, validation, and smoke form a strict post-upload readiness chai
 
 test("deployed validator accepts every file in a complete CORS-readable catalog", async (t) => {
   const catalogUrl = await deployedFixture(t);
+  const { validateDeployedCatalog } = await loadDeployedValidator();
+
+  const result = await validateDeployedCatalog({ catalogUrl, expectedCatalogVersion });
+
+  assert.deepEqual(result, { catalogUrl, expectedCatalogVersion, appCount: 2, fileCount: 4 });
+});
+
+test("deployed validator accepts GitHub Pages application/javascript responses", async (t) => {
+  const catalogUrl = await deployedFixture(t, { javascriptMediaType: "application/javascript" });
   const { validateDeployedCatalog } = await loadDeployedValidator();
 
   const result = await validateDeployedCatalog({ catalogUrl, expectedCatalogVersion });
