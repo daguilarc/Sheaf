@@ -231,3 +231,67 @@ Implementation commit (exact):
 
 The follow-up commit containing this report is metadata-only and intentionally
 does not alter the implementation hash recorded above.
+
+## Review Fix
+
+Opus review and root audit identified four hardening items:
+
+- `MasterClock::CommitBlock` now rejects an invalid pending quarter-note slope
+  before observing the callback in `AudioSampleTimeMapper`, so a rejected
+  commit cannot mutate mapper history or diagnostics.
+- `ClockDiagnostics::ignoredInputCount` now counts rejected external MIDI
+  clock/transport input only. Mapper observation rejections are exposed
+  separately as `mapperIgnoredObservationCount`.
+- The unchecked `ClockBlockPlan` position queries now document their
+  containment precondition and point callers to the corresponding checked
+  `Try*` APIs.
+- Prepared tempo/configuration transitions now validate the derived
+  quarter-notes-per-sample slope before mutating clock state. This covers
+  `SetTempoBpm`, `Prepare` with a previously saved tempo whose slope
+  underflows, and restoration of the valid saved manual slope when receive
+  clock is disabled. The pre-observation commit guard remains as defense in
+  depth.
+
+Review RED evidence:
+
+```text
+make -C projects/synth master_clock_tests
+```
+
+- The diagnostics contract test initially failed to compile because
+  `ClockDiagnostics` had no `mapperIgnoredObservationCount` member.
+- After adding that contract only, the focused binary failed
+  `master_clock_rejected_commit_does_not_mutate_mapper_or_plan_state` because
+  the mapper history size changed during a rejected commit.
+- The derived-slope tests then failed
+  `master_clock_prepare_rejects_a_saved_tempo_whose_slope_underflows` at
+  `!clock.Prepare(...)` and
+  `master_clock_underflowing_tempo_rejection_preserves_clock_state` at
+  `!clock.SetTempoBpm(...)`.
+
+Review GREEN evidence:
+
+```text
+make -C projects/synth -B dsp_tests master_clock_tests contract_tests engine_tests
+```
+
+Exit `0`; the full DSP binary, all 17 master-clock cases, all contract cases,
+and all engine cases passed without compiler warnings.
+
+```text
+clang++ -Iprojects/synth/include -std=c++20 -Wall -Wextra -Wpedantic -O1 -g \
+  -fsanitize=address,undefined projects/synth/tests/master_clock_tests.cpp \
+  projects/synth/src/MasterClock.cpp \
+  -o /tmp/sheaf-master-clock-review-tests-asan
+/tmp/sheaf-master-clock-review-tests-asan
+```
+
+Exit `0`; all 17 focused cases passed with no AddressSanitizer or
+UndefinedBehaviorSanitizer diagnostics. `git diff --check` and the focused
+staged-path audit were also clean.
+
+Review-fix implementation commit (exact):
+
+`94c208d76e7475cee86d9d49ef11dce7b17a4aa2` — `fix(synth): harden master clock transactions`
+
+The follow-up commit that records this Review Fix section is metadata-only.
