@@ -23,13 +23,13 @@
 
 - [x] 4.1 Add Braid 4 only as a declarative app-manifest record and verify static checks find no Braid 4 browser source, branch, adapter, or custom build recipe.
 - [x] 4.2 Compile and package the unchanged Braid 4 `SynthApplication` under the common memory/runtime policy and validate its immutable package metadata.
-- [ ] 4.3 Add a real Chromium Braid 4 launch proving portable UI rendering, one-click native callback progress, finite deadline data, non-silent output, and isolated persistence.
+- [x] 4.3 Add a real Chromium Braid 4 launch proving portable UI rendering, one-click native callback progress, finite deadline data, non-silent output, and isolated persistence.
 
 ## 5. Shared Launcher and Publication Acceptance
 
-- [ ] 5.1 Update generic launcher/runtime tests so Mini App and Braid 4 independently launch from the same deterministic two-app catalog through the same activation and package path.
-- [ ] 5.2 Update Cloudflare and GitHub Pages artifact tests and deployed-origin validation for the complete catalog and both immutable packages without changing their host-specific responsibilities.
-- [ ] 5.3 Update CI build targets to compile and validate all configured apps generically and retain live GitHub Pages CORS/MIME/browser gates.
+- [x] 5.1 Update generic launcher/runtime tests so Mini App and Braid 4 independently launch from the same deterministic two-app catalog through the same activation and package path.
+- [x] 5.2 Update Cloudflare and GitHub Pages artifact tests and deployed-origin validation for the complete catalog and both immutable packages without changing their host-specific responsibilities.
+- [x] 5.3 Update CI build targets to compile and validate all configured apps generically and retain live GitHub Pages CORS/MIME/browser gates.
 
 ## 6. Documentation and Completion Gates
 
