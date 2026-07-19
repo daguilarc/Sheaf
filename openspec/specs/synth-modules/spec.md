@@ -285,7 +285,7 @@ WHEN two-pole filter behavior is needed in a reusable synth module, THE synth mo
 - **THEN** it follows the same registration-once, stored-parameter-ID, bank-capacity validation, natural-input mapping, arbitrary-polyphony array sizing, and UI-state publication pattern as the existing VCO and LFO modules
 
 ### Requirement: smod-9 — Braid 4 wavetable VCO-bank module
-WHEN four-oscillator wavetable synthesis is needed, THE synth module system SHALL provide a JUCE-free `Braid4VcoModule` containing four `DefaultWavetableVco` processors; SHALL reserve the sibling name `Braid4LfoModule` for a later LFO module; SHALL register its X/Y controls into a two-voice group, Tune/Phase/Shape/Gain controls into a four-voice group, and four PM Index plus four Frequency controls into a monophonic group; SHALL preserve the zero-based bank order and mappings defined by `d4-2`; and SHALL expose four post-gain oscillator outputs, two stereo outputs, one scope-holder connection per processor, and four VCO UI-state entries.
+WHEN four-oscillator wavetable synthesis is needed, THE synth module system SHALL provide a JUCE-free `Braid4VcoModule` containing four `DefaultWavetableVco` processors; SHALL reserve the sibling name `Braid4LfoModule` for a later LFO module; SHALL register its X/Y controls into a two-voice group, Tune/Phase/Shape/Gain controls into a four-voice group, and four Mod LPF Cutoff plus four Frequency controls into a monophonic group; SHALL expose oscillator-indexed cutoff parameter IDs to application-owned cache filtering; SHALL preserve the zero-based bank order and mappings defined by `d4-2`; and SHALL expose four post-gain oscillator outputs, two stereo outputs, one scope-holder connection per processor, and four VCO UI-state entries.
 
 #### Scenario: Registration validates three owned groups
 - **WHEN** Braid registers its parameters
@@ -306,9 +306,14 @@ WHEN four-oscillator wavetable synthesis is needed, THE synth module system SHAL
 - **WHEN** the Braid application prepares this module for host rate `R`
 - **THEN** the module sample rate is `4R`
 
-#### Scenario: PM index scales cycle offset
-- **WHEN** oscillator `i` has Phase voice value `p` cycles and PM Index `m`
-- **THEN** its underlying VCO phase-offset input is `p * m` cycles
+#### Scenario: Phase reaches oscillator without a separate depth multiplier
+- **WHEN** oscillator `i` has a filtered Phase voice value `p` cycles
+- **THEN** its underlying VCO phase-offset input is `p` cycles
+- **AND** the module applies no PM Index or other outside damping multiplier
+
+#### Scenario: Cutoff IDs remain oscillator indexed
+- **WHEN** an application requests the four Mod LPF Cutoff parameter IDs
+- **THEN** array element `i` identifies the monophonic cutoff control belonging to oscillator `i`
 
 #### Scenario: Gain is post-processor and bipolar
 - **WHEN** an underlying VCO returns sample `v` and Gain maps to `g` in `[-1,1]`
@@ -320,7 +325,7 @@ WHEN four-oscillator wavetable synthesis is needed, THE synth module system SHAL
 - **THEN** its left and right outputs use voices `0` and `1` of X/Y through the separable equal-power formula in `d4-4`
 
 ### Requirement: smod-10 — Size-templated bipolar matrix-mixer module
-WHEN reusable square matrix mixing is needed, THE synth module system SHALL provide a JUCE-free `BipolarMatrixMixerModule<Size>` for every positive compile-time `Size`; SHALL register `Size * Size` monophonic bipolar gain parameters in row-major order; SHALL map each gain through a zero-based bipolar exponential curve from `-1` to `1` whose half-travel magnitude is `0.25`; SHALL default diagonal gains to `1` and off-diagonal gains to `0`; and SHALL expose address-stable input and output arrays.
+WHEN reusable square matrix mixing is needed, THE synth module system SHALL provide a JUCE-free `BipolarMatrixMixerModule<Size>` for every positive compile-time `Size`; SHALL register `Size * Size` monophonic bipolar gain parameters in row-major order where row is output index and column is input index; SHALL map each gain through a zero-based bipolar exponential curve from `-1` to `1` whose half-travel magnitude is `0.25`; SHALL default diagonal gains to `1` and off-diagonal gains to `0`; and SHALL expose address-stable input and output arrays.
 
 #### Scenario: Template rejects zero size
 - **WHEN** a matrix mixer is instantiated with `Size == 0`
@@ -328,11 +333,11 @@ WHEN reusable square matrix mixing is needed, THE synth module system SHALL prov
 
 #### Scenario: Four-by-four registers row-major controls
 - **WHEN** `BipolarMatrixMixerModule<4>` registers to a group and bank
-- **THEN** it creates sixteen uniquely named parameters ordered row `0` columns `0..3`, then row `1`, row `2`, and row `3`
+- **THEN** it creates sixteen uniquely named parameters ordered output row `0` input columns `0..3`, then output rows `1`, `2`, and `3`
 - **AND** those parameters occupy sixteen consecutive bank positions
 
 #### Scenario: Matrix can share an existing compatible mono group
-- **WHEN** a monophonic, two-scene, unmodulated group already contains Braid's eight PM Index and Frequency parameters
+- **WHEN** a monophonic, two-scene group already contains Braid's eight Mod LPF Cutoff and Frequency parameters
 - **THEN** `BipolarMatrixMixerModule<4>` can register its sixteen gains into the remaining capacity of that same group
 - **AND** no separate matrix parameter group is required
 
@@ -354,12 +359,13 @@ WHEN reusable square matrix mixing is needed, THE synth module system SHALL prov
 - **THEN** those pointers remain valid for the matrix module's lifetime
 
 ### Requirement: smod-11 — Braid4VCO module styling and frequency-range options
-WHEN an application reuses `Braid4VcoModule` for parallel oscillator banks, THE module SHALL allow the caller to provide registration-time parameter colors, per-oscillator voice colors, and a frequency octave shift without changing the bank layout, parameter names, equal-power XY computation, scope contract, or post-gain output semantics.
+WHEN an application reuses `Braid4VcoModule` for parallel oscillator banks, THE module SHALL allow the caller to provide registration-time parameter colors, per-oscillator voice colors, and an oscillator-frequency octave shift without changing the bank layout, parameter names, Mod LPF Cutoff range, equal-power XY computation, scope contract, or post-gain output semantics.
 
-#### Scenario: Frequency octave shift preserves ratios
-- **WHEN** a `Braid4VcoModule` is configured with frequency octave shift `-10`
+#### Scenario: Frequency octave shift preserves ratios but not cutoff shift
+- **WHEN** a `Braid4VcoModule` is configured with oscillator-frequency octave shift `-10`
 - **THEN** each oscillator's base-frequency range is multiplied by `2^-10`
-- **AND** Tune, PM Index, Phase, Shape, Gain, and XY mappings are unchanged
+- **AND** Mod LPF Cutoff remains exponentially mapped across `0.1..20000` Hz
+- **AND** Tune, Phase, Shape, Gain, and XY mappings are unchanged
 
 #### Scenario: Parameter colors are caller controlled
 - **WHEN** a caller registers one `Braid4VcoModule` as audible VCOs and another as LFOs
