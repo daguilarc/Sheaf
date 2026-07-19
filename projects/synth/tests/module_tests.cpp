@@ -1118,9 +1118,15 @@ TEST_CASE(bipolar_matrix_registers_row_major_identity_parameters_and_bank_cells)
     REQUIRE_TRUE(ids[1] == 1);
     REQUIRE_TRUE(ids[4] == 4);
     REQUIRE_TRUE(ids[15] == 15);
-    REQUIRE_TRUE(manager.ParameterById(ids[0]).Name() == "Matrix R1C1");
-    REQUIRE_TRUE(manager.ParameterById(ids[1]).Name() == "Matrix R1C2");
-    REQUIRE_TRUE(manager.ParameterById(ids[15]).Name() == "Matrix R4C4");
+    // Matrix row selects the output; column selects the input. The row-major
+    // parameter order therefore keeps every output row contiguous.
+    for (std::size_t row = 0; row < 4; ++row) {
+        for (std::size_t column = 0; column < 4; ++column) {
+            const auto id = ids[row * 4 + column];
+            REQUIRE_TRUE(manager.ParameterById(id).Name()
+                         == "Matrix R" + std::to_string(row + 1) + "C" + std::to_string(column + 1));
+        }
+    }
     REQUIRE_TRUE(manager.ParameterById(ids[0]).Range() == synth::RangeKind::Bipolar);
     REQUIRE_TRUE(manager.ParameterById(ids[1]).Range() == synth::RangeKind::Bipolar);
     REQUIRE_TRUE(manager.ParameterById(ids[0]).BaseColor() == synth::Color::Grey);
@@ -1295,8 +1301,9 @@ TEST_CASE(braid_vco_registers_three_group_shapes_two_scenes_fourteen_red_paramet
     REQUIRE_TRUE(ids.quad.phase == 3);
     REQUIRE_TRUE(ids.quad.shape == 4);
     REQUIRE_TRUE(ids.quad.gain == 5);
-    REQUIRE_TRUE(ids.pmIndex[0] == 6);
-    REQUIRE_TRUE(ids.pmIndex[3] == 9);
+    for (std::size_t oscIx = 0; oscIx < synth::Braid4VcoModule::kOscillatorCount; ++oscIx) {
+        REQUIRE_TRUE(ids.modulationCutoff[oscIx] == 6 + oscIx);
+    }
     REQUIRE_TRUE(ids.frequency[0] == 10);
     REQUIRE_TRUE(ids.frequency[3] == 13);
     REQUIRE_TRUE(manager.ParameterCount() == 14);
@@ -1312,7 +1319,14 @@ TEST_CASE(braid_vco_registers_three_group_shapes_two_scenes_fourteen_red_paramet
     REQUIRE_NEAR(manager.ParameterById(ids.quad.phase).SceneCenter(1), 0.5f, 0.0001f);
     REQUIRE_NEAR(manager.ParameterById(ids.quad.shape).SceneCenter(1), 0.0f, 0.0001f);
     REQUIRE_NEAR(manager.ParameterById(ids.quad.gain).SceneCenter(1), 1.0f, 0.0001f);
-    REQUIRE_NEAR(manager.ParameterById(ids.pmIndex[0]).SceneCenter(1), 0.0f, 0.0001f);
+    REQUIRE_NEAR(synth::Braid4VcoModule::kMinModulationCutoffHz, 0.1f, 0.0001f);
+    REQUIRE_NEAR(synth::Braid4VcoModule::kMaxModulationCutoffHz, 20000.0f, 0.0001f);
+    for (std::size_t oscIx = 0; oscIx < synth::Braid4VcoModule::kOscillatorCount; ++oscIx) {
+        const auto& cutoff = manager.ParameterById(ids.modulationCutoff[oscIx]);
+        REQUIRE_TRUE(cutoff.Name().find("Mod LPF") != std::string::npos);
+        REQUIRE_TRUE(cutoff.ShortName().find("Mod LPF") != std::string::npos);
+        REQUIRE_NEAR(cutoff.SceneCenter(1), 0.0f, 0.0001f);
+    }
     REQUIRE_NEAR(manager.ParameterById(ids.frequency[0]).SceneCenter(1), 0.5f, 0.0001f);
 
     auto& bank = manager.CreateBank();
@@ -1331,8 +1345,9 @@ TEST_CASE(braid_vco_registers_three_group_shapes_two_scenes_fourteen_red_paramet
     REQUIRE_TRUE(bank.VisibleParameter(5) == &manager.ParameterById(ids.quad.phase));
     REQUIRE_TRUE(bank.VisibleParameter(6) == &manager.ParameterById(ids.quad.shape));
     REQUIRE_TRUE(bank.VisibleParameter(7) == &manager.ParameterById(ids.quad.gain));
-    REQUIRE_TRUE(bank.VisibleParameter(8) == &manager.ParameterById(ids.pmIndex[0]));
-    REQUIRE_TRUE(bank.VisibleParameter(11) == &manager.ParameterById(ids.pmIndex[3]));
+    for (std::size_t oscIx = 0; oscIx < synth::Braid4VcoModule::kOscillatorCount; ++oscIx) {
+        REQUIRE_TRUE(bank.VisibleParameter(8 + oscIx) == &manager.ParameterById(ids.modulationCutoff[oscIx]));
+    }
     REQUIRE_TRUE(bank.VisibleParameter(12) == &manager.ParameterById(ids.frequency[0]));
     REQUIRE_TRUE(bank.VisibleParameter(15) == &manager.ParameterById(ids.frequency[3]));
 
@@ -1447,7 +1462,7 @@ TEST_CASE(braid_vco_maps_all_parameter_ranges_to_natural_vco_inputs) {
     SetAndSettle(manager, ids.quad.phase, 0.75f);
     SetAndSettle(manager, ids.quad.shape, 0.25f);
     SetAndSettle(manager, ids.quad.gain, 0.25f);
-    SetAndSettle(manager, ids.pmIndex[0], 0.5f);
+    SetAndSettle(manager, ids.modulationCutoff[0], 0.5f);
     SetAndSettle(manager, ids.frequency[0], 0.0f);
     SetAndSettle(manager, ids.frequency[1], 0.0f);
     SetAndSettle(manager, ids.frequency[2], 0.0f);
@@ -1460,13 +1475,13 @@ TEST_CASE(braid_vco_maps_all_parameter_ranges_to_natural_vco_inputs) {
     REQUIRE_NEAR(module.CurrentInput().oscillators[0].phaseCycles, 0.5f, 0.0001f);
     REQUIRE_NEAR(module.CurrentInput().oscillators[0].shape, 0.25f, 0.0001f);
     REQUIRE_NEAR(module.CurrentInput().oscillators[0].gain, -0.5f, 0.0001f);
-    REQUIRE_NEAR(module.CurrentInput().oscillators[0].pmIndex, 0.25f, 0.0001f);
     REQUIRE_NEAR(module.CurrentInput().oscillators[0].baseFrequencyHz, 10.0f, 0.0001f);
     REQUIRE_NEAR(module.CurrentInput().oscillators[1].baseFrequencyHz, 50.0f, 0.0001f);
     REQUIRE_NEAR(module.CurrentInput().oscillators[2].baseFrequencyHz, 250.0f, 0.0001f);
     REQUIRE_NEAR(module.CurrentInput().oscillators[3].baseFrequencyHz, 1000.0f, 0.0001f);
     REQUIRE_NEAR(static_cast<float>(module.CurrentInput().oscillators[0].vco.freq), 10.0f / 192000.0f, 0.000001f);
-    REQUIRE_NEAR(module.CurrentInput().oscillators[0].vco.phaseOffset, 0.125f, 0.0001f);
+    REQUIRE_NEAR(module.CurrentInput().oscillators[0].vco.phaseOffset,
+                 module.CurrentInput().oscillators[0].phaseCycles, 0.0001f);
     REQUIRE_NEAR(module.CurrentInput().oscillators[0].vco.wavetablePosition, 0.25f, 0.0001f);
     REQUIRE_NEAR(module.CurrentInput().oscillators[0].vco.maxFreq, 0.5f, 0.0001f);
 
@@ -1474,7 +1489,7 @@ TEST_CASE(braid_vco_maps_all_parameter_ranges_to_natural_vco_inputs) {
     SetAndSettle(manager, ids.quad.phase, 0.0f);
     SetAndSettle(manager, ids.quad.shape, 1.0f);
     SetAndSettle(manager, ids.quad.gain, 1.0f);
-    SetAndSettle(manager, ids.pmIndex[0], 1.0f);
+    SetAndSettle(manager, ids.modulationCutoff[0], 1.0f);
     SetAndSettle(manager, ids.frequency[0], 1.0f);
     SetAndSettle(manager, ids.frequency[1], 1.0f);
     SetAndSettle(manager, ids.frequency[2], 1.0f);
@@ -1485,7 +1500,6 @@ TEST_CASE(braid_vco_maps_all_parameter_ranges_to_natural_vco_inputs) {
     REQUIRE_NEAR(module.CurrentInput().oscillators[0].phaseCycles, -1.0f, 0.0001f);
     REQUIRE_NEAR(module.CurrentInput().oscillators[0].shape, 1.0f, 0.0001f);
     REQUIRE_NEAR(module.CurrentInput().oscillators[0].gain, 1.0f, 0.0001f);
-    REQUIRE_NEAR(module.CurrentInput().oscillators[0].pmIndex, 1.0f, 0.0001f);
     REQUIRE_NEAR(module.CurrentInput().oscillators[0].baseFrequencyHz, 160.0f, 0.0001f);
     REQUIRE_NEAR(module.CurrentInput().oscillators[1].baseFrequencyHz, 800.0f, 0.0001f);
     REQUIRE_NEAR(module.CurrentInput().oscillators[2].baseFrequencyHz, 2000.0f, 0.0001f);
@@ -1535,9 +1549,9 @@ TEST_CASE(braid_vco_supports_frequency_octave_shift_and_parameter_colors) {
         REQUIRE_TRUE(manager.ParameterById(ids.y).IndicatorColor(voiceIx) == synth::Color::Green);
     }
     for (std::size_t oscIx = 0; oscIx < synth::Braid4VcoModule::kOscillatorCount; ++oscIx) {
-        REQUIRE_TRUE(manager.ParameterById(ids.pmIndex[oscIx]).BaseColor() == greens[oscIx]);
+        REQUIRE_TRUE(manager.ParameterById(ids.modulationCutoff[oscIx]).BaseColor() == greens[oscIx]);
         REQUIRE_TRUE(manager.ParameterById(ids.frequency[oscIx]).BaseColor() == greens[oscIx]);
-        REQUIRE_TRUE(manager.ParameterById(ids.pmIndex[oscIx]).IndicatorColor(0) == greens[oscIx]);
+        REQUIRE_TRUE(manager.ParameterById(ids.modulationCutoff[oscIx]).IndicatorColor(0) == greens[oscIx]);
         REQUIRE_TRUE(manager.ParameterById(ids.frequency[oscIx]).IndicatorColor(0) == greens[oscIx]);
     }
     for (const synth::ParameterId id : {ids.quad.tune, ids.quad.phase, ids.quad.shape, ids.quad.gain}) {

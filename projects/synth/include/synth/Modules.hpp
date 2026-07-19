@@ -299,7 +299,9 @@ public:
             throw std::logic_error("bipolar matrix mixer module requires a mono parameter group");
         }
 
+        // Matrix coordinates are [output row][input column] throughout.
         std::array<std::string, kSize * kSize> names{};
+        // Each output row sums every input column in row-major order.
         for (std::size_t row = 0; row < kSize; ++row) {
             for (std::size_t column = 0; column < kSize; ++column) {
                 names[Index(row, column)] = MatrixName(prefix, row, column);
@@ -448,6 +450,8 @@ class Braid4VcoModule {
 public:
     static constexpr std::size_t kOscillatorCount = 4;
     static constexpr std::size_t kStereoVoiceCount = 2;
+    static constexpr float kMinModulationCutoffHz = 0.1f;
+    static constexpr float kMaxModulationCutoffHz = 20000.0f;
 
     struct QuadParameterIds {
         ParameterId tune = 0;
@@ -460,7 +464,7 @@ public:
         ParameterId x = 0;
         ParameterId y = 0;
         QuadParameterIds quad{};
-        std::array<ParameterId, kOscillatorCount> pmIndex{};
+        std::array<ParameterId, kOscillatorCount> modulationCutoff{};
         std::array<ParameterId, kOscillatorCount> frequency{};
     };
 
@@ -470,7 +474,6 @@ public:
         float phaseCycles = 0.0f;
         float shape = 0.0f;
         float gain = 1.0f;
-        float pmIndex = 0.0f;
         float baseFrequencyHz = 10.0f;
     };
 
@@ -568,13 +571,13 @@ public:
                                                                                                              options.indicatorColors.end()),
                                                                   });
         for (std::size_t oscIx = 0; oscIx < kOscillatorCount; ++oscIx) {
-            parameterIds_.pmIndex[oscIx] = manager.RegisterParameter(mono, {
-                                                                               .name = names[6 + oscIx],
-                                                                               .shortName = OscillatorShortName("PM", oscIx),
-                                                                               .defaultValue = 0.0f,
-                                                                               .baseColor = options.indicatorColors[oscIx],
-                                                                               .indicatorColors = {options.indicatorColors[oscIx]},
-                                                                           });
+            parameterIds_.modulationCutoff[oscIx] = manager.RegisterParameter(mono, {
+                                                                                        .name = names[6 + oscIx],
+                                                                                        .shortName = OscillatorShortName("Mod LPF", oscIx),
+                                                                                        .defaultValue = 0.0f,
+                                                                                        .baseColor = options.indicatorColors[oscIx],
+                                                                                        .indicatorColors = {options.indicatorColors[oscIx]},
+                                                                                    });
         }
         for (std::size_t oscIx = 0; oscIx < kOscillatorCount; ++oscIx) {
             parameterIds_.frequency[oscIx] = manager.RegisterParameter(mono, {
@@ -604,7 +607,7 @@ public:
         bank.AddMapping(6, ParameterById(parameterIds_.quad.shape));
         bank.AddMapping(7, ParameterById(parameterIds_.quad.gain));
         for (std::size_t oscIx = 0; oscIx < kOscillatorCount; ++oscIx) {
-            bank.AddMapping(static_cast<PhysicalEncoderId>(8 + oscIx), ParameterById(parameterIds_.pmIndex[oscIx]));
+            bank.AddMapping(static_cast<PhysicalEncoderId>(8 + oscIx), ParameterById(parameterIds_.modulationCutoff[oscIx]));
             bank.AddMapping(static_cast<PhysicalEncoderId>(12 + oscIx), ParameterById(parameterIds_.frequency[oscIx]));
         }
     }
@@ -642,16 +645,6 @@ public:
             }
             return previousMapped;
         };
-        auto zeroBasedExponential = [&manager](ParameterId id, std::size_t voiceIx, float maxValue,
-                                               float midpointValue, float& previousRaw, float& previousMapped) {
-            const float raw = manager.ParameterById(id).CachedKnobValue(voiceIx);
-            if (raw != previousRaw) {
-                previousRaw = raw;
-                previousMapped = manager.GetZeroBasedExponential(maxValue, midpointValue, voiceIx, id);
-            }
-            return previousMapped;
-        };
-
         for (std::size_t voiceIx = 0; voiceIx < kStereoVoiceCount; ++voiceIx) {
             input_.x[voiceIx] = linear(parameterIds_.x, voiceIx, 0.0f, 1.0f,
                                        cachedRaw_.x[voiceIx], cachedMapped_.x[voiceIx]);
@@ -669,8 +662,6 @@ public:
                                       cachedRaw_.shape[oscIx], cachedMapped_.shape[oscIx]);
             oscillator.gain = bipolar(parameterIds_.quad.gain, oscIx, 1.0f,
                                       cachedRaw_.gain[oscIx], cachedMapped_.gain[oscIx]);
-            oscillator.pmIndex = zeroBasedExponential(parameterIds_.pmIndex[oscIx], 0, 1.0f, 0.25f,
-                                                      cachedRaw_.pmIndex[oscIx], cachedMapped_.pmIndex[oscIx]);
             oscillator.baseFrequencyHz = exponential(parameterIds_.frequency[oscIx], 0,
                                                      kMinFrequencyHz[oscIx], kMaxFrequencyHz[oscIx],
                                                      cachedRaw_.frequency[oscIx],
@@ -678,7 +669,7 @@ public:
                                          * frequencyScale_;
             oscillator.vco.freq = static_cast<double>(oscillator.baseFrequencyHz * oscillator.tuneMultiplier)
                                   / static_cast<double>(sampleRate_);
-            oscillator.vco.phaseOffset = oscillator.phaseCycles * oscillator.pmIndex;
+            oscillator.vco.phaseOffset = oscillator.phaseCycles;
             oscillator.vco.wavetablePosition = oscillator.shape;
             oscillator.vco.maxFreq = 0.5f;
         }
@@ -818,7 +809,7 @@ private:
             {},
         };
         for (std::size_t oscIx = 0; oscIx < kOscillatorCount; ++oscIx) {
-            names[6 + oscIx] = EffectiveName(prefix, OscillatorShortName("PM Index", oscIx));
+            names[6 + oscIx] = EffectiveName(prefix, OscillatorShortName("Mod LPF Cutoff", oscIx));
             names[10 + oscIx] = EffectiveName(prefix, OscillatorShortName("Frequency", oscIx));
         }
         return names;
@@ -865,7 +856,6 @@ private:
         std::array<float, kOscillatorCount> phase{};
         std::array<float, kOscillatorCount> shape{};
         std::array<float, kOscillatorCount> gain{};
-        std::array<float, kOscillatorCount> pmIndex{};
         std::array<float, kOscillatorCount> frequency{};
     };
     struct CachedRawInput {
@@ -875,7 +865,6 @@ private:
         std::array<float, kOscillatorCount> phase{FillNaN<kOscillatorCount>()};
         std::array<float, kOscillatorCount> shape{FillNaN<kOscillatorCount>()};
         std::array<float, kOscillatorCount> gain{FillNaN<kOscillatorCount>()};
-        std::array<float, kOscillatorCount> pmIndex{FillNaN<kOscillatorCount>()};
         std::array<float, kOscillatorCount> frequency{FillNaN<kOscillatorCount>()};
     };
     template<std::size_t Count>

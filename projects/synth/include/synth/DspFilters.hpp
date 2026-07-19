@@ -55,10 +55,18 @@ struct OnePoleLowPass {
         m_alpha = AlphaFromNatFreq(cyclesPerSample);
     }
 
-    float Process(const Input& input) {
-        SetAlphaFromNatFreq(input.cutoff);
-        m_output = m_alpha * input.value + (1.0f - m_alpha) * m_output;
+    void Reset(float output = 0.0f) {
+        m_output = output;
+    }
+
+    float ProcessWithAlpha(float value, float alpha) {
+        m_alpha = std::clamp(alpha, 0.0f, 1.0f);
+        m_output += m_alpha * (value - m_output);
         return m_output;
+    }
+
+    float Process(const Input& input) {
+        return ProcessWithAlpha(input.value, AlphaFromNatFreq(input.cutoff));
     }
 
     void PopulateUIState(UIState& state) const {

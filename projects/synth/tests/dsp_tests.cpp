@@ -2010,6 +2010,19 @@ TEST_CASE(one_pole_filters_and_tanh_follow_dsp_contract) {
     }
     REQUIRE_TRUE(lp.m_output > 0.9f);
 
+    const float alpha = synth::OnePoleLowPass::AlphaFromNatFreq(1000.0f / 48000.0f);
+    synth::OnePoleLowPass cutoffPath;
+    synth::OnePoleLowPass alphaPath;
+    REQUIRE_NEAR(cutoffPath.Process({.value = 0.75f, .cutoff = 1000.0f / 48000.0f}),
+                 alphaPath.ProcessWithAlpha(0.75f, alpha), 0.000001f);
+    alphaPath.Reset(0.4f);
+    REQUIRE_NEAR(alphaPath.m_output, 0.4f, 0.000001f);
+
+    synth::OnePoleLowPass firstSharedAlphaPath;
+    synth::OnePoleLowPass secondSharedAlphaPath;
+    REQUIRE_NEAR(firstSharedAlphaPath.ProcessWithAlpha(0.25f, alpha), alpha * 0.25f, 0.000001f);
+    REQUIRE_NEAR(secondSharedAlphaPath.ProcessWithAlpha(0.75f, alpha), alpha * 0.75f, 0.000001f);
+
     synth::OnePoleHighPass hp;
     synth::OnePoleHighPass::Input hpInput{.value = 1.0f, .cutoff = 0.05f};
     for (int i = 0; i < 128; ++i) {
