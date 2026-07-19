@@ -6,14 +6,14 @@
 
 ## 2. Reusable One-Pole Hot Path
 
-- [ ] 2.1 Add DSP tests proving low-pass precomputed-alpha processing matches cutoff processing, independent instances can share one alpha, and reset seeds output deterministically.
-- [ ] 2.2 Extend `OnePoleLowPass` with `ProcessWithAlpha(value, alpha)` and `Reset(output)`, delegating the existing cutoff-bearing `Process` path without changing its response or UI-state contract.
+- [x] 2.1 Add DSP tests proving low-pass precomputed-alpha processing matches cutoff processing, independent instances can share one alpha, and reset seeds output deterministically.
+- [x] 2.2 Extend `OnePoleLowPass` with `ProcessWithAlpha(value, alpha)` and `Reset(output)`, delegating the existing cutoff-bearing `Process` path without changing its response or UI-state contract.
 
 ## 3. Braid Module Control Migration
 
-- [ ] 3.1 Update module tests first for four oscillator-indexed Mod LPF Cutoff IDs/names/defaults, unchanged positions and registration counts, unchanged oscillator Frequency ranges, unshifted LFO cutoff range, and direct Phase-to-phase-offset mapping.
-- [ ] 3.2 Replace `Braid4VcoModule` PM Index IDs/input/cache fields and labels with Mod LPF Cutoff controls in the same monophonic registration slots, expose the cutoff IDs, and remove the phase-depth multiplier.
-- [ ] 3.3 Update matrix module tests and naming comments so `[row][column]` unambiguously means `[output][input]` and shared mono-group expectations refer to Cutoff/Frequency rather than PM Index/Frequency.
+- [x] 3.1 Update module tests first for four oscillator-indexed Mod LPF Cutoff IDs/names/defaults, unchanged positions and registration counts, unchanged oscillator Frequency ranges, unshifted LFO cutoff range, and direct Phase-to-phase-offset mapping.
+- [x] 3.2 Replace `Braid4VcoModule` PM Index IDs/input/cache fields and labels with Mod LPF Cutoff controls in the same monophonic registration slots, expose the cutoff IDs, and remove the phase-depth multiplier.
+- [x] 3.3 Update matrix module tests and naming comments so `[row][column]` unambiguously means `[output][input]` and shared mono-group expectations refer to Cutoff/Frequency rather than PM Index/Frequency.
 
 ## 4. Braid 4 Oscillator-Owned Filtering
 
