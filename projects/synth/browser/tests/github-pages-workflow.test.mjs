@@ -184,6 +184,7 @@ test("build installs pinned toolchains, runs local gates, derives the catalog ve
   const setupNode = build.steps.find(({ uses: reference }) => reference?.startsWith("actions/setup-node@"));
   const setupEmsdk = build.steps.find(({ uses: reference }) => reference?.startsWith("emscripten-core/setup-emsdk@"));
   const upload = build.steps.find(({ uses: reference }) => reference?.startsWith("actions/upload-pages-artifact@"));
+  const localBrowserGate = build.steps.find(({ name }) => name === "Run local cross-origin publication gates");
 
   assert.deepEqual(setupNode.with, { "node-version": "22.17.1" });
   assert.deepEqual(setupEmsdk.with, { version: "6.0.3" });
@@ -198,6 +199,8 @@ test("build installs pinned toolchains, runs local gates, derives the catalog ve
   assert.match(buildCommands, /npm --prefix projects\/synth\/browser run publish:pages/);
   assert.match(buildCommands, /tests\/two-origin-package\.spec\.ts/);
   assert.match(buildCommands, /tests\/deployed-origin\.spec\.ts/);
+  assert.equal(localBrowserGate["working-directory"], "projects/synth/browser");
+  assert.doesNotMatch(localBrowserGate.run, /--prefix/);
   assert.match(buildCommands, /catalogs\/sheaf\/catalog\.json/);
   assert.equal(build.outputs["catalog-version"], "${{ steps.publisher.outputs.catalog-version }}");
   assert.deepEqual(Object.keys(build.outputs), ["catalog-version"]);
@@ -209,6 +212,7 @@ test("deployment, validation, and smoke form a strict post-upload readiness chai
   const deployment = deploy.steps.find(({ uses: reference }) => reference?.startsWith("actions/deploy-pages@"));
   const validateCommands = commands(validate);
   const smokeCommands = commands(smoke);
+  const deployedBrowserGate = smoke.steps.find(({ name }) => name === "Run deployed-origin readiness smoke");
 
   assert.equal(deploy.needs, "build");
   assert.equal(deployment.id, "deployment");
@@ -223,6 +227,8 @@ test("deployment, validation, and smoke form a strict post-upload readiness chai
   assert.equal(smoke.env.SYNTH_BROWSER_EXPECTED_CATALOG_VERSION, "${{ needs.validate.outputs.catalog-version }}");
   assert.equal(smoke.env.SYNTH_BROWSER_REMOTE_CATALOG_URL, "${{ needs.validate.outputs.catalog-url }}");
   assert.match(smokeCommands, /playwright test tests\/deployed-origin\.spec\.ts/);
+  assert.equal(deployedBrowserGate["working-directory"], "projects/synth/browser");
+  assert.doesNotMatch(deployedBrowserGate.run, /--prefix/);
 });
 
 test("deployed validator accepts every file in a complete CORS-readable catalog", async (t) => {

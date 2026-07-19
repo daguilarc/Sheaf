@@ -50,10 +50,11 @@ jobs:
           test -n "$catalog_version"
           echo "catalog-version=$catalog_version" >> "$GITHUB_OUTPUT"
       - name: Run local cross-origin publication gates
+        working-directory: projects/synth/browser
         env:
           SYNTH_BROWSER_REMOTE_CATALOG_URL: http://127.0.0.1:4174/dist/pages/catalogs/sheaf/catalog.json
           SYNTH_BROWSER_EXPECTED_CATALOG_VERSION: ${{ steps.publisher.outputs.catalog-version }}
-        run: npx --prefix projects/synth/browser playwright test tests/two-origin-package.spec.ts tests/deployed-origin.spec.ts
+        run: npx playwright test tests/two-origin-package.spec.ts tests/deployed-origin.spec.ts
       - name: Configure GitHub Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - name: Upload publisher artifact
@@ -125,4 +126,5 @@ jobs:
           npx --prefix projects/synth/browser playwright install --with-deps chromium
           npm --prefix projects/synth/browser run build
       - name: Run deployed-origin readiness smoke
-        run: npx --prefix projects/synth/browser playwright test tests/deployed-origin.spec.ts
+        working-directory: projects/synth/browser
+        run: npx playwright test tests/deployed-origin.spec.ts
