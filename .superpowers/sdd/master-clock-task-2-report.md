@@ -22,6 +22,12 @@ Implemented Task 2 from base
 - a JUCE-free trivially-copyable `ScheduledMidiEvent` and non-owning
   `IScheduledMidiEventSink::TryEnqueue(...) noexcept` producer boundary.
 
+Review-fix implementation commit
+`758f005347c116205a68715ffbb33302628d3508` adds one explicit 4096-candidate
+budget across an entire retained-history splice, documents the uncorrected
+tempo-versus-corrected-slope contract, and documents the safe fallback for an
+activation outside retained committed history.
+
 Engine/`MessageIn`, concrete `MidiSender`, host delivery, persistence, UI,
 browser, and application integration remain outside this task.
 
@@ -93,6 +99,19 @@ sink had not filled. The fixtures were corrected to issue a deliberate
 two-pulse jump and use a genuinely full four-entry sink; no production policy
 was weakened for those corrections.
 
+Review-fix composite-bound RED:
+
+```text
+make -C projects/synth master_clock_tests
+```
+
+Exited `2` after the new
+`master_clock_delayed_splice_has_one_total_crossing_iteration_budget` case
+failed its total-budget assertion; the other 36 cases passed. Root cause: the
+4096-candidate affine limit was reset independently for every one of the 64
+retained plan descriptors, permitting 262,144 candidate iterations in one
+delayed splice.
+
 ## GREEN Commands and Results
 
 Focused Task 2 test:
@@ -144,6 +163,19 @@ Additional verification:
   paths listed above.
 - A source audit found no heap container, mutex, allocation, I/O, sleep, or
   per-audio-frame loop in the production clock path.
+
+Review-fix GREEN and fresh verification:
+
+- `make -C projects/synth master_clock_tests`: exit `0`, 37/37 cases passed.
+- `make -C projects/synth -B dsp_tests master_clock_tests contract_tests
+  engine_tests`: exit `0`, with all sources rebuilt warning-free and all
+  affected suites passing.
+- Direct `clang++` AddressSanitizer plus UndefinedBehaviorSanitizer build/run:
+  exit `0`, 37/37 cases passed with no diagnostics.
+- `make -C projects/synth test`: exit `0`; the complete synth suite and all
+  five Braid deadline cases passed.
+- The staged implementation-fix audit contained only `MasterClock.hpp`,
+  `MasterClock.cpp`, and `master_clock_tests.cpp`; diff checks passed.
 
 ## State-Transition Table
 
@@ -197,6 +229,12 @@ the first positive interval seeds period; acquisition becomes `Locked` after
 two valid intervals. Exact rounded 120-BPM/24-PPQN input is within `0.1 BPM`
 after 64 intervals. Timeout leaves `activeBpm_` and the last positive pending
 slope intact, yielding `FreeRun` rather than stopping or snapping.
+
+`activeBpm_`, `TempoBpm()`, and diagnostics `currentBpm` expose the manual or
+filtered-estimator tempo from `P`; they deliberately exclude the transient
+bounded phase correction. `QuarterNotesPerSample()` exposes the future slope
+and may therefore differ from the uncorrected BPM conversion while correction
+is active.
 
 ## Source Arbitration
 
@@ -283,9 +321,11 @@ required integer-microsecond rounding bound.
 - Pending internal transport storage is fixed at 16 entries; plan/splice scans
   are bounded at the existing 64 descriptors.
 - Crossing work is analytical and proportional to musical crossings, never
-  output frames or oversampled frames. Each affine segment processes at most
-  4096 candidate cells, after which newest events are counted as dropped and
-  detector authority advances to the final crossed cell.
+  output frames or oversampled frames. Ordinary current-plan production
+  processes at most 4096 candidate cells per affine segment. A delayed splice
+  scans at most 64 fixed descriptors and shares one 4096-candidate iteration
+  budget across the complete scan. Excess newer events are counted as dropped,
+  while detector authority advances analytically to each final crossed cell.
 - The production path contains no dynamic container, `new`, mutex, lock, I/O,
   sleep, host/JUCE call, or per-audio-sample loop.
 - A global allocation interceptor measured zero allocations across 1,000
@@ -302,16 +342,18 @@ required integer-microsecond rounding bound.
   but does not implement the concrete SPSC `MidiSender` lane or worker-side
   cutoff filtering; Task 4 owns that consumer.
 - To reconcile finite realtime work with an otherwise unbounded positive core
-  tempo, analytical production caps one affine segment at 4096 crossings.
-  Excess newest crossings are observable drops and the detector advances so
-  later blocks do not replay stale cells. This is far above valid musical
-  rates/block sizes but should remain aligned with the concrete lane capacity
-  chosen in Task 4.
+  tempo, ordinary analytical production caps one affine segment at 4096
+  candidates, and delayed splice reconstruction caps the entire retained
+  history at 4096 candidate iterations. Excess newest crossings are observable
+  drops and the detector advances so later blocks do not replay stale cells.
+  This is far above valid musical rates/block sizes but should remain aligned
+  with the concrete lane capacity chosen in Task 4.
 - Exact output-only splice fill requires the normalized timestamp to remain in
   the existing bounded mapper/plan history. The specified fixed latency keeps
-  normal handoff within that window; an older-than-history event still changes
-  the next committed transport state but cannot reconstruct evicted output
-  phase.
+  normal handoff within that window. If this latency contract is violated, the
+  intentional safe fallback starts the next committed run at zero and skips
+  retroactive reconstruction rather than extrapolating an unknown evicted
+  output phase.
 - Sync configuration has no timestamp in the Task 2 public seam, so send-clock
   and PPQN detector reconfiguration is committed at the next plan boundary.
 - Physical delivery accuracy and worker late-event handling remain Task 4 host
@@ -327,5 +369,13 @@ Task 2 implementation commit:
 
 `3d110a33e4c4c5c922f7677315fbfd2470ab43e8` — `feat(synth): add clock transport and external sync`
 
-The follow-up commit containing this report is metadata-only and intentionally
-does not alter the implementation hash recorded above.
+Initial metadata-only report commit:
+
+`394d42b90911869f3c79ad60767790513259ddc3` — `docs(synth): report master clock task 2`
+
+Review-fix implementation commit:
+
+`758f005347c116205a68715ffbb33302628d3508` — `fix(synth): bound delayed clock splices`
+
+The follow-up commit updating this report is metadata-only and intentionally
+does not alter either implementation hash recorded above.
