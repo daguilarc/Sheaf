@@ -26,7 +26,7 @@
 
 ## 5. Verification and Documentation
 
-- [ ] 5.1 Run the focused DSP, parameter-modulation, module, Braid system, portable-UI, and persistence test targets and resolve all regressions.
-- [ ] 5.2 Run Braid's release deadline tests at 44.1, 48, and 96 kHz and confirm the existing average and p99 callback budgets with all 80 filters active.
-- [ ] 5.3 Run the full synth test suite and public-header/JUCE-free build checks.
-- [ ] 5.4 Update `projects/synth/docs/coverage.md` and any affected architecture/control documentation to map `sdsp-6`, `spm-11`, `spm-66`, `spm-72`, `smod-9..11`, and `d4-1`, `d4-2`, `d4-7`, `d4-8`, `d4-10` to their focused tests.
+- [x] 5.1 Run the focused DSP, parameter-modulation, module, Braid system, portable-UI, and persistence test targets and resolve all regressions.
+- [x] 5.2 Run Braid's release deadline tests at 44.1, 48, and 96 kHz and confirm the existing average and p99 callback budgets with all 80 filters active.
+- [x] 5.3 Run the full synth test suite and public-header/JUCE-free build checks.
+- [x] 5.4 Update `projects/synth/docs/coverage.md` and any affected architecture/control documentation to map `sdsp-6`, `spm-11`, `spm-66`, `spm-72`, `smod-9..11`, and `d4-1`, `d4-2`, `d4-7`, `d4-8`, `d4-10` to their focused tests.

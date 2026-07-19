@@ -1,6 +1,6 @@
 # Spec Coverage
 
-Last audit: standard modulators, fifteen-source application adoption, sparse modulation processing, absolute encoder mode, exact parameter projection, causal absolute encoder feedback synchronization, generic JUCE hierarchy/scrolling/production Controllers migration, and runtime button grids, 2026-07-16
+Last audit: standard modulators, fifteen-source application adoption, sparse modulation processing, absolute encoder mode, exact parameter projection, causal absolute encoder feedback synchronization, generic JUCE hierarchy/scrolling/production Controllers migration, runtime button grids, and Braid 4 oscillator-owned parameter-cache filtering, 2026-07-18
 
 | Requirement | Status | Primary exact coverage |
 |---|---|---|
@@ -30,6 +30,7 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
 | `sru-25` | covered | `projects/synth/tests/portable_ui_tests.cpp` shared encoder underlay body alpha and preserved non-body commands; `projects/synth/tests/miniapp_system_tests.cpp` visible and hidden visualizer underlay wiring |
 | `sru-27` | covered | type-aware block round trips in `blocks_tests`, row editing in `viewmodel_tests`, and portable combo rendering/dispatch in `controllers_page_ui_tests` |
 | `sdsp-13` (modified) | covered | `projects/synth/tests/dsp_tests.cpp` deterministic seeded noise, strict open interval, one advance per voice, distribution sanity, stable pointers, and direct `ParameterGroup` publication; `miniapp_registers_noise_at_standard_index_fourteen` covers application adoption |
+| `sdsp-6` (modified) | covered | `one_pole_filters_and_tanh_follow_dsp_contract` covers cutoff/alpha equivalence, shared-alpha independent states, and deterministic reset seeding |
 | `sdsp-33` (modified) | covered | `miniapp_registers_distinct_scope_visualizers_for_modulators` proves three distinct retained scope visualizers at application indexes `4/5/6`; `miniapp_registers_standard_fifteen_source_topology_without_changing_performer_topology` separates standard visualizers at `0..3/11/14` |
 | `sdsp-34` | covered | `dsp_tests` shaped interpolation, reciprocal-time correlated increments, Hz-domain voice spread, validation, precision, and one-hour increment floor cases |
 | `sdsp-35` | covered | `dsp_tests` deterministic voice wait/move/done transitions, exact and overshot boundaries, reset semantics, and double progress cases |
@@ -45,9 +46,12 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
 | `ssm-4` | covered | the `standard_modulators_rejects_*` atomic-validation cases and `standard_modulators_mono_omits_constant_and_ignores_constant_collision` |
 | `ssm-5` | covered | `standard_modulators_lifecycle_requires_registration_and_finite_preparation`, `standard_modulators_process_advances_dynamic_sources_once_and_copies_voice_order`, and `standard_modulators_group_updates_and_ui_publication_remain_explicit` |
 | `spm-71` | covered | MiniApp topology/system coverage plus two-scope main-screen and complete 4x4 encoder-grid parity across portable trees, browser serialization, shared geometry, and JUCE |
-| `d4-1` | covered | `initializes_parameter_groups_banks_slot_and_scene_endpoints`, `braid4_standard_bundles_register_exact_independent_sources`, and `braid4_groups_fit_sparse_fifteen_position_modulation_views` |
+| `d4-1` (modified) | covered | `initializes_parameter_groups_banks_slot_and_scene_endpoints`, `braid4_filter_storage_seeds_all_eighty_owned_caches_and_excludes_xy_and_nested_depths`, `braid4_standard_bundles_register_exact_independent_sources`, and `braid4_groups_fit_sparse_fifteen_position_modulation_views` |
+| `d4-2` (modified) | covered | `braid_vco_registers_three_group_shapes_two_scenes_fourteen_red_parameters_and_sparse_bank`, `braid_vco_maps_all_parameter_ranges_to_natural_vco_inputs`, and `braid_and_matrix_banks_expose_required_encoder_cells` |
 | `d4-3` | covered | `prepares_four_x_internal_rate_and_sequences_internal_subframes`, `matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_consumption_one_internal_sample`, and `braid4_deadline_tests` |
-| `d4-8` | covered | `parallel_lfo_topology_banks_colors_and_modulator_slots`, `audio_and_lfo_outputs_publish_normalized_stereo_mono_and_quad_modulators`, and the matrix-delay case named for `d4-3` |
+| `d4-7` (modified) | covered | `prepares_four_x_internal_rate_and_sequences_internal_subframes`, `braid4_owned_caches_share_row_cutoff_alpha_but_keep_independent_filter_state`, and all three `braid4_meets_*_256_frame_deadline_and_continuity` cases |
+| `d4-8` (modified) | covered | `parallel_lfo_topology_banks_colors_and_modulator_slots`, `braid_vco_supports_frequency_octave_shift_and_parameter_colors`, `audio_and_lfo_outputs_publish_normalized_stereo_mono_and_quad_modulators`, and the matrix-delay case named for `d4-3` |
+| `d4-10` | covered | `braid4_filter_storage_seeds_all_eighty_owned_caches_and_excludes_xy_and_nested_depths`, `braid4_owned_caches_share_row_cutoff_alpha_but_keep_independent_filter_state`, phase/order system cases, and `braid4_deadline_tests` |
 | `d4-9` | covered | `braid4_standard_modulation_view_renders_underlay_and_app_sources_remain_encoder_only`, `braid4_standard_bundles_register_exact_independent_sources`, and `TestBraid4StandardModulationViewsRemainPortable` |
 | `sar-7` (modified) | covered | `concurrent_absolute_alert_and_position_output_linearize_before_alert_or_after_acknowledgement`, `rig_absolute_feedback_follows_real_acknowledgement_and_ignores_modulation`, `rig_absolute_feedback_resolves_only_latest_same_route_rapid_input`, `rig_generic_absolute_feedback_round_trips_same_address_without_auxiliary_traffic`, and `engine_rebuild_retains_pending_absolute_feedback_across_bank_route_change` |
 | `spm-20` (modified) | covered | `parameter_ui_snapshot_owns_parameter_source_and_gesture_colors`, `ui_state_reports_affecting_masks_through_gesture_index_63`, `ui_state_publishes_normalized_raw_center_before_modulation_smoothing_and_presentation`, `raw_center_and_processed_epoch_require_one_stable_revision`, `processed_absolute_epoch_follows_slot_position_across_bank_and_modulation_view_changes`, `randomized_message_bus_ui_state_simulation`, and portable encoder snapshot/render assertions through bit 63 |
@@ -57,7 +61,12 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
 | `spm-78` | covered | `midi_encoder_input_absolute_publishes_matching_epoch_and_rolls_back_rejected_push`, `param_set_absolute_acknowledges_apply_modifier_rejection_and_disconnected_routes_monotonically`, absolute encoder acknowledgement/output cases, snapshot-only grid lookup, and existing output-byte/cache/reset/color/budget regressions |
 | `spm-79` | covered | `generic_controller_profile_derives_same_address_position_only_output_and_honors_overrides`, `generic_absolute_encoder_output_uses_same_address_causal_acknowledgement`, `generic_absolute_encoder_output_retries_failed_correction_without_state_mutation`, `generic_relative_encoder_output_uses_display_value_without_epoch_coordination`, `generic_untracked_absolute_encoder_output_uses_raw_center_fallback`, `rig_generic_absolute_feedback_round_trips_same_address_without_auxiliary_traffic`, and `engine_rebuild_retains_pending_absolute_feedback_across_bank_route_change` |
 | `spm-25` (modified) | covered | `randomized_message_bus_ui_state_simulation` plus `message_bus_sparse_lifecycle_model_tracks_pins_collection_reuse_and_patch_load` validate 64-bit UI masks and sparse lifecycle state against deterministic manager-owned oracles |
-| `spm-72` | covered | `group_process_sample_visits_only_registered_roots`, `recursive_local_compute_seeds_display_without_audio_rate_processing`, active-route full-scan cases, and `braid4_sparse_work_counters_bound_inactive_capacity` |
+| `spm-11` (modified) | covered | `process_lite_phases_replace_cached_knob_before_ui_smoothing`, `process_lite_wrapper_matches_explicit_phases`, `parameter_process_sample_phases_recompute_only_in_phase_one`, and `group_process_sample_phases_visit_only_registered_roots` |
+| `spm-66` (modified) | covered | `process_lite_phases_replace_cached_knob_before_ui_smoothing` and `ui_display_center_and_spread_follow_cached_knob_order` |
+| `spm-72` | covered | `group_process_sample_visits_only_registered_roots`, `group_process_sample_phases_visit_only_registered_roots`, `recursive_local_compute_seeds_display_without_audio_rate_processing`, active-route full-scan cases, and `braid4_sparse_work_counters_bound_inactive_capacity` |
+| `smod-9` (modified) | covered | `braid_vco_registers_three_group_shapes_two_scenes_fourteen_red_parameters_and_sparse_bank` and `braid_vco_maps_all_parameter_ranges_to_natural_vco_inputs` |
+| `smod-10` (modified) | covered | `bipolar_matrix_registers_row_major_identity_parameters_and_bank_cells` and `braid4_owned_caches_share_row_cutoff_alpha_but_keep_independent_filter_state` |
+| `smod-11` (modified) | covered | `braid_vco_supports_frequency_octave_shift_and_parameter_colors` and `parallel_lfo_topology_banks_colors_and_modulator_slots` |
 | `spm-73` | covered | 0--64 gesture boundary/sparse-mask tests, `ControllerGesture63SelectsAndEditsManagerGestureWhileBankMaskRemains32Bit`, portable bit-63 badge rendering, and randomized UI-state coverage |
 | `spm-74` | covered | neutral-leaf guard, bottom-up collapse, pin, settling/detach, bounded-reuse, patch-load, semantic-JSON, and randomized lifecycle cases in `parameter_modulation_tests` |
 | `spm-75` | covered | connected-only modulation-view materialization/capacity/randomization cases in `parameter_modulation_tests`, MiniApp and Braid4 sparse-position system assertions, `TestBraid4StandardModulationViewsRemainPortable`, plus grid message factories/JSON validation and mixed FIFO routing/namespace isolation |
@@ -467,6 +476,9 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
 - [`braid4_system_tests.cpp`](../tests/braid4_system_tests.cpp):
   `initializes_parameter_groups_banks_slot_and_scene_endpoints` checks the three
   heterogeneous groups and shared sixteen-position slot;
+  `braid4_filter_storage_seeds_all_eighty_owned_caches_and_excludes_xy_and_nested_depths`
+  additionally counts the 80 top-level Braid-owned filter states across those
+  existing groups;
   `braid4_standard_bundles_register_exact_independent_sources` checks retained
   independent `<2>/<4>/<1>` bundles and addresses; and
   `braid4_groups_fit_sparse_fifteen_position_modulation_views` checks capacities
@@ -494,6 +506,9 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
 - `matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_consumption_one_internal_sample`
   and `runs_finite_non_silent_stereo_audio_after_decimation` pin application
   source timing and audible-path isolation.
+- [`module_tests.cpp`](../tests/module_tests.cpp):
+  `braid_vco_supports_frequency_octave_shift_and_parameter_colors` keeps the
+  LFO-only frequency shift separate from the shared Mod LPF Cutoff mapping.
 
 ### `d4-9` - Braid4 Standard Visualizers
 
@@ -535,6 +550,8 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
 
 - [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp):
   `group_process_sample_visits_only_registered_roots` and
+  `group_process_sample_phases_visit_only_registered_roots` verify the explicit
+  phase traversals still visit roots only; and
   `recursive_local_compute_seeds_display_without_audio_rate_processing` cover
   the top-level `ProcessLite` boundary and recursive local-state refresh.
   `modulators_apply_active_uses_explicit_stable_source_indices`,
@@ -804,6 +821,68 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
   `controllers_page_simulation_tests` runs the independent
   seed `0x6a1d2026` across 320 operations, including JSON reload, invalid
   atomic edits, row identity, hidden-orphan equality, and scroll reachability.
+
+## Braid 4 Parameter-Cache Filtering Requirement Mappings
+
+### `sdsp-6` - Reusable One-Pole State And Shared Alpha
+
+- [`dsp_tests.cpp`](../tests/dsp_tests.cpp):
+  `one_pole_filters_and_tanh_follow_dsp_contract` compares the cutoff-bearing
+  path with caller-supplied alpha, advances two independent states with the
+  same alpha, and confirms reset seeds a deterministic output. This is the
+  primitive used by the Braid cache-filter bundles.
+
+### `spm-11`, `spm-66`, And `spm-72` - Phase Boundary, UI Cache, And Root Traversal
+
+- [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp):
+  `process_lite_phases_replace_cached_knob_before_ui_smoothing` proves a
+  between-phase replacement is clamped and becomes the UI input;
+  `process_lite_wrapper_matches_explicit_phases` retains the consecutive-wrapper
+  behavior; `parameter_process_sample_phases_recompute_only_in_phase_one`
+  pins configured-cadence recomputation to phase 1; and
+  `group_process_sample_phases_visit_only_registered_roots` keeps phase work
+  off materialized local modulation-depth nodes.
+- `ui_display_center_and_spread_follow_cached_knob_order` supplies the focused
+  display-center/spread ordering check, while the existing active-route oracle
+  cases continue to cover sparse route traversal.
+
+### `smod-9`, `smod-10`, And `smod-11` - Controls, Matrix Coordinates, And LFO Styling
+
+- [`module_tests.cpp`](../tests/module_tests.cpp):
+  `braid_vco_registers_three_group_shapes_two_scenes_fourteen_red_parameters_and_sparse_bank`
+  checks all four oscillator-indexed Mod LPF Cutoff IDs, names, defaults, and
+  positions `8..11`; `braid_vco_maps_all_parameter_ranges_to_natural_vco_inputs`
+  checks direct Phase mapping without the retired depth multiplier; and
+  `braid_vco_supports_frequency_octave_shift_and_parameter_colors` keeps the
+  cutoff range independent of the LFO frequency shift.
+- `bipolar_matrix_registers_row_major_identity_parameters_and_bank_cells` names
+  the `[output][input]` matrix coordinate convention, which the Braid ownership
+  assertions use when assigning each row to one oscillator cutoff.
+
+### `d4-1`, `d4-2`, `d4-7`, `d4-8`, And `d4-10` - Braid Ownership And Timing
+
+- [`braid4_system_tests.cpp`](../tests/braid4_system_tests.cpp):
+  `braid4_filter_storage_seeds_all_eighty_owned_caches_and_excludes_xy_and_nested_depths`
+  enumerates every audible/LFO quad voice, cutoff, frequency, and matrix cell,
+  counts 80 owned states, and excludes X/Y plus nested depths. It also observes
+  seeding from current caches rather than a zero-origin transient.
+- `braid4_owned_caches_share_row_cutoff_alpha_but_keep_independent_filter_state`
+  checks output-row matrix ownership over every row/column, one alpha per
+  oscillator after phase-1 cutoff sampling, ten independent states per
+  oscillator, and identical filtered-cache visibility to DSP mapping and UI
+  smoothing. `prepares_four_x_internal_rate_and_sequences_internal_subframes`
+  and `matrix_feedback_uses_current_vco_outputs_and_delays_only_modulator_consumption_one_internal_sample`
+  retain the phase ordering and one-internal-sample feedback timing checks.
+- `braid_and_matrix_banks_expose_required_encoder_cells`,
+  `parallel_lfo_topology_banks_colors_and_modulator_slots`, and
+  `patch_save_perturb_load_round_trips_representative_braid_and_matrix_values`
+  cover the stable control layout, parallel LFO bank, and persistence semantics.
+- [`braid4_deadline_tests.cpp`](../tests/braid4_deadline_tests.cpp):
+  `braid4_meets_44100hz_256_frame_deadline_and_continuity`,
+  `braid4_meets_48000hz_256_frame_deadline_and_continuity`, and
+  `braid4_meets_96000hz_256_frame_deadline_and_continuity` exercise the active
+  filter path at 44.1, 48, and 96 kHz host rates. The required callback budget
+  measurements are recorded in Task 4's verification report.
 
 ## Known Gaps
 
