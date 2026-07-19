@@ -404,6 +404,11 @@ public:
     // keeps disconnect/reconnect snapshots close to the actual deadline while
     // still giving the platform scheduler time to submit the event.
     static constexpr std::uint64_t kHostScheduleLeadMicros = 1'000;
+    // TryEnqueue intentionally does not take mutex_. A notification may race
+    // the worker's predicate-to-wait transition, so an otherwise-idle worker
+    // polls at this bounded interval. At most 250 us of self-heal latency
+    // retains at least 750 us of the host scheduling lead.
+    static constexpr std::uint64_t kIdleSelfHealMicros = 250;
 
     class QueueGuardForTests {
     public:
@@ -419,6 +424,10 @@ public:
         std::unique_lock<std::mutex> lock_;
     };
 
+    // Without an injected provider, scheduled deadlines use steady_clock
+    // microseconds since its epoch. Feedback-only users remain source
+    // compatible; callers that enqueue scheduled events must use that same
+    // epoch (Engine/Runtime inject their own shared runtime-relative epoch).
     explicit MidiSender(std::size_t capacity = 4096, TimestampProvider timestampProvider = {});
     ~MidiSender();
 

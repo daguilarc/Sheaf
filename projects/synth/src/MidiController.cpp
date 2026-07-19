@@ -1056,7 +1056,9 @@ bool MidiSender::FlushForTests(std::chrono::milliseconds timeout) {
 }
 
 std::uint64_t MidiSender::NowMicros() const noexcept {
-    return timestampProvider_ ? timestampProvider_() : 0;
+    // The constructor installs a steady_clock provider when none is injected,
+    // so scheduled operation never silently falls into a non-advancing epoch.
+    return timestampProvider_();
 }
 
 bool MidiSender::RealtimeLaneEmpty() const noexcept {
@@ -1357,7 +1359,11 @@ void MidiSender::Run() {
             return stopRequested_ || size_ > 0 || !RealtimeLaneEmpty();
         };
         if (pendingScheduledSize_ == 0) {
-            cv_.wait(lock, ready);
+            // TryEnqueue cannot take mutex_ without violating the audio-side
+            // producer contract. Its notify may therefore land between this
+            // predicate and the condition-variable wait. A short bounded wait
+            // makes that race self-heal without adding any producer blocking.
+            cv_.wait_for(lock, std::chrono::microseconds(kIdleSelfHealMicros), ready);
         } else {
             const PendingScheduledEntry& entry = pendingScheduled_[0];
             std::uint64_t wakeAt = entry.event.dueTimeMicros;

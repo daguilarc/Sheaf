@@ -59,6 +59,8 @@ using synth::ScheduledMidiOrderingIntent;
 static_assert(std::is_base_of_v<synth::IScheduledMidiEventSink, MidiSender>);
 static_assert(noexcept(std::declval<MidiSender&>().TryEnqueue(
     std::declval<const ScheduledMidiEvent&>())));
+static_assert(MidiSender::kIdleSelfHealMicros > 0);
+static_assert(MidiSender::kIdleSelfHealMicros <= MidiSender::kHostScheduleLeadMicros / 4);
 
 // A trivial, always-immediate sink: records every Send() call. Used for the
 // non-blocking-path assertions (sink actually receives what was enqueued).
@@ -553,6 +555,43 @@ TEST_CASE(stop_discards_far_future_pending_events_without_waiting) {
     sender.Stop();
     REQUIRE_TRUE(std::chrono::steady_clock::now() - start < std::chrono::seconds(1));
     REQUIRE_TRUE(sink.Snapshot().empty());
+}
+
+TEST_CASE(quiescent_one_shot_scheduled_transport_never_strands_on_an_idle_wakeup_race) {
+    std::atomic<std::uint64_t> nowMicros{500'000};
+    MidiSender sender(16, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
+    RecordingSink sink;
+    sender.SetSink(0, &sink);
+    sender.Start();
+
+    constexpr std::size_t kOneShotCount = 2048;
+    for (std::size_t index = 0; index < kOneShotCount; ++index) {
+        REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(
+            ScheduledMidiEventKind::Start, 500'000, index + 1)));
+        REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(100)));
+    }
+    sender.Stop();
+
+    REQUIRE_TRUE(sink.Snapshot().size() == kOneShotCount);
+}
+
+TEST_CASE(missing_timestamp_provider_uses_steady_clock_epoch_for_scheduled_delivery) {
+    MidiSender sender(16);
+    RecordingSink sink;
+    sender.SetSink(0, &sink);
+    sender.Start();
+
+    const std::uint64_t nowMicros = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count());
+    REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(
+        ScheduledMidiEventKind::Continue, nowMicros + 2'000, 1)));
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    sender.Stop();
+
+    const auto deliveries = sink.Snapshot();
+    REQUIRE_TRUE(deliveries.size() == 1);
+    REQUIRE_TRUE(deliveries[0].midi.raw == std::vector<std::uint8_t>{0xFB});
 }
 
 // Baseline: SetSink + Enqueue + FlushForTests actually delivers to the sink
