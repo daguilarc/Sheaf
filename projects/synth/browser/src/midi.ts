@@ -29,9 +29,10 @@ export class BrowserMidiWorkerRuntime implements BrowserMidiRuntime {
 }
 
 type MidiMessage = { data: Uint8Array; timeStamp: number };
-type MidiInputPort = { id: string; name?: string | null; state?: string; onmidimessage: ((message: MidiMessage) => void) | null };
-type MidiOutputPort = { id: string; name?: string | null; state?: string; send(bytes: number[] | Uint8Array): void };
-type MidiAccess = {
+export type MidiPort = { close?(): Promise<unknown> | void };
+type MidiInputPort = MidiPort & { id: string; name?: string | null; state?: string; onmidimessage: ((message: MidiMessage) => void) | null };
+type MidiOutputPort = MidiPort & { id: string; name?: string | null; state?: string; send(bytes: number[] | Uint8Array): void };
+export type MidiAccess = {
   inputs: { values(): IterableIterator<MidiInputPort> };
   outputs: { values(): IterableIterator<MidiOutputPort> };
   onstatechange: ((event: unknown) => void) | null;
@@ -69,10 +70,25 @@ export class BrowserMidiManager {
     if (this.access) return { status: this.statusValue };
     this.statusValue = "requesting";
     try {
-      this.access = this.options.requestMIDIAccess
+      const access = this.options.requestMIDIAccess
         ? await this.options.requestMIDIAccess({ sysex: true })
         : await (navigator.requestMIDIAccess({ sysex: true }) as unknown as Promise<MidiAccess>);
-      this.access.onstatechange = () => { void this.poll(); };
+      return await this.startWithAccess(access);
+    } catch (error) {
+      this.statusValue = "offline";
+      return { status: this.statusValue, reason: error instanceof Error ? error.message : "Web MIDI unavailable" };
+    }
+  }
+
+  async startWithAccess(access: MidiAccess): Promise<BrowserMidiStartResult> {
+    if (this.access) {
+      if (this.access !== access) throw new Error("MIDI manager already owns different access");
+      return { status: this.statusValue };
+    }
+    this.statusValue = "requesting";
+    this.access = access;
+    try {
+      access.onstatechange = () => { void this.poll(); };
       const schedule = this.options.setInterval ?? setInterval;
       this.pollTimer = schedule(() => { void this.poll(); }, this.options.pollIntervalMs ?? 500);
       this.drainTimer = schedule(() => { void this.drainOutputs(); }, this.options.drainIntervalMs ?? 16);
@@ -80,8 +96,8 @@ export class BrowserMidiManager {
       this.statusValue = "online";
       return { status: this.statusValue };
     } catch (error) {
-      this.statusValue = "offline";
-      return { status: this.statusValue, reason: error instanceof Error ? error.message : "Web MIDI unavailable" };
+      this.stop();
+      return { status: "offline", reason: error instanceof Error ? error.message : "Web MIDI unavailable" };
     }
   }
 

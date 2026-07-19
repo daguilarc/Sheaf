@@ -70,6 +70,37 @@ test("requests Web MIDI sysex permission and remains offline when it is denied",
   expect(result.uiAndAudioRemainRunning).toEqual({ ui: true, audio: true });
 });
 
+test("reconciles leased MIDI access without requesting permission a second time", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4174/public/index.html");
+  const result = await page.evaluate(async () => {
+    const { BrowserMidiManager } = await (new Function("return import('/dist/src/midi.js')")() as Promise<any>);
+    const calls: unknown[] = [];
+    const access = {
+      inputs: new Map([["input", { id: "input", name: "Input", state: "connected", onmidimessage: null }]]),
+      outputs: new Map([["output", { id: "output", name: "Output", state: "connected", send() {} }]]),
+      onstatechange: null,
+    };
+    const manager = new BrowserMidiManager({
+      async submitEndpoints(endpoints: unknown) { calls.push(["endpoints", endpoints]); return []; },
+      async deliverMidi() {},
+      async dequeueMidiOutput() { return undefined; },
+    }, {
+      requestMIDIAccess: async () => { calls.push("permission-request"); return access; },
+      setInterval: () => 1,
+      clearInterval: () => {},
+    });
+    const started = await manager.startWithAccess(access);
+    manager.stop();
+    return { started, calls };
+  });
+
+  expect(result.started).toEqual({ status: "online" });
+  expect(result.calls).toEqual([["endpoints", [
+    { identifier: "input", name: "Input", kind: "input" },
+    { identifier: "output", name: "Output", kind: "output" },
+  ]]]);
+});
+
 test("routes sysex between selected ports and their independent controller slots", async ({ page }) => {
   await page.goto("http://127.0.0.1:4173/public/index.html");
   const result = await page.evaluate(async () => {

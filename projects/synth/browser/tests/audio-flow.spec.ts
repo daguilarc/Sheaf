@@ -65,6 +65,37 @@ test("starts a worklet from user activation and copies finite non-silent samples
   expect(result.available).toBe(0);
 });
 
+test("attaches audio to an already-resumed leased context without constructing or resuming another", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4174/public/index.html");
+  const result = await page.evaluate(async () => {
+    const { AudioBridge } = await (new Function("return import('/dist/src/audio.js')")() as Promise<any>);
+    const calls: string[] = [];
+    const context = {
+      sampleRate: 48_000,
+      destination: {},
+      audioWorklet: { addModule: async () => { calls.push("module"); } },
+      async resume() { calls.push("resume"); },
+    };
+    const bridge = new AudioBridge({
+      postMessage(message: { type: string }) { calls.push(message.type); },
+      async startAudioWorklet() { calls.push("runtime-worklet"); return { started: true }; },
+    }, {
+      audioContext: context,
+      audioContextFactory: () => { throw new Error("second context"); },
+      audioWorkletNodeFactory: () => ({
+        connect(destination: unknown) { calls.push(destination === context.destination ? "connect" : "wrong-destination"); },
+        disconnect() {},
+      }),
+    });
+    const started = await bridge.startFromUserActivation();
+    bridge.shutdown();
+    return { started, calls };
+  });
+
+  expect(result.started).toEqual({ started: true });
+  expect(result.calls).toEqual(["module", "connect", "configure-audio", "render-audio"]);
+});
+
 test("prefers runtime-owned Wasm AudioWorklet callback over JS ring producer", async ({ page }) => {
   await page.goto("http://127.0.0.1:4174/public/index.html");
   const result = await page.evaluate(async () => {
