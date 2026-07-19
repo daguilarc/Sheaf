@@ -5,6 +5,7 @@
 #endif
 
 #include <atomic>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdlib>
@@ -103,6 +104,7 @@ static_assert(std::is_trivially_copyable_v<synth::ClockDiagnostics>);
 static_assert(std::is_trivially_copyable_v<synth::ClockPlanDescriptor>);
 static_assert(std::is_trivially_copyable_v<synth::ClockBlockPlan>);
 static_assert(std::is_trivially_copyable_v<synth::AudioSampleTimeMapper::Diagnostics>);
+static_assert(std::is_trivially_copyable_v<synth::ScheduledMidiEvent>);
 static_assert(sizeof(synth::ClockPlanDescriptor) <= 96);
 static_assert(sizeof(synth::ClockBlockPlan) <= 96);
 static_assert(noexcept(std::declval<const synth::ClockBlockPlan&>().Contains(0.0)));
@@ -111,9 +113,61 @@ static_assert(noexcept(std::declval<const synth::ClockBlockPlan&>().TransportQua
 static_assert(noexcept(std::declval<synth::AudioSampleTimeMapper&>().ObserveBlock(0, 0)));
 static_assert(noexcept(std::declval<const synth::AudioSampleTimeMapper&>().TimeMicrosAt(0.0)));
 static_assert(noexcept(std::declval<synth::MasterClock&>().CommitBlock(0, 64, 0)));
+static_assert(noexcept(std::declval<synth::MasterClock&>().HandleInternalTransport(
+    synth::ClockTransportCommand::Start)));
+static_assert(noexcept(std::declval<synth::MasterClock&>().HandleExternalTransport(
+    synth::ClockTransportCommand::Start, 0, 0)));
+static_assert(noexcept(std::declval<synth::MasterClock&>().HandleExternalClock(0, 0)));
 static_assert(std::is_same_v<
               decltype(std::declval<const synth::MasterClock&>().CurrentPlan()),
               const synth::ClockBlockPlan*>);
+
+template <std::size_t Capacity>
+class FixedScheduledSink final : public synth::IScheduledMidiEventSink {
+public:
+    bool TryEnqueue(const synth::ScheduledMidiEvent& event) noexcept override {
+        if (size_ == Capacity) {
+            return false;
+        }
+        events_[size_++] = event;
+        return true;
+    }
+
+    std::size_t Size() const noexcept { return size_; }
+    const synth::ScheduledMidiEvent& operator[](std::size_t index) const noexcept {
+        return events_[index];
+    }
+
+    std::size_t Count(synth::ScheduledMidiEventKind kind) const noexcept {
+        std::size_t count = 0;
+        for (std::size_t index = 0; index < size_; ++index) {
+            if (events_[index].kind == kind) {
+                ++count;
+            }
+        }
+        return count;
+    }
+
+private:
+    std::array<synth::ScheduledMidiEvent, Capacity> events_{};
+    std::size_t size_ = 0;
+};
+
+template <std::size_t Capacity>
+const synth::ScheduledMidiEvent* FindEvent(
+    const FixedScheduledSink<Capacity>& sink,
+    synth::ScheduledMidiEventKind kind,
+    std::size_t occurrence = 0) noexcept {
+    for (std::size_t index = 0; index < sink.Size(); ++index) {
+        if (sink[index].kind == kind) {
+            if (occurrence == 0) {
+                return &sink[index];
+            }
+            --occurrence;
+        }
+    }
+    return nullptr;
+}
 
 } // namespace
 
@@ -492,6 +546,625 @@ TEST_CASE(master_clock_commit_query_and_mapper_paths_allocate_nothing_after_prep
     allocation_probe::enabled.store(false, std::memory_order_release);
 
     REQUIRE_TRUE(allocation_probe::count.load(std::memory_order_relaxed) == 0);
+}
+
+TEST_CASE(master_clock_internal_transport_uses_boundary_epochs_and_current_run_time) {
+    synth::MasterClock clock;
+    FixedScheduledSink<64> sink;
+    clock.SetScheduledMidiEventSink(&sink);
+    synth::SyncConfig config;
+    config.sendClock = true;
+    config.sendTransport = true;
+    config.ppqn = 4;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(100.0, 10));
+
+    REQUIRE_TRUE(clock.CommitBlock(0, 10, 1'000'000) != nullptr);
+    REQUIRE_TRUE(clock.TransportState() == synth::ClockTransportState::Stopped);
+    REQUIRE_TRUE(sink.Count(synth::ScheduledMidiEventKind::TimingClock) == 0);
+
+    REQUIRE_TRUE(clock.HandleInternalTransport(synth::ClockTransportCommand::Start));
+    REQUIRE_TRUE(clock.TransportState() == synth::ClockTransportState::Stopped);
+    const synth::ClockBlockPlan* started = clock.CommitBlock(10, 10, 1'100'000);
+    REQUIRE_TRUE(started != nullptr);
+    REQUIRE_TRUE(started->TransportState() == synth::ClockTransportState::Running);
+    REQUIRE_NEAR(started->TransportStartQuarterNotes(), 0.0, 0.0);
+    REQUIRE_TRUE(started->TransportEpoch() == 1);
+
+    const auto* cutoff = FindEvent(sink, synth::ScheduledMidiEventKind::PhaseGenerationCutoff);
+    const auto* start = FindEvent(sink, synth::ScheduledMidiEventKind::Start);
+    const auto* zero = FindEvent(sink, synth::ScheduledMidiEventKind::TimingClock);
+    REQUIRE_TRUE(cutoff != nullptr);
+    REQUIRE_TRUE(start != nullptr);
+    REQUIRE_TRUE(zero != nullptr);
+    REQUIRE_TRUE(cutoff->dueTimeMicros == 1'300'000);
+    REQUIRE_TRUE(start->dueTimeMicros == cutoff->dueTimeMicros);
+    REQUIRE_TRUE(zero->dueTimeMicros == cutoff->dueTimeMicros);
+    REQUIRE_TRUE(cutoff->orderingIntent == synth::ScheduledMidiOrderingIntent::GenerationCutoff);
+    REQUIRE_TRUE(start->orderingIntent == synth::ScheduledMidiOrderingIntent::Transport);
+    REQUIRE_TRUE(zero->orderingIntent == synth::ScheduledMidiOrderingIntent::Clock);
+    REQUIRE_TRUE(cutoff->sequence < start->sequence);
+    REQUIRE_TRUE(start->sequence < zero->sequence);
+    REQUIRE_TRUE(zero->phaseGeneration == cutoff->phaseGeneration);
+    REQUIRE_TRUE(cutoff->invalidatedPhaseGeneration + 1 == cutoff->phaseGeneration);
+    REQUIRE_TRUE(sink.Count(synth::ScheduledMidiEventKind::TimingClock) == 1);
+
+    REQUIRE_TRUE(clock.CommitBlock(20, 10, 1'200'000) != nullptr);
+    const auto* fractionalTick = FindEvent(
+        sink, synth::ScheduledMidiEventKind::TimingClock, 1);
+    REQUIRE_TRUE(fractionalTick != nullptr);
+    REQUIRE_TRUE(fractionalTick->dueTimeMicros == 1'425'000);
+
+    REQUIRE_TRUE(clock.HandleInternalTransport(synth::ClockTransportCommand::Stop));
+    const synth::ClockBlockPlan* stopped = clock.CommitBlock(30, 10, 1'300'000);
+    REQUIRE_TRUE(stopped != nullptr);
+    REQUIRE_TRUE(stopped->TransportState() == synth::ClockTransportState::Stopped);
+    REQUIRE_NEAR(stopped->TransportStartQuarterNotes(), 0.0, 0.0);
+    REQUIRE_TRUE(stopped->TransportEpoch() == 1);
+    const auto* stop = FindEvent(sink, synth::ScheduledMidiEventKind::Stop);
+    REQUIRE_TRUE(stop != nullptr);
+    REQUIRE_TRUE(stop->dueTimeMicros == 1'500'000);
+    for (std::size_t index = 0; index < sink.Size(); ++index) {
+        REQUIRE_TRUE(!(sink[index].kind == synth::ScheduledMidiEventKind::TimingClock &&
+                       sink[index].dueTimeMicros == stop->dueTimeMicros));
+    }
+
+    REQUIRE_TRUE(clock.HandleInternalTransport(synth::ClockTransportCommand::Continue));
+    const synth::ClockBlockPlan* continued = clock.CommitBlock(40, 10, 1'400'000);
+    REQUIRE_TRUE(continued != nullptr);
+    REQUIRE_TRUE(continued->TransportState() == synth::ClockTransportState::Running);
+    REQUIRE_NEAR(continued->TransportStartQuarterNotes(), 0.0, 0.0);
+    REQUIRE_TRUE(continued->TransportEpoch() == 2);
+    REQUIRE_TRUE(FindEvent(sink, synth::ScheduledMidiEventKind::Continue) != nullptr);
+}
+
+TEST_CASE(master_clock_external_start_arms_and_first_clock_is_timestamped_zero) {
+    synth::MasterClock clock;
+    FixedScheduledSink<64> sink;
+    clock.SetScheduledMidiEventSink(&sink);
+    synth::SyncConfig config;
+    config.sendClock = true;
+    config.receiveClock = true;
+    config.sendTransport = true;
+    config.receiveTransport = true;
+    config.ppqn = 4;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(1000.0, 100));
+    const synth::ClockBlockPlan* prior = clock.CommitBlock(0, 100, 1'000'000);
+    REQUIRE_TRUE(prior != nullptr);
+    const synth::ClockBlockPlan immutablePrior = *prior;
+
+    REQUIRE_TRUE(clock.HandleExternalTransport(
+        synth::ClockTransportCommand::Start, 1'050'000, 2));
+    auto diagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.hasActiveExternalSource);
+    REQUIRE_TRUE(diagnostics.activeExternalSourceSlot == 2);
+    REQUIRE_TRUE(diagnostics.sourceIsProvisional);
+    REQUIRE_TRUE(clock.HandleExternalClock(1'075'000, 2));
+    diagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_TRUE(!diagnostics.sourceIsProvisional);
+    REQUIRE_TRUE(diagnostics.acceptedExternalClockCount == 1);
+    REQUIRE_TRUE(clock.CurrentPlan()->TransportState() == synth::ClockTransportState::Stopped);
+    REQUIRE_NEAR(
+        clock.CurrentPlan()->LifetimeStartQuarterNotes(),
+        immutablePrior.LifetimeStartQuarterNotes(),
+        0.0);
+
+    const auto* start = FindEvent(sink, synth::ScheduledMidiEventKind::Start);
+    const auto* zero = FindEvent(sink, synth::ScheduledMidiEventKind::TimingClock);
+    REQUIRE_TRUE(start != nullptr);
+    REQUIRE_TRUE(zero != nullptr);
+    REQUIRE_TRUE(start->dueTimeMicros == 1'250'000);
+    REQUIRE_TRUE(zero->dueTimeMicros == 1'275'000);
+
+    const synth::ClockBlockPlan* running = clock.CommitBlock(100, 100, 1'100'000);
+    REQUIRE_TRUE(running != nullptr);
+    REQUIRE_TRUE(running->TransportState() == synth::ClockTransportState::Running);
+    REQUIRE_NEAR(running->TransportStartQuarterNotes(), 0.05, 1.0e-12);
+    REQUIRE_TRUE(running->TransportEpoch() == 1);
+    REQUIRE_TRUE(!clock.HandleExternalClock(1'125'000, 1));
+    REQUIRE_TRUE(clock.DiagnosticsSnapshot().ignoredInputCount == 1);
+
+    REQUIRE_TRUE(clock.HandleExternalTransport(
+        synth::ClockTransportCommand::Stop, 1'150'000, 2));
+    REQUIRE_TRUE(clock.CurrentPlan()->TransportState() == synth::ClockTransportState::Running);
+    const synth::ClockBlockPlan* stopped = clock.CommitBlock(200, 100, 1'200'000);
+    REQUIRE_TRUE(stopped != nullptr);
+    REQUIRE_TRUE(stopped->TransportState() == synth::ClockTransportState::Stopped);
+    REQUIRE_NEAR(stopped->TransportStartQuarterNotes(), 0.0, 0.0);
+    REQUIRE_TRUE(stopped->LifetimeStartQuarterNotes() >
+                 immutablePrior.LifetimeStartQuarterNotes());
+
+    REQUIRE_TRUE(clock.HandleExternalTransport(
+        synth::ClockTransportCommand::Stop, 1'225'000, 2));
+    REQUIRE_TRUE(clock.CommitBlock(300, 100, 1'300'000) != nullptr);
+    REQUIRE_TRUE(clock.TransportState() == synth::ClockTransportState::Stopped);
+    REQUIRE_TRUE(sink.Count(synth::ScheduledMidiEventKind::Stop) == 2);
+}
+
+TEST_CASE(master_clock_receive_gating_and_send_policy_are_independent) {
+    synth::MasterClock clock;
+    FixedScheduledSink<16> sink;
+    clock.SetScheduledMidiEventSink(&sink);
+    synth::SyncConfig config;
+    config.sendTransport = true;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(1000.0, 100));
+    REQUIRE_TRUE(clock.CommitBlock(0, 100, 10'000) != nullptr);
+
+    REQUIRE_TRUE(!clock.HandleExternalClock(20'000, 4));
+    REQUIRE_TRUE(!clock.HandleExternalTransport(
+        synth::ClockTransportCommand::Start, 20'000, 4));
+    REQUIRE_TRUE(clock.DiagnosticsSnapshot().ignoredInputCount == 2);
+    REQUIRE_TRUE(clock.HandleInternalTransport(synth::ClockTransportCommand::Start));
+    REQUIRE_TRUE(clock.CommitBlock(100, 100, 110'000) != nullptr);
+    REQUIRE_TRUE(clock.IsTransportRunning());
+    REQUIRE_TRUE(sink.Count(synth::ScheduledMidiEventKind::Start) == 1);
+    REQUIRE_TRUE(sink.Count(synth::ScheduledMidiEventKind::TimingClock) == 0);
+}
+
+TEST_CASE(master_clock_transport_only_external_input_keeps_internal_tempo_authority) {
+    synth::MasterClock clock;
+    synth::SyncConfig config;
+    config.receiveTransport = true;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(1000.0, 100));
+    REQUIRE_TRUE(clock.CommitBlock(0, 100, 1'000'000) != nullptr);
+    REQUIRE_TRUE(clock.HandleExternalTransport(
+        synth::ClockTransportCommand::Start, 1'050'000, 6));
+    const auto diagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.acquisition == synth::ClockAcquisitionState::Internal);
+    REQUIRE_TRUE(diagnostics.source == synth::ClockSource::Internal);
+    REQUIRE_NEAR(diagnostics.currentBpm, 120.0, 0.0);
+}
+
+TEST_CASE(master_clock_pll_uses_median_and_one_eighth_ewma) {
+    synth::MasterClock clock;
+    synth::SyncConfig config;
+    config.receiveClock = true;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(1000.0, 10'000));
+    REQUIRE_TRUE(clock.CommitBlock(0, 10'000, 1'000'000) != nullptr);
+
+    std::uint64_t timestamp = 1'000'000;
+    REQUIRE_TRUE(clock.HandleExternalClock(timestamp, 0));
+    timestamp += 1000;
+    REQUIRE_TRUE(clock.HandleExternalClock(timestamp, 0));
+    auto diagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_NEAR(diagnostics.externalRawIntervalMicros, 1000.0, 0.0);
+    REQUIRE_NEAR(diagnostics.externalMedianIntervalMicros, 1000.0, 0.0);
+    REQUIRE_NEAR(diagnostics.externalFilteredPeriodMicros, 1000.0, 0.0);
+
+    timestamp += 1100;
+    REQUIRE_TRUE(clock.HandleExternalClock(timestamp, 0));
+    diagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_NEAR(diagnostics.externalMedianIntervalMicros, 1050.0, 0.0);
+    REQUIRE_NEAR(diagnostics.externalFilteredPeriodMicros, 1006.25, 1.0e-12);
+    REQUIRE_TRUE(diagnostics.acquisition == synth::ClockAcquisitionState::Locked);
+
+    timestamp += 900;
+    REQUIRE_TRUE(clock.HandleExternalClock(timestamp, 0));
+    diagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_NEAR(diagnostics.externalMedianIntervalMicros, 1000.0, 0.0);
+    REQUIRE_NEAR(diagnostics.externalFilteredPeriodMicros, 1005.46875, 1.0e-12);
+}
+
+TEST_CASE(master_clock_pll_recovers_120_bpm_after_64_exact_intervals) {
+    synth::MasterClock clock;
+    synth::SyncConfig config;
+    config.receiveClock = true;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(48'000.0, 100'000));
+    REQUIRE_TRUE(clock.CommitBlock(0, 100'000, 1'000'000) != nullptr);
+
+    constexpr long double periodMicros = 60'000'000.0L / (120.0L * 24.0L);
+    for (std::uint64_t tick = 0; tick <= 64; ++tick) {
+        const auto timestamp = static_cast<std::uint64_t>(
+            std::llround(1'000'000.0L + periodMicros * static_cast<long double>(tick)));
+        REQUIRE_TRUE(clock.HandleExternalClock(timestamp, 7));
+    }
+    const auto diagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.acquisition == synth::ClockAcquisitionState::Locked);
+    REQUIRE_TRUE(diagnostics.acceptedExternalClockCount == 65);
+    REQUIRE_TRUE(diagnostics.externalInputTickIndex == 64);
+    REQUIRE_NEAR(diagnostics.currentBpm, 120.0, 0.1);
+}
+
+TEST_CASE(master_clock_pll_rejects_duplicate_and_out_of_order_and_infers_multiples_two_to_eight) {
+    synth::MasterClock clock;
+    synth::SyncConfig config;
+    config.receiveClock = true;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(1000.0, 10'000));
+    REQUIRE_TRUE(clock.CommitBlock(0, 10'000, 1'000'000) != nullptr);
+
+    std::uint64_t timestamp = 1'000'000;
+    REQUIRE_TRUE(clock.HandleExternalClock(timestamp, 1));
+    timestamp += 20'000;
+    REQUIRE_TRUE(clock.HandleExternalClock(timestamp, 1));
+    const auto acceptedBeforeRejects =
+        clock.DiagnosticsSnapshot().acceptedExternalClockCount;
+    REQUIRE_TRUE(!clock.HandleExternalClock(timestamp, 1));
+    REQUIRE_TRUE(!clock.HandleExternalClock(timestamp - 1, 1));
+    REQUIRE_TRUE(!clock.HandleExternalClock(timestamp + 10'000, 1));
+    REQUIRE_TRUE(!clock.HandleExternalClock(timestamp + 28'000, 1));
+    REQUIRE_TRUE(clock.DiagnosticsSnapshot().acceptedExternalClockCount ==
+                 acceptedBeforeRejects);
+
+    std::uint64_t expectedTickIndex = 1;
+    std::uint64_t expectedMissed = 0;
+    for (std::uint64_t multiple = 2; multiple <= 8; ++multiple) {
+        timestamp += multiple * 20'000;
+        REQUIRE_TRUE(clock.HandleExternalClock(timestamp, 1));
+        expectedTickIndex += multiple;
+        expectedMissed += multiple - 1;
+    }
+    const auto diagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.externalInputTickIndex == expectedTickIndex);
+    REQUIRE_TRUE(diagnostics.inferredMissedPulseCount == expectedMissed);
+    REQUIRE_TRUE(diagnostics.ignoredInputCount == 4);
+    REQUIRE_NEAR(diagnostics.externalFilteredPeriodMicros, 20'000.0, 1.0e-9);
+}
+
+TEST_CASE(master_clock_pll_bounds_phase_correction_and_hard_reacquires_beyond_two_pulses) {
+    synth::MasterClock clock;
+    REQUIRE_TRUE(clock.SetTempoBpm(60.0));
+    synth::SyncConfig config;
+    config.receiveClock = true;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(48'000.0, 100'000));
+    REQUIRE_TRUE(clock.CommitBlock(0, 100'000, 1'000'000) != nullptr);
+    const synth::ClockBlockPlan committed = *clock.CurrentPlan();
+
+    constexpr long double periodMicros = 60'000'000.0L / (120.0L * 24.0L);
+    REQUIRE_TRUE(clock.HandleExternalClock(1'000'000, 0));
+    for (std::uint64_t tick = 1; tick <= 3; ++tick) {
+        const auto timestamp = static_cast<std::uint64_t>(
+            std::llround(1'000'000.0L + periodMicros * static_cast<long double>(tick)));
+        REQUIRE_TRUE(clock.HandleExternalClock(timestamp, 0));
+    }
+    auto diagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_TRUE(std::fabs(diagnostics.appliedPhaseCorrectionPulsePeriods) <= 0.25);
+    REQUIRE_NEAR(
+        std::fabs(diagnostics.appliedPhaseCorrectionPulsePeriods), 0.25, 1.0e-4);
+    const double baseSlope =
+        1.0 / (24.0 * diagnostics.externalFilteredPeriodMicros * 48'000.0 / 1'000'000.0);
+    REQUIRE_TRUE(clock.QuarterNotesPerSample() >= baseSlope * 0.75);
+    REQUIRE_TRUE(clock.QuarterNotesPerSample() <= baseSlope * 1.25);
+    REQUIRE_NEAR(
+        clock.CurrentPlan()->QuarterNotesPerSample(),
+        committed.QuarterNotesPerSample(),
+        0.0);
+
+    const auto reacquireTimestamp = static_cast<std::uint64_t>(
+        std::llround(1'000'000.0L + periodMicros * 5.0L));
+    REQUIRE_TRUE(clock.HandleExternalClock(reacquireTimestamp, 0));
+    diagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.hardReacquireCount >= 1);
+    REQUIRE_NEAR(diagnostics.appliedPhaseCorrectionPulsePeriods, 0.0, 0.0);
+}
+
+TEST_CASE(master_clock_pll_phase_correction_can_slow_a_future_plan_but_stays_positive) {
+    synth::MasterClock clock;
+    REQUIRE_TRUE(clock.SetTempoBpm(240.0));
+    synth::SyncConfig config;
+    config.receiveClock = true;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(48'000.0, 100'000));
+    REQUIRE_TRUE(clock.CommitBlock(0, 100'000, 1'000'000) != nullptr);
+    REQUIRE_TRUE(clock.HandleExternalClock(1'000'000, 0));
+    REQUIRE_TRUE(clock.HandleExternalClock(1'020'833, 0));
+
+    const auto diagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.appliedPhaseCorrectionPulsePeriods < 0.0);
+    REQUIRE_TRUE(diagnostics.appliedPhaseCorrectionPulsePeriods >= -0.25);
+    const double baseSlope =
+        1.0 / (24.0 * diagnostics.externalFilteredPeriodMicros * 48'000.0 / 1'000'000.0);
+    REQUIRE_TRUE(clock.QuarterNotesPerSample() >= baseSlope * 0.75);
+    REQUIRE_TRUE(clock.QuarterNotesPerSample() < baseSlope);
+}
+
+TEST_CASE(master_clock_source_arbitration_provisional_lock_timeout_and_takeover_are_deterministic) {
+    synth::MasterClock provisional;
+    synth::SyncConfig config;
+    config.receiveClock = true;
+    config.receiveTransport = true;
+    REQUIRE_TRUE(provisional.ApplySyncConfig(config));
+    REQUIRE_TRUE(provisional.Prepare(1000.0, 100));
+    REQUIRE_TRUE(provisional.CommitBlock(0, 100, 1'000'000) != nullptr);
+    REQUIRE_TRUE(provisional.HandleExternalTransport(
+        synth::ClockTransportCommand::Start, 1'010'000, 3));
+    REQUIRE_TRUE(provisional.DiagnosticsSnapshot().sourceIsProvisional);
+    REQUIRE_TRUE(!provisional.HandleExternalTransport(
+        synth::ClockTransportCommand::Continue, 1'020'000, 4));
+    REQUIRE_TRUE(provisional.HandleExternalClock(1'030'000, 3));
+    REQUIRE_TRUE(!provisional.DiagnosticsSnapshot().sourceIsProvisional);
+
+    synth::MasterClock clock;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(1000.0, 100));
+    REQUIRE_TRUE(clock.CommitBlock(0, 100, 1'000'000) != nullptr);
+    REQUIRE_TRUE(clock.HandleExternalClock(1'000'000, 0));
+    REQUIRE_TRUE(clock.HandleExternalClock(1'020'000, 0));
+    REQUIRE_TRUE(clock.HandleExternalClock(1'040'000, 0));
+    const double lockedBpm = clock.TempoBpm();
+    REQUIRE_TRUE(!clock.HandleExternalClock(1'060'000, 1));
+    REQUIRE_TRUE(!clock.HandleExternalTransport(
+        synth::ClockTransportCommand::Start, 1'070'000, 1));
+    REQUIRE_TRUE(clock.DiagnosticsSnapshot().activeExternalSourceSlot == 0);
+
+    const double priorLifetimeEnd = clock.CurrentPlan()->LifetimeEndQuarterNotes();
+    REQUIRE_TRUE(clock.CommitBlock(100, 100, 1'600'001) != nullptr);
+    auto diagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.acquisition == synth::ClockAcquisitionState::FreeRun);
+    REQUIRE_TRUE(!diagnostics.hasActiveExternalSource);
+    REQUIRE_NEAR(clock.TempoBpm(), lockedBpm, 0.0);
+    REQUIRE_NEAR(clock.CurrentPlan()->LifetimeStartQuarterNotes(), priorLifetimeEnd, 0.0);
+
+    REQUIRE_TRUE(clock.HandleExternalClock(1'610'000, 1));
+    diagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.hasActiveExternalSource);
+    REQUIRE_TRUE(diagnostics.activeExternalSourceSlot == 1);
+    REQUIRE_TRUE(diagnostics.acquisition == synth::ClockAcquisitionState::Acquiring);
+    REQUIRE_NEAR(clock.TempoBpm(), lockedBpm, 0.0);
+    REQUIRE_TRUE(diagnostics.sourceTimeoutCount == 1);
+}
+
+TEST_CASE(master_clock_repeated_provisional_owner_transport_refreshes_its_timeout) {
+    synth::MasterClock clock;
+    synth::SyncConfig config;
+    config.receiveClock = true;
+    config.receiveTransport = true;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(1000.0, 100));
+    REQUIRE_TRUE(clock.CommitBlock(0, 100, 1'000'000) != nullptr);
+
+    REQUIRE_TRUE(clock.HandleExternalTransport(
+        synth::ClockTransportCommand::Start, 1'010'000, 3));
+    REQUIRE_TRUE(clock.HandleExternalTransport(
+        synth::ClockTransportCommand::Continue, 1'400'000, 3));
+    REQUIRE_TRUE(clock.HandleExternalClock(1'800'000, 3));
+    const auto diagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.sourceTimeoutCount == 0);
+    REQUIRE_TRUE(diagnostics.hasActiveExternalSource);
+    REQUIRE_TRUE(diagnostics.activeExternalSourceSlot == 3);
+    REQUIRE_TRUE(!diagnostics.sourceIsProvisional);
+}
+
+TEST_CASE(master_clock_source_timeout_uses_four_periods_when_larger_than_500_ms) {
+    synth::MasterClock clock;
+    synth::SyncConfig config;
+    config.receiveClock = true;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(1000.0, 100));
+    REQUIRE_TRUE(clock.CommitBlock(0, 100, 1'000'000) != nullptr);
+    REQUIRE_TRUE(clock.HandleExternalClock(1'000'000, 0));
+    REQUIRE_TRUE(clock.HandleExternalClock(1'200'000, 0));
+    REQUIRE_TRUE(clock.HandleExternalClock(1'400'000, 0));
+    REQUIRE_NEAR(
+        clock.DiagnosticsSnapshot().externalFilteredPeriodMicros,
+        200'000.0,
+        0.0);
+
+    REQUIRE_TRUE(clock.CommitBlock(100, 100, 2'100'000) != nullptr);
+    REQUIRE_TRUE(clock.DiagnosticsSnapshot().hasActiveExternalSource);
+    REQUIRE_TRUE(clock.DiagnosticsSnapshot().acquisition ==
+                 synth::ClockAcquisitionState::Locked);
+    REQUIRE_TRUE(clock.CommitBlock(200, 100, 2'300'001) != nullptr);
+    REQUIRE_TRUE(!clock.DiagnosticsSnapshot().hasActiveExternalSource);
+    REQUIRE_TRUE(clock.DiagnosticsSnapshot().acquisition ==
+                 synth::ClockAcquisitionState::FreeRun);
+}
+
+TEST_CASE(master_clock_alternating_jitter_is_smoothed_and_dropout_keeps_output_free_running) {
+    synth::MasterClock clock;
+    FixedScheduledSink<256> sink;
+    clock.SetScheduledMidiEventSink(&sink);
+    synth::SyncConfig config;
+    config.sendClock = true;
+    config.receiveClock = true;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(1000.0, 1000));
+    REQUIRE_TRUE(clock.CommitBlock(0, 1000, 1'000'000) != nullptr);
+
+    std::uint64_t timestamp = 1'000'000;
+    REQUIRE_TRUE(clock.HandleExternalClock(timestamp, 0));
+    for (std::size_t interval = 0; interval < 20; ++interval) {
+        timestamp += (interval % 2) == 0 ? 19'000 : 21'000;
+        REQUIRE_TRUE(clock.HandleExternalClock(timestamp, 0));
+    }
+    const auto locked = clock.DiagnosticsSnapshot();
+    REQUIRE_TRUE(locked.acquisition == synth::ClockAcquisitionState::Locked);
+    REQUIRE_TRUE(std::fabs(locked.externalFilteredPeriodMicros - 20'000.0) < 400.0);
+    REQUIRE_TRUE(std::fabs(locked.externalFilteredPeriodMicros -
+                           locked.externalRawIntervalMicros) > 500.0);
+    const double lockedBpm = locked.currentBpm;
+    const std::size_t eventsBeforeDropout = sink.Size();
+
+    REQUIRE_TRUE(clock.CommitBlock(1000, 1000, timestamp + 500'001) != nullptr);
+    const auto freeRun = clock.DiagnosticsSnapshot();
+    REQUIRE_TRUE(freeRun.acquisition == synth::ClockAcquisitionState::FreeRun);
+    REQUIRE_NEAR(freeRun.currentBpm, lockedBpm, 0.0);
+    REQUIRE_TRUE(sink.Size() > eventsBeforeDropout);
+}
+
+TEST_CASE(master_clock_external_activation_and_stop_fill_output_only_splices) {
+    synth::MasterClock clock;
+    FixedScheduledSink<128> sink;
+    clock.SetScheduledMidiEventSink(&sink);
+    synth::SyncConfig config;
+    config.receiveClock = true;
+    config.receiveTransport = true;
+    config.sendTransport = true;
+    config.ppqn = 24;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(1000.0, 100));
+    const synth::ClockBlockPlan* immutable = clock.CommitBlock(0, 100, 1'000'000);
+    REQUIRE_TRUE(immutable != nullptr);
+    const synth::ClockBlockPlan prior = *immutable;
+
+    config.sendClock = true;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.HandleExternalTransport(
+        synth::ClockTransportCommand::Continue, 1'010'000, 0));
+    REQUIRE_TRUE(clock.HandleExternalClock(1'010'000, 0));
+    REQUIRE_TRUE(clock.CurrentPlan()->TransportState() ==
+                 synth::ClockTransportState::Stopped);
+    REQUIRE_NEAR(
+        clock.CurrentPlan()->LifetimeEndQuarterNotes(),
+        prior.LifetimeEndQuarterNotes(),
+        0.0);
+
+    const auto* continued = FindEvent(sink, synth::ScheduledMidiEventKind::Continue);
+    REQUIRE_TRUE(continued != nullptr);
+    REQUIRE_TRUE(continued->dueTimeMicros == 1'210'000);
+    bool sawZero = false;
+    bool sawSpliceTick = false;
+    for (std::size_t index = 0; index < sink.Size(); ++index) {
+        if (sink[index].kind != synth::ScheduledMidiEventKind::TimingClock) {
+            continue;
+        }
+        sawZero = sawZero || sink[index].dueTimeMicros == 1'210'000;
+        sawSpliceTick = sawSpliceTick || sink[index].dueTimeMicros == 1'230'833;
+    }
+    REQUIRE_TRUE(sawZero);
+    REQUIRE_TRUE(sawSpliceTick);
+
+    const synth::ClockBlockPlan* running = clock.CommitBlock(100, 100, 1'100'000);
+    REQUIRE_TRUE(running != nullptr);
+    REQUIRE_TRUE(running->TransportState() == synth::ClockTransportState::Running);
+    REQUIRE_NEAR(running->TransportStartQuarterNotes(), 0.18, 1.0e-12);
+    const std::size_t beforeStop = sink.Size();
+    REQUIRE_TRUE(clock.HandleExternalTransport(
+        synth::ClockTransportCommand::Stop, 1'150'000, 0));
+    bool sawStop = false;
+    bool sawImmediateStopClock = false;
+    bool sawResumedLifetimeClock = false;
+    for (std::size_t index = beforeStop; index < sink.Size(); ++index) {
+        sawStop = sawStop ||
+            (sink[index].kind == synth::ScheduledMidiEventKind::Stop &&
+             sink[index].dueTimeMicros == 1'350'000);
+        sawImmediateStopClock = sawImmediateStopClock ||
+            (sink[index].kind == synth::ScheduledMidiEventKind::TimingClock &&
+             sink[index].dueTimeMicros == 1'350'000);
+        sawResumedLifetimeClock = sawResumedLifetimeClock ||
+            (sink[index].kind == synth::ScheduledMidiEventKind::TimingClock &&
+             sink[index].dueTimeMicros == 1'366'667);
+    }
+    REQUIRE_TRUE(sawStop);
+    REQUIRE_TRUE(!sawImmediateStopClock);
+    REQUIRE_TRUE(sawResumedLifetimeClock);
+}
+
+TEST_CASE(master_clock_ppqn_change_clears_external_lock_without_changing_lifetime_or_bpm) {
+    synth::MasterClock clock;
+    synth::SyncConfig config;
+    config.receiveClock = true;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(1000.0, 100));
+    REQUIRE_TRUE(clock.CommitBlock(0, 100, 1'000'000) != nullptr);
+    REQUIRE_TRUE(clock.HandleExternalClock(1'000'000, 5));
+    REQUIRE_TRUE(clock.HandleExternalClock(1'020'000, 5));
+    REQUIRE_TRUE(clock.HandleExternalClock(1'040'000, 5));
+    const double priorBpm = clock.TempoBpm();
+    const double priorLifetimeEnd = clock.CurrentPlan()->LifetimeEndQuarterNotes();
+
+    config.ppqn = 48;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    const auto diagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_TRUE(!diagnostics.hasActiveExternalSource);
+    REQUIRE_TRUE(diagnostics.acquisition == synth::ClockAcquisitionState::Acquiring);
+    REQUIRE_NEAR(diagnostics.currentBpm, priorBpm, 0.0);
+    REQUIRE_TRUE(clock.CommitBlock(100, 100, 1'100'000) != nullptr);
+    REQUIRE_NEAR(clock.CurrentPlan()->LifetimeStartQuarterNotes(), priorLifetimeEnd, 0.0);
+}
+
+TEST_CASE(master_clock_disabling_external_recovery_restores_the_saved_manual_tempo) {
+    synth::MasterClock clock;
+    REQUIRE_TRUE(clock.SetTempoBpm(90.0));
+    synth::SyncConfig config;
+    config.receiveClock = true;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(48'000.0, 100'000));
+    REQUIRE_TRUE(clock.CommitBlock(0, 100'000, 1'000'000) != nullptr);
+    REQUIRE_TRUE(clock.HandleExternalClock(1'000'000, 0));
+    REQUIRE_TRUE(clock.HandleExternalClock(1'020'833, 0));
+    REQUIRE_TRUE(clock.HandleExternalClock(1'041'667, 0));
+    REQUIRE_TRUE(std::fabs(clock.TempoBpm() - 120.0) < 0.1);
+    REQUIRE_TRUE(!clock.SetTempoBpm(75.0));
+
+    config.receiveClock = false;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_NEAR(clock.TempoBpm(), 90.0, 0.0);
+    REQUIRE_NEAR(
+        clock.QuarterNotesPerSample(),
+        90.0 / (60.0 * 48'000.0),
+        1.0e-18);
+}
+
+TEST_CASE(master_clock_half_open_crossings_ppqn_reprime_and_sink_overflow_are_observable) {
+    synth::MasterClock clock;
+    FixedScheduledSink<4> sink;
+    clock.SetScheduledMidiEventSink(&sink);
+    REQUIRE_TRUE(clock.SetTempoBpm(60.0));
+    synth::SyncConfig config;
+    config.sendClock = true;
+    config.ppqn = 4;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(100.0, 25));
+
+    REQUIRE_TRUE(clock.CommitBlock(0, 25, 1'000'000) != nullptr);
+    REQUIRE_TRUE(sink.Count(synth::ScheduledMidiEventKind::TimingClock) == 0);
+    REQUIRE_TRUE(clock.CommitBlock(25, 25, 1'250'000) != nullptr);
+    REQUIRE_TRUE(sink.Count(synth::ScheduledMidiEventKind::TimingClock) == 1);
+    const auto* boundary = FindEvent(sink, synth::ScheduledMidiEventKind::TimingClock);
+    REQUIRE_TRUE(boundary != nullptr);
+    REQUIRE_TRUE(boundary->dueTimeMicros == 1'750'000);
+
+    config.ppqn = 8;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    const std::size_t before = sink.Size();
+    REQUIRE_TRUE(clock.CommitBlock(50, 25, 1'500'000) != nullptr);
+    REQUIRE_TRUE(sink.Size() > before);
+    for (std::size_t index = before; index < sink.Size(); ++index) {
+        REQUIRE_TRUE(!(sink[index].kind == synth::ScheduledMidiEventKind::TimingClock &&
+                       sink[index].dueTimeMicros == 2'000'000));
+    }
+
+    REQUIRE_TRUE(clock.CommitBlock(75, 25, 1'750'000) != nullptr);
+    REQUIRE_TRUE(clock.DiagnosticsSnapshot().droppedOutputCount > 0);
+}
+
+TEST_CASE(master_clock_clock_production_and_input_paths_allocate_nothing_and_are_bounded_by_crossings) {
+    synth::MasterClock clock;
+    FixedScheduledSink<4096> sink;
+    clock.SetScheduledMidiEventSink(&sink);
+    synth::SyncConfig config;
+    config.sendClock = true;
+    config.receiveClock = true;
+    config.receiveTransport = true;
+    config.ppqn = 24;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(48'000.0, 64));
+    REQUIRE_TRUE(clock.CommitBlock(0, 64, 1'000'000) != nullptr);
+
+    allocation_probe::count.store(0, std::memory_order_relaxed);
+    allocation_probe::enabled.store(true, std::memory_order_release);
+    bool realtimeOk = true;
+    std::uint64_t timestamp = 1'000'000;
+    for (std::uint64_t block = 1; block <= 1000; ++block) {
+        timestamp += 1333;
+        realtimeOk = realtimeOk && clock.HandleExternalClock(timestamp, 0);
+        const std::uint64_t startSample = block * 64;
+        realtimeOk = realtimeOk &&
+            clock.CommitBlock(startSample, 64, timestamp) != nullptr;
+    }
+    allocation_probe::enabled.store(false, std::memory_order_release);
+    REQUIRE_TRUE(realtimeOk);
+    REQUIRE_TRUE(allocation_probe::count.load(std::memory_order_relaxed) == 0);
+    const auto diagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.enumeratedCrossingCount < 1000 * 64);
+    REQUIRE_TRUE(diagnostics.enumeratedCrossingCount <= sink.Size());
 }
 
 int main() {

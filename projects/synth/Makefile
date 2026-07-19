@@ -83,7 +83,7 @@ $(BUILD_DIR)/MidiConfigViewModel.o: src/MidiConfigViewModel.cpp include/synth/Mi
 $(BUILD_DIR)/MidiConfigBlocks.o: src/MidiConfigBlocks.cpp include/synth/MidiConfigBlocks.hpp include/synth/MidiController.hpp | $(BUILD_SENTINEL)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/MasterClock.o: src/MasterClock.cpp include/synth/MasterClock.hpp | $(BUILD_SENTINEL)
+$(BUILD_DIR)/MasterClock.o: src/MasterClock.cpp include/synth/MasterClock.hpp include/synth/DspPhasor2Tick.hpp | $(BUILD_SENTINEL)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(LIB): $(OBJ)
@@ -98,7 +98,7 @@ $(BUTTON_GRID_TEST_BIN): tests/button_grid_tests.cpp include/synth/ButtonGrid.hp
 $(DSP_TEST_BIN): tests/dsp_tests.cpp $(LIB) $(DSP_HEADERS) $(STANDARD_MODULATOR_HEADERS)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(MASTER_CLOCK_TEST_BIN): tests/master_clock_tests.cpp $(LIB) include/synth/MasterClock.hpp
+$(MASTER_CLOCK_TEST_BIN): tests/master_clock_tests.cpp $(LIB) include/synth/MasterClock.hpp include/synth/DspPhasor2Tick.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 dsp_tests: $(DSP_TEST_BIN)
