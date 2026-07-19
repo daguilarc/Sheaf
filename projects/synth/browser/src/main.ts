@@ -32,6 +32,15 @@ export type SynthBrowserLauncherOptions = {
 
 const DEFAULT_MODULE_URL = "/dist/wasm/app.js";
 const DEFAULT_DATA_ROOT = "/data";
+const ROOT_OWNER = Symbol.for("sheaf.synth-browser.root-owner");
+
+function claimRoot(root: HTMLElement): () => boolean {
+  const ownedRoot = root as HTMLElement & { [key: symbol]: unknown };
+  const owner = Object.freeze({});
+  ownedRoot[ROOT_OWNER] = owner;
+  // Symbol.for makes this supersession guard stable across fresh main.js evaluations.
+  return () => ownedRoot[ROOT_OWNER] === owner;
+}
 
 export function createDirectRuntimeClient(loadModule: RuntimeModuleLoader = loadEmscriptenRuntime): RuntimeClient {
   const statusHandlers = new Set<(response: RuntimeResponse) => void>();
@@ -193,6 +202,7 @@ export class SynthBrowserApp {
 }
 
 export async function installSynthBrowserApp(root: HTMLElement, options: SynthBrowserAppOptions = {}): Promise<SynthBrowserApp> {
+  claimRoot(root);
   const moduleUrl = options.moduleUrl ?? root.dataset.synthModule ?? DEFAULT_MODULE_URL;
   const dataRoot = options.dataRoot ?? DEFAULT_DATA_ROOT;
   const runtime = options.runtimeClient ?? createDirectRuntimeClient(options.runtimeModuleLoader ?? loadEmscriptenRuntime);
@@ -220,11 +230,13 @@ export async function installSheafPatchLauncher(
   root: HTMLElement,
   options: SynthBrowserLauncherOptions = {},
 ): Promise<SheafPatchLauncher> {
+  const ownsRoot = claimRoot(root);
   const sourcesUrl = options.sourcesUrl ?? root.dataset.synthCatalogSources ?? "/catalog-sources.json";
   const launcher = new SheafPatchLauncher(root, {
     client: options.client ?? new CatalogClient({ sourcesUrl }),
     select: options.select ?? (async () => { throw new Error("Application launch is not available in this build"); }),
     navigateToLauncher: options.navigateToLauncher,
+    ownsRoot,
   });
   await launcher.start();
   return launcher;

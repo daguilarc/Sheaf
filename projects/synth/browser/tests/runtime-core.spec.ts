@@ -197,6 +197,66 @@ test("main bootstrap composes runtime, UI, audio channels, and actions generical
   expect(result.calls).toContainEqual(["destroy", 11]);
 });
 
+test("direct runtime installation supersedes delayed launcher auto-boot across fresh module evaluation", async ({ page }) => {
+  const catalogUrl = "https://publisher.example/delayed-catalog.json";
+  const pendingCatalogs: Array<import("@playwright/test").Route> = [];
+  await page.route("http://127.0.0.1:4173/catalog-sources.json", (route) => route.fulfill({ json: [catalogUrl] }));
+  await page.route(catalogUrl, (route) => { pendingCatalogs.push(route); });
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await expect.poll(() => pendingCatalogs.length).toBe(1);
+  const frame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 120, 50], children: ["button"] },
+    { id: "button", kind: NodeKind.Button, bounds: [0, 0, 120, 40], label: "Direct owner", action: { name: "generic.direct", value: "pressed" } },
+  ]);
+
+  await page.evaluate(async (bytes) => {
+    const main = await (new Function("return import('/dist/src/main.js?review-direct-owner')")() as Promise<any>);
+    const runtimeClient = {
+      async request(command: { type: string }) {
+        if (command.type === "audio-config") return { type: "audio-config", channels: 2 };
+        if (command.type === "build-ui-frame") return { type: "ui-frame", frame: bytes };
+        return { type: "ok" };
+      },
+      terminate() {},
+    };
+    (window as any).__reviewDirectApp = await main.installSynthBrowserApp(
+      document.querySelector("#synth-root"),
+      { runtimeClient, frameIntervalMs: 60_000 },
+    );
+  }, Array.from(new Uint8Array(frame)));
+  await expect(page.locator('[data-synth-node-id="button"]')).toHaveText("Direct owner");
+  await expect.poll(() => pendingCatalogs.length).toBe(2);
+
+  const response = {
+    schemaVersion: 1,
+    catalogVersion: "revision-1",
+    publisher: { id: "example", name: "Example" },
+    apps: [{
+      appId: "portable-app",
+      displayName: "Portable App",
+      author: "Example",
+      category: "Instrument",
+      buildId: "portable-app-build-1",
+      browser: {
+        abiVersion: 1,
+        uiProtocolVersion: 1,
+        runtimeConfigVersion: 1,
+        entry: "packages/portable-app/portable-app-build-1/app.js",
+        files: [{
+          path: "packages/portable-app/portable-app-build-1/app.js",
+          mediaType: "text/javascript",
+          sha256: "0123456789abcdef".repeat(4),
+        }],
+      },
+    }],
+  };
+  await Promise.all(pendingCatalogs.map((route) => route.fulfill({ json: response })));
+
+  await expect(page.locator('[data-synth-node-id="button"]')).toHaveText("Direct owner");
+  await expect(page.getByRole("heading", { name: "SheafPatch" })).toHaveCount(0);
+  await page.evaluate(() => (window as any).__reviewDirectApp.stop());
+});
+
 test("production bootstrap discovers catalogs without loading an application module", async ({ page }) => {
   const catalogUrl = "https://publisher.example/catalog.json";
   const requested: string[] = [];

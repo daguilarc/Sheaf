@@ -7,6 +7,7 @@ export type SheafPatchLauncherOptions = Readonly<{
   client: CatalogLoader;
   select: (app: CatalogApp) => Promise<void>;
   navigateToLauncher?: () => void;
+  ownsRoot?: () => boolean;
 }>;
 
 function element<K extends keyof HTMLElementTagNameMap>(
@@ -42,23 +43,27 @@ export class SheafPatchLauncher {
     await this.load("default");
   }
 
+  private ownsRoot(): boolean {
+    return this.options.ownsRoot?.() ?? true;
+  }
+
   private async load(cacheMode: RequestCache): Promise<void> {
-    if (this.loading || this.selectionPending || this.selectionComplete) return;
+    if (!this.ownsRoot() || this.loading || this.selectionPending || this.selectionComplete) return;
     this.loading = true;
     this.loadError = undefined;
-    this.render();
+    const loadingShell = this.render();
     try {
       this.result = await this.options.client.loadSources({ cacheMode });
     } catch (error) {
-      this.result = undefined;
       this.loadError = errorMessage(error);
     } finally {
       this.loading = false;
-      this.render();
+      if (loadingShell && this.ownsRoot() && this.root.firstElementChild === loadingShell) this.render();
     }
   }
 
-  private render(): void {
+  private render(): HTMLElement | undefined {
+    if (!this.ownsRoot()) return undefined;
     this.root.replaceChildren();
     const shell = element("section", "synth-launcher");
     shell.setAttribute("aria-labelledby", "synth-launcher-title");
@@ -80,7 +85,7 @@ export class SheafPatchLauncher {
     if (this.result) {
       const apps = element("ul", "synth-launcher__apps");
       apps.setAttribute("aria-label", "Available applications");
-      for (const app of this.result.apps) apps.append(this.renderApp(app, shell));
+      for (const app of this.result.apps) apps.append(this.renderApp(app));
       shell.append(apps);
       const failed = this.result.diagnostics.filter(({ status }) => status !== "loaded");
       if (failed.length > 0 || this.result.duplicateDiagnostics.length > 0) {
@@ -115,9 +120,10 @@ export class SheafPatchLauncher {
       shell.append(back);
     }
     this.root.append(shell);
+    return shell;
   }
 
-  private renderApp(app: CatalogApp, renderedShell: HTMLElement): HTMLLIElement {
+  private renderApp(app: CatalogApp): HTMLLIElement {
     const row = element("li", "synth-launcher__app");
     const details = element("div", "synth-launcher__app-details");
     details.append(element("h2", "synth-launcher__app-name", app.displayName));
@@ -126,6 +132,7 @@ export class SheafPatchLauncher {
       ["Publisher", app.publisher.name],
       ["Author", app.author],
       ["Category", app.category],
+      // Incompatible catalogs are diagnosed by CatalogClient and never enter result.apps.
       ["Compatibility", "Compatible"],
     ]) {
       metadata.append(element("dt", undefined, label), element("dd", undefined, value));
@@ -142,7 +149,7 @@ export class SheafPatchLauncher {
     const button = element("button", "synth-launcher__launch", buttonLabel);
     button.type = "button";
     button.disabled = this.selectionPending || this.selectionComplete;
-    button.addEventListener("click", () => { void this.select(app, renderedShell); });
+    button.addEventListener("click", () => { void this.select(app); });
     row.append(button);
     if (selected && this.selectionError) {
       const error = element("p", "synth-launcher__app-error", this.selectionError);
@@ -152,12 +159,12 @@ export class SheafPatchLauncher {
     return row;
   }
 
-  private async select(app: CatalogApp, renderedShell: HTMLElement): Promise<void> {
-    if (this.selectionPending || this.selectionComplete) return;
+  private async select(app: CatalogApp): Promise<void> {
+    if (!this.ownsRoot() || this.selectionPending || this.selectionComplete) return;
     this.selectionPending = true;
     this.selectedId = app.globalId;
     this.selectionError = undefined;
-    this.render();
+    const pendingShell = this.render();
     try {
       await this.options.select(app);
       this.selectionComplete = true;
@@ -165,7 +172,7 @@ export class SheafPatchLauncher {
       this.selectionError = errorMessage(error);
     } finally {
       this.selectionPending = false;
-      if (this.root.contains(renderedShell) || this.root.querySelector(".synth-launcher")) this.render();
+      if (pendingShell && this.ownsRoot() && this.root.firstElementChild === pendingShell) this.render();
     }
   }
 }

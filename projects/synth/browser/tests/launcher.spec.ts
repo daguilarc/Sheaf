@@ -90,6 +90,26 @@ test("preserves healthy apps, diagnoses a failed source, and refreshes stable UR
   expect(failedAttempts).toBe(2);
 });
 
+test("preserves the last healthy app list when source-list revalidation fails", async ({ page }) => {
+  const failedCatalogUrl = "https://offline.example/catalog.json";
+  let sourceAttempts = 0;
+  await page.route(sourcesUrl, (route) => {
+    sourceAttempts += 1;
+    if (sourceAttempts === 1) return route.fulfill({ json: [firstCatalogUrl, failedCatalogUrl] });
+    return route.fulfill({ status: 503, body: "source list offline" });
+  });
+  await page.route(firstCatalogUrl, (route) => route.fulfill({ json: catalog("publisher") }));
+  await page.route(failedCatalogUrl, (route) => route.fulfill({ status: 503, body: "offline" }));
+
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await expect(page.getByRole("button", { name: /launch aurora/i })).toBeEnabled();
+  await page.getByRole("button", { name: /retry catalogs/i }).click();
+
+  await expect(page.getByRole("status")).toContainText(/catalog discovery failed.*HTTP 503/i);
+  await expect(page.getByRole("button", { name: /launch aurora/i })).toBeEnabled();
+  expect(sourceAttempts).toBe(2);
+});
+
 test("locks selection after success and returns through generic top-level navigation", async ({ page }) => {
   await page.goto("http://127.0.0.1:4173/dist/src/launcher.js");
   await page.setContent('<main id="launcher-root"></main>');
@@ -141,6 +161,51 @@ test("locks selection after success and returns through generic top-level naviga
     selected: ["example/one"],
     navigated: ["reload"],
   });
+});
+
+test("does not overwrite runtime DOM that replaces the exact pending-selection shell", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/dist/src/launcher.js");
+  await page.setContent('<main id="launcher-root"></main>');
+  await page.evaluate(async () => {
+    const { SheafPatchLauncher } = await (new Function("return import('/dist/src/launcher.js')")() as Promise<any>);
+    let finishSelection!: () => void;
+    const selection = new Promise<void>((resolve) => { finishSelection = resolve; });
+    (window as any).__finishSelection = finishSelection;
+    const application = {
+      globalId: "example/one",
+      catalogUrl: "https://publisher.example/catalog.json",
+      publisher: { id: "example", name: "Example Audio" },
+      appId: "one",
+      displayName: "Aurora",
+      author: "Ada Example",
+      category: "Instrument",
+      buildId: "one-build-1",
+      browser: {
+        abiVersion: 1,
+        uiProtocolVersion: 1,
+        runtimeConfigVersion: 1,
+        entry: "one.js",
+        entryUrl: "https://publisher.example/one.js",
+        files: [],
+      },
+    };
+    const launcher = new SheafPatchLauncher(document.querySelector("#launcher-root"), {
+      client: { loadSources: async () => ({ apps: [application], diagnostics: [], duplicateDiagnostics: [] }) },
+      select: async () => selection,
+    });
+    await launcher.start();
+  });
+
+  await page.getByRole("button", { name: /launch aurora/i }).click();
+  await expect(page.getByRole("button", { name: /loading aurora/i })).toBeDisabled();
+  await page.evaluate(() => {
+    document.querySelector("#launcher-root")!.innerHTML =
+      '<section data-runtime-owner="true"><div class="synth-launcher">Runtime-owned class collision</div></section>';
+    (window as any).__finishSelection();
+  });
+
+  await expect(page.locator('[data-runtime-owner="true"]')).toContainText("Runtime-owned class collision");
+  await expect(page.getByRole("heading", { name: "SheafPatch" })).toHaveCount(0);
 });
 
 test("reports selection failure on its row and allows retry", async ({ page }) => {

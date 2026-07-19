@@ -185,3 +185,103 @@ materialization plus successful runtime selection are deliberately Tasks 3 and 4
 those tasks land, an un-routed production root reports a retryable source-list error and
 the default selection boundary reports that application launch is unavailable; Task 2
 tests inject discovery fixtures and selection behavior at those explicit boundaries.
+
+## Review Fix: Root Ownership and Retry State
+
+The Task 2 review found three asynchronous ownership/state defects. They were reproduced
+before production changes and fixed in a separate TDD cycle.
+
+### Root causes and implementation
+
+- Fresh `main.js` evaluation saw the production root's persistent
+  `data-synth-launcher="true"` marker and began another launcher load. A later direct
+  `installSynthBrowserApp` call had no way to supersede that load, so its completion
+  could be overwritten by the launcher's unconditional `finally` render.
+- Launcher retry failure explicitly assigned `result = undefined`, discarding the last
+  healthy registry even though it was still safe and selectable.
+- Selection captured the shell from before the pending-state render, then used a broad
+  `.synth-launcher` query as a fallback. A runtime-owned DOM with that generic class
+  could therefore be mistaken for launcher ownership and overwritten.
+
+The fix adds a DOM-root ownership token keyed by
+`Symbol.for("sheaf.synth-browser.root-owner")`. Both direct runtime and launcher install
+claim the root; launcher continuations receive an `ownsRoot()` guard. `Symbol.for` is
+intentional: fresh URL-query module evaluations share the token and direct installation
+can supersede every delayed auto-launcher instance without test-only marker mutation.
+
+Launcher load and selection renders now return their exact shell element. An async
+continuation may render again only when it still owns the root and that exact shell is
+still the root's first element. Class-name similarity is never treated as ownership.
+Retry errors update `loadError` while retaining the last successful `result`, so healthy
+rows remain usable and the retryable discovery error stays visible.
+
+The row text `Compatible` is intentionally constant: `CatalogClient` validates each
+catalog before merge and incompatible catalogs contribute diagnostics but never enter
+`result.apps`. The unit partial-failure test proves the incompatible publisher has no
+accepted app; launcher rows therefore represent compatible records by construction.
+This invariant is now stated beside the rendered field in `launcher.ts`.
+
+### Review RED evidence
+
+After adding three regressions and before production fixes:
+
+```sh
+npm run build && npx playwright test tests/launcher.spec.ts tests/runtime-core.spec.ts
+```
+
+Result: exit `1`; 10/13 passed and the three new tests failed for the reported reasons:
+
+- healthy `Aurora` disappeared after a source-list retry returned HTTP 503;
+- the delayed catalog completions removed the directly installed `Direct owner` UI;
+- selection completion removed runtime DOM containing a nested `.synth-launcher` class.
+
+### Review GREEN evidence
+
+After the ownership and state fixes, the same command exited `0`, 13/13 passed.
+
+The requested real-app regression run first exposed stale pre-Task-1 WASM artifacts,
+not a source regression: both emitted modules lacked `_synth_browser_abi_version`, so
+fake-app negotiation failed and miniapp correctly stopped behind its generic gate.
+Rebuilding current artifacts resolved that prerequisite:
+
+```sh
+make browser-fake-app browser-miniapp
+```
+
+Result: exit `0` (the existing Emscripten `USE_PTHREADS` deprecation warning remained).
+
+The real gate was then run in required order:
+
+```sh
+npx playwright test tests/fake-app.e2e.spec.ts && \
+  SYNTH_BROWSER_FAKE_GATE_CONFIRMED=1 npx playwright test tests/miniapp-smoke.spec.ts
+```
+
+Result: exit `0`; fake-app 3/3 and miniapp 6/6 passed. Those smoke tests regenerated
+two screenshot files; both were restored to their tracked baselines and are not part of
+this source-only fix.
+
+Final pre-commit verification ran build, the 4/4 catalog-client tests, the generic
+runtime boundary check, launcher/static/runtime-core (16/16), fake-app (3/3), and
+miniapp (6/6) in one successful command chain. Exit status was `0` with no test failures.
+
+### Review self-review
+
+- Verified ownership uses object identity, not dataset toggles, CSS selectors, timing,
+  or module-local state.
+- Verified the token crosses fresh module evaluation and direct install claims before
+  its first asynchronous runtime operation.
+- Verified stale discovery completion cannot render or change runtime DOM after direct
+  supersession.
+- Verified selection completion preserves any replacement DOM, including DOM that
+  happens to contain the generic launcher class.
+- Verified standalone `SheafPatchLauncher` use retains exact-shell protection even
+  without the main bootstrap ownership injection.
+- Verified initial source-list failure still has no stale result, while retry failure
+  retains only a previously validated successful result.
+- Verified incompatible catalogs remain diagnostics-only and the constant compatible
+  row label accurately describes every accepted app.
+- Verified direct fake-app and miniapp installation still works with the production
+  launcher marker present; no test-only `data-synth-launcher` mutation is required.
+- Verified no package behavior, app-specific branch, OpenSpec checkbox, or progress file
+  changed.
