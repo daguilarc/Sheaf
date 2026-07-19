@@ -26,7 +26,7 @@ The constraints are one catalog click, no package download before selection, sel
 
 ### D1 — Register the activated context inside each self-contained Emscripten module
 
-The selection handler keeps acquiring and resuming one JavaScript `AudioContext` before any await. Once the verified Emscripten factory resolves, a generic module runtime method calls the module-local `emscriptenRegisterAudioObject` helper and returns its `EMSCRIPTEN_WEBAUDIO_T` handle. A browser ABI export starts `Runtime<App>` on that registered handle.
+The selection handler keeps acquiring and resuming one JavaScript `AudioContext` before any await. Once the verified Emscripten factory resolves, the generic module facade calls the module-local `emscriptenRegisterAudioObject` runtime method exported by the common linker contract and receives its `EMSCRIPTEN_WEBAUDIO_T` handle. Browser ABI v2 starts `Runtime<App>` on that registered handle; v1 packages are rejected before runtime creation.
 
 `Runtime<App>` factors context-independent worklet startup into a method that accepts a valid handle. The existing direct path may create its own context and then call the same method. Sample rate, render quantum, engine preparation, worklet-thread creation, processor/node creation, connection, block/peak/deadline metrics, and `ProcessAudioWorklet` remain native and shared.
 

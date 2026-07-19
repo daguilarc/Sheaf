@@ -68,10 +68,11 @@ The catalog row's synchronous event handler creates and resumes one host
 today. Package fetch, hashing, object-URL materialization, and module
 instantiation then occur asynchronously.
 
-After the Emscripten module factory resolves, the generic module facade
-registers the leased JavaScript `AudioContext` with that module's Emscripten
-WebAudio object registry and receives an `EMSCRIPTEN_WEBAUDIO_T` handle. The
-browser ABI starts the runtime's Wasm AudioWorklet using that handle. The native
+After the Emscripten module factory resolves, the generic module facade calls
+the module-local `emscriptenRegisterAudioObject` runtime method exported by the
+common linker contract, registering the leased JavaScript `AudioContext` and
+receiving an `EMSCRIPTEN_WEBAUDIO_T` handle. Browser ABI v2 starts the runtime's
+Wasm AudioWorklet using that handle. The native
 startup method obtains sample rate and render quantum from the registered
 context, prepares the engine, creates the Wasm AudioWorklet processor and node,
 and connects it to that context's destination.
@@ -82,7 +83,7 @@ deadline metering, block counting, peak metering, and direct call to
 continue to let the runtime create its own context from an in-app gesture, but
 it uses the same callback implementation.
 
-The host-context registration surface is part of the generic browser module
+The v2 host-context registration surface is part of the generic browser module
 contract, not an application contract. A self-contained package built with a
 compatible Sheaf fork exposes the same narrow module hook. If it does not, the
 launcher rejects it before audio startup. There is no fallback.

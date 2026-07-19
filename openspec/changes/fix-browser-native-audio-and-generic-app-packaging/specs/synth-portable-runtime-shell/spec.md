@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: sprs-8 — Browser audio: runtime-owned AudioWorklet callback
-WHEN the Chrome static site starts audio for any conforming browser-hosted application, THE browser runtime SHALL use a generic Emscripten Wasm AudioWorklet callback that invokes the C++ `Runtime<App>::Process` path against the same runtime/engine instance used by UI, MIDI, patch, and controller operations; SHALL register the host `AudioContext` acquired synchronously by catalog selection with the selected module before native callback startup; and SHALL NOT schedule DSP production through a timer, animation frame, message-loop cadence, ScriptProcessor, or JavaScript sample ring.
+WHEN the Chrome static site starts audio for any conforming browser-hosted application, THE browser runtime SHALL require browser ABI v2, use a generic Emscripten Wasm AudioWorklet callback that invokes the C++ `Runtime<App>::Process` path against the same runtime/engine instance used by UI, MIDI, patch, and controller operations, register the host `AudioContext` acquired synchronously by catalog selection with the selected module before native callback startup, and SHALL NOT schedule DSP production through a timer, animation frame, message-loop cadence, ScriptProcessor, or JavaScript sample ring.
 
 #### Scenario: No duplicated application runtime
 - **WHEN** the browser audio path starts
@@ -18,6 +18,11 @@ WHEN the Chrome static site starts audio for any conforming browser-hosted appli
 - **WHEN** a loaded runtime module does not expose compatible host-context registration and native AudioWorklet startup
 - **THEN** launch fails with a diagnostic before reporting audio online
 - **AND** the browser does not start timer-driven, ring-buffered, or otherwise degraded audio
+
+#### Scenario: ABI v1 package is rejected
+- **WHEN** a catalog package reports browser ABI v1 or changes the v2 context-aware start signature
+- **THEN** compatibility negotiation rejects it before runtime creation
+- **AND** the publisher must rebuild the package with the v2 generic browser boundary
 
 #### Scenario: Allocation completes before callback startup
 - **WHEN** an application requires Wasm heap allocation or growth during construction and initialization

@@ -1,7 +1,7 @@
 ## 1. Native One-Click Audio
 
 - [ ] 1.1 Add focused failing C++ and browser tests proving a click-acquired host context is registered with the selected module and starts the existing native Wasm AudioWorklet callback.
-- [ ] 1.2 Add the generic module-local context registration export and refactor `Runtime<App>` startup to accept either the registered context or its existing direct-path-created context while preserving one `ProcessAudioWorklet` implementation.
+- [ ] 1.2 Advance the browser ABI to v2, export the generic module-local Emscripten context-registration method, and refactor `Runtime<App>` startup to accept either the registered context or its existing direct-path-created context while preserving one `ProcessAudioWorklet` implementation.
 - [ ] 1.3 Remove the JavaScript audio render interval, sample ring, `configure-audio`/`render-audio` commands, fallback AudioWorklet processor, and tests that permit degraded audio.
 - [ ] 1.4 Verify native block, peak, and deadline diagnostics advance from one launcher selection without a second context or second application runtime.
 

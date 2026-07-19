@@ -14,7 +14,7 @@ WHEN a first-party `SynthApplication` is selected for browser publication, THE s
 - **AND** it names the invalid record and field
 
 ### Requirement: sbap-2 — Compilation: generated binding and uniform runtime
-WHEN the first-party browser build compiles its declarative app list, THE build SHALL generate each app's `SYNTH_BROWSER_APP` binding only as a transient build artifact and SHALL compile every app with the same browser runtime sources, ABI exports, worker/worklet policy, compiler settings, and memory policy of 512 MiB initial memory, enabled growth, and a 2 GiB maximum.
+WHEN the first-party browser build compiles its declarative app list, THE build SHALL generate each app's `SYNTH_BROWSER_APP` binding only as a transient build artifact and SHALL compile every app with the same browser ABI v2 runtime sources, context-registration/start exports, worker/worklet policy, compiler settings, and memory policy of 512 MiB initial memory, enabled growth, and a 2 GiB maximum.
 
 #### Scenario: Ordinary SynthApplication compiles generically
 - **WHEN** a manifest record names a header and qualified type satisfying `SynthApplication`

@@ -4,7 +4,7 @@ The catalog launcher currently routes a click-acquired `AudioContext` through a 
 
 ## What Changes
 
-- **BREAKING** Remove the JavaScript timer/ring-buffer audio fallback and its runtime commands; a browser module that cannot start the native Wasm AudioWorklet fails closed.
+- **BREAKING** Advance the browser ABI from v1 to v2 for host-context adoption, remove the JavaScript timer/ring-buffer audio fallback and its runtime commands, and fail closed when a module cannot start the native Wasm AudioWorklet.
 - Register the single click-acquired host `AudioContext` with the selected Emscripten module, then run the existing native `ProcessAudioWorklet` → `Runtime::Process` path unchanged.
 - Require application construction and any Wasm memory growth to finish before native audio callback startup.
 - Replace Mini App-specific entry sources, build targets, catalog templates, and publisher branches with one validated declarative app build manifest and generic compiler/packager.
