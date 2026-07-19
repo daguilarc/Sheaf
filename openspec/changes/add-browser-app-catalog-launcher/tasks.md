@@ -30,9 +30,9 @@
 
 ## 5. Shared configuration and app persistence isolation
 
-- [ ] 5.1 Extend the browser initialization boundary to accept validated publisher/app identity and derive shared SheafPatch data/config roots plus `patches/<publisher-id>/<app-id>` paths.
-- [ ] 5.2 Update IDBFS persistence mounting/sync behavior to preserve the shared runtime config across compatible apps while isolating patch discovery and writes by global app identity.
-- [ ] 5.3 Add persistence tests proving build updates retain an app's patch root, different publishers using the same local app ID cannot see each other's patches, and incompatible runtime-config versions cannot write shared config.
+- [x] 5.1 Extend the browser initialization boundary to accept validated publisher/app identity and derive shared SheafPatch data/config roots plus `patches/<publisher-id>/<app-id>` paths.
+- [x] 5.2 Update IDBFS persistence mounting/sync behavior to preserve the shared runtime config across compatible apps while isolating patch discovery and writes by global app identity.
+- [x] 5.3 Add persistence tests proving build updates retain an app's patch root, different publishers using the same local app ID cannot see each other's patches, and incompatible runtime-config versions cannot write shared config.
 
 ## 6. First-party launcher, catalog, and Cloudflare publication
 
