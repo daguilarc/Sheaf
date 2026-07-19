@@ -1135,6 +1135,46 @@ TEST_CASE(master_clock_half_open_crossings_ppqn_reprime_and_sink_overflow_are_ob
     REQUIRE_TRUE(clock.DiagnosticsSnapshot().droppedOutputCount > 0);
 }
 
+TEST_CASE(master_clock_delayed_splice_has_one_total_crossing_iteration_budget) {
+    synth::MasterClock clock;
+    REQUIRE_TRUE(clock.SetTempoBpm(60'000.0));
+    synth::SyncConfig config;
+    config.receiveTransport = true;
+    config.ppqn = 960;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.Prepare(1000.0, 10));
+
+    constexpr std::uint64_t kBlocks = synth::MasterClock::kPlanHistoryCapacity;
+    constexpr std::uint64_t kFramesPerBlock = 10;
+    constexpr std::uint64_t kCrossingsPerFrame = 960;
+    for (std::uint64_t block = 0; block < kBlocks; ++block) {
+        REQUIRE_TRUE(clock.CommitBlock(
+                         block * kFramesPerBlock,
+                         kFramesPerBlock,
+                         1'000'000 + block * 10'000) != nullptr);
+    }
+
+    const auto before = clock.DiagnosticsSnapshot();
+    config.sendClock = true;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.HandleExternalTransport(
+        synth::ClockTransportCommand::Start, 1'000'000, 0));
+    const auto after = clock.DiagnosticsSnapshot();
+
+    constexpr std::uint64_t kTotalSpliceIterationBudget = 4096;
+    static_assert(
+        synth::MasterClock::kMaximumSpliceCrossingIterations ==
+        kTotalSpliceIterationBudget);
+    constexpr std::uint64_t kAnalyticalCandidates =
+        kBlocks * kFramesPerBlock * kCrossingsPerFrame;
+    REQUIRE_TRUE(
+        after.enumeratedCrossingCount - before.enumeratedCrossingCount ==
+        kTotalSpliceIterationBudget);
+    REQUIRE_TRUE(
+        after.droppedOutputCount - before.droppedOutputCount ==
+        kAnalyticalCandidates - kTotalSpliceIterationBudget);
+}
+
 TEST_CASE(master_clock_clock_production_and_input_paths_allocate_nothing_and_are_bounded_by_crossings) {
     synth::MasterClock clock;
     FixedScheduledSink<4096> sink;

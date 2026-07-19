@@ -109,6 +109,8 @@ struct ClockDiagnostics {
     ClockSource source = ClockSource::Internal;
     bool hasActiveExternalSource = false;
     std::size_t activeExternalSourceSlot = 0;
+    // Manual or filtered-estimator tempo, without the transient PLL phase
+    // correction which may be present in QuarterNotesPerSample().
     double currentBpm = 120.0;
     std::uint64_t outputLatencyMicros = 0;
     // Rejected external MIDI clock/transport input only.
@@ -292,6 +294,7 @@ public:
     static constexpr std::size_t kExternalIntervalWindow = 5;
     static constexpr std::size_t kPendingInternalTransportCapacity = 16;
     static constexpr std::size_t kMaximumCrossingsPerSegment = 4096;
+    static constexpr std::size_t kMaximumSpliceCrossingIterations = 4096;
     static constexpr double kDefaultTempoBpm = 120.0;
     static constexpr double kExternalPeriodEwmaGain = 1.0 / 8.0;
     static constexpr double kMissedPulseTolerance = 0.25;
@@ -307,6 +310,8 @@ public:
     std::uint64_t OutputLatencyMicros() const noexcept { return outputLatencyMicros_; }
 
     bool SetTempoBpm(double bpm) noexcept;
+    // Authority tempo is deliberately uncorrected. During external recovery,
+    // QuarterNotesPerSample() may additionally contain bounded phase correction.
     double TempoBpm() const noexcept { return activeBpm_; }
     double QuarterNotesPerSample() const noexcept { return pendingQuarterNotesPerSample_; }
     double LifetimeQuarterNotes() const noexcept;
@@ -409,7 +414,8 @@ private:
         double startSample,
         double endSample,
         double phaseAtStart,
-        double quarterNotesPerSample) noexcept;
+        double quarterNotesPerSample,
+        std::size_t& remainingCandidateIterations) noexcept;
     std::optional<std::uint64_t> DueTimeAtSample(double sample) const noexcept;
     std::optional<std::uint64_t> DueTimeFromTimestamp(std::uint64_t timestampMicros) const noexcept;
     bool EnqueueScheduledEvent(
@@ -434,6 +440,7 @@ private:
     ClockSource source_ = ClockSource::Internal;
     double sampleRate_ = 0.0;
     double manualBpm_ = kDefaultTempoBpm;
+    // Manual or filtered external-estimator tempo; never the phase-corrected slope.
     double activeBpm_ = kDefaultTempoBpm;
     double pendingQuarterNotesPerSample_ = 0.0;
     double nextLifetimeQuarterNotes_ = 0.0;

@@ -613,7 +613,8 @@ void MasterClock::EnumerateAffineCrossings(
     double startSample,
     double endSample,
     double phaseAtStart,
-    double quarterNotesPerSample) noexcept {
+    double quarterNotesPerSample,
+    std::size_t& remainingCandidateIterations) noexcept {
     if (!syncConfig_.sendClock || !(endSample > startSample) ||
         !std::isfinite(phaseAtStart) || !IsFinitePositive(quarterNotesPerSample) ||
         detectorPpqn_ <= 0) {
@@ -650,7 +651,8 @@ void MasterClock::EnumerateAffineCrossings(
         static_cast<std::uint64_t>(endExclusive - firstCell);
     const std::uint64_t processCount = std::min<std::uint64_t>(
         candidateCount,
-        kMaximumCrossingsPerSegment);
+        remainingCandidateIterations);
+    remainingCandidateIterations -= static_cast<std::size_t>(processCount);
 
     for (std::uint64_t offset = 0; offset < processCount; ++offset) {
         const std::int64_t cell = firstCell + static_cast<std::int64_t>(offset);
@@ -703,11 +705,13 @@ void MasterClock::EnumerateCurrentPlanCrossings() noexcept {
     const double phaseStart = descriptor.transportState == ClockTransportState::Running
         ? descriptor.transportStartQuarterNotes
         : descriptor.lifetimeStartQuarterNotes;
+    std::size_t remainingCandidateIterations = kMaximumCrossingsPerSegment;
     EnumerateAffineCrossings(
         static_cast<double>(descriptor.startSample),
         static_cast<double>(descriptor.endSample),
         phaseStart,
-        descriptor.quarterNotesPerSample);
+        descriptor.quarterNotesPerSample,
+        remainingCandidateIterations);
 }
 
 std::optional<double> MasterClock::LifetimeQuarterNotesAtKnownSample(
@@ -734,6 +738,10 @@ void MasterClock::EnumerateSpliceCrossings(
     if (!lifetimeAtSplice.has_value()) {
         return;
     }
+    // One budget covers the entire retained-history splice. Descriptors are
+    // oldest-first, so excess newest candidates are observable drops; each
+    // affine segment still advances detector authority to its final cell.
+    std::size_t remainingCandidateIterations = kMaximumSpliceCrossingIterations;
     for (std::size_t logical = 0; logical < planHistoryCount_; ++logical) {
         const ClockPlanDescriptor& descriptor = PlanAtLogicalIndex(logical);
         const double segmentStart = std::max(
@@ -752,7 +760,8 @@ void MasterClock::EnumerateSpliceCrossings(
             segmentStart,
             segmentEnd,
             phaseStart,
-            descriptor.quarterNotesPerSample);
+            descriptor.quarterNotesPerSample,
+            remainingCandidateIterations);
     }
 }
 
@@ -770,6 +779,9 @@ void MasterClock::ActivateTransportAtExternalTimestamp(
         ? LifetimeQuarterNotesAtKnownSample(*spliceSample)
         : std::nullopt;
     transportState_ = ClockTransportState::Running;
+    // Safe fallback for a violated latency contract: if the activation lies
+    // outside retained committed history, start the next committed run at zero
+    // and skip retroactive reconstruction instead of extrapolating unknown phase.
     nextTransportQuarterNotes_ = lifetimeAtActivation.has_value()
         ? std::max(0.0, nextLifetimeQuarterNotes_ - *lifetimeAtActivation)
         : 0.0;
