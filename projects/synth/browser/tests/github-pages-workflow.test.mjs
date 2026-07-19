@@ -1,17 +1,21 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 
 import { parse } from "yaml";
 
-const repositoryRoot = path.resolve(process.cwd(), "../../..");
+const repositoryRoot = fileURLToPath(new URL("../../../../../", import.meta.url));
 const workflowPath = path.join(repositoryRoot, ".github", "workflows", "synth-browser-pages.yml");
 const browserReadmePath = path.join(repositoryRoot, "projects", "synth", "browser", "README.md");
 const expectedBuildId = "publisher-build-1";
+const execFileAsync = promisify(execFile);
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -290,6 +294,22 @@ test("publisher documentation distinguishes one-time Pages setup, stable artifac
   assert.match(readme, /Access-Control-Allow-Origin:\s*\*/i);
   assert.match(readme, /application\/wasm/);
   assert.match(readme, /Cloudflare.*(?:COOP|Cross-Origin-Opener-Policy).*(?:COEP|Cross-Origin-Embedder-Policy).*Permissions-Policy/is);
+  assert.match(
+    readme,
+    /\[current GitHub Pages limits\]\(https:\/\/docs\.github\.com\/en\/pages\/getting-started-with-github-pages\/github-pages-limits\)/i,
+  );
+  assert.match(readme, /published-site size.*deployment duration.*bandwidth.*rate limits/is);
   assert.match(readme, /local.*(?:cannot|do not).*prove.*live.*(?:CORS|MIME)|live.*(?:CORS|MIME).*only.*CI/is);
   assert.match(readme, /does not claim.*live.*Cloudflare/i);
+});
+
+test("compiled workflow contract passes when invoked from the repository root", async () => {
+  if (process.env.SYNTH_BROWSER_ROOT_CWD_PROBE === "1") return;
+  const childEnvironment = { ...process.env, SYNTH_BROWSER_ROOT_CWD_PROBE: "1" };
+  delete childEnvironment.NODE_TEST_CONTEXT;
+
+  await execFileAsync(process.execPath, ["--test", fileURLToPath(import.meta.url)], {
+    cwd: repositoryRoot,
+    env: childEnvironment,
+  });
 });

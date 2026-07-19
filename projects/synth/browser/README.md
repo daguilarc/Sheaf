@@ -118,6 +118,12 @@ tree, or Cloudflare-only `_headers` file. A publisher update changes the stable
 catalog's build record and adds a content-addressed package directory; it never
 mutates an older package directory.
 
+GitHub Pages also imposes platform quotas that this workflow does not bypass.
+Consult the [current GitHub Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
+before relying on the publisher: published-site size, deployment duration,
+bandwidth, and rate limits are external service constraints and can change
+independently of this repository.
+
 Every public catalog and package response must remain readable with
 `Access-Control-Allow-Origin: *`. Catalog file records declare the exact byte
 size, media type, and SHA-256 digest. Live JavaScript responses must use

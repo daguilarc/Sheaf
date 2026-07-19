@@ -22,6 +22,70 @@ checkboxes and `.superpowers/sdd/progress.md` were not edited. The pre-existing
 untracked `projects/synth/browser/package-lock.json` and
 `projects/synth/miniapp/` were preserved and excluded from the commit.
 
+## Post-review CI invocation fix
+
+Persistent review found that the compiled structural test derived the
+repository root from `process.cwd()`. That happened to work from
+`projects/synth/browser`, but the workflow runs its compiled Node tests from the
+repository root. The exact workflow invocation reproduced the blocker before
+the fix:
+
+```text
+node --test projects/synth/browser/dist/tests/github-pages-workflow.test.mjs
+```
+
+RED: exit 1; 7 passed and 7 failed. The six workflow assertions looked for
+`/Users/joyo/.codex/.github/workflows/synth-browser-pages.yml`, and the README
+assertion looked below `/Users/joyo/.codex/projects`, proving that the working
+directory—not the compiled module—supplied the bad root.
+
+A subprocess regression now runs the compiled contract with the repository as
+its explicit working directory. Before changing root discovery, its focused
+run failed 0/1 and the child showed 8 passes and the same 7 failures. The only
+implementation change derives the root from `import.meta.url` instead.
+
+GREEN from repository root:
+
+```text
+node --test projects/synth/browser/dist/tests/github-pages-workflow.test.mjs
+```
+
+Result: exit 0; 15/15 passed.
+
+GREEN from the browser package directory:
+
+```text
+npm run build && node --test dist/tests/github-pages-workflow.test.mjs
+```
+
+Result: exit 0; TypeScript passed and 15/15 tests passed. The subprocess removes
+Node's inherited `NODE_TEST_CONTEXT` marker so it exercises a real independent
+root-CWD test run rather than silently inheriting the parent test worker.
+
+The complete workflow-shaped root-CWD gate also passed after the fix:
+
+```text
+npm --prefix projects/synth/browser run build
+npm --prefix projects/synth/browser run check:generic-runtime
+node --test projects/synth/browser/dist/tests/*.test.mjs
+```
+
+Result: exit 0; TypeScript and the generic-runtime guard passed, then 53/53 Node
+tests passed.
+
+Review also noted that the README named publisher limits without documenting
+the platform quotas. On 2026-07-19 the current categories were verified against
+GitHub's authoritative documentation:
+
+```text
+https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits
+```
+
+A focused documentation assertion first failed 0/1 for the missing official
+link, then passed 1/1. The README links the live limits page and names durable
+categories—published-site size, deployment duration, bandwidth, and rate
+limits—without copying time-unstable figures into the repository.
+
 ## Pinned action verification
 
 On 2026-07-19, each action tag was resolved directly from its primary GitHub
