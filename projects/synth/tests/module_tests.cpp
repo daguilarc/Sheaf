@@ -15,9 +15,11 @@
 #include <cmath>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -69,6 +71,16 @@ void SetAndSettle(synth::ParameterManager& manager, synth::ParameterId id, float
     parameter.ProcessLite();
 }
 
+template<typename Exception, typename Callable>
+bool Throws(Callable&& callable) {
+    try {
+        std::forward<Callable>(callable)();
+    } catch (const Exception&) {
+        return true;
+    }
+    return false;
+}
+
 } // namespace
 
 static_assert(!std::is_copy_constructible_v<synth::WavetableVcoModule<2>>);
@@ -79,6 +91,11 @@ static_assert(!std::is_copy_constructible_v<synth::BasicLfoModule<2>>);
 static_assert(!std::is_copy_assignable_v<synth::BasicLfoModule<2>>);
 static_assert(!std::is_move_constructible_v<synth::BasicLfoModule<2>>);
 static_assert(!std::is_move_assignable_v<synth::BasicLfoModule<2>>);
+static_assert(!std::is_copy_constructible_v<synth::AdsrModule<2>>);
+static_assert(!std::is_copy_assignable_v<synth::AdsrModule<2>>);
+static_assert(!std::is_move_constructible_v<synth::AdsrModule<2>>);
+static_assert(!std::is_move_assignable_v<synth::AdsrModule<2>>);
+static_assert(noexcept(std::declval<synth::AdsrModule<2>&>().Process()));
 static_assert(!std::is_copy_constructible_v<synth::ClassicSvfModule<2>>);
 static_assert(!std::is_copy_assignable_v<synth::ClassicSvfModule<2>>);
 static_assert(!std::is_move_constructible_v<synth::ClassicSvfModule<2>>);
@@ -690,6 +707,174 @@ TEST_CASE(basic_lfo_template_supports_three_voice_phase_stagger_and_ui_state) {
     REQUIRE_TRUE(ui.lfos[2].scope.load() == &writer);
     REQUIRE_TRUE(ui.lfos[2].scopeChannel.load() == third.FlatChan());
     REQUIRE_TRUE(ui.lfos[2].scopeColor.Load() == synth::Color::Yellow);
+}
+
+TEST_CASE(adsr_module_registers_parameters_and_maps_natural_defaults) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numScenes = 1,
+        .maxParameters = 4,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+    });
+    synth::AdsrModule<2> module(1000.0f);
+
+    module.RegisterParameters(manager, group, "Amp");
+
+    const auto ids = module.Parameters();
+    REQUIRE_TRUE(ids.attack == 0);
+    REQUIRE_TRUE(ids.decay == 1);
+    REQUIRE_TRUE(ids.sustain == 2);
+    REQUIRE_TRUE(ids.release == 3);
+    REQUIRE_TRUE(manager.ParameterById(ids.attack).Name() == "Amp Attack");
+    REQUIRE_TRUE(manager.ParameterById(ids.decay).Name() == "Amp Decay");
+    REQUIRE_TRUE(manager.ParameterById(ids.sustain).Name() == "Amp Sustain");
+    REQUIRE_TRUE(manager.ParameterById(ids.release).Name() == "Amp Release");
+
+    module.SetInput(manager, std::array<bool, 2>{false, true});
+    REQUIRE_NEAR(static_cast<float>(module.CurrentInput().voices[0].attackIncrement), 0.1f, 0.000001f);
+    REQUIRE_NEAR(static_cast<float>(module.CurrentInput().voices[0].decayIncrement), 0.01f, 0.000001f);
+    REQUIRE_NEAR(module.CurrentInput().voices[0].sustain, 0.7f, 0.0001f);
+    REQUIRE_NEAR(static_cast<float>(module.CurrentInput().voices[0].releaseIncrement), 0.004f, 0.000001f);
+    REQUIRE_TRUE(!module.CurrentInput().voices[0].gate);
+    REQUIRE_TRUE(module.CurrentInput().voices[1].gate);
+}
+
+TEST_CASE(adsr_module_maps_endpoints_and_processes_gates_independently) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 2,
+        .numScenes = 1,
+        .maxParameters = 4,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+    });
+    synth::AdsrModule<2> module(1000.0f);
+    module.RegisterParameters(manager, group, "Env");
+    const auto ids = module.Parameters();
+
+    SetAndSettle(manager, ids.attack, 0.0f);
+    SetAndSettle(manager, ids.decay, 1.0f);
+    SetAndSettle(manager, ids.sustain, 1.0f);
+    SetAndSettle(manager, ids.release, 0.0f);
+    module.SetInput(manager, std::array<bool, 2>{true, false});
+
+    REQUIRE_NEAR(static_cast<float>(module.CurrentInput().voices[0].attackIncrement), 1.0f, 0.000001f);
+    REQUIRE_NEAR(static_cast<float>(module.CurrentInput().voices[0].decayIncrement), 0.0002f, 0.000001f);
+    REQUIRE_NEAR(module.CurrentInput().voices[0].sustain, 1.0f, 0.0f);
+    REQUIRE_NEAR(static_cast<float>(module.CurrentInput().voices[0].releaseIncrement), 1.0f, 0.000001f);
+
+    module.CurrentInput().voices[0].attackIncrement = 1.0;
+    module.Process();
+    REQUIRE_NEAR(module.Output(0), 1.0f, 0.0f);
+    REQUIRE_NEAR(module.Output(1), 0.0f, 0.0f);
+    REQUIRE_TRUE(module.Outputs().size() == 2);
+    REQUIRE_NEAR(module.Outputs()[0], module.Output(0), 0.0f);
+    REQUIRE_NEAR(module.Outputs()[1], module.Output(1), 0.0f);
+    REQUIRE_TRUE(Throws<std::out_of_range>([&] { (void)module.Output(2); }));
+}
+
+TEST_CASE(adsr_module_preserves_voice_state_across_sample_rate_changes) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numScenes = 1,
+        .maxParameters = 4,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+    });
+    synth::AdsrModule<1> module(1000.0f);
+    module.RegisterParameters(manager, group, "Env");
+    const float oneSecondNormalized = std::log(1.0f / synth::AdsrModule<1>::kMinAttackSeconds)
+                                    / std::log(synth::AdsrModule<1>::kMaxAttackSeconds
+                                               / synth::AdsrModule<1>::kMinAttackSeconds);
+    SetAndSettle(manager, module.Parameters().attack, oneSecondNormalized);
+
+    module.SetInput(manager, std::array<bool, 1>{true});
+    module.Process();
+    REQUIRE_NEAR(module.Output(0), 0.001f, 0.000001f);
+
+    module.SetSampleRate(2000.0f);
+    module.SetInput(manager, std::array<bool, 1>{true});
+    REQUIRE_NEAR(static_cast<float>(module.CurrentInput().voices[0].attackIncrement), 0.0005f, 0.000001f);
+    module.Process();
+    REQUIRE_NEAR(module.Output(0), 0.0015f, 0.000001f);
+    REQUIRE_NEAR(module.SampleRate(), 2000.0f, 0.0f);
+}
+
+TEST_CASE(adsr_module_applies_options_and_registers_bank_in_adsr_order) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 2, .numScenes = 1, .maxParameters = 4});
+    synth::AdsrModule<2> module;
+    synth::AdsrModule<2>::Options options;
+    options.indicatorColors = {synth::Color::Yellow, synth::Color::Orange};
+    module.RegisterParameters(manager, group, "Env", options);
+
+    auto& bank = manager.CreateBank();
+    auto& slot = manager.CreateBankSlot();
+    for (const synth::PhysicalEncoderId encoder : {30u, 31u, 32u, 33u, 34u}) {
+        slot.AddPhysicalEncoder(encoder);
+    }
+    slot.SelectBank(&bank);
+    module.RegisterToBank(bank, 1);
+
+    const auto ids = module.Parameters();
+    REQUIRE_TRUE(bank.VisibleParameter(31) == &manager.ParameterById(ids.attack));
+    REQUIRE_TRUE(bank.VisibleParameter(32) == &manager.ParameterById(ids.decay));
+    REQUIRE_TRUE(bank.VisibleParameter(33) == &manager.ParameterById(ids.sustain));
+    REQUIRE_TRUE(bank.VisibleParameter(34) == &manager.ParameterById(ids.release));
+    for (const auto id : {ids.attack, ids.decay, ids.sustain, ids.release}) {
+        REQUIRE_TRUE(manager.ParameterById(id).IndicatorColor(0) == synth::Color::Yellow);
+        REQUIRE_TRUE(manager.ParameterById(id).IndicatorColor(1) == synth::Color::Orange);
+    }
+}
+
+TEST_CASE(adsr_module_rejects_registration_errors_atomically) {
+    synth::ParameterManager smallManager;
+    auto& smallGroup = smallManager.CreateGroup({.numVoices = 2, .numScenes = 1, .maxParameters = 3});
+    synth::AdsrModule<2> small;
+    REQUIRE_TRUE(Throws<std::length_error>([&] { small.RegisterParameters(smallManager, smallGroup, "Env"); }));
+    REQUIRE_TRUE(smallManager.ParameterCount() == 0);
+    REQUIRE_TRUE(smallGroup.ParameterCount() == 0);
+
+    synth::ParameterManager duplicateManager;
+    auto& duplicateGroup = duplicateManager.CreateGroup({.numVoices = 2, .numScenes = 1, .maxParameters = 5});
+    (void)duplicateManager.RegisterParameter(duplicateGroup, {.name = "Env Sustain"});
+    synth::AdsrModule<2> duplicate;
+    REQUIRE_TRUE(Throws<std::logic_error>([&] {
+        duplicate.RegisterParameters(duplicateManager, duplicateGroup, "Env");
+    }));
+    REQUIRE_TRUE(duplicateManager.ParameterCount() == 1);
+    REQUIRE_TRUE(duplicateGroup.ParameterCount() == 1);
+}
+
+TEST_CASE(adsr_module_rejects_invalid_lifecycle_and_sample_rates) {
+    synth::AdsrModule<2> unregistered;
+    synth::ParameterManager first;
+    auto& firstGroup = first.CreateGroup({.numVoices = 2, .numScenes = 1, .maxParameters = 4});
+    auto& bank = first.CreateBank();
+    REQUIRE_TRUE(Throws<std::logic_error>([&] { unregistered.RegisterToBank(bank, 0); }));
+    REQUIRE_TRUE(Throws<std::logic_error>([&] {
+        unregistered.SetInput(first, std::array<bool, 2>{});
+    }));
+
+    unregistered.RegisterParameters(first, firstGroup, "Env");
+    REQUIRE_TRUE(Throws<std::logic_error>([&] {
+        unregistered.RegisterParameters(first, firstGroup, "Again");
+    }));
+
+    synth::ParameterManager second;
+    REQUIRE_TRUE(Throws<std::logic_error>([&] {
+        unregistered.SetInput(second, std::array<bool, 2>{});
+    }));
+    REQUIRE_TRUE(Throws<std::invalid_argument>([] { synth::AdsrModule<1> invalid(0.0f); }));
+    REQUIRE_TRUE(Throws<std::invalid_argument>([&] {
+        unregistered.SetSampleRate(std::numeric_limits<float>::infinity());
+    }));
+    REQUIRE_TRUE(Throws<std::invalid_argument>([&] {
+        unregistered.SetSampleRate(std::numeric_limits<float>::quiet_NaN());
+    }));
 }
 
 TEST_CASE(classic_svf_registers_parameters_in_visible_order_and_rejects_repeat_registration) {

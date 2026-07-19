@@ -1,5 +1,6 @@
 #pragma once
 
+#include "synth/DspAdsr.hpp"
 #include "synth/DspFilters.hpp"
 #include "synth/DspOscillators.hpp"
 #include "synth/ParameterModulation.hpp"
@@ -9,6 +10,7 @@
 #include <cstddef>
 #include <cmath>
 #include <limits>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -1134,6 +1136,214 @@ private:
     std::array<BasicLFOProcessor, kVoiceCount> lfos_;
     std::array<float, kVoiceCount> outputs_{};
     std::array<float, kVoiceCount> modulationSources_{};
+};
+
+template<std::size_t Polyphony>
+class AdsrModule {
+public:
+    static_assert(Polyphony > 0);
+
+    static constexpr std::size_t kVoiceCount = Polyphony;
+    static constexpr float kMinAttackSeconds = 0.001f;
+    static constexpr float kMaxAttackSeconds = 2.0f;
+    static constexpr float kMinDecaySeconds = 0.001f;
+    static constexpr float kMaxDecaySeconds = 5.0f;
+    static constexpr float kMinReleaseSeconds = 0.001f;
+    static constexpr float kMaxReleaseSeconds = 5.0f;
+
+    struct ParameterIds {
+        ParameterId attack = 0;
+        ParameterId decay = 0;
+        ParameterId sustain = 0;
+        ParameterId release = 0;
+    };
+
+    struct Input {
+        std::array<AdsrProcessor::Input, kVoiceCount> voices{};
+    };
+
+    struct Options {
+        std::vector<Color> indicatorColors;
+    };
+
+    explicit AdsrModule(float sampleRate = 48000.0f) {
+        SetSampleRate(sampleRate);
+    }
+    AdsrModule(const AdsrModule&) = delete;
+    AdsrModule& operator=(const AdsrModule&) = delete;
+    AdsrModule(AdsrModule&&) = delete;
+    AdsrModule& operator=(AdsrModule&&) = delete;
+
+    void RegisterParameters(ParameterManager& manager, ParameterGroup& group, std::string_view prefix = {}) {
+        RegisterParameters(manager, group, prefix, Options{});
+    }
+
+    void RegisterParameters(ParameterManager& manager, ParameterGroup& group, std::string_view prefix,
+                            const Options& options) {
+        if (registered_) {
+            throw std::logic_error("ADSR module parameters already registered");
+        }
+
+        const std::array<std::string, 4> names{
+            EffectiveName(prefix, "Attack"),
+            EffectiveName(prefix, "Decay"),
+            EffectiveName(prefix, "Sustain"),
+            EffectiveName(prefix, "Release"),
+        };
+        ValidateRegistration(manager, group, names, "ADSR module");
+
+        parameterIds_.attack = manager.RegisterParameter(group, {
+                                                                    .name = names[0],
+                                                                    .shortName = "Atk",
+                                                                    .defaultValue = ExponentialNormalized(
+                                                                        kMinAttackSeconds,
+                                                                        kMaxAttackSeconds,
+                                                                        0.010f),
+                                                                    .baseColor = Color::Cyan,
+                                                                    .indicatorColors = options.indicatorColors,
+                                                                });
+        parameterIds_.decay = manager.RegisterParameter(group, {
+                                                                   .name = names[1],
+                                                                   .shortName = "Dec",
+                                                                   .defaultValue = ExponentialNormalized(
+                                                                       kMinDecaySeconds,
+                                                                       kMaxDecaySeconds,
+                                                                       0.100f),
+                                                                   .baseColor = Color::Blue,
+                                                                   .indicatorColors = options.indicatorColors,
+                                                               });
+        parameterIds_.sustain = manager.RegisterParameter(group, {
+                                                                     .name = names[2],
+                                                                     .shortName = "Sus",
+                                                                     .defaultValue = 0.7f,
+                                                                     .baseColor = Color::Green,
+                                                                     .indicatorColors = options.indicatorColors,
+                                                                 });
+        parameterIds_.release = manager.RegisterParameter(group, {
+                                                                     .name = names[3],
+                                                                     .shortName = "Rel",
+                                                                     .defaultValue = ExponentialNormalized(
+                                                                         kMinReleaseSeconds,
+                                                                         kMaxReleaseSeconds,
+                                                                         0.250f),
+                                                                     .baseColor = Color::Orange,
+                                                                     .indicatorColors = options.indicatorColors,
+                                                                 });
+        manager_ = &manager;
+        registered_ = true;
+    }
+
+    void RegisterToBank(Bank& bank, std::size_t offset) {
+        RequireRegistered();
+        std::array<Parameter*, 4> parameters{
+            &ParameterById(parameterIds_.attack),
+            &ParameterById(parameterIds_.decay),
+            &ParameterById(parameterIds_.sustain),
+            &ParameterById(parameterIds_.release),
+        };
+        bank.RegisterParameters(parameters, offset);
+    }
+
+    void SetInput(ParameterManager& manager, const std::array<bool, kVoiceCount>& gates) {
+        RequireRegistered();
+        if (&manager != manager_) {
+            throw std::logic_error("ADSR module used with a different parameter manager");
+        }
+
+        for (std::size_t voiceIx = 0; voiceIx < kVoiceCount; ++voiceIx) {
+            const float attackSeconds = manager.GetExponential(
+                kMinAttackSeconds, kMaxAttackSeconds, voiceIx, parameterIds_.attack);
+            const float decaySeconds = manager.GetExponential(
+                kMinDecaySeconds, kMaxDecaySeconds, voiceIx, parameterIds_.decay);
+            const float releaseSeconds = manager.GetExponential(
+                kMinReleaseSeconds, kMaxReleaseSeconds, voiceIx, parameterIds_.release);
+            input_.voices[voiceIx] = {
+                .attackIncrement = 1.0 / (static_cast<double>(attackSeconds) * sampleRate_),
+                .decayIncrement = 1.0 / (static_cast<double>(decaySeconds) * sampleRate_),
+                .sustain = manager.GetLinear(0.0f, 1.0f, voiceIx, parameterIds_.sustain),
+                .releaseIncrement = 1.0 / (static_cast<double>(releaseSeconds) * sampleRate_),
+                .gate = gates[voiceIx],
+            };
+        }
+    }
+
+    void Process() noexcept {
+        for (std::size_t voiceIx = 0; voiceIx < kVoiceCount; ++voiceIx) {
+            outputs_[voiceIx] = processors_[voiceIx].Process(input_.voices[voiceIx]);
+        }
+    }
+
+    void SetSampleRate(float sampleRate) {
+        if (!std::isfinite(sampleRate) || sampleRate <= 0.0f) {
+            throw std::invalid_argument("ADSR module sample rate must be finite and positive");
+        }
+        sampleRate_ = sampleRate;
+    }
+
+    float SampleRate() const { return sampleRate_; }
+    bool Registered() const { return registered_; }
+    const ParameterIds& Parameters() const { return parameterIds_; }
+    const Input& CurrentInput() const { return input_; }
+    Input& CurrentInput() { return input_; }
+    float Output(std::size_t voiceIx) const { return outputs_.at(voiceIx); }
+    std::span<const float> Outputs() const noexcept { return outputs_; }
+
+private:
+    template<std::size_t Count>
+    static void ValidateRegistration(const ParameterManager& manager, const ParameterGroup& group,
+                                     const std::array<std::string, Count>& names, std::string_view moduleName) {
+        if (group.Config().maxParameters - group.ParameterCount() < names.size()) {
+            std::string message(moduleName);
+            message += " parameter capacity exhausted";
+            throw std::length_error(message);
+        }
+
+        for (const std::string& name : names) {
+            for (std::size_t paramIx = 0; paramIx < manager.ParameterCount(); ++paramIx) {
+                if (manager.ParameterById(static_cast<ParameterId>(paramIx)).Name() == name) {
+                    std::string message("duplicate ");
+                    message += moduleName;
+                    message += " parameter name";
+                    throw std::logic_error(message);
+                }
+            }
+        }
+    }
+
+    static float ExponentialNormalized(float minimum, float maximum, float value) {
+        return std::log(value / minimum) / std::log(maximum / minimum);
+    }
+
+    static std::string EffectiveName(std::string_view prefix, std::string_view name) {
+        if (prefix.empty()) {
+            return std::string(name);
+        }
+        std::string result(prefix);
+        result += " ";
+        result += name;
+        return result;
+    }
+
+    Parameter& ParameterById(ParameterId id) const {
+        if (manager_ == nullptr) {
+            throw std::logic_error("ADSR module parameters are not registered");
+        }
+        return manager_->ParameterById(id);
+    }
+
+    void RequireRegistered() const {
+        if (!registered_ || manager_ == nullptr) {
+            throw std::logic_error("ADSR module parameters are not registered");
+        }
+    }
+
+    float sampleRate_ = 48000.0f;
+    bool registered_ = false;
+    ParameterManager* manager_ = nullptr;
+    ParameterIds parameterIds_{};
+    Input input_{};
+    std::array<AdsrProcessor, kVoiceCount> processors_;
+    std::array<float, kVoiceCount> outputs_{};
 };
 
 template<std::size_t Polyphony>
