@@ -7,10 +7,10 @@
 
 ## 2. Trusted catalog discovery and launcher UI
 
-- [ ] 2.1 Implement `catalog-sources.json` loading and concurrent cached catalog fetches with independent success, incompatibility, network-failure, and retry status.
-- [ ] 2.2 Build the generic SheafPatch launcher view with application rows showing app, publisher, author, category, compatibility, loading, and error state, without concrete miniapp branches.
-- [ ] 2.3 Add launcher tests proving manifests load without package requests, one source failure preserves other apps, retry refreshes a stable catalog URL, and a newly listed app appears without launcher JavaScript changes.
-- [ ] 2.4 Enforce one active application per page navigation and provide reload/navigation behavior for returning from a running app to the launcher.
+- [x] 2.1 Implement `catalog-sources.json` loading and concurrent cached catalog fetches with independent success, incompatibility, network-failure, and retry status.
+- [x] 2.2 Build the generic SheafPatch launcher view with application rows showing app, publisher, author, category, compatibility, loading, and error state, without concrete miniapp branches.
+- [x] 2.3 Add launcher tests proving manifests load without package requests, one source failure preserves other apps, retry refreshes a stable catalog URL, and a newly listed app appears without launcher JavaScript changes.
+- [x] 2.4 Enforce one active application per page navigation and provide reload/navigation behavior for returning from a running app to the launcher.
 
 ## 3. Immutable package build and remote materialization
 
