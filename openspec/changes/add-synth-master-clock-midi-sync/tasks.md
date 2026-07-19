@@ -22,23 +22,23 @@
 
 ## 4. Realtime MIDI Input and Message Dispatch
 
-- [ ] 4.1 Extend `MessageIn` with Continue, Internal/ExternalMidi origin, and external controller-slot identity; update equality, factories, catalogs, sort/JSON/config helpers, and exhaustive switch tests without changing existing UI factory defaults.
-- [ ] 4.2 Add failing processor-chain tests proving unmapped `F8`/`FA`/`FB`/`FC` from every profile become distinct external messages with original normalized timestamps and slot identity while unrelated bytes remain unchanged.
-- [ ] 4.3 Implement the terminal realtime MIDI input processor and append it to every controller profile chain, including rebuild paths and browser delivery.
-- [ ] 4.4 Route clock/transport messages from both UI and MIDI bus drains through one fixed-capacity timestamp-ordered batch to MasterClock on the audio thread, apply deterministic equal-time ties plus receive gating/provenance/source rules, and remove the existing discard-only Start/Stop/Clock handling.
+- [x] 4.1 Extend `MessageIn` with Continue, Internal/ExternalMidi origin, and external controller-slot identity; update equality, factories, catalogs, sort/JSON/config helpers, and exhaustive switch tests without changing existing UI factory defaults.
+- [x] 4.2 Add failing processor-chain tests proving unmapped `F8`/`FA`/`FB`/`FC` from every profile become distinct external messages with original normalized timestamps and slot identity while unrelated bytes remain unchanged.
+- [x] 4.3 Implement the terminal realtime MIDI input processor and append it to every controller profile chain, including rebuild paths and browser delivery.
+- [x] 4.4 Route clock/transport messages from both UI and MIDI bus drains through one fixed-capacity timestamp-ordered batch to MasterClock on the audio thread, apply deterministic equal-time ties plus receive gating/provenance/source rules, and remove the existing discard-only Start/Stop/Clock handling.
 
 ## 5. Engine, AppContext, and SynthRig Integration
 
-- [ ] 5.1 Add fake-app Engine tests for one stable context clock pointer, prepare ordering, message-drain-before-plan order, one app block call, `AudioBlock::clockPlan == MasterClock::CurrentPlan()`, immutable plan lifetime, exact consecutive anchors/sample ranges, and tick enqueue before delegation.
-- [ ] 5.2 Make Engine own MasterClock, expose it through `AppContext`/`AudioBlock`, prepare it from negotiated values, commit and publish one plan per output block, and enumerate clock crossings without moving parameter or module DSP into Engine.
-- [ ] 5.3 Extend SynthRig with deterministic clock/transport injection and inspection helpers, then cover internal/external transitions, block-size independence, 4x internal-index-to-fractional-output-position queries, long-run double precision, and no-NaN/no-hang invariants.
-- [ ] 5.4 Add audio-thread instrumentation tests proving plan commit, direct clock query, analytical crossing enumeration, and scheduled-event enqueue perform no allocation or mutex acquisition.
+- [x] 5.1 Add fake-app Engine tests for one stable context clock pointer, prepare ordering, message-drain-before-plan order, one app block call, `AudioBlock::clockPlan == MasterClock::CurrentPlan()`, immutable plan lifetime, exact consecutive anchors/sample ranges, and tick enqueue before delegation.
+- [x] 5.2 Make Engine own MasterClock, expose it through `AppContext`/`AudioBlock`, prepare it from negotiated values, commit and publish one plan per output block, and enumerate clock crossings without moving parameter or module DSP into Engine.
+- [x] 5.3 Extend SynthRig with deterministic clock/transport injection and inspection helpers, then cover internal/external transitions, block-size independence, 4x internal-index-to-fractional-output-position queries, long-run double precision, and no-NaN/no-hang invariants.
+- [x] 5.4 Add audio-thread instrumentation tests proving plan commit, direct clock query, analytical crossing enumeration, and scheduled-event enqueue perform no allocation or mutex acquisition.
 
 ## 6. Runtime Configuration Persistence
 
-- [ ] 6.1 Add JSON tests for `SyncConfig` defaults, valid round trips, every invalid boolean/type/PPQN case, atomic rejection, schema-v1 default migration, schema-v2 output, and patch exclusion.
-- [ ] 6.2 Extend runtime configuration serialization/loading APIs to include sync state, accept schema v1 with defaults, write schema v2, and update Engine startup/save call sites atomically with instrument and audio state.
-- [ ] 6.3 Add startup-order tests proving loaded sync policy is installed before clock prepare, MIDI processing, reconciliation, and the first audio block.
+- [x] 6.1 Add JSON tests for `SyncConfig` defaults, valid round trips, every invalid boolean/type/PPQN case, atomic rejection, schema-v1 default migration, schema-v2 output, and patch exclusion.
+- [x] 6.2 Extend runtime configuration serialization/loading APIs to include sync state, accept schema v1 with defaults, write schema v2, and update Engine startup/save call sites atomically with instrument and audio state.
+- [x] 6.3 Add startup-order tests proving loaded sync policy is installed before clock prepare, MIDI processing, reconciliation, and the first audio block.
 
 ## 7. Scheduled MIDI Sender and JUCE Output
 

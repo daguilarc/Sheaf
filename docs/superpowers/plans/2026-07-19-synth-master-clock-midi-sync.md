@@ -93,19 +93,19 @@
 
 **Required behavior:**
 
-- [ ] Extend `MessageIn` with Continue, origin, and external slot identity while preserving Internal defaults for existing UI factories. Update equality, factories, catalogs, serialization/config helpers, exhaustive switches, and tests.
-- [ ] Add a terminal realtime processor to every controller profile/rebuild chain so otherwise-unmapped `F8/FA/FB/FC` becomes distinct ExternalMidi input with original normalized timestamp and slot; unrelated bytes remain unchanged.
-- [ ] Replace separate discard-oriented UI/MIDI drains for realtime clock/transport with one fixed-capacity sorted batch and the required deterministic tie order. Route accepted messages through `MasterClock`; retain normal parameter/grid behavior.
-- [ ] Make `Engine` own and prepare `MasterClock`, expose one stable pointer through `AppContext`, publish the exact current plan through `AudioBlock`, and order each block as message drain → plan commit/crossing enqueue → optional frame hook → exactly one app block call.
-- [ ] Inject the Task 2 scheduled-event sink boundary into Engine. Prove enqueue ordering and realtime safety with the fixed-capacity test sink in this task; do not forward-reference Task 4's concrete `MidiSender` realtime lane.
-- [ ] Preserve `startSample` semantics and application ownership of per-sample DSP. Verify Braid 4's `internal / 4.0` query convention without adding callbacks.
-- [ ] Extend SynthRig with deterministic injection, timestamps, clock queries, outgoing-event inspection, block-size/oversampling/long-run tests, and no-NaN/no-hang checks.
-- [ ] Prove plan commit, direct query, crossing enumeration, and realtime enqueue are allocation- and mutex-free on the steady-state audio path.
-- [ ] Upgrade runtime config to schema v2 with atomic instrument/audio/sync load; accept v1 with default sync; reject every invalid sync type/value with no partial mutation; keep patches unchanged.
-- [ ] Verify startup order installs loaded sync before prepare, MIDI reconcile/processing, and the first block.
-- [ ] Structure the implementer report and Opus review evidence in three explicit subsections—MIDI ingress, Engine/AppContext/SynthRig, and runtime config/startup—so this intentionally coarse task remains independently auditable.
-- [ ] Run focused `contract_tests`, `instrument_tests`, `engine_tests`, `rig_tests`, persistence tests, and then `make -C projects/synth test`.
-- [ ] Commit only the task files after review and verification.
+- [x] Extend `MessageIn` with Continue, origin, and external slot identity while preserving Internal defaults for existing UI factories. Update equality, factories, catalogs, serialization/config helpers, exhaustive switches, and tests.
+- [x] Add a terminal realtime processor to every controller profile/rebuild chain so otherwise-unmapped `F8/FA/FB/FC` becomes distinct ExternalMidi input with original normalized timestamp and slot; unrelated bytes remain unchanged.
+- [x] Replace separate discard-oriented UI/MIDI drains for realtime clock/transport with one fixed-capacity sorted batch and the required deterministic tie order. Route accepted messages through `MasterClock`; retain normal parameter/grid behavior.
+- [x] Make `Engine` own and prepare `MasterClock`, expose one stable pointer through `AppContext`, publish the exact current plan through `AudioBlock`, and order each block as message drain → plan commit/crossing enqueue → optional frame hook → exactly one app block call.
+- [x] Inject the Task 2 scheduled-event sink boundary into Engine. Prove enqueue ordering and realtime safety with the fixed-capacity test sink in this task; do not forward-reference Task 4's concrete `MidiSender` realtime lane.
+- [x] Preserve `startSample` semantics and application ownership of per-sample DSP. Verify Braid 4's `internal / 4.0` query convention without adding callbacks.
+- [x] Extend SynthRig with deterministic injection, timestamps, clock queries, outgoing-event inspection, block-size/oversampling/long-run tests, and no-NaN/no-hang checks.
+- [x] Prove plan commit, direct query, crossing enumeration, and realtime enqueue are allocation- and mutex-free on the steady-state audio path.
+- [x] Upgrade runtime config to schema v2 with atomic instrument/audio/sync load; accept v1 with default sync; reject every invalid sync type/value with no partial mutation; keep patches unchanged.
+- [x] Verify startup order installs loaded sync before prepare, MIDI reconcile/processing, and the first block.
+- [x] Structure the implementer report and Opus review evidence in three explicit subsections—MIDI ingress, Engine/AppContext/SynthRig, and runtime config/startup—so this intentionally coarse task remains independently auditable.
+- [x] Run focused `contract_tests`, `instrument_tests`, `engine_tests`, `rig_tests`, persistence tests, and then `make -C projects/synth test`.
+- [x] Commit only the task files after review and verification.
 
 ## Task 4: Scheduled MIDI Sender and JUCE Delivery (Sol)
 
