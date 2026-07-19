@@ -164,3 +164,55 @@ The first complete run found the real-WASM restart test using a miniapp artifact
 ## Concerns
 
 Plain Playwright discovery also imports the repository's Node `*.test.mjs` files and can print a non-gating parallel `package-app` failure marker even when Playwright exits successfully. The canonical serial Node gate (`npm run test:unit`) passes 31/31, and all 96 Playwright tests pass. This appears to be pre-existing runner-discovery noise, not a Task 5 persistence failure.
+
+---
+
+# Browser Native Audio / Generic Packaging Documentation Task 5
+
+## Status
+
+DONE — documentation and requirement coverage updated; OpenSpec artifacts were
+intentionally not edited.
+
+## Documentation and coverage
+
+- Documented ABI-v2, one-click host-context registration and native callback-only
+  audio, including fail-closed behavior with no timer/ring fallback.
+- Documented one-record app onboarding, generated transient bindings, uniform
+  512 MiB initial/growable-to-2 GiB memory, generic Mini App/Braid 4 packaging,
+  complete-catalog atomic publication, and generic per-app rollback pages.
+- Documented the Cloudflare launcher versus GitHub Pages publisher split,
+  whole-`catalogVersion` deployed validation, and local artifact/loopback versus
+  CI-owned live CORS/MIME evidence.
+- Added `sprs-8` and `sbap-1` through `sbap-4` mappings and corrected three
+  stale citations in the same coverage table.
+
+## Checks
+
+Passed:
+
+```sh
+git diff --check
+rg -n 'render-audio|configure-audio|ring producer|miniapp_entry|browser-miniapp' \
+  projects/synth/browser/README.md projects/synth/browser/docs projects/synth/docs/coverage.md
+rg -n 'sbap-[1-4]|sprs-8' projects/synth/docs/coverage.md
+npm --prefix projects/synth/browser run build
+node --test projects/synth/browser/dist/tests/github-pages-workflow.test.mjs
+```
+
+The obsolete-instruction search had no matches. The focused workflow,
+documentation, manifest, publication, and deployed-validator suite passed
+16/16. Earlier focused runs also passed the manifest, generic builder, and
+publication tests.
+
+## Reviewer
+
+Persistent Claude Sonnet xagent run `xrun_20260719191543782_e79cd21b` found
+three pre-existing stale coverage citations. They were corrected, and its
+re-review verdict was PASS with no remaining findings.
+
+## Scope and concerns
+
+The sibling `add-browser-app-catalog-launcher` OpenSpec change was untouched.
+`projects/synth/browser/package-lock.json` and `projects/synth/miniapp/` remain
+untracked and unstaged. No concerns.
