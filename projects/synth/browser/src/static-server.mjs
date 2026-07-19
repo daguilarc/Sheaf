@@ -75,7 +75,7 @@ function packageFixture(request) {
     appId: "remote-fake",
     buildId: "build-1",
     browser: {
-      abiVersion: 1,
+      abiVersion: 2,
       uiProtocolVersion: 1,
       runtimeConfigVersion: 1,
       entry: `${packageRoot}/remote-fake.js`,

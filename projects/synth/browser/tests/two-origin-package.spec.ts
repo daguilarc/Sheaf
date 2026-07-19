@@ -32,6 +32,7 @@ test("starts a generic verified package from the isolated launcher's second orig
     materialized.dispose();
     return {
       crossOriginIsolated,
+      catalogAbiVersion: app.browser.abiVersion,
       loaded,
       created,
       audio,
@@ -40,6 +41,7 @@ test("starts a generic verified package from the isolated launcher's second orig
   });
 
   expect(result.crossOriginIsolated).toBe(true);
+  expect(result.catalogAbiVersion).toBe(2);
   expect(result.loaded).toEqual({ type: "ok" });
   expect(result.created).toEqual({ type: "created", handle: 41 });
   expect(result.audio).toEqual({ type: "audio-config", channels: 2 });
