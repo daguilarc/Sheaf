@@ -14,11 +14,11 @@
 
 ## 3. Immutable package build and remote materialization
 
-- [ ] 3.1 Add a deterministic package assembler that inventories the Emscripten entry, WASM, pthread/worker, AudioWorklet, and other required sidecars under `packages/<app-id>/<build-id>`, computes SHA-256 values, and emits catalog file records.
-- [ ] 3.2 Implement CORS package fetching with media-type and SHA-256 verification that refuses to import the entry when any declared file is missing or inconsistent.
-- [ ] 3.3 Implement typed object-URL materialization, lifetime cleanup, and explicit Emscripten `locateFile` plus `mainScriptUrlOrBlob`/equivalent mappings for WASM and worker/AudioWorklet sidecars.
-- [ ] 3.4 Add package-loader unit tests for valid builds, stale WASM, missing workers, wrong media types, hash mismatch, object-URL cleanup, and accidental document-relative sidecar resolution.
-- [ ] 3.5 Extend the two-origin browser test server and generic fake app acceptance path to prove a cross-origin package starts inside a cross-origin-isolated launcher before miniapp tests run.
+- [x] 3.1 Add a deterministic package assembler that inventories the Emscripten entry, WASM, pthread/worker, AudioWorklet, and other required sidecars under `packages/<app-id>/<build-id>`, computes SHA-256 values, and emits catalog file records.
+- [x] 3.2 Implement CORS package fetching with media-type and SHA-256 verification that refuses to import the entry when any declared file is missing or inconsistent.
+- [x] 3.3 Implement typed object-URL materialization, lifetime cleanup, and explicit Emscripten `locateFile` plus `mainScriptUrlOrBlob`/equivalent mappings for WASM and worker/AudioWorklet sidecars.
+- [x] 3.4 Add package-loader unit tests for valid builds, stale WASM, missing workers, wrong media types, hash mismatch, object-URL cleanup, and accidental document-relative sidecar resolution.
+- [x] 3.5 Extend the two-origin browser test server and generic fake app acceptance path to prove a cross-origin package starts inside a cross-origin-isolated launcher before miniapp tests run.
 
 ## 4. Selection activation and runtime ownership
 
