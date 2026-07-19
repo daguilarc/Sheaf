@@ -1,165 +1,129 @@
 # Synth Browser Runtime
 
-This directory builds and tests the Chrome-targeted static WebAssembly host for
-portable synth applications. It has no dynamic HTTP API, WebSocket service,
-native helper, or server-side synth process.
+This directory builds the Chrome-targeted static WebAssembly host for portable
+`SynthApplication`s. It has no dynamic HTTP API, WebSocket service, native
+helper, or server-side synth process. The catalog launcher is app-generic: the
+only checked-in first-party app knowledge is the declarative
+[`first-party-apps.json`](first-party-apps.json) manifest.
 
-The catalog contract and a multi-app publisher example are in
+The catalog contract and publisher procedures are in
 [docs/catalog-schema-v1.md](docs/catalog-schema-v1.md) and
 [docs/publisher-guide.md](docs/publisher-guide.md).
 
-## Browser And Hosting Requirements
+## Runtime contract
 
-- Use a current Chrome or Chromium release in a secure context. Production
-  deployments require HTTPS; loopback origins are suitable for local testing.
-- Serve the page with `Cross-Origin-Opener-Policy: same-origin` and
-  `Cross-Origin-Embedder-Policy: require-corp`. Cross-origin isolation is
-  mandatory for the `SharedArrayBuffer` audio bridge.
-- Allow MIDI for the site with `Permissions-Policy: midi=(self)`. The runtime
-  requests Web MIDI using `{ sysex: true }`, so the user must grant sysex
-  access before MIDI ports can come online.
-- Serve `.wasm` files as `application/wasm` and package JavaScript, including
-  worker and worklet sidecars, as `text/javascript`. All browser runtime files
-  are static assets; persistence remains in browser IDBFS/IndexedDB storage
+One catalog-selection gesture creates and resumes the host `AudioContext`
+before package work begins. Once the verified package module is initialized,
+the generic facade registers that *same* context through the module-local
+`emscriptenRegisterAudioObject` export and invokes the ABI-v2 native
+`_synth_browser_start_audio_worklet` export. Native Emscripten
+AudioWorklet callbacks execute the C++ `Runtime<App>::Process` path against
+the instance already used for UI, MIDI, patches, and controllers.
+
+This is callback-only audio. A package that lacks compatible context
+registration or native startup fails launch with a diagnostic before audio is
+reported online. There is no degraded fallback: the historical timer/ring
+sample transport and its production commands are removed, and the host never
+uses timer, animation-frame, message-loop, ScriptProcessor, or JavaScript
+sample-ring DSP production.
+
+Every first-party module shares `INITIAL_MEMORY=536870912`,
+`ALLOW_MEMORY_GROWTH=1`, and `MAXIMUM_MEMORY=2147483648`: 512 MiB initially,
+growable to 2 GiB. Application construction, persistence setup, and any needed
+growth finish before native callback startup; the callback must not allocate or
+grow memory.
+
+## Browser and hosting requirements
+
+- Use current Chrome or Chromium in a secure context. HTTPS is required in
+  production; loopback is suitable locally.
+- The launcher needs `Cross-Origin-Opener-Policy: same-origin`,
+  `Cross-Origin-Embedder-Policy: require-corp`, and
+  `Permissions-Policy: midi=(self)`. Cross-origin isolation is required by the
+  Emscripten worker/audio runtime. Web MIDI requests sysex access.
+- Serve `.wasm` as `application/wasm`, package JavaScript as
+  `text/javascript`, and serve publisher catalog/package responses with
+  `Access-Control-Allow-Origin: *`. Persistence is browser IDBFS/IndexedDB
   under `/data`.
-- The browser audio catalog exposes only `System Default` (`system_default`).
-  Named output selection and `AudioContext.setSinkId()` are intentionally not
-  used. Audio input is unsupported and remains skipped.
+- Browser audio exposes only `System Default` (`system_default`). Named output
+  selection and audio input are unsupported.
 
-These are static-only hosting requirements. Normal audio, MIDI, UI, patch, and
-configuration flows must not call application endpoints or open WebSockets.
+## Build and test
 
-## Build And Test
-
-Install the browser package dependencies, then run the complete TypeScript,
-generic-boundary, unit, and Playwright suite:
+Install dependencies and run the TypeScript, generic-boundary, Node, and
+Playwright suite:
 
 ```sh
 npm --prefix projects/synth/browser install
 npm --prefix projects/synth/browser test
 ```
 
-The Playwright suite always runs the generic fake-app acceptance gate before
-the miniapp smoke path. Without Emscripten, the deterministic facade and
-injectable-port coverage runs and the real-WASM miniapp test is reported as
-skipped.
-
-With `em++` available, build and run the real static artifacts through Make:
+With `em++` available, compile every configured first-party app from the
+manifest, then publish the validated Cloudflare launcher artifact:
 
 ```sh
-make -C projects/synth browser-fake-app-test
-make -C projects/synth browser-miniapp-smoke
-```
-
-The smoke target builds `dist/wasm/miniapp.js` solely from
-`cpp/miniapp_entry.cpp` plus the generic browser runtime sources. Its fake-app
-build/test prerequisite must succeed before the miniapp artifact is built and
-opened.
-
-## First-Party Catalog Publication
-
-Build the generic acceptance app and real miniapp, then assemble the exact
-Cloudflare Pages directory:
-
-```sh
-make -C projects/synth/browser browser-fake-app browser-miniapp
+make -C projects/synth/browser browser-apps
 npm --prefix projects/synth/browser run publish:site
 ```
 
-`dist/site` is replaced only after a staging tree passes reference, declared
-size, media-type, and SHA-256 validation. Repeating the command with identical
-inputs produces a byte-identical tree:
+`browser-apps` emits transient binding translation units under
+`dist/generated/browser-apps/`, compiles every manifest record through one
+generic recipe, and atomically replaces the complete emission report. The
+generated files are build artifacts, not source to edit or check in. A failing
+record leaves the last complete output intact.
 
-```text
-index.html
-catalog-sources.json
-catalogs/sheaf/catalog.json
-catalogs/sheaf/packages/miniapp/<content-build-id>/miniapp.js
-catalogs/sheaf/packages/miniapp/<content-build-id>/miniapp.wasm
-dist/src/
-rollback/direct-miniapp/
-_headers
+The first-party manifest currently contains ordinary Mini App and Braid 4
+records. The publisher consumes all validated emissions, not a privileged app,
+and atomically replaces `dist/site` only after verifying the complete catalog,
+every declared immutable package file, and a generic rollback page for every
+catalog app. `catalogVersion` is derived from the ordered complete app/build
+set; it is not a per-app build ID.
+
+## Publication roles and rollback
+
+Cloudflare Pages is the top-level launcher host. Its artifact includes the
+launcher, generic runtime modules, catalog, immutable packages, per-app
+rollback pages, and `_headers` policy. Cloudflare applies COOP
+(`Cross-Origin-Opener-Policy`), COEP (`Cross-Origin-Embedder-Policy`), and the
+MIDI `Permissions-Policy`. GitHub Pages is publisher-only: its artifact
+contains only the complete `catalogs/` tree and is fetched with CORS by the
+Cloudflare launcher.
+
+The preferred rollback is deployment-level: republish a previous known-good
+Cloudflare artifact. The current artifact also has one temporary direct page
+per catalog app at `rollback/apps/<app-id>/`; each page references that app's
+immutable package rather than copying application-specific files. Do not
+mutate a validated catalog or an older immutable package path in place.
+
+The repository validates local artifact structure, deterministic output, and
+loopback two-origin launches. It does not prove a live Cloudflare deployment or
+live GitHub Pages CORS/MIME behavior locally. The Pages workflow owns that
+post-deploy evidence: it validates the expected **whole catalogVersion** and
+every declared package response before its deployed-origin smoke.
+
+## GitHub Pages publisher
+
+Enable **Settings → Pages → Build and deployment → Source → GitHub Actions**
+once and keep the `github-pages` environment limited to the default branch. The
+workflow does not change repository settings or deploy feature branches. Its
+stable first-party catalog URL is
+`https://jvictor0.github.io/Sheaf/catalogs/sheaf/catalog.json`. This documents
+the configured publication contract and does not assert that a deployment is
+presently live.
+
+```sh
+npm --prefix projects/synth/browser run publish:pages
 ```
 
-The checked-in source list uses `catalogs/sheaf/catalog.json`, resolved against
-the deployed source-list URL. The catalog's `packages/...` records therefore
-resolve beside that catalog. The generated package declares entry, WASM,
-pthread worker, Wasm-worker, and AudioWorklet roles through the generic
-assembler. The current Emscripten emission has two physical files: the three
-worker/worklet roles deliberately alias the hashed `miniapp.js` bootstrap.
+This derives `dist/pages` from a validated `dist/site` and atomically replaces
+it with catalogs and immutable packages only. The workflow then passes the
+build's expected catalog version to `validate-deployed-catalog.mjs`; the
+validator rejects a deployment unless its complete catalog and every declared
+file are CORS-readable, correctly typed, size-matching, and SHA-256-matching.
+GitHub Pages platform limits are external service constraints; consult the
+[current GitHub Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
+before relying on the publisher. Published-site size, deployment duration,
+bandwidth, and rate limits can change independently of this repository.
 
-Production `index.html` is launcher-only. Startup downloads the source list and
-catalog metadata, but no package bytes. Selecting `sheaf/miniapp` downloads and
-verifies the immutable package through the same generic loader used for remote
-publishers. Launcher/runtime source contains no miniapp branch and has no
-dependency on the rollback directory or `dist/wasm/app.js`.
-
-The `_headers` file applies COOP, COEP, and the MIDI permission policy to every
-route. Additional catalog-package and rollback globs explicitly preserve WASM
-and JavaScript media types for entry, pthread/Wasm-worker, and AudioWorklet
-paths.
-
-## GitHub Pages Catalog Publisher
-
-The one-time repository setup is intentionally manual: in GitHub repository
-**Settings → Pages**, set **Build and deployment → Source** to **GitHub
-Actions**. Keep the `github-pages` environment limited to the default branch.
-The workflow does not enable Pages, change repository settings, or deploy from
-feature branches.
-
-Once repository Pages is enabled, the stable first-party catalog URL is:
-
-```text
-https://jvictor0.github.io/Sheaf/catalogs/sheaf/catalog.json
-```
-
-This URL documents the configured publication contract; it is not a claim that
-the deployment is currently live. `.github/workflows/synth-browser-pages.yml`
-builds and validates the existing Cloudflare artifact, derives `dist/pages`
-from it, and uploads catalogs and immutable packages only. The Pages artifact
-has no root launcher, `catalog-sources.json`, rollback page, runtime module
-tree, or Cloudflare-only `_headers` file. A publisher update changes the stable
-catalog's build record and adds a content-addressed package directory; it never
-mutates an older package directory.
-
-GitHub Pages also imposes platform quotas that this workflow does not bypass.
-Consult the [current GitHub Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
-before relying on the publisher: published-site size, deployment duration,
-bandwidth, and rate limits are external service constraints and can change
-independently of this repository.
-
-Every public catalog and package response must remain readable with
-`Access-Control-Allow-Origin: *`. Catalog file records declare the exact byte
-size, media type, and SHA-256 digest. Live JavaScript responses must use
-`text/javascript`, and live `.wasm` responses must use `application/wasm`.
-After deployment, the workflow passes the catalog URL and build ID explicitly
-to the validator, then runs the opt-in Chromium smoke with
-`SYNTH_BROWSER_REMOTE_CATALOG_URL` and `SYNTH_BROWSER_EXPECTED_BUILD_ID`.
-
-GitHub Pages remains a publisher origin, not the top-level runtime host. The
-Cloudflare site remains the launcher because its `_headers` contract supplies
-COOP (`Cross-Origin-Opener-Policy`), COEP
-(`Cross-Origin-Embedder-Policy`), and the Web MIDI `Permissions-Policy` needed
-by the cross-origin-isolated audio runtime. A Pages package is fetched with
-CORS and materialized by that isolated launcher.
-
-Local tests prove deterministic artifact contents, validator rejection paths,
-and a production-like two-origin launch. Local tests cannot prove live Pages
-CORS or MIME behavior; those live properties are proven only when CI validates
-the newly deployed Pages URL. This task also does not claim any live Cloudflare
-header behavior or a live deployment on either host.
-
-### Temporary Direct Rollback
-
-`dist/wasm/app.js` is only an input to the documented rollback bundle. The
-published `rollback/direct-miniapp/` contains `index.html`, `app.js`, the real
-`miniapp.js` worker/worklet bootstrap, and `miniapp.wasm`; no normal production
-asset references it.
-
-The preferred rollback is to republish the previous known-good Cloudflare
-Pages artifact. For a temporary direct rollback from the current artifact,
-make a copy of `dist/site`, replace that copy's root `index.html` with
-`rollback/direct-miniapp/index.html`, and copy the three rollback JS/WASM files
-to the copy's root before publishing the copy. Do not edit or overwrite the
-validated catalog artifact in place. Return to the launcher by republishing the
-unchanged validated `dist/site` output.
+Local checks cannot prove live Pages CORS or MIME behavior; only CI validates
+those properties after deployment. This documentation does not claim live Cloudflare header behavior or a live Cloudflare deployment.

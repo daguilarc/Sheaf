@@ -1,143 +1,99 @@
 # Browser catalog schema v1
 
-The launcher accepts only schema version `1` (`SUPPORTED_CATALOG_SCHEMA_VERSION`)
-and browser ABI, UI-protocol, and runtime-config versions `1`
-(`SUPPORTED_BROWSER_ABI_VERSION`, `SUPPORTED_UI_PROTOCOL_VERSION`, and
-`SUPPORTED_RUNTIME_CONFIG_VERSION`). This is a strict, closed JSON contract:
-every object below must contain exactly the listed fields; unknown and missing
-fields are rejected before an application is presented.
+The launcher accepts schema version `1`, browser ABI version `2`, UI protocol
+version `1`, and runtime-config version `1`. This is a strict closed JSON
+contract: every object must contain exactly its documented fields; missing or
+unknown fields are rejected before an app is presented.
 
 ## Trusted discovery
 
-`catalog-sources.json` is a nonempty JSON array of catalog URL strings. It is
-configured by the launcher deployment, so registering a URL is a trust decision:
-a publisher whose catalog is accepted can supply browser code that will execute
-after the user selects it. A source must be HTTPS, except that loopback HTTP
-(`127.0.0.1`, `localhost`, or `[::1]`) is allowed only for local browser tests;
-credentials and fragments are rejected. A relative source is allowed only when
-resolved against the fetched source-list URL, which is how a same-deployment
-list such as `catalogs/sheaf/catalog.json` works.
-
-The launcher fetches the list, then every registered catalog concurrently. A
-failed source becomes an independent `network-error` or `incompatible`
-diagnostic; healthy source apps remain available. Normal startup uses the
-browser's default cache mode and **Retry catalogs** uses `no-cache`, so a stable
-source URL can reveal a changed catalog without changing its registration.
+`catalog-sources.json` is a nonempty array of catalog URLs configured by the
+launcher deployment. Adding a URL is a host trust decision: an accepted
+publisher supplies code that can execute after selection. Sources must be
+HTTPS, except loopback HTTP for local tests; credentials and fragments are
+rejected. The launcher fetches every registered catalog concurrently, retains
+healthy catalogs when a sibling fails, and uses `no-cache` for **Retry
+catalogs**.
 
 ## Catalog JSON
 
 ```json
 {
   "schemaVersion": 1,
-  "catalogVersion": "release-2026-07-19",
+  "catalogVersion": "first-party-<digest-of-ordered-app-build-set>",
   "publisher": { "id": "example-labs", "name": "Example Labs" },
-  "apps": [
-    {
-      "appId": "tone-grid",
-      "displayName": "Tone Grid",
-      "author": "Example Labs",
-      "category": "Instrument",
-      "buildId": "a-content-derived-immutable-id",
-      "browser": {
-        "abiVersion": 1,
-        "uiProtocolVersion": 1,
-        "runtimeConfigVersion": 1,
-        "entry": "packages/tone-grid/a-content-derived-immutable-id/app.js",
-        "files": [
-          {
-            "path": "packages/tone-grid/a-content-derived-immutable-id/app.js",
-            "mediaType": "text/javascript",
-            "size": 1234,
-            "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-          }
-        ]
-      }
+  "apps": [{
+    "appId": "tone-grid",
+    "displayName": "Tone Grid",
+    "author": "Example Labs",
+    "category": "Instrument",
+    "buildId": "a-content-derived-immutable-id",
+    "browser": {
+      "abiVersion": 2,
+      "uiProtocolVersion": 1,
+      "runtimeConfigVersion": 1,
+      "entry": "packages/tone-grid/a-content-derived-immutable-id/app.js",
+      "files": [{
+        "path": "packages/tone-grid/a-content-derived-immutable-id/app.js",
+        "mediaType": "text/javascript",
+        "size": 1234,
+        "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      }]
     }
-  ]
+  }]
 }
 ```
 
-`catalogVersion` is a trimmed 1--128-character string. `publisher.id`,
-`appId`, and `buildId` are 1--200-character lowercase ASCII identifiers:
-letters or digits separated only by single hyphens. `publisher.name`,
-`displayName`, `author`, and `category` are trimmed, nonempty strings of at
-most 200 characters. `apps` is nonempty and may contain multiple apps, but
-their local `appId` values must be unique. `buildId` identifies an immutable
-build; it is not a mutable release label.
+`catalogVersion` is a trimmed 1--128-character string. For the first-party
+publisher it is deterministically derived from the entire ordered
+`{appId, buildId}` set, so it identifies the complete catalog publication, not
+one app. `publisher.id`, `appId`, and `buildId` are lowercase kebab-case
+identifiers. `apps` is nonempty with unique local app IDs. `buildId` identifies
+an immutable build; it is not a mutable release label.
 
 `browser` has exactly `abiVersion`, `uiProtocolVersion`,
-`runtimeConfigVersion`, `entry`, and `files`. Each version must exactly match
-the supported host value. `entry` and every file `path` are normalized relative
-paths: no slash prefix, traversal, empty segments, backslashes, percent escapes,
-query/fragment, or colon. They resolve relative to the **catalog response URL**,
-not the launcher page. `files` is nonempty, has unique paths, and each record
-has exactly these fields:
+`runtimeConfigVersion`, `entry`, and `files`; versions must match the host.
+Paths are normalized catalog-relative paths. `files` is nonempty with unique
+paths. Each record has `path`, `mediaType`, `size`, and `sha256`; accepted media
+types are `text/javascript`, `application/wasm`, and
+`application/octet-stream`. `entry` is a declared JavaScript file. The package
+root is `packages/<app-id>/<build-id>/`; every listed file must remain inside
+that immutable root.
 
-| Field | Required value |
-| --- | --- |
-| `path` | normalized catalog-relative package path |
-| `mediaType` | `text/javascript`, `application/wasm`, or `application/octet-stream` |
-| `size` | nonnegative safe-integer decoded byte count |
-| `sha256` | 64 lowercase hexadecimal SHA-256 digest of those decoded bytes |
+Roles such as entry, Wasm, pthread worker, Wasm worker, and AudioWorklet are
+assembler inputs, not catalog fields. Several roles may intentionally resolve
+to one emitted bootstrap file. The full `files` inventory is authoritative.
 
-`entry` must equal one declared file path whose media type is
-`text/javascript`. File records contain no role property. Roles are assembler
-inputs (`entry`, `wasm`, `pthreadWorker`, `wasmWorker`, `audioWorklet`) and each
-must reference a declared emitted file; several roles may intentionally alias
-one file, as the current Emscripten `miniapp.js` bootstrap does. The full file
-inventory, including sidecars and data files, is authoritative.
+## Runtime, identity, and audio
 
-## Registry, compatibility, and persistence
+An app identity is `<publisher-id>/<app-id>`. Compatible packages are loaded
+only after the host verifies every declared file's CORS response MIME, decoded
+size, and SHA-256, materializes typed object URLs, and maps all Emscripten
+sidecars explicitly. Integrity checks bytes; they are not a code sandbox.
 
-An app's global identity is `<publisher-id>/<app-id>`. Catalogs are processed
-in configured source order; the first accepted registration for a duplicate
-global identity wins and later copies become `duplicate-app` diagnostics.
-Accepted apps are displayed in deterministic code-unit order by `displayName`,
-then global identity. Different publishers may use the same local app ID.
+Selection synchronously acquires one host `AudioContext` before package work.
+The ABI-v2 generic module facade registers that same context with its
+module-local `emscriptenRegisterAudioObject` helper, then starts native Wasm
+AudioWorklet processing. Missing compatible context registration or native
+startup is a launch failure before audio is online. There is no timer, animation
+frame, message-loop, ScriptProcessor, or JavaScript sample-ring fallback.
 
-The browser package embeds its concrete application and selected Sheaf library
-or fork. The host negotiates only the stable ABI, UI command-buffer, and
-runtime-config boundary; it never silently relinks or upgrades an older package
-when host Sheaf changes. Version mismatch is rejected before module execution.
-Shared runtime configuration is host-owned, while app patches use
-`patches/<publisher-id>/<app-id>`. That root is stable across compatible
-`buildId` changes and isolates publishers from one another.
+Each package embeds its selected app and compatible Sheaf runtime. Patches live
+under `patches/<publisher-id>/<app-id>`, which isolates identities across
+builds. Only one app is active per navigation.
 
-## Immutable package loading
+## Hosting, evidence, and rollback
 
-The package root is `packages/<app-id>/<buildId>/`; every listed file and entry
-must be inside it. Package URLs are content-addressed by build ID and should be
-published as immutable. The loader CORS-fetches each declared file with omitted
-credentials, requires its response MIME essence to equal `mediaType`, then
-checks decoded `arrayBuffer()` size and SHA-256. Transfer `Content-Length` is
-only advisory because transfer encoding may be compressed.
+Cloudflare is the cross-origin-isolated launcher host and includes response
+headers, generic runtime modules, rollback pages, catalogs, and packages.
+GitHub Pages is a publisher-only catalog/package origin and must provide public
+CORS plus the exact declared JavaScript/Wasm MIME types. A local publication
+test proves artifact and loopback behavior, not either service's live behavior.
+The Pages CI workflow validates a deployed URL against the expected complete
+`catalogVersion`, then checks every declared package response and runs a
+deployed-origin smoke.
 
-After all verification succeeds, the loader creates typed object URLs for every
-file. It maps the entry module, main script, WASM, pthread worker, Wasm worker,
-and AudioWorklet sidecars through the explicit Emscripten `locateFile` mapping;
-verified `new URL(..., import.meta.url)` sidecars are rewritten to those URLs.
-This avoids document-relative or direct cross-origin Worker/AudioWorklet loads.
-Object URLs remain alive for the selected app and are revoked exactly once on
-disposal. Integrity proves bytes only: it is not a code sandbox.
-
-Only one app is active per navigation. Selection begins host-owned audio and
-sysex MIDI activation in that user gesture, before package work; returning to
-the launcher is a top-level navigation/reload that releases the prior audio and
-MIDI ownership. The running runtime owns the root after selection, so the
-launcher does not render an in-page return control into that runtime surface.
-
-## Updates and operating limits
-
-Keep catalog URLs stable and retryable; update their JSON to list a new app or
-build, never alter an old package root. Startup fetches only source-list and
-catalog metadata, not package bytes. A catalog update can therefore reveal a
-new compatible app/build without rebuilding launcher JavaScript.
-
-The Cloudflare publication is the cross-origin-isolated launcher and first-party
-publisher: it owns COOP, COEP, and Web MIDI headers. GitHub Pages is a
-publisher-only catalog/package origin. It must send `Access-Control-Allow-Origin: *`,
-`text/javascript` for JS, and `application/wasm` for WASM; its post-deploy
-validator and Chromium smoke are CI evidence, not a claim that either site is
-currently live. Audio and MIDI remain host-owned. The operational rollback
-boundary is republishing a known-good validated launcher artifact; immutable
-package paths are not rewritten in place.
+Republish a known-good Cloudflare artifact to roll back. Immutable package
+paths and validated catalog artifacts are never edited in place. The
+Cloudflare artifact also supplies one generic direct rollback page per catalog
+app at `rollback/apps/<app-id>/`.

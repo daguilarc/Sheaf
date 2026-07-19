@@ -1,124 +1,100 @@
 # Publishing a browser catalog
 
-This guide describes a separate repository publishing multiple packages for a
-launcher that has already chosen to trust its catalog URL. Publisher updates do
-not automatically register themselves: a launcher operator must manually add
-the stable catalog URL to its trusted `catalog-sources.json` deployment.
+A launcher operator separately registers a stable catalog URL in its trusted
+`catalog-sources.json`. That registration is a host trust decision; publishing
+or updating a catalog does not add it to launchers automatically.
 
-## Immutable publisher tree
+## Add a first-party application
 
-For a publisher called `example-labs`, publish this tree at one HTTPS origin:
-
-```text
-catalogs/example-labs/catalog.json
-catalogs/example-labs/packages/tone-grid/<build-id>/app.js
-catalogs/example-labs/packages/tone-grid/<build-id>/app.wasm
-catalogs/example-labs/packages/delay-lab/<build-id>/app.js
-catalogs/example-labs/packages/delay-lab/<build-id>/app.wasm
-```
-
-Each `<build-id>` is content-derived and immutable. Never replace a file in a
-published build root. Publish a new root and change the stable catalog instead.
-Every emitted dependency needed by an Emscripten app--including data files,
-pthread/Wasm-worker, and AudioWorklet sidecars--must appear in that app's
-`files` array. The current first-party build aliases its three worker/worklet
-roles to the entry bootstrap; a different build may publish separate files.
-
-Use the repository assembler where possible; it inventories bytes, calculates
-SHA-256, derives the build ID, copies the immutable tree, and prints a browser
-record:
-
-```sh
-node projects/synth/browser/dist/src/package-app.mjs \
-  --app-id tone-grid --source-dir build/tone-grid --output-dir publish/catalogs/example-labs \
-  --entry app.js --wasm app.wasm --pthread-worker app.js --wasm-worker app.js --audio-worklet app.js
-```
-
-For an independent implementation, calculate `size` from the exact emitted
-bytes and use a lowercase digest, for example `wc -c < app.js` and
-`shasum -a 256 app.js`. The build-ID algorithm used here hashes each sorted
-inventory record's path, media type, size, and SHA-256, so use the supplied
-assembler if compatibility with this publisher layout matters.
-
-## Complete schema-v1 multi-app catalog
-
-Replace every illustrative digest and build ID below with real content-derived
-values before publishing. All paths resolve relative to `catalog.json`.
+One conforming first-party application is onboarded by adding **one record** to
+[`first-party-apps.json`](../first-party-apps.json). The record contains exactly
+the catalog metadata and compile-time C++ identity used by the shared builder:
 
 ```json
 {
-  "schemaVersion": 1,
-  "catalogVersion": "release-1",
-  "publisher": { "id": "example-labs", "name": "Example Labs" },
-  "apps": [
-    {
-      "appId": "tone-grid", "displayName": "Tone Grid", "author": "Example Labs", "category": "Instrument",
-      "buildId": "tone-grid-build-1",
-      "browser": {
-        "abiVersion": 1, "uiProtocolVersion": 1, "runtimeConfigVersion": 1,
-        "entry": "packages/tone-grid/tone-grid-build-1/app.js",
-        "files": [
-          { "path": "packages/tone-grid/tone-grid-build-1/app.js", "mediaType": "text/javascript", "size": 1234, "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" },
-          { "path": "packages/tone-grid/tone-grid-build-1/app.wasm", "mediaType": "application/wasm", "size": 5678, "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789" }
-        ]
-      }
-    },
-    {
-      "appId": "delay-lab", "displayName": "Delay Lab", "author": "Example Labs", "category": "Effect",
-      "buildId": "delay-lab-build-1",
-      "browser": {
-        "abiVersion": 1, "uiProtocolVersion": 1, "runtimeConfigVersion": 1,
-        "entry": "packages/delay-lab/delay-lab-build-1/app.js",
-        "files": [
-          { "path": "packages/delay-lab/delay-lab-build-1/app.js", "mediaType": "text/javascript", "size": 2345, "sha256": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210" },
-          { "path": "packages/delay-lab/delay-lab-build-1/app.wasm", "mediaType": "application/wasm", "size": 6789, "sha256": "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff" }
-        ]
-      }
-    }
-  ]
+  "appId": "tone-grid",
+  "displayName": "Tone Grid",
+  "author": "Example Labs",
+  "category": "Instrument",
+  "header": "ToneGrid.hpp",
+  "cppType": "example::ToneGrid",
+  "includeDirs": ["../apps/tone-grid"]
 }
 ```
 
-The example's IDs are schema-valid placeholders, but the hashes are deliberately
-not usable package values. The launcher rejects a package whose fetched,
-decoded bytes, MIME type, size, or SHA-256 differ from its record.
+`appId` is lowercase kebab case; metadata strings are trimmed and nonempty;
+`cppType` is a qualified C++ identifier; and header/include paths must resolve
+within the allowed application source roots. Duplicate IDs, unknown fields,
+missing fields, invalid identifiers, missing headers, and source-root escapes
+fail before any publication artifact is produced.
 
-## GitHub Pages publisher workflow
+Then run:
 
-Adapt [the repository workflow](../../../../.github/workflows/synth-browser-pages.yml)
-for the publishing repository: pin setup actions, build package emissions, run
-the local gates, make the publisher-only artifact, then upload it through the
-official Pages actions. Enable **Settings → Pages → Build and deployment →
-GitHub Actions** once for that repository; the workflow does not turn Pages on
-for you. Its artifact must contain catalogs/packages only--no launcher,
-`_headers`, or runtime modules.
+```bash
+make -C projects/synth/browser browser-apps
+npm --prefix projects/synth/browser run publish:site
+```
 
-Every public catalog and package response needs `Access-Control-Allow-Origin: *`.
-Serve JS as `text/javascript`, WASM as `application/wasm`, and other declared
-files with their exact manifest MIME type. After deployment, run the validator
-against the actual catalog URL and expected build ID; it verifies CORS, MIME,
-immutable-root membership, size, and SHA-256:
+The builder sorts valid records by app ID, generates a transient binding under
+`dist/generated/browser-apps/` that invokes `SYNTH_BROWSER_APP(<cppType>)`, and
+compiles all records through the same ABI-v2 runtime, exports, workers/worklet
+policy, and memory flags. Do not add an entry `.cpp`, Make target, package
+branch, deployment branch, or custom audio integration for an app.
 
-```sh
+Mini App and Braid 4 are the reference ordinary records. Both use the same
+launcher path, generic runtime host, immutable package assembler, and
+per-identity persistence root. Every module starts with 512 MiB, can grow to
+2 GiB, and completes initialization and any required growth before native
+audio starts.
+
+## Publish atomically
+
+The generic catalog assembler consumes the complete validated manifest and its
+matching emission report. It validates every app's declared emitted artifacts,
+packages each under `packages/<app-id>/<build-id>/`, and writes one ordered
+catalog. The first-party `catalogVersion` hashes the complete ordered
+app/build set. A compile, undeclared-file, missing-file, or package-validation
+failure prevents replacement of the last complete output; it never publishes a
+partial catalog.
+
+`publish:site` stages and validates the full Cloudflare artifact before an
+atomic replacement of `dist/site`. It includes launcher assets, generic runtime
+modules, the complete catalog and packages, `_headers`, and exactly one direct
+rollback page at `rollback/apps/<app-id>/` for each catalog record. The
+rollback page references the app's immutable package; no per-app copied
+browser program is required.
+
+Use deployment rollback for recovery: republish a previous known-good
+Cloudflare artifact. Do not overwrite an existing immutable package or edit a
+validated catalog in place.
+
+## Cloudflare launcher and GitHub Pages publisher
+
+Cloudflare Pages hosts the top-level launcher and owns the COOP, COEP, and MIDI
+permission headers required by the isolated runtime. GitHub Pages hosts a
+publisher-only artifact created with:
+
+```bash
+npm --prefix projects/synth/browser run publish:pages
+```
+
+`dist/pages` contains only the complete `catalogs/` tree. It has no launcher,
+runtime module tree, `_headers`, or rollback pages. Public catalog/package
+responses need `Access-Control-Allow-Origin: *`, `text/javascript` for
+JavaScript, and `application/wasm` for Wasm.
+
+Enable GitHub Pages once in repository settings with **Build and deployment →
+GitHub Actions**. The workflow builds packages, publishes the Pages artifact,
+and after deployment passes the expected complete catalog version to:
+
+```bash
 node projects/synth/browser/src/validate-deployed-catalog.mjs \
   --catalog-url https://example.github.io/apps/catalogs/example-labs/catalog.json \
-  --expected-build-id tone-grid-build-1
+  --expected-catalog-version first-party-<complete-catalog-digest>
 ```
 
-For a local, non-deploying equivalent, build the first-party artifact and run
-the two-origin/deployed-origin tests; those use loopback and prove the loader
-path, not live Pages behavior:
-
-```sh
-make -C projects/synth/browser browser-fake-app browser-miniapp
-npm --prefix projects/synth/browser run publish:site
-npm --prefix projects/synth/browser run publish:pages
-npx --prefix projects/synth/browser playwright test tests/two-origin-package.spec.ts tests/deployed-origin.spec.ts
-```
-
-To trust the publisher, the launcher operator independently adds, for example,
-`https://example.github.io/apps/catalogs/example-labs/catalog.json` to its
-source list. Subsequent edits to that publisher's stable catalog automatically
-appear on launcher refresh/retry; adding the publisher URL itself is always a
-manual host registration and grants the publisher the ability to execute code
-after selection. Integrity checking is not isolation or sandboxing.
+The validator checks the whole deployed catalog version, each declared package
+file's CORS, MIME, decoded size, and SHA-256; the following CI job runs the
+deployed-origin Chromium smoke. Local commands prove staged artifacts and
+loopback behavior only. They do not prove live Pages CORS/MIME, live Cloudflare
+headers, or that either deployment is currently live.
