@@ -7,10 +7,10 @@
 
 ## 2. Declarative Generic App Builder
 
-- [ ] 2.1 Add failing manifest-validation and generated-binding tests covering required metadata, compile identity, duplicate IDs, path safety, unsupported fields, and generic-boundary enforcement.
-- [ ] 2.2 Introduce one first-party app build manifest and a generic builder that emits transient `SYNTH_BROWSER_APP` translation units and structured app emissions.
-- [ ] 2.3 Apply the uniform 512 MiB initial, growable-to-2 GiB memory policy and common runtime sources/exports/worker settings to every manifest record.
-- [ ] 2.4 Replace handwritten Mini App entry/build plumbing with a Mini App manifest record and prove application code remains unchanged.
+- [x] 2.1 Add failing manifest-validation and generated-binding tests covering required metadata, compile identity, duplicate IDs, path safety, unsupported fields, and generic-boundary enforcement.
+- [x] 2.2 Introduce one first-party app build manifest and a generic builder that emits transient `SYNTH_BROWSER_APP` translation units and structured app emissions.
+- [x] 2.3 Apply the uniform 512 MiB initial, growable-to-2 GiB memory policy and common runtime sources/exports/worker settings to every manifest record.
+- [x] 2.4 Replace handwritten Mini App entry/build plumbing with a Mini App manifest record and prove application code remains unchanged.
 
 ## 3. Generic Multi-App Packaging
 
