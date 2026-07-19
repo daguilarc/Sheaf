@@ -28,7 +28,7 @@ test("routes a portable action through the runtime worker facade without app HTM
       runtimeConfigVersion: 1,
       create() { calls.push(["create"]); return nextHandle++; },
       audioOutputChannels(handle: number) { calls.push(["audioOutputChannels", handle]); return 2; },
-      initialize(handle: number, dataRoot: string) { calls.push(["initialize", handle, dataRoot]); return 0; },
+      initialize(handle: number, identity: unknown) { calls.push(["initialize", handle, identity]); return 0; },
       prepare(handle: number, sampleRate: number, blockSize: number) { calls.push(["prepare", handle, sampleRate, blockSize]); return 0; },
       process(handle: number, frames: number, timestampMicros: number) { calls.push(["process", handle, frames, timestampMicros]); return 0; },
       startAudioWorklet(handle: number) { calls.push(["startAudioWorklet", handle]); return 0; },
@@ -40,7 +40,10 @@ test("routes a portable action through the runtime worker facade without app HTM
 
     await worker.handle({ type: "load", module: { entryUrl: "blob:test", locateFile: {}, mainScriptUrlOrBlob: "blob:test" } });
     await worker.handle({ type: "create" });
-    await worker.handle({ type: "initialize", dataRoot: "/runtime-data" });
+    await worker.handle({
+      type: "initialize",
+      identity: { publisherId: "example", appId: "portable-app", runtimeConfigVersion: 1 },
+    });
     await worker.handle({ type: "prepare", sampleRate: 48000, blockSize: 128 });
     await worker.handle({ type: "process", frames: 128, timestampMicros: 10 });
     await worker.handle({ type: "start-audio-worklet" });
@@ -54,7 +57,8 @@ test("routes a portable action through the runtime worker facade without app HTM
 
   expect(result.uiFrame).toEqual({ type: "ui-frame", frame: Array.from(new Uint8Array(frame)) });
   expect(result.calls).toEqual([
-    ["create"], ["initialize", 1, "/runtime-data"], ["prepare", 1, 48000, 128], ["process", 1, 128, 10],
+    ["create"], ["initialize", 1, { publisherId: "example", appId: "portable-app", runtimeConfigVersion: 1 }],
+    ["prepare", 1, 48000, 128], ["process", 1, 128, 10],
     ["startAudioWorklet", 1],
     ["messageTick", 1, 11], ["dispatchAction", 1, "generic.trigger", "pressed"],
     ["buildUiFrame", 1], ["buildUiFrame", 1], ["destroy", 1],
@@ -153,7 +157,7 @@ test("main bootstrap composes runtime, UI, audio channels, and actions generical
         },
         create() { calls.push(["create"]); return 11; },
         audioOutputChannels(handle: number) { calls.push(["audioOutputChannels", handle]); return 1; },
-        initialize(handle: number, dataRoot: string) { calls.push(["initialize", handle, dataRoot]); return 0; },
+        initialize(handle: number, identity: unknown) { calls.push(["initialize", handle, identity]); return 0; },
         prepare(handle: number, sampleRate: number, blockSize: number) { calls.push(["prepare", handle, sampleRate, blockSize]); return 0; },
         process() { return 0; },
         startAudioWorklet(handle: number) { calls.push(["startAudioWorklet", handle]); return 0; },

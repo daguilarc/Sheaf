@@ -1,4 +1,10 @@
+import { validateBrowserRuntimeIdentity } from "./catalog.js";
+import type { BrowserRuntimeIdentity } from "./catalog.js";
+
 export const BROWSER_DATA_ROOT = "/data";
+export const BROWSER_PATCHES_ROOT = `${BROWSER_DATA_ROOT}/patches`;
+export const BROWSER_LOGS_ROOT = `${BROWSER_DATA_ROOT}/logs`;
+export const BROWSER_CONFIG_FILE = `${BROWSER_DATA_ROOT}/config.json`;
 export const BROWSER_PERSISTENCE_STATUS_PATH = "runtime.file.status";
 
 export type BrowserPersistencePaths = {
@@ -19,8 +25,19 @@ export type BrowserPersistenceStatus = "persistence pending" | "persistence succ
 export type BrowserPersistenceOptions = { debounceMs?: number };
 export type BrowserPersistenceFactory = (
   filesystem: BrowserFileSystem,
+  identity: BrowserRuntimeIdentity,
   reportStatus: (status: BrowserPersistenceStatus) => void,
 ) => BrowserPersistence;
+
+export function deriveBrowserPersistencePaths(identity: unknown): BrowserPersistencePaths {
+  const validated = validateBrowserRuntimeIdentity(identity);
+  return Object.freeze({
+    dataRoot: BROWSER_DATA_ROOT,
+    patchesRoot: `${BROWSER_PATCHES_ROOT}/${validated.publisherId}/${validated.appId}`,
+    logsRoot: BROWSER_LOGS_ROOT,
+    configFile: BROWSER_CONFIG_FILE,
+  });
+}
 
 function isAlreadyPresent(error: unknown): boolean {
   return error instanceof Error && /exist|busy/i.test(error.message);
@@ -39,12 +56,8 @@ function normalizePatchPath(path: string): string {
 }
 
 export class BrowserPersistence {
-  readonly paths: BrowserPersistencePaths = {
-    dataRoot: BROWSER_DATA_ROOT,
-    patchesRoot: `${BROWSER_DATA_ROOT}/patches`,
-    logsRoot: `${BROWSER_DATA_ROOT}/logs`,
-    configFile: `${BROWSER_DATA_ROOT}/config.json`,
-  };
+  readonly paths: BrowserPersistencePaths;
+  private readonly identity: BrowserRuntimeIdentity;
   private readonly debounceMs: number;
   private started = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -52,9 +65,12 @@ export class BrowserPersistence {
 
   constructor(
     private readonly filesystem: BrowserFileSystem,
+    identity: unknown,
     options: BrowserPersistenceOptions = {},
     private readonly reportStatus: (status: BrowserPersistenceStatus) => void = () => {},
   ) {
+    this.identity = validateBrowserRuntimeIdentity(identity);
+    this.paths = deriveBrowserPersistencePaths(this.identity);
     this.debounceMs = options.debounceMs ?? 100;
   }
 
@@ -63,6 +79,8 @@ export class BrowserPersistence {
     try {
       this.ensureDirectory(this.paths.dataRoot);
       this.filesystem.mount(this.filesystem.filesystems.IDBFS, {}, this.paths.dataRoot);
+      this.ensureDirectory(BROWSER_PATCHES_ROOT);
+      this.ensureDirectory(`${BROWSER_PATCHES_ROOT}/${this.identity.publisherId}`);
       this.ensureDirectory(this.paths.patchesRoot);
       this.ensureDirectory(this.paths.logsRoot);
       this.setStatus("persistence pending");

@@ -533,6 +533,50 @@ void TestBrowserContractVersionsAreReadableBeforeRuntimeCreation()
             "browser runtime-config version is available before runtime creation");
 }
 
+void TestBrowserPersistenceIdentityDerivesSharedAndIsolatedRoots()
+{
+    const synth::RuntimeDataPaths first =
+        synth_browser::BrowserPersistentDataPaths("sheaf", "miniapp", 1);
+    const synth::RuntimeDataPaths updated =
+        synth_browser::BrowserPersistentDataPaths("sheaf", "miniapp", 1);
+    const synth::RuntimeDataPaths otherPublisher =
+        synth_browser::BrowserPersistentDataPaths("friend", "miniapp", 1);
+
+    Require(first.dataRoot == "/data", "browser persistence mounts the shared /data root");
+    Require(first.configFile == "/data/config.json", "browser runtime config is shared");
+    Require(first.logsRoot == "/data/logs", "browser logs root is shared");
+    Require(first.patchesRoot == "/data/patches/sheaf/miniapp",
+            "browser patches use publisher and app identity");
+    Require(updated.patchesRoot == first.patchesRoot,
+            "browser patch root is stable across builds because build identity is absent");
+    Require(otherPublisher.patchesRoot == "/data/patches/friend/miniapp",
+            "publishers with the same app id have distinct patch roots");
+    Require(otherPublisher.configFile == first.configFile,
+            "compatible applications share browser runtime config");
+
+    bool rejectedTraversal = false;
+    try
+    {
+        (void)synth_browser::BrowserPersistentDataPaths("../sheaf", "miniapp", 1);
+    }
+    catch (const std::invalid_argument&)
+    {
+        rejectedTraversal = true;
+    }
+    Require(rejectedTraversal, "browser persistence rejects invalid publisher path components");
+
+    bool rejectedVersion = false;
+    try
+    {
+        (void)synth_browser::BrowserPersistentDataPaths("sheaf", "miniapp", 2);
+    }
+    catch (const std::invalid_argument&)
+    {
+        rejectedVersion = true;
+    }
+    Require(rejectedVersion, "browser persistence rejects incompatible runtime-config versions");
+}
+
 }  // namespace
 
 int main()
@@ -542,6 +586,7 @@ int main()
     static_assert(!synth_browser::BrowserApplication<MissingSurface>);
     static_assert(!synth::SynthApplication<MissingSurface>);
     TestBrowserContractVersionsAreReadableBeforeRuntimeCreation();
+    TestBrowserPersistenceIdentityDerivesSharedAndIsolatedRoots();
     TestBrowserRuntimeUsesSharedFrameAndActionRouting();
     TestBrowserPrepareFeedsNegotiatedAudioPageAndRejectsOversizedBlocks();
     TestNativeBuildRejectsBrowserAudioWorkletStart();

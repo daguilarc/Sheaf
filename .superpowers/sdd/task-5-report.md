@@ -88,3 +88,79 @@ Result before commit: exit `0`, no output. The staged scope contained exactly fi
 ## Concerns
 
 None. Task 1 already supplied the underlying three-entry catalog and enum conversion; this task intentionally builds on it and adds the missing presentation cue plus end-to-end edit-session/runtime proof.
+
+# Browser App Catalog Task 5: Persistence Contract
+
+## Status
+
+DONE — OpenSpec 5.1–5.3 implemented and locally verified. OpenSpec task checkboxes were intentionally left unchanged for review.
+
+## Contract Implemented
+
+- Added one exact browser runtime identity record: `{publisherId, appId, runtimeConfigVersion}`.
+- Catalog identity extraction and every worker initialization command validate that record before it can be used as a persistence namespace.
+- Removed the free-form `dataRoot` initialization argument from the TypeScript worker facade and native browser ABI.
+- Mounted one shared IDBFS at `/data` and retained shared `/data/config.json` and `/data/logs` paths.
+- Derived app patches only as `/data/patches/<publisher>/<app>`, creating the publisher/app directories under the shared mount.
+- Excluded build ID from the initialization and persistence APIs, so immutable build updates retain one app patch root while publishers using the same app ID remain isolated.
+- Revalidated identity and runtime-config version in native code before setting `RuntimeDataPaths` or starting the runtime.
+- Deferred persistence construction until the validated initialize command, preserving populate sync before native initialization and existing debounced dirty writes.
+
+## RED Evidence
+
+Native command:
+
+```sh
+make -C projects/synth browser-unit-test
+```
+
+Result: exit `2`. The new native contract assertions failed compilation because `BrowserPersistentDataPaths` had no identity-aware overload and accepted only the old zero-argument shared path API.
+
+Browser command (unchanged test command rerun outside the macOS Chromium sandbox after the sandboxed launch was denied):
+
+```sh
+cd projects/synth/browser
+npx playwright test tests/persistence.spec.ts
+```
+
+Result: exit `1`, five behavioral failures. The meaningful failures included the missing `runtimeIdentityForCatalogApp`, missing app-isolated roots, the old persistence constructor/initialization boundary, and failure to reject runtime-config version 2 before persistence setup. The first sandboxed attempt failed before test execution with the macOS `MachPortRendezvousServer` permission denial and is not counted as behavioral RED evidence.
+
+## GREEN Evidence
+
+```sh
+make -C projects/synth browser-unit-test
+```
+
+Result: exit `0`; `build/browser_runtime_contract_tests` passed.
+
+```sh
+cd projects/synth/browser
+npm run test:unit
+npm run check:generic-runtime
+npx playwright test tests/persistence.spec.ts
+```
+
+Results: 31/31 Node tests passed, generic-runtime boundary check passed, and 5/5 focused persistence tests passed.
+
+Additional browser verification:
+
+```sh
+npx playwright test tests/runtime-core.spec.ts tests/audio-flow.spec.ts \
+  tests/midi-flow.spec.ts tests/static-site.spec.ts tests/persistence.spec.ts
+npx playwright test
+```
+
+Results: 29/29 affected browser tests passed and the complete Playwright gate passed 96/96.
+
+The first complete run found the real-WASM restart test using a miniapp artifact older than the changed native ABI. `make -n browser-miniapp` and file timestamps confirmed the artifact was stale: its old initializer treated the publisher string as a free-form root and wrote outside mounted `/data`. Rebuilding the fake app and miniapp with the new ABI made the focused restart gate and complete browser gate pass without an additional source fix.
+
+## Files Changed
+
+- Browser identity, initialization, persistence, and ABI code under `projects/synth/browser/src`, `projects/synth/browser/cpp`, and `projects/synth/include/synth/browser`.
+- Persistence/native contract tests plus existing audio, MIDI, runtime-core, and static-site fixtures updated to use the structured initialization record.
+- No OpenSpec checkbox or `.superpowers/sdd/progress.md` changes.
+- The pre-existing untracked `projects/synth/browser/package-lock.json` and `projects/synth/miniapp/` were not staged.
+
+## Concerns
+
+Plain Playwright discovery also imports the repository's Node `*.test.mjs` files and can print a non-gating parallel `package-app` failure marker even when Playwright exits successfully. The canonical serial Node gate (`npm run test:unit`) passes 31/31, and all 96 Playwright tests pass. This appears to be pre-existing runner-discovery noise, not a Task 5 persistence failure.

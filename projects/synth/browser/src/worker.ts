@@ -5,6 +5,8 @@ import {
   SharedRingBuffer,
 } from "./protocol.js";
 import type { AudioBridgeDescriptor, MidiAction, MidiEndpoint, MidiOutput } from "./protocol.js";
+import { validateBrowserRuntimeIdentity } from "./catalog.js";
+import type { BrowserRuntimeIdentity } from "./catalog.js";
 import { BROWSER_PERSISTENCE_STATUS_PATH, BrowserPersistence } from "./persistence.js";
 import type { BrowserFileSystem, BrowserPersistenceFactory } from "./persistence.js";
 import { normalizeMaterializedPath, type MaterializedRuntimeModule } from "./package-loader.js";
@@ -12,7 +14,7 @@ import { normalizeMaterializedPath, type MaterializedRuntimeModule } from "./pac
 export type RuntimeCommand =
   | { type: "load"; module: MaterializedRuntimeModule; versions?: RuntimeVersions }
   | { type: "create" }
-  | { type: "initialize"; dataRoot: string }
+  | { type: "initialize"; identity: BrowserRuntimeIdentity }
   | { type: "audio-config" }
   | { type: "prepare"; sampleRate: number; blockSize: number }
   | { type: "process"; frames: number; timestampMicros: number }
@@ -51,7 +53,7 @@ export interface RuntimeModuleFacade {
   filesystem?: BrowserFileSystem;
   create(): number;
   audioOutputChannels(handle: number): number;
-  initialize(handle: number, dataRoot: string): number;
+  initialize(handle: number, identity: BrowserRuntimeIdentity): number;
   prepare(handle: number, sampleRate: number, blockSize: number): number;
   process(handle: number, frames: number, timestampMicros: number): number;
   renderAudio?(handle: number, channels: number, frames: number, timestampMicros: number): { status: number; outputs: Float32Array[] };
@@ -115,7 +117,12 @@ type EmscriptenModule = {
   _synth_browser_runtime_config_version(): number;
   _synth_browser_create(): number;
   _synth_browser_audio_output_channels(handle: number): number;
-  _synth_browser_initialize(handle: number, dataRoot: number): number;
+  _synth_browser_initialize(
+    handle: number,
+    publisherId: number,
+    appId: number,
+    runtimeConfigVersion: number,
+  ): number;
   _synth_browser_prepare(handle: number, sampleRate: number, blockSize: number): number;
   _synth_browser_process(handle: number, outputs: number, outputChannels: number, frames: number, timestampMicros: bigint): number;
   _synth_browser_start_audio_worklet?(handle: number): number;
@@ -180,7 +187,9 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
     runtimeConfigVersion: module._synth_browser_runtime_config_version(),
     create: () => module._synth_browser_create(),
     audioOutputChannels: (handle) => module._synth_browser_audio_output_channels(handle),
-    initialize: (handle, dataRoot) => withUtf8(module, dataRoot, (root) => module._synth_browser_initialize(handle, root)),
+    initialize: (handle, identity) => withUtf8(module, identity.publisherId, (publisherId) =>
+      withUtf8(module, identity.appId, (appId) =>
+        module._synth_browser_initialize(handle, publisherId, appId, identity.runtimeConfigVersion))),
     prepare: (handle, sampleRate, blockSize) => module._synth_browser_prepare(handle, sampleRate, blockSize),
     process: (handle, frames, timestampMicros) => module._synth_browser_process(handle, 0, 0, frames, BigInt(timestampMicros)),
     startAudioWorklet: module._synth_browser_start_audio_worklet
@@ -341,11 +350,7 @@ export class BrowserRuntimeWorker {
         {
           const module = await this.loadModule(command.module);
           negotiateRuntimeVersions(module, command.versions);
-          const persistence = module.filesystem ? (this.createPersistence ?? defaultPersistenceFactory)(module.filesystem, (status) => {
-            this.emitStatus({ type: "page-status", path: BROWSER_PERSISTENCE_STATUS_PATH, status });
-          }) : undefined;
           this.module = module;
-          this.persistence = persistence;
           return { type: "ok" };
         }
         case "create": {
@@ -356,11 +361,20 @@ export class BrowserRuntimeWorker {
           return { type: "created", handle: this.handleValue };
         }
         case "initialize": {
-          if (this.persistence) {
-            await this.persistence.start();
-            return this.call((module, handle) => module.initialize(handle, this.persistence!.paths.dataRoot));
+          const identity = validateBrowserRuntimeIdentity(command.identity);
+          const module = this.requireModule();
+          if (module.filesystem) {
+            const persistence = (this.createPersistence ?? defaultPersistenceFactory)(
+              module.filesystem,
+              identity,
+              (status) => {
+                this.emitStatus({ type: "page-status", path: BROWSER_PERSISTENCE_STATUS_PATH, status });
+              },
+            );
+            await persistence.start();
+            this.persistence = persistence;
           }
-          return this.call((module, handle) => module.initialize(handle, command.dataRoot));
+          return this.call((loadedModule, handle) => loadedModule.initialize(handle, identity));
         }
         case "audio-config":
           return { type: "audio-config", channels: this.requireModule().audioOutputChannels(this.requireHandle()) };
@@ -472,8 +486,12 @@ export class BrowserRuntimeWorker {
   }
 }
 
-function defaultPersistenceFactory(filesystem: BrowserFileSystem, reportStatus: (status: string) => void): BrowserPersistence {
-  return new BrowserPersistence(filesystem, {}, reportStatus);
+function defaultPersistenceFactory(
+  filesystem: BrowserFileSystem,
+  identity: BrowserRuntimeIdentity,
+  reportStatus: (status: string) => void,
+): BrowserPersistence {
+  return new BrowserPersistence(filesystem, identity, {}, reportStatus);
 }
 
 type WorkerScope = {
@@ -485,7 +503,7 @@ type WorkerScope = {
 export function installBrowserRuntimeWorker(scope: WorkerScope, loadModule: RuntimeModuleLoader = loadEmscriptenRuntime) {
   const runtime = new BrowserRuntimeWorker(
     loadModule,
-    (filesystem, reportStatus) => new BrowserPersistence(filesystem, {}, reportStatus),
+    (filesystem, identity, reportStatus) => new BrowserPersistence(filesystem, identity, {}, reportStatus),
     (response) => scope.postMessage(response),
   );
   scope.addEventListener("message", (event: MessageEvent<RuntimeCommand>) => {

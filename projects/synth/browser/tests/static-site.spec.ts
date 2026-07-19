@@ -56,7 +56,7 @@ test("normal generic browser flows make no backend or WebSocket requests beyond 
   await page.goto("http://127.0.0.1:4174/public/index.html");
   await page.evaluate(async () => {
     const { BrowserPersistence } = await (new Function("return import('/dist/src/persistence.js')")() as Promise<{
-      BrowserPersistence: new (filesystem: unknown, options: unknown) => unknown;
+      BrowserPersistence: new (filesystem: unknown, identity: unknown, options: unknown, reportStatus: unknown) => unknown;
     }>);
     const { BrowserRuntimeWorker } = await (new Function("return import('/dist/src/worker.js')")() as Promise<{
       BrowserRuntimeWorker: new (loadModule: unknown, createPersistence: unknown) => { handle(command: unknown): Promise<unknown> };
@@ -64,17 +64,20 @@ test("normal generic browser flows make no backend or WebSocket requests beyond 
     const filesystem = {
       filesystems: { IDBFS: "idbfs" }, mkdir() {}, mount() {}, syncfs(_populate: boolean, complete: () => void) { complete(); },
     };
-    const persistence = new BrowserPersistence(filesystem, { debounceMs: 0 });
     const worker = new BrowserRuntimeWorker(async () => ({
       abiVersion: 1, uiProtocolVersion: 1, runtimeConfigVersion: 1,
       filesystem,
       create: () => 1, audioOutputChannels: () => 2, initialize: () => 0, prepare: () => 0, process: () => 0, messageTick: () => 0,
       buildUiFrame: () => new ArrayBuffer(0), dispatchAction: () => 0, submitMidiEndpoints: () => 0,
       dequeueMidiAction: () => undefined, deliverMidi: () => 0, dequeueMidiOutput: () => undefined, destroy: () => {},
-    }), () => persistence);
+    }), (mountedFilesystem: unknown, identity: unknown, reportStatus: unknown) =>
+      new BrowserPersistence(mountedFilesystem, identity, { debounceMs: 0 }, reportStatus));
     await worker.handle({ type: "load", module: { entryUrl: "blob:test", locateFile: {}, mainScriptUrlOrBlob: "blob:test" } });
     await worker.handle({ type: "create" });
-    await worker.handle({ type: "initialize", dataRoot: "/data" });
+    await worker.handle({
+      type: "initialize",
+      identity: { publisherId: "example", appId: "portable-app", runtimeConfigVersion: 1 },
+    });
     await worker.handle({ type: "prepare", sampleRate: 48000, blockSize: 128 });
     await worker.handle({ type: "midi-endpoints", endpoints: [] });
     await worker.handle({ type: "build-ui-frame" });

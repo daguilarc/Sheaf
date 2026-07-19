@@ -465,7 +465,8 @@ class RuntimeAbi {
 public:
     virtual ~RuntimeAbi() = default;
     virtual std::size_t AudioOutputChannels() const = 0;
-    virtual int Initialize(const char* dataRoot) = 0;
+    virtual int Initialize(const char* publisherId, const char* appId,
+                           std::uint32_t runtimeConfigVersion) = 0;
     virtual int Prepare(double sampleRate, std::size_t blockSize) = 0;
     virtual int Process(float** outputs, std::size_t outputChannels, std::size_t frames,
                         std::uint64_t timestampMicros) = 0;
@@ -490,15 +491,15 @@ class RuntimeAbiAdapter final : public RuntimeAbi {
 public:
     std::size_t AudioOutputChannels() const override { return runtime_.AudioOutputChannels(); }
 
-    int Initialize(const char* dataRoot) override
+    int Initialize(const char* publisherId, const char* appId,
+                   std::uint32_t runtimeConfigVersion) override
     {
-        if (dataRoot == nullptr) {
+        if (publisherId == nullptr || appId == nullptr) {
             return -1;
         }
         try {
-            const std::string_view root{dataRoot};
-            runtime_.SetRuntimeDataPaths(root == kBrowserDataRoot ? BrowserPersistentDataPaths()
-                                                                  : synth::RuntimeDataPaths::FromDataRoot(dataRoot));
+            runtime_.SetRuntimeDataPaths(
+                BrowserPersistentDataPaths(publisherId, appId, runtimeConfigVersion));
             runtime_.Start();
             return 0;
         } catch (const std::exception&) {
@@ -701,7 +702,8 @@ std::uint32_t synth_browser_abi_version();
 std::uint32_t synth_browser_ui_protocol_version();
 std::uint32_t synth_browser_runtime_config_version();
 synth_browser_runtime* synth_browser_create();
-int synth_browser_initialize(synth_browser_runtime* runtime, const char* dataRoot);
+int synth_browser_initialize(synth_browser_runtime* runtime, const char* publisherId,
+                             const char* appId, std::uint32_t runtimeConfigVersion);
 std::size_t synth_browser_audio_output_channels(synth_browser_runtime* runtime);
 int synth_browser_prepare(synth_browser_runtime* runtime, double sampleRate, std::size_t blockSize);
 int synth_browser_process(synth_browser_runtime* runtime, float** outputs, std::size_t outputChannels,

@@ -4,7 +4,7 @@ test("syncs IDBFS before runtime initialization and flushes patch/config updates
   await page.goto("http://127.0.0.1:4173/public/index.html");
   const result = await page.evaluate(async () => {
     const { BrowserPersistence } = await (new Function("return import('/dist/src/persistence.js')")() as Promise<{
-      BrowserPersistence: new (filesystem: unknown, options: unknown, reportStatus?: (status: string) => void) => {
+      BrowserPersistence: new (filesystem: unknown, identity: unknown, options: unknown, reportStatus?: (status: string) => void) => {
         paths: unknown; start(): Promise<void>; scheduleSync(): void; status(): string; patchPath(path: string): string;
       };
     }>);
@@ -35,7 +35,10 @@ test("syncs IDBFS before runtime initialization and flushes patch/config updates
       filesystem,
       create: () => 3,
       audioOutputChannels: () => 2,
-      initialize: (_handle: number, dataRoot: string) => { calls.push(`initialize:${dataRoot}`); return 0; },
+      initialize: (_handle: number, identity: { publisherId: string; appId: string; runtimeConfigVersion: number }) => {
+        calls.push(`initialize:${identity.publisherId}/${identity.appId}:v${identity.runtimeConfigVersion}`);
+        return 0;
+      },
       prepare: () => 0,
       process: () => 0,
       messageTick: () => 0,
@@ -46,14 +49,22 @@ test("syncs IDBFS before runtime initialization and flushes patch/config updates
       deliverMidi: () => 0,
       dequeueMidiOutput: () => undefined,
       destroy: () => {},
-    }), (_filesystem: unknown, reportStatus: (status: string) => void) => {
-      persistence = new BrowserPersistence(filesystem, { debounceMs: 0 }, reportStatus);
+    }), (_filesystem: unknown, identity: unknown, reportStatus: (status: string) => void) => {
+      persistence = new BrowserPersistence(
+        filesystem,
+        identity,
+        { debounceMs: 0 },
+        reportStatus,
+      );
       return persistence;
     }, (status: unknown) => emitted.push(status));
 
     await worker.handle({ type: "load", module: { entryUrl: "blob:test", locateFile: {}, mainScriptUrlOrBlob: "blob:test" } });
     await worker.handle({ type: "create" });
-    const initialized = await worker.handle({ type: "initialize", dataRoot: "/ignored-by-host" });
+    const initialized = await worker.handle({
+      type: "initialize",
+      identity: { publisherId: "sheaf", appId: "miniapp", runtimeConfigVersion: 1 },
+    });
     const pending = await worker.handle({ type: "persistence", state: "patch saved" });
     await new Promise((resolve) => setTimeout(resolve, 10));
     const liveness = await worker.handle({ type: "status" });
@@ -81,7 +92,8 @@ test("syncs IDBFS before runtime initialization and flushes patch/config updates
 
   expect(result.initialized).toEqual({ type: "ok" });
   expect(result.calls).toEqual([
-    "mkdir:/data", "mount:idbfs:/data", "mkdir:/data/patches", "mkdir:/data/logs", "sync:true", "initialize:/data", "sync:false",
+    "mkdir:/data", "mount:idbfs:/data", "mkdir:/data/patches", "mkdir:/data/patches/sheaf",
+    "mkdir:/data/patches/sheaf/miniapp", "mkdir:/data/logs", "sync:true", "initialize:sheaf/miniapp:v1", "sync:false",
   ]);
   expect(result.emitted).toEqual([
     { type: "page-status", path: "runtime.file.status", status: "persistence pending" },
@@ -93,8 +105,13 @@ test("syncs IDBFS before runtime initialization and flushes patch/config updates
   expect(result.liveness).toEqual({ type: "status", status: "running" });
   expect(result.settled).toEqual({ type: "page-status", path: "runtime.file.status", status: "persistence succeeded" });
   expect(result.flushCount).toBe(1);
-  expect(result.paths).toEqual({ dataRoot: "/data", patchesRoot: "/data/patches", logsRoot: "/data/logs", configFile: "/data/config.json" });
-  expect(result.patchPath).toBe("/data/patches/presets/bright.json");
+  expect(result.paths).toEqual({
+    dataRoot: "/data",
+    patchesRoot: "/data/patches/sheaf/miniapp",
+    logsRoot: "/data/logs",
+    configFile: "/data/config.json",
+  });
+  expect(result.patchPath).toBe("/data/patches/sheaf/miniapp/presets/bright.json");
   expect(result.rejectsEscape).toBe(true);
 });
 
@@ -102,7 +119,7 @@ test("flushes runtime-reported persistence changes after actions and ticks", asy
   await page.goto("http://127.0.0.1:4173/public/index.html");
   const result = await page.evaluate(async () => {
     const { BrowserPersistence } = await (new Function("return import('/dist/src/persistence.js')")() as Promise<{
-      BrowserPersistence: new (filesystem: unknown, options: unknown, reportStatus?: (status: string) => void) => unknown;
+      BrowserPersistence: new (filesystem: unknown, identity: unknown, options: unknown, reportStatus?: (status: string) => void) => unknown;
     }>);
     const { BrowserRuntimeWorker } = await (new Function("return import('/dist/src/worker.js')")() as Promise<{
       BrowserRuntimeWorker: new (loadModule: unknown, createPersistence: unknown, emitStatus: unknown) => { handle(command: unknown): Promise<unknown> };
@@ -144,12 +161,16 @@ test("flushes runtime-reported persistence changes after actions and ticks", asy
       deliverMidi: () => 0,
       dequeueMidiOutput: () => undefined,
       destroy: () => {},
-    }), (filesystem: unknown, reportStatus: (status: string) => void) => new BrowserPersistence(filesystem, { debounceMs: 0 }, reportStatus),
+    }), (filesystem: unknown, identity: unknown, reportStatus: (status: string) => void) =>
+      new BrowserPersistence(filesystem, identity, { debounceMs: 0 }, reportStatus),
     (status: unknown) => statuses.push(status));
 
     await worker.handle({ type: "load", module: { entryUrl: "blob:test", locateFile: {}, mainScriptUrlOrBlob: "blob:test" } });
     await worker.handle({ type: "create" });
-    await worker.handle({ type: "initialize", dataRoot: "/ignored" });
+    await worker.handle({
+      type: "initialize",
+      identity: { publisherId: "sheaf", appId: "miniapp", runtimeConfigVersion: 1 },
+    });
     calls.length = 0;
     await worker.handle({ type: "dispatch-action", name: "runtime.config.save", value: "" });
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -174,7 +195,7 @@ test("reports a generic browser-host persistence failure", async ({ page }) => {
   await page.goto("http://127.0.0.1:4173/public/index.html");
   const result = await page.evaluate(async () => {
     const { BrowserPersistence } = await (new Function("return import('/dist/src/persistence.js')")() as Promise<{
-      BrowserPersistence: new (filesystem: unknown, options: unknown, report: (status: string) => void) => {
+      BrowserPersistence: new (filesystem: unknown, identity: unknown, options: unknown, report: (status: string) => void) => {
         start(): Promise<void>; scheduleSync(): void; status(): string;
       };
     }>);
@@ -184,7 +205,8 @@ test("reports a generic browser-host persistence failure", async ({ page }) => {
       mkdir() {},
       mount() {},
       syncfs(populate: boolean, complete: (error?: Error) => void) { complete(populate ? undefined : new Error("quota")); },
-    }, { debounceMs: 0 }, (status: string) => statuses.push(status));
+    }, { publisherId: "sheaf", appId: "miniapp", runtimeConfigVersion: 1 },
+    { debounceMs: 0 }, (status: string) => statuses.push(status));
     await persistence.start();
     persistence.scheduleSync();
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -193,4 +215,88 @@ test("reports a generic browser-host persistence failure", async ({ page }) => {
 
   expect(result.statuses).toEqual(["persistence pending", "persistence succeeded", "persistence pending", "persistence failed"]);
   expect(result.status).toBe("persistence failed");
+});
+
+test("derives stable app-isolated patch roots from validated catalog identity", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async () => {
+    const catalog = await (new Function("return import('/dist/src/catalog.js')")() as Promise<any>);
+    const persistence = await (new Function("return import('/dist/src/persistence.js')")() as Promise<any>);
+    const app = (publisherId: string, buildId: string) => ({
+      publisher: { id: publisherId },
+      appId: "miniapp",
+      buildId,
+      browser: { runtimeConfigVersion: 1 },
+    });
+    const paths = (publisherId: string, buildId: string) => persistence.deriveBrowserPersistencePaths(
+      catalog.runtimeIdentityForCatalogApp(app(publisherId, buildId)),
+    );
+    const rejects = (identity: unknown) => {
+      try {
+        persistence.deriveBrowserPersistencePaths(identity);
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    return {
+      firstBuild: paths("sheaf", "build-one"),
+      nextBuild: paths("sheaf", "build-two"),
+      otherPublisher: paths("friend", "build-one"),
+      rejectsTraversal: rejects({ publisherId: "../sheaf", appId: "miniapp", runtimeConfigVersion: 1 }),
+      rejectsExtraPathInput: rejects({ publisherId: "sheaf", appId: "miniapp", runtimeConfigVersion: 1, patchesRoot: "/tmp" }),
+    };
+  });
+
+  expect(result.firstBuild).toEqual(result.nextBuild);
+  expect(result.firstBuild).toEqual({
+    dataRoot: "/data",
+    patchesRoot: "/data/patches/sheaf/miniapp",
+    logsRoot: "/data/logs",
+    configFile: "/data/config.json",
+  });
+  expect(result.otherPublisher.patchesRoot).toBe("/data/patches/friend/miniapp");
+  expect(result.otherPublisher.configFile).toBe(result.firstBuild.configFile);
+  expect(result.otherPublisher.logsRoot).toBe(result.firstBuild.logsRoot);
+  expect(result.rejectsTraversal).toBe(true);
+  expect(result.rejectsExtraPathInput).toBe(true);
+});
+
+test("rejects incompatible runtime-config identity before filesystem or runtime initialization", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async () => {
+    const { BrowserRuntimeWorker } = await (new Function("return import('/dist/src/worker.js')")() as Promise<any>);
+    const calls: string[] = [];
+    const worker = new BrowserRuntimeWorker(async () => ({
+      abiVersion: 1,
+      uiProtocolVersion: 1,
+      runtimeConfigVersion: 1,
+      filesystem: {
+        filesystems: { IDBFS: "idbfs" },
+        mkdir() { calls.push("mkdir"); },
+        mount() { calls.push("mount"); },
+        syncfs() { calls.push("sync"); },
+      },
+      create() { calls.push("create"); return 5; },
+      initialize() { calls.push("initialize"); return 0; },
+      destroy() {},
+    }), () => {
+      calls.push("persistence-factory");
+      throw new Error("must not construct persistence");
+    });
+    await worker.handle({ type: "load", module: { entryUrl: "blob:test", locateFile: {}, mainScriptUrlOrBlob: "blob:test" } });
+    await worker.handle({ type: "create" });
+    const initialized = await worker.handle({
+      type: "initialize",
+      identity: { publisherId: "sheaf", appId: "miniapp", runtimeConfigVersion: 2 },
+    });
+    await worker.handle({ type: "persistence", state: "should-not-write" });
+    return { initialized, calls };
+  });
+
+  expect(result.initialized).toEqual({
+    type: "error",
+    error: expect.stringMatching(/runtimeConfigVersion.*unsupported.*1/i),
+  });
+  expect(result.calls).toEqual(["create"]);
 });

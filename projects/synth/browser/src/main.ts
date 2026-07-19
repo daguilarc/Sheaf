@@ -1,7 +1,8 @@
 import { AudioBridge, AudioBridgeOptions, BrowserAudioWorker } from "./audio.js";
 import { ActivationLease } from "./activation.js";
 import { CatalogClient } from "./catalog-client.js";
-import type { CatalogApp } from "./catalog.js";
+import { runtimeIdentityForCatalogApp, validateBrowserRuntimeIdentity } from "./catalog.js";
+import type { BrowserRuntimeIdentity, CatalogApp } from "./catalog.js";
 import { SheafPatchLauncher } from "./launcher.js";
 import { BrowserMidiManager, BrowserMidiWorkerRuntime } from "./midi.js";
 import { materializePackage as materializeCatalogPackage } from "./package-loader.js";
@@ -20,7 +21,7 @@ export type RuntimeClient = {
 export type SynthBrowserAppOptions = {
   module?: MaterializedRuntimeModule;
   moduleUrl?: string;
-  dataRoot?: string;
+  runtimeIdentity?: BrowserRuntimeIdentity;
   frameIntervalMs?: number;
   runtimeClient?: RuntimeClient;
   runtimeClientFactory?: () => RuntimeClient;
@@ -45,7 +46,11 @@ export type SynthBrowserLauncherOptions = {
 };
 
 const DEFAULT_MODULE_URL = "/dist/wasm/app.js";
-const DEFAULT_DATA_ROOT = "/data";
+const DEFAULT_RUNTIME_IDENTITY: BrowserRuntimeIdentity = Object.freeze({
+  publisherId: "sheaf",
+  appId: "direct-runtime",
+  runtimeConfigVersion: 1,
+});
 const ROOT_OWNER = Symbol.for("sheaf.synth-browser.root-owner");
 
 function directModuleMapping(moduleUrl: string): MaterializedRuntimeModule {
@@ -145,7 +150,7 @@ export class SynthBrowserApp {
   constructor(
     private readonly root: HTMLElement,
     private readonly runtime: RuntimeClient,
-    private readonly options: Required<Pick<SynthBrowserAppOptions, "module" | "dataRoot" | "frameIntervalMs">> &
+    private readonly options: Required<Pick<SynthBrowserAppOptions, "module" | "runtimeIdentity" | "frameIntervalMs">> &
       Pick<SynthBrowserAppOptions, "audioOptions" | "runtimeVersions" | "activationLease" | "disposeModule"> &
       Readonly<{ claimRuntimeRoot: () => void; midiAccess?: Awaited<ReturnType<ActivationLease["consume"]>>["midiAccess"] }>,
   ) {
@@ -166,7 +171,7 @@ export class SynthBrowserApp {
     };
     await this.expectOk(await this.runtime.request({ type: "load", module, versions: this.options.runtimeVersions }));
     await this.expectOk(await this.runtime.request({ type: "create" }));
-    await this.expectOk(await this.runtime.request({ type: "initialize", dataRoot: this.options.dataRoot }));
+    await this.expectOk(await this.runtime.request({ type: "initialize", identity: this.options.runtimeIdentity }));
     const audioConfig = await this.runtime.request({ type: "audio-config" });
     if (audioConfig.type !== "audio-config") throw new Error("runtime did not return audio configuration");
     const channels = audioConfig.channels;
@@ -266,7 +271,7 @@ export class SynthBrowserApp {
 export async function installSynthBrowserApp(root: HTMLElement, options: SynthBrowserAppOptions = {}): Promise<SynthBrowserApp> {
   const moduleUrl = options.moduleUrl ?? root.dataset.synthModule ?? DEFAULT_MODULE_URL;
   const module = options.module ?? directModuleMapping(moduleUrl);
-  const dataRoot = options.dataRoot ?? DEFAULT_DATA_ROOT;
+  const runtimeIdentity = validateBrowserRuntimeIdentity(options.runtimeIdentity ?? DEFAULT_RUNTIME_IDENTITY);
   let app: SynthBrowserApp | undefined;
   try {
     const resources = options.activationLease ? await options.activationLease.consume() : undefined;
@@ -274,7 +279,7 @@ export async function installSynthBrowserApp(root: HTMLElement, options: SynthBr
       createDirectRuntimeClient(options.runtimeModuleLoader ?? loadEmscriptenRuntime);
     app = new SynthBrowserApp(root, runtime, {
       module,
-      dataRoot,
+      runtimeIdentity,
       frameIntervalMs: options.frameIntervalMs ?? 1000 / 30,
       audioOptions: resources ? { ...options.audioOptions, audioContext: resources.audioContext } : options.audioOptions,
       runtimeVersions: options.runtimeVersions,
@@ -343,6 +348,7 @@ async function launchCatalogApplication(
         uiProtocolVersion: app.browser.uiProtocolVersion,
         runtimeConfigVersion: app.browser.runtimeConfigVersion,
       },
+      runtimeIdentity: runtimeIdentityForCatalogApp(app),
       activationLease,
       disposeModule: () => materialized!.dispose(),
       runtimeClientFactory: options.runtimeClientFactory,

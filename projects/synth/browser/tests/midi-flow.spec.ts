@@ -331,7 +331,10 @@ test("real miniapp WASM keeps two Web MIDI controller slots independent through 
       },
     });
     await request({ type: "create" });
-    await request({ type: "initialize", dataRoot: "/data" });
+    await request({
+      type: "initialize",
+      identity: { publisherId: "sheaf", appId: "miniapp", runtimeConfigVersion: 1 },
+    });
     const endpoints = [
       { identifier: "in-a", name: "Input A", kind: "input" },
       { identifier: "in-b", name: "Input B", kind: "input" },

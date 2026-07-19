@@ -33,6 +33,11 @@ export type CatalogBrowserPackage = Readonly<{
   entryUrl: string;
   files: readonly CatalogFile[];
 }>;
+export type BrowserRuntimeIdentity = Readonly<{
+  publisherId: string;
+  appId: string;
+  runtimeConfigVersion: number;
+}>;
 export type CatalogApp = Readonly<{
   globalId: string;
   catalogUrl: string;
@@ -101,6 +106,30 @@ function identifier(value: unknown, path: string): string {
   const parsed = boundedString(value, path, 200);
   if (!ID_PATTERN.test(parsed)) fail(path, "must contain lowercase ASCII letters, digits, and single hyphens between segments");
   return parsed;
+}
+
+export function validateBrowserRuntimeIdentity(value: unknown): BrowserRuntimeIdentity {
+  const input = record(value, "runtime identity");
+  exactKeys(input, ["publisherId", "appId", "runtimeConfigVersion"], "runtime identity");
+  return Object.freeze({
+    publisherId: identifier(input.publisherId, "runtime identity.publisherId"),
+    appId: identifier(input.appId, "runtime identity.appId"),
+    runtimeConfigVersion: exactVersion(
+      input.runtimeConfigVersion,
+      SUPPORTED_RUNTIME_CONFIG_VERSION,
+      "runtime identity.runtimeConfigVersion",
+    ),
+  });
+}
+
+export function runtimeIdentityForCatalogApp(
+  app: Pick<CatalogApp, "publisher" | "appId" | "browser">,
+): BrowserRuntimeIdentity {
+  return validateBrowserRuntimeIdentity({
+    publisherId: app.publisher.id,
+    appId: app.appId,
+    runtimeConfigVersion: app.browser.runtimeConfigVersion,
+  });
 }
 
 function httpsUrl(value: unknown, path: string): string {

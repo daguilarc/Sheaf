@@ -23,7 +23,7 @@ extern "C" std::uint32_t synth_browser_ui_protocol_version()
 
 extern "C" std::uint32_t synth_browser_runtime_config_version()
 {
-    return 1;
+    return synth_browser::kBrowserRuntimeConfigVersion;
 }
 
 extern "C" synth_browser_runtime* synth_browser_create()
@@ -31,9 +31,12 @@ extern "C" synth_browser_runtime* synth_browser_create()
     return reinterpret_cast<synth_browser_runtime*>(synth_browser_create_runtime());
 }
 
-extern "C" int synth_browser_initialize(synth_browser_runtime* runtime, const char* dataRoot)
+extern "C" int synth_browser_initialize(synth_browser_runtime* runtime, const char* publisherId,
+                                          const char* appId, std::uint32_t runtimeConfigVersion)
 {
-    return RuntimeFor(runtime) == nullptr ? -1 : RuntimeFor(runtime)->Initialize(dataRoot);
+    return RuntimeFor(runtime) == nullptr
+               ? -1
+               : RuntimeFor(runtime)->Initialize(publisherId, appId, runtimeConfigVersion);
 }
 
 extern "C" std::size_t synth_browser_audio_output_channels(synth_browser_runtime* runtime)

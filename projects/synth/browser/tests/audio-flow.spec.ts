@@ -146,7 +146,10 @@ test("real miniapp WASM renders four finite non-silent audio blocks", async ({ p
       mainScriptUrlOrBlob: moduleUrl,
     } }, "ok");
     await request({ type: "create" }, "created");
-    await request({ type: "initialize", dataRoot: "/data" }, "ok");
+    await request({
+      type: "initialize",
+      identity: { publisherId: "sheaf", appId: "miniapp", runtimeConfigVersion: 1 },
+    }, "ok");
     const ring = SharedRingBuffer.create(2, 1024);
     await request({ type: "configure-audio", sampleRate: 48_000, blockSize: 128, bridge: ring.descriptor() }, "ok");
     await request({ type: "midi-input", controllerIx: 0, bytes: [0x90, 60, 100], timestampMicros: 1_000 }, "ok");
@@ -199,7 +202,10 @@ test("real miniapp WASM runs DSP from the runtime-owned AudioWorklet callback", 
             mainScriptUrlOrBlob: moduleUrl,
           } }, "ok");
           await request({ type: "create" }, "created");
-          await request({ type: "initialize", dataRoot: "/data" }, "ok");
+          await request({
+            type: "initialize",
+            identity: { publisherId: "sheaf", appId: "miniapp", runtimeConfigVersion: 1 },
+          }, "ok");
           await request({ type: "midi-input", controllerIx: 0, bytes: [0x90, 60, 100], timestampMicros: 1_000 }, "ok");
           await request({ type: "start-audio-worklet" }, "ok");
           const deadline = performance.now() + 5_000;
@@ -272,7 +278,10 @@ test("runtime-owned AudioWorklet applies browser-time encoder actions promptly",
             mainScriptUrlOrBlob: moduleUrl,
           } }, "ok");
           await request({ type: "create" }, "created");
-          await request({ type: "initialize", dataRoot: "/data" }, "ok");
+          await request({
+            type: "initialize",
+            identity: { publisherId: "sheaf", appId: "miniapp", runtimeConfigVersion: 1 },
+          }, "ok");
           await request({ type: "start-audio-worklet" }, "ok");
           await request({ type: "message-tick", timestampMicros: Math.round(performance.now() * 1000) }, "ok");
           const before = encoderSignature(await frame());
