@@ -2484,6 +2484,88 @@ TEST_CASE(process_lite_samples_cached_knob_after_slew) {
     REQUIRE_NEAR(parameter.CachedKnobValue(0), 0.25f, 0.0001f);
 }
 
+TEST_CASE(process_lite_phases_replace_cached_knob_before_ui_smoothing) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Level", .defaultValue = 0.0f});
+    parameter.SceneCenter(0) = 1.0f;
+    parameter.Compute(manager.Scene());
+
+    parameter.ProcessLitePhase1();
+    const float rawCached = parameter.CachedKnobValue(0);
+    const float centerBeforePhase2 = parameter.UIDisplayCenter(0);
+    parameter.ReplaceCachedKnobValue(0, 0.25f);
+    REQUIRE_NEAR(parameter.GetRaw(0), rawCached, 0.000001f);
+    REQUIRE_NEAR(parameter.UIDisplayCenter(0), centerBeforePhase2, 0.000001f);
+    parameter.ProcessLitePhase2();
+    REQUIRE_NEAR(parameter.CachedKnobValue(0), 0.25f, 0.000001f);
+
+    parameter.ReplaceCachedKnobValue(0, -1.0f);
+    REQUIRE_NEAR(parameter.CachedKnobValue(0), 0.0f, 0.000001f);
+    parameter.ReplaceCachedKnobValue(0, 2.0f);
+    REQUIRE_NEAR(parameter.CachedKnobValue(0), 1.0f, 0.000001f);
+}
+
+TEST_CASE(process_lite_wrapper_matches_explicit_phases) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 2,
+        .processLiteAlpha = 0.25f,
+        .targetCenterAlpha = 1.0f,
+    });
+    auto& wrapped = manager.CreateParameter(group, {.name = "Wrapped", .defaultValue = 0.0f});
+    auto& phased = manager.CreateParameter(group, {.name = "Phased", .defaultValue = 0.0f});
+    wrapped.SceneCenter(0) = 1.0f;
+    phased.SceneCenter(0) = 1.0f;
+    wrapped.Compute(manager.Scene());
+    phased.Compute(manager.Scene());
+
+    wrapped.ProcessLite();
+    phased.ProcessLitePhase1();
+    phased.ProcessLitePhase2();
+
+    REQUIRE_NEAR(phased.GetRaw(0), wrapped.GetRaw(0), 0.000001f);
+    REQUIRE_NEAR(phased.CachedKnobValue(0), wrapped.CachedKnobValue(0), 0.000001f);
+    REQUIRE_NEAR(phased.UIDisplayCenter(0), wrapped.UIDisplayCenter(0), 0.000001f);
+    REQUIRE_NEAR(phased.UIDisplaySpread(0), wrapped.UIDisplaySpread(0), 0.000001f);
+}
+
+TEST_CASE(parameter_process_sample_phases_recompute_only_in_phase_one) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 0,
+        .numScenes = 1,
+        .maxParameters = 1,
+        .processLiteAlpha = 1.0f,
+        .targetCenterAlpha = 1.0f,
+        .targetComputeIntervalSamples = 16,
+    });
+    auto& parameter = manager.CreateParameter(group, {.name = "Probe", .defaultValue = 0.0f});
+
+    parameter.SceneCenter(0) = 0.25f;
+    parameter.ProcessSamplePhase1(0);
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.25f, 0.000001f);
+
+    parameter.SceneCenter(0) = 0.75f;
+    parameter.ProcessSamplePhase2();
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.25f, 0.000001f);
+    parameter.ProcessSamplePhase1(15);
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.25f, 0.000001f);
+    parameter.ProcessSamplePhase1(16);
+    REQUIRE_NEAR(parameter.TargetCenter(), 0.75f, 0.000001f);
+}
+
 TEST_CASE(parameter_process_sample_recomputes_on_configured_interval) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({
@@ -2582,6 +2664,30 @@ TEST_CASE(group_process_sample_visits_only_registered_roots) {
     group.ProcessSample(16);
     REQUIRE_TRUE(work.topLevelProcessLiteCalls == 4);
     REQUIRE_TRUE(work.localRecursiveComputeCalls == 2);
+}
+
+TEST_CASE(group_process_sample_phases_visit_only_registered_roots) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 1,
+        .maxParameters = 8,
+        .targetComputeIntervalSamples = 16,
+    });
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier"});
+    (void)manager.CreateParameter(group, {.name = "Tone"});
+    auto& depth = carrier.EnsureModulationDepth(0, {.name = "Carrier M1", .defaultValue = 0.5f});
+    (void)depth.EnsureModulationDepth(1, {.name = "Carrier M1 M2", .defaultValue = 0.5f});
+    synth::ParameterProcessingObserver work{};
+    group.SetProcessingObserverForTests(&work);
+
+    group.ProcessSamplePhase1(16);
+    REQUIRE_TRUE(work.topLevelProcessLiteCalls == 2);
+    REQUIRE_TRUE(work.localRecursiveComputeCalls == 2);
+
+    group.ProcessSamplePhase2();
+    REQUIRE_TRUE(work.topLevelProcessLiteCalls == 2);
 }
 
 TEST_CASE(recursive_local_compute_seeds_display_without_audio_rate_processing) {
@@ -9412,10 +9518,8 @@ void SimSnapParameterToTarget(SimOracle& oracle, SimParam& parameter) {
     }
 }
 
-void SimProcessLiteAll(SimOracle& oracle) {
+void SimProcessLitePhase1All(SimOracle& oracle) {
     constexpr float alpha = 0.25f;
-    constexpr float uiCenterAlpha = synth::kDefaultUiDisplayCenterAlpha;
-    constexpr float uiSpreadAlpha = synth::kDefaultUiDisplaySpreadAlpha;
     for (std::size_t paramIx = 0; paramIx < oracle.params.size(); ++paramIx) {
         SimParam& parameter = oracle.params[paramIx];
         parameter.currentCenter += alpha * (parameter.targetCenter - parameter.currentCenter);
@@ -9436,12 +9540,27 @@ void SimProcessLiteAll(SimOracle& oracle) {
         for (std::size_t voiceIx = 0; voiceIx < kSimVoices; ++voiceIx) {
             const float knob = SimGetRaw(oracle, paramIx, voiceIx);
             parameter.cachedKnob[voiceIx] = knob;
+        }
+    }
+}
+
+void SimProcessLitePhase2All(SimOracle& oracle) {
+    constexpr float uiCenterAlpha = synth::kDefaultUiDisplayCenterAlpha;
+    constexpr float uiSpreadAlpha = synth::kDefaultUiDisplaySpreadAlpha;
+    for (SimParam& parameter : oracle.params) {
+        for (std::size_t voiceIx = 0; voiceIx < kSimVoices; ++voiceIx) {
+            const float knob = parameter.cachedKnob[voiceIx];
             parameter.uiDisplayCenter[voiceIx] += uiCenterAlpha * (knob - parameter.uiDisplayCenter[voiceIx]);
             const float residual = knob - parameter.uiDisplayCenter[voiceIx];
             parameter.uiDisplaySpreadEnergy[voiceIx] +=
                 uiSpreadAlpha * ((residual * residual) - parameter.uiDisplaySpreadEnergy[voiceIx]);
         }
     }
+}
+
+void SimProcessLiteAll(SimOracle& oracle) {
+    SimProcessLitePhase1All(oracle);
+    SimProcessLitePhase2All(oracle);
 }
 
 void SimOpenModulationView(SimOracle& oracle, SimBank& bank, int paramIx) {

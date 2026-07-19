@@ -864,13 +864,24 @@ void ParameterGroup::ConfigureProcessingTiming(const ParameterProcessingTiming& 
     config_.uiDisplaySpreadAlpha = timing.uiDisplaySpreadAlpha;
 }
 
-void ParameterGroup::ProcessSample(std::uint64_t sampleIndex) {
+void ParameterGroup::ProcessSamplePhase1(std::uint64_t sampleIndex) {
     for (Parameter* parameter : topLevelParameters_) {
-        parameter->ProcessSample(sampleIndex);
+        parameter->ProcessSamplePhase1(sampleIndex);
         if (processingObserver_ != nullptr) {
             ++processingObserver_->topLevelProcessLiteCalls;
         }
     }
+}
+
+void ParameterGroup::ProcessSamplePhase2() {
+    for (Parameter* parameter : topLevelParameters_) {
+        parameter->ProcessSamplePhase2();
+    }
+}
+
+void ParameterGroup::ProcessSample(std::uint64_t sampleIndex) {
+    ProcessSamplePhase1(sampleIndex);
+    ProcessSamplePhase2();
 }
 
 Parameter::Parameter(ParameterId id, ParameterGroup& group, ParameterConfig config, std::size_t slotIx)
@@ -1425,7 +1436,7 @@ bool Parameter::LoadValuesFromJSON(JSON json) {
     return true;
 }
 
-void Parameter::ProcessLite() {
+void Parameter::ProcessLitePhase1() {
     const float alpha = group_.Config().processLiteAlpha;
     currentCenter_ += alpha * (targetCenter_ - currentCenter_);
     for (std::size_t voiceIx = 0; voiceIx < currentCenterScales_.size(); ++voiceIx) {
@@ -1446,8 +1457,20 @@ void Parameter::ProcessLite() {
         }
     }
     for (std::size_t voiceIx = 0; voiceIx < currentKnobValues_.size(); ++voiceIx) {
-        const float knob = GetRaw(voiceIx);
-        currentKnobValues_[voiceIx] = knob;
+        currentKnobValues_[voiceIx] = GetRaw(voiceIx);
+    }
+}
+
+void Parameter::ReplaceCachedKnobValue(std::size_t voiceIx, float normalizedValue) {
+    if (voiceIx >= currentKnobValues_.size()) {
+        throw std::out_of_range("parameter cached knob voice index out of range");
+    }
+    currentKnobValues_[voiceIx] = std::clamp(normalizedValue, 0.0f, 1.0f);
+}
+
+void Parameter::ProcessLitePhase2() {
+    for (std::size_t voiceIx = 0; voiceIx < currentKnobValues_.size(); ++voiceIx) {
+        const float knob = currentKnobValues_[voiceIx];
         uiDisplayCenters_[voiceIx] += group_.Config().uiDisplayCenterAlpha * (knob - uiDisplayCenters_[voiceIx]);
         const float residual = knob - uiDisplayCenters_[voiceIx];
         uiDisplaySpreadEnergies_[voiceIx] +=
@@ -1455,11 +1478,25 @@ void Parameter::ProcessLite() {
     }
 }
 
-void Parameter::ProcessSample(std::uint64_t sampleIndex) {
+void Parameter::ProcessLite() {
+    ProcessLitePhase1();
+    ProcessLitePhase2();
+}
+
+void Parameter::ProcessSamplePhase1(std::uint64_t sampleIndex) {
     if (sampleIndex % group_.Config().targetComputeIntervalSamples == 0) {
         Compute(group_.Manager().Scene());
     }
-    ProcessLite();
+    ProcessLitePhase1();
+}
+
+void Parameter::ProcessSamplePhase2() {
+    ProcessLitePhase2();
+}
+
+void Parameter::ProcessSample(std::uint64_t sampleIndex) {
+    ProcessSamplePhase1(sampleIndex);
+    ProcessSamplePhase2();
 }
 
 void Parameter::HandleIncDec(const SceneState& scene, float delta) {

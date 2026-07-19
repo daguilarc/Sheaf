@@ -353,6 +353,8 @@ public:
     float GestureValue(std::size_t gestureIx) const;
     void ClearGestureActiveFlagsForActiveSceneSelection(const SceneState& scene, std::size_t gestureIx);
     void ConfigureProcessingTiming(const ParameterProcessingTiming& timing);
+    void ProcessSamplePhase1(std::uint64_t sampleIndex);
+    void ProcessSamplePhase2();
     void ProcessSample(std::uint64_t sampleIndex);
     void SetProcessingObserverForTests(ParameterProcessingObserver* observer) { processingObserver_ = observer; }
 
@@ -475,7 +477,12 @@ public:
     void PopulateUIState(UIState& state, const SceneState& scene, std::uint64_t processedAbsoluteEpoch) const;
     void Compute(const SceneState& scene);
     // Audio-rate helper: no graph traversal or allocation.
+    void ProcessLitePhase1();
+    void ReplaceCachedKnobValue(std::size_t voiceIx, float normalizedValue);
+    void ProcessLitePhase2();
     void ProcessLite();
+    void ProcessSamplePhase1(std::uint64_t sampleIndex);
+    void ProcessSamplePhase2();
     void ProcessSample(std::uint64_t sampleIndex);
     void HandleIncDec(const SceneState& scene, float delta);
     void HandleSetAbsolute(const SceneState& scene, float normalizedTarget) noexcept;
