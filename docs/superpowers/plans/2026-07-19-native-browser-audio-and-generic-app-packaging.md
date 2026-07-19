@@ -54,7 +54,11 @@
 - C++: `Runtime<App>::StartAudioWorklet(EMSCRIPTEN_WEBAUDIO_T suppliedContext = 0)` delegates both supplied and newly created contexts to one unchanged worklet/callback setup.
 - Browser ABI version advances from `1` to `2`; v1 catalogs/modules are rejected before creation.
 
-- [ ] **Step 1: Write failing browser tests for the required branch**
+- [ ] **Step 1: Prove the pinned Emscripten context-adoption primitive**
+
+Before fixing interfaces around it, inspect the pinned emsdk implementation and compile a disposable probe with the real audio-worklet/linker settings. Prove that `emscriptenRegisterAudioObject` can be retained through `EXPORTED_RUNTIME_METHODS`, is callable on the instantiated module, returns a valid `EMSCRIPTEN_WEBAUDIO_T` for a JavaScript-created `AudioContext`, and that native `emscripten_audio_context_*`/worklet APIs accept that handle. Record the exact compiler version and probe command/output in the Task 1 evidence. If the primitive cannot be proven, stop and revise the OpenSpec/design for an explicit generic module-local shim before writing production tests or changing ABI v2.
+
+- [ ] **Step 2: Write failing browser tests for the required branch**
 
 In `audio-flow.spec.ts` and `activation-lease.spec.ts`, require a leased context to be passed to the runtime hook and prohibit all ring messages:
 
@@ -73,7 +77,7 @@ expect(calls).toEqual([context]);
 
 Assert the runtime rejects missing `registerAudioContext`/native start support, never emits `configure-audio` or `render-audio`, and does not construct another context.
 
-- [ ] **Step 2: Run focused tests and confirm the regression is exposed**
+- [ ] **Step 3: Run focused tests and confirm the regression is exposed**
 
 Run from `projects/synth/browser`:
 
@@ -84,11 +88,11 @@ npx playwright test tests/audio-flow.spec.ts tests/activation-lease.spec.ts test
 
 Expected: failures show the leased-context branch configures the JavaScript ring and calls `render-audio` instead of the native start hook.
 
-- [ ] **Step 3: Add failing native/module-contract coverage**
+- [ ] **Step 4: Add failing native/module-contract coverage**
 
 Extend `browser_runtime_contract_tests.cpp` and runtime-core module fakes so the start export accepts a context handle, direct startup passes `0`, supplied startup preserves the supplied handle, browser ABI v2 is negotiated before creation, and the Emscripten module exposes `emscriptenRegisterAudioObject` before runtime creation. Add a source assertion that `ProcessAudioWorklet` still calls `runtime->Process(...)` and remains the sole callback implementation.
 
-- [ ] **Step 4: Implement module-local context registration and shared native startup**
+- [ ] **Step 5: Implement module-local context registration and shared native startup**
 
 Add the documented module-local Emscripten helper to the common runtime export list:
 
@@ -98,17 +102,17 @@ EXPORTED_RUNTIME_METHODS := '[...,"emscriptenRegisterAudioObject"]'
 
 In `worker.ts`, register the exact leased object through that method and pass the returned handle to the v2 native export. In `BrowserRuntime.hpp`, use the supplied handle when nonzero; otherwise call `emscripten_create_audio_context`. In both cases read sample rate/quantum, call `Prepare`, initialize timestamp/deadline state, resume, and start the same Wasm AudioWorklet thread. Do not alter `ProcessAudioWorklet` DSP or metering.
 
-- [ ] **Step 5: Remove the timer/ring audio transport completely**
+- [ ] **Step 6: Remove the timer/ring audio transport completely**
 
 Reduce `AudioBridge` to validation, native start delegation, and idempotent shutdown. Remove `renderTimer`, `AudioBridgeDescriptor`, `SharedRingBuffer`, audio ring state, the `configure-audio` and `render-audio` commands/handlers, `renderAudio` facade allocation/copy code, the launcher JavaScript worklet module, and its published runtime-file expectation. Keep the package's `audioWorklet` artifact role: the common Emscripten entry remains the native Wasm AudioWorklet bootstrap. Keep `_synth_browser_process` only where the generic ABI/native tests still require it; it must not be scheduled by browser JavaScript.
 
-- [ ] **Step 6: Prove real native callback progress**
+- [ ] **Step 7: Prove real native callback progress**
 
 Update the Mini App real-Wasm smoke to use the production direct runtime client, select the catalog row once, poll `audio-worklet-stats`, and require `blocks` to increase across observations with finite deadline data and no second context. A resumed context without advancing block counts must fail the test. Native start must not resolve `audio:online` until callback progress is observed within a bounded timeout.
 
 Make teardown ownership-safe: runtime destruction/unregistration settles before the activation lease closes its JavaScript context and disposes the package, while repeated stop/pagehide remains idempotent.
 
-- [ ] **Step 7: Run task verification**
+- [ ] **Step 8: Run task verification**
 
 ```bash
 make -C projects/synth build/browser_runtime_contract_tests
@@ -120,7 +124,7 @@ npx --prefix projects/synth/browser playwright test tests/audio-flow.spec.ts tes
 
 Expected: all pass; `rg -n 'renderTimer|configure-audio|render-audio|SharedRingBuffer|synth-audio-ring-buffer' projects/synth/browser/src` returns no audio-production implementation.
 
-- [ ] **Step 8: Commit and review**
+- [ ] **Step 9: Commit and review**
 
 Commit as `fix(synth-browser): restore native callback audio`. Mark OpenSpec 1.1–1.4 only after persistent Opus spec and quality review pass; reuse the implementer and reviewer for fixes/re-review.
 
@@ -189,7 +193,7 @@ The orchestrator always uses the same core sources, `BrowserRuntimeAbi.cpp`, gen
 
 - [ ] **Step 5: Migrate all configured apps to records and delete handwritten binding**
 
-Populate `first-party-apps.json` with Mini App (`category: "test"`) and Braid 4 metadata/type records. Delete both checked-in entry translation units and move the fake header under test fixtures. The fake build uses a fixture manifest through the exact same builder. Remove `MINIAPP_HEADERS`, named compiler targets, the legacy `dist/wasm/app.js` alias, and app-specific include flags. Depending on all headers beneath validated app directories is acceptable; branching on an app ID is not.
+Populate `first-party-apps.json` with Mini App (`category: "Instrument"`, preserving its published metadata) and Braid 4 metadata/type records. Delete both checked-in entry translation units and move the fake header under test fixtures. The fake build uses a fixture manifest through the exact same builder. Remove `MINIAPP_HEADERS`, named compiler targets, the legacy `dist/wasm/app.js` alias, and app-specific include flags. Depending on all headers beneath validated app directories is acceptable; branching on an app ID is not.
 
 - [ ] **Step 6: Strengthen generic-boundary tests**
 
@@ -305,7 +309,7 @@ const firstPartyApps = [
 ];
 ```
 
-For each, use a fresh browser context/page, click once, require its root, poll two increasing native `blocks` observations, require finite deadline data and nonzero peak after interaction, and prove one context, one runtime, and no fallback messages.
+For each, use a fresh browser context/page, click once, require its root, record the module memory buffer byte length when callback startup begins, poll two increasing native `blocks` observations, require finite deadline data and nonzero peak after interaction, prove the memory byte length is unchanged after callback progress, and prove one context, one runtime, and no fallback messages.
 
 - [ ] **Step 2: Add Braid 4 persistence and memory assertions**
 
@@ -352,7 +356,6 @@ Commit as `test(synth-browser): prove two-app native browser launch`. Mark OpenS
 - Modify: `projects/synth/browser/docs/catalog-schema-v1.md`
 - Modify: `projects/synth/browser/docs/publisher-guide.md`
 - Modify: `projects/synth/docs/coverage.md`
-- Modify only if required by actual behavior: `openspec/changes/add-browser-app-catalog-launcher/design.md`
 
 - [ ] **Step 1: Build a documentation checklist from the final interfaces**
 
