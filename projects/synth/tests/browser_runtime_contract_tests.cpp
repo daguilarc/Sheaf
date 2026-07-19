@@ -18,6 +18,11 @@
 #include <utility>
 #include <vector>
 
+extern "C" synth_browser::RuntimeAbi* synth_browser_create_runtime()
+{
+    return nullptr;
+}
+
 namespace {
 
 void Require(bool condition, const char* label)
@@ -518,6 +523,16 @@ void TestAudioWorkletDeadlineMeterAveragesQuantizedTimerSamples()
             "quantized callback timing is averaged over a window");
 }
 
+void TestBrowserContractVersionsAreReadableBeforeRuntimeCreation()
+{
+    Require(synth_browser_abi_version() == 1,
+            "browser ABI version is available before runtime creation");
+    Require(synth_browser_ui_protocol_version() == 1,
+            "browser UI protocol version is available before runtime creation");
+    Require(synth_browser_runtime_config_version() == 1,
+            "browser runtime-config version is available before runtime creation");
+}
+
 }  // namespace
 
 int main()
@@ -526,6 +541,7 @@ int main()
     static_assert(synth_browser::BrowserApplication<ValidApp>);
     static_assert(!synth_browser::BrowserApplication<MissingSurface>);
     static_assert(!synth::SynthApplication<MissingSurface>);
+    TestBrowserContractVersionsAreReadableBeforeRuntimeCreation();
     TestBrowserRuntimeUsesSharedFrameAndActionRouting();
     TestBrowserPrepareFeedsNegotiatedAudioPageAndRejectsOversizedBlocks();
     TestNativeBuildRejectsBrowserAudioWorkletStart();

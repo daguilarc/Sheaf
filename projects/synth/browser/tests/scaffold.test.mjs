@@ -15,6 +15,17 @@ test("emscripten runtime facade exports string and persistence helpers", async (
   assert.equal((makefile.match(/-sEXPORTED_RUNTIME_METHODS=\$\(EXPORTED_RUNTIME_METHODS\)/g) ?? []).length, 2);
 });
 
+test("emscripten exports pre-creation browser contract version functions", async () => {
+  const makefile = await readBrowserMakefile();
+  for (const name of [
+    "_synth_browser_abi_version",
+    "_synth_browser_ui_protocol_version",
+    "_synth_browser_runtime_config_version",
+  ]) {
+    assert.match(makefile, new RegExp(`\\"${name}\\"`));
+  }
+});
+
 test("emscripten browser builds enable pthreads for engine midi sender", async () => {
   const makefile = await readBrowserMakefile();
   assert.match(makefile, /PTHREAD_FLAGS := -pthread -sUSE_PTHREADS=1 -sPTHREAD_POOL_SIZE=1 -sINITIAL_MEMORY=268435456 -sSTACK_SIZE=16777216/);

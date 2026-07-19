@@ -11,6 +11,21 @@ synth_browser::RuntimeAbi* RuntimeFor(synth_browser_runtime* handle)
 
 }  // namespace
 
+extern "C" std::uint32_t synth_browser_abi_version()
+{
+    return 1;
+}
+
+extern "C" std::uint32_t synth_browser_ui_protocol_version()
+{
+    return 1;
+}
+
+extern "C" std::uint32_t synth_browser_runtime_config_version()
+{
+    return 1;
+}
+
 extern "C" synth_browser_runtime* synth_browser_create()
 {
     return reinterpret_cast<synth_browser_runtime*>(synth_browser_create_runtime());

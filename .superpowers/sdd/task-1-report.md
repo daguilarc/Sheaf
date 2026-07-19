@@ -1,151 +1,208 @@
-# Task 1 Report: Encoder-Mode Contract and Compatible Persistence
+# Task 1 Report: Catalog Contract and Registry
 
 ## Result
 
 - Status: `DONE`
-- OpenSpec mapping: `1.1`, `1.2`, `1.3`
-- Commit: `8693e629` (`feat(synth): add encoder mode contract and migration`)
-- The pre-existing `projects/synth/miniapp/`, OpenSpec proposal, implementation plan, and progress ledger were not committed or modified by this task.
+- OpenSpec mapping: `1.1`–`1.4`
+- Commit message: `feat(synth-browser): define catalog and browser ABI contracts` (hash returned to the controller)
+- Required catalog, facade/runtime-core, generic-boundary, and native contract gates pass.
+- OpenSpec checkboxes were not modified; controller review owns acceptance and checkbox updates.
+- The pre-existing `.superpowers/sdd/progress.md` edit, `projects/synth/browser/package-lock.json`, and `projects/synth/miniapp/` artifacts were preserved and excluded from staging.
 
 ## Implementation
 
-- Renamed the public C++ contract from `EncoderRelativeMode` / `relativeMode` to `EncoderMode` / `mode` across tracked synth consumers.
-- Added declaration-order `EncoderMode::Absolute` while preserving `Signed7Bit` as the default and `turnStep == 1 / 128`.
-- Added JSON conversion for `absolute` and changed new encoder-input JSON output to the `mode` key.
-- Added compatible loading of legacy `relativeMode` only when `mode` is absent. A present invalid `mode`, including explicit JSON `null`, fails without mutating the destination and never falls back.
-- Renamed exposed Controllers view-model/UI field and catalog identifiers to encoder-mode terminology. The catalog remains limited to the two existing relative choices until the dedicated Controllers integration task; absolute input decoding also remains deferred to its planned task.
+### Strict catalog/source contract
 
-## Files Changed
+- Added supported schema/browser ABI/UI protocol/runtime-config constants, all version `1`.
+- Added readonly validated source, publisher, package-file, browser-package, app, catalog, duplicate-diagnostic, and registry types.
+- Added `parseCatalogSources(value)` for a nonempty, unique list of absolute HTTPS catalog URLs without credentials or fragments.
+- Added `parseCatalog(value, catalogUrl)` with strict schema-owned keys and required fields at every v1 object level.
+- Enforced the agreed minimal v1 contract:
+  - `catalogVersion`: trimmed, nonempty string, maximum 128 characters.
+  - publisher/app/build IDs: `[a-z0-9]+(?:-[a-z0-9]+)*`.
+  - publisher name and app display name/author/category: trimmed, nonempty strings, maximum 200 characters.
+  - package media types: `text/javascript`, `application/wasm`, or `application/octet-stream`.
+  - SHA-256: exactly 64 lowercase hexadecimal characters.
+  - normalized relative package paths only; absolute, backslash, percent-encoded, query/fragment, empty-segment, dot-segment, and traversal-like forms are rejected before URL resolution.
+  - nonempty app/file inventories, unique local app IDs and file paths, and an entry path naming a declared `text/javascript` file.
+- Resolved validated entry/file URLs only after path validation and against the catalog response URL.
+- Returned recursively frozen records/arrays without mutating input values.
 
-- `projects/synth/include/synth/ControllersPageUI.hpp`
-- `projects/synth/include/synth/MidiConfigViewModel.hpp`
-- `projects/synth/include/synth/MidiController.hpp`
-- `projects/synth/src/MidiConfigViewModel.cpp`
-- `projects/synth/src/MidiController.cpp`
-- `projects/synth/tests/parameter_modulation_tests.cpp`
-- `projects/synth/tests/rig_tests.cpp`
-- `projects/synth/tests/viewmodel_tests.cpp`
+### Deterministic registry merge
 
-## Baseline Evidence
+- Added `mergeCatalogs(results)` returning readonly `{ apps, diagnostics }`.
+- Preserved configured-source input order as precedence.
+- Retained the first `<publisher-id>/<app-id>` registration and emitted a frozen `duplicate-app` diagnostic for every later duplicate with accepted/rejected catalog URLs.
+- Sorted final accepted apps by display name and then global ID using deterministic JavaScript code-unit ordering rather than locale collation.
 
-Command:
+### Pre-creation browser ABI negotiation
 
-```text
-make -C projects/synth build/parameter_modulation_tests build/viewmodel_tests build/blocks_tests build/controllers_page_ui_tests && projects/synth/build/parameter_modulation_tests && projects/synth/build/viewmodel_tests && projects/synth/build/blocks_tests && projects/synth/build/controllers_page_ui_tests
-```
-
-Observed result: exit `0`; all four binaries passed before Task 1 edits.
+- Added native C exports:
+  - `synth_browser_abi_version()`
+  - `synth_browser_ui_protocol_version()`
+  - `synth_browser_runtime_config_version()`
+- Declared the exports in the browser runtime header and added them to the Emscripten export list.
+- Added corresponding required numeric values to `RuntimeModuleFacade`; `emscriptenRuntimeFacade` reads all three before `create` is called.
+- Added `RuntimeVersions`, frozen `SUPPORTED_RUNTIME_VERSIONS`, and `negotiateRuntimeVersions(actual, required)`.
+- Moved worker load assignment and persistence-factory creation behind successful negotiation. A mismatch leaves the worker without a loaded module, so subsequent creation cannot run.
+- Added optional declared versions to the load command; when omitted, the module's reported requirements must still equal all host-supported versions.
+- Updated existing injected facade fixtures to explicitly implement ABI v1.
+- Linked the real C adapter into the native contract binary so the pre-creation export assertions exercise production definitions.
 
 ## TDD RED Evidence
 
-After adding the new contract and persistence tests, before production edits:
+### Catalog RED
+
+Command from `projects/synth/browser` after adding `tests/catalog.test.mjs` and before creating production `src/catalog.ts`:
 
 ```text
-make -C projects/synth build/parameter_modulation_tests build/viewmodel_tests
+npm run build && node --test dist/tests/catalog.test.mjs
 ```
 
-Observed result: exit `2` during compilation. The expected missing-contract diagnostics included:
+Observed: TypeScript build exited successfully; Node exited nonzero with the expected missing-feature error:
 
 ```text
-error: no member named 'EncoderMode' in namespace 'synth'
-error: no member named 'mode' in 'synth::EncoderMidiInConfig'
-make: *** [build/parameter_modulation_tests] Error 1
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '.../dist/src/catalog.js'
+✖ dist/tests/catalog.test.mjs
+tests 1; pass 0; fail 1
 ```
 
-During self-review, an additional authority edge-case test was added before its fix:
+### Native ABI RED
+
+Command from `projects/synth` after adding native assertions and linking the production adapter, before adding the exports:
 
 ```text
-make -C projects/synth build/parameter_modulation_tests && projects/synth/build/parameter_modulation_tests
+make browser-unit-test
 ```
 
-Observed result: exit `1`, with only the new explicit-null authority assertion failing:
+Observed: compilation failed at the three expected missing declarations:
 
 ```text
-[FAIL] encoder_mode_json_new_field_is_authoritative: requirement failed: !synth::FromJSON(nullMode, loaded)
+error: use of undeclared identifier 'synth_browser_abi_version'
+error: use of undeclared identifier 'synth_browser_ui_protocol_version'
+error: use of undeclared identifier 'synth_browser_runtime_config_version'
+make: *** [build/browser_runtime_contract_tests] Error 1
 ```
 
-This demonstrated that the legacy fallback incorrectly treated a present JSON `null` mode as absent before `ObjectHasKey` was introduced.
+### Browser facade/negotiation RED
+
+The first sandboxed Playwright attempt failed solely because macOS denied Chromium's Mach-port bootstrap. Per repository policy, the unchanged test was rerun with Chromium outside the sandbox.
+
+Meaningful RED command from `projects/synth/browser`:
+
+```text
+npx playwright test tests/runtime-core.spec.ts
+```
+
+Observed: 4 existing tests passed and exactly the 2 new tests failed:
+
+```text
+reads Emscripten browser contract versions without creating a runtime:
+  expected version 1 values, received undefined
+
+rejects incompatible modules before creation or persistence setup:
+  expected incompatibility, received "persistence must not be created"
+
+2 failed; 4 passed
+```
+
+This proved both missing facade exposure and the incorrect pre-fix ordering where persistence setup occurred before negotiation.
 
 ## GREEN Evidence
 
-Focused edge-case GREEN after the parser-presence fix:
+### Catalog GREEN
+
+Command from `projects/synth/browser`:
 
 ```text
-make -C projects/synth build/parameter_modulation_tests && projects/synth/build/parameter_modulation_tests
+npm run build && node --test dist/tests/catalog.test.mjs
 ```
 
-Observed result: exit `0`; all parameter-modulation tests passed, including the four new encoder-mode contract/persistence cases.
+Observed: exit `0`; all 15 catalog tests passed.
 
-Final required gate:
+### ABI GREEN
+
+Commands:
 
 ```text
-make -C projects/synth build/parameter_modulation_tests build/viewmodel_tests build/blocks_tests build/controllers_page_ui_tests && projects/synth/build/parameter_modulation_tests && projects/synth/build/viewmodel_tests && projects/synth/build/blocks_tests && projects/synth/build/controllers_page_ui_tests
+npx playwright test tests/runtime-core.spec.ts
+make browser-unit-test
 ```
 
-Observed result: exit `0`; all four builds and binaries passed without compiler warnings.
+Observed: runtime-core exited `0` with 6/6 tests passed. Native build linked `browser/cpp/BrowserRuntimeAbi.cpp`, then `build/browser_runtime_contract_tests` exited `0`.
 
-Repository compatibility scan:
+### Collateral facade-fixture GREEN
+
+Command from `projects/synth/browser`:
 
 ```text
-rg -n 'EncoderRelativeMode|\.relativeMode|"relativeMode"' projects/synth --glob '!miniapp/**'
+npm run build && npx playwright test tests/static-site.spec.ts tests/persistence.spec.ts tests/midi-flow.spec.ts --grep-invert "real miniapp WASM"
 ```
 
-Observed result: no old C++ type/member references. Matches were limited to the deliberate legacy JSON parser lookup, migration/authority tests, and pre-existing invalid-input legacy fixtures.
+Observed: exit `0`; 11/11 existing static, persistence, and generic MIDI tests passed with their v1 facade fixtures. The generated real-miniapp artifact test was deliberately excluded because the task instructions require preserving pre-existing build artifacts; a newly generated package will carry the new exports through the changed Emscripten export list.
+
+### Final Required Gate (Fresh, Before Commit)
+
+From `projects/synth/browser`:
+
+```text
+npm run build && node --test dist/tests/catalog.test.mjs dist/tests/scaffold.test.mjs && npm run check:generic-runtime && npx playwright test tests/runtime-core.spec.ts
+```
+
+Observed: exit `0`.
+
+- TypeScript build: passed.
+- Node catalog/scaffold tests: 20/20 passed, 0 failed.
+- Generic runtime boundary check: passed.
+- Runtime-core Playwright: 6/6 passed, 0 failed.
+
+From `projects/synth`:
+
+```text
+make browser-unit-test
+```
+
+Observed: exit `0`; `build/browser_runtime_contract_tests` ran successfully.
+
+Additional final hygiene:
+
+```text
+git diff --check
+```
+
+Observed: exit `0`, no whitespace errors.
+
+## Files Changed
+
+- `.superpowers/sdd/task-1-report.md`
+- `projects/synth/Makefile`
+- `projects/synth/browser/Makefile`
+- `projects/synth/browser/cpp/BrowserRuntimeAbi.cpp`
+- `projects/synth/browser/src/catalog.ts`
+- `projects/synth/browser/src/protocol.ts`
+- `projects/synth/browser/src/worker.ts`
+- `projects/synth/browser/tests/catalog.test.mjs`
+- `projects/synth/browser/tests/midi-flow.spec.ts`
+- `projects/synth/browser/tests/persistence.spec.ts`
+- `projects/synth/browser/tests/runtime-core.spec.ts`
+- `projects/synth/browser/tests/scaffold.test.mjs`
+- `projects/synth/browser/tests/static-site.spec.ts`
+- `projects/synth/include/synth/browser/BrowserRuntime.hpp`
+- `projects/synth/tests/browser_runtime_contract_tests.cpp`
 
 ## Self-Review
 
-- Confirmed declaration values `0`, `1`, and `2` with compile-time assertions.
-- Confirmed new writes omit `relativeMode`, absolute values round-trip, both legacy relative strings remain covered, `mode` wins when both keys exist, and failed parsing preserves the destination.
-- Confirmed existing relative decoder code paths and default preset configuration remain behaviorally unchanged aside from the source-level rename.
-- Confirmed `git diff --cached --check` passed and the commit contains only the eight Task 1 synth source/test files.
+- Re-read Task 1, OpenSpec `sbac-2`, `sbac-3`, `sbac-5`, and `sbac-9`, plus design decisions D2/D3.
+- Confirmed all compatibility values are exactly `1` in TypeScript and native exports.
+- Confirmed validation is performed before URL resolution and no input object/array is modified.
+- Confirmed the parser rejects unknown schema-owned keys rather than silently carrying extension data into v1.
+- Confirmed source precedence is independent of display sorting and a later duplicate cannot replace the accepted object.
+- Confirmed incompatible module load does not assign the module, call `create`, or construct persistence.
+- Confirmed direct/runtime worker fixtures explicitly declare v1 rather than weakening production negotiation for legacy mocks.
+- Confirmed no application-specific names or branches were introduced into runtime code.
+- Confirmed `git diff --check` passes.
+- Confirmed the pre-existing progress edit, package lock, and miniapp artifacts remain unstaged.
 
 ## Concerns
 
-None for Task 1. Absolute CC message emission and the third editable Controllers catalog choice are intentionally pending in Tasks 4 and 5, respectively.
-
-## Review Fix: Truthful Absolute Catalog State
-
-- Commit: `653f8b1e` (`fix(synth): represent absolute encoder mode truthfully`)
-- Expanded `EncoderModeCatalog()` to the three declaration-order values and made both `ApplyMappingEdit` and `RowFieldValue` map indices `0`, `1`, and `2` exactly. Invalid stored enum values and catalog index `3` remain rejected.
-- Updated catalog comments and focused tests. Task 5 still owns the deeper open-session identity, commit/rebuild, and live processor reconstruction behavior.
-
-### Review-Fix RED Evidence
-
-Command:
-
-```text
-make -C projects/synth build/viewmodel_tests && projects/synth/build/viewmodel_tests
-```
-
-Observed result before production edits: exit `1` with the focused regression failing because `EncoderModeCatalog().size()` was `2` rather than `3`.
-
-After only expanding the catalog, the same command remained RED and exposed the two aliasing paths:
-
-```text
-[FAIL] AbsoluteEncoderModeHasItsOwnCatalogIndexAndRowValue: requirement failed: value == 2.0
-[FAIL] EncoderModeIndexOutOfRangeIsRefused: requirement failed: !ok
-```
-
-After adding the explicit index-2 edit assertion, the pre-fix mapping also failed with:
-
-```text
-[FAIL] AbsoluteEncoderModeHasItsOwnCatalogIndexAndRowValue: requirement failed: edited.controllers[0].config.encoderInput->mode == EncoderMode::Absolute
-```
-
-### Review-Fix GREEN Evidence
-
-Focused command:
-
-```text
-make -C projects/synth build/viewmodel_tests && projects/synth/build/viewmodel_tests
-```
-
-Observed result: exit `0`; `EncoderModeCatalogExposesAllChoicesInDeclarationOrder`, `AbsoluteEncoderModeHasItsOwnCatalogIndexAndRowValue`, the relative round-trip, and index-3 rejection all passed.
-
-Full Task 1 gate:
-
-```text
-make -C projects/synth build/parameter_modulation_tests build/viewmodel_tests build/blocks_tests build/controllers_page_ui_tests && projects/synth/build/parameter_modulation_tests && projects/synth/build/viewmodel_tests && projects/synth/build/blocks_tests && projects/synth/build/controllers_page_ui_tests
-```
-
-Observed result: exit `0`; all four binaries passed.
+None for the source contract. Any already-generated browser WASM artifact predating this commit must be rebuilt before a real-package browser test can observe the new version exports; the Makefile now exports them for both fake and miniapp builds. No generated artifact was modified or staged in this task.

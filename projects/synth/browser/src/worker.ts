@@ -1,10 +1,15 @@
-import { SharedRingBuffer } from "./protocol.js";
+import {
+  SUPPORTED_BROWSER_ABI_VERSION,
+  SUPPORTED_RUNTIME_CONFIG_VERSION,
+  SUPPORTED_UI_PROTOCOL_VERSION,
+  SharedRingBuffer,
+} from "./protocol.js";
 import type { AudioBridgeDescriptor, MidiAction, MidiEndpoint, MidiOutput } from "./protocol.js";
 import { BROWSER_PERSISTENCE_STATUS_PATH, BrowserPersistence } from "./persistence.js";
 import type { BrowserFileSystem, BrowserPersistenceFactory } from "./persistence.js";
 
 export type RuntimeCommand =
-  | { type: "load"; moduleUrl?: string }
+  | { type: "load"; moduleUrl?: string; versions?: RuntimeVersions }
   | { type: "create" }
   | { type: "initialize"; dataRoot: string }
   | { type: "audio-config" }
@@ -39,6 +44,9 @@ export type RuntimeResponse =
   | { type: "error"; error: string };
 
 export interface RuntimeModuleFacade {
+  readonly abiVersion: number;
+  readonly uiProtocolVersion: number;
+  readonly runtimeConfigVersion: number;
   filesystem?: BrowserFileSystem;
   create(): number;
   audioOutputChannels(handle: number): number;
@@ -61,6 +69,37 @@ export interface RuntimeModuleFacade {
 
 export type RuntimeModuleLoader = (moduleUrl?: string) => Promise<RuntimeModuleFacade>;
 
+export type RuntimeVersions = Readonly<{
+  abiVersion: number;
+  uiProtocolVersion: number;
+  runtimeConfigVersion: number;
+}>;
+
+export const SUPPORTED_RUNTIME_VERSIONS: RuntimeVersions = Object.freeze({
+  abiVersion: SUPPORTED_BROWSER_ABI_VERSION,
+  uiProtocolVersion: SUPPORTED_UI_PROTOCOL_VERSION,
+  runtimeConfigVersion: SUPPORTED_RUNTIME_CONFIG_VERSION,
+});
+
+export function negotiateRuntimeVersions(
+  actual: RuntimeVersions,
+  required: RuntimeVersions = actual,
+): RuntimeVersions {
+  for (const field of ["abiVersion", "uiProtocolVersion", "runtimeConfigVersion"] as const) {
+    if (required[field] !== SUPPORTED_RUNTIME_VERSIONS[field]) {
+      throw new Error(`${field} incompatible: required ${required[field]}, supported ${SUPPORTED_RUNTIME_VERSIONS[field]}`);
+    }
+    if (actual[field] !== required[field]) {
+      throw new Error(`${field} mismatch: required ${required[field]}, module reports ${actual[field]}`);
+    }
+  }
+  return Object.freeze({
+    abiVersion: actual.abiVersion,
+    uiProtocolVersion: actual.uiProtocolVersion,
+    runtimeConfigVersion: actual.runtimeConfigVersion,
+  });
+}
+
 type EmscriptenModule = {
   FS: BrowserFileSystem;
   IDBFS?: unknown;
@@ -70,6 +109,9 @@ type EmscriptenModule = {
   _free(pointer: number): void;
   lengthBytesUTF8(value: string): number;
   stringToUTF8(value: string, pointer: number, maxBytesToWrite: number): void;
+  _synth_browser_abi_version(): number;
+  _synth_browser_ui_protocol_version(): number;
+  _synth_browser_runtime_config_version(): number;
   _synth_browser_create(): number;
   _synth_browser_audio_output_channels(handle: number): number;
   _synth_browser_initialize(handle: number, dataRoot: number): number;
@@ -120,6 +162,9 @@ function decodeUtf8(module: EmscriptenModule, pointer: number, size: number): st
 
 export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModuleFacade {
   return {
+    abiVersion: module._synth_browser_abi_version(),
+    uiProtocolVersion: module._synth_browser_ui_protocol_version(),
+    runtimeConfigVersion: module._synth_browser_runtime_config_version(),
     create: () => module._synth_browser_create(),
     audioOutputChannels: (handle) => module._synth_browser_audio_output_channels(handle),
     initialize: (handle, dataRoot) => withUtf8(module, dataRoot, (root) => module._synth_browser_initialize(handle, root)),
@@ -261,11 +306,16 @@ export class BrowserRuntimeWorker {
       if (this.destroyed) throw new Error("runtime is destroyed");
       switch (command.type) {
         case "load":
-          this.module = await this.loadModule(command.moduleUrl);
-          this.persistence = this.module.filesystem ? (this.createPersistence ?? defaultPersistenceFactory)(this.module.filesystem, (status) => {
+        {
+          const module = await this.loadModule(command.moduleUrl);
+          negotiateRuntimeVersions(module, command.versions);
+          const persistence = module.filesystem ? (this.createPersistence ?? defaultPersistenceFactory)(module.filesystem, (status) => {
             this.emitStatus({ type: "page-status", path: BROWSER_PERSISTENCE_STATUS_PATH, status });
           }) : undefined;
+          this.module = module;
+          this.persistence = persistence;
           return { type: "ok" };
+        }
         case "create": {
           if (!this.module) throw new Error("runtime module is not loaded");
           if (this.handleValue !== undefined) throw new Error("runtime is already created");

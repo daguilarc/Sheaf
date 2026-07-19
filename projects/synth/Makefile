@@ -158,8 +158,8 @@ $(RUNTIME_FILE_SERVICE_TEST_BIN): tests/runtime_file_service_tests.cpp include/s
 $(CONTROLLERS_PAGE_UI_TEST_BIN): tests/controllers_page_ui_tests.cpp include/synth/ControllersPageUI.hpp include/synth/MidiConfigViewModel.hpp include/synth/MidiConfigBlocks.hpp $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(BROWSER_CONTRACT_TEST_BIN): tests/browser_runtime_contract_tests.cpp include/synth/browser/BrowserAppEntry.hpp include/synth/browser/BrowserRuntime.hpp include/synth/browser/BrowserRuntimeMainServices.hpp include/synth/browser/BrowserAudioDevices.hpp include/synth/browser/BrowserMidiBridge.hpp include/synth/browser/BrowserCommandBuffer.hpp include/synth/RuntimeMainComponent.hpp include/synth/RuntimeFileService.hpp include/synth/AppConcepts.hpp include/synth/AppContext.hpp include/synth/Engine.hpp include/synth/PortableUI.hpp $(LIB)
-	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
+$(BROWSER_CONTRACT_TEST_BIN): tests/browser_runtime_contract_tests.cpp browser/cpp/BrowserRuntimeAbi.cpp include/synth/browser/BrowserAppEntry.hpp include/synth/browser/BrowserRuntime.hpp include/synth/browser/BrowserRuntimeMainServices.hpp include/synth/browser/BrowserAudioDevices.hpp include/synth/browser/BrowserMidiBridge.hpp include/synth/browser/BrowserCommandBuffer.hpp include/synth/RuntimeMainComponent.hpp include/synth/RuntimeFileService.hpp include/synth/AppConcepts.hpp include/synth/AppContext.hpp include/synth/Engine.hpp include/synth/PortableUI.hpp $(LIB)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< browser/cpp/BrowserRuntimeAbi.cpp $(LIB) -o $@
 
 $(BROWSER_COMMAND_BUFFER_TEST_BIN): tests/browser_command_buffer_tests.cpp apps/miniapp/MiniAppDraw.hpp include/synth/browser/BrowserCommandBuffer.hpp include/synth/PortableUI.hpp $(STANDARD_MODULATOR_HEADERS) $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@

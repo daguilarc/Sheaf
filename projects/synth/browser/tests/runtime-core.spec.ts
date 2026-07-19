@@ -23,6 +23,9 @@ test("routes a portable action through the runtime worker facade without app HTM
     const calls: Array<[string, ...unknown[]]> = [];
     let nextHandle = 1;
     const worker = new BrowserRuntimeWorker(async () => ({
+      abiVersion: 1,
+      uiProtocolVersion: 1,
+      runtimeConfigVersion: 1,
       create() { calls.push(["create"]); return nextHandle++; },
       audioOutputChannels(handle: number) { calls.push(["audioOutputChannels", handle]); return 2; },
       initialize(handle: number, dataRoot: string) { calls.push(["initialize", handle, dataRoot]); return 0; },
@@ -60,6 +63,70 @@ test("routes a portable action through the runtime worker facade without app HTM
   expect(result.html).not.toMatch(/miniapp|fake-browser/i);
 });
 
+test("reads Emscripten browser contract versions without creating a runtime", async ({ page }) => {
+  await blockProductAutoBoot(page);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+
+  const result = await page.evaluate(async () => {
+    const { emscriptenRuntimeFacade } = await (new Function("return import('/dist/src/worker.js')")() as Promise<any>);
+    const calls: string[] = [];
+    const facade = emscriptenRuntimeFacade({
+      _synth_browser_abi_version() { calls.push("abiVersion"); return 1; },
+      _synth_browser_ui_protocol_version() { calls.push("uiProtocolVersion"); return 1; },
+      _synth_browser_runtime_config_version() { calls.push("runtimeConfigVersion"); return 1; },
+      _synth_browser_create() { calls.push("create"); return 1; },
+    } as any);
+    return {
+      versions: {
+        abiVersion: facade.abiVersion,
+        uiProtocolVersion: facade.uiProtocolVersion,
+        runtimeConfigVersion: facade.runtimeConfigVersion,
+      },
+      calls,
+    };
+  });
+
+  expect(result.versions).toEqual({ abiVersion: 1, uiProtocolVersion: 1, runtimeConfigVersion: 1 });
+  expect(result.calls).toEqual(["abiVersion", "uiProtocolVersion", "runtimeConfigVersion"]);
+});
+
+test("rejects incompatible modules before creation or persistence setup", async ({ page }) => {
+  await blockProductAutoBoot(page);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+
+  const results = await page.evaluate(async () => {
+    const { BrowserRuntimeWorker } = await (new Function("return import('/dist/src/worker.js')")() as Promise<any>);
+    const fields = ["abiVersion", "uiProtocolVersion", "runtimeConfigVersion"];
+    return await Promise.all(fields.map(async (field) => {
+      const calls: string[] = [];
+      const versions = { abiVersion: 1, uiProtocolVersion: 1, runtimeConfigVersion: 1, [field]: 2 };
+      const worker = new BrowserRuntimeWorker(
+        async () => ({
+          ...versions,
+          filesystem: {},
+          create() { calls.push("create"); return 1; },
+        }),
+        () => {
+          calls.push("persistence");
+          throw new Error("persistence must not be created");
+        },
+      );
+      const loaded = await worker.handle({ type: "load" });
+      const created = await worker.handle({ type: "create" });
+      return { field, loaded, created, calls };
+    }));
+  });
+
+  for (const result of results) {
+    expect(result.loaded).toEqual({
+      type: "error",
+      error: expect.stringMatching(new RegExp(`${result.field}.*required 2.*supported 1|${result.field}.*supported 1.*received 2`, "i")),
+    });
+    expect(result.created).toEqual({ type: "error", error: "runtime module is not loaded" });
+    expect(result.calls).toEqual([]);
+  }
+});
+
 test("main bootstrap composes runtime, UI, audio channels, and actions generically", async ({ page }) => {
   await page.goto("http://127.0.0.1:4173/dist/src/main.js");
   await page.setContent('<main id="synth-root"></main>');
@@ -75,6 +142,9 @@ test("main bootstrap composes runtime, UI, audio channels, and actions generical
       moduleUrl: "/dist/wasm/test-app.js",
       frameIntervalMs: 100000,
       runtimeModuleLoader: async () => ({
+        abiVersion: 1,
+        uiProtocolVersion: 1,
+        runtimeConfigVersion: 1,
         filesystem: {
           filesystems: { IDBFS: "idbfs" },
           mkdir() {},
@@ -166,6 +236,9 @@ test("static auto boot uses the default direct runtime client", async ({ page })
             HEAPU8.set(bytes, pointer);
             HEAPU8[pointer + bytes.length] = 0;
           },
+          _synth_browser_abi_version() { return 1; },
+          _synth_browser_ui_protocol_version() { return 1; },
+          _synth_browser_runtime_config_version() { return 1; },
           _synth_browser_create() { calls.push(["create"]); return 17; },
           _synth_browser_audio_output_channels(handle) { calls.push(["audioOutputChannels", handle]); return 1; },
           _synth_browser_initialize(handle, dataRoot) { calls.push(["initialize", handle, readString(dataRoot)]); return 0; },

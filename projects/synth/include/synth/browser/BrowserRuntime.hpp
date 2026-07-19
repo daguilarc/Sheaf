@@ -697,6 +697,9 @@ extern "C" {
 
 struct synth_browser_runtime;
 
+std::uint32_t synth_browser_abi_version();
+std::uint32_t synth_browser_ui_protocol_version();
+std::uint32_t synth_browser_runtime_config_version();
 synth_browser_runtime* synth_browser_create();
 int synth_browser_initialize(synth_browser_runtime* runtime, const char* dataRoot);
 std::size_t synth_browser_audio_output_channels(synth_browser_runtime* runtime);

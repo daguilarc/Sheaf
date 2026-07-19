@@ -9,6 +9,9 @@ test("forwards generic MIDI commands through the runtime worker", async ({ page 
     const calls: unknown[] = [];
     const actions = [{ type: "open-input", controllerIx: 1, identifier: "in-b", name: "Input B" }];
     const worker = new BrowserRuntimeWorker(async () => ({
+      abiVersion: 1,
+      uiProtocolVersion: 1,
+      runtimeConfigVersion: 1,
       create: () => 7,
       audioOutputChannels: () => 2,
       initialize: () => 0,

@@ -29,6 +29,9 @@ test("syncs IDBFS before runtime initialization and flushes patch/config updates
       },
     };
     const worker = new BrowserRuntimeWorker(async () => ({
+      abiVersion: 1,
+      uiProtocolVersion: 1,
+      runtimeConfigVersion: 1,
       filesystem,
       create: () => 3,
       audioOutputChannels: () => 2,
@@ -119,6 +122,9 @@ test("flushes runtime-reported persistence changes after actions and ticks", asy
       },
     };
     const worker = new BrowserRuntimeWorker(async () => ({
+      abiVersion: 1,
+      uiProtocolVersion: 1,
+      runtimeConfigVersion: 1,
       filesystem,
       create: () => 9,
       audioOutputChannels: () => 2,
