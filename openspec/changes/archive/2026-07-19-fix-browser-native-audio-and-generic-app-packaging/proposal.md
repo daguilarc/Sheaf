@@ -8,6 +8,7 @@ The catalog launcher currently routes a click-acquired `AudioContext` through a 
 - Register the single click-acquired host `AudioContext` with the selected Emscripten module, then run the existing native `ProcessAudioWorklet` → `Runtime::Process` path unchanged.
 - Require application construction and any Wasm memory growth to finish before native audio callback startup.
 - Replace Mini App-specific entry sources, build targets, catalog templates, and publisher branches with one validated declarative app build manifest and generic compiler/packager.
+- Keep localhost catalog discovery relative, but make the published Cloudflare launcher discover this repository's production catalog and immutable packages from the stable GitHub Pages publisher URL.
 - Migrate Mini App to the generic path and add Braid 4 as a second first-party catalog application without browser-specific application code.
 - Apply one browser memory policy to every first-party app: 512 MiB initial memory, growth enabled, and a 2 GiB maximum.
 - Extend browser and publication tests to prove native callback cadence, absence of fallback scheduling, generic app boundaries, deterministic multi-app output, and real Mini App/Braid 4 launches.

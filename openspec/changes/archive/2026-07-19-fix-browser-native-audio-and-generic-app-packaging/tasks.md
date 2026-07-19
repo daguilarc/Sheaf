@@ -37,3 +37,4 @@
 - [x] 6.2 Run focused C++ contract, TypeScript/Node, generic-boundary, real-Wasm Chromium, two-origin, publication, and workflow tests.
 - [x] 6.3 Run the full synth and browser suites, rebuild both publication artifacts, validate the OpenSpec change strictly, and confirm `git diff --check` is clean.
 - [x] 6.4 Complete spec-compliance, code-quality, and fresh whole-change release-risk reviews; resolve every actionable finding and re-run affected verification.
+- [x] 6.5 Keep localhost catalog discovery relative while publishing the Cloudflare launcher with the stable GitHub Pages catalog source, and cover both source lists in publication tests.

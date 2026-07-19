@@ -52,6 +52,8 @@ The generic builder produces a structured list of successful app emissions. The 
 
 Mini App and Braid 4 are the initial records. Cloudflare and GitHub Pages publication continue consuming the same validated site/pages artifacts, so neither deployment workflow names an app.
 
+The checked-in catalog source remains relative so localhost development is self-contained. During `publish:site`, the Cloudflare launcher source list is replaced with the stable GitHub Pages catalog URL. The Cloudflare artifact retains its validated catalog/package copies for generic rollback pages, while normal production selection fetches the catalog and immutable application package from GitHub Pages. This makes the first-party repository use the same remote-publisher boundary as additional trusted repositories.
+
 ### D5 — Use one pre-audio memory policy
 
 Every first-party module links with `INITIAL_MEMORY=536870912`, `ALLOW_MEMORY_GROWTH=1`, and `MAXIMUM_MEMORY=2147483648`. App construction, Braid 4's existing scope allocation, persistence initialization, and any growth finish before native callback startup. The callback performs no allocation or growth.
