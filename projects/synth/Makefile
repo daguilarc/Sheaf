@@ -39,7 +39,7 @@ APPS_DIR := apps
 MINIAPP_DIR := $(APPS_DIR)/miniapp
 SHEAF_PATCH_DIR := $(APPS_DIR)/sheaf-patch
 
-.PHONY: all build test check-ui-boundary miniapp sheaf-patch apps browser browser-fake-app browser-fake-app-test browser-miniapp browser-miniapp-run browser-miniapp-smoke browser-unit-test browser-command-buffer-test browser-audio-device-test browser-midi-bridge-test clean
+.PHONY: all build test check-ui-boundary miniapp sheaf-patch apps browser browser-apps browser-fixture-app browser-apps-run browser-apps-smoke browser-unit-test browser-command-buffer-test browser-audio-device-test browser-midi-bridge-test clean
 
 all: build test
 
@@ -221,20 +221,17 @@ apps:
 browser:
 	$(MAKE) -C browser build
 
-browser-fake-app:
-	$(MAKE) -C browser browser-fake-app
+browser-apps:
+	$(MAKE) -C browser browser-apps
 
-browser-fake-app-test:
-	$(MAKE) -C browser browser-fake-app-test
+browser-fixture-app:
+	$(MAKE) -C browser browser-fixture-app
 
-browser-miniapp:
-	$(MAKE) -C browser browser-miniapp
+browser-apps-run:
+	$(MAKE) -C browser browser-apps-run
 
-browser-miniapp-run:
-	$(MAKE) -C browser browser-miniapp-run
-
-browser-miniapp-smoke:
-	$(MAKE) -C browser browser-miniapp-smoke
+browser-apps-smoke:
+	$(MAKE) -C browser browser-apps-smoke
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -177,7 +177,7 @@ test("build installs pinned toolchains, runs local gates, derives the build ID, 
   assert.match(buildCommands, /npm --prefix projects\/synth\/browser run build/);
   assert.match(buildCommands, /npm --prefix projects\/synth\/browser run check:generic-runtime/);
   assert.match(buildCommands, /node --test projects\/synth\/browser\/dist\/tests\/\*\.test\.mjs/);
-  assert.match(buildCommands, /make -C projects\/synth\/browser browser-fake-app browser-miniapp/);
+  assert.match(buildCommands, /make -C projects\/synth\/browser browser-fixture-app browser-apps/);
   assert.match(buildCommands, /npm --prefix projects\/synth\/browser run publish:site/);
   assert.match(buildCommands, /npm --prefix projects\/synth\/browser run publish:pages/);
   assert.match(buildCommands, /tests\/two-origin-package\.spec\.ts/);

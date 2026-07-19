@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "compile:browser-apps": "node dist/src/build-browser-apps.mjs",
+    "compile:browser-fixture": "node dist/src/build-browser-apps.mjs --manifest tests/fixtures/fake-browser-apps.json --allowed-source-root tests/fixtures/cpp",
     "build:cloudflare-pages": "bash scripts/cloudflare-pages-build.sh",
     "package:app": "node dist/src/package-app.mjs",
     "publish:site": "npm run build && node dist/src/publish-site.mjs",

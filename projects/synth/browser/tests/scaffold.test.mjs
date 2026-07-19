@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -14,23 +14,29 @@ test("playwright discovers only browser specs", async () => {
   assert.match(config, /testMatch:\s*"\*\*\/\*\.spec\.ts"/);
 });
 
-test("fake and miniapp builds cannot race the rollback app alias", async () => {
+test("browser apps and the fixture use the same generic builder with no rollback alias", async () => {
   const makefile = await readBrowserMakefile();
-  const appAliasCopies = makefile.match(/cp \$\(BROWSER_BUILD_DIR\)\/[^\s]+ \$\(BROWSER_BUILD_DIR\)\/app\.js/g) ?? [];
-  assert.deepEqual(appAliasCopies, [
-    "cp $(BROWSER_BUILD_DIR)/miniapp.js $(BROWSER_BUILD_DIR)/app.js",
-  ]);
+  for (const target of ["browser-apps", "browser-fixture-app", "browser-apps-run", "browser-apps-smoke"]) {
+    assert.match(makefile, new RegExp(`^${target}:`, "m"));
+  }
+  assert.equal((makefile.match(/dist\/src\/build-browser-apps\.mjs/g) ?? []).length, 2);
+  assert.doesNotMatch(makefile, /browser-miniapp|browser-fake-app|dist\/wasm\/app\.js|miniapp_entry|fake_app_entry/);
+  assert.match(makefile, /browser-apps-smoke: browser-fixture-app\n\t\$\(MAKE\) browser-apps/);
+
+  const browserRoot = await findBrowserRoot();
+  await assert.rejects(access(path.join(browserRoot, "cpp", "miniapp_entry.cpp")));
+  await assert.rejects(access(path.join(browserRoot, "cpp", "fake_app_entry.cpp")));
 });
 
 test("emscripten runtime facade exports string and persistence helpers", async () => {
-  const makefile = await readBrowserMakefile();
-  assert.match(makefile, /EXPORTED_RUNTIME_METHODS := '\["stringToUTF8","lengthBytesUTF8","FS","IDBFS","HEAPU8","HEAPF32","emscriptenRegisterAudioObject"\]'/);
-  assert.match(makefile, /FILESYSTEM_FLAGS := -lidbfs\.js/);
-  assert.equal((makefile.match(/-sEXPORTED_RUNTIME_METHODS=\$\(EXPORTED_RUNTIME_METHODS\)/g) ?? []).length, 2);
+  const builder = await readBuilder();
+  assert.match(builder, /"stringToUTF8", "lengthBytesUTF8", "FS", "IDBFS", "HEAPU8", "HEAPF32"/);
+  assert.match(builder, /"emscriptenRegisterAudioObject"/);
+  assert.match(builder, /"-lidbfs\.js"/);
 });
 
 test("emscripten exports pre-creation browser contract version functions", async () => {
-  const makefile = await readBrowserMakefile();
+  const makefile = await readBuilder();
   for (const name of [
     "_synth_browser_abi_version",
     "_synth_browser_ui_protocol_version",
@@ -41,9 +47,20 @@ test("emscripten exports pre-creation browser contract version functions", async
 });
 
 test("emscripten browser builds enable pthreads for engine midi sender", async () => {
-  const makefile = await readBrowserMakefile();
-  assert.match(makefile, /PTHREAD_FLAGS := -pthread -sUSE_PTHREADS=1 -sPTHREAD_POOL_SIZE=1 -sINITIAL_MEMORY=268435456 -sSTACK_SIZE=16777216/);
-  assert.equal((makefile.match(/\$\(PTHREAD_FLAGS\)/g) ?? []).length, 2);
+  const builder = await readBuilder();
+  for (const flag of [
+    "-pthread",
+    "-sUSE_PTHREADS=1",
+    "-sPTHREAD_POOL_SIZE=1",
+    "-sINITIAL_MEMORY=536870912",
+    "-sALLOW_MEMORY_GROWTH=1",
+    "-sMAXIMUM_MEMORY=2147483648",
+    "-sSTACK_SIZE=16777216",
+    "-sAUDIO_WORKLET=1",
+    "-sWASM_WORKERS=1",
+  ]) {
+    assert.ok(builder.includes(`"${flag}"`), `missing common compiler flag ${flag}`);
+  }
 });
 
 test("cloudflare pages build script bootstraps emscripten before publishing", async () => {
@@ -54,13 +71,19 @@ test("cloudflare pages build script bootstraps emscripten before publishing", as
   const script = await readFile(path.join(browserRoot, "scripts/cloudflare-pages-build.sh"), "utf8");
   assert.match(script, /emsdk" install latest/);
   assert.match(script, /emsdk" activate latest/);
-  assert.match(script, /make .*browser-fake-app browser-miniapp/);
   assert.match(script, /npm .*run publish:site/);
 
   const makefile = await readBrowserMakefile();
-  assert.match(makefile, /browser-miniapp-smoke:[\s\S]*npm run publish:site[\s\S]*tests\/miniapp-smoke\.spec\.ts/);
+  assert.match(makefile, /browser-apps-smoke:/);
   assert.equal(packageJson.scripts["publish:site"], "npm run build && node dist/src/publish-site.mjs");
+  assert.equal(packageJson.scripts["compile:browser-apps"], "node dist/src/build-browser-apps.mjs");
+  assert.equal(packageJson.scripts["compile:browser-fixture"],
+    "node dist/src/build-browser-apps.mjs --manifest tests/fixtures/fake-browser-apps.json --allowed-source-root tests/fixtures/cpp");
 });
+
+async function readBuilder() {
+  return await readFile(path.join(await findBrowserRoot(), "src", "build-browser-apps.mjs"), "utf8");
+}
 
 async function readBrowserMakefile() {
   return await readFile(path.join(await findBrowserRoot(), "Makefile"), "utf8");

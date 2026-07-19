@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "publisher": {
+    "id": "test",
+    "name": "Generic Test Publisher"
+  },
+  "apps": [
+    {
+      "appId": "fake-browser-app",
+      "displayName": "Generic Fake App",
+      "author": "Sheaf Tests",
+      "category": "Instrument",
+      "header": "FakeBrowserApp.hpp",
+      "cppType": "synth_browser::test::FakeBrowserApp",
+      "includeDirs": [
+        "tests/fixtures/cpp"
+      ]
+    }
+  ]
+}

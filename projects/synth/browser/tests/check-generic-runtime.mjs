@@ -1,28 +1,68 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
-const forbidden = /\b(MiniApp|miniapp|synth_miniapp|Vco|FilterModule|LfoBank)\b/;
+import { readAppBuildManifest } from "../src/app-build-manifest.mjs";
+
+const browserRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const synthRoot = path.resolve(browserRoot, "..");
+const repositoryRoot = path.resolve(synthRoot, "..", "..");
+const manifestPath = path.join(browserRoot, "first-party-apps.json");
+const manifest = await readAppBuildManifest({ browserRoot, manifestPath });
 const forbiddenAudioFallback = /renderTimer|configure-audio|render-audio|SharedRingBuffer|synth-audio-ring-buffer/;
-const roots = ["src", "../include/synth/browser", "cpp"];
-// Concrete application identity is permitted only at native entry and
-// first-party publication boundaries; launcher/runtime implementation remains
-// covered by the scan.
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const concreteTokens = new Set();
+for (const app of manifest.apps) {
+  const headerName = path.posix.basename(app.header);
+  concreteTokens.add(app.appId);
+  concreteTokens.add(app.displayName);
+  concreteTokens.add(headerName);
+  concreteTokens.add(headerName.replace(/\.[^.]+$/, ""));
+  concreteTokens.add(app.cppType);
+  for (const component of app.cppType.split("::")) concreteTokens.add(component);
+}
+const forbiddenAppIdentity = new RegExp(
+  [...concreteTokens]
+    .filter((token) => token.length > 0)
+    .sort((left, right) => right.length - left.length)
+    .map(escapeRegex)
+    .join("|"),
+);
+
+const roots = [
+  path.join(browserRoot, "src"),
+  path.join(synthRoot, "include", "synth", "browser"),
+  path.join(browserRoot, "cpp"),
+  path.join(browserRoot, "scripts"),
+  path.join(repositoryRoot, ".github", "workflows", "synth-browser-pages.yml"),
+  path.join(browserRoot, "Makefile"),
+  path.join(synthRoot, "Makefile"),
+];
+
+// Multi-app publication is migrated in Task 3. These legacy publisher files
+// remain excluded only until they consume this task's manifest/emission report.
 const skipped = new Set([
-  path.resolve("cpp/miniapp_entry.cpp"),
-  path.resolve("src/build-first-party-catalog.mjs"),
-  path.resolve("src/publish-site.mjs"),
+  path.join(browserRoot, "src", "build-first-party-catalog.mjs"),
+  path.join(browserRoot, "src", "publish-site.mjs"),
 ]);
 
 async function* filesUnder(root) {
-  const absoluteRoot = path.resolve(root);
-  const entries = await readdir(absoluteRoot);
-  for (const entry of entries) {
-    const absolutePath = path.join(absoluteRoot, entry);
-    const metadata = await stat(absolutePath);
-    if (metadata.isDirectory()) {
+  const metadata = await stat(root);
+  if (metadata.isFile()) {
+    yield root;
+    return;
+  }
+  for (const entry of await readdir(root)) {
+    const absolutePath = path.join(root, entry);
+    const childMetadata = await stat(absolutePath);
+    if (childMetadata.isDirectory()) {
       yield* filesUnder(absolutePath);
-    } else if (metadata.isFile()) {
+    } else if (childMetadata.isFile()) {
       yield absolutePath;
     }
   }
@@ -31,23 +71,37 @@ async function* filesUnder(root) {
 const violations = [];
 for (const root of roots) {
   for await (const file of filesUnder(root)) {
-    if (skipped.has(file)) {
-      continue;
-    }
+    if (skipped.has(file)) continue;
     const text = await readFile(file, "utf8");
     const lines = text.split(/\r?\n/);
+    const synthMakeBrowserStart = file === path.join(synthRoot, "Makefile")
+      ? lines.findIndex((line) => line === "browser:")
+      : -1;
+    const synthMakeBrowserEnd = synthMakeBrowserStart >= 0
+      ? lines.findIndex((line, lineIndex) => lineIndex > synthMakeBrowserStart && line === "clean:")
+      : -1;
     for (let index = 0; index < lines.length; index += 1) {
-      if (forbidden.test(lines[index])) {
-        violations.push(`${path.relative(process.cwd(), file)}:${index + 1}: ${lines[index].trim()}`);
+      let line = lines[index];
+      // The repository synth Makefile also owns native app/test recipes. Scan
+      // only its browser target names and dedicated browser-wrapper block.
+      if (file === path.join(synthRoot, "Makefile")) {
+        if (line.startsWith(".PHONY:")) {
+          line = (line.match(/browser(?:-[A-Za-z0-9-]+)?/g) ?? []).join(" ");
+        } else if (index < synthMakeBrowserStart || index >= synthMakeBrowserEnd) {
+          continue;
+        }
       }
-      if (forbiddenAudioFallback.test(lines[index])) {
-        violations.push(`${path.relative(process.cwd(), file)}:${index + 1}: forbidden audio fallback: ${lines[index].trim()}`);
+      if (forbiddenAppIdentity.test(line)) {
+        violations.push(`${path.relative(repositoryRoot, file)}:${index + 1}: concrete app identity: ${line.trim()}`);
+      }
+      if (forbiddenAudioFallback.test(line)) {
+        violations.push(`${path.relative(repositoryRoot, file)}:${index + 1}: forbidden audio fallback: ${line.trim()}`);
       }
     }
   }
 }
 
 if (violations.length > 0) {
-  console.error(`Browser runtime contains concrete app-specific references:\n${violations.join("\n")}`);
+  console.error(`Generic browser sources contain forbidden concrete app references:\n${violations.join("\n")}`);
   process.exit(1);
 }

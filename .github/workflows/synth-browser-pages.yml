@@ -38,7 +38,7 @@ jobs:
           npm --prefix projects/synth/browser run check:generic-runtime
           node --test projects/synth/browser/dist/tests/*.test.mjs
       - name: Build immutable browser packages
-        run: make -C projects/synth/browser browser-fake-app browser-miniapp
+        run: make -C projects/synth/browser browser-fixture-app browser-apps
       - name: Assemble validated publication artifacts
         run: |
           npm --prefix projects/synth/browser run publish:site

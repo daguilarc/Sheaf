@@ -20,5 +20,5 @@ if [ -f "$EMSDK_DIR/emsdk_env.sh" ]; then
 fi
 
 npm --prefix "$BROWSER_ROOT" install
-make -C "$BROWSER_ROOT" EMSDK="$EMSDK_DIR" browser-fake-app browser-miniapp
+make -C "$BROWSER_ROOT" EMSDK="$EMSDK_DIR" browser-fixture-app browser-apps
 npm --prefix "$BROWSER_ROOT" run publish:site

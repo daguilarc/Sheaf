@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "publisher": {
+    "id": "sheaf",
+    "name": "Sheaf"
+  },
+  "apps": [
+    {
+      "appId": "miniapp",
+      "displayName": "Mini App",
+      "author": "Sheaf",
+      "category": "Instrument",
+      "header": "MiniApp.hpp",
+      "cppType": "synth_miniapp::MiniApp",
+      "includeDirs": [
+        "../apps/miniapp"
+      ]
+    },
+    {
+      "appId": "braid-4",
+      "displayName": "Braid 4",
+      "author": "Sheaf",
+      "category": "synth",
+      "header": "Braid4.hpp",
+      "cppType": "synth_braid4::Braid4",
+      "includeDirs": [
+        "../apps/braid-4"
+      ]
+    }
+  ]
+}
