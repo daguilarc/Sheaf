@@ -29,6 +29,12 @@ test("browser apps and the fixture use the same generic builder with no rollback
   await assert.rejects(access(path.join(browserRoot, "cpp", "fake_app_entry.cpp")));
 });
 
+test("the full browser suite builds the isolated real-Wasm fixture before Playwright", async () => {
+  const browserRoot = await findBrowserRoot();
+  const packageJson = JSON.parse(await readFile(path.join(browserRoot, "package.json"), "utf8"));
+  assert.match(packageJson.scripts.test, /make browser-fixture-app.*playwright test/);
+});
+
 test("emscripten runtime facade exports string and persistence helpers", async () => {
   const builder = await readBuilder();
   assert.match(builder, /"stringToUTF8", "lengthBytesUTF8", "FS", "IDBFS", "HEAPU8", "HEAPF32"/);

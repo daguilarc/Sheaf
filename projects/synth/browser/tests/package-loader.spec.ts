@@ -293,9 +293,11 @@ test("passes explicit immutable mappings to the Emscripten factory and refuses d
           IDBFS: {},
           HEAPU8: new Uint8Array(16),
           HEAPF32: new Float32Array(4),
-          _synth_browser_abi_version: () => 1,
+          _synth_browser_abi_version: () => 2,
           _synth_browser_ui_protocol_version: () => 1,
           _synth_browser_runtime_config_version: () => 1,
+          emscriptenRegisterAudioObject: () => 1,
+          _synth_browser_start_audio_worklet: () => 0,
         };
       } };
     });

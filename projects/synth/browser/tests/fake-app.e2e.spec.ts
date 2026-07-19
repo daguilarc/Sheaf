@@ -20,14 +20,15 @@ async function builtFakeCatalogApp() {
   }>);
   const buildId = "fake-browser-app-build-1";
   const packageRoot = `packages/fake-browser-app/${buildId}`;
+  const emissionRoot = "fixture-apps/fake-browser-app";
   const files = await Promise.all([
-    ["fake_browser_app.js", "text/javascript"],
-    ["fake_browser_app.wasm", "application/wasm"],
+    ["fake-browser-app.js", "text/javascript"],
+    ["fake-browser-app.wasm", "application/wasm"],
   ].map(async ([name, mediaType]) => {
-    const bytes = await readFile(new URL(`../dist/wasm/${name}`, import.meta.url));
+    const bytes = await readFile(new URL(`../dist/wasm/${emissionRoot}/${name}`, import.meta.url));
     return {
       path: `${packageRoot}/${name}`,
-      url: `http://127.0.0.1:4174/dist/wasm/${name}`,
+      url: `http://127.0.0.1:4174/dist/wasm/${emissionRoot}/${name}`,
       mediaType,
       size: bytes.byteLength,
       sha256: createHash("sha256").update(bytes).digest("hex"),
@@ -43,10 +44,10 @@ async function builtFakeCatalogApp() {
     category: "Instrument",
     buildId,
     browser: {
-      abiVersion: 1,
+      abiVersion: 2,
       uiProtocolVersion: 1,
       runtimeConfigVersion: 1,
-      entry: `${packageRoot}/fake_browser_app.js`,
+      entry: `${packageRoot}/fake-browser-app.js`,
       entryUrl: files[0].url,
       files,
     },
@@ -77,7 +78,8 @@ async function installRealFakeApp(page: Page): Promise<void> {
     const main = await (new Function("return import('/dist/src/main.js?task4-fake')")() as Promise<any>);
     const { decodeCommandBuffer } = await (new Function("return import('/dist/src/protocol.js')")() as Promise<any>);
     const { materializePackage } = await (new Function("return import('/dist/src/package-loader.js')")() as Promise<any>);
-    const client = main.createWorkerRuntimeClient();
+    const { ActivationLease } = await (new Function("return import('/dist/src/activation.js')")() as Promise<any>);
+    const client = main.createDirectRuntimeClient();
     const observations = {
       commands: [] as Array<{ type: string; name?: string; value?: string }>,
       responses: [] as Array<{ type: string; error?: string }>,
@@ -96,6 +98,7 @@ async function installRealFakeApp(page: Page): Promise<void> {
       packageDisposals: 0,
     };
     const observingClient = {
+      ...client,
       async request(command: { type: string; name?: string; value?: string }) {
         observations.commands.push({ type: command.type, name: command.name, value: command.value });
         const response = await client.request(command);
@@ -107,30 +110,58 @@ async function installRealFakeApp(page: Page): Promise<void> {
         return response;
       },
       onStatus: client.onStatus,
-      terminate: () => {
+      terminate: async () => {
         observations.terminated = true;
-        client.terminate?.();
+        await client.terminate?.();
       },
     };
-    class TestAudioContext {
-      readonly sampleRate = 48_000;
-      readonly destination = {};
-      readonly audioWorklet = { addModule: async () => {} };
-      constructor() { resources.contexts += 1; }
-      async resume() { resources.resumes += 1; }
-      async close() { resources.closes += 1; }
-    }
-    Object.defineProperty(globalThis, "AudioContext", { configurable: true, value: TestAudioContext });
-    Object.defineProperty(navigator, "requestMIDIAccess", {
+
+    const NativeAudioWorkletNode = globalThis.AudioWorkletNode;
+    Object.defineProperty(globalThis, "AudioWorkletNode", {
       configurable: true,
-      value: async () => {
-        resources.midiRequests += 1;
-        return { inputs: new Map(), outputs: new Map(), onstatechange: null };
-      },
+      value: new Proxy(NativeAudioWorkletNode, {
+        construct(target, argumentsList, newTarget) {
+          const node = Reflect.construct(target, argumentsList, newTarget) as AudioWorkletNode;
+          const instrumented = node as any;
+          const nativeConnect = instrumented.connect.bind(node);
+          const nativeDisconnect = instrumented.disconnect.bind(node);
+          instrumented.connect = (...args: unknown[]) => {
+            resources.nodeConnects += 1;
+            return nativeConnect(...args);
+          };
+          instrumented.disconnect = (...args: unknown[]) => {
+            resources.nodeDisconnects += 1;
+            return nativeDisconnect(...args);
+          };
+          return node;
+        },
+      }),
     });
     await main.installSheafPatchLauncher(root, {
       client: { loadSources: async () => ({ apps: [application], diagnostics: [], duplicateDiagnostics: [] }) },
       runtimeClientFactory: () => { resources.runtimeClients += 1; return observingClient; },
+      activationLeaseFactory: () => {
+        if (resources.contexts !== 0) throw new Error("second AudioContext");
+        const context = new AudioContext();
+        resources.contexts += 1;
+        const nativeResume = context.resume.bind(context);
+        const nativeClose = context.close.bind(context);
+        context.resume = async () => {
+          resources.resumes += 1;
+          await nativeResume();
+        };
+        context.close = async () => {
+          resources.closes += 1;
+          await nativeClose();
+        };
+        return ActivationLease.acquire({
+          audioContextFactory: () => context,
+          requestMIDIAccess: async () => {
+            resources.midiRequests += 1;
+            return { inputs: new Map(), outputs: new Map(), onstatechange: null };
+          },
+        });
+      },
       materializePackage: async (app: unknown) => {
         resources.materializations += 1;
         const packageLease = await materializePackage(app);
@@ -145,13 +176,6 @@ async function installRealFakeApp(page: Page): Promise<void> {
           },
         };
       },
-      audioOptions: {
-        audioContextFactory: () => { throw new Error("second AudioContext"); },
-        audioWorkletNodeFactory: () => ({
-          connect() { resources.nodeConnects += 1; },
-          disconnect() { resources.nodeDisconnects += 1; },
-        }),
-      },
       frameIntervalMs: 60_000,
     });
     (window as any).__task4Fake = { observations, resources };
@@ -161,10 +185,16 @@ async function installRealFakeApp(page: Page): Promise<void> {
 }
 
 test.afterEach(async ({ page }) => {
-  await page.evaluate(() => {
+  await page.evaluate(async () => {
     const state = (window as any).__task4Fake;
     if (!state) return;
     dispatchEvent(new Event("pagehide"));
+    const deadline = performance.now() + 5_000;
+    while (performance.now() < deadline &&
+           (!state.observations.terminated || state.resources.closes !== 1 ||
+            state.resources.nodeDisconnects !== 1 || state.resources.packageDisposals !== 1)) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     if (!state.observations.terminated) throw new Error("SynthBrowserApp.stop() did not terminate the runtime client");
     if (state.resources.closes !== 1 || state.resources.nodeDisconnects !== 1 || state.resources.packageDisposals !== 1)
       throw new Error(`runtime resources were not released exactly once: ${JSON.stringify(state.resources)}`);
@@ -218,9 +248,9 @@ test("real fake-app WASM renders and refreshes the shared runtime shell", async 
   });
   expect(frameShape.roots).toEqual(["runtime.main.root"]);
   expect(frameShape.frameCount).toBeGreaterThanOrEqual(7);
-  expect(await page.evaluate(() => (window as any).__task4Fake.resources)).toEqual({
+  const resources = await page.evaluate(() => (window as any).__task4Fake.resources);
+  expect(resources).toMatchObject({
     contexts: 1,
-    resumes: 1,
     closes: 0,
     midiRequests: 1,
     runtimeClients: 1,
@@ -229,6 +259,7 @@ test("real fake-app WASM renders and refreshes the shared runtime shell", async 
     materializations: 1,
     packageDisposals: 0,
   });
+  expect(resources.resumes).toBeGreaterThanOrEqual(1);
   expect(await page.evaluate(() =>
     (window as any).__task4Fake.observations.commands.filter((command: { type: string }) => command.type === "load").length,
   )).toBe(1);
