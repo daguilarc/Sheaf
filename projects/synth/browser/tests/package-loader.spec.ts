@@ -45,7 +45,7 @@ test("fetches and verifies every declared package file with CORS before creating
       return new Response(bytes, {
         status: 200,
         headers: {
-          "Content-Type": name.endsWith(".wasm") ? "application/wasm" : "text/javascript; charset=utf-8",
+          "Content-Type": name.endsWith(".wasm") ? "application/wasm" : "application/javascript",
           "Content-Length": String(bytes.byteLength),
         },
       });

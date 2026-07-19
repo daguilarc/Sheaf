@@ -67,6 +67,11 @@ function mediaTypeEssence(response: Response): string {
   return (response.headers.get("Content-Type") ?? "").split(";", 1)[0].trim().toLowerCase();
 }
 
+function matchesMediaType(actualMediaType: string, expectedMediaType: string): boolean {
+  if (actualMediaType === expectedMediaType) return true;
+  return expectedMediaType === "text/javascript" && actualMediaType === "application/javascript";
+}
+
 const IMPORT_META_SIDECAR = /new\s+URL\(\s*(["'])([^"']+)\1\s*,\s*import\.meta\.url\s*\)/g;
 
 function rewriteImportMetaSidecars(source: string, mappings: Readonly<Record<string, string>>): string {
@@ -87,7 +92,7 @@ async function verifiedBytes(file: CatalogFile, fetcher: PackageFetcher): Promis
   }
   if (!response.ok) throw new Error(`package file ${file.path} returned HTTP ${response.status}`);
   const actualMediaType = mediaTypeEssence(response);
-  if (actualMediaType !== file.mediaType)
+  if (!matchesMediaType(actualMediaType, file.mediaType))
     throw new Error(`package file ${file.path} media type ${actualMediaType || "<missing>"}; expected ${file.mediaType}`);
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.byteLength !== file.size)
