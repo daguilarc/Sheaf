@@ -22,11 +22,11 @@
 
 ## 4. Selection activation and runtime ownership
 
-- [ ] 4.1 Refactor browser audio startup so the launcher selection handler creates/resumes the host-owned audio context before awaiting package work and the loaded generic runtime attaches its WASM AudioWorklet to that activated context instead of creating a second context.
-- [ ] 4.2 Refactor Web MIDI startup so the same selection handler begins sysex permission acquisition once and passes the resulting host-owned MIDI access into the selected runtime manager.
-- [ ] 4.3 Add activation-lease tests with delayed package download/compilation proving the first selection gesture starts audio and MIDI without a second click.
-- [ ] 4.4 Add retry and cleanup behavior for denied audio/MIDI activation, failed package loading, runtime initialization failure, and page unload without leaving duplicate contexts, ports, or runtime instances.
-- [ ] 4.5 Preserve the generic fake-app-first gate and update real miniapp audio/MIDI smoke tests to select it through the launcher rather than auto-launching a module URL.
+- [x] 4.1 Refactor browser audio startup so the launcher selection handler creates/resumes the host-owned audio context before awaiting package work and the loaded generic runtime attaches through the host AudioBridge/ring on that exact activated context instead of invoking the native callback that creates a second context.
+- [x] 4.2 Refactor Web MIDI startup so the same selection handler begins sysex permission acquisition once and passes the resulting host-owned MIDI access into the selected runtime manager.
+- [x] 4.3 Add activation-lease tests with delayed package download/compilation proving the first selection gesture starts audio and MIDI without a second click.
+- [x] 4.4 Add retry and cleanup behavior for denied audio/MIDI activation, failed package loading, runtime initialization failure, and page unload without leaving duplicate contexts, ports, or runtime instances.
+- [x] 4.5 Preserve the generic fake-app-first gate and update real miniapp audio/MIDI smoke tests to select it through the launcher rather than auto-launching a module URL.
 
 ## 5. Shared configuration and app persistence isolation
 
