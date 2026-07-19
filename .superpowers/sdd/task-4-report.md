@@ -1,165 +1,152 @@
-# Task 4 Report: Absolute MIDI Encoder Decoding
+# Task 4 Report — Two-app one-click browser and deployment acceptance
 
-## Result
+## Status
 
-DONE
+Complete. Task 4 was implemented from base
+`83331f69e88ad604775330b1f183091cf511b30a` in implementation commit
+`e3cfc420` (`test(synth-browser): prove two-app native browser launch`). OpenSpec
+artifacts were not modified.
 
-## Commit
+## Delivered behavior
 
-`035ba434` (`feat(synth): decode absolute encoder positions`)
+- Replaced the Mini App-only real-Wasm smoke with a table-driven Mini App and
+  Braid 4 acceptance. Each row opens an explicit fresh browser context/page and
+  proves one launcher click, one acquired `AudioContext`, one Web MIDI request,
+  one runtime, and one materialized package.
+- Each real app renders its application-specific root using test data only,
+  advances two observed native AudioWorklet block counts, reports finite
+  deadline stats, produces a nonzero peak after a MIDI interaction, and retains
+  the exact module-memory byte length recorded at native callback startup.
+- Each real app saves a patch below `/data/patches/sheaf/<appId>` and proves the
+  other app's patch root is absent in its fresh session.
+- Both local and deployed-origin acceptance reject evidence of the removed
+  `configure-audio`/`render-audio` transport and `synth-audio-ring-buffer`
+  fallback while requiring the native `sheaf-synth-audio` node.
+- Launcher and published-site tests render the two deterministic catalog rows,
+  fetch only source/catalog metadata during discovery, and fetch only the
+  selected row's immutable package.
+- The generic two-origin fixture now preserves browser ABI v2 and exposes only
+  the native context-registration/start/stats surface required by that ABI.
+- The deployed validator compares the exact whole `catalogVersion` and fetches,
+  validates CORS/MIME, sizes, and hashes for every file of every catalog app.
+  A second-app CORS rejection test proves validation does not stop after the
+  first app.
+- The GitHub Pages workflow now carries
+  `SYNTH_BROWSER_EXPECTED_CATALOG_VERSION` / `--expected-catalog-version`
+  through build, local smoke, post-deploy validation, and deployed smoke. It
+  builds `browser-apps`, assembles both Cloudflare and publisher-only artifacts,
+  and retains pinned actions, minimum permissions, default-branch deployment,
+  environment, concurrency, CORS, and MIME gates.
+- The Cloudflare build compiles all manifest apps through `browser-apps` and
+  installs dependencies without creating or changing the protected lockfile.
 
-## Scope
+## Strict TDD record
 
-- Modified `projects/synth/src/MidiController.cpp`.
-- Added focused coverage in `projects/synth/tests/parameter_modulation_tests.cpp`.
-- Preserved the user's untracked `projects/synth/miniapp/` directory.
-- Did not modify Controllers edit sessions, property tests, OpenSpec artifacts, the plan, or the progress ledger.
+### RED — whole-catalog deployment validation
 
-## RED Evidence
+After adding the two-app validator/workflow expectations, this command failed
+as intended against the build-ID-only implementation:
 
-Command:
+```sh
+npm --prefix projects/synth/browser run build
+node --test projects/synth/browser/dist/tests/github-pages-workflow.test.mjs
+```
 
-`make -C projects/synth build/parameter_modulation_tests && projects/synth/build/parameter_modulation_tests`
+Result: 5 passed, 10 failed. The failures specifically showed the old
+`browser-fixture-app browser-apps` CI command, old
+`SYNTH_BROWSER_EXPECTED_BUILD_ID` / `--expected-build-id` interface, and the
+validator rejecting the new `expectedCatalogVersion` input before validating
+the two-app fixture.
 
-Result: exit 1 after the new tests compiled. Both new cases failed at the expected first missing message assertion:
+### GREEN — whole-catalog deployment validation
 
-- `midi_encoder_input_absolute_maps_raw_positions_independent_of_turn_step`: failed `bus.Pop(message, 103)` because mapped absolute turns emitted no message.
-- `midi_encoder_input_absolute_preserves_mapped_push_and_thru_boundaries`: failed `bus.Pop(message, 77)` for the same missing absolute-turn emission.
+After the minimal validator, workflow, and Cloudflare changes, the same focused
+workflow test passed 15/15. The final expanded workflow/publication run passed
+24/24, including the second-app response gate.
 
-All pre-existing cases passed during the RED run, isolating the failure to the absent absolute decoder branch.
+### RED — ABI-v2 two-origin fixture
 
-## Implementation
+After changing the two-origin acceptance to require ABI v2, its focused run
+failed 1/1 with:
 
-`EncoderMidiInProcessor::Process` now handles a mapped turn in `EncoderMode::Absolute` by emitting:
+```text
+runtime module does not expose AudioContext registration
+```
 
-`MessageIn::ParamSetAbsolute(NextTimestamp(), mapping->slotIx, mapping->position, float(raw) / 127.0f)`
+### GREEN — ABI-v2 two-origin fixture
 
-The absolute branch returns before `DecodeDelta`, so it never reads or applies `turnStep`. Signed-7-bit and direction-only turns continue through the unchanged `DecodeDelta` path.
+Adding the generic native context registration, native start, and stats
+functions to the fixture made the same focused test pass 1/1.
 
-## Focused Coverage
+### Real-app acceptance baseline
 
-- Raw CC values `0`, `64`, and `127` produce normalized values `0`, `64.0f / 127.0f`, and `1`.
-- Generated timestamps are used instead of incoming MIDI timestamps.
-- Mapped slot and position are preserved.
-- The same expected messages are produced with `turnStep` values `0.01f` and `0.75f`.
-- A mapped absolute raw-zero turn is emitted and consumed rather than treated as a relative no-op.
-- Mapped nonzero pushes still emit `ParamPush` and are consumed.
-- Mapped zero-value pushes remain consumed without emitting a message.
-- Unmapped CC input still passes through unchanged.
+The newly table-driven Mini App/Braid 4 acceptance passed 2/2 against the Task
+1–3 base once the canonical three-port server was running. This confirmed the
+earlier implementation already satisfied the real-app behavior and that Task
+4's work here is the release-grade acceptance and deployment generalization.
+An initial sandboxed Chromium launch and a run without the explicit canonical
+server were environment failures and are not counted as RED evidence.
 
-## GREEN Evidence
+## Verification
 
-Focused command:
+All required commands were run from the Task 4 worktree.
 
-`make -C projects/synth build/parameter_modulation_tests && projects/synth/build/parameter_modulation_tests`
+- `make -C projects/synth/browser browser-apps` — passed; built Mini App and
+  Braid 4 under the common ABI/memory/runtime recipe. Emscripten emitted its
+  existing pthread + growable-memory and deprecated `USE_PTHREADS` warnings.
+- `npm --prefix projects/synth/browser run publish:site` — passed.
+- `npm --prefix projects/synth/browser run publish:pages` — passed.
+- `npm --prefix projects/synth/browser run build` — passed.
+- `npm --prefix projects/synth/browser run check:generic-runtime` — passed.
+- `node --test projects/synth/browser/dist/tests/github-pages-workflow.test.mjs projects/synth/browser/dist/tests/publish-site.test.mjs`
+  — 24 passed, 0 failed.
+- `npx --prefix projects/synth/browser playwright test tests/first-party-apps-smoke.spec.ts tests/launcher.spec.ts tests/persistence.spec.ts tests/static-site.spec.ts tests/two-origin-package.spec.ts tests/deployed-origin.spec.ts`
+  — 22 passed, 2 skipped. Both skips are the documented live-URL-only cases
+  because `SYNTH_BROWSER_REMOTE_CATALOG_URL` was unset.
+- The same deployed-origin test with the local Pages catalog URL and
+  `SYNTH_BROWSER_EXPECTED_CATALOG_VERSION` — 2 passed, 0 failed (Mini App and
+  Braid 4).
+- Standalone `validate-deployed-catalog.mjs` against the local Pages catalog —
+  validated 2 apps and 4 package files at
+  `first-party-c9081639f5c39389244c2817308d4b7890269dc149793c6afec5da0f6089895d`.
+- A SHA-256 tree comparison proved `dist/site/catalogs` and
+  `dist/pages/catalogs` byte-identical: one catalog plus two JS/Wasm files per
+  app. Only the Cloudflare tree contains the launcher, runtime modules,
+  rollback pages, source list, styles, and `_headers`.
+- `git diff --check` — passed.
+- Generated `test-results/` was moved to `/tmp` before staging. The pre-existing
+  untracked `projects/synth/browser/package-lock.json` and
+  `projects/synth/miniapp/` remain unmodified and unstaged.
 
-Result: exit 0; 254/254 parameter-modulation cases passed, including both new absolute cases and existing relative decoder/default-profile/persistence coverage.
+## Persistent Opus review
 
-Prescribed non-regression command:
+- Harness/model: Claude Code / Opus through packaged xagent.
+- Run ID: `xrun_20260719190323122_31275be7`.
+- Reviewed range: exact
+  `83331f69e88ad604775330b1f183091cf511b30a..e3cfc420`.
+- Verdict: **APPROVED**.
+- Actionable findings: none; no fix/re-review loop was required.
+- The reviewer explicitly confirmed the two-app native callback, stable-memory,
+  persistence, package-fetch, ABI-v2, `catalogVersion`, all-file validation,
+  workflow security/hosting, protected-path, and unchanged-OpenSpec contracts.
 
-`make -C projects/synth build/parameter_modulation_tests build/rig_tests build/miniapp_system_tests build/braid4_system_tests && projects/synth/build/parameter_modulation_tests && projects/synth/build/rig_tests && projects/synth/build/miniapp_system_tests && projects/synth/build/braid4_system_tests`
+The reviewer recorded three low-severity observations rather than defects:
 
-Result: exit 0. Parameter modulation, rig, MiniApp system, and Braid4 system suites all passed. Existing Twister/WRLD.Bldr defaults and relative production routing remained green.
-
-`git diff --check` also passed before commit.
-
-## Self-Review
-
-- The product delta is the minimal mode branch required by OpenSpec tasks 4.1-4.3.
-- Relative decoding code was not rewritten or reordered.
-- Absolute decoding uses the raw 7-bit value directly and has no parameter-state or `turnStep` dependency.
-- Mapped/unmapped/thru/push behavior is explicitly covered at the processor boundary.
-- Only the two task-scoped files were committed.
+1. `npm install --no-package-lock` consciously trades lockfile-pinned builder
+   dependencies for preserving the repository's intentionally untracked
+   lockfile; content-addressed output and deterministic catalog tests remain.
+2. Generic rollback pages intentionally reuse immutable catalog package paths;
+   the underlying generic rollback-tree implementation came from Task 3, while
+   Task 4 now accepts both real rows through it.
+3. `src/static-server.mjs` and `tests/github-pages-workflow.test.mjs` are two
+   justified companion files beyond the brief's primary list: the former keeps
+   the cross-origin fixture on ABI v2, and the latter verifies the required
+   workflow interface change.
 
 ## Concerns
 
-None.
-
-# Browser App Catalog Task 4: Selection Activation Lease
-
-## Result
-
-IMPLEMENTED — OpenSpec 4.1–4.5 behavior is covered. Per controller instruction,
-the OpenSpec checkboxes and `.superpowers/sdd/progress.md` remain unchanged for
-review/coordination to update separately.
-
-## Commits
-
-- Phase A: `17ef3271` (`feat(synth-browser): acquire activation resources before launch`)
-- Phase B: `feat(synth-browser): launch packages from one activation gesture`
-
-## TDD Evidence
-
-Phase A RED was captured with four focused activation tests failing because
-`dist/src/activation.js` did not exist. Phase A then implemented synchronous
-audio construction/resume and sysex MIDI request ownership, one-shot consume,
-partial-failure cleanup, idempotent disposal, leased AudioBridge context
-injection, and leased MIDI reconciliation. Before the Phase A commit, the
-focused suites passed in order: activation 4/4, audio 7/7, MIDI 7/7.
-
-Phase B RED was captured with four new integration cases failing against the
-placeholder launcher selection path: no same-stack acquire/materialize/version
-forwarding, no package-failure retry cleanup, no runtime-init cleanup, and no
-leased unload teardown. Converting the generic fake-app gate also exposed a
-structured-clone failure when a `MaterializedPackage.dispose` function crossed
-the Worker boundary; the production fix sends only the serializable
-`MaterializedRuntimeModule` fields while retaining package disposal with the
-active app.
-
-## Implementation
-
-- `SheafPatchLauncher` invokes its supplied selection boundary synchronously in
-  the click stack, then settles the returned promise separately while preserving
-  the Task 2 pending-shell/root-ownership guards.
-- The production selection callback calls `ActivationLease.acquire()` before
-  entering package materialization, so AudioContext construction/resume and the
-  `{sysex:true}` MIDI request start before the first await.
-- `installSynthBrowserApp` consumes one lease, passes declared catalog versions
-  through the existing Task 3 runtime negotiation boundary, injects the exact
-  leased AudioContext and MIDI access, and creates one runtime only after
-  activation succeeds.
-- Package failure, runtime initialization failure, active-page unload, and
-  repeated disposal release the package URLs, runtime, UI, AudioBridge node,
-  AudioContext, MIDI bindings, and MIDI ports without duplicate acquisition.
-- Generic fake-app and real miniapp acceptance now enter through catalog rows,
-  verified materialization, activation lease consumption, and generic runtime
-  installation. Counters assert one context, resume, MIDI request, runtime,
-  materialization/import load, and input binding.
-- Focused direct AudioBridge, native Wasm AudioWorklet, MIDI manager, and direct
-  runtime installation APIs remain callable and covered.
-
-## Controller-Approved Audio Variance
-
-The brief's phrase “runtime-owned Wasm AudioWorklet” cannot attach to a
-JavaScript-created AudioContext through the current native ABI without changing
-native files outside Task 4. The controller approved the binding OpenSpec
-`sbac-6` implementation: launcher-selected apps use the existing host
-AudioBridge/shared-ring path on the exact leased host AudioContext and never
-invoke `runtime.startAudioWorklet` or create a second context. The focused direct
-native Wasm AudioWorklet path is preserved unchanged.
-
-## Final Verification
-
-After `npm run build` and `git diff --check`, the prescribed Chromium gates ran
-in the exact required order and passed:
-
-1. `tests/activation-lease.spec.ts`: 8/8
-2. `tests/audio-flow.spec.ts`: 7/7
-3. `tests/midi-flow.spec.ts`: 7/7
-4. `tests/fake-app.e2e.spec.ts`: 3/3
-5. `tests/miniapp-smoke.spec.ts`: 6/6
-
-`npm run check:generic-runtime` passed, followed by
-`tests/launcher.spec.ts tests/runtime-core.spec.ts` at 13/13. The miniapp smoke
-spec unconditionally rewrites its two tracked screenshot paths; because Task 4
-has no intended pixel delta, both generated PNG changes were restored from HEAD
-after the successful normal-mode run.
-
-## Scope and Concerns
-
-- No Task 5 persistence identity/path work was started.
-- The pre-existing untracked `projects/synth/browser/package-lock.json` and
-  `projects/synth/miniapp/` tree were preserved and never staged.
-- No OpenSpec task checkbox or progress-ledger entry was edited.
-- No unresolved implementation concern remains; the native-worklet wording
-  variance is explicit above for reviewer attention.
+No blocking concerns. The two reviewer observations involving dependency
+pinning and rollback structure are intentional existing project trade-offs.
+Documentation still using the former build-ID terminology belongs to the
+change's later documentation task and was deliberately not changed in this
+Task 4 scope.
