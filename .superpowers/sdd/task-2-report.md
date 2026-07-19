@@ -1,124 +1,187 @@
-# Task 2 Report: Exact Absolute Parameter Editing
+# Task 2 Report: Catalog Discovery and Launcher
 
-## Result
+## Status
 
-- Status: `DONE`
-- Commit: `0ad708aa` (`feat(synth): add exact absolute parameter projection`)
-- OpenSpec mapping implemented: 2.1, 2.2, 2.3, 2.4, 2.5.
-- OpenSpec checkboxes, plan, proposal, progress ledger, prior task reports, and `projects/synth/miniapp/` were not committed or modified by this task.
+Task 2 is implemented with strict RED-GREEN-REFACTOR coverage. The intended commit is
+`feat(synth-browser): discover catalogs in generic launcher`.
 
-## Scope Implemented
+The production browser root now boots catalog discovery instead of the direct WASM
+module. The direct `installSynthBrowserApp` API and its focused runtime coverage remain
+available for rollback and later Task 6 work. No OpenSpec checkbox was modified, per
+the controller instruction.
 
-- Added JUCE-free `synth::detail` contracts for gesture contributions, distinct latent edit locations, coefficient construction, and pure target projection.
-- Added post-aggregation validation for non-null distinct storage, finite positive coefficients, unit coefficient sum, finite in-range storage, finite ordered bounds, and finite in-range targets.
-- Added the double-intermediate active-set solve `z_i = clamp(x_i + lambda * a_i)`, fixing every contributor that crosses the approached bound and recomputing over the remaining free set. Float writes happen only after the complete candidate passes range and `1e-5` effective-target validation.
-- Added `Parameter::HandleSetAbsolute`, preserving the existing relative handler unchanged. At the Task 2 commit, the absolute handler clamped normalized input, armed selected inactive gestures using the existing endpoint rules, rebuilt contributors after arming, included every positive-weight active gesture independent of selection, projected, and verified production `ComputeRawCenter(scene)` before target-center slew within `1e-5`. The final-review follow-up in `daa421d1` retained those observable semantics while replacing the runtime verification path with staged rounded-weight validation and independent `ComputeRawCenter` tests.
+## Implementation
+
+### Catalog client
+
+- Added `CatalogClient`, which fetches and validates the configured source list through
+  Task 1's `parseCatalogSources` contract.
+- Starts every catalog request concurrently and validates each successful response
+  through Task 1's `parseCatalog` contract.
+- Merges accepted catalogs through Task 1's `mergeCatalogs` contract; validation and
+  deterministic duplicate precedence are not duplicated in the client.
+- Returns frozen accepted apps, one ordered diagnostic per configured source, and the
+  merge's structured duplicate diagnostics.
+- Distinguishes `loaded`, `network-error`, and `incompatible` source states without
+  dropping healthy sibling catalogs.
+- Uses normal cache handling (`cache: "default"`) at startup and explicit revalidation
+  (`cache: "no-cache"`) for a stable-URL retry.
+- Fetches source/catalog JSON only. It contains no package fetching, materialization,
+  runtime activation, audio, MIDI, or concrete-app behavior.
+
+### Generic launcher
+
+- Added the accessible `SheafPatchLauncher` view with a `SheafPatch` heading, live
+  loading/availability status, application list, catalog diagnostics, and retry action.
+- Each accepted row displays application name, publisher, author, category, and
+  compatibility, and exposes one injected `select(app)` boundary.
+- Selection immediately locks all rows. A rejected selection reports an alert on its
+  row and permits retry. A resolved selection permanently forbids another in-page
+  selection and exposes `Back to launcher`, whose default action is `location.reload()`.
+- The success path does not overwrite a runtime DOM installed by a later selection
+  callback: it re-renders the completed launcher state only while launcher markup still
+  owns the root.
+- All DOM uses validated catalog metadata and generic labels; there are no concrete
+  application names, IDs, controls, or branches.
+
+### Bootstrap and static shell
+
+- Added exported `installSheafPatchLauncher` composition in `main.ts` while retaining
+  all direct-runtime exports and the explicit legacy `data-synth-auto="true"` path.
+- Changed production `index.html` to
+  `data-synth-launcher="true" data-synth-catalog-sources="/catalog-sources.json"` and
+  removed its direct `/dist/wasm/app.js` marker.
+- Added generic responsive launcher styling.
+- Updated static-site expectations so the one new non-module request is the trusted
+  static source list rather than a backend request.
+
+The implementation plan omitted `tests/runtime-core.spec.ts` from Task 2's file list
+even though the required production bootstrap change made its old direct-auto-boot
+assertion obsolete. The controller explicitly approved adding that file and replacing
+only that assertion. The replacement proves startup requests source/catalog JSON,
+does not request `/dist/wasm/app.js` or any package path, and leaves the callable direct
+runtime composition test intact.
 
 ## TDD Evidence
 
-### Cycle 1 RED: coefficient builder and projection
+### Initial RED: missing client contract
 
-Command:
+From `projects/synth/browser`, after adding tests and before production modules:
 
-```text
-make -C projects/synth build/parameter_modulation_tests
+```sh
+npm run build && node --test dist/tests/catalog-client.test.mjs && npx playwright test tests/launcher.spec.ts
 ```
 
-Result: exit code `2` as expected. Compilation failed because the wished-for pure API did not exist, beginning with:
+Result: exit `1`. TypeScript compilation completed, then Node failed with
+`ERR_MODULE_NOT_FOUND` for `dist/src/catalog-client.js`. This was the expected missing
+Task 2 module failure. Because the required command uses `&&`, the Playwright phase did
+not execute in that invocation.
 
-```text
-tests/parameter_modulation_tests.cpp:185:16: error: no member named 'detail' in namespace 'synth'
-tests/parameter_modulation_tests.cpp:190:16: error: no member named 'detail' in namespace 'synth'
+### Initial RED: missing launcher UI
+
+The first direct Playwright attempt was denied by the macOS Chromium sandbox
+(`MachPortRendezvousServer ... Permission denied`), so it was rerun with the required
+browser-launch approval:
+
+```sh
+npx playwright test tests/launcher.spec.ts
 ```
 
-The failing tests already covered independently calculated scene/gesture coefficients, endpoints, aliased storage, hand-calculated minimum change, upward/downward saturation redistribution, bipolar bounds, endpoint/no-op behavior, exactness, and invalid-contract no-mutation behavior.
+Result: exit `1`, 4/4 failed for expected missing behavior. The production page had no
+`SheafPatch` heading or launch rows, and direct import of
+`/dist/src/launcher.js` failed because the module did not exist.
 
-### Cycle 1 GREEN
+### Client GREEN
 
-Command:
-
-```text
-make -C projects/synth build/parameter_modulation_tests && projects/synth/build/parameter_modulation_tests
+```sh
+npm run build && node --test dist/tests/catalog-client.test.mjs
 ```
 
-Result: exit code `0`. The new pure tests and the complete existing parameter binary passed.
+Result: exit `0`, 4/4 passed. This covers concurrent request start, healthy-source
+preservation across network/version failures, per-source diagnostics, stable-URL
+revalidation, newly added manifest entries, and source-list trust rejection.
 
-### Cycle 2 RED: `Parameter::HandleSetAbsolute`
+### Browser integration RED/GREEN refinement
 
-Command:
+The first browser run against the new implementation exposed a real integration defect:
+the default window `fetch` function had been stored unbound, producing
+`Illegal invocation` and 3 failures/1 pass. The existing launcher assertions were the
+RED. Binding the default fetch through a closure was the minimal fix.
 
-```text
-make -C projects/synth build/parameter_modulation_tests
+The next run reached the no-package assertion and showed it incorrectly counted the
+launcher's own compiled `/dist/src/*.js` modules as application packages. The assertion
+was narrowed to the actual package namespaces (`/packages/` and `/dist/wasm/`), retaining
+the required discovery contract.
+
+```sh
+npm run build && npx playwright test tests/launcher.spec.ts
 ```
 
-Result: exit code `2` as expected. All nine call sites failed on the missing behavior, beginning with:
+Result: exit `0`, 4/4 passed.
 
-```text
-tests/parameter_modulation_tests.cpp:310:15: error: no member named 'HandleSetAbsolute' in 'synth::Parameter'
-tests/parameter_modulation_tests.cpp:319:15: error: no member named 'HandleSetAbsolute' in 'synth::Parameter'
+### Static regression RED/GREEN refinement
+
+The first combined regression run passed the client and 12/13 browser tests. The old
+static-site assertion expected no request beyond `/dist/` and `/public/`, and correctly
+failed on the newly required `/catalog-sources.json` request. It was updated to assert
+that exact static discovery request while retaining the no-WebSocket/no-backend gate.
+
+### Final required GREEN
+
+```sh
+npm run build && node --test dist/tests/catalog-client.test.mjs && npx playwright test tests/launcher.spec.ts tests/static-site.spec.ts tests/runtime-core.spec.ts
 ```
 
-The parameter tests were present before production implementation and covered endpoint/mid-blend/aliased scenes, same-call arming, the proof's reweighting counterexample, active deselected participation, saturation redistribution, unrelated storage, bipolar normalized storage, normalized clamping, and non-finite no-mutation behavior.
+Result: exit `0`; build passed, Node 4/4 passed, Playwright 13/13 passed.
 
-During the first post-implementation run, production reached the requested `0.9` target but exposed one incorrect hand calculation in the test: for inputs `(0.2, 0.8)` and coefficients `(0.75, 0.25)`, minimum-change projection saturates the right contributor and returns `(13/15, 1)`, not `(1, 0.6)`. The independent expected value was corrected; production was unchanged.
+Additional generic-boundary verification:
 
-### Final GREEN, repeated twice
-
-Command:
-
-```text
-make -C projects/synth build/parameter_modulation_tests && projects/synth/build/parameter_modulation_tests && projects/synth/build/parameter_modulation_tests
+```sh
+npm run check:generic-runtime
 ```
 
-Result: exit code `0` after the final invariant/include cleanup. Both consecutive executions passed all 252 registered cases (244 pre-existing plus 8 new). The focused new cases were:
+Result: exit `0`.
 
-```text
-[PASS] absolute_edit_locations_form_the_independently_computed_convex_system
-[PASS] absolute_edit_locations_cover_endpoints_no_gestures_and_aliased_storage
-[PASS] absolute_projection_is_exact_minimum_change_and_redistributes_saturation
-[PASS] absolute_projection_handles_noop_endpoints_bipolar_ranges_and_rejects_invalid_contracts
-[PASS] handle_set_absolute_reaches_endpoint_mid_blend_and_aliased_scene_targets
-[PASS] handle_set_absolute_arms_then_rebuilds_the_proof_counterexample
-[PASS] handle_set_absolute_arms_both_touched_endpoints_and_preserves_unrelated_storage
-[PASS] handle_set_absolute_clamps_normalized_input_maps_bipolar_storage_and_rejects_nonfinite
-```
+## Changed Files
 
-## Independent Oracle
+- `.superpowers/sdd/task-2-report.md`
+- `projects/synth/browser/src/catalog-client.ts`
+- `projects/synth/browser/src/launcher.ts`
+- `projects/synth/browser/src/main.ts`
+- `projects/synth/browser/public/index.html`
+- `projects/synth/browser/public/synth-browser.css`
+- `projects/synth/browser/tests/catalog-client.test.mjs`
+- `projects/synth/browser/tests/launcher.spec.ts`
+- `projects/synth/browser/tests/static-site.spec.ts`
+- `projects/synth/browser/tests/runtime-core.spec.ts` (controller-approved plan variance)
 
-The coefficient test does not call the production builder to obtain expected coefficients. It independently computes:
-
-```text
-W = w_a + w_b
-p_0 = [w_a(1-w_a) + w_b(1-w_b)] / W
-p_a = w_a^2 / W
-p_b = w_b^2 / W
-a_(k,L) = p_k(1-b)
-a_(k,R) = p_k b
-```
-
-The second gesture's effective weight is independently derived from a right-only active scene endpoint. The test then looks up each production location by storage identity and compares every accumulated coefficient plus the unit sum. A separate shared-endpoint case proves alias aggregation into one coefficient-1 location.
-
-## Proof-to-Code Mapping
-
-- **Lemma 1 (convex coefficients):** `BuildAbsoluteEditLocations` computes `p_0`, `p_j`, multiplies by `1-b,b`, omits zero terms, aggregates identical addresses, and rejects any result that is not finite, positive, and unit-sum within `1e-10`.
-- **Post-arming topology:** `HandleSetAbsolute` completes the selected-inactive arming pass first. Only afterward does it scan the active mask, recompute `EffectiveGestureWeight`, build distinct locations, and project. The explicit base-0 / active-gesture-1 / newly-armed-gesture-0 counterexample reaches `0.75` in the same call with the predicted `(base, old gesture, new gesture) = (0.8, 1, 0.4)`.
-- **Theorem 1 (existence):** the builder supplies positive unit-sum coefficients over bounded storage; endpoint targets are handled directly and interior targets use the continuous clamped weighted family.
-- **Theorem 2 (termination/exactness):** each nonterminal active-set iteration fixes at least one newly saturated free contributor, so at most the contributor count can be removed. The solver algebraically recomputes lambda from fixed contribution, free base contribution, and `sum(a_i^2)`, then validates the rounded float effective value within `1e-5` before writing.
-- **Theorem 3 (minimum change):** unsaturated candidates use the KKT form `x_i + lambda*a_i`; saturated candidates are fixed only at the approached bound. Hand-calculated unconstrained and upper/lower saturation cases assert the unique expected solution.
-- **Production exactness before slew:** handler tests use `targetCenterAlpha = 1` and call `Compute(scene)` only as the narrow test seam exposing `ComputeRawCenter`. At the original Task 2 commit the handler also recomputed the private raw center; final-review fix `daa421d1` instead validates the equivalent staged rounded weighted center before commit, while the focused and property tests continue to verify production `ComputeRawCenter(scene)` before any target-center smoothing.
-
-## Files in Commit
-
-- `projects/synth/include/synth/ParameterModulation.hpp`
-- `projects/synth/src/ParameterModulation.cpp`
-- `projects/synth/tests/parameter_modulation_tests.cpp`
+`projects/synth/browser/playwright.config.mjs` did not require modification because the
+existing server and Playwright route fixtures expressed discovery on the current origin.
 
 ## Self-Review
 
-- `git diff --check` passed before commit.
-- `HandleIncDec` has no task diff and retains its swallowed first relative turn.
-- Projection validates the full candidate before any storage write, so rejected pure-helper contracts do not partially mutate storage.
-- All arithmetic used to derive coefficients, lambda, candidates, and rounded effective value is double; only the final boundary write is float.
-- Endpoint/shared-scene aliasing is aggregated by storage address, preventing duplicate writes.
-- At the original Task 2 commit, the control-message path still allocated small JUCE-free vectors. Final-review fix `daa421d1` removed those runtime allocations, made the handler `noexcept`, and added fixed-capacity staging plus rollback so rejected internal invariants are mutation-free no-ops; the vector-returning adapter now remains only for pure helper tests.
-- No known correctness concerns remain. Randomized model/property breadth is deliberately reserved for plan Task 6.
+- Re-read Task 2 brief, OpenSpec 2.1-2.4, `sbac-1`, `sbac-8`, and the relevant design
+  decisions against the final implementation.
+- Verified catalog validation/merge logic is reused exclusively from Task 1.
+- Verified requests start concurrently and diagnostics retain configured-source order.
+- Verified a failed or incompatible source cannot suppress healthy applications.
+- Verified retry uses `no-cache` for both the source list and stable catalog URLs.
+- Verified discovery never requests application entry/WASM/data/package paths.
+- Verified launcher source has no miniapp/fake-app/package/audio/MIDI specialization.
+- Verified selection has one injected boundary, rejects concurrent clicks, allows retry
+  after failure, and permanently locks after success.
+- Verified top-level reload is the default return mechanism.
+- Verified the production index no longer names or auto-loads the direct WASM module.
+- Verified direct runtime installation remains callable and covered.
+- Verified `git diff --check` is clean.
+- Verified the pre-existing untracked `projects/synth/browser/package-lock.json` and
+  `projects/synth/miniapp/` artifacts remain unmodified and unstaged.
+- Verified no OpenSpec checkbox was modified.
+
+## Concerns
+
+None blocking. The checked-in source-list artifact is deliberately Task 6, and package
+materialization plus successful runtime selection are deliberately Tasks 3 and 4. Until
+those tasks land, an un-routed production root reports a retryable source-list error and
+the default selection boundary reports that application launch is unavailable; Task 2
+tests inject discovery fixtures and selection behavior at those explicit boundaries.

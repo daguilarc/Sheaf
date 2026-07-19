@@ -197,79 +197,44 @@ test("main bootstrap composes runtime, UI, audio channels, and actions generical
   expect(result.calls).toContainEqual(["destroy", 11]);
 });
 
-test("static auto boot uses the default direct runtime client", async ({ page }) => {
-  const frame = makeCommandBuffer([
-    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 120, 50], children: ["button"] },
-    { id: "button", kind: NodeKind.Button, bounds: [0, 0, 120, 40], label: "Auto", action: { name: "generic.auto", value: "pressed" } },
-  ]);
-  await page.route("**/dist/wasm/app.js", (route) => route.fulfill({
-    status: 200,
-    contentType: "application/javascript",
-    body: `
-      export default async function createSynthBrowserModule() {
-        const heap = new ArrayBuffer(1024 * 1024);
-        const HEAPU8 = new Uint8Array(heap);
-        const HEAPF32 = new Float32Array(heap);
-        const view = new DataView(heap);
-        let next = 4096;
-        const frame = Uint8Array.from([${Array.from(new Uint8Array(frame)).join(",")}]);
-        const framePointer = next;
-        HEAPU8.set(frame, framePointer);
-        next += frame.length + 16;
-        globalThis.__synthModuleCalls = [];
-        const calls = globalThis.__synthModuleCalls;
-        const readString = (pointer) => {
-          let end = pointer;
-          while (HEAPU8[end] !== 0) end += 1;
-          return new TextDecoder().decode(HEAPU8.slice(pointer, end));
-        };
-        return {
-          FS: { filesystems: { IDBFS: {} }, mkdir() {}, mount() {}, syncfs(_populate, complete) { complete(); } },
-          IDBFS: {},
-          HEAPU8,
-          HEAPF32,
-          _malloc(size) { const pointer = next; next += size + 16; return pointer; },
-          _free() {},
-          lengthBytesUTF8(value) { return new TextEncoder().encode(value).length; },
-          stringToUTF8(value, pointer) {
-            const bytes = new TextEncoder().encode(value);
-            HEAPU8.set(bytes, pointer);
-            HEAPU8[pointer + bytes.length] = 0;
-          },
-          _synth_browser_abi_version() { return 1; },
-          _synth_browser_ui_protocol_version() { return 1; },
-          _synth_browser_runtime_config_version() { return 1; },
-          _synth_browser_create() { calls.push(["create"]); return 17; },
-          _synth_browser_audio_output_channels(handle) { calls.push(["audioOutputChannels", handle]); return 1; },
-          _synth_browser_initialize(handle, dataRoot) { calls.push(["initialize", handle, readString(dataRoot)]); return 0; },
-          _synth_browser_prepare(handle, sampleRate, blockSize) { calls.push(["prepare", handle, sampleRate, blockSize]); return 0; },
-          _synth_browser_process(handle, _outputs, _channels, frames, timestamp) { calls.push(["process", handle, frames, Number(timestamp)]); return 0; },
-          _synth_browser_start_audio_worklet(handle) { calls.push(["startAudioWorklet", handle]); return 0; },
-          _synth_browser_message_tick(handle, timestamp) { calls.push(["messageTick", handle, Number(timestamp)]); return 0; },
-          _synth_browser_build_ui_frame(handle, sizePointer) { calls.push(["buildUiFrame", handle]); view.setUint32(sizePointer, frame.length, true); return framePointer; },
-          _synth_browser_dispatch_action(handle, name, value) { calls.push(["dispatchAction", handle, readString(name), readString(value)]); return 0; },
-          _synth_browser_submit_midi_endpoints() { return 0; },
-          _synth_browser_dequeue_midi_action() { return 0; },
-          _synth_browser_deliver_midi() { return 0; },
-          _synth_browser_dequeue_midi_output(_handle, _controllerIx, size) { view.setUint32(size, 0, true); return 0; },
-          _synth_browser_destroy(handle) { calls.push(["destroy", handle]); },
-        };
-      }
-    `,
+test("production bootstrap discovers catalogs without loading an application module", async ({ page }) => {
+  const catalogUrl = "https://publisher.example/catalog.json";
+  const requested: string[] = [];
+  await page.route("http://127.0.0.1:4173/catalog-sources.json", (route) => route.fulfill({ json: [catalogUrl] }));
+  await page.route(catalogUrl, (route) => route.fulfill({
+    json: {
+      schemaVersion: 1,
+      catalogVersion: "revision-1",
+      publisher: { id: "example", name: "Example" },
+      apps: [{
+        appId: "portable-app",
+        displayName: "Portable App",
+        author: "Example",
+        category: "Instrument",
+        buildId: "portable-app-build-1",
+        browser: {
+          abiVersion: 1,
+          uiProtocolVersion: 1,
+          runtimeConfigVersion: 1,
+          entry: "packages/portable-app/portable-app-build-1/app.js",
+          files: [{
+            path: "packages/portable-app/portable-app-build-1/app.js",
+            mediaType: "text/javascript",
+            sha256: "0123456789abcdef".repeat(4),
+          }],
+        },
+      }],
+    },
   }));
+  page.on("request", (request) => requested.push(request.url()));
 
   await page.goto("http://127.0.0.1:4173/public/index.html");
-  await expect(page.locator('[data-synth-node-id="button"]')).toHaveText("Auto");
-  await expect(page.locator("#synth-root")).toHaveAttribute("data-synth-status", "running");
-  const calls = await page.evaluate(() => (window as unknown as { __synthModuleCalls?: unknown[] }).__synthModuleCalls);
-  expect(calls?.slice(0, 5)).toEqual([
-    ["create"],
-    ["initialize", 17, "/data"],
-    ["audioOutputChannels", 17],
-    ["messageTick", 17, expect.any(Number)],
-    ["buildUiFrame", 17],
-  ]);
-  expect(calls?.slice(5).every((call, index) => Array.isArray(call) && call[0] === (index % 2 === 0 ? "messageTick" : "buildUiFrame"))).toBe(true);
+  await expect(page.getByRole("button", { name: /launch portable app/i })).toBeEnabled();
+
+  expect(requested).toContain("http://127.0.0.1:4173/catalog-sources.json");
+  expect(requested).toContain(catalogUrl);
+  expect(requested).not.toContain("http://127.0.0.1:4173/dist/wasm/app.js");
+  expect(requested.filter((url) => /\/packages\//.test(url))).toEqual([]);
 });
 
 test("browser worker contains no concrete application branch", async ({ page }) => {

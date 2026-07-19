@@ -1,4 +1,7 @@
 import { AudioBridge, AudioBridgeOptions, BrowserAudioWorker } from "./audio.js";
+import { CatalogClient } from "./catalog-client.js";
+import type { CatalogApp } from "./catalog.js";
+import { SheafPatchLauncher } from "./launcher.js";
 import { BrowserMidiManager, BrowserMidiWorkerRuntime } from "./midi.js";
 import { BrowserUiBackend } from "./ui.js";
 import type { RuntimeCommand, RuntimeModuleLoader, RuntimeResponse } from "./worker.js";
@@ -18,6 +21,13 @@ export type SynthBrowserAppOptions = {
   runtimeClient?: RuntimeClient;
   runtimeModuleLoader?: RuntimeModuleLoader;
   audioOptions?: AudioBridgeOptions;
+};
+
+export type SynthBrowserLauncherOptions = {
+  sourcesUrl?: string;
+  client?: CatalogClient;
+  select?: (app: CatalogApp) => Promise<void>;
+  navigateToLauncher?: () => void;
 };
 
 const DEFAULT_MODULE_URL = "/dist/wasm/app.js";
@@ -206,8 +216,26 @@ export function installBrowserAudioActivation(
   return bridge;
 }
 
+export async function installSheafPatchLauncher(
+  root: HTMLElement,
+  options: SynthBrowserLauncherOptions = {},
+): Promise<SheafPatchLauncher> {
+  const sourcesUrl = options.sourcesUrl ?? root.dataset.synthCatalogSources ?? "/catalog-sources.json";
+  const launcher = new SheafPatchLauncher(root, {
+    client: options.client ?? new CatalogClient({ sourcesUrl }),
+    select: options.select ?? (async () => { throw new Error("Application launch is not available in this build"); }),
+    navigateToLauncher: options.navigateToLauncher,
+  });
+  await launcher.start();
+  return launcher;
+}
+
 const root = document.querySelector<HTMLElement>("#synth-root");
-if (root?.dataset.synthAuto === "true") {
+if (root?.dataset.synthLauncher === "true") {
+  void installSheafPatchLauncher(root).catch((error) => {
+    root.dataset.synthStatus = error instanceof Error ? error.message : "catalog launcher startup failed";
+  });
+} else if (root?.dataset.synthAuto === "true") {
   void installSynthBrowserApp(root).catch((error) => {
     root.dataset.synthStatus = error instanceof Error ? error.message : "browser runtime startup failed";
   });

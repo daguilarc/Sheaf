@@ -1,0 +1,156 @@
+import { expect, test, type Page, type Route } from "@playwright/test";
+
+const digest = "0123456789abcdef".repeat(4);
+const sourcesUrl = "http://127.0.0.1:4173/catalog-sources.json";
+const firstCatalogUrl = "https://publisher.example/releases/catalog.json";
+
+function app(appId: string, displayName: string) {
+  const buildId = `${appId}-build-1`;
+  const entry = `packages/${appId}/${buildId}/${appId}.js`;
+  return {
+    appId,
+    displayName,
+    author: "Ada Example",
+    category: "Instrument",
+    buildId,
+    browser: {
+      abiVersion: 1,
+      uiProtocolVersion: 1,
+      runtimeConfigVersion: 1,
+      entry,
+      files: [{ path: entry, mediaType: "text/javascript", sha256: digest }],
+    },
+  };
+}
+
+function catalog(publisherId: string, apps = [app("one", "Aurora")]) {
+  return {
+    schemaVersion: 1,
+    catalogVersion: "revision-1",
+    publisher: { id: publisherId, name: "Example Audio" },
+    apps,
+  };
+}
+
+async function routeSources(page: Page, urls: string[]) {
+  await page.route(sourcesUrl, (route) => route.fulfill({ json: urls }));
+}
+
+test("shows loading then accessible app metadata without requesting package files", async ({ page }) => {
+  const pending: { route?: Route } = {};
+  const packageRequests: string[] = [];
+  await routeSources(page, [firstCatalogUrl]);
+  await page.route(firstCatalogUrl, async (route) => { pending.route = route; });
+  page.on("request", (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (pathname.includes("/packages/") || pathname.startsWith("/dist/wasm/"))
+      packageRequests.push(request.url());
+  });
+
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await expect(page.getByRole("heading", { name: "SheafPatch" })).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText(/loading trusted catalogs/i);
+  await expect.poll(() => Boolean(pending.route)).toBe(true);
+  await pending.route!.fulfill({ json: catalog("publisher") });
+
+  const row = page.getByRole("listitem").filter({ hasText: "Aurora" });
+  await expect(row.getByRole("button", { name: /launch aurora/i })).toBeEnabled();
+  await expect(row).toContainText("Example Audio");
+  await expect(row).toContainText("Ada Example");
+  await expect(row).toContainText("Instrument");
+  await expect(row).toContainText("Compatible");
+  expect(packageRequests).toEqual([]);
+});
+
+test("preserves healthy apps, diagnoses a failed source, and refreshes stable URLs on retry", async ({ page }) => {
+  const failedCatalogUrl = "https://offline.example/catalog.json";
+  let failedAttempts = 0;
+  let healthyAttempts = 0;
+  await routeSources(page, [firstCatalogUrl, failedCatalogUrl]);
+  await page.route(firstCatalogUrl, (route) => {
+    healthyAttempts += 1;
+    const apps = healthyAttempts === 1
+      ? [app("one", "Aurora")]
+      : [app("one", "Aurora"), app("two", "Borealis")];
+    return route.fulfill({ json: catalog("publisher", apps) });
+  });
+  await page.route(failedCatalogUrl, (route) => {
+    failedAttempts += 1;
+    return route.fulfill({ status: 503, body: "offline" });
+  });
+
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await expect(page.getByRole("button", { name: /launch aurora/i })).toBeEnabled();
+  const diagnostic = page.getByRole("listitem").filter({ hasText: failedCatalogUrl });
+  await expect(diagnostic).toContainText(/unavailable/i);
+  await page.getByRole("button", { name: /retry catalogs/i }).click();
+
+  await expect(page.getByRole("button", { name: /launch borealis/i })).toBeEnabled();
+  expect(healthyAttempts).toBe(2);
+  expect(failedAttempts).toBe(2);
+});
+
+test("locks selection after success and returns through generic top-level navigation", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/dist/src/launcher.js");
+  await page.setContent('<main id="launcher-root"></main>');
+  await page.evaluate(async () => {
+    const { SheafPatchLauncher } = await (new Function("return import('/dist/src/launcher.js')")() as Promise<any>);
+    const selected: string[] = [];
+    const navigated: string[] = [];
+    (window as any).__launcherTest = { selected, navigated };
+    const makeApp = (appId: string, displayName: string) => ({
+      globalId: `example/${appId}`,
+      catalogUrl: "https://publisher.example/catalog.json",
+      publisher: { id: "example", name: "Example Audio" },
+      appId,
+      displayName,
+      author: "Ada Example",
+      category: "Instrument",
+      buildId: `${appId}-build-1`,
+      browser: {
+        abiVersion: 1,
+        uiProtocolVersion: 1,
+        runtimeConfigVersion: 1,
+        entry: `${appId}.js`,
+        entryUrl: `https://publisher.example/${appId}.js`,
+        files: [],
+      },
+    });
+    const client = {
+      loadSources: async () => ({
+        apps: [makeApp("one", "Aurora"), makeApp("two", "Borealis")],
+        diagnostics: [],
+        duplicateDiagnostics: [],
+      }),
+    };
+    const launcher = new SheafPatchLauncher(document.querySelector("#launcher-root"), {
+      client,
+      select: async (app: any) => { selected.push(app.globalId); },
+      navigateToLauncher: () => { navigated.push("reload"); },
+    });
+    await launcher.start();
+  });
+
+  await page.getByRole("button", { name: /launch aurora/i }).click();
+  await expect(page.getByRole("button", { name: /launch aurora/i })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /launch borealis/i })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /back to launcher/i })).toBeVisible();
+  await page.getByRole("button", { name: /back to launcher/i }).click();
+
+  expect(await page.evaluate(() => (window as any).__launcherTest)).toEqual({
+    selected: ["example/one"],
+    navigated: ["reload"],
+  });
+});
+
+test("reports selection failure on its row and allows retry", async ({ page }) => {
+  await routeSources(page, [firstCatalogUrl]);
+  await page.route(firstCatalogUrl, (route) => route.fulfill({ json: catalog("publisher") }));
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+
+  await page.getByRole("button", { name: /launch aurora/i }).click();
+
+  const row = page.getByRole("listitem").filter({ hasText: "Aurora" });
+  await expect(row).toContainText(/launch is not available/i);
+  await expect(row.getByRole("button", { name: /retry aurora/i })).toBeEnabled();
+});

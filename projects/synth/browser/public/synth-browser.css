@@ -101,3 +101,94 @@ body {
 #synth-root [aria-disabled="true"] {
   opacity: 0.58;
 }
+
+.synth-launcher {
+  width: min(880px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 48px 0;
+}
+
+.synth-launcher__header,
+.synth-launcher__status,
+.synth-launcher__sources {
+  margin-bottom: 24px;
+}
+
+.synth-launcher__title,
+.synth-launcher__subtitle,
+.synth-launcher__app-name,
+.synth-launcher__sources-title {
+  margin: 0;
+}
+
+.synth-launcher__subtitle,
+.synth-launcher__status,
+.synth-launcher__metadata,
+.synth-launcher__diagnostic {
+  color: #aeb8c2;
+}
+
+.synth-launcher__apps,
+.synth-launcher__diagnostics {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.synth-launcher__app {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 20px;
+  align-items: center;
+  padding: 20px;
+  border: 1px solid #39434c;
+  border-radius: 8px;
+  background: #1b1f23;
+}
+
+.synth-launcher__metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin: 12px 0 0;
+}
+
+.synth-launcher__metadata div {
+  display: flex;
+}
+
+.synth-launcher__metadata dt {
+  margin-right: 5px;
+  font-weight: 700;
+}
+
+.synth-launcher__metadata dd {
+  margin: 0;
+}
+
+.synth-launcher__app-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #fca5a5;
+}
+
+.synth-launcher button {
+  min-height: 38px;
+}
+
+.synth-launcher button:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+@media (max-width: 600px) {
+  .synth-launcher {
+    width: min(100% - 24px, 880px);
+    padding: 24px 0;
+  }
+
+  .synth-launcher__app {
+    grid-template-columns: 1fr;
+  }
+}
