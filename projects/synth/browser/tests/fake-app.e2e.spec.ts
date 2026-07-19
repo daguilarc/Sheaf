@@ -55,8 +55,16 @@ async function installRealFakeApp(page: Page): Promise<void> {
         client.terminate?.();
       },
     };
+    const moduleUrl = new URL("/dist/wasm/fake_browser_app.js", location.href).href;
     const app = await main.installSynthBrowserApp(document.querySelector("#synth-root")!, {
-      moduleUrl: new URL("/dist/wasm/fake_browser_app.js", location.href).href,
+      module: {
+        entryUrl: moduleUrl,
+        locateFile: {
+          "fake_browser_app.js": moduleUrl,
+          "fake_browser_app.wasm": new URL("/dist/wasm/fake_browser_app.wasm", location.href).href,
+        },
+        mainScriptUrlOrBlob: moduleUrl,
+      },
       frameIntervalMs: 60_000,
       runtimeClient: observingClient,
     });

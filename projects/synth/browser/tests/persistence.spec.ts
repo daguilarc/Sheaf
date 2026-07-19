@@ -51,7 +51,7 @@ test("syncs IDBFS before runtime initialization and flushes patch/config updates
       return persistence;
     }, (status: unknown) => emitted.push(status));
 
-    await worker.handle({ type: "load" });
+    await worker.handle({ type: "load", module: { entryUrl: "blob:test", locateFile: {}, mainScriptUrlOrBlob: "blob:test" } });
     await worker.handle({ type: "create" });
     const initialized = await worker.handle({ type: "initialize", dataRoot: "/ignored-by-host" });
     const pending = await worker.handle({ type: "persistence", state: "patch saved" });
@@ -147,7 +147,7 @@ test("flushes runtime-reported persistence changes after actions and ticks", asy
     }), (filesystem: unknown, reportStatus: (status: string) => void) => new BrowserPersistence(filesystem, { debounceMs: 0 }, reportStatus),
     (status: unknown) => statuses.push(status));
 
-    await worker.handle({ type: "load" });
+    await worker.handle({ type: "load", module: { entryUrl: "blob:test", locateFile: {}, mainScriptUrlOrBlob: "blob:test" } });
     await worker.handle({ type: "create" });
     await worker.handle({ type: "initialize", dataRoot: "/ignored" });
     calls.length = 0;

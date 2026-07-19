@@ -3,6 +3,7 @@ import { CatalogClient } from "./catalog-client.js";
 import type { CatalogApp } from "./catalog.js";
 import { SheafPatchLauncher } from "./launcher.js";
 import { BrowserMidiManager, BrowserMidiWorkerRuntime } from "./midi.js";
+import type { MaterializedRuntimeModule } from "./package-loader.js";
 import { BrowserUiBackend } from "./ui.js";
 import type { RuntimeCommand, RuntimeModuleLoader, RuntimeResponse } from "./worker.js";
 import { BrowserRuntimeWorker, loadEmscriptenRuntime } from "./worker.js";
@@ -15,6 +16,7 @@ export type RuntimeClient = {
 };
 
 export type SynthBrowserAppOptions = {
+  module?: MaterializedRuntimeModule;
   moduleUrl?: string;
   dataRoot?: string;
   frameIntervalMs?: number;
@@ -33,6 +35,21 @@ export type SynthBrowserLauncherOptions = {
 const DEFAULT_MODULE_URL = "/dist/wasm/app.js";
 const DEFAULT_DATA_ROOT = "/data";
 const ROOT_OWNER = Symbol.for("sheaf.synth-browser.root-owner");
+
+function directModuleMapping(moduleUrl: string): MaterializedRuntimeModule {
+  const parsed = new URL(moduleUrl, location.href);
+  const filename = parsed.pathname.slice(parsed.pathname.lastIndexOf("/") + 1);
+  const stem = filename.endsWith(".js") ? filename.slice(0, -3) : filename;
+  const wasmFilename = `${stem}.wasm`;
+  return Object.freeze({
+    entryUrl: parsed.href,
+    locateFile: Object.freeze({
+      [filename]: parsed.href,
+      [wasmFilename]: new URL(wasmFilename, parsed).href,
+    }),
+    mainScriptUrlOrBlob: parsed.href,
+  });
+}
 
 function claimRoot(root: HTMLElement): () => boolean {
   const ownedRoot = root as HTMLElement & { [key: symbol]: unknown };
@@ -113,7 +130,7 @@ export class SynthBrowserApp {
   constructor(
     private readonly root: HTMLElement,
     private readonly runtime: RuntimeClient,
-    private readonly options: Required<Pick<SynthBrowserAppOptions, "moduleUrl" | "dataRoot" | "frameIntervalMs">> &
+    private readonly options: Required<Pick<SynthBrowserAppOptions, "module" | "dataRoot" | "frameIntervalMs">> &
       Pick<SynthBrowserAppOptions, "audioOptions">,
   ) {
     this.ui = new BrowserUiBackend(root, (action) => {
@@ -126,7 +143,7 @@ export class SynthBrowserApp {
 
   async start(): Promise<void> {
     this.renderStatus({ type: "status", status: "starting" });
-    await this.expectOk(await this.runtime.request({ type: "load", moduleUrl: this.options.moduleUrl }));
+    await this.expectOk(await this.runtime.request({ type: "load", module: this.options.module }));
     await this.runtime.request({ type: "create" });
     await this.expectOk(await this.runtime.request({ type: "initialize", dataRoot: this.options.dataRoot }));
     const audioConfig = await this.runtime.request({ type: "audio-config" });
@@ -204,10 +221,11 @@ export class SynthBrowserApp {
 export async function installSynthBrowserApp(root: HTMLElement, options: SynthBrowserAppOptions = {}): Promise<SynthBrowserApp> {
   claimRoot(root);
   const moduleUrl = options.moduleUrl ?? root.dataset.synthModule ?? DEFAULT_MODULE_URL;
+  const module = options.module ?? directModuleMapping(moduleUrl);
   const dataRoot = options.dataRoot ?? DEFAULT_DATA_ROOT;
   const runtime = options.runtimeClient ?? createDirectRuntimeClient(options.runtimeModuleLoader ?? loadEmscriptenRuntime);
   const app = new SynthBrowserApp(root, runtime, {
-    moduleUrl,
+    module,
     dataRoot,
     frameIntervalMs: options.frameIntervalMs ?? 1000 / 30,
     audioOptions: options.audioOptions,

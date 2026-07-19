@@ -17,14 +17,30 @@ EXPORTED_RUNTIME_METHODS := '["stringToUTF8","lengthBytesUTF8","FS","IDBFS","HEA
 # WASM_WORKERS is required by Emscripten's Wasm AudioWorklet runtime.
 PTHREAD_FLAGS := -pthread -sUSE_PTHREADS=1 -sPTHREAD_POOL_SIZE=1 -sINITIAL_MEMORY=268435456 -sSTACK_SIZE=16777216 -sAUDIO_WORKLET=1 -sWASM_WORKERS=1
 FILESYSTEM_FLAGS := -lidbfs.js
+PACKAGE_APP_ID ?=
+PACKAGE_SOURCE_DIR ?=
+PACKAGE_OUTPUT_DIR ?=
+PACKAGE_ENTRY ?=
+PACKAGE_WASM ?=
+PACKAGE_PTHREAD_WORKER ?= $(PACKAGE_ENTRY)
+PACKAGE_WASM_WORKER ?= $(PACKAGE_ENTRY)
+PACKAGE_AUDIO_WORKLET ?= $(PACKAGE_ENTRY)
 
-.PHONY: build test browser-fake-app browser-fake-app-test browser-miniapp browser-miniapp-run browser-miniapp-smoke
+.PHONY: build test browser-package browser-fake-app browser-fake-app-test browser-miniapp browser-miniapp-run browser-miniapp-smoke
 
 build:
 	npm run build
 
 test:
 	npm test
+
+browser-package: build
+	@test -n "$(PACKAGE_APP_ID)" || { echo "PACKAGE_APP_ID is required" >&2; exit 2; }
+	@test -n "$(PACKAGE_SOURCE_DIR)" || { echo "PACKAGE_SOURCE_DIR is required" >&2; exit 2; }
+	@test -n "$(PACKAGE_OUTPUT_DIR)" || { echo "PACKAGE_OUTPUT_DIR is required" >&2; exit 2; }
+	@test -n "$(PACKAGE_ENTRY)" || { echo "PACKAGE_ENTRY is required" >&2; exit 2; }
+	@test -n "$(PACKAGE_WASM)" || { echo "PACKAGE_WASM is required" >&2; exit 2; }
+	npm run package:app -- --app-id "$(PACKAGE_APP_ID)" --source-dir "$(PACKAGE_SOURCE_DIR)" --output-dir "$(PACKAGE_OUTPUT_DIR)" --entry "$(PACKAGE_ENTRY)" --wasm "$(PACKAGE_WASM)" --pthread-worker "$(PACKAGE_PTHREAD_WORKER)" --wasm-worker "$(PACKAGE_WASM_WORKER)" --audio-worklet "$(PACKAGE_AUDIO_WORKLET)"
 
 browser-fake-app: $(BROWSER_BUILD_DIR)/fake_browser_app.js
 	cp $(BROWSER_BUILD_DIR)/fake_browser_app.js $(BROWSER_BUILD_DIR)/app.js

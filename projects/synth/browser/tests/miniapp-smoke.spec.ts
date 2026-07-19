@@ -101,8 +101,16 @@ async function installRealMiniapp(page: Page, options: { fakeMidi?: boolean; fra
       connect() {}
       disconnect() {}
     }
+    const moduleUrl = new URL("/dist/wasm/miniapp.js", location.href).href;
     const app = await main.installSynthBrowserApp(document.querySelector("#synth-root")!, {
-      moduleUrl: new URL("/dist/wasm/miniapp.js", location.href).href,
+      module: {
+        entryUrl: moduleUrl,
+        locateFile: {
+          "miniapp.js": moduleUrl,
+          "miniapp.wasm": new URL("/dist/wasm/miniapp.wasm", location.href).href,
+        },
+        mainScriptUrlOrBlob: moduleUrl,
+      },
       frameIntervalMs: frameIntervalMs ?? 60_000,
       runtimeClient,
       audioOptions: {

@@ -72,7 +72,7 @@ test("normal generic browser flows make no backend or WebSocket requests beyond 
       buildUiFrame: () => new ArrayBuffer(0), dispatchAction: () => 0, submitMidiEndpoints: () => 0,
       dequeueMidiAction: () => undefined, deliverMidi: () => 0, dequeueMidiOutput: () => undefined, destroy: () => {},
     }), () => persistence);
-    await worker.handle({ type: "load" });
+    await worker.handle({ type: "load", module: { entryUrl: "blob:test", locateFile: {}, mainScriptUrlOrBlob: "blob:test" } });
     await worker.handle({ type: "create" });
     await worker.handle({ type: "initialize", dataRoot: "/data" });
     await worker.handle({ type: "prepare", sampleRate: 48000, blockSize: 128 });

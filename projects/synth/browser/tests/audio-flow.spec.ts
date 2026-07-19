@@ -108,7 +108,12 @@ test("real miniapp WASM renders four finite non-silent audio blocks", async ({ p
       worker.addEventListener("message", receive);
       worker.postMessage(command);
     });
-    await request({ type: "load", moduleUrl: new URL("/dist/wasm/miniapp.js", location.href).href }, "ok");
+    const moduleUrl = new URL("/dist/wasm/miniapp.js", location.href).href;
+    await request({ type: "load", module: {
+      entryUrl: moduleUrl,
+      locateFile: { "miniapp.js": moduleUrl, "miniapp.wasm": new URL("/dist/wasm/miniapp.wasm", location.href).href },
+      mainScriptUrlOrBlob: moduleUrl,
+    } }, "ok");
     await request({ type: "create" }, "created");
     await request({ type: "initialize", dataRoot: "/data" }, "ok");
     const ring = SharedRingBuffer.create(2, 1024);
@@ -156,7 +161,12 @@ test("real miniapp WASM runs DSP from the runtime-owned AudioWorklet callback", 
             if (response.type !== expected) throw new Error(response.type === "error" ? response.error : `expected ${expected}, got ${response.type}`);
             return response;
           };
-          await request({ type: "load", moduleUrl: new URL("/dist/wasm/miniapp.js", location.href).href }, "ok");
+          const moduleUrl = new URL("/dist/wasm/miniapp.js", location.href).href;
+          await request({ type: "load", module: {
+            entryUrl: moduleUrl,
+            locateFile: { "miniapp.js": moduleUrl, "miniapp.wasm": new URL("/dist/wasm/miniapp.wasm", location.href).href },
+            mainScriptUrlOrBlob: moduleUrl,
+          } }, "ok");
           await request({ type: "create" }, "created");
           await request({ type: "initialize", dataRoot: "/data" }, "ok");
           await request({ type: "midi-input", controllerIx: 0, bytes: [0x90, 60, 100], timestampMicros: 1_000 }, "ok");
@@ -224,7 +234,12 @@ test("runtime-owned AudioWorklet applies browser-time encoder actions promptly",
             };
           };
 
-          await request({ type: "load", moduleUrl: new URL("/dist/wasm/miniapp.js", location.href).href }, "ok");
+          const moduleUrl = new URL("/dist/wasm/miniapp.js", location.href).href;
+          await request({ type: "load", module: {
+            entryUrl: moduleUrl,
+            locateFile: { "miniapp.js": moduleUrl, "miniapp.wasm": new URL("/dist/wasm/miniapp.wasm", location.href).href },
+            mainScriptUrlOrBlob: moduleUrl,
+          } }, "ok");
           await request({ type: "create" }, "created");
           await request({ type: "initialize", dataRoot: "/data" }, "ok");
           await request({ type: "start-audio-worklet" }, "ok");

@@ -26,7 +26,7 @@ test("forwards generic MIDI commands through the runtime worker", async ({ page 
       dequeueMidiOutput: () => ({ controllerIx: 1, bytes: [0xf0, 0x7d, 0x55, 0xf7] }),
       destroy: () => {},
     }));
-    await worker.handle({ type: "load" });
+    await worker.handle({ type: "load", module: { entryUrl: "blob:test", locateFile: {}, mainScriptUrlOrBlob: "blob:test" } });
     await worker.handle({ type: "create" });
     const endpointResponse = await worker.handle({ type: "midi-endpoints", endpoints: [{ identifier: "in-b", name: "Input B", kind: "input" }] });
     const inputResponse = await worker.handle({ type: "midi-input", controllerIx: 1, bytes: [0xf0, 0x7d, 0x33, 0xf7], timestampMicros: 42 });
@@ -287,7 +287,18 @@ test("real miniapp WASM keeps two Web MIDI controller slots independent through 
       return response;
     };
 
-    await request({ type: "load", moduleUrl: new URL("/dist/wasm/miniapp.js", location.href).href });
+    const moduleUrl = new URL("/dist/wasm/miniapp.js", location.href).href;
+    await request({
+      type: "load",
+      module: {
+        entryUrl: moduleUrl,
+        locateFile: {
+          "miniapp.js": moduleUrl,
+          "miniapp.wasm": new URL("/dist/wasm/miniapp.wasm", location.href).href,
+        },
+        mainScriptUrlOrBlob: moduleUrl,
+      },
+    });
     await request({ type: "create" });
     await request({ type: "initialize", dataRoot: "/data" });
     const endpoints = [

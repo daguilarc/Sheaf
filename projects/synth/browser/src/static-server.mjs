@@ -1,5 +1,6 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import path from "node:path";
 import process from "node:process";
@@ -8,8 +9,75 @@ import { fileURLToPath } from "node:url";
 const browserRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const staticRoots = new Map([
   ["/dist/", path.join(browserRoot, "dist")],
+  ["/packages/", path.join(browserRoot, "packages")],
   ["/public/", path.join(browserRoot, "public")],
 ]);
+
+const packageFixtureWasm = Buffer.from([0, 97, 115, 109, 1, 0, 0, 0]);
+const packageFixtureEntry = Buffer.from(`export default async function createRemoteFake(options) {
+  const wasmUrl = options.locateFile("remote-fake.wasm", import.meta.url);
+  await WebAssembly.instantiate(await (await fetch(wasmUrl)).arrayBuffer());
+  globalThis.__synthTwoOriginFactory = {
+    wasmUrl,
+    mainScriptUrlOrBlob: options.mainScriptUrlOrBlob,
+    entryOrigin: new URL(import.meta.url).origin,
+  };
+  const heap = new Uint8Array(1024);
+  return {
+    FS: { filesystems: { IDBFS: {} } },
+    IDBFS: {},
+    HEAPU8: heap,
+    HEAPF32: new Float32Array(heap.buffer),
+    _malloc: () => 8,
+    _free: () => {},
+    lengthBytesUTF8: value => new TextEncoder().encode(value).length,
+    stringToUTF8: () => {},
+    _synth_browser_abi_version: () => 1,
+    _synth_browser_ui_protocol_version: () => 1,
+    _synth_browser_runtime_config_version: () => 1,
+    _synth_browser_create: () => 41,
+    _synth_browser_audio_output_channels: () => 2,
+    _synth_browser_destroy: () => {},
+  };
+}
+`);
+
+function fixtureDigest(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function packageFixture(request) {
+  const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
+  if (pathname === "/package-fixture/remote-fake.js")
+    return { bytes: packageFixtureEntry, contentType: "text/javascript" };
+  if (pathname === "/package-fixture/remote-fake.wasm")
+    return { bytes: packageFixtureWasm, contentType: "application/wasm" };
+  if (pathname !== "/package-fixture/catalog.json") return undefined;
+  const origin = `http://${request.headers.host ?? "127.0.0.1:4174"}`;
+  const packageRoot = "packages/remote-fake/build-1";
+  const files = [
+    { name: "remote-fake.js", mediaType: "text/javascript", bytes: packageFixtureEntry },
+    { name: "remote-fake.wasm", mediaType: "application/wasm", bytes: packageFixtureWasm },
+  ].map(({ name, mediaType, bytes }) => ({
+    path: `${packageRoot}/${name}`,
+    url: `${origin}/package-fixture/${name}`,
+    mediaType,
+    sha256: fixtureDigest(bytes),
+  }));
+  const bytes = Buffer.from(`${JSON.stringify({
+    appId: "remote-fake",
+    buildId: "build-1",
+    browser: {
+      abiVersion: 1,
+      uiProtocolVersion: 1,
+      runtimeConfigVersion: 1,
+      entry: `${packageRoot}/remote-fake.js`,
+      entryUrl: `${origin}/package-fixture/remote-fake.js`,
+      files,
+    },
+  })}\n`);
+  return { bytes, contentType: "application/json" };
+}
 
 export function contentTypeForPath(filename) {
   if (filename.endsWith(".wasm")) return "application/wasm";
@@ -40,23 +108,39 @@ function staticFileFor(requestUrl) {
 
 export function createStaticServer({ isolated = true } = {}) {
   return createServer(async (request, response) => {
+    const headers = {
+      "Access-Control-Allow-Origin": "*",
+      "Cross-Origin-Resource-Policy": "cross-origin",
+    };
+    if (isolated) {
+      headers["Cross-Origin-Opener-Policy"] = "same-origin";
+      headers["Cross-Origin-Embedder-Policy"] = "require-corp";
+      headers["Permissions-Policy"] = "midi=(self)";
+    }
+    if (request.method === "OPTIONS") {
+      response.writeHead(204, headers).end();
+      return;
+    }
+    const fixture = packageFixture(request);
+    if (fixture) {
+      response.writeHead(200, {
+        ...headers,
+        "Content-Type": fixture.contentType,
+        "Content-Length": fixture.bytes.byteLength,
+      }).end(fixture.bytes);
+      return;
+    }
     const filename = staticFileFor(request.url);
     if (!filename) {
-      response.writeHead(404).end();
+      response.writeHead(404, headers).end();
       return;
     }
     try {
       if (!(await stat(filename)).isFile()) throw new Error("not a file");
-      const headers = { "Content-Type": contentTypeForPath(filename) };
-      if (isolated) {
-        headers["Cross-Origin-Opener-Policy"] = "same-origin";
-        headers["Cross-Origin-Embedder-Policy"] = "require-corp";
-        headers["Permissions-Policy"] = "midi=(self)";
-      }
-      response.writeHead(200, headers);
+      response.writeHead(200, { ...headers, "Content-Type": contentTypeForPath(filename) });
       createReadStream(filename).pipe(response);
     } catch {
-      response.writeHead(404).end();
+      response.writeHead(404, headers).end();
     }
   });
 }

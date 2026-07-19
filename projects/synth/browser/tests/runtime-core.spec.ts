@@ -38,7 +38,7 @@ test("routes a portable action through the runtime worker facade without app HTM
       destroy(handle: number) { calls.push(["destroy", handle]); },
     }));
 
-    await worker.handle({ type: "load" });
+    await worker.handle({ type: "load", module: { entryUrl: "blob:test", locateFile: {}, mainScriptUrlOrBlob: "blob:test" } });
     await worker.handle({ type: "create" });
     await worker.handle({ type: "initialize", dataRoot: "/runtime-data" });
     await worker.handle({ type: "prepare", sampleRate: 48000, blockSize: 128 });
@@ -111,7 +111,7 @@ test("rejects incompatible modules before creation or persistence setup", async 
           throw new Error("persistence must not be created");
         },
       );
-      const loaded = await worker.handle({ type: "load" });
+      const loaded = await worker.handle({ type: "load", module: { entryUrl: "blob:test", locateFile: {}, mainScriptUrlOrBlob: "blob:test" } });
       const created = await worker.handle({ type: "create" });
       return { field, loaded, created, calls };
     }));
@@ -139,7 +139,7 @@ test("main bootstrap composes runtime, UI, audio channels, and actions generical
     const { installSynthBrowserApp } = await (new Function("return import('/dist/src/main.js')")() as Promise<any>);
     const calls: Array<[string, ...unknown[]]> = [];
     const app = await installSynthBrowserApp(document.querySelector("#synth-root")!, {
-      moduleUrl: "/dist/wasm/test-app.js",
+      module: { entryUrl: "blob:test-app", locateFile: {}, mainScriptUrlOrBlob: "blob:test-app" },
       frameIntervalMs: 100000,
       runtimeModuleLoader: async () => ({
         abiVersion: 1,

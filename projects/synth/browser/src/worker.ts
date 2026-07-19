@@ -7,9 +7,10 @@ import {
 import type { AudioBridgeDescriptor, MidiAction, MidiEndpoint, MidiOutput } from "./protocol.js";
 import { BROWSER_PERSISTENCE_STATUS_PATH, BrowserPersistence } from "./persistence.js";
 import type { BrowserFileSystem, BrowserPersistenceFactory } from "./persistence.js";
+import type { MaterializedRuntimeModule } from "./package-loader.js";
 
 export type RuntimeCommand =
-  | { type: "load"; moduleUrl?: string; versions?: RuntimeVersions }
+  | { type: "load"; module: MaterializedRuntimeModule; versions?: RuntimeVersions }
   | { type: "create" }
   | { type: "initialize"; dataRoot: string }
   | { type: "audio-config" }
@@ -67,7 +68,7 @@ export interface RuntimeModuleFacade {
   destroy(handle: number): void;
 }
 
-export type RuntimeModuleLoader = (moduleUrl?: string) => Promise<RuntimeModuleFacade>;
+export type RuntimeModuleLoader = (module: MaterializedRuntimeModule) => Promise<RuntimeModuleFacade>;
 
 export type RuntimeVersions = Readonly<{
   abiVersion: number;
@@ -131,6 +132,18 @@ type EmscriptenModule = {
   _synth_browser_dequeue_midi_output(handle: number, controllerIx: number, size: number): number;
   _synth_browser_destroy(handle: number): void;
 };
+
+type EmscriptenFactoryOptions = Readonly<{
+  locateFile(path: string, prefix?: string): string;
+  mainScriptUrlOrBlob: string;
+}>;
+
+type EmscriptenModuleImport = Readonly<{
+  default?: (options: EmscriptenFactoryOptions) => Promise<EmscriptenModule>;
+  createSynthBrowserModule?: (options: EmscriptenFactoryOptions) => Promise<EmscriptenModule>;
+}>;
+
+export type RuntimeModuleImporter = (entryUrl: string) => Promise<EmscriptenModuleImport>;
 
 function withUtf8<T>(module: EmscriptenModule, value: string, operation: (pointer: number) => T): T {
   const pointer = module._malloc(module.lengthBytesUTF8(value) + 1);
@@ -271,12 +284,41 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
   };
 }
 
-export const loadEmscriptenRuntime: RuntimeModuleLoader = async (moduleUrl) => {
-  if (!moduleUrl) throw new Error("runtime module URL is required");
-  const imported = await import(moduleUrl) as { default?: () => Promise<EmscriptenModule>; createSynthBrowserModule?: () => Promise<EmscriptenModule> };
+function normalizedMaterializedPath(requestedPath: string): string {
+  if (typeof requestedPath !== "string" || requestedPath.length === 0 || requestedPath.startsWith("/") ||
+      requestedPath.includes("\\") || requestedPath.includes("?") || requestedPath.includes("#") || requestedPath.includes("%") || requestedPath.includes(":"))
+    throw new Error(`Emscripten requested unmapped package path ${String(requestedPath)}`);
+  const normalized = requestedPath.startsWith("./") ? requestedPath.slice(2) : requestedPath;
+  if (normalized.split("/").some((segment) => segment === "" || segment === "." || segment === ".."))
+    throw new Error(`Emscripten requested unmapped package path ${requestedPath}`);
+  return normalized;
+}
+
+const importRuntimeModule: RuntimeModuleImporter = async (entryUrl) => import(entryUrl) as Promise<EmscriptenModuleImport>;
+
+export async function loadEmscriptenRuntime(
+  materialized: MaterializedRuntimeModule,
+  importer: RuntimeModuleImporter = importRuntimeModule,
+): Promise<RuntimeModuleFacade> {
+  if (!materialized || typeof materialized.entryUrl !== "string" || materialized.entryUrl.length === 0)
+    throw new Error("materialized runtime entry URL is required");
+  if (!materialized.locateFile || typeof materialized.locateFile !== "object" || Array.isArray(materialized.locateFile))
+    throw new Error("materialized runtime locateFile map is required");
+  if (typeof materialized.mainScriptUrlOrBlob !== "string" || materialized.mainScriptUrlOrBlob.length === 0)
+    throw new Error("materialized runtime mainScriptUrlOrBlob is required");
+  const imported = await importer(materialized.entryUrl);
   const factory = imported.default ?? imported.createSynthBrowserModule;
   if (!factory) throw new Error("runtime module does not export an Emscripten factory");
-  const module = await factory();
+  const module = await factory({
+    locateFile: (requestedPath) => {
+      const normalized = normalizedMaterializedPath(requestedPath);
+      const url = materialized.locateFile[normalized];
+      if (typeof url !== "string" || url.length === 0)
+        throw new Error(`Emscripten requested unmapped package path ${requestedPath}; file was not materialized`);
+      return url;
+    },
+    mainScriptUrlOrBlob: materialized.mainScriptUrlOrBlob,
+  });
   const idbfs = module.IDBFS ?? module.FS.filesystems?.IDBFS;
   if (!idbfs) throw new Error("runtime module does not include IDBFS");
   return { ...emscriptenRuntimeFacade(module), filesystem: {
@@ -285,7 +327,7 @@ export const loadEmscriptenRuntime: RuntimeModuleLoader = async (moduleUrl) => {
     mount: (type, options, path) => module.FS.mount(type, options, path),
     syncfs: (populate, complete) => module.FS.syncfs(populate, complete),
   } };
-};
+}
 
 export class BrowserRuntimeWorker {
   private module: RuntimeModuleFacade | undefined;
@@ -307,7 +349,7 @@ export class BrowserRuntimeWorker {
       switch (command.type) {
         case "load":
         {
-          const module = await this.loadModule(command.moduleUrl);
+          const module = await this.loadModule(command.module);
           negotiateRuntimeVersions(module, command.versions);
           const persistence = module.filesystem ? (this.createPersistence ?? defaultPersistenceFactory)(module.filesystem, (status) => {
             this.emitStatus({ type: "page-status", path: BROWSER_PERSISTENCE_STATUS_PATH, status });
