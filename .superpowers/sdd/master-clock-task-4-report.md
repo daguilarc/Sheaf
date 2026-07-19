@@ -8,6 +8,7 @@ and concrete delivery-boundary portions) from exact base:
 - base: `d36cdfb4f6c6249e87997936ca309cc44ec126da`
 - implementation head: `340cf082cb5ec9120d27439f371cdd44995797d2`
 - implementation commit: `feat(synth): deliver scheduled MIDI clock events`
+- review-fix head: `a5651208` (`fix(synth): bound scheduled MIDI idle wake`)
 - task head: the metadata-only commit containing this report (its hash cannot
   be embedded in its own contents without changing that hash)
 
@@ -35,6 +36,12 @@ Implementation and tests commit (`340cf082`):
 Metadata-only follow-up commit:
 
 - `.superpowers/sdd/master-clock-task-4-report.md`
+
+Opus review implementation/tests follow-up (`a5651208`):
+
+- `projects/synth/include/synth/MidiController.hpp`
+- `projects/synth/src/MidiController.cpp`
+- `projects/synth/tests/midi_sender_tests.cpp`
 
 `runtime/juce_build.mk` is required because JUCE application/test links now
 instantiate the concrete Engine clock-to-sender path and therefore need
@@ -110,8 +117,8 @@ make -C projects/synth -B build/midi_sender_tests
 projects/synth/build/midi_sender_tests
 ```
 
-Exit `0`; all 18 tests pass. Coverage includes producer and worker overflow,
-deadline priority, FIFO feedback isolation, transport/clock ties, cutoff
+Exit `0`; the initial 18 tests pass. Coverage includes producer and worker
+overflow, deadline priority, FIFO feedback isolation, transport/clock ties, cutoff
 boundaries, fallback waiting and late observation, scheduled broadcast,
 per-sink clear synchronization, reconnect no-replay, clean future-event stop,
 exact internal deadlines, and external fixed-offset/no-hole regeneration. The
@@ -318,3 +325,72 @@ claims about physical device jitter.
   compatible immediate-only sinks and therefore use the lower-quality
   worker-wait fallback until Task 5.
 - No Task 6 Sync page or Task 7 MiniApp/Braid behavior was implemented.
+
+## Opus Review Follow-up
+
+Opus returned PASS/PASS with one Important liveness finding and one Minor
+timestamp-provider contract finding. Both were addressed in `a5651208`.
+
+### Review RED
+
+Before the follow-up production edit:
+
+```text
+make -C projects/synth -B build/midi_sender_tests
+```
+
+Exited `2` on the deliberately missing `MidiSender::kIdleSelfHealMicros`
+contract. The new cases also stress 2,048 independent one-shot scheduled Start
+deliveries after the worker repeatedly becomes quiescent and exercise a
+default-constructed sender with a real future steady-clock deadline.
+
+### Lost-wakeup correction
+
+The original empty-pending branch used untimed `cv.wait(lock, predicate)`.
+Because realtime `TryEnqueue` correctly does not acquire `mutex_`, its notify
+could occur after the worker's false predicate read but before the worker was
+actually waiting. That one legal interleaving stranded a one-shot event until
+unrelated later traffic.
+
+The idle branch now uses a maximum `250 us` bounded wait. A missed notification
+therefore self-heals within 250 us while preserving at least 750 us of the
+documented 1-ms host submission lead. The SPSC producer implementation and its
+wait-free, mutex-free, allocation-free memory-ordering protocol are unchanged.
+The named constant is compile-time checked positive and no larger than one
+quarter of the host lead.
+
+### Missing-provider behavior
+
+The constructor already installed a steady-clock provider when injection was
+omitted, but the public contract and `NowMicros` fallback expression left the
+behavior ambiguous. The constructor now documents that compatibility policy:
+feedback-only callers remain unchanged, while scheduled callers without an
+injected provider use microseconds since `steady_clock` epoch. `NowMicros`
+unconditionally invokes the constructor-established provider, so it cannot
+silently return a permanently stalled zero epoch. The new test submits a
+future `Continue` deadline in that epoch and observes delivery.
+
+### Review verification
+
+```text
+make -C projects/synth build/midi_sender_tests
+projects/synth/build/midi_sender_tests
+for run in 1 2 3 4 5 6 7 8; do
+  projects/synth/build/midi_sender_tests >/dev/null || exit 1
+done
+```
+
+Exit `0`; all 20 focused cases pass, and all eight repeated runs include the
+2,048-iteration quiescent one-shot stress case.
+
+The same direct ASan/UBSan and TSan commands recorded above were rebuilt and
+rerun after the review changes; both exit `0` with no sanitizer diagnostic.
+
+```text
+make -C projects/synth test
+openspec validate add-synth-master-clock-midi-sync --strict
+```
+
+Both exit `0` after the review fix. The full synth suite passes, OpenSpec
+remains valid, and `git diff --check` is clean. The review package, parent
+ledger/brief, browser lockfile, and untracked miniapp remain untouched.
