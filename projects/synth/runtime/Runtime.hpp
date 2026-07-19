@@ -99,8 +99,9 @@ class Runtime : private juce::AudioIODeviceCallback, private juce::Timer {
 public:
     Runtime()
         : startTime_(std::chrono::steady_clock::now())
+        , midiEpoch_(synth_juce::RuntimeMidiEpoch::Capture(startTime_))
         , engine_([this]() -> std::uint64_t { return NowMicros(); })
-        , midiConnections_(std::make_unique<MidiConnectionManager<App>>(engine_)) {
+        , midiConnections_(std::make_unique<MidiConnectionManager<App>>(engine_, midiEpoch_)) {
         // The engine invokes this synchronously, on whichever thread is
         // performing a rebuild, immediately BEFORE midiProcessors_ is
         // destroyed/replaced (Initialize()'s rebuilds and
@@ -168,15 +169,14 @@ public:
     //       OnEngineAudioDeviceChanged for future runtime-config-initiated
     //       audio changes
     //   3. engine_.Initialize()
-    //   4. open the audio device, applying preferred rate/block where
+    //   4. start the MidiSender worker
+    //   5. synchronously reconcile MIDI devices, then start the MIDI poller
+    //   6. open the audio device, applying preferred rate/block where
     //      allowed, PREFERRING engine.AudioDeviceSnapshot().outputDeviceName
     //      over the platform default when it names a currently-enumerated device
     //      (runtime configuration seeds this value before device open)
-    //   5. start the MidiSender worker (before the audio callback is
-    //      registered, so the sink is draining before ProcessBlock/MIDI
-    //      output processors can enqueue into it)
-    //   6. Prepare the engine via audioDeviceAboutToStart
-    //   7. register this as the audio callback
+    //   7. Prepare the engine via audioDeviceAboutToStart and register the
+    //      audio callback
     //   8. start the UI timer
     void Start() {
         const synth::RuntimeConfig appConfig = App::Config();
@@ -211,9 +211,16 @@ public:
         INFO("Runtime started: %s", appConfig.appName.c_str());
         const synth::RuntimeConfig& config = engine_.Config();
 
-        // Startup order (sar-5, binding, per p3-globals.md): engine init ->
-        // startup/runtime config applied -> ONE synchronous reconcile ->
-        // start poller -> audio device -> ... StartupReconcile() is that
+        // Start the sender before opening MIDI inputs/outputs or starting the
+        // connection poller. Once ingress or the audio callback exists, every
+        // producer therefore has a live consumer.
+        if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
+            sender->Start();
+        }
+
+        // Startup order (binding): engine init -> sender -> startup/runtime
+        // config applied -> ONE synchronous reconcile -> start poller -> audio
+        // device -> ... StartupReconcile() is that
         // synchronous reconcile: it resizes midiConnections_ to the current
         // controller count, reconciles every configured ref against
         // currently-present devices (absent -> offline, never a startup
@@ -283,10 +290,6 @@ public:
         INFO("Audio device selector startup sync: selected=%s",
              startupAudioDeviceState.outputDeviceName.empty() ? "System Default"
                                                                 : startupAudioDeviceState.outputDeviceName.c_str());
-
-        if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
-            sender->Start();
-        }
 
         // addAudioCallback() invokes audioDeviceAboutToStart(currentDevice)
         // synchronously here (the device is already open), which is what
@@ -738,6 +741,7 @@ private:
     // the engine can possibly invoke it (audio never starts before
     // Start() completes, well after construction).
     std::chrono::steady_clock::time_point startTime_;
+    synth_juce::RuntimeMidiEpoch midiEpoch_;
     juce::AudioDeviceManager deviceManager_;
     synth::Engine<App> engine_;
     synth::RuntimeDataPaths dataPaths_;

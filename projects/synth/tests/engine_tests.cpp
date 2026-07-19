@@ -105,6 +105,27 @@ struct EngineScheduledEventSink final : synth::IScheduledMidiEventSink {
     }
 };
 
+struct EngineMidiOutputSink final : synth::IMidiOutputSink {
+    synth::MidiSchedulingCapability SchedulingCapability() const noexcept override {
+        return synth::MidiSchedulingCapability::HostTimestamped;
+    }
+
+    void Send(const synth::BasicMidi& midi) override {
+        std::lock_guard lock(mutex);
+        delivered.push_back(midi);
+    }
+
+    void SendScheduled(const synth::BasicMidi& midi, std::uint64_t dueTimeMicros) override {
+        std::lock_guard lock(mutex);
+        delivered.push_back(midi);
+        deadlines.push_back(dueTimeMicros);
+    }
+
+    std::mutex mutex;
+    std::vector<synth::BasicMidi> delivered;
+    std::vector<std::uint64_t> deadlines;
+};
+
 struct EngineTestApp {
     static inline bool sawNullUiStateDuringInit = false;
     static inline int initCalls = 0;
@@ -744,6 +765,43 @@ TEST_CASE(engine_owns_one_stable_clock_prepares_before_app_and_publishes_exact_c
     REQUIRE_TRUE(firstDescriptor.startSample == 0);
     REQUIRE_TRUE(firstDescriptor.endSample == 64);
     REQUIRE_TRUE(engine.Application().processBlockCalls == 2);
+}
+
+TEST_CASE(engine_wires_its_master_clock_to_its_concrete_midi_sender_by_default) {
+    EngineTestApp::processLiteAlpha = 1.0f;
+    std::atomic<std::uint64_t> nowMicros{3'000'000};
+    synth::Engine<EngineTestApp> engine(
+        [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
+    engine.Initialize();
+    engine.Prepare(100.0, 25);
+    REQUIRE_TRUE(engine.Clock().SetTempoBpm(60.0));
+    REQUIRE_TRUE(engine.Clock().ApplySyncConfig({
+        .sendClock = true,
+        .receiveClock = false,
+        .sendTransport = false,
+        .receiveTransport = false,
+        .ppqn = 4,
+    }));
+
+    EngineMidiOutputSink sink;
+    synth::MidiSender* const sender = engine.Context().midiSender;
+    REQUIRE_TRUE(sender != nullptr);
+    sender->SetSink(0, &sink);
+    sender->Start();
+
+    TestBlockBuffers buffers(2, 25);
+    synth::AudioBlock first = buffers.Block(25);
+    synth::AudioBlock second = buffers.Block(25);
+    synth::AudioBlock third = buffers.Block(25);
+    engine.ProcessBlock(first, 1'000'000);
+    engine.ProcessBlock(second, 1'250'000);
+    engine.ProcessBlock(third, 1'500'000);
+    REQUIRE_TRUE(sender->FlushForTests(std::chrono::milliseconds(500)));
+    sender->Stop();
+
+    std::lock_guard lock(sink.mutex);
+    REQUIRE_TRUE(sink.delivered.size() == 2);
+    REQUIRE_TRUE((sink.deadlines == std::vector<std::uint64_t>{1'750'000, 2'000'000}));
 }
 
 TEST_CASE(engine_delegates_with_null_clock_plan_before_prepare_and_for_zero_frame_blocks) {

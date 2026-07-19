@@ -1,5 +1,6 @@
 #pragma once
 
+#include "synth/MasterClock.hpp"
 #include "synth/ParameterModulation.hpp"
 #include "synth/RuntimeUIState.hpp"
 
@@ -364,9 +365,18 @@ private:
     SystemButtonMidiInConfig config_;
 };
 
+enum class MidiSchedulingCapability : std::uint8_t {
+    ImmediateOnly,
+    HostTimestamped,
+};
+
 struct IMidiOutputSink {
     virtual ~IMidiOutputSink() = default;
+    virtual MidiSchedulingCapability SchedulingCapability() const noexcept {
+        return MidiSchedulingCapability::ImmediateOnly;
+    }
     virtual void Send(const BasicMidi& midi) = 0;
+    virtual void SendScheduled(const BasicMidi& midi, std::uint64_t) { Send(midi); }
 };
 
 class MidiOutputProcessor {
@@ -376,9 +386,24 @@ public:
     virtual void Process() = 0;
 };
 
-class MidiSender {
+struct MidiSenderDiagnostics {
+    std::uint64_t producerOverflowCount = 0;
+    std::uint64_t workerOverflowCount = 0;
+    std::uint64_t staleGenerationDropCount = 0;
+    std::uint64_t lateEventCount = 0;
+    std::uint64_t fallbackSendCount = 0;
+};
+
+class MidiSender final : public IScheduledMidiEventSink {
 public:
+    using TimestampProvider = std::function<std::uint64_t()>;
+
     static constexpr std::size_t kMaxSinks = 8;
+    static constexpr std::size_t kScheduledRealtimeCapacity = 4096;
+    // Host-timestamp-capable outputs receive events only this far ahead. This
+    // keeps disconnect/reconnect snapshots close to the actual deadline while
+    // still giving the platform scheduler time to submit the event.
+    static constexpr std::uint64_t kHostScheduleLeadMicros = 1'000;
 
     class QueueGuardForTests {
     public:
@@ -394,7 +419,7 @@ public:
         std::unique_lock<std::mutex> lock_;
     };
 
-    explicit MidiSender(std::size_t capacity = 4096);
+    explicit MidiSender(std::size_t capacity = 4096, TimestampProvider timestampProvider = {});
     ~MidiSender();
 
     MidiSender(const MidiSender&) = delete;
@@ -427,6 +452,10 @@ public:
     // silently by the worker (smi-7 offline drop) — it does not block the
     // worker or affect other sinks' traffic.
     bool Enqueue(std::size_t sinkIx, const BasicMidi& midi);
+    // Audio-thread SPSC producer. Fixed-capacity, allocation-free,
+    // mutex-free, wait-free, newest-drop on overflow.
+    bool TryEnqueue(const ScheduledMidiEvent& event) noexcept override;
+    MidiSenderDiagnostics DiagnosticsSnapshot() const noexcept;
     bool IsRunning() const;
     bool FlushForTests(std::chrono::milliseconds timeout);
     // Deterministic concurrency-test seam. It uses the sender's existing
@@ -439,16 +468,35 @@ private:
         BasicMidi midi;
     };
 
+    struct PendingScheduledEntry {
+        ScheduledMidiEvent event;
+        std::array<std::uint64_t, kMaxSinks> sinkRegistrationGenerations{};
+        std::uint8_t hostScheduledMask = 0;
+        std::uint8_t immediateFallbackMask = 0;
+        bool sinksCaptured = false;
+        bool lateCounted = false;
+    };
+
     void Run();
+    std::uint64_t NowMicros() const noexcept;
+    bool RealtimeLaneEmpty() const noexcept;
+    void DrainRealtimeLane();
+    void InsertPending(const ScheduledMidiEvent& event);
+    void ApplyGenerationCutoff(const ScheduledMidiEvent& cutoff);
+    void CaptureScheduledSinks(PendingScheduledEntry& entry, std::uint64_t nowMicros);
+    bool ProcessScheduledFront(std::uint64_t nowMicros);
+    bool ProcessFeedbackFront();
+    bool BeginSinkCall(std::size_t sinkIx, std::uint64_t registrationGeneration,
+                       IMidiOutputSink*& sink);
+    void EndSinkCall(std::size_t sinkIx);
+    void RemovePendingFront();
+    void NotifyIfDrained();
 
     mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::condition_variable drainedCv_;
-    // Notified whenever sendingSinkIx_ changes (a Send() begins or ends) --
-    // separate from drainedCv_ (which only fires when the whole queue is
-    // idle) so ClearSinkSync can wait on the narrower "not sending THIS sink
-    // right now" condition without waiting for unrelated sinks' traffic to
-    // drain too.
+    // Notified whenever a per-sink in-flight count changes. ClearSinkSync
+    // waits only for the sink it is clearing, never for unrelated outputs.
     std::condition_variable sendingCv_;
     std::vector<QueueEntry> queue_;
     std::size_t head_ = 0;
@@ -457,15 +505,27 @@ private:
     bool running_ = false;
     bool stopRequested_ = false;
     std::array<IMidiOutputSink*, kMaxSinks> sinks_{};
-    // The sink index the worker is currently inside sink->Send() for, or
-    // kMaxSinks when the worker is not in the middle of a Send() call. Set
-    // (under mutex_) immediately before Send() is invoked (outside the lock)
-    // and cleared (under mutex_, with sendingCv_ notified) immediately after
-    // Send() returns. ClearSinkSync waits on sendingCv_ until this no longer
-    // equals the sink it is clearing, which -- combined with clearing
-    // sinks_[sinkIx] first, under the same lock -- guarantees the worker can
-    // never dequeue a fresh entry for that sink after the clear either.
-    std::size_t sendingSinkIx_ = kMaxSinks;
+    std::array<MidiSchedulingCapability, kMaxSinks> sinkCapabilities_{};
+    std::array<std::uint64_t, kMaxSinks> sinkRegistrationGenerations_{};
+    std::array<std::size_t, kMaxSinks> inFlightBySink_{};
+
+    // Single-producer/single-consumer lane. The producer publishes an entry
+    // with release; the worker observes it with acquire. The worker publishes
+    // reclaimed capacity with release; the producer observes it with acquire.
+    std::array<ScheduledMidiEvent, kScheduledRealtimeCapacity> realtimeLane_{};
+    alignas(64) std::atomic<std::uint64_t> realtimeWrite_{0};
+    alignas(64) std::atomic<std::uint64_t> realtimeRead_{0};
+    std::array<PendingScheduledEntry, kScheduledRealtimeCapacity> pendingScheduled_{};
+    std::size_t pendingScheduledSize_ = 0;
+    std::atomic<std::size_t> pendingScheduledCount_{0};
+
+    TimestampProvider timestampProvider_;
+    bool preferRealtimeWhenBothReady_ = true;
+    std::atomic<std::uint64_t> producerOverflowCount_{0};
+    std::atomic<std::uint64_t> workerOverflowCount_{0};
+    std::atomic<std::uint64_t> staleGenerationDropCount_{0};
+    std::atomic<std::uint64_t> lateEventCount_{0};
+    std::atomic<std::uint64_t> fallbackSendCount_{0};
     std::thread thread_;
 };
 

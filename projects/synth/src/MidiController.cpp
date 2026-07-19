@@ -927,8 +927,16 @@ void SystemButtonMidiInProcessor::PushStamped(MessageIn message) {
     Push(message);
 }
 
-MidiSender::MidiSender(std::size_t capacity)
-    : queue_(capacity == 0 ? 1 : capacity) {}
+MidiSender::MidiSender(std::size_t capacity, TimestampProvider timestampProvider)
+    : queue_(capacity == 0 ? 1 : capacity),
+      timestampProvider_(std::move(timestampProvider)) {
+    if (!timestampProvider_) {
+        timestampProvider_ = [] {
+            return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count());
+        };
+    }
+}
 
 MidiSender::~MidiSender() {
     Stop();
@@ -938,8 +946,12 @@ void MidiSender::SetSink(std::size_t sinkIx, IMidiOutputSink* sink) {
     if (sinkIx >= kMaxSinks) {
         return;
     }
+    const MidiSchedulingCapability capability =
+        sink == nullptr ? MidiSchedulingCapability::ImmediateOnly : sink->SchedulingCapability();
     std::lock_guard lock(mutex_);
     sinks_[sinkIx] = sink;
+    sinkCapabilities_[sinkIx] = capability;
+    ++sinkRegistrationGenerations_[sinkIx];
 }
 
 void MidiSender::ClearSinkSync(std::size_t sinkIx) {
@@ -947,15 +959,10 @@ void MidiSender::ClearSinkSync(std::size_t sinkIx) {
         return;
     }
     std::unique_lock lock(mutex_);
-    // Clear the pointer first (under the lock) so the worker can never start
-    // a NEW Send() against this sink after this point: Run() reads
-    // sinks_[entry.sinkIx] under the same lock right before it records
-    // sendingSinkIx_ and releases the lock to call Send(). Then wait for any
-    // Send() the worker had already started (and thus already captured the
-    // old sink pointer for, in its local `sink` variable) before we cleared
-    // sinks_ above -- sendingSinkIx_ == sinkIx is exactly that case.
     sinks_[sinkIx] = nullptr;
-    sendingCv_.wait(lock, [this, sinkIx] { return sendingSinkIx_ != sinkIx; });
+    sinkCapabilities_[sinkIx] = MidiSchedulingCapability::ImmediateOnly;
+    ++sinkRegistrationGenerations_[sinkIx];
+    sendingCv_.wait(lock, [this, sinkIx] { return inFlightBySink_[sinkIx] == 0; });
 }
 
 void MidiSender::Start() {
@@ -972,6 +979,8 @@ void MidiSender::Stop() {
     {
         std::lock_guard lock(mutex_);
         if (!running_ && !thread_.joinable()) {
+            realtimeRead_.store(realtimeWrite_.load(std::memory_order_acquire),
+                                std::memory_order_release);
             return;
         }
         stopRequested_ = true;
@@ -985,6 +994,10 @@ void MidiSender::Stop() {
     stopRequested_ = false;
     head_ = 0;
     size_ = 0;
+    pendingScheduledSize_ = 0;
+    pendingScheduledCount_.store(0, std::memory_order_release);
+    realtimeRead_.store(realtimeWrite_.load(std::memory_order_acquire),
+                        std::memory_order_release);
     drainedCv_.notify_all();
 }
 
@@ -997,10 +1010,36 @@ bool MidiSender::Enqueue(std::size_t sinkIx, const BasicMidi& midi) {
         return false;
     }
     const std::size_t tail = (head_ + size_) % queue_.size();
-    queue_[tail] = QueueEntry{.sinkIx = sinkIx, .midi = midi};
+    queue_[tail] = QueueEntry{
+        .sinkIx = sinkIx,
+        .midi = midi,
+    };
     ++size_;
     cv_.notify_one();
     return true;
+}
+
+bool MidiSender::TryEnqueue(const ScheduledMidiEvent& event) noexcept {
+    const std::uint64_t write = realtimeWrite_.load(std::memory_order_relaxed);
+    const std::uint64_t read = realtimeRead_.load(std::memory_order_acquire);
+    if (write - read >= kScheduledRealtimeCapacity) {
+        producerOverflowCount_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    realtimeLane_[write % kScheduledRealtimeCapacity] = event;
+    realtimeWrite_.store(write + 1, std::memory_order_release);
+    cv_.notify_one();
+    return true;
+}
+
+MidiSenderDiagnostics MidiSender::DiagnosticsSnapshot() const noexcept {
+    return {
+        .producerOverflowCount = producerOverflowCount_.load(std::memory_order_relaxed),
+        .workerOverflowCount = workerOverflowCount_.load(std::memory_order_relaxed),
+        .staleGenerationDropCount = staleGenerationDropCount_.load(std::memory_order_relaxed),
+        .lateEventCount = lateEventCount_.load(std::memory_order_relaxed),
+        .fallbackSendCount = fallbackSendCount_.load(std::memory_order_relaxed),
+    };
 }
 
 bool MidiSender::IsRunning() const {
@@ -1010,55 +1049,324 @@ bool MidiSender::IsRunning() const {
 
 bool MidiSender::FlushForTests(std::chrono::milliseconds timeout) {
     std::unique_lock lock(mutex_);
-    return drainedCv_.wait_for(lock, timeout, [this] { return size_ == 0 && inFlight_ == 0; });
+    return drainedCv_.wait_for(lock, timeout, [this] {
+        return size_ == 0 && inFlight_ == 0 && RealtimeLaneEmpty() &&
+               pendingScheduledCount_.load(std::memory_order_acquire) == 0;
+    });
+}
+
+std::uint64_t MidiSender::NowMicros() const noexcept {
+    return timestampProvider_ ? timestampProvider_() : 0;
+}
+
+bool MidiSender::RealtimeLaneEmpty() const noexcept {
+    return realtimeRead_.load(std::memory_order_acquire) ==
+           realtimeWrite_.load(std::memory_order_acquire);
+}
+
+void MidiSender::ApplyGenerationCutoff(const ScheduledMidiEvent& cutoff) {
+    std::size_t writeIx = 0;
+    for (std::size_t readIx = 0; readIx < pendingScheduledSize_; ++readIx) {
+        const ScheduledMidiEvent& pending = pendingScheduled_[readIx].event;
+        const bool stale = pending.phaseGeneration == cutoff.invalidatedPhaseGeneration &&
+                           pending.dueTimeMicros >= cutoff.phaseCutoffDueTimeMicros;
+        if (stale) {
+            staleGenerationDropCount_.fetch_add(1, std::memory_order_relaxed);
+            continue;
+        }
+        if (writeIx != readIx) {
+            pendingScheduled_[writeIx] = pendingScheduled_[readIx];
+        }
+        ++writeIx;
+    }
+    pendingScheduledSize_ = writeIx;
+    pendingScheduledCount_.store(writeIx, std::memory_order_release);
+}
+
+void MidiSender::InsertPending(const ScheduledMidiEvent& event) {
+    if (pendingScheduledSize_ >= kScheduledRealtimeCapacity) {
+        workerOverflowCount_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    const auto before = [](const ScheduledMidiEvent& lhs, const ScheduledMidiEvent& rhs) {
+        if (lhs.dueTimeMicros != rhs.dueTimeMicros) {
+            return lhs.dueTimeMicros < rhs.dueTimeMicros;
+        }
+        if (lhs.orderingIntent != rhs.orderingIntent) {
+            return lhs.orderingIntent < rhs.orderingIntent;
+        }
+        return lhs.sequence < rhs.sequence;
+    };
+    std::size_t insertIx = pendingScheduledSize_;
+    while (insertIx > 0 && before(event, pendingScheduled_[insertIx - 1].event)) {
+        pendingScheduled_[insertIx] = pendingScheduled_[insertIx - 1];
+        --insertIx;
+    }
+    pendingScheduled_[insertIx] = PendingScheduledEntry{.event = event};
+    ++pendingScheduledSize_;
+    pendingScheduledCount_.store(pendingScheduledSize_, std::memory_order_release);
+}
+
+void MidiSender::DrainRealtimeLane() {
+    std::uint64_t read = realtimeRead_.load(std::memory_order_relaxed);
+    const std::uint64_t write = realtimeWrite_.load(std::memory_order_acquire);
+    while (read != write) {
+        const ScheduledMidiEvent event = realtimeLane_[read % kScheduledRealtimeCapacity];
+        ++read;
+        realtimeRead_.store(read, std::memory_order_release);
+        if (event.kind == ScheduledMidiEventKind::PhaseGenerationCutoff) {
+            ApplyGenerationCutoff(event);
+        } else {
+            InsertPending(event);
+        }
+    }
+}
+
+void MidiSender::CaptureScheduledSinks(PendingScheduledEntry& entry, std::uint64_t nowMicros) {
+    std::lock_guard lock(mutex_);
+    const std::size_t sinkCount = entry.event.broadcast ? kMaxSinks : 1;
+    for (std::size_t sinkIx = 0; sinkIx < sinkCount; ++sinkIx) {
+        if (sinks_[sinkIx] == nullptr) {
+            continue;
+        }
+        const std::uint8_t bit = static_cast<std::uint8_t>(1u << sinkIx);
+        entry.sinkRegistrationGenerations[sinkIx] = sinkRegistrationGenerations_[sinkIx];
+        if (sinkCapabilities_[sinkIx] == MidiSchedulingCapability::HostTimestamped) {
+            entry.hostScheduledMask = static_cast<std::uint8_t>(entry.hostScheduledMask | bit);
+        } else {
+            entry.immediateFallbackMask = static_cast<std::uint8_t>(entry.immediateFallbackMask | bit);
+        }
+    }
+    entry.sinksCaptured = true;
+    if ((entry.hostScheduledMask != 0 || entry.immediateFallbackMask != 0) &&
+        nowMicros > entry.event.dueTimeMicros) {
+        entry.lateCounted = true;
+        lateEventCount_.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+bool MidiSender::BeginSinkCall(std::size_t sinkIx, std::uint64_t registrationGeneration,
+                               IMidiOutputSink*& sink) {
+    std::lock_guard lock(mutex_);
+    if (sinkIx >= kMaxSinks || sinks_[sinkIx] == nullptr ||
+        sinkRegistrationGenerations_[sinkIx] != registrationGeneration) {
+        sink = nullptr;
+        return false;
+    }
+    sink = sinks_[sinkIx];
+    ++inFlight_;
+    ++inFlightBySink_[sinkIx];
+    return true;
+}
+
+void MidiSender::EndSinkCall(std::size_t sinkIx) {
+    {
+        std::lock_guard lock(mutex_);
+        --inFlight_;
+        --inFlightBySink_[sinkIx];
+    }
+    sendingCv_.notify_all();
+    NotifyIfDrained();
+}
+
+void MidiSender::RemovePendingFront() {
+    for (std::size_t ix = 1; ix < pendingScheduledSize_; ++ix) {
+        pendingScheduled_[ix - 1] = pendingScheduled_[ix];
+    }
+    if (pendingScheduledSize_ > 0) {
+        --pendingScheduledSize_;
+    }
+    pendingScheduledCount_.store(pendingScheduledSize_, std::memory_order_release);
+}
+
+bool MidiSender::ProcessScheduledFront(std::uint64_t nowMicros) {
+    if (pendingScheduledSize_ == 0) {
+        return false;
+    }
+    PendingScheduledEntry& entry = pendingScheduled_[0];
+    if (!entry.sinksCaptured) {
+        const std::uint64_t leadReadyAt = entry.event.dueTimeMicros > kHostScheduleLeadMicros
+            ? entry.event.dueTimeMicros - kHostScheduleLeadMicros
+            : 0;
+        if (nowMicros < leadReadyAt) {
+            return false;
+        }
+        CaptureScheduledSinks(entry, nowMicros);
+        if (entry.hostScheduledMask == 0 && entry.immediateFallbackMask == 0) {
+            RemovePendingFront();
+            NotifyIfDrained();
+            return true;
+        }
+    }
+
+    if (!entry.lateCounted && nowMicros > entry.event.dueTimeMicros) {
+        entry.lateCounted = true;
+        lateEventCount_.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    const BasicMidi midi = BasicMidi::Realtime(entry.event.dueTimeMicros,
+                                                entry.event.MidiStatusByte());
+    if (entry.hostScheduledMask != 0) {
+        for (std::size_t sinkIx = 0; sinkIx < kMaxSinks; ++sinkIx) {
+            const std::uint8_t bit = static_cast<std::uint8_t>(1u << sinkIx);
+            if ((entry.hostScheduledMask & bit) == 0) {
+                continue;
+            }
+            entry.hostScheduledMask = static_cast<std::uint8_t>(entry.hostScheduledMask & ~bit);
+            IMidiOutputSink* sink = nullptr;
+            if (BeginSinkCall(sinkIx, entry.sinkRegistrationGenerations[sinkIx], sink)) {
+                sink->SendScheduled(midi, entry.event.dueTimeMicros);
+                EndSinkCall(sinkIx);
+            }
+        }
+    }
+
+    if (entry.immediateFallbackMask != 0 && nowMicros >= entry.event.dueTimeMicros) {
+        for (std::size_t sinkIx = 0; sinkIx < kMaxSinks; ++sinkIx) {
+            const std::uint8_t bit = static_cast<std::uint8_t>(1u << sinkIx);
+            if ((entry.immediateFallbackMask & bit) == 0) {
+                continue;
+            }
+            entry.immediateFallbackMask = static_cast<std::uint8_t>(entry.immediateFallbackMask & ~bit);
+            IMidiOutputSink* sink = nullptr;
+            if (BeginSinkCall(sinkIx, entry.sinkRegistrationGenerations[sinkIx], sink)) {
+                sink->Send(midi);
+                fallbackSendCount_.fetch_add(1, std::memory_order_relaxed);
+                EndSinkCall(sinkIx);
+            }
+        }
+    }
+
+    if (entry.hostScheduledMask == 0 && entry.immediateFallbackMask == 0) {
+        RemovePendingFront();
+        NotifyIfDrained();
+    }
+    return true;
+}
+
+bool MidiSender::ProcessFeedbackFront() {
+    BasicMidi midi;
+    IMidiOutputSink* sink = nullptr;
+    std::size_t sinkIx = kMaxSinks;
+    {
+        std::lock_guard lock(mutex_);
+        if (size_ == 0) {
+            return false;
+        }
+        const QueueEntry entry = queue_[head_];
+        head_ = (head_ + 1) % queue_.size();
+        --size_;
+        sinkIx = entry.sinkIx;
+        midi = entry.midi;
+        if (sinks_[sinkIx] != nullptr) {
+            sink = sinks_[sinkIx];
+            ++inFlight_;
+            ++inFlightBySink_[sinkIx];
+        }
+    }
+    if (sink != nullptr) {
+        sink->Send(midi);
+        EndSinkCall(sinkIx);
+    } else {
+        NotifyIfDrained();
+    }
+    return true;
+}
+
+void MidiSender::NotifyIfDrained() {
+    std::lock_guard lock(mutex_);
+    if (size_ == 0 && inFlight_ == 0 && RealtimeLaneEmpty() &&
+        pendingScheduledCount_.load(std::memory_order_acquire) == 0) {
+        drainedCv_.notify_all();
+    }
 }
 
 void MidiSender::Run() {
     ScopedThreadId scopedThreadId(ThreadId::MidiSender);
     for (;;) {
-        BasicMidi midi;
-        IMidiOutputSink* sink = nullptr;
-        std::size_t sinkIx = kMaxSinks;
-        {
-            std::unique_lock lock(mutex_);
-            cv_.wait(lock, [this] { return stopRequested_ || size_ > 0; });
-            if (stopRequested_ && size_ == 0) {
-                break;
-            }
-            const QueueEntry& entry = queue_[head_];
-            midi = entry.midi;
-            sinkIx = entry.sinkIx;
-            sink = sinks_[sinkIx];
-            head_ = (head_ + 1) % queue_.size();
-            --size_;
-            ++inFlight_;
-            // Record which sink Send() is about to be called for, still
-            // under the lock, BEFORE releasing it -- this is what lets
-            // ClearSinkSync (which clears sinks_[sinkIx] then waits for
-            // sendingSinkIx_ to stop naming that index) observe an in-flight
-            // Send() it must wait out, even though sink was already read
-            // above and the lock is about to be dropped.
-            if (sink != nullptr) {
-                sendingSinkIx_ = sinkIx;
-            }
-        }
-        if (sink != nullptr) {
-            sink->Send(midi);
-        }
         {
             std::lock_guard lock(mutex_);
-            --inFlight_;
-            if (sink != nullptr) {
-                sendingSinkIx_ = kMaxSinks;
-            }
-            if (size_ == 0 && inFlight_ == 0) {
-                drainedCv_.notify_all();
+            if (stopRequested_) {
+                break;
             }
         }
-        // Notified outside the lock (harmless either way, but keeps the
-        // critical section minimal): wakes any ClearSinkSync waiting on this
-        // sinkIx now that sendingSinkIx_ no longer names it.
-        sendingCv_.notify_all();
+
+        DrainRealtimeLane();
+
+        {
+            std::lock_guard lock(mutex_);
+            if (stopRequested_) {
+                break;
+            }
+        }
+
+        const std::uint64_t nowMicros = NowMicros();
+        bool feedbackReady = false;
+        {
+            std::lock_guard lock(mutex_);
+            feedbackReady = size_ > 0;
+        }
+
+        bool realtimeDue = false;
+        bool realtimeHostReady = false;
+        if (pendingScheduledSize_ > 0) {
+            PendingScheduledEntry& entry = pendingScheduled_[0];
+            const std::uint64_t leadReadyAt = entry.event.dueTimeMicros > kHostScheduleLeadMicros
+                ? entry.event.dueTimeMicros - kHostScheduleLeadMicros
+                : 0;
+            if (!entry.sinksCaptured && nowMicros >= leadReadyAt) {
+                CaptureScheduledSinks(entry, nowMicros);
+                if (entry.hostScheduledMask == 0 && entry.immediateFallbackMask == 0) {
+                    RemovePendingFront();
+                    NotifyIfDrained();
+                    continue;
+                }
+            }
+            if (entry.sinksCaptured) {
+                realtimeDue = nowMicros >= entry.event.dueTimeMicros &&
+                              (entry.hostScheduledMask != 0 || entry.immediateFallbackMask != 0);
+                realtimeHostReady = entry.hostScheduledMask != 0;
+            }
+        }
+
+        if (realtimeDue) {
+            ProcessScheduledFront(nowMicros);
+            continue;
+        }
+        if (realtimeHostReady && feedbackReady) {
+            if (preferRealtimeWhenBothReady_) {
+                preferRealtimeWhenBothReady_ = false;
+                ProcessScheduledFront(nowMicros);
+            } else {
+                preferRealtimeWhenBothReady_ = true;
+                ProcessFeedbackFront();
+            }
+            continue;
+        }
+        if (realtimeHostReady) {
+            ProcessScheduledFront(nowMicros);
+            continue;
+        }
+        if (feedbackReady) {
+            ProcessFeedbackFront();
+            continue;
+        }
+
+        std::unique_lock lock(mutex_);
+        const auto ready = [this] {
+            return stopRequested_ || size_ > 0 || !RealtimeLaneEmpty();
+        };
+        if (pendingScheduledSize_ == 0) {
+            cv_.wait(lock, ready);
+        } else {
+            const PendingScheduledEntry& entry = pendingScheduled_[0];
+            std::uint64_t wakeAt = entry.event.dueTimeMicros;
+            if (!entry.sinksCaptured && wakeAt > kHostScheduleLeadMicros) {
+                wakeAt -= kHostScheduleLeadMicros;
+            }
+            const std::uint64_t waitMicros = wakeAt > nowMicros ? wakeAt - nowMicros : 1;
+            cv_.wait_for(lock, std::chrono::microseconds(waitMicros), ready);
+        }
     }
     {
         std::lock_guard lock(mutex_);

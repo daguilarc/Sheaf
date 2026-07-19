@@ -28,6 +28,7 @@ APP_BUNDLE_BINARY := $(APP_BUNDLE)/Contents/MacOS/$(APP_NAME)
 
 SYNTH_SRC := $(SYNTH_ROOT)/src/ParameterModulation.cpp $(SYNTH_ROOT)/src/ButtonGrid.cpp $(SYNTH_ROOT)/src/MidiController.cpp $(SYNTH_ROOT)/src/PatchPersistence.cpp $(SYNTH_ROOT)/src/DspWavetable.cpp \
 	$(SYNTH_ROOT)/src/Modules.cpp $(SYNTH_ROOT)/src/MidiReconcile.cpp $(SYNTH_ROOT)/src/MidiDevicePoller.cpp $(SYNTH_ROOT)/src/MidiConfigViewModel.cpp $(SYNTH_ROOT)/src/MidiConfigBlocks.cpp
+SYNTH_SRC += $(SYNTH_ROOT)/src/MasterClock.cpp
 SYNTH_RUNTIME_SRC := $(SYNTH_ROOT)/runtime/HostDataPaths.cpp
 SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/AtomicColor.hpp $(SYNTH_ROOT)/include/synth/ButtonGrid.hpp \
 	$(SYNTH_ROOT)/include/synth/ParameterModulation.hpp $(SYNTH_ROOT)/include/synth/MidiController.hpp \
@@ -35,6 +36,8 @@ SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/AtomicColor.hpp $(SYNTH_ROOT)/inclu
 	$(SYNTH_ROOT)/include/synth/Modules.hpp \
 	$(SYNTH_ROOT)/include/synth/PatchPersistence.hpp \
 	$(SYNTH_ROOT)/include/synth/DspMath.hpp \
+	$(SYNTH_ROOT)/include/synth/DspPhasor2Tick.hpp \
+	$(SYNTH_ROOT)/include/synth/MasterClock.hpp \
 	$(SYNTH_ROOT)/include/synth/DspRandomLfo.hpp \
 	$(SYNTH_ROOT)/include/synth/GangedRandomLfoVisualizer.hpp \
 	$(SYNTH_ROOT)/include/synth/StandardModulators.hpp \

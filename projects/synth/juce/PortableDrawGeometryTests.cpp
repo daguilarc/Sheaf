@@ -265,6 +265,24 @@ int main() {
     if (midiOut.Open("__sheaf_missing_midi_output__") || midiOut.IsOpen()) {
         throw std::runtime_error("missing MIDI output identifier should leave handler closed");
     }
+    RequireTrue(midiOut.SchedulingCapability() == synth::MidiSchedulingCapability::HostTimestamped,
+                "JUCE output advertises host timestamp scheduling");
+
+    const synth_juce::RuntimeMidiEpoch epoch{.juceMillisecondsAtEngineEpochZero = 12'345.25};
+    RequireNear(epoch.ToJuceMilliseconds(2'500'000), 14'845.25, 0.000001,
+                "runtime microseconds convert to JUCE monotonic milliseconds");
+    RequireTrue(epoch.ToEngineMicros(14.84525) == 2'500'000,
+                "JUCE callback seconds normalize to the runtime epoch");
+
+    const synth_juce::JuceScheduledMidiSubmission scheduled =
+        synth_juce::PrepareScheduledMidiSubmission(synth::BasicMidi::Clock(0), 2'500'000, epoch);
+    RequireNear(scheduled.hostDueTimeMilliseconds, 14'845.25, 0.000001,
+                "scheduled adapter retains the converted future deadline");
+    RequireTrue(scheduled.buffer.getNumEvents() == 1,
+                "scheduled adapter builds one JUCE MIDI event");
+    const auto metadata = *scheduled.buffer.begin();
+    RequireTrue(metadata.samplePosition == 0 && metadata.numBytes == 1 && metadata.data[0] == 0xF8,
+                "scheduled adapter retains realtime bytes at the host start timestamp");
 
     std::cout << "Portable draw geometry tests passed\n";
     return 0;

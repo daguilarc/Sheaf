@@ -50,7 +50,7 @@ public:
         , parameterMessageOutBus_()
         , patchInputBus_()
         , patchOutputBus_()
-        , midiSender_()
+        , midiSender_(4096, timestampProvider)
         , absoluteFeedbackCoordinator_()
         , patchManager_(&patchInputBus_, &patchOutputBus_, initialArenaCapacity)
         , masterClock_()
@@ -94,6 +94,7 @@ public:
         context_.uiState = nullptr;
         context_.gridManager = &gridManager_;
         context_.now = timestampProvider_;
+        masterClock_.SetScheduledMidiEventSink(&midiSender_);
     }
 
     Engine(const Engine&) = delete;

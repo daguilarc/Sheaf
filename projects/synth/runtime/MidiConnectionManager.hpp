@@ -185,7 +185,9 @@ inline synth::MidiDeviceList ForceDirtyEnumerate() {
 template <synth::SynthApplication App>
 class MidiConnectionManager {
 public:
-    explicit MidiConnectionManager(synth::Engine<App>& engine) : engine_(engine) {}
+    explicit MidiConnectionManager(synth::Engine<App>& engine,
+                                   synth_juce::RuntimeMidiEpoch midiEpoch = {})
+        : engine_(engine), midiEpoch_(midiEpoch) {}
 
     ~MidiConnectionManager() {
         // Shutdown ordering (binding, per p3-globals.md): stop/join the
@@ -399,8 +401,8 @@ private:
         state_.controllers.resize(newCount);
 
         for (const std::size_t ix : resizePlan.growingIx) {
-            inputHandlers_[ix] = std::make_unique<synth_juce::MidiInHandler>();
-            outputHandlers_[ix] = std::make_unique<synth_juce::MidiOutputHandler>();
+            inputHandlers_[ix] = std::make_unique<synth_juce::MidiInHandler>(midiEpoch_);
+            outputHandlers_[ix] = std::make_unique<synth_juce::MidiOutputHandler>(midiEpoch_);
         }
         for (std::size_t ix = 0; ix < newCount; ++ix) {
             InstallForwardingProcessor(ix);
@@ -524,7 +526,7 @@ private:
     void CloseOutput(std::size_t ix) {
         if (ix < outputHandlers_.size() && outputHandlers_[ix]) {
             if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
-                sender->SetSink(ix, nullptr);
+                sender->ClearSinkSync(ix);
             }
             outputHandlers_[ix]->Close();
         }
@@ -581,6 +583,7 @@ private:
     }
 
     synth::Engine<App>& engine_;
+    synth_juce::RuntimeMidiEpoch midiEpoch_;
 
     std::vector<std::unique_ptr<synth_juce::MidiInHandler>> inputHandlers_;
     std::vector<std::unique_ptr<synth_juce::MidiOutputHandler>> outputHandlers_;
