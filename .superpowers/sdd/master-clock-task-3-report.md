@@ -206,9 +206,10 @@ Engine owns one inline `MasterClock` for its full lifetime, wires its stable
 address into `AppContext` before application `Init`, prepares it first from the
 negotiated output sample rate/block size, and exposes sink injection plus direct
 clock inspection. Each block routes due input, assigns the prior sample-counter
-value to `block.startSample`, commits exactly one plan/crossing set, assigns the
-exact `MasterClock::CurrentPlan()` pointer to `block.clockPlan`, then invokes the
-optional frame hook and exactly one application block callback. The application
+value to `block.startSample`, attempts exactly one plan/crossing commit, assigns
+the exact `MasterClock::CurrentPlan()` pointer to `block.clockPlan` on success,
+then invokes the optional frame hook and exactly one application block callback.
+The nullable edge contract and review fix are recorded below. The application
 fixture captures the descriptor before/after work, observes sink enqueue before
 delegation, and verifies exact adjacent `[0,64)` / `[64,128)` anchors.
 
@@ -267,3 +268,43 @@ audio device, and MasterClock sync state into v2.
 - Runtime sync is applied during single-threaded startup here. The later Sync
   page owns the audio-safe live-update handoff, staged editing, and host-service
   wiring.
+
+## Review Fix — Nullable `AudioBlock::clockPlan`
+
+Opus review returned specification-compliance PASS and code-quality PASS with
+one minor documentation finding: Engine delegates to the application even when
+`MasterClock::CommitBlock` returns null, but the app-facing field did not state
+when null is possible.
+
+Implementation review-fix commit:
+
+`d256256f69d9e370361c0b76d9c6ccd35e94130f` —
+`fix(synth): define nullable audio clock plan`
+
+The existing runtime behavior was preserved. `AudioBlock::clockPlan` now states
+that it is the non-owning exact `MasterClock::CurrentPlan()` only for a
+successful prepared, nonzero, contiguous commit; it is null for default views,
+before successful clock preparation, for zero-frame callbacks, or any rejected
+commit. Applications must null-check it and must not retain it as an immutable
+snapshot across callbacks because the next successful commit replaces the
+pointed-to plan. Engine's block-order contract now explicitly says delegation
+still occurs exactly once when the commit is rejected.
+
+The focused Engine characterization
+`engine_delegates_with_null_clock_plan_before_prepare_and_for_zero_frame_blocks`
+proves both null cases, exact once-per-block delegation, no current plan, zero
+sample-position consumption for the zero-frame callback, and successful
+recovery with the following `[0,64)` block. No runtime branch or clock behavior
+changed.
+
+Fresh review-fix verification:
+
+```text
+make -C projects/synth -B contract_tests engine_tests
+git diff --check
+git diff --cached --check
+```
+
+The forced rebuild and both complete focused suites exited `0` without compiler
+warnings; diff checks were clean. The follow-up commit containing this section
+is metadata-only.
