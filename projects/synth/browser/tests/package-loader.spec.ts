@@ -119,38 +119,61 @@ test("rejects missing worker files before creating any object URL", async ({ pag
   expect(result.created).toBe(0);
 });
 
-test("rejects wrong response media types and mismatched content lengths", async ({ page }) => {
+test("rejects wrong response media types", async ({ page }) => {
   await openTestPage(page);
-  const results = await page.evaluate(async () => {
+  const result = await page.evaluate(async () => {
     const { materializePackage } = await (new Function("return import('/dist/src/package-loader.js')")() as Promise<any>);
-    const bytes = Uint8Array.from([0, 97, 115, 109]);
+    const bytes = new TextEncoder().encode("export default async () => ({});\n");
     const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)))
       .map((value) => value.toString(16).padStart(2, "0")).join("");
     const app = {
       appId: "test-app",
       buildId: "build-1",
       browser: {
-        entry: "packages/test-app/build-1/app.wasm",
-        entryUrl: "https://publisher.example/packages/test-app/build-1/app.wasm",
-        files: [{ path: "packages/test-app/build-1/app.wasm", url: "https://publisher.example/packages/test-app/build-1/app.wasm", mediaType: "application/wasm", sha256: digest }],
+        entry: "packages/test-app/build-1/app.js",
+        entryUrl: "https://publisher.example/packages/test-app/build-1/app.js",
+        files: [{ path: "packages/test-app/build-1/app.js", url: "https://publisher.example/packages/test-app/build-1/app.js", mediaType: "text/javascript", sha256: digest }],
       },
     };
-    const run = async (headers: Record<string, string>) => {
-      try {
-        await materializePackage(app as any, async () => new Response(bytes, { status: 200, headers }));
-        return "";
-      } catch (error) {
-        return error instanceof Error ? error.message : String(error);
-      }
-    };
-    return {
-      mediaType: await run({ "Content-Type": "application/octet-stream", "Content-Length": "4" }),
-      length: await run({ "Content-Type": "application/wasm", "Content-Length": "5" }),
-    };
+    try {
+      await materializePackage(app as any, async () => new Response(bytes, {
+        status: 200,
+        headers: { "Content-Type": "application/octet-stream", "Content-Length": String(bytes.byteLength) },
+      }));
+      return "accepted";
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
   });
 
-  expect(results.mediaType).toMatch(/media type.*application\/octet-stream|expected.*application\/wasm/i);
-  expect(results.length).toMatch(/length.*4.*5|expected.*5/i);
+  expect(result).toMatch(/media type.*application\/octet-stream|expected.*text\/javascript/i);
+});
+
+test("accepts advisory transfer lengths when decoded bytes match the digest", async ({ page }) => {
+  await openTestPage(page);
+  const result = await page.evaluate(async () => {
+    const { materializePackage } = await (new Function("return import('/dist/src/package-loader.js')")() as Promise<any>);
+    const bytes = new TextEncoder().encode("export default async () => ({});\n");
+    const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)))
+      .map((value) => value.toString(16).padStart(2, "0")).join("");
+    const app = {
+      appId: "test-app",
+      buildId: "build-1",
+      browser: {
+        entry: "packages/test-app/build-1/app.js",
+        entryUrl: "https://publisher.example/packages/test-app/build-1/app.js",
+        files: [{ path: "packages/test-app/build-1/app.js", url: "https://publisher.example/packages/test-app/build-1/app.js", mediaType: "text/javascript", sha256: digest }],
+      },
+    };
+    const materialized = await materializePackage(app as any, async () => new Response(bytes, {
+      status: 200,
+      headers: { "Content-Type": "text/javascript", "Content-Length": "17" },
+    }));
+    materialized.dispose();
+    return "accepted";
+  });
+
+  expect(result).toBe("accepted");
 });
 
 test("rejects stale or hash-mismatched WASM before importing the verified entry", async ({ page }) => {
@@ -247,6 +270,32 @@ test("passes explicit immutable mappings to the Emscripten factory and refuses d
     ["nested", "blob:verified-audio"],
   ]);
   expect(result.fallbackError).toMatch(/missing\.worker\.js.*not materialized|unmapped/i);
+});
+
+test("normalizes every materialized sidecar path with one strict package grammar", async ({ page }) => {
+  await openTestPage(page);
+  const result = await page.evaluate(async () => {
+    const { normalizeMaterializedPath } = await (new Function("return import('/dist/src/package-loader.js')")() as Promise<any>);
+    const accepted = ["worker.js", "./worklets/audio.js", "assets/runtime_data-1.bin"]
+      .map((value) => normalizeMaterializedPath(value, "test path"));
+    const rejected = [
+      "", "/worker.js", "../worker.js", "worklets//audio.js", "././worker.js",
+      "worker%2ejs", "https:worker.js", "worker.js?cache", "worker.js#fragment",
+      "worker\\windows.js", "worker name.js",
+    ].map((value) => {
+      try {
+        normalizeMaterializedPath(value, "test path");
+        return "accepted";
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    });
+    return { accepted, rejected };
+  });
+
+  expect(result.accepted).toEqual(["worker.js", "worklets/audio.js", "assets/runtime_data-1.bin"]);
+  expect(result.rejected).toHaveLength(11);
+  expect(result.rejected.every((message) => /test path.*normalized package-relative path/i.test(message))).toBe(true);
 });
 
 test("rewrites verified Emscripten import-meta worker bootstraps to typed object URLs", async ({ page }) => {

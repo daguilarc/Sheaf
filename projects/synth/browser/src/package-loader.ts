@@ -27,12 +27,14 @@ const defaultObjectUrls: ObjectUrlPrimitives = Object.freeze({
   revokeObjectURL: (url) => URL.revokeObjectURL(url),
 });
 
-function normalizedRelativePath(value: string, label: string): string {
-  if (value.length === 0 || value.startsWith("/") || value.includes("\\") || value.includes("?") || value.includes("#"))
+const MATERIALIZED_PATH_SEGMENT = /^[A-Za-z0-9._~-]+$/;
+
+export function normalizeMaterializedPath(value: string, label: string): string {
+  if (typeof value !== "string" || value.length === 0 || value.startsWith("/") || value.includes("\\") || value.includes("?") || value.includes("#"))
     throw new Error(`${label} is not a normalized package-relative path`);
   const normalized = value.startsWith("./") ? value.slice(2) : value;
   const segments = normalized.split("/");
-  if (segments.some((segment) => segment === "" || segment === "." || segment === ".."))
+  if (segments.some((segment) => segment === "" || segment === "." || segment === ".." || !MATERIALIZED_PATH_SEGMENT.test(segment)))
     throw new Error(`${label} is not a normalized package-relative path`);
   return normalized;
 }
@@ -46,7 +48,7 @@ function packageRelativePaths(app: CatalogApp): ReadonlyMap<CatalogFile, string>
   const basenames = new Map<string, string>();
   for (const file of app.browser.files) {
     if (!file.path.startsWith(prefix)) throw new Error(`package file ${file.path} is outside immutable package root ${prefix}`);
-    const relative = normalizedRelativePath(file.path.slice(prefix.length), `package file ${file.path}`);
+    const relative = normalizeMaterializedPath(file.path.slice(prefix.length), `package file ${file.path}`);
     if (seen.has(relative)) throw new Error(`duplicate package file ${relative}`);
     seen.add(relative);
     const basename = relative.slice(relative.lastIndexOf("/") + 1);
@@ -69,7 +71,7 @@ const IMPORT_META_SIDECAR = /new\s+URL\(\s*(["'])([^"']+)\1\s*,\s*import\.meta\.
 
 function rewriteImportMetaSidecars(source: string, mappings: Readonly<Record<string, string>>): string {
   return source.replace(IMPORT_META_SIDECAR, (_expression, _quote, requestedPath: string) => {
-    const normalized = normalizedRelativePath(requestedPath, `Emscripten import-meta sidecar ${requestedPath}`);
+    const normalized = normalizeMaterializedPath(requestedPath, `Emscripten import-meta sidecar ${requestedPath}`);
     const url = mappings[normalized];
     if (!url) throw new Error(`Emscripten import-meta sidecar ${requestedPath} was not materialized`);
     return `new URL(${JSON.stringify(url)})`;
@@ -92,8 +94,9 @@ async function verifiedBytes(file: CatalogFile, fetcher: PackageFetcher): Promis
   if (contentLength !== null) {
     if (!/^(0|[1-9][0-9]*)$/.test(contentLength)) throw new Error(`package file ${file.path} has invalid Content-Length ${contentLength}`);
     const declaredLength = Number(contentLength);
-    if (!Number.isSafeInteger(declaredLength) || declaredLength !== bytes.byteLength)
-      throw new Error(`package file ${file.path} length ${bytes.byteLength}; response declared ${contentLength}`);
+    if (!Number.isSafeInteger(declaredLength)) throw new Error(`package file ${file.path} has invalid Content-Length ${contentLength}`);
+    // Fetch decodes transfer content encodings before arrayBuffer(); this valid
+    // header may describe compressed transfer bytes, so SHA-256 is authoritative.
   }
   const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes.buffer)))
     .map((value) => value.toString(16).padStart(2, "0"))

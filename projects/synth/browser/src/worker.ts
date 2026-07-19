@@ -7,7 +7,7 @@ import {
 import type { AudioBridgeDescriptor, MidiAction, MidiEndpoint, MidiOutput } from "./protocol.js";
 import { BROWSER_PERSISTENCE_STATUS_PATH, BrowserPersistence } from "./persistence.js";
 import type { BrowserFileSystem, BrowserPersistenceFactory } from "./persistence.js";
-import type { MaterializedRuntimeModule } from "./package-loader.js";
+import { normalizeMaterializedPath, type MaterializedRuntimeModule } from "./package-loader.js";
 
 export type RuntimeCommand =
   | { type: "load"; module: MaterializedRuntimeModule; versions?: RuntimeVersions }
@@ -284,16 +284,6 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
   };
 }
 
-function normalizedMaterializedPath(requestedPath: string): string {
-  if (typeof requestedPath !== "string" || requestedPath.length === 0 || requestedPath.startsWith("/") ||
-      requestedPath.includes("\\") || requestedPath.includes("?") || requestedPath.includes("#") || requestedPath.includes("%") || requestedPath.includes(":"))
-    throw new Error(`Emscripten requested unmapped package path ${String(requestedPath)}`);
-  const normalized = requestedPath.startsWith("./") ? requestedPath.slice(2) : requestedPath;
-  if (normalized.split("/").some((segment) => segment === "" || segment === "." || segment === ".."))
-    throw new Error(`Emscripten requested unmapped package path ${requestedPath}`);
-  return normalized;
-}
-
 const importRuntimeModule: RuntimeModuleImporter = async (entryUrl) => import(entryUrl) as Promise<EmscriptenModuleImport>;
 
 export async function loadEmscriptenRuntime(
@@ -311,7 +301,7 @@ export async function loadEmscriptenRuntime(
   if (!factory) throw new Error("runtime module does not export an Emscripten factory");
   const module = await factory({
     locateFile: (requestedPath) => {
-      const normalized = normalizedMaterializedPath(requestedPath);
+      const normalized = normalizeMaterializedPath(requestedPath, `Emscripten requested path ${String(requestedPath)}`);
       const url = materialized.locateFile[normalized];
       if (typeof url !== "string" || url.length === 0)
         throw new Error(`Emscripten requested unmapped package path ${requestedPath}; file was not materialized`);
