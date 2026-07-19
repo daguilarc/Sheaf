@@ -570,7 +570,7 @@ Expected: every synth test binary exits 0.
 
 - [ ] **Step 3: Audit the no-integration boundary**
 
-Run: `rg -n "Adsr(Module|Processor)|DspAdsr" projects/synth --glob '!include/synth/DspAdsr.hpp' --glob '!include/synth/Modules.hpp' --glob '!tests/dsp_tests.cpp' --glob '!tests/module_tests.cpp' --glob '!Makefile'`
+Run from `projects/synth`: `rg -n "Adsr(Module|Processor)|DspAdsr" . --glob '!include/synth/DspAdsr.hpp' --glob '!include/synth/Modules.hpp' --glob '!tests/dsp_tests.cpp' --glob '!tests/module_tests.cpp' --glob '!Makefile'`
 
 Expected: no matches. This proves no app, runtime, instrument, standard-modulator,
 patch, controller, or UI source began using the ADSR types.
