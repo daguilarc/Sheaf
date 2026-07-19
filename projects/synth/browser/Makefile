@@ -43,7 +43,6 @@ browser-package: build
 	npm run package:app -- --app-id "$(PACKAGE_APP_ID)" --source-dir "$(PACKAGE_SOURCE_DIR)" --output-dir "$(PACKAGE_OUTPUT_DIR)" --entry "$(PACKAGE_ENTRY)" --wasm "$(PACKAGE_WASM)" --pthread-worker "$(PACKAGE_PTHREAD_WORKER)" --wasm-worker "$(PACKAGE_WASM_WORKER)" --audio-worklet "$(PACKAGE_AUDIO_WORKLET)"
 
 browser-fake-app: $(BROWSER_BUILD_DIR)/fake_browser_app.js
-	cp $(BROWSER_BUILD_DIR)/fake_browser_app.js $(BROWSER_BUILD_DIR)/app.js
 
 browser-fake-app-test: build browser-fake-app
 	npm run check:generic-runtime

@@ -175,6 +175,18 @@ test("publish failure names a missing miniapp emission before replacing the dest
   assert.equal(await readFile(path.join(publishRoot, "existing.txt"), "utf8"), "previous deployment\n");
 });
 
+test("publish rejects unexpected Emscripten emissions before replacing the destination", async () => {
+  const { browserRoot, publishRoot } = await createPublishFixture("unexpected-sidecar");
+  await writeFixture(publishRoot, { "existing.txt": "previous deployment\n" });
+  await writeFile(path.join(browserRoot, "dist/wasm/miniapp.worker.js"), "postMessage('worker');\n");
+
+  await assert.rejects(
+    () => publishSite({ browserRoot, publishRoot }),
+    /unexpected.*miniapp\.worker\.js/i,
+  );
+  assert.equal(await readFile(path.join(publishRoot, "existing.txt"), "utf8"), "previous deployment\n");
+});
+
 async function createPublishFixture(name) {
   const root = await mkdtemp(path.join(os.tmpdir(), `synth-browser-publish-${name}-`));
   const browserRoot = path.join(root, "browser");

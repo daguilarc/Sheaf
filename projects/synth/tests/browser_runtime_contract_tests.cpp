@@ -533,6 +533,13 @@ void TestBrowserContractVersionsAreReadableBeforeRuntimeCreation()
             "browser runtime-config version is available before runtime creation");
 }
 
+void TestBrowserRuntimeAdapterRejectsIncompatibleRuntimeConfigVersion()
+{
+    synth_browser::RuntimeAbiAdapter<ValidApp> runtime;
+    Require(runtime.Initialize("sheaf", "miniapp", 2) == -1,
+            "browser runtime adapter rejects incompatible runtime-config versions");
+}
+
 void TestBrowserPersistenceIdentityDerivesSharedAndIsolatedRoots()
 {
     const synth::RuntimeDataPaths first =
@@ -586,6 +593,7 @@ int main()
     static_assert(!synth_browser::BrowserApplication<MissingSurface>);
     static_assert(!synth::SynthApplication<MissingSurface>);
     TestBrowserContractVersionsAreReadableBeforeRuntimeCreation();
+    TestBrowserRuntimeAdapterRejectsIncompatibleRuntimeConfigVersion();
     TestBrowserPersistenceIdentityDerivesSharedAndIsolatedRoots();
     TestBrowserRuntimeUsesSharedFrameAndActionRouting();
     TestBrowserPrepareFeedsNegotiatedAudioPageAndRejectsOversizedBlocks();

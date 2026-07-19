@@ -8,6 +8,20 @@ test("browser scaffold test runner is active", () => {
   assert.equal(typeof globalThis, "object");
 });
 
+test("playwright discovers only browser specs", async () => {
+  const browserRoot = await findBrowserRoot();
+  const config = await readFile(path.join(browserRoot, "playwright.config.mjs"), "utf8");
+  assert.match(config, /testMatch:\s*"\*\*\/\*\.spec\.ts"/);
+});
+
+test("fake and miniapp builds cannot race the rollback app alias", async () => {
+  const makefile = await readBrowserMakefile();
+  const appAliasCopies = makefile.match(/cp \$\(BROWSER_BUILD_DIR\)\/[^\s]+ \$\(BROWSER_BUILD_DIR\)\/app\.js/g) ?? [];
+  assert.deepEqual(appAliasCopies, [
+    "cp $(BROWSER_BUILD_DIR)/miniapp.js $(BROWSER_BUILD_DIR)/app.js",
+  ]);
+});
+
 test("emscripten runtime facade exports string and persistence helpers", async () => {
   const makefile = await readBrowserMakefile();
   assert.match(makefile, /EXPORTED_RUNTIME_METHODS := '\["stringToUTF8","lengthBytesUTF8","FS","IDBFS","HEAPU8","HEAPF32"\]'/);

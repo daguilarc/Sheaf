@@ -1,4 +1,4 @@
-import { copyFile, mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -35,6 +35,16 @@ async function requiredNonemptyFile(filename, relativePath) {
   if (metadata.size === 0) throw new Error(`Required first-party artifact is empty: ${relativePath}`);
 }
 
+async function rejectUnexpectedMiniappEmissions(browserRoot) {
+  const expected = new Set(["miniapp.js", "miniapp.wasm"]);
+  const entries = await readdir(path.join(browserRoot, "dist", "wasm"));
+  const unexpected = entries
+    .filter((name) => name.startsWith("miniapp.") && !expected.has(name))
+    .sort();
+  if (unexpected.length > 0)
+    throw new Error(`Unexpected first-party Emscripten emissions: ${unexpected.join(", ")}`);
+}
+
 function readTemplate(value) {
   const template = plainRecord(value, "first-party catalog template");
   exactKeys(template, ["schemaVersion", "publisher", "app"], "first-party catalog template");
@@ -57,6 +67,7 @@ export async function buildFirstPartyCatalog({ browserRoot, outputRoot }) {
   await requiredNonemptyFile(templatePath, "catalogs/sheaf/catalog.template.json");
   await requiredNonemptyFile(entryPath, "dist/wasm/miniapp.js");
   await requiredNonemptyFile(wasmPath, "dist/wasm/miniapp.wasm");
+  await rejectUnexpectedMiniappEmissions(browserRoot);
 
   const sourceList = JSON.parse(await readFile(sourceListPath, "utf8"));
   const parsedSources = parseCatalogSources(sourceList, "https://deployment.invalid/catalog-sources.json");
