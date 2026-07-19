@@ -81,12 +81,18 @@ struct RecordingSink final : IMidiOutputSink {
         std::uint64_t dueTimeMicros = 0;
     };
 
-    explicit RecordingSink(bool hostScheduled = false)
-        : hostScheduled(hostScheduled) {}
+    explicit RecordingSink(bool hostScheduled = false,
+                           std::uint64_t schedulingLeadMicros = MidiSender::kHostScheduleLeadMicros)
+        : hostScheduled(hostScheduled)
+        , schedulingLeadMicros(schedulingLeadMicros) {}
 
     MidiSchedulingCapability SchedulingCapability() const noexcept override {
         return hostScheduled ? MidiSchedulingCapability::HostTimestamped
                              : MidiSchedulingCapability::ImmediateOnly;
+    }
+
+    std::uint64_t SchedulingLeadMicros() const noexcept override {
+        return schedulingLeadMicros;
     }
 
     void Send(const BasicMidi& midi) override {
@@ -105,6 +111,7 @@ struct RecordingSink final : IMidiOutputSink {
     }
 
     bool hostScheduled = false;
+    std::uint64_t schedulingLeadMicros = MidiSender::kHostScheduleLeadMicros;
     std::mutex mutex;
     std::vector<Delivery> deliveries;
 };
@@ -288,6 +295,65 @@ TEST_CASE(scheduled_realtime_broadcast_preserves_original_deadline) {
     REQUIRE_TRUE(firstDeliveries[0].scheduled);
     REQUIRE_TRUE(firstDeliveries[0].dueTimeMicros == clock.dueTimeMicros);
     REQUIRE_TRUE(secondDeliveries[0].dueTimeMicros == clock.dueTimeMicros);
+}
+
+TEST_CASE(host_timestamped_broadcast_uses_the_max_registered_sink_lead) {
+    std::atomic<std::uint64_t> nowMicros{100'000};
+    MidiSender sender(16, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
+    RecordingSink shortLead(true, 1'000);
+    RecordingSink browserLead(true, 25'000);
+    sender.SetSink(0, &shortLead);
+    sender.SetSink(1, &browserLead);
+    REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(
+        ScheduledMidiEventKind::TimingClock, 125'000, 1, 7)));
+
+    sender.Start();
+    REQUIRE_TRUE(WaitUntil([&] {
+        return shortLead.Snapshot().size() == 1 && browserLead.Snapshot().size() == 1;
+    }, std::chrono::milliseconds(100)));
+    sender.Stop();
+
+    REQUIRE_TRUE(shortLead.Snapshot()[0].dueTimeMicros == 125'000);
+    REQUIRE_TRUE(browserLead.Snapshot()[0].dueTimeMicros == 125'000);
+}
+
+TEST_CASE(registering_a_long_lead_sink_wakes_a_sender_waiting_for_the_deadline) {
+    std::atomic<std::uint64_t> nowMicros{100'000};
+    MidiSender sender(16, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
+    RecordingSink longLead(true, 900'000);
+    REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(
+        ScheduledMidiEventKind::TimingClock, 1'000'000, 1, 7)));
+    sender.Start();
+
+    // Let the worker consume the realtime lane and begin its deadline wait
+    // while there are no host-timestamped sinks registered.
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sender.SetSink(0, &longLead);
+    REQUIRE_TRUE(WaitUntil([&] {
+        return longLead.Snapshot().size() == 1;
+    }, std::chrono::milliseconds(100)));
+    sender.Stop();
+}
+
+TEST_CASE(horizon_ready_old_generation_is_cut_off_before_any_sink_snapshot) {
+    std::atomic<std::uint64_t> nowMicros{100'000};
+    MidiSender sender(16, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
+    RecordingSink browserLead(true, 25'000);
+    sender.SetSink(0, &browserLead);
+    REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(
+        ScheduledMidiEventKind::TimingClock, 125'000, 1, 11)));
+    ScheduledMidiEvent cutoff = RealtimeEvent(
+        ScheduledMidiEventKind::PhaseGenerationCutoff, 125'000, 2, 12);
+    cutoff.invalidatedPhaseGeneration = 11;
+    cutoff.phaseCutoffDueTimeMicros = 125'000;
+    REQUIRE_TRUE(sender.TryEnqueue(cutoff));
+
+    sender.Start();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    sender.Stop();
+
+    REQUIRE_TRUE(browserLead.Snapshot().empty());
+    REQUIRE_TRUE(sender.DiagnosticsSnapshot().staleGenerationDropCount == 1);
 }
 
 TEST_CASE(due_realtime_precedes_feedback_without_cross_sink_leakage) {

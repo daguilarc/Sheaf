@@ -172,7 +172,10 @@ export class SynthBrowserApp {
       mainScriptUrlOrBlob: this.options.module.mainScriptUrlOrBlob,
     };
     await this.expectOk(await this.runtime.request({ type: "load", module, versions: this.options.runtimeVersions }));
-    await this.expectOk(await this.runtime.request({ type: "create" }));
+    await this.expectOk(await this.runtime.request({
+      type: "create",
+      documentTimeOriginMillis: performance.timeOrigin,
+    }));
     await this.expectOk(await this.runtime.request({ type: "initialize", identity: this.options.runtimeIdentity }));
     const audioConfig = await this.runtime.request({ type: "audio-config" });
     if (audioConfig.type !== "audio-config") throw new Error("runtime did not return audio configuration");

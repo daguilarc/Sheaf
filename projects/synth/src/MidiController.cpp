@@ -948,10 +948,19 @@ void MidiSender::SetSink(std::size_t sinkIx, IMidiOutputSink* sink) {
     }
     const MidiSchedulingCapability capability =
         sink == nullptr ? MidiSchedulingCapability::ImmediateOnly : sink->SchedulingCapability();
-    std::lock_guard lock(mutex_);
-    sinks_[sinkIx] = sink;
-    sinkCapabilities_[sinkIx] = capability;
-    ++sinkRegistrationGenerations_[sinkIx];
+    const std::uint64_t schedulingLeadMicros =
+        sink != nullptr && capability == MidiSchedulingCapability::HostTimestamped
+            ? sink->SchedulingLeadMicros()
+            : 0;
+    {
+        std::lock_guard lock(mutex_);
+        sinks_[sinkIx] = sink;
+        sinkCapabilities_[sinkIx] = capability;
+        sinkScheduleLeadMicros_[sinkIx] = schedulingLeadMicros;
+        ++sinkRegistrationGenerations_[sinkIx];
+        ++sinkWakeGeneration_;
+    }
+    cv_.notify_all();
 }
 
 void MidiSender::ClearSinkSync(std::size_t sinkIx) {
@@ -961,8 +970,12 @@ void MidiSender::ClearSinkSync(std::size_t sinkIx) {
     std::unique_lock lock(mutex_);
     sinks_[sinkIx] = nullptr;
     sinkCapabilities_[sinkIx] = MidiSchedulingCapability::ImmediateOnly;
+    sinkScheduleLeadMicros_[sinkIx] = 0;
     ++sinkRegistrationGenerations_[sinkIx];
+    ++sinkWakeGeneration_;
     sendingCv_.wait(lock, [this, sinkIx] { return inFlightBySink_[sinkIx] == 0; });
+    lock.unlock();
+    cv_.notify_all();
 }
 
 void MidiSender::Start() {
@@ -1181,14 +1194,28 @@ void MidiSender::RemovePendingFront() {
     pendingScheduledCount_.store(pendingScheduledSize_, std::memory_order_release);
 }
 
-bool MidiSender::ProcessScheduledFront(std::uint64_t nowMicros) {
+std::uint64_t MidiSender::HostScheduleLeadMicros() const noexcept {
+    std::lock_guard lock(mutex_);
+    std::uint64_t leadMicros = 0;
+    for (std::size_t sinkIx = 0; sinkIx < kMaxSinks; ++sinkIx) {
+        if (sinks_[sinkIx] != nullptr &&
+            sinkCapabilities_[sinkIx] == MidiSchedulingCapability::HostTimestamped) {
+            leadMicros = std::max(leadMicros, sinkScheduleLeadMicros_[sinkIx]);
+        }
+    }
+    return leadMicros;
+}
+
+bool MidiSender::ProcessScheduledFront(
+    std::uint64_t nowMicros,
+    std::uint64_t hostScheduleLeadMicros) {
     if (pendingScheduledSize_ == 0) {
         return false;
     }
     PendingScheduledEntry& entry = pendingScheduled_[0];
     if (!entry.sinksCaptured) {
-        const std::uint64_t leadReadyAt = entry.event.dueTimeMicros > kHostScheduleLeadMicros
-            ? entry.event.dueTimeMicros - kHostScheduleLeadMicros
+        const std::uint64_t leadReadyAt = entry.event.dueTimeMicros > hostScheduleLeadMicros
+            ? entry.event.dueTimeMicros - hostScheduleLeadMicros
             : 0;
         if (nowMicros < leadReadyAt) {
             return false;
@@ -1303,6 +1330,7 @@ void MidiSender::Run() {
         }
 
         const std::uint64_t nowMicros = NowMicros();
+        const std::uint64_t hostScheduleLeadMicros = HostScheduleLeadMicros();
         bool feedbackReady = false;
         {
             std::lock_guard lock(mutex_);
@@ -1313,8 +1341,8 @@ void MidiSender::Run() {
         bool realtimeHostReady = false;
         if (pendingScheduledSize_ > 0) {
             PendingScheduledEntry& entry = pendingScheduled_[0];
-            const std::uint64_t leadReadyAt = entry.event.dueTimeMicros > kHostScheduleLeadMicros
-                ? entry.event.dueTimeMicros - kHostScheduleLeadMicros
+            const std::uint64_t leadReadyAt = entry.event.dueTimeMicros > hostScheduleLeadMicros
+                ? entry.event.dueTimeMicros - hostScheduleLeadMicros
                 : 0;
             if (!entry.sinksCaptured && nowMicros >= leadReadyAt) {
                 CaptureScheduledSinks(entry, nowMicros);
@@ -1332,13 +1360,13 @@ void MidiSender::Run() {
         }
 
         if (realtimeDue) {
-            ProcessScheduledFront(nowMicros);
+            ProcessScheduledFront(nowMicros, hostScheduleLeadMicros);
             continue;
         }
         if (realtimeHostReady && feedbackReady) {
             if (preferRealtimeWhenBothReady_) {
                 preferRealtimeWhenBothReady_ = false;
-                ProcessScheduledFront(nowMicros);
+                ProcessScheduledFront(nowMicros, hostScheduleLeadMicros);
             } else {
                 preferRealtimeWhenBothReady_ = true;
                 ProcessFeedbackFront();
@@ -1346,7 +1374,7 @@ void MidiSender::Run() {
             continue;
         }
         if (realtimeHostReady) {
-            ProcessScheduledFront(nowMicros);
+            ProcessScheduledFront(nowMicros, hostScheduleLeadMicros);
             continue;
         }
         if (feedbackReady) {
@@ -1355,8 +1383,10 @@ void MidiSender::Run() {
         }
 
         std::unique_lock lock(mutex_);
-        const auto ready = [this] {
-            return stopRequested_ || size_ > 0 || !RealtimeLaneEmpty();
+        const std::uint64_t sinkWakeGeneration = sinkWakeGeneration_;
+        const auto ready = [this, sinkWakeGeneration] {
+            return stopRequested_ || size_ > 0 || !RealtimeLaneEmpty() ||
+                   sinkWakeGeneration_ != sinkWakeGeneration;
         };
         if (pendingScheduledSize_ == 0) {
             // TryEnqueue cannot take mutex_ without violating the audio-side
@@ -1367,8 +1397,8 @@ void MidiSender::Run() {
         } else {
             const PendingScheduledEntry& entry = pendingScheduled_[0];
             std::uint64_t wakeAt = entry.event.dueTimeMicros;
-            if (!entry.sinksCaptured && wakeAt > kHostScheduleLeadMicros) {
-                wakeAt -= kHostScheduleLeadMicros;
+            if (!entry.sinksCaptured && wakeAt > hostScheduleLeadMicros) {
+                wakeAt -= hostScheduleLeadMicros;
             }
             const std::uint64_t waitMicros = wakeAt > nowMicros ? wakeAt - nowMicros : 1;
             cv_.wait_for(lock, std::chrono::microseconds(waitMicros), ready);

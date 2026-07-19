@@ -6,6 +6,7 @@
 #endif
 
 #include <chrono>
+#include <atomic>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -41,8 +42,10 @@ public:
 class FakeEngine {
 public:
     FakeEngine()
+        : sender(4096, [this] { return nowMicros.load(std::memory_order_relaxed); })
     {
         context.midiSender = &sender;
+        context.now = [this] { return nowMicros.load(std::memory_order_relaxed); };
     }
 
     synth::MidiInstrumentConfig InstrumentSnapshot() const { return instrument; }
@@ -60,6 +63,7 @@ public:
     synth::MidiInstrumentConfig instrument;
     std::vector<RecordingProcessor> inputs;
     std::vector<std::size_t> resetSlots;
+    std::atomic<std::uint64_t> nowMicros{10'000};
     synth::MidiSender sender;
 
 private:
@@ -67,6 +71,30 @@ private:
 };
 
 using Bridge = synth_browser::BrowserMidiBridge<FakeEngine>;
+static_assert(Bridge::kSchedulingLeadMicros == 25'000);
+
+synth::ScheduledMidiEvent Scheduled(
+    synth::ScheduledMidiEventKind kind,
+    std::uint64_t dueTimeMicros,
+    std::uint64_t sequence,
+    std::uint64_t generation = 0)
+{
+    synth::ScheduledMidiOrderingIntent ordering =
+        synth::ScheduledMidiOrderingIntent::Transport;
+    if (kind == synth::ScheduledMidiEventKind::TimingClock) {
+        ordering = synth::ScheduledMidiOrderingIntent::Clock;
+    } else if (kind == synth::ScheduledMidiEventKind::PhaseGenerationCutoff) {
+        ordering = synth::ScheduledMidiOrderingIntent::GenerationCutoff;
+    }
+    return synth::ScheduledMidiEvent{
+        .kind = kind,
+        .orderingIntent = ordering,
+        .broadcast = true,
+        .dueTimeMicros = dueTimeMicros,
+        .sequence = sequence,
+        .phaseGeneration = generation,
+    };
+}
 
 std::vector<Bridge::Endpoint> Endpoints()
 {
@@ -134,8 +162,201 @@ void TestIncomingAndOutgoingSysexStayOnSelectedControllerSlot()
     Require(sent.has_value(), "outbound message is available to browser");
     Require(sent->controllerIx == 0, "outbound message keeps controller slot");
     Require(sent->bytes == outbound, "outbound sysex bytes preserved");
+    Require(sent->delivery == Bridge::OutboundDelivery::Immediate,
+            "controller feedback remains immediate");
+    Require(sent->dueTimeMicros == 0, "immediate feedback has no scheduled deadline");
     Require(!bridge.DequeueOutput().has_value(), "outbound queue drains once");
 
+    bridge.Stop();
+}
+
+void TestScheduledTransportRetainsDueTimeAndOutranksFeedback()
+{
+    FakeEngine engine;
+    engine.instrument.controllers = {
+        Slot("A", Ref("in-a", "Input A"), Ref("out-a", "Output A")),
+    };
+    engine.inputs.resize(1);
+    Bridge bridge(engine);
+    bridge.SubmitEndpoints(Endpoints());
+    while (bridge.DequeueAction()) {
+    }
+
+    for (std::size_t index = 0; index < 256; ++index) {
+        Require(engine.sender.Enqueue(
+                    0, synth::BasicMidi::Realtime(index, static_cast<std::uint8_t>(0x90))),
+                "feedback fills its independent availability lane");
+    }
+    Require(engine.sender.TryEnqueue(Scheduled(
+                synth::ScheduledMidiEventKind::Continue, 10'500, 1)),
+            "scheduled transport enters realtime lane");
+    bridge.Start();
+    Require(engine.sender.FlushForTests(std::chrono::milliseconds(500)),
+            "sender drains feedback and scheduled traffic");
+
+    const auto scheduled = bridge.DequeueOutput();
+    Require(scheduled.has_value(), "scheduled transport is available");
+    Require(scheduled->bytes == std::vector<std::uint8_t>{0xFB},
+            "scheduled transport bytes preserved");
+    Require(scheduled->delivery == Bridge::OutboundDelivery::Scheduled,
+            "scheduled transport remains distinguished from feedback");
+    Require(scheduled->dueTimeMicros == 10'500,
+            "scheduled transport retains its absolute engine deadline");
+    Require(bridge.DiagnosticsSnapshot().droppedImmediateOutputCount == 0,
+            "exact feedback capacity does not drop");
+
+    Require(engine.sender.Enqueue(0, synth::BasicMidi::Realtime(0, 0x91)),
+            "newest feedback reaches sender");
+    Require(engine.sender.FlushForTests(std::chrono::milliseconds(500)),
+            "newest feedback attempt reaches bridge");
+    Require(bridge.DiagnosticsSnapshot().droppedImmediateOutputCount == 1,
+            "full feedback availability lane drops newest observably");
+
+    for (std::size_t index = 0; index < Bridge::kScheduledOutputCapacity; ++index) {
+        Require(engine.sender.TryEnqueue(Scheduled(
+                    synth::ScheduledMidiEventKind::Start, 10'750, index + 2)),
+                "scheduled lane accepts its fixed capacity");
+    }
+    Require(engine.sender.TryEnqueue(Scheduled(
+                synth::ScheduledMidiEventKind::Continue,
+                10'750,
+                Bridge::kScheduledOutputCapacity + 2)),
+            "newest scheduled event reaches the bounded browser lane");
+    Require(engine.sender.FlushForTests(std::chrono::milliseconds(500)),
+            "scheduled overflow attempt reaches bridge");
+    Require(bridge.DiagnosticsSnapshot().droppedScheduledOutputCount == 1,
+            "full scheduled availability lane drops newest observably");
+    for (std::size_t index = 0; index < Bridge::kScheduledOutputCapacity; ++index) {
+        const auto output = bridge.DequeueOutput();
+        Require(output.has_value() && output->bytes == std::vector<std::uint8_t>{0xFA},
+                "scheduled newest-drop preserves every older event in FIFO order");
+    }
+    bridge.Stop();
+}
+
+void TestGenerationCutoffKeepsStartBeforeOneTimeZeroClock()
+{
+    FakeEngine engine;
+    engine.instrument.controllers = {
+        Slot("A", Ref("in-a", "Input A"), Ref("out-a", "Output A")),
+    };
+    engine.inputs.resize(1);
+    Bridge bridge(engine);
+    bridge.SubmitEndpoints(Endpoints());
+    while (bridge.DequeueAction()) {
+    }
+
+    Require(engine.sender.TryEnqueue(Scheduled(
+                synth::ScheduledMidiEventKind::TimingClock, 10'500, 1, 7)),
+            "old-generation clock enters sender");
+    auto cutoff = Scheduled(
+        synth::ScheduledMidiEventKind::PhaseGenerationCutoff, 10'500, 2, 8);
+    cutoff.invalidatedPhaseGeneration = 7;
+    cutoff.phaseCutoffDueTimeMicros = 10'500;
+    Require(engine.sender.TryEnqueue(cutoff), "generation cutoff enters sender");
+    Require(engine.sender.TryEnqueue(Scheduled(
+                synth::ScheduledMidiEventKind::Start, 10'500, 3)),
+            "Start enters sender");
+    Require(engine.sender.TryEnqueue(Scheduled(
+                synth::ScheduledMidiEventKind::TimingClock, 10'500, 4, 8)),
+            "new time-zero clock enters sender");
+
+    bridge.Start();
+    Require(engine.sender.FlushForTests(std::chrono::milliseconds(500)),
+            "cutoff and replacement events drain");
+    const auto start = bridge.DequeueOutput();
+    const auto clock = bridge.DequeueOutput();
+    Require(start.has_value() && start->bytes == std::vector<std::uint8_t>{0xFA},
+            "Start is first at the shared deadline");
+    Require(clock.has_value() && clock->bytes == std::vector<std::uint8_t>{0xF8},
+            "one replacement time-zero clock follows Start");
+    Require(start->dueTimeMicros == 10'500 && clock->dueTimeMicros == 10'500,
+            "Start and first clock keep the same absolute deadline");
+    Require(!bridge.DequeueOutput().has_value(),
+            "invalidated old-generation clock is never exposed to browser");
+    Require(engine.sender.DiagnosticsSnapshot().staleGenerationDropCount == 1,
+            "generation cutoff remains observable in concrete sender");
+    bridge.Stop();
+}
+
+void TestContinuousStoppedClockAndLateDrainKeepOriginalDeadlines()
+{
+    FakeEngine engine;
+    engine.instrument.controllers = {
+        Slot("A", Ref("in-a", "Input A"), Ref("out-a", "Output A")),
+    };
+    engine.inputs.resize(1);
+    Bridge bridge(engine);
+    bridge.SubmitEndpoints(Endpoints());
+    while (bridge.DequeueAction()) {
+    }
+
+    synth::MasterClock clock;
+    clock.SetScheduledMidiEventSink(&engine.sender);
+    Require(clock.SetTempoBpm(60.0), "stopped-clock tempo accepted");
+    synth::SyncConfig config;
+    config.sendClock = true;
+    config.ppqn = 4;
+    Require(clock.ApplySyncConfig(config), "stopped-clock send policy accepted");
+    Require(clock.Prepare(100.0, 25), "stopped clock prepared");
+    Require(clock.CommitBlock(0, 25, 1'000'000) != nullptr, "first stopped plan commits");
+    Require(clock.CommitBlock(25, 25, 1'250'000) != nullptr, "second stopped plan commits");
+    Require(clock.CommitBlock(50, 25, 1'500'000) != nullptr, "third stopped plan commits");
+
+    engine.nowMicros.store(3'000'000, std::memory_order_relaxed);
+    bridge.Start();
+    Require(engine.sender.FlushForTests(std::chrono::milliseconds(500)),
+            "continuous stopped clocks reach browser bridge");
+    const auto first = bridge.DequeueOutput();
+    const auto second = bridge.DequeueOutput();
+    Require(first.has_value() && second.has_value(), "two stopped-grid clocks drain");
+    Require(first->bytes == std::vector<std::uint8_t>{0xF8} &&
+                second->bytes == std::vector<std::uint8_t>{0xF8},
+            "stopped output contains only Timing Clock");
+    Require(first->dueTimeMicros == 1'750'000 && second->dueTimeMicros == 2'000'000,
+            "late drains retain analytically derived stopped-grid deadlines");
+    Require(bridge.DiagnosticsSnapshot().lateScheduledOutputCount == 2,
+            "each late browser availability drain increments diagnostics");
+    bridge.Stop();
+}
+
+void TestOutputReconnectPurgesOldAvailabilityWithoutReplay()
+{
+    FakeEngine engine;
+    engine.instrument.controllers = {
+        Slot("A", Ref("in-a", "Input A"), Ref("out-a", "Output A")),
+    };
+    engine.inputs.resize(1);
+    Bridge bridge(engine);
+    bridge.SubmitEndpoints(Endpoints());
+    while (bridge.DequeueAction()) {
+    }
+    Require(engine.sender.TryEnqueue(Scheduled(
+                synth::ScheduledMidiEventKind::TimingClock, 10'500, 1, 2)),
+            "pre-disconnect clock enters sender");
+    bridge.Start();
+    Require(engine.sender.FlushForTests(std::chrono::milliseconds(500)),
+            "pre-disconnect clock reaches bridge availability");
+
+    auto offline = Endpoints();
+    offline.erase(offline.begin() + 1);
+    bridge.SubmitEndpoints(offline);
+    while (bridge.DequeueAction()) {
+    }
+    bridge.SubmitEndpoints(Endpoints());
+    while (bridge.DequeueAction()) {
+    }
+    Require(!bridge.DequeueOutput().has_value(),
+            "reconnect never replays output queued for the old binding");
+
+    Require(engine.sender.TryEnqueue(Scheduled(
+                synth::ScheduledMidiEventKind::TimingClock, 11'000, 2, 2)),
+            "future clock enters reconnected sender binding");
+    Require(engine.sender.FlushForTests(std::chrono::milliseconds(500)),
+            "future clock reaches reconnected output");
+    const auto future = bridge.DequeueOutput();
+    Require(future.has_value() && future->dueTimeMicros == 11'000,
+            "reconnected output joins future schedule only");
     bridge.Stop();
 }
 
@@ -221,6 +442,10 @@ int main()
 {
     TestReconcileBindsSlotsIndependentlyAndResyncsOutputs();
     TestIncomingAndOutgoingSysexStayOnSelectedControllerSlot();
+    TestScheduledTransportRetainsDueTimeAndOutranksFeedback();
+    TestGenerationCutoffKeepsStartBeforeOneTimeZeroClock();
+    TestContinuousStoppedClockAndLateDrainKeepOriginalDeadlines();
+    TestOutputReconnectPurgesOldAvailabilityWithoutReplay();
     TestOfflineSlotDoesNotRemapAnotherSelectedSlot();
     TestNameFallbackUpdatesStoredReferencesThroughTheBridge();
     TestLatestDeviceListMatchesSubmittedEndpoints();

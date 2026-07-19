@@ -74,6 +74,52 @@ test("routes a portable action through the runtime worker facade without app HTM
   expect(result.html).not.toMatch(/miniapp|fake-browser/i);
 });
 
+test("normalizes a distinct worker time origin into the document engine epoch", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async () => {
+    const { BrowserRuntimeWorker } = await (new Function("return import('/dist/src/worker.js')")() as Promise<any>);
+    const offsets: number[] = [];
+    const worker = new BrowserRuntimeWorker(async () => ({
+      abiVersion: 2,
+      uiProtocolVersion: 1,
+      runtimeConfigVersion: 1,
+      create: () => 3,
+      setTimestampEpochOffset: (_handle: number, offsetMicros: number) => { offsets.push(offsetMicros); return 0; },
+      audioOutputChannels: () => 2,
+      initialize: () => 0,
+      prepare: () => 0,
+      process: () => 0,
+      messageTick: () => 0,
+      buildUiFrame: () => new ArrayBuffer(0),
+      dispatchAction: () => 0,
+      submitMidiEndpoints: () => 0,
+      dequeueMidiAction: () => undefined,
+      deliverMidi: () => 0,
+      dequeueMidiOutput: () => undefined,
+      midiDiagnostics: () => ({
+        droppedImmediateOutputCount: 0,
+        droppedScheduledOutputCount: 0,
+        lateScheduledOutputCount: 0,
+      }),
+      destroy: () => {},
+    }), undefined, undefined, () => 1_700_000_000_250);
+    await worker.handle({
+      type: "load",
+      module: { entryUrl: "blob:test", locateFile: {}, mainScriptUrlOrBlob: "blob:test" },
+    });
+    const response = await worker.handle({
+      type: "create",
+      documentTimeOriginMillis: 1_700_000_000_000,
+    });
+    return { response, offsets };
+  });
+
+  expect(result).toEqual({
+    response: { type: "created", handle: 3 },
+    offsets: [250_000],
+  });
+});
+
 test("reads Emscripten browser contract versions without creating a runtime", async ({ page }) => {
   await blockProductAutoBoot(page);
   await page.goto("http://127.0.0.1:4173/public/index.html");

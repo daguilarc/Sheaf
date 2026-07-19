@@ -3,7 +3,7 @@ import {
   SUPPORTED_RUNTIME_CONFIG_VERSION,
   SUPPORTED_UI_PROTOCOL_VERSION,
 } from "./protocol.js";
-import type { MidiAction, MidiEndpoint, MidiOutput } from "./protocol.js";
+import type { MidiAction, MidiEndpoint, MidiOutput, MidiOutputDiagnostics } from "./protocol.js";
 import { validateBrowserRuntimeIdentity } from "./catalog.js";
 import type { BrowserRuntimeIdentity } from "./catalog.js";
 import { BROWSER_PERSISTENCE_STATUS_PATH, BrowserPersistence } from "./persistence.js";
@@ -12,7 +12,7 @@ import { normalizeMaterializedPath, type MaterializedRuntimeModule } from "./pac
 
 export type RuntimeCommand =
   | { type: "load"; module: MaterializedRuntimeModule; versions?: RuntimeVersions }
-  | { type: "create" }
+  | { type: "create"; documentTimeOriginMillis?: number }
   | { type: "initialize"; identity: BrowserRuntimeIdentity }
   | { type: "audio-config" }
   | { type: "prepare"; sampleRate: number; blockSize: number }
@@ -25,6 +25,7 @@ export type RuntimeCommand =
   | { type: "midi-endpoints"; endpoints: MidiEndpoint[] }
   | { type: "midi-input"; controllerIx: number; bytes: number[]; timestampMicros: number }
   | { type: "drain-midi-output" }
+  | { type: "midi-diagnostics" }
   | { type: "persistence"; state: string }
   | { type: "persistence-status" }
   | { type: "status" };
@@ -38,6 +39,7 @@ export type RuntimeResponse =
   | { type: "destroyed" }
   | { type: "midi-actions"; actions: MidiAction[] }
   | { type: "midi-output"; output?: MidiOutput }
+  | { type: "midi-diagnostics"; diagnostics: MidiOutputDiagnostics }
   | { type: "status"; status: string }
   | { type: "page-status"; path: string; status: string }
   | { type: "error"; error: string };
@@ -48,6 +50,7 @@ export interface RuntimeModuleFacade {
   readonly runtimeConfigVersion: number;
   filesystem?: BrowserFileSystem;
   create(): number;
+  setTimestampEpochOffset?(handle: number, offsetMicros: number): number;
   audioOutputChannels(handle: number): number;
   initialize(handle: number, identity: BrowserRuntimeIdentity): number;
   prepare(handle: number, sampleRate: number, blockSize: number): number;
@@ -62,6 +65,7 @@ export interface RuntimeModuleFacade {
   dequeueMidiAction(handle: number): MidiAction | undefined;
   deliverMidi(handle: number, controllerIx: number, bytes: number[], timestampMicros: number): number;
   dequeueMidiOutput(handle: number): MidiOutput | undefined;
+  midiDiagnostics?(handle: number): MidiOutputDiagnostics;
   destroy(handle: number): void;
 }
 
@@ -112,6 +116,7 @@ type EmscriptenModule = {
   _synth_browser_ui_protocol_version(): number;
   _synth_browser_runtime_config_version(): number;
   _synth_browser_create(): number;
+  _synth_browser_set_timestamp_epoch_offset(handle: number, offsetMicros: bigint): number;
   _synth_browser_audio_output_channels(handle: number): number;
   _synth_browser_initialize(
     handle: number,
@@ -132,7 +137,8 @@ type EmscriptenModule = {
   _synth_browser_submit_midi_endpoints(handle: number, endpoints: number, count: number): number;
   _synth_browser_dequeue_midi_action(handle: number, action: number): number;
   _synth_browser_deliver_midi(handle: number, controllerIx: number, bytes: number, size: number, timestampMicros: bigint): number;
-  _synth_browser_dequeue_midi_output(handle: number, controllerIx: number, size: number): number;
+  _synth_browser_dequeue_midi_output(handle: number, descriptor: number): number;
+  _synth_browser_midi_diagnostics(handle: number, descriptor: number): number;
   _synth_browser_destroy(handle: number): void;
 };
 
@@ -170,6 +176,8 @@ function withBytes<T>(module: EmscriptenModule, bytes: Uint8Array, operation: (p
 
 const MIDI_ENDPOINT_SIZE = 20;
 const MIDI_ACTION_SIZE = 24;
+const MIDI_OUTPUT_SIZE = 24;
+const MIDI_DIAGNOSTICS_SIZE = 24;
 const MIDI_ACTION_TYPES: MidiAction["type"][] = ["open-input", "open-output", "close-input", "close-output", "update-input-ref", "update-output-ref", "resync"];
 
 function decodeUtf8(module: EmscriptenModule, pointer: number, size: number): string {
@@ -186,6 +194,8 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
     uiProtocolVersion: module._synth_browser_ui_protocol_version(),
     runtimeConfigVersion: module._synth_browser_runtime_config_version(),
     create: () => module._synth_browser_create(),
+    setTimestampEpochOffset: (handle, offsetMicros) =>
+      module._synth_browser_set_timestamp_epoch_offset(handle, BigInt(offsetMicros)),
     audioOutputChannels: (handle) => module._synth_browser_audio_output_channels(handle),
     initialize: (handle, identity) => withUtf8(module, identity.publisherId, (publisherId) =>
       withUtf8(module, identity.appId, (appId) =>
@@ -269,14 +279,43 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
     deliverMidi: (handle, controllerIx, bytes, timestampMicros) => withBytes(module, Uint8Array.from(bytes), (pointer) =>
       module._synth_browser_deliver_midi(handle, controllerIx, pointer, bytes.length, BigInt(timestampMicros))),
     dequeueMidiOutput: (handle) => {
-      const metadata = module._malloc(8);
+      const metadata = module._malloc(MIDI_OUTPUT_SIZE);
       try {
-        const pointer = module._synth_browser_dequeue_midi_output(handle, metadata, metadata + 4);
+        const pointer = module._synth_browser_dequeue_midi_output(handle, metadata);
         const view = new DataView(module.HEAPU8.buffer);
         const size = view.getUint32(metadata + 4, true);
-        return pointer === 0 ? undefined : { controllerIx: view.getUint32(metadata, true), bytes: Array.from(module.HEAPU8.slice(pointer, pointer + size)) };
+        if (pointer === 0) return undefined;
+        const deliveryValue = view.getUint32(metadata + 8, true);
+        if (deliveryValue > 1) throw new Error("runtime returned invalid MIDI output delivery");
+        const dueTimeMicros = Number(view.getBigUint64(metadata + 16, true));
+        if (!Number.isSafeInteger(dueTimeMicros)) throw new Error("runtime returned unsafe MIDI output deadline");
+        return {
+          controllerIx: view.getUint32(metadata, true),
+          bytes: Array.from(module.HEAPU8.slice(pointer, pointer + size)),
+          delivery: deliveryValue === 0 ? "immediate" : "scheduled",
+          dueTimeMicros,
+        };
       } finally {
         module._free(metadata);
+      }
+    },
+    midiDiagnostics: (handle) => {
+      const descriptor = module._malloc(MIDI_DIAGNOSTICS_SIZE);
+      try {
+        if (module._synth_browser_midi_diagnostics(handle, descriptor) !== 0)
+          throw new Error("runtime failed to read MIDI diagnostics");
+        const view = new DataView(module.HEAPU8.buffer);
+        const values = [0, 8, 16].map((offset) =>
+          Number(view.getBigUint64(descriptor + offset, true)));
+        if (values.some((value) => !Number.isSafeInteger(value)))
+          throw new Error("runtime returned unsafe MIDI diagnostics");
+        return {
+          droppedImmediateOutputCount: values[0],
+          droppedScheduledOutputCount: values[1],
+          lateScheduledOutputCount: values[2],
+        };
+      } finally {
+        module._free(descriptor);
       }
     },
     destroy: (handle) => module._synth_browser_destroy(handle),
@@ -328,6 +367,7 @@ export class BrowserRuntimeWorker {
     private readonly loadModule: RuntimeModuleLoader = loadEmscriptenRuntime,
     private readonly createPersistence: BrowserPersistenceFactory | undefined = undefined,
     private readonly emitStatus: (response: RuntimeResponse) => void = () => {},
+    private readonly workerTimeOriginMillis: () => number = () => performance.timeOrigin,
   ) {}
 
   async startAudioWorklet(context?: AudioContext): Promise<RuntimeResponse> {
@@ -368,9 +408,28 @@ export class BrowserRuntimeWorker {
         case "create": {
           if (!this.module) throw new Error("runtime module is not loaded");
           if (this.handleValue !== undefined) throw new Error("runtime is already created");
-          this.handleValue = this.module.create();
-          if (!this.handleValue) throw new Error("runtime creation failed");
-          return { type: "created", handle: this.handleValue };
+          const handle = this.module.create();
+          if (!handle) throw new Error("runtime creation failed");
+          try {
+            const workerOriginMillis = this.workerTimeOriginMillis();
+            const documentOriginMillis = command.documentTimeOriginMillis ?? workerOriginMillis;
+            if (!Number.isFinite(workerOriginMillis) || !Number.isFinite(documentOriginMillis))
+              throw new Error("runtime time origin is invalid");
+            const offsetMicros = Math.round((workerOriginMillis - documentOriginMillis) * 1000);
+            if (!Number.isSafeInteger(offsetMicros))
+              throw new Error("runtime timestamp epoch offset is unsafe");
+            if (this.module.setTimestampEpochOffset) {
+              if (this.module.setTimestampEpochOffset(handle, offsetMicros) !== 0)
+                throw new Error("runtime rejected timestamp epoch offset");
+            } else if (offsetMicros !== 0) {
+              throw new Error("runtime does not support timestamp epoch alignment");
+            }
+            this.handleValue = handle;
+            return { type: "created", handle };
+          } catch (error) {
+            try { this.module.destroy(handle); } catch {}
+            throw error;
+          }
         }
         case "initialize": {
           const identity = validateBrowserRuntimeIdentity(command.identity);
@@ -422,6 +481,14 @@ export class BrowserRuntimeWorker {
           return this.call((module, handle) => module.deliverMidi(handle, command.controllerIx, command.bytes, command.timestampMicros));
         case "drain-midi-output":
           return { type: "midi-output", output: this.requireModule().dequeueMidiOutput(this.requireHandle()) };
+        case "midi-diagnostics": {
+          const diagnostics = this.requireModule().midiDiagnostics?.(this.requireHandle()) ?? {
+            droppedImmediateOutputCount: 0,
+            droppedScheduledOutputCount: 0,
+            lateScheduledOutputCount: 0,
+          };
+          return { type: "midi-diagnostics", diagnostics };
+        }
         case "destroy": {
           const module = this.requireModule();
           const handle = this.requireHandle();

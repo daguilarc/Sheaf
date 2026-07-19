@@ -7,7 +7,19 @@ export const COMMAND_BUFFER_VERSION = SUPPORTED_UI_PROTOCOL_VERSION;
 export type MidiEndpoint = { identifier: string; name: string; kind: "input" | "output" };
 export type MidiActionType = "open-input" | "open-output" | "close-input" | "close-output" | "update-input-ref" | "update-output-ref" | "resync";
 export type MidiAction = { type: MidiActionType; controllerIx: number; identifier?: string; name?: string };
-export type MidiOutput = { controllerIx: number; bytes: number[] };
+export type MidiOutput = {
+  controllerIx: number;
+  bytes: number[];
+  delivery: "immediate" | "scheduled";
+  // Absolute performance.timeOrigin-relative engine microseconds. Immediate
+  // feedback uses zero and the timestamp-less Web MIDI send overload.
+  dueTimeMicros: number;
+};
+export type MidiOutputDiagnostics = {
+  droppedImmediateOutputCount: number;
+  droppedScheduledOutputCount: number;
+  lateScheduledOutputCount: number;
+};
 
 export enum NodeKind {
   Root,

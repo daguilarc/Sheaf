@@ -18,18 +18,21 @@ const CORE_SOURCES = [
   "MidiDevicePoller.cpp",
   "MidiConfigViewModel.cpp",
   "MidiConfigBlocks.cpp",
+  "MasterClock.cpp",
 ];
 
 const EXPORTED_FUNCTIONS = [
   "_malloc", "_free", "_synth_browser_abi_version", "_synth_browser_ui_protocol_version",
   "_synth_browser_runtime_config_version", "_synth_browser_create", "_synth_browser_initialize",
   "_synth_browser_audio_output_channels", "_synth_browser_prepare", "_synth_browser_process",
-  "_synth_browser_start_audio_worklet", "_synth_browser_audio_worklet_block_count",
+  "_synth_browser_start_audio_worklet", "_synth_browser_set_timestamp_epoch_offset",
+  "_synth_browser_audio_worklet_block_count",
   "_synth_browser_audio_worklet_peak_microunits", "_synth_browser_audio_worklet_deadline_microunits",
   "_synth_browser_message_tick", "_synth_browser_build_ui_frame", "_synth_browser_dispatch_action",
   "_synth_browser_consume_persistence_dirty", "_synth_browser_submit_midi_endpoints",
   "_synth_browser_dequeue_midi_action", "_synth_browser_deliver_midi",
-  "_synth_browser_dequeue_midi_output", "_synth_browser_destroy",
+  "_synth_browser_dequeue_midi_output", "_synth_browser_midi_diagnostics",
+  "_synth_browser_destroy",
 ];
 
 const EXPORTED_RUNTIME_METHODS = [

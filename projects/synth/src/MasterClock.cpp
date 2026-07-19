@@ -898,12 +898,17 @@ bool MasterClock::Prepare(double sampleRate, std::size_t blockSize) noexcept {
 
     const double blockDurationMicros =
         static_cast<double>(blockSize) * 1'000'000.0 / sampleRate;
-    const double latency = std::max(2.0 * blockDurationMicros, 5000.0);
-    if (!std::isfinite(latency) ||
-        latency > static_cast<double>(std::numeric_limits<std::uint64_t>::max())) {
+    const double baseLatency = std::max(2.0 * blockDurationMicros, 5000.0);
+    if (!std::isfinite(baseLatency) ||
+        baseLatency > static_cast<double>(std::numeric_limits<std::uint64_t>::max())) {
         return false;
     }
-    const auto outputLatencyMicros = static_cast<std::uint64_t>(std::ceil(latency));
+    const auto baseLatencyMicros = static_cast<std::uint64_t>(std::ceil(baseLatency));
+    if (baseLatencyMicros > std::numeric_limits<std::uint64_t>::max() -
+                                outputSchedulingHorizonMicros_) {
+        return false;
+    }
+    const auto outputLatencyMicros = baseLatencyMicros + outputSchedulingHorizonMicros_;
     const double quarterNotesPerSample = manualBpm_ / (60.0 * sampleRate);
     if (!IsFinitePositive(quarterNotesPerSample)) {
         return false;

@@ -1,4 +1,12 @@
 import { expect, test } from "@playwright/test";
+import type { MidiOutput } from "../src/protocol.js";
+
+const scheduledOutputContract = {
+  controllerIx: 1,
+  bytes: [0xfb],
+  delivery: "scheduled",
+  dueTimeMicros: 1_250_000,
+} satisfies MidiOutput;
 
 test("forwards generic MIDI commands through the runtime worker", async ({ page }) => {
   await page.goto("http://127.0.0.1:4173/public/index.html");
@@ -23,7 +31,7 @@ test("forwards generic MIDI commands through the runtime worker", async ({ page 
       submitMidiEndpoints: (_handle: number, endpoints: unknown) => { calls.push(["endpoints", endpoints]); return 0; },
       dequeueMidiAction: () => actions.shift(),
       deliverMidi: (_handle: number, controllerIx: number, bytes: number[], timestampMicros: number) => { calls.push(["input", controllerIx, bytes, timestampMicros]); return 0; },
-      dequeueMidiOutput: () => ({ controllerIx: 1, bytes: [0xf0, 0x7d, 0x55, 0xf7] }),
+      dequeueMidiOutput: () => ({ controllerIx: 1, bytes: [0xfb], delivery: "scheduled", dueTimeMicros: 1_250_000 }),
       destroy: () => {},
     }));
     await worker.handle({ type: "load", module: { entryUrl: "blob:test", locateFile: {}, mainScriptUrlOrBlob: "blob:test" } });
@@ -36,11 +44,110 @@ test("forwards generic MIDI commands through the runtime worker", async ({ page 
 
   expect(result.endpointResponse).toEqual({ type: "midi-actions", actions: [{ type: "open-input", controllerIx: 1, identifier: "in-b", name: "Input B" }] });
   expect(result.inputResponse).toEqual({ type: "ok" });
-  expect(result.outputResponse).toEqual({ type: "midi-output", output: { controllerIx: 1, bytes: [0xf0, 0x7d, 0x55, 0xf7] } });
+  expect(result.outputResponse).toEqual({ type: "midi-output", output: scheduledOutputContract });
   expect(result.calls).toEqual([
     ["endpoints", [{ identifier: "in-b", name: "Input B", kind: "input" }]],
     ["input", 1, [0xf0, 0x7d, 0x33, 0xf7], 42],
   ]);
+});
+
+test("normalizes Web MIDI timestamps into the shared time-origin-relative microsecond epoch", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async () => {
+    const { BrowserMidiManager } = await (new Function("return import('/dist/src/midi.js')")() as Promise<any>);
+    class InputPort {
+      readonly state = "connected";
+      onmidimessage: ((event: { data: Uint8Array; timeStamp: number }) => void) | null = null;
+      constructor(readonly id: string, readonly name: string) {}
+      emit(bytes: number[], timeStamp: number) {
+        this.onmidimessage?.({ data: Uint8Array.from(bytes), timeStamp });
+      }
+    }
+    const input = new InputPort("in-clock", "Clock Input");
+    const access = { inputs: new Map([[input.id, input]]), outputs: new Map(), onstatechange: null };
+    const delivered: Array<{ controllerIx: number; bytes: number[]; timestampMicros: number }> = [];
+    const runtime = {
+      submitEndpoints: async () => [
+        { type: "open-input", controllerIx: 3, identifier: input.id, name: input.name },
+      ],
+      deliverMidi: async (controllerIx: number, bytes: number[], timestampMicros: number) => {
+        delivered.push({ controllerIx, bytes, timestampMicros });
+      },
+      dequeueMidiOutput: async () => undefined,
+    };
+    const manager = new BrowserMidiManager(runtime, {
+      requestMIDIAccess: async () => access,
+      setInterval: () => 1,
+      clearInterval: () => {},
+      timeOriginMillis: 1_700_000_000_000,
+      nowMicros: () => 19_000,
+    });
+    await manager.startFromUserActivation();
+    input.emit([0xfa], 17.25);
+    input.emit([0xf8], 1_700_000_000_018.5);
+    input.emit([0xfc], Number.NaN);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    manager.stop();
+    return delivered;
+  });
+
+  expect(result).toEqual([
+    { controllerIx: 3, bytes: [0xfa], timestampMicros: 17_250 },
+    { controllerIx: 3, bytes: [0xf8], timestampMicros: 18_500 },
+    { controllerIx: 3, bytes: [0xfc], timestampMicros: 19_000 },
+  ]);
+});
+
+test("uses stored deadlines for Web MIDI scheduling and reports timer-throttled lateness", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async () => {
+    const { BrowserMidiManager } = await (new Function("return import('/dist/src/midi.js')")() as Promise<any>);
+    class OutputPort {
+      readonly state = "connected";
+      readonly sent: Array<{ bytes: number[]; timestamp?: number }> = [];
+      constructor(readonly id: string, readonly name: string) {}
+      send(bytes: number[] | Uint8Array, timestamp?: number) {
+        this.sent.push({ bytes: Array.from(bytes), timestamp });
+      }
+    }
+    const output = new OutputPort("out-clock", "Clock Output");
+    const access = { inputs: new Map(), outputs: new Map([[output.id, output]]), onstatechange: null };
+    const queue = [
+      { controllerIx: 0, bytes: [0xfa], delivery: "scheduled", dueTimeMicros: 1_250_000 },
+      { controllerIx: 0, bytes: [0xf8], delivery: "scheduled", dueTimeMicros: 1_250_000 },
+      { controllerIx: 0, bytes: [0x90, 0x40, 0x7f], delivery: "immediate", dueTimeMicros: 0 },
+    ];
+    const runtime = {
+      submitEndpoints: async () => [
+        { type: "open-output", controllerIx: 0, identifier: output.id, name: output.name },
+      ],
+      deliverMidi: async () => {},
+      dequeueMidiOutput: async () => queue.shift(),
+    };
+    const manager = new BrowserMidiManager(runtime, {
+      requestMIDIAccess: async () => access,
+      setInterval: () => 1,
+      clearInterval: () => {},
+      nowMicros: () => 1_300_000,
+    });
+    await manager.startFromUserActivation();
+    const diagnostics = manager.diagnostics();
+    manager.stop();
+    return { sent: output.sent, diagnostics };
+  });
+
+  expect(result.sent).toEqual([
+    { bytes: [0xfa], timestamp: 1_250 },
+    { bytes: [0xf8], timestamp: 1_250 },
+    { bytes: [0x90, 0x40, 0x7f] },
+  ]);
+  expect(result.diagnostics).toEqual({
+    droppedImmediateOutputCount: 0,
+    droppedScheduledOutputCount: 0,
+    bridgeLateScheduledOutputCount: 0,
+    lateScheduledOutputCount: 2,
+    sendErrorCount: 0,
+  });
 });
 
 test("requests Web MIDI sysex permission and remains offline when it is denied", async ({ page }) => {

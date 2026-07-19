@@ -43,10 +43,29 @@ public:
         std::string identifier;
         std::string name;
     };
+    enum class OutboundDelivery : std::uint32_t {
+        Immediate = 0,
+        Scheduled = 1,
+    };
     struct OutboundMessage {
         std::size_t controllerIx = 0;
         std::vector<std::uint8_t> bytes;
+        OutboundDelivery delivery = OutboundDelivery::Immediate;
+        // Absolute performance.timeOrigin-relative engine microseconds.
+        // Zero for immediate controller feedback.
+        std::uint64_t dueTimeMicros = 0;
     };
+    struct Diagnostics {
+        std::uint64_t droppedImmediateOutputCount = 0;
+        std::uint64_t droppedScheduledOutputCount = 0;
+        std::uint64_t lateScheduledOutputCount = 0;
+    };
+
+    static constexpr std::size_t kImmediateOutputCapacity = 256;
+    static constexpr std::size_t kScheduledOutputCapacity = 256;
+    // The browser main thread drains at a 16 ms cadence. Keep a full cadence
+    // plus bounded task jitter between the sender snapshot and Web MIDI send.
+    static constexpr std::uint64_t kSchedulingLeadMicros = 25'000;
 
     explicit BrowserMidiBridge(EngineType& engine)
         : engine_(engine)
@@ -121,7 +140,7 @@ public:
         };
         ops.closeOutput = [this](std::size_t ix) {
             if (synth::MidiSender* sender = MidiSender()) {
-                sender->SetSink(ix, nullptr);
+                sender->ClearSinkSync(ix);
             }
             if (OutputSink* sink = OutputSinkFor(ix)) {
                 sink->Clear();
@@ -179,20 +198,27 @@ public:
 
     std::optional<OutboundMessage> DequeueOutput()
     {
-        if (outputSinks_.empty()) {
+        std::lock_guard lock(outputMutex_);
+        if (!scheduledOutputs_.empty()) {
+            OutboundMessage message = std::move(scheduledOutputs_.front());
+            scheduledOutputs_.pop_front();
+            if (NowMicros() > message.dueTimeMicros) {
+                ++diagnostics_.lateScheduledOutputCount;
+            }
+            return message;
+        }
+        if (immediateOutputs_.empty()) {
             return std::nullopt;
         }
-        for (std::size_t offset = 0; offset < outputSinks_.size(); ++offset) {
-            const std::size_t ix = (nextOutputSlot_ + offset) % outputSinks_.size();
-            if (outputSinks_[ix] == nullptr) {
-                continue;
-            }
-            if (std::optional<std::vector<std::uint8_t>> bytes = outputSinks_[ix]->Dequeue()) {
-                nextOutputSlot_ = (ix + 1) % outputSinks_.size();
-                return OutboundMessage{.controllerIx = ix, .bytes = std::move(*bytes)};
-            }
-        }
-        return std::nullopt;
+        OutboundMessage message = std::move(immediateOutputs_.front());
+        immediateOutputs_.pop_front();
+        return message;
+    }
+
+    Diagnostics DiagnosticsSnapshot() const
+    {
+        std::lock_guard lock(outputMutex_);
+        return diagnostics_;
     }
 
     const synth::MidiConnectionState& ConnectionState() const { return state_; }
@@ -201,36 +227,87 @@ public:
 private:
     class OutputSink final : public synth::IMidiOutputSink {
     public:
-        void Send(const synth::BasicMidi& midi) override
+        OutputSink(BrowserMidiBridge& owner, std::size_t controllerIx)
+            : owner_(owner)
+            , controllerIx_(controllerIx)
         {
-            std::lock_guard lock(mutex_);
-            if (messages_.size() < kMaxQueuedMessages) {
-                messages_.push_back(midi.raw);
-            }
         }
 
-        std::optional<std::vector<std::uint8_t>> Dequeue()
+        synth::MidiSchedulingCapability SchedulingCapability() const noexcept override
         {
-            std::lock_guard lock(mutex_);
-            if (messages_.empty()) {
-                return std::nullopt;
-            }
-            std::vector<std::uint8_t> bytes = std::move(messages_.front());
-            messages_.pop_front();
-            return bytes;
+            return synth::MidiSchedulingCapability::HostTimestamped;
+        }
+
+        std::uint64_t SchedulingLeadMicros() const noexcept override
+        {
+            return kSchedulingLeadMicros;
+        }
+
+        void Send(const synth::BasicMidi& midi) override
+        {
+            owner_.EnqueueOutput(controllerIx_, midi.raw, OutboundDelivery::Immediate, 0);
+        }
+
+        void SendScheduled(const synth::BasicMidi& midi, std::uint64_t dueTimeMicros) override
+        {
+            owner_.EnqueueOutput(
+                controllerIx_, midi.raw, OutboundDelivery::Scheduled, dueTimeMicros);
         }
 
         void Clear()
         {
-            std::lock_guard lock(mutex_);
-            messages_.clear();
+            owner_.ClearOutput(controllerIx_);
         }
 
     private:
-        static constexpr std::size_t kMaxQueuedMessages = 256;
-        std::mutex mutex_;
-        std::deque<std::vector<std::uint8_t>> messages_;
+        BrowserMidiBridge& owner_;
+        std::size_t controllerIx_ = 0;
     };
+
+    void EnqueueOutput(std::size_t controllerIx,
+                       const std::vector<std::uint8_t>& bytes,
+                       OutboundDelivery delivery,
+                       std::uint64_t dueTimeMicros)
+    {
+        std::lock_guard lock(outputMutex_);
+        auto& queue = delivery == OutboundDelivery::Scheduled
+            ? scheduledOutputs_
+            : immediateOutputs_;
+        const std::size_t capacity = delivery == OutboundDelivery::Scheduled
+            ? kScheduledOutputCapacity
+            : kImmediateOutputCapacity;
+        if (queue.size() >= capacity) {
+            if (delivery == OutboundDelivery::Scheduled) {
+                ++diagnostics_.droppedScheduledOutputCount;
+            } else {
+                ++diagnostics_.droppedImmediateOutputCount;
+            }
+            return;
+        }
+        queue.push_back(OutboundMessage{
+            .controllerIx = controllerIx,
+            .bytes = bytes,
+            .delivery = delivery,
+            .dueTimeMicros = dueTimeMicros,
+        });
+    }
+
+    void ClearOutput(std::size_t controllerIx)
+    {
+        std::lock_guard lock(outputMutex_);
+        std::erase_if(scheduledOutputs_, [controllerIx](const OutboundMessage& message) {
+            return message.controllerIx == controllerIx;
+        });
+        std::erase_if(immediateOutputs_, [controllerIx](const OutboundMessage& message) {
+            return message.controllerIx == controllerIx;
+        });
+    }
+
+    std::uint64_t NowMicros() const
+    {
+        const auto& now = engine_.Context().now;
+        return now ? now() : 0;
+    }
 
     synth::MidiSender* MidiSender()
     {
@@ -248,6 +325,9 @@ private:
             if (synth::MidiSender* sender = MidiSender()) {
                 for (std::size_t ix = count; ix < outputSinks_.size(); ++ix) {
                     sender->ClearSinkSync(ix);
+                    if (outputSinks_[ix] != nullptr) {
+                        outputSinks_[ix]->Clear();
+                    }
                 }
             }
             outputSinks_.resize(count);
@@ -258,15 +338,10 @@ private:
             // that table can still receive input but cannot bind an output.
             const std::size_t supportedCount = std::min(count, synth::MidiSender::kMaxSinks);
             for (std::size_t ix = oldCount; ix < supportedCount; ++ix) {
-                outputSinks_[ix] = std::make_unique<OutputSink>();
+                outputSinks_[ix] = std::make_unique<OutputSink>(*this, ix);
             }
         }
         state_.controllers.resize(count);
-        if (!outputSinks_.empty()) {
-            nextOutputSlot_ %= outputSinks_.size();
-        } else {
-            nextOutputSlot_ = 0;
-        }
     }
 
     EngineType& engine_;
@@ -274,7 +349,10 @@ private:
     synth::MidiConnectionState state_;
     std::vector<std::unique_ptr<OutputSink>> outputSinks_;
     std::deque<Action> actions_;
-    std::size_t nextOutputSlot_ = 0;
+    mutable std::mutex outputMutex_;
+    std::deque<OutboundMessage> scheduledOutputs_;
+    std::deque<OutboundMessage> immediateOutputs_;
+    Diagnostics diagnostics_;
     bool started_ = false;
 };
 

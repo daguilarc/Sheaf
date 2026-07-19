@@ -96,6 +96,8 @@ public:
         , services_(engine_, midiBridge_, [this] { return AudioWorkletDeadlineSamplePercent(); })
         , mainComponent_(engine_.Application(), services_)
     {
+        engine_.Clock().SetOutputSchedulingHorizonMicros(
+            BrowserMidiBridge<synth::Engine<App>>::kSchedulingLeadMicros);
     }
 
     Runtime(const Runtime&) = delete;
@@ -143,6 +145,17 @@ public:
 #endif
     }
 
+    void SetTimestampEpochOffsetMicros(std::int64_t offsetMicros)
+    {
+        RequireNotStarted();
+        timestampEpochOffsetMicros_.store(offsetMicros, std::memory_order_release);
+    }
+
+    std::int64_t TimestampEpochOffsetMicros() const
+    {
+        return timestampEpochOffsetMicros_.load(std::memory_order_acquire);
+    }
+
     void Prepare(double sampleRate, std::size_t blockSize)
     {
         RequireStarted();
@@ -178,7 +191,11 @@ public:
             return false;
         }
         Prepare(static_cast<double>(sampleRate), static_cast<std::size_t>(quantumSize));
-        const auto nowMicros = static_cast<std::uint64_t>(std::llround(emscripten_get_now() * 1000.0));
+        const auto localNowMicros = static_cast<std::uint64_t>(
+            std::llround(std::max(0.0, emscripten_get_now() * 1000.0)));
+        const auto nowMicros = ApplyTimestampEpochOffset(
+            localNowMicros,
+            timestampEpochOffsetMicros_.load(std::memory_order_acquire));
         timestampMicros_.store(nowMicros, std::memory_order_release);
         audioCallbackTimestampMicros_.store(nowMicros, std::memory_order_release);
         audioCallbackBlockMicros_.store(
@@ -285,6 +302,12 @@ public:
         return midiBridge_.DequeueOutput();
     }
 
+    typename BrowserMidiBridge<synth::Engine<App>>::Diagnostics MidiDiagnosticsSnapshot()
+    {
+        RequireStarted();
+        return midiBridge_.DiagnosticsSnapshot();
+    }
+
     synth::Engine<App>& Engine() { return engine_; }
 
     bool ConsumePersistenceDirty()
@@ -296,6 +319,20 @@ public:
     }
 
 private:
+    static std::uint64_t ApplyTimestampEpochOffset(
+        std::uint64_t timestampMicros,
+        std::int64_t offsetMicros) noexcept
+    {
+        if (offsetMicros >= 0) {
+            const auto positiveOffset = static_cast<std::uint64_t>(offsetMicros);
+            return timestampMicros > std::numeric_limits<std::uint64_t>::max() - positiveOffset
+                ? std::numeric_limits<std::uint64_t>::max()
+                : timestampMicros + positiveOffset;
+        }
+        const auto magnitude = static_cast<std::uint64_t>(-(offsetMicros + 1)) + 1;
+        return timestampMicros < magnitude ? 0 : timestampMicros - magnitude;
+    }
+
     void RequireStarted() const
     {
         if (!started_.load(std::memory_order_acquire)) {
@@ -425,6 +462,7 @@ private:
 #endif
 
     std::atomic<std::uint64_t> timestampMicros_{0};
+    std::atomic<std::int64_t> timestampEpochOffsetMicros_{0};
     std::atomic<std::uint64_t> audioCallbackTimestampMicros_{0};
     std::atomic<std::uint64_t> audioCallbackBlockMicros_{0};
     std::atomic<std::uint32_t> audioWorkletBlockCount_{0};
@@ -467,6 +505,30 @@ struct MidiActionDescriptor {
     std::uint32_t nameSize = 0;
 };
 
+// Stable Wasm32 ABI record for one bounded browser-output dequeue. Scheduled
+// deadlines use the browser engine's performance.timeOrigin-relative
+// microsecond epoch. Immediate feedback uses delivery=0 and dueTimeMicros=0.
+struct MidiOutputDescriptor {
+    std::uint32_t controllerIx = 0;
+    std::uint32_t size = 0;
+    std::uint32_t delivery = 0;
+    std::uint32_t reserved = 0;
+    std::uint64_t dueTimeMicros = 0;
+};
+
+static_assert(sizeof(MidiOutputDescriptor) == 24);
+static_assert(offsetof(MidiOutputDescriptor, dueTimeMicros) == 16);
+
+struct MidiDiagnosticsDescriptor {
+    std::uint64_t droppedImmediateOutputCount = 0;
+    std::uint64_t droppedScheduledOutputCount = 0;
+    std::uint64_t lateScheduledOutputCount = 0;
+};
+
+static_assert(sizeof(MidiDiagnosticsDescriptor) == 24);
+static_assert(offsetof(MidiDiagnosticsDescriptor, droppedScheduledOutputCount) == 8);
+static_assert(offsetof(MidiDiagnosticsDescriptor, lateScheduledOutputCount) == 16);
+
 // The ABI erases an application-specific Runtime<App>. BrowserAppEntry is the
 // sole binding point that instantiates this adapter for a concrete app.
 class RuntimeAbi {
@@ -482,6 +544,7 @@ public:
     virtual std::uint32_t AudioWorkletBlockCount() const = 0;
     virtual std::uint32_t AudioWorkletPeakMicrounits() const = 0;
     virtual std::uint32_t AudioWorkletDeadlineMicrounits() const = 0;
+    virtual int SetTimestampEpochOffsetMicros(std::int64_t offsetMicros) = 0;
     virtual int MessageTick(std::uint64_t timestampMicros) = 0;
     virtual const std::uint8_t* BuildUiFrame(std::size_t* size) = 0;
     virtual int DispatchAction(const char* name, const char* value) = 0;
@@ -490,7 +553,8 @@ public:
     virtual int DequeueMidiAction(MidiActionDescriptor* action) = 0;
     virtual int DeliverMidi(std::uint32_t controllerIx, const std::uint8_t* bytes, std::uint32_t size,
                             std::uint64_t timestampMicros) = 0;
-    virtual const std::uint8_t* DequeueMidiOutput(std::uint32_t* controllerIx, std::uint32_t* size) = 0;
+    virtual const std::uint8_t* DequeueMidiOutput(MidiOutputDescriptor* descriptor) = 0;
+    virtual int MidiDiagnostics(MidiDiagnosticsDescriptor* descriptor) = 0;
     virtual void Destroy() = 0;
 };
 
@@ -551,6 +615,13 @@ public:
     std::uint32_t AudioWorkletDeadlineMicrounits() const override
     {
         return runtime_.AudioWorkletDeadlineMicrounits();
+    }
+
+    int SetTimestampEpochOffsetMicros(std::int64_t offsetMicros) override
+    {
+        return Invoke([this, offsetMicros] {
+            runtime_.SetTimestampEpochOffsetMicros(offsetMicros);
+        });
     }
 
     int MessageTick(std::uint64_t timestampMicros) override
@@ -645,26 +716,47 @@ public:
         });
     }
 
-    const std::uint8_t* DequeueMidiOutput(std::uint32_t* controllerIx, std::uint32_t* size) override
+    const std::uint8_t* DequeueMidiOutput(MidiOutputDescriptor* descriptor) override
     {
-        if (controllerIx == nullptr || size == nullptr) {
+        if (descriptor == nullptr) {
             return nullptr;
         }
         try {
             output_.reset();
             output_ = runtime_.DequeueMidiOutput();
             if (!output_.has_value()) {
-                *controllerIx = 0;
-                *size = 0;
+                *descriptor = {};
                 return nullptr;
             }
-            *controllerIx = static_cast<std::uint32_t>(output_->controllerIx);
-            *size = static_cast<std::uint32_t>(output_->bytes.size());
+            *descriptor = MidiOutputDescriptor{
+                .controllerIx = static_cast<std::uint32_t>(output_->controllerIx),
+                .size = static_cast<std::uint32_t>(output_->bytes.size()),
+                .delivery = static_cast<std::uint32_t>(output_->delivery),
+                .dueTimeMicros = output_->dueTimeMicros,
+            };
             return output_->bytes.data();
         } catch (const std::exception&) {
-            *controllerIx = 0;
-            *size = 0;
+            *descriptor = {};
             return nullptr;
+        }
+    }
+
+    int MidiDiagnostics(MidiDiagnosticsDescriptor* descriptor) override
+    {
+        if (descriptor == nullptr) {
+            return -1;
+        }
+        try {
+            const auto diagnostics = runtime_.MidiDiagnosticsSnapshot();
+            *descriptor = MidiDiagnosticsDescriptor{
+                .droppedImmediateOutputCount = diagnostics.droppedImmediateOutputCount,
+                .droppedScheduledOutputCount = diagnostics.droppedScheduledOutputCount,
+                .lateScheduledOutputCount = diagnostics.lateScheduledOutputCount,
+            };
+            return 0;
+        } catch (const std::exception&) {
+            *descriptor = {};
+            return -1;
         }
     }
 
@@ -719,6 +811,8 @@ int synth_browser_process(synth_browser_runtime* runtime, float** outputs, std::
                           std::size_t frames, std::uint64_t timestampMicros);
 int synth_browser_start_audio_worklet(synth_browser_runtime* runtime,
                                       std::uint32_t audioContextHandle);
+int synth_browser_set_timestamp_epoch_offset(
+    synth_browser_runtime* runtime, std::int64_t offsetMicros);
 std::uint32_t synth_browser_audio_worklet_block_count(synth_browser_runtime* runtime);
 std::uint32_t synth_browser_audio_worklet_peak_microunits(synth_browser_runtime* runtime);
 std::uint32_t synth_browser_audio_worklet_deadline_microunits(synth_browser_runtime* runtime);
@@ -731,8 +825,10 @@ int synth_browser_submit_midi_endpoints(synth_browser_runtime* runtime,
 int synth_browser_dequeue_midi_action(synth_browser_runtime* runtime, synth_browser::MidiActionDescriptor* action);
 int synth_browser_deliver_midi(synth_browser_runtime* runtime, std::uint32_t controllerIx, const std::uint8_t* bytes,
                                std::uint32_t size, std::uint64_t timestampMicros);
-const std::uint8_t* synth_browser_dequeue_midi_output(synth_browser_runtime* runtime, std::uint32_t* controllerIx,
-                                                       std::uint32_t* size);
+const std::uint8_t* synth_browser_dequeue_midi_output(
+    synth_browser_runtime* runtime, synth_browser::MidiOutputDescriptor* descriptor);
+int synth_browser_midi_diagnostics(
+    synth_browser_runtime* runtime, synth_browser::MidiDiagnosticsDescriptor* descriptor);
 void synth_browser_destroy(synth_browser_runtime* runtime);
 
 }

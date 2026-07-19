@@ -308,6 +308,12 @@ public:
     double SampleRate() const noexcept { return sampleRate_; }
     std::size_t BlockSize() const noexcept { return blockSize_; }
     std::uint64_t OutputLatencyMicros() const noexcept { return outputLatencyMicros_; }
+    void SetOutputSchedulingHorizonMicros(std::uint64_t horizonMicros) noexcept {
+        outputSchedulingHorizonMicros_ = horizonMicros;
+    }
+    std::uint64_t OutputSchedulingHorizonMicros() const noexcept {
+        return outputSchedulingHorizonMicros_;
+    }
 
     bool SetTempoBpm(double bpm) noexcept;
     // Authority tempo is deliberately uncorrected. During external recovery,
@@ -446,6 +452,7 @@ private:
     double nextLifetimeQuarterNotes_ = 0.0;
     double nextTransportQuarterNotes_ = 0.0;
     std::size_t blockSize_ = 0;
+    std::uint64_t outputSchedulingHorizonMicros_ = 0;
     std::uint64_t outputLatencyMicros_ = 0;
     std::uint64_t expectedNextSample_ = 0;
     std::uint64_t transportEpoch_ = 0;

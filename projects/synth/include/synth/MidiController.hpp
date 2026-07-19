@@ -370,10 +370,15 @@ enum class MidiSchedulingCapability : std::uint8_t {
     HostTimestamped,
 };
 
+inline constexpr std::uint64_t kDefaultMidiHostScheduleLeadMicros = 1'000;
+
 struct IMidiOutputSink {
     virtual ~IMidiOutputSink() = default;
     virtual MidiSchedulingCapability SchedulingCapability() const noexcept {
         return MidiSchedulingCapability::ImmediateOnly;
+    }
+    virtual std::uint64_t SchedulingLeadMicros() const noexcept {
+        return kDefaultMidiHostScheduleLeadMicros;
     }
     virtual void Send(const BasicMidi& midi) = 0;
     virtual void SendScheduled(const BasicMidi& midi, std::uint64_t) { Send(midi); }
@@ -403,7 +408,8 @@ public:
     // Host-timestamp-capable outputs receive events only this far ahead. This
     // keeps disconnect/reconnect snapshots close to the actual deadline while
     // still giving the platform scheduler time to submit the event.
-    static constexpr std::uint64_t kHostScheduleLeadMicros = 1'000;
+    static constexpr std::uint64_t kHostScheduleLeadMicros =
+        kDefaultMidiHostScheduleLeadMicros;
     // TryEnqueue intentionally does not take mutex_. A notification may race
     // the worker's predicate-to-wait transition, so an otherwise-idle worker
     // polls at this bounded interval. At most 250 us of self-heal latency
@@ -493,7 +499,8 @@ private:
     void InsertPending(const ScheduledMidiEvent& event);
     void ApplyGenerationCutoff(const ScheduledMidiEvent& cutoff);
     void CaptureScheduledSinks(PendingScheduledEntry& entry, std::uint64_t nowMicros);
-    bool ProcessScheduledFront(std::uint64_t nowMicros);
+    bool ProcessScheduledFront(std::uint64_t nowMicros, std::uint64_t hostScheduleLeadMicros);
+    std::uint64_t HostScheduleLeadMicros() const noexcept;
     bool ProcessFeedbackFront();
     bool BeginSinkCall(std::size_t sinkIx, std::uint64_t registrationGeneration,
                        IMidiOutputSink*& sink);
@@ -515,7 +522,9 @@ private:
     bool stopRequested_ = false;
     std::array<IMidiOutputSink*, kMaxSinks> sinks_{};
     std::array<MidiSchedulingCapability, kMaxSinks> sinkCapabilities_{};
+    std::array<std::uint64_t, kMaxSinks> sinkScheduleLeadMicros_{};
     std::array<std::uint64_t, kMaxSinks> sinkRegistrationGenerations_{};
+    std::uint64_t sinkWakeGeneration_ = 0;
     std::array<std::size_t, kMaxSinks> inFlightBySink_{};
 
     // Single-producer/single-consumer lane. The producer publishes an entry

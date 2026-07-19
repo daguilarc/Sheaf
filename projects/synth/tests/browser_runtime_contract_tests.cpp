@@ -10,6 +10,7 @@
 #error "browser runtime contract tests must not see JUCE"
 #endif
 
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -313,6 +314,10 @@ void TestBrowserPrepareFeedsNegotiatedAudioPageAndRejectsOversizedBlocks()
     const ValidApp& app = fixture.runtime.Engine().Application();
     Require(app.preparedSampleRate == 48000.0, "prepare reaches the generic application");
     Require(app.preparedBlockSize == 128, "prepare preserves the negotiated block size");
+    Require(fixture.runtime.Engine().Clock().OutputSchedulingHorizonMicros() == 25'000,
+            "browser runtime configures the Web MIDI scheduling horizon before prepare");
+    Require(fixture.runtime.Engine().Clock().OutputLatencyMicros() == 30'334,
+            "browser runtime preserves the full base latency before its scheduling horizon");
 
     fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSidebarAudio, "");
     const synth_browser::DecodedCommandBuffer frame = fixture.Frame();
@@ -550,6 +555,7 @@ public:
     std::uint32_t AudioWorkletBlockCount() const override { return 0; }
     std::uint32_t AudioWorkletPeakMicrounits() const override { return 0; }
     std::uint32_t AudioWorkletDeadlineMicrounits() const override { return 0; }
+    int SetTimestampEpochOffsetMicros(std::int64_t) override { return 0; }
     int MessageTick(std::uint64_t) override { return 0; }
     const std::uint8_t* BuildUiFrame(std::size_t*) override { return nullptr; }
     int DispatchAction(const char*, const char*) override { return 0; }
@@ -557,7 +563,8 @@ public:
     int SubmitMidiEndpoints(const synth_browser::MidiEndpointDescriptor*, std::uint32_t) override { return 0; }
     int DequeueMidiAction(synth_browser::MidiActionDescriptor*) override { return 0; }
     int DeliverMidi(std::uint32_t, const std::uint8_t*, std::uint32_t, std::uint64_t) override { return 0; }
-    const std::uint8_t* DequeueMidiOutput(std::uint32_t*, std::uint32_t*) override { return nullptr; }
+    const std::uint8_t* DequeueMidiOutput(synth_browser::MidiOutputDescriptor*) override { return nullptr; }
+    int MidiDiagnostics(synth_browser::MidiDiagnosticsDescriptor*) override { return 0; }
     void Destroy() override {}
 
     std::vector<std::uint32_t> observedHandles;
@@ -652,6 +659,44 @@ void TestBrowserPersistenceIdentityDerivesSharedAndIsolatedRoots()
     Require(rejectedVersion, "browser persistence rejects incompatible runtime-config versions");
 }
 
+void TestMidiOutputDescriptorHasStableWasmLayout()
+{
+    static_assert(std::is_standard_layout_v<synth_browser::MidiOutputDescriptor>);
+    static_assert(sizeof(synth_browser::MidiOutputDescriptor) == 24);
+    static_assert(offsetof(synth_browser::MidiOutputDescriptor, controllerIx) == 0);
+    static_assert(offsetof(synth_browser::MidiOutputDescriptor, size) == 4);
+    static_assert(offsetof(synth_browser::MidiOutputDescriptor, delivery) == 8);
+    static_assert(offsetof(synth_browser::MidiOutputDescriptor, dueTimeMicros) == 16);
+
+    const synth_browser::MidiOutputDescriptor scheduled{
+        .controllerIx = 7,
+        .size = 1,
+        .delivery = 1,
+        .dueTimeMicros = 9'876'543,
+    };
+    Require(scheduled.controllerIx == 7 && scheduled.size == 1,
+            "MIDI output ABI retains controller and byte count");
+    Require(scheduled.delivery == 1 && scheduled.dueTimeMicros == 9'876'543,
+            "MIDI output ABI retains scheduled delivery and absolute deadline");
+}
+
+void TestMidiDiagnosticsDescriptorAndTimestampEpochOffsetContract()
+{
+    static_assert(std::is_standard_layout_v<synth_browser::MidiDiagnosticsDescriptor>);
+    static_assert(sizeof(synth_browser::MidiDiagnosticsDescriptor) == 24);
+    static_assert(offsetof(synth_browser::MidiDiagnosticsDescriptor,
+                           droppedImmediateOutputCount) == 0);
+    static_assert(offsetof(synth_browser::MidiDiagnosticsDescriptor,
+                           droppedScheduledOutputCount) == 8);
+    static_assert(offsetof(synth_browser::MidiDiagnosticsDescriptor,
+                           lateScheduledOutputCount) == 16);
+
+    synth_browser::Runtime<ValidApp> runtime;
+    runtime.SetTimestampEpochOffsetMicros(250'000);
+    Require(runtime.TimestampEpochOffsetMicros() == 250'000,
+            "runtime retains the signed document-to-worker epoch offset before startup");
+}
+
 }  // namespace
 
 int main()
@@ -673,5 +718,7 @@ int main()
     TestFilePageDispatchesPatchLifecycleThroughBrowserRuntime();
     TestPersistenceDirtyConsumesRuntimeAndServicesSourcesTogether();
     TestAudioWorkletDeadlineMeterAveragesQuantizedTimerSamples();
+    TestMidiOutputDescriptorHasStableWasmLayout();
+    TestMidiDiagnosticsDescriptorAndTimestampEpochOffsetContract();
     return 0;
 }

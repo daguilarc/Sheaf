@@ -64,6 +64,14 @@ extern "C" int synth_browser_start_audio_worklet(synth_browser_runtime* runtime,
                : RuntimeFor(runtime)->StartAudioWorklet(audioContextHandle);
 }
 
+extern "C" int synth_browser_set_timestamp_epoch_offset(
+    synth_browser_runtime* runtime, std::int64_t offsetMicros)
+{
+    return RuntimeFor(runtime) == nullptr
+               ? -1
+               : RuntimeFor(runtime)->SetTimestampEpochOffsetMicros(offsetMicros);
+}
+
 extern "C" std::uint32_t synth_browser_audio_worklet_block_count(synth_browser_runtime* runtime)
 {
     return RuntimeFor(runtime) == nullptr ? 0 : RuntimeFor(runtime)->AudioWorkletBlockCount();
@@ -121,10 +129,18 @@ extern "C" int synth_browser_deliver_midi(synth_browser_runtime* runtime, std::u
                : RuntimeFor(runtime)->DeliverMidi(controllerIx, bytes, size, timestampMicros);
 }
 
-extern "C" const std::uint8_t* synth_browser_dequeue_midi_output(synth_browser_runtime* runtime,
-                                                                    std::uint32_t* controllerIx, std::uint32_t* size)
+extern "C" const std::uint8_t* synth_browser_dequeue_midi_output(
+    synth_browser_runtime* runtime, synth_browser::MidiOutputDescriptor* descriptor)
 {
-    return RuntimeFor(runtime) == nullptr ? nullptr : RuntimeFor(runtime)->DequeueMidiOutput(controllerIx, size);
+    return RuntimeFor(runtime) == nullptr ? nullptr : RuntimeFor(runtime)->DequeueMidiOutput(descriptor);
+}
+
+extern "C" int synth_browser_midi_diagnostics(
+    synth_browser_runtime* runtime, synth_browser::MidiDiagnosticsDescriptor* descriptor)
+{
+    return RuntimeFor(runtime) == nullptr
+               ? -1
+               : RuntimeFor(runtime)->MidiDiagnostics(descriptor);
 }
 
 extern "C" void synth_browser_destroy(synth_browser_runtime* runtime)

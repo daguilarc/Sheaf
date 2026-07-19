@@ -1,10 +1,11 @@
-import type { MidiAction, MidiEndpoint, MidiOutput } from "./protocol.js";
+import type { MidiAction, MidiEndpoint, MidiOutput, MidiOutputDiagnostics } from "./protocol.js";
 import type { RuntimeCommand, RuntimeResponse } from "./worker.js";
 
 export interface BrowserMidiRuntime {
   submitEndpoints(endpoints: MidiEndpoint[]): Promise<MidiAction[]>;
   deliverMidi(controllerIx: number, bytes: number[], timestampMicros: number): Promise<void>;
   dequeueMidiOutput(): Promise<MidiOutput | undefined>;
+  midiDiagnostics?(): Promise<MidiOutputDiagnostics>;
 }
 
 export class BrowserMidiWorkerRuntime implements BrowserMidiRuntime {
@@ -26,12 +27,24 @@ export class BrowserMidiWorkerRuntime implements BrowserMidiRuntime {
     if (response.type !== "midi-output") throw new Error("runtime rejected MIDI output drain");
     return response.output;
   }
+
+  async midiDiagnostics(): Promise<MidiOutputDiagnostics> {
+    const response = await this.request({ type: "midi-diagnostics" });
+    if (response.type !== "midi-diagnostics") throw new Error("runtime rejected MIDI diagnostics");
+    return response.diagnostics;
+  }
 }
 
 type MidiMessage = { data: Uint8Array; timeStamp: number };
 export type MidiPort = { close?(): Promise<unknown> | void };
 type MidiInputPort = MidiPort & { id: string; name?: string | null; state?: string; onmidimessage: ((message: MidiMessage) => void) | null };
-type MidiOutputPort = MidiPort & { id: string; name?: string | null; state?: string; send(bytes: number[] | Uint8Array): void };
+type MidiOutputPort = MidiPort & {
+  id: string;
+  name?: string | null;
+  state?: string;
+  send(bytes: number[] | Uint8Array, timestamp?: number): void;
+  clear?: () => void;
+};
 export type MidiAccess = {
   inputs: { values(): IterableIterator<MidiInputPort> };
   outputs: { values(): IterableIterator<MidiOutputPort> };
@@ -47,6 +60,15 @@ export type BrowserMidiManagerOptions = {
   pollIntervalMs?: number;
   drainIntervalMs?: number;
   nowMicros?: () => number;
+  timeOriginMillis?: number;
+};
+
+export type BrowserMidiDiagnostics = {
+  droppedImmediateOutputCount: number;
+  droppedScheduledOutputCount: number;
+  bridgeLateScheduledOutputCount: number;
+  lateScheduledOutputCount: number;
+  sendErrorCount: number;
 };
 
 type InputBinding = { identifier: string; port: MidiInputPort; handler: (message: MidiMessage) => void };
@@ -60,11 +82,28 @@ export class BrowserMidiManager {
   private readonly inputs = new Map<number, InputBinding>();
   private readonly outputs = new Map<number, OutputBinding>();
   private queue: Promise<void> = Promise.resolve();
-  private drainQueue: Promise<void> = Promise.resolve();
+  private drainInFlight: Promise<void> | undefined;
+  private drainRequested = false;
+  private lateScheduledOutputCount = 0;
+  private sendErrorCount = 0;
+  private bridgeDiagnostics: MidiOutputDiagnostics = {
+    droppedImmediateOutputCount: 0,
+    droppedScheduledOutputCount: 0,
+    lateScheduledOutputCount: 0,
+  };
 
   constructor(private readonly runtime: BrowserMidiRuntime, private readonly options: BrowserMidiManagerOptions = {}) {}
 
   status(): BrowserMidiStatus { return this.statusValue; }
+  diagnostics(): BrowserMidiDiagnostics {
+    return {
+      droppedImmediateOutputCount: this.bridgeDiagnostics.droppedImmediateOutputCount,
+      droppedScheduledOutputCount: this.bridgeDiagnostics.droppedScheduledOutputCount,
+      bridgeLateScheduledOutputCount: this.bridgeDiagnostics.lateScheduledOutputCount,
+      lateScheduledOutputCount: this.lateScheduledOutputCount,
+      sendErrorCount: this.sendErrorCount,
+    };
+  }
 
   async startFromUserActivation(): Promise<BrowserMidiStartResult> {
     if (this.access) return { status: this.statusValue };
@@ -110,9 +149,20 @@ export class BrowserMidiManager {
 
   async drainOutputs(): Promise<void> {
     if (!this.access) return;
-    const next = this.drainQueue.then(() => this.drainOutputsNow(), () => this.drainOutputsNow());
-    this.drainQueue = next.catch(() => {});
-    return next;
+    if (this.drainInFlight) {
+      this.drainRequested = true;
+      return this.drainInFlight;
+    }
+    const drain = async () => {
+      do {
+        this.drainRequested = false;
+        await this.drainOutputsNow();
+      } while (this.drainRequested && this.access);
+    };
+    this.drainInFlight = drain().finally(() => {
+      this.drainInFlight = undefined;
+    });
+    return this.drainInFlight;
   }
 
   stop(): void {
@@ -126,7 +176,7 @@ export class BrowserMidiManager {
     }
     if (this.access) this.access.onstatechange = null;
     for (const controllerIx of this.inputs.keys()) this.closeInput(controllerIx);
-    this.outputs.clear();
+    for (const controllerIx of [...this.outputs.keys()]) this.closeOutput(controllerIx);
     this.access = undefined;
     this.statusValue = "offline";
   }
@@ -136,8 +186,27 @@ export class BrowserMidiManager {
     // the drain timer will pick up any deferred messages.
     for (let count = 0; count < 256; count++) {
       const output = await this.runtime.dequeueMidiOutput();
-      if (!output) return;
-      this.outputs.get(output.controllerIx)?.port.send(output.bytes);
+      if (!output) break;
+      const port = this.outputs.get(output.controllerIx)?.port;
+      if (!port || port.state === "disconnected") continue;
+      try {
+        if (output.delivery === "scheduled") {
+          const nowMicros = this.options.nowMicros?.() ?? Math.round(performance.now() * 1000);
+          if (nowMicros > output.dueTimeMicros) this.lateScheduledOutputCount += 1;
+          // Web MIDI DOMHighResTimeStamp is in milliseconds relative to
+          // performance.timeOrigin, exactly the engine epoch divided by 1000.
+          port.send(output.bytes, output.dueTimeMicros / 1000);
+        } else {
+          port.send(output.bytes);
+        }
+      } catch {
+        this.sendErrorCount += 1;
+      }
+    }
+    if (this.runtime.midiDiagnostics) {
+      try {
+        this.bridgeDiagnostics = await this.runtime.midiDiagnostics();
+      } catch {}
     }
   }
 
@@ -165,7 +234,7 @@ export class BrowserMidiManager {
         if (existing?.identifier === port.id && existing.port === port) return;
         this.closeInput(action.controllerIx);
         const handler = (message: MidiMessage) => {
-          const timestampMicros = Number.isFinite(message.timeStamp) ? Math.round(message.timeStamp * 1000) : (this.options.nowMicros?.() ?? 0);
+          const timestampMicros = this.normalizeInputTimestamp(message.timeStamp);
           void this.runtime.deliverMidi(action.controllerIx, Array.from(message.data), timestampMicros);
         };
         port.onmidimessage = handler;
@@ -177,11 +246,15 @@ export class BrowserMidiManager {
         return;
       case "open-output": {
         const port = this.outputFor(access, action.identifier);
-        if (port) this.outputs.set(action.controllerIx, { identifier: port.id, port });
+        if (!port) return;
+        const existing = this.outputs.get(action.controllerIx);
+        if (existing?.identifier === port.id && existing.port === port) return;
+        this.closeOutput(action.controllerIx);
+        this.outputs.set(action.controllerIx, { identifier: port.id, port });
         return;
       }
       case "close-output":
-        this.outputs.delete(action.controllerIx);
+        this.closeOutput(action.controllerIx);
         return;
       case "update-input-ref":
       case "update-output-ref":
@@ -197,11 +270,39 @@ export class BrowserMidiManager {
     this.inputs.delete(controllerIx);
   }
 
+  private closeOutput(controllerIx: number): void {
+    const binding = this.outputs.get(controllerIx);
+    if (!binding) return;
+    try {
+      binding.port.clear?.();
+    } catch {
+      this.sendErrorCount += 1;
+    }
+    this.outputs.delete(controllerIx);
+  }
+
   private inputFor(access: MidiAccess, identifier: string | undefined): MidiInputPort | undefined {
     return [...access.inputs.values()].find((port) => port.id === identifier && port.state !== "disconnected");
   }
 
   private outputFor(access: MidiAccess, identifier: string | undefined): MidiOutputPort | undefined {
     return [...access.outputs.values()].find((port) => port.id === identifier && port.state !== "disconnected");
+  }
+
+  private normalizeInputTimestamp(timestampMillis: number): number {
+    if (!Number.isFinite(timestampMillis)) {
+      return this.options.nowMicros?.() ?? Math.round(performance.now() * 1000);
+    }
+    const timeOriginMillis = this.options.timeOriginMillis ?? performance.timeOrigin;
+    // Modern Event.timeStamp is already time-origin-relative. Some legacy
+    // implementations expose absolute DOM milliseconds; normalize those by
+    // subtracting the explicitly shared origin before converting to micros.
+    const relativeMillis = timestampMillis >= timeOriginMillis
+      ? timestampMillis - timeOriginMillis
+      : timestampMillis;
+    if (!Number.isFinite(relativeMillis) || relativeMillis < 0) {
+      return this.options.nowMicros?.() ?? Math.round(performance.now() * 1000);
+    }
+    return Math.round(relativeMillis * 1000);
   }
 }

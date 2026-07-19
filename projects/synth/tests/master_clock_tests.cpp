@@ -265,6 +265,24 @@ TEST_CASE(master_clock_default_and_prepare_state_match_the_output_domain_contrac
     REQUIRE_TRUE(diagnostics.outputLatencyMicros == 5000);
 }
 
+TEST_CASE(master_clock_adds_host_scheduling_horizon_after_the_full_base_latency) {
+    synth::MasterClock clock;
+    clock.SetOutputSchedulingHorizonMicros(25'000);
+    REQUIRE_TRUE(clock.OutputSchedulingHorizonMicros() == 25'000);
+    REQUIRE_TRUE(clock.Prepare(48'000.0, 128));
+
+    // ceil(max(2 * 128 / 48k, 5ms) + 25ms) = 30,334us. The
+    // horizon is additive, leaving the complete two-block handoff margin
+    // before the host-timestamped sink snapshot becomes irreversible.
+    REQUIRE_TRUE(clock.OutputLatencyMicros() == 30'334);
+
+    synth::MasterClock overflowing;
+    overflowing.SetOutputSchedulingHorizonMicros(
+        std::numeric_limits<std::uint64_t>::max());
+    REQUIRE_TRUE(!overflowing.Prepare(48'000.0, 128));
+    REQUIRE_TRUE(!overflowing.IsPrepared());
+}
+
 TEST_CASE(master_clock_rejects_invalid_prepare_and_tempo_transactionally) {
     synth::MasterClock clock;
     REQUIRE_TRUE(!clock.Prepare(0.0, 64));
