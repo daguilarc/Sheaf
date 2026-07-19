@@ -323,6 +323,10 @@ bool MasterClock::Prepare(double sampleRate, std::size_t blockSize) noexcept {
         return false;
     }
     const auto outputLatencyMicros = static_cast<std::uint64_t>(std::ceil(latency));
+    const double quarterNotesPerSample = manualBpm_ / (60.0 * sampleRate);
+    if (!IsFinitePositive(quarterNotesPerSample)) {
+        return false;
+    }
 
     AudioSampleTimeMapper mapper;
     if (!mapper.Prepare(sampleRate, outputLatencyMicros)) {
@@ -333,7 +337,7 @@ bool MasterClock::Prepare(double sampleRate, std::size_t blockSize) noexcept {
     blockSize_ = blockSize;
     outputLatencyMicros_ = outputLatencyMicros;
     activeBpm_ = manualBpm_;
-    pendingQuarterNotesPerSample_ = activeBpm_ / (60.0 * sampleRate_);
+    pendingQuarterNotesPerSample_ = quarterNotesPerSample;
     nextLifetimeQuarterNotes_ = 0.0;
     nextTransportQuarterNotes_ = 0.0;
     transportState_ = ClockTransportState::Stopped;
@@ -359,10 +363,17 @@ bool MasterClock::SetTempoBpm(double bpm) noexcept {
     if (!IsFinitePositive(bpm) || syncConfig_.receiveClock) {
         return false;
     }
+    double nextQuarterNotesPerSample = pendingQuarterNotesPerSample_;
+    if (prepared_) {
+        nextQuarterNotesPerSample = bpm / (60.0 * sampleRate_);
+        if (!IsFinitePositive(nextQuarterNotesPerSample)) {
+            return false;
+        }
+    }
     manualBpm_ = bpm;
     activeBpm_ = bpm;
     if (prepared_) {
-        pendingQuarterNotesPerSample_ = bpm / (60.0 * sampleRate_);
+        pendingQuarterNotesPerSample_ = nextQuarterNotesPerSample;
     }
     return true;
 }
@@ -380,6 +391,13 @@ bool MasterClock::ApplySyncConfig(const SyncConfig& config) noexcept {
         return false;
     }
     const bool receiveChanged = config.receiveClock != syncConfig_.receiveClock;
+    double restoredQuarterNotesPerSample = pendingQuarterNotesPerSample_;
+    if (receiveChanged && !config.receiveClock && prepared_) {
+        restoredQuarterNotesPerSample = manualBpm_ / (60.0 * sampleRate_);
+        if (!IsFinitePositive(restoredQuarterNotesPerSample)) {
+            return false;
+        }
+    }
     syncConfig_ = config;
     if (receiveChanged && syncConfig_.receiveClock) {
         acquisitionState_ = ClockAcquisitionState::Acquiring;
@@ -389,7 +407,7 @@ bool MasterClock::ApplySyncConfig(const SyncConfig& config) noexcept {
         source_ = ClockSource::Internal;
         activeBpm_ = manualBpm_;
         if (prepared_) {
-            pendingQuarterNotesPerSample_ = activeBpm_ / (60.0 * sampleRate_);
+            pendingQuarterNotesPerSample_ = restoredQuarterNotesPerSample;
         }
     }
     return true;
@@ -404,7 +422,8 @@ ClockDiagnostics MasterClock::DiagnosticsSnapshot() const noexcept {
         .activeExternalSourceSlot = 0,
         .currentBpm = activeBpm_,
         .outputLatencyMicros = outputLatencyMicros_,
-        .ignoredInputCount = ignoredInputCount_ + mapperDiagnostics.ignoredObservationCount,
+        .ignoredInputCount = ignoredInputCount_,
+        .mapperIgnoredObservationCount = mapperDiagnostics.ignoredObservationCount,
         .lateEventCount = mapperDiagnostics.lateEventCount,
         .droppedOutputCount = droppedOutputCount_,
         .mapperDiscontinuityCount = mapperDiagnostics.discontinuityCount,
@@ -418,16 +437,14 @@ const ClockBlockPlan* MasterClock::CommitBlock(
     std::uint64_t callbackTimestampMicros) noexcept {
     if (!prepared_ || frameCount == 0 ||
         frameCount > std::numeric_limits<std::uint64_t>::max() - blockStartSample ||
-        (hasCurrentPlan_ && blockStartSample != expectedNextSample_)) {
+        (hasCurrentPlan_ && blockStartSample != expectedNextSample_) ||
+        !IsFinitePositive(pendingQuarterNotesPerSample_)) {
         return nullptr;
     }
     const std::uint64_t endSample = blockStartSample + static_cast<std::uint64_t>(frameCount);
     const MapperObservationResult observation =
         timeMapper_.ObserveBlock(blockStartSample, callbackTimestampMicros);
     if (observation == MapperObservationResult::Rejected) {
-        return nullptr;
-    }
-    if (!IsFinitePositive(pendingQuarterNotesPerSample_)) {
         return nullptr;
     }
 

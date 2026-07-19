@@ -47,7 +47,10 @@ struct ClockDiagnostics {
     std::size_t activeExternalSourceSlot = 0;
     double currentBpm = 120.0;
     std::uint64_t outputLatencyMicros = 0;
+    // Rejected external MIDI clock/transport input only.
     std::uint64_t ignoredInputCount = 0;
+    // Rejected audio callback observations are a separate mapper concern.
+    std::uint64_t mapperIgnoredObservationCount = 0;
     std::uint64_t lateEventCount = 0;
     std::uint64_t droppedOutputCount = 0;
     std::uint64_t mapperDiscontinuityCount = 0;
@@ -108,7 +111,11 @@ public:
     const ClockPlanDescriptor& Descriptor() const noexcept { return descriptor_; }
 
     bool Contains(double absoluteOutputSample) const noexcept;
+    // Precondition: Contains(absoluteOutputSample). Use the corresponding
+    // Try* method when the caller has not already established containment.
     double LifetimeQuarterNotesAt(double absoluteOutputSample) const noexcept;
+    // Precondition: Contains(absoluteOutputSample). Use the corresponding
+    // Try* method when the caller has not already established containment.
     double TransportQuarterNotesAt(double absoluteOutputSample) const noexcept;
     std::optional<double> TryLifetimeQuarterNotesAt(double absoluteOutputSample) const noexcept;
     std::optional<double> TryTransportQuarterNotesAt(double absoluteOutputSample) const noexcept;

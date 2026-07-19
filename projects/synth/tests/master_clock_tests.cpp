@@ -229,6 +229,22 @@ TEST_CASE(master_clock_rejects_invalid_prepare_and_tempo_transactionally) {
     REQUIRE_NEAR(clock.QuarterNotesPerSample(), priorIncrement, 0.0);
 }
 
+TEST_CASE(master_clock_prepare_rejects_a_saved_tempo_whose_slope_underflows) {
+    synth::MasterClock clock;
+    const double denormalTempo = std::numeric_limits<double>::denorm_min();
+    REQUIRE_TRUE(clock.SetTempoBpm(denormalTempo));
+
+    REQUIRE_TRUE(!clock.Prepare(48000.0, 64));
+    REQUIRE_TRUE(!clock.IsPrepared());
+    REQUIRE_TRUE(!clock.TimeMapper().IsPrepared());
+    REQUIRE_TRUE(clock.CurrentPlan() == nullptr);
+    REQUIRE_NEAR(clock.TempoBpm(), denormalTempo, 0.0);
+    REQUIRE_NEAR(clock.SampleRate(), 0.0, 0.0);
+    REQUIRE_TRUE(clock.BlockSize() == 0);
+    REQUIRE_TRUE(clock.OutputLatencyMicros() == 0);
+    REQUIRE_NEAR(clock.QuarterNotesPerSample(), 0.0, 0.0);
+}
+
 TEST_CASE(master_clock_receive_authority_rejects_manual_tempo_and_restores_it) {
     synth::MasterClock clock;
     REQUIRE_TRUE(clock.Prepare(48000.0, 64));
@@ -274,6 +290,34 @@ TEST_CASE(master_clock_commits_exact_adjacent_anchors_and_only_future_tempo_slop
     REQUIRE_NEAR(secondPointer->LifetimeStartQuarterNotes(), first.LifetimeEndQuarterNotes(), 0.0);
     REQUIRE_NEAR(secondPointer->QuarterNotesPerSample(), 60.0 / (60.0 * 48000.0), 1.0e-18);
     REQUIRE_TRUE(first.LifetimeQuarterNotesAt(1063.0) < secondPointer->LifetimeQuarterNotesAt(1064.0));
+}
+
+TEST_CASE(master_clock_underflowing_tempo_rejection_preserves_clock_state) {
+    synth::MasterClock clock;
+    REQUIRE_TRUE(clock.Prepare(48000.0, 64));
+    REQUIRE_TRUE(clock.CommitBlock(0, 64, 1'000'000) != nullptr);
+    const synth::ClockBlockPlan priorPlan = *clock.CurrentPlan();
+    const std::size_t priorMapperHistorySize = clock.TimeMapper().HistorySize();
+    const std::size_t priorPlanHistorySize = clock.PlanHistorySize();
+    const double priorTempo = clock.TempoBpm();
+    const double priorIncrement = clock.QuarterNotesPerSample();
+
+    REQUIRE_TRUE(!clock.SetTempoBpm(std::numeric_limits<double>::denorm_min()));
+
+    REQUIRE_NEAR(clock.TempoBpm(), priorTempo, 0.0);
+    REQUIRE_NEAR(clock.QuarterNotesPerSample(), priorIncrement, 0.0);
+    REQUIRE_TRUE(clock.TimeMapper().HistorySize() == priorMapperHistorySize);
+    REQUIRE_TRUE(clock.PlanHistorySize() == priorPlanHistorySize);
+    REQUIRE_TRUE(clock.CurrentPlan() != nullptr);
+    REQUIRE_TRUE(clock.CurrentPlan()->Descriptor().startSample == priorPlan.Descriptor().startSample);
+    REQUIRE_TRUE(clock.CurrentPlan()->Descriptor().endSample == priorPlan.Descriptor().endSample);
+    REQUIRE_NEAR(
+        clock.CurrentPlan()->LifetimeStartQuarterNotes(),
+        priorPlan.LifetimeStartQuarterNotes(),
+        0.0);
+
+    REQUIRE_TRUE(clock.CommitBlock(64, 64, 1'001'333) != nullptr);
+    REQUIRE_TRUE(clock.TimeMapper().HistorySize() == priorMapperHistorySize + 1);
 }
 
 TEST_CASE(master_clock_maps_delayed_timestamps_through_bounded_plan_history) {
@@ -385,6 +429,27 @@ TEST_CASE(audio_sample_time_mapper_resets_generation_on_host_discontinuity) {
     REQUIRE_NEAR(diagnostics.latestPhaseErrorMicros, 10'001.0, 0.0);
     REQUIRE_NEAR(*mapper.TimeMicrosAt(10.0), 120'001.0, 0.0);
     REQUIRE_NEAR(*mapper.TimeMicrosAt(5.0), 105'000.0, 0.0);
+}
+
+TEST_CASE(mapper_rejections_are_diagnosed_separately_from_ignored_midi_input) {
+    synth::AudioSampleTimeMapper mapper;
+    REQUIRE_TRUE(mapper.Prepare(1000.0, 5000));
+    REQUIRE_TRUE(mapper.ObserveBlock(0, 1000) == synth::MapperObservationResult::Anchored);
+    REQUIRE_TRUE(mapper.ObserveBlock(0, 1001) == synth::MapperObservationResult::Rejected);
+    REQUIRE_TRUE(mapper.DiagnosticsSnapshot().ignoredObservationCount == 1);
+
+    synth::ClockDiagnostics diagnostics;
+    diagnostics.ignoredInputCount = 7;
+    diagnostics.mapperIgnoredObservationCount =
+        mapper.DiagnosticsSnapshot().ignoredObservationCount;
+    REQUIRE_TRUE(diagnostics.ignoredInputCount == 7);
+    REQUIRE_TRUE(diagnostics.mapperIgnoredObservationCount == 1);
+
+    synth::MasterClock clock;
+    REQUIRE_TRUE(clock.Prepare(48000.0, 64));
+    const auto clockDiagnostics = clock.DiagnosticsSnapshot();
+    REQUIRE_TRUE(clockDiagnostics.ignoredInputCount == 0);
+    REQUIRE_TRUE(clockDiagnostics.mapperIgnoredObservationCount == 0);
 }
 
 TEST_CASE(audio_sample_time_mapper_history_is_bounded_and_long_run_mapping_stays_finite_monotonic) {
