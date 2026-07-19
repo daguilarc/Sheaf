@@ -183,7 +183,7 @@ Workspace: managed linked worktree, detached HEAD
 - Execution policy: eight coarse sequential tasks; native Codex Sol for Tasks 1–5 and 8, Terra for Tasks 6–7 unless discovered coupling warrants Sol; same implementer handles small review fixes; one persistent Opus reviewer handles every task review/re-review and the final whole-change review.
 - Persistent reviewer: xagent run `xrun_20260719190651915_18a4113c` (kept open through completion).
 - Baseline: browser WASM build plus unsandboxed `npm test` passed all 64 Playwright cases and 6 Node cases. Core functional binaries passed; the existing Braid wall-clock deadline gate failed intermittently inside the full suite while other agent/browser processes were active, then the unchanged isolated deadline binary passed all five rate/sparsity cases. Treat that benchmark as load-sensitive and require isolated timing verification.
-- Task 1 (clock primitives, affine plans, mapper): pending.
+- Task 1 (clock primitives, affine plans, mapper): complete (implementation/report commits `439a8d26`/`d6eb5269`; review-fix/report commits `94c208d7`/`6691cab6`; missing-header REDs, forced DSP/master-clock/contract/engine GREEN with 17 clock cases, ASan/UBSan GREEN; persistent Opus initial and same-context re-review both returned SPEC COMPLIANCE PASS and CODE QUALITY PASS with no remaining findings; OpenSpec 1.1–1.3 and 2.1–2.2 checked; mapper-only portion of 7.5 verified but the composite item remains open for sender integration).
 - Task 2 (transport, PLL, arbitration, crossings): pending.
 - Task 3 (MIDI ingress, Engine, SynthRig, config v2): pending.
 - Task 4 (scheduled sender and JUCE): pending.

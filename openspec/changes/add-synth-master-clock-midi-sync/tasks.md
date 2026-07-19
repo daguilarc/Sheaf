@@ -1,13 +1,13 @@
 ## 1. Timing DSP and Clock Contracts
 
-- [ ] 1.1 Add failing JUCE-free DSP tests for `Phasor2Tick` boundary changes, silent same-cell processing, silent priming, backward/jumped time, invalid setup, and allocation-free/noexcept processing.
-- [ ] 1.2 Implement `Phasor2Tick` in the synth DSP headers and update focused build dependencies until the new DSP tests pass.
-- [ ] 1.3 Define JUCE-free `SyncConfig`, transport/acquisition enums, immutable `ClockBlockPlan`, diagnostics snapshot, and `MasterClock` public API with compile-time contract tests.
+- [x] 1.1 Add failing JUCE-free DSP tests for `Phasor2Tick` boundary changes, silent same-cell processing, silent priming, backward/jumped time, invalid setup, and allocation-free/noexcept processing.
+- [x] 1.2 Implement `Phasor2Tick` in the synth DSP headers and update focused build dependencies until the new DSP tests pass.
+- [x] 1.3 Define JUCE-free `SyncConfig`, transport/acquisition enums, immutable `ClockBlockPlan`, diagnostics snapshot, and `MasterClock` public API with compile-time contract tests.
 
 ## 2. Master Clock Core
 
-- [ ] 2.1 Add deterministic tests for prepare/default state, BPM-to-output-sample-increment conversion, rejected invalid tempo, external-authority rejection, manual-tempo restoration, stopped/running affine queries, half-open endpoints, exact inter-block anchor continuity, immutable current-plan behavior, and timestamp mapping through bounded plan history.
-- [ ] 2.2 Implement MasterClock preparation, manual tempo authority, one affine `ClockBlockPlan` commit per output block, a bounded compact plan-descriptor history, direct integer/fractional output-sample queries with no sample buffer, and finite-positive slope changes that apply only to future plans.
+- [x] 2.1 Add deterministic tests for prepare/default state, BPM-to-output-sample-increment conversion, rejected invalid tempo, external-authority rejection, manual-tempo restoration, stopped/running affine queries, half-open endpoints, exact inter-block anchor continuity, immutable current-plan behavior, and timestamp mapping through bounded plan history.
+- [x] 2.2 Implement MasterClock preparation, manual tempo authority, one affine `ClockBlockPlan` commit per output block, a bounded compact plan-descriptor history, direct integer/fractional output-sample queries with no sample buffer, and finite-positive slope changes that apply only to future plans.
 - [ ] 2.3 Add transition tests for internal and external Start/Continue, timestamped time-zero first clock and first-plan phase projection, next-plan Stop/zeroing, repeated commands, and the distinction between current-run time and MIDI song position.
 - [ ] 2.4 Implement the Stopped/ArmedStart/ArmedContinue/Running state machine and first-clock-after-transport semantics.
 - [ ] 2.5 Add tests for analytically enumerated stopped lifetime ticks and running transport ticks, fractional crossing positions, half-open endpoint ownership, internal and timestamp-separated external Start/Continue ordering, output-only transition splices, no duplicate zero tick, Stop switch priming, and phase-safe PPQN changes.
