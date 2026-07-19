@@ -148,6 +148,95 @@ TEST_CASE(MessageInJsonRoundTripsHighGestureIndex) {
     REQUIRE_TRUE(target.hasBoolValue);
 }
 
+TEST_CASE(MessageInRealtimeFactoriesPreserveInternalDefaultsAndExternalIdentity) {
+    const synth::MessageIn internalStart = synth::MessageIn::Start(11);
+    const synth::MessageIn internalContinue = synth::MessageIn::Continue(0);
+    REQUIRE_TRUE(internalStart.origin == synth::MessageIn::Origin::Internal);
+    REQUIRE_TRUE(internalContinue.origin == synth::MessageIn::Origin::Internal);
+    REQUIRE_TRUE(internalContinue.type == synth::MessageIn::Type::Continue);
+
+    const synth::MessageIn exactTimestamp = synth::MessageIn::Clock(
+        123456, synth::MessageIn::Origin::ExternalMidi, 7);
+    REQUIRE_TRUE(exactTimestamp.timestamp == 123456);
+    const synth::MessageIn external = synth::MessageIn::Clock(
+        0, synth::MessageIn::Origin::ExternalMidi, 7);
+    REQUIRE_TRUE(external.origin == synth::MessageIn::Origin::ExternalMidi);
+    REQUIRE_TRUE(external.externalControllerSlot == 7);
+
+    synth::JsonArena arena(4096);
+    const synth::JSON json = synth::ToJSON(arena, external);
+    REQUIRE_TRUE(std::string_view(json.Get("origin").StringValue()) == "externalMidi");
+    REQUIRE_TRUE(json.Get("externalControllerSlot").IntegerValue() == 7);
+    synth::MessageIn roundTrip;
+    REQUIRE_TRUE(synth::FromJSON(json, roundTrip));
+    REQUIRE_TRUE(roundTrip == external);
+
+    synth::JsonArena internalArena(4096);
+    const synth::JSON internalJson = synth::ToJSON(internalArena, internalContinue);
+    REQUIRE_TRUE(internalJson.Get("origin").IsNull());
+    synth::MessageIn internalRoundTrip;
+    REQUIRE_TRUE(synth::FromJSON(internalJson, internalRoundTrip));
+    REQUIRE_TRUE(internalRoundTrip == internalContinue);
+}
+
+TEST_CASE(RealtimeMidiProcessorTranslatesExactSingleByteMessagesWithOriginalTimestampAndSlot) {
+    synth::MessageInBus bus(nullptr, 8);
+    synth::RealtimeMidiInProcessor processor(/*controllerSlot=*/3, &bus);
+    processor.SetTimestampProvider([] { return std::uint64_t{999999}; });
+    RecordingMidiInProcessor thru;
+    processor.SetThru(&thru);
+
+    processor.Process(synth::BasicMidi::Clock(101));
+    processor.Process(synth::BasicMidi::TransportStart(102));
+    processor.Process(synth::BasicMidi::TransportContinue(103));
+    processor.Process(synth::BasicMidi::TransportStop(104));
+    REQUIRE_TRUE(bus.Size() == 4);
+    REQUIRE_TRUE(thru.received.empty());
+
+    const synth::MessageIn::Type expectedTypes[] = {
+        synth::MessageIn::Type::Clock,
+        synth::MessageIn::Type::Start,
+        synth::MessageIn::Type::Continue,
+        synth::MessageIn::Type::Stop,
+    };
+    for (std::size_t ix = 0; ix < 4; ++ix) {
+        synth::MessageIn message;
+        REQUIRE_TRUE(bus.Pop(message, std::numeric_limits<std::uint64_t>::max()));
+        REQUIRE_TRUE(message.type == expectedTypes[ix]);
+        REQUIRE_TRUE(message.timestamp == 101 + ix);
+        REQUIRE_TRUE(message.origin == synth::MessageIn::Origin::ExternalMidi);
+        REQUIRE_TRUE(message.externalControllerSlot == 3);
+    }
+
+    const synth::BasicMidi multiByteRealtime(201, std::vector<std::uint8_t>{0xF8, 0x00});
+    const synth::BasicMidi unsupportedRealtime(202, std::vector<std::uint8_t>{0xF9});
+    const synth::BasicMidi ordinary = synth::BasicMidi::CC(203, 2, 3, 4);
+    processor.Process(multiByteRealtime);
+    processor.Process(unsupportedRealtime);
+    processor.Process(ordinary);
+    REQUIRE_TRUE(bus.Size() == 0);
+    REQUIRE_TRUE(thru.received.size() == 3);
+    REQUIRE_TRUE(thru.received[0].timestamp == 201);
+    REQUIRE_TRUE(thru.received[1].timestamp == 202);
+    REQUIRE_TRUE(thru.received[2].timestamp == 203);
+}
+
+TEST_CASE(EveryControllerProfileEndsInRealtimeMidiIncludingEmptyProfiles) {
+    synth::MessageInBus bus(nullptr, 8);
+    auto empty = synth::CreateMidiControllerProfile(
+        MidiControllerProfileConfig{}, &bus, nullptr,
+        static_cast<synth::ParameterManager::UIState*>(nullptr), {}, 0, nullptr, 5);
+    REQUIRE_TRUE(dynamic_cast<synth::RealtimeMidiInProcessor*>(empty.input.get()) != nullptr);
+    REQUIRE_TRUE(empty.inputThru.empty());
+
+    empty.input->Process(synth::BasicMidi::TransportContinue(777));
+    synth::MessageIn message;
+    REQUIRE_TRUE(bus.Pop(message, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(message.type == synth::MessageIn::Type::Continue);
+    REQUIRE_TRUE(message.timestamp == 777);
+    REQUIRE_TRUE(message.externalControllerSlot == 5);
+}
+
 TEST_CASE(BasicMidiPolyPressureRecognizesOnlyCompletePolyphonicAftertouch) {
     const synth::BasicMidi midi = synth::BasicMidi::PolyPressure(9, 3, 42, 88);
     REQUIRE_TRUE(midi.timestamp == 9);
@@ -258,7 +347,8 @@ TEST_CASE(CreateMidiControllerProfileBuildsPressureOnlyAndSharedMixedThruChains)
     auto only = synth::CreateMidiControllerProfile(
         pressureOnly, &bus, nullptr, static_cast<synth::ParameterManager::UIState*>(nullptr), [] { return 77; });
     REQUIRE_TRUE(dynamic_cast<synth::PolyphonicPressureMidiInProcessor*>(only.input.get()) != nullptr);
-    REQUIRE_TRUE(only.inputThru.empty());
+    REQUIRE_TRUE(only.inputThru.size() == 1);
+    REQUIRE_TRUE(dynamic_cast<synth::RealtimeMidiInProcessor*>(only.inputThru[0].get()) != nullptr);
     REQUIRE_TRUE(only.input->Bus() == &bus);
 
     MidiControllerProfileConfig mixed;
@@ -276,10 +366,11 @@ TEST_CASE(CreateMidiControllerProfileBuildsPressureOnlyAndSharedMixedThruChains)
     auto chain = synth::CreateMidiControllerProfile(
         mixed, &bus, nullptr, static_cast<synth::ParameterManager::UIState*>(nullptr), [] { return 77; });
     REQUIRE_TRUE(dynamic_cast<synth::EncoderMidiInProcessor*>(chain.input.get()) != nullptr);
-    REQUIRE_TRUE(chain.inputThru.size() == 3);
+    REQUIRE_TRUE(chain.inputThru.size() == 4);
     REQUIRE_TRUE(dynamic_cast<synth::AnalogMidiInProcessor*>(chain.inputThru[0].get()) != nullptr);
     REQUIRE_TRUE(dynamic_cast<synth::SystemButtonMidiInProcessor*>(chain.inputThru[1].get()) != nullptr);
     REQUIRE_TRUE(dynamic_cast<synth::PolyphonicPressureMidiInProcessor*>(chain.inputThru[2].get()) != nullptr);
+    REQUIRE_TRUE(dynamic_cast<synth::RealtimeMidiInProcessor*>(chain.inputThru[3].get()) != nullptr);
     REQUIRE_TRUE(chain.input->Bus() == &bus);
     REQUIRE_TRUE(chain.inputThru[0]->Bus() == &bus);
     REQUIRE_TRUE(chain.inputThru[1]->Bus() == &bus);

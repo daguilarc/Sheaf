@@ -3811,6 +3811,8 @@ TEST_CASE(UISystemMessageCatalogExpansionCoversPressAndReleaseSemantics) {
          synth::MessageIn::Type::Clock, false, true},
         {UISystemMessage::Start, synth::MessageIn::Type::Start, false, false,
          synth::MessageIn::Type::Clock, false, false},
+        {UISystemMessage::Continue, synth::MessageIn::Type::Continue, false, false,
+         synth::MessageIn::Type::Clock, false, false},
         {UISystemMessage::Stop, synth::MessageIn::Type::Stop, false, false,
          synth::MessageIn::Type::Clock, false, false},
         {UISystemMessage::Clock, synth::MessageIn::Type::Clock, false, false,

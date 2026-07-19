@@ -7401,7 +7401,8 @@ TEST_CASE(midi_controller_profile_builds_chained_input_processors) {
     synth::MidiControllerProfileResult profile =
         synth::CreateMidiControllerProfile(config, &bus, nullptr, nullptr, [] { return 88; });
     REQUIRE_TRUE(profile.input != nullptr);
-    REQUIRE_TRUE(profile.inputThru.size() == 2);
+    REQUIRE_TRUE(profile.inputThru.size() == 3);
+    REQUIRE_TRUE(dynamic_cast<synth::RealtimeMidiInProcessor*>(profile.inputThru[2].get()) != nullptr);
 
     profile.input->Process(synth::BasicMidi::CC(1, 0, 1, 65));
     synth::MessageIn message;
@@ -7807,7 +7808,8 @@ TEST_CASE(midi_controller_profile_routes_launchpad_only_system_associations) {
     synth::MidiControllerProfileResult profile =
         synth::CreateMidiControllerProfile(config, &bus, &sender, &ui, [] { return 91; });
     REQUIRE_TRUE(dynamic_cast<synth::SystemButtonMidiInProcessor*>(profile.input.get()) != nullptr);
-    REQUIRE_TRUE(profile.inputThru.empty());
+    REQUIRE_TRUE(profile.inputThru.size() == 1);
+    REQUIRE_TRUE(dynamic_cast<synth::RealtimeMidiInProcessor*>(profile.inputThru[0].get()) != nullptr);
     REQUIRE_TRUE(profile.outputs.size() == 1);
     REQUIRE_TRUE(dynamic_cast<synth::LaunchpadGridMidiOutProcessor*>(profile.outputs[0].get()) != nullptr);
 
@@ -7889,7 +7891,8 @@ TEST_CASE(wrld_bldr_default_profile_maps_encoders_analogs_and_system_buttons) {
     synth::MidiControllerProfileResult profile =
         synth::CreateWrldBldrDefaultProfile(options, &bus, nullptr, nullptr, [] { return 99; });
     REQUIRE_TRUE(profile.input != nullptr);
-    REQUIRE_TRUE(profile.inputThru.size() == 2);
+    REQUIRE_TRUE(profile.inputThru.size() == 3);
+    REQUIRE_TRUE(dynamic_cast<synth::RealtimeMidiInProcessor*>(profile.inputThru[2].get()) != nullptr);
 
     profile.input->Process(synth::BasicMidi::CC(0, 0, 0, 65));
     synth::MessageIn message;
@@ -8001,7 +8004,8 @@ TEST_CASE(mf_twister_default_profile_maps_encoders_and_input_only_side_buttons) 
     synth::MidiControllerProfileResult profile =
         synth::CreateMfTwisterDefaultProfile(options, &bus, &sender, &ui, [] { return 321; });
     REQUIRE_TRUE(profile.input != nullptr);
-    REQUIRE_TRUE(profile.inputThru.size() == 1);
+    REQUIRE_TRUE(profile.inputThru.size() == 2);
+    REQUIRE_TRUE(dynamic_cast<synth::RealtimeMidiInProcessor*>(profile.inputThru[1].get()) != nullptr);
     REQUIRE_TRUE(profile.outputs.size() == 1);
     REQUIRE_TRUE(dynamic_cast<synth::TwisterMidiOutProcessor*>(profile.outputs[0].get()) != nullptr);
 
@@ -8117,7 +8121,8 @@ TEST_CASE(launchpad_default_profile_creates_only_system_input_and_grid_output) {
     synth::MidiControllerProfileResult profile =
         synth::CreateLaunchpadDefaultProfile(options, &bus, &sender, &ui, [] { return 123; });
     REQUIRE_TRUE(dynamic_cast<synth::SystemButtonMidiInProcessor*>(profile.input.get()) != nullptr);
-    REQUIRE_TRUE(profile.inputThru.empty());
+    REQUIRE_TRUE(profile.inputThru.size() == 1);
+    REQUIRE_TRUE(dynamic_cast<synth::RealtimeMidiInProcessor*>(profile.inputThru[0].get()) != nullptr);
     REQUIRE_TRUE(profile.outputs.size() == 1);
     REQUIRE_TRUE(dynamic_cast<synth::LaunchpadGridMidiOutProcessor*>(profile.outputs[0].get()) != nullptr);
 
@@ -12942,9 +12947,10 @@ TEST_CASE(midi_profile_config_json_round_trips_wrld_bldr_defaults_and_rebuilds_p
     synth::MidiControllerProfileResult result =
         synth::CreateMidiControllerProfile(loaded, nullptr, nullptr, nullptr, [] { return 0; });
     REQUIRE_TRUE(dynamic_cast<synth::EncoderMidiInProcessor*>(result.input.get()) != nullptr);
-    REQUIRE_TRUE(result.inputThru.size() == 2);
+    REQUIRE_TRUE(result.inputThru.size() == 3);
     REQUIRE_TRUE(dynamic_cast<synth::AnalogMidiInProcessor*>(result.inputThru[0].get()) != nullptr);
     REQUIRE_TRUE(dynamic_cast<synth::SystemButtonMidiInProcessor*>(result.inputThru[1].get()) != nullptr);
+    REQUIRE_TRUE(dynamic_cast<synth::RealtimeMidiInProcessor*>(result.inputThru[2].get()) != nullptr);
     REQUIRE_TRUE(result.outputs.size() == 3);
     REQUIRE_TRUE(dynamic_cast<synth::WrldBldrMidiOutProcessor*>(result.outputs[0].get()) != nullptr);
     REQUIRE_TRUE(dynamic_cast<synth::SystemCcMidiOutProcessor*>(result.outputs[1].get()) != nullptr);
@@ -13210,8 +13216,9 @@ TEST_CASE(midi_profile_config_json_round_trips_mf_twister_side_buttons) {
     synth::MidiControllerProfileResult rebuilt =
         synth::CreateMidiControllerProfile(loaded, nullptr, nullptr, nullptr, [] { return 0; });
     REQUIRE_TRUE(dynamic_cast<synth::EncoderMidiInProcessor*>(rebuilt.input.get()) != nullptr);
-    REQUIRE_TRUE(rebuilt.inputThru.size() == 1);
+    REQUIRE_TRUE(rebuilt.inputThru.size() == 2);
     REQUIRE_TRUE(dynamic_cast<synth::SystemButtonMidiInProcessor*>(rebuilt.inputThru[0].get()) != nullptr);
+    REQUIRE_TRUE(dynamic_cast<synth::RealtimeMidiInProcessor*>(rebuilt.inputThru[1].get()) != nullptr);
     REQUIRE_TRUE(rebuilt.outputs.size() == 1);
     REQUIRE_TRUE(dynamic_cast<synth::TwisterMidiOutProcessor*>(rebuilt.outputs[0].get()) != nullptr);
     for (const auto& output : rebuilt.outputs) {
@@ -13824,9 +13831,16 @@ TEST_CASE(runtime_config_json_round_trips_midi_and_audio) {
     synth::MidiInstrumentConfig instrument =
         MakeInstrumentFromProfile(synth::WrldBldrDefaultProfileConfig({}), "input-id", "output-id");
     synth::AudioDeviceState audio{.outputDeviceName = "Interface Out", .inputDeviceName = "Interface In"};
+    const synth::SyncConfig sync{
+        .sendClock = true,
+        .receiveClock = false,
+        .sendTransport = true,
+        .receiveTransport = true,
+        .ppqn = 96,
+    };
 
     synth::JsonArena arena(262144);
-    synth::JSON root = synth::BuildRuntimeConfigJSON(arena, instrument, audio);
+    synth::JSON root = synth::BuildRuntimeConfigJSON(arena, instrument, audio, sync);
     REQUIRE_TRUE(!root.IsNull());
     REQUIRE_TRUE(!arena.Failed());
     REQUIRE_TRUE(std::string(root.Get("schema").StringValue()) == synth::kRuntimeConfigSchema);
@@ -13837,12 +13851,127 @@ TEST_CASE(runtime_config_json_round_trips_midi_and_audio) {
 
     synth::MidiInstrumentConfig loadedInstrument;
     synth::AudioDeviceState loadedAudio;
-    REQUIRE_TRUE(synth::LoadRuntimeConfigJSON(root, loadedInstrument, loadedAudio));
+    synth::SyncConfig loadedSync;
+    REQUIRE_TRUE(synth::LoadRuntimeConfigJSON(root, loadedInstrument, loadedAudio, loadedSync));
     REQUIRE_TRUE(loadedInstrument.controllers.size() == 1);
     REQUIRE_TRUE(loadedInstrument.controllers[0].input.identifier == "input-id");
     REQUIRE_TRUE(loadedInstrument.controllers[0].output.identifier == "output-id");
     REQUIRE_TRUE(loadedAudio.outputDeviceName == "Interface Out");
     REQUIRE_TRUE(loadedAudio.inputDeviceName == "Interface In");
+    REQUIRE_TRUE(loadedSync == sync);
+}
+
+TEST_CASE(runtime_config_v1_migrates_to_default_sync_and_v2_save_contains_exact_sync_fields) {
+    const synth::MidiInstrumentConfig sourceInstrument;
+    const synth::AudioDeviceState sourceAudio{.outputDeviceName = "Out", .inputDeviceName = "In"};
+
+    synth::JsonArena defaultArena(1024);
+    const synth::JSON defaultJson = synth::ToJSON(defaultArena, synth::SyncConfig{});
+    REQUIRE_TRUE(!defaultJson.Get("sendClock").BooleanValue());
+    REQUIRE_TRUE(!defaultJson.Get("receiveClock").BooleanValue());
+    REQUIRE_TRUE(!defaultJson.Get("sendTransport").BooleanValue());
+    REQUIRE_TRUE(!defaultJson.Get("receiveTransport").BooleanValue());
+    REQUIRE_TRUE(defaultJson.Get("ppqn").IntegerValue() == 24);
+    synth::SyncConfig roundTrippedDefault{.sendClock = true, .ppqn = 960};
+    REQUIRE_TRUE(synth::FromJSON(defaultJson, roundTrippedDefault));
+    REQUIRE_TRUE(roundTrippedDefault == synth::SyncConfig{});
+
+    synth::JsonArena v1Arena(8192);
+    synth::JSON v1 = v1Arena.Object();
+    v1.SetNew("schema", v1Arena.String(synth::kRuntimeConfigSchema));
+    v1.SetNew("schemaVersion", v1Arena.Integer(1));
+    v1.SetNew("midiInstrument", synth::ToJSON(v1Arena, sourceInstrument));
+    v1.SetNew("audioDevice", synth::ToJSON(v1Arena, sourceAudio));
+
+    synth::MidiInstrumentConfig loadedInstrument;
+    synth::AudioDeviceState loadedAudio;
+    synth::SyncConfig loadedSync{
+        .sendClock = true,
+        .receiveClock = true,
+        .sendTransport = true,
+        .receiveTransport = true,
+        .ppqn = 960,
+    };
+    REQUIRE_TRUE(synth::LoadRuntimeConfigJSON(v1, loadedInstrument, loadedAudio, loadedSync));
+    REQUIRE_TRUE(loadedAudio == sourceAudio);
+    REQUIRE_TRUE(loadedSync == synth::SyncConfig{});
+
+    const synth::SyncConfig savedSync{
+        .sendClock = true,
+        .receiveClock = true,
+        .sendTransport = false,
+        .receiveTransport = true,
+        .ppqn = 48,
+    };
+    synth::JsonArena v2Arena(8192);
+    const synth::JSON v2 = synth::BuildRuntimeConfigJSON(
+        v2Arena, sourceInstrument, sourceAudio, savedSync);
+    REQUIRE_TRUE(v2.Get("schemaVersion").IntegerValue() == 2);
+    const synth::JSON sync = v2.Get("sync");
+    REQUIRE_TRUE(sync.Size() == 5);
+    REQUIRE_TRUE(sync.Get("sendClock").BooleanValue());
+    REQUIRE_TRUE(sync.Get("receiveClock").BooleanValue());
+    REQUIRE_TRUE(!sync.Get("sendTransport").BooleanValue());
+    REQUIRE_TRUE(sync.Get("receiveTransport").BooleanValue());
+    REQUIRE_TRUE(sync.Get("ppqn").IntegerValue() == 48);
+}
+
+TEST_CASE(runtime_config_v2_rejects_every_missing_or_wrong_sync_field_atomically) {
+    const std::string prefix =
+        R"({"schema":"sheaf.synth.runtime-config","schemaVersion":2,"midiInstrument":{"schema":"synth.midiInstrument","schemaVersion":1,"controllers":[]},"audioDevice":{},"sync":)";
+    const auto requireAtomicRejection = [](const std::string& text) {
+        synth::JsonArena arena(16384);
+        const synth::JSON invalid = arena.Loads(text.c_str());
+        REQUIRE_TRUE(!invalid.IsNull());
+
+        synth::MidiInstrumentConfig instrument =
+            MakeInstrumentFromProfile(synth::WrldBldrDefaultProfileConfig({}), "keep-in", "keep-out");
+        const synth::MidiInstrumentConfig originalInstrument = instrument;
+        synth::AudioDeviceState audio{.outputDeviceName = "Keep Out", .inputDeviceName = "Keep In"};
+        const synth::AudioDeviceState originalAudio = audio;
+        synth::SyncConfig sync{
+            .sendClock = true,
+            .receiveClock = true,
+            .sendTransport = true,
+            .receiveTransport = true,
+            .ppqn = 960,
+        };
+        const synth::SyncConfig originalSync = sync;
+
+        REQUIRE_TRUE(!synth::LoadRuntimeConfigJSON(invalid, instrument, audio, sync));
+        REQUIRE_TRUE(instrument.controllers.size() == originalInstrument.controllers.size());
+        REQUIRE_TRUE(instrument.controllers[0].input.identifier ==
+                     originalInstrument.controllers[0].input.identifier);
+        REQUIRE_TRUE(audio == originalAudio);
+        REQUIRE_TRUE(sync == originalSync);
+    };
+
+    requireAtomicRejection(
+        R"({"schema":"sheaf.synth.runtime-config","schemaVersion":2,"midiInstrument":{"schema":"synth.midiInstrument","schemaVersion":1,"controllers":[]},"audioDevice":{}})");
+
+    const std::vector<std::string> invalidSyncObjects = {
+        R"(null)",
+        R"({"receiveClock":false,"sendTransport":false,"receiveTransport":false,"ppqn":24})",
+        R"({"sendClock":false,"sendTransport":false,"receiveTransport":false,"ppqn":24})",
+        R"({"sendClock":false,"receiveClock":false,"receiveTransport":false,"ppqn":24})",
+        R"({"sendClock":false,"receiveClock":false,"sendTransport":false,"ppqn":24})",
+        R"({"sendClock":false,"receiveClock":false,"sendTransport":false,"receiveTransport":false})",
+        R"({"sendClock":0,"receiveClock":false,"sendTransport":false,"receiveTransport":false,"ppqn":24})",
+        R"({"sendClock":false,"receiveClock":"false","sendTransport":false,"receiveTransport":false,"ppqn":24})",
+        R"({"sendClock":false,"receiveClock":false,"sendTransport":[],"receiveTransport":false,"ppqn":24})",
+        R"({"sendClock":false,"receiveClock":false,"sendTransport":false,"receiveTransport":{},"ppqn":24})",
+        R"({"sendClock":false,"receiveClock":false,"sendTransport":false,"receiveTransport":false,"ppqn":24.0})",
+        R"({"sendClock":false,"receiveClock":false,"sendTransport":false,"receiveTransport":false,"ppqn":true})",
+        R"({"sendClock":false,"receiveClock":false,"sendTransport":false,"receiveTransport":false,"ppqn":-1})",
+        R"({"sendClock":false,"receiveClock":false,"sendTransport":false,"receiveTransport":false,"ppqn":0})",
+        R"({"sendClock":false,"receiveClock":false,"sendTransport":false,"receiveTransport":false,"ppqn":961})",
+        R"({"sendClock":false,"receiveClock":false,"sendTransport":false,"receiveTransport":false,"ppqn":24,"extra":0})",
+    };
+
+    for (const std::string& syncObject : invalidSyncObjects) {
+        const std::string text = prefix + syncObject + "}";
+        requireAtomicRejection(text);
+    }
 }
 
 TEST_CASE(runtime_config_load_invalid_schema_preserves_targets) {
@@ -13854,14 +13983,16 @@ TEST_CASE(runtime_config_load_invalid_schema_preserves_targets) {
     synth::MidiInstrumentConfig instrument =
         MakeInstrumentFromProfile(synth::WrldBldrDefaultProfileConfig({}), "keep-in", "keep-out");
     synth::AudioDeviceState audio{.outputDeviceName = "Keep Out", .inputDeviceName = "Keep In"};
+    synth::SyncConfig sync{.sendClock = true, .ppqn = 96};
 
-    REQUIRE_TRUE(!synth::LoadRuntimeConfigJSON(invalid, instrument, audio));
+    REQUIRE_TRUE(!synth::LoadRuntimeConfigJSON(invalid, instrument, audio, sync));
     REQUIRE_TRUE(!synth::ValidateRuntimeConfigJSON(invalid));
     REQUIRE_TRUE(instrument.controllers.size() == 1);
     REQUIRE_TRUE(instrument.controllers[0].input.identifier == "keep-in");
     REQUIRE_TRUE(instrument.controllers[0].output.identifier == "keep-out");
     REQUIRE_TRUE(audio.outputDeviceName == "Keep Out");
     REQUIRE_TRUE(audio.inputDeviceName == "Keep In");
+    REQUIRE_TRUE((sync == synth::SyncConfig{.sendClock = true, .ppqn = 96}));
 }
 
 TEST_CASE(runtime_config_load_invalid_midi_preserves_targets) {
@@ -13878,18 +14009,27 @@ TEST_CASE(runtime_config_load_invalid_midi_preserves_targets) {
         .outputDeviceName = "New Out",
         .inputDeviceName = "New In",
     }));
+    synth::JSON syncJson = arena.Object();
+    syncJson.SetNew("sendClock", arena.Boolean(false));
+    syncJson.SetNew("receiveClock", arena.Boolean(false));
+    syncJson.SetNew("sendTransport", arena.Boolean(false));
+    syncJson.SetNew("receiveTransport", arena.Boolean(false));
+    syncJson.SetNew("ppqn", arena.Integer(24));
+    invalid.SetNew("sync", syncJson);
 
     synth::MidiInstrumentConfig instrument =
         MakeInstrumentFromProfile(synth::WrldBldrDefaultProfileConfig({}), "keep-in", "keep-out");
     synth::AudioDeviceState audio{.outputDeviceName = "Keep Out", .inputDeviceName = "Keep In"};
+    synth::SyncConfig sync{.receiveClock = true, .ppqn = 48};
 
-    REQUIRE_TRUE(!synth::LoadRuntimeConfigJSON(invalid, instrument, audio));
+    REQUIRE_TRUE(!synth::LoadRuntimeConfigJSON(invalid, instrument, audio, sync));
     REQUIRE_TRUE(!synth::ValidateRuntimeConfigJSON(invalid));
     REQUIRE_TRUE(instrument.controllers.size() == 1);
     REQUIRE_TRUE(instrument.controllers[0].input.identifier == "keep-in");
     REQUIRE_TRUE(instrument.controllers[0].output.identifier == "keep-out");
     REQUIRE_TRUE(audio.outputDeviceName == "Keep Out");
     REQUIRE_TRUE(audio.inputDeviceName == "Keep In");
+    REQUIRE_TRUE((sync == synth::SyncConfig{.receiveClock = true, .ppqn = 48}));
 }
 
 TEST_CASE(runtime_config_load_invalid_audio_preserves_targets) {
@@ -13904,19 +14044,28 @@ TEST_CASE(runtime_config_load_invalid_audio_preserves_targets) {
     synth::JSON invalidAudio = arena.Object();
     invalidAudio.SetNew("outputDeviceName", arena.Integer(3));
     invalid.SetNew("audioDevice", invalidAudio);
+    synth::JSON syncJson = arena.Object();
+    syncJson.SetNew("sendClock", arena.Boolean(false));
+    syncJson.SetNew("receiveClock", arena.Boolean(false));
+    syncJson.SetNew("sendTransport", arena.Boolean(false));
+    syncJson.SetNew("receiveTransport", arena.Boolean(false));
+    syncJson.SetNew("ppqn", arena.Integer(24));
+    invalid.SetNew("sync", syncJson);
     REQUIRE_TRUE(!arena.Failed());
 
     synth::MidiInstrumentConfig instrument =
         MakeInstrumentFromProfile(synth::WrldBldrDefaultProfileConfig({}), "keep-in", "keep-out");
     synth::AudioDeviceState audio{.outputDeviceName = "Keep Out", .inputDeviceName = "Keep In"};
+    synth::SyncConfig sync{.sendTransport = true, .ppqn = 120};
 
-    REQUIRE_TRUE(!synth::LoadRuntimeConfigJSON(invalid, instrument, audio));
+    REQUIRE_TRUE(!synth::LoadRuntimeConfigJSON(invalid, instrument, audio, sync));
     REQUIRE_TRUE(!synth::ValidateRuntimeConfigJSON(invalid));
     REQUIRE_TRUE(instrument.controllers.size() == 1);
     REQUIRE_TRUE(instrument.controllers[0].input.identifier == "keep-in");
     REQUIRE_TRUE(instrument.controllers[0].output.identifier == "keep-out");
     REQUIRE_TRUE(audio.outputDeviceName == "Keep Out");
     REQUIRE_TRUE(audio.inputDeviceName == "Keep In");
+    REQUIRE_TRUE((sync == synth::SyncConfig{.sendTransport = true, .ppqn = 120}));
 }
 
 TEST_CASE(runtime_config_file_invalid_schema_returns_invalid_and_preserves_targets) {
@@ -13933,8 +14082,9 @@ TEST_CASE(runtime_config_file_invalid_schema_returns_invalid_and_preserves_targe
     synth::MidiInstrumentConfig instrument =
         MakeInstrumentFromProfile(synth::WrldBldrDefaultProfileConfig({}), "keep-in", "keep-out");
     synth::AudioDeviceState audio{.outputDeviceName = "Keep Out", .inputDeviceName = "Keep In"};
+    synth::SyncConfig sync{.receiveTransport = true, .ppqn = 192};
 
-    const synth::RuntimeConfigFileStatus status = synth::LoadRuntimeConfigFile(configFile, instrument, audio);
+    const synth::RuntimeConfigFileStatus status = synth::LoadRuntimeConfigFile(configFile, instrument, audio, sync);
     REQUIRE_TRUE(status == synth::RuntimeConfigFileStatus::Invalid);
     REQUIRE_TRUE(std::string(synth::RuntimeConfigFileStatusName(status)) == "Invalid");
     REQUIRE_TRUE(std::string(synth::RuntimeConfigFileStatusName(synth::RuntimeConfigFileStatus::IOError)) == "IOError");
@@ -13943,6 +14093,7 @@ TEST_CASE(runtime_config_file_invalid_schema_returns_invalid_and_preserves_targe
     REQUIRE_TRUE(instrument.controllers[0].output.identifier == "keep-out");
     REQUIRE_TRUE(audio.outputDeviceName == "Keep Out");
     REQUIRE_TRUE(audio.inputDeviceName == "Keep In");
+    REQUIRE_TRUE((sync == synth::SyncConfig{.receiveTransport = true, .ppqn = 192}));
 
     std::filesystem::remove_all(tempRoot);
 }
@@ -13956,8 +14107,9 @@ TEST_CASE(runtime_config_file_missing_preserves_targets) {
     synth::MidiInstrumentConfig instrument =
         MakeInstrumentFromProfile(synth::WrldBldrDefaultProfileConfig({}), "keep-in", "keep-out");
     synth::AudioDeviceState audio{.outputDeviceName = "Keep Out", .inputDeviceName = "Keep In"};
+    synth::SyncConfig sync{.sendClock = true, .ppqn = 12};
 
-    const synth::RuntimeConfigFileStatus status = synth::LoadRuntimeConfigFile(configFile, instrument, audio);
+    const synth::RuntimeConfigFileStatus status = synth::LoadRuntimeConfigFile(configFile, instrument, audio, sync);
     REQUIRE_TRUE(status == synth::RuntimeConfigFileStatus::Missing);
     REQUIRE_TRUE(std::string(synth::RuntimeConfigFileStatusName(status)) == "Missing");
     REQUIRE_TRUE(instrument.controllers.size() == 1);
@@ -13965,6 +14117,7 @@ TEST_CASE(runtime_config_file_missing_preserves_targets) {
     REQUIRE_TRUE(instrument.controllers[0].output.identifier == "keep-out");
     REQUIRE_TRUE(audio.outputDeviceName == "Keep Out");
     REQUIRE_TRUE(audio.inputDeviceName == "Keep In");
+    REQUIRE_TRUE((sync == synth::SyncConfig{.sendClock = true, .ppqn = 12}));
 
     std::filesystem::remove_all(tempRoot);
 }
@@ -13978,8 +14131,9 @@ TEST_CASE(runtime_config_atomic_save_writes_config_and_cleans_temp) {
     const synth::MidiInstrumentConfig instrument =
         MakeInstrumentFromProfile(synth::WrldBldrDefaultProfileConfig({}), "saved-in", "saved-out");
     const synth::AudioDeviceState audio{.outputDeviceName = "Saved Out", .inputDeviceName = "Saved In"};
+    const synth::SyncConfig sync{.sendClock = true, .receiveTransport = true, .ppqn = 48};
 
-    const synth::RuntimeConfigFileStatus saveStatus = synth::SaveRuntimeConfigFile(configFile, instrument, audio);
+    const synth::RuntimeConfigFileStatus saveStatus = synth::SaveRuntimeConfigFile(configFile, instrument, audio, sync);
     REQUIRE_TRUE(saveStatus == synth::RuntimeConfigFileStatus::Ok);
     REQUIRE_TRUE(std::string(synth::RuntimeConfigFileStatusName(saveStatus)) == "Ok");
     REQUIRE_TRUE(std::filesystem::exists(configFile));
@@ -13990,13 +14144,16 @@ TEST_CASE(runtime_config_atomic_save_writes_config_and_cleans_temp) {
 
     synth::MidiInstrumentConfig loadedInstrument;
     synth::AudioDeviceState loadedAudio;
-    const synth::RuntimeConfigFileStatus loadStatus = synth::LoadRuntimeConfigFile(configFile, loadedInstrument, loadedAudio);
+    synth::SyncConfig loadedSync;
+    const synth::RuntimeConfigFileStatus loadStatus = synth::LoadRuntimeConfigFile(
+        configFile, loadedInstrument, loadedAudio, loadedSync);
     REQUIRE_TRUE(loadStatus == synth::RuntimeConfigFileStatus::Ok);
     REQUIRE_TRUE(loadedInstrument.controllers.size() == 1);
     REQUIRE_TRUE(loadedInstrument.controllers[0].input.identifier == "saved-in");
     REQUIRE_TRUE(loadedInstrument.controllers[0].output.identifier == "saved-out");
     REQUIRE_TRUE(loadedAudio.outputDeviceName == "Saved Out");
     REQUIRE_TRUE(loadedAudio.inputDeviceName == "Saved In");
+    REQUIRE_TRUE(loadedSync == sync);
 
     std::filesystem::remove_all(tempRoot);
 }

@@ -7,18 +7,44 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <new>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+namespace engine_allocation_probe {
+
+std::atomic<bool> enabled{false};
+std::atomic<std::size_t> count{0};
+
+}  // namespace engine_allocation_probe
+
+void* operator new(std::size_t size) {
+    if (engine_allocation_probe::enabled.load(std::memory_order_relaxed)) {
+        engine_allocation_probe::count.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (void* memory = std::malloc(size)) {
+        return memory;
+    }
+    throw std::bad_alloc();
+}
+
+void* operator new[](std::size_t size) { return ::operator new(size); }
+void operator delete(void* memory) noexcept { std::free(memory); }
+void operator delete[](void* memory) noexcept { std::free(memory); }
+void operator delete(void* memory, std::size_t) noexcept { std::free(memory); }
+void operator delete[](void* memory, std::size_t) noexcept { std::free(memory); }
 
 namespace {
 
@@ -62,6 +88,23 @@ void RequireNear(float actual, float expected, float tolerance, const char* expr
 
 #define REQUIRE_NEAR(actual, expected, tolerance) RequireNear((actual), (expected), (tolerance), #actual)
 
+std::size_t gScheduledEventCount = 0;
+
+struct EngineScheduledEventSink final : synth::IScheduledMidiEventSink {
+    static constexpr std::size_t kCapacity = 512;
+    std::array<synth::ScheduledMidiEvent, kCapacity> events{};
+    std::size_t size = 0;
+
+    bool TryEnqueue(const synth::ScheduledMidiEvent& event) noexcept override {
+        if (size >= events.size()) {
+            return false;
+        }
+        events[size++] = event;
+        gScheduledEventCount = size;
+        return true;
+    }
+};
+
 struct EngineTestApp {
     static inline bool sawNullUiStateDuringInit = false;
     static inline int initCalls = 0;
@@ -85,6 +128,11 @@ struct EngineTestApp {
     float lastProbeDuringBlock = -1.0f;
     float lastProbeSceneCenterDuringBlock = -1.0f;
     std::uint64_t lastBlockStartSample = 0;
+    const synth::ClockBlockPlan* lastClockPlan = nullptr;
+    synth::ClockPlanDescriptor lastClockDescriptor{};
+    bool planStableDuringBlock = false;
+    bool clockPreparedDuringPrepare = false;
+    std::size_t scheduledEventsDuringBlock = 0;
 
     static synth::RuntimeConfig Config() {
         synth::RuntimeConfig config;
@@ -125,10 +173,17 @@ struct EngineTestApp {
     void PrepareToPlay(double sampleRate, int blockSize) {
         preparedSampleRate = sampleRate;
         preparedBlockSize = blockSize;
+        clockPreparedDuringPrepare = context != nullptr && context->masterClock != nullptr &&
+                                   context->masterClock->IsPrepared();
     }
     void ProcessBlock(synth::AudioBlock& block) {
         ++processBlockCalls;
         lastBlockStartSample = block.startSample;
+        lastClockPlan = block.clockPlan;
+        const synth::ClockPlanDescriptor before = block.clockPlan != nullptr
+            ? block.clockPlan->Descriptor()
+            : synth::ClockPlanDescriptor{};
+        scheduledEventsDuringBlock = gScheduledEventCount;
         for (std::size_t frame = 0; frame < block.numFrames; ++frame) {
             context->parameterManager->ParameterById(probeId).ProcessLite();
         }
@@ -147,6 +202,10 @@ struct EngineTestApp {
                 out[frame] = 0.5f;
             }
         }
+        lastClockDescriptor = before;
+        planStableDuringBlock = block.clockPlan != nullptr && block.clockPlan->Descriptor().startSample == before.startSample &&
+                                block.clockPlan->Descriptor().endSample == before.endSample &&
+                                block.clockPlan->Descriptor().generation == before.generation;
     }
 };
 
@@ -246,8 +305,10 @@ synth::MidiInstrumentConfig MakeRuntimeConfigInstrument(std::string name) {
 
 void WriteRuntimeConfigFile(const std::filesystem::path& configFile,
                             const synth::MidiInstrumentConfig& instrument,
-                            const synth::AudioDeviceState& audioDevice) {
-    const synth::RuntimeConfigFileStatus status = synth::SaveRuntimeConfigFile(configFile, instrument, audioDevice);
+                            const synth::AudioDeviceState& audioDevice,
+                            const synth::SyncConfig& sync = {}) {
+    const synth::RuntimeConfigFileStatus status =
+        synth::SaveRuntimeConfigFile(configFile, instrument, audioDevice, sync);
     REQUIRE_TRUE(status == synth::RuntimeConfigFileStatus::Ok);
 }
 
@@ -375,6 +436,58 @@ TEST_CASE(engine_initialize_loads_runtime_config_before_midi_processors_and_then
     std::filesystem::remove_all(dataRoot);
 }
 
+TEST_CASE(engine_loaded_sync_precedes_first_processor_rebuild_prepare_and_first_block) {
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-runtime-sync-startup-order";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    const synth::SyncConfig loadedSync{
+        .sendClock = true,
+        .receiveClock = true,
+        .sendTransport = true,
+        .receiveTransport = true,
+        .ppqn = 96,
+    };
+    WriteRuntimeConfigFile(paths.configFile, MakeRuntimeConfigInstrument("sync-loaded"), {}, loadedSync);
+
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = false;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{5000}; });
+    engine.SetRuntimeDataPaths(paths);
+    bool rebuildSawLoadedSync = false;
+    engine.SetMidiProcessorsWillRebuildCallback([&] {
+        rebuildSawLoadedSync = engine.Clock().SyncConfiguration() == loadedSync;
+    });
+    engine.Initialize();
+    REQUIRE_TRUE(rebuildSawLoadedSync);
+    REQUIRE_TRUE(engine.Clock().SyncConfiguration() == loadedSync);
+
+    EngineScheduledEventSink sink;
+    gScheduledEventCount = 0;
+    engine.SetScheduledMidiEventSink(&sink);
+    engine.Prepare(44100.0, 17);
+    REQUIRE_TRUE(engine.Clock().SyncConfiguration() == loadedSync);
+    REQUIRE_TRUE(engine.Clock().SampleRate() == 44100.0);
+    REQUIRE_TRUE(engine.Clock().BlockSize() == 17);
+
+    REQUIRE_TRUE(engine.UiBus().Push(synth::MessageIn::Start(5000)));
+    std::array<float, 17> left{};
+    std::array<float, 17> right{};
+    float* outputs[] = {left.data(), right.data()};
+    synth::AudioBlock block;
+    block.outputs = outputs;
+    block.numOutputChannels = 2;
+    block.numFrames = 17;
+    engine.ProcessBlock(block, 5000);
+    REQUIRE_TRUE(block.clockPlan == engine.Clock().CurrentPlan());
+    REQUIRE_TRUE(block.clockPlan->StartSample() == 0);
+    REQUIRE_TRUE(block.clockPlan->EndSample() == 17);
+    REQUIRE_TRUE(block.clockPlan->TransportState() == synth::ClockTransportState::ArmedStart);
+    REQUIRE_TRUE(sink.size > 0);
+
+    std::filesystem::remove_all(dataRoot);
+}
+
 TEST_CASE(engine_initialize_ignores_invalid_runtime_config_and_still_loads_startup_patch) {
     const std::filesystem::path dataRoot =
         std::filesystem::temp_directory_path() / "engine-invalid-runtime-config-data-root";
@@ -450,8 +563,9 @@ TEST_CASE(engine_save_runtime_configuration_snapshots_current_midi_and_audio_sta
 
     synth::MidiInstrumentConfig loadedInstrument;
     synth::AudioDeviceState loadedAudio;
+    synth::SyncConfig loadedSync;
     const synth::RuntimeConfigFileStatus loadStatus =
-        synth::LoadRuntimeConfigFile(paths.configFile, loadedInstrument, loadedAudio);
+        synth::LoadRuntimeConfigFile(paths.configFile, loadedInstrument, loadedAudio, loadedSync);
     REQUIRE_TRUE(loadStatus == synth::RuntimeConfigFileStatus::Ok);
     REQUIRE_TRUE(loadedInstrument.controllers.size() == 1);
     REQUIRE_TRUE(loadedInstrument.controllers.front().name == "saved-controller");
@@ -489,7 +603,8 @@ TEST_CASE(engine_runtime_page_back_policy_saves_config_for_audio_and_controllers
 
     synth::MidiInstrumentConfig loadedInstrument;
     synth::AudioDeviceState loadedAudio;
-    REQUIRE_TRUE(synth::LoadRuntimeConfigFile(paths.configFile, loadedInstrument, loadedAudio) ==
+    synth::SyncConfig loadedSync;
+    REQUIRE_TRUE(synth::LoadRuntimeConfigFile(paths.configFile, loadedInstrument, loadedAudio, loadedSync) ==
                  synth::RuntimeConfigFileStatus::Ok);
     REQUIRE_TRUE(loadedInstrument.controllers.front().name == "audio-back-controller");
     REQUIRE_TRUE(loadedAudio.outputDeviceName == "Audio Back Output");
@@ -506,7 +621,7 @@ TEST_CASE(engine_runtime_page_back_policy_saves_config_for_audio_and_controllers
                                                           .inputDeviceName = "Controllers Back Input"});
     simulateBack(synth::RuntimePageKind::Controllers);
 
-    REQUIRE_TRUE(synth::LoadRuntimeConfigFile(paths.configFile, loadedInstrument, loadedAudio) ==
+    REQUIRE_TRUE(synth::LoadRuntimeConfigFile(paths.configFile, loadedInstrument, loadedAudio, loadedSync) ==
                  synth::RuntimeConfigFileStatus::Ok);
     REQUIRE_TRUE(loadedInstrument.controllers.front().name == "controllers-back-controller");
     REQUIRE_TRUE(loadedAudio.outputDeviceName == "Controllers Back Output");
@@ -580,6 +695,207 @@ struct EngineFakeMidiSink final : synth::IMidiOutputSink {
 };
 
 }  // namespace
+
+TEST_CASE(engine_owns_one_stable_clock_prepares_before_app_and_publishes_exact_current_plan) {
+    EngineTestApp::processLiteAlpha = 1.0f;
+    gScheduledEventCount = 0;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{1000}; });
+    engine.Initialize();
+
+    synth::MasterClock* const contextClock = engine.Context().masterClock;
+    REQUIRE_TRUE(contextClock != nullptr);
+    REQUIRE_TRUE(contextClock == &engine.Clock());
+    REQUIRE_TRUE(!contextClock->IsPrepared());
+
+    EngineScheduledEventSink sink;
+    engine.SetScheduledMidiEventSink(&sink);
+    REQUIRE_TRUE(engine.Clock().ApplySyncConfig({
+        .sendClock = true,
+        .receiveClock = false,
+        .sendTransport = true,
+        .receiveTransport = false,
+        .ppqn = 24,
+    }));
+    engine.Prepare(48000.0, 64);
+    REQUIRE_TRUE(engine.Application().clockPreparedDuringPrepare);
+    REQUIRE_TRUE(engine.Context().masterClock == contextClock);
+
+    REQUIRE_TRUE(engine.UiBus().Push(synth::MessageIn::Start(1000)));
+    TestBlockBuffers buffers(2, 64);
+    synth::AudioBlock first = buffers.Block(64);
+    engine.ProcessBlock(first, 1000);
+
+    REQUIRE_TRUE(first.clockPlan != nullptr);
+    REQUIRE_TRUE(first.clockPlan == engine.Clock().CurrentPlan());
+    REQUIRE_TRUE(engine.Application().lastClockPlan == first.clockPlan);
+    REQUIRE_TRUE(engine.Application().planStableDuringBlock);
+    REQUIRE_TRUE(engine.Application().scheduledEventsDuringBlock == sink.size);
+    REQUIRE_TRUE(sink.size > 0);
+    REQUIRE_TRUE(first.clockPlan->StartSample() == 0);
+    REQUIRE_TRUE(first.clockPlan->EndSample() == 64);
+    REQUIRE_TRUE(first.clockPlan->FrameCount() == 64);
+
+    const synth::ClockPlanDescriptor firstDescriptor = engine.Application().lastClockDescriptor;
+    synth::AudioBlock second = buffers.Block(64);
+    engine.ProcessBlock(second, 2000);
+    REQUIRE_TRUE(second.clockPlan == engine.Clock().CurrentPlan());
+    REQUIRE_TRUE(second.clockPlan->StartSample() == 64);
+    REQUIRE_TRUE(second.clockPlan->EndSample() == 128);
+    REQUIRE_TRUE(firstDescriptor.startSample == 0);
+    REQUIRE_TRUE(firstDescriptor.endSample == 64);
+    REQUIRE_TRUE(engine.Application().processBlockCalls == 2);
+}
+
+TEST_CASE(engine_merges_realtime_messages_across_buses_with_deterministic_ties) {
+    EngineTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{100}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 32);
+    REQUIRE_TRUE(engine.Clock().ApplySyncConfig({
+        .sendClock = false,
+        .receiveClock = true,
+        .sendTransport = false,
+        .receiveTransport = true,
+        .ppqn = 24,
+    }));
+
+    // MIDI's earlier timestamp wins even though UI is drained first; Start
+    // then Stop leaves the first committed plan stopped.
+    REQUIRE_TRUE(engine.UiBus().Push(synth::MessageIn::Stop(90)));
+    REQUIRE_TRUE(engine.MidiBus().Push(synth::MessageIn::Start(80)));
+
+    // UI arrives first, but external slot identity is the earlier tie-break.
+    REQUIRE_TRUE(engine.UiBus().Push(synth::MessageIn::Clock(
+        100, synth::MessageIn::Origin::ExternalMidi, 9)));
+    REQUIRE_TRUE(engine.MidiBus().Push(synth::MessageIn::Clock(
+        100, synth::MessageIn::Origin::ExternalMidi, 2)));
+    TestBlockBuffers buffers(2, 32);
+    synth::AudioBlock first = buffers.Block(32);
+    engine.ProcessBlock(first, 100);
+    REQUIRE_TRUE(first.clockPlan->TransportState() == synth::ClockTransportState::Stopped);
+    const synth::ClockDiagnostics diagnostics = engine.Clock().DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.hasActiveExternalSource);
+    REQUIRE_TRUE(diagnostics.activeExternalSourceSlot == 2);
+    REQUIRE_TRUE(diagnostics.acceptedExternalClockCount == 1);
+
+    // Exact ties preserve FIFO arrival order within one bus.
+    REQUIRE_TRUE(engine.UiBus().Push(synth::MessageIn::Start(200)));
+    REQUIRE_TRUE(engine.UiBus().Push(synth::MessageIn::Stop(200)));
+    synth::AudioBlock second = buffers.Block(32);
+    engine.ProcessBlock(second, 200);
+    REQUIRE_TRUE(second.clockPlan->TransportState() == synth::ClockTransportState::Stopped);
+
+}
+
+TEST_CASE(engine_realtime_batch_overflow_is_observable_and_retains_earliest_ordered_messages) {
+    EngineTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{100}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 32);
+    REQUIRE_TRUE(engine.Clock().ApplySyncConfig({
+        .sendClock = false,
+        .receiveClock = true,
+        .sendTransport = false,
+        .receiveTransport = false,
+        .ppqn = 24,
+    }));
+
+    for (std::size_t slot = synth::Engine<EngineTestApp>::kRealtimeBatchCapacity; slot > 0; --slot) {
+        REQUIRE_TRUE(engine.MidiBus().Push(synth::MessageIn::Clock(
+            100, synth::MessageIn::Origin::ExternalMidi, slot)));
+    }
+    REQUIRE_TRUE(engine.MidiBus().Push(synth::MessageIn::Clock(
+        100, synth::MessageIn::Origin::ExternalMidi, 0)));
+
+    TestBlockBuffers buffers(2, 32);
+    synth::AudioBlock block = buffers.Block(32);
+    engine.ProcessBlock(block, 100);
+    REQUIRE_TRUE(engine.DroppedRealtimeInputCount() == 1);
+    REQUIRE_TRUE(engine.Clock().DiagnosticsSnapshot().activeExternalSourceSlot == 0);
+}
+
+TEST_CASE(engine_clock_commit_query_crossing_and_enqueue_allocate_nothing_after_prepare) {
+    EngineTestApp::processLiteAlpha = 1.0f;
+    gScheduledEventCount = 0;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{1000}; });
+    engine.Initialize();
+    EngineScheduledEventSink sink;
+    engine.SetScheduledMidiEventSink(&sink);
+    REQUIRE_TRUE(engine.Clock().ApplySyncConfig({
+        .sendClock = true,
+        .receiveClock = false,
+        .sendTransport = true,
+        .receiveTransport = false,
+        .ppqn = 960,
+    }));
+    engine.Prepare(48000.0, 64);
+    REQUIRE_TRUE(engine.UiBus().Push(synth::MessageIn::Start(1000)));
+
+    TestBlockBuffers buffers(2, 64);
+    synth::AudioBlock warmup = buffers.Block(64);
+    engine.ProcessBlock(warmup, 1000);
+    REQUIRE_TRUE(warmup.clockPlan != nullptr);
+
+    engine_allocation_probe::count.store(0, std::memory_order_relaxed);
+    engine_allocation_probe::enabled.store(true, std::memory_order_release);
+    for (std::uint64_t blockIx = 1; blockIx <= 128; ++blockIx) {
+        synth::AudioBlock block = buffers.Block(64);
+        engine.ProcessBlock(block, 1000 + blockIx * 1333);
+        const double fractionalSample = static_cast<double>(block.startSample) + 0.25;
+        const auto direct = engine.Clock().TimeAtSample(fractionalSample);
+        if (!direct.has_value() || block.clockPlan == nullptr ||
+            !block.clockPlan->TryLifetimeQuarterNotesAt(fractionalSample).has_value()) {
+            engine_allocation_probe::enabled.store(false, std::memory_order_release);
+            throw std::runtime_error("clock query unexpectedly failed during allocation probe");
+        }
+    }
+    engine_allocation_probe::enabled.store(false, std::memory_order_release);
+    REQUIRE_TRUE(engine_allocation_probe::count.load(std::memory_order_relaxed) == 0);
+}
+
+TEST_CASE(engine_steady_state_block_does_not_acquire_configuration_mutex) {
+    EngineTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{1000}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 64);
+    TestBlockBuffers buffers(2, 64);
+
+    std::atomic<bool> editHoldsMutex{false};
+    std::atomic<bool> releaseEdit{false};
+    std::thread editor([&] {
+        engine.EditInstrument([&](synth::MidiInstrumentConfig&) {
+            editHoldsMutex.store(true, std::memory_order_release);
+            while (!releaseEdit.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+        });
+    });
+    while (!editHoldsMutex.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+
+    std::atomic<bool> blockStarted{false};
+    std::atomic<bool> blockCompleted{false};
+    std::thread audio([&] {
+        blockStarted.store(true, std::memory_order_release);
+        synth::AudioBlock block = buffers.Block(64);
+        engine.ProcessBlock(block, 1000);
+        blockCompleted.store(true, std::memory_order_release);
+    });
+    while (!blockStarted.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!blockCompleted.load(std::memory_order_acquire) &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    const bool completedWhileMutexHeld = blockCompleted.load(std::memory_order_acquire);
+    releaseEdit.store(true, std::memory_order_release);
+    audio.join();
+    editor.join();
+    REQUIRE_TRUE(completedWhileMutexHeld);
+}
 
 namespace {
 

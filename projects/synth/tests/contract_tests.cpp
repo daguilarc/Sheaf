@@ -254,6 +254,7 @@ TEST_CASE(audio_block_is_a_plain_view) {
     REQUIRE_TRUE(block.numInputChannels == 0);
     REQUIRE_TRUE(block.numOutputChannels == 2);
     REQUIRE_TRUE(block.numFrames == 4);
+    REQUIRE_TRUE(block.clockPlan == nullptr);
     REQUIRE_NEAR(block.outputs[0][3], 0.3f, 1e-6f);
 }
 
@@ -271,6 +272,7 @@ TEST_CASE(app_context_default_constructs_null) {
     REQUIRE_TRUE(context.defaultInstrument == nullptr);
     REQUIRE_TRUE(context.config == nullptr);
     REQUIRE_TRUE(context.uiState == nullptr);
+    REQUIRE_TRUE(context.masterClock == nullptr);
 }
 
 TEST_CASE(app_context_holds_live_pointers) {

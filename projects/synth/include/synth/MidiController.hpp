@@ -92,6 +92,21 @@ private:
     TimestampProvider timestampProvider_;
 };
 
+// Terminal processor installed at the end of every controller input chain.
+// It translates only exact one-byte MIDI realtime messages and deliberately
+// uses BasicMidi::timestamp rather than the timestamp provider used by mapped
+// control messages.
+class RealtimeMidiInProcessor final : public MidiInProcessor {
+public:
+    explicit RealtimeMidiInProcessor(std::size_t controllerSlot, MessageInBus* bus = nullptr)
+        : MidiInProcessor(bus), controllerSlot_(controllerSlot) {}
+
+    void Process(const BasicMidi& midi) override;
+
+private:
+    std::size_t controllerSlot_ = 0;
+};
+
 enum class EncoderMode {
     Signed7Bit,
     DirectionOnly,
@@ -266,7 +281,8 @@ private:
 };
 
 inline bool operator==(const MessageIn& lhs, const MessageIn& rhs) {
-    return lhs.timestamp == rhs.timestamp && lhs.type == rhs.type && lhs.slotIx == rhs.slotIx &&
+    return lhs.timestamp == rhs.timestamp && lhs.type == rhs.type && lhs.origin == rhs.origin &&
+           lhs.externalControllerSlot == rhs.externalControllerSlot && lhs.slotIx == rhs.slotIx &&
            lhs.position == rhs.position && lhs.gestureIx == rhs.gestureIx && lhs.bankIx == rhs.bankIx &&
            lhs.sceneIx == rhs.sceneIx && lhs.value == rhs.value && lhs.delta == rhs.delta &&
            lhs.boolValue == rhs.boolValue && lhs.hasBoolValue == rhs.hasBoolValue &&

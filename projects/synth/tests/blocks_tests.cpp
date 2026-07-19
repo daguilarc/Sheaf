@@ -115,6 +115,7 @@ bool MessageInFullyEquivalent(const MessageIn& a, const MessageIn& b) {
         case MessageIn::Type::ToggleRandomMod:
             return a.hasBoolValue == b.hasBoolValue && (!a.hasBoolValue || a.boolValue == b.boolValue);
         case MessageIn::Type::Start:
+        case MessageIn::Type::Continue:
         case MessageIn::Type::Stop:
         case MessageIn::Type::Clock:
             return true;

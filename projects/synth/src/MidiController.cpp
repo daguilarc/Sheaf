@@ -205,6 +205,8 @@ const char* MessageTypeName(MessageIn::Type type) {
         return "prevParamBank";
     case MessageIn::Type::Start:
         return "start";
+    case MessageIn::Type::Continue:
+        return "continue";
     case MessageIn::Type::Stop:
         return "stop";
     case MessageIn::Type::Clock:
@@ -252,6 +254,8 @@ bool ParseMessageType(std::string_view value, MessageIn::Type& type) {
         type = MessageIn::Type::PrevParamBank;
     } else if (value == "start") {
         type = MessageIn::Type::Start;
+    } else if (value == "continue") {
+        type = MessageIn::Type::Continue;
     } else if (value == "stop") {
         type = MessageIn::Type::Stop;
     } else if (value == "clock") {
@@ -273,6 +277,35 @@ bool ParseMessageType(std::string_view value, MessageIn::Type& type) {
     } else {
         return false;
     }
+    return true;
+}
+
+void WriteMessageOrigin(JsonArena& arena, JSON json, const MessageIn& value) {
+    if (value.origin == MessageIn::Origin::ExternalMidi) {
+        json.SetNew("origin", arena.String("externalMidi"));
+        json.SetNew("externalControllerSlot",
+                    arena.Integer(static_cast<std::int64_t>(value.externalControllerSlot)));
+    }
+}
+
+bool ReadMessageOrigin(JSON json, MessageIn& value) {
+    const JSON origin = json.Get("origin");
+    const bool hasExternalSlot = ObjectHasKey(json, "externalControllerSlot");
+    if (origin.IsNull()) {
+        return !hasExternalSlot;
+    }
+    if (!IsString(origin)) {
+        return false;
+    }
+    const std::string_view name(origin.StringValue());
+    if (name == "internal") {
+        return !hasExternalSlot;
+    }
+    if (name != "externalMidi" || !hasExternalSlot ||
+        !ReadSize(json.Get("externalControllerSlot"), value.externalControllerSlot)) {
+        return false;
+    }
+    value.origin = MessageIn::Origin::ExternalMidi;
     return true;
 }
 
@@ -451,6 +484,33 @@ void MidiInProcessor::PassToThru(const BasicMidi& midi) {
     if (thru_ != nullptr) {
         thru_->Process(midi);
     }
+}
+
+void RealtimeMidiInProcessor::Process(const BasicMidi& midi) {
+    if (midi.raw.size() != 1 || !BasicMidi::IsSupportedRealtimeStatus(midi.raw.front())) {
+        PassToThru(midi);
+        return;
+    }
+
+    MessageIn message;
+    switch (midi.raw.front()) {
+    case BasicMidi::kStatusClock:
+        message = MessageIn::Clock(midi.timestamp, MessageIn::Origin::ExternalMidi, controllerSlot_);
+        break;
+    case BasicMidi::kStatusTransportStart:
+        message = MessageIn::Start(midi.timestamp, MessageIn::Origin::ExternalMidi, controllerSlot_);
+        break;
+    case BasicMidi::kStatusTransportContinue:
+        message = MessageIn::Continue(midi.timestamp, MessageIn::Origin::ExternalMidi, controllerSlot_);
+        break;
+    case BasicMidi::kStatusTransportStop:
+        message = MessageIn::Stop(midi.timestamp, MessageIn::Origin::ExternalMidi, controllerSlot_);
+        break;
+    default:
+        PassToThru(midi);
+        return;
+    }
+    (void)Push(message);
 }
 
 EncoderMidiInConfig EncoderMidiInConfig::TwisterDefault(std::size_t slotIx) {
@@ -1378,6 +1438,7 @@ SystemMessageOutputState SystemMessageOutputInfo::Evaluate(const MessageIn& mess
     case MessageIn::Type::NextParamBank:
     case MessageIn::Type::PrevParamBank:
     case MessageIn::Type::Start:
+    case MessageIn::Type::Continue:
     case MessageIn::Type::Stop:
     case MessageIn::Type::Clock:
     case MessageIn::Type::SetGestureValue:
@@ -1843,6 +1904,7 @@ bool FromJSON(JSON json, EncoderMidiOutConfig& value) {
 JSON ToJSON(JsonArena& arena, const MessageIn& value) {
     JSON json = arena.Object();
     json.SetNew("type", arena.String(MessageTypeName(value.type)));
+    WriteMessageOrigin(arena, json, value);
     switch (value.type) {
     case MessageIn::Type::GridPress:
     case MessageIn::Type::GridPressureChange:
@@ -1872,6 +1934,7 @@ JSON ToJSON(JsonArena& arena, const MessageIn& value) {
     case MessageIn::Type::NextParamBank:
     case MessageIn::Type::PrevParamBank:
     case MessageIn::Type::Start:
+    case MessageIn::Type::Continue:
     case MessageIn::Type::Stop:
     case MessageIn::Type::Clock:
     case MessageIn::Type::SetGestureValue:
@@ -1897,6 +1960,9 @@ bool FromJSON(JSON json, MessageIn& value) {
     }
     MessageIn parsed;
     if (!ParseMessageType(json.Get("type").StringValue(), parsed.type)) {
+        return false;
+    }
+    if (!ReadMessageOrigin(json, parsed)) {
         return false;
     }
     switch (parsed.type) {
@@ -1934,6 +2000,7 @@ bool FromJSON(JSON json, MessageIn& value) {
     case MessageIn::Type::NextParamBank:
     case MessageIn::Type::PrevParamBank:
     case MessageIn::Type::Start:
+    case MessageIn::Type::Continue:
     case MessageIn::Type::Stop:
     case MessageIn::Type::Clock:
     case MessageIn::Type::SetGestureValue:
@@ -2339,6 +2406,7 @@ MidiControllerProfileResult CreateMidiControllerProfileImpl(
     if (config.pressureInput.has_value()) {
         appendInput(std::make_unique<PolyphonicPressureMidiInProcessor>(*config.pressureInput, bus));
     }
+    appendInput(std::make_unique<RealtimeMidiInProcessor>(controllerSlot, bus));
 
     if (config.encoderOutput.has_value()) {
         switch (config.encoderOutput->protocol) {

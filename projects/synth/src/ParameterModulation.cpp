@@ -3887,24 +3887,39 @@ MessageIn MessageIn::PrevParamBank(std::uint64_t timestamp, std::size_t slotIx) 
     return message;
 }
 
-MessageIn MessageIn::Start(std::uint64_t timestamp) {
+MessageIn MessageIn::Start(std::uint64_t timestamp, Origin origin, std::size_t externalControllerSlot) {
     MessageIn message;
     message.timestamp = timestamp;
     message.type = Type::Start;
+    message.origin = origin;
+    message.externalControllerSlot = externalControllerSlot;
     return message;
 }
 
-MessageIn MessageIn::Stop(std::uint64_t timestamp) {
+MessageIn MessageIn::Continue(std::uint64_t timestamp, Origin origin, std::size_t externalControllerSlot) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::Continue;
+    message.origin = origin;
+    message.externalControllerSlot = externalControllerSlot;
+    return message;
+}
+
+MessageIn MessageIn::Stop(std::uint64_t timestamp, Origin origin, std::size_t externalControllerSlot) {
     MessageIn message;
     message.timestamp = timestamp;
     message.type = Type::Stop;
+    message.origin = origin;
+    message.externalControllerSlot = externalControllerSlot;
     return message;
 }
 
-MessageIn MessageIn::Clock(std::uint64_t timestamp) {
+MessageIn MessageIn::Clock(std::uint64_t timestamp, Origin origin, std::size_t externalControllerSlot) {
     MessageIn message;
     message.timestamp = timestamp;
     message.type = Type::Clock;
+    message.origin = origin;
+    message.externalControllerSlot = externalControllerSlot;
     return message;
 }
 
@@ -4094,6 +4109,7 @@ void MessageInBus::Apply(const MessageIn& message) {
         }
         break;
     case MessageIn::Type::Start:
+    case MessageIn::Type::Continue:
     case MessageIn::Type::Stop:
     case MessageIn::Type::Clock:
         break;

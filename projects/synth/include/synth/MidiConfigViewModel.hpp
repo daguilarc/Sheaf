@@ -195,6 +195,7 @@ enum class UISystemMessage {
     HoldGestureSelect,
     SelectParamBank,
     Start,
+    Continue,
     Stop,
     Clock,
     SetGestureValue,

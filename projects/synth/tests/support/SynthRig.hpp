@@ -6,14 +6,15 @@
 // production-bus messages (Turn/Press/ResetPress/gesture/scene/bank
 // selection, SendMidi) exactly like a real control surface or MIDI input
 // would, and observes the engine's output the way an external harness must
-// (captured output frames, peak, sticky NaN/Inf, parameter values, UI
-// state). Patch persistence commands are exposed as blocking helpers that
+// (captured output frames, peak, sticky NaN/Inf, parameter values, UI state,
+// exact MasterClock plans/direct queries, and scheduled MIDI events). Patch
+// persistence commands are exposed as blocking helpers that
 // pump blocks internally until the manager reports a terminal status or a
 // configurable block budget is exhausted.
 //
 // Deliberately depends on nothing but synth::Engine<App> and the headers it
 // already pulls in (AppContext/AppConcepts/MidiController/
-// ParameterModulation/PatchPersistence): no JUCE, so this can run in plain
+// ParameterModulation/PatchPersistence/MasterClock): no JUCE, so this can run in plain
 // unit-test binaries.
 //
 // Test-support surface: InstallInstrumentForTest() below (and the
@@ -25,10 +26,13 @@
 #include "synth/Engine.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -39,18 +43,31 @@ enum class RigPatchStatus { Ok, Written, Failed, TimedOut };
 template <synth::SynthApplicationCore App>
 class SynthRig {
 public:
+    struct AudioSettings {
+        double sampleRate = 0.0;
+        int blockSize = 0;
+    };
+
     struct OutputFrame {
         std::vector<float> channels;
     };
 
-    explicit SynthRig(std::size_t patchPumpBudgetBlocks = 64, synth::RuntimeDataPaths dataPaths = {})
+    explicit SynthRig(std::size_t patchPumpBudgetBlocks = 64,
+                      synth::RuntimeDataPaths dataPaths = {},
+                      AudioSettings audioSettings = {})
         : patchPumpBudgetBlocks_(patchPumpBudgetBlocks)
+        , scheduledMidiSink_()
         , engine_([this] { return NextTimestamp(); }) {
         const synth::RuntimeConfig config = App::Config();
         numInputChannels_ = config.numAudioInputs;
         numOutputChannels_ = config.numAudioOutputs;
-        blockSize_ = static_cast<std::size_t>(config.preferredBlockSize);
-        sampleRate_ = config.preferredSampleRate;
+        const int negotiatedBlockSize = audioSettings.blockSize > 0
+            ? audioSettings.blockSize
+            : config.preferredBlockSize;
+        blockSize_ = static_cast<std::size_t>(negotiatedBlockSize);
+        sampleRate_ = audioSettings.sampleRate > 0.0
+            ? audioSettings.sampleRate
+            : config.preferredSampleRate;
 
         inputBuffers_.assign(static_cast<std::size_t>(numInputChannels_),
                              std::vector<float>(blockSize_, 0.0f));
@@ -66,8 +83,9 @@ public:
         }
 
         engine_.SetRuntimeDataPaths(std::move(dataPaths));
+        engine_.SetScheduledMidiEventSink(&scheduledMidiSink_);
         engine_.Initialize();
-        engine_.Prepare(config.preferredSampleRate, config.preferredBlockSize);
+        engine_.Prepare(sampleRate_, negotiatedBlockSize);
     }
 
     SynthRig(const SynthRig&) = delete;
@@ -77,9 +95,11 @@ public:
 
     void RunBlocks(std::size_t count) {
         for (std::size_t i = 0; i < count; ++i) {
-            RunOneBlock();
+            RunOneBlockAt(NextTimestamp());
         }
     }
+
+    void RunBlockAt(std::uint64_t timestamp) { RunOneBlockAt(timestamp); }
 
     void RunSamples(std::size_t count) {
         if (blockSize_ == 0) {
@@ -145,6 +165,38 @@ public:
         engine_.UiBus().Push(synth::MessageIn::SelectParamBank(NextTimestamp(), slotIx, bankIx));
     }
 
+    void StartAt(std::uint64_t timestamp) {
+        engine_.UiBus().Push(synth::MessageIn::Start(timestamp));
+    }
+
+    void ContinueAt(std::uint64_t timestamp) {
+        engine_.UiBus().Push(synth::MessageIn::Continue(timestamp));
+    }
+
+    void StopAt(std::uint64_t timestamp) {
+        engine_.UiBus().Push(synth::MessageIn::Stop(timestamp));
+    }
+
+    void ExternalStartAt(std::size_t controllerSlot, std::uint64_t timestamp) {
+        engine_.MidiBus().Push(synth::MessageIn::Start(
+            timestamp, synth::MessageIn::Origin::ExternalMidi, controllerSlot));
+    }
+
+    void ExternalContinueAt(std::size_t controllerSlot, std::uint64_t timestamp) {
+        engine_.MidiBus().Push(synth::MessageIn::Continue(
+            timestamp, synth::MessageIn::Origin::ExternalMidi, controllerSlot));
+    }
+
+    void ExternalStopAt(std::size_t controllerSlot, std::uint64_t timestamp) {
+        engine_.MidiBus().Push(synth::MessageIn::Stop(
+            timestamp, synth::MessageIn::Origin::ExternalMidi, controllerSlot));
+    }
+
+    void ExternalClockAt(std::size_t controllerSlot, std::uint64_t timestamp) {
+        engine_.MidiBus().Push(synth::MessageIn::Clock(
+            timestamp, synth::MessageIn::Origin::ExternalMidi, controllerSlot));
+    }
+
     // Feeds midi into controller slot controllerIx's input processor chain
     // (Engine::MidiInputProcessor(controllerIx)) -- per-controller rebuild
     // (Task 2): every slot's chain still terminates in the same underlying
@@ -152,9 +204,8 @@ public:
     // slot's chain decodes a given raw message is now caller-selected, the
     // same way a real multi-device host would route each physical MIDI
     // input's bytes to the processor built for that device's slot. Silently
-    // drops (with an INFO log) when controllerIx is out of range or that
-    // slot has no input chain, matching the prior single-controller
-    // null-check contract.
+    // drops (with an INFO log) when controllerIx is out of range. Every
+    // existing slot has at least its terminal realtime processor.
     void SendMidi(std::size_t controllerIx, const synth::BasicMidi& midi) {
         synth::MidiInProcessor* processor = engine_.MidiInputProcessor(controllerIx);
         if (processor == nullptr) {
@@ -191,6 +242,25 @@ public:
 
     App& Application() { return engine_.Application(); }
     synth::Engine<App>& Engine() { return engine_; }
+    bool SetSyncConfig(const synth::SyncConfig& config) {
+        return engine_.Clock().ApplySyncConfig(config);
+    }
+    const synth::ClockBlockPlan* CurrentClockPlan() const {
+        return engine_.Clock().CurrentPlan();
+    }
+    std::optional<synth::ClockTimePoint> ClockTimeAtSample(double sample) const {
+        return engine_.Clock().TimeAtSample(sample);
+    }
+    std::optional<synth::ClockTimePoint> ClockTimeAtTimestamp(std::uint64_t timestamp) const {
+        return engine_.Clock().TimeAtTimestamp(timestamp);
+    }
+    std::span<const synth::ScheduledMidiEvent> ScheduledMidiEvents() const {
+        return scheduledMidiSink_.Events();
+    }
+    std::uint64_t DroppedScheduledMidiEventCount() const {
+        return scheduledMidiSink_.DroppedCount();
+    }
+    void ClearScheduledMidiEvents() { scheduledMidiSink_.Clear(); }
 
     // Test-support: install a full MIDI instrument (any number of controller
     // slots) as the engine's live instrument and rebuild the MIDI processors
@@ -234,6 +304,34 @@ public:
     }
 
 private:
+    class FixedScheduledMidiEventSink final : public synth::IScheduledMidiEventSink {
+    public:
+        static constexpr std::size_t kCapacity = 16384;
+
+        bool TryEnqueue(const synth::ScheduledMidiEvent& event) noexcept override {
+            if (size_ >= events_.size()) {
+                ++droppedCount_;
+                return false;
+            }
+            events_[size_++] = event;
+            return true;
+        }
+
+        std::span<const synth::ScheduledMidiEvent> Events() const noexcept {
+            return {events_.data(), size_};
+        }
+        std::uint64_t DroppedCount() const noexcept { return droppedCount_; }
+        void Clear() noexcept {
+            size_ = 0;
+            droppedCount_ = 0;
+        }
+
+    private:
+        std::array<synth::ScheduledMidiEvent, kCapacity> events_{};
+        std::size_t size_ = 0;
+        std::uint64_t droppedCount_ = 0;
+    };
+
     std::uint64_t NextTimestamp() { return nextTimestamp_++; }
 
     static bool IsImmediateFailure(synth::PatchCommandStatus status) {
@@ -351,7 +449,7 @@ private:
         return RigPatchStatus::TimedOut;
     }
 
-    void RunOneBlock() {
+    void RunOneBlockAt(std::uint64_t timestamp) {
         synth::AudioBlock block;
         block.inputs = numInputChannels_ > 0 ? inputPointers_.data() : nullptr;
         block.outputs = numOutputChannels_ > 0 ? outputPointers_.data() : nullptr;
@@ -359,7 +457,7 @@ private:
         block.numOutputChannels = numOutputChannels_;
         block.numFrames = blockSize_;
 
-        engine_.ProcessBlock(block, NextTimestamp());
+        engine_.ProcessBlock(block, timestamp);
 
         for (std::size_t frame = 0; frame < blockSize_; ++frame) {
             OutputFrame captured;
@@ -404,6 +502,7 @@ private:
     std::vector<const float*> inputPointers_;
     std::vector<float*> outputPointers_;
 
+    FixedScheduledMidiEventSink scheduledMidiSink_;
     synth::Engine<App> engine_;
 
     std::vector<OutputFrame> capturedOutput_;

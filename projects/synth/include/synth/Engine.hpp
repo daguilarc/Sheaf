@@ -15,11 +15,13 @@
 #include "synth/AppContext.hpp"
 #include "synth/AsyncLogger.hpp"
 #include "synth/MidiController.hpp"
+#include "synth/MasterClock.hpp"
 #include "synth/ParameterModulation.hpp"
 #include "synth/PatchPersistence.hpp"
 #include "synth/RuntimeUIState.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstddef>
@@ -51,6 +53,7 @@ public:
         , midiSender_()
         , absoluteFeedbackCoordinator_()
         , patchManager_(&patchInputBus_, &patchOutputBus_, initialArenaCapacity)
+        , masterClock_()
         , instrumentConfig_()
         , defaultInstrumentConfig_()
         , audioDeviceState_()
@@ -84,6 +87,7 @@ public:
         context_.patchInputBus = &patchInputBus_;
         context_.patchOutputBus = &patchOutputBus_;
         context_.midiSender = &midiSender_;
+        context_.masterClock = &masterClock_;
         context_.instrument = &instrumentConfig_;
         context_.defaultInstrument = &defaultInstrumentConfig_;
         context_.config = &config_;
@@ -109,8 +113,9 @@ public:
     //       default that revert/new-patch restore to)
     //   4b. load runtime config from dataPaths_.configFile when present.
     //       Valid config replaces the live MIDI instrument/audio selection
-    //       before MIDI processors or host startup reconciliation exist;
-    //       missing/invalid config preserves the app defaults above.
+    //       and installs sync policy before MIDI processors, clock prepare,
+    //       or host startup reconciliation exist; missing/invalid config
+    //       preserves the app defaults above.
     //   5. manager_.CaptureDefaultControlState()
     //   6. allocate parameter/grid UI state, publish initial grid state, bind
     //      the stable RuntimeUIState facade, and expose only its parameter
@@ -180,14 +185,18 @@ public:
         }
     }
 
-    // Stores negotiated audio values, computes the UI-state publish-throttle
-    // interval (in blocks), and forwards to the application's PrepareToPlay
-    // hook when present. uiPublishInterval_ = max(1, round(sampleRate /
-    // (uiFrameHz * blockSize))); before Prepare runs, the default of 1
-    // (publish every block) applies.
+    // Stores negotiated output-audio values, prepares the MasterClock first,
+    // computes the UI-state publish-throttle interval (in blocks), and then
+    // forwards to the application's PrepareToPlay hook when present.
+    // uiPublishInterval_ = max(1, round(sampleRate / (uiFrameHz * blockSize)));
+    // before Prepare runs, the default of 1 (publish every block) applies.
     void Prepare(double sampleRate, int blockSize) {
         sampleRate_ = sampleRate;
         blockSize_ = blockSize;
+
+        if (sampleRate > 0.0 && blockSize > 0) {
+            (void)masterClock_.Prepare(sampleRate, static_cast<std::size_t>(blockSize));
+        }
 
         const int uiFrameHz = config_.uiFrameHz > 0 ? config_.uiFrameHz : 30;
         if (sampleRate > 0.0 && blockSize > 0) {
@@ -204,7 +213,7 @@ public:
         }
     }
 
-    // Task 4: audio-thread block pump (sar-6, binding order):
+    // Audio-thread block pump (sar-6, binding order):
     //   1. patch-drain phase (drain barrier): if a message is stashed in
     //      pendingPatchMessage_ AND arenaGrowPending_ is still set, the
     //      arena has not been grown yet — skip draining patchInputBus_
@@ -220,16 +229,23 @@ public:
     //      synthesizer parameter values only. ArenaExhausted stashes the popped
     //      message in pendingPatchMessage_, sets arenaGrowPending_, and stops
     //      draining for this block (never grows the arena on the audio path).
-    //   2. uiBus_.Process(timestamp)
-    //   3. midiBus_.Process(timestamp)
-    //   4. if the app opts in via the HasProcessFrame concept, app_.ProcessFrame()
+    //   2. drain due UI messages, then due MIDI messages. Apply ordinary
+    //      parameter/grid messages immediately; insert clock/transport into
+    //      one fixed-capacity ordered batch. Its key is timestamp, Internal
+    //      before ExternalMidi, external slot ascending, then stable drain
+    //      order. Overflow retains the earliest messages and increments an
+    //      observable newest-drop counter.
+    //   3. route that ordered realtime batch into MasterClock. External
+    //      receive gating/source ownership stays MasterClock policy; Internal
+    //      transport bypasses external receive gates.
+    //   4. sampleCounter_.fetch_add(block.numFrames, relaxed), store the
+    //      returned pre-increment value as block.startSample, commit exactly
+    //      one MasterClock plan, enqueue its analytical crossings through the
+    //      injected sink, and publish CurrentPlan() as block.clockPlan.
+    //   5. if the app opts in via the HasProcessFrame concept, app_.ProcessFrame()
     //      exactly once: the optional once-per-block control-rate hook. Runs
-    //      after message drains (so it observes post-message-manager state) and
-    //      before app_.ProcessBlock (so any control-rate state it updates is
-    //      visible to that call).
-    //   5. sampleCounter_.fetch_add(block.numFrames, relaxed), storing the
-    //      returned pre-increment value as block.startSample for applications
-    //      that need a monotonic runtime sample position.
+    //      after message routing and clock commit (so it observes the exact
+    //      current plan) and before app_.ProcessBlock.
     //   6. app_.ProcessBlock(block) exactly once
     //   7. throttled PopulateUIState every uiPublishInterval_ blocks
     void ProcessBlock(AudioBlock& block, std::uint64_t timestamp) {
@@ -275,14 +291,17 @@ public:
             DrainPatchInputBus();
         }
 
-        uiBus_.Process(timestamp);
-        midiBus_.Process(timestamp);
-        if constexpr (HasProcessFrame<App>) {
-            app_.ProcessFrame();
-        }
+        realtimeBatchSize_ = 0;
+        DrainMessageBus(uiBus_, timestamp);
+        DrainMessageBus(midiBus_, timestamp);
+        RouteRealtimeBatch();
         const std::uint64_t blockStartSample =
             sampleCounter_.fetch_add(block.numFrames, std::memory_order_relaxed);
         block.startSample = blockStartSample;
+        block.clockPlan = masterClock_.CommitBlock(blockStartSample, block.numFrames, timestamp);
+        if constexpr (HasProcessFrame<App>) {
+            app_.ProcessFrame();
+        }
         app_.ProcessBlock(block);
 
         if (++blocksSinceUiPublish_ >= uiPublishInterval_) {
@@ -359,6 +378,16 @@ public:
     MessageInBus& UiBus() { return uiBus_; }
     MessageInBus& MidiBus() { return midiBus_; }
     PatchManager& Patches() { return patchManager_; }
+    MasterClock& Clock() { return masterClock_; }
+    const MasterClock& Clock() const { return masterClock_; }
+    void SetScheduledMidiEventSink(IScheduledMidiEventSink* sink) noexcept {
+        masterClock_.SetScheduledMidiEventSink(sink);
+    }
+    std::uint64_t DroppedRealtimeInputCount() const noexcept {
+        return droppedRealtimeInputCount_.load(std::memory_order_relaxed);
+    }
+
+    static constexpr std::size_t kRealtimeBatchCapacity = 256;
 
     // Must be called before Initialize(); startup patch/config discovery reads
     // these paths during initialization.
@@ -370,19 +399,24 @@ public:
     RuntimeConfigFileStatus LoadRuntimeConfiguration() {
         MidiInstrumentConfig loadedInstrument;
         AudioDeviceState loadedAudioDevice;
+        SyncConfig loadedSync = masterClock_.SyncConfiguration();
         {
             const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
             loadedInstrument = instrumentConfig_;
             loadedAudioDevice = audioDeviceState_;
         }
 
-        const RuntimeConfigFileStatus status =
-            LoadRuntimeConfigFile(dataPaths_.configFile, loadedInstrument, loadedAudioDevice);
+        RuntimeConfigFileStatus status =
+            LoadRuntimeConfigFile(dataPaths_.configFile, loadedInstrument, loadedAudioDevice, loadedSync);
         if (status == RuntimeConfigFileStatus::Ok) {
-            const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
-            instrumentConfig_ = std::move(loadedInstrument);
-            audioDeviceState_ = loadedAudioDevice;
-            lastNotifiedAudioDeviceState_ = loadedAudioDevice;
+            if (!masterClock_.ApplySyncConfig(loadedSync)) {
+                status = RuntimeConfigFileStatus::Invalid;
+            } else {
+                const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
+                instrumentConfig_ = std::move(loadedInstrument);
+                audioDeviceState_ = loadedAudioDevice;
+                lastNotifiedAudioDeviceState_ = loadedAudioDevice;
+            }
         }
         const std::string path = dataPaths_.configFile.string();
         INFO("Runtime config load status=%s path=%s", RuntimeConfigFileStatusName(status), path.c_str());
@@ -399,7 +433,8 @@ public:
         }
 
         const RuntimeConfigFileStatus status =
-            SaveRuntimeConfigFile(dataPaths_.configFile, instrument, audioDevice);
+            SaveRuntimeConfigFile(dataPaths_.configFile, instrument, audioDevice,
+                                  masterClock_.SyncConfiguration());
         const std::string path = dataPaths_.configFile.string();
         INFO("Runtime config save status=%s path=%s", RuntimeConfigFileStatusName(status), path.c_str());
         return status;
@@ -411,11 +446,10 @@ public:
     // resizes midiProcessors_ to match the snapshotted controller count).
     std::size_t MidiControllerCount() const { return midiProcessors_.size(); }
 
-    // Input processor chain head for controller slot controllerIx, or
-    // nullptr when controllerIx is out of range (>= MidiControllerCount()) or
-    // that slot's profile has no input processors configured (mirrors the
-    // single-controller accessor's prior "empty profile -> nullptr"
-    // contract, now per-slot).
+    // Input processor chain head for controller slot controllerIx, or nullptr
+    // when controllerIx is out of range (>= MidiControllerCount()). Every
+    // existing slot has at least the terminal realtime MIDI processor, even
+    // when its profile contains no mappings.
     MidiInProcessor* MidiInputProcessor(std::size_t controllerIx) {
         if (controllerIx >= midiProcessors_.size()) {
             return nullptr;
@@ -681,6 +715,98 @@ public:
     }
 
 private:
+    static bool IsRealtimeMessage(const MessageIn& message) noexcept {
+        switch (message.type) {
+        case MessageIn::Type::Start:
+        case MessageIn::Type::Continue:
+        case MessageIn::Type::Stop:
+        case MessageIn::Type::Clock:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    static bool RealtimeMessageLess(const MessageIn& lhs, const MessageIn& rhs) noexcept {
+        if (lhs.timestamp != rhs.timestamp) {
+            return lhs.timestamp < rhs.timestamp;
+        }
+        if (lhs.origin != rhs.origin) {
+            return lhs.origin == MessageIn::Origin::Internal;
+        }
+        if (lhs.origin == MessageIn::Origin::ExternalMidi &&
+            lhs.externalControllerSlot != rhs.externalControllerSlot) {
+            return lhs.externalControllerSlot < rhs.externalControllerSlot;
+        }
+        return false;
+    }
+
+    void InsertRealtimeMessage(const MessageIn& message) noexcept {
+        if (realtimeBatchSize_ == kRealtimeBatchCapacity &&
+            !RealtimeMessageLess(message, realtimeBatch_[realtimeBatchSize_ - 1])) {
+            droppedRealtimeInputCount_.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+
+        std::size_t insertAt = realtimeBatchSize_;
+        if (insertAt == kRealtimeBatchCapacity) {
+            --insertAt;
+            droppedRealtimeInputCount_.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            ++realtimeBatchSize_;
+        }
+        while (insertAt > 0 && RealtimeMessageLess(message, realtimeBatch_[insertAt - 1])) {
+            realtimeBatch_[insertAt] = realtimeBatch_[insertAt - 1];
+            --insertAt;
+        }
+        realtimeBatch_[insertAt] = message;
+    }
+
+    void DrainMessageBus(MessageInBus& bus, std::uint64_t timestamp) noexcept {
+        MessageIn message;
+        while (bus.Pop(message, timestamp)) {
+            if (IsRealtimeMessage(message)) {
+                InsertRealtimeMessage(message);
+            } else {
+                bus.Apply(message);
+            }
+        }
+    }
+
+    void RouteRealtimeBatch() noexcept {
+        for (std::size_t ix = 0; ix < realtimeBatchSize_; ++ix) {
+            const MessageIn& message = realtimeBatch_[ix];
+            if (message.type == MessageIn::Type::Clock) {
+                if (message.origin == MessageIn::Origin::ExternalMidi) {
+                    (void)masterClock_.HandleExternalClock(
+                        message.timestamp, message.externalControllerSlot);
+                }
+                continue;
+            }
+
+            ClockTransportCommand command = ClockTransportCommand::Stop;
+            switch (message.type) {
+            case MessageIn::Type::Start:
+                command = ClockTransportCommand::Start;
+                break;
+            case MessageIn::Type::Continue:
+                command = ClockTransportCommand::Continue;
+                break;
+            case MessageIn::Type::Stop:
+                command = ClockTransportCommand::Stop;
+                break;
+            default:
+                continue;
+            }
+            if (message.origin == MessageIn::Origin::ExternalMidi) {
+                (void)masterClock_.HandleExternalTransport(
+                    command, message.timestamp, message.externalControllerSlot);
+            } else {
+                (void)masterClock_.HandleInternalTransport(command);
+            }
+        }
+    }
+
     // Audio-thread drain loop shared by ProcessBlock's no-stash path and its
     // post-retry continuation. Drains patchInputBus_ via ApplyPatchMessage;
     // Applied/Reverted patch messages update parameter values only.
@@ -812,6 +938,7 @@ private:
     // processors keep only non-owning pointers back to this stable owner.
     AbsoluteFeedbackCoordinator absoluteFeedbackCoordinator_;
     PatchManager patchManager_;
+    MasterClock masterClock_;
     // Engine-owned MIDI instrument (sar-3): the source
     // RebuildMidiProcessors() builds midiProcessors_ from (one
     // MidiControllerProfileResult per controller slot, index-for-index -- see
@@ -874,6 +1001,9 @@ private:
     std::vector<MidiControllerProfileResult> midiProcessors_;
     TimestampProvider timestampProvider_;
     std::atomic<std::uint64_t> sampleCounter_{0};
+    std::array<MessageIn, kRealtimeBatchCapacity> realtimeBatch_{};
+    std::size_t realtimeBatchSize_ = 0;
+    std::atomic<std::uint64_t> droppedRealtimeInputCount_{0};
     std::function<void()> midiProcessorsRebuiltCallback_;
     // Invoked synchronously immediately BEFORE midiProcessors_ is
     // destroyed/replaced, from RebuildMidiProcessors() (the sole assignment

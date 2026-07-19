@@ -1,6 +1,7 @@
 #pragma once
 
 #include "synth/MidiController.hpp"
+#include "synth/MasterClock.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -29,14 +30,19 @@ JSON ToJSON(JsonArena& arena, const AudioDeviceState& state);
 bool FromJSON(JSON json, AudioDeviceState& state);
 
 inline constexpr const char* kRuntimeConfigSchema = "sheaf.synth.runtime-config";
-inline constexpr int kRuntimeConfigSchemaVersion = 1;
+inline constexpr int kRuntimeConfigSchemaVersion = 2;
+
+JSON ToJSON(JsonArena& arena, const SyncConfig& config);
+bool FromJSON(JSON json, SyncConfig& config);
 
 JSON BuildRuntimeConfigJSON(JsonArena& arena,
                             const MidiInstrumentConfig& instrument,
-                            const AudioDeviceState& audioDevice);
+                            const AudioDeviceState& audioDevice,
+                            const SyncConfig& sync);
 bool LoadRuntimeConfigJSON(JSON root,
                            MidiInstrumentConfig& instrument,
-                           AudioDeviceState& audioDevice);
+                           AudioDeviceState& audioDevice,
+                           SyncConfig& sync);
 bool ValidateRuntimeConfigJSON(JSON root);
 
 enum class RuntimeConfigFileStatus {
@@ -48,10 +54,12 @@ enum class RuntimeConfigFileStatus {
 
 RuntimeConfigFileStatus LoadRuntimeConfigFile(const std::filesystem::path& configFile,
                                               MidiInstrumentConfig& instrument,
-                                              AudioDeviceState& audioDevice);
+                                              AudioDeviceState& audioDevice,
+                                              SyncConfig& sync);
 RuntimeConfigFileStatus SaveRuntimeConfigFile(const std::filesystem::path& configFile,
                                               const MidiInstrumentConfig& instrument,
-                                              const AudioDeviceState& audioDevice);
+                                              const AudioDeviceState& audioDevice,
+                                              const SyncConfig& sync);
 const char* RuntimeConfigFileStatusName(RuntimeConfigFileStatus status);
 
 JSON BuildPatchJSON(JsonArena& arena, std::string_view patchName,
@@ -60,10 +68,11 @@ JSON BuildPatchJSON(JsonArena& arena, std::string_view patchName,
                     const AudioDeviceState& audioDevice = {});
 // MIDI/audio arguments are retained for source compatibility with existing
 // callers, but patch JSON is parameter-only. Runtime MIDI/audio configuration
-// is persisted separately through BuildRuntimeConfigJSON/LoadRuntimeConfigJSON.
+// and sync policy are persisted separately through
+// BuildRuntimeConfigJSON/LoadRuntimeConfigJSON.
 // Legacy midiInstrument/audioDevice sections in patch JSON are tolerated and
 // ignored. Patch load applies parameter values only and leaves runtime
-// MIDI/audio state untouched.
+// MIDI/audio/sync state untouched.
 bool LoadPatchJSON(JSON root, ParameterManager& manager,
                    MidiInstrumentConfig& instrument,
                    AudioDeviceState* audioDevice = nullptr);

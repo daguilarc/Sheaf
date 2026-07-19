@@ -5,6 +5,7 @@
 // the JUCE runtime shell, and the headless test rig.
 
 #include "synth/MidiController.hpp"
+#include "synth/MasterClock.hpp"
 #include "synth/ParameterModulation.hpp"
 #include "synth/PatchPersistence.hpp"
 
@@ -73,6 +74,7 @@ struct AudioBlock {
     int numOutputChannels = 0;
     std::size_t numFrames = 0;
     std::uint64_t startSample = 0;
+    const ClockBlockPlan* clockPlan = nullptr;
 };
 
 // Non-owning pointers to every framework object an application may touch
@@ -88,6 +90,7 @@ struct AppContext {
     PatchMessageInBus* patchInputBus = nullptr;     // producer: message thread; consumer: audio thread
     MessageOutBus* patchOutputBus = nullptr;        // producer: audio; consumer: message thread
     MidiSender* midiSender = nullptr;               // enqueue from message thread; owned worker drains
+    MasterClock* masterClock = nullptr;             // audio thread; stable for application lifetime
     MidiInstrumentConfig* instrument = nullptr;              // message thread only
     const MidiInstrumentConfig* defaultInstrument = nullptr; // immutable after init
     const RuntimeConfig* config = nullptr;          // immutable after construction

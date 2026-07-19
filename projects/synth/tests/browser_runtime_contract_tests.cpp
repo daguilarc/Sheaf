@@ -408,8 +408,9 @@ void TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack()
             "controllers Back marks browser persistence dirty after saving runtime configuration");
     synth::MidiInstrumentConfig loadedInstrument;
     synth::AudioDeviceState loadedAudio;
+    synth::SyncConfig loadedSync;
     Require(synth::LoadRuntimeConfigFile(
-                fixture.Paths().configFile, loadedInstrument, loadedAudio) ==
+                fixture.Paths().configFile, loadedInstrument, loadedAudio, loadedSync) ==
                 synth::RuntimeConfigFileStatus::Ok,
             "controllers Back persists runtime configuration");
     Require(loadedInstrument.controllers.size() == 2,

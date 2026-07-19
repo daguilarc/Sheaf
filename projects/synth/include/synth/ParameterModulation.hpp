@@ -922,6 +922,11 @@ private:
 };
 
 struct MessageIn {
+    enum class Origin : std::uint8_t {
+        Internal,
+        ExternalMidi,
+    };
+
     enum class Type {
         ParamIncDec,
         ParamSetAbsolute,
@@ -933,6 +938,7 @@ struct MessageIn {
         SetGestureSelect,
         SelectParamBank,
         Start,
+        Continue,
         Stop,
         Clock,
         SetGestureValue,
@@ -948,6 +954,8 @@ struct MessageIn {
 
     std::uint64_t timestamp = 0;
     Type type = Type::Clock;
+    Origin origin = Origin::Internal;
+    std::size_t externalControllerSlot = 0;
     std::size_t slotIx = 0;
     std::size_t position = 0;
     std::size_t gestureIx = 0;
@@ -979,9 +987,14 @@ struct MessageIn {
     static MessageIn SelectParamBank(std::uint64_t timestamp, std::size_t slotIx, std::size_t bankIx);
     static MessageIn NextParamBank(std::uint64_t timestamp, std::size_t slotIx);
     static MessageIn PrevParamBank(std::uint64_t timestamp, std::size_t slotIx);
-    static MessageIn Start(std::uint64_t timestamp);
-    static MessageIn Stop(std::uint64_t timestamp);
-    static MessageIn Clock(std::uint64_t timestamp);
+    static MessageIn Start(std::uint64_t timestamp, Origin origin = Origin::Internal,
+                           std::size_t externalControllerSlot = 0);
+    static MessageIn Continue(std::uint64_t timestamp, Origin origin = Origin::Internal,
+                              std::size_t externalControllerSlot = 0);
+    static MessageIn Stop(std::uint64_t timestamp, Origin origin = Origin::Internal,
+                          std::size_t externalControllerSlot = 0);
+    static MessageIn Clock(std::uint64_t timestamp, Origin origin = Origin::Internal,
+                           std::size_t externalControllerSlot = 0);
     static MessageIn SetGestureValue(std::uint64_t timestamp, std::size_t gestureIx, float value);
     static MessageIn SceneSelect(std::uint64_t timestamp, std::size_t sceneIx);
     static MessageIn SetSceneBlend(std::uint64_t timestamp, float blend);

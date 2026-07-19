@@ -287,6 +287,124 @@ TEST_CASE(rig_runs_blocks_and_captures_output) {
     REQUIRE_NEAR(rig.OutputPeak(), 0.25f, 1e-4f);
 }
 
+TEST_CASE(rig_exposes_deterministic_clock_injection_queries_and_scheduled_output) {
+    synth_rig::SynthRig<RigTestApp> rig(
+        64, {}, {.sampleRate = 44100.0, .blockSize = 7});
+    REQUIRE_TRUE(rig.SetSyncConfig({
+        .sendClock = true,
+        .receiveClock = false,
+        .sendTransport = true,
+        .receiveTransport = false,
+        .ppqn = 96,
+    }));
+
+    rig.StartAt(1000);
+    rig.RunBlockAt(1000);
+    const synth::ClockBlockPlan* first = rig.CurrentClockPlan();
+    REQUIRE_TRUE(first != nullptr);
+    REQUIRE_TRUE(first->StartSample() == 0);
+    REQUIRE_TRUE(first->EndSample() == 7);
+    REQUIRE_TRUE(first->IsTransportRunning());
+    REQUIRE_TRUE(!rig.ScheduledMidiEvents().empty());
+
+    // Braid 4's four-times-oversampled convention queries clock time at
+    // block.startSample + internalSample / 4.0, with fractional output-domain
+    // positions intact.
+    const double internalSample = 13.0;
+    const double outputSample = static_cast<double>(first->StartSample()) + internalSample / 4.0;
+    const auto direct = rig.ClockTimeAtSample(outputSample);
+    REQUIRE_TRUE(direct.has_value());
+    REQUIRE_TRUE(first->Contains(outputSample));
+    REQUIRE_TRUE(first->TryLifetimeQuarterNotesAt(outputSample).has_value());
+    REQUIRE_TRUE(std::fabs(*first->TryLifetimeQuarterNotesAt(outputSample) -
+                           direct->lifetimeQuarterNotes) < 1e-12);
+
+    rig.ContinueAt(2000);
+    rig.StopAt(2000);
+    rig.RunBlockAt(2000);
+    REQUIRE_TRUE(rig.CurrentClockPlan()->TransportState() == synth::ClockTransportState::Stopped);
+    REQUIRE_TRUE(rig.DroppedScheduledMidiEventCount() == 0);
+}
+
+TEST_CASE(rig_clock_time_is_independent_of_block_partitioning) {
+    synth_rig::SynthRig<RigTestApp> sevenFrameRig(
+        64, {}, {.sampleRate = 48000.0, .blockSize = 7});
+    synth_rig::SynthRig<RigTestApp> thirteenFrameRig(
+        64, {}, {.sampleRate = 48000.0, .blockSize = 13});
+
+    sevenFrameRig.StartAt(1000);
+    thirteenFrameRig.StartAt(1000);
+    for (std::uint64_t block = 0; block < 13; ++block) {
+        sevenFrameRig.RunBlockAt(1000 + block);
+    }
+    for (std::uint64_t block = 0; block < 7; ++block) {
+        thirteenFrameRig.RunBlockAt(1000 + block);
+    }
+
+    REQUIRE_TRUE(sevenFrameRig.CurrentClockPlan()->EndSample() == 91);
+    REQUIRE_TRUE(thirteenFrameRig.CurrentClockPlan()->EndSample() == 91);
+    REQUIRE_TRUE(std::fabs(
+        sevenFrameRig.CurrentClockPlan()->LifetimeEndQuarterNotes() -
+        thirteenFrameRig.CurrentClockPlan()->LifetimeEndQuarterNotes()) < 1e-12);
+    const auto sevenFrameQuery = sevenFrameRig.ClockTimeAtSample(90.5);
+    const auto thirteenFrameQuery = thirteenFrameRig.ClockTimeAtSample(90.5);
+    REQUIRE_TRUE(sevenFrameQuery.has_value());
+    REQUIRE_TRUE(thirteenFrameQuery.has_value());
+    REQUIRE_TRUE(std::fabs(
+        sevenFrameQuery->lifetimeQuarterNotes -
+        thirteenFrameQuery->lifetimeQuarterNotes) < 1e-12);
+}
+
+TEST_CASE(rig_empty_controller_accepts_raw_external_realtime_and_long_run_stays_finite) {
+    synth_rig::SynthRig<RigTestApp> rig(
+        64, {}, {.sampleRate = 48000.0, .blockSize = 13});
+    synth::MidiInstrumentConfig instrument;
+    synth::MidiControllerSlot slot;
+    slot.name = "clock-only";
+    slot.kind = synth::MidiProfileKind::Generic;
+    REQUIRE_TRUE(instrument.AddController(std::move(slot)));
+    rig.InstallInstrumentForTest(std::move(instrument));
+    REQUIRE_TRUE(rig.SetSyncConfig({
+        .sendClock = false,
+        .receiveClock = true,
+        .sendTransport = false,
+        .receiveTransport = true,
+        .ppqn = 24,
+    }));
+
+    rig.SendMidi(0, synth::BasicMidi::TransportStart(10'000));
+    rig.SendMidi(0, synth::BasicMidi::Clock(10'001));
+    rig.RunBlockAt(10'001);
+    REQUIRE_TRUE(rig.Engine().Clock().DiagnosticsSnapshot().activeExternalSourceSlot == 0);
+    REQUIRE_TRUE(rig.CurrentClockPlan()->IsTransportRunning());
+
+    rig.ExternalStopAt(0, 10'002);
+    rig.RunBlockAt(10'002);
+    REQUIRE_TRUE(rig.CurrentClockPlan()->TransportState() == synth::ClockTransportState::Stopped);
+    rig.ExternalContinueAt(0, 10'003);
+    rig.ExternalClockAt(0, 10'004);
+    rig.RunBlockAt(10'004);
+    REQUIRE_TRUE(rig.CurrentClockPlan()->IsTransportRunning());
+
+    std::uint64_t timestamp = 10'004;
+    double previousLifetime = rig.CurrentClockPlan()->LifetimeEndQuarterNotes();
+    for (std::size_t block = 0; block < 2000; ++block) {
+        timestamp += 271;
+        if ((block % 77) == 0) {
+            rig.ExternalClockAt(0, timestamp);
+        }
+        rig.RunBlockAt(timestamp);
+        const double lifetime = rig.CurrentClockPlan()->LifetimeEndQuarterNotes();
+        REQUIRE_TRUE(std::isfinite(lifetime));
+        REQUIRE_TRUE(lifetime >= previousLifetime);
+        previousLifetime = lifetime;
+    }
+    REQUIRE_TRUE(!rig.SawNaN());
+    REQUIRE_TRUE(rig.CurrentClockPlan() != nullptr);
+    REQUIRE_TRUE(std::isfinite(rig.CurrentClockPlan()->LifetimeEndQuarterNotes()));
+    REQUIRE_TRUE(rig.CurrentClockPlan()->FrameCount() == 13);
+}
+
 TEST_CASE(rig_turn_reaches_parameter_through_production_bus) {
     synth_rig::SynthRig<RigTestApp> rig;
     rig.Turn(0, 0, 0.5f);  // Level encoder
@@ -431,9 +549,10 @@ TEST_CASE(rig_runtime_config_round_trips_nested_pressure_profile_without_changin
         .outputDeviceName = "Pressure Out",
         .inputDeviceName = "Pressure In",
     };
+    const synth::SyncConfig sync{.sendClock = true, .receiveClock = true, .ppqn = 96};
 
     synth::JsonArena arena(1024 * 1024);
-    const synth::JSON json = synth::BuildRuntimeConfigJSON(arena, instrument, audio);
+    const synth::JSON json = synth::BuildRuntimeConfigJSON(arena, instrument, audio, sync);
     REQUIRE_TRUE(json.Get("schema").StringValue() == std::string_view(synth::kRuntimeConfigSchema));
     REQUIRE_TRUE(json.Get("schemaVersion").IntegerValue() == synth::kRuntimeConfigSchemaVersion);
     const synth::JSON nestedInstrument = json.Get("midiInstrument");
@@ -444,8 +563,10 @@ TEST_CASE(rig_runtime_config_round_trips_nested_pressure_profile_without_changin
 
     synth::MidiInstrumentConfig loadedInstrument;
     synth::AudioDeviceState loadedAudio;
-    REQUIRE_TRUE(synth::LoadRuntimeConfigJSON(json, loadedInstrument, loadedAudio));
+    synth::SyncConfig loadedSync;
+    REQUIRE_TRUE(synth::LoadRuntimeConfigJSON(json, loadedInstrument, loadedAudio, loadedSync));
     REQUIRE_TRUE(loadedAudio == audio);
+    REQUIRE_TRUE(loadedSync == sync);
     REQUIRE_TRUE(loadedInstrument.controllers.size() == 1);
     REQUIRE_TRUE(loadedInstrument.controllers[0].config.pressureInput.has_value());
     REQUIRE_TRUE(loadedInstrument.controllers[0].config.pressureInput->mappings ==
@@ -456,6 +577,7 @@ TEST_CASE(rig_runtime_config_round_trips_nested_pressure_profile_without_changin
     const synth::JSON patch = synth::BuildPatchJSON(patchArena, "pressure", manager, instrument, audio);
     REQUIRE_TRUE(patch.Get("midiInstrument").IsNull());
     REQUIRE_TRUE(patch.Get("audioDevice").IsNull());
+    REQUIRE_TRUE(patch.Get("sync").IsNull());
 }
 
 TEST_CASE(rig_installs_pressure_only_profile_and_processes_poly_pressure) {

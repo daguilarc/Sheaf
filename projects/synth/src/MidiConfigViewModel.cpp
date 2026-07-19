@@ -33,6 +33,7 @@ std::optional<std::size_t> PrimaryMessageArg(const MessageIn& message) {
         case MessageIn::Type::ToggleRandom:
         case MessageIn::Type::ToggleRandomMod:
         case MessageIn::Type::Start:
+        case MessageIn::Type::Continue:
         case MessageIn::Type::Stop:
         case MessageIn::Type::Clock:
         case MessageIn::Type::SetSceneBlend:
@@ -71,6 +72,7 @@ bool SetPrimaryMessageArg(MessageIn& message, std::size_t arg) {
         case MessageIn::Type::ToggleRandom:
         case MessageIn::Type::ToggleRandomMod:
         case MessageIn::Type::Start:
+        case MessageIn::Type::Continue:
         case MessageIn::Type::Stop:
         case MessageIn::Type::Clock:
         case MessageIn::Type::SetSceneBlend:
@@ -103,6 +105,7 @@ bool UISystemMessageHasArg(UISystemMessage message) {
         case UISystemMessage::ToggleRandomMod:
         case UISystemMessage::HoldRandomMod:
         case UISystemMessage::Start:
+        case UISystemMessage::Continue:
         case UISystemMessage::Stop:
         case UISystemMessage::Clock:
         case UISystemMessage::SetSceneBlend:
@@ -150,6 +153,8 @@ UISystemMessage UISystemMessageForAssociation(const MidiControllerSystemMessageA
             return UISystemMessage::PrevParamBank;
         case MessageIn::Type::Start:
             return UISystemMessage::Start;
+        case MessageIn::Type::Continue:
+            return UISystemMessage::Continue;
         case MessageIn::Type::Stop:
             return UISystemMessage::Stop;
         case MessageIn::Type::Clock:
@@ -202,6 +207,8 @@ MessageIn PressForUISystemMessage(UISystemMessage message, const MidiControllerS
             return MessageIn::PrevParamBank(0, arg);
         case UISystemMessage::Start:
             return MessageIn::Start(0);
+        case UISystemMessage::Continue:
+            return MessageIn::Continue(0);
         case UISystemMessage::Stop:
             return MessageIn::Stop(0);
         case UISystemMessage::Clock:
@@ -237,6 +244,7 @@ std::optional<MessageIn> ReleaseForUISystemMessage(UISystemMessage message, cons
         case UISystemMessage::NextParamBank:
         case UISystemMessage::PrevParamBank:
         case UISystemMessage::Start:
+        case UISystemMessage::Continue:
         case UISystemMessage::Stop:
         case UISystemMessage::Clock:
         case UISystemMessage::SetGestureValue:
@@ -425,6 +433,7 @@ const std::vector<UISystemMessageChoice>& UISystemMessageCatalog() {
         {"Next Bank", UISystemMessage::NextParamBank},
         {"Previous Bank", UISystemMessage::PrevParamBank},
         {"Start", UISystemMessage::Start},
+        {"Continue", UISystemMessage::Continue},
         {"Stop", UISystemMessage::Stop},
         {"Clock", UISystemMessage::Clock},
         {"Gesture Value", UISystemMessage::SetGestureValue},
@@ -513,6 +522,9 @@ std::string DescribeMessage(const MessageIn& message) {
             break;
         case MessageIn::Type::Start:
             oss << "start";
+            break;
+        case MessageIn::Type::Continue:
+            oss << "continue";
             break;
         case MessageIn::Type::Stop:
             oss << "stop";

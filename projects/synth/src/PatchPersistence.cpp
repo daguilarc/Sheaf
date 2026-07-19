@@ -33,6 +33,10 @@ bool IsInteger(JSON json) {
     return json.m_node != nullptr && json.m_node->m_type == JsonType::Integer;
 }
 
+bool IsBoolean(JSON json) {
+    return json.m_node != nullptr && json.m_node->m_type == JsonType::Boolean;
+}
+
 bool ValidPatchRoot(JSON root) {
     if (!IsObject(root)) {
         return false;
@@ -43,14 +47,17 @@ bool ValidPatchRoot(JSON root) {
            IsInteger(version) && version.IntegerValue() == 1;
 }
 
-bool ValidRuntimeConfigRoot(JSON root) {
+std::optional<int> RuntimeConfigVersion(JSON root) {
     if (!IsObject(root)) {
-        return false;
+        return std::nullopt;
     }
     const JSON schema = root.Get("schema");
     const JSON version = root.Get("schemaVersion");
-    return IsString(schema) && std::string_view(schema.StringValue()) == kRuntimeConfigSchema &&
-           IsInteger(version) && version.IntegerValue() == kRuntimeConfigSchemaVersion;
+    if (!IsString(schema) || std::string_view(schema.StringValue()) != kRuntimeConfigSchema ||
+        !IsInteger(version) || (version.IntegerValue() != 1 && version.IntegerValue() != 2)) {
+        return std::nullopt;
+    }
+    return static_cast<int>(version.IntegerValue());
 }
 
 std::string SanitizePatchName(std::string_view patchName) {
@@ -118,21 +125,60 @@ bool FromJSON(JSON json, AudioDeviceState& state) {
     return true;
 }
 
+JSON ToJSON(JsonArena& arena, const SyncConfig& config) {
+    JSON json = arena.Object();
+    json.SetNew("sendClock", arena.Boolean(config.sendClock));
+    json.SetNew("receiveClock", arena.Boolean(config.receiveClock));
+    json.SetNew("sendTransport", arena.Boolean(config.sendTransport));
+    json.SetNew("receiveTransport", arena.Boolean(config.receiveTransport));
+    json.SetNew("ppqn", arena.Integer(config.ppqn));
+    return json;
+}
+
+bool FromJSON(JSON json, SyncConfig& config) {
+    if (!IsObject(json) || json.Size() != 5) {
+        return false;
+    }
+    const JSON sendClock = json.Get("sendClock");
+    const JSON receiveClock = json.Get("receiveClock");
+    const JSON sendTransport = json.Get("sendTransport");
+    const JSON receiveTransport = json.Get("receiveTransport");
+    const JSON ppqn = json.Get("ppqn");
+    if (!IsBoolean(sendClock) || !IsBoolean(receiveClock) ||
+        !IsBoolean(sendTransport) || !IsBoolean(receiveTransport) || !IsInteger(ppqn) ||
+        ppqn.IntegerValue() < 1 || ppqn.IntegerValue() > 960) {
+        return false;
+    }
+    SyncConfig parsed{
+        .sendClock = sendClock.BooleanValue(),
+        .receiveClock = receiveClock.BooleanValue(),
+        .sendTransport = sendTransport.BooleanValue(),
+        .receiveTransport = receiveTransport.BooleanValue(),
+        .ppqn = static_cast<int>(ppqn.IntegerValue()),
+    };
+    config = parsed;
+    return true;
+}
+
 JSON BuildRuntimeConfigJSON(JsonArena& arena,
                             const MidiInstrumentConfig& instrument,
-                            const AudioDeviceState& audioDevice) {
+                            const AudioDeviceState& audioDevice,
+                            const SyncConfig& sync) {
     JSON root = arena.Object();
     root.SetNew("schema", arena.String(kRuntimeConfigSchema));
     root.SetNew("schemaVersion", arena.Integer(kRuntimeConfigSchemaVersion));
     root.SetNew("midiInstrument", ToJSON(arena, instrument));
     root.SetNew("audioDevice", ToJSON(arena, audioDevice));
+    root.SetNew("sync", ToJSON(arena, sync));
     return root;
 }
 
 bool LoadRuntimeConfigJSON(JSON root,
                            MidiInstrumentConfig& instrument,
-                           AudioDeviceState& audioDevice) {
-    if (!ValidRuntimeConfigRoot(root)) {
+                           AudioDeviceState& audioDevice,
+                           SyncConfig& sync) {
+    const std::optional<int> version = RuntimeConfigVersion(root);
+    if (!version.has_value()) {
         return false;
     }
 
@@ -146,20 +192,28 @@ bool LoadRuntimeConfigJSON(JSON root,
         return false;
     }
 
+    SyncConfig parsedSync;
+    if (*version == 2 && !FromJSON(root.Get("sync"), parsedSync)) {
+        return false;
+    }
+
     instrument = std::move(parsedInstrument);
     audioDevice = std::move(parsedAudioDevice);
+    sync = parsedSync;
     return true;
 }
 
 bool ValidateRuntimeConfigJSON(JSON root) {
     MidiInstrumentConfig instrument;
     AudioDeviceState audioDevice;
-    return LoadRuntimeConfigJSON(root, instrument, audioDevice);
+    SyncConfig sync;
+    return LoadRuntimeConfigJSON(root, instrument, audioDevice, sync);
 }
 
 RuntimeConfigFileStatus LoadRuntimeConfigFile(const std::filesystem::path& configFile,
                                               MidiInstrumentConfig& instrument,
-                                              AudioDeviceState& audioDevice) {
+                                              AudioDeviceState& audioDevice,
+                                              SyncConfig& sync) {
     std::error_code ec;
     if (!std::filesystem::exists(configFile, ec)) {
         return ec ? RuntimeConfigFileStatus::IOError : RuntimeConfigFileStatus::Missing;
@@ -185,14 +239,15 @@ RuntimeConfigFileStatus LoadRuntimeConfigFile(const std::filesystem::path& confi
         return RuntimeConfigFileStatus::Invalid;
     }
 
-    return LoadRuntimeConfigJSON(root, instrument, audioDevice)
+    return LoadRuntimeConfigJSON(root, instrument, audioDevice, sync)
         ? RuntimeConfigFileStatus::Ok
         : RuntimeConfigFileStatus::Invalid;
 }
 
 RuntimeConfigFileStatus SaveRuntimeConfigFile(const std::filesystem::path& configFile,
                                               const MidiInstrumentConfig& instrument,
-                                              const AudioDeviceState& audioDevice) {
+                                              const AudioDeviceState& audioDevice,
+                                              const SyncConfig& sync) {
     std::error_code ec;
     const std::filesystem::path parent = configFile.parent_path();
     if (!parent.empty()) {
@@ -203,10 +258,10 @@ RuntimeConfigFileStatus SaveRuntimeConfigFile(const std::filesystem::path& confi
     }
 
     JsonArena arena(kRuntimeConfigInitialArenaCapacity);
-    JSON root = BuildRuntimeConfigJSON(arena, instrument, audioDevice);
+    JSON root = BuildRuntimeConfigJSON(arena, instrument, audioDevice, sync);
     while ((root.IsNull() || arena.Failed()) && arena.Capacity() < kRuntimeConfigMaxArenaCapacity) {
         arena.GrowAndReset();
-        root = BuildRuntimeConfigJSON(arena, instrument, audioDevice);
+        root = BuildRuntimeConfigJSON(arena, instrument, audioDevice, sync);
     }
     if (root.IsNull() || arena.Failed()) {
         return RuntimeConfigFileStatus::Invalid;
