@@ -1,0 +1,23 @@
+{
+  "task_key": "midi-config-blocks__p3-task-2",
+  "G1": 3,
+  "G2": 1,
+  "G3": 5,
+  "G4": 4,
+  "G5": 5,
+  "n_critical": 1,
+  "n_important": 2,
+  "n_minor": 1,
+  "verdict_sequence": ["REVISE", "PASS"],
+  "rounds_to_accept": 2,
+  "final_grade": "F",
+  "evidence": [
+    "Critical: output handler shrink can destroy a sink while MidiSender still holds its raw pointer",
+    "Important: startup ordering violates binding, OnInstrumentRebuilt can reconcile before StartupReconcile",
+    "Important: manual UI opens persist empty endpoint names, weakening self-healing reconnect matching",
+    "Minor: no test coverage for manager-side resize case (OnInstrumentRebuilt growth/shrink)",
+    "Round 2: SPEC PASS, QUALITY APPROVED — reviewed fixes satisfy interleavings, gating, and name threading"
+  ],
+  "reviewer_models": ["gpt-5.5", "claude-sonnet-5"],
+  "excluded_reviews": []
+}

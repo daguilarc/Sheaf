@@ -1,0 +1,22 @@
+{
+  "task_key": "midi-config-blocks__p4-task-2",
+  "G1": 5,
+  "G2": 5,
+  "G3": 4,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 2,
+  "verdict_sequence": ["PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "SPEC PASS: required interface, sidebar/page behavior, retained app, deadline formatting, thin shell host present",
+    "Minor: resized() doesn't clamp layout for windows narrower than 96px or very short heights",
+    "Minor: shell chrome removal left stale unused includes (AppContext.hpp, PatchPersistence.hpp, MidiPanel.hpp)",
+    "Reviewer did not rerun tests/build/launch smoke per task constraints forbidding tests/builds"
+  ],
+  "reviewer_models": ["gpt-5.5"],
+  "excluded_reviews": []
+}

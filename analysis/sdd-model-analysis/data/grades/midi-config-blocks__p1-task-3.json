@@ -1,0 +1,21 @@
+{
+  "task_key": "midi-config-blocks__p1-task-3",
+  "G1": 2,
+  "G2": 5,
+  "G3": 5,
+  "G4": 4,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 1,
+  "verdict_sequence": ["REVISE"],
+  "rounds_to_accept": null,
+  "final_grade": "B",
+  "evidence": [
+    "SPEC FAIL: LoadPatchJSON uses MidiInstrumentConfig& while brief literally specifies a pointer parameter",
+    "Behavior otherwise consistent with required midiInstrument despite the signature mismatch",
+    "Minor: SerializeToJSON endpoint-ref coverage is indirect, doesn't directly assert identifier paths"
+  ],
+  "reviewer_models": ["gpt-5.5"],
+  "excluded_reviews": []
+}

@@ -1,6 +1,6 @@
 {
   "task_key": "add-autoscope-density-raster__task-6",
-  "G1": 5,
+  "G1": 3,
   "G2": 5,
   "G3": 4,
   "G4": 4,
@@ -8,16 +8,17 @@
   "n_critical": 0,
   "n_important": 1,
   "n_minor": 2,
-  "verdict_sequence": ["PASS", "PASS", "REVISE", "PASS"],
+  "verdict_sequence": ["PASS", "PASS", "CHANGES REQUESTED", "PASS"],
   "rounds_to_accept": 4,
-  "final_grade": "C",
+  "final_grade": "B",
   "evidence": [
-    "Round 1 PASS; minor: report overclaims null-pointer path was test-verified",
+    "Minor: report overclaims null-pointer test coverage not actually exercised",
     "Minor: duplicated background/centerline drawing constants across two call sites",
-    "Rereview: both minors resolved, shared frame helper extracted, null-path test added",
-    "Later round CHANGES REQUESTED: coverage.md still cites stale renamed test name",
-    "Doc also behaviorally stale: prose contradicts what renamed test now proves",
-    "Final rereview PASS: coverage.md updated, old name absent repo-wide"
+    "Both minors resolved via shared AppendScopeFrameCommands helper and new test",
+    "CHANGES REQUESTED: coverage.md still cites old, now-nonexistent test name twice",
+    "Doc is both broken and behaviorally stale, contradicts renamed test's assertions",
+    "Re-review: old name fully absent repo-wide, doc wording now matches behavior"
   ],
-  "reviewer_models": ["claude-sonnet-5", "claude-opus-4-8"]
+  "reviewer_models": ["claude-sonnet-5", "claude-opus-4-8"],
+  "excluded_reviews": []
 }

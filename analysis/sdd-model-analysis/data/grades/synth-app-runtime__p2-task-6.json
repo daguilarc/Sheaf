@@ -1,0 +1,21 @@
+{
+  "task_key": "synth-app-runtime__p2-task-6",
+  "G1": 3,
+  "G2": 1,
+  "G3": 5,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 1,
+  "n_important": 1,
+  "n_minor": 0,
+  "verdict_sequence": ["REVISE", "PASS"],
+  "rounds_to_accept": 2,
+  "final_grade": "F",
+  "evidence": [
+    "PumpSaveLike calls RunBlocks(1), which already consumes Written via MessageThreadTick; later ProcessResponses sees NoCompletion and can time out",
+    "SawNullMidiInputProcessor() is an extra public method outside the binding Produces surface",
+    "Rereview: save race fixed via ConsumeLastTickPatchResult; unrequested accessor removed; new regression test added; Approved"
+  ],
+  "reviewer_models": ["gpt-5.5"],
+  "excluded_reviews": []
+}

@@ -1,0 +1,24 @@
+{
+  "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-8",
+  "G1": 5,
+  "G2": 5,
+  "G3": 5,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "verdict_sequence": ["PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "Every normative claim in catalog-schema-v1.md and publisher-guide.md traces to real source constants and behavior",
+    "All 31 quoted test titles across sbac-1 through sbac-12 and sprs-12 verified verbatim against actual test files",
+    "Links resolve correctly, both embedded JSON examples parse valid, git diff --check clean",
+    "No obsolete auto-launch/direct-dist-wasm-app.js guidance introduced; remaining mentions correctly describe rollback bundle",
+    "Live-deployment honesty maintained: report and docs explicitly state deployed-catalog validator wasn't run against a real URL",
+    "Scope discipline: only the four required files committed, under the exact required commit message"
+  ],
+  "reviewer_models": ["claude-sonnet-5"],
+  "excluded_reviews": []
+}

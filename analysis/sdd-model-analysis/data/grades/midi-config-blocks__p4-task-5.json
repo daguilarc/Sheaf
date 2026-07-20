@@ -1,0 +1,21 @@
+{
+  "task_key": "midi-config-blocks__p4-task-5",
+  "G1": 2,
+  "G2": 1,
+  "G3": 5,
+  "G4": 2,
+  "G5": 2,
+  "n_critical": 1,
+  "n_important": 1,
+  "n_minor": 0,
+  "verdict_sequence": ["REVISE"],
+  "rounds_to_accept": null,
+  "final_grade": "F",
+  "evidence": [
+    "Critical: added test reads LiveInstrument() but claims to pin post-Init DefaultInstrument() — a regression in the snapshot path would still pass",
+    "Important: test sets expected scene/bank/gesture options but only asserts encoder counts/mappings, not full documented options",
+    "No later reviewer round confirms the implementer's claimed fix (pin default instrument snapshot) was actually correct"
+  ],
+  "reviewer_models": ["gpt-5.5", "claude-haiku-4-5-20251001"],
+  "excluded_reviews": []
+}

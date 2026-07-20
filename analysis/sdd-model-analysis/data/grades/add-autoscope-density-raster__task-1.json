@@ -12,12 +12,13 @@
   "rounds_to_accept": 1,
   "final_grade": "A",
   "evidence": [
-    "Reviewer: no important code-quality fix required before commit; verdict PASS",
+    "No important code-quality fix required before commit; verdict PASS",
     "Overflow, NaN propagation, merge math, time support all verified sound",
-    "Non-blocking: SummaryEffectiveBaseIndex re-runs validation three times per read",
+    "SummaryEffectiveBaseIndex re-runs validation three times per read (non-blocking)",
     "Redundant static_assert of trivially-copyable in both header and test",
     "Split-span assertion effectively tautological, adds little extra coverage",
-    "Alias-band test threshold slack is implicit rather than documented"
+    "Alias-band test threshold slack implicit rather than documented"
   ],
-  "reviewer_models": ["claude-opus-4-8"]
+  "reviewer_models": ["claude-opus-4-8"],
+  "excluded_reviews": []
 }

@@ -1,10 +1,10 @@
 {
   "task_key": "add-autoscope-density-raster__task-7",
-  "G1": 5,
+  "G1": 4,
   "G2": 5,
   "G3": 4,
-  "G4": 5,
-  "G5": 2,
+  "G4": 4,
+  "G5": 3,
   "n_critical": 0,
   "n_important": 2,
   "n_minor": 2,
@@ -12,12 +12,13 @@
   "rounds_to_accept": 2,
   "final_grade": "C",
   "evidence": [
-    "Important: report claims 37/37 scenarios audited, spec files actually define 38",
-    "Important: report claims dsp_tests 57/57 PASS, actual is 56/56 PASS",
-    "Both errors are self-reported evidence-count inaccuracies, not code/spec defects",
-    "Rereview PASS: both counts corrected, no stale 37/37 or 57/57 strings remain",
-    "Later PASS: benchmark/doc round finds only non-blocking minors, e.g. timer scope",
-    "All formulas, defaults, and coverage rows verified line-by-line against source"
+    "Important: report claims 37/37 scenarios; spec files actually define 38",
+    "Important: report overstates dsp_tests pass count (57/57 claimed, 56/56 actual)",
+    "Both self-reported evidence-count inaccuracies must be corrected before PASS",
+    "Re-review: no stale 37/37 or 57/57 strings remain; all counts now correct",
+    "Minor: hand-computed storage formulas duplicate internal layout, no failing assertion",
+    "Minor: vector-move inside rebuild/hit timers, negligible, symmetric across regions"
   ],
-  "reviewer_models": ["claude-sonnet-5", "claude-opus-4-8"]
+  "reviewer_models": ["claude-sonnet-5", "claude-opus-4-8"],
+  "excluded_reviews": []
 }

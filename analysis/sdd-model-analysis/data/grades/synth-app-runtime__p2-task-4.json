@@ -1,0 +1,22 @@
+{
+  "task_key": "synth-app-runtime__p2-task-4",
+  "G1": 3,
+  "G2": 1,
+  "G3": 4,
+  "G4": 3,
+  "G5": 5,
+  "n_critical": 1,
+  "n_important": 1,
+  "n_minor": 1,
+  "verdict_sequence": ["REVISE", "PASS"],
+  "rounds_to_accept": 2,
+  "final_grade": "F",
+  "evidence": [
+    "pendingPatchMessage_ not treated as drain barrier; a later exhausted message can overwrite the stashed one",
+    "Add focused test around stash barrier/overwrite case; ArenaExhausted path never exercised by tests",
+    "Prepare() recomputes uiPublishInterval_ but does not reset blocksSinceUiPublish_",
+    "Rereview: barrier enforced structurally; new test covers exhaust/barrier/retry-first sequence; Approved"
+  ],
+  "reviewer_models": ["gpt-5.5"],
+  "excluded_reviews": []
+}

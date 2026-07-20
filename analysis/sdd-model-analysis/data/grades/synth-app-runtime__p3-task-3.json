@@ -1,0 +1,22 @@
+{
+  "task_key": "synth-app-runtime__p3-task-3",
+  "G1": 2,
+  "G2": 1,
+  "G3": 4,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 1,
+  "n_important": 1,
+  "n_minor": 1,
+  "verdict_sequence": ["REVISE", "PASS"],
+  "rounds_to_accept": 2,
+  "final_grade": "F",
+  "evidence": [
+    "MidiPanel dereferences inputTarget_ without synchronization while ReopenPersistedEndpoints writes it; stale pointer to a destroyed processor (UAF)",
+    "Missing output Reset() after open/reopen regresses LED/value resync parity with the old app",
+    "Unconditional post-Initialize ReopenPersistedEndpoints causes redundant close/reopen, acceptable once race fixed",
+    "Rereview: UAF window closed via mutex-guarded processor slot; output reset parity fixed; Approved"
+  ],
+  "reviewer_models": ["gpt-5.5"],
+  "excluded_reviews": []
+}

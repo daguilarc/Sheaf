@@ -1,23 +1,23 @@
 {
   "task_key": "add-autoscope-density-raster__task-4",
   "G1": 5,
-  "G2": 4,
+  "G2": 5,
   "G3": 4,
-  "G4": 5,
+  "G4": 4,
   "G5": 5,
   "n_critical": 0,
   "n_important": 0,
-  "n_minor": 6,
+  "n_minor": 4,
   "verdict_sequence": ["PASS", "PASS"],
   "rounds_to_accept": 1,
   "final_grade": "A",
   "evidence": [
-    "Round 1: PASS, no Critical/Important findings, four Minor notes",
-    "Minor 1: locked reader reports Empty() on exact cycle-boundary edge case",
-    "Minor 2: stale diagnostics fields when locked analysis fails phase acquisition",
-    "Minor 4: coverage gap vs drift/noise/steady-hold tests, brief itself satisfied",
-    "Rereview: all four minors correctly fixed, drift/noise tests added and hand-verified",
-    "All seven verification targets hold; range-safe, no regression"
+    "Verdict PASS; no Critical or Important findings, four Minor notes",
+    "Minor 1 and Minor 2 (empty() boundary, stale diagnostics) correctly resolved",
+    "Independent fuzz probe: no throw, no non-finite, no ASan/UBSan error",
+    "Sub-pixel mapping compression: no action needed, div-by-zero protection correct",
+    "Test-coverage gap vs OpenSpec 4.5: drift/noise/steady-hold tests recommended as follow-up"
   ],
-  "reviewer_models": ["claude-opus-4-8"]
+  "reviewer_models": ["claude-opus-4-8"],
+  "excluded_reviews": []
 }

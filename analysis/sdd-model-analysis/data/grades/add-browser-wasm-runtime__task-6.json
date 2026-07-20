@@ -1,0 +1,24 @@
+{
+  "task_key": "add-browser-wasm-runtime__task-6",
+  "G1": 5,
+  "G2": 1,
+  "G3": 4,
+  "G4": 2,
+  "G5": 3,
+  "n_critical": 1,
+  "n_important": 0,
+  "n_minor": 2,
+  "verdict_sequence": ["REVISE", "APPROVE"],
+  "rounds_to_accept": 2,
+  "final_grade": "F",
+  "evidence": [
+    "MidiSender starts a real std::thread but WASM build has no pthread flags",
+    "Would fail entire browser runtime init or leave outbound MIDI silently dead",
+    "C++ bridge tests only pass because FakeEngine's thread is native; WASM path untested",
+    "Output sinks silently capped at 8 controllers - acceptable but undocumented",
+    "Prior HIGH fixed: PTHREAD_FLAGS with USE_PTHREADS=1 added to both browser targets",
+    "Regression test asserts pthread flags stay present - Recommendation: approve"
+  ],
+  "reviewer_models": ["claude-opus-4-8"],
+  "excluded_reviews": []
+}

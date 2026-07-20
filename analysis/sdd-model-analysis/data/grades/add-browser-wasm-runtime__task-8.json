@@ -1,0 +1,24 @@
+{
+  "task_key": "add-browser-wasm-runtime__task-8",
+  "G1": 3,
+  "G2": 1,
+  "G3": 3,
+  "G4": 2,
+  "G5": 2,
+  "n_critical": 2,
+  "n_important": 1,
+  "n_minor": 7,
+  "verdict_sequence": ["DONE_WITH_CONCERNS", "APPROVE", "APPROVE"],
+  "rounds_to_accept": 2,
+  "final_grade": "F",
+  "evidence": [
+    "Blocker: audio channel count assumed stereo - could corrupt memory via OOB write, now RESOLVED",
+    "Blocker: main.ts stub - static site did not boot the app at all, now RESOLVED",
+    "Miniapp smoke doesn't verify bidirectional MIDI through injectable ports - brief deviation",
+    "Step 5 OpenSpec checklist (tasks.md) left unchecked; later reviewer calls it authorized",
+    "C++ ABI now validates outputChannels against engine config, throws on mismatch",
+    "Real-WASM miniapp smoke correctly skipped (404 gate) due to missing em++ toolchain"
+  ],
+  "reviewer_models": ["claude-opus-4-8"],
+  "excluded_reviews": []
+}

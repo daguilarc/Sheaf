@@ -1,0 +1,23 @@
+{
+  "task_key": "synth-app-runtime__p2-task-5",
+  "G1": 2,
+  "G2": 1,
+  "G3": 4,
+  "G4": 2,
+  "G5": 5,
+  "n_critical": 2,
+  "n_important": 1,
+  "n_minor": 1,
+  "verdict_sequence": ["REVISE", "PASS"],
+  "rounds_to_accept": 2,
+  "final_grade": "F",
+  "evidence": [
+    "MessageThreadTick calls RebuildMidiProcessors before clearing flag; callback fires inside rebuild, wrong order",
+    "Callback registered before Initialize fires spuriously on first rebuild and again on startup patch load",
+    "Tiny-arena test consumes ProcessResponses before the successful tick; would pass even if tick step 3 missing",
+    "Comment says 'or would only reach the cap' but code only drops when already at cap",
+    "Rereview: callback dispatch only in Initialize and MessageThreadTick after clear; Approved"
+  ],
+  "reviewer_models": ["gpt-5.5"],
+  "excluded_reviews": []
+}

@@ -1,0 +1,24 @@
+{
+  "task_key": "midi-config-blocks__p4-task-1",
+  "G1": 2,
+  "G2": 2,
+  "G3": 4,
+  "G4": 2,
+  "G5": 2,
+  "n_critical": 0,
+  "n_important": 7,
+  "n_minor": 2,
+  "verdict_sequence": ["REVISE", "REVISE", "REVISE"],
+  "rounds_to_accept": null,
+  "final_grade": "D",
+  "evidence": [
+    "Important: WrldBldrX/Y edits don't update paired control channel/CC, position can diverge from actual MIDI trigger",
+    "Important: system-message editableFields advertise Press/ReleaseMessage but ApplyMappingEdit has no cases for them",
+    "Round 2: WRLD.Bldr Channel/Cc edits still accepted despite not being advertised, still desyncing position",
+    "Round 2: size_t-backed fields accept unrepresentable doubles like 1e300, unchecked static_cast",
+    "Round 3: TurnStep still accepts huge finite doubles that cannot become a finite float",
+    "Minor: test hygiene — missing coverage for advertised fields vs ApplyMappingEdit, the exact gap that recurred"
+  ],
+  "reviewer_models": ["gpt-5.5", "claude-sonnet-5"],
+  "excluded_reviews": []
+}

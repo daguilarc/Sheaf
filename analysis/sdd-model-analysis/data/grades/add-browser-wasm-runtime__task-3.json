@@ -1,0 +1,24 @@
+{
+  "task_key": "add-browser-wasm-runtime__task-3",
+  "G1": 5,
+  "G2": 2,
+  "G3": 4,
+  "G4": 3,
+  "G5": 4,
+  "n_critical": 0,
+  "n_important": 3,
+  "n_minor": 1,
+  "verdict_sequence": ["APPROVE_WITH_MINORS", "APPROVE", "REVISE", "APPROVE"],
+  "rounds_to_accept": 2,
+  "final_grade": "C",
+  "evidence": [
+    "DrawKind.Fill always fills full canvas, ignoring draw command's bounds - confirmed bug",
+    "Slider/TextField input.value force-reset every render clobbers in-progress focused edits",
+    "Dead code: 'preserve sibling controls' branch never has anything to preserve",
+    "New controllers/file/negotiated-audio logic entirely untested - withheld CODE QUALITY APPROVED",
+    "All three round-1 findings resolved with direct test coverage, hand-traced",
+    "Re-review: prior Important coverage-gap finding resolved with new integration tests"
+  ],
+  "reviewer_models": ["claude-sonnet-5"],
+  "excluded_reviews": []
+}

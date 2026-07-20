@@ -1,0 +1,21 @@
+{
+  "task_key": "midi-config-blocks__p1-task-2",
+  "G1": 5,
+  "G2": 4,
+  "G3": 4,
+  "G4": 4,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 2,
+  "verdict_sequence": ["PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "SPEC PASS: schema/shape, profile reuse, scratch-only load, rejection paths, endpoint round-trip all implemented",
+    "Minor: Step-1 endpoint identifier+name pair test not fully explicit for twister/launchpads",
+    "Minor: public FromJSON accepts kind-invalid slot/profile combos when called standalone outside AddController"
+  ],
+  "reviewer_models": ["gpt-5.5"],
+  "excluded_reviews": []
+}

@@ -1,0 +1,25 @@
+{
+  "task_key": "add-runtime-button-grids__task-3",
+  "G1": 3,
+  "G2": 5,
+  "G3": 5,
+  "G4": 5,
+  "G5": 3,
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 0,
+  "verdict_sequence": ["REVISE", "PASS"],
+  "rounds_to_accept": 2,
+  "final_grade": "B",
+  "evidence": [
+    "Task 3.2 marked complete on a review gate the report itself documents as skipped",
+    "SPEC COMPLIANCE: REVISE due to premature checkbox completion with no supporting artifact",
+    "Re-review confirms single-line fix: 3.2 flipped back to unchecked pending final review",
+    "Nothing extraneous added or removed; precisely the correction the prior review required",
+    "SPEC COMPLIANCE: PASS, CODE QUALITY: PASS after correction"
+  ],
+  "reviewer_models": ["claude-sonnet-5"],
+  "excluded_reviews": [
+    "claude-afc29cdd-5ba6-487c-95af-94dc2e1a3afb.md"
+  ]
+}

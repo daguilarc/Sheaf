@@ -1,23 +1,23 @@
 {
   "task_key": "add-autoscope-density-raster__task-5",
-  "G1": 5,
+  "G1": 4,
   "G2": 2,
-  "G3": 3,
+  "G3": 4,
   "G4": 5,
-  "G5": 3,
+  "G5": 4,
   "n_critical": 0,
   "n_important": 2,
-  "n_minor": 7,
-  "verdict_sequence": ["REVISE", "PASS", "PASS", "PASS"],
+  "n_minor": 2,
+  "verdict_sequence": ["PASS", "PASS"],
   "rounds_to_accept": 2,
   "final_grade": "C",
   "evidence": [
-    "Two previously-reported Important issues independently confirmed fixed (writer/consumer)",
-    "Fix confirmed: unbounded-retry and Reset-races-producer concurrency bugs resolved",
-    "TSAN clean over 200k reused slots; concurrency protocol sound",
-    "Benchmark round: two prior Minor findings (stability assert, doc wording) resolved",
-    "Alpha-raster round: report mismatch - task-5-report.md describes different, unrelated work",
-    "Reviewer: report mismatch not a code-quality defect but worth flagging to human"
+    "Two previously-reported Important issues independently confirmed fixed",
+    "Fix for prior 'unbounded retry' Important issue: bounded attempts confirmed",
+    "Fix for prior 'Reset races producer state' Important issue: confirmed safe",
+    "Command-count stability and maintenance-percentage wording (prior Minors) resolved",
+    "TSAN 200k concurrent test executed clean; ASan/UBSan and focused suite all pass"
   ],
-  "reviewer_models": ["claude-opus-4-8", "claude-sonnet-5"]
+  "reviewer_models": ["claude-opus-4-8", "claude-sonnet-5"],
+  "excluded_reviews": ["claude-91da254d-0241-4553-a9a4-168eea6b3bb1.md"]
 }

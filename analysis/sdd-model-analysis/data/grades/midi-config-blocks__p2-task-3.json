@@ -1,0 +1,23 @@
+{
+  "task_key": "midi-config-blocks__p2-task-3",
+  "G1": 2,
+  "G2": 2,
+  "G3": 5,
+  "G4": 4,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 2,
+  "verdict_sequence": ["REVISE", "PASS"],
+  "rounds_to_accept": 2,
+  "final_grade": "C",
+  "evidence": [
+    "R1 Important: name-fallback match inside already-open branch only, so some fallback matches emit no Update*Ref",
+    "R1 Important: FindByName ignores claimed status, duplicate-name controllers can misassign across slots",
+    "R1 Minor: no test for close-then-open stale-online retargeting full sequence",
+    "R1 Minor: adversarial mixed exact-vs-fallback priority across slots not directly tested",
+    "R2: fixes correctly emit Update*Ref without spurious open/close and deterministic unclaimed name fallback"
+  ],
+  "reviewer_models": ["gpt-5.5"],
+  "excluded_reviews": []
+}

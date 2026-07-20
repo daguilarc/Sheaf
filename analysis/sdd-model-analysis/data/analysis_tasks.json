@@ -64,16 +64,17 @@
    "rounds_to_accept": 1,
    "final_grade": "A",
    "evidence": [
-    "Reviewer: no important code-quality fix required before commit; verdict PASS",
+    "No important code-quality fix required before commit; verdict PASS",
     "Overflow, NaN propagation, merge math, time support all verified sound",
-    "Non-blocking: SummaryEffectiveBaseIndex re-runs validation three times per read",
+    "SummaryEffectiveBaseIndex re-runs validation three times per read (non-blocking)",
     "Redundant static_assert of trivially-copyable in both header and test",
     "Split-span assertion effectively tautological, adds little extra coverage",
-    "Alias-band test threshold slack is implicit rather than documented"
+    "Alias-band test threshold slack implicit rather than documented"
    ],
    "reviewer_models": [
     "claude-opus-4-8"
-   ]
+   ],
+   "excluded_reviews": []
   }
  },
  {
@@ -128,29 +129,29 @@
   "grade": {
    "task_key": "add-autoscope-density-raster__task-2",
    "G1": 5,
-   "G2": 3,
-   "G3": 4,
+   "G2": 5,
+   "G3": 3,
    "G4": 5,
    "G5": 5,
    "n_critical": 0,
    "n_important": 1,
    "n_minor": 2,
    "verdict_sequence": [
-    "REVISE",
     "PASS"
    ],
    "rounds_to_accept": 2,
    "final_grade": "B",
    "evidence": [
-    "Important finding (delegating zero-arg ctor implicit) resolved via explicit ctor",
-    "Minor: AddSamples noexcept proof addressed with static_assert",
+    "Important finding (implicit zero-arg ctor) resolved via explicit keyword",
+    "Minor: AddSamples noexcept proof addressed via static_assert",
     "Minor: non-default odd-tap delay test addressed, hand-verified formulas",
-    "Rebuilt fresh: 17/17 tests pass under ASan/UBSan, no diagnostics",
-    "No Critical/Important findings remain after fix round"
+    "17/17 tests pass under -Wall -Wextra -Wpedantic -O2 and sanitizers",
+    "No source-tree changes from verification; git status clean"
    ],
    "reviewer_models": [
     "claude-sonnet-5"
-   ]
+   ],
+   "excluded_reviews": []
   }
  },
  {
@@ -204,32 +205,34 @@
   },
   "grade": {
    "task_key": "add-autoscope-density-raster__task-3",
-   "G1": 5,
+   "G1": 4,
    "G2": 5,
    "G3": 4,
    "G4": 2,
-   "G5": 3,
+   "G5": 4,
    "n_critical": 0,
    "n_important": 2,
    "n_minor": 3,
    "verdict_sequence": [
     "PASS",
-    "PASS",
-    "REVISE"
+    "CHANGES REQUESTED"
    ],
    "rounds_to_accept": null,
-   "final_grade": "D",
+   "final_grade": "C",
    "evidence": [
-    "Efficiency follow-up PASS; informational note on evaluatedPairs count only",
-    "OpenSpec ledger issue 'was Important', palette/registry 'was Minor' now resolved",
-    "Latest round: CHANGES REQUESTED - anchor helper makes test vacuous",
-    "Test asserts a false invariant: signed/summary anchors coincide, but diverge by FIR delay",
-    "Production density-raster implementation itself deemed correct across full checklist",
-    "No later review confirms concern-3 fix was applied and re-verified"
+    "OpenSpec ledger (was Important) resolved: checkboxes ticked only after review",
+    "Palette helpers (was Minor) and registry tick (was Minor) addressed",
+    "Required fix: DensityReaderForSourceTesting anchor helper makes test vacuous, false invariant",
+    "Production density-raster implementation correct across entire checklist",
+    "Global runner-up prominence: real limitation, deferred, no fix required",
+    "Diagnostics counting concern cannot manifest; counters consistent in every reachable state"
    ],
    "reviewer_models": [
-    "claude-opus-4-8",
-    "claude-sonnet-5"
+    "claude-sonnet-5",
+    "claude-opus-4-8"
+   ],
+   "excluded_reviews": [
+    "claude-b86d6a80-a7ef-49b4-97e4-3bf8d17d214b.md"
    ]
   }
  },
@@ -285,13 +288,13 @@
   "grade": {
    "task_key": "add-autoscope-density-raster__task-4",
    "G1": 5,
-   "G2": 4,
+   "G2": 5,
    "G3": 4,
-   "G4": 5,
+   "G4": 4,
    "G5": 5,
    "n_critical": 0,
    "n_important": 0,
-   "n_minor": 6,
+   "n_minor": 4,
    "verdict_sequence": [
     "PASS",
     "PASS"
@@ -299,16 +302,16 @@
    "rounds_to_accept": 1,
    "final_grade": "A",
    "evidence": [
-    "Round 1: PASS, no Critical/Important findings, four Minor notes",
-    "Minor 1: locked reader reports Empty() on exact cycle-boundary edge case",
-    "Minor 2: stale diagnostics fields when locked analysis fails phase acquisition",
-    "Minor 4: coverage gap vs drift/noise/steady-hold tests, brief itself satisfied",
-    "Rereview: all four minors correctly fixed, drift/noise tests added and hand-verified",
-    "All seven verification targets hold; range-safe, no regression"
+    "Verdict PASS; no Critical or Important findings, four Minor notes",
+    "Minor 1 and Minor 2 (empty() boundary, stale diagnostics) correctly resolved",
+    "Independent fuzz probe: no throw, no non-finite, no ASan/UBSan error",
+    "Sub-pixel mapping compression: no action needed, div-by-zero protection correct",
+    "Test-coverage gap vs OpenSpec 4.5: drift/noise/steady-hold tests recommended as follow-up"
    ],
    "reviewer_models": [
     "claude-opus-4-8"
-   ]
+   ],
+   "excluded_reviews": []
   }
  },
  {
@@ -362,33 +365,33 @@
   },
   "grade": {
    "task_key": "add-autoscope-density-raster__task-5",
-   "G1": 5,
+   "G1": 4,
    "G2": 2,
-   "G3": 3,
+   "G3": 4,
    "G4": 5,
-   "G5": 3,
+   "G5": 4,
    "n_critical": 0,
    "n_important": 2,
-   "n_minor": 7,
+   "n_minor": 2,
    "verdict_sequence": [
-    "REVISE",
-    "PASS",
     "PASS",
     "PASS"
    ],
    "rounds_to_accept": 2,
    "final_grade": "C",
    "evidence": [
-    "Two previously-reported Important issues independently confirmed fixed (writer/consumer)",
-    "Fix confirmed: unbounded-retry and Reset-races-producer concurrency bugs resolved",
-    "TSAN clean over 200k reused slots; concurrency protocol sound",
-    "Benchmark round: two prior Minor findings (stability assert, doc wording) resolved",
-    "Alpha-raster round: report mismatch - task-5-report.md describes different, unrelated work",
-    "Reviewer: report mismatch not a code-quality defect but worth flagging to human"
+    "Two previously-reported Important issues independently confirmed fixed",
+    "Fix for prior 'unbounded retry' Important issue: bounded attempts confirmed",
+    "Fix for prior 'Reset races producer state' Important issue: confirmed safe",
+    "Command-count stability and maintenance-percentage wording (prior Minors) resolved",
+    "TSAN 200k concurrent test executed clean; ASan/UBSan and focused suite all pass"
    ],
    "reviewer_models": [
     "claude-opus-4-8",
     "claude-sonnet-5"
+   ],
+   "excluded_reviews": [
+    "claude-91da254d-0241-4553-a9a4-168eea6b3bb1.md"
    ]
   }
  },
@@ -443,7 +446,7 @@
   },
   "grade": {
    "task_key": "add-autoscope-density-raster__task-6",
-   "G1": 5,
+   "G1": 3,
    "G2": 5,
    "G3": 4,
    "G4": 4,
@@ -454,23 +457,24 @@
    "verdict_sequence": [
     "PASS",
     "PASS",
-    "REVISE",
+    "CHANGES REQUESTED",
     "PASS"
    ],
    "rounds_to_accept": 4,
-   "final_grade": "C",
+   "final_grade": "B",
    "evidence": [
-    "Round 1 PASS; minor: report overclaims null-pointer path was test-verified",
+    "Minor: report overclaims null-pointer test coverage not actually exercised",
     "Minor: duplicated background/centerline drawing constants across two call sites",
-    "Rereview: both minors resolved, shared frame helper extracted, null-path test added",
-    "Later round CHANGES REQUESTED: coverage.md still cites stale renamed test name",
-    "Doc also behaviorally stale: prose contradicts what renamed test now proves",
-    "Final rereview PASS: coverage.md updated, old name absent repo-wide"
+    "Both minors resolved via shared AppendScopeFrameCommands helper and new test",
+    "CHANGES REQUESTED: coverage.md still cites old, now-nonexistent test name twice",
+    "Doc is both broken and behaviorally stale, contradicts renamed test's assertions",
+    "Re-review: old name fully absent repo-wide, doc wording now matches behavior"
    ],
    "reviewer_models": [
     "claude-sonnet-5",
     "claude-opus-4-8"
-   ]
+   ],
+   "excluded_reviews": []
   }
  },
  {
@@ -524,11 +528,11 @@
   },
   "grade": {
    "task_key": "add-autoscope-density-raster__task-7",
-   "G1": 5,
+   "G1": 4,
    "G2": 5,
    "G3": 4,
-   "G4": 5,
-   "G5": 2,
+   "G4": 4,
+   "G5": 3,
    "n_critical": 0,
    "n_important": 2,
    "n_minor": 2,
@@ -540,17 +544,18 @@
    "rounds_to_accept": 2,
    "final_grade": "C",
    "evidence": [
-    "Important: report claims 37/37 scenarios audited, spec files actually define 38",
-    "Important: report claims dsp_tests 57/57 PASS, actual is 56/56 PASS",
-    "Both errors are self-reported evidence-count inaccuracies, not code/spec defects",
-    "Rereview PASS: both counts corrected, no stale 37/37 or 57/57 strings remain",
-    "Later PASS: benchmark/doc round finds only non-blocking minors, e.g. timer scope",
-    "All formulas, defaults, and coverage rows verified line-by-line against source"
+    "Important: report claims 37/37 scenarios; spec files actually define 38",
+    "Important: report overstates dsp_tests pass count (57/57 claimed, 56/56 actual)",
+    "Both self-reported evidence-count inaccuracies must be corrected before PASS",
+    "Re-review: no stale 37/37 or 57/57 strings remain; all counts now correct",
+    "Minor: hand-computed storage formulas duplicate internal layout, no failing assertion",
+    "Minor: vector-move inside rebuild/hit timers, negligible, symmetric across regions"
    ],
    "reviewer_models": [
     "claude-sonnet-5",
     "claude-opus-4-8"
-   ]
+   ],
+   "excluded_reviews": []
   }
  },
  {
@@ -605,32 +610,34 @@
   "grade": {
    "task_key": "add-browser-wasm-runtime__task-1",
    "G1": 4,
-   "G2": 1,
-   "G3": 2,
-   "G4": 2,
+   "G2": 4,
+   "G3": 4,
+   "G4": 3,
    "G5": 2,
-   "n_critical": 1,
+   "n_critical": 0,
    "n_important": 3,
-   "n_minor": 4,
+   "n_minor": 2,
    "verdict_sequence": [
-    "REVISE",
-    "PASS",
-    "PASS",
-    "REVISE",
+    "CHANGES REQUESTED",
     "PASS"
    ],
-   "rounds_to_accept": 5,
-   "final_grade": "F",
+   "rounds_to_accept": 2,
+   "final_grade": "C",
    "evidence": [
-    "synth-browser-test wired but broken: no tests/ dir exists, playwright fails",
-    "tsconfig 'files' list silently limits build to compiling one file only",
-    "Report claims portability proven; only a dry-run was executed for wasm target",
-    "Rereview: all five previously flagged issues resolved, clean to proceed",
-    "Critical: implicit copy/move ctor + this-capturing lambdas caused ASan heap-use-after-free",
-    "Fix confirmed: copy/move ops explicitly deleted, static_asserts and rebuild pass"
+    "synth-browser-test wired but will fail: no tests/ dir exists, target broken",
+    "tsconfig 'files' list limits build to one file; no real type-checking",
+    "Verification claims outrun what was checked: only make -n dry-run for em++",
+    "Generated build output (dist/, wasm-build/) not gitignored",
+    "Dead code: BrowserAppBinding defined but never referenced (inherited from brief)",
+    "All five previously flagged issues resolved; no new blocking findings"
    ],
    "reviewer_models": [
     "claude-sonnet-5"
+   ],
+   "excluded_reviews": [
+    "claude-ee76d4b1-7bcf-4b4f-a151-c88759e55391.md",
+    "claude-9447e09f-fa78-427c-af51-1466d9fc4212.md",
+    "claude-49ce41a6-0a9f-41cf-8df8-ca894adacce1.md"
    ]
   }
  },
@@ -683,7 +690,38 @@
     "C7": "Exact format shape and function signatures given; bodies open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "add-browser-wasm-runtime__task-2",
+   "G1": 4,
+   "G2": 4,
+   "G3": 4,
+   "G4": 4,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 2,
+   "verdict_sequence": [
+    "APPROVE_WITH_MINORS",
+    "APPROVE"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "A",
+   "evidence": [
+    "Dropping unsupported node could leave dangling child references in parent's children list",
+    "intern and stringIndex were duplicate O(n) linear scans over the strings vector",
+    "Approve with minors: faithful, well-tested match for brief and global constraints",
+    "Dangling child ids from dropped nodes resolved via two-pass pruning with diagnostics",
+    "Duplicate string-table scans resolved: single stringIndices unordered_map shared",
+    "All three follow-up items resolved with direct test coverage; Task 2 gate passes"
+   ],
+   "reviewer_models": [
+    "claude-sonnet-5"
+   ],
+   "excluded_reviews": [
+    "claude-7fb2591b-de9d-4e36-a7ea-9d41996a2e9f.md",
+    "claude-b7cfc553-8c7b-4df8-b31e-f32b10589e06.md"
+   ]
+  }
  },
  {
   "task_key": "add-browser-wasm-runtime__task-3",
@@ -734,7 +772,37 @@
     "C7": "Detailed behavioral rules given but decoder/renderer architecture left open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "add-browser-wasm-runtime__task-3",
+   "G1": 5,
+   "G2": 2,
+   "G3": 4,
+   "G4": 3,
+   "G5": 4,
+   "n_critical": 0,
+   "n_important": 3,
+   "n_minor": 1,
+   "verdict_sequence": [
+    "APPROVE_WITH_MINORS",
+    "APPROVE",
+    "REVISE",
+    "APPROVE"
+   ],
+   "rounds_to_accept": 2,
+   "final_grade": "C",
+   "evidence": [
+    "DrawKind.Fill always fills full canvas, ignoring draw command's bounds - confirmed bug",
+    "Slider/TextField input.value force-reset every render clobbers in-progress focused edits",
+    "Dead code: 'preserve sibling controls' branch never has anything to preserve",
+    "New controllers/file/negotiated-audio logic entirely untested - withheld CODE QUALITY APPROVED",
+    "All three round-1 findings resolved with direct test coverage, hand-traced",
+    "Re-review: prior Important coverage-gap finding resolved with new integration tests"
+   ],
+   "reviewer_models": [
+    "claude-sonnet-5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "add-browser-wasm-runtime__task-4",
@@ -785,7 +853,37 @@
     "C7": "Exact ABI function names given, implementation bodies left open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "add-browser-wasm-runtime__task-4",
+   "G1": 5,
+   "G2": 3,
+   "G3": 3,
+   "G4": 4,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 1,
+   "n_minor": 3,
+   "verdict_sequence": [
+    "APPROVE_WITH_MINORS",
+    "APPROVE",
+    "APPROVE"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "B",
+   "evidence": [
+    "Makefile omits EXPORTED_RUNTIME_METHODS; stringToUTF8/lengthBytesUTF8 undefined at runtime",
+    "check:generic-runtime guard fails open (passes vacuously) if rg is absent",
+    "Both prior findings resolved: runtime methods exported, rg guard replaced with pure-Node scanner",
+    "Dead duplicate 'unknown child' check left unreachable after ordering fix",
+    "setPointerCapture failure wrapped in try/catch, verified no stale drag state on throw",
+    "CODE QUALITY APPROVED - no critical/important findings, fix areas hand-verified"
+   ],
+   "reviewer_models": [
+    "claude-opus-4-8",
+    "claude-sonnet-5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "add-browser-wasm-runtime__task-5",
@@ -836,7 +934,40 @@
     "C7": "Exact device option label/id given, ring-buffer design left open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "add-browser-wasm-runtime__task-5",
+   "G1": 5,
+   "G2": 4,
+   "G3": 3,
+   "G4": 2,
+   "G5": 4,
+   "n_critical": 0,
+   "n_important": 2,
+   "n_minor": 7,
+   "verdict_sequence": [
+    "APPROVE_WITH_MINORS",
+    "APPROVE",
+    "REVISE",
+    "APPROVE"
+   ],
+   "rounds_to_accept": 2,
+   "final_grade": "C",
+   "evidence": [
+    "Ring-buffer state-word indices duplicated as magic numbers instead of single source of truth",
+    "Right channel of 2-channel ring buffer never read or asserted - false-positive audio test",
+    "Missing cleanup: four new e2e tests never call app.stop() or terminate the Worker",
+    "Untracked screenshot artifacts with no .gitignore entry would commit binary diffs",
+    "Hardcoded 250ms waitForTimeout vs sibling test's expect.poll pattern - flaky risk",
+    "APPROVED: planar two-channel audio, app.stop() cleanup, expect.poll all verified fixed"
+   ],
+   "reviewer_models": [
+    "claude-sonnet-5",
+    "claude-haiku-4-5-20251001"
+   ],
+   "excluded_reviews": [
+    "claude-2d706743-2773-4336-aff3-ab7a6a2758a5.md"
+   ]
+  }
  },
  {
   "task_key": "add-browser-wasm-runtime__task-6",
@@ -887,7 +1018,35 @@
     "C7": "Sysex call and ownership split given, C++/JS boundary design left open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "add-browser-wasm-runtime__task-6",
+   "G1": 5,
+   "G2": 1,
+   "G3": 4,
+   "G4": 2,
+   "G5": 3,
+   "n_critical": 1,
+   "n_important": 0,
+   "n_minor": 2,
+   "verdict_sequence": [
+    "REVISE",
+    "APPROVE"
+   ],
+   "rounds_to_accept": 2,
+   "final_grade": "F",
+   "evidence": [
+    "MidiSender starts a real std::thread but WASM build has no pthread flags",
+    "Would fail entire browser runtime init or leave outbound MIDI silently dead",
+    "C++ bridge tests only pass because FakeEngine's thread is native; WASM path untested",
+    "Output sinks silently capped at 8 controllers - acceptable but undocumented",
+    "Prior HIGH fixed: PTHREAD_FLAGS with USE_PTHREADS=1 added to both browser targets",
+    "Regression test asserts pthread flags stay present - Recommendation: approve"
+   ],
+   "reviewer_models": [
+    "claude-opus-4-8"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "add-browser-wasm-runtime__task-7",
@@ -938,7 +1097,35 @@
     "C7": "Exact file/behavior to canonicalize specified, implementation open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "add-browser-wasm-runtime__task-7",
+   "G1": 3,
+   "G2": 4,
+   "G3": 4,
+   "G4": 4,
+   "G5": 3,
+   "n_critical": 0,
+   "n_important": 2,
+   "n_minor": 2,
+   "verdict_sequence": [
+    "REVISE",
+    "APPROVE"
+   ],
+   "rounds_to_accept": 2,
+   "final_grade": "C",
+   "evidence": [
+    "Persistence status not routed through runtime page status path (kFileStatus) - Step 3 partial",
+    "BrowserPersistence.hpp declares kBrowserPersistenceStatusPath but is dead, unused code",
+    "status command now masks runtime liveness - persistence status shadows liveness silently",
+    "RESOLVED: worker now emits page-status to runtime.file.status, verified against source",
+    "status command split into pure liveness vs separate persistence-status - no masking",
+    "APPROVED (approve-with-minor): remaining vacuous no-op branch is cosmetic only"
+   ],
+   "reviewer_models": [
+    "claude-opus-4-8"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "add-browser-wasm-runtime__task-8",
@@ -989,7 +1176,36 @@
     "C7": "Files and coverage areas listed, exact scenarios left to implementer"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "add-browser-wasm-runtime__task-8",
+   "G1": 3,
+   "G2": 1,
+   "G3": 3,
+   "G4": 2,
+   "G5": 2,
+   "n_critical": 2,
+   "n_important": 1,
+   "n_minor": 7,
+   "verdict_sequence": [
+    "DONE_WITH_CONCERNS",
+    "APPROVE",
+    "APPROVE"
+   ],
+   "rounds_to_accept": 2,
+   "final_grade": "F",
+   "evidence": [
+    "Blocker: audio channel count assumed stereo - could corrupt memory via OOB write, now RESOLVED",
+    "Blocker: main.ts stub - static site did not boot the app at all, now RESOLVED",
+    "Miniapp smoke doesn't verify bidirectional MIDI through injectable ports - brief deviation",
+    "Step 5 OpenSpec checklist (tasks.md) left unchecked; later reviewer calls it authorized",
+    "C++ ABI now validates outputChannels against engine config, throws on mismatch",
+    "Real-WASM miniapp smoke correctly skipped (404 gate) due to missing em++ toolchain"
+   ],
+   "reviewer_models": [
+    "claude-opus-4-8"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "add-browser-wasm-synth-runtime__task-1",
@@ -1040,7 +1256,34 @@
     "C7": "Brief supplies complete file contents to create verbatim"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "add-browser-wasm-synth-runtime__task-1",
+   "G1": 5,
+   "G2": 5,
+   "G3": 3,
+   "G4": 3,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 4,
+   "verdict_sequence": [
+    "APPROVE"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "B",
+   "evidence": [
+    "C ABI functions verified by compilation only - never linked/run, not behaviorally tested",
+    "audio_input_supported() returns raw status code, not boolean - easy to misread",
+    "dispatch_action silently drops built ActionMessage - matches brief's stub, fine for now",
+    "No explicit JUCE guard in host cpp itself - protection is build-level only",
+    "Approved: skeleton satisfies every binding constraint for Task 1",
+    "Beyond-brief ProcessBlock wiring verified against actual Engine/MiniAppCore signatures"
+   ],
+   "reviewer_models": [
+    "claude-opus-4-8"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "add-browser-wasm-synth-runtime__task-2",
@@ -3159,7 +3402,34 @@
     "C7": "Full test case code is given verbatim"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "add-portable-modulator-visualizers__task-5",
+   "G1": 5,
+   "G2": 5,
+   "G3": 5,
+   "G4": 5,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 0,
+   "verdict_sequence": [
+    "APPROVED",
+    "APPROVED"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "A",
+   "evidence": [
+    "Braid4Core registration never sets .visualizer; stays at nullptr default per d4-9",
+    "Test checks all three groups (Stereo/Quad/Mono), numModulators==2, metadata pointers null",
+    "No production code changed; only test file and tasks.md checkboxes touched",
+    "Report honestly discloses this was a guard-green result, not a red-green cycle",
+    "No Critical or Important findings in either review; both APPROVED"
+   ],
+   "reviewer_models": [
+    "claude-sonnet-5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "add-portable-modulator-visualizers__task-6",
@@ -3210,7 +3480,35 @@
     "C7": "Exact table rows and verification commands given verbatim"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "add-portable-modulator-visualizers__task-6",
+   "G1": 5,
+   "G2": 5,
+   "G3": 5,
+   "G4": 4,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 1,
+   "verdict_sequence": [
+    "APPROVED",
+    "APPROVED"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "A",
+   "evidence": [
+    "Coverage rows match brief verbatim; diff touches only tasks.md and coverage.md",
+    "Coverage/verification: openspec validate --strict re-ran, confirmed exit 0",
+    "Minor: 3.2's top-level-parameter/bank-transition absence cases lack dedicated tests",
+    "Behavior correct-by-construction though; no stale pointer survives a bank transition",
+    "No Critical or Important findings; implementation faithfully satisfies all five requirements"
+   ],
+   "reviewer_models": [
+    "claude-sonnet-5",
+    "claude-opus-4-8"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "add-runtime-button-grids__task-1",
@@ -3261,7 +3559,36 @@
     "C7": "Field declaration given; test assertions and review left open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "add-runtime-button-grids__task-1",
+   "G1": 5,
+   "G2": 5,
+   "G3": 4,
+   "G4": 5,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 1,
+   "verdict_sequence": [
+    "PASS"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "A",
+   "evidence": [
+    "gridManager wiring runs in constructor body after context_ construction, valid for Init",
+    "Finalization trigger confirmed strictly after app_.Init() returns, matching declare-then-finalize",
+    "Test color assertion accounts for PopulateUIState overwriting alpha; not accidentally passing",
+    "Nit: 3-line comment block visually inconsistent with sibling members; not worth blocking",
+    "SPEC COMPLIANCE: PASS, CODE QUALITY: PASS"
+   ],
+   "reviewer_models": [
+    "claude-sonnet-5"
+   ],
+   "excluded_reviews": [
+    "claude-01eff6b8-4f52-410a-9f2f-c69eca50f679.md",
+    "claude-39657238-c26c-45e8-ba7a-16e5b93425fe.md"
+   ]
+  }
  },
  {
   "task_key": "add-runtime-button-grids__task-2",
@@ -3312,7 +3639,35 @@
     "C7": "Exact registration and processing code given, init structure left open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "add-runtime-button-grids__task-2",
+   "G1": 5,
+   "G2": 5,
+   "G3": 4,
+   "G4": 4,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 1,
+   "verdict_sequence": [
+    "PASS"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "A",
+   "evidence": [
+    "No correctness or spec-compliance defects found; one trivial style nit",
+    "Dead defensive check: make_unique can't return null, cell==nullptr unreachable; cosmetic",
+    "GridRange::Create genuinely half-open; row/voice binding traced and confirmed correct",
+    "PopulateUIState alpha strictly on/off, RGB carries full/dim distinction, as required",
+    "SPEC COMPLIANCE: PASS, CODE QUALITY: PASS"
+   ],
+   "reviewer_models": [
+    "claude-sonnet-5"
+   ],
+   "excluded_reviews": [
+    "claude-5eb976c8-8ce2-4526-ae84-74531a2c77ab.md"
+   ]
+  }
  },
  {
   "task_key": "add-runtime-button-grids__task-3",
@@ -3363,7 +3718,36 @@
     "C7": "Exact verification commands and expected outcomes specified"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "add-runtime-button-grids__task-3",
+   "G1": 3,
+   "G2": 5,
+   "G3": 5,
+   "G4": 5,
+   "G5": 3,
+   "n_critical": 0,
+   "n_important": 1,
+   "n_minor": 0,
+   "verdict_sequence": [
+    "REVISE",
+    "PASS"
+   ],
+   "rounds_to_accept": 2,
+   "final_grade": "B",
+   "evidence": [
+    "Task 3.2 marked complete on a review gate the report itself documents as skipped",
+    "SPEC COMPLIANCE: REVISE due to premature checkbox completion with no supporting artifact",
+    "Re-review confirms single-line fix: 3.2 flipped back to unchecked pending final review",
+    "Nothing extraneous added or removed; precisely the correction the prior review required",
+    "SPEC COMPLIANCE: PASS, CODE QUALITY: PASS after correction"
+   ],
+   "reviewer_models": [
+    "claude-sonnet-5"
+   ],
+   "excluded_reviews": [
+    "claude-afc29cdd-5ba6-487c-95af-94dc2e1a3afb.md"
+   ]
+  }
  },
  {
   "task_key": "add-sheaf-synth-superapp__task-1",
@@ -3618,7 +4002,37 @@
     "C7": "Exact test and production code snippets provided"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "add-standard-modulators__task-2",
+   "G1": 5,
+   "G2": 5,
+   "G3": 4,
+   "G4": 4,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 2,
+   "verdict_sequence": [
+    "PASS",
+    "PASS"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "A",
+   "evidence": [
+    "Formula matches brief's Step 3 exactly; all four sources' derived values verified by hand",
+    "TDD RED evidence genuine: pre-GREEN failure values match old formula's output exactly",
+    "Minor: magic coefficients uncommented, no cue tying them to spec ratios or units",
+    "Minor: test re-derives expected values with same literal coefficients as production code",
+    "SPEC COMPLIANCE: PASS, CODE QUALITY: PASS"
+   ],
+   "reviewer_models": [
+    "claude-sonnet-5"
+   ],
+   "excluded_reviews": [
+    "claude-cf3a3470-de31-4c55-8ef4-a601cb8bbb21.md",
+    "claude-1a6f3afe-b747-416b-aba5-ceb8b86ed2d0.md"
+   ]
+  }
  },
  {
   "task_key": "add-standard-modulators__task-3",
@@ -3669,7 +4083,37 @@
     "C7": "Exact node ids and layout formulas given, code structure open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "add-standard-modulators__task-3",
+   "G1": 5,
+   "G2": 5,
+   "G3": 3,
+   "G4": 5,
+   "G5": 4,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 4,
+   "verdict_sequence": [
+    "PASS",
+    "PASS"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "B",
+   "evidence": [
+    "16 row-major encoders, corner mapping, bounded layout at both sizes hand-verified",
+    "Were tests weakened? No -- each removed assertion replaced or already covered elsewhere",
+    "Minor: GangedRandomLfoInstance() left with zero remaining callers, dead accessor",
+    "Minor: comment-only timestamp workaround is a standing Makefile header-dependency risk",
+    "Minor: Makefile lists headers already pulled in transitively by STANDARD_MODULATOR_HEADERS",
+    "SPEC COMPLIANCE: PASS, CODE QUALITY: PASS"
+   ],
+   "reviewer_models": [
+    "claude-sonnet-5"
+   ],
+   "excluded_reviews": [
+    "claude-8d9566aa-ce31-4a8f-8367-cdbba1f27c19.md"
+   ]
+  }
  },
  {
   "task_key": "add-standard-modulators__task-4",
@@ -5442,7 +5886,36 @@
     "C7": "Exact catalogVersion formula and fixture pattern specified"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-3",
+   "G1": 5,
+   "G2": 5,
+   "G3": 3,
+   "G4": 5,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 3,
+   "verdict_sequence": [
+    "PASS"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "B",
+   "evidence": [
+    "PASS: no actionable correctness, security, atomicity, race/TOCTOU, schema-validation, or test-gap findings",
+    "Non-blocking: expectedCatalogVersion duplicates catalogVersion definition, kept honest by mismatch validation",
+    "Non-blocking: _headers glob only matches 3-segment paths, latent constraint not a bug given producible outputs",
+    "Non-blocking: standalone buildFirstPartyCatalog two-step replace not jointly atomic, irrelevant to production path",
+    "Atomic complete app set, digest/report staleness, and Braid 4 data-only status all independently verified against source",
+    "Deterministic two-app catalog, byte-identical repeats, and destination-preservation on failure all covered by tests"
+   ],
+   "reviewer_models": [
+    "claude-opus-4-8"
+   ],
+   "excluded_reviews": [
+    "claude-9dd9c61c-4e8e-46bf-add1-19c9800a35a4.md"
+   ]
+  }
  },
  {
   "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-4",
@@ -5493,7 +5966,36 @@
     "C7": "Clear acceptance requirements; validator/workflow generalization design left open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-4",
+   "G1": 5,
+   "G2": 4,
+   "G3": 3,
+   "G4": 5,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 3,
+   "verdict_sequence": [
+    "APPROVED"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "B",
+   "evidence": [
+    "Findings (all LOW): none block the task",
+    "cloudflare-pages-build.sh --no-package-lock is a mild non-blocking supply-chain/reproducibility trade-off",
+    "static-site.spec.ts rollback semantics change consistent with design but underlying rollback tree not directly confirmed",
+    "Two files outside brief's explicit list (static-server.mjs, github-pages-workflow.test.mjs) both justified, noted for transparency",
+    "Table-driven two-app acceptance, persistence isolation, no-fallback-transport, and ABI v2 everywhere all verified against tests",
+    "'Scope boundaries (untracked files, OpenSpec) are respected'"
+   ],
+   "reviewer_models": [
+    "claude-opus-4-8"
+   ],
+   "excluded_reviews": [
+    "claude-d97cfd25-7c0e-4b1f-90a7-49c4e31704d4.md"
+   ]
+  }
  },
  {
   "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-5",
@@ -5595,7 +6097,38 @@
     "C7": "Outcome and gates defined; specific fixes left to implementer"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-6",
+   "G1": 5,
+   "G2": 5,
+   "G3": 3,
+   "G4": 4,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 4,
+   "verdict_sequence": [
+    "PASS",
+    "PASS"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "B",
+   "evidence": [
+    "Critical: None. Important: None. Task 6 merge-readiness: APPROVE (merge-ready)",
+    "Minor: scaffold.test.mjs guard is a weak structural check on package.json string shape, not real behavior",
+    "Minor: fake-app.e2e.spec.ts loosened toEqual to toMatchObject and resumes:1 to resumes>=1, justified as nondeterministic",
+    "Minor: redundant onStatus re-assignment already covered by spread, harmless",
+    "Minor: optional zero-context-registration branch coverage from Task 1's ledger left unaddressed, explicitly non-blocking",
+    "Follow-up commit adding only task-6-report.md re-confirmed byte-identical diff, SPEC/QUALITY PASS, 0 unresolved findings"
+   ],
+   "reviewer_models": [
+    "claude-opus-4-8",
+    "claude-opus-4-8"
+   ],
+   "excluded_reviews": [
+    "claude-2769d191-cb33-48ec-a491-f054245abaa3.md"
+   ]
+  }
  },
  {
   "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-7",
@@ -5697,7 +6230,34 @@
     "C7": "Extensive content contract itemized; prose/structure left open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-8",
+   "G1": 5,
+   "G2": 5,
+   "G3": 5,
+   "G4": 5,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 0,
+   "verdict_sequence": [
+    "PASS"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "A",
+   "evidence": [
+    "Every normative claim in catalog-schema-v1.md and publisher-guide.md traces to real source constants and behavior",
+    "All 31 quoted test titles across sbac-1 through sbac-12 and sprs-12 verified verbatim against actual test files",
+    "Links resolve correctly, both embedded JSON examples parse valid, git diff --check clean",
+    "No obsolete auto-launch/direct-dist-wasm-app.js guidance introduced; remaining mentions correctly describe rollback bundle",
+    "Live-deployment honesty maintained: report and docs explicitly state deployed-catalog validator wasn't run against a real URL",
+    "Scope discipline: only the four required files committed, under the exact required commit message"
+   ],
+   "reviewer_models": [
+    "claude-sonnet-5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-9",
@@ -5799,7 +6359,30 @@
     "C7": "Interface block is verbatim-binding; implementation bodies left open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "midi-config-blocks__p1-task-1",
+   "G1": 2,
+   "G2": 3,
+   "G3": 5,
+   "G4": 3,
+   "G5": 4,
+   "n_critical": 0,
+   "n_important": 1,
+   "n_minor": 0,
+   "verdict_sequence": [
+    "REVISE"
+   ],
+   "rounds_to_accept": null,
+   "final_grade": "B",
+   "evidence": [
+    "SlotValidForKind never requires association.control for WrldBldr/Twister/Generic; invalid slots can enter config",
+    "New tests cover control-only and forbidden-position cases but miss the missing-address case"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "midi-config-blocks__p1-task-2",
@@ -5850,7 +6433,31 @@
     "C7": "Exact interfaces and JSON shape given; parsing bodies left open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "midi-config-blocks__p1-task-2",
+   "G1": 5,
+   "G2": 4,
+   "G3": 4,
+   "G4": 4,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 2,
+   "verdict_sequence": [
+    "PASS"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "A",
+   "evidence": [
+    "SPEC PASS: schema/shape, profile reuse, scratch-only load, rejection paths, endpoint round-trip all implemented",
+    "Minor: Step-1 endpoint identifier+name pair test not fully explicit for twister/launchpads",
+    "Minor: public FromJSON accepts kind-invalid slot/profile combos when called standalone outside AddController"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "midi-config-blocks__p1-task-3",
@@ -5901,7 +6508,31 @@
     "C7": "Engine boundary explicitly resolved in brief; call-site fixes left open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "midi-config-blocks__p1-task-3",
+   "G1": 2,
+   "G2": 5,
+   "G3": 5,
+   "G4": 4,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 1,
+   "n_minor": 1,
+   "verdict_sequence": [
+    "REVISE"
+   ],
+   "rounds_to_accept": null,
+   "final_grade": "B",
+   "evidence": [
+    "SPEC FAIL: LoadPatchJSON uses MidiInstrumentConfig& while brief literally specifies a pointer parameter",
+    "Behavior otherwise consistent with required midiInstrument despite the signature mismatch",
+    "Minor: SerializeToJSON endpoint-ref coverage is indirect, doesn't directly assert identifier paths"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "midi-config-blocks__p1-task-4",
@@ -5952,7 +6583,35 @@
     "C7": "Scope decisions are largely pre-resolved by the brief, little left open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "midi-config-blocks__p1-task-4",
+   "G1": 2,
+   "G2": 1,
+   "G3": 4,
+   "G4": 4,
+   "G5": 2,
+   "n_critical": 2,
+   "n_important": 0,
+   "n_minor": 1,
+   "verdict_sequence": [
+    "REVISE",
+    "REVISE",
+    "PASS"
+   ],
+   "rounds_to_accept": 3,
+   "final_grade": "F",
+   "evidence": [
+    "R1 Critical: RebuildMidiProcessors reads instrumentConfig_ outside mutex, racing audio-thread ApplyPatchMessage",
+    "R2 Critical: MidiPanel::Slot0Endpoints reads LiveInstrument().controllers unlocked on message-thread paths",
+    "Implementer's round-1 audit claimed all other readers locked correctly, but missed the Slot0Endpoints case",
+    "R1 Minor: stale midiProfileConfig references remain in comments despite brief requiring none",
+    "R3: locked InstrumentSnapshot() now covers Slot0Endpoints; remaining callers are single-threaded tests"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "midi-config-blocks__p2-task-1",
@@ -6003,7 +6662,31 @@
     "C7": "kMaxSinks and exact SetSink/Enqueue signatures given verbatim"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "midi-config-blocks__p2-task-1",
+   "G1": 4,
+   "G2": 5,
+   "G3": 4,
+   "G4": 4,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 2,
+   "verdict_sequence": [
+    "PASS"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "A",
+   "evidence": [
+    "SPEC PASS: interface matches, call sites updated, required Step-1 tests present",
+    "Minor: new tests call FlushForTests without asserting its return value",
+    "Minor: cv_ plus drainedCv_ don't literally match the global 'one CV' wording, pre-existing and unchanged"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "midi-config-blocks__p2-task-2",
@@ -6054,7 +6737,30 @@
     "C7": "Accessor interfaces given verbatim; snapshot/build approach strongly hinted"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "midi-config-blocks__p2-task-2",
+   "G1": 5,
+   "G2": 5,
+   "G3": 4,
+   "G4": 5,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 1,
+   "verdict_sequence": [
+    "PASS"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "A",
+   "evidence": [
+    "SPEC PASS: interfaces, rebuild behavior, sink routing, reset scoping, and requested tests are present",
+    "Minor: stale comment says RebuildMidiProcessors only builds slot 0; implementation now rebuilds all slots"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "midi-config-blocks__p2-task-3",
@@ -6105,7 +6811,34 @@
     "C7": "Twelve truth-table test cases specified; implementation bodies open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "midi-config-blocks__p2-task-3",
+   "G1": 2,
+   "G2": 2,
+   "G3": 5,
+   "G4": 4,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 2,
+   "n_minor": 2,
+   "verdict_sequence": [
+    "REVISE",
+    "PASS"
+   ],
+   "rounds_to_accept": 2,
+   "final_grade": "C",
+   "evidence": [
+    "R1 Important: name-fallback match inside already-open branch only, so some fallback matches emit no Update*Ref",
+    "R1 Important: FindByName ignores claimed status, duplicate-name controllers can misassign across slots",
+    "R1 Minor: no test for close-then-open stale-online retargeting full sequence",
+    "R1 Minor: adversarial mixed exact-vs-fallback priority across slots not directly tested",
+    "R2: fixes correctly emit Update*Ref without spurious open/close and deterministic unclaimed name fallback"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "midi-config-blocks__p3-task-1",
@@ -6156,7 +6889,34 @@
     "C7": "Constructor/Start/Stop/ConsumeChange interface given verbatim"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "midi-config-blocks__p3-task-1",
+   "G1": 5,
+   "G2": 2,
+   "G3": 4,
+   "G4": 4,
+   "G5": 4,
+   "n_critical": 0,
+   "n_important": 3,
+   "n_minor": 2,
+   "verdict_sequence": [
+    "REVISE",
+    "REVISE"
+   ],
+   "rounds_to_accept": null,
+   "final_grade": "C",
+   "evidence": [
+    "R1 Important: missed-generation race in PollNowForTests, concurrent forced-poll callers can collapse onto one generation",
+    "R1 Important: enumerate() exceptions escape the worker thread and would call std::terminate",
+    "R1 Important: Stop() cannot join promptly while mid-enumerate(), no bounded-callback contract documented",
+    "R1 Minor: concurrent Start() while Stop() is joining silently drops the start request, undocumented",
+    "R2: sequencing and exception paths race-free in code, but comments describe stale fold-in behavior"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "midi-config-blocks__p3-task-2",
@@ -6207,7 +6967,35 @@
     "C7": "Ops bindings spelled out precisely; reentrancy and MidiPanel-cut depth open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "midi-config-blocks__p3-task-2",
+   "G1": 3,
+   "G2": 1,
+   "G3": 5,
+   "G4": 4,
+   "G5": 5,
+   "n_critical": 1,
+   "n_important": 2,
+   "n_minor": 1,
+   "verdict_sequence": [
+    "REVISE",
+    "PASS"
+   ],
+   "rounds_to_accept": 2,
+   "final_grade": "F",
+   "evidence": [
+    "Critical: output handler shrink can destroy a sink while MidiSender still holds its raw pointer",
+    "Important: startup ordering violates binding, OnInstrumentRebuilt can reconcile before StartupReconcile",
+    "Important: manual UI opens persist empty endpoint names, weakening self-healing reconnect matching",
+    "Minor: no test coverage for manager-side resize case (OnInstrumentRebuilt growth/shrink)",
+    "Round 2: SPEC PASS, QUALITY APPROVED \u2014 reviewed fixes satisfy interleavings, gating, and name threading"
+   ],
+   "reviewer_models": [
+    "gpt-5.5",
+    "claude-sonnet-5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "midi-config-blocks__p3-task-3",
@@ -6258,7 +7046,35 @@
     "C7": "Exact binding order given, but enumeration degraded-mode decision left open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "midi-config-blocks__p3-task-3",
+   "G1": 3,
+   "G2": 3,
+   "G3": 4,
+   "G4": 4,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 2,
+   "n_minor": 2,
+   "verdict_sequence": [
+    "REVISE",
+    "PASS"
+   ],
+   "rounds_to_accept": 2,
+   "final_grade": "C",
+   "evidence": [
+    "Important: planner marks absent endpoint offline only from Online, not Unconfigured \u2014 violates absent-to-offline requirement",
+    "Important: cannot verify from diff that rebuild-then-reconcile is tested as specified; test only proves callback fires",
+    "Minor: Reconcile() logs unconditionally every poll tick even for empty plan \u2014 degraded mode not log-quiet",
+    "Minor: sender-before-poller shutdown ordering inspected, no race found \u2014 benign deviation",
+    "Round 2: SPEC PASS, QUALITY APPROVED \u2014 no further findings"
+   ],
+   "reviewer_models": [
+    "gpt-5.5",
+    "claude-sonnet-5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "midi-config-blocks__p4-task-1",
@@ -6309,7 +7125,37 @@
     "C7": "Exact struct/method names and Step-1 test list given, bodies open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "midi-config-blocks__p4-task-1",
+   "G1": 2,
+   "G2": 2,
+   "G3": 4,
+   "G4": 2,
+   "G5": 2,
+   "n_critical": 0,
+   "n_important": 7,
+   "n_minor": 2,
+   "verdict_sequence": [
+    "REVISE",
+    "REVISE",
+    "REVISE"
+   ],
+   "rounds_to_accept": null,
+   "final_grade": "D",
+   "evidence": [
+    "Important: WrldBldrX/Y edits don't update paired control channel/CC, position can diverge from actual MIDI trigger",
+    "Important: system-message editableFields advertise Press/ReleaseMessage but ApplyMappingEdit has no cases for them",
+    "Round 2: WRLD.Bldr Channel/Cc edits still accepted despite not being advertised, still desyncing position",
+    "Round 2: size_t-backed fields accept unrepresentable doubles like 1e300, unchecked static_cast",
+    "Round 3: TurnStep still accepts huge finite doubles that cannot become a finite float",
+    "Minor: test hygiene \u2014 missing coverage for advertised fields vs ApplyMappingEdit, the exact gap that recurred"
+   ],
+   "reviewer_models": [
+    "gpt-5.5",
+    "claude-sonnet-5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "midi-config-blocks__p4-task-2",
@@ -6360,7 +7206,32 @@
     "C7": "Exact pixel layout and interface block specified precisely"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "midi-config-blocks__p4-task-2",
+   "G1": 5,
+   "G2": 5,
+   "G3": 4,
+   "G4": 5,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 2,
+   "verdict_sequence": [
+    "PASS"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "A",
+   "evidence": [
+    "SPEC PASS: required interface, sidebar/page behavior, retained app, deadline formatting, thin shell host present",
+    "Minor: resized() doesn't clamp layout for windows narrower than 96px or very short heights",
+    "Minor: shell chrome removal left stale unused includes (AppContext.hpp, PatchPersistence.hpp, MidiPanel.hpp)",
+    "Reviewer did not rerun tests/build/launch smoke per task constraints forbidding tests/builds"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "midi-config-blocks__p4-task-3",
@@ -6411,7 +7282,33 @@
     "C7": "Requirements very exact, including verbatim-preserved conditional logic"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "midi-config-blocks__p4-task-3",
+   "G1": 5,
+   "G2": 3,
+   "G3": 4,
+   "G4": 4,
+   "G5": 4,
+   "n_critical": 0,
+   "n_important": 1,
+   "n_minor": 2,
+   "verdict_sequence": [
+    "REVISE"
+   ],
+   "rounds_to_accept": null,
+   "final_grade": "C",
+   "evidence": [
+    "SPEC PASS: Audio/File pages present, routed, refreshed; AudioPanel deleted; Controllers remains placeholder",
+    "Important: audio status messages overwritten before user can see them \u2014 RefreshStatus replaces event text with device text",
+    "Minor: file chooser lifetime unverifiable re: JUCE callback-after-shutdown guarantee, but preserves old pattern",
+    "Minor: hook lifetime acceptable for current single-audio-page ownership model",
+    "No later reviewer round confirms the important finding was actually fixed"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "midi-config-blocks__p4-task-4",
@@ -6462,7 +7359,36 @@
     "C7": "Leaves the connection-manager wiring choice to be judged and documented"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "midi-config-blocks__p4-task-4",
+   "G1": 2,
+   "G2": 1,
+   "G3": 3,
+   "G4": 4,
+   "G5": 2,
+   "n_critical": 1,
+   "n_important": 4,
+   "n_minor": 1,
+   "verdict_sequence": [
+    "REVISE",
+    "REVISE"
+   ],
+   "rounds_to_accept": null,
+   "final_grade": "F",
+   "evidence": [
+    "Critical: ControllersPage never subscribes to onMidiProcessorsRebuilt_, so instrument changes with same status leave VM stale indefinitely",
+    "Important: page re-implements section/field logic locally instead of being a thin VM renderer, violating the binding",
+    "Important: device combo selection bypasses SetEndpointRef, calling ManualOpenInput/Output directly",
+    "Important: MidiPanel file deleted but stale doc/comment references remain in README, MidiConnectionManager, Engine",
+    "Important: focus guard can starve refresh forever, leaving VM visually stale until focus lost",
+    "Round 2: Runtime.hpp comment still documents deleted ManualOpen* path \u2014 stale/false reference remains"
+   ],
+   "reviewer_models": [
+    "gpt-5.5",
+    "claude-sonnet-5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "midi-config-blocks__p4-task-5",
@@ -6513,7 +7439,32 @@
     "C7": "Grep-verifiable exact requirements for what must disappear"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "midi-config-blocks__p4-task-5",
+   "G1": 2,
+   "G2": 1,
+   "G3": 5,
+   "G4": 2,
+   "G5": 2,
+   "n_critical": 1,
+   "n_important": 1,
+   "n_minor": 0,
+   "verdict_sequence": [
+    "REVISE"
+   ],
+   "rounds_to_accept": null,
+   "final_grade": "F",
+   "evidence": [
+    "Critical: added test reads LiveInstrument() but claims to pin post-Init DefaultInstrument() \u2014 a regression in the snapshot path would still pass",
+    "Important: test sets expected scene/bank/gesture options but only asserts encoder counts/mappings, not full documented options",
+    "No later reviewer round confirms the implementer's claimed fix (pin default instrument snapshot) was actually correct"
+   ],
+   "reviewer_models": [
+    "gpt-5.5",
+    "claude-haiku-4-5-20251001"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "midi-config-blocks__taskgroup-1",
@@ -6870,7 +7821,33 @@
     "C7": "Brief stated to contain exact values and expected code snippets"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "restore-encoder-mouse-interaction__task-1",
+   "G1": 5,
+   "G2": 4,
+   "G3": 5,
+   "G4": 4,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 2,
+   "verdict_sequence": [
+    "PASS"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "A",
+   "evidence": [
+    "Spec Compliance: PASS, Code Quality: PASS \u2014 all required interfaces present with exact names/signatures",
+    "LOW: std::to_string(float) 6-digit precision could lose precision; round-trip test uses 0.25f which doesn't catch it",
+    "LOW: SIZE_MAX sentinel for parse failure would reject a legitimate SIZE_MAX value; practically safe for encoder indices",
+    "Implementation stops precisely at Task 2 boundary; confirmed red test at encoder node wiring line 231",
+    "Changed files match allowed scope (4 files, all listed)"
+   ],
+   "reviewer_models": [
+    "claude-sonnet-4-6"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "restore-encoder-mouse-interaction__task-2",
@@ -7516,7 +8493,32 @@
     "C7": "Produces block and Initialize-order paragraph are binding constraints"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "synth-app-runtime__p2-task-3",
+   "G1": 2,
+   "G2": 5,
+   "G3": 4,
+   "G4": 5,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 1,
+   "n_minor": 2,
+   "verdict_sequence": [
+    "REVISE"
+   ],
+   "rounds_to_accept": null,
+   "final_grade": "C",
+   "evidence": [
+    "Public Engine constructor adds initialArenaCapacity param; brief requires exact single-arg constructor",
+    "ApplyPendingPatchMessages grows arena unconditionally; Task 4 must guard before calling from audio path",
+    "engine_tests.cpp uses std::fabs without directly including <cmath>",
+    "Task quality: Needs fixes \u2014 public constructor doesn't match binding Produces surface"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "synth-app-runtime__p2-task-4",
@@ -7567,7 +8569,33 @@
     "C7": "Pump order given as binding code block; tests sketched only"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "synth-app-runtime__p2-task-4",
+   "G1": 3,
+   "G2": 1,
+   "G3": 4,
+   "G4": 3,
+   "G5": 5,
+   "n_critical": 1,
+   "n_important": 1,
+   "n_minor": 1,
+   "verdict_sequence": [
+    "REVISE",
+    "PASS"
+   ],
+   "rounds_to_accept": 2,
+   "final_grade": "F",
+   "evidence": [
+    "pendingPatchMessage_ not treated as drain barrier; a later exhausted message can overwrite the stashed one",
+    "Add focused test around stash barrier/overwrite case; ArenaExhausted path never exercised by tests",
+    "Prepare() recomputes uiPublishInterval_ but does not reset blocksSinceUiPublish_",
+    "Rereview: barrier enforced structurally; new test covers exhaust/barrier/retry-first sequence; Approved"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "synth-app-runtime__p2-task-5",
@@ -7618,7 +8646,34 @@
     "C7": "Tick order enumerated exactly; test scenarios described, not coded"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "synth-app-runtime__p2-task-5",
+   "G1": 2,
+   "G2": 1,
+   "G3": 4,
+   "G4": 2,
+   "G5": 5,
+   "n_critical": 2,
+   "n_important": 1,
+   "n_minor": 1,
+   "verdict_sequence": [
+    "REVISE",
+    "PASS"
+   ],
+   "rounds_to_accept": 2,
+   "final_grade": "F",
+   "evidence": [
+    "MessageThreadTick calls RebuildMidiProcessors before clearing flag; callback fires inside rebuild, wrong order",
+    "Callback registered before Initialize fires spuriously on first rebuild and again on startup patch load",
+    "Tiny-arena test consumes ProcessResponses before the successful tick; would pass even if tick step 3 missing",
+    "Comment says 'or would only reach the cap' but code only drops when already at cap",
+    "Rereview: callback dispatch only in Initialize and MessageThreadTick after clear; Approved"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "synth-app-runtime__p2-task-6",
@@ -7669,7 +8724,32 @@
     "C7": "Public rig surface and RigTestApp specifics given precisely"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "synth-app-runtime__p2-task-6",
+   "G1": 3,
+   "G2": 1,
+   "G3": 5,
+   "G4": 5,
+   "G5": 5,
+   "n_critical": 1,
+   "n_important": 1,
+   "n_minor": 0,
+   "verdict_sequence": [
+    "REVISE",
+    "PASS"
+   ],
+   "rounds_to_accept": 2,
+   "final_grade": "F",
+   "evidence": [
+    "PumpSaveLike calls RunBlocks(1), which already consumes Written via MessageThreadTick; later ProcessResponses sees NoCompletion and can time out",
+    "SawNullMidiInputProcessor() is an extra public method outside the binding Produces surface",
+    "Rereview: save race fixed via ConsumeLastTickPatchResult; unrequested accessor removed; new regression test added; Approved"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "synth-app-runtime__p2-task-7",
@@ -7720,7 +8800,32 @@
     "C7": "Five tests and assertions specified; regions sketched for real code"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "synth-app-runtime__p2-task-7",
+   "G1": 3,
+   "G2": 5,
+   "G3": 4,
+   "G4": 1,
+   "G5": 5,
+   "n_critical": 1,
+   "n_important": 0,
+   "n_minor": 1,
+   "verdict_sequence": [
+    "REVISE",
+    "PASS"
+   ],
+   "rounds_to_accept": 2,
+   "final_grade": "F",
+   "evidence": [
+    "Round-trip test saves edited value then loads while rig is already at that value; a no-op load could still pass",
+    "Long explanatory comment around RevertPatch adaptation is oversized for a test body",
+    "Rereview: test now perturbs state before load, then asserts restoration; no-op load would fail; Approved"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "synth-app-runtime__p3-task-1",
@@ -7771,7 +8876,32 @@
     "C7": "Named gates and pitfalls given; extraction structure left open"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "synth-app-runtime__p3-task-1",
+   "G1": 3,
+   "G2": 3,
+   "G3": 4,
+   "G4": 5,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 1,
+   "n_minor": 1,
+   "verdict_sequence": [
+    "REVISE",
+    "PASS"
+   ],
+   "rounds_to_accept": 2,
+   "final_grade": "B",
+   "evidence": [
+    "App Makefile path handling is cwd-relative; invoking from another directory fails to find runtime/juce_build.mk",
+    "clean target defined but omitted from .PHONY; a real file named clean could shadow it",
+    "Rereview: APP_DIR anchored before include, JUCE_BUILD_MK_DIR computed first, clean now in .PHONY; Approved"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "synth-app-runtime__p3-task-2",
@@ -7822,7 +8952,31 @@
     "C7": "Exact startup order and callback behavior specified step by step"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "synth-app-runtime__p3-task-2",
+   "G1": 5,
+   "G2": 5,
+   "G3": 5,
+   "G4": 5,
+   "G5": 5,
+   "n_critical": 0,
+   "n_important": 0,
+   "n_minor": 0,
+   "verdict_sequence": [
+    "PASS"
+   ],
+   "rounds_to_accept": 1,
+   "final_grade": "A",
+   "evidence": [
+    "Runtime<App> matches requested shell; Start() follows bound order; placeholder main doesn't call Start()",
+    "JUCE sequencing correct: addAudioCallback calls audioDeviceAboutToStart before registering callback so Prepare runs with real device values",
+    "No task-scoped correctness issues found; Task quality: Approved"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "synth-app-runtime__p3-task-3",
@@ -7873,7 +9027,33 @@
     "C7": "Wiring requirements enumerated precisely as bullet points"
    }
   },
-  "grade": null
+  "grade": {
+   "task_key": "synth-app-runtime__p3-task-3",
+   "G1": 2,
+   "G2": 1,
+   "G3": 4,
+   "G4": 5,
+   "G5": 5,
+   "n_critical": 1,
+   "n_important": 1,
+   "n_minor": 1,
+   "verdict_sequence": [
+    "REVISE",
+    "PASS"
+   ],
+   "rounds_to_accept": 2,
+   "final_grade": "F",
+   "evidence": [
+    "MidiPanel dereferences inputTarget_ without synchronization while ReopenPersistedEndpoints writes it; stale pointer to a destroyed processor (UAF)",
+    "Missing output Reset() after open/reopen regresses LED/value resync parity with the old app",
+    "Unconditional post-Initialize ReopenPersistedEndpoints causes redundant close/reopen, acceptable once race fixed",
+    "Rereview: UAF window closed via mutex-guarded processor slot; output reset parity fixed; Approved"
+   ],
+   "reviewer_models": [
+    "gpt-5.5"
+   ],
+   "excluded_reviews": []
+  }
  },
  {
   "task_key": "synth-app-runtime__p3-task-4",

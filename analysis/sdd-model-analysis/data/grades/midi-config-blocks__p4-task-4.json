@@ -1,0 +1,24 @@
+{
+  "task_key": "midi-config-blocks__p4-task-4",
+  "G1": 2,
+  "G2": 1,
+  "G3": 3,
+  "G4": 4,
+  "G5": 2,
+  "n_critical": 1,
+  "n_important": 4,
+  "n_minor": 1,
+  "verdict_sequence": ["REVISE", "REVISE"],
+  "rounds_to_accept": null,
+  "final_grade": "F",
+  "evidence": [
+    "Critical: ControllersPage never subscribes to onMidiProcessorsRebuilt_, so instrument changes with same status leave VM stale indefinitely",
+    "Important: page re-implements section/field logic locally instead of being a thin VM renderer, violating the binding",
+    "Important: device combo selection bypasses SetEndpointRef, calling ManualOpenInput/Output directly",
+    "Important: MidiPanel file deleted but stale doc/comment references remain in README, MidiConnectionManager, Engine",
+    "Important: focus guard can starve refresh forever, leaving VM visually stale until focus lost",
+    "Round 2: Runtime.hpp comment still documents deleted ManualOpen* path — stale/false reference remains"
+  ],
+  "reviewer_models": ["gpt-5.5", "claude-sonnet-5"],
+  "excluded_reviews": []
+}

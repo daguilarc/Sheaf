@@ -1,0 +1,24 @@
+{
+  "task_key": "add-browser-wasm-runtime__task-7",
+  "G1": 3,
+  "G2": 4,
+  "G3": 4,
+  "G4": 4,
+  "G5": 3,
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 2,
+  "verdict_sequence": ["REVISE", "APPROVE"],
+  "rounds_to_accept": 2,
+  "final_grade": "C",
+  "evidence": [
+    "Persistence status not routed through runtime page status path (kFileStatus) - Step 3 partial",
+    "BrowserPersistence.hpp declares kBrowserPersistenceStatusPath but is dead, unused code",
+    "status command now masks runtime liveness - persistence status shadows liveness silently",
+    "RESOLVED: worker now emits page-status to runtime.file.status, verified against source",
+    "status command split into pure liveness vs separate persistence-status - no masking",
+    "APPROVED (approve-with-minor): remaining vacuous no-op branch is cosmetic only"
+  ],
+  "reviewer_models": ["claude-opus-4-8"],
+  "excluded_reviews": []
+}

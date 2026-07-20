@@ -1,11 +1,13 @@
 # SDD Model Analysis — status & resume instructions
 
-## State (2026-07-19)
+## State (2026-07-19, final)
 
-Mechanical extraction is **complete and committed**; the LLM labeling fan-out is
-**blocked on the Anthropic monthly spend limit** (all subagents failed with
-"You've hit your monthly spend limit"). No phase/complexity/grade files were
-written yet (`data/phase_labels/`, `data/complexity/`, `data/grades/` are empty).
+**Complete.** All three labeling stages ran: 200/202 phase-labeled sessions,
+143/155 complexity-scored tasks, 117/122 graded tasks (remaining items are
+legitimate skips — empty sessions or briefs deleted from disk). Synthesis is in
+`findings.md`; the flat dataset is `data/analysis_tasks.{json,csv}` and
+`data/analysis_sessions.json`. The instructions below are kept for re-running
+or extending the pipeline on future SDD runs.
 
 ## What exists
 

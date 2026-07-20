@@ -1,0 +1,24 @@
+{
+  "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-3",
+  "G1": 5,
+  "G2": 5,
+  "G3": 3,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 3,
+  "verdict_sequence": ["PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "B",
+  "evidence": [
+    "PASS: no actionable correctness, security, atomicity, race/TOCTOU, schema-validation, or test-gap findings",
+    "Non-blocking: expectedCatalogVersion duplicates catalogVersion definition, kept honest by mismatch validation",
+    "Non-blocking: _headers glob only matches 3-segment paths, latent constraint not a bug given producible outputs",
+    "Non-blocking: standalone buildFirstPartyCatalog two-step replace not jointly atomic, irrelevant to production path",
+    "Atomic complete app set, digest/report staleness, and Braid 4 data-only status all independently verified against source",
+    "Deterministic two-app catalog, byte-identical repeats, and destination-preservation on failure all covered by tests"
+  ],
+  "reviewer_models": ["claude-opus-4-8"],
+  "excluded_reviews": ["claude-9dd9c61c-4e8e-46bf-add1-19c9800a35a4.md"]
+}

@@ -1,23 +1,24 @@
 {
   "task_key": "add-autoscope-density-raster__task-3",
-  "G1": 5,
+  "G1": 4,
   "G2": 5,
   "G3": 4,
   "G4": 2,
-  "G5": 3,
+  "G5": 4,
   "n_critical": 0,
   "n_important": 2,
   "n_minor": 3,
-  "verdict_sequence": ["PASS", "PASS", "REVISE"],
+  "verdict_sequence": ["PASS", "CHANGES REQUESTED"],
   "rounds_to_accept": null,
-  "final_grade": "D",
+  "final_grade": "C",
   "evidence": [
-    "Efficiency follow-up PASS; informational note on evaluatedPairs count only",
-    "OpenSpec ledger issue 'was Important', palette/registry 'was Minor' now resolved",
-    "Latest round: CHANGES REQUESTED - anchor helper makes test vacuous",
-    "Test asserts a false invariant: signed/summary anchors coincide, but diverge by FIR delay",
-    "Production density-raster implementation itself deemed correct across full checklist",
-    "No later review confirms concern-3 fix was applied and re-verified"
+    "OpenSpec ledger (was Important) resolved: checkboxes ticked only after review",
+    "Palette helpers (was Minor) and registry tick (was Minor) addressed",
+    "Required fix: DensityReaderForSourceTesting anchor helper makes test vacuous, false invariant",
+    "Production density-raster implementation correct across entire checklist",
+    "Global runner-up prominence: real limitation, deferred, no fix required",
+    "Diagnostics counting concern cannot manifest; counters consistent in every reachable state"
   ],
-  "reviewer_models": ["claude-opus-4-8", "claude-sonnet-5"]
+  "reviewer_models": ["claude-sonnet-5", "claude-opus-4-8"],
+  "excluded_reviews": ["claude-b86d6a80-a7ef-49b4-97e4-3bf8d17d214b.md"]
 }

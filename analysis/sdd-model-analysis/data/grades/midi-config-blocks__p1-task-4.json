@@ -1,0 +1,23 @@
+{
+  "task_key": "midi-config-blocks__p1-task-4",
+  "G1": 2,
+  "G2": 1,
+  "G3": 4,
+  "G4": 4,
+  "G5": 2,
+  "n_critical": 2,
+  "n_important": 0,
+  "n_minor": 1,
+  "verdict_sequence": ["REVISE", "REVISE", "PASS"],
+  "rounds_to_accept": 3,
+  "final_grade": "F",
+  "evidence": [
+    "R1 Critical: RebuildMidiProcessors reads instrumentConfig_ outside mutex, racing audio-thread ApplyPatchMessage",
+    "R2 Critical: MidiPanel::Slot0Endpoints reads LiveInstrument().controllers unlocked on message-thread paths",
+    "Implementer's round-1 audit claimed all other readers locked correctly, but missed the Slot0Endpoints case",
+    "R1 Minor: stale midiProfileConfig references remain in comments despite brief requiring none",
+    "R3: locked InstrumentSnapshot() now covers Slot0Endpoints; remaining callers are single-threaded tests"
+  ],
+  "reviewer_models": ["gpt-5.5"],
+  "excluded_reviews": []
+}
