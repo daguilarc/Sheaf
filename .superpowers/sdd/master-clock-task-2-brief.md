@@ -20,4 +20,3 @@
 - [ ] Define the JUCE-free producer boundary used by later integration: a `ScheduledMidiEvent` value plus a non-owning `IScheduledMidiEventSink::TryEnqueue(const ScheduledMidiEvent&) noexcept`-style contract. The event carries due time, sequence, broadcast/transport ordering intent, phase generation, and cutoff data. The contract requires fixed-capacity, newest-drop, allocation-free, mutex-free producer semantics and observable overflow; Task 3 uses a fixed-capacity test double, while Task 4 makes `MidiSender` the production implementation and owns worker consumption.
 - [ ] Run focused clock tests plus `make -C projects/synth test` before review.
 - [ ] Commit only the task files after review and verification.
-
