@@ -23,6 +23,8 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -36,6 +38,90 @@
 #include <vector>
 
 namespace synth {
+
+class ClockDiagnosticsPublication {
+public:
+    ClockDiagnosticsPublication() noexcept { Publish(ClockDiagnostics{}); }
+
+    void Publish(const ClockDiagnostics& diagnostics) noexcept {
+        const std::uint64_t prior = sequence_.fetch_add(1, std::memory_order_seq_cst);
+        assert((prior & 1U) == 0U);
+        const std::uint64_t metadata =
+            static_cast<std::uint64_t>(diagnostics.acquisition) |
+            (static_cast<std::uint64_t>(diagnostics.source) << 8U) |
+            (static_cast<std::uint64_t>(diagnostics.hasActiveExternalSource) << 16U);
+        metadata_.store(metadata, std::memory_order_seq_cst);
+        activeExternalSourceSlot_.store(
+            static_cast<std::uint64_t>(diagnostics.activeExternalSourceSlot),
+            std::memory_order_seq_cst);
+        currentBpmBits_.store(std::bit_cast<std::uint64_t>(diagnostics.currentBpm),
+                              std::memory_order_seq_cst);
+        outputLatencyMicros_.store(diagnostics.outputLatencyMicros, std::memory_order_seq_cst);
+        ignoredInputCount_.store(diagnostics.ignoredInputCount, std::memory_order_seq_cst);
+        lateEventCount_.store(diagnostics.lateEventCount, std::memory_order_seq_cst);
+        droppedOutputCount_.store(diagnostics.droppedOutputCount, std::memory_order_seq_cst);
+        sequence_.store(prior + 2U, std::memory_order_seq_cst);
+    }
+
+    ClockDiagnostics Snapshot() const noexcept {
+        for (;;) {
+            const std::uint64_t before = sequence_.load(std::memory_order_seq_cst);
+            if ((before & 1U) != 0U) {
+                continue;
+            }
+            const std::uint64_t metadata = metadata_.load(std::memory_order_seq_cst);
+            ClockDiagnostics result{
+                .acquisition = static_cast<ClockAcquisitionState>(metadata & 0xffU),
+                .source = static_cast<ClockSource>((metadata >> 8U) & 0xffU),
+                .hasActiveExternalSource = ((metadata >> 16U) & 1U) != 0U,
+                .activeExternalSourceSlot = static_cast<std::size_t>(
+                    activeExternalSourceSlot_.load(std::memory_order_seq_cst)),
+                .currentBpm = std::bit_cast<double>(
+                    currentBpmBits_.load(std::memory_order_seq_cst)),
+                .outputLatencyMicros = outputLatencyMicros_.load(std::memory_order_seq_cst),
+                .ignoredInputCount = ignoredInputCount_.load(std::memory_order_seq_cst),
+                .lateEventCount = lateEventCount_.load(std::memory_order_seq_cst),
+                .droppedOutputCount = droppedOutputCount_.load(std::memory_order_seq_cst),
+            };
+            const std::uint64_t after = sequence_.load(std::memory_order_seq_cst);
+            if (before == after) {
+                return result;
+            }
+        }
+    }
+
+private:
+    static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
+
+    std::atomic<std::uint64_t> sequence_{0};
+    std::atomic<std::uint64_t> metadata_{0};
+    std::atomic<std::uint64_t> activeExternalSourceSlot_{0};
+    std::atomic<std::uint64_t> currentBpmBits_{0};
+    std::atomic<std::uint64_t> outputLatencyMicros_{0};
+    std::atomic<std::uint64_t> ignoredInputCount_{0};
+    std::atomic<std::uint64_t> lateEventCount_{0};
+    std::atomic<std::uint64_t> droppedOutputCount_{0};
+};
+
+inline constexpr std::uint64_t EncodeSyncConfiguration(const SyncConfig& config) noexcept {
+    return static_cast<std::uint64_t>(config.sendClock) |
+           (static_cast<std::uint64_t>(config.receiveClock) << 1U) |
+           (static_cast<std::uint64_t>(config.sendTransport) << 2U) |
+           (static_cast<std::uint64_t>(config.receiveTransport) << 3U) |
+           (static_cast<std::uint64_t>(config.ppqn) << 4U);
+}
+
+inline constexpr SyncConfig DecodeSyncConfiguration(std::uint64_t word) noexcept {
+    return SyncConfig{
+        .sendClock = (word & 1U) != 0U,
+        .receiveClock = ((word >> 1U) & 1U) != 0U,
+        .sendTransport = ((word >> 2U) & 1U) != 0U,
+        .receiveTransport = ((word >> 3U) & 1U) != 0U,
+        .ppqn = static_cast<int>(word >> 4U),
+    };
+}
+
+static_assert(std::atomic<std::uint64_t>::is_always_lock_free);
 
 template <SynthApplicationCore App>
 class Engine {
@@ -198,6 +284,7 @@ public:
         if (sampleRate > 0.0 && blockSize > 0) {
             (void)masterClock_.Prepare(sampleRate, static_cast<std::size_t>(blockSize));
         }
+        PublishClockDiagnostics();
 
         const int uiFrameHz = config_.uiFrameHz > 0 ? config_.uiFrameHz : 30;
         if (sampleRate > 0.0 && blockSize > 0) {
@@ -252,6 +339,17 @@ public:
     //   6. app_.ProcessBlock(block) exactly once
     //   7. throttled PopulateUIState every uiPublishInterval_ blocks
     void ProcessBlock(AudioBlock& block, std::uint64_t timestamp) {
+        const std::uint64_t requestedSyncWord =
+            requestedSyncWord_.load(std::memory_order_acquire);
+        if (requestedSyncWord != appliedSyncWord_) {
+            const SyncConfig requested = DecodeSyncConfiguration(requestedSyncWord);
+            const bool applied = masterClock_.ApplySyncConfig(requested);
+            assert(applied);
+            if (applied) {
+                appliedSyncWord_ = requestedSyncWord;
+            }
+        }
+
         if (pendingPatchMessage_.has_value()) {
             if (arenaGrowPending_.load(std::memory_order_acquire)) {
                 // Barrier still up: MessageThreadTick has not grown the
@@ -302,6 +400,7 @@ public:
             sampleCounter_.fetch_add(block.numFrames, std::memory_order_relaxed);
         block.startSample = blockStartSample;
         block.clockPlan = masterClock_.CommitBlock(blockStartSample, block.numFrames, timestamp);
+        PublishClockDiagnostics();
         if constexpr (HasProcessFrame<App>) {
             app_.ProcessFrame();
         }
@@ -383,6 +482,19 @@ public:
     PatchManager& Patches() { return patchManager_; }
     MasterClock& Clock() { return masterClock_; }
     const MasterClock& Clock() const { return masterClock_; }
+    bool RequestSyncConfiguration(const SyncConfig& config) noexcept {
+        if (!config.IsValid()) {
+            return false;
+        }
+        requestedSyncWord_.store(EncodeSyncConfiguration(config), std::memory_order_release);
+        return true;
+    }
+    SyncConfig SyncConfigurationSnapshot() const noexcept {
+        return DecodeSyncConfiguration(requestedSyncWord_.load(std::memory_order_acquire));
+    }
+    ClockDiagnostics ClockDiagnosticsSnapshot() const noexcept {
+        return clockDiagnosticsPublication_.Snapshot();
+    }
     void SetScheduledMidiEventSink(IScheduledMidiEventSink* sink) noexcept {
         masterClock_.SetScheduledMidiEventSink(sink);
     }
@@ -402,7 +514,7 @@ public:
     RuntimeConfigFileStatus LoadRuntimeConfiguration() {
         MidiInstrumentConfig loadedInstrument;
         AudioDeviceState loadedAudioDevice;
-        SyncConfig loadedSync = masterClock_.SyncConfiguration();
+        SyncConfig loadedSync = SyncConfigurationSnapshot();
         {
             const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
             loadedInstrument = instrumentConfig_;
@@ -415,6 +527,9 @@ public:
             if (!masterClock_.ApplySyncConfig(loadedSync)) {
                 status = RuntimeConfigFileStatus::Invalid;
             } else {
+                const std::uint64_t loadedWord = EncodeSyncConfiguration(loadedSync);
+                requestedSyncWord_.store(loadedWord, std::memory_order_release);
+                appliedSyncWord_ = loadedWord;
                 const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
                 instrumentConfig_ = std::move(loadedInstrument);
                 audioDeviceState_ = loadedAudioDevice;
@@ -423,6 +538,7 @@ public:
         }
         const std::string path = dataPaths_.configFile.string();
         INFO("Runtime config load status=%s path=%s", RuntimeConfigFileStatusName(status), path.c_str());
+        PublishClockDiagnostics();
         return status;
     }
 
@@ -437,7 +553,7 @@ public:
 
         const RuntimeConfigFileStatus status =
             SaveRuntimeConfigFile(dataPaths_.configFile, instrument, audioDevice,
-                                  masterClock_.SyncConfiguration());
+                                  SyncConfigurationSnapshot());
         const std::string path = dataPaths_.configFile.string();
         INFO("Runtime config save status=%s path=%s", RuntimeConfigFileStatusName(status), path.c_str());
         return status;
@@ -718,6 +834,10 @@ public:
     }
 
 private:
+    void PublishClockDiagnostics() noexcept {
+        clockDiagnosticsPublication_.Publish(masterClock_.DiagnosticsSnapshot());
+    }
+
     static bool IsRealtimeMessage(const MessageIn& message) noexcept {
         switch (message.type) {
         case MessageIn::Type::Start:
@@ -942,6 +1062,9 @@ private:
     AbsoluteFeedbackCoordinator absoluteFeedbackCoordinator_;
     PatchManager patchManager_;
     MasterClock masterClock_;
+    std::atomic<std::uint64_t> requestedSyncWord_{EncodeSyncConfiguration(SyncConfig{})};
+    std::uint64_t appliedSyncWord_ = EncodeSyncConfiguration(SyncConfig{});
+    ClockDiagnosticsPublication clockDiagnosticsPublication_;
     // Engine-owned MIDI instrument (sar-3): the source
     // RebuildMidiProcessors() builds midiProcessors_ from (one
     // MidiControllerProfileResult per controller slot, index-for-index -- see

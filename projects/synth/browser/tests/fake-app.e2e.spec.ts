@@ -9,7 +9,7 @@ type FrameNode = {
 
 type FrameObservation = { nodes: FrameNode[] };
 
-const fakeAcceptance = { shell: false, gestures: false, narrow: false };
+const fakeAcceptance = { shell: false, sync: false, gestures: false, narrow: false };
 
 async function builtFakeCatalogApp() {
   const { createHash } = await (new Function("return import('node:crypto')")() as Promise<{
@@ -229,7 +229,7 @@ test("real fake-app WASM renders and refreshes the shared runtime shell", async 
   await expect(page.locator('[data-synth-node-id="runtime.sidebar.root"]')).toBeVisible();
   await assertNoContentSidebarOverlap(page);
 
-  for (const pageName of ["audio", "controllers", "file"] as const) {
+  for (const pageName of ["audio", "controllers", "sync", "file"] as const) {
     await page.locator(`[data-synth-node-id="runtime.sidebar.${pageName}"]`).click();
     await expect(page.locator(`[data-synth-node-id="runtime.${pageName}.root"]`)).toBeVisible();
     await expect(page.locator('[data-synth-node-id="fake-browser-root"]')).toHaveCount(0);
@@ -264,6 +264,69 @@ test("real fake-app WASM renders and refreshes the shared runtime shell", async 
     (window as any).__task4Fake.observations.commands.filter((command: { type: string }) => command.type === "load").length,
   )).toBe(1);
   fakeAcceptance.shell = true;
+});
+
+test("real fake-app WASM stages, validates, saves, and reopens Sync", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installRealFakeApp(page);
+  await page.locator('[data-synth-node-id="runtime.sidebar.sync"]').click();
+  await expect(page.locator('[data-synth-node-id="runtime.sync.root"]')).toBeVisible();
+
+  const sendClock = page.locator('[data-synth-node-id="runtime.sync.send_clock"] input');
+  const receiveClock = page.locator('[data-synth-node-id="runtime.sync.receive_clock"] input');
+  const sendTransport = page.locator('[data-synth-node-id="runtime.sync.send_transport"] input');
+  const receiveTransport = page.locator('[data-synth-node-id="runtime.sync.receive_transport"] input');
+  const ppqn = page.locator('[data-synth-node-id="runtime.sync.ppqn"] input');
+  await expect(sendClock).not.toBeChecked();
+  await expect(ppqn).toHaveValue("24");
+  await sendClock.check();
+  await receiveClock.check();
+  await sendTransport.check();
+  await receiveTransport.check();
+
+  await ppqn.fill("96x");
+  await expect(page.locator('[data-synth-node-id="runtime.sync.validation"]')).toContainText("1 to 960");
+  await ppqn.fill("96");
+  await expect(page.locator('[data-synth-node-id="runtime.sync.validation"]')).toHaveText("");
+  await expect(page.locator('[data-synth-node-id="runtime.sync.warning"]')).toContainText("nonstandard");
+  await expect(page.locator('[data-synth-node-id="runtime.sync.bpm"]')).toContainText("Current BPM: 120.00");
+  await expect(page.locator('[data-synth-node-id="runtime.sync.lock"]')).toContainText("Internal");
+  await expect(page.locator('[data-synth-node-id="runtime.sync.source"]')).toContainText("no external source");
+
+  const containment = await page.evaluate(() => {
+    const root = document.querySelector<HTMLElement>('[data-synth-node-id="runtime.sync.root"]')!.getBoundingClientRect();
+    return [...document.querySelectorAll<HTMLElement>('[data-synth-node-id^="runtime.sync."]')]
+      .every((element) => {
+        const bounds = element.getBoundingClientRect();
+        return bounds.left >= root.left - 0.5 && bounds.top >= root.top - 0.5 &&
+          bounds.right <= root.right + 0.5 && bounds.bottom <= root.bottom + 0.5;
+      });
+  });
+  expect(containment).toBe(true);
+
+  await page.locator('[data-synth-node-id="runtime.sync.back"]').click();
+  await expect(page.locator('[data-synth-node-id="fake-browser-root"]')).toBeVisible();
+  await page.locator('[data-synth-node-id="runtime.sidebar.sync"]').click();
+  await expect(page.locator('[data-synth-node-id="runtime.sync.ppqn"] input')).toHaveValue("96");
+  await expect(page.locator('[data-synth-node-id="runtime.sync.send_clock"] input')).toBeChecked();
+  await expect(page.locator('[data-synth-node-id="runtime.sync.receive_clock"] input')).toBeChecked();
+  await expect(page.locator('[data-synth-node-id="runtime.sync.send_transport"] input')).toBeChecked();
+  await expect(page.locator('[data-synth-node-id="runtime.sync.receive_transport"] input')).toBeChecked();
+
+  const actions = await page.evaluate(() =>
+    (window as any).__task5Fake.observations.commands
+      .filter((command: { type: string }) => command.type === "dispatch-action")
+      .map((command: { name?: string; value?: string }) => [command.name, command.value]),
+  );
+  expect(actions).toEqual(expect.arrayContaining([
+    ["runtime.sync.send_clock", "1"],
+    ["runtime.sync.receive_clock", "1"],
+    ["runtime.sync.send_transport", "1"],
+    ["runtime.sync.receive_transport", "1"],
+    ["runtime.sync.ppqn", "96"],
+    ["runtime.sync.back", ""],
+  ]));
+  fakeAcceptance.sync = true;
 });
 
 test("real fake-app WASM dispatches incremental drag and double-click actions", async ({ page }) => {

@@ -5,9 +5,13 @@
 
 #include "synth/PatchBrowser.hpp"
 #include "synth/PortableUI.hpp"
+#include "synth/MasterClock.hpp"
+#include "synth/MidiController.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <cstdio>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -26,6 +30,7 @@ namespace NodeIds {
 inline constexpr const char* kSidebarRoot = "runtime.sidebar.root";
 inline constexpr const char* kSidebarAudio = "runtime.sidebar.audio";
 inline constexpr const char* kSidebarControllers = "runtime.sidebar.controllers";
+inline constexpr const char* kSidebarSync = "runtime.sidebar.sync";
 inline constexpr const char* kSidebarFile = "runtime.sidebar.file";
 inline constexpr const char* kSidebarDeadline = "runtime.sidebar.deadline";
 
@@ -35,6 +40,23 @@ inline constexpr const char* kAudioOutput = "runtime.audio.output";
 inline constexpr const char* kAudioInput = "runtime.audio.input";
 inline constexpr const char* kAudioDeviceLine = "runtime.audio.device_line";
 inline constexpr const char* kAudioStatusLine = "runtime.audio.status_line";
+
+inline constexpr const char* kSyncRoot = "runtime.sync.root";
+inline constexpr const char* kSyncBack = "runtime.sync.back";
+inline constexpr const char* kSyncSendClock = "runtime.sync.send_clock";
+inline constexpr const char* kSyncReceiveClock = "runtime.sync.receive_clock";
+inline constexpr const char* kSyncSendTransport = "runtime.sync.send_transport";
+inline constexpr const char* kSyncReceiveTransport = "runtime.sync.receive_transport";
+inline constexpr const char* kSyncPpqn = "runtime.sync.ppqn";
+inline constexpr const char* kSyncValidation = "runtime.sync.validation";
+inline constexpr const char* kSyncWarning = "runtime.sync.warning";
+inline constexpr const char* kSyncBpm = "runtime.sync.bpm";
+inline constexpr const char* kSyncLock = "runtime.sync.lock";
+inline constexpr const char* kSyncSource = "runtime.sync.source";
+inline constexpr const char* kSyncOutputLatency = "runtime.sync.output_latency";
+inline constexpr const char* kSyncIgnoredInput = "runtime.sync.ignored_input";
+inline constexpr const char* kSyncLateEvents = "runtime.sync.late_events";
+inline constexpr const char* kSyncDroppedOutput = "runtime.sync.dropped_output";
 
 inline constexpr const char* kFileRoot = "runtime.file.root";
 inline constexpr const char* kFileBack = "runtime.file.back";
@@ -81,11 +103,19 @@ namespace Actions {
 
 inline constexpr const char* kSidebarAudio = "runtime.sidebar.audio";
 inline constexpr const char* kSidebarControllers = "runtime.sidebar.controllers";
+inline constexpr const char* kSidebarSync = "runtime.sidebar.sync";
 inline constexpr const char* kSidebarFile = "runtime.sidebar.file";
 
 inline constexpr const char* kAudioBack = "runtime.audio.back";
 inline constexpr const char* kAudioOutputSelect = "runtime.audio.output.select";
 inline constexpr const char* kAudioInputSelect = "runtime.audio.input.select";
+
+inline constexpr const char* kSyncBack = "runtime.sync.back";
+inline constexpr const char* kSyncSendClock = "runtime.sync.send_clock";
+inline constexpr const char* kSyncReceiveClock = "runtime.sync.receive_clock";
+inline constexpr const char* kSyncSendTransport = "runtime.sync.send_transport";
+inline constexpr const char* kSyncReceiveTransport = "runtime.sync.receive_transport";
+inline constexpr const char* kSyncPpqn = "runtime.sync.ppqn";
 
 inline constexpr const char* kFileBack = "runtime.file.back";
 inline constexpr const char* kFileNew = "runtime.file.new";
@@ -128,6 +158,59 @@ struct AudioPageSnapshot
     std::string deviceLineText;
     std::string statusLineText;
 };
+
+struct SyncPageStatus
+{
+    double currentBpm = 120.0;
+    std::string lockState = "Internal";
+    std::string sourceName = "Internal (no external source)";
+    std::uint64_t outputLatencyMicros = 0;
+    std::uint64_t ignoredInputCount = 0;
+    std::uint64_t lateEventCount = 0;
+    std::uint64_t droppedOutputCount = 0;
+};
+
+inline const char* ClockAcquisitionStatusName(ClockAcquisitionState state) noexcept
+{
+    switch (state)
+    {
+        case ClockAcquisitionState::Internal:
+            return "Internal";
+        case ClockAcquisitionState::Acquiring:
+            return "Acquiring";
+        case ClockAcquisitionState::Locked:
+            return "Locked";
+        case ClockAcquisitionState::FreeRun:
+            return "FreeRun";
+    }
+    return "Internal";
+}
+
+inline SyncPageStatus BuildSyncPageStatus(const ClockDiagnostics& diagnostics,
+                                          const MidiInstrumentConfig& instrument)
+{
+    SyncPageStatus status;
+    status.currentBpm = diagnostics.currentBpm;
+    status.lockState = ClockAcquisitionStatusName(diagnostics.acquisition);
+    status.outputLatencyMicros = diagnostics.outputLatencyMicros;
+    status.ignoredInputCount = diagnostics.ignoredInputCount;
+    status.lateEventCount = diagnostics.lateEventCount;
+    status.droppedOutputCount = diagnostics.droppedOutputCount;
+    if (!diagnostics.hasActiveExternalSource)
+    {
+        status.sourceName = "Internal (no external source)";
+        return status;
+    }
+    if (diagnostics.activeExternalSourceSlot < instrument.controllers.size() &&
+        !instrument.controllers[diagnostics.activeExternalSourceSlot].name.empty())
+    {
+        status.sourceName = instrument.controllers[diagnostics.activeExternalSourceSlot].name;
+        return status;
+    }
+    status.sourceName =
+        "External source slot " + std::to_string(diagnostics.activeExternalSourceSlot);
+    return status;
+}
 
 enum class FileBrowserKind
 {
@@ -182,7 +265,7 @@ inline constexpr float kFilePanelPadding = 10.0f;
 
 inline ui::Bounds SidebarRootBounds()
 {
-    return {0.0f, 0.0f, kSidebarWidth, kSidebarButtonHeight * 4.0f};
+    return {0.0f, 0.0f, kSidebarWidth, kSidebarButtonHeight * 5.0f};
 }
 
 inline std::string FormatDeadlineText(float percent)
@@ -277,12 +360,23 @@ inline ui::NodeTree BuildSidebarTree(const SidebarSnapshot& snapshot)
     controllersButton.action = ui::Action::Named(Actions::kSidebarControllers);
     appendChild(std::move(controllersButton));
 
+    ui::Node syncButton;
+    syncButton.id = NodeIds::kSidebarSync;
+    syncButton.kind = ui::NodeKind::Button;
+    syncButton.label = "Sync";
+    syncButton.bounds = {0.0f,
+                         Layout::kSidebarButtonHeight * 2.0f,
+                         Layout::kSidebarWidth,
+                         Layout::kSidebarButtonHeight};
+    syncButton.action = ui::Action::Named(Actions::kSidebarSync);
+    appendChild(std::move(syncButton));
+
     ui::Node fileButton;
     fileButton.id = NodeIds::kSidebarFile;
     fileButton.kind = ui::NodeKind::Button;
     fileButton.label = "File";
     fileButton.bounds = {0.0f,
-                         Layout::kSidebarButtonHeight * 2.0f,
+                         Layout::kSidebarButtonHeight * 3.0f,
                          Layout::kSidebarWidth,
                          Layout::kSidebarButtonHeight};
     fileButton.action = ui::Action::Named(Actions::kSidebarFile);
@@ -293,11 +387,141 @@ inline ui::NodeTree BuildSidebarTree(const SidebarSnapshot& snapshot)
     deadlineLabel.kind = ui::NodeKind::StatusText;
     deadlineLabel.text = Layout::FormatDeadlineText(snapshot.deadlinePercent);
     deadlineLabel.bounds = {0.0f,
-                            Layout::kSidebarButtonHeight * 3.0f,
+                            Layout::kSidebarButtonHeight * 4.0f,
                             Layout::kSidebarWidth,
                             Layout::kSidebarButtonHeight};
     appendChild(std::move(deadlineLabel));
 
+    return tree;
+}
+
+struct SyncPageSnapshot
+{
+    SyncConfig staged{};
+    SyncPageStatus status{};
+    std::string validationText;
+    std::string warningText;
+};
+
+inline std::string FormatSyncBpm(double bpm)
+{
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "Current BPM: %.2f", bpm);
+    return buffer;
+}
+
+inline std::string FormatSyncOutputLatency(std::uint64_t latencyMicros)
+{
+    char buffer[64];
+    std::snprintf(buffer,
+                  sizeof(buffer),
+                  "Output latency: %.3f ms",
+                  static_cast<double>(latencyMicros) / 1000.0);
+    return buffer;
+}
+
+inline ui::NodeTree BuildSyncPageTree(const SyncPageSnapshot& snapshot, ui::Bounds area)
+{
+    ui::NodeTree tree;
+    ui::Node root;
+    root.id = NodeIds::kSyncRoot;
+    root.kind = ui::NodeKind::Root;
+    root.bounds = area;
+    tree.nodes.push_back(root);
+
+    auto appendChild = [&](ui::Node node) {
+        tree.nodes.front().children.push_back(node.id);
+        tree.nodes.push_back(std::move(node));
+    };
+
+    const float contentX = area.x + Layout::kPageMargin;
+    const float contentWidth = std::max(0.0f, area.width - Layout::kPageMargin * 2.0f);
+    float y = area.y + Layout::kPageMargin;
+
+    ui::Node back;
+    back.id = NodeIds::kSyncBack;
+    back.kind = ui::NodeKind::Button;
+    back.label = "Back";
+    back.bounds = {contentX,
+                   y,
+                   std::min(Layout::kBackButtonWidth, contentWidth),
+                   Layout::kBackRowHeight};
+    back.action = ui::Action::Named(Actions::kSyncBack);
+    appendChild(std::move(back));
+    y += Layout::kBackRowHeight + Layout::kRowGap;
+
+    constexpr std::size_t kRemainingRows = 14;
+    const float remainingHeight =
+        std::max(0.0f, area.y + area.height - Layout::kPageMargin - y);
+    const float gap = remainingHeight >= 280.0f ? 3.0f : 1.0f;
+    const float rowHeight = std::max(
+        1.0f,
+        std::min(28.0f,
+                 (remainingHeight - gap * static_cast<float>(kRemainingRows - 1)) /
+                     static_cast<float>(kRemainingRows)));
+
+    auto appendRow = [&](ui::Node node) {
+        node.bounds = {contentX, y, contentWidth, rowHeight};
+        appendChild(std::move(node));
+        y += rowHeight + gap;
+    };
+    auto appendToggle = [&](const char* id,
+                            const char* label,
+                            bool checked,
+                            const char* action) {
+        ui::Node node;
+        node.id = id;
+        node.kind = ui::NodeKind::Toggle;
+        node.label = label;
+        node.checked = checked;
+        node.action = ui::Action::Named(action);
+        appendRow(std::move(node));
+    };
+    appendToggle(NodeIds::kSyncSendClock,
+                 "Send clock",
+                 snapshot.staged.sendClock,
+                 Actions::kSyncSendClock);
+    appendToggle(NodeIds::kSyncReceiveClock,
+                 "Receive clock",
+                 snapshot.staged.receiveClock,
+                 Actions::kSyncReceiveClock);
+    appendToggle(NodeIds::kSyncSendTransport,
+                 "Send transport",
+                 snapshot.staged.sendTransport,
+                 Actions::kSyncSendTransport);
+    appendToggle(NodeIds::kSyncReceiveTransport,
+                 "Receive transport",
+                 snapshot.staged.receiveTransport,
+                 Actions::kSyncReceiveTransport);
+
+    ui::Node ppqn;
+    ppqn.id = NodeIds::kSyncPpqn;
+    ppqn.kind = ui::NodeKind::TextField;
+    ppqn.label = "PPQN (1-960)";
+    ppqn.text = std::to_string(snapshot.staged.ppqn);
+    ppqn.action = ui::Action::Named(Actions::kSyncPpqn);
+    appendRow(std::move(ppqn));
+
+    auto appendStatus = [&](const char* id, std::string text) {
+        ui::Node node;
+        node.id = id;
+        node.kind = ui::NodeKind::StatusText;
+        node.text = std::move(text);
+        appendRow(std::move(node));
+    };
+    appendStatus(NodeIds::kSyncValidation, snapshot.validationText);
+    appendStatus(NodeIds::kSyncWarning, snapshot.warningText);
+    appendStatus(NodeIds::kSyncBpm, FormatSyncBpm(snapshot.status.currentBpm));
+    appendStatus(NodeIds::kSyncLock, "Lock: " + snapshot.status.lockState);
+    appendStatus(NodeIds::kSyncSource, "Source: " + snapshot.status.sourceName);
+    appendStatus(NodeIds::kSyncOutputLatency,
+                 FormatSyncOutputLatency(snapshot.status.outputLatencyMicros));
+    appendStatus(NodeIds::kSyncIgnoredInput,
+                 "Ignored input: " + std::to_string(snapshot.status.ignoredInputCount));
+    appendStatus(NodeIds::kSyncLateEvents,
+                 "Late events: " + std::to_string(snapshot.status.lateEventCount));
+    appendStatus(NodeIds::kSyncDroppedOutput,
+                 "Dropped output: " + std::to_string(snapshot.status.droppedOutputCount));
     return tree;
 }
 
@@ -1003,6 +1227,91 @@ public:
 
 private:
     SidebarSnapshot snapshot_;
+    ActionHandler outerHandler_;
+};
+
+class SyncPageSurface final : public ui::Surface
+{
+public:
+    ui::NodeTree BuildTree() override
+    {
+        return BuildSyncPageTree(snapshot_, contentBounds_);
+    }
+
+    void SetActionHandler(ActionHandler handler) override { outerHandler_ = std::move(handler); }
+    void DispatchAction(const ui::Action& action) override
+    {
+        if (action.name == Actions::kSyncBack)
+        {
+            if (outerHandler_)
+            {
+                outerHandler_(action);
+            }
+            return;
+        }
+        if (action.name == Actions::kSyncPpqn)
+        {
+            int value = 0;
+            const char* const begin = action.value.data();
+            const char* const end = begin + action.value.size();
+            const auto [parsedEnd, error] = std::from_chars(begin, end, value, 10);
+            if (action.value.empty() || error != std::errc{} || parsedEnd != end ||
+                value < 1 || value > 960)
+            {
+                snapshot_.validationText = "PPQN must be a whole number from 1 to 960";
+                return;
+            }
+            snapshot_.staged.ppqn = value;
+            snapshot_.validationText.clear();
+            UpdateWarning();
+            return;
+        }
+
+        bool* target = nullptr;
+        if (action.name == Actions::kSyncSendClock)
+        {
+            target = &snapshot_.staged.sendClock;
+        }
+        else if (action.name == Actions::kSyncReceiveClock)
+        {
+            target = &snapshot_.staged.receiveClock;
+        }
+        else if (action.name == Actions::kSyncSendTransport)
+        {
+            target = &snapshot_.staged.sendTransport;
+        }
+        else if (action.name == Actions::kSyncReceiveTransport)
+        {
+            target = &snapshot_.staged.receiveTransport;
+        }
+        if (target != nullptr && (action.value == "1" || action.value == "0"))
+        {
+            *target = action.value == "1";
+        }
+    }
+    void SetContentBounds(ui::Bounds bounds) { contentBounds_ = bounds; }
+    void BeginEdit(const SyncConfig& config)
+    {
+        snapshot_.staged = config;
+        snapshot_.validationText.clear();
+        UpdateWarning();
+    }
+    void RefreshStatus(const SyncPageStatus& status) { snapshot_.status = status; }
+    const SyncConfig& StagedConfiguration() const { return snapshot_.staged; }
+    const std::string& ValidationText() const { return snapshot_.validationText; }
+    const std::string& WarningText() const { return snapshot_.warningText; }
+    void SetApplyError() { snapshot_.validationText = "Unable to apply sync configuration"; }
+
+private:
+    void UpdateWarning()
+    {
+        snapshot_.warningText = snapshot_.staged.ppqn == 24
+                                    ? std::string{}
+                                    : "Warning: MIDI peers must use the same nonstandard pulse density";
+    }
+
+    SyncPageSnapshot snapshot_{};
+    ui::Bounds contentBounds_{0.0f, 0.0f, 640.0f, 480.0f};
     ActionHandler outerHandler_;
 };
 

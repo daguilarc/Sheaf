@@ -1,4 +1,5 @@
 #include "synth/PortableUI.hpp"
+#include "synth/RuntimePages.hpp"
 #include "synth/GangedRandomLfoVisualizer.hpp"
 #include "synth/StandardModulators.hpp"
 #include "synth/browser/BrowserCommandBuffer.hpp"
@@ -149,6 +150,41 @@ void TestNodeIdsAreStableAcrossFrames()
         Require(firstDecoded.nodes[index].id == secondDecoded.nodes[index].id, "stable node id");
     }
     Require(FindNode(secondDecoded, "slider").value == 0.75f, "second frame value changes");
+}
+
+void TestSyncPageRoundTripsPortableControlsAndActions()
+{
+    synth::runtime_ui::SyncPageSurface surface;
+    surface.BeginEdit({.sendClock = true,
+                       .receiveClock = false,
+                       .sendTransport = true,
+                       .receiveTransport = false,
+                       .ppqn = 96});
+    surface.RefreshStatus({.currentBpm = 121.25,
+                           .lockState = "Locked",
+                           .sourceName = "Clock Controller",
+                           .outputLatencyMicros = 5'500,
+                           .ignoredInputCount = 2,
+                           .lateEventCount = 3,
+                           .droppedOutputCount = 4});
+    surface.SetContentBounds({0.0f, 0.0f, 240.0f, 560.0f});
+    const auto decoded = synth_browser::DecodeCommandBuffer(
+        synth_browser::SerializeNodeTree(surface.BuildTree()).bytes);
+    Require(decoded.diagnostics.empty(), "Sync tree needs no browser fallback");
+    const auto& sendClock = FindNode(decoded, synth::runtime_ui::NodeIds::kSyncSendClock);
+    Require(sendClock.kind == synth_browser::CommandNodeKind::Toggle && sendClock.checked,
+            "browser command buffer preserves Sync toggle kind/state");
+    Require(sendClock.action.has_value() &&
+                sendClock.action->name == synth::runtime_ui::Actions::kSyncSendClock,
+            "browser command buffer preserves Sync toggle action");
+    const auto& ppqn = FindNode(decoded, synth::runtime_ui::NodeIds::kSyncPpqn);
+    Require(ppqn.kind == synth_browser::CommandNodeKind::TextField && ppqn.text == "96",
+            "browser command buffer preserves Sync PPQN editor");
+    Require(ppqn.action.has_value() && ppqn.action->name == synth::runtime_ui::Actions::kSyncPpqn,
+            "browser command buffer preserves Sync PPQN action");
+    Require(FindNode(decoded, synth::runtime_ui::NodeIds::kSyncSource).text ==
+                "Source: Clock Controller",
+            "browser command buffer preserves Sync diagnostic text");
 }
 
 void TestUnsupportedPortableFeatureIsGeneric()
@@ -306,6 +342,7 @@ int main()
 {
     TestCompleteTreeRoundTrips();
     TestNodeIdsAreStableAcrossFrames();
+    TestSyncPageRoundTripsPortableControlsAndActions();
     TestUnsupportedPortableFeatureIsGeneric();
     TestUnsupportedDrawFeatureIsGeneric();
     TestPredictiveGangedLfoUsesExistingDrawSchema();

@@ -22,6 +22,7 @@ public:
         None,
         Audio,
         Controllers,
+        Sync,
         File
     };
 
@@ -81,6 +82,8 @@ private:
                 return synth::runtime_ui::RuntimeMainPage::Audio;
             case Page::Controllers:
                 return synth::runtime_ui::RuntimeMainPage::Controllers;
+            case Page::Sync:
+                return synth::runtime_ui::RuntimeMainPage::Sync;
             case Page::File:
                 return synth::runtime_ui::RuntimeMainPage::File;
             case Page::None:
@@ -96,6 +99,8 @@ private:
                 return Page::Audio;
             case synth::runtime_ui::RuntimeMainPage::Controllers:
                 return Page::Controllers;
+            case synth::runtime_ui::RuntimeMainPage::Sync:
+                return Page::Sync;
             case synth::runtime_ui::RuntimeMainPage::File:
                 return Page::File;
             case synth::runtime_ui::RuntimeMainPage::Application:

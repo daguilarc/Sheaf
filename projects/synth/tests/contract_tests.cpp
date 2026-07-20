@@ -242,6 +242,7 @@ TEST_CASE(runtime_page_back_save_policy_matches_configuration_pages) {
     REQUIRE_TRUE(!synth::RuntimePageBackSavesConfiguration(synth::RuntimePageKind::None));
     REQUIRE_TRUE(synth::RuntimePageBackSavesConfiguration(synth::RuntimePageKind::Audio));
     REQUIRE_TRUE(synth::RuntimePageBackSavesConfiguration(synth::RuntimePageKind::Controllers));
+    REQUIRE_TRUE(synth::RuntimePageBackSavesConfiguration(synth::RuntimePageKind::Sync));
     REQUIRE_TRUE(!synth::RuntimePageBackSavesConfiguration(synth::RuntimePageKind::File));
 }
 

@@ -368,6 +368,96 @@ void TestSharedBrowserNavigationReplacesAndRestoresEveryRuntimePage()
             "file page is removed after Back");
 }
 
+void TestBrowserSyncUsesSharedStagingPersistsAndResolvesSourceNames()
+{
+    RuntimeFixture fixture;
+    fixture.Prepare(48'000.0, 128);
+    fixture.runtime.MessageTick(2);
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSidebarSync, "");
+
+    synth_browser::DecodedCommandBuffer frame = fixture.Frame();
+    const synth_browser::DecodedNode* ppqn =
+        FindNode(frame, synth::runtime_ui::NodeIds::kSyncPpqn);
+    const synth_browser::DecodedNode* source =
+        FindNode(frame, synth::runtime_ui::NodeIds::kSyncSource);
+    Require(ppqn != nullptr && ppqn->text == "24", "browser Sync opens at requested PPQN");
+    Require(source != nullptr && source->text.find("Internal") != std::string::npos,
+            "browser Sync has deterministic no-external-source status");
+
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSyncSendClock, "1");
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSyncReceiveClock, "1");
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSyncSendTransport, "1");
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSyncReceiveTransport, "1");
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSyncPpqn, "96x");
+    frame = fixture.Frame();
+    ppqn = FindNode(frame, synth::runtime_ui::NodeIds::kSyncPpqn);
+    Require(ppqn != nullptr && ppqn->text == "24",
+            "browser invalid PPQN retains prior staged value");
+    Require(FindNode(frame, synth::runtime_ui::NodeIds::kSyncValidation)->text.find("1 to 960") !=
+                std::string::npos,
+            "browser invalid PPQN renders inline validation");
+
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSyncPpqn, "96");
+    frame = fixture.Frame();
+    Require(FindNode(frame, synth::runtime_ui::NodeIds::kSyncWarning)->text.find("nonstandard") !=
+                std::string::npos,
+            "browser valid non-24 PPQN renders compatibility warning before Back");
+    Require(fixture.runtime.Engine().SyncConfigurationSnapshot() == synth::SyncConfig{},
+            "browser staged edits do not commit before Back");
+
+    const synth::SyncConfig committed{true, true, true, true, 96};
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSyncBack, "");
+    Require(fixture.runtime.Engine().SyncConfigurationSnapshot() == committed,
+            "browser Sync Back commits one complete requested config");
+    Require(fixture.runtime.Engine().Clock().SyncConfiguration() == synth::SyncConfig{},
+            "browser Sync Back does not mutate MasterClock before audio handoff");
+    Require(fixture.runtime.ConsumePersistenceDirty(),
+            "browser Sync Back marks persistence dirty");
+    synth::MidiInstrumentConfig savedInstrument;
+    synth::AudioDeviceState savedAudio;
+    synth::SyncConfig savedSync;
+    Require(synth::LoadRuntimeConfigFile(fixture.Paths().configFile,
+                                         savedInstrument,
+                                         savedAudio,
+                                         savedSync) ==
+                synth::RuntimeConfigFileStatus::Ok &&
+                savedSync == committed,
+            "browser Sync Back saves requested config before the next audio block");
+
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSidebarSync, "");
+    frame = fixture.Frame();
+    Require(FindNode(frame, synth::runtime_ui::NodeIds::kSyncPpqn)->text == "96",
+            "browser Sync reopen starts from committed requested state");
+
+    fixture.runtime.Process(nullptr, 0, 128, 10'000);
+    Require(fixture.runtime.Engine().Clock().SyncConfiguration() == committed,
+            "browser requested config applies at next audio block");
+    Require(fixture.runtime.Engine().Clock().HandleExternalClock(10'100, 1),
+            "test external source is accepted");
+    fixture.runtime.Process(nullptr, 0, 128, 12'667);
+    fixture.runtime.MessageTick(15'334);
+    frame = fixture.Frame();
+    source = FindNode(frame, synth::runtime_ui::NodeIds::kSyncSource);
+    Require(source != nullptr && source->text == "Source: Controller B",
+            "browser resolves active source slot to controller name off audio path");
+
+    const synth::SyncConfig receiveOff{true, false, true, true, 96};
+    Require(fixture.runtime.Engine().RequestSyncConfiguration(receiveOff),
+            "test disables receive clock through Engine request");
+    fixture.runtime.Process(nullptr, 0, 128, 18'001);
+    Require(fixture.runtime.Engine().RequestSyncConfiguration(committed),
+            "test re-enables receive clock through Engine request");
+    fixture.runtime.Process(nullptr, 0, 128, 20'668);
+    Require(fixture.runtime.Engine().Clock().HandleExternalClock(20'700, 99),
+            "out-of-range source slot can be diagnosed");
+    fixture.runtime.Process(nullptr, 0, 128, 23'335);
+    fixture.runtime.MessageTick(26'002);
+    frame = fixture.Frame();
+    source = FindNode(frame, synth::runtime_ui::NodeIds::kSyncSource);
+    Require(source != nullptr && source->text == "Source: External source slot 99",
+            "browser uses deterministic out-of-range source fallback");
+}
+
 void TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack()
 {
     RuntimeFixture fixture;
@@ -714,6 +804,7 @@ int main()
     TestBrowserPrepareFeedsNegotiatedAudioPageAndRejectsOversizedBlocks();
     TestNativeBuildRejectsBrowserAudioWorkletStart();
     TestSharedBrowserNavigationReplacesAndRestoresEveryRuntimePage();
+    TestBrowserSyncUsesSharedStagingPersistsAndResolvesSourceNames();
     TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack();
     TestFilePageDispatchesPatchLifecycleThroughBrowserRuntime();
     TestPersistenceDirtyConsumesRuntimeAndServicesSourcesTogether();

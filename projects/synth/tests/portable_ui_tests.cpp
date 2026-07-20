@@ -1136,11 +1136,28 @@ int main()
     Require(FindNodeById(sidebarTree, synth::runtime_ui::NodeIds::kSidebarAudio) != nullptr, "sidebar audio node");
     Require(FindNodeById(sidebarTree, synth::runtime_ui::NodeIds::kSidebarControllers) != nullptr,
             "sidebar controllers node");
+    Require(FindNodeById(sidebarTree, synth::runtime_ui::NodeIds::kSidebarSync) != nullptr,
+            "sidebar sync node");
     Require(FindNodeById(sidebarTree, synth::runtime_ui::NodeIds::kSidebarFile) != nullptr, "sidebar file node");
     Require(FindNodeById(sidebarTree, synth::runtime_ui::NodeIds::kSidebarDeadline) != nullptr,
             "sidebar deadline node");
     const synth::ui::Node* deadlineNode = FindNodeById(sidebarTree, synth::runtime_ui::NodeIds::kSidebarDeadline);
     Require(deadlineNode->text == "12.5%", "deadline readout text");
+    Require(sidebarTree.nodes.front().children.size() == 5,
+            "sidebar contains Audio, Controllers, Sync, File, deadline");
+    Require(sidebarTree.nodes.front().children[0] ==
+                synth::ui::NodeId(synth::runtime_ui::NodeIds::kSidebarAudio) &&
+                sidebarTree.nodes.front().children[1] ==
+                synth::ui::NodeId(synth::runtime_ui::NodeIds::kSidebarControllers) &&
+                sidebarTree.nodes.front().children[2] ==
+                synth::ui::NodeId(synth::runtime_ui::NodeIds::kSidebarSync) &&
+                sidebarTree.nodes.front().children[3] ==
+                synth::ui::NodeId(synth::runtime_ui::NodeIds::kSidebarFile) &&
+                sidebarTree.nodes.front().children[4] ==
+                synth::ui::NodeId(synth::runtime_ui::NodeIds::kSidebarDeadline),
+            "sidebar order is fixed");
+    Require(sidebarTree.nodes.front().bounds.height == 200.0f,
+            "sidebar root is five fixed 40 px rows high");
 
     synth::runtime_ui::AudioPageSnapshot audioSnapshot;
     audioSnapshot.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Speakers", "Headphones"});
@@ -1189,6 +1206,113 @@ int main()
     audioSurface.Snapshot() = audioSnapshot;
     audioSurface.SetContentBounds({0.0f, 0.0f, 640.0f, 480.0f});
     Require(audioSurface.BuildTree().nodes.size() >= 5, "audio surface builds semantic tree");
+
+    synth::runtime_ui::SyncPageSurface syncSurface;
+    syncSurface.SetContentBounds({0.0f, 0.0f, 240.0f, 560.0f});
+    syncSurface.BeginEdit({});
+    const synth::ui::NodeTree defaultSyncTree = syncSurface.BuildTree();
+    Require(FindNodeById(defaultSyncTree, synth::runtime_ui::NodeIds::kSyncBack) != nullptr,
+            "sync back node");
+    Require(FindNodeById(defaultSyncTree, synth::runtime_ui::NodeIds::kSyncSendClock)->kind ==
+                synth::ui::NodeKind::Toggle,
+            "sync send-clock is a portable toggle");
+    Require(FindNodeById(defaultSyncTree, synth::runtime_ui::NodeIds::kSyncReceiveClock)->kind ==
+                synth::ui::NodeKind::Toggle,
+            "sync receive-clock is a portable toggle");
+    Require(FindNodeById(defaultSyncTree, synth::runtime_ui::NodeIds::kSyncSendTransport)->kind ==
+                synth::ui::NodeKind::Toggle,
+            "sync send-transport is a portable toggle");
+    Require(FindNodeById(defaultSyncTree, synth::runtime_ui::NodeIds::kSyncReceiveTransport)->kind ==
+                synth::ui::NodeKind::Toggle,
+            "sync receive-transport is a portable toggle");
+    Require(FindNodeById(defaultSyncTree, synth::runtime_ui::NodeIds::kSyncPpqn)->kind ==
+                synth::ui::NodeKind::TextField,
+            "sync PPQN is a portable text field");
+    Require(syncSurface.StagedConfiguration() == synth::SyncConfig{},
+            "sync defaults are four false flags and PPQN 24");
+
+    syncSurface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kSyncSendClock, "1"));
+    syncSurface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kSyncReceiveClock, "1"));
+    syncSurface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kSyncSendTransport, "1"));
+    syncSurface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kSyncReceiveTransport, "1"));
+    Require(syncSurface.StagedConfiguration() == synth::SyncConfig{true, true, true, true, 24},
+            "all four exact toggle actions update staged state");
+    syncSurface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kSyncSendClock, "unexpected"));
+    Require(syncSurface.StagedConfiguration().sendClock,
+            "toggle ignores values outside backend 1/0 contract");
+
+    const std::vector<std::string> invalidPpqn = {
+        "", "12x", "12.0", "1e2", "+24", "-1", "0", "961", " 24", "24 ",
+        "999999999999999999999999999999999999"};
+    for (const std::string& invalid : invalidPpqn)
+    {
+        syncSurface.DispatchAction(synth::ui::Action::WithValue(
+            synth::runtime_ui::Actions::kSyncPpqn, invalid));
+        Require(syncSurface.StagedConfiguration().ppqn == 24,
+                "invalid PPQN retains prior valid value");
+        Require(!syncSurface.ValidationText().empty(), "invalid PPQN shows inline validation");
+    }
+    syncSurface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kSyncPpqn, "1"));
+    Require(syncSurface.StagedConfiguration().ppqn == 1 &&
+                syncSurface.ValidationText().empty(),
+            "PPQN lower boundary is accepted and clears validation");
+    Require(syncSurface.WarningText().find("nonstandard") != std::string::npos,
+            "non-24 PPQN shows peer compatibility warning");
+    syncSurface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kSyncPpqn, "960"));
+    Require(syncSurface.StagedConfiguration().ppqn == 960,
+            "PPQN upper boundary is accepted");
+    syncSurface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kSyncPpqn, "24"));
+    Require(syncSurface.WarningText().empty(), "standard PPQN 24 clears warning");
+
+    syncSurface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kSyncPpqn, "96"));
+    const synth::SyncConfig stagedBeforeRefresh = syncSurface.StagedConfiguration();
+    syncSurface.RefreshStatus({.currentBpm = 119.75,
+                               .lockState = "FreeRun",
+                               .sourceName = "Clock Controller",
+                               .outputLatencyMicros = 7'500,
+                               .ignoredInputCount = 9,
+                               .lateEventCount = 10,
+                               .droppedOutputCount = 11});
+    Require(syncSurface.StagedConfiguration() == stagedBeforeRefresh,
+            "diagnostic refresh never overwrites staged edits");
+    const synth::ui::NodeTree statusTree = syncSurface.BuildTree();
+    Require(FindNodeById(statusTree, synth::runtime_ui::NodeIds::kSyncBpm)->text ==
+                "Current BPM: 119.75",
+            "sync current BPM has stable human-readable label");
+    Require(FindNodeById(statusTree, synth::runtime_ui::NodeIds::kSyncLock)->text ==
+                "Lock: FreeRun",
+            "sync lock has stable human-readable label");
+    Require(FindNodeById(statusTree, synth::runtime_ui::NodeIds::kSyncSource)->text ==
+                "Source: Clock Controller",
+            "sync source has stable human-readable label");
+    Require(FindNodeById(statusTree, synth::runtime_ui::NodeIds::kSyncOutputLatency)->text ==
+                "Output latency: 7.500 ms",
+            "sync output latency has stable human-readable label");
+    Require(FindNodeById(statusTree, synth::runtime_ui::NodeIds::kSyncIgnoredInput)->text ==
+                "Ignored input: 9",
+            "sync ignored-input count has stable human-readable label");
+    Require(FindNodeById(statusTree, synth::runtime_ui::NodeIds::kSyncLateEvents)->text ==
+                "Late events: 10",
+            "sync late-event count has stable human-readable label");
+    Require(FindNodeById(statusTree, synth::runtime_ui::NodeIds::kSyncDroppedOutput)->text ==
+                "Dropped output: 11",
+            "sync dropped-output count has stable human-readable label");
+    for (const synth::ui::Node& node : statusTree.nodes)
+    {
+        Require(node.bounds.x >= 0.0f && node.bounds.y >= 0.0f &&
+                    node.bounds.x + node.bounds.width <= 240.0f &&
+                    node.bounds.y + node.bounds.height <= 560.0f,
+                "all sync nodes remain within narrow content bounds");
+    }
 
     synth::runtime_ui::FilePageSurface fileSurface;
     fileSurface.Snapshot() = fileSnapshot;

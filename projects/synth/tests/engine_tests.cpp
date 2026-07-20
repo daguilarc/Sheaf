@@ -21,6 +21,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace engine_allocation_probe {
@@ -482,6 +483,7 @@ TEST_CASE(engine_loaded_sync_precedes_first_processor_rebuild_prepare_and_first_
     engine.Initialize();
     REQUIRE_TRUE(rebuildSawLoadedSync);
     REQUIRE_TRUE(engine.Clock().SyncConfiguration() == loadedSync);
+    REQUIRE_TRUE(engine.SyncConfigurationSnapshot() == loadedSync);
 
     EngineScheduledEventSink sink;
     gScheduledEventCount = 0;
@@ -716,6 +718,148 @@ struct EngineFakeMidiSink final : synth::IMidiOutputSink {
 };
 
 }  // namespace
+
+bool MatchesPublishedClockTuple(const synth::ClockDiagnostics& actual,
+                                const synth::ClockDiagnostics& expected) {
+    return actual.acquisition == expected.acquisition &&
+           actual.source == expected.source &&
+           actual.hasActiveExternalSource == expected.hasActiveExternalSource &&
+           actual.activeExternalSourceSlot == expected.activeExternalSourceSlot &&
+           actual.currentBpm == expected.currentBpm &&
+           actual.outputLatencyMicros == expected.outputLatencyMicros &&
+           actual.ignoredInputCount == expected.ignoredInputCount &&
+           actual.lateEventCount == expected.lateEventCount &&
+           actual.droppedOutputCount == expected.droppedOutputCount;
+}
+
+TEST_CASE(engine_clock_diagnostics_publication_never_tears_known_tuples) {
+    synth::ClockDiagnosticsPublication publication;
+    const synth::ClockDiagnostics first{
+        .acquisition = synth::ClockAcquisitionState::Locked,
+        .source = synth::ClockSource::ExternalMidi,
+        .hasActiveExternalSource = true,
+        .activeExternalSourceSlot = 3,
+        .currentBpm = 111.25,
+        .outputLatencyMicros = 5'001,
+        .ignoredInputCount = 7,
+        .lateEventCount = 11,
+        .droppedOutputCount = 13,
+    };
+    const synth::ClockDiagnostics second{
+        .acquisition = synth::ClockAcquisitionState::FreeRun,
+        .source = synth::ClockSource::Internal,
+        .hasActiveExternalSource = false,
+        .activeExternalSourceSlot = 97,
+        .currentBpm = 222.5,
+        .outputLatencyMicros = 50'002,
+        .ignoredInputCount = 70,
+        .lateEventCount = 110,
+        .droppedOutputCount = 130,
+    };
+    publication.Publish(first);
+
+    std::atomic<bool> start{false};
+    std::thread writer([&] {
+        while (!start.load(std::memory_order_acquire)) {
+        }
+        for (int iteration = 0; iteration < 100'000; ++iteration) {
+            publication.Publish((iteration & 1) == 0 ? second : first);
+        }
+    });
+    start.store(true, std::memory_order_release);
+    bool coherent = true;
+    synth::ClockDiagnostics unexpected{};
+    for (int iteration = 0; iteration < 100'000; ++iteration) {
+        const synth::ClockDiagnostics snapshot = publication.Snapshot();
+        if (!MatchesPublishedClockTuple(snapshot, first) &&
+            !MatchesPublishedClockTuple(snapshot, second)) {
+            coherent = false;
+            unexpected = snapshot;
+            break;
+        }
+    }
+    writer.join();
+    if (!coherent) {
+        std::cerr << "unexpected tuple acquisition=" << static_cast<int>(unexpected.acquisition)
+                  << " source=" << static_cast<int>(unexpected.source)
+                  << " hasSource=" << unexpected.hasActiveExternalSource
+                  << " slot=" << unexpected.activeExternalSourceSlot
+                  << " bpm=" << unexpected.currentBpm
+                  << " latency=" << unexpected.outputLatencyMicros
+                  << " ignored=" << unexpected.ignoredInputCount
+                  << " late=" << unexpected.lateEventCount
+                  << " dropped=" << unexpected.droppedOutputCount << '\n';
+    }
+    REQUIRE_TRUE(coherent);
+}
+
+TEST_CASE(engine_sync_requests_are_atomic_next_block_latest_wins_and_save_requested_immediately) {
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-sync-request-handoff";
+    std::filesystem::remove_all(dataRoot);
+
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = false;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{1'000}; });
+    engine.SetRuntimeDataPaths(synth::RuntimeDataPaths::FromDataRoot(dataRoot));
+    engine.Initialize();
+    engine.Prepare(48'000.0, 64);
+
+    const synth::SyncConfig defaults{};
+    const synth::SyncConfig first{true, false, true, false, 48};
+    const synth::SyncConfig latest{false, true, false, true, 96};
+    REQUIRE_TRUE(!engine.RequestSyncConfiguration({true, true, true, true, 0}));
+    REQUIRE_TRUE(engine.SyncConfigurationSnapshot() == defaults);
+    REQUIRE_TRUE(engine.Clock().SyncConfiguration() == defaults);
+
+    REQUIRE_TRUE(engine.RequestSyncConfiguration(first));
+    REQUIRE_TRUE(engine.RequestSyncConfiguration(latest));
+    REQUIRE_TRUE(engine.SyncConfigurationSnapshot() == latest);
+    REQUIRE_TRUE(engine.Clock().SyncConfiguration() == defaults);
+
+    REQUIRE_TRUE(engine.SaveRuntimeConfiguration() == synth::RuntimeConfigFileStatus::Ok);
+    synth::MidiInstrumentConfig savedInstrument;
+    synth::AudioDeviceState savedAudio;
+    synth::SyncConfig savedSync;
+    REQUIRE_TRUE(synth::LoadRuntimeConfigFile(engine.DataPaths().configFile,
+                                              savedInstrument,
+                                              savedAudio,
+                                              savedSync) ==
+                 synth::RuntimeConfigFileStatus::Ok);
+    REQUIRE_TRUE(savedSync == latest);
+    REQUIRE_TRUE(engine.Clock().SyncConfiguration() == defaults);
+
+    TestBlockBuffers buffers(2, 64);
+    synth::AudioBlock block = buffers.Block(64);
+    engine.ProcessBlock(block, 1'000);
+    REQUIRE_TRUE(engine.Clock().SyncConfiguration() == latest);
+    REQUIRE_TRUE(engine.SyncConfigurationSnapshot() == latest);
+
+    REQUIRE_TRUE(!engine.RequestSyncConfiguration({false, false, false, false, 961}));
+    REQUIRE_TRUE(engine.SyncConfigurationSnapshot() == latest);
+    REQUIRE_TRUE(engine.Clock().SyncConfiguration() == latest);
+    std::filesystem::remove_all(dataRoot);
+}
+
+TEST_CASE(engine_publishes_sensible_clock_diagnostics_before_and_after_audio) {
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = false;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{10'000}; });
+    engine.Initialize();
+    REQUIRE_TRUE(engine.ClockDiagnosticsSnapshot().acquisition ==
+                 synth::ClockAcquisitionState::Internal);
+    REQUIRE_TRUE(engine.ClockDiagnosticsSnapshot().currentBpm == 120.0);
+
+    engine.Prepare(48'000.0, 128);
+    REQUIRE_TRUE(engine.ClockDiagnosticsSnapshot().outputLatencyMicros == 5'334);
+
+    REQUIRE_TRUE(engine.RequestSyncConfiguration({false, true, false, true, 24}));
+    TestBlockBuffers buffers(2, 128);
+    synth::AudioBlock block = buffers.Block(128);
+    engine.ProcessBlock(block, 10'000);
+    REQUIRE_TRUE(engine.ClockDiagnosticsSnapshot().acquisition ==
+                 synth::ClockAcquisitionState::Acquiring);
+}
 
 TEST_CASE(engine_owns_one_stable_clock_prepares_before_app_and_publishes_exact_current_plan) {
     EngineTestApp::processLiteAlpha = 1.0f;

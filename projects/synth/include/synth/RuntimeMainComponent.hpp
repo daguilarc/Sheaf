@@ -23,6 +23,7 @@ enum class RuntimeMainPage
     Application,
     Audio,
     Controllers,
+    Sync,
     File,
 };
 
@@ -30,7 +31,9 @@ template <typename Services>
 concept RuntimeMainServices = requires(Services& services,
                                        AudioPageSnapshot& audio,
                                        FilePageSnapshot& file,
+                                       SyncPageStatus& syncStatus,
                                        ControllersPageSurface& controllers,
+                                       const SyncConfig& syncConfig,
                                        const ui::Action& action,
                                        std::function<void()> onBack) {
     { services.MakeControllersCallbacks(std::move(onBack)) } ->
@@ -40,6 +43,9 @@ concept RuntimeMainServices = requires(Services& services,
     { services.RefreshFile(file) } -> std::same_as<void>;
     { services.DispatchFile(action) } -> std::same_as<void>;
     { services.RefreshControllers(controllers) } -> std::same_as<void>;
+    { services.SnapshotSyncConfiguration() } -> std::same_as<SyncConfig>;
+    { services.RefreshSyncStatus(syncStatus) } -> std::same_as<void>;
+    { services.CommitSyncConfiguration(syncConfig) } -> std::same_as<bool>;
     { services.DeadlineSamplePercent() } -> std::convertible_to<float>;
     { services.SaveRuntimeConfiguration() } -> std::same_as<void>;
 };
@@ -61,6 +67,7 @@ public:
         audioSurface_.SetContentBounds(contentBounds);
         fileSurface_.SetContentBounds(contentBounds);
         controllersSurface_.SetContentBounds(contentBounds);
+        syncSurface_.SetContentBounds(contentBounds);
 
         sidebarSurface_.SetActionHandler([this](const ui::Action& action) {
             HandleSidebarAction(action);
@@ -80,6 +87,18 @@ public:
                 return;
             }
             services_.DispatchFile(action);
+        });
+        syncSurface_.SetActionHandler([this](const ui::Action& action) {
+            if (action.name != Actions::kSyncBack)
+            {
+                return;
+            }
+            if (!services_.CommitSyncConfiguration(syncSurface_.StagedConfiguration()))
+            {
+                syncSurface_.SetApplyError();
+                return;
+            }
+            ReturnToApplication(RuntimePageKind::Sync);
         });
     }
 
@@ -141,6 +160,10 @@ public:
         {
             fileSurface_.DispatchAction(action);
         }
+        else if (IsSyncAction(action.name))
+        {
+            syncSurface_.DispatchAction(action);
+        }
         else if (IsControllersAction(action.name))
         {
             controllersSurface_.DispatchAction(action);
@@ -163,6 +186,9 @@ public:
         services_.RefreshAudio(audioSurface_.Snapshot());
         services_.RefreshFile(fileSurface_.Snapshot());
         services_.RefreshControllers(controllersSurface_);
+        SyncPageStatus syncStatus;
+        services_.RefreshSyncStatus(syncStatus);
+        syncSurface_.RefreshStatus(syncStatus);
     }
 
     void ShowPage(RuntimeMainPage page)
@@ -203,6 +229,7 @@ private:
         return IsOneOf(action,
                        {Actions::kSidebarAudio,
                         Actions::kSidebarControllers,
+                        Actions::kSidebarSync,
                         Actions::kSidebarFile});
     }
 
@@ -234,6 +261,17 @@ private:
                         Actions::kFileConfirmedSaveAs,
                         Actions::kFileConfirmedOverwriteSaveAs,
                         Actions::kFileConfirmedLoad});
+    }
+
+    static bool IsSyncAction(std::string_view action)
+    {
+        return IsOneOf(action,
+                       {Actions::kSyncBack,
+                        Actions::kSyncSendClock,
+                        Actions::kSyncReceiveClock,
+                        Actions::kSyncSendTransport,
+                        Actions::kSyncReceiveTransport,
+                        Actions::kSyncPpqn});
     }
 
     static bool IsControllersAction(std::string_view action)
@@ -393,6 +431,8 @@ private:
                 return audioSurface_.BuildTree();
             case RuntimeMainPage::Controllers:
                 return controllersSurface_.BuildTree();
+            case RuntimeMainPage::Sync:
+                return syncSurface_.BuildTree();
             case RuntimeMainPage::File:
                 return fileSurface_.BuildTree();
             case RuntimeMainPage::Application:
@@ -410,6 +450,14 @@ private:
         else if (action.name == Actions::kSidebarControllers)
         {
             ShowPage(RuntimeMainPage::Controllers);
+        }
+        else if (action.name == Actions::kSidebarSync)
+        {
+            if (currentPage_ != RuntimeMainPage::Sync)
+            {
+                syncSurface_.BeginEdit(services_.SnapshotSyncConfiguration());
+            }
+            ShowPage(RuntimeMainPage::Sync);
         }
         else if (action.name == Actions::kSidebarFile)
         {
@@ -434,6 +482,7 @@ private:
     AudioPageSurface audioSurface_;
     FilePageSurface fileSurface_;
     ControllersPageSurface controllersSurface_;
+    SyncPageSurface syncSurface_;
     ActionHandler actionHandler_;
 };
 

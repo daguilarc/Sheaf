@@ -176,6 +176,73 @@ int main() {
     Require(&session.GetRuntime().AppSurface() == appSurface,
             "the app surface and its state survive runtime-page navigation");
 
+    auto* syncButton = dynamic_cast<juce::TextButton*>(
+        renderer.FindByNodeId(synth::runtime_ui::NodeIds::kSidebarSync));
+    Require(syncButton != nullptr, "Sync sidebar control is a button");
+    syncButton->onClick();
+    auto* syncShell = dynamic_cast<synth_runtime::ShellComponent<synth_miniapp::MiniApp>*>(
+        &session.Component());
+    Require(syncShell != nullptr &&
+                syncShell->GetMainPane().CurrentPage() ==
+                    synth_runtime::MainPane<synth_miniapp::MiniApp>::Page::Sync,
+            "JUCE host reports the portable Sync page as current");
+    auto* sendClockToggle = dynamic_cast<juce::ToggleButton*>(
+        renderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncSendClock));
+    auto* syncPpqnEditor = dynamic_cast<juce::TextEditor*>(
+        renderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncPpqn));
+    Require(sendClockToggle != nullptr && !sendClockToggle->getToggleState(),
+            "JUCE Sync session opens with the Engine snapshot");
+    Require(syncPpqnEditor != nullptr && syncPpqnEditor->getText() == "24",
+            "JUCE Sync session opens with default PPQN");
+    sendClockToggle->setToggleState(true, juce::dontSendNotification);
+    sendClockToggle->onClick();
+    syncPpqnEditor = dynamic_cast<juce::TextEditor*>(
+        renderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncPpqn));
+    Require(syncPpqnEditor != nullptr, "JUCE Sync PPQN remains rendered after toggle edit");
+    syncPpqnEditor->setText("96");
+    syncPpqnEditor->onReturnKey();
+    Require(session.GetRuntime().GetEngine().SyncConfigurationSnapshot() == synth::SyncConfig{},
+            "JUCE Sync edits stay staged before Back");
+
+    auto* syncBackButton = dynamic_cast<juce::TextButton*>(
+        renderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncBack));
+    Require(syncBackButton != nullptr, "JUCE Sync Back is rendered");
+    syncBackButton->onClick();
+    const synth::SyncConfig committedSync{
+        .sendClock = true,
+        .receiveClock = false,
+        .sendTransport = false,
+        .receiveTransport = false,
+        .ppqn = 96,
+    };
+    Require(session.GetRuntime().GetEngine().SyncConfigurationSnapshot() == committedSync,
+            "JUCE Sync Back commits one complete configuration");
+    synth::MidiInstrumentConfig savedInstrument;
+    synth::AudioDeviceState savedAudio;
+    synth::SyncConfig savedSync;
+    Require(synth::LoadRuntimeConfigFile(
+                paths.configFile, savedInstrument, savedAudio, savedSync) ==
+                synth::RuntimeConfigFileStatus::Ok &&
+                savedSync == committedSync,
+            "JUCE Sync Back persists the requested configuration");
+
+    syncButton = dynamic_cast<juce::TextButton*>(
+        renderer.FindByNodeId(synth::runtime_ui::NodeIds::kSidebarSync));
+    Require(syncButton != nullptr, "Sync sidebar returns after Back");
+    syncButton->onClick();
+    sendClockToggle = dynamic_cast<juce::ToggleButton*>(
+        renderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncSendClock));
+    syncPpqnEditor = dynamic_cast<juce::TextEditor*>(
+        renderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncPpqn));
+    Require(sendClockToggle != nullptr && sendClockToggle->getToggleState(),
+            "JUCE Sync reopen uses committed toggle state");
+    Require(syncPpqnEditor != nullptr && syncPpqnEditor->getText() == "96",
+            "JUCE Sync reopen uses committed PPQN");
+    syncBackButton = dynamic_cast<juce::TextButton*>(
+        renderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncBack));
+    Require(syncBackButton != nullptr, "JUCE Sync Back remains available after reopen");
+    syncBackButton->onClick();
+
     session.GetRuntime().GetEngine().EditInstrument([](synth::MidiInstrumentConfig& instrument) {
         instrument.AddController(synth::WrldBldrDefaultControllerSlot("second"));
     });

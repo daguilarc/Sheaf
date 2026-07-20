@@ -46,7 +46,7 @@ int main()
     juce::ScopedJuceInitialiser_GUI juce;
 
     synth_runtime::SidebarHost sidebar;
-    sidebar.setSize(static_cast<int>(synth::runtime_ui::Layout::kSidebarWidth), 160);
+    sidebar.setSize(static_cast<int>(synth::runtime_ui::Layout::kSidebarWidth), 200);
     sidebar.RefreshFromSurface();
 
     std::string lastAction;
@@ -57,12 +57,14 @@ int main()
     synth::runtime_ui::SidebarSurface sidebarSurface;
     sidebarSurface.SetDeadlinePercent(7.5f);
     synth_juce::PortableComponent sidebarRenderer(sidebarSurface);
-    sidebarRenderer.setSize(static_cast<int>(synth::runtime_ui::Layout::kSidebarWidth), 160);
+    sidebarRenderer.setSize(static_cast<int>(synth::runtime_ui::Layout::kSidebarWidth), 200);
     sidebarRenderer.RefreshFromSurface();
     Require(sidebarRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSidebarAudio) != nullptr,
             "sidebar audio control renders");
     Require(sidebarRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSidebarDeadline) != nullptr,
             "sidebar deadline control renders");
+    Require(sidebarRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSidebarSync) != nullptr,
+            "sidebar Sync control renders");
 
     auto* audioButton = dynamic_cast<juce::TextButton*>(
         sidebarRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSidebarAudio));
@@ -102,6 +104,64 @@ int main()
         FindNodeById(refreshedAudioTree, synth::runtime_ui::NodeIds::kAudioDeviceLine);
     Require(deviceLine != nullptr && deviceLine->text == "Speakers: 44100 Hz, 256 frames",
             "audio page state refresh updates device line");
+
+    synth::runtime_ui::SyncPageSurface syncSurface;
+    syncSurface.BeginEdit({.sendClock = true,
+                           .receiveClock = false,
+                           .sendTransport = true,
+                           .receiveTransport = false,
+                           .ppqn = 96});
+    syncSurface.RefreshStatus({.currentBpm = 121.5,
+                               .lockState = "Locked",
+                               .sourceName = "Clock Controller",
+                               .outputLatencyMicros = 5'500,
+                               .ignoredInputCount = 2,
+                               .lateEventCount = 3,
+                               .droppedOutputCount = 4});
+    syncSurface.SetContentBounds({0.0f, 0.0f, 240.0f, 560.0f});
+    synth_juce::PortableComponent syncRenderer(syncSurface);
+    syncRenderer.setSize(240, 560);
+    syncRenderer.RefreshFromSurface();
+    auto* syncSendClock = dynamic_cast<juce::ToggleButton*>(
+        syncRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncSendClock));
+    Require(syncSendClock != nullptr,
+            "Sync send-clock renders as ToggleButton");
+    Require(dynamic_cast<juce::ToggleButton*>(
+                syncRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncReceiveClock)) != nullptr,
+            "Sync receive-clock renders as ToggleButton");
+    Require(dynamic_cast<juce::ToggleButton*>(
+                syncRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncSendTransport)) != nullptr,
+            "Sync send-transport renders as ToggleButton");
+    Require(dynamic_cast<juce::ToggleButton*>(
+                syncRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncReceiveTransport)) != nullptr,
+            "Sync receive-transport renders as ToggleButton");
+    auto* ppqnEditor = dynamic_cast<juce::TextEditor*>(
+        syncRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncPpqn));
+    Require(ppqnEditor != nullptr && ppqnEditor->getText() == "96",
+            "Sync PPQN renders as TextEditor with staged text");
+    syncSendClock->setToggleState(false, juce::dontSendNotification);
+    syncSendClock->onClick();
+    Require(!syncSurface.StagedConfiguration().sendClock,
+            "JUCE Sync toggle dispatches the portable zero-valued action");
+    ppqnEditor->setText("48");
+    ppqnEditor->onReturnKey();
+    Require(syncSurface.StagedConfiguration().ppqn == 48,
+            "JUCE Sync editor dispatches the portable PPQN action");
+    for (const char* statusId : {synth::runtime_ui::NodeIds::kSyncValidation,
+                                 synth::runtime_ui::NodeIds::kSyncWarning,
+                                 synth::runtime_ui::NodeIds::kSyncBpm,
+                                 synth::runtime_ui::NodeIds::kSyncLock,
+                                 synth::runtime_ui::NodeIds::kSyncSource,
+                                 synth::runtime_ui::NodeIds::kSyncOutputLatency,
+                                 synth::runtime_ui::NodeIds::kSyncIgnoredInput,
+                                 synth::runtime_ui::NodeIds::kSyncLateEvents,
+                                 synth::runtime_ui::NodeIds::kSyncDroppedOutput})
+    {
+        Require(dynamic_cast<juce::Label*>(syncRenderer.FindByNodeId(statusId)) != nullptr,
+                "Sync read-only status renders as Label");
+        RequireInsideRoot(syncRenderer, syncRenderer.FindByNodeId(statusId),
+                          "Sync narrow status remains inside root bounds");
+    }
 
     synth::runtime_ui::FilePageSurface fileSurface;
     synth::runtime_ui::FilePageSnapshot& fileSnapshot = fileSurface.Snapshot();

@@ -109,10 +109,17 @@ struct FakeServices
     int fileRefreshCount = 0;
     int fileDispatchCount = 0;
     int controllersRefreshCount = 0;
+    int syncSnapshotCount = 0;
+    int syncRefreshCount = 0;
+    int syncCommitCount = 0;
     int saveCount = 0;
     std::string lastAudioAction;
     std::string lastFileAction;
     float deadlinePercent = 12.5f;
+    bool syncCommitSucceeds = true;
+    synth::SyncConfig currentSync{};
+    synth::SyncConfig lastCommittedSync{};
+    synth::runtime_ui::SyncPageStatus syncStatus{};
 
     synth::runtime_ui::ControllersPageCallbacks MakeControllersCallbacks(std::function<void()> onBack)
     {
@@ -151,6 +158,29 @@ struct FakeServices
     void RefreshControllers(synth::runtime_ui::ControllersPageSurface&)
     {
         ++controllersRefreshCount;
+    }
+
+    synth::SyncConfig SnapshotSyncConfiguration()
+    {
+        ++syncSnapshotCount;
+        return currentSync;
+    }
+
+    void RefreshSyncStatus(synth::runtime_ui::SyncPageStatus& status)
+    {
+        ++syncRefreshCount;
+        status = syncStatus;
+    }
+
+    bool CommitSyncConfiguration(const synth::SyncConfig& config)
+    {
+        ++syncCommitCount;
+        lastCommittedSync = config;
+        if (syncCommitSucceeds)
+        {
+            currentSync = config;
+        }
+        return syncCommitSucceeds;
     }
 
     float DeadlineSamplePercent()
@@ -193,10 +223,14 @@ void TestCompositeBoundsPreserveAppAndAddSidebar()
         FindNodeById(tree, synth::runtime_ui::NodeIds::kSidebarRoot);
     const synth::ui::Node* audio =
         FindNodeById(tree, synth::runtime_ui::NodeIds::kSidebarAudio);
+    const synth::ui::Node* sync =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::kSidebarSync);
     Require(sidebar != nullptr, "sidebar root exists");
     Require(audio != nullptr, "sidebar audio node exists");
-    RequireBounds(sidebar->bounds, 900.0f, 0.0f, 96.0f, 160.0f, "sidebar root translated");
+    Require(sync != nullptr, "sidebar sync node exists");
+    RequireBounds(sidebar->bounds, 900.0f, 0.0f, 96.0f, 200.0f, "sidebar root translated");
     RequireBounds(audio->bounds, 900.0f, 0.0f, 96.0f, 40.0f, "sidebar descendant translated");
+    RequireBounds(sync->bounds, 900.0f, 80.0f, 96.0f, 40.0f, "sidebar sync translated");
     RequireBounds(fixture.component.IntrinsicBounds(),
                   0.0f,
                   0.0f,
@@ -232,6 +266,18 @@ void TestSidebarOpensEachPageAndBackRestoresApp()
     fixture.component.DispatchAction(synth::ui::Action::Named("runtime.file.back"));
     Require(fixture.component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::Application,
             "file back restores app");
+
+    fixture.component.DispatchAction(synth::ui::Action::Named("runtime.sidebar.sync"));
+    Require(fixture.component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::Sync,
+            "sync page opens");
+    Require(fixture.services.syncSnapshotCount == 1,
+            "sync opening snapshots requested configuration once");
+    Require(fixture.component.BuildTree().nodes[1].id ==
+                synth::ui::NodeId(synth::runtime_ui::NodeIds::kSyncRoot),
+            "sync page root replaces app root");
+    fixture.component.DispatchAction(synth::ui::Action::Named("runtime.sync.back"));
+    Require(fixture.component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::Application,
+            "sync back restores app");
 }
 
 void TestAppActionsRouteOnlyToAppSurface()
@@ -309,6 +355,91 @@ void TestBackFromConfigurationPageSavesRuntimeConfiguration()
     Require(fixture.services.saveCount == 2, "file back does not save runtime configuration");
 }
 
+void TestSyncStagesRefreshesCommitsAndReopensFromEngineSnapshot()
+{
+    Fixture fixture;
+    fixture.services.currentSync = {.sendClock = false,
+                                    .receiveClock = true,
+                                    .sendTransport = false,
+                                    .receiveTransport = true,
+                                    .ppqn = 24};
+    fixture.component.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kSidebarSync));
+
+    fixture.component.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kSyncSendClock, "1"));
+    fixture.component.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kSyncReceiveClock, "0"));
+    fixture.component.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kSyncSendTransport, "1"));
+    fixture.component.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kSyncReceiveTransport, "0"));
+    fixture.component.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kSyncPpqn, "96"));
+    fixture.component.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kSidebarSync));
+    Require(fixture.services.syncSnapshotCount == 1,
+            "clicking the already-open Sync tab does not begin a second edit");
+    Require(FindNodeById(fixture.component.BuildTree(),
+                         synth::runtime_ui::NodeIds::kSyncPpqn)->text == "96",
+            "clicking the already-open Sync tab preserves staged PPQN");
+
+    fixture.services.syncStatus = {.currentBpm = 123.5,
+                                   .lockState = "Locked",
+                                   .sourceName = "Clock Controller",
+                                   .outputLatencyMicros = 8'000,
+                                   .ignoredInputCount = 2,
+                                   .lateEventCount = 3,
+                                   .droppedOutputCount = 4};
+    fixture.component.Refresh();
+    Require(fixture.services.syncRefreshCount == 1, "refresh requests sync diagnostics");
+    const synth::ui::NodeTree stagedTree = fixture.component.BuildTree();
+    Require(FindNodeById(stagedTree, synth::runtime_ui::NodeIds::kSyncSendClock)->checked,
+            "refresh does not overwrite staged send-clock");
+    Require(!FindNodeById(stagedTree, synth::runtime_ui::NodeIds::kSyncReceiveClock)->checked,
+            "refresh does not overwrite staged receive-clock");
+    Require(FindNodeById(stagedTree, synth::runtime_ui::NodeIds::kSyncPpqn)->text == "96",
+            "refresh does not overwrite staged PPQN");
+    Require(FindNodeById(stagedTree, synth::runtime_ui::NodeIds::kSyncWarning)->text.find(
+                "nonstandard") != std::string::npos,
+            "staged nonstandard PPQN warning remains visible");
+    Require(FindNodeById(stagedTree, synth::runtime_ui::NodeIds::kSyncSource)->text.find(
+                "Clock Controller") != std::string::npos,
+            "refresh updates source diagnostics");
+
+    fixture.component.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kSyncBack));
+    Require(fixture.services.syncCommitCount == 1, "Sync Back commits exactly once");
+    Require(fixture.services.saveCount == 1, "successful Sync Back saves exactly once");
+    Require(fixture.services.lastCommittedSync ==
+                synth::SyncConfig{true, false, true, false, 96},
+            "Sync Back commits one complete staged config");
+    Require(fixture.component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::Application,
+            "successful Sync Back returns to application");
+
+    fixture.component.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kSidebarSync));
+    const synth::ui::NodeTree reopenedTree = fixture.component.BuildTree();
+    Require(fixture.services.syncSnapshotCount == 2,
+            "reopening Sync obtains one fresh committed snapshot");
+    Require(FindNodeById(reopenedTree, synth::runtime_ui::NodeIds::kSyncPpqn)->text == "96",
+            "reopening Sync starts from committed PPQN");
+
+    fixture.services.syncCommitSucceeds = false;
+    fixture.component.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kSyncPpqn, "48"));
+    fixture.component.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kSyncBack));
+    Require(fixture.services.syncCommitCount == 2, "rejected Sync Back attempts one commit");
+    Require(fixture.services.saveCount == 1, "rejected Sync Back does not save");
+    Require(fixture.component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::Sync,
+            "rejected Sync Back stays on Sync");
+    Require(FindNodeById(fixture.component.BuildTree(),
+                         synth::runtime_ui::NodeIds::kSyncValidation)->text.find("apply") !=
+                std::string::npos,
+            "rejected Sync Back shows an apply error");
+}
+
 void TestRefreshUpdatesRuntimePageModelsAndRollingDeadline()
 {
     Fixture fixture;
@@ -320,6 +451,7 @@ void TestRefreshUpdatesRuntimePageModelsAndRollingDeadline()
     Require(fixture.services.audioRefreshCount == 2, "refresh updates audio snapshot");
     Require(fixture.services.fileRefreshCount == 2, "refresh updates file snapshot");
     Require(fixture.services.controllersRefreshCount == 2, "refresh updates controllers surface");
+    Require(fixture.services.syncRefreshCount == 2, "refresh updates sync status only");
     const synth::ui::Node* deadline = FindNodeById(
         fixture.component.BuildTree(), synth::runtime_ui::NodeIds::kSidebarDeadline);
     Require(deadline != nullptr, "deadline node exists after refresh");
@@ -455,6 +587,8 @@ int main()
         TestControllerDraftActionsReachControllerSurface);
     Run("TestBackFromConfigurationPageSavesRuntimeConfiguration",
         TestBackFromConfigurationPageSavesRuntimeConfiguration);
+    Run("TestSyncStagesRefreshesCommitsAndReopensFromEngineSnapshot",
+        TestSyncStagesRefreshesCommitsAndReopensFromEngineSnapshot);
     Run("TestRefreshUpdatesRuntimePageModelsAndRollingDeadline",
         TestRefreshUpdatesRuntimePageModelsAndRollingDeadline);
     Run("TestRejectsRootSizeMismatch", TestRejectsRootSizeMismatch);

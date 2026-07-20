@@ -122,6 +122,22 @@ public:
         surface.RefreshOnTick();
     }
 
+    synth::SyncConfig SnapshotSyncConfiguration()
+    {
+        return engine_.SyncConfigurationSnapshot();
+    }
+
+    void RefreshSyncStatus(synth::runtime_ui::SyncPageStatus& status)
+    {
+        status = synth::runtime_ui::BuildSyncPageStatus(
+            engine_.ClockDiagnosticsSnapshot(), engine_.InstrumentSnapshot());
+    }
+
+    bool CommitSyncConfiguration(const synth::SyncConfig& config)
+    {
+        return engine_.RequestSyncConfiguration(config);
+    }
+
     float DeadlineSamplePercent() const
     {
         return deadlineSampleProvider_ ? deadlineSampleProvider_() : 0.0f;
