@@ -1,0 +1,22 @@
+{
+  "task_key": "add-dresden-4-synth-app__task-1",
+  "model": "gpt-5.5",
+  "final_grade": "B",
+  "findings": [
+    {
+      "severity": "minor",
+      "category": "logic-bug",
+      "desc": "ConvertSampleInterval overflow guard compares against SIZE_MAX rounded to 2^64 in double precision, a latent off-by-one at extreme magnitudes."
+    },
+    {
+      "severity": "minor",
+      "category": "test-boundary",
+      "desc": "Non-compounding test calls a flat field-copy setter twice with same values, so it can't actually catch a compounding bug."
+    },
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "New free functions inserted in the middle of an unrelated Color constant block."
+    }
+  ]
+}

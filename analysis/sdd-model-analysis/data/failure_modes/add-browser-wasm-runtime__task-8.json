@@ -1,0 +1,20 @@
+{
+  "task_key": "add-browser-wasm-runtime__task-8",
+  "model": "gpt-5.6-sol",
+  "final_grade": "F",
+  "findings": [
+    {"severity": "critical", "category": "integration", "desc": "Audio channel count was assumed stereo instead of queried, risking out-of-bounds memory writes across the ABI."},
+    {"severity": "critical", "category": "integration", "desc": "main.ts was a stub, so the static site never actually booted the application."},
+    {"severity": "important", "category": "spec-misread", "desc": "OpenSpec tasks.md Step 5 checklist left entirely unchecked despite being listed as a file to modify."},
+    {"severity": "important", "category": "test-gap", "desc": "Miniapp smoke test does not verify bidirectional MIDI through injectable ports as the brief required."},
+    {"severity": "minor", "category": "concurrency", "desc": "Cross-file test ordering relies on a gate plus incidental alphabetical filename order, fragile under a single worker."},
+    {"severity": "minor", "category": "concurrency", "desc": "Stale rendezvous gate file keyed on parent PID could be reused after a crash and PID reuse, skipping the wait."},
+    {"severity": "minor", "category": "test-gap", "desc": "Miniapp DOM-level glue-absence assertions only execute inside the em++-gated real-WASM test, never run in practice."},
+    {"severity": "minor", "category": "test-boundary", "desc": "dynamicRequests empty-assertion assumes no incidental same-origin fetches like favicon requests."},
+    {"severity": "minor", "category": "quality-style", "desc": "README wording overstates that file ordering enforces the fake-app-before-miniapp gate rather than the blocking wait."},
+    {"severity": "minor", "category": "test-boundary", "desc": "The 'no dynamic HTTP' assertion is scoped to one origin only, narrower than its stated guarantee."},
+    {"severity": "minor", "category": "test-boundary", "desc": "Audio-isolation diagnostic fix now exercises only the SharedArrayBuffer-undefined branch, not genuine non-isolated origins."},
+    {"severity": "minor", "category": "quality-style", "desc": "Defensive fallback to 2 channels on the audio-config error branch reintroduces a stereo assumption as dead code."},
+    {"severity": "minor", "category": "quality-style", "desc": "Makefile copies only the .js artifact to app.js, and both miniapp and fake-app builds overwrite the same target name."}
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "task_key": "decouple-encoder-block-rate__task-3",
+  "model": "gpt-5.5",
+  "final_grade": "A",
+  "findings": [
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "Diff drops explanatory comment '// one-pole 1 kHz cutoff at 48 kHz' documenting a magic constant, leaving it opaque."
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "task_key": "add-browser-wasm-synth-runtime__task-7",
+  "model": "gpt-5.5",
+  "final_grade": "A",
+  "findings": [
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "Smoke test uses a fixed port (8791) that could collide under concurrent node --test and make smoke runs."
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "task_key": "add-dresden-4-synth-app__task-5",
+  "model": "gpt-5.6-sol",
+  "final_grade": "F",
+  "findings": [
+    {
+      "severity": "critical",
+      "category": "spec-misread",
+      "desc": "Matrix feedback delay implemented as two internal subframes instead of the spec-required one; no test caught it via real ProcessBlock."
+    },
+    {
+      "severity": "important",
+      "category": "scope-drift",
+      "desc": "BipolarMatrixMixerModule default color changed globally from Grey to Red instead of a per-instance Dresden-scoped override."
+    },
+    {
+      "severity": "important",
+      "category": "test-gap",
+      "desc": "Missing tests for output-channel policy, decimator continuity across blocks, patch round-trip, and feedback-delay through real ProcessBlock."
+    },
+    {
+      "severity": "minor",
+      "category": "test-boundary",
+      "desc": "Test sets AudioBlock.startSample=100 but Engine::ProcessBlock overwrites it, so the offset it appears to verify is never exercised."
+    },
+    {
+      "severity": "minor",
+      "category": "report-inaccuracy",
+      "desc": "Report cites RED/fix commit hashes that don't match actual repo hashes and omits the real fix-commit hash."
+    }
+  ]
+}

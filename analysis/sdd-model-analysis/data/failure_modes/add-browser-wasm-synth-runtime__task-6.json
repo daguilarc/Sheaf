@@ -1,0 +1,32 @@
+{
+  "task_key": "add-browser-wasm-synth-runtime__task-6",
+  "model": "gpt-5.5",
+  "final_grade": "C",
+  "findings": [
+    {
+      "severity": "important",
+      "category": "logic-bug",
+      "desc": "Startup syncfs(populate=true) gate is inert in the real raw-wasm boot path since storageModule resolves undefined."
+    },
+    {
+      "severity": "important",
+      "category": "logic-bug",
+      "desc": "sheath_browser_log_record is a pure stub; native-originated logs never reach IndexedDB."
+    },
+    {
+      "severity": "minor",
+      "category": "logic-bug",
+      "desc": "appendBrowserLog writes a new per-message file instead of appending; same-millisecond messages collide, last write wins."
+    },
+    {
+      "severity": "minor",
+      "category": "integration",
+      "desc": "callBrowserHost routes create/prepare through storageModule.ccall while the worklet uses a separate raw instance, a module-vs-instance split."
+    },
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "globalThis.sheathRuntime is assigned before the storage gate throws, leaving a stray global handle on aborted startup."
+    }
+  ]
+}

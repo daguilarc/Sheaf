@@ -1,0 +1,9 @@
+{
+  "task_key": "wt:d37c__task-4",
+  "model": "gpt-5.5",
+  "final_grade": "A",
+  "findings": [
+    {"severity": "minor", "category": "quality-style", "desc": "Dead m_frequencies/m_logFrequencies members populated but never read anywhere in the diff."},
+    {"severity": "minor", "category": "quality-style", "desc": "2.0f and +0.5f residual-scaling constants are unexplained magic numbers, not named or commented."}
+  ]
+}

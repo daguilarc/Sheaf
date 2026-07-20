@@ -1,0 +1,12 @@
+{
+  "task_key": "add-dresden-4-synth-app__task-8",
+  "model": "gpt-5.5",
+  "final_grade": "A",
+  "findings": [
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "The '4:1' decimation ratio literal only appears in README.md, not repeated in apps/dresden-4/README.md; not worth revision."
+    }
+  ]
+}

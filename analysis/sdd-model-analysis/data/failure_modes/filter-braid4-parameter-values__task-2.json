@@ -1,0 +1,12 @@
+{
+  "task_key": "filter-braid4-parameter-values__task-2",
+  "model": "gpt-5.6-terra",
+  "final_grade": "A",
+  "findings": [
+    {
+      "severity": "minor",
+      "category": "integration",
+      "desc": "braid4_system_tests.cpp still references the removed pmIndex field/IDs, so full test target won't build cleanly at this commit."
+    }
+  ]
+}

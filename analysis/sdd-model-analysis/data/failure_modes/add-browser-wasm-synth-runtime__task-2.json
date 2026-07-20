@@ -1,0 +1,22 @@
+{
+  "task_key": "add-browser-wasm-synth-runtime__task-2",
+  "model": "gpt-5.5",
+  "final_grade": "B",
+  "findings": [
+    {
+      "severity": "important",
+      "category": "logic-bug",
+      "desc": "Dirty flag hardcoded to 1 and version always bumps on build, so JS can never observe an unchanged frame."
+    },
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "drawCommands.reserve(4096) allocates unconditionally regardless of actual frame size."
+    },
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "Draw-command truncation loop uses continue instead of break, wasting iterations after cap is hit."
+    }
+  ]
+}

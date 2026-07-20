@@ -1,0 +1,17 @@
+{
+  "task_key": "add-dresden-4-synth-app__task-2",
+  "model": "gpt-5.5",
+  "final_grade": "B",
+  "findings": [
+    {
+      "severity": "important",
+      "category": "logic-bug",
+      "desc": "OversampledOutputStage has no static check that Decimator's factor matches the outer Factor, a silent correctness trap on mismatch."
+    },
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "Delegating constructor copies an array into a span and back, a harmless but redundant construction-time step."
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "task_key": "configure-dictator-audio-input__task-2",
+  "model": "gpt-5.5",
+  "final_grade": "B",
+  "findings": [
+    {
+      "severity": "important",
+      "category": "test-boundary",
+      "desc": "Success-path recording test fake never sets recorder/recordingURL state; test ignores stop() result, masking internally inconsistent lifecycle."
+    }
+  ]
+}

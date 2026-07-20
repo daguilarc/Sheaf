@@ -1,0 +1,17 @@
+{
+  "task_key": "add-dresden-4-synth-app__task-9",
+  "model": "gpt-5.5",
+  "final_grade": "B",
+  "findings": [
+    {
+      "severity": "important",
+      "category": "report-inaccuracy",
+      "desc": "Report claimed FIR/filter-response coverage for float-coefficient path, but no test runs real 287-tap coefficients through FirDecimator::ProcessFrame."
+    },
+    {
+      "severity": "minor",
+      "category": "other",
+      "desc": "96kHz deadline test average margin only 4-6% headroom, added to make test, flagged as a CI flake risk."
+    }
+  ]
+}

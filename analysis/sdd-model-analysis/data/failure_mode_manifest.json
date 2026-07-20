@@ -1,0 +1,1347 @@
+[
+ {
+  "task_key": "add-browser-wasm-synth-runtime__task-2",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-browser-wasm-synth-runtime__task-2.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-602665ec-9ec9-46b7-ac3a-875243386d1c.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4040-9448-7773-af62-cd485b35bdd0.md"
+  ],
+  "complexity_composite": 2.8
+ },
+ {
+  "task_key": "add-browser-wasm-synth-runtime__task-3",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-browser-wasm-synth-runtime__task-3.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-93b1efd2-d5de-474d-a88a-a45558c25618.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4047-9462-77a0-bbda-3183a7cb7c14.md"
+  ],
+  "complexity_composite": 3.2
+ },
+ {
+  "task_key": "add-browser-wasm-synth-runtime__task-4",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 3,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-browser-wasm-synth-runtime__task-4.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-9014380d-019b-4504-84b2-bd8ec86d3611.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4050-9438-7c61-8a55-05dfea08df19.md"
+  ],
+  "complexity_composite": 3.0
+ },
+ {
+  "task_key": "add-browser-wasm-synth-runtime__task-5",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "C",
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-browser-wasm-synth-runtime__task-5.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-aa8d699b-2c96-4f14-baf8-74dda7630bd1.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4059-d5e6-78b1-ae5f-7bc2e66717cc.md"
+  ],
+  "complexity_composite": 2.7
+ },
+ {
+  "task_key": "add-browser-wasm-synth-runtime__task-6",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "C",
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 3,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-browser-wasm-synth-runtime__task-6.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-78f6493d-b86c-4cea-a099-e1fe05a75ab3.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-2b550690-b7ae-4e6c-97fd-cc220af16a83.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4063-c063-7a23-8803-8a914412c9ed.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f406f-0e11-78c3-9458-095f07760771.md"
+  ],
+  "complexity_composite": 3.0
+ },
+ {
+  "task_key": "add-browser-wasm-synth-runtime__task-7",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 1,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-browser-wasm-synth-runtime__task-7.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-199a0ae6-b65a-4462-8c6e-898921e8e9b1.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4073-889d-72c1-91eb-d9690f669477.md"
+  ],
+  "complexity_composite": 1.8
+ },
+ {
+  "task_key": "add-browser-wasm-synth-runtime__task-8",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-browser-wasm-synth-runtime__task-8.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-e647da94-c27d-40fa-8346-7cd83bbe9cf8.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4078-b7d8-7fd2-8b6d-4a44b8f69b63.md"
+  ],
+  "complexity_composite": 4.0
+ },
+ {
+  "task_key": "add-dresden-4-synth-app__task-1",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 3,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-dresden-4-synth-app__task-1.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-92110f39-f6ec-4501-a60d-86f0532d2927.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4d5c-8587-7c63-831e-f7abc13d2897.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f53ef-97ef-7b22-a962-ae50e218ca43.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f53f8-da87-7691-9587-3fa25eadfae3.md"
+  ],
+  "complexity_composite": null
+ },
+ {
+  "task_key": "add-dresden-4-synth-app__task-2",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 1,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-dresden-4-synth-app__task-2.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-0a84b6f2-56f2-4450-b26c-772863eece73.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-7fc75acc-fb72-457b-b753-b31b46a4c267.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-1aa1a270-73fc-4b6e-970b-c2ea2b43ca7c.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4d64-6090-7830-a007-4bcb770fc663.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f53fe-068d-76a0-8443-4c0e70ad57bb.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f540b-3f98-7782-ae84-55fefdad5ad5.md"
+  ],
+  "complexity_composite": null
+ },
+ {
+  "task_key": "add-dresden-4-synth-app__task-3",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 1,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-dresden-4-synth-app__task-3.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-520d26d7-d39b-429a-97f4-a77777550f4d.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4d78-c055-7352-9403-5cf917e8b3f6.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4d7f-3ef9-7591-8201-d149d82d8f10.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5413-467f-7050-9031-428f582905f4.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5419-42e8-79a0-98f3-161dd1652c0e.md"
+  ],
+  "complexity_composite": null
+ },
+ {
+  "task_key": "add-dresden-4-synth-app__task-4",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "F",
+  "n_critical": 1,
+  "n_important": 0,
+  "n_minor": 4,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-dresden-4-synth-app__task-4.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-a580cc4f-8518-43bf-ab63-ab247c5f6686.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-b99b0616-e12b-4a3c-8138-894aa22f8052.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4d0e-fc36-7532-9676-a8abe9bba126.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f541a-80bc-70b0-abd0-474cd6693949.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5422-2424-74c0-8c59-3bea9860bf11.md"
+  ],
+  "complexity_composite": 3.2
+ },
+ {
+  "task_key": "add-dresden-4-synth-app__task-6",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-dresden-4-synth-app__task-6.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-c039384e-8e45-4cad-a889-874eefa8f394.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4e52-09ba-7921-8ff0-930b010f5931.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f542a-8822-7e82-8dd7-ef639e9dab4b.md"
+  ],
+  "complexity_composite": null
+ },
+ {
+  "task_key": "add-dresden-4-synth-app__task-7",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-dresden-4-synth-app__task-7.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-bfeaa048-8936-4a92-a123-7eba5dd24c65.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-7e4b6ac7-88bb-43a5-8c66-af4bcce4d7ad.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4e5e-3956-7ab0-a100-de86179af2b6.md"
+  ],
+  "complexity_composite": null
+ },
+ {
+  "task_key": "add-dresden-4-synth-app__task-8",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 1,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-dresden-4-synth-app__task-8.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-d2261f03-8926-4a32-8a8f-d65ee9f18f1a.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4e75-f047-70f2-95c3-40ceb3fc71bd.md"
+  ],
+  "complexity_composite": null
+ },
+ {
+  "task_key": "add-dresden-4-synth-app__task-9",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 1,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-dresden-4-synth-app__task-9.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-60c7e9e6-a6ad-464c-8782-959a54937716.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-1865166c-244d-4fe4-9f15-f7ef5585d67c.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4eb2-5571-7813-ac99-22828cf2c7e2.md"
+  ],
+  "complexity_composite": null
+ },
+ {
+  "task_key": "add-portable-modulator-visualizers__task-1",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-portable-modulator-visualizers__task-1.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-9c9f542f-240c-4fc7-909a-bae4c3544e62.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5771-373f-75e2-8cd6-6d3ef2cd8e0f.md"
+  ],
+  "complexity_composite": 2.7
+ },
+ {
+  "task_key": "add-portable-modulator-visualizers__task-2",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-portable-modulator-visualizers__task-2.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-543ab449-63db-4024-b5ee-04d0ed8f409f.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5779-22ee-76d1-862b-2bf75b7118af.md"
+  ],
+  "complexity_composite": 2.3
+ },
+ {
+  "task_key": "add-portable-modulator-visualizers__task-3",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 1,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-portable-modulator-visualizers__task-3.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-560eb030-bce8-4e77-a208-1415c78f4f55.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5780-2555-7202-91fa-41d5ba958cff.md"
+  ],
+  "complexity_composite": 3.3
+ },
+ {
+  "task_key": "add-portable-modulator-visualizers__task-4",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 1,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-portable-modulator-visualizers__task-4.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-c67dd9b1-e265-4ef0-a870-a3d9890ce1ae.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f578a-bc61-7780-8728-1d83c373c2d4.md"
+  ],
+  "complexity_composite": 3.2
+ },
+ {
+  "task_key": "add-portable-modulator-visualizers__task-5",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-portable-modulator-visualizers__task-5.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-a1356a8c-21e4-4e35-87ff-6e74d6c66ba1.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-2b49a97c-9aa8-41f3-878d-8a66f903bcba.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5791-aebb-7093-b292-86f7e9de4903.md"
+  ],
+  "complexity_composite": 1.7
+ },
+ {
+  "task_key": "add-portable-modulator-visualizers__task-6",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 1,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-portable-modulator-visualizers__task-6.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-738a8d33-1515-436d-a76e-523044571082.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-eedb5ef6-873a-4b73-b6b8-35f77ca5a6a9.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-014688f3-3d95-4501-b4be-c9656e8f1fc1.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f572f-9552-78d1-b83b-1b85b5d19210.md"
+  ],
+  "complexity_composite": 1.8
+ },
+ {
+  "task_key": "add-synth-runtime-data-directory__task-4",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-synth-runtime-data-directory__task-4.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-39ade1d7-a109-4d9e-be19-d9e141c5d6ad.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f2fdb-00c5-7101-b84b-8bc0b8ab03c6.md"
+  ],
+  "complexity_composite": 3.8
+ },
+ {
+  "task_key": "configure-dictator-audio-input__task-2",
+  "model": "gpt-5.5",
+  "effort": "medium",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 0,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/configure-dictator-audio-input__task-2.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019edbc7-82cb-7f60-8c28-0d49a7e10c5e.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019edbcb-858f-7123-9c92-04a67a7ecf08.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019edbcd-f681-7512-9e48-8eab47e8c890.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019edbbf-dbfe-7022-bd7c-ccd929883c21.md"
+  ],
+  "complexity_composite": 3.0
+ },
+ {
+  "task_key": "decouple-encoder-block-rate__task-2",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/decouple-encoder-block-rate__task-2.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-e256b866-e0d5-4ce7-8fff-c7dfb3c4d72b.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-67583065-4766-40bf-92da-7388adda3b95.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3977-f1a9-7e31-b42f-c2bab8a23c2f.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3981-f269-7be1-9259-add86209df37.md"
+  ],
+  "complexity_composite": 2.8
+ },
+ {
+  "task_key": "decouple-encoder-block-rate__task-3",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 1,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/decouple-encoder-block-rate__task-3.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-8ba1222d-0aa4-4e8d-a41b-0f56d1d5cc77.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f398a-857b-7ae3-88bf-9d028f75697f.md"
+  ],
+  "complexity_composite": 2.5
+ },
+ {
+  "task_key": "fix-agent-review-hunk-navigation__task-2",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/fix-agent-review-hunk-navigation__task-2.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019ed4b0-f910-79f0-8e2a-4d13817eb8c7.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019ed4a7-9e19-7971-ad92-625a5d0c40e0.md"
+  ],
+  "complexity_composite": 2.8
+ },
+ {
+  "task_key": "fix-agent-review-hunk-navigation__task-4",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/fix-agent-review-hunk-navigation__task-4.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019ed4de-1210-79a0-94c6-93ff07c57fa1.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019ed4ea-2855-7ec1-a296-c689963c15bc.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019ed4ea-477e-7342-84a8-15b8a2b93ce4.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019ed4c7-1851-7581-a282-b8ef335b4eaa.md"
+  ],
+  "complexity_composite": 3.3
+ },
+ {
+  "task_key": "wt:d37c__task-1",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 1,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/wt:d37c__task-1.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-933a3c3a-8931-4644-a960-397d15a03968.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3b0b-ad9b-7920-b92b-599bb8628d7f.md"
+  ],
+  "complexity_composite": 3.0
+ },
+ {
+  "task_key": "wt:d37c__task-2",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 3,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/wt:d37c__task-2.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-236e80a1-4b2b-41ee-bacf-69eff8d23d9d.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3b14-737a-7270-8abc-cce6a0cf110e.md"
+  ],
+  "complexity_composite": 4.0
+ },
+ {
+  "task_key": "wt:d37c__task-3",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 3,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/wt:d37c__task-3.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-79a6af34-cc53-4313-9036-2530577a8f50.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3b1e-1749-7d31-a2cd-31eb96aa9540.md"
+  ],
+  "complexity_composite": 4.0
+ },
+ {
+  "task_key": "wt:d37c__task-4",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/wt:d37c__task-4.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-8ff935dc-b737-404e-9708-2f07f0f1eea6.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3b29-e3bd-7b32-a2cf-213a1a54e767.md"
+  ],
+  "complexity_composite": 4.7
+ },
+ {
+  "task_key": "wt:d37c__task-5",
+  "model": "gpt-5.5",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/wt:d37c__task-5.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ce5c42b1-7f6f-4b0c-90d7-10d3ad3a8e10.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f3b34-7605-70f1-8ad3-dd8beae85b6b.md"
+  ],
+  "complexity_composite": 2.7
+ },
+ {
+  "task_key": "add-autoscope-density-raster__task-1",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 4,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-autoscope-density-raster__task-1.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-edc377cf-4e4f-4598-83bf-7f7dc0098a81.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f595c-357f-7ad0-8f6e-1d68cf112041.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6a1e-2f8f-78d3-91b4-8466769dcb34.md"
+  ],
+  "complexity_composite": 3.3
+ },
+ {
+  "task_key": "add-autoscope-density-raster__task-2",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-autoscope-density-raster__task-2.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-dadde526-0654-45bf-8057-717248e06871.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5965-a8ae-7111-8f9c-5d48959ce732.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6a29-f513-7023-ae2d-a9583df69a4a.md"
+  ],
+  "complexity_composite": 3.8
+ },
+ {
+  "task_key": "add-autoscope-density-raster__task-3",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "C",
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 3,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-autoscope-density-raster__task-3.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-b86d6a80-a7ef-49b4-97e4-3bf8d17d214b.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-80d5b2f8-25b4-45e4-baa2-bdd0d09489d6.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-cf21cade-a172-40f3-990b-6f0c6e2512ef.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5974-3c22-7032-8d2e-16dc5ce44c7a.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5979-c89b-7103-8efa-b35f953fb043.md"
+  ],
+  "complexity_composite": 3.5
+ },
+ {
+  "task_key": "add-autoscope-density-raster__task-4",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 4,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-autoscope-density-raster__task-4.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-e5e7c633-3eee-4abe-91f3-f2c9c50e0a9d.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-543bd592-c4f0-4307-8a31-f6f576c1fd26.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5989-da17-7bd1-8c62-9eb6142edb68.md"
+  ],
+  "complexity_composite": 2.7
+ },
+ {
+  "task_key": "add-autoscope-density-raster__task-5",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "C",
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-autoscope-density-raster__task-5.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-bbac4492-73da-4e44-b638-2c651dab9d70.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-9b51b419-9863-421d-9832-5a2812278e09.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-91da254d-0241-4553-a9a4-168eea6b3bb1.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f59a2-51e6-7820-b055-96e0e0c82bf1.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f59a8-4d91-7c40-9857-67ed2c88c59f.md"
+  ],
+  "complexity_composite": 3.8
+ },
+ {
+  "task_key": "add-autoscope-density-raster__task-6",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-autoscope-density-raster__task-6.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-08d4e43b-06a5-41fa-9e68-cc082761082b.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ccf6f929-5927-4d30-9144-8334925c0348.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-fb238430-0d1c-4cdd-839c-08c4e7e2f655.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-85e90b53-793f-4370-9c92-b756c2f76cb3.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f59b4-0be9-7fd2-9ce1-087cc62bda7a.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f59b9-bed1-7c33-8aa6-055df84220e0.md"
+  ],
+  "complexity_composite": 3.2
+ },
+ {
+  "task_key": "add-autoscope-density-raster__task-7",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "C",
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-autoscope-density-raster__task-7.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-cbcfa9d2-f08c-44cb-8a55-a255ecd869fc.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-c0bf6c06-1462-4d2f-858a-332082ab35aa.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-83876c4e-e62c-4c7d-becf-52eb3029a4a7.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f59c6-d8ef-70d2-b4ab-d56d3ab9d5ba.md"
+  ],
+  "complexity_composite": 2.7
+ },
+ {
+  "task_key": "add-browser-wasm-runtime__task-8",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "F",
+  "n_critical": 2,
+  "n_important": 1,
+  "n_minor": 7,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-browser-wasm-runtime__task-8.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-f40ebd9d-741f-43c0-9829-12855d303c09.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-28fd9659-5e51-4083-a8f1-0a8932a5c4ad.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-53afe2af-e7c2-4e8c-9532-b1b261538837.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4909-8511-7aa2-b7bd-a5508c13e877.md"
+  ],
+  "complexity_composite": 3.8
+ },
+ {
+  "task_key": "add-dresden-4-synth-app__task-5",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "F",
+  "n_critical": 1,
+  "n_important": 2,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-dresden-4-synth-app__task-5.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ed7921a0-5d09-4d49-a97e-34b56d7aa77b.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-0c54f16d-d6dc-4400-be09-250243dcef84.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5423-92ef-74e0-a1ed-1cf58d6ae00e.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f5428-ce1d-7610-a94d-744c351f7ce5.md"
+  ],
+  "complexity_composite": null
+ },
+ {
+  "task_key": "add-note-system-message-mappings__task-1",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-note-system-message-mappings__task-1.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-f6a8782f-c85e-4d4c-b266-c388ffa72185.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-0df13741-88a5-4f45-8e0f-53242d75799c.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6ebb-9dd9-7fa2-8fd7-b39316e860fd.md"
+  ],
+  "complexity_composite": 3.7
+ },
+ {
+  "task_key": "add-note-system-message-mappings__task-2",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-note-system-message-mappings__task-2.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-adf280d9-7917-4208-8fca-b78ade10d85f.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6ec7-145a-7820-a766-6d755b8b75a9.md"
+  ],
+  "complexity_composite": 2.7
+ },
+ {
+  "task_key": "add-note-system-message-mappings__task-3",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "C",
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 1,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-note-system-message-mappings__task-3.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-09c2e8a6-75c2-4cd0-89ce-2d3ea3085fc3.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-12bfe854-dd44-4c3a-8ae5-c6c5c683855e.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6ed0-adcc-7551-baf0-339f894cde27.md"
+  ],
+  "complexity_composite": 3.5
+ },
+ {
+  "task_key": "add-note-system-message-mappings__task-4",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-note-system-message-mappings__task-4.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-591cb84e-cc45-47dd-8f02-8aa25f9086d0.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6ee9-7d8b-7061-81b6-94ae9fe1e16d.md"
+  ],
+  "complexity_composite": 1.5
+ },
+ {
+  "task_key": "add-standard-modulators__task-2",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-standard-modulators__task-2.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-cf3a3470-de31-4c55-8ef4-a601cb8bbb21.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-1a6f3afe-b747-416b-aba5-ceb8b86ed2d0.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-baea5bbe-609c-46b7-9d3b-18864396734f.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-55a26e94-20b4-4b28-8140-07f6b90e8b66.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f68dd-e7bf-70e3-9b27-0884d0bc65b2.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6a05-d70d-7cf3-a706-7ea475500310.md"
+  ],
+  "complexity_composite": 2.0
+ },
+ {
+  "task_key": "add-standard-modulators__task-3",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 4,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-standard-modulators__task-3.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-8d9566aa-ce31-4a8f-8367-cdbba1f27c19.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-e0aae1db-083b-4a20-880c-e93e87a54b09.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-9a56ea96-274f-4f1d-8656-eeb78edf0e62.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f68e8-2c23-7300-b501-6625567e2414.md"
+  ],
+  "complexity_composite": 3.5
+ },
+ {
+  "task_key": "add-standard-modulators__task-4",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "C",
+  "n_critical": 0,
+  "n_important": 3,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-standard-modulators__task-4.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-6f4509c9-5b51-4a94-a241-28a3747bd693.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ee950464-e6a8-4763-bc2a-145708c13fe4.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ed203d11-3c05-4dcf-aaaf-191e7e62c9e6.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-eecb7070-9252-4b7a-b34f-439aa6a88edd.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f68f8-1f87-7072-8dc3-7c8b6cfcbd69.md"
+  ],
+  "complexity_composite": 3.2
+ },
+ {
+  "task_key": "filter-braid4-parameter-values__task-3",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/filter-braid4-parameter-values__task-3.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-354ee31c-977f-49a4-8c0c-a962243621df.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7919-3381-7bc0-89d1-3c6136d99d53.md"
+  ],
+  "complexity_composite": 4.0
+ },
+ {
+  "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-1",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 6,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/fix-browser-native-audio-and-generic-app-packaging__task-1.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-e792121a-4d26-4550-a026-e7f9afed3695.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-c61c3a9c-32a5-4456-85dd-1a873390c22d.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f78eb-2dd9-7242-8208-e5014ee9009e.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7b54-482d-7672-aed0-69c651433c7d.md"
+  ],
+  "complexity_composite": 4.8
+ },
+ {
+  "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-2",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 3,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/fix-browser-native-audio-and-generic-app-packaging__task-2.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-a1b723c1-1ea4-485a-b4ea-92578f3c0030.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-8385d13d-ae5a-428d-8c75-a0d80554e1db.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7901-0819-75c1-b313-9dad9630aca1.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7b73-7617-7ad3-8313-77936213fc22.md"
+  ],
+  "complexity_composite": 3.8
+ },
+ {
+  "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-3",
+  "model": "gpt-5.6-sol",
+  "effort": "xhigh",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 3,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/fix-browser-native-audio-and-generic-app-packaging__task-3.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-9dd9c61c-4e8e-46bf-add1-19c9800a35a4.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ac9cafa7-27c9-41a4-9c4d-3d47730613e5.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7923-9cec-7760-be50-bfc11795ccd9.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7b8c-81b8-7ef0-a105-f9741b299944.md"
+  ],
+  "complexity_composite": 3.5
+ },
+ {
+  "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-4",
+  "model": "gpt-5.6-sol",
+  "effort": "xhigh",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 3,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/fix-browser-native-audio-and-generic-app-packaging__task-4.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-d97cfd25-7c0e-4b1f-90a7-49c4e31704d4.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-d2d28547-6643-45fc-8484-6f0e7b688ac7.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f794c-27eb-71b3-8d33-d17ccedaa4f9.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7bb0-866f-77c2-b03c-6332e2c26a1b.md"
+  ],
+  "complexity_composite": 4.2
+ },
+ {
+  "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-6",
+  "model": "gpt-5.6-sol",
+  "effort": "xhigh",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 4,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/fix-browser-native-audio-and-generic-app-packaging__task-6.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-2769d191-cb33-48ec-a491-f054245abaa3.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-9f47ba04-482f-4af2-b25e-8595afafd046.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-a6773fd2-a9f5-4369-b8d8-f39e7d7e6ca8.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7986-74b2-7361-a7bc-ecdad22b8f72.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7bda-3282-7310-a118-0dfeacc4b7f8.md"
+  ],
+  "complexity_composite": 4.0
+ },
+ {
+  "task_key": "synchronize-absolute-encoder-feedback__task-1",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 6,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/synchronize-absolute-encoder-feedback__task-1.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-043265df-3baf-40ed-b67a-8db236000ec9.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-8c8b598e-d80c-492e-93ad-ddb278a6e142.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-390e3f42-9513-4dda-95d5-305db201ef97.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6bd7-76d9-7041-b380-4525d33f61ed.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6db7-49ee-7122-b93a-a47ab3b2fa51.md"
+  ],
+  "complexity_composite": 4.2
+ },
+ {
+  "task_key": "synchronize-absolute-encoder-feedback__task-3",
+  "model": "gpt-5.6-sol",
+  "effort": "high",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 3,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/synchronize-absolute-encoder-feedback__task-3.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-015be842-34fe-4876-b11f-3941f9797f45.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f6dd3-3cda-74a1-a37c-427af6fc0265.md"
+  ],
+  "complexity_composite": 4.2
+ },
+ {
+  "task_key": "add-browser-wasm-runtime__task-1",
+  "model": "gpt-5.6-terra",
+  "effort": "medium",
+  "final_grade": "C",
+  "n_critical": 0,
+  "n_important": 3,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-browser-wasm-runtime__task-1.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-97033eff-4210-4961-b170-dcf5b5087913.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-923df609-dbbb-4495-93c5-1a479af0bcd1.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ee76d4b1-7bcf-4b4f-a151-c88759e55391.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-9447e09f-fa78-427c-af51-1466d9fc4212.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-49ce41a6-0a9f-41cf-8df8-ca894adacce1.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f487c-1c1a-7960-9e9b-e878320badf7.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4886-772b-7c61-bf6f-ad614bef226d.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4aa7-1de9-7e50-973f-924cf6766e80.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4abc-f898-7233-9629-1089b3e5c73e.md"
+  ],
+  "complexity_composite": 4.2
+ },
+ {
+  "task_key": "add-browser-wasm-runtime__task-2",
+  "model": "gpt-5.6-terra",
+  "effort": "medium",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-browser-wasm-runtime__task-2.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-7b38b69c-0d5f-4bb7-b61a-8855e0b1f97d.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-0d12aa3e-fe15-4ad5-a15a-83239f193c5c.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-7fb2591b-de9d-4e36-a7ea-9d41996a2e9f.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-b7cfc553-8c7b-4df8-b31e-f32b10589e06.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f488c-a225-7342-85cd-973d56ed0932.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4ac5-b183-79c2-b052-5b4028a972e0.md"
+  ],
+  "complexity_composite": 2.5
+ },
+ {
+  "task_key": "add-browser-wasm-runtime__task-3",
+  "model": "gpt-5.6-terra",
+  "effort": "medium",
+  "final_grade": "C",
+  "n_critical": 0,
+  "n_important": 3,
+  "n_minor": 1,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-browser-wasm-runtime__task-3.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-43c83fe6-5fd9-4636-86d1-5f10bca3ecc5.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ff81ec8c-3e61-4a05-8091-332fff555c5c.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-ff13ebc6-b0df-4750-9b48-3ead4875cb0b.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-cacaba8e-1805-4cd3-a0f1-23009cf293ca.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f489c-5a68-7390-9568-4eb783d61d33.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f48ab-592c-7d63-b1b7-8ed029f4e6cf.md"
+  ],
+  "complexity_composite": 3.5
+ },
+ {
+  "task_key": "add-browser-wasm-runtime__task-4",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 3,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-browser-wasm-runtime__task-4.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-2a336588-31a7-4258-b45c-a68b64fb164d.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-a4e2b126-6ebd-4671-8364-a88040e85322.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-7bceca44-aba4-4a8f-96f5-2f4fd6126c5e.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f48b0-9cf9-75d2-81e3-8577b341f95d.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f48b2-803e-73a1-a715-52aebe437030.md"
+  ],
+  "complexity_composite": 3.2
+ },
+ {
+  "task_key": "add-browser-wasm-runtime__task-5",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "final_grade": "C",
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 7,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-browser-wasm-runtime__task-5.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-73e01fcb-7c18-4c18-9f28-d6ba84106028.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-fdba54d1-455c-47b5-b9e8-4722f5033bf5.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-2d706743-2773-4336-aff3-ab7a6a2758a5.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-b42c3ed0-af01-477b-922c-237b9d35952e.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-c607b587-3052-4cac-94a2-9df34054303e.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-436f0b24-2f3a-4c24-8f3a-0ffdf9f13468.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f48c7-f823-7161-9a3a-8707dd863316.md"
+  ],
+  "complexity_composite": 4.3
+ },
+ {
+  "task_key": "add-browser-wasm-runtime__task-6",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "final_grade": "F",
+  "n_critical": 1,
+  "n_important": 0,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-browser-wasm-runtime__task-6.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-cfc7eae8-5333-475e-9f37-e7a6032f83e3.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-d58e5516-49cc-4606-8e2f-2c92c1f9dbec.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f48da-6781-7973-b7e6-cfd1595cb45e.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f48de-81f9-70a0-966b-de455deaf7fc.md"
+  ],
+  "complexity_composite": 3.8
+ },
+ {
+  "task_key": "add-browser-wasm-runtime__task-7",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "final_grade": "C",
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-browser-wasm-runtime__task-7.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-4ac5c7dc-0fc8-4ecf-b8f2-be8ae3876a68.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-5585077e-6ddc-424b-b5bc-998efc36f9e4.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f48f7-d9fe-7801-aab7-3524ce5878b4.md"
+  ],
+  "complexity_composite": 3.2
+ },
+ {
+  "task_key": "add-runtime-button-grids__task-1",
+  "model": "gpt-5.6-terra",
+  "effort": "medium",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 1,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-runtime-button-grids__task-1.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-01eff6b8-4f52-410a-9f2f-c69eca50f679.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-39657238-c26c-45e8-ba7a-16e5b93425fe.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-fbd921aa-f784-4bf3-8489-f1c0813ffc63.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f76ef-8711-7671-ab52-4f82109b6012.md"
+  ],
+  "complexity_composite": 2.7
+ },
+ {
+  "task_key": "add-runtime-button-grids__task-2",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 1,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-runtime-button-grids__task-2.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-5eb976c8-8ce2-4526-ae84-74531a2c77ab.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-7565c889-a204-416a-94e6-ead0beb45bb6.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f76f6-d88c-76c0-9a5e-8b071bac21f8.md"
+  ],
+  "complexity_composite": 2.8
+ },
+ {
+  "task_key": "add-runtime-button-grids__task-3",
+  "model": "gpt-5.6-terra",
+  "effort": "medium",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 0,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-runtime-button-grids__task-3.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-afc29cdd-5ba6-487c-95af-94dc2e1a3afb.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-2f5842ee-9c2b-4946-90e4-9f3f62dc497b.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-662f1f6e-4af2-4c0c-8e29-2e1f1ff58758.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f76ff-0f4d-7412-a30c-3799cbd4fca3.md"
+  ],
+  "complexity_composite": 1.8
+ },
+ {
+  "task_key": "add-target-center-alpha__task-1",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "final_grade": "B",
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 0,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-target-center-alpha__task-1.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f4f96-1ab7-7613-89f5-ffaeb8f57048.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f4f99-987e-79f1-ab12-51f54b1e5c46.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4f94-411f-7db2-adeb-e41991fdf2e5.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4f97-628e-76e2-bf30-a22815a34de9.md"
+  ],
+  "complexity_composite": 1.8
+ },
+ {
+  "task_key": "add-target-center-alpha__task-2",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-target-center-alpha__task-2.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f4f9e-6cb7-71a2-a1cd-71b972056500.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4f9a-b69d-7961-957c-e922eb422d1b.md"
+  ],
+  "complexity_composite": 2.5
+ },
+ {
+  "task_key": "add-target-center-alpha__task-3",
+  "model": "gpt-5.6-luna",
+  "effort": "medium",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/add-target-center-alpha__task-3.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/codex-019f4fa2-635a-7a80-80d5-16a2d8eb028e.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f4f9f-b755-7ee0-b350-2a985cdbb6ca.md"
+  ],
+  "complexity_composite": 1.8
+ },
+ {
+  "task_key": "filter-braid4-parameter-values__task-1",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/filter-braid4-parameter-values__task-1.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-fa979540-0cbd-4e68-8426-5bfdcfbf8f86.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7906-df49-7831-be73-c38dc144f71b.md",
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7909-c04a-79e3-8c5f-ca958e48b739.md"
+  ],
+  "complexity_composite": 3.0
+ },
+ {
+  "task_key": "filter-braid4-parameter-values__task-2",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 2,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/filter-braid4-parameter-values__task-2.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-47edf5a6-bb5e-4809-bd14-1102f9ad7b9c.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7910-6565-7082-8163-ace7bc0a517a.md"
+  ],
+  "complexity_composite": 3.7
+ },
+ {
+  "task_key": "filter-braid4-parameter-values__task-4",
+  "model": "gpt-5.6-terra",
+  "effort": "high",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 1,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/filter-braid4-parameter-values__task-4.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-2afd5663-9d42-471d-9636-4dba8a414434.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f7926-7bc3-7163-84b9-0d44ed464f8b.md"
+  ],
+  "complexity_composite": 2.3
+ },
+ {
+  "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-8",
+  "model": "gpt-5.6-terra",
+  "effort": "medium",
+  "final_grade": "A",
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "grade_file": "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/grades/fix-browser-native-audio-and-generic-app-packaging__task-8.json",
+  "review_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/review_texts/claude-310cad1d-3a78-4f01-a645-56382e99718e.md"
+  ],
+  "timeline_files": [
+   "/Users/joyo/Sheaf/.claude/worktrees/romantic-germain-72d5b4/analysis/sdd-model-analysis/data/timelines/codex-019f79da-f0f2-7a02-878d-595b7e251f80.md"
+  ],
+  "complexity_composite": 2.3
+ }
+]

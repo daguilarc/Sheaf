@@ -1,0 +1,22 @@
+{
+  "task_key": "add-dresden-4-synth-app__task-7",
+  "model": "gpt-5.5",
+  "final_grade": "B",
+  "findings": [
+    {
+      "severity": "important",
+      "category": "logic-bug",
+      "desc": "LaunchRegisteredApp assigns activeSession_ before repointing window content, leaving a dangling content pointer window on relaunch."
+    },
+    {
+      "severity": "minor",
+      "category": "test-boundary",
+      "desc": "New LauncherHarnessTests block only checks a std::function is truthy, never actually invokes miniappOwnerFactory at runtime."
+    },
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "std::function used in LauncherHarnessTests.cpp without including <functional>, relying on transitive include."
+    }
+  ]
+}

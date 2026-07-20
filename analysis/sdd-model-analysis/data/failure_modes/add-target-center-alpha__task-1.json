@@ -1,0 +1,12 @@
+{
+  "task_key": "add-target-center-alpha__task-1",
+  "model": "gpt-5.6-luna",
+  "final_grade": "B",
+  "findings": [
+    {
+      "severity": "important",
+      "category": "spec-misread",
+      "desc": "New RED tests added but existing legacy direct-assignment tests left unadjusted, would break GREEN phase once new default alpha lands."
+    }
+  ]
+}

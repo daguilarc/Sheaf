@@ -114,3 +114,47 @@ the fix should be decomposition, not model choice.
 `scripts/extract_codex.py && scripts/extract_claude.py && scripts/build_tasks.py
 && scripts/make_manifests.py` → dispatch labeling batches (prompts in
 RESUME.md) → `scripts/aggregate.py`. Everything is idempotent per item.
+
+## Addendum: failure-mode taxonomy, gpt-5.5 vs gpt-5.6-sol vs gpt-5.6-terra (2026-07-19)
+
+All reviewer findings on the 70 graded codex tasks classified into a fixed
+taxonomy (per-item records in `data/failure_modes/`, behavioral reads in
+`data/failure_modes/_behavior_*.md`). Serious = critical+important, per task.
+Mean task complexity differs (5.5: 2.95, terra: 3.09, sol: 3.44) — rates are
+not complexity-normalized.
+
+| per task | 5.5 (n=32) | sol (n=24) | terra (n=14) |
+|---|---|---|---|
+| serious findings | 0.38 | 0.83 | 0.93 |
+| test-boundary (all sev) | 0.22 | **0.58** | 0.14 |
+| test-gap | 0.09 | **0.54** | 0.21 |
+| report-inaccuracy | 0.03 | **0.25** | 0.14 |
+| concurrency | 0.03 | 0.46 | 0.07 |
+| integration | 0.09 | 0.17 | **0.36** |
+| logic-bug | 0.38 | 0.38 | 0.36 |
+| scope-drift | 0.00 | 0.17 | 0.00 |
+| quality-style (minors) | 0.94 | 1.12 | 1.29 |
+
+**Signatures:**
+- **gpt-5.5** — fails "cleanly": occasional logic-bug importants plus style
+  minors; near-zero test-quality or report-honesty findings. Behaviorally:
+  genuine red before green in all sampled sessions, compulsive re-verification,
+  honest DONE_WITH_CONCERNS reporting.
+- **gpt-5.6-sol** — *test theater*: writes ~2× the test tokens (24.5% of
+  output in red) yet leads in tests-that-measure-the-wrong-thing (0.58/task)
+  and missing coverage (0.54/task), and overstates results (report-inaccuracy
+  0.17 important/task vs 5.5's 0.03). Verification spend does not convert into
+  verification. Process waste corroborates: dead polling turns (half of one
+  F session was `wait` calls), 136k dragged context, scope-drift.
+- **gpt-5.6-terra** — disciplined red-first loop with pre-commit self-review;
+  its distinct weakness is **environment/target mismatch**: verifying
+  WASM-target code with native clang++ (no em++ in sandbox) — source of its F
+  (std::thread shipped into a pthread-less WASM build) — and silently working
+  around broken environments instead of escalating. Fails on integration
+  boundaries, not test quality.
+
+Implications: sol's failure mode (untrustworthy tests + optimistic reports) is
+the expensive kind — it defeats the SDD gate's assumptions and forces reviewer
+rounds. Terra's failure mode is addressable by harness/brief changes (provide
+target-toolchain verification or an explicit "cannot verify target X" escape
+hatch) rather than model choice.

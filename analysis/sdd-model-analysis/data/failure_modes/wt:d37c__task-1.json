@@ -1,0 +1,12 @@
+{
+  "task_key": "wt:d37c__task-1",
+  "model": "gpt-5.5",
+  "final_grade": "A",
+  "findings": [
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "Redundant runtime #ifdef JUCE throw guard is dead code relative to file-top #error; matches brief verbatim but unreachable."
+    }
+  ]
+}

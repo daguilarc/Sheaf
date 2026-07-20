@@ -1,0 +1,11 @@
+{
+  "task_key": "add-autoscope-density-raster__task-4",
+  "model": "gpt-5.6-sol",
+  "final_grade": "A",
+  "findings": [
+    {"severity": "minor", "category": "logic-bug", "desc": "Locked reader reports Empty() when the newest sample lands exactly on a cycle boundary."},
+    {"severity": "minor", "category": "logic-bug", "desc": "Stale diagnostics render fields persist when a locked analysis fails phase acquisition."},
+    {"severity": "minor", "category": "logic-bug", "desc": "Sub-pixel mapping compresses due to denominator clamps on very small transfer segments."},
+    {"severity": "minor", "category": "test-gap", "desc": "Missing dedicated tests for gradual frequency drift, noisy crossings, and steady multi-read phase tracking."}
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "task_key": "add-autoscope-density-raster__task-6",
+  "model": "gpt-5.6-sol",
+  "final_grade": "B",
+  "findings": [
+    {"severity": "minor", "category": "report-inaccuracy", "desc": "Report claimed null-model behavior was verified, but no test constructs a nullptr AutoScopeVisualizer."},
+    {"severity": "minor", "category": "quality-style", "desc": "Background/centerline drawing constants duplicated across two call sites instead of shared."},
+    {"severity": "important", "category": "quality-style", "desc": "coverage.md left stale references to a renamed test and described now-incorrect pre-rename behavior."}
+  ]
+}

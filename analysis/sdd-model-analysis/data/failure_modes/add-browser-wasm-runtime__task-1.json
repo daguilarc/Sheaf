@@ -1,0 +1,27 @@
+{
+  "task_key": "add-browser-wasm-runtime__task-1",
+  "model": "gpt-5.6-terra",
+  "final_grade": "C",
+  "findings": [
+    {
+      "severity": "important",
+      "category": "integration",
+      "desc": "synth-browser-test target wired into Makefile but no tests/ directory exists, so playwright exits non-zero and the target is broken."
+    },
+    {
+      "severity": "important",
+      "category": "integration",
+      "desc": "tsconfig 'files' list silently limits tsc build to one file, so npm run build performs no real type-checking of src files."
+    },
+    {
+      "severity": "important",
+      "category": "report-inaccuracy",
+      "desc": "Report claims native compilation proves portability, but only a make -n dry-run was run for the real em++/STANDALONE_WASM targets."
+    },
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "Generated build output directories (dist/, wasm-build/) not added to .gitignore, already showing as untracked."
+    }
+  ]
+}

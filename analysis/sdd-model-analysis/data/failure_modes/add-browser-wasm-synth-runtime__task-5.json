@@ -1,0 +1,27 @@
+{
+  "task_key": "add-browser-wasm-synth-runtime__task-5",
+  "model": "gpt-5.5",
+  "final_grade": "C",
+  "findings": [
+    {
+      "severity": "important",
+      "category": "logic-bug",
+      "desc": "Sysex requested (sysex:true) but payloads over 3 bytes are silently dropped with no diagnostic."
+    },
+    {
+      "severity": "important",
+      "category": "concurrency",
+      "desc": "DrainMidiInput heap-allocates a std::vector per message inside the realtime worklet drain callback."
+    },
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "sendMidiOutput defaults to a no-op and is never wired in boot.js, a dead notification hook."
+    },
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "enqueue_midi_input return value is ignored at the JS boundary, giving no dropped-message signal to the UI."
+    }
+  ]
+}

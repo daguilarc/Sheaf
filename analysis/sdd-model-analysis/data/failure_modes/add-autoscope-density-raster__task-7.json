@@ -1,0 +1,11 @@
+{
+  "task_key": "add-autoscope-density-raster__task-7",
+  "model": "gpt-5.6-sol",
+  "final_grade": "C",
+  "findings": [
+    {"severity": "important", "category": "report-inaccuracy", "desc": "Report claimed 37/37 OpenSpec scenarios audited when the spec files actually define 38 scenarios."},
+    {"severity": "important", "category": "report-inaccuracy", "desc": "Report claimed dsp_tests passed 57/57 when the suite actually contains and passes 56/56 tests."},
+    {"severity": "minor", "category": "quality-style", "desc": "Benchmark hand-computes storage formulas duplicating internal layout instead of using accessors, risking silent drift."},
+    {"severity": "minor", "category": "quality-style", "desc": "Vector-move for Draw() results occurs inside the timed rebuild/hit benchmark regions, adding negligible noise."}
+  ]
+}

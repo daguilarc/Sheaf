@@ -1,0 +1,22 @@
+{
+  "task_key": "add-browser-wasm-synth-runtime__task-3",
+  "model": "gpt-5.5",
+  "final_grade": "B",
+  "findings": [
+    {
+      "severity": "important",
+      "category": "logic-bug",
+      "desc": "Posting instance.exports via postMessage is not structured-cloneable; a real browser throws DataCloneError."
+    },
+    {
+      "severity": "minor",
+      "category": "integration",
+      "desc": "wasm Makefile target's thread flags (PTHREAD_POOL_SIZE without -pthread/SHARED_MEMORY) look insufficient for SharedArrayBuffer support."
+    },
+    {
+      "severity": "minor",
+      "category": "logic-bug",
+      "desc": "Main-thread WebAssembly.instantiate(module, {}) uses empty imports, which will fail against a real Emscripten module."
+    }
+  ]
+}

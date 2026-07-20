@@ -1,0 +1,12 @@
+{
+  "task_key": "filter-braid4-parameter-values__task-4",
+  "model": "gpt-5.6-terra",
+  "final_grade": "A",
+  "findings": [
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "d4-2's coverage.md row cites tests that don't directly exercise its own exponential-mapping scenario, though the fact is proven elsewhere."
+    }
+  ]
+}

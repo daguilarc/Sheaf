@@ -1,0 +1,17 @@
+{
+  "task_key": "filter-braid4-parameter-values__task-1",
+  "model": "gpt-5.6-terra",
+  "final_grade": "A",
+  "findings": [
+    {
+      "severity": "minor",
+      "category": "test-gap",
+      "desc": "ReplaceCachedKnobValue's out-of-range throw path has no test exercising the thrown std::out_of_range branch."
+    },
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "ParameterGroup::ProcessSample reordering (phase1-for-all then phase2-for-all) not documented as an intentional invariant."
+    }
+  ]
+}

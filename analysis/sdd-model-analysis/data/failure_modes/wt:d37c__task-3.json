@@ -1,0 +1,22 @@
+{
+  "task_key": "wt:d37c__task-3",
+  "model": "gpt-5.5",
+  "final_grade": "A",
+  "findings": [
+    {
+      "severity": "minor",
+      "category": "test-gap",
+      "desc": "RmsDbFS/PeakDbFS static helpers added but not requested by the brief and not exercised by any test."
+    },
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "MeterSnapshot::rms field is misleadingly named; it stores smoothed mean-square, not an actual RMS value."
+    },
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "AntiAliasLowpassInPlace calls SetCutoff then also passes cutoff via Input every sample, redundant duplicate path."
+    }
+  ]
+}

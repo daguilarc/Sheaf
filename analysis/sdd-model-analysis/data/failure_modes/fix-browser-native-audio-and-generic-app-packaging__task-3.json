@@ -1,0 +1,10 @@
+{
+  "task_key": "fix-browser-native-audio-and-generic-app-packaging__task-3",
+  "model": "gpt-5.6-sol",
+  "final_grade": "B",
+  "findings": [
+    {"severity": "minor", "category": "quality-style", "desc": "expectedCatalogVersion duplicates the catalogVersion definition; two definitions must be kept in lockstep manually."},
+    {"severity": "minor", "category": "logic-bug", "desc": "_headers glob only matches 3-segment package paths, a latent constraint not currently reachable given producible outputs."},
+    {"severity": "minor", "category": "concurrency", "desc": "Standalone buildFirstPartyCatalog two-step directory replace is not jointly atomic outside the production path."}
+  ]
+}

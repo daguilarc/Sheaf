@@ -1,0 +1,12 @@
+{
+  "task_key": "add-dresden-4-synth-app__task-3",
+  "model": "gpt-5.5",
+  "final_grade": "A",
+  "findings": [
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "Duplicate-name check is O(n*(n+P)) and near-verbatim duplicates an existing routine instead of being factored out."
+    }
+  ]
+}

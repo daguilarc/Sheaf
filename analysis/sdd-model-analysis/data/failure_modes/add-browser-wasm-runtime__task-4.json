@@ -1,0 +1,27 @@
+{
+  "task_key": "add-browser-wasm-runtime__task-4",
+  "model": "gpt-5.6-terra",
+  "final_grade": "B",
+  "findings": [
+    {
+      "severity": "important",
+      "category": "integration",
+      "desc": "Makefile omits -sEXPORTED_RUNTIME_METHODS, so stringToUTF8/lengthBytesUTF8 are dead-code-eliminated and undefined at runtime for both build targets."
+    },
+    {
+      "severity": "minor",
+      "category": "logic-bug",
+      "desc": "check:generic-runtime guard uses '! rg ...'; if ripgrep is absent it exits 127 and the negated check passes vacuously without scanning."
+    },
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "BrowserRuntimeAbi.cpp shims evaluate RuntimeFor(runtime) twice per call instead of caching the result; harmless but noisy."
+    },
+    {
+      "severity": "minor",
+      "category": "quality-style",
+      "desc": "After a fix reordered validation, a duplicate 'unknown child' check inside visit() became dead code, unreachable but left in place."
+    }
+  ]
+}
