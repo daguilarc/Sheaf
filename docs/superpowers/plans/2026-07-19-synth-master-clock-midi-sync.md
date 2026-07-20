@@ -210,8 +210,8 @@
 - [x] Assert deadline error `≤1 µs`, spacing error `≤2 µs` plus the `500 ppm` slew allowance, fixed-offset error `≤1 µs`, and 120-BPM recovery error `≤0.1 BPM` after 64 stable intervals.
 - [x] Document ownership, once-per-block/fractional-query contract, oversampling conversion, thread roles, mapper and timestamp epochs, runtime config v2 migration, output latency, PPQN compatibility warning, transport/Continue limitations, diagnostics, and fallback quality.
 - [x] Run all focused C++ tests, `make -C projects/synth test`, application/JUCE build-and-test targets, browser Node and Playwright suites, UI-boundary checks, strict OpenSpec validation, and requirement-ID checks.
-- [ ] Obtain a final whole-branch Opus review in addition to the task review. Fix and re-review until both spec compliance and code quality are clean.
-- [ ] Mark every verified OpenSpec task complete and leave the change ready for archive; do not archive or land unless the user separately requests it.
+- [x] Obtain a final whole-branch Opus review in addition to the task review. Fix and re-review until both spec compliance and code quality are clean.
+- [x] Mark every verified OpenSpec task complete and leave the change ready for archive; do not archive or land unless the user separately requests it.
 - [x] Commit only final trace/documentation/fix files after review and verification.
 
 ---
