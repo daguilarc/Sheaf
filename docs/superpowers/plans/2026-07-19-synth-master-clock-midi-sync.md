@@ -164,13 +164,13 @@
 
 **Required behavior:**
 
-- [ ] Add a runtime-owned Sync sidebar action and portable `SyncPageSurface` with four staged toggles, integer PPQN validation (`1..960`), non-24 warning, read-only BPM/source/lock/latency/late-drop diagnostics, and Back.
-- [ ] Commit config and save runtime state only on Sync Back. Preserve File Back's existing non-save behavior.
-- [ ] Route coherent Engine snapshots and audio-safe sync updates through generic host-service callbacks; resolve active controller name outside the audio path.
-- [ ] Maintain configured app bounds and usable narrow layout in JUCE and browser.
-- [ ] Add JUCE-free tree/view-model tests plus JUCE component and browser command-buffer/Playwright parity for open/edit/save/reopen and diagnostics refresh.
-- [ ] Run portable UI, runtime main component, JUCE page, browser command-buffer, and focused Playwright tests.
-- [ ] Commit only the task files after review and verification.
+- [x] Add a runtime-owned Sync sidebar action and portable `SyncPageSurface` with four staged toggles, integer PPQN validation (`1..960`), non-24 warning, read-only BPM/source/lock/latency/late-drop diagnostics, and Back.
+- [x] Commit config and save runtime state only on Sync Back. Preserve File Back's existing non-save behavior.
+- [x] Route coherent Engine snapshots and audio-safe sync updates through generic host-service callbacks; resolve active controller name outside the audio path.
+- [x] Maintain configured app bounds and usable narrow layout in JUCE and browser.
+- [x] Add JUCE-free tree/view-model tests plus JUCE component and browser command-buffer/Playwright parity for open/edit/save/reopen and diagnostics refresh.
+- [x] Run portable UI, runtime main component, JUCE page, browser command-buffer, and focused Playwright tests.
+- [x] Commit only the task files after review and verification.
 
 ## Task 7: MiniApp Clocked ADSR, Tempo, and Oversampling Contract (Sol)
 

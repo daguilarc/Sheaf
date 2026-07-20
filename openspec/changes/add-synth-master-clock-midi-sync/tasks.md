@@ -57,10 +57,10 @@
 
 ## 9. Portable Sync Page
 
-- [ ] 9.1 Add JUCE-free view-model/tree tests for the Sync sidebar action, four toggles, PPQN validation and nonstandard warning, read-only diagnostics, staged edits, Back commit/save, and File Back non-save behavior.
-- [ ] 9.2 Implement portable sidebar layout changes and `SyncPageSurface`, extend runtime main-page routing/policy and generic host-service callbacks, and preserve configured app bounds in both hosts.
-- [ ] 9.3 Wire Engine sync snapshots and audio-safe config commit into JUCE and browser main services, including active controller-name resolution and coherent UI refresh.
-- [ ] 9.4 Add JUCE component and browser command-buffer/Playwright parity tests for opening, editing, saving, reopening, narrow layout, and diagnostics rendering.
+- [x] 9.1 Add JUCE-free view-model/tree tests for the Sync sidebar action, four toggles, PPQN validation and nonstandard warning, read-only diagnostics, staged edits, Back commit/save, and File Back non-save behavior.
+- [x] 9.2 Implement portable sidebar layout changes and `SyncPageSurface`, extend runtime main-page routing/policy and generic host-service callbacks, and preserve configured app bounds in both hosts.
+- [x] 9.3 Wire Engine sync snapshots and audio-safe config commit into JUCE and browser main services, including active controller-name resolution and coherent UI refresh.
+- [x] 9.4 Add JUCE component and browser command-buffer/Playwright parity tests for opening, editing, saving, reopening, narrow layout, and diagnostics rendering.
 
 ## 10. MiniApp Clocked ADSR and Tempo
 
