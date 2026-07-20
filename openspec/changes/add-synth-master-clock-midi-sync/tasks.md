@@ -50,10 +50,10 @@
 
 ## 8. Browser Scheduled MIDI
 
-- [ ] 8.1 Extend browser C++/worker/TypeScript protocol tests so outbound MIDI carries `dueTimeMicros`, controller feedback remains valid, and bounded drains preserve event ordering.
-- [ ] 8.2 Update the browser MIDI bridge and output sink to retain scheduled deadlines and generation behavior without allowing its bounded queue to starve realtime clock.
-- [ ] 8.3 Update Web MIDI types and manager logic to convert the engine epoch to `DOMHighResTimeStamp` and call `port.send(bytes, timestamp)`; test that drain time never replaces due time and that immediate events still send correctly.
-- [ ] 8.4 Add browser integration coverage for external input timestamp normalization, Start-plus-first-clock order, continuous stopped clock, output reconnect, and timer-throttling/late diagnostics.
+- [x] 8.1 Extend browser C++/worker/TypeScript protocol tests so outbound MIDI carries `dueTimeMicros`, controller feedback remains valid, and bounded drains preserve event ordering.
+- [x] 8.2 Update the browser MIDI bridge and output sink to retain scheduled deadlines and generation behavior without allowing its bounded queue to starve realtime clock.
+- [x] 8.3 Update Web MIDI types and manager logic to convert the engine epoch to `DOMHighResTimeStamp` and call `port.send(bytes, timestamp)`; test that drain time never replaces due time and that immediate events still send correctly.
+- [x] 8.4 Add browser integration coverage for external input timestamp normalization, Start-plus-first-clock order, continuous stopped clock, output reconnect, and timer-throttling/late diagnostics.
 
 ## 9. Portable Sync Page
 

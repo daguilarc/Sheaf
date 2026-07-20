@@ -143,15 +143,15 @@
 
 **Required behavior:**
 
-- [ ] Extend C++/worker/TypeScript outbound records with `dueTimeMicros` while keeping immediate feedback valid and bounded drains ordered.
-- [ ] Normalize external Web MIDI input timestamps into the shared time-origin-relative microsecond epoch before C++ delivery; preserve Start-plus-first-clock order and source identity.
-- [ ] Carry deadlines and generation/cutoff behavior through the browser bridge without allowing its bounded availability queue to starve clock events.
-- [ ] Convert microseconds to the correct `DOMHighResTimeStamp` at `port.send(bytes, timestamp)`. Drain/wake time must never replace the due time.
-- [ ] Test stopped continuous clock, input clock/transport, output reconnect without replay, late/timer-throttling diagnostics, and immediate events.
-- [ ] Run C++ browser bridge/contract targets, browser Node tests, then Playwright with the existing build/static-server workflow. If browser process sandboxing blocks Chromium, rerun the same command through the approved escalated path; do not reinterpret an infrastructure error as a product failure.
-- [ ] Commit only the task files after review and verification.
+- [x] Extend C++/worker/TypeScript outbound records with `dueTimeMicros` while keeping immediate feedback valid and bounded drains ordered.
+- [x] Normalize external Web MIDI input timestamps into the shared time-origin-relative microsecond epoch before C++ delivery; preserve Start-plus-first-clock order and source identity.
+- [x] Carry deadlines and generation/cutoff behavior through the browser bridge without allowing its bounded availability queue to starve clock events.
+- [x] Convert microseconds to the correct `DOMHighResTimeStamp` at `port.send(bytes, timestamp)`. Drain/wake time must never replace the due time.
+- [x] Test stopped continuous clock, input clock/transport, output reconnect without replay, late/timer-throttling diagnostics, and immediate events.
+- [x] Run C++ browser bridge/contract targets, browser Node tests, then Playwright with the existing build/static-server workflow. If browser process sandboxing blocks Chromium, rerun the same command through the approved escalated path; do not reinterpret an infrastructure error as a product failure.
+- [x] Commit only the task files after review and verification.
 
-## Task 6: Portable Sync Page and Host Persistence Parity (Terra)
+## Task 6: Portable Sync Page and Host Persistence Parity (Sol)
 
 **OpenSpec Tasks Covered:** 9.1–9.4
 
@@ -172,7 +172,7 @@
 - [ ] Run portable UI, runtime main component, JUCE page, browser command-buffer, and focused Playwright tests.
 - [ ] Commit only the task files after review and verification.
 
-## Task 7: MiniApp Clocked ADSR, Tempo, and Oversampling Contract (Terra)
+## Task 7: MiniApp Clocked ADSR, Tempo, and Oversampling Contract (Sol)
 
 **OpenSpec Tasks Covered:** 10.1–10.5 and the application-consumer portions of 5.3
 
