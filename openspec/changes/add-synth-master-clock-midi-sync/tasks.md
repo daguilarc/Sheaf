@@ -72,7 +72,7 @@
 
 ## 11. Verification and Documentation
 
-- [ ] 11.1 Run the focused DSP, clock, MIDI sender, persistence, Engine/SynthRig, MiniApp, JUCE runtime-page, browser unit, and browser integration suites; fix every regression without weakening timing assertions.
-- [ ] 11.2 Run the complete synth core, JUCE, MiniApp, and browser test targets and the OpenSpec requirement-ID/validation checks.
-- [ ] 11.3 Update synth architecture/coverage/contracts documentation with master-clock ownership, thread roles, runtime-config schema v2, MIDI timestamp epochs, output-latency formula, non-24 PPQN warning, Continue limitation, diagnostics, and host fallback guarantees.
-- [ ] 11.4 Capture deterministic internal, jittered-external, callback-jitter, missed-clock, dropout, block-boundary tempo-change, fractional-crossing, Start/Stop/Continue, send+receive, and multi-output timing traces and verify computed deadline error `≤1 µs`, spacing error `≤2 µs` plus the `500 ppm` slew bound, fixed-offset error `≤1 µs`, and recovered 120-BPM error `≤0.1 BPM` after 64 stable intervals.
+- [x] 11.1 Run the focused DSP, clock, MIDI sender, persistence, Engine/SynthRig, MiniApp, JUCE runtime-page, browser unit, and browser integration suites; fix every regression without weakening timing assertions.
+- [x] 11.2 Run the complete synth core, JUCE, MiniApp, and browser test targets and the OpenSpec requirement-ID/validation checks.
+- [x] 11.3 Update synth architecture/coverage/contracts documentation with master-clock ownership, thread roles, runtime-config schema v2, MIDI timestamp epochs, output-latency formula, non-24 PPQN warning, Continue limitation, diagnostics, and host fallback guarantees.
+- [x] 11.4 Capture deterministic internal, jittered-external, callback-jitter, missed-clock, dropout, block-boundary tempo-change, fractional-crossing, Start/Stop/Continue, send+receive, and multi-output timing traces and verify computed deadline error `≤1 µs`, spacing error `≤2 µs` plus the `500 ppm` slew bound, fixed-offset error `≤1 µs`, and recovered 120-BPM error `≤0.1 BPM` after 64 stable intervals.
