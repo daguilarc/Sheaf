@@ -1,0 +1,14 @@
+{
+  "task_key": "add-dresden-4-synth-app__task-4",
+  "C7": 3,
+  "final_grade": "F",
+  "cause": "deliberate-delegation",
+  "confidence": "high",
+  "vagueness_cost": "unclear",
+  "missing_details": [
+    "exact param-group/bank architecture for Dresden4",
+    "exact OpenSpec spec structure/scenario breakdown",
+    "phase param units (radians vs normalized -1..1)"
+  ],
+  "evidence": "Task explicitly says 'Spec this out' and asks the agent to investigate open questions itself ('Can a bank/module have multiple param groups? Check during speccing') -- a propose/spec task defers architecture by design. Linked reviews discuss an unrelated PortableUIBuilders/ScopePathMath refactor, so cost is unverifiable from given data."
+}

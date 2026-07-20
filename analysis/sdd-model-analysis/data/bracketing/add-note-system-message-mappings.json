@@ -1,0 +1,17 @@
+{
+  "change": "add-note-system-message-mappings",
+  "n_openspec_items": 11,
+  "mapping": {
+    "task-1": ["1.1", "1.2", "1.3", "1.4", "1.5"],
+    "task-2": ["2.1", "2.2"],
+    "task-3": ["2.3", "2.4"],
+    "task-4": ["3.1", "3.2"]
+  },
+  "unmapped_openspec_items": [],
+  "extra_work_not_in_checklist": [],
+  "split_items": [],
+  "order_preserved": true,
+  "contiguous_partition": true,
+  "verdict": "regrouping",
+  "notes": "All 4 briefs carry explicit '**OpenSpec coverage:** X.Y-X.Z' headers, giving direct ground truth. Sections 1 and 3 each map 1:1 to a task, but section 2 (4 items) is split across two tasks along a data-model/block-coalescing boundary (2.1-2.2) versus a view-model/UI-wiring boundary (2.3-2.4), reflecting a subsystem-driven split rather than pure section bracketing."
+}

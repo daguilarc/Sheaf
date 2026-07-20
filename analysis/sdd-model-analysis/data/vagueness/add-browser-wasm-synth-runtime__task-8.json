@@ -1,0 +1,12 @@
+{
+  "task_key": "add-browser-wasm-synth-runtime__task-8",
+  "C7": 3,
+  "final_grade": "A",
+  "cause": "inherent-uncertainty",
+  "confidence": "high",
+  "vagueness_cost": "no",
+  "missing_details": [
+    "exact regressions to fix (unknowable before running verification)"
+  ],
+  "evidence": "Brief explicitly scopes 'Modify: any files needed for regressions discovered by verification' -- content cannot be known until tests actually run. Grade A, PASS on round 1, no critical/important findings; the 2 minors are unrelated informational notes."
+}

@@ -1,0 +1,14 @@
+{
+  "task_key": "add-browser-wasm-runtime__task-8",
+  "C7": 3,
+  "final_grade": "F",
+  "cause": "deliberate-delegation",
+  "confidence": "medium",
+  "vagueness_cost": "unclear",
+  "missing_details": [
+    "exact Playwright assertions per coverage area",
+    "exact channel-count handling in test fixtures",
+    "exact main.ts boot verification steps"
+  ],
+  "evidence": "Brief's coverage checklist matches the plan's own scenario list almost verbatim -- no plan detail was dropped. Critical bugs found (stereo OOB assumption, main.ts stub) were pre-existing in earlier tasks' code, surfaced by this task's e2e tests, not clearly caused by this task's own scenario vagueness."
+}

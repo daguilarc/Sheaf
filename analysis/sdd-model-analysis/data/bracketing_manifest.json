@@ -1,0 +1,160 @@
+[
+ {
+  "change": "add-absolute-encoder-mode",
+  "tasks_md": "/Users/joyo/Sheaf/openspec/changes/archive/2026-07-16-add-absolute-encoder-mode/tasks.md",
+  "plan": "/Users/joyo/Sheaf/docs/superpowers/plans/2026-07-16-add-absolute-encoder-mode.md",
+  "briefs": {
+   "task-1": "/Users/joyo/.codex/worktrees/fdbad985-650c-46f4-95a9-ed8acdcafbd0/Sheaf/.superpowers/sdd/task-1-brief.md",
+   "task-2": "/Users/joyo/.codex/worktrees/fdbad985-650c-46f4-95a9-ed8acdcafbd0/Sheaf/.superpowers/sdd/task-2-brief.md",
+   "task-3": "/Users/joyo/.codex/worktrees/fdbad985-650c-46f4-95a9-ed8acdcafbd0/Sheaf/.superpowers/sdd/task-3-brief.md"
+  },
+  "n_briefs": 3
+ },
+ {
+  "change": "add-ganged-random-lfo",
+  "tasks_md": "/Users/joyo/Sheaf/openspec/changes/archive/2026-07-15-add-ganged-random-lfo/tasks.md",
+  "plan": null,
+  "briefs": {
+   "task-1": "/Users/joyo/.codex/worktrees/dff4efc4-09e2-452f-9a76-6b9d38d7e9a6/Sheaf/.superpowers/sdd/add-ganged-random-lfo/task-1-brief.md",
+   "task-2": "/Users/joyo/.codex/worktrees/dff4efc4-09e2-452f-9a76-6b9d38d7e9a6/Sheaf/.superpowers/sdd/add-ganged-random-lfo/task-2-brief.md",
+   "task-3": "/Users/joyo/.codex/worktrees/dff4efc4-09e2-452f-9a76-6b9d38d7e9a6/Sheaf/.superpowers/sdd/add-ganged-random-lfo/task-3-brief.md",
+   "task-4": "/Users/joyo/.codex/worktrees/dff4efc4-09e2-452f-9a76-6b9d38d7e9a6/Sheaf/.superpowers/sdd/add-ganged-random-lfo/task-4-brief.md",
+   "task-5": "/Users/joyo/.codex/worktrees/dff4efc4-09e2-452f-9a76-6b9d38d7e9a6/Sheaf/.superpowers/sdd/add-ganged-random-lfo/task-5-brief.md"
+  },
+  "n_briefs": 5
+ },
+ {
+  "change": "add-note-system-message-mappings",
+  "tasks_md": "/Users/joyo/Sheaf/openspec/changes/archive/2026-07-17-add-note-system-message-mappings/tasks.md",
+  "plan": null,
+  "briefs": {
+   "task-1": "/Users/joyo/.codex/worktrees/855578f6-f7d6-459c-be71-80ad98429fcc/Sheaf/.superpowers/sdd/task-1-brief.md",
+   "task-2": "/Users/joyo/.codex/worktrees/855578f6-f7d6-459c-be71-80ad98429fcc/Sheaf/.superpowers/sdd/task-2-brief.md",
+   "task-3": "/Users/joyo/.codex/worktrees/855578f6-f7d6-459c-be71-80ad98429fcc/Sheaf/.superpowers/sdd/task-3-brief.md",
+   "task-4": "/Users/joyo/.codex/worktrees/855578f6-f7d6-459c-be71-80ad98429fcc/Sheaf/.superpowers/sdd/task-4-brief.md"
+  },
+  "n_briefs": 4
+ },
+ {
+  "change": "add-portable-modulator-visualizers",
+  "tasks_md": "/Users/joyo/Sheaf/openspec/changes/archive/2026-07-12-add-portable-modulator-visualizers/tasks.md",
+  "plan": null,
+  "briefs": {
+   "task-1": "/Users/joyo/.codex/worktrees/353ecde4-be23-402c-adcc-071fe31f4638/Sheaf/.superpowers/sdd/task-1-brief.md",
+   "task-2": "/Users/joyo/.codex/worktrees/353ecde4-be23-402c-adcc-071fe31f4638/Sheaf/.superpowers/sdd/task-2-brief.md",
+   "task-3": "/Users/joyo/.codex/worktrees/353ecde4-be23-402c-adcc-071fe31f4638/Sheaf/.superpowers/sdd/task-3-brief.md",
+   "task-4": "/Users/joyo/.codex/worktrees/353ecde4-be23-402c-adcc-071fe31f4638/Sheaf/.superpowers/sdd/task-4-brief.md",
+   "task-5": "/Users/joyo/.codex/worktrees/353ecde4-be23-402c-adcc-071fe31f4638/Sheaf/.superpowers/sdd/task-5-brief.md",
+   "task-6": "/Users/joyo/.codex/worktrees/353ecde4-be23-402c-adcc-071fe31f4638/Sheaf/.superpowers/sdd/task-6-brief.md"
+  },
+  "n_briefs": 6
+ },
+ {
+  "change": "add-runtime-button-grids",
+  "tasks_md": "/Users/joyo/Sheaf/openspec/changes/archive/2026-07-18-add-runtime-button-grids/tasks.md",
+  "plan": "/Users/joyo/Sheaf/docs/superpowers/plans/2026-07-16-add-runtime-button-grids.md",
+  "briefs": {
+   "task-1": "/Users/joyo/.codex/worktrees/a228f651-3426-4ead-b96c-f8b690dc5e84/Sheaf/.superpowers/sdd/task-1-brief.md",
+   "task-2": "/Users/joyo/.codex/worktrees/a228f651-3426-4ead-b96c-f8b690dc5e84/Sheaf/.superpowers/sdd/task-2-brief.md",
+   "task-3": "/Users/joyo/.codex/worktrees/a228f651-3426-4ead-b96c-f8b690dc5e84/Sheaf/.superpowers/sdd/task-3-brief.md",
+   "task-4": "/Users/joyo/.codex/worktrees/a228f651-3426-4ead-b96c-f8b690dc5e84/Sheaf/.superpowers/sdd/task-4-brief.md",
+   "task-5": "/Users/joyo/.codex/worktrees/a228f651-3426-4ead-b96c-f8b690dc5e84/Sheaf/.superpowers/sdd/task-5-brief.md",
+   "task-6": "/Users/joyo/.codex/worktrees/a228f651-3426-4ead-b96c-f8b690dc5e84/Sheaf/.superpowers/sdd/task-6-brief.md",
+   "task-7": "/Users/joyo/.codex/worktrees/a228f651-3426-4ead-b96c-f8b690dc5e84/Sheaf/.superpowers/sdd/task-7-brief.md"
+  },
+  "n_briefs": 7
+ },
+ {
+  "change": "add-standard-modulators",
+  "tasks_md": "/Users/joyo/Sheaf/openspec/changes/archive/2026-07-16-add-standard-modulators/tasks.md",
+  "plan": null,
+  "briefs": {
+   "task-1": "/Users/joyo/.codex/worktrees/df43a042-cd18-489e-a742-04c9807cc6c9/Sheaf/.superpowers/sdd/task-1-brief.md",
+   "task-2": "/Users/joyo/.codex/worktrees/df43a042-cd18-489e-a742-04c9807cc6c9/Sheaf/.superpowers/sdd/task-2-brief.md",
+   "task-3": "/Users/joyo/.codex/worktrees/df43a042-cd18-489e-a742-04c9807cc6c9/Sheaf/.superpowers/sdd/task-3-brief.md",
+   "task-4": "/Users/joyo/.codex/worktrees/df43a042-cd18-489e-a742-04c9807cc6c9/Sheaf/.superpowers/sdd/task-4-brief.md",
+   "task-5": "/Users/joyo/.codex/worktrees/df43a042-cd18-489e-a742-04c9807cc6c9/Sheaf/.superpowers/sdd/task-5-brief.md"
+  },
+  "n_briefs": 5
+ },
+ {
+  "change": "add-target-center-alpha",
+  "tasks_md": "/Users/joyo/Sheaf/openspec/changes/archive/2026-07-11-add-target-center-alpha/tasks.md",
+  "plan": "/Users/joyo/Sheaf/docs/superpowers/plans/2026-07-11-add-target-center-alpha.md",
+  "briefs": {
+   "task-1": "/Users/joyo/.codex/worktrees/3fc5984e-25f3-4931-a725-3e159790c66e/Sheaf/.superpowers/sdd/task-1-brief.md",
+   "task-2": "/Users/joyo/.codex/worktrees/3fc5984e-25f3-4931-a725-3e159790c66e/Sheaf/.superpowers/sdd/task-2-brief.md",
+   "task-3": "/Users/joyo/.codex/worktrees/3fc5984e-25f3-4931-a725-3e159790c66e/Sheaf/.superpowers/sdd/task-3-brief.md"
+  },
+  "n_briefs": 3
+ },
+ {
+  "change": "decouple-encoder-block-rate",
+  "tasks_md": "/Users/joyo/Sheaf/openspec/changes/archive/2026-07-07-decouple-encoder-block-rate/tasks.md",
+  "plan": "/Users/joyo/Sheaf/docs/superpowers/plans/2026-07-06-decouple-encoder-block-rate.md",
+  "briefs": {
+   "task-1": "/Users/joyo/.codex/worktrees/3d2b5420-ab17-4045-82c2-acece1bdc544/Sheaf/.superpowers/sdd/task-1-brief.md",
+   "task-2": "/Users/joyo/.codex/worktrees/3d2b5420-ab17-4045-82c2-acece1bdc544/Sheaf/.superpowers/sdd/task-2-brief.md",
+   "task-3": "/Users/joyo/.codex/worktrees/3d2b5420-ab17-4045-82c2-acece1bdc544/Sheaf/.superpowers/sdd/task-3-brief.md",
+   "task-4": "/Users/joyo/.codex/worktrees/3d2b5420-ab17-4045-82c2-acece1bdc544/Sheaf/.superpowers/sdd/task-4-brief.md"
+  },
+  "n_briefs": 4
+ },
+ {
+  "change": "filter-braid4-parameter-values",
+  "tasks_md": "/Users/joyo/Sheaf/openspec/changes/archive/2026-07-19-filter-braid4-parameter-values/tasks.md",
+  "plan": "/Users/joyo/Sheaf/docs/superpowers/plans/2026-07-18-filter-braid4-parameter-values.md",
+  "briefs": {
+   "task-1": "/Users/joyo/.codex/worktrees/edd67dd3-c1c6-412c-9f9a-efaadbef43d2/Sheaf/.superpowers/sdd/task-1-brief.md",
+   "task-2": "/Users/joyo/.codex/worktrees/edd67dd3-c1c6-412c-9f9a-efaadbef43d2/Sheaf/.superpowers/sdd/task-2-brief.md",
+   "task-3": "/Users/joyo/.codex/worktrees/edd67dd3-c1c6-412c-9f9a-efaadbef43d2/Sheaf/.superpowers/sdd/task-3-brief.md",
+   "task-4": "/Users/joyo/.codex/worktrees/edd67dd3-c1c6-412c-9f9a-efaadbef43d2/Sheaf/.superpowers/sdd/task-4-brief.md"
+  },
+  "n_briefs": 4
+ },
+ {
+  "change": "fix-browser-native-audio-and-generic-app-packaging",
+  "tasks_md": "/Users/joyo/Sheaf/openspec/changes/archive/2026-07-19-fix-browser-native-audio-and-generic-app-packaging/tasks.md",
+  "plan": null,
+  "briefs": {
+   "task-1": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-1-brief.md",
+   "task-2": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-2-brief.md",
+   "task-3": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-3-brief.md",
+   "task-4": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-4-brief.md",
+   "task-5": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-5-brief.md",
+   "task-6": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-6-brief.md",
+   "task-7": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-7-brief.md",
+   "task-8": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-8-brief.md",
+   "task-9": "/Users/joyo/.codex/worktrees/dafbc3f5-8e1f-4a21-aeb8-f869fe5fad47/Sheaf/.superpowers/sdd/task-9-brief.md"
+  },
+  "n_briefs": 9
+ },
+ {
+  "change": "scale-modulation-processing",
+  "tasks_md": "/Users/joyo/Sheaf/openspec/changes/archive/2026-07-16-scale-modulation-processing/tasks.md",
+  "plan": "/Users/joyo/Sheaf/docs/superpowers/plans/2026-07-15-scale-modulation-processing.md",
+  "briefs": {
+   "task-1": "/Users/joyo/Sheaf/.superpowers/sdd/scale-modulation-processing/task-1-brief.md",
+   "task-2": "/Users/joyo/Sheaf/.superpowers/sdd/scale-modulation-processing/task-2-brief.md",
+   "task-3": "/Users/joyo/Sheaf/.superpowers/sdd/scale-modulation-processing/task-3-brief.md",
+   "task-4": "/Users/joyo/Sheaf/.superpowers/sdd/scale-modulation-processing/task-4-brief.md",
+   "task-5": "/Users/joyo/Sheaf/.superpowers/sdd/scale-modulation-processing/task-5-brief.md",
+   "task-6": "/Users/joyo/Sheaf/.superpowers/sdd/scale-modulation-processing/task-6-brief.md"
+  },
+  "n_briefs": 6
+ },
+ {
+  "change": "synchronize-absolute-encoder-feedback",
+  "tasks_md": "/Users/joyo/Sheaf/openspec/changes/archive/2026-07-16-synchronize-absolute-encoder-feedback/tasks.md",
+  "plan": "/Users/joyo/Sheaf/docs/superpowers/plans/2026-07-16-synchronize-absolute-encoder-feedback.md",
+  "briefs": {
+   "task-1": "/Users/joyo/.codex/worktrees/fdbad985-650c-46f4-95a9-ed8acdcafbd0/Sheaf/.superpowers/sdd/task-1-brief.md",
+   "task-2": "/Users/joyo/.codex/worktrees/fdbad985-650c-46f4-95a9-ed8acdcafbd0/Sheaf/.superpowers/sdd/task-2-brief.md",
+   "task-3": "/Users/joyo/.codex/worktrees/fdbad985-650c-46f4-95a9-ed8acdcafbd0/Sheaf/.superpowers/sdd/task-3-brief.md",
+   "task-4": "/Users/joyo/.codex/worktrees/fdbad985-650c-46f4-95a9-ed8acdcafbd0/Sheaf/.superpowers/sdd/task-4-brief.md",
+   "task-5": "/Users/joyo/.codex/worktrees/fdbad985-650c-46f4-95a9-ed8acdcafbd0/Sheaf/.superpowers/sdd/task-5-brief.md",
+   "task-6": "/Users/joyo/.codex/worktrees/fdbad985-650c-46f4-95a9-ed8acdcafbd0/Sheaf/.superpowers/sdd/task-6-brief.md"
+  },
+  "n_briefs": 6
+ }
+]

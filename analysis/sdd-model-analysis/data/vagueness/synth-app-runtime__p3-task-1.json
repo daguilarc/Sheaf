@@ -1,0 +1,12 @@
+{
+  "task_key": "synth-app-runtime__p3-task-1",
+  "C7": 3,
+  "final_grade": "B",
+  "cause": "avoidable-omission",
+  "confidence": "high",
+  "vagueness_cost": "yes",
+  "missing_details": [
+    "whether Makefile include paths must be anchored via $(dir $(lastword $(MAKEFILE_LIST))) or a caller-set variable"
+  ],
+  "evidence": "Dispatch itself supplies the exact snippet fix as one named option but frames it as 'document whichever you choose' instead of mandating it. Reviewer's Important finding (round 1): cwd-relative path handling breaks when invoked from another directory -- neither offered option, fixed only in round 2."
+}

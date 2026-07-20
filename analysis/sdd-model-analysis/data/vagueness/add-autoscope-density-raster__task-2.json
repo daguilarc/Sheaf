@@ -1,0 +1,14 @@
+{
+  "task_key": "add-autoscope-density-raster__task-2",
+  "C7": 3,
+  "final_grade": "B",
+  "cause": "avoidable-omission",
+  "confidence": "medium",
+  "vagueness_cost": "unclear",
+  "missing_details": [
+    "exact versioned byte order for serialized fields",
+    "exact archive schema version number to bump to",
+    "exact JSON/report field labels"
+  ],
+  "evidence": "Field names pinned exactly but 'serialize in one versioned order' leaves the order unspecified; sibling task-3 pins exact frame numbers/offsets, showing the planner could pin this too. Linked review is about an unrelated LSAB ctor, not serialization, so cost is unverifiable."
+}

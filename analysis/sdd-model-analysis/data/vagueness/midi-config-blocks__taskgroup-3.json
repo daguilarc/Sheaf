@@ -1,0 +1,12 @@
+{
+  "task_key": "midi-config-blocks__taskgroup-3",
+  "C7": 3,
+  "final_grade": null,
+  "cause": "deliberate-delegation",
+  "confidence": "medium",
+  "vagueness_cost": "unclear",
+  "missing_details": [
+    "which specific field/kind logic belongs in renderer vs view model"
+  ],
+  "evidence": "design.md's Decisions section explicitly states row semantics/defaults 'come from the view model' -- a stated thin-renderer architecture principle, not an oversight. No grade/review files exist for this task-group entry to check cost."
+}

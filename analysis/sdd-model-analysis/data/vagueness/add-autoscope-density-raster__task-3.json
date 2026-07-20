@@ -1,0 +1,14 @@
+{
+  "task_key": "add-autoscope-density-raster__task-3",
+  "C7": 3,
+  "final_grade": "C",
+  "cause": "avoidable-omission",
+  "confidence": "medium",
+  "vagueness_cost": "yes",
+  "missing_details": [
+    "exact candidate grid parameter sweep values",
+    "requirement to wire held-out gates into an executed/automated check",
+    "exact dedup algorithm for equivalent configs"
+  ],
+  "evidence": "Manifest-linked reviews (b86d6a80/80d5b2f8/cf21cade) are mismatched (YIN pitch detection, ledger checkboxes, unrelated density-raster task). Correctly-topic reviews found separately show held-out safety gate functions defined but never wired/executed, tracing directly to the brief's under-specified grid/gate integration."
+}

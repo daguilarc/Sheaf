@@ -1,0 +1,12 @@
+{
+  "task_key": "synth-app-runtime__p4-task-2",
+  "C7": 3,
+  "final_grade": "F",
+  "cause": "deliberate-delegation",
+  "confidence": "medium",
+  "vagueness_cost": "no",
+  "missing_details": [
+    "AppContext exposure vs Engine accessor for reaching audioDeviceState_ during Init"
+  ],
+  "evidence": "Dispatch frames the AppContext-vs-accessor wiring explicitly as 'decide... pick the AppContext route and document'. Actual reviewer findings (audio-thread std::string allocation, atomic load-then-store race, stale notification state) are independent thread-safety bugs unrelated to that specific flagged decision; 3 rounds to accept but not traceable to the delegated choice."
+}

@@ -1,0 +1,24 @@
+{
+  "change": "synchronize-absolute-encoder-feedback",
+  "n_openspec_items": 8,
+  "mapping": {
+    "task-1": ["5.1"],
+    "task-2": ["1.2", "2.1"],
+    "task-3": ["3.1", "3.2"],
+    "task-4": ["4.1"],
+    "task-5": ["4.2"],
+    "task-6": []
+  },
+  "unmapped_openspec_items": ["1.1"],
+  "extra_work_not_in_checklist": [
+    "task-5 minor-ledger cleanup: epoch allocation ordering, fail-closed assert rewrite",
+    "task-5 renames Twister-specific constant to protocol-neutral name",
+    "task-3 adds test-only concurrency synchronization seam for races",
+    "task-6 covers an unrelated change (add-absolute-encoder-mode), not this checklist"
+  ],
+  "split_items": [],
+  "order_preserved": false,
+  "contiguous_partition": false,
+  "verdict": "re-decomposition",
+  "notes": "Grouping follows build/verification phases and subsystem files, not checklist section order (task-1 does last item 5.1 first; task-2 merges 1.2+2.1 across sections). Item 1.1 unmapped (coordinator predates these briefs). task-6 is stale content from the unrelated add-absolute-encoder-mode change sharing this worktree."
+}

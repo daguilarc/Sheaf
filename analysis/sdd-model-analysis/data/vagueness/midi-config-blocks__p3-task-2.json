@@ -1,0 +1,13 @@
+{
+  "task_key": "midi-config-blocks__p3-task-2",
+  "C7": 3,
+  "final_grade": "F",
+  "cause": "deliberate-delegation",
+  "confidence": "medium",
+  "vagueness_cost": "yes",
+  "missing_details": [
+    "guard-flag vs batch strategy for EditInstrument reentrancy during ref updates",
+    "exact remainder of MidiPanel after ownership move (name threading)"
+  ],
+  "evidence": "Brief said 'use a guard flag... or batch... document the choice'. Reviewer found startup double-reconcile (OnInstrumentRebuilt fires before StartupReconcile) and manual-open name loss, both tracing to the two flagged-open areas; 2 rounds to accept."
+}

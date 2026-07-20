@@ -1,0 +1,14 @@
+{
+  "task_key": "add-autoscope-density-raster__task-1",
+  "C7": 3,
+  "final_grade": "A",
+  "cause": "deliberate-delegation",
+  "confidence": "medium",
+  "vagueness_cost": "unclear",
+  "missing_details": [
+    "exact evidence-identity struct/field types",
+    "exact source-encoding representation (signed/zero)",
+    "exact selector helper function names"
+  ],
+  "evidence": "Brief pins formulas, tie-order, and deletions exactly; siblings show same planner CAN specify exact detail. Linked reviews (edc377cf/dadde526) discuss an unrelated LSAB ctor/overflow task, not this brief's content, so cost is unverifiable."
+}

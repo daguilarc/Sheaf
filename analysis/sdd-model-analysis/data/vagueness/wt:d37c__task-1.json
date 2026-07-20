@@ -1,0 +1,12 @@
+{
+  "task_key": "wt:d37c__task-1",
+  "C7": 3,
+  "final_grade": "A",
+  "cause": "avoidable-omission",
+  "confidence": "low",
+  "vagueness_cost": "no",
+  "missing_details": [
+    "content of task-1-implementer-prompt.md itself, inaccessible to this analysis"
+  ],
+  "evidence": "C7=3 was a midpoint default because the referenced brief file no longer exists (worktree removed). Reviewer confirms the actual work matched 'exact declarations the brief specifies... verbatim' -- indicating the real brief was prescriptive; this score likely reflects analysis-pipeline inaccessibility, not planner vagueness. Grade A, clean PASS round 1."
+}

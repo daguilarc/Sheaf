@@ -1,0 +1,12 @@
+{
+  "task_key": "midi-config-blocks__p4-task-4",
+  "C7": 3,
+  "final_grade": "F",
+  "cause": "avoidable-omission",
+  "confidence": "high",
+  "vagueness_cost": "yes",
+  "missing_details": [
+    "whether device-combo selection must use ref-update+reconcile vs ManualOpen directly"
+  ],
+  "evidence": "Brief already named its preference ('prefer the ref-update + reconcile path... so it self-heals') but phrased it as 'choose... documenting it' rather than mandating. Reviewer found device combo bypasses SetEndpointRef and calls ManualOpenInput/Output directly -- the discouraged path."
+}

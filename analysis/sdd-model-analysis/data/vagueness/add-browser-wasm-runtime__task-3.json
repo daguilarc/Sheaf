@@ -1,0 +1,13 @@
+{
+  "task_key": "add-browser-wasm-runtime__task-3",
+  "C7": 3,
+  "final_grade": "C",
+  "cause": "avoidable-omission",
+  "confidence": "high",
+  "vagueness_cost": "no",
+  "missing_details": [
+    "exact API names: BrowserUiBackend, decodeCommandBuffer, renderFrame, dispatchBrowserAction",
+    "exact decoder/renderer module boundaries"
+  ],
+  "evidence": "The plan's Interfaces section already names decodeCommandBuffer/renderFrame/BrowserUiBackend/dispatchBrowserAction, but the task brief dropped them. Reviews found real bugs (Fill bounds, slider input clobber, dead branch) unrelated to interface naming, so vagueness didn't cause these findings."
+}

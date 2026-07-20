@@ -1,0 +1,12 @@
+{
+  "task_key": "add-mf-twister-midi-profile__task-1",
+  "C7": 3,
+  "final_grade": null,
+  "cause": "deliberate-delegation",
+  "confidence": "high",
+  "vagueness_cost": "unclear",
+  "missing_details": [
+    "exact TDD step ordering/sequencing left to implementer"
+  ],
+  "evidence": "task_statement_inline points directly at the plan file, which already contains exact code snippets (field placement, memory_order, test code) -- the real brief is the fully-prescriptive plan; only generic test-first sequencing is unspecified. No grade/review data exists to check cost."
+}

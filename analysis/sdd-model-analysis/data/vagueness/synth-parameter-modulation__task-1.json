@@ -1,0 +1,12 @@
+{
+  "task_key": "synth-parameter-modulation__task-1",
+  "C7": 3,
+  "final_grade": null,
+  "cause": "avoidable-omission",
+  "confidence": "high",
+  "vagueness_cost": "unclear",
+  "missing_details": [
+    "exact header/cpp/test/Makefile contents"
+  ],
+  "evidence": "Plan Task 1 contains complete literal code for the header shell, implementation, test harness, and both Makefiles. Dispatch reduced this to six prose steps ('create minimal C++20 clamp API...') instead of quoting the plan's code. No grade/review captured for this task."
+}

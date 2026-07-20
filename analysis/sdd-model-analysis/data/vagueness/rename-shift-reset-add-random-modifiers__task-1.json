@@ -1,0 +1,14 @@
+{
+  "task_key": "rename-shift-reset-add-random-modifiers__task-1",
+  "C7": 3,
+  "final_grade": null,
+  "cause": "avoidable-omission",
+  "confidence": "high",
+  "vagueness_cost": "unclear",
+  "missing_details": [
+    "exact struct/enum/function bodies for Modifier state and random source",
+    "exact test-case code",
+    "exact Makefile wiring"
+  ],
+  "evidence": "The referenced plan (2026-07-03-...md, Task 1) contains complete literal code for the header, .cpp implementation, and test cases -- the dispatch paraphrased these into bullet requirements instead of quoting them, even though the dispatch tells the implementer to 'use the plan'. No grade/review captured."
+}

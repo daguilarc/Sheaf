@@ -1,0 +1,14 @@
+{
+  "task_key": "add-browser-wasm-runtime__task-5",
+  "C7": 3,
+  "final_grade": "C",
+  "cause": "avoidable-omission",
+  "confidence": "medium",
+  "vagueness_cost": "yes",
+  "missing_details": [
+    "ring-buffer state-word index/layout constants",
+    "single source of truth for buffer offsets",
+    "two-channel buffer read/assert design in tests"
+  ],
+  "evidence": "Plan Step 5 already describes ring-buffer behavior (state-word reads/writes, underflow counts) that the brief omitted. Review found 'ring-buffer state-word indices duplicated as magic numbers' and 'right channel never read or asserted' -- directly traces to the left-open design."
+}

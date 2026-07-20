@@ -1,0 +1,12 @@
+{
+  "task_key": "unify-agent-review-source-rendering__task-7",
+  "C7": 3,
+  "final_grade": null,
+  "cause": "inherent-uncertainty",
+  "confidence": "medium",
+  "vagueness_cost": "unclear",
+  "missing_details": [
+    "whether any additional dead split-rendering code exists beyond the 3 named targets"
+  ],
+  "evidence": "The 3 named removal targets in the plan are accurately conveyed in the dispatch checklist; the residual open item is a genuine audit scope ('if any remains') that requires actually reading the current code to discover, not a knowable-in-advance detail. No grade/review captured to confirm cost."
+}

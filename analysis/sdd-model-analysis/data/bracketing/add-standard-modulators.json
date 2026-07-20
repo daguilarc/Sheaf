@@ -1,0 +1,26 @@
+{
+  "change": "add-standard-modulators",
+  "n_openspec_items": 27,
+  "mapping": {
+    "standard-modulators/task-1": ["1.1", "1.2", "1.3", "1.4"],
+    "standard-modulators/task-2": ["2.1", "2.2", "2.3"],
+    "standard-modulators/task-3": ["3.1", "3.2", "3.3", "3.4"],
+    "standard-modulators/task-4": ["4.1", "4.2", "4.3", "4.4"],
+    "standard-modulators/task-5": ["5.1", "5.2", "5.3", "5.4"],
+    "disconnected-modulator-depths/task-1": ["6.1", "6.2"],
+    "disconnected-modulator-depths/task-2": ["6.3"],
+    "less-predictable-random-timing/task-1": [],
+    "less-predictable-random-timing/task-2": ["7.1", "7.2"],
+    "less-predictable-random-timing/task-3": ["7.3", "7.4"],
+    "less-predictable-random-timing/task-4": ["7.5"]
+  },
+  "unmapped_openspec_items": [],
+  "extra_work_not_in_checklist": [
+    "less-predictable-random-timing/task-1 amends the OpenSpec proposal/design/spec/tasks.md itself (adds section 7), not a checklist item"
+  ],
+  "split_items": [],
+  "order_preserved": true,
+  "contiguous_partition": true,
+  "verdict": "regrouping",
+  "notes": "DATA CAVEAT (severe): this OpenSpec change was implemented across THREE sequential SDD sessions sharing one unnamespaced worktree: an original 5-task pass (sections 1-5), then a follow-on 'disconnected-modulator-depths' 2-task pass adding/covering section 6, then a 'less-predictable-random-timing' 4-task pass that first amended tasks.md to add section 7 and then implemented it. Each later session overwrote the prior session's task-1..4-brief.md files at the same paths (manifest's 'briefs' only captures the LAST session's task-1..4, plus the untouched original task-5). Reconstructed via progress.md's per-task 'OpenSpec X checked' log plus uniquely-named survivor report files (task-N-standard-modulators-report.md, random-grid-task-N-report.md). Within each session the mapping is a clean, mostly 1:1 section-to-task bracket; the notable re-decomposition signal is structural: the checklist itself was extended twice mid-project by dedicated non-numbered planning/amendment work, not a one-shot static bracketing of a fixed list."
+}

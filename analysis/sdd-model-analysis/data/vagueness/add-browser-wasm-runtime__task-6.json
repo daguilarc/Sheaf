@@ -1,0 +1,14 @@
+{
+  "task_key": "add-browser-wasm-runtime__task-6",
+  "C7": 3,
+  "final_grade": "F",
+  "cause": "inherent-uncertainty",
+  "confidence": "medium",
+  "vagueness_cost": "yes",
+  "missing_details": [
+    "C++/WASM threading model for MidiSender under Emscripten",
+    "pthread build-flag requirements",
+    "exact reconcile-core to JS boundary shape"
+  ],
+  "evidence": "Brief itself flags em++ unavailable so WASM behavior 'may remain unverified' and instructs to stop/report if the boundary can't be represented -- a genuine environment unknown. Critical finding (std::thread needs pthread flags, untested on WASM) traces exactly to this flagged uncertainty."
+}

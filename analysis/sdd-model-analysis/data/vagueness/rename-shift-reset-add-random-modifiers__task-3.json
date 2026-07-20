@@ -1,0 +1,13 @@
+{
+  "task_key": "rename-shift-reset-add-random-modifiers__task-3",
+  "C7": 3,
+  "final_grade": null,
+  "cause": "avoidable-omission",
+  "confidence": "high",
+  "vagueness_cost": "unclear",
+  "missing_details": [
+    "exact switch-case bodies for MessageTypeName/SystemMessageOutputInfo",
+    "exact SynthRig helper implementations"
+  ],
+  "evidence": "Plan Task 3 gives literal code for the new Evaluate() cases, the profile mapping calls, and full test bodies; only 2 of 7 steps (miniapp labels, SynthRig rename) are prose-described rather than coded. Dispatch omitted the literal code that already existed in the plan. No grade/review captured."
+}

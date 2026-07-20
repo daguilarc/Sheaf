@@ -1,0 +1,13 @@
+{
+  "task_key": "synth-app-runtime__p4-task-3",
+  "C7": 3,
+  "final_grade": "F",
+  "cause": "avoidable-omission",
+  "confidence": "medium",
+  "vagueness_cost": "yes",
+  "missing_details": [
+    "symmetric startup catch-up handling for input devices (only output path detailed)",
+    "mutex-guarding convention for AudioDeviceState carried over from prior task"
+  ],
+  "evidence": "Brief fully resolves output-device pre-device-open ordering but only mentions input devices as 'typically absent'. Reviewer found (R3) startup input-device preferences never applied (output-only catch-up) and (R2) AppContext audio state mutex bypassed -- both in areas the brief left asymmetric or unmentioned relative to the sibling Task 2 pattern."
+}
