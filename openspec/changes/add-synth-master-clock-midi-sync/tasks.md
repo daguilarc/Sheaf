@@ -64,11 +64,11 @@
 
 ## 10. MiniApp Clocked ADSR and Tempo
 
-- [ ] 10.1 Add MiniApp system tests for ADSR/Tempo parameter registration and LFO page/bank order, 30–300 BPM mapping/default, application modulator index ownership, storage capacity, and existing topology parity.
-- [ ] 10.2 Integrate `AdsrModule<2>`, its application-owned stable two-float modulation mirror at index 7, and the Tempo parameter into MiniApp initialization, bank/page registration, sample-rate preparation, parameter storage sizing, and modulation-source registration.
-- [ ] 10.3 Add committed-plan query tests proving gate high on transport phase `[0, 0.5)`, low on `[0.5, 1)`, quarter-note retrigger, next-plan Stop-low behavior, same-frame ADSR mirror publication at index 7, and correct behavior across arbitrary block boundaries.
-- [ ] 10.4 Process the clock-derived ADSR gate, copy `AdsrModule::Outputs()` into the registered mirror, then call `UpdateModValues` in the same frame; call the master tempo API only when MiniApp's effective Tempo value changes, including ignored external-authority calls and manual restoration.
-- [ ] 10.5 Update MiniApp portable UI/system snapshots and focused documentation for the expanded LFO page while preserving existing VCO/filter/audio/ratio-grid behavior.
+- [x] 10.1 Add MiniApp system tests for ADSR/Tempo parameter registration and LFO page/bank order, 30–300 BPM mapping/default, application modulator index ownership, storage capacity, and existing topology parity.
+- [x] 10.2 Integrate `AdsrModule<2>`, its application-owned stable two-float modulation mirror at index 7, and the Tempo parameter into MiniApp initialization, bank/page registration, sample-rate preparation, parameter storage sizing, and modulation-source registration.
+- [x] 10.3 Add committed-plan query tests proving gate high on transport phase `[0, 0.5)`, low on `[0.5, 1)`, quarter-note retrigger, next-plan Stop-low behavior, same-frame ADSR mirror publication at index 7, and correct behavior across arbitrary block boundaries.
+- [x] 10.4 Process the clock-derived ADSR gate, copy `AdsrModule::Outputs()` into the registered mirror, then call `UpdateModValues` in the same frame; call the master tempo API only when MiniApp's effective Tempo value changes, including ignored external-authority calls and manual restoration.
+- [x] 10.5 Update MiniApp portable UI/system snapshots and focused documentation for the expanded LFO page while preserving existing VCO/filter/audio/ratio-grid behavior.
 
 ## 11. Verification and Documentation
 

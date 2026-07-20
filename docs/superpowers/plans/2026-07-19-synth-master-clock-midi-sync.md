@@ -184,15 +184,15 @@
 
 **Required behavior:**
 
-- [ ] Register Attack/Decay/Sustain/Release and Tempo after the existing five LFO controls in both page and bank ordering; Tempo maps linearly `30..300 BPM`, defaults to `120`, and storage/topology expectations remain exact.
-- [ ] Integrate `AdsrModule<2>` and an app-owned stable two-float mirror at application modulation source index `7`; do not add mutable module output access.
-- [ ] For each output frame, derive the shared gate from the committed transport phase: high on `[0, 0.5)`, low on `[0.5, 1)`, only while Running. Test quarter retrigger, eighth-note falling edge, arbitrary block boundaries, and next-plan Stop-low.
-- [ ] Process ADSR, copy `Outputs()` into the mirror, then call `UpdateModValues`, proving current-sample visibility for both voices.
-- [ ] Call `SetTempoBpm` only when effective Tempo changes; verify receive authority ignores it and disabling receive restores manual tempo.
-- [ ] In Braid 4 tests, prove every 4x internal sample queries fractional output position and that the last prior-block internal sample precedes the next block's first sample under tempo changes.
-- [ ] Update UI/system expectations and MiniApp docs without regressing VCO/filter/audio/ratio-grid behavior.
-- [ ] Run MiniApp system/UI tests, Braid system/deadline tests, and the full core suite.
-- [ ] Commit only the task files after review and verification.
+- [x] Register Attack/Decay/Sustain/Release and Tempo after the existing five LFO controls in both page and bank ordering; Tempo maps linearly `30..300 BPM`, defaults to `120`, and storage/topology expectations remain exact.
+- [x] Integrate `AdsrModule<2>` and an app-owned stable two-float mirror at application modulation source index `7`; do not add mutable module output access.
+- [x] For each output frame, derive the shared gate from the committed transport phase: high on `[0, 0.5)`, low on `[0.5, 1)`, only while Running. Test quarter retrigger, eighth-note falling edge, arbitrary block boundaries, and next-plan Stop-low.
+- [x] Process ADSR, copy `Outputs()` into the mirror, then call `UpdateModValues`, proving current-sample visibility for both voices.
+- [x] Call `SetTempoBpm` only when effective Tempo changes; verify receive authority ignores it and disabling receive restores manual tempo.
+- [x] In Braid 4 tests, prove every 4x internal sample queries fractional output position and that the last prior-block internal sample precedes the next block's first sample under tempo changes.
+- [x] Update UI/system expectations and MiniApp docs without regressing VCO/filter/audio/ratio-grid behavior.
+- [x] Run MiniApp system/UI tests, Braid system/deadline tests, and the full core suite.
+- [x] Commit only the task files after review and verification.
 
 ## Task 8: Timing Traces, Documentation, and Whole-System Hardening (Sol)
 
