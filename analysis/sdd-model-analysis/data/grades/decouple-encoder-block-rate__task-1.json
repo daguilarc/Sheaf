@@ -1,0 +1,24 @@
+{
+  "task_key": "decouple-encoder-block-rate__task-1",
+  "G1": 4,
+  "G2": 5,
+  "G3": 4,
+  "G4": 4,
+  "G5": 4,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 5,
+  "verdict_sequence": ["PASS", "PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "All five required interfaces present and correct: cadence field/constant, IsValid, ProcessSample APIs, default 16",
+    "M1: tasks.md marked [x] before review approval, short-circuiting the review gate",
+    "M2: depth parameters double-computed at interval boundaries; wasted work but no correctness harm",
+    "M3: group test cannot distinguish recursive-Compute path from direct-loop path for depth targets",
+    "Final branch review: no blocking issues, ComputeAllTargets removal scoped correctly, cadence equivalence verified",
+    "Final: stale doc comment still references ComputeAllTargets(); thin integration coverage for non-16-aligned cadence"
+  ],
+  "reviewer_models": ["claude-sonnet-4-6", "claude-opus-4-8"],
+  "excluded_reviews": []
+}

@@ -1,0 +1,22 @@
+{
+  "task_key": "synth-app-runtime__task-5",
+  "G1": 5,
+  "G2": 5,
+  "G3": 5,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "verdict_sequence": ["PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "ComputeAllTargets declared beside ComputeAllParameters with the required steady-state vs init/load/revert comment",
+    "Definition null-skips parameters_ and calls Compute() without SnapCurrentToTarget()",
+    "Test shows target recomputation doesn't snap; one ProcessLite slews strictly between old and new values",
+    "ComputeAllParameters still snaps as before; priming adapted while respecting access control"
+  ],
+  "reviewer_models": ["gpt-5.5"],
+  "excluded_reviews": []
+}

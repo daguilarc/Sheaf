@@ -1,0 +1,23 @@
+{
+  "task_key": "add-autoscope-density-raster__task-6",
+  "G1": 5,
+  "G2": 5,
+  "G3": 4,
+  "G4": 4,
+  "G5": 3,
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 2,
+  "verdict_sequence": ["PASS", "PASS", "REVISE", "PASS"],
+  "rounds_to_accept": 4,
+  "final_grade": "C",
+  "evidence": [
+    "Round 1 PASS; minor: report overclaims null-pointer path was test-verified",
+    "Minor: duplicated background/centerline drawing constants across two call sites",
+    "Rereview: both minors resolved, shared frame helper extracted, null-path test added",
+    "Later round CHANGES REQUESTED: coverage.md still cites stale renamed test name",
+    "Doc also behaviorally stale: prose contradicts what renamed test now proves",
+    "Final rereview PASS: coverage.md updated, old name absent repo-wide"
+  ],
+  "reviewer_models": ["claude-sonnet-5", "claude-opus-4-8"]
+}

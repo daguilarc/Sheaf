@@ -1,0 +1,23 @@
+{
+  "task_key": "add-browser-wasm-runtime__task-1",
+  "G1": 4,
+  "G2": 1,
+  "G3": 2,
+  "G4": 2,
+  "G5": 2,
+  "n_critical": 1,
+  "n_important": 3,
+  "n_minor": 4,
+  "verdict_sequence": ["REVISE", "PASS", "PASS", "REVISE", "PASS"],
+  "rounds_to_accept": 5,
+  "final_grade": "F",
+  "evidence": [
+    "synth-browser-test wired but broken: no tests/ dir exists, playwright fails",
+    "tsconfig 'files' list silently limits build to compiling one file only",
+    "Report claims portability proven; only a dry-run was executed for wasm target",
+    "Rereview: all five previously flagged issues resolved, clean to proceed",
+    "Critical: implicit copy/move ctor + this-capturing lambdas caused ASan heap-use-after-free",
+    "Fix confirmed: copy/move ops explicitly deleted, static_asserts and rebuild pass"
+  ],
+  "reviewer_models": ["claude-sonnet-5"]
+}

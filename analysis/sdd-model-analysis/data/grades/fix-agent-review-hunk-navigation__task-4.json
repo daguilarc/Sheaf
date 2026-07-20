@@ -1,0 +1,21 @@
+{
+  "task_key": "fix-agent-review-hunk-navigation__task-4",
+  "G1": 5,
+  "G2": 5,
+  "G3": 5,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "verdict_sequence": ["APPROVED", "APPROVED", "APPROVED"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "Round 1: fake Launchpad paint calls, (3,3) paste, randomized workflow all observable and asserted; 30/30 passed",
+    "Round 2: deterministic comment overwrite path covered; no real Dictator dependency, all fakes used",
+    "Round 3: no findings in chatScreen.test.ts; no brittleness, false positives, or flakiness observed",
+    "All three rounds: build/tsc/openspec status all pass with no findings raised"
+  ],
+  "reviewer_models": ["gpt-5.5"]
+}

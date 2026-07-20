@@ -15,31 +15,53 @@ Contract: rebuild and run the covering binary `projects/synth/build/rig_tests` (
 
 Report back ONLY (under 10 lines): Status, commit SHA + subject, one-line test summary naming rig_tests, concerns.
 
-## Turn 1  (output_tokens=3029)
+## Turn 1  (output_tokens=5)
 - SAY: I'll fix the patch round-trip test by adding state perturbation between save and load, then verify the fix with a test run.
+
+## Turn 2  (output_tokens=153)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/rig_tests.cpp
   OUT: 290	    rig.Turn(0, 0, 0.4f); rig.RunBlocks(8);
 291	    const float edited = rig.ParameterValue(rig.Application().levelId);
 292	    REQUIRE_TRUE(edite
+
+## Turn 3  (output_tokens=1)
 - SAY: Now let me see more context around the test to understand the full structure:
+
+## Turn 4  (output_tokens=139)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/rig_tests.cpp
   OUT: 250	    }
 251	    REQUIRE_NEAR(a.ParameterValue(a.Application().levelId), b.ParameterValue(b.Application().levelId), 0.0f);
 252	}
 253	
 254	// Patch ro
+
+## Turn 5  (output_tokens=1)
 - SAY: Perfect. Now I'll apply the fix to add state perturbation between save and load, trim the comment, and update the test:
+
+## Turn 6  (output_tokens=699)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/rig_tests.cpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/rig_tests.cpp has been updated successfully. (file state is curr
+
+## Turn 7  (output_tokens=1)
 - SAY: Now I'll add the state perturbation between save and load:
+
+## Turn 8  (output_tokens=579)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/rig_tests.cpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/rig_tests.cpp has been updated successfully. (file state is curr
+
+## Turn 9  (output_tokens=1)
 - SAY: Now let me build and test:
+
+## Turn 10  (output_tokens=102)
 - CALL Bash: make -C projects/synth test 2>&1 | head -100
   OUT: c++ -Iinclude -std=c++20 -Wall -Wextra -Wpedantic -O2 tests/rig_tests.cpp build/libsynth.a -o build/rig_tests
 build/parameter_modulation_tests
 [PASS] 
+
+## Turn 11  (output_tokens=1)
 - SAY: Let me continue checking the test results:
+
+## Turn 12  (output_tokens=77)
 - CALL Bash: make -C projects/synth test 2>&1 | tail -50
   OUT: 23:20:17 0 MidiInput midi 1993
 23:20:17 0 Audio audio 1994
@@ -47,7 +69,11 @@ build/parameter_modulation_tests
 23:20:17 0 Audio audio 1995
 23:20:17 0 MidiInput midi 1995
 2
+
+## Turn 13  (output_tokens=1)
 - SAY: Perfect! All tests pass, including the fixed round-trip test. Now let me update the report file and commit:
+
+## Turn 14  (output_tokens=118)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.superpowers/sdd/p2-task-7-report.md
   OUT: 1	# Plan 2 Task 7: Rig-driven system tests — Report
 2	
@@ -55,10 +81,18 @@ build/parameter_modulation_tests
 4	
 5	Done. All five tests implemented, passing, full suite green with zero
 6	warnin
+
+## Turn 15  (output_tokens=1)
 - SAY: Now I'll append the Fix Round 1 report:
+
+## Turn 16  (output_tokens=680)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.superpowers/sdd/p2-task-7-report.md
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.superpowers/sdd/p2-task-7-report.md has been updated successfully. (file state is cu
+
+## Turn 17  (output_tokens=1)
 - SAY: Now commit the changes:
+
+## Turn 18  (output_tokens=232)
 - CALL Bash: git add -A && git commit -m "$(cat <<'EOF'
 fix(synth): perturb state before load in rig patch round-trip test
 
@@ -67,8 +101,14 @@ saved value, assert the perturbation took, then LoadPatch and verify
 restoration. This ensures LoadPatch actually relo
   OUT: [claude/brave-diffie-733065 3edb03e] fix(synth): perturb state before load in rig patch round-trip test
  9 files changed, 1339 insertions(+), 27 delet
+
+## Turn 19  (output_tokens=1)
 - SAY: Perfect! Let me verify the commit SHA and final test status:
+
+## Turn 20  (output_tokens=114)
 - CALL Bash: git log -1 --oneline && make -C projects/synth test 2>&1 | grep -E "^\[PASS\]|\[FAIL\]|rig_tests" | tail -15
   OUT: 3edb03e fix(synth): perturb state before load in rig patch round-trip test
 [PASS] engine_initialize_fires_rebuilt_callback_exactly_once_when_startup_p
+
+## Turn 21  (output_tokens=122)
 - SAY: Status: ✓ Fixed. Commit `3edb03e` — `fix(synth): perturb state before load in rig patch round-trip test`. All 10 rig_tests pass (including `rig_patch_round_trip_through_production_flow`); full suite green, zero warnings. State perturbation via Turn(-0.3f) injected after save, asserts value moved away from edited, then LoadPatch restores it—no longer vulnerable to no-op load. Report updated.

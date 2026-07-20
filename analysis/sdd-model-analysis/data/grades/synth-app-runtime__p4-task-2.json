@@ -1,0 +1,22 @@
+{
+  "task_key": "synth-app-runtime__p4-task-2",
+  "G1": 2,
+  "G2": 1,
+  "G3": 5,
+  "G4": 3,
+  "G5": 4,
+  "n_critical": 2,
+  "n_important": 2,
+  "n_minor": 0,
+  "verdict_sequence": ["REVISE", "REVISE", "PASS"],
+  "rounds_to_accept": 3,
+  "final_grade": "F",
+  "evidence": [
+    "Audio-thread drain copies AudioDeviceState containing std::string, can allocate on audio thread",
+    "load() then store(false) can clear a true written by audio thread, losing a callback",
+    "'fires exactly once' test only ticks once, doesn't prove flag consumption",
+    "R2: startup load can leave lastNotifiedAudioDeviceState_ stale, a real spec violation",
+    "R3: sync after ApplyPendingPatchMessages is unconditional; regression test real; approved"
+  ],
+  "reviewer_models": ["gpt-5.5", "claude-sonnet-5", "claude-haiku-4-5-20251001"]
+}

@@ -18,63 +18,105 @@ Contract: re-run the covering tests — the parameter_modulation_tests binary �
 
 Report back ONLY (under 10 lines): Status, commit SHA + subject, one-line test summary naming the covering binary, concerns.
 
-## Turn 1  (output_tokens=7198)
+## Turn 1  (output_tokens=1)
 - SAY: I'll start by examining the relevant files to understand the current state.
+
+## Turn 2  (output_tokens=1)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/PatchPersistence.hpp
   OUT: 80	class PatchMessageInBus {
 81	public:
 82	    explicit PatchMessageInBus(std::size_t capacity = 64);
 83	
 84	    bool Push(const PatchMessageIn& messa
+
+## Turn 3  (output_tokens=1)
 - CALL Bash: git log --oneline -3 && git show 973eb5c --stat
   OUT: 973eb5c feat(synth): let ApplyPatchMessage reuse a caller-owned serialization arena
 3da9fac Check off OpenSpec task 3.1
 6c1b36a feat(synth): add layer
+
+## Turn 4  (output_tokens=34)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/src/PatchPersistence.cpp
   OUT: 330	    message = std::move(queue_[head]);
 331	    head_.store((head + 1) % queue_.size(), std::memory_order_release);
 332	    size_.fetch_sub(1, std:
+
+## Turn 5  (output_tokens=278)
 - CALL Bash: grep -n "arena\|patchName\|ValidatePatchJSON\|LoadPatchJSON" /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/src/PatchPersistence.cpp | head -80
   OUT: 44:std::string SanitizePatchName(std::string_view patchName) {
 46:    result.reserve(patchName.size());
 47:    for (char ch : patchName) {
 75:JSON ToJ
+
+## Turn 6  (output_tokens=2)
 - SAY: Now let me find the accessor for reading string members like `patchName`, and check how tests read it, plus find `IsString`/`root.Get` usage patterns and the existing test.
+
+## Turn 7  (output_tokens=248)
 - CALL Bash: grep -n "GetString\|\.Get(\"patchName\")\|AsString\|StringValue" /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/src/PatchPersistence.cpp /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/parameter_modulation_tests.cpp | head -40
   OUT: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/src/PatchPersistence.cpp:40:    return IsString(schema) && std::string_view(sch
+
+## Turn 8  (output_tokens=4)
 - SAY: Found the accessor pattern: `root.Get("patchName").StringValue()`. Now let's look at the existing test for the caller-arena reuse.
+
+## Turn 9  (output_tokens=183)
 - CALL Bash: grep -n "apply_patch_message_reuses_caller_arena" -A 90 /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/parameter_modulation_tests.cpp | head -100
   OUT: 6666:TEST_CASE(apply_patch_message_reuses_caller_arena) {
 6667-    synth::ParameterManager manager;
 6668-    manager.SetGestureCount(1);
 6669-    auto
+
+## Turn 10  (output_tokens=1)
 - SAY: This confirms the bug exactly as described: the current test calls `ApplyPatchMessage` twice before popping anything, so the second call's `Reset()` clobbers the first's document before it's read. Now let's check `PatchManager`'s single-pending-save gate to reference accurately in the doc comment.
+
+## Turn 11  (output_tokens=223)
 - CALL Bash: grep -n "class PatchManager\|pending\|arena" /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/PatchPersistence.hpp | head -30
   OUT: 21:JSON ToJSON(JsonArena& arena, const MidiEndpointState& endpoints);
 24:JSON BuildPatchJSON(JsonArena& arena, std::string_view patchName,
 45:    std:
+
+## Turn 12  (output_tokens=146)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/PatchPersistence.hpp
   OUT: 159	class PatchManager {
 160	public:
 161	    explicit PatchManager(PatchMessageInBus* inputBus = nullptr, MessageOutBus* outputBus = nullptr,
 162	    
+
+## Turn 13  (output_tokens=9)
 - SAY: Confirmed: `PatchManager` doesn't itself set `context.arena` (it uses default heap-allocated arena per request via `initialArenaCapacity_`), but the "single-pending-save gate" (`pendingSave_`) is what ensures ordering — only one save/serialize can be in flight, so a caller-arena-based manager wouldn't issue a second serialize until the first's response is fully processed. This is the ordering guarantee to reference. Now let's make the edits.
+
+## Turn 14  (output_tokens=9)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/PatchPersistence.hpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/PatchPersistence.hpp has been updated successfully. (fil
+
+## Turn 15  (output_tokens=53)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/src/PatchPersistence.cpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/src/PatchPersistence.cpp has been updated successfully. (file state is
+
+## Turn 16  (output_tokens=3)
 - SAY: Now fix the test to consume-before-reuse and assert `patchName`:
+
+## Turn 17  (output_tokens=1187)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/parameter_modulation_tests.cpp
   OUT: <tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>
+
+## Turn 18  (output_tokens=1)
 - SAY: I need to Read the file section first (it was viewed via grep, not Read).
+
+## Turn 19  (output_tokens=172)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/parameter_modulation_tests.cpp
   OUT: 6666	TEST_CASE(apply_patch_message_reuses_caller_arena) {
 6667	    synth::ParameterManager manager;
 6668	    manager.SetGestureCount(1);
 6669	    auto
+
+## Turn 20  (output_tokens=1186)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/parameter_modulation_tests.cpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/parameter_modulation_tests.cpp has been updated successfully. (f
+
+## Turn 21  (output_tokens=5)
 - SAY: Now let's build and run the tests.
+
+## Turn 22  (output_tokens=131)
 - CALL Bash: ls projects/synth | head -20 && cat projects/synth/Makefile 2>/dev/null | head -30
   OUT: Makefile
 README.md
@@ -88,10 +130,16 @@ CXX ?= clang++
 CXXFLAGS ?= -std=c++20 -Wall -Wextra -Wpedantic -O2
 CPPFLAGS ?= -Iinclude
 BUILD
+
+## Turn 23  (output_tokens=170)
 - CALL Bash: make -C projects/synth build/parameter_modulation_tests 2>&1 | tail -60 && ./projects/synth/build/parameter_modulation_tests 2>&1 | tail -40
   OUT: c++ -Iinclude -std=c++20 -Wall -Wextra -Wpedantic -O2 -c src/PatchPersistence.cpp -o build/PatchPersistence.o
 ar rcs build/libsynth.a build/ParameterM
+
+## Turn 24  (output_tokens=3)
 - SAY: Build succeeded with zero warnings, and all tests including the two targeted ones pass. Now let's run the full test suite.
+
+## Turn 25  (output_tokens=256)
 - CALL Bash: make -C projects/synth test 2>&1 | tee /private/tmp/claude-501/-Users-joyo-Sheaf--claude-worktrees-brave-diffie-733065/4ead7da6-ecca-4767-ac88-0afb8a9aeeba/scratchpad/synth_test_full.log | tail -80
   OUT: 21:50:43 0 Audio audio 1965
 21:50:43 0 MidiInput midi 1965
@@ -99,13 +147,21 @@ ar rcs build/libsynth.a build/ParameterM
 21:50:43 0 MidiInput midi 1966
 21:50:43 0 Audio audio 1967
 21:5
+
+## Turn 26  (output_tokens=366)
 - CALL Bash: grep -c "\[PASS\]" /private/tmp/claude-501/-Users-joyo-Sheaf--claude-worktrees-brave-diffie-733065/4ead7da6-ecca-4767-ac88-0afb8a9aeeba/scratchpad/synth_test_full.log
 grep -c "\[FAIL\]" /private/tmp/claude-501/-Users-joyo-Sheaf--claude-worktrees-brave-diffie-733065/4ead7da6-ecca-4767-ac88-0afb8a9aee
   OUT: 174
 0
+
+## Turn 27  (output_tokens=1)
 - SAY: All 174 tests pass, zero failures, zero warnings/errors. Now update the report file.
+
+## Turn 28  (output_tokens=139)
 - CALL Bash: ls -la /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.superpowers/sdd/p2-task-2-report.md 2>&1
   OUT: -rw-r--r--@ 1 joyo  staff  7570 Jul  1 21:44 /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.superpowers/sdd/p2-task-2-report.md
+
+## Turn 29  (output_tokens=100)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.superpowers/sdd/p2-task-2-report.md
   OUT: 1	# Plan 2 Task 2: Reusable serialization arena for ApplyPatchMessage
 2	
@@ -113,25 +169,43 @@ grep -c "\[FAIL\]" /private/tmp/claude-501/-Users-joyo-Sheaf--claude-worktrees-b
 4	
 5	## Commits
 6	- `973eb5c` feat(synth): let ApplyPat
+
+## Turn 30  (output_tokens=1)
 - SAY: This confirms the original report already flagged the exact concern this task fixes. Now append the Fix Round 1 section.
+
+## Turn 31  (output_tokens=1673)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.superpowers/sdd/p2-task-2-report.md
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.superpowers/sdd/p2-task-2-report.md has been updated successfully. (file state is cu
+
+## Turn 32  (output_tokens=3)
 - SAY: Now let's commit.
+
+## Turn 33  (output_tokens=99)
 - CALL Bash: git status && git diff --stat
   OUT: On branch claude/brave-diffie-733065
 Changes not staged for commit:
   (use "git add <file>..." to update what will be committed)
   (use "git restore <
+
+## Turn 34  (output_tokens=1)
 - SAY: The report file is under `.superpowers/sdd/` — let's check if it's tracked and needs staging too.
+
+## Turn 35  (output_tokens=197)
 - CALL Bash: git status --porcelain .superpowers/sdd/p2-task-2-report.md; git log --oneline -1 -- .superpowers/sdd/p2-task-2-report.md; cat /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.gitignore 2>/dev/null | grep -i superpower
   OUT: (Bash completed with no output)
+
+## Turn 36  (output_tokens=1)
 - SAY: The report file shows no changes in git status, meaning it's gitignored (not tracked). That's expected — it's an SDD workflow artifact, not part of the commit. Let's commit only the three code/test files.
+
+## Turn 37  (output_tokens=308)
 - CALL Bash: git add projects/synth/include/synth/PatchPersistence.hpp projects/synth/src/PatchPersistence.cpp projects/synth/tests/parameter_modulation_tests.cpp && git commit -m "$(cat <<'EOF'
 fix(synth): document caller-arena lifetime contract and test consume-before-reuse
 
 Co-Authored-By: Claude Fable 5 <nor
   OUT: [claude/brave-diffie-733065 3eaae7b] fix(synth): document caller-arena lifetime contract and test consume-before-reuse
  3 files changed, 37 insertions
+
+## Turn 38  (output_tokens=2)
 - SAY: Status: Done. Commit `3eaae7b` `fix(synth): document caller-arena lifetime contract and test consume-before-reuse`.
 
 Tests: `projects/synth/build/parameter_modulation_tests` — all pass including `apply_patch_message_reuses_caller_arena` (now consume-before-reuse with `patchName` A/B assertions) and `apply_patch_message_reports_exhaustion_without_growing_caller_arena`; full `make -C projects/synth test` — 174 PASS, 0 FAIL, 0 warnings.

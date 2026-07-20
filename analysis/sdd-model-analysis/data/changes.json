@@ -8655,7 +8655,7 @@
     "effort": null,
     "kind": "reviewer-rereview",
     "started_at": "2026-07-19T19:06:52.339Z",
-    "tokens": 20236700,
+    "tokens": 61277160,
     "worktree": "5fc41ca0-491d-48fb-944c-babc0bc62db6",
     "timeline_file": "timelines/claude-2da52349-9cc6-46ac-8727-eba43ac8b0f3.md",
     "review_traits": {

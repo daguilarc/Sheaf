@@ -1,0 +1,23 @@
+{
+  "task_key": "add-autoscope-density-raster__task-4",
+  "G1": 5,
+  "G2": 4,
+  "G3": 4,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 6,
+  "verdict_sequence": ["PASS", "PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "Round 1: PASS, no Critical/Important findings, four Minor notes",
+    "Minor 1: locked reader reports Empty() on exact cycle-boundary edge case",
+    "Minor 2: stale diagnostics fields when locked analysis fails phase acquisition",
+    "Minor 4: coverage gap vs drift/noise/steady-hold tests, brief itself satisfied",
+    "Rereview: all four minors correctly fixed, drift/noise tests added and hand-verified",
+    "All seven verification targets hold; range-safe, no regression"
+  ],
+  "reviewer_models": ["claude-opus-4-8"]
+}

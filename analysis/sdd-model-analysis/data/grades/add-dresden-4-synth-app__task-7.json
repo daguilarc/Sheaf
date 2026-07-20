@@ -1,0 +1,24 @@
+{
+  "task_key": "add-dresden-4-synth-app__task-7",
+  "G1": 5,
+  "G2": 3,
+  "G3": 4,
+  "G4": 3,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 2,
+  "verdict_sequence": ["PASS", "PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "B",
+  "evidence": [
+    "Medium: LaunchRegisteredApp ordering can leave window's content pointer dangling if second session launched",
+    "Not a regression today (unreachable), but a real risk once Task 8 enables relaunch; recommend fixing now",
+    "Low: new LauncherHarnessTests block never calls miniappOwnerFactory at runtime, only checks truthy std::function",
+    "Trivial: std::function used without including <functional>",
+    "Round 2: ownership ordering fixed, window repointed before old session destroyed",
+    "Round 2: harness strengthened to actually invoke factory and dynamic_cast the result"
+  ],
+  "reviewer_models": ["claude-sonnet-5"],
+  "excluded_reviews": []
+}

@@ -19,17 +19,21 @@ I need you to READ runtime/MidiPanel.hpp and runtime/Runtime.hpp in full (they a
 
 2. What is the SMALLEST change to Runtime.hpp and MidiPanel.hpp that avoids that breakage while keeping MidiPanel's UI (combo boxes, preset selector, re
 
-## Turn 1  (output_tokens=2776)
+## Turn 1  (output_tokens=40)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/silly-meninsky-138d3d/projects/synth/runtime/MidiPanel.hpp
   OUT: 1	#pragma once
 2	
 3	// synth_runtime::MidiPanel — the JUCE-side MIDI device management panel for
 4	// the runtime shell (Plan 3 Task 3). Ports the old
+
+## Turn 2  (output_tokens=201)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/silly-meninsky-138d3d/projects/synth/runtime/Runtime.hpp
   OUT: 1	#pragma once
 2	
 3	// synth_runtime::Runtime — the JUCE-side host shell over synth::Engine<App>
 4	// (sar-7 and later). Owns the audio device, drives
+
+## Turn 3  (output_tokens=2535)
 - SAY: ## Findings
 
 **1. Concurrency breakage if both are wired simultaneously**

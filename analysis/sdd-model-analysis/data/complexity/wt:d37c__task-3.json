@@ -1,0 +1,20 @@
+{
+  "task_key": "wt:d37c__task-3",
+  "C1": 4,
+  "C2": 5,
+  "C3": 4,
+  "C4": 4,
+  "C5": 3,
+  "C6": 4,
+  "C7": 2,
+  "composite": 4.0,
+  "rationale": {
+    "C1": "9 file actions: delete template, modify catalog/publish/package-contract, Makefile, 3 tests",
+    "C2": "Overhauls catalog assembly signature, atomic staged replace; no new files, all existing rewritten",
+    "C3": "Whole-tree atomic replace with partial-failure rollback, hash-derived catalog version, alias rejection",
+    "C4": "Composes Task 2 emission manifest, catalog schema, site publisher and Pages publisher",
+    "C5": "Deterministic multi-app fixtures plus simulated partial-failure/atomicity assertions on staged output",
+    "C6": "Needs Task 2 emission report shape, OpenSpec spec/design, publication pipeline conventions",
+    "C7": "Exact interface signature and catalogVersion formula given; assembly implementation left open"
+  }
+}

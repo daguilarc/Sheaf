@@ -1,0 +1,20 @@
+{
+  "task_key": "synth-app-runtime__p4-task-1",
+  "G1": 5,
+  "G2": 5,
+  "G3": 5,
+  "G4": 4,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "verdict_sequence": ["PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "AudioDeviceState mirrors MidiEndpointState JSON shape/tolerant parsing correctly",
+    "Section omitted when both output/input device names empty, per spec",
+    "No apparent MidiEndpointState behavior regression; required behavior tests present"
+  ],
+  "reviewer_models": ["gpt-5.5"]
+}

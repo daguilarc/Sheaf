@@ -1,0 +1,23 @@
+{
+  "task_key": "synth-app-runtime__p3-task-5",
+  "G1": 4,
+  "G2": 2,
+  "G3": 4,
+  "G4": 2,
+  "G5": 2,
+  "n_critical": 0,
+  "n_important": 4,
+  "n_minor": 2,
+  "verdict_sequence": ["REVISE", "REVISE", "REVISE", "PASS"],
+  "rounds_to_accept": 4,
+  "final_grade": "D",
+  "evidence": [
+    "Tune/Shape tests only assert parameter values changed, not that output actually changed",
+    "Default MIDI profile revert risk: Revert/New Patch resets routing to empty default",
+    "R2: output-window tests don't prove the turn caused difference; oscillator phase drift could explain it",
+    "R3: tests claim bit-identical baseline but assert tolerance-based comparison, not exact equality",
+    "R3 minor: comparison helper does not assert equal window/channel shapes",
+    "R4: exact twin-rig baseline check plus shape assertions implemented; approved"
+  ],
+  "reviewer_models": ["gpt-5.5", "claude-sonnet-5", "claude-haiku-4-5-20251001"]
+}

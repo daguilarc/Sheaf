@@ -1,0 +1,23 @@
+{
+  "task_key": "add-note-system-message-mappings__task-1",
+  "G1": 5,
+  "G2": 5,
+  "G3": 4,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 2,
+  "verdict_sequence": ["Approved", "APPROVE"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "MidiAddress() computed twice in SystemButtonMidiInProcessor; harmless, not worth fixing",
+    "Non-CC/non-note messages reach FindPush before PassToThru; extra cheap call only",
+    "Test coverage closely tracks every scenario called out in the brief",
+    "Both carried-over Task 1 minors are style/performance trivia, not blocking",
+    "No blocking or important issues found across task and final review"
+  ],
+  "reviewer_models": ["claude-sonnet-5", "claude-opus-4-8"],
+  "excluded_reviews": []
+}

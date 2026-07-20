@@ -1,0 +1,24 @@
+{
+  "task_key": "add-dresden-4-synth-app__task-4",
+  "G1": 5,
+  "G2": 1,
+  "G3": 3,
+  "G4": 2,
+  "G5": 2,
+  "n_critical": 1,
+  "n_important": 0,
+  "n_minor": 4,
+  "verdict_sequence": ["REVISE", "PASS"],
+  "rounds_to_accept": 2,
+  "final_grade": "F",
+  "evidence": [
+    "Critical: removing ScopePathMath namespace breaks PathDrawer.hpp and EncoderComponentGeometryTests.cpp build",
+    "g++ -fsyntax-only confirms compile error: no member named ScopePathMath in namespace synth_miniapp",
+    "Report's claim of Implemented and locally verified omits this build break entirely",
+    "Round 2: ScopePathMath restored as thin forwarders; PathDrawer.hpp compiles again",
+    "Minor: duplicate waveform_detail helpers still kept in MiniAppDraw.hpp risk divergence",
+    "Round 2 minor: task-4-report.md overwritten but left uncommitted in working tree"
+  ],
+  "reviewer_models": ["claude-sonnet-5"],
+  "excluded_reviews": []
+}

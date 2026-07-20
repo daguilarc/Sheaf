@@ -1,0 +1,23 @@
+{
+  "task_key": "add-autoscope-density-raster__task-1",
+  "G1": 5,
+  "G2": 5,
+  "G3": 4,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 4,
+  "verdict_sequence": ["PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "Reviewer: no important code-quality fix required before commit; verdict PASS",
+    "Overflow, NaN propagation, merge math, time support all verified sound",
+    "Non-blocking: SummaryEffectiveBaseIndex re-runs validation three times per read",
+    "Redundant static_assert of trivially-copyable in both header and test",
+    "Split-span assertion effectively tautological, adds little extra coverage",
+    "Alias-band test threshold slack is implicit rather than documented"
+  ],
+  "reviewer_models": ["claude-opus-4-8"]
+}

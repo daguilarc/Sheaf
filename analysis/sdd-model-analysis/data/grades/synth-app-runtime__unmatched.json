@@ -1,0 +1,24 @@
+{
+  "task_key": "synth-app-runtime__unmatched",
+  "G1": 2,
+  "G2": 1,
+  "G3": 2,
+  "G4": 2,
+  "G5": 3,
+  "n_critical": 1,
+  "n_important": 10,
+  "n_minor": 7,
+  "verdict_sequence": ["REVISE", "REVISE", "PASS"],
+  "rounds_to_accept": 3,
+  "final_grade": "F",
+  "evidence": [
+    "Blocker/critical: audio callback drains patch bus via allocating serialization (make_shared, malloc), violating RT-safety",
+    "Major: UI and MIDI messages not applied in shared timestamp order across two independent SPSC queues",
+    "Major: proposed pump uses ComputeAllParameters which snaps, bypassing the ProcessLite slew the miniapp preserves",
+    "Major: AppContext exposes RT-unsafe objects (PatchManager, MidiSender) to all hooks incl. audio thread",
+    "Round 2: MIDI panel missing controller preset/profile UI; slog-7 patch/storage completions unlogged; MidiSender untagged",
+    "Round 3: all round-2 findings verified fixed; verdict READY-WITH-NITS with one deferred (non-blocking) follow-up"
+  ],
+  "reviewer_models": ["gpt-5.5"],
+  "excluded_reviews": []
+}

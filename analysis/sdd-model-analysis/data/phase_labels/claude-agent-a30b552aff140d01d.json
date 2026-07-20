@@ -1,6 +1,12 @@
 {
   "session_key": "claude-agent-a30b552aff140d01d",
   "labels": {
-    "1": "report"
+    "1": "orient",
+    "2": "orient",
+    "3": "orient",
+    "4": "other",
+    "5": "other",
+    "6": "other",
+    "7": "other"
   }
 }

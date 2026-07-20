@@ -1686,7 +1686,7 @@
   "task": "task-8",
   "worktree": "d359",
   "brief_file": null,
-  "report_file": null,
+  "report_file": "/Users/joyo/Sheaf/.superpowers/sdd/task-8-report.md",
   "brief_bytes": null,
   "implementer_sessions": [
    {
@@ -2194,7 +2194,7 @@
   "task": "task-8",
   "worktree": "9209",
   "brief_file": "/Users/joyo/.codex/worktrees/9209/Sheaf/.superpowers/sdd/task-8-brief.md",
-  "report_file": null,
+  "report_file": "/Users/joyo/Sheaf/.superpowers/sdd/task-8-report.md",
   "brief_bytes": 3281,
   "implementer_sessions": [
    {
@@ -2986,7 +2986,7 @@
   "task": "task-8",
   "worktree": "0546c445-dea2-4148-bd24-0451d943ed00",
   "brief_file": null,
-  "report_file": null,
+  "report_file": "/Users/joyo/Sheaf/.superpowers/sdd/task-8-report.md",
   "brief_bytes": null,
   "implementer_sessions": [
    {
@@ -3029,7 +3029,7 @@
   "task": "task-9",
   "worktree": "0546c445-dea2-4148-bd24-0451d943ed00",
   "brief_file": null,
-  "report_file": null,
+  "report_file": "/Users/joyo/Sheaf/.superpowers/sdd/task-9-report.md",
   "brief_bytes": null,
   "implementer_sessions": [
    {
@@ -5358,7 +5358,7 @@
     "effort": null,
     "kind": "reviewer-rereview",
     "started_at": "2026-07-19T19:06:52.339Z",
-    "tokens": 20236700,
+    "tokens": 61277160,
     "worktree": "5fc41ca0-491d-48fb-944c-babc0bc62db6",
     "timeline_file": "timelines/claude-2da52349-9cc6-46ac-8727-eba43ac8b0f3.md",
     "review_traits": {
@@ -11775,7 +11775,7 @@
   "task": "task-8",
   "worktree": "c7be86e7-6e69-4a9b-94b9-f97a4403a660",
   "brief_file": null,
-  "report_file": null,
+  "report_file": "/Users/joyo/Sheaf/.superpowers/sdd/task-8-report.md",
   "brief_bytes": null,
   "implementer_sessions": [
    {

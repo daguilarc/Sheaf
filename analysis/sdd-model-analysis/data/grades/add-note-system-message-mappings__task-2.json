@@ -1,0 +1,22 @@
+{
+  "task_key": "add-note-system-message-mappings__task-2",
+  "G1": 5,
+  "G2": 5,
+  "G3": 5,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "verdict_sequence": ["Approved"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "No Critical, Important, or Minor findings",
+    "Duplicate-address rejection correctly treats CC and Note addresses as distinct",
+    "Rejection-without-mutation ordering in ExpandEncoderBlock is correct",
+    "Diff stays within the files/line ranges the brief specified"
+  ],
+  "reviewer_models": ["claude-sonnet-5"],
+  "excluded_reviews": []
+}

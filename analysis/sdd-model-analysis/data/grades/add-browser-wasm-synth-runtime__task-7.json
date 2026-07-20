@@ -1,0 +1,23 @@
+{
+  "task_key": "add-browser-wasm-synth-runtime__task-7",
+  "G1": 5,
+  "G2": 5,
+  "G3": 4,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 1,
+  "verdict_sequence": ["PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "Every report claim verifies directly against source, not just the report",
+    "Test exceeds the brief: also verifies COEP and MIDI Permissions-Policy",
+    "Fixed port 8791 could collide under concurrent node --test and make smoke",
+    "Self-reported the port-collision limitation rather than hiding it",
+    "Docs explicitly list deferred pieces as follow-up runtime work"
+  ],
+  "reviewer_models": ["claude-opus-4-8"],
+  "excluded_reviews": []
+}

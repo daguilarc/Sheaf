@@ -5,24 +5,32 @@ task keys: {"worktree": "e700"}
 ## Prompt (truncated)
 Read and follow the complete review prompt at /Users/joyo/.codex/worktrees/e700/Sheaf/.superpowers/sdd/task-4-review-prompt.md. Return only the required review report.
 
-## Turn 1  (output_tokens=21048)
+## Turn 1  (output_tokens=218)
 - CALL Read: /Users/joyo/.codex/worktrees/e700/Sheaf/.superpowers/sdd/task-4-review-prompt.md
   OUT: 1	# Task 4 Review: Coverage and OpenSpec Completion
 2	
 3	Review this task first for spec compliance and then code quality/documentation accuracy. It i
+
+## Turn 2  (output_tokens=400)
 - CALL Read: /Users/joyo/.codex/worktrees/e700/Sheaf/.superpowers/sdd/task-4-brief.md
   OUT: 1	### Task 4: Coverage, OpenSpec Completion, and Whole-Change Verification
 2	
 3	**Files:**
 4	- Modify: `projects/synth/docs/coverage.md`
 5	- Modify: `
+
+## Turn 3  (output_tokens=200)
 - CALL Read: /Users/joyo/.codex/worktrees/e700/Sheaf/.superpowers/sdd/task-4-report.md
   OUT: 1	# Task 4 Report: Noise Modulator Coverage and Verification
 2	
 3	## Status
 4	
 5	Implementation portion complete. Coverage, final-tree verification, O
+
+## Turn 4  (output_tokens=111)
 - SAY: Now let me read the diff package.
+
+## Turn 5  (output_tokens=111)
 - CALL Read: /Users/joyo/.codex/worktrees/e700/Sheaf/.superpowers/sdd/review-6ded5966..f15e6c69.diff
   OUT: 1	# Review package: 6ded5966..f15e6c69
 2	
@@ -31,21 +39,33 @@ Read and follow the complete review prompt at /Users/joyo/.codex/worktrees/e700/
 5	
 6	## Files changed
 7	 openspec/ch
+
+## Turn 6  (output_tokens=5422)
 - SAY: The diff is small and documentation-only. The core review risk is coverage-accuracy: whether the named tests actually exist and cover the claimed behaviors, and whether the index 0/1/2 vs index 4 distinction is real. Let me do focused verification on the test files the mappings name.
+
+## Turn 7  (output_tokens=2711)
 - CALL Read: /Users/joyo/.codex/worktrees/e700/Sheaf/projects/synth/tests/miniapp_system_tests.cpp
   OUT: 620	TEST_CASE(miniapp_bank_transition_clears_modulation_visualizer_underlay) {
 621	    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
 622	      
+
+## Turn 8  (output_tokens=2711)
 - CALL Read: /Users/joyo/.codex/worktrees/e700/Sheaf/projects/synth/tests/dsp_tests.cpp
   OUT: 115	    REQUIRE_TRUE(std::is_default_constructible_v<synth::BitCrusher>);
 116	    REQUIRE_TRUE(std::is_default_constructible_v<synth::Meter>);
 117	   
+
+## Turn 9  (output_tokens=3216)
 - SAY: The DSP and MiniApp tests precisely match the coverage claims. Let me verify the third named file (portable UI) backs the `sdsp-35`/`spv-6` claims.
+
+## Turn 10  (output_tokens=1608)
 - CALL Read: /Users/joyo/.codex/worktrees/e700/Sheaf/projects/synth/tests/portable_ui_tests.cpp
   OUT: 258	
 259	    {
 260	        synth::ui::NoiseWaveformVisualizer left(synth::Color::Yellow, 1234);
 261	        synth::ui::NoiseWaveformVisualizer right(s
+
+## Turn 11  (output_tokens=4340)
 - SAY: All three named test files accurately and precisely back the coverage mappings. Here is my review.
 
 ## Task 4 Review Report

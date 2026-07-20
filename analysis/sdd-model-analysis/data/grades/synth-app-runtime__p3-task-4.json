@@ -1,0 +1,22 @@
+{
+  "task_key": "synth-app-runtime__p3-task-4",
+  "G1": 4,
+  "G2": 2,
+  "G3": 4,
+  "G4": 4,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 1,
+  "verdict_sequence": ["REVISE", "PASS"],
+  "rounds_to_accept": 2,
+  "final_grade": "C",
+  "evidence": [
+    "shutdown() destroys window_ before runtime_ while repaint hook captures destroyed ShellComponent",
+    "initialise() does not handle exceptions from runtime_->Start(); JUCE won't catch it",
+    "Save As/Load status text reports success immediately even if dispatch could fail",
+    "Rereview: shutdown clears repaint hook before destroying window, then runtime; approved",
+    "Rereview: startup failure path mirrors safe cleanup order, logs exception, quits cleanly"
+  ],
+  "reviewer_models": ["gpt-5.5", "claude-sonnet-5"]
+}

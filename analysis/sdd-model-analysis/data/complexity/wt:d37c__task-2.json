@@ -1,0 +1,20 @@
+{
+  "task_key": "wt:d37c__task-2",
+  "C1": 5,
+  "C2": 4,
+  "C3": 4,
+  "C4": 4,
+  "C5": 3,
+  "C6": 4,
+  "C7": 2,
+  "composite": 4.0,
+  "rationale": {
+    "C1": "13+ files: new manifest/compiler/tests, deleted entries, Makefiles, package.json, boundary checks",
+    "C2": "Renames/rewires Makefile targets, package.json, boundary check across several existing files",
+    "C3": "Strict parser: path traversal/containment, digest/sort determinism, argv-safe compiler, atomic report swap",
+    "C4": "Spans build manifest, C++ codegen, Make/npm tooling, CI script, static boundary checker",
+    "C5": "Needs fixture manifest, fake app, injected runCommand fake to avoid real Emscripten calls",
+    "C6": "Requires OpenSpec proposal/design/tasks, Task 1 ABI v2 contract, repo build conventions",
+    "C7": "Exact interfaces, exact generated C++ snippet, and exact flags given; bodies left open"
+  }
+}

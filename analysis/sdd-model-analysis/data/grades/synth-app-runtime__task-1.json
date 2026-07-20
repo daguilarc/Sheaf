@@ -1,0 +1,21 @@
+{
+  "task_key": "synth-app-runtime__task-1",
+  "G1": 5,
+  "G2": 5,
+  "G3": 5,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "verdict_sequence": ["PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "No Missing/Extra/Misunderstood items found against the authoritative brief",
+    "RuntimeConfig, AudioBlock, AppContext contract shape and defaults match requirements exactly",
+    "Contract tests cover defaults, plain audio view, null default context, live pointer, JUCE guard",
+    "Build/test pass claims not independently verifiable from diff alone (read-only review caveat)"
+  ],
+  "reviewer_models": ["gpt-5.5"]
+}

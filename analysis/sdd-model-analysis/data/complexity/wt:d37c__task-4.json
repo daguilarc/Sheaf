@@ -1,0 +1,20 @@
+{
+  "task_key": "wt:d37c__task-4",
+  "C1": 5,
+  "C2": 4,
+  "C3": 4,
+  "C4": 5,
+  "C5": 5,
+  "C6": 5,
+  "C7": 2,
+  "composite": 4.7,
+  "rationale": {
+    "C1": "10 planned files plus 2 reviewer-noted companion files actually touched, >10 total",
+    "C2": "Interleaved rewrites across many Playwright specs, CI workflow, and deploy scripts",
+    "C3": "Polls native audio block/deadline stats, memory invariants, whole-catalogVersion comparison logic",
+    "C4": "Crosses launcher UI, native audio runtime, GitHub Pages/Cloudflare CI, deployment validation",
+    "C5": "Real Chromium E2E across two apps: audio callback progress, MIDI, persistence isolation",
+    "C6": "Depends on full Task 1-3 context: ABI v2, manifest, packaging, deployment conventions",
+    "C7": "Concrete test-data table and required assertions given; overall harness structure open"
+  }
+}

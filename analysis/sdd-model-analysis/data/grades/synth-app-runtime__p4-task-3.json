@@ -1,0 +1,23 @@
+{
+  "task_key": "synth-app-runtime__p4-task-3",
+  "G1": 2,
+  "G2": 1,
+  "G3": 4,
+  "G4": 4,
+  "G5": 3,
+  "n_critical": 2,
+  "n_important": 2,
+  "n_minor": 2,
+  "verdict_sequence": ["REVISE", "REVISE", "REVISE", "PASS"],
+  "rounds_to_accept": 4,
+  "final_grade": "F",
+  "evidence": [
+    "Runtime.hpp writes engine_.AudioDevice() directly on combo selection without updating shadow",
+    "Minor: input combo created but not populated/wired, dead UI for input-enabled apps",
+    "R2: AppContext::audioDeviceState remains public raw mutable pointer, bypass not closed",
+    "R2: ApplyPendingPatchMessages passes state without holding audioDeviceStateMutex_",
+    "R3: startup input-device preferences not applied after device manager opens (output-only catch-up)",
+    "R4: startup input catch-up now mirrors output catch-up; approved"
+  ],
+  "reviewer_models": ["gpt-5.5", "claude-sonnet-5", "claude-haiku-4-5-20251001"]
+}

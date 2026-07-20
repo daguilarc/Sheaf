@@ -19,50 +19,80 @@ Findings:
 
 Gates: `make -C projects/synth test` green; `make -C projects/synth miniapp` links; `m
 
-## Turn 1  (output_tokens=21438)
+## Turn 1  (output_tokens=1)
 - SAY: I'll start by reading the relevant files to understand the current state before making changes.
+
+## Turn 2  (output_tokens=1)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/AppContext.hpp
   OUT: 1	#pragma once
 2	
 3	// Application/runtime contract types for the synth application runtime
 4	// (sar-1, sar-2, sar-3). JUCE-free: consumed by applica
+
+## Turn 3  (output_tokens=218)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp
   OUT: 1	#pragma once
 2	
 3	// synth::Engine — the JUCE-free engine core that owns every framework object
 4	// an application touches (sar-3), wires AppContex
+
+## Turn 4  (output_tokens=2)
 - SAY: Now let me look at the Runtime.hpp, MidiPanel.hpp, and test files.
+
+## Turn 5  (output_tokens=2)
 - CALL Bash: grep -rn "audioDeviceState\b" /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth --include="*.hpp" --include="*.cpp" -l
   OUT: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp
 /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-73306
+
+## Turn 6  (output_tokens=352)
 - CALL Bash: grep -rn "audioDeviceState\|AudioDeviceState\|preferredOutputDevice\|preferredInputDevice" /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/runtime/Runtime.hpp /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/runtime/MidiPanel.hpp 2>/dev/null
   OUT: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/runtime/MidiPanel.hpp:555:        const synth::AudioDeviceState state = engine_
+
+## Turn 7  (output_tokens=2)
 - SAY: Good news: `AppContext::audioDeviceState` isn't referenced by Runtime.hpp or MidiPanel.hpp at all — only by AppContext.hpp, Engine.hpp itself, and engine_tests.cpp. Let's check that test file and other usages, plus contract_tests.cpp.
+
+## Turn 8  (output_tokens=2)
 - CALL Bash: grep -n "audioDeviceState\|AudioDeviceState\|context_\|ctx\." /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/engine_tests.cpp | head -80
   OUT: 78:    // When non-empty, Init() writes this into *ctx->audioDeviceState (the
 82:    // (empty) leaves the engine's audioDeviceState_ untouched, as be
+
+## Turn 9  (output_tokens=2)
 - CALL Bash: grep -n "audioDeviceState\|AudioDeviceState\|preferredOutputDevice\|preferredInputDevice" /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/contract_tests.cpp
   OUT: (Bash completed with no output)
+
+## Turn 10  (output_tokens=2)
 - SAY: Now let's see the `EngineTestApp` (in engine_tests.cpp) `Init()` and `Config()` in full, plus contract_tests.cpp doesn't reference it at all — good. Let's check contract_tests.cpp more broadly for `AppContext` usage and `RuntimeConfig`.
+
+## Turn 11  (output_tokens=2)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/contract_tests.cpp
   OUT: 1	#include "synth/AppContext.hpp"
 2	#include "synth/AppConcepts.hpp"
 3	
 4	#ifdef JUCE_MAJOR_VERSION
 5	#error "synth contract tests must not see JUCE h
+
+## Turn 12  (output_tokens=372)
 - CALL Bash: grep -n "audioDeviceState\|AppContext\|RuntimeConfig" /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/contract_tests.cpp | head -40
   OUT: 1:#include "synth/AppContext.hpp"
 62:    const synth::RuntimeConfig config;
 88:    const synth::AppContext context;
 106:    synth::AppContext context;
+
+## Turn 13  (output_tokens=7)
 - SAY: Interesting — `context.audioDeviceState == nullptr` isn't checked, but let's confirm by viewing lines 100-140 to be sure, and see if `audioDeviceState` is referenced anywhere else in contract_tests.cpp.
+
+## Turn 14  (output_tokens=224)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/contract_tests.cpp
   OUT: 100	    REQUIRE_TRUE(context.uiState == nullptr);
 101	}
 102	
 103	TEST_CASE(app_context_holds_live_pointers) {
 104	    synth::ParameterManager manager;
+
+## Turn 15  (output_tokens=2)
 - SAY: Confirmed: contract_tests.cpp doesn't reference `audioDeviceState` at all currently. Since no app/runtime code reads it (only tests seed it), the finding says removal is preferred. Now let's look at engine_tests.cpp EngineTestApp fully.
+
+## Turn 16  (output_tokens=234)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/engine_tests.cpp
   OUT: 1	#include "synth/Engine.hpp"
 2	
@@ -71,41 +101,71 @@ Gates: `make -C projects/synth test` green; `make -C projects/synth miniapp` lin
 5	#endif
 6	
 7	#include <algorithm
+
+## Turn 17  (output_tokens=5)
 - SAY: Now let's find the test at line ~967 that uses `initAudioDeviceState` via config, and see the full test to understand how to reroute through config fields.
+
+## Turn 18  (output_tokens=161)
 - CALL Bash: grep -n "initAudioDeviceState" /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/engine_tests.cpp
   OUT: 83:    static inline synth::AudioDeviceState initAudioDeviceState;
 105:            (!initAudioDeviceState.outputDeviceName.empty() || !initAudioDevice
+
+## Turn 19  (output_tokens=54)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/engine_tests.cpp
   OUT: 955	    // Also confirm the default profile snapshot itself carries the mapping
 956	    // (not just that the live profile happens to still have it): 
+
+## Turn 20  (output_tokens=3)
 - SAY: Now let's check `AudioDeviceState` struct definition to know field names, and see the `RuntimeConfig` currently uses `preferredSampleRate`/`preferredBlockSize` naming for reference.
+
+## Turn 21  (output_tokens=185)
 - CALL Bash: grep -n "struct AudioDeviceState" -A 15 /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/*.hpp
   OUT: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/PatchPersistence.hpp:24:struct AudioDeviceState {
 /Users/joyo/She
+
+## Turn 22  (output_tokens=5)
 - SAY: Now let's look at Runtime.hpp finding #3 (OnEngineAudioDeviceChanged), and MidiPanel.hpp around line 555.
+
+## Turn 23  (output_tokens=189)
 - CALL Bash: grep -n "OnEngineAudioDeviceChanged\|outputDeviceName\|inputDeviceName" /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/runtime/Runtime.hpp
   OUT: 124:    //       OnEngineAudioDeviceChanged (must also precede Initialize(), for
 130:    //      allowed, PREFERRING engine.AudioDeviceSnapshot().outp
+
+## Turn 24  (output_tokens=34)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/runtime/Runtime.hpp
   OUT: 1	#pragma once
 2	
 3	// synth_runtime::Runtime — the JUCE-side host shell over synth::Engine<App>
 4	// (sar-7 and later). Owns the audio device, drives
+
+## Turn 25  (output_tokens=1)
 - SAY: This confirms Runtime.hpp reads `engine_.AudioDeviceSnapshot()`, never the raw `AppContext::audioDeviceState` pointer. So it's safe to remove that member. Now let's find `OnEngineAudioDeviceChanged` for finding #3.
+
+## Turn 26  (output_tokens=238)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/runtime/Runtime.hpp
   OUT: 490	    // BEFORE engine_.Initialize() — see Start()'s doc comment). Invoked on
 491	    // the message thread whenever a consumed patch message change
+
+## Turn 27  (output_tokens=5)
 - SAY: Now I see finding #3 fully: `OnEngineAudioDeviceChanged` only handles `outputName`/`SwitchOutputDevice`, never applies `inputDeviceName`. Let's look at `SwitchOutputDevice`, `ApplyAudioDeviceSelection`, `ApplyAudioDeviceInputSelection`, and `IsEnumeratedOutputDevice`/input equivalents to understand how to fix symmetrically.
+
+## Turn 28  (output_tokens=297)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/runtime/Runtime.hpp
   OUT: 300	            double sampleRate = device->getCurrentSampleRate();
 301	            int blockSize = device->getCurrentBufferSizeSamples();
 302	       
+
+## Turn 29  (output_tokens=6)
 - SAY: Now I have a full picture. There's already an `ApplyAudioDeviceInputSelection` for the input-combo path, but `OnEngineAudioDeviceChanged` (the patch-driven path) applies only output. Let me check `AudioPanel::SyncSelection` in MidiPanel.hpp to see how the input combo syncs.
+
+## Turn 30  (output_tokens=281)
 - CALL Bash: grep -n "class AudioPanel\|SyncSelection\|SetStatus\|Refresh\|onInputSelected\|onOutputSelected\|inputCombo\|outputCombo" /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/runtime/MidiPanel.hpp | head -60
   OUT: 122:        refreshButton_.setButtonText("Refresh");
 123:        refreshButton_.onClick = [this] { Refresh(); };
 153:        Refresh();
 182:    void R
+
+## Turn 31  (output_tokens=144)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/runtime/MidiPanel.hpp
   OUT: 540	            }
 541	        }
@@ -115,97 +175,189 @@ Gates: `make -C projects/synth test` green; `make -C projects/synth miniapp` lin
 545	
 546	    // Re-syncs the combo's selection(s) to
 547	    // engine.Aud
+
+## Turn 32  (output_tokens=1)
 - SAY: This confirms finding #3: `SyncSelection()` already syncs the input combo's *display*, but `OnEngineAudioDeviceChanged()` never calls `IsEnumeratedInputDevice`/applies `setup.inputDeviceName` for the actual device switch, so a patch that changes only the input device won't actually switch the input device — only the combo will show it (visually synced but not applied). Now let's implement all three fixes. Starting with AppContext.hpp / RuntimeConfig.
+
+## Turn 33  (output_tokens=868)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/AppContext.hpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/AppContext.hpp has been updated successfully. (file stat
+
+## Turn 34  (output_tokens=3)
 - SAY: Now remove the `audioDeviceState` member from AppContext (preferred smallest-surface outcome, since nothing reads it besides tests seeding via the old bypass):
+
+## Turn 35  (output_tokens=606)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/AppContext.hpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/AppContext.hpp has been updated successfully. (file stat
+
+## Turn 36  (output_tokens=2)
 - SAY: Note: removed the mutable pointer entirely (per the "removal is the preferred, smallest-surface outcome" instruction), since no app/runtime code reads it. Let's view the file to confirm it's clean.
+
+## Turn 37  (output_tokens=168)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/AppContext.hpp
   OUT: 1	#pragma once
 2	
 3	// Application/runtime contract types for the synth application runtime
 4	// (sar-1, sar-2, sar-3). JUCE-free: consumed by applica
+
+## Turn 38  (output_tokens=5)
 - SAY: Now let's fix Engine.hpp: remove the `context_.audioDeviceState = &audioDeviceState_;` wiring, seed `audioDeviceState_` from config at start of `Initialize()` under lock, and fix `ApplyPendingPatchMessages()` to hold the lock.
+
+## Turn 39  (output_tokens=425)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp has been updated successfully. (file state is
+
+## Turn 40  (output_tokens=2)
 - SAY: Now update `Initialize()` to seed `audioDeviceState_` from config fields at the start, before `app_.Init()`:
+
+## Turn 41  (output_tokens=1696)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp has been updated successfully. (file state is
+
+## Turn 42  (output_tokens=3)
 - SAY: Now fix finding #2: `ApplyPendingPatchMessages()` needs to hold `audioDeviceStateMutex_`. Let's look at it again with fresh line numbers.
+
+## Turn 43  (output_tokens=192)
 - CALL Bash: grep -n "ApplyPendingPatchMessages\|audioDeviceStateMutex_" /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp
   OUT: 109:    //      found, patchManager_.LoadPatch(dir), then ApplyPendingPatchMessages()
 137:            // audioDeviceState_ (see audioDeviceStateMutex_
+
+## Turn 44  (output_tokens=6)
 - SAY: Let's view the comment block around Initialize's call to `ApplyPendingPatchMessages()` (lines 180-200) and the function itself (lines 668-700) to update both consistently.
+
+## Turn 45  (output_tokens=203)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp
   OUT: 178	
 179	        const std::optional<std::filesystem::path> patchDir = LatestPatchDirectory(config_.patchesRoot);
 180	        if (patchDir.has_value()
+
+## Turn 46  (output_tokens=9)
 - SAY: Now update this comment to reflect the fixed invariant, and fix the actual `ApplyPendingPatchMessages()` function:
+
+## Turn 47  (output_tokens=599)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp has been updated successfully. (file state is
+
+## Turn 48  (output_tokens=3)
 - SAY: Now the actual function body:
+
+## Turn 49  (output_tokens=151)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp
   OUT: 665	        const std::size_t nextCapacity = std::min(doubled, serializationContext_.maxArenaCapacity);
 666	        serializationArena_.Init(nextCapac
+
+## Turn 50  (output_tokens=142)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp
   OUT: 693	                status = ApplyPatchMessage(message, manager_, midiProfileConfig_, defaultMidiProfileConfig_,
 694	                                 
+
+## Turn 51  (output_tokens=1809)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp has been updated successfully. (file state is
+
+## Turn 52  (output_tokens=8)
 - SAY: Now let's update the `audioDeviceState_` member doc comment that references the old mutable-pointer wiring:
+
+## Turn 53  (output_tokens=157)
 - CALL Bash: grep -n "Engine-owned audio device selection (Task 2)" /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp
   OUT: 758:    // Engine-owned audio device selection (Task 2). Wired into
+
+## Turn 54  (output_tokens=142)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp
   OUT: 755	    // audio-thread hazard in steady state.
 756	    mutable std::mutex audioDeviceStateMutex_;
 757	
 758	    // Engine-owned audio device selection
+
+## Turn 55  (output_tokens=767)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp has been updated successfully. (file state is
+
+## Turn 56  (output_tokens=9)
 - SAY: Now let's check if there's a stray reference to `AppContext::audioDeviceState`'s doc comment elsewhere (e.g. SetAudioDeviceFromHost comment references "Task 3 review finding"). Let's grep the whole file for remaining stale references.
+
+## Turn 57  (output_tokens=281)
 - CALL Bash: grep -n "ctx->audioDeviceState\|context_.audioDeviceState\|AppContext::audioDeviceState" /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/AppContext.hpp
   OUT: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp:130:            // the old mutable AppContext::audioDe
+
+## Turn 58  (output_tokens=1)
 - SAY: The AppContext.hpp reference at line 39 is now stale (that member no longer exists). Let me fix it:
+
+## Turn 59  (output_tokens=180)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/AppContext.hpp
   OUT: 33	    int uiFrameHz = 30;
 34	    // Initial audio device preference (Task 3 review, Critical fix): empty =
 35	    // system default. Engine::Initiali
+
+## Turn 60  (output_tokens=580)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/AppContext.hpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/AppContext.hpp has been updated successfully. (file stat
+
+## Turn 61  (output_tokens=5)
 - SAY: Now let's fix finding #3 in Runtime.hpp: `OnEngineAudioDeviceChanged()` should apply input symmetrically.
+
+## Turn 62  (output_tokens=1825)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/runtime/Runtime.hpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/runtime/Runtime.hpp has been updated successfully. (file state is curr
+
+## Turn 63  (output_tokens=6)
 - SAY: Now let's check where `App::Config()` implementations exist (miniapp) to see if we need to seed `preferredOutputDeviceName`/`preferredInputDeviceName` anywhere, and check for any other `Init()` implementations that used the old `ctx->audioDeviceState` pattern.
+
+## Turn 64  (output_tokens=224)
 - CALL Bash: grep -rln "audioDeviceState\|AudioDeviceState" /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth --include="*.hpp" --include="*.cpp"
   OUT: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/PatchPersistence.hpp
 /Users/joyo/Sheaf/.claude/worktrees/brave-di
+
+## Turn 65  (output_tokens=2)
 - SAY: Good — miniapp doesn't reference it, so no seeding needed there beyond defaults. Now let's fix `engine_tests.cpp`. Let's update `EngineTestApp` to use config fields instead of the removed context pointer.
+
+## Turn 66  (output_tokens=1558)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/engine_tests.cpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/engine_tests.cpp has been updated successfully. (file state is c
+
+## Turn 67  (output_tokens=5)
 - SAY: Now let's fix the test at ~965 that references the old rationale in its comment (mentioning `*ctx->audioDeviceState`):
+
+## Turn 68  (output_tokens=5)
 - CALL Bash: grep -n "ctx->audioDeviceState" /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/engine_tests.cpp
   OUT: 85:    // before. Replaces the old *ctx->audioDeviceState write now that
 972:    // configured (via *ctx->audioDeviceState), BEFORE any startup patch
+
+## Turn 69  (output_tokens=142)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/engine_tests.cpp
   OUT: 965	    EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
 966	}
 967	
 968	TEST_CASE(engine_revert_all_to_default_re
+
+## Turn 70  (output_tokens=50)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/engine_tests.cpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/tests/engine_tests.cpp has been updated successfully. (file state is c
+
+## Turn 71  (output_tokens=6)
 - SAY: Now let's check contract_tests.cpp again — no changes needed since it never referenced `audioDeviceState`. Let's double check by grepping full repo for any remaining stale references to the removed member.
+
+## Turn 72  (output_tokens=6)
 - CALL Bash: grep -rn "\.audioDeviceState\b\|->audioDeviceState\b" /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth --include="*.hpp" --include="*.cpp"
   OUT: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp:739:    // (host writes via SetAudioDeviceFromHost/App
+
+## Turn 73  (output_tokens=1)
 - SAY: One more stale comment reference in Engine.hpp near `audioDeviceStateMutex_`'s doc comment. Let's view and fix it.
+
+## Turn 74  (output_tokens=1)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp
   OUT: 728	    // app_.Init(&context_) returns and before any startup patch applies (see
 729	    // the Initialize() binding-order comment, step 4a).
 730	   
+
+## Turn 75  (output_tokens=50)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/include/synth/Engine.hpp has been updated successfully. (file state is
+
+## Turn 76  (output_tokens=8)
 - SAY: Now let's fix the last stale comment in engine_tests.cpp (line 85, "Replaces the old *ctx->audioDeviceState write now that" — that's fine, it's accurate prose describing history, not a bug). Now build and run tests.
+
+## Turn 77  (output_tokens=183)
 - CALL Bash: make -C projects/synth test 2>&1 | tail -100
   OUT: 12:13:12 0 Audio audio 1978
 12:13:12 0 MidiInput midi 1978
@@ -213,19 +365,31 @@ Gates: `make -C projects/synth test` green; `make -C projects/synth miniapp` lin
 12:13:12 0 MidiInput midi 1979
 12:13:12 0 Audio audio 1980
 12:1
+
+## Turn 78  (output_tokens=2)
 - SAY: All engine tests pass. Let's check the full output for warnings and confirm contract_tests ran and passed too.
+
+## Turn 79  (output_tokens=123)
 - CALL Bash: make -C projects/synth test 2>&1 | grep -iE "warning|error|FAIL" | sort -u | head -50
   OUT: (Bash completed with no output)
+
+## Turn 80  (output_tokens=7)
 - SAY: Zero warnings/errors/failures. Now let's check contract_tests ran:
+
+## Turn 81  (output_tokens=114)
 - CALL Bash: make -C projects/synth test 2>&1 | grep -iE "contract_tests|PASS\]" | grep -i contract
   OUT: [PASS] one_pole_filters_and_tanh_follow_dsp_contract
 build/contract_tests
+
+## Turn 82  (output_tokens=149)
 - CALL Bash: make -C projects/synth test 2>&1 > /tmp_out.log; grep -A 15 "build/contract_tests" /tmp_out.log; echo "---"; grep -c "PASS" /tmp_out.log; grep -c "FAIL" /tmp_out.log; rm /tmp_out.log
   OUT: Exit code 1
 /bin/bash: /tmp_out.log: Read-only file system
 ugrep: warning: /tmp_out.log: No such file or directory
 ---
 ugrep: warning: /tmp_out.log: N
+
+## Turn 83  (output_tokens=313)
 - CALL Bash: SCRATCH="/private/tmp/claude-501/-Users-joyo-Sheaf--claude-worktrees-brave-diffie-733065/4ead7da6-ecca-4767-ac88-0afb8a9aeeba/scratchpad"; mkdir -p "$SCRATCH"; make -C /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth test > "$SCRATCH/test_out.log" 2>&1; echo "exit=$?"; grep -c 
   OUT: exit=0
 229
@@ -234,52 +398,90 @@ build/contract_tests
 [PASS] runtime_config_defaults_are_sensible
 [PASS] audio_block_is_a_plain_view
 [PASS] app_context_default_constructs
+
+## Turn 84  (output_tokens=1)
 - SAY: 229 tests pass, 0 fail, exit=0. Now let's build and test the miniapp per the gates.
+
+## Turn 85  (output_tokens=272)
 - CALL Bash: SCRATCH="/private/tmp/claude-501/-Users-joyo-Sheaf--claude-worktrees-brave-diffie-733065/4ead7da6-ecca-4767-ac88-0afb8a9aeeba/scratchpad"; make -C /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth miniapp > "$SCRATCH/miniapp_build.log" 2>&1; echo "exit=$?"; tail -60 "$SCRATCH/mi
   OUT: exit=0
 /Applications/Xcode.app/Contents/Developer/usr/bin/make -C apps/miniapp
 c++ -I/Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/
+
+## Turn 86  (output_tokens=2)
 - SAY: Miniapp linked successfully with zero warnings (`-Wall -Wextra -Wpedantic`). Now let's run `make -C projects/synth/apps/miniapp test`.
+
+## Turn 87  (output_tokens=303)
 - CALL Bash: SCRATCH="/private/tmp/claude-501/-Users-joyo-Sheaf--claude-worktrees-brave-diffie-733065/4ead7da6-ecca-4767-ac88-0afb8a9aeeba/scratchpad"; make -C /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/apps/miniapp test > "$SCRATCH/miniapp_test.log" 2>&1; echo "exit=$?"; tail -80 "$S
   OUT: exit=0
 c++ -I/Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/projects/synth/runtime/../include -I/Users/joyo/Sheaf/.claude/worktrees/brave-dif
+
+## Turn 88  (output_tokens=1)
 - SAY: All gates pass: `make test` (229 pass/0 fail), `make miniapp` links clean, `make -C apps/miniapp test` passes, zero warnings throughout (build uses `-Wall -Wextra -Wpedantic`).
 
 Now let's check the p4-task-3-report.md file to append the Fix Round 2 section.
+
+## Turn 89  (output_tokens=277)
 - CALL Bash: ls -la /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.superpowers/sdd/p4-task-3-report.md 2>&1; wc -l /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.superpowers/sdd/p4-task-3-report.md
   OUT: -rw-r--r--@ 1 joyo  staff  17581 Jul  2 12:04 /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.superpowers/sdd/p4-task-3-report.md
      323 /U
+
+## Turn 90  (output_tokens=144)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.superpowers/sdd/p4-task-3-report.md
   OUT: 260	`AudioDeviceState::inputDeviceName`. Wired it identically to `outputBox_` in
 261	`projects/synth/runtime/MidiPanel.hpp`:
 262	
 263	- `Refresh()` no
+
+## Turn 91  (output_tokens=144)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.superpowers/sdd/p4-task-3-report.md
   OUT: 320	  `ApplyAudioDeviceSelection` and `ApplyAudioDeviceInputSelection`. This
 321	  matches the existing `AudioDeviceState` value-type shape and avoids
+
+## Turn 92  (output_tokens=2)
 - SAY: Let's see the rest of the file to confirm the end before appending.
+
+## Turn 93  (output_tokens=165)
 - CALL Read: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.superpowers/sdd/p4-task-3-report.md
   OUT: 320	  `ApplyAudioDeviceSelection` and `ApplyAudioDeviceInputSelection`. This
 321	  matches the existing `AudioDeviceState` value-type shape and avoids
+
+## Turn 94  (output_tokens=5)
 - SAY: Now let's append the "## Fix Round 2" section.
+
+## Turn 95  (output_tokens=2600)
 - CALL Edit: /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.superpowers/sdd/p4-task-3-report.md
   OUT: The file /Users/joyo/Sheaf/.claude/worktrees/brave-diffie-733065/.superpowers/sdd/p4-task-3-report.md has been updated successfully. (file state is cu
+
+## Turn 96  (output_tokens=5)
 - SAY: Now let's commit.
+
+## Turn 97  (output_tokens=5)
 - CALL Bash: git status --short
   OUT:  M projects/synth/include/synth/AppContext.hpp
  M projects/synth/include/synth/Engine.hpp
  M projects/synth/runtime/Runtime.hpp
  M projects/synth/test
+
+## Turn 98  (output_tokens=1)
 - SAY: The report file shows unmodified because it's untracked or path differs — let's check:
+
+## Turn 99  (output_tokens=124)
 - CALL Bash: git status --short .superpowers/sdd/p4-task-3-report.md; git check-ignore -v .superpowers/sdd/p4-task-3-report.md
   OUT: .superpowers/sdd/.gitignore:1:*	.superpowers/sdd/p4-task-3-report.md
+
+## Turn 100  (output_tokens=1)
 - SAY: The report file is gitignored (`.superpowers/sdd/.gitignore` ignores everything in that dir), consistent with sdd reports being local artifacts. That's fine — it's still updated on disk per instructions. Now let's commit the code changes.
+
+## Turn 101  (output_tokens=548)
 - CALL Bash: git add projects/synth/include/synth/AppContext.hpp projects/synth/include/synth/Engine.hpp projects/synth/runtime/Runtime.hpp projects/synth/tests/engine_tests.cpp && git commit -m "$(cat <<'EOF'
 fix(synth): close audio-state mutation bypass via config-seeded preferences
 
 Round-2 review fixes: remo
   OUT: [claude/brave-diffie-733065 4f0e67c] fix(synth): close audio-state mutation bypass via config-seeded preferences
  4 files changed, 134 insertions(+), 
+
+## Turn 102  (output_tokens=2)
 - SAY: Status: Done, all three round-2 findings fixed.
 
 Commit: `4f0e67c` — `fix(synth): close audio-state mutation bypass via config-seeded preferences`

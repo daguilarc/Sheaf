@@ -1,0 +1,22 @@
+{
+  "task_key": "synth-app-runtime__task-2",
+  "G1": 5,
+  "G2": 5,
+  "G3": 5,
+  "G4": 5,
+  "G5": 4,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 1,
+  "verdict_sequence": ["PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "Ports CircularQueue<T,N> with namespace synth, trailing-underscore members, required API, JUCE guard, Makefile wiring",
+    "SPSC publish path preserves source semantics; NextToPush does not publish until CompletePush",
+    "Full-queue assertion (pushed==2) meaningful for the port's capacity semantics",
+    "Minor: implementer's report mischaracterizes default atomics as relaxed when code uses seq_cst"
+  ],
+  "reviewer_models": ["gpt-5.5"],
+  "excluded_reviews": []
+}

@@ -5,12 +5,16 @@ task keys: {"openspec_change": "add-autoscope-density-raster", "plan": "2026-07-
 ## Prompt (truncated)
 You are the Task 5 SPECIFICATION REVIEWER for OpenSpec change add-autoscope-density-raster. Review only current uncommitted Task 5 Canvas/JUCE backend changes against proposal/design, specs/synth-portable-runtime-shell/spec.md sprs-9 rendering scenarios, docs/superpowers/plans/2026-07-15-autoscope-density-raster.md Task 5, and .superpowers/sdd/autoscope-density-task-5-report.md. Inspect actual ui.ts/ui-backend.spec.ts and PortableJuceBackend.hpp/Tests diff. Do not edit. Verify identical 2x2 semantics, nearest rounded tint-alpha multiplication, straight-alpha/offscreen-only Canvas ImageData, destination source-over drawImage and no putImageData, nearest-neighbor scaling/bounds/overlap, state restoration, offscreen reuse, validated direct-frame access, JUCE premultiplication correctness and equivalent opaque-background pixels within one, nonpositive target no-op, and no per-cell draw commands/host objects. Return exactly PASS or CHANGES REQUESTED first, then concrete file:line evidence. Ignore concurrent DspAutoScope/autoscope changes and unrelated dirty files.
 
-## Turn 1  (output_tokens=27510)
+## Turn 1  (output_tokens=1396)
 - SAY: I'll review the Task 5 changes. Let me gather the diffs and reference documents.
+
+## Turn 2  (output_tokens=698)
 - CALL Bash: git diff projects/synth/browser/src/ui.ts projects/synth/juce/PortableJuceBackend.hpp projects/synth/juce/PortableJuceBackendTests.cpp projects/synth/browser/tests/ui-backend.spec.ts
   OUT: diff --git a/projects/synth/browser/src/ui.ts b/projects/synth/browser/src/ui.ts
 index cfc32d10..fe711507 100644
 --- a/projects/synth/browser/src/ui.t
+
+## Turn 3  (output_tokens=698)
 - CALL Read: /Users/joyo/.codex/worktrees/e0e6ecd7-cd4a-47e8-985c-2e066fda34aa/Sheaf/.superpowers/sdd/autoscope-density-task-5-report.md
   OUT: 1	# AutoScope Density Raster — Task 5 Report
 2	
@@ -19,10 +23,16 @@ index cfc32d10..fe711507 100644
 5	## Scope
 6	
 7	Implemented only the Canvas and JUCE `AlphaRaster` backend r
+
+## Turn 4  (output_tokens=926)
 - SAY: Let me read the reference specs, design, plan, and the protocol/DrawCommand definitions to verify semantics.
+
+## Turn 5  (output_tokens=463)
 - CALL Bash: echo "=== SPEC sprs-9 ===" && grep -n "sprs-9\|AlphaRaster\|alpha raster\|nearest\|density\|raster" openspec/specs/synth-portable-runtime-shell/spec.md | head -60
   OUT: === SPEC sprs-9 ===
 114:WHEN the browser backend renders a composite frame, THE backend SHALL treat resolved node bounds as absolute surface coordinat
+
+## Turn 6  (output_tokens=463)
 - CALL Bash: sed -n '/Task 5/,/Task 6/p' docs/superpowers/plans/2026-07-15-autoscope-density-raster.md 2>/dev/null; echo "---LSPLAN---"; ls docs/superpowers/plans/
   OUT: ## Task 5: Canvas and JUCE alpha-raster rendering
 
@@ -30,37 +40,61 @@ index cfc32d10..fe711507 100644
 
 - Modify: `projects/synth/browser/src/ui.ts`
 - Modify: `projects/synth/browser/tests/ui
+
+## Turn 7  (output_tokens=634)
 - SAY: Let me look at the spec's AlphaRaster rendering scenarios, the design, and the DrawCommand definitions.
+
+## Turn 8  (output_tokens=317)
 - CALL Bash: cd /Users/joyo/.codex/worktrees/e0e6ecd7-cd4a-47e8-985c-2e066fda34aa/Sheaf; echo "=== spec grep raster/tint/nearest ==="; grep -rn "raster\|tint\|nearest\|premultipl\|source-over\|smoothing\|resampl" openspec/changes/add-autoscope-density-raster/ | head -80
   OUT: === spec grep raster/tint/nearest ===
 openspec/changes/add-autoscope-density-raster/proposal.md:13:  aged history into a fixed 256-by-64 alpha-density
+
+## Turn 9  (output_tokens=391)
 - SAY: Let me read the full sprs-9 spec section and the DrawCommand C++/TS definitions to verify the semantics precisely.
+
+## Turn 10  (output_tokens=391)
 - CALL Bash: cd /Users/joyo/.codex/worktrees/e0e6ecd7-cd4a-47e8-985c-2e066fda34aa/Sheaf; sed -n '1,40p' openspec/changes/add-autoscope-density-raster/specs/synth-portable-runtime-shell/spec.md
   OUT: ## ADDED Requirements
 
 ### Requirement: sprs-9 — Drawing: portable tinted alpha raster
 WHEN a portable surface emits a tinted alpha-raster draw comman
+
+## Turn 11  (output_tokens=391)
 - CALL Bash: cd /Users/joyo/.codex/worktrees/e0e6ecd7-cd4a-47e8-985c-2e066fda34aa/Sheaf; echo "=== TS validateAlphaRasterCommand & AlphaRaster ==="; grep -n "validateAlphaRasterCommand\|AlphaRaster\|rasterWidth\|rasterHeight\|alpha" projects/synth/browser/src/protocol.ts | head -40
   OUT: === TS validateAlphaRasterCommand & AlphaRaster ===
 100:  AlphaRaster,
 110:  rasterWidth: number; rasterHeight: number; alpha: Uint8Array;
 150:functio
+
+## Turn 12  (output_tokens=696)
 - SAY: Let me check the C++ `DrawCommand::AlphaRaster`, `ValidatedRaster`, and the JUCE premultiplication concern.
+
+## Turn 13  (output_tokens=348)
 - CALL Bash: cd /Users/joyo/.codex/worktrees/e0e6ecd7-cd4a-47e8-985c-2e066fda34aa/Sheaf; grep -n "AlphaRaster\|ValidatedRaster\|AlphaRasterPayload\|Alpha()\|Width()\|Height()\|struct DrawCommand\|Kind::" projects/synth/include/synth/*.hpp | head -50
   OUT: projects/synth/include/synth/DspAutoScope.hpp:296:        std::size_t Width() const noexcept { return width_; }
 projects/synth/include/synth/DspAutoSc
+
+## Turn 14  (output_tokens=400)
 - CALL Bash: cd /Users/joyo/.codex/worktrees/e0e6ecd7-cd4a-47e8-985c-2e066fda34aa/Sheaf; grep -rln "ValidatedRaster\|AlphaRasterPayload\|struct DrawCommand" projects/synth/include projects/synth/juce
   OUT: projects/synth/include/synth/PortableUI.hpp
 projects/synth/include/synth/browser/BrowserCommandBuffer.hpp
 projects/synth/juce/PortableJuceBackend.hpp
+
+## Turn 15  (output_tokens=208)
 - CALL Bash: cd /Users/joyo/.codex/worktrees/e0e6ecd7-cd4a-47e8-985c-2e066fda34aa/Sheaf; grep -n "AlphaRaster\|ValidatedRaster\|AlphaRasterPayload\|Alpha()\|Width()\|Height()\|effectiveAlpha\|premultipl\|struct DrawCommand\|static DrawCommand" projects/synth/include/synth/PortableUI.hpp
   OUT: 41:inline constexpr std::uint32_t kAlphaRasterMaxDimension = 4'096;
 42:inline constexpr std::size_t kAlphaRasterMaxCells = 1'048'576;
 44:inline std::s
+
+## Turn 16  (output_tokens=10720)
 - SAY: The implementation is thoroughly consistent with the spec, design, and plan. Let me confirm a couple of exact line anchors in the current files.
+
+## Turn 17  (output_tokens=5360)
 - CALL Bash: cd /Users/joyo/.codex/worktrees/e0e6ecd7-cd4a-47e8-985c-2e066fda34aa/Sheaf; echo "== ui.ts drawAlphaRaster =="; grep -n "drawAlphaRaster\|validateAlphaRasterCommand\|putImageData\|drawImage\|imageSmoothingEnabled\|globalCompositeOperation\|context.save\|context.restore\|Math.floor" projects/synth/br
   OUT: == ui.ts drawAlphaRaster ==
 1:import { Action, CommandBufferError, CommandBufferFrame, Color, DrawCommand, DrawKind, Node, NodeKind, decodeCommandBuff
+
+## Turn 18  (output_tokens=3010)
 - SAY: **PASS**
 
 Task 5 Canvas/JUCE `AlphaRaster` rendering satisfies the sprs-9 rendering scenarios, the design's cross-backend compositing contract, and the plan's Task 5 requirements. Evidence:

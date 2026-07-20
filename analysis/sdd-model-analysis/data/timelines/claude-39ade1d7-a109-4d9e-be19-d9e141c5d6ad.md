@@ -5,50 +5,76 @@ task keys: {"openspec_change": "add-synth-runtime-data-directory", "worktree": "
 ## Prompt (truncated)
 Targeted quality re-review for Task 4 of OpenSpec change add-synth-runtime-data-directory after addressing low review notes. Please review only these post-review edits: Runtime::Start now calls AsyncLogQueue::ConfigureLogDirectory(dataPaths_.logsRoot) before create_directories/INFO failure probes; Engine::LoadRuntimeConfiguration has a startup-only/concurrency contract comment; engine_runtime_configuration_load_and_save_status_are_logged explicitly sets EngineTestApp::wantEncoderMidiInput=false. Relevant files: projects/synth/runtime/Runtime.hpp, projects/synth/include/synth/Engine.hpp, projects/synth/tests/engine_tests.cpp. Focus on whether these edits introduce any bug or fail to address the prior low notes. Local verification after edits passed: make -C projects/synth build/engine_tests build/logging_tests && projects/synth/build/engine_tests && projects/synth/build/logging_tests && git diff --check on touched files. Read-only review; do not modify files or run tests. Report findings first; if no blocking issues say so plainly.
 
-## Turn 1  (output_tokens=13533)
+## Turn 1  (output_tokens=620)
 - SAY: I'll review the three post-review edits. Let me read the relevant files.
+
+## Turn 2  (output_tokens=310)
 - CALL Read: /Users/joyo/.codex/worktrees/ae61/Sheaf/projects/synth/runtime/Runtime.hpp
   OUT: 1	#pragma once
 2	
 3	// synth_runtime::Runtime — the JUCE-side host shell over synth::Engine<App>
 4	// (sar-7 and later). Owns the audio device, drives
+
+## Turn 3  (output_tokens=310)
 - CALL Bash: git diff projects/synth/runtime/Runtime.hpp projects/synth/include/synth/Engine.hpp projects/synth/tests/engine_tests.cpp
   OUT: <persisted-output>
 Output too large (101.2KB). Full output saved to: /Users/joyo/.claude/projects/-Users-joyo--codex-worktrees-ae61-Sheaf/39ade1d7-a10
+
+## Turn 4  (output_tokens=884)
 - SAY: Let me get the targeted diffs for the Engine and test changes.
+
+## Turn 5  (output_tokens=442)
 - CALL Bash: git diff projects/synth/include/synth/Engine.hpp | grep -n "LoadRuntimeConfiguration\|startup-only\|concurrency\|message thread\|single-thread" -i -A2 -B2 | head -60
   OUT: 60--            // lock or the lastNotifiedAudioDeviceState_ shadow -- see
 61--            // RuntimeConfig::preferredOutputDeviceName's doc comment.
 
+
+## Turn 6  (output_tokens=442)
 - CALL Bash: git diff projects/synth/tests/engine_tests.cpp | grep -n "wantEncoderMidiInput\|_and_save_status_are_logged" -A3 -B3 | head -40
   OUT: 13-@@ -75,17 +74,6 @@ struct EngineTestApp {
 14-     // identity/ordering set this before constructing the Engine; default
 15-     // false keeps ever
+
+## Turn 7  (output_tokens=520)
 - SAY: Let me look at the specific test and the Engine LoadRuntimeConfiguration comment in context.
+
+## Turn 8  (output_tokens=260)
 - CALL Bash: grep -n "engine_runtime_configuration_load_and_save_status_are_logged" /Users/joyo/.codex/worktrees/ae61/Sheaf/projects/synth/tests/engine_tests.cpp
   OUT: 381:TEST_CASE(engine_runtime_configuration_load_and_save_status_are_logged) {
+
+## Turn 9  (output_tokens=269)
 - CALL Read: /Users/joyo/.codex/worktrees/ae61/Sheaf/projects/synth/tests/engine_tests.cpp
   OUT: 381	TEST_CASE(engine_runtime_configuration_load_and_save_status_are_logged) {
 382	    const std::filesystem::path dataRoot =
 383	        std::filesyst
+
+## Turn 10  (output_tokens=269)
 - CALL Read: /Users/joyo/.codex/worktrees/ae61/Sheaf/projects/synth/include/synth/Engine.hpp
   OUT: 300	                parameterMessage.group == nullptr) {
 301	                continue;
 302	            }
 303	            // slog-7: INFO-log storage-b
+
+## Turn 11  (output_tokens=1714)
 - SAY: Let me verify what `ConfigureLogDirectory` does, since it's called before `create_directories(logsRoot)`.
+
+## Turn 12  (output_tokens=857)
 - CALL Bash: grep -n "ConfigureLogDirectory\|SetLogDirectoryForTesting\|void DoLog\|logDirectory_\|OpenLogFile\|ofstream\|fopen\|std::filesystem::create" /Users/joyo/.codex/worktrees/ae61/Sheaf/projects/synth/include/synth/AsyncLogger.hpp | head -40
   OUT: 86:    std::string logDirectory_;
 88:    std::ofstream logFile_;
 95:        , logDirectory_()
 126:    void DoLog() {
 160:    void ConfigureLogDirector
+
+## Turn 13  (output_tokens=140)
 - CALL Read: /Users/joyo/.codex/worktrees/ae61/Sheaf/projects/synth/include/synth/AsyncLogger.hpp
   OUT: 126	    void DoLog() {
 127	        std::size_t emptyQueueCount = 0;
 128	        bool didSomething = false;
 129	
 130	        while (emptyQueueCount < k
+
+## Turn 14  (output_tokens=6496)
 - SAY: I've reviewed all three edits in context. Here are my findings.
 
 ## Findings

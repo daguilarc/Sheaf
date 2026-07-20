@@ -1,0 +1,22 @@
+{
+  "task_key": "add-note-system-message-mappings__task-4",
+  "G1": 5,
+  "G2": 5,
+  "G3": 5,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "verdict_sequence": ["Approved"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "No findings; documentation-only three-line coverage-table addition",
+    "Each coverage claim traces to real, aptly-named tests confirmed by grep",
+    "openspec validate --strict reproduces valid: true, issues: []",
+    "Coverage commit touches only coverage.md, no fix/production code smuggled in"
+  ],
+  "reviewer_models": ["claude-sonnet-5"],
+  "excluded_reviews": []
+}

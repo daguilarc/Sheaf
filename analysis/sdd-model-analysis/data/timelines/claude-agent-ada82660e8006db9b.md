@@ -19,8 +19,10 @@ Answer precisely (with file:line):
 
 Give concrete quotes and line numbers. Be concise. Flag any place where a checkbox/claim lacks real evidence.
 
-## Turn 1  (output_tokens=537)
+## Turn 1  (output_tokens=10)
 - SAY: I'll read all the requested files in parallel.
+
+## Turn 2  (output_tokens=5)
 - CALL Read: /Users/joyo/.codex/worktrees/e1e8/Sheaf/projects/synth/tests/braid4_deadline_tests.cpp
   OUT: 1	#include "Braid4Core.hpp"
 2	
@@ -28,6 +30,8 @@ Give concrete quotes and line numbers. Be concise. Flag any place where a checkb
 4	
 5	#ifdef JUCE_MAJOR_VERSION
 6	#error "Braid 4 deadline tests must not see JUCE headers
+
+## Turn 3  (output_tokens=5)
 - CALL Read: /Users/joyo/.codex/worktrees/e1e8/Sheaf/projects/synth/tests/braid4_system_tests.cpp
   OUT: 1	#include "Braid4.hpp"
 2	#include "Braid4Core.hpp"
@@ -35,12 +39,16 @@ Give concrete quotes and line numbers. Be concise. Flag any place where a checkb
 4	
 5	#include "synth/AppConcepts.hpp"
 6	#include "synth/Modules.
+
+## Turn 4  (output_tokens=5)
 - CALL Read: /Users/joyo/.codex/worktrees/e1e8/Sheaf/.superpowers/sdd/scale-modulation-processing/task-6-report.md
   OUT: 1	# Task 6 Report: Braid4 Structural/Deadline Regression and Coverage Closure
 2	
 3	## Scope
 4	
 5	- Added one authoritative Braid4 work-counter case co
+
+## Turn 5  (output_tokens=5)
 - CALL Read: /Users/joyo/.codex/worktrees/e1e8/Sheaf/.superpowers/sdd/scale-modulation-processing/task-6-review-package.md
   OUT: 1	# Review package: 5a1e9408..baf2c608
 2	
@@ -49,6 +57,8 @@ Give concrete quotes and line numbers. Be concise. Flag any place where a checkb
 5	
 6	## Files changed
 7	 projects/synth
+
+## Turn 6  (output_tokens=503)
 - CALL Read: /Users/joyo/.codex/worktrees/e1e8/Sheaf/projects/synth/docs/coverage.md
   OUT: 1	# Spec Coverage
 2	
@@ -57,6 +67,8 @@ Give concrete quotes and line numbers. Be concise. Flag any place where a checkb
 5	| Requirement | Status | Primary exact coverage |
 6	|---|---|---|
 7	|
+
+## Turn 7  (output_tokens=4)
 - SAY: I have everything needed to answer. Note one detail: the report/review-package diff shows a field named `denseConfiguredRouteVisits`, but the current committed test file renamed it to `materializedTopLevelDenseRouteVisitUpperBound` (a later polish commit). That doesn't affect the answers.
 
 ## 1. EQUAL-WORK COUNTERS — YES, structural work assertions present

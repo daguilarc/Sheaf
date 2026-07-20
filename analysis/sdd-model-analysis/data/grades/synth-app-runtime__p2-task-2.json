@@ -1,0 +1,23 @@
+{
+  "task_key": "synth-app-runtime__p2-task-2",
+  "G1": 4,
+  "G2": 3,
+  "G3": 4,
+  "G4": 2,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 0,
+  "verdict_sequence": ["REVISE", "PASS"],
+  "rounds_to_accept": 2,
+  "final_grade": "C",
+  "evidence": [
+    "Caller-owned arena lifetime/invalidation contract not adequately documented; may dangle after reset",
+    "Reuse test serializes twice before popping first message; could pass with first doc silently overwritten",
+    "Should fix before accepting task as a safe API change",
+    "Re-review: lifetime/invalidation contract now documented at field and call site, consume-before-reuse noted",
+    "Re-review: reuse test now pops and asserts patch A before serializing patch B; fix closes both gaps"
+  ],
+  "reviewer_models": ["gpt-5.5"],
+  "excluded_reviews": []
+}

@@ -1,0 +1,24 @@
+{
+  "task_key": "add-browser-wasm-synth-runtime__task-5",
+  "G1": 3,
+  "G2": 2,
+  "G3": 4,
+  "G4": 4,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 2,
+  "verdict_sequence": ["PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "C",
+  "evidence": [
+    "Sysex requested (sysex:true) but silently dropped for payloads over 3 bytes",
+    "Heap allocation per message in the realtime worklet drain callback",
+    "Controllers page device listing/edit flow not demonstrated in the diff",
+    "Cross-thread SPSC queue delivery cannot be verified from diff alone",
+    "Incoming-MIDI path genuinely wired to real synth bus, not a decorative stub",
+    "sendMidiOutput defaults to a no-op and is never wired in boot.js"
+  ],
+  "reviewer_models": ["claude-opus-4-8"],
+  "excluded_reviews": []
+}

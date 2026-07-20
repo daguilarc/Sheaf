@@ -1,0 +1,22 @@
+{
+  "task_key": "synth-app-runtime__task-3",
+  "G1": 4,
+  "G2": 5,
+  "G3": 5,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 1,
+  "verdict_sequence": ["PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "Matches required API, header-only thread_local design, namespace, enum layout, scoped restore behavior",
+    "Implements prior-value restoration correctly including nested scopes and thread-local default isolation",
+    "Tests cover required behaviors from the brief",
+    "Minor interpretation nit: ThreadIdToString(Count) returns \"Count\" instead of \"Unknown\" if output set read as closed"
+  ],
+  "reviewer_models": ["gpt-5.5"],
+  "excluded_reviews": []
+}

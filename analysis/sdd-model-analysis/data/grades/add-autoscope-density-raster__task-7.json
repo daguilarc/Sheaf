@@ -1,0 +1,23 @@
+{
+  "task_key": "add-autoscope-density-raster__task-7",
+  "G1": 5,
+  "G2": 5,
+  "G3": 4,
+  "G4": 5,
+  "G5": 2,
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 2,
+  "verdict_sequence": ["REVISE", "PASS", "PASS"],
+  "rounds_to_accept": 2,
+  "final_grade": "C",
+  "evidence": [
+    "Important: report claims 37/37 scenarios audited, spec files actually define 38",
+    "Important: report claims dsp_tests 57/57 PASS, actual is 56/56 PASS",
+    "Both errors are self-reported evidence-count inaccuracies, not code/spec defects",
+    "Rereview PASS: both counts corrected, no stale 37/37 or 57/57 strings remain",
+    "Later PASS: benchmark/doc round finds only non-blocking minors, e.g. timer scope",
+    "All formulas, defaults, and coverage rows verified line-by-line against source"
+  ],
+  "reviewer_models": ["claude-sonnet-5", "claude-opus-4-8"]
+}

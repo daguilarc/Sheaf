@@ -1,0 +1,24 @@
+{
+  "task_key": "add-dresden-4-synth-app__task-8",
+  "G1": 4,
+  "G2": 5,
+  "G3": 5,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 1,
+  "verdict_sequence": ["PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "VERDICT PASS; findings informational only, nothing blocking",
+    "Manifest values verified exact: appId dresden-4, displayName Dresden 4, minEncoders 16",
+    "Generic runtime ownership confirmed, no Dresden-specific path; single activeSession_ member",
+    "Full clean rebuild of SheafPatch.app succeeded end-to-end, confirming include graph complete",
+    "Nit: 4:1 ratio only in README.md, not repeated in apps/dresden-4/README.md; not worth revision",
+    "Tests build real registrations, click real buttons, assert real paths, not tautological"
+  ],
+  "reviewer_models": ["claude-sonnet-5"],
+  "excluded_reviews": []
+}

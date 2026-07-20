@@ -1,0 +1,22 @@
+{
+  "task_key": "add-target-center-alpha__task-1",
+  "G1": 3,
+  "G2": 5,
+  "G3": 5,
+  "G4": 3,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 0,
+  "verdict_sequence": ["REVISE", "PASS"],
+  "rounds_to_accept": 2,
+  "final_grade": "B",
+  "evidence": [
+    "Existing tests still assert legacy default assigns raw target directly; would break GREEN phase",
+    "Fixed: legacy tests opted into targetCenterAlpha=1.0 to preserve immediate-target intent",
+    "Covers all five requested RED scenarios: default/invalid config, slew, alpha-one, recursion, per-sample order",
+    "Round2: Approved, focused RED test change, prior regression addressed"
+  ],
+  "reviewer_models": ["gpt-5.6-terra"],
+  "excluded_reviews": []
+}

@@ -1,0 +1,27 @@
+{
+  "task_key": "add-standard-modulators__task-4",
+  "G1": 3,
+  "G2": 3,
+  "G3": 4,
+  "G4": 4,
+  "G5": 3,
+  "n_critical": 0,
+  "n_important": 3,
+  "n_minor": 2,
+  "verdict_sequence": ["REVISE", "PASS"],
+  "rounds_to_accept": 2,
+  "final_grade": "C",
+  "evidence": [
+    "Sparse-depth hot-path optimization had no OpenSpec authorization or design.md documentation",
+    "Report under-disclosed a more severe 96kHz p99 deadline miss (3.592ms vs 2.133ms threshold)",
+    "Hot path used checked Modulators::Value per index, avoidable overhead in thin margin",
+    "Modulators::Apply now orphaned, duplicate dot-product logic with nothing keeping them in sync",
+    "Thin coverage of AssignModulationDepth(modIx, nullptr) single-index clear semantics",
+    "Round 2: all three important and both minor findings confirmed FIXED, both verdicts Approved"
+  ],
+  "reviewer_models": ["claude-sonnet-5"],
+  "excluded_reviews": [
+    "claude-ed203d11-3c05-4dcf-aaaf-191e7e62c9e6.md",
+    "claude-eecb7070-9252-4b7a-b34f-439aa6a88edd.md"
+  ]
+}

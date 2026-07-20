@@ -1,0 +1,23 @@
+{
+  "task_key": "add-autoscope-density-raster__task-3",
+  "G1": 5,
+  "G2": 5,
+  "G3": 4,
+  "G4": 2,
+  "G5": 3,
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 3,
+  "verdict_sequence": ["PASS", "PASS", "REVISE"],
+  "rounds_to_accept": null,
+  "final_grade": "D",
+  "evidence": [
+    "Efficiency follow-up PASS; informational note on evaluatedPairs count only",
+    "OpenSpec ledger issue 'was Important', palette/registry 'was Minor' now resolved",
+    "Latest round: CHANGES REQUESTED - anchor helper makes test vacuous",
+    "Test asserts a false invariant: signed/summary anchors coincide, but diverge by FIR delay",
+    "Production density-raster implementation itself deemed correct across full checklist",
+    "No later review confirms concern-3 fix was applied and re-verified"
+  ],
+  "reviewer_models": ["claude-opus-4-8", "claude-sonnet-5"]
+}

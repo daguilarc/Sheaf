@@ -177,6 +177,9 @@ def extract(path):
                             s = text_of(s) if not isinstance(s, str) else s
                             cur_items.append({"k": "out", "s": str(s)[:200]})
             elif t == "assistant":
+                # each assistant line is one API response: close the previous
+                # turn so phase labeling gets per-request granularity
+                flush()
                 m = e.get("message") or {}
                 rec["model"] = m.get("model") or rec["model"]
                 u = m.get("usage") or {}

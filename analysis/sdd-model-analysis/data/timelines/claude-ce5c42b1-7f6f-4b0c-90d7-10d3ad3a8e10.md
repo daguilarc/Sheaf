@@ -5,18 +5,24 @@ task keys: {"worktree": "d37c"}
 ## Prompt (truncated)
 Read /Users/joyo/.codex/worktrees/d37c/Sheaf/.superpowers/sdd/task-5-reviewer-prompt.md and carry out that review exactly. Return only the requested review report.
 
-## Turn 1  (output_tokens=24029)
+## Turn 1  (output_tokens=250)
 - CALL Read: /Users/joyo/.codex/worktrees/d37c/Sheaf/.superpowers/sdd/task-5-reviewer-prompt.md
   OUT: 1	# Task 5 Reviewer Prompt
 2	
 3	You are reviewing one task's implementation: first whether it matches its requirements, then whether it is well-built.
+
+## Turn 2  (output_tokens=298)
 - SAY: I'll read the task brief, the implementer's report, and the diff.
+
+## Turn 3  (output_tokens=298)
 - CALL Read: /Users/joyo/.codex/worktrees/d37c/Sheaf/.superpowers/sdd/task-5-brief.md
   OUT: 1	### Task 5: OLA-Driven Resynthesizer
 2	
 3	**Files:**
 4	- Modify: `projects/synth/include/synth/DspResynthesis.hpp`
 5	- Modify: `projects/synth/tests
+
+## Turn 4  (output_tokens=298)
 - CALL Read: /Users/joyo/.codex/worktrees/d37c/Sheaf/.superpowers/sdd/task-5-report.md
   OUT: 1	# Task 5 Report
 2	
@@ -26,6 +32,8 @@ Read /Users/joyo/.codex/worktrees/d37c/Sheaf/.superpowers/sdd/task-5-reviewer-pr
 6	
 7	- `Input`
 
+
+## Turn 5  (output_tokens=298)
 - CALL Read: /Users/joyo/.codex/worktrees/d37c/Sheaf/.superpowers/sdd/review-cb8978a6..35863100.diff
   OUT: 1	# Review package: cb8978a6..35863100
 2	
@@ -34,12 +42,18 @@ Read /Users/joyo/.codex/worktrees/d37c/Sheaf/.superpowers/sdd/task-5-reviewer-pr
 5	
 6	## Files changed
 7	 projects/synth/include/synth/D
+
+## Turn 6  (output_tokens=12718)
 - SAY: I've read the brief, the report, and the full diff. Verifying two named integration risks before reporting.
+
+## Turn 7  (output_tokens=6359)
 - CALL Bash: grep -nE "void Write|Process|kHopDenom|kHopSize" projects/synth/include/synth/DspOla.hpp | head -30; echo "---POLAR---"; grep -n "Polar2Pi" projects/synth/include/synth/*.hpp
   OUT: 14:    static constexpr std::size_t kHopDenom = 4;
 16:    static constexpr std::size_t kHopSize = kTableSize / kHopDenom;
 22:    float Process() {
 32:
+
+## Turn 8  (output_tokens=3510)
 - SAY: Both integration risks resolved: `Ola<Bits>::Write` takes a `DiscreteFourierTransform<Bits>` (DspOla.hpp:32), matching `m_ola.Write(m_lastSynthesisDft)`; `DspMath<Bits>::Polar2Pi(float, float)` exists (DspMath.hpp:87).
 
 ### Spec Compliance

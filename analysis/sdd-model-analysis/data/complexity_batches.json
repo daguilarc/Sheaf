@@ -124,7 +124,7 @@
     "change": "add-browser-wasm-runtime",
     "task": "task-8",
     "brief_file": null,
-    "report_file": null,
+    "report_file": "/Users/joyo/Sheaf/.superpowers/sdd/task-8-report.md",
     "prompt_fallback": "You are implementing Task 8 of the OpenSpec/Superpowers plan in /Users/joyo/.codex/worktrees/d359/Sheaf.\n\nContext: Tasks 1-7 are complete and committed. This is the final end-to-end browser validation/documentation slice for the Chrome-targeted static WASM synth runtime. You are not alone in the codebase: do not revert existing edits, and work with current files.\n\nRead this first \u2014 it is your exact task requirements:\n/Users/joyo/.codex/worktrees/d359/Sheaf/.superpowers/sdd/task-8-brief.md\n\nSupplemental binding constraints:\n- ZERO miniapp-specific or concrete-app-specific browser runtime/backend logic. Miniapp may only be named in the browser entry/build/smoke target, like existing miniapp_entry.cpp; no miniapp-specific JS/HTML/control fallback.\n- Static website only: no dynamic HTTP API, WebSocket service, native helper, server-side synth process, or app-specific backend.\n- Fake generic app validation must run before miniapp smoke.\n- Chrome/Playwright tests must cover app open, audio flow, bidirectional MIDI including sysex through injectable ports, mouse gestures/command-buffer rendering, persistence/static-only behavior, and absence of miniapp-specific browser glue. Audio input remains skipped.\n- Emscripten (`em++`) may be unavailable locally. If so, do not fake a real WASM link; keep the limitation explicit in the report and use existing facade/injectable coverage where appropriate. If a real miniapp browser smoke cannot honestly run because the WASM artifact cannot be built, report DONE_WITH_CONCERNS, not DONE.\n- There is a minor approved review note from Task 7: BrowserRuntime.hpp has a no-op ternary around `/data`; you may clean it up only if it naturally fits without changing behavior.\n\nOwned files from the task brief:\n- Create: projects/synth/browser/tests/fake-app.e2e.spec.ts\n- Create: projects/synth/browser/tests/miniapp-smoke.spec.ts\n- Create: projects/synth/browser/README.md\n- Modify: projects/synth/browser/Makefile\n- Modify: projects/synth/Makefile\n- Do not update OpenSpec checkboxes; the controller will do that after review/verification.\n\nFollow TDD where practical. Run the required verification from the brief:\n  make -C projects/synth test\n  npm --prefix projects/synth/browser test\n  openspec validate add-browser-wasm-runtime --strict\nAlso run git diff --check.\n\nIf full browser test execution requires Playwright/Chromium permissions and fails due sandboxing, record the exact failure in your report; the controller can rerun with approved escalation.\n\nWrite your full report to:\n/Users/joyo/.codex/worktrees/d359/Sheaf/.superpowers/sdd/task-8-report.md\n\nReport contract: include status (DONE, DONE_WITH_CONCERNS, NEEDS_CONTEXT, or BLOCKED), commits, files changed, tests run with outcomes, and concerns. Commit your changes with the requested message if successful. Return only status, commit(s), one-line test summary, and concerns."
    },
    {
@@ -193,7 +193,7 @@
     "change": "add-browser-wasm-synth-runtime",
     "task": "task-8",
     "brief_file": "/Users/joyo/.codex/worktrees/9209/Sheaf/.superpowers/sdd/task-8-brief.md",
-    "report_file": null,
+    "report_file": "/Users/joyo/Sheaf/.superpowers/sdd/task-8-report.md",
     "prompt_fallback": null
    },
    {
@@ -262,7 +262,7 @@
     "change": "add-dresden-4-synth-app",
     "task": "task-8",
     "brief_file": null,
-    "report_file": null,
+    "report_file": "/Users/joyo/Sheaf/.superpowers/sdd/task-8-report.md",
     "prompt_fallback": ""
    },
    {
@@ -270,7 +270,7 @@
     "change": "add-dresden-4-synth-app",
     "task": "task-9",
     "brief_file": null,
-    "report_file": null,
+    "report_file": "/Users/joyo/Sheaf/.superpowers/sdd/task-9-report.md",
     "prompt_fallback": ""
    },
    {
@@ -1261,7 +1261,7 @@
     "change": "unify-agent-review-source-rendering",
     "task": "task-8",
     "brief_file": null,
-    "report_file": null,
+    "report_file": "/Users/joyo/Sheaf/.superpowers/sdd/task-8-report.md",
     "prompt_fallback": "Implement Task 8 documentation/checklist sync in repo `/Users/joyo/.codex/worktrees/c7be86e7-6e69-4a9b-94b9-f97a4403a660/Sheaf`.\n\nYou are not alone in the codebase; do not revert others' changes. Worktree is clean at task start.\n\nOwned files:\n- `openspec/changes/unify-agent-review-source-rendering/tasks.md`\n- `projects/sheaf-chat/docs/coverage.md`\n\nContext/results to record:\n- Targeted validation passed:\n  1. `npm run build`: PASS\n  2. `node --test dist/tests/ui/chatScreen.test.js --test-name-pattern \"Agent Review|Highlight|highlight|Emacs|search|mark\"`: PASS, 34/34\n  3. `node --test dist/tests/integration/browserChat.integration.test.js --test-name-pattern \"file view|highlighted|search|mark|navigation\"`: PASS, 18/18\n  4. `node --test dist/tests/integration/repoWorkspaceFlow.integration.test.js --test-name-pattern \"Agent Review|hunk-aware source rendering\"`: PASS, 3/3\n- Full `npm test` in sandbox failed due Playwright Chromium launch environment errors, not an assertion failure. Exact salient error: `FATAL:base/apple/mach_port_rendezvous_mac.cc:159 Check failed: kr == KERN_SUCCESS. bootstrap_check_in ... Permission denied (1100)`. Attempting an unsandboxed rerun with approval was rejected by the approval system due account usage limit, so full-suite validation could not be completed in this turn.\n- Split-path audit command:\n  `rg -n \"RenderInlineReviewFile|DecorateRenderedReview|DecorateReviewFocusedPoint|CreateHighlightedFilePreview|sheaf-chat-agent-review-inline-code|textContent = row\\\\.text|file-search-match|file-region\" projects/sheaf-chat/src/ui`\n  Result: no `DecorateReviewFocusedPoint`, no `textContent = row.text`; remaining `RenderInlineReviewFile`/`DecorateRenderedReview` are review chrome/focus orchestration over shared source rendering; `CreateHighlightedFilePreview` is a normal-file fallback.\n\nTasks:\n1. Update `projects/sheaf-chat/docs/coverage.md` with a concise `Unified Source Rendering Coverage` section or table under/near file-browser coverage. Include no-hunk vs hunk-bearing coverage for syntax highlighting, point/navigation, mark/region, incremental search, pure insertion/deletion, edit replacement, textContent stability, and Agent Review behavior preservation. Mention the full-suite Playwright environment limitation if appropriate, but keep it concise.\n2. Update `openspec/changes/unify-agent-review-source-rendering/tasks.md` checkboxes to reflect completed work. For broad parity subtasks that are covered by existing browserChat tests plus the new hunk tests, mark complete. For full-suite validation, do not mark complete if the task specifically requires full suite pass; instead leave unchecked or add a brief note if the file style supports notes. Preserve markdown style.\n\nAfter editing, run:\n- `git diff --check`\n- `openspec status --change unify-agent-review-source-rendering`\n\nReport changed paths and command results."
    },
    {

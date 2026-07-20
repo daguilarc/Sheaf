@@ -1,0 +1,23 @@
+{
+  "task_key": "wt:d37c__task-4",
+  "G1": 5,
+  "G2": 5,
+  "G3": 4,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 2,
+  "verdict_sequence": ["PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "Spec compliant; DSP headers JUCE-free, templated on Bits, no Math4096 alias",
+    "2.0f/+0.5 residual scaling verified correct via in-diff DFT normalization test",
+    "Residual test: bin 8 cancelled <0.05, sub-threshold bin 20 retained >0.10",
+    "Minor: dead m_frequencies/m_logFrequencies members never read in diff",
+    "Minor: 2.0f and +0.5f are unexplained magic numbers, should be named constants",
+    "Task quality: Approved, no critical or important findings"
+  ],
+  "reviewer_models": ["claude-opus-4-8"]
+}

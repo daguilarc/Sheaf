@@ -13,46 +13,72 @@ B) ENCODER BADGE LABELS 16..63: Read projects/synth/include/synth/EncoderDraw.hp
 
 Be concise and concrete with file:line and quotes.
 
-## Turn 1  (output_tokens=3664)
+## Turn 1  (output_tokens=14)
 - SAY: I'll investigate both questions in parallel.
+
+## Turn 2  (output_tokens=7)
 - CALL Bash: grep -rn "browser\|portable_ui_tests" /Users/joyo/.codex/worktrees/e1e8/Sheaf/.superpowers/sdd/scale-modulation-processing/final-review-package.md | head -50
   OUT: /Users/joyo/.codex/worktrees/e1e8/Sheaf/.superpowers/sdd/scale-modulation-processing/final-review-package.md:53: projects/synth/tests/portable_ui_test
+
+## Turn 3  (output_tokens=289)
 - CALL Read: /Users/joyo/.codex/worktrees/e1e8/Sheaf/projects/synth/include/synth/EncoderDraw.hpp
   OUT: 1	#pragma once
 2	
 3	// JUCE-free portable encoder draw state, geometry, fourteen-segment label,
 4	// and DrawCommand builder. Backends render the retu
+
+## Turn 4  (output_tokens=16)
 - SAY: Now let me find the tests and browser command buffer code.
+
+## Turn 5  (output_tokens=8)
 - CALL Bash: grep -rn "BadgeText\|one-based\|badge is\|gesture 16\|gesture 63\|\"64\"\|\"17\"" /Users/joyo/.codex/worktrees/e1e8/Sheaf/projects/synth/tests/ | head -40
   OUT: /Users/joyo/.codex/worktrees/e1e8/Sheaf/projects/synth/tests/browser_runtime_contract_tests.cpp:281:    fixture.runtime.DispatchAction("contract.app.a
+
+## Turn 6  (output_tokens=529)
 - CALL Bash: ls /Users/joyo/.codex/worktrees/e1e8/Sheaf/projects/synth/tests/ | grep -i "browser\|command\|portable"
   OUT: browser_audio_device_tests.cpp
 browser_command_buffer_tests.cpp
 browser_midi_bridge_tests.cpp
 browser_runtime_contract_tests.cpp
 portable_ui_tests.cpp
+
+## Turn 7  (output_tokens=6)
 - SAY: Let me read the relevant test sections and inspect the browser command buffer.
+
+## Turn 8  (output_tokens=3)
 - CALL Read: /Users/joyo/.codex/worktrees/e1e8/Sheaf/projects/synth/tests/portable_ui_tests.cpp
   OUT: 420	    parameterState.voiceCount.store(1);
 421	    parameterState.baseColor.Store(synth::Color::Red);
 422	    parameterState.indicatorColors[0].Store
+
+## Turn 9  (output_tokens=3)
 - CALL Bash: grep -rn "gesture\|Gesture\|GestureMask\|mask\|Mask\|uint64\|uint32\|version\|Version" /Users/joyo/.codex/worktrees/e1e8/Sheaf/projects/synth/tests/browser_command_buffer_tests.cpp | head -40; echo "---DrawCommand serialize---"; grep -rln "DrawCommand\|CommandBuffer\|Serialize\|serialize" /Users/joy
   OUT: /Users/joyo/.codex/worktrees/e1e8/Sheaf/projects/synth/tests/browser_command_buffer_tests.cpp:87:    Require(decoded.version == 1, "buffer version");
 
+
+## Turn 10  (output_tokens=16)
 - SAY: Let me verify the browser command buffer schema has no gesture-mask field, and check git diff for browser files.
+
+## Turn 11  (output_tokens=8)
 - CALL Bash: grep -n "gesture\|Gesture\|mask\|Mask\|uint64\|struct\|kCommandBufferVersion\|version\|Kind" /Users/joyo/.codex/worktrees/e1e8/Sheaf/projects/synth/include/synth/browser/BrowserCommandBuffer.hpp | head -60
   OUT: 22:inline constexpr std::uint16_t kCommandBufferVersion = 1;
 24:enum class CommandNodeKind : std::uint8_t {
 39:enum class CommandDrawKind : std::uint8
+
+## Turn 12  (output_tokens=600)
 - CALL Bash: git diff --stat main...HEAD -- projects/synth/include/synth/browser projects/synth/src 2>/dev/null | grep -i browser; echo "=== files changed touching browser command buffer ==="; git log --oneline main...HEAD 2>/dev/null | head; echo "=== diff of BrowserCommandBuffer since main ==="; git diff main.
   OUT: === files changed touching browser command buffer ===
 cfd5fc03 docs(synth): record sparse modulation cleanup
 092a64d2 chore(synth): polish sparse modu
+
+## Turn 13  (output_tokens=411)
 - CALL Bash: cd /Users/joyo/.codex/worktrees/e1e8/Sheaf; echo "=== browser files changed vs main ==="; git diff --stat main...HEAD -- projects/synth/include/synth/browser/ projects/synth/tests/browser_command_buffer_tests.cpp; echo "exit: $?"; echo "=== any change touching 'browser' path in branch ==="; git diff
   OUT: === browser files changed vs main ===
 exit: 0
 === any change touching 'browser' path in branch ===
 (none above = unchanged)
+
+## Turn 14  (output_tokens=1754)
 - SAY: Both questions verified. Findings:
 
 ## A) BROWSER COMMAND PROTOCOL — VERDICT: PROTOCOL UNCHANGED (safe)

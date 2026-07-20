@@ -1,0 +1,22 @@
+{
+  "task_key": "filter-braid4-parameter-values__task-1",
+  "G1": 5,
+  "G2": 5,
+  "G3": 4,
+  "G4": 4,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 2,
+  "verdict_sequence": ["PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "All spec-compliance checks PASS; phase split, wrappers, ordering all match brief exactly",
+    "Critical: None. Important: None.",
+    "Minor: ReplaceCachedKnobValue's out-of-range throw path has no test exercising it",
+    "Minor: ProcessSample reordering (phase1-for-all then phase2-for-all) not documented as intentional",
+    "Commit scoped to exactly the three files named in the brief"
+  ],
+  "reviewer_models": ["claude-sonnet-5"]
+}

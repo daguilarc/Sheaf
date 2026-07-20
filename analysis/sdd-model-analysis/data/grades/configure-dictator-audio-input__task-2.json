@@ -1,0 +1,23 @@
+{
+  "task_key": "configure-dictator-audio-input__task-2",
+  "G1": 5,
+  "G2": 4,
+  "G3": 5,
+  "G4": 4,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 1,
+  "n_minor": 0,
+  "verdict_sequence": ["PASS", "REVISE", "PASS"],
+  "rounds_to_accept": 3,
+  "final_grade": "B",
+  "evidence": [
+    "APPROVED: prior gaps fixed - default mode no longer falls back to devices.first when unknown/nil",
+    "Selected-input apply failure and unavailable selected input confirmed not to fall back to default",
+    "P3: test fake for successful recording never creates stoppable recorder state, internally inconsistent lifecycle reachable via public initializer",
+    "Round3: injected recording seam confirmed to have coherent start/stop lifecycle, stop() returns captured audio correctly",
+    "Verification runs (swift test, filtered suite) passed 14-15 tests, 0 failures across rounds"
+  ],
+  "reviewer_models": ["gpt-5.5"],
+  "excluded_reviews": []
+}

@@ -1,0 +1,21 @@
+{
+  "task_key": "fix-agent-review-hunk-navigation__task-2",
+  "G1": 5,
+  "G2": 5,
+  "G3": 5,
+  "G4": 5,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "verdict_sequence": ["APPROVED"],
+  "rounds_to_accept": 1,
+  "final_grade": "A",
+  "evidence": [
+    "No findings for the requested Task 2 Launchpad review cell focus-gating scope",
+    "Build passed, 30 tests passed, 0 failed",
+    "Covers unfocused navigation/mutation off, no-draft off/no-op, armed no-hunk, insert-serialized-review, failed-insert-preserves-draft",
+    "Final diff limited to service.ts and agentReview.test.ts, no package-lock drift"
+  ],
+  "reviewer_models": ["gpt-5.5"]
+}

@@ -1,0 +1,24 @@
+{
+  "task_key": "add-browser-wasm-synth-runtime__task-6",
+  "G1": 3,
+  "G2": 3,
+  "G3": 3,
+  "G4": 5,
+  "G5": 4,
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 3,
+  "verdict_sequence": ["REVISE", "PASS"],
+  "rounds_to_accept": 2,
+  "final_grade": "C",
+  "evidence": [
+    "syncfs(populate=true) gate not active in real boot path; storageModule undefined in raw-wasm path",
+    "sheath_browser_log_record is a pure stub; native-originated logs never reach IndexedDB",
+    "Rereview: create call now sits behind requireBrowserStorageModule, gate is structural not additive",
+    "Regression test asserts rejection, no sheath_browser_create call, and visible status message",
+    "appendBrowserLog overwrites per-message files; same-millisecond collisions last-wins",
+    "globalThis.sheathRuntime assigned before the gate throws; harmless but untidy"
+  ],
+  "reviewer_models": ["claude-opus-4-8"],
+  "excluded_reviews": []
+}

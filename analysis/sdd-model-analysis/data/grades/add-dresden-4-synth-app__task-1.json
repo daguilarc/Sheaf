@@ -1,0 +1,23 @@
+{
+  "task_key": "add-dresden-4-synth-app__task-1",
+  "G1": 5,
+  "G2": 4,
+  "G3": 3,
+  "G4": 4,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 3,
+  "verdict_sequence": ["PASS"],
+  "rounds_to_accept": 1,
+  "final_grade": "B",
+  "evidence": [
+    "Overflow guard rounds to exactly 2^64 in double precision; latent but unreachable at realistic magnitudes",
+    "Non-compounding test doesn't actually exercise a scenario where compounding could occur",
+    "New free functions inserted in the middle of an unrelated Color constant block",
+    "Validate-before-mutate discipline gives a real all-or-nothing guarantee",
+    "Pointer-identity test directly proves the no-storage-rebuild constraint"
+  ],
+  "reviewer_models": ["claude-sonnet-5"],
+  "excluded_reviews": []
+}

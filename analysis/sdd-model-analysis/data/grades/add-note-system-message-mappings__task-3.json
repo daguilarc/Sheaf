@@ -1,0 +1,23 @@
+{
+  "task_key": "add-note-system-message-mappings__task-3",
+  "G1": 5,
+  "G2": 5,
+  "G3": 2,
+  "G4": 4,
+  "G5": 5,
+  "n_critical": 0,
+  "n_important": 2,
+  "n_minor": 1,
+  "verdict_sequence": ["REVISE", "PASS"],
+  "rounds_to_accept": 2,
+  "final_grade": "C",
+  "evidence": [
+    "Important: duplicate 'Type' column header, both AddressType and BlockMessageType return 'Type'",
+    "Important: Makefile stale-object gap causes silent ABI/struct-layout mismatch risk",
+    "Minor: no test exercises invalid AddressType indices on Block rows",
+    "Re-review: all three prior findings verified resolved, no new issues found",
+    "Makefile fixed at root cause; duplicate header fixed to 'Addr'; invalid-index test added"
+  ],
+  "reviewer_models": ["claude-sonnet-5", "claude-sonnet-5"],
+  "excluded_reviews": []
+}

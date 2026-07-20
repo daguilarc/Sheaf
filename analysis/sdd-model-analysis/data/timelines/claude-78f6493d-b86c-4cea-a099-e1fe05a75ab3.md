@@ -47,14 +47,18 @@ Specific strengths.
 **Task quality:** Approved | Needs fixes
 **Reasoning:** 1-2 sentence technical assessment.
 
-## Turn 1  (output_tokens=16211)
+## Turn 1  (output_tokens=672)
 - SAY: I'll review this task implementation. Let me start by reading the key files.
+
+## Turn 2  (output_tokens=336)
 - CALL Read: /Users/joyo/.codex/worktrees/9209/Sheaf/.superpowers/sdd/task-6-brief.md
   OUT: 1	## Task 6: IDBFS Storage, Runtime Config, Patch Store, and Browser Logs
 2	
 3	Implements OpenSpec tasks 6.1 through 6.6 and parts of 3.6 and 7.3.
 4	
 
+
+## Turn 3  (output_tokens=336)
 - CALL Read: /Users/joyo/.codex/worktrees/9209/Sheaf/.superpowers/sdd/browser-wasm-task-6-report.md
   OUT: 1	# Browser Wasm Synth Runtime - Task 6 Report
 2	
@@ -70,24 +74,38 @@ Specific strengths.
 5	
 6	## Files changed
 7	 .superpowers/sdd/browser-
+
+## Turn 4  (output_tokens=336)
 - CALL Read: /Users/joyo/.codex/worktrees/9209/Sheaf/.superpowers/sdd/review-c75d3a2b..17186dfe.diff
+
+## Turn 5  (output_tokens=908)
 - SAY: Let me verify the named risks against unchanged code — the `BrowserStatusCode` enum and `State()` definition.
+
+## Turn 6  (output_tokens=454)
 - CALL Bash: sed -n '1,80p' projects/synth/browser/cpp/BrowserHostTypes.hpp | grep -n "StatusCode\|StorageSyncPending\|StorageFailed\|Ready\|enum" 
   OUT: 18:enum class BrowserStatusCode : std::int32_t {
 19:    Ready = 0,
 25:    StorageSyncPending = 6,
 26:    StorageFailed = 7,
 31:    BrowserStatusCode c
+
+## Turn 7  (output_tokens=454)
 - CALL Bash: grep -n "StorageSyncPending\|StorageFailed\|enum class BrowserStatusCode\|Ready" projects/synth/browser/cpp/BrowserHostTypes.hpp
   OUT: 18:enum class BrowserStatusCode : std::int32_t {
 19:    Ready = 0,
 25:    StorageSyncPending = 6,
 26:    StorageFailed = 7,
 94:    return BrowserStatu
+
+## Turn 8  (output_tokens=6262)
 - SAY: I have enough to assess. Let me confirm one ordering detail in the real boot path regarding whether the raw-wasm instantiate produces an Emscripten `Module`.
+
+## Turn 9  (output_tokens=3131)
 - CALL Bash: grep -n "globalThis.Module\|Module\s*=\|loadCompiledModule\|instantiate" projects/synth/browser/js/runtime.js | head -30
   OUT: 20:export async function loadCompiledModule(url, fetchImpl = fetch) {
 35:    this.wasmModule = wasmModule;
+
+## Turn 10  (output_tokens=3322)
 - SAY: ### Spec Compliance
 - ✅ **Storage surface + ABI**: `storage.js` (`mountBrowserStorage`/`syncBrowserStorage`/`appendBrowserLog`) and the three C ABI symbols in `BrowserMiniAppHost.cpp:162-176` are implemented, tested, and wired to the enum values (`StorageSyncPending=6`, `StorageFailed=7`) that already exist in `BrowserHostTypes.hpp:25-26`. Native paths untouched; JUCE-free; origin-confined under `/sheath`.
 - ✅ **Post-write sync is off the realtime path**: worklet emits `browser-log`/`storage-sync` port messages; `handleBrowserStorageMessage` (`boot.js:304-321`) runs on the main/message thread,
