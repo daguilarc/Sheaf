@@ -1,6 +1,6 @@
 # Spec Coverage
 
-Last audit: standard modulators, fifteen-source application adoption, sparse modulation processing, absolute encoder mode, exact parameter projection, causal absolute encoder feedback synchronization, generic JUCE hierarchy/scrolling/production Controllers migration, runtime button grids, and Braid 4 oscillator-owned parameter-cache filtering, 2026-07-18
+Last audit: master-clock/MIDI-sync acceptance traces, host scheduling contracts, Sync runtime UI, standard modulators, fifteen-source application adoption, sparse modulation processing, absolute encoder mode, exact parameter projection, causal absolute encoder feedback synchronization, generic JUCE hierarchy/scrolling/production Controllers migration, runtime button grids, and Braid 4 oscillator-owned parameter-cache filtering, 2026-07-20
 
 | Requirement | Status | Primary exact coverage |
 |---|---|---|
@@ -82,6 +82,28 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
 | `bgr-5` | covered | `button_grid_tests` topology freeze plus unchanged capacities, storage addresses, and stable grid/slot pointers across runtime operations |
 | `sar-24` | covered | `engine_tests` manager/facade lifetime, pre-processor finalization, dual-bus pump, and publication; `rig_tests` and `miniapp_system_tests` unchanged app contract without grids |
 | `sru-27` | covered | JUCE-free block/view-model/portable binaries plus generic-JUCE portable backend/runtime-shell coverage and `controllers_page_simulation_tests` independent seeded oracle |
+| `sdsp-42` | covered | six `phasor2tick_*` cases in `dsp_tests`: silent priming/same-cell work, exact floor-cell crossing, backward/jump detection, invalid input, and allocation-free processing |
+| `smc-1` | covered | `engine_owns_one_stable_clock_prepares_before_app_and_publishes_exact_current_plan`, `master_clock_default_and_prepare_state_match_the_output_domain_contract`, `acceptance_trace_internal_timeline_orders_half_open_fractional_transport_epochs` |
+| `smc-2` | covered | both `clock_plan_queries_*` cases, `master_clock_commits_exact_adjacent_anchors_and_only_future_tempo_slopes`, internal-timeline trace, `clock_plan_is_queried_at_every_fractional_oversampled_subframe` |
+| `smc-3` | covered | `master_clock_rejects_invalid_prepare_and_tempo_transactionally`, `master_clock_receive_authority_rejects_manual_tempo_and_restores_it`, MiniApp tempo-authority cases |
+| `smc-4` | covered | internal-timeline and external-acquisition traces plus `master_clock_internal_transport_uses_boundary_epochs_and_current_run_time` and `master_clock_external_start_arms_and_first_clock_is_timestamped_zero` |
+| `smc-5` | covered | `master_clock_receive_gating_and_send_policy_are_independent`, `master_clock_transport_only_external_input_keeps_internal_tempo_authority`, `master_clock_ppqn_change_clears_external_lock_without_changing_lifetime_or_bpm` |
+| `smc-6` | covered | `acceptance_trace_external_acquisition_jitter_dropout_takeover_and_regeneration`, source-arbitration cases, delayed timestamp-history case, and Engine timestamp-order merge cases |
+| `smc-7` | covered | external-acquisition trace (64 stable intervals, jitter, missed clocks, dropout) plus focused PLL, phase-correction, and reacquisition cases |
+| `smc-8` | covered | internal-timeline and external-acquisition traces, `master_clock_external_activation_and_stop_fill_output_only_splices`, and cross-sender regeneration cases |
+| `smc-9` | covered | `acceptance_trace_mapper_output_calculation_reports_normative_maxima`, `acceptance_trace_concrete_sender_broadcast_reconnect_cutoff_and_fallback`, and focused mapper/sender generation, cutoff, lateness, half-open, reconnect, and overflow cases |
+| `smc-10` | covered | runtime-config v1/v2 migration, exact sync-field round trip, atomic rejection, and patch-exclusion cases in `parameter_modulation_tests` plus host Sync persistence tests |
+| `smc-11` | covered | `engine_clock_diagnostics_publication_never_tears_known_tuples`, `engine_publishes_sensible_clock_diagnostics_before_and_after_audio`, Sync page portable/JUCE/browser status coverage |
+| `smi-10` | covered | `MessageInRealtimeFactoriesPreserveInternalDefaultsAndExternalIdentity`, `RealtimeMidiProcessorTranslatesExactSingleByteMessagesWithOriginalTimestampAndSlot`, `EveryControllerProfileEndsInRealtimeMidiIncludingEmptyProfiles`, Engine ordered merge, empty-profile Rig case |
+| `smi-11` | covered | concrete-sender acceptance trace plus `scheduled_realtime_broadcast_preserves_original_deadline`, equal-deadline ordering, generation cutoff, overflow, and per-sink feedback isolation cases |
+| `smi-12` | covered | host-lead and immediate-fallback sender cases, browser timestamp-epoch and scheduled-Web-MIDI tests, and `portable_draw_geometry_tests` JUCE scheduling-capability/epoch/deadline assertions |
+| `sar-3` (modified) | covered | Engine stable-clock/prepare/current-plan cases and `rig_exposes_deterministic_clock_injection_queries_and_scheduled_output` |
+| `sar-6` (modified) | covered | Engine timestamp-order/commit/delegation cases, allocation-free block path, internal-timeline trace, and Braid fractional 4x query case |
+| `sar-11` (modified) | covered | MiniApp clocked ADSR topology, exact nondivisor-block gate boundaries, current-frame voice publication, tempo authority, and Rig clock surface cases |
+| `sar-18` (modified) | covered | Engine load-before-rebuild/default/save cases; runtime-config migration/atomic-save/patch-exclusion cases; JUCE/browser Sync Back persistence |
+| `sru-2` (modified) | covered | `TestSidebarOpensEachPageAndBackRestoresApp`, `TestRefreshUpdatesRuntimePageModelsAndRollingDeadline`, portable sidebar assertions, JUCE runtime-page/session tests, browser navigation |
+| `sru-12` (modified) | covered | `TestBackFromConfigurationPageSavesRuntimeConfiguration`, `TestSyncStagesRefreshesCommitsAndReopensFromEngineSnapshot`, JUCE runtime-shell Sync save/reopen, browser Sync Back persistence |
+| `sru-30` | covered | portable Sync surface assertions, `TestSyncStagesRefreshesCommitsAndReopensFromEngineSnapshot`, `TestBrowserSyncUsesSharedStagingPersistsAndResolvesSourceNames`, JUCE runtime-page/session and fake-app Playwright Sync cases |
 
 ## Requirement Mappings
 
@@ -906,6 +928,171 @@ Last audit: standard modulators, fifteen-source application adoption, sparse mod
   `braid4_meets_96000hz_256_frame_deadline_and_continuity` exercise the active
   filter path at 44.1, 48, and 96 kHz host rates. The required callback budget
   measurements are recorded in Task 4's verification report.
+
+### `sdsp-42` - Phasor-To-Tick Crossings
+
+- [`dsp_tests.cpp`](../tests/dsp_tests.cpp):
+  `phasor2tick_priming_and_same_cell_processing_are_silent`,
+  `phasor2tick_first_valid_process_silently_primes`, and
+  `phasor2tick_emits_exactly_when_the_floored_cell_changes` cover silent
+  priming, quiet same-cell work, and one tick at a floor-cell boundary.
+  `phasor2tick_detects_backward_time_and_multi_cell_jumps_once_per_call`,
+  `phasor2tick_rejects_invalid_inputs_without_corrupting_its_cell`, and
+  `phasor2tick_processing_performs_no_dynamic_allocation` cover the observable
+  discontinuity, validation, dependency-free, and realtime contracts.
+
+### `smc-1` Through `smc-5` - Ownership, Timeline, Tempo, Transport, And Gates
+
+- [`engine_tests.cpp`](../tests/engine_tests.cpp):
+  `engine_owns_one_stable_clock_prepares_before_app_and_publishes_exact_current_plan`
+  proves stable ownership, negotiated-audio preparation, and the exact plan
+  pointer exposed through `AudioBlock`. The null/unprepared and default-wired
+  sender cases cover deterministic startup and application delegation.
+- [`master_clock_tests.cpp`](../tests/master_clock_tests.cpp):
+  `acceptance_trace_internal_timeline_orders_half_open_fractional_transport_epochs`
+  records stopped lifetime time, half-open endpoint ownership, exact adjacent
+  anchors, a block-boundary tempo slope, fractional query/crossing results,
+  Start, distinct Continue wire intent with a new current-run epoch, Stop, and
+  transport-before-tick-zero ordering. The two `clock_plan_queries_*` cases and
+  delayed-plan-history case retain direct affine-plan assertions (`smc-2`).
+- `master_clock_receive_authority_rejects_manual_tempo_and_restores_it` and the
+  transactional tempo/underflow cases cover conversion and manual/external
+  authority (`smc-3`).
+  `master_clock_internal_transport_uses_boundary_epochs_and_current_run_time`
+  and `master_clock_external_start_arms_and_first_clock_is_timestamped_zero`
+  retain focused Start/Continue/Stop and armed-first-clock coverage (`smc-4`).
+  The receive/send policy, transport-only input, and PPQN-reprime cases exercise
+  all four independent gates and phase-safe policy changes (`smc-5`).
+- [`braid4_system_tests.cpp`](../tests/braid4_system_tests.cpp):
+  `clock_plan_is_queried_at_every_fractional_oversampled_subframe` proves a 4x
+  application maps each internal subframe to fractional output-sample time.
+
+### `smc-6` Through `smc-8` - Acquisition, Recovery, And Regeneration
+
+- [`master_clock_tests.cpp`](../tests/master_clock_tests.cpp):
+  `acceptance_trace_external_acquisition_jitter_dropout_takeover_and_regeneration`
+  records one provisional owner, foreign-source rejection, exact event-time
+  acquisition, timeout/takeover, external Start and Continue activation on the
+  first accepted clock, Stop, exact 24-PPQN input, alternating jitter,
+  duplicate/out-of-order rejection, one inferred three-pulse gap,
+  dropout/free-run, and regenerated output phase.
+- The trace directly asserts recovered tempo is within `0.1 BPM` of 120 after
+  64 stable intervals. The focused median/`1/8` PLL, outlier/multiple inference,
+  bounded phase correction, jitter/dropout, source arbitration, long-period
+  timeout, delayed timestamp mapping, and output-only splice cases isolate each
+  `smc-6`/`smc-7`/`smc-8` rule. Engine's deterministic cross-bus timestamp merge
+  proves drain order cannot replace event order.
+- [`midi_sender_tests.cpp`](../tests/midi_sender_tests.cpp):
+  `external_transition_regeneration_crosses_sender_with_fixed_offset_and_no_clock_hole`
+  and `master_clock_events_cross_the_concrete_sender_without_deadline_replacement`
+  verify that regenerated transitions retain phase and original deadlines
+  across the concrete output lane.
+
+### `smc-9` - Mapper And Scheduled Output
+
+- [`master_clock_tests.cpp`](../tests/master_clock_tests.cpp):
+  `acceptance_trace_mapper_output_calculation_reports_normative_maxima` records
+  five callback errors, independently calculates their median and `1/32` EWMA,
+  checks exact ordinary endpoint continuity, positive and negative 500-ppm
+  future slopes, discontinuity generation, analytical fractional crossings,
+  and regenerated fixed offset. It directly asserts calculated deadline error
+  `<= 1 us`, spacing error `<= 2 us` plus a separately calculated 500-ppm slew
+  contribution, and fixed-offset error `<= 1 us`.
+- [`midi_sender_tests.cpp`](../tests/midi_sender_tests.cpp):
+  `acceptance_trace_concrete_sender_broadcast_reconnect_cutoff_and_fallback`
+  records identical ordered deadlines at two timestamp-capable outputs, an
+  offline output that cannot stall its peer, future-only reconnect, transport
+  before clock at an equal deadline, generation cutoff behavior, and the
+  observable immediate-only fallback lane. Focused host-lead, lateness,
+  overflow, reconnect snapshot, and cutoff cases remain separate regressions.
+- These are deterministic calculation, queueing, and host-submission
+  guarantees. They do **not** assert sub-microsecond sender-thread wakeup,
+  browser-main-thread execution, OS MIDI service, cable, or physical-device
+  delivery. JUCE's 1-ms default sink lead and the browser's 25-ms advertised
+  lead provide host scheduling horizon; actual delivery quality remains
+  observable through fallback/late/drop diagnostics.
+
+### `smc-10` And `smc-11` - Persistence And Diagnostics
+
+- [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp):
+  `runtime_config_v1_migrates_to_default_sync_and_v2_save_contains_exact_sync_fields`,
+  `runtime_config_v2_rejects_every_missing_or_wrong_sync_field_atomically`, and
+  the runtime-config round-trip/file cases cover v1 defaults, exact schema-v2
+  sync ownership, atomic validation, and save behavior. The patch-load cases
+  prove sync configuration stays outside patch state (`smc-10`).
+- [`engine_tests.cpp`](../tests/engine_tests.cpp):
+  `engine_clock_diagnostics_publication_never_tears_known_tuples` and
+  `engine_publishes_sensible_clock_diagnostics_before_and_after_audio` prove
+  non-blocking coherent publication (`smc-11`). The portable, JUCE, and browser
+  Sync page cases below expose BPM, lock/source, latency, ignored input, late,
+  and dropped-output values without overwriting staged edits.
+
+### `smi-10` Through `smi-12` - Terminal Input And Output Sinks
+
+- [`instrument_tests.cpp`](../tests/instrument_tests.cpp):
+  `MessageInRealtimeFactoriesPreserveInternalDefaultsAndExternalIdentity`,
+  `RealtimeMidiProcessorTranslatesExactSingleByteMessagesWithOriginalTimestampAndSlot`,
+  and `EveryControllerProfileEndsInRealtimeMidiIncludingEmptyProfiles` cover
+  exact Clock/Start/Continue/Stop identities and timestamps, rejection of other
+  bytes, terminal routing after profile rebuild, and empty profiles (`smi-10`).
+  [`rig_tests.cpp`](../tests/rig_tests.cpp)
+  `rig_empty_controller_accepts_raw_external_realtime_and_long_run_stays_finite`
+  covers the end-to-end empty-profile path.
+- [`midi_sender_tests.cpp`](../tests/midi_sender_tests.cpp): the concrete sender
+  acceptance trace and focused broadcast, per-sink feedback isolation,
+  non-blocking overflow, equal-order, and cutoff cases cover `smi-11`.
+  `host_timestamped_broadcast_uses_the_max_registered_sink_lead`,
+  `immediate_only_sink_waits_for_due_and_reports_fallback`, and
+  `missing_timestamp_provider_uses_steady_clock_epoch_for_scheduled_delivery`
+  cover the common sink contract and explicit degradation in `smi-12`.
+- [`midi-flow.spec.ts`](../browser/tests/midi-flow.spec.ts) normalizes Web MIDI
+  input into the shared time-origin-relative epoch and converts stored due times
+  to Web MIDI timestamps while reporting throttled lateness.
+  [`PortableDrawGeometryTests.cpp`](../juce/PortableDrawGeometryTests.cpp)
+  checks that the JUCE adapter advertises host scheduling, converts the runtime
+  epoch to JUCE monotonic milliseconds, and retains the future deadline and
+  realtime byte in a one-event timestamped submission. The JUCE application
+  aggregates build and exercise the concrete adapter. Neither host suite claims
+  a physical MIDI device delivery bound.
+
+### `sar-3`, `sar-6`, `sar-11`, And `sar-18` - Runtime Integration
+
+- [`engine_tests.cpp`](../tests/engine_tests.cpp): stable clock ownership and
+  preparation cover `sar-3`; timestamp-ordered drain, one commit/query/enqueue
+  pass, exact plan delegation, null-plan startup, and allocation-free steady
+  state cover `sar-6`. [`rig_tests.cpp`](../tests/rig_tests.cpp) exposes the
+  deterministic clock injection/query/scheduled-output surface.
+- [`miniapp_system_tests.cpp`](../tests/miniapp_system_tests.cpp):
+  `miniapp_registers_clocked_adsr_tempo_topology_without_changing_performer_topology`,
+  `miniapp_clock_plan_drives_exact_adsr_gate_boundaries_across_nondivisor_blocks`,
+  current-frame voice publication, tempo-authority, and Rig parameter cases
+  cover the clock-related `sar-11` scenarios without changing app ownership.
+- Engine's load-before-rebuild, missing-default, snapshot/save, and patch-
+  exclusion cases, plus the schema-v2 cases under `smc-10`, cover `sar-18`.
+  JUCE runtime-shell and browser Sync tests exercise save/reopen through both
+  concrete hosts.
+
+### `sru-2`, `sru-12`, And `sru-30` - Sync Runtime UI
+
+- [`runtime_main_component_tests.cpp`](../tests/runtime_main_component_tests.cpp):
+  `TestSidebarOpensEachPageAndBackRestoresApp` opens Sync through the shared tab;
+  `TestRefreshUpdatesRuntimePageModelsAndRollingDeadline` checks the rolling
+  recent-peak deadline readout (`sru-2`).
+  `TestBackFromConfigurationPageSavesRuntimeConfiguration` and
+  `TestSyncStagesRefreshesCommitsAndReopensFromEngineSnapshot` distinguish
+  Audio/Controllers/Sync save-on-Back from File Back and prove atomic staged
+  Sync commit, rejection, persistence, diagnostics refresh, and reopen
+  (`sru-12`, `sru-30`).
+- [`portable_ui_tests.cpp`](../tests/portable_ui_tests.cpp) checks all safe
+  defaults, four toggles, strict PPQN `1..960` validation, the non-24 warning,
+  all diagnostics labels, and narrow layout. [`RuntimePagesJuceTests.cpp`](../juce/RuntimePagesJuceTests.cpp)
+  renders that same model as JUCE controls; [`RuntimeShellSessionTests.cpp`](../juce/RuntimeShellSessionTests.cpp)
+  exercises Sync navigation, staged edits, Back/save, and reopen.
+- [`browser_runtime_contract_tests.cpp`](../tests/browser_runtime_contract_tests.cpp)
+  `TestBrowserSyncUsesSharedStagingPersistsAndResolvesSourceNames` exercises the
+  same portable model and next-block Engine handoff. The fake-app Playwright
+  case `real fake-app WASM stages, validates, saves, and reopens Sync` verifies
+  the real browser/WASM surface.
 
 ## Known Gaps
 

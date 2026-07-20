@@ -356,7 +356,7 @@ void RunGridSimulation()
     surface.DispatchAction(synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleConfig, "1"));
     surface.DispatchAction(synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleSection,
                                                         "1:system_messages"));
-    synth_runtime::ControllersTreeRenderer renderer(surface);
+    synth_juce::PortableComponent renderer(surface);
     renderer.setSize(980, 300);
     int accepted = 0;
 

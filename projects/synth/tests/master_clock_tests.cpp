@@ -5,6 +5,7 @@
 #endif
 
 #include <atomic>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -153,6 +154,27 @@ private:
     std::size_t size_ = 0;
 };
 
+template <typename Record, std::size_t Capacity>
+class FixedTrace {
+public:
+    bool Push(const Record& record) noexcept {
+        if (size_ == Capacity) {
+            return false;
+        }
+        records_[size_++] = record;
+        return true;
+    }
+
+    std::size_t Size() const noexcept { return size_; }
+    const Record& operator[](std::size_t index) const noexcept {
+        return records_[index];
+    }
+
+private:
+    std::array<Record, Capacity> records_{};
+    std::size_t size_ = 0;
+};
+
 template <std::size_t Capacity>
 const synth::ScheduledMidiEvent* FindEvent(
     const FixedScheduledSink<Capacity>& sink,
@@ -164,6 +186,33 @@ const synth::ScheduledMidiEvent* FindEvent(
                 return &sink[index];
             }
             --occurrence;
+        }
+    }
+    return nullptr;
+}
+
+template <std::size_t Capacity>
+std::size_t CountEventsAtDeadline(
+    const FixedScheduledSink<Capacity>& sink,
+    synth::ScheduledMidiEventKind kind,
+    std::uint64_t dueTimeMicros) noexcept {
+    std::size_t count = 0;
+    for (std::size_t index = 0; index < sink.Size(); ++index) {
+        if (sink[index].kind == kind && sink[index].dueTimeMicros == dueTimeMicros) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+template <std::size_t Capacity>
+const synth::ScheduledMidiEvent* FindEventAtDeadline(
+    const FixedScheduledSink<Capacity>& sink,
+    synth::ScheduledMidiEventKind kind,
+    std::uint64_t dueTimeMicros) noexcept {
+    for (std::size_t index = 0; index < sink.Size(); ++index) {
+        if (sink[index].kind == kind && sink[index].dueTimeMicros == dueTimeMicros) {
+            return &sink[index];
         }
     }
     return nullptr;
@@ -1223,6 +1272,578 @@ TEST_CASE(master_clock_clock_production_and_input_paths_allocate_nothing_and_are
     const auto diagnostics = clock.DiagnosticsSnapshot();
     REQUIRE_TRUE(diagnostics.enumeratedCrossingCount < 1000 * 64);
     REQUIRE_TRUE(diagnostics.enumeratedCrossingCount <= sink.Size());
+}
+
+TEST_CASE(acceptance_trace_internal_timeline_orders_half_open_fractional_transport_epochs) {
+    struct PlanRecord {
+        synth::ClockTransportState state = synth::ClockTransportState::Stopped;
+        std::uint64_t startSample = 0;
+        std::uint64_t endSample = 0;
+        std::uint64_t transportEpoch = 0;
+        double lifetimeStart = 0.0;
+        double lifetimeEnd = 0.0;
+        double transportStart = 0.0;
+        double fractionalTransport = 0.0;
+        double increment = 0.0;
+    };
+
+    synth::MasterClock clock;
+    FixedScheduledSink<256> sink;
+    FixedTrace<PlanRecord, 5> trace;
+    clock.SetScheduledMidiEventSink(&sink);
+    synth::SyncConfig config;
+    config.sendClock = true;
+    config.sendTransport = true;
+    config.ppqn = 24;
+    REQUIRE_TRUE(clock.ApplySyncConfig(config));
+    REQUIRE_TRUE(clock.SetTempoBpm(120.0));
+    REQUIRE_TRUE(clock.Prepare(1000.0, 125));
+    REQUIRE_TRUE(clock.OutputLatencyMicros() == 250'000);
+
+    const auto appendPlan = [&trace](const synth::ClockBlockPlan& plan) {
+        return trace.Push(PlanRecord{
+            .state = plan.TransportState(),
+            .startSample = plan.StartSample(),
+            .endSample = plan.EndSample(),
+            .transportEpoch = plan.TransportEpoch(),
+            .lifetimeStart = plan.LifetimeStartQuarterNotes(),
+            .lifetimeEnd = plan.LifetimeEndQuarterNotes(),
+            .transportStart = plan.TransportStartQuarterNotes(),
+            .fractionalTransport = plan.TransportQuarterNotesAt(
+                static_cast<double>(plan.StartSample()) + 1.5),
+            .increment = plan.QuarterNotesPerSample(),
+        });
+    };
+
+    const synth::ClockBlockPlan first = *clock.CommitBlock(0, 125, 1'000'000);
+    REQUIRE_TRUE(appendPlan(first));
+    REQUIRE_TRUE(first.Contains(124.999));
+    REQUIRE_TRUE(!first.Contains(125.0));
+    constexpr std::uint64_t endpointDue = 1'375'000;
+    REQUIRE_TRUE(CountEventsAtDeadline(
+                     sink, synth::ScheduledMidiEventKind::TimingClock, endpointDue) == 0);
+
+    const synth::ClockBlockPlan second = *clock.CommitBlock(125, 125, 1'125'000);
+    REQUIRE_TRUE(appendPlan(second));
+    REQUIRE_TRUE(second.Contains(125.0));
+    REQUIRE_NEAR(second.LifetimeStartQuarterNotes(), first.LifetimeEndQuarterNotes(), 0.0);
+    REQUIRE_TRUE(CountEventsAtDeadline(
+                     sink, synth::ScheduledMidiEventKind::TimingClock, endpointDue) == 1);
+
+    REQUIRE_TRUE(clock.SetTempoBpm(90.0));
+    REQUIRE_TRUE(clock.HandleInternalTransport(synth::ClockTransportCommand::Start));
+    const std::size_t beforeStart = sink.Size();
+    const synth::ClockBlockPlan started = *clock.CommitBlock(250, 125, 1'250'000);
+    REQUIRE_TRUE(appendPlan(started));
+    REQUIRE_TRUE(started.TransportState() == synth::ClockTransportState::Running);
+    REQUIRE_TRUE(started.TransportEpoch() == 1);
+    REQUIRE_NEAR(started.TransportStartQuarterNotes(), 0.0, 0.0);
+    REQUIRE_NEAR(started.QuarterNotesPerSample(), 90.0 / 60'000.0, 1.0e-18);
+    REQUIRE_NEAR(started.LifetimeStartQuarterNotes(), second.LifetimeEndQuarterNotes(), 0.0);
+    REQUIRE_NEAR(started.TransportQuarterNotesAt(251.5), 1.5 * 90.0 / 60'000.0, 1.0e-15);
+    REQUIRE_TRUE(sink[beforeStart].kind ==
+                 synth::ScheduledMidiEventKind::PhaseGenerationCutoff);
+    REQUIRE_TRUE(sink[beforeStart + 1].kind == synth::ScheduledMidiEventKind::Start);
+    REQUIRE_TRUE(sink[beforeStart + 2].kind == synth::ScheduledMidiEventKind::TimingClock);
+    REQUIRE_TRUE(sink[beforeStart + 1].dueTimeMicros == 1'500'000);
+    REQUIRE_TRUE(sink[beforeStart + 2].dueTimeMicros == 1'500'000);
+    REQUIRE_TRUE(sink[beforeStart + 1].sequence < sink[beforeStart + 2].sequence);
+    constexpr std::uint64_t firstFractionalRunningTickDue = 1'527'778;
+    REQUIRE_TRUE(CountEventsAtDeadline(
+                     sink,
+                     synth::ScheduledMidiEventKind::TimingClock,
+                     firstFractionalRunningTickDue) == 1);
+
+    REQUIRE_TRUE(clock.HandleInternalTransport(synth::ClockTransportCommand::Continue));
+    const std::size_t beforeContinue = sink.Size();
+    const synth::ClockBlockPlan continued = *clock.CommitBlock(375, 125, 1'375'000);
+    REQUIRE_TRUE(appendPlan(continued));
+    REQUIRE_TRUE(continued.TransportState() == synth::ClockTransportState::Running);
+    REQUIRE_TRUE(continued.TransportEpoch() == 2);
+    REQUIRE_NEAR(continued.TransportStartQuarterNotes(), 0.0, 0.0);
+    REQUIRE_NEAR(continued.LifetimeStartQuarterNotes(), started.LifetimeEndQuarterNotes(), 0.0);
+    REQUIRE_TRUE(sink[beforeContinue].kind ==
+                 synth::ScheduledMidiEventKind::PhaseGenerationCutoff);
+    REQUIRE_TRUE(sink[beforeContinue + 1].kind == synth::ScheduledMidiEventKind::Continue);
+    REQUIRE_TRUE(sink[beforeContinue + 2].kind == synth::ScheduledMidiEventKind::TimingClock);
+    REQUIRE_TRUE(sink[beforeContinue + 1].dueTimeMicros == 1'625'000);
+    REQUIRE_TRUE(sink[beforeContinue + 2].dueTimeMicros == 1'625'000);
+
+    REQUIRE_TRUE(clock.HandleInternalTransport(synth::ClockTransportCommand::Stop));
+    const std::size_t beforeStop = sink.Size();
+    const synth::ClockBlockPlan stopped = *clock.CommitBlock(500, 125, 1'500'000);
+    REQUIRE_TRUE(appendPlan(stopped));
+    REQUIRE_TRUE(stopped.TransportState() == synth::ClockTransportState::Stopped);
+    REQUIRE_NEAR(stopped.TransportStartQuarterNotes(), 0.0, 0.0);
+    REQUIRE_NEAR(stopped.LifetimeStartQuarterNotes(), continued.LifetimeEndQuarterNotes(), 0.0);
+    REQUIRE_TRUE(sink[beforeStop].kind ==
+                 synth::ScheduledMidiEventKind::PhaseGenerationCutoff);
+    REQUIRE_TRUE(sink[beforeStop + 1].kind == synth::ScheduledMidiEventKind::Stop);
+    REQUIRE_TRUE(sink[beforeStop + 1].dueTimeMicros == 1'750'000);
+    REQUIRE_TRUE(CountEventsAtDeadline(
+                     sink, synth::ScheduledMidiEventKind::TimingClock, 1'750'000) == 0);
+    REQUIRE_TRUE(CountEventsAtDeadline(
+                     sink, synth::ScheduledMidiEventKind::TimingClock, 1'777'778) == 1);
+
+    REQUIRE_TRUE(trace.Size() == 5);
+    REQUIRE_TRUE(trace[0].state == synth::ClockTransportState::Stopped);
+    REQUIRE_TRUE(trace[1].state == synth::ClockTransportState::Stopped);
+    REQUIRE_TRUE(trace[2].state == synth::ClockTransportState::Running);
+    REQUIRE_TRUE(trace[3].state == synth::ClockTransportState::Running);
+    REQUIRE_TRUE(trace[4].state == synth::ClockTransportState::Stopped);
+    for (std::size_t index = 1; index < trace.Size(); ++index) {
+        REQUIRE_TRUE(trace[index].startSample == trace[index - 1].endSample);
+        REQUIRE_NEAR(trace[index].lifetimeStart, trace[index - 1].lifetimeEnd, 0.0);
+    }
+
+    std::cout << "[trace] internal_timeline plans=" << trace.Size()
+              << " endpoint_due_us=" << endpointDue
+              << " fractional_tick_due_us=" << firstFractionalRunningTickDue
+              << " epochs=0,0,1,2,2\n";
+}
+
+TEST_CASE(acceptance_trace_external_acquisition_jitter_dropout_takeover_and_regeneration) {
+    enum class Step : std::uint8_t {
+        ExactLocked,
+        JitterFiltered,
+        RejectedInputs,
+        MissedPulses,
+        FreeRun,
+        ProvisionalStart,
+        RunningStart,
+        Stopped,
+        RunningContinue,
+        Takeover,
+    };
+    struct Record {
+        Step step = Step::ExactLocked;
+        synth::ClockAcquisitionState acquisition = synth::ClockAcquisitionState::Internal;
+        synth::ClockTransportState transport = synth::ClockTransportState::Stopped;
+        std::size_t sourceSlot = 0;
+        std::uint64_t accepted = 0;
+        std::uint64_t ignored = 0;
+        std::uint64_t missed = 0;
+        double bpm = 0.0;
+        double filteredPeriodMicros = 0.0;
+    };
+    FixedTrace<Record, 10> trace;
+
+    synth::MasterClock acquisition;
+    synth::SyncConfig receive;
+    receive.receiveClock = true;
+    REQUIRE_TRUE(acquisition.ApplySyncConfig(receive));
+    REQUIRE_TRUE(acquisition.Prepare(48'000.0, 100'000));
+    REQUIRE_TRUE(acquisition.CommitBlock(0, 100'000, 1'000'000) != nullptr);
+    constexpr long double exactPeriodMicros =
+        60'000'000.0L / (120.0L * 24.0L);
+    std::uint64_t timestamp = 1'000'000;
+    for (std::uint64_t tick = 0; tick <= 64; ++tick) {
+        timestamp = static_cast<std::uint64_t>(std::llround(
+            1'000'000.0L + exactPeriodMicros * static_cast<long double>(tick)));
+        REQUIRE_TRUE(acquisition.HandleExternalClock(timestamp, 7));
+    }
+    auto diagnostics = acquisition.DiagnosticsSnapshot();
+    const double recoveredBpmError = std::fabs(diagnostics.currentBpm - 120.0);
+    REQUIRE_TRUE(diagnostics.acquisition == synth::ClockAcquisitionState::Locked);
+    REQUIRE_TRUE(diagnostics.acceptedExternalClockCount == 65);
+    REQUIRE_TRUE(recoveredBpmError <= 0.1);
+    REQUIRE_TRUE(trace.Push({
+        .step = Step::ExactLocked,
+        .acquisition = diagnostics.acquisition,
+        .sourceSlot = diagnostics.activeExternalSourceSlot,
+        .accepted = diagnostics.acceptedExternalClockCount,
+        .ignored = diagnostics.ignoredInputCount,
+        .missed = diagnostics.inferredMissedPulseCount,
+        .bpm = diagnostics.currentBpm,
+        .filteredPeriodMicros = diagnostics.externalFilteredPeriodMicros,
+    }));
+
+    for (std::size_t interval = 0; interval < 12; ++interval) {
+        timestamp += interval % 2 == 0 ? 19'833 : 21'833;
+        REQUIRE_TRUE(acquisition.HandleExternalClock(timestamp, 7));
+    }
+    diagnostics = acquisition.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.acquisition == synth::ClockAcquisitionState::Locked);
+    REQUIRE_TRUE(std::fabs(diagnostics.externalFilteredPeriodMicros - 20'833.0) < 400.0);
+    REQUIRE_TRUE(std::fabs(diagnostics.externalFilteredPeriodMicros -
+                           diagnostics.externalRawIntervalMicros) > 500.0);
+    REQUIRE_TRUE(trace.Push({
+        .step = Step::JitterFiltered,
+        .acquisition = diagnostics.acquisition,
+        .sourceSlot = diagnostics.activeExternalSourceSlot,
+        .accepted = diagnostics.acceptedExternalClockCount,
+        .ignored = diagnostics.ignoredInputCount,
+        .missed = diagnostics.inferredMissedPulseCount,
+        .bpm = diagnostics.currentBpm,
+        .filteredPeriodMicros = diagnostics.externalFilteredPeriodMicros,
+    }));
+
+    const std::uint64_t acceptedBeforeRejects = diagnostics.acceptedExternalClockCount;
+    REQUIRE_TRUE(!acquisition.HandleExternalClock(timestamp, 7));
+    REQUIRE_TRUE(!acquisition.HandleExternalClock(timestamp - 1, 7));
+    REQUIRE_TRUE(!acquisition.HandleExternalClock(timestamp + 5'000, 7));
+    diagnostics = acquisition.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.acceptedExternalClockCount == acceptedBeforeRejects);
+    REQUIRE_TRUE(diagnostics.ignoredInputCount >= 3);
+    REQUIRE_TRUE(trace.Push({
+        .step = Step::RejectedInputs,
+        .acquisition = diagnostics.acquisition,
+        .sourceSlot = diagnostics.activeExternalSourceSlot,
+        .accepted = diagnostics.acceptedExternalClockCount,
+        .ignored = diagnostics.ignoredInputCount,
+        .missed = diagnostics.inferredMissedPulseCount,
+        .bpm = diagnostics.currentBpm,
+        .filteredPeriodMicros = diagnostics.externalFilteredPeriodMicros,
+    }));
+
+    const std::uint64_t missedBefore = diagnostics.inferredMissedPulseCount;
+    timestamp += 3 * 20'833;
+    REQUIRE_TRUE(acquisition.HandleExternalClock(timestamp, 7));
+    diagnostics = acquisition.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.inferredMissedPulseCount == missedBefore + 2);
+    REQUIRE_TRUE(trace.Push({
+        .step = Step::MissedPulses,
+        .acquisition = diagnostics.acquisition,
+        .sourceSlot = diagnostics.activeExternalSourceSlot,
+        .accepted = diagnostics.acceptedExternalClockCount,
+        .ignored = diagnostics.ignoredInputCount,
+        .missed = diagnostics.inferredMissedPulseCount,
+        .bpm = diagnostics.currentBpm,
+        .filteredPeriodMicros = diagnostics.externalFilteredPeriodMicros,
+    }));
+
+    const double bpmBeforeDropout = diagnostics.currentBpm;
+    const double lifetimeBeforeDropout = acquisition.CurrentPlan()->LifetimeEndQuarterNotes();
+    REQUIRE_TRUE(acquisition.CommitBlock(
+                     100'000, 100'000, timestamp + 500'001) != nullptr);
+    diagnostics = acquisition.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.acquisition == synth::ClockAcquisitionState::FreeRun);
+    REQUIRE_TRUE(!diagnostics.hasActiveExternalSource);
+    REQUIRE_NEAR(diagnostics.currentBpm, bpmBeforeDropout, 0.0);
+    REQUIRE_NEAR(
+        acquisition.CurrentPlan()->LifetimeStartQuarterNotes(),
+        lifetimeBeforeDropout,
+        0.0);
+    REQUIRE_TRUE(trace.Push({
+        .step = Step::FreeRun,
+        .acquisition = diagnostics.acquisition,
+        .sourceSlot = diagnostics.activeExternalSourceSlot,
+        .accepted = diagnostics.acceptedExternalClockCount,
+        .ignored = diagnostics.ignoredInputCount,
+        .missed = diagnostics.inferredMissedPulseCount,
+        .bpm = diagnostics.currentBpm,
+        .filteredPeriodMicros = diagnostics.externalFilteredPeriodMicros,
+    }));
+
+    synth::MasterClock transport;
+    FixedScheduledSink<256> sink;
+    transport.SetScheduledMidiEventSink(&sink);
+    synth::SyncConfig sendReceive;
+    sendReceive.sendClock = true;
+    sendReceive.receiveClock = true;
+    sendReceive.sendTransport = true;
+    sendReceive.receiveTransport = true;
+    sendReceive.ppqn = 24;
+    REQUIRE_TRUE(transport.ApplySyncConfig(sendReceive));
+    REQUIRE_TRUE(transport.Prepare(1000.0, 100));
+    REQUIRE_TRUE(transport.CommitBlock(0, 100, 1'000'000) != nullptr);
+    REQUIRE_TRUE(transport.HandleExternalTransport(
+        synth::ClockTransportCommand::Start, 1'010'000, 3));
+    diagnostics = transport.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.sourceIsProvisional);
+    REQUIRE_TRUE(diagnostics.activeExternalSourceSlot == 3);
+    REQUIRE_TRUE(!transport.HandleExternalTransport(
+        synth::ClockTransportCommand::Continue, 1'011'000, 4));
+    REQUIRE_TRUE(trace.Push({
+        .step = Step::ProvisionalStart,
+        .acquisition = diagnostics.acquisition,
+        .transport = synth::ClockTransportState::ArmedStart,
+        .sourceSlot = diagnostics.activeExternalSourceSlot,
+        .accepted = diagnostics.acceptedExternalClockCount,
+        .ignored = transport.DiagnosticsSnapshot().ignoredInputCount,
+        .bpm = diagnostics.currentBpm,
+    }));
+
+    REQUIRE_TRUE(transport.HandleExternalClock(1'025'000, 3));
+    REQUIRE_TRUE(FindEventAtDeadline(
+                     sink, synth::ScheduledMidiEventKind::Start, 1'210'000) != nullptr);
+    REQUIRE_TRUE(FindEventAtDeadline(
+                     sink, synth::ScheduledMidiEventKind::TimingClock, 1'225'000) != nullptr);
+    REQUIRE_TRUE(transport.HandleExternalClock(1'047'000, 3));
+    REQUIRE_TRUE(FindEventAtDeadline(
+                     sink, synth::ScheduledMidiEventKind::TimingClock, 1'245'833) != nullptr);
+    REQUIRE_TRUE(FindEventAtDeadline(
+                     sink, synth::ScheduledMidiEventKind::TimingClock, 1'247'000) == nullptr);
+    const synth::ClockBlockPlan runningStart =
+        *transport.CommitBlock(100, 100, 1'100'000);
+    REQUIRE_TRUE(runningStart.TransportState() == synth::ClockTransportState::Running);
+    diagnostics = transport.DiagnosticsSnapshot();
+    REQUIRE_TRUE(trace.Push({
+        .step = Step::RunningStart,
+        .acquisition = diagnostics.acquisition,
+        .transport = runningStart.TransportState(),
+        .sourceSlot = diagnostics.activeExternalSourceSlot,
+        .accepted = diagnostics.acceptedExternalClockCount,
+        .ignored = diagnostics.ignoredInputCount,
+        .bpm = diagnostics.currentBpm,
+        .filteredPeriodMicros = diagnostics.externalFilteredPeriodMicros,
+    }));
+
+    REQUIRE_TRUE(transport.HandleExternalTransport(
+        synth::ClockTransportCommand::Stop, 1'150'000, 3));
+    const synth::ClockBlockPlan stopped = *transport.CommitBlock(200, 100, 1'200'000);
+    REQUIRE_TRUE(stopped.TransportState() == synth::ClockTransportState::Stopped);
+    REQUIRE_NEAR(stopped.TransportStartQuarterNotes(), 0.0, 0.0);
+    REQUIRE_TRUE(FindEventAtDeadline(
+                     sink, synth::ScheduledMidiEventKind::Stop, 1'350'000) != nullptr);
+    diagnostics = transport.DiagnosticsSnapshot();
+    REQUIRE_TRUE(trace.Push({
+        .step = Step::Stopped,
+        .acquisition = diagnostics.acquisition,
+        .transport = stopped.TransportState(),
+        .sourceSlot = diagnostics.activeExternalSourceSlot,
+        .accepted = diagnostics.acceptedExternalClockCount,
+        .ignored = diagnostics.ignoredInputCount,
+        .bpm = diagnostics.currentBpm,
+        .filteredPeriodMicros = diagnostics.externalFilteredPeriodMicros,
+    }));
+
+    REQUIRE_TRUE(transport.HandleExternalTransport(
+        synth::ClockTransportCommand::Continue, 1'210'000, 3));
+    REQUIRE_TRUE(transport.HandleExternalClock(1'230'000, 3));
+    const synth::ClockBlockPlan runningContinue =
+        *transport.CommitBlock(300, 100, 1'300'000);
+    REQUIRE_TRUE(runningContinue.TransportState() == synth::ClockTransportState::Running);
+    REQUIRE_TRUE(runningContinue.TransportEpoch() == 2);
+    REQUIRE_NEAR(
+        runningContinue.TransportStartQuarterNotes(),
+        70.0 * stopped.QuarterNotesPerSample(),
+        1.0e-12);
+    REQUIRE_TRUE(FindEventAtDeadline(
+                     sink, synth::ScheduledMidiEventKind::Continue, 1'410'000) != nullptr);
+    REQUIRE_TRUE(FindEventAtDeadline(
+                     sink, synth::ScheduledMidiEventKind::TimingClock, 1'430'000) != nullptr);
+    diagnostics = transport.DiagnosticsSnapshot();
+    REQUIRE_TRUE(trace.Push({
+        .step = Step::RunningContinue,
+        .acquisition = diagnostics.acquisition,
+        .transport = runningContinue.TransportState(),
+        .sourceSlot = diagnostics.activeExternalSourceSlot,
+        .accepted = diagnostics.acceptedExternalClockCount,
+        .ignored = diagnostics.ignoredInputCount,
+        .bpm = diagnostics.currentBpm,
+        .filteredPeriodMicros = diagnostics.externalFilteredPeriodMicros,
+    }));
+
+    REQUIRE_TRUE(transport.HandleExternalClock(1'730'001, 4));
+    diagnostics = transport.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.hasActiveExternalSource);
+    REQUIRE_TRUE(diagnostics.activeExternalSourceSlot == 4);
+    REQUIRE_TRUE(diagnostics.sourceTimeoutCount == 1);
+    REQUIRE_TRUE(diagnostics.acquisition == synth::ClockAcquisitionState::Acquiring);
+    REQUIRE_TRUE(trace.Push({
+        .step = Step::Takeover,
+        .acquisition = diagnostics.acquisition,
+        .transport = synth::ClockTransportState::Running,
+        .sourceSlot = diagnostics.activeExternalSourceSlot,
+        .accepted = diagnostics.acceptedExternalClockCount,
+        .ignored = diagnostics.ignoredInputCount,
+        .bpm = diagnostics.currentBpm,
+        .filteredPeriodMicros = diagnostics.externalFilteredPeriodMicros,
+    }));
+
+    REQUIRE_TRUE(trace.Size() == 10);
+    REQUIRE_TRUE(trace[0].step == Step::ExactLocked);
+    REQUIRE_TRUE(trace[1].step == Step::JitterFiltered);
+    REQUIRE_TRUE(trace[2].step == Step::RejectedInputs);
+    REQUIRE_TRUE(trace[3].step == Step::MissedPulses);
+    REQUIRE_TRUE(trace[4].step == Step::FreeRun);
+    REQUIRE_TRUE(trace[5].step == Step::ProvisionalStart);
+    REQUIRE_TRUE(trace[6].step == Step::RunningStart);
+    REQUIRE_TRUE(trace[7].step == Step::Stopped);
+    REQUIRE_TRUE(trace[8].step == Step::RunningContinue);
+    REQUIRE_TRUE(trace[9].step == Step::Takeover);
+
+    std::cout << "[trace] external_acquisition records=" << trace.Size()
+              << " bpm_error=" << recoveredBpmError
+              << " jitter_filtered_us=" << trace[1].filteredPeriodMicros
+              << " ignored=" << trace[2].ignored
+              << " missed=" << trace[3].missed
+              << " takeover_slot=" << trace[9].sourceSlot << "\n";
+}
+
+TEST_CASE(acceptance_trace_mapper_output_calculation_reports_normative_maxima) {
+    struct MapperRecord {
+        double latestError = 0.0;
+        double medianError = 0.0;
+        double filteredError = 0.0;
+        double microsPerSample = 0.0;
+    };
+    FixedTrace<MapperRecord, 5> mapperTrace;
+    synth::AudioSampleTimeMapper mapper;
+    REQUIRE_TRUE(mapper.Prepare(1000.0, 1'000'000));
+    REQUIRE_TRUE(mapper.ObserveBlock(0, 0) == synth::MapperObservationResult::Anchored);
+    constexpr std::array<double, 5> requestedErrors{50.0, 10.0, 90.0, 30.0, 70.0};
+    std::array<double, 5> actualErrors{};
+    double expectedFiltered = 0.0;
+    for (std::size_t index = 0; index < requestedErrors.size(); ++index) {
+        const std::uint64_t sample = static_cast<std::uint64_t>((index + 1) * 100);
+        const double predicted = *mapper.TimeMicrosAt(static_cast<double>(sample));
+        const auto observed = static_cast<std::uint64_t>(
+            std::llround(predicted + requestedErrors[index]));
+        actualErrors[index] = static_cast<double>(observed) - predicted;
+        std::array<double, 5> sorted = actualErrors;
+        std::sort(sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(index + 1));
+        const std::size_t count = index + 1;
+        const double expectedMedian = count % 2 != 0
+            ? sorted[count / 2]
+            : (sorted[count / 2 - 1] + sorted[count / 2]) * 0.5;
+        expectedFiltered +=
+            (expectedMedian - expectedFiltered) *
+            synth::AudioSampleTimeMapper::kPhaseErrorEwmaGain;
+        REQUIRE_TRUE(mapper.ObserveBlock(sample, observed) ==
+                     synth::MapperObservationResult::Continuous);
+        const auto snapshot = mapper.DiagnosticsSnapshot();
+        REQUIRE_NEAR(snapshot.latestPhaseErrorMicros, actualErrors[index], 1.0e-9);
+        REQUIRE_NEAR(snapshot.medianPhaseErrorMicros, expectedMedian, 1.0e-9);
+        REQUIRE_NEAR(snapshot.filteredPhaseErrorMicros, expectedFiltered, 1.0e-9);
+        REQUIRE_TRUE(mapperTrace.Push({
+            .latestError = snapshot.latestPhaseErrorMicros,
+            .medianError = snapshot.medianPhaseErrorMicros,
+            .filteredError = snapshot.filteredPhaseErrorMicros,
+            .microsPerSample = snapshot.currentMicrosPerSample,
+        }));
+    }
+    REQUIRE_TRUE(mapperTrace.Size() == 5);
+    REQUIRE_NEAR(mapperTrace[4].medianError, 50.0, 1.0);
+
+    synth::AudioSampleTimeMapper positiveSlew;
+    REQUIRE_TRUE(positiveSlew.Prepare(1000.0, 2'000'000));
+    REQUIRE_TRUE(positiveSlew.ObserveBlock(0, 0) == synth::MapperObservationResult::Anchored);
+    const double positivePriorEnd = *positiveSlew.TimeMicrosAt(10.0);
+    REQUIRE_TRUE(positiveSlew.ObserveBlock(10, 1'010'000) ==
+                 synth::MapperObservationResult::Continuous);
+    REQUIRE_NEAR(*positiveSlew.TimeMicrosAt(10.0), positivePriorEnd, 0.0);
+    REQUIRE_NEAR(
+        positiveSlew.DiagnosticsSnapshot().currentMicrosPerSample, 1000.5, 1.0e-12);
+
+    synth::AudioSampleTimeMapper negativeSlew;
+    REQUIRE_TRUE(negativeSlew.Prepare(1000.0, 20'000));
+    REQUIRE_TRUE(negativeSlew.ObserveBlock(0, 10'000) ==
+                 synth::MapperObservationResult::Anchored);
+    REQUIRE_TRUE(negativeSlew.ObserveBlock(10, 11'000) ==
+                 synth::MapperObservationResult::Continuous);
+    REQUIRE_NEAR(
+        negativeSlew.DiagnosticsSnapshot().currentMicrosPerSample, 999.5, 1.0e-12);
+
+    synth::AudioSampleTimeMapper discontinuity;
+    REQUIRE_TRUE(discontinuity.Prepare(1000.0, 5000));
+    REQUIRE_TRUE(discontinuity.ObserveBlock(0, 100'000) ==
+                 synth::MapperObservationResult::Anchored);
+    REQUIRE_TRUE(discontinuity.ObserveBlock(10, 120'001) ==
+                 synth::MapperObservationResult::Discontinuity);
+    REQUIRE_TRUE(discontinuity.DiagnosticsSnapshot().generation == 2);
+    REQUIRE_NEAR(*discontinuity.TimeMicrosAt(10.0), 120'001.0, 0.0);
+
+    synth::MasterClock outputClock;
+    FixedScheduledSink<128> outputSink;
+    outputClock.SetScheduledMidiEventSink(&outputSink);
+    synth::SyncConfig outputConfig;
+    outputConfig.sendClock = true;
+    outputConfig.ppqn = 24;
+    REQUIRE_TRUE(outputClock.ApplySyncConfig(outputConfig));
+    REQUIRE_TRUE(outputClock.SetTempoBpm(120.0));
+    REQUIRE_TRUE(outputClock.Prepare(1000.0, 100));
+    REQUIRE_TRUE(outputClock.CommitBlock(0, 100, 1'000'000) != nullptr);
+    const std::size_t outputBegin = outputSink.Size();
+    REQUIRE_TRUE(outputClock.CommitBlock(100, 100, 1'110'000) != nullptr);
+    const auto outputMapperDiagnostics = outputClock.TimeMapper().DiagnosticsSnapshot();
+    const double nominalMicrosPerSample =
+        outputClock.TimeMapper().NominalMicrosPerSample();
+    const double slewPpm = std::fabs(
+        outputMapperDiagnostics.currentMicrosPerSample / nominalMicrosPerSample - 1.0) *
+        1'000'000.0;
+    REQUIRE_TRUE(slewPpm <= synth::AudioSampleTimeMapper::kMaximumSlewPpm + 1.0e-9);
+    REQUIRE_NEAR(slewPpm, 500.0, 1.0e-9);
+
+    double maximumDeadlineErrorMicros = 0.0;
+    double maximumSpacingErrorMicros = 0.0;
+    double previousDue = 0.0;
+    const double tickSpacingSamples =
+        1.0 / (24.0 * outputClock.CurrentPlan()->QuarterNotesPerSample());
+    const double nominalTickSpacingMicros = tickSpacingSamples * nominalMicrosPerSample;
+    const double maximumSlewContributionMicros = nominalTickSpacingMicros *
+        synth::AudioSampleTimeMapper::kMaximumSlewPpm / 1'000'000.0;
+    REQUIRE_TRUE(outputSink.Size() - outputBegin == 5);
+    for (std::size_t index = outputBegin; index < outputSink.Size(); ++index) {
+        const std::size_t cell = 5 + (index - outputBegin);
+        const double crossingSample =
+            (static_cast<double>(cell) / 24.0) /
+            outputClock.CurrentPlan()->QuarterNotesPerSample();
+        const double idealDeadline =
+            *outputClock.TimeMapper().TimeMicrosAt(crossingSample) +
+            static_cast<double>(outputClock.OutputLatencyMicros());
+        maximumDeadlineErrorMicros = std::max(
+            maximumDeadlineErrorMicros,
+            std::fabs(static_cast<double>(outputSink[index].dueTimeMicros) - idealDeadline));
+        if (index != outputBegin) {
+            maximumSpacingErrorMicros = std::max(
+                maximumSpacingErrorMicros,
+                std::fabs(
+                    static_cast<double>(outputSink[index].dueTimeMicros) -
+                    previousDue - nominalTickSpacingMicros));
+        }
+        previousDue = static_cast<double>(outputSink[index].dueTimeMicros);
+    }
+    REQUIRE_TRUE(maximumDeadlineErrorMicros <= 1.0);
+    REQUIRE_TRUE(maximumSpacingErrorMicros <=
+                 2.0 + maximumSlewContributionMicros);
+
+    synth::MasterClock regeneration;
+    FixedScheduledSink<128> regenerationSink;
+    regeneration.SetScheduledMidiEventSink(&regenerationSink);
+    synth::SyncConfig regenerationConfig;
+    regenerationConfig.sendClock = true;
+    regenerationConfig.receiveClock = true;
+    regenerationConfig.sendTransport = true;
+    regenerationConfig.receiveTransport = true;
+    regenerationConfig.ppqn = 24;
+    REQUIRE_TRUE(regeneration.ApplySyncConfig(regenerationConfig));
+    REQUIRE_TRUE(regeneration.Prepare(1000.0, 100));
+    REQUIRE_TRUE(regeneration.CommitBlock(0, 100, 1'000'000) != nullptr);
+    constexpr std::uint64_t continueInput = 1'010'000;
+    constexpr std::uint64_t zeroInput = 1'025'000;
+    REQUIRE_TRUE(regeneration.HandleExternalTransport(
+        synth::ClockTransportCommand::Continue, continueInput, 5));
+    REQUIRE_TRUE(regeneration.HandleExternalClock(zeroInput, 5));
+    const auto* continueEvent = FindEventAtDeadline(
+        regenerationSink,
+        synth::ScheduledMidiEventKind::Continue,
+        continueInput + regeneration.OutputLatencyMicros());
+    const auto* zeroEvent = FindEventAtDeadline(
+        regenerationSink,
+        synth::ScheduledMidiEventKind::TimingClock,
+        zeroInput + regeneration.OutputLatencyMicros());
+    REQUIRE_TRUE(continueEvent != nullptr);
+    REQUIRE_TRUE(zeroEvent != nullptr);
+    const double continueOffsetError = std::fabs(
+        static_cast<double>(continueEvent->dueTimeMicros - continueInput) -
+        static_cast<double>(regeneration.OutputLatencyMicros()));
+    const double zeroOffsetError = std::fabs(
+        static_cast<double>(zeroEvent->dueTimeMicros - zeroInput) -
+        static_cast<double>(regeneration.OutputLatencyMicros()));
+    const double maximumFixedOffsetErrorMicros =
+        std::max(continueOffsetError, zeroOffsetError);
+    REQUIRE_TRUE(maximumFixedOffsetErrorMicros <= 1.0);
+
+    std::cout << "[trace] mapper_output deadline_max_us="
+              << maximumDeadlineErrorMicros
+              << " spacing_max_us=" << maximumSpacingErrorMicros
+              << " slew_allowance_us=" << maximumSlewContributionMicros
+              << " fixed_offset_max_us=" << maximumFixedOffsetErrorMicros
+              << " median_us=" << mapperTrace[4].medianError
+              << " generation=" << discontinuity.DiagnosticsSnapshot().generation
+              << "\n";
 }
 
 int main() {

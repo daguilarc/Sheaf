@@ -119,11 +119,13 @@ int main()
     Require(predictiveDots == 2, "JUCE consumes predictive ellipse commands");
 
     synth::ParameterManager manager;
+    synth::GridManager gridManager;
     synth::MessageInBus uiBus(&manager);
     synth::RuntimeConfig config = synth_miniapp::MiniAppCore::Config();
     synth::MidiInstrumentConfig instrument;
     synth::AppContext context;
     context.parameterManager = &manager;
+    context.gridManager = &gridManager;
     context.uiBus = &uiBus;
     context.config = &config;
     context.instrument = &instrument;

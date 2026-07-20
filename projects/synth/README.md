@@ -146,8 +146,11 @@ gesture messages through manager-owned gestures, and scene messages through the
 manager scene API. A `SceneSelect(sceneIx)` message selects one scene ordinal;
 the manager writes it to the less-selected endpoint of the current blend
 (`blend <= 0.5` updates right, `blend > 0.5` updates left) and leaves blend
-unchanged. `Clock`, `Start`, and `Stop` are accepted and drained but
-intentionally inert in this change.
+unchanged. `Clock`, `Start`, `Continue`, and `Stop` are terminal realtime
+messages: `Engine` merges them from the UI and MIDI buses into one bounded
+timestamp-ordered batch and routes them to its runtime-owned `MasterClock`.
+External messages retain their normalized timestamp and controller slot;
+ordinary parameter and grid messages keep their existing routing.
 
 Gestures are manager-owned. `ParameterManager::SetGestureCount(count)` must be
 called before groups are created when gestures are needed; the default gesture
@@ -158,6 +161,28 @@ Scene endpoint changes should use `SetSceneEndpoints(left, right)`, which
 rejects endpoints that are invalid for any existing group and leaves prior
 scene state unchanged. `SetSceneBlend(blend)` clamps and updates blend
 independently.
+
+## Master Clock And MIDI Sync
+
+Every `Engine` owns one address-stable, JUCE-free `MasterClock`. Once per audio
+callback the engine drains due control input, commits one immutable half-open
+affine `ClockBlockPlan`, analytically queues enabled MIDI clock crossings, and
+then calls the application once. Applications read musical time directly at
+integer or fractional output-sample positions; they do not advance the clock.
+A 4x application maps internal subframe `k` to
+`block.startSample + k / 4.0`.
+
+The runtime sidebar's Sync page stages send/receive clock and transport gates,
+PPQN, and read-only lock/source/BPM/latency/late/drop diagnostics. Runtime
+configuration schema v2 persists this global sync policy; schema-v1 files load
+with all four gates off and PPQN 24. Patch files never contain sync policy.
+PPQN values `1..960` are accepted, but values other than 24 require a matching
+nonstandard peer configuration.
+
+See [Master Clock and MIDI Sync](docs/master-clock-and-midi-sync.md) for the
+timeline, transport, timestamp-epoch, scheduling, threading, diagnostics, and
+fallback contracts. Its microsecond tolerances describe calculated deadlines
+before host delivery, not physical MIDI-device latency.
 
 ## Runtime Button Grids
 
@@ -267,16 +292,17 @@ core, app UI producers, and page producers JUCE-free.
 
 `projects/synth/runtime/` is the shared, app-agnostic JUCE application
 runtime (`synth_runtime::Runtime<App>`, `synth_runtime::ShellComponent<App>`,
-`synth_runtime::MainPane<App>` and its Audio/Controllers/File pages, the
+`synth_runtime::MainPane<App>` and its Audio/Controllers/Sync/File pages, the
 `SYNTH_RUNTIME_MAIN` macro). It owns the audio device, the message-thread
 tick, and per-controller MIDI connection management that every app built on
 it gets for free.
 
-`MainPane` lays out a fixed-width right sidebar (Audio/Controllers/File
+`MainPane` lays out a fixed-width right sidebar (Audio/Controllers/Sync/File
 buttons plus a rolling-max deadline readout) next to a content host that
 shows exactly one page at a time: `AudioConfigPage` (audio device
 selection/status), `ControllersPage` (per-controller MIDI device pickers and
-mapping edits), and `FilePage` (patch commands and patch identity). There is
+mapping edits), `SyncPageSurface` (clock/transport policy and status), and
+`FilePage` (patch commands and patch identity). There is
 no separate shell chrome row — each page owns the state that used to live in
 the old MidiPanel/AudioPanel strips and the patch-command row.
 
@@ -301,8 +327,11 @@ production `Runtime<App>` resolves an OS application-data root under
 `Sheaf/<appName>` and creates `patches/`, `logs/`, and `config.json`. Tests can
 inject scratch paths. `patches/` contains synthesizer patch directories and
 version files; `logs/` contains async session logs; `config.json` stores MIDI
-controller/device configuration plus audio input/output selection. Patch files
-do not carry MIDI/audio configuration.
+controller/device configuration, audio input/output selection, and global sync
+configuration. Writers emit runtime-config schema v2. Readers migrate schema
+v1 by supplying safe sync defaults (all flags off, PPQN 24), and reject invalid
+schema-v2 sync values atomically. Patch files do not carry MIDI/audio/sync
+configuration.
 
 `FilePage` (`projects/synth/runtime/FilePage.hpp`) hosts the patch-command
 row (New/Save/Save As/Load/Revert), an in-app patch browser rooted at
@@ -326,9 +355,9 @@ through `engine.EditInstrument` plus a
 `MidiConnectionManager` reconcile pass — the page never mutates config or
 device handlers directly.
 
-Audio and Controllers page Back buttons save `config.json` before returning to
-the app view. File page Back only dismisses the File page; patch save/load
-commands are explicit.
+Audio, Controllers, and Sync page Back buttons save `config.json` before
+returning to the app view. File page Back only dismisses the File page; patch
+save/load commands are explicit.
 
 Build an app from `projects/synth`:
 

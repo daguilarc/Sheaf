@@ -5,6 +5,7 @@
 #endif
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <iostream>
@@ -269,6 +270,27 @@ bool WaitUntil(Predicate&& predicate, std::chrono::milliseconds timeout = std::c
     }
     return true;
 }
+
+template <typename Record, std::size_t Capacity>
+class FixedTrace {
+public:
+    bool Push(const Record& record) noexcept {
+        if (size_ == Capacity) {
+            return false;
+        }
+        records_[size_++] = record;
+        return true;
+    }
+
+    std::size_t Size() const noexcept { return size_; }
+    const Record& operator[](std::size_t index) const noexcept {
+        return records_[index];
+    }
+
+private:
+    std::array<Record, Capacity> records_{};
+    std::size_t size_ = 0;
+};
 
 } // namespace
 
@@ -795,6 +817,151 @@ TEST_CASE(stop_after_clear_sink_sync_joins_promptly) {
     sender.Stop();
     const auto elapsed = std::chrono::steady_clock::now() - start;
     REQUIRE_TRUE(elapsed < std::chrono::seconds(1));
+}
+
+TEST_CASE(acceptance_trace_concrete_sender_broadcast_reconnect_cutoff_and_fallback) {
+    struct DeliveryRecord {
+        std::size_t sink = 0;
+        std::uint8_t status = 0;
+        bool scheduled = false;
+        std::uint64_t dueTimeMicros = 0;
+    };
+
+    std::atomic<std::uint64_t> nowMicros{100'000};
+    MidiSender sender(32, [&nowMicros] {
+        return nowMicros.load(std::memory_order_relaxed);
+    });
+    RecordingSink first(true, 25'000);
+    RecordingSink second(true, 1'000);
+    RecordingSink reconnected(true, 1'000);
+    RecordingSink immediateOnly;
+    sender.SetSink(0, &first);
+    sender.SetSink(1, &second);
+    // Slots 2 and 4 begin offline. Slot 2 reconnects only after the first
+    // ordered broadcast has already been snapshotted and submitted.
+
+    REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(
+        ScheduledMidiEventKind::TimingClock, 124'999, 1, 11)));
+    REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(
+        ScheduledMidiEventKind::TimingClock, 125'000, 2, 11)));
+    ScheduledMidiEvent cutoff = RealtimeEvent(
+        ScheduledMidiEventKind::PhaseGenerationCutoff, 125'000, 3, 12);
+    cutoff.invalidatedPhaseGeneration = 11;
+    cutoff.phaseCutoffDueTimeMicros = 125'000;
+    REQUIRE_TRUE(sender.TryEnqueue(cutoff));
+    REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(
+        ScheduledMidiEventKind::Start, 125'000, 4)));
+    REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(
+        ScheduledMidiEventKind::TimingClock, 125'000, 5, 12)));
+    REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(
+        ScheduledMidiEventKind::TimingClock, 200'000, 6, 12)));
+
+    sender.Start();
+    REQUIRE_TRUE(WaitUntil([&] {
+        return first.Snapshot().size() == 3 && second.Snapshot().size() == 3;
+    }));
+    REQUIRE_TRUE(reconnected.Snapshot().empty());
+
+    nowMicros.store(175'000, std::memory_order_relaxed);
+    sender.SetSink(2, &reconnected);
+    REQUIRE_TRUE(WaitUntil([&] {
+        return first.Snapshot().size() == 4 &&
+               second.Snapshot().size() == 4 &&
+               reconnected.Snapshot().size() == 1;
+    }));
+
+    sender.SetSink(3, &immediateOnly);
+    nowMicros.store(185'000, std::memory_order_relaxed);
+    REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(
+        ScheduledMidiEventKind::TimingClock, 210'000, 7, 12)));
+    REQUIRE_TRUE(WaitUntil([&] {
+        return first.Snapshot().size() == 5 &&
+               second.Snapshot().size() == 5 &&
+               reconnected.Snapshot().size() == 2;
+    }));
+    REQUIRE_TRUE(immediateOnly.Snapshot().empty());
+
+    nowMicros.store(210'001, std::memory_order_relaxed);
+    REQUIRE_TRUE(sender.Enqueue(7, NoteOn()));
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    sender.Stop();
+
+    const auto firstDeliveries = first.Snapshot();
+    const auto secondDeliveries = second.Snapshot();
+    const auto reconnectDeliveries = reconnected.Snapshot();
+    const auto immediateDeliveries = immediateOnly.Snapshot();
+    REQUIRE_TRUE(firstDeliveries.size() == 5);
+    REQUIRE_TRUE(secondDeliveries.size() == firstDeliveries.size());
+    for (std::size_t index = 0; index < firstDeliveries.size(); ++index) {
+        REQUIRE_TRUE(firstDeliveries[index].midi.raw == secondDeliveries[index].midi.raw);
+        REQUIRE_TRUE(firstDeliveries[index].scheduled);
+        REQUIRE_TRUE(secondDeliveries[index].scheduled);
+        REQUIRE_TRUE(firstDeliveries[index].dueTimeMicros ==
+                     secondDeliveries[index].dueTimeMicros);
+    }
+    REQUIRE_TRUE(firstDeliveries[0].midi.raw ==
+                 std::vector<std::uint8_t>{0xF8});
+    REQUIRE_TRUE(firstDeliveries[0].dueTimeMicros == 124'999);
+    REQUIRE_TRUE(firstDeliveries[1].midi.raw ==
+                 std::vector<std::uint8_t>{0xFA});
+    REQUIRE_TRUE(firstDeliveries[1].dueTimeMicros == 125'000);
+    REQUIRE_TRUE(firstDeliveries[2].midi.raw ==
+                 std::vector<std::uint8_t>{0xF8});
+    REQUIRE_TRUE(firstDeliveries[2].dueTimeMicros == 125'000);
+    REQUIRE_TRUE(firstDeliveries[3].dueTimeMicros == 200'000);
+    REQUIRE_TRUE(firstDeliveries[4].dueTimeMicros == 210'000);
+
+    REQUIRE_TRUE(reconnectDeliveries.size() == 2);
+    REQUIRE_TRUE(reconnectDeliveries[0].dueTimeMicros == 200'000);
+    REQUIRE_TRUE(reconnectDeliveries[1].dueTimeMicros == 210'000);
+    for (const auto& delivery : reconnectDeliveries) {
+        REQUIRE_TRUE(delivery.dueTimeMicros > 125'000);
+    }
+    REQUIRE_TRUE(immediateDeliveries.size() == 1);
+    REQUIRE_TRUE(!immediateDeliveries[0].scheduled);
+    REQUIRE_TRUE(immediateDeliveries[0].midi.raw ==
+                 std::vector<std::uint8_t>{0xF8});
+    REQUIRE_TRUE(immediateDeliveries[0].midi.timestamp == 210'000);
+
+    const auto diagnostics = sender.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.staleGenerationDropCount == 1);
+    REQUIRE_TRUE(diagnostics.fallbackSendCount == 1);
+    REQUIRE_TRUE(diagnostics.lateEventCount == 1);
+
+    FixedTrace<DeliveryRecord, 13> trace;
+    const auto append = [&trace](
+                            std::size_t sinkIndex,
+                            const std::vector<RecordingSink::Delivery>& deliveries) {
+        for (const auto& delivery : deliveries) {
+            if (!trace.Push({
+                    .sink = sinkIndex,
+                    .status = static_cast<std::uint8_t>(
+                        delivery.midi.raw.empty() ? 0 : delivery.midi.raw.front()),
+                    .scheduled = delivery.scheduled,
+                    .dueTimeMicros = delivery.scheduled
+                        ? delivery.dueTimeMicros
+                        : delivery.midi.timestamp,
+                })) {
+                return false;
+            }
+        }
+        return true;
+    };
+    REQUIRE_TRUE(append(0, firstDeliveries));
+    REQUIRE_TRUE(append(1, secondDeliveries));
+    REQUIRE_TRUE(append(2, reconnectDeliveries));
+    REQUIRE_TRUE(append(3, immediateDeliveries));
+    REQUIRE_TRUE(trace.Size() == 13);
+    REQUIRE_TRUE(trace[0].dueTimeMicros == trace[5].dueTimeMicros);
+    REQUIRE_TRUE(trace[1].status == 0xFA && trace[2].status == 0xF8);
+    REQUIRE_TRUE(trace[10].dueTimeMicros == 200'000);
+    REQUIRE_TRUE(!trace[12].scheduled && trace[12].dueTimeMicros == 210'000);
+
+    std::cout << "[trace] concrete_sender records=" << trace.Size()
+              << " broadcast_deadlines=5"
+              << " stale_drops=" << diagnostics.staleGenerationDropCount
+              << " reconnect_first_us=" << reconnectDeliveries[0].dueTimeMicros
+              << " fallback=" << diagnostics.fallbackSendCount << "\n";
 }
 
 int main() {
