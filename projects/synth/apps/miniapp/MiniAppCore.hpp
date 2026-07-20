@@ -29,9 +29,12 @@
 #include "synth/StandardModulators.hpp"
 
 #include <array>
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <vector>
 
@@ -44,8 +47,25 @@ public:
     using VcoModule = synth::WavetableVcoModule<kVoiceCount>;
     using FilterModule = synth::ClassicSvfModule<kVoiceCount>;
     using LfoModule = synth::BasicLfoModule<kVoiceCount>;
+    using AdsrModule = synth::AdsrModule<kVoiceCount>;
     using VcoUiLayerState = synth::DefaultWavetableVco::UIState;
     using LfoUiLayerState = synth::BasicLFOProcessor::UIState;
+
+    struct AdsrClockDebugState {
+        std::size_t framesProcessed = 0;
+        bool firstGate = false;
+        bool lastGate = false;
+        std::size_t risingEdgeCount = 0;
+        std::size_t fallingEdgeCount = 0;
+        std::uint64_t lastRisingSample = 0;
+        std::uint64_t lastFallingSample = 0;
+    };
+
+    struct TempoRequestDebugState {
+        std::uint64_t requestCount = 0;
+        float lastRequestedBpm = 0.0f;
+        bool lastAcceptance = false;
+    };
 
     static synth::RuntimeConfig Config() {
         synth::RuntimeConfig config;
@@ -71,9 +91,9 @@ public:
             .numVoices = 2,
             .numModulators = 15,
             .numScenes = 3,
-            // Twelve base values plus twelve values for each of fifteen
-            // modulation sources: 12 * (1 + 15) = 192.
-            .maxParameters = 192,
+            // Seventeen base values plus seventeen values for each of fifteen
+            // modulation sources: 17 * (1 + 15) = 272.
+            .maxParameters = 17 * (1 + 15),
         });
         group_ = &group;
         standardModulators_ = std::make_unique<synth::StandardModulators<kVoiceCount>>(group);
@@ -90,9 +110,30 @@ public:
         LfoModule::Options lfoOptions;
         lfoOptions.indicatorColors = indicatorColors;
         lfoModule_.RegisterParameters(*context_->parameterManager, group, "LFO", lfoOptions);
+        AdsrModule::Options adsrOptions;
+        adsrOptions.indicatorColors = indicatorColors;
+        adsrModule_.RegisterParameters(*context_->parameterManager, group, {}, adsrOptions);
+        tempoId_ = context_->parameterManager->RegisterParameter(group, {
+            .name = "Tempo",
+            .shortName = "BPM",
+            .defaultValue = (120.0f - 30.0f) / (300.0f - 30.0f),
+            .range = synth::RangeKind::Unipolar,
+            .baseColor = synth::Color::White,
+            .indicatorColors = indicatorColors,
+        });
         standardModulators_->Register();
         vcoModule_.RegisterModulationSources(group, 4, 5);
         lfoModule_.RegisterModulationSource(group, 6);
+        std::array<float*, kVoiceCount> adsrMirrorPointers{};
+        for (std::size_t voiceIx = 0; voiceIx < kVoiceCount; ++voiceIx) {
+            adsrMirrorPointers[voiceIx] = &adsrModulationMirror_[voiceIx];
+        }
+        group.SetModulationSource(7, adsrMirrorPointers, {
+            .name = "ADSR",
+            .shortName = "ADSR",
+            .sourceColor = synth::Color::Blue,
+            .connected = true,
+        });
         RegisterModulatorVisualizers(group);
 
         tune_ = &context_->parameterManager->ParameterById(vcoModule_.Parameters().tune);
@@ -107,9 +148,15 @@ public:
         lfoPhaseOffset_ = &context_->parameterManager->ParameterById(lfoModule_.Parameters().phaseOffset);
         lfoSkew_ = &context_->parameterManager->ParameterById(lfoModule_.Parameters().skew);
         lfoExponent_ = &context_->parameterManager->ParameterById(lfoModule_.Parameters().exponent);
+        attack_ = &context_->parameterManager->ParameterById(adsrModule_.Parameters().attack);
+        decay_ = &context_->parameterManager->ParameterById(adsrModule_.Parameters().decay);
+        sustain_ = &context_->parameterManager->ParameterById(adsrModule_.Parameters().sustain);
+        release_ = &context_->parameterManager->ParameterById(adsrModule_.Parameters().release);
+        tempo_ = &context_->parameterManager->ParameterById(tempoId_);
         parameters_ = {
             tune_,        phaseParam_,       shape_,        volume_,      filterCutoff_, filterResonance_,
             filterBlend_, lfoFrequency_,     lfoShape_,     lfoPhaseOffset_, lfoSkew_,   lfoExponent_,
+            attack_,      decay_,            sustain_,      release_,       tempo_,
         };
 
         tune_->SetGestureActive(0, 0, true);
@@ -129,6 +176,11 @@ public:
         context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *lfoPhaseOffset_);
         context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *lfoSkew_);
         context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *lfoExponent_);
+        context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *attack_);
+        context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *decay_);
+        context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *sustain_);
+        context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *release_);
+        context_->parameterManager->AssignParameterToPage(lfoPage.ordinal, *tempo_);
 
         vcoBank_ = &context_->parameterManager->CreateBank();
         vcoBank_->SetBankColor(synth::Color::Cyan);
@@ -143,6 +195,9 @@ public:
         filterModule_.RegisterToBank(*vcoBank_, 4);
         slot_->SelectBank(lfoBank_);
         lfoModule_.RegisterToBank(*lfoBank_, 0);
+        adsrModule_.RegisterToBank(*lfoBank_, 5);
+        std::array<synth::Parameter*, 1> tempoParameters{tempo_};
+        lfoBank_->RegisterParameters(tempoParameters, 9);
         slot_->SelectBank(vcoBank_);
 
         context_->parameterManager->SetActivePage(0);
@@ -199,12 +254,14 @@ public:
         // input path ignores out-of-range messages and output feedback blanks
         // cells with no backing parameter.
         *context_->instrument = synth::DefaultMidiInstrumentConfig();
+        lastEffectiveTempoBpm_ = 120.0f;
     }
 
     void PrepareToPlay(double sampleRate, int /*blockSize*/) {
         vcoModule_.SetSampleRate(static_cast<float>(sampleRate));
         filterModule_.SetSampleRate(static_cast<float>(sampleRate));
         lfoModule_.SetSampleRate(static_cast<float>(sampleRate));
+        adsrModule_.SetSampleRate(static_cast<float>(sampleRate));
         standardModulators_->Prepare(sampleRate);
     }
 
@@ -227,8 +284,26 @@ public:
             context_->parameterManager->SetActivePage(desiredPage);
         }
 
+        if (block.numFrames != 0) {
+            adsrClockDebug_ = {};
+        }
+
         for (std::size_t frame = 0; frame < block.numFrames; ++frame) {
-            ProcessParameters(*group_, block.startSample + frame);
+            const std::uint64_t absoluteOutputSample = block.startSample + frame;
+            ProcessParameters(*group_, absoluteOutputSample);
+
+            const float effectiveTempoBpm = context_->parameterManager->GetLinear(
+                30.0f, 300.0f, 0, tempoId_);
+            if (effectiveTempoBpm != lastEffectiveTempoBpm_) {
+                if (context_->masterClock != nullptr) {
+                    tempoRequestDebug_.lastAcceptance =
+                        context_->masterClock->SetTempoBpm(effectiveTempoBpm);
+                    tempoRequestDebug_.lastRequestedBpm = effectiveTempoBpm;
+                    ++tempoRequestDebug_.requestCount;
+                }
+                lastEffectiveTempoBpm_ = effectiveTempoBpm;
+            }
+
             vcoModule_.SetInput(*context_->parameterManager);
             for (std::size_t voiceIx = 0; voiceIx < kVoiceCount; ++voiceIx) {
                 vcoModule_.CurrentInput().voices[voiceIx].vco.freq *=
@@ -243,6 +318,39 @@ public:
             lfoModule_.SetInput(*context_->parameterManager);
             lfoModule_.Process();
             standardModulators_->Process();
+
+            bool adsrGate = false;
+            if (block.clockPlan != nullptr &&
+                block.clockPlan->TransportState() == synth::ClockTransportState::Running) {
+                const double transportQuarterNotes = block.clockPlan->TransportQuarterNotesAt(
+                    static_cast<double>(absoluteOutputSample));
+                const double phase = transportQuarterNotes - std::floor(transportQuarterNotes);
+                adsrGate = phase >= 0.0 && phase < 0.5;
+            }
+            if (frame == 0) {
+                adsrClockDebug_.firstGate = adsrGate;
+            }
+            if (adsrGate != previousAdsrGate_) {
+                if (adsrGate) {
+                    ++adsrClockDebug_.risingEdgeCount;
+                    adsrClockDebug_.lastRisingSample = absoluteOutputSample;
+                } else {
+                    ++adsrClockDebug_.fallingEdgeCount;
+                    adsrClockDebug_.lastFallingSample = absoluteOutputSample;
+                }
+            }
+            previousAdsrGate_ = adsrGate;
+            adsrClockDebug_.lastGate = adsrGate;
+            ++adsrClockDebug_.framesProcessed;
+
+            std::array<bool, kVoiceCount> adsrGates{};
+            adsrGates.fill(adsrGate);
+            adsrModule_.SetInput(*context_->parameterManager, adsrGates);
+            adsrModule_.Process();
+            const std::span<const float> adsrOutputs = adsrModule_.Outputs();
+            for (std::size_t voiceIx = 0; voiceIx < kVoiceCount; ++voiceIx) {
+                adsrModulationMirror_[voiceIx] = adsrOutputs[voiceIx];
+            }
             context_->parameterManager->UpdateModValues(*group_);
 
             const float mixed = (filterModule_.Output(0) + filterModule_.Output(1)) * 0.5f;
@@ -271,7 +379,14 @@ public:
     const VcoModule::ParameterIds& VcoParameterIds() const { return vcoModule_.Parameters(); }
     const FilterModule::ParameterIds& FilterParameterIds() const { return filterModule_.Parameters(); }
     const LfoModule::ParameterIds& LfoParameterIds() const { return lfoModule_.Parameters(); }
+    const AdsrModule::ParameterIds& AdsrParameterIds() const { return adsrModule_.Parameters(); }
+    synth::ParameterId TempoParameterId() const { return tempoId_; }
+    synth::Parameter& TempoParameter() { return *tempo_; }
+    const synth::Parameter& TempoParameter() const { return *tempo_; }
     const std::vector<synth::Parameter*>& Parameters() const { return parameters_; }
+    const std::array<float, kVoiceCount>& AdsrModulationMirror() const { return adsrModulationMirror_; }
+    const AdsrClockDebugState& AdsrClockDebug() const { return adsrClockDebug_; }
+    const TempoRequestDebugState& TempoRequestDebug() const { return tempoRequestDebug_; }
 
     synth::Bank* VcoBank() const { return vcoBank_; }
     synth::Bank* LfoBank() const { return lfoBank_; }
@@ -289,6 +404,8 @@ public:
     VcoModule& VcoModuleInstance() { return vcoModule_; }
     FilterModule& FilterModuleInstance() { return filterModule_; }
     LfoModule& LfoModuleInstance() { return lfoModule_; }
+    AdsrModule& AdsrModuleInstance() { return adsrModule_; }
+    const AdsrModule& AdsrModuleInstance() const { return adsrModule_; }
     synth::StandardModulators<kVoiceCount>& StandardModulatorsInstance() {
         return *standardModulators_;
     }
@@ -322,6 +439,12 @@ private:
     synth::Parameter* lfoPhaseOffset_ = nullptr;
     synth::Parameter* lfoSkew_ = nullptr;
     synth::Parameter* lfoExponent_ = nullptr;
+    synth::Parameter* attack_ = nullptr;
+    synth::Parameter* decay_ = nullptr;
+    synth::Parameter* sustain_ = nullptr;
+    synth::Parameter* release_ = nullptr;
+    synth::Parameter* tempo_ = nullptr;
+    synth::ParameterId tempoId_ = 0;
     std::vector<synth::Parameter*> parameters_;
     synth::Bank* vcoBank_ = nullptr;
     synth::Bank* lfoBank_ = nullptr;
@@ -333,6 +456,12 @@ private:
     VcoModule vcoModule_;
     FilterModule filterModule_;
     LfoModule lfoModule_;
+    AdsrModule adsrModule_;
+    std::array<float, kVoiceCount> adsrModulationMirror_{};
+    bool previousAdsrGate_ = false;
+    float lastEffectiveTempoBpm_ = 120.0f;
+    AdsrClockDebugState adsrClockDebug_{};
+    TempoRequestDebugState tempoRequestDebug_{};
     std::unique_ptr<synth::StandardModulators<kVoiceCount>> standardModulators_;
     VcoModule::UIState vcoUiStates_;
     FilterModule::UIState filterUiStates_;

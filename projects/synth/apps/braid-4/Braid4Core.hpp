@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 
 namespace synth_braid4 {
@@ -58,6 +59,23 @@ public:
         std::array<float, kOscillatorCount> lastMatrixInputs{};
         std::array<float, kOscillatorCount> lastConsumedMatrixSources{};
     };
+
+    struct ClockQueryDebugState {
+        std::size_t attemptedQueryCount = 0;
+        std::size_t successfulQueryCount = 0;
+        double firstOutputPosition = 0.0;
+        double lastOutputPosition = 0.0;
+        double firstLifetimeQuarterNotes = 0.0;
+        double lastLifetimeQuarterNotes = 0.0;
+    };
+
+    static constexpr double OutputPositionForInternalIndex(
+        std::uint64_t blockStartSample,
+        std::size_t localInternalIndex) noexcept {
+        return static_cast<double>(blockStartSample) +
+               static_cast<double>(localInternalIndex) /
+                   static_cast<double>(kOversampleFactor);
+    }
 
     static synth::RuntimeConfig Config() {
         synth::RuntimeConfig config;
@@ -217,12 +235,19 @@ public:
             return;
         }
 
+        clockQueryDebug_ = {};
         debugCounters_.lastHostStartSample = block.startSample;
+        std::size_t localInternalIndex = 0;
         for (std::size_t frame = 0; frame < block.numFrames; ++frame) {
             const std::uint64_t hostIndex = block.startSample + frame;
-            const std::array<float, 2> output = outputStage_.ProcessHostFrame(hostIndex, [this](std::uint64_t internalIndex) {
-                return ProcessInternalSubframe(internalIndex);
-            });
+            const std::array<float, 2> output = outputStage_.ProcessHostFrame(
+                hostIndex,
+                [this, &block, &localInternalIndex](std::uint64_t internalIndex) {
+                    const double outputPosition = OutputPositionForInternalIndex(
+                        block.startSample, localInternalIndex++);
+                    return ProcessInternalSubframe(
+                        internalIndex, outputPosition, block.clockPlan);
+                });
             WriteOutputFrame(block, frame, output);
             ++debugCounters_.hostFramesProcessed;
         }
@@ -293,6 +318,7 @@ public:
         return (DecimatorLatencyInternalFrames() + kOversampleFactor - 1) / kOversampleFactor;
     }
     const DebugCounterState& DebugCounters() const { return debugCounters_; }
+    const ClockQueryDebugState& ClockQueryDebug() const { return clockQueryDebug_; }
 
     static constexpr std::size_t FilteredParameterStateCountForTest() {
         return kFilteredParameterStateCount;
@@ -410,7 +436,11 @@ private:
             NormalizeMatrixOutput(0.5f * (rawLfoStereoOutputs_[0] + rawLfoStereoOutputs_[1]));
     }
 
-    std::array<float, 2> ProcessInternalSubframe(std::uint64_t internalIndex) {
+    std::array<float, 2> ProcessInternalSubframe(
+        std::uint64_t internalIndex,
+        double outputPosition,
+        const synth::ClockBlockPlan* clockPlan) {
+        ObserveClockPlan(clockPlan, outputPosition);
         debugCounters_.lastMatrixModulatorConsumptionInternalIndex = internalIndex;
         debugCounters_.lastConsumedMatrixOutputPublicationInternalIndex = matrixOutputPublicationInternalIndex_;
         debugCounters_.lastConsumedMatrixSources = normalizedMatrixSources_;
@@ -458,6 +488,27 @@ private:
         RecordInternalIndex(internalIndex);
 
         return {braidModule_.OutputLeft(), braidModule_.OutputRight()};
+    }
+
+    void ObserveClockPlan(
+        const synth::ClockBlockPlan* clockPlan,
+        double outputPosition) noexcept {
+        if (clockPlan == nullptr) {
+            return;
+        }
+        ++clockQueryDebug_.attemptedQueryCount;
+        const std::optional<double> lifetimeQuarterNotes =
+            clockPlan->TryLifetimeQuarterNotesAt(outputPosition);
+        if (!lifetimeQuarterNotes.has_value()) {
+            return;
+        }
+        if (clockQueryDebug_.successfulQueryCount == 0) {
+            clockQueryDebug_.firstOutputPosition = outputPosition;
+            clockQueryDebug_.firstLifetimeQuarterNotes = *lifetimeQuarterNotes;
+        }
+        clockQueryDebug_.lastOutputPosition = outputPosition;
+        clockQueryDebug_.lastLifetimeQuarterNotes = *lifetimeQuarterNotes;
+        ++clockQueryDebug_.successfulQueryCount;
     }
 
     struct OscillatorParameterFilters {
@@ -680,6 +731,7 @@ private:
     double hostSampleRate_ = 0.0;
     double internalSampleRate_ = 0.0;
     DebugCounterState debugCounters_;
+    ClockQueryDebugState clockQueryDebug_;
 };
 
 }  // namespace synth_braid4

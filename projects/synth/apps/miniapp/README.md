@@ -135,10 +135,22 @@ open projects/synth/apps/miniapp/build/SynthMiniapp.app
 
 ## What this app does
 
-It creates one parameter group with two demo pages (VCO, LFO), two banks
-(VCO bank mapped to the dual-VCO module's parameters, LFO bank mapped to the
-LFO speed parameter), one bank slot with four physical encoders, one gesture,
-and three scenes with unipolar sine modulators driving the LFO sources.
+It creates one duophonic parameter group with 17 top-level parameters,
+15 modulation sources, three scenes, one gesture, two pages (VCO and LFO),
+two banks, and one 16-encoder bank slot. The VCO page retains Tune, Phase,
+Shape, Volume, and the filter's Cutoff, Resonance, and Blend controls. The
+expanded LFO page and bank expose, in order, LFO Frequency, Shape, Phase
+Offset, Skew, Exponent, ADSR Attack, Decay, Sustain, Release, and Tempo.
+
+The app queries the runtime's immutable committed clock plan at each absolute
+output frame. While transport is running, the shared ADSR gate is high for
+quarter-note phase `[0, 0.5)` and low for `[0.5, 1.0)`, so each integer quarter
+retriggers an eighth-note-long envelope. Current per-voice ADSR outputs are
+copied into an app-owned stable mirror registered as modulation source 7
+before the same-frame modulation update. Tempo maps linearly from 30 to
+300 BPM (120 BPM by default); voice 0 is the global authority, and MiniApp
+requests a master-clock tempo change only when that effective value changes.
+
 Portable UI actions send `MessageIn` values through `context->uiBus`; the JUCE
 backend under `projects/synth/juce` turns portable nodes and draw commands
 into desktop widgets and graphics calls. Selecting the VCO/LFO bank buttons

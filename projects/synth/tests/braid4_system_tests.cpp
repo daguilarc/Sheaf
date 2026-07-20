@@ -24,6 +24,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -68,6 +69,63 @@ void RequireNear(double actual, double expected, double tolerance, const char* e
 }
 
 #define REQUIRE_NEAR(actual, expected, tolerance) RequireNear((actual), (expected), (tolerance), #actual)
+
+template <typename Rig>
+void RequireEverySubframeClockQueriesAndTempoContinuity(Rig& rig) {
+    using Core = std::remove_reference_t<decltype(rig.Application())>;
+    if constexpr (requires(Core& core) {
+                      core.ClockQueryDebug();
+                      Core::OutputPositionForInternalIndex(std::uint64_t{}, std::size_t{});
+                  }) {
+        constexpr std::size_t kHostFrames = 5;
+        constexpr std::size_t kInternalFrames = kHostFrames * Core::kOversampleFactor;
+
+        REQUIRE_NEAR(Core::OutputPositionForInternalIndex(0, 0), 0.0, 0.0);
+        REQUIRE_NEAR(Core::OutputPositionForInternalIndex(0, 1), 0.25, 0.0);
+        REQUIRE_NEAR(Core::OutputPositionForInternalIndex(0, 2), 0.5, 0.0);
+        REQUIRE_NEAR(Core::OutputPositionForInternalIndex(0, 3), 0.75, 0.0);
+        REQUIRE_NEAR(Core::OutputPositionForInternalIndex(0, 6), 1.5, 0.0);
+        REQUIRE_NEAR(Core::OutputPositionForInternalIndex(0, kInternalFrames - 1), 4.75, 0.0);
+
+        rig.RunBlockAt(1);
+        const synth::ClockBlockPlan* firstPlanPointer = rig.CurrentClockPlan();
+        REQUIRE_TRUE(firstPlanPointer != nullptr);
+        const synth::ClockBlockPlan firstPlan = *firstPlanPointer;
+        const auto firstQueries = rig.Application().ClockQueryDebug();
+        REQUIRE_TRUE(firstQueries.attemptedQueryCount == kInternalFrames);
+        REQUIRE_TRUE(firstQueries.successfulQueryCount == kInternalFrames);
+        REQUIRE_NEAR(firstQueries.firstOutputPosition, 0.0, 0.0);
+        REQUIRE_NEAR(firstQueries.lastOutputPosition, 4.75, 0.0);
+        REQUIRE_NEAR(firstQueries.firstLifetimeQuarterNotes,
+                     firstPlan.LifetimeQuarterNotesAt(0.0), 0.0);
+        REQUIRE_NEAR(firstQueries.lastLifetimeQuarterNotes,
+                     firstPlan.LifetimeQuarterNotesAt(4.75), 0.0);
+        REQUIRE_TRUE(firstQueries.lastOutputPosition < static_cast<double>(firstPlan.EndSample()));
+        REQUIRE_NEAR(firstPlan.QuarterNotesPerSample(), 120.0 / (60.0 * 48000.0), 1.0e-15);
+
+        REQUIRE_TRUE(rig.Engine().Clock().SetTempoBpm(180.0));
+        REQUIRE_NEAR(firstPlan.QuarterNotesPerSample(), 120.0 / (60.0 * 48000.0), 1.0e-15);
+        rig.RunBlockAt(2);
+
+        const synth::ClockBlockPlan* secondPlan = rig.CurrentClockPlan();
+        REQUIRE_TRUE(secondPlan != nullptr);
+        REQUIRE_TRUE(secondPlan->StartSample() == firstPlan.EndSample());
+        REQUIRE_TRUE(secondPlan->LifetimeStartQuarterNotes() == firstPlan.LifetimeEndQuarterNotes());
+        REQUIRE_NEAR(secondPlan->QuarterNotesPerSample(), 180.0 / (60.0 * 48000.0), 1.0e-15);
+
+        const auto secondQueries = rig.Application().ClockQueryDebug();
+        REQUIRE_TRUE(secondQueries.attemptedQueryCount == kInternalFrames);
+        REQUIRE_TRUE(secondQueries.successfulQueryCount == kInternalFrames);
+        REQUIRE_NEAR(secondQueries.firstOutputPosition, 5.0, 0.0);
+        REQUIRE_NEAR(secondQueries.lastOutputPosition, 9.75, 0.0);
+        REQUIRE_TRUE(secondQueries.firstLifetimeQuarterNotes == firstPlan.LifetimeEndQuarterNotes());
+        REQUIRE_TRUE(secondQueries.firstLifetimeQuarterNotes > firstQueries.lastLifetimeQuarterNotes);
+        REQUIRE_NEAR(secondQueries.lastLifetimeQuarterNotes,
+                     secondPlan->LifetimeQuarterNotesAt(9.75), 0.0);
+    } else {
+        REQUIRE_TRUE(false);
+    }
+}
 
 synth::RuntimeDataPaths UseScratchRuntimeDataPaths(const char* testName) {
     const std::filesystem::path dataRoot =
@@ -1642,6 +1700,14 @@ TEST_CASE(patch_save_perturb_load_round_trips_representative_braid_and_matrix_va
     for (const auto& [id, expected] : saved) {
         REQUIRE_NEAR(Scene0(manager, id), expected, 0.000001);
     }
+}
+
+TEST_CASE(clock_plan_is_queried_at_every_fractional_oversampled_subframe) {
+    synth_rig::SynthRig<synth_braid4::Braid4Core> rig(
+        64,
+        UseScratchRuntimeDataPaths("clock_plan_is_queried_at_every_fractional_oversampled_subframe"),
+        {.sampleRate = 48000.0, .blockSize = 5});
+    RequireEverySubframeClockQueriesAndTempoContinuity(rig);
 }
 
 TEST_CASE(runs_finite_non_silent_stereo_audio_after_decimation) {

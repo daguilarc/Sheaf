@@ -29,6 +29,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -92,6 +93,11 @@ constexpr std::size_t kLfoShapePosition = 1;
 constexpr std::size_t kLfoPhaseOffsetPosition = 2;
 constexpr std::size_t kLfoSkewPosition = 3;
 constexpr std::size_t kLfoExponentPosition = 4;
+constexpr std::size_t kAttackPosition = 5;
+constexpr std::size_t kDecayPosition = 6;
+constexpr std::size_t kSustainPosition = 7;
+constexpr std::size_t kReleasePosition = 8;
+constexpr std::size_t kTempoPosition = 9;
 
 // Builds fresh runtime-owned scratch data paths unique to the calling test.
 // Every test below injects these paths through SynthRig so startup patch
@@ -211,6 +217,88 @@ void RequireUnboundBankPosition(synth::BankSlot& slot, const synth::Bank& bank, 
     synth::PhysicalEncoderId encoderId = 0;
     REQUIRE_TRUE(slot.ResolvePosition(position, encoderId));
     REQUIRE_TRUE(bank.VisibleParameter(encoderId) == nullptr);
+}
+
+template <typename Rig>
+void RequireAdsrTempoAccessors(Rig& rig, double expectedSampleRate) {
+    using Core = std::remove_reference_t<decltype(rig.Application())>;
+    if constexpr (requires(Core& core, const Core& constCore) {
+                      core.AdsrParameterIds();
+                      core.AdsrModuleInstance();
+                      constCore.AdsrModuleInstance();
+                      core.TempoParameterId();
+                      core.TempoParameter();
+                      constCore.TempoParameter();
+                      core.AdsrModulationMirror();
+                      constCore.AdsrModulationMirror();
+                  }) {
+        Core& core = rig.Application();
+        const Core& constCore = core;
+        const auto ids = constCore.AdsrParameterIds();
+        REQUIRE_TRUE(ids.attack == 12);
+        REQUIRE_TRUE(ids.decay == 13);
+        REQUIRE_TRUE(ids.sustain == 14);
+        REQUIRE_TRUE(ids.release == 15);
+        REQUIRE_TRUE(constCore.TempoParameterId() == 16);
+        REQUIRE_TRUE(constCore.TempoParameter().Id() == 16);
+        REQUIRE_TRUE(core.TempoParameter().Id() == 16);
+        REQUIRE_NEAR(constCore.AdsrModuleInstance().SampleRate(), expectedSampleRate, 0.0);
+
+        const float* const mirrorAddress = constCore.AdsrModulationMirror().data();
+        REQUIRE_TRUE(mirrorAddress != nullptr);
+        REQUIRE_TRUE(core.AdsrModulationMirror().data() == mirrorAddress);
+        rig.RunBlocks(3);
+        REQUIRE_TRUE(constCore.AdsrModulationMirror().data() == mirrorAddress);
+    } else {
+        REQUIRE_TRUE(false);
+    }
+}
+
+template <typename Core>
+void RequireAdsrClockDebug(const Core& core,
+                           std::size_t framesProcessed,
+                           bool firstGate,
+                           bool lastGate,
+                           std::size_t risingEdges,
+                           std::size_t fallingEdges,
+                           std::uint64_t lastRisingSample,
+                           std::uint64_t lastFallingSample) {
+    if constexpr (requires { core.AdsrClockDebug(); }) {
+        const auto& debug = core.AdsrClockDebug();
+        REQUIRE_TRUE(debug.framesProcessed == framesProcessed);
+        REQUIRE_TRUE(debug.firstGate == firstGate);
+        REQUIRE_TRUE(debug.lastGate == lastGate);
+        REQUIRE_TRUE(debug.risingEdgeCount == risingEdges);
+        REQUIRE_TRUE(debug.fallingEdgeCount == fallingEdges);
+        REQUIRE_TRUE(debug.lastRisingSample == lastRisingSample);
+        REQUIRE_TRUE(debug.lastFallingSample == lastFallingSample);
+    } else {
+        REQUIRE_TRUE(false);
+    }
+}
+
+template <typename Core>
+void RequireTempoRequestDebug(const Core& core,
+                              std::uint64_t requestCount,
+                              float lastRequestedBpm,
+                              bool lastAcceptance) {
+    if constexpr (requires { core.TempoRequestDebug(); }) {
+        const auto& debug = core.TempoRequestDebug();
+        REQUIRE_TRUE(debug.requestCount == requestCount);
+        REQUIRE_NEAR(debug.lastRequestedBpm, lastRequestedBpm, 0.000001f);
+        REQUIRE_TRUE(debug.lastAcceptance == lastAcceptance);
+    } else {
+        REQUIRE_TRUE(false);
+    }
+}
+
+void SetNormalizedParameter(synth::ParameterManager& manager,
+                            synth::Parameter& parameter,
+                            float normalized) {
+    for (std::size_t sceneIx = 0; sceneIx < parameter.Group().Config().numScenes; ++sceneIx) {
+        parameter.SceneCenter(sceneIx) = normalized;
+    }
+    manager.ComputeAllParameters();
 }
 
 const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const char* id) {
@@ -887,7 +975,7 @@ TEST_CASE(miniapp_registers_distinct_scope_visualizers_for_modulators) {
     REQUIRE_TRUE(mod6->Visible());
 }
 
-TEST_CASE(miniapp_registers_standard_fifteen_source_topology_without_changing_performer_topology) {
+TEST_CASE(miniapp_registers_clocked_adsr_tempo_topology_without_changing_performer_topology) {
     synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
         64,
         UseScratchRuntimeDataPaths("registers_ganged_random_lfo_without_changing_performer_topology"));
@@ -901,10 +989,11 @@ TEST_CASE(miniapp_registers_standard_fifteen_source_topology_without_changing_pe
     REQUIRE_TRUE(groupConfig.numVoices == 2);
     REQUIRE_TRUE(groupConfig.numModulators == 15);
     REQUIRE_TRUE(groupConfig.numScenes == 3);
-    REQUIRE_TRUE(groupConfig.maxParameters == 192);
-    REQUIRE_TRUE(group.ParameterCount() == 12);
+    REQUIRE_TRUE(groupConfig.maxParameters == 272);
+    REQUIRE_TRUE(group.ParameterCount() == 17);
+    REQUIRE_TRUE(group.TopLevelParameterCount() == 17);
     REQUIRE_TRUE(group.GestureCount() == 1);
-    REQUIRE_TRUE(manager.ParameterCount() == 12);
+    REQUIRE_TRUE(manager.ParameterCount() == 17);
     REQUIRE_TRUE(manager.NumGroups() == 1);
     REQUIRE_TRUE(manager.GestureCount() == 1);
     REQUIRE_TRUE(manager.Scene().leftScene == 0);
@@ -938,6 +1027,11 @@ TEST_CASE(miniapp_registers_standard_fifteen_source_topology_without_changing_pe
     REQUIRE_TRUE(modulators.Metadata(5).sourceColor == synth::Color::Orange);
     REQUIRE_TRUE(modulators.Metadata(6).name == "LFO");
     REQUIRE_TRUE(modulators.Metadata(6).sourceColor == synth::Color::Green);
+    REQUIRE_TRUE(modulators.Metadata(7).connected);
+    REQUIRE_TRUE(modulators.Metadata(7).name == "ADSR");
+    REQUIRE_TRUE(modulators.Metadata(7).shortName == "ADSR");
+    REQUIRE_TRUE(modulators.Metadata(7).sourceColor == synth::Color::Blue);
+    REQUIRE_TRUE(modulators.Metadata(7).visualizer == nullptr);
     REQUIRE_TRUE(modulators.Metadata(11).connected);
     REQUIRE_TRUE(modulators.Metadata(11).name == "Constant");
     REQUIRE_TRUE(modulators.Metadata(11).shortName == "Const");
@@ -946,7 +1040,7 @@ TEST_CASE(miniapp_registers_standard_fifteen_source_topology_without_changing_pe
     REQUIRE_TRUE(modulators.Metadata(14).name == "Noise");
     REQUIRE_TRUE(modulators.Metadata(14).shortName == "Noise");
     REQUIRE_TRUE(modulators.Metadata(14).sourceColor == synth::Color::White);
-    for (const std::size_t gap : {7u, 8u, 9u, 10u, 12u, 13u}) {
+    for (const std::size_t gap : {8u, 9u, 10u, 12u, 13u}) {
         REQUIRE_TRUE(!modulators.Metadata(gap).connected);
         REQUIRE_TRUE(modulators.Metadata(gap).visualizer == nullptr);
     }
@@ -984,15 +1078,15 @@ TEST_CASE(miniapp_registers_standard_fifteen_source_topology_without_changing_pe
     rig.Press(kSlotIx, kTunePosition);
     rig.RunBlocks(1);
     const synth::ParameterManager::UIState& uiState = rig.UIState();
-    REQUIRE_TRUE(group.ParameterCount() == 21);
+    REQUIRE_TRUE(group.ParameterCount() == 27);
     REQUIRE_TRUE(uiState.slots[0].showingModulationView.load());
-    for (const std::size_t connected : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 11u, 14u}) {
+    for (const std::size_t connected : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 11u, 14u}) {
         synth::Parameter* const depth = core.Parameters()[0]->ModulationDepthParameter(connected);
         REQUIRE_TRUE(depth != nullptr);
         REQUIRE_TRUE(core.VcoBank()->VisibleParameter(10 + connected) == depth);
         REQUIRE_TRUE(uiState.slots[0].cells[connected].connected.load());
     }
-    for (const std::size_t gap : {7u, 8u, 9u, 10u, 12u, 13u}) {
+    for (const std::size_t gap : {8u, 9u, 10u, 12u, 13u}) {
         REQUIRE_TRUE(core.Parameters()[0]->ModulationDepthParameter(gap) == nullptr);
         REQUIRE_TRUE(core.VcoBank()->VisibleParameter(10 + gap) == nullptr);
         REQUIRE_TRUE(!uiState.slots[0].cells[gap].connected.load());
@@ -1002,7 +1096,7 @@ TEST_CASE(miniapp_registers_standard_fifteen_source_topology_without_changing_pe
                  retainedVisualizer);
     REQUIRE_TRUE(modulators.Metadata(0).visualizer == retainedVisualizer);
     const synth::ui::NodeTree tree = BuildMiniAppTree(rig);
-    for (const std::size_t connected : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 11u, 14u}) {
+    for (const std::size_t connected : {0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 11u, 14u}) {
         REQUIRE_TRUE(uiState.slots[0].cells[connected].visualizer.load(std::memory_order_relaxed) ==
                      modulators.Metadata(connected).visualizer);
     }
@@ -1010,13 +1104,180 @@ TEST_CASE(miniapp_registers_standard_fifteen_source_topology_without_changing_pe
         REQUIRE_TRUE(FindNodeById(
                          tree, synth_miniapp::MiniAppNodeIds::Encoder(visibleConnected) + ".visualizer") != nullptr);
     }
-    for (const std::size_t gap : {7u, 8u, 9u, 10u, 12u, 13u}) {
+    REQUIRE_TRUE(uiState.slots[0].cells[7].visualizer.load(std::memory_order_relaxed) == nullptr);
+    REQUIRE_TRUE(FindNodeById(
+                     tree, synth_miniapp::MiniAppNodeIds::Encoder(7) + ".visualizer") == nullptr);
+    for (const std::size_t gap : {8u, 9u, 10u, 12u, 13u}) {
         REQUIRE_TRUE(uiState.slots[0].cells[gap].visualizer.load(std::memory_order_relaxed) == nullptr);
         REQUIRE_TRUE(FindNodeById(
                          tree, synth_miniapp::MiniAppNodeIds::Encoder(gap) + ".visualizer") == nullptr);
     }
     REQUIRE_TRUE(FindNodeById(
                      tree, synth_miniapp::MiniAppNodeIds::Encoder(15) + ".visualizer") == nullptr);
+}
+
+TEST_CASE(miniapp_registers_exact_adsr_and_tempo_parameter_contract) {
+    constexpr double kNegotiatedSampleRate = 44100.0;
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        64,
+        UseScratchRuntimeDataPaths("registers_exact_adsr_and_tempo_parameter_contract"),
+        {.sampleRate = kNegotiatedSampleRate, .blockSize = 37});
+    auto& core = rig.Application();
+    auto& manager = *core.Context()->parameterManager;
+    const auto& parameters = core.Parameters();
+    const std::array<const char*, 17> expectedNames{
+        "Tune", "Phase", "Shape", "Volume", "Filter Cutoff", "Filter Resonance", "Filter Blend",
+        "LFO Frequency", "LFO Shape", "LFO Phase Offset", "LFO Skew", "LFO Exponent",
+        "Attack", "Decay", "Sustain", "Release", "Tempo",
+    };
+    REQUIRE_TRUE(parameters.size() == expectedNames.size());
+    for (std::size_t parameterIx = 0; parameterIx < parameters.size(); ++parameterIx) {
+        REQUIRE_TRUE(parameters[parameterIx] != nullptr);
+        REQUIRE_TRUE(parameters[parameterIx]->Id() == parameterIx);
+        REQUIRE_TRUE(parameters[parameterIx]->Name() == expectedNames[parameterIx]);
+    }
+
+    synth::Parameter* const tempo = manager.FindParameterByName("Tempo");
+    REQUIRE_TRUE(tempo != nullptr);
+    REQUIRE_TRUE(tempo->Id() == 16);
+    REQUIRE_TRUE(tempo->ShortName() == "BPM");
+    REQUIRE_TRUE(tempo->Range() == synth::RangeKind::Unipolar);
+    REQUIRE_TRUE(tempo->BaseColor() == synth::Color::White);
+    REQUIRE_TRUE(tempo->IndicatorColor(0) == synth::Color::Cyan);
+    REQUIRE_TRUE(tempo->IndicatorColor(1) == synth::Color::Orange);
+    REQUIRE_TRUE(tempo->GetRaw(0) == (120.0f - 30.0f) / (300.0f - 30.0f));
+    REQUIRE_TRUE(manager.GetLinear(30.0f, 300.0f, 0, tempo->Id()) == 120.0f);
+
+    for (std::size_t sceneIx = 0; sceneIx < 3; ++sceneIx) {
+        tempo->SceneCenter(sceneIx) = 0.0f;
+    }
+    manager.ComputeAllParameters();
+    REQUIRE_TRUE(manager.GetLinear(30.0f, 300.0f, 0, tempo->Id()) == 30.0f);
+    for (std::size_t sceneIx = 0; sceneIx < 3; ++sceneIx) {
+        tempo->SceneCenter(sceneIx) = 1.0f;
+    }
+    manager.ComputeAllParameters();
+    REQUIRE_TRUE(manager.GetLinear(30.0f, 300.0f, 0, tempo->Id()) == 300.0f);
+
+    RequireAdsrTempoAccessors(rig, kNegotiatedSampleRate);
+}
+
+TEST_CASE(miniapp_clock_plan_drives_exact_adsr_gate_boundaries_across_nondivisor_blocks) {
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        64,
+        UseScratchRuntimeDataPaths("clock_plan_drives_exact_adsr_gate_boundaries"),
+        {.sampleRate = 8.0, .blockSize = 3});
+
+    rig.StartAt(0);
+    rig.RunBlockAt(1);
+    const synth::ClockBlockPlan* firstPlan = rig.CurrentClockPlan();
+    REQUIRE_TRUE(firstPlan != nullptr);
+    REQUIRE_TRUE(firstPlan->StartSample() == 0);
+    REQUIRE_TRUE(firstPlan->EndSample() == 3);
+    REQUIRE_TRUE(firstPlan->TransportState() == synth::ClockTransportState::Running);
+    REQUIRE_TRUE(firstPlan->TransportQuarterNotesAt(0.0) == 0.0);
+    REQUIRE_TRUE(firstPlan->TransportQuarterNotesAt(2.0) == 0.5);
+    RequireAdsrClockDebug(rig.Application(), 3, true, false, 1, 1, 0, 2);
+    for (std::size_t voiceIx = 0; voiceIx < synth_miniapp::MiniAppCore::kVoiceCount; ++voiceIx) {
+        REQUIRE_TRUE(!rig.Application().AdsrModuleInstance().CurrentInput().voices[voiceIx].gate);
+    }
+
+    rig.RunBlockAt(2);
+    const synth::ClockBlockPlan* secondPlan = rig.CurrentClockPlan();
+    REQUIRE_TRUE(secondPlan != nullptr);
+    REQUIRE_TRUE(secondPlan->StartSample() == 3);
+    REQUIRE_TRUE(secondPlan->EndSample() == 6);
+    REQUIRE_TRUE(secondPlan->TransportQuarterNotesAt(3.0) == 0.75);
+    REQUIRE_TRUE(secondPlan->TransportQuarterNotesAt(4.0) == 1.0);
+    RequireAdsrClockDebug(rig.Application(), 3, false, true, 1, 0, 4, 0);
+    for (std::size_t voiceIx = 0; voiceIx < synth_miniapp::MiniAppCore::kVoiceCount; ++voiceIx) {
+        REQUIRE_TRUE(rig.Application().AdsrModuleInstance().CurrentInput().voices[voiceIx].gate);
+    }
+
+    rig.StopAt(3);
+    rig.RunBlockAt(3);
+    const synth::ClockBlockPlan* stoppedPlan = rig.CurrentClockPlan();
+    REQUIRE_TRUE(stoppedPlan != nullptr);
+    REQUIRE_TRUE(stoppedPlan->StartSample() == 6);
+    REQUIRE_TRUE(stoppedPlan->TransportState() == synth::ClockTransportState::Stopped);
+    RequireAdsrClockDebug(rig.Application(), 3, false, false, 0, 1, 0, 6);
+    for (std::size_t voiceIx = 0; voiceIx < synth_miniapp::MiniAppCore::kVoiceCount; ++voiceIx) {
+        REQUIRE_TRUE(!rig.Application().AdsrModuleInstance().CurrentInput().voices[voiceIx].gate);
+    }
+}
+
+TEST_CASE(miniapp_publishes_current_adsr_outputs_to_both_voices_in_the_same_frame) {
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        64,
+        UseScratchRuntimeDataPaths("publishes_current_adsr_outputs_in_same_frame"),
+        {.sampleRate = 1000.0, .blockSize = 1});
+    rig.StartAt(0);
+    rig.RunBlockAt(1);
+
+    const auto& core = rig.Application();
+    const auto outputs = core.AdsrModuleInstance().Outputs();
+    const auto& mirror = core.AdsrModulationMirror();
+    const auto& modulators = core.Group()->GetModulators();
+    REQUIRE_TRUE(outputs.size() == 2);
+    REQUIRE_TRUE(mirror.size() == 2);
+    for (std::size_t voiceIx = 0; voiceIx < 2; ++voiceIx) {
+        REQUIRE_TRUE(outputs[voiceIx] > 0.0f);
+        REQUIRE_TRUE(mirror[voiceIx] == outputs[voiceIx]);
+        REQUIRE_TRUE(modulators.Value(voiceIx, 7) == mirror[voiceIx]);
+    }
+}
+
+TEST_CASE(miniapp_tempo_requests_respect_committed_plans_and_external_authority) {
+    constexpr double kSampleRate = 48000.0;
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        64,
+        UseScratchRuntimeDataPaths("tempo_requests_respect_committed_plans_and_external_authority"),
+        {.sampleRate = kSampleRate, .blockSize = 7});
+    auto& core = rig.Application();
+    auto& manager = *core.Context()->parameterManager;
+
+    rig.RunBlockAt(1);
+    RequireTempoRequestDebug(core, 0, 0.0f, false);
+    REQUIRE_TRUE(rig.Engine().Clock().TempoBpm() == 120.0);
+
+    SetNormalizedParameter(manager, core.TempoParameter(), (180.0f - 30.0f) / (300.0f - 30.0f));
+    rig.RunBlockAt(2);
+    const synth::ClockBlockPlan* committedBeforeManualRequest = rig.CurrentClockPlan();
+    REQUIRE_TRUE(committedBeforeManualRequest != nullptr);
+    REQUIRE_NEAR(committedBeforeManualRequest->QuarterNotesPerSample(),
+                 120.0 / (60.0 * kSampleRate), 1.0e-15);
+    RequireTempoRequestDebug(core, 1, 180.0f, true);
+    REQUIRE_TRUE(rig.Engine().Clock().TempoBpm() == 180.0);
+
+    rig.RunBlockAt(3);
+    const synth::ClockBlockPlan* firstManualTempoPlan = rig.CurrentClockPlan();
+    REQUIRE_TRUE(firstManualTempoPlan != nullptr);
+    REQUIRE_NEAR(firstManualTempoPlan->QuarterNotesPerSample(),
+                 180.0 / (60.0 * kSampleRate), 1.0e-15);
+    RequireTempoRequestDebug(core, 1, 180.0f, true);
+
+    synth::SyncConfig externalConfig;
+    externalConfig.receiveClock = true;
+    REQUIRE_TRUE(rig.SetSyncConfig(externalConfig));
+    rig.ExternalClockAt(0, 1000);
+    rig.RunBlockAt(1000);
+    rig.ExternalClockAt(0, 22000);
+    rig.RunBlockAt(22000);
+    const double externallyAuthoritativeBpm = rig.Engine().Clock().TempoBpm();
+    REQUIRE_TRUE(std::isfinite(externallyAuthoritativeBpm));
+    REQUIRE_TRUE(externallyAuthoritativeBpm > 0.0);
+
+    SetNormalizedParameter(manager, core.TempoParameter(), (90.0f - 30.0f) / (300.0f - 30.0f));
+    rig.RunBlockAt(23000);
+    RequireTempoRequestDebug(core, 2, 90.0f, false);
+    REQUIRE_TRUE(rig.Engine().Clock().TempoBpm() == externallyAuthoritativeBpm);
+
+    synth::SyncConfig manualConfig;
+    REQUIRE_TRUE(rig.SetSyncConfig(manualConfig));
+    REQUIRE_TRUE(rig.Engine().Clock().TempoBpm() == 180.0);
+    rig.RunBlockAt(24000);
+    RequireTempoRequestDebug(core, 2, 90.0f, false);
+    REQUIRE_TRUE(rig.Engine().Clock().TempoBpm() == 180.0);
 }
 
 TEST_CASE(miniapp_loads_old_six_index_depth_data_without_alias_or_translation) {
@@ -1146,7 +1407,7 @@ TEST_CASE(miniapp_registers_constant_at_standard_index_eleven_without_sample_wor
 
     REQUIRE_TRUE(group.Config().numVoices == 2);
     REQUIRE_TRUE(group.Config().numModulators == 15);
-    REQUIRE_TRUE(group.Config().maxParameters == 192);
+    REQUIRE_TRUE(group.Config().maxParameters == 272);
     REQUIRE_TRUE(metadata.size() == 15);
     REQUIRE_TRUE(metadata[11].connected);
     REQUIRE_TRUE(metadata[11].name == "Constant");
@@ -1194,7 +1455,7 @@ TEST_CASE(miniapp_color_flow_keeps_semantic_roles_independent) {
         64, UseScratchRuntimeDataPaths("color_flow_keeps_semantic_roles_independent"));
     rig.RunBlocks(1);
 
-    const std::array<synth::Color, 12> expectedBaseColors{
+    const std::array<synth::Color, 17> expectedBaseColors{
         synth::Color::Cyan,
         synth::Color::Indigo,
         synth::Color::Orange,
@@ -1207,6 +1468,11 @@ TEST_CASE(miniapp_color_flow_keeps_semantic_roles_independent) {
         synth::Color::Indigo,
         synth::Color::Orange,
         synth::Color::Yellow,
+        synth::Color::Cyan,
+        synth::Color::Blue,
+        synth::Color::Green,
+        synth::Color::Orange,
+        synth::Color::White,
     };
     const auto& parameters = rig.Application().Parameters();
     REQUIRE_TRUE(parameters.size() == expectedBaseColors.size());
@@ -1227,6 +1493,7 @@ TEST_CASE(miniapp_color_flow_keeps_semantic_roles_independent) {
     REQUIRE_TRUE(modulatorMetadata[4].sourceColor == synth::Color::Cyan);
     REQUIRE_TRUE(modulatorMetadata[5].sourceColor == synth::Color::Orange);
     REQUIRE_TRUE(modulatorMetadata[6].sourceColor == synth::Color::Green);
+    REQUIRE_TRUE(modulatorMetadata[7].sourceColor == synth::Color::Blue);
     REQUIRE_TRUE(modulatorMetadata[11].sourceColor == synth::Color::Yellow);
     REQUIRE_TRUE(modulatorMetadata[14].sourceColor == synth::Color::White);
     REQUIRE_TRUE(rig.Application().Context()->parameterManager->GestureMetadataAt(0).gestureColor ==
@@ -1269,7 +1536,7 @@ TEST_CASE(miniapp_color_flow_keeps_semantic_roles_independent) {
 
     rig.SelectBank(kSlotIx, kLfoBankIx);
     rig.RunBlocks(1);
-    requireVisibleCellColors(5, std::span<const synth::Color>(expectedBaseColors).subspan(7));
+    requireVisibleCellColors(10, std::span<const synth::Color>(expectedBaseColors).subspan(7));
 }
 
 TEST_CASE(miniapp_rig_initializes_headlessly_and_runs) {
@@ -1301,12 +1568,20 @@ TEST_CASE(miniapp_rig_raising_volume_yields_nonzero_output_peak) {
     REQUIRE_TRUE(rig.OutputPeak() > 0.0f);
 }
 
-TEST_CASE(miniapp_rig_lfo_bank_exposes_five_module_parameters) {
-    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, UseScratchRuntimeDataPaths("lfo_bank_exposes_five_module_parameters"));
+TEST_CASE(miniapp_rig_lfo_bank_exposes_lfo_adsr_and_tempo_parameters) {
+    synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(
+        64, UseScratchRuntimeDataPaths("lfo_bank_exposes_lfo_adsr_and_tempo_parameters"));
     rig.RunBlocks(1);
 
-    REQUIRE_TRUE(rig.Application().Parameters().size() == 12);
+    REQUIRE_TRUE(rig.Application().Parameters().size() == 17);
     const auto lfoIds = rig.Application().LfoParameterIds();
+    synth::ParameterManager& manager = *rig.Application().Context()->parameterManager;
+    synth::Parameter* const attack = manager.FindParameterByName("Attack");
+    synth::Parameter* const decay = manager.FindParameterByName("Decay");
+    synth::Parameter* const sustain = manager.FindParameterByName("Sustain");
+    synth::Parameter* const release = manager.FindParameterByName("Release");
+    synth::Parameter* const tempo = manager.FindParameterByName("Tempo");
+    REQUIRE_TRUE(attack != nullptr && decay != nullptr && sustain != nullptr && release != nullptr && tempo != nullptr);
     const float beforeFrequency = rig.ParameterValue(lfoIds.frequency);
     const float beforeShape = rig.ParameterValue(lfoIds.shape);
     const float beforePhaseOffset = rig.ParameterValue(lfoIds.phaseOffset);
@@ -1319,12 +1594,17 @@ TEST_CASE(miniapp_rig_lfo_bank_exposes_five_module_parameters) {
     const synth::Page* activePage = rig.Application().Context()->parameterManager->ActivePage();
     REQUIRE_TRUE(activePage != nullptr);
     REQUIRE_TRUE(activePage->name == "LFO");
-    REQUIRE_TRUE(activePage->parameters.size() == 5);
+    REQUIRE_TRUE(activePage->parameters.size() == 10);
     RequirePagePosition(*activePage, kLfoFrequencyPosition, lfoIds.frequency, "LFO Frequency");
     RequirePagePosition(*activePage, kLfoShapePosition, lfoIds.shape, "LFO Shape");
     RequirePagePosition(*activePage, kLfoPhaseOffsetPosition, lfoIds.phaseOffset, "LFO Phase Offset");
     RequirePagePosition(*activePage, kLfoSkewPosition, lfoIds.skew, "LFO Skew");
     RequirePagePosition(*activePage, kLfoExponentPosition, lfoIds.exponent, "LFO Exponent");
+    RequirePagePosition(*activePage, kAttackPosition, attack->Id(), "Attack");
+    RequirePagePosition(*activePage, kDecayPosition, decay->Id(), "Decay");
+    RequirePagePosition(*activePage, kSustainPosition, sustain->Id(), "Sustain");
+    RequirePagePosition(*activePage, kReleasePosition, release->Id(), "Release");
+    RequirePagePosition(*activePage, kTempoPosition, tempo->Id(), "Tempo");
 
     RequireBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), kLfoFrequencyPosition,
                         lfoIds.frequency, "LFO Frequency");
@@ -1336,8 +1616,19 @@ TEST_CASE(miniapp_rig_lfo_bank_exposes_five_module_parameters) {
                         lfoIds.skew, "LFO Skew");
     RequireBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), kLfoExponentPosition,
                         lfoIds.exponent, "LFO Exponent");
-    RequireUnboundBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), kFilterResonancePosition);
-    RequireUnboundBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), kFilterBlendPosition);
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), kAttackPosition,
+                        attack->Id(), "Attack");
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), kDecayPosition,
+                        decay->Id(), "Decay");
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), kSustainPosition,
+                        sustain->Id(), "Sustain");
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), kReleasePosition,
+                        release->Id(), "Release");
+    RequireBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), kTempoPosition,
+                        tempo->Id(), "Tempo");
+    for (std::size_t position = 10; position < 16; ++position) {
+        RequireUnboundBankPosition(*rig.Application().Slot(), *rig.Application().LfoBank(), position);
+    }
 
     rig.Turn(kSlotIx, kLfoFrequencyPosition, 0.10f);
     rig.Turn(kSlotIx, kLfoShapePosition, -0.10f);
@@ -1358,7 +1649,7 @@ TEST_CASE(miniapp_rig_vco_bank_exposes_vco_and_filter_parameters) {
     synth_rig::SynthRig<synth_miniapp::MiniAppCore> rig(64, UseScratchRuntimeDataPaths("vco_bank_exposes_vco_and_filter_parameters"));
     rig.RunBlocks(1);
 
-    REQUIRE_TRUE(rig.Application().Parameters().size() == 12);
+    REQUIRE_TRUE(rig.Application().Parameters().size() == 17);
     const auto vcoIds = rig.Application().VcoParameterIds();
     const auto filterIds = rig.Application().FilterParameterIds();
 
