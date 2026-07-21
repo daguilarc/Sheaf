@@ -110,6 +110,7 @@ CREATE TABLE grades(
   n_critical INT, n_important INT, n_minor INT,
   rounds_to_accept INT, verdict_sequence_json TEXT, final_grade TEXT,
   evidence_json TEXT, excluded_reviews_json TEXT,
+  review_text TEXT,                     -- verbatim grading input (provenance)
   rubric_version TEXT NOT NULL, input_sha256 TEXT NOT NULL, scored_by TEXT,
   PRIMARY KEY(task_id, rubric_version));
 
