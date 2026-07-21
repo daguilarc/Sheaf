@@ -255,6 +255,63 @@ class TestTrain(unittest.TestCase):
         self.assertEqual(old_params_still_present, 3)
         conn.close()
 
+    def test_loo_calibration_is_leak_free(self):
+        # Independent, deliberately slow reference implementation of the
+        # leave-one-out calibration: for every held-out row, recompute the
+        # pooled fit *from scratch excluding that row* (no XtX/Xty downdate
+        # trick -- just a straightforward NIG.update over the remaining
+        # rows), then fit the arm's fold posterior on its remaining rows.
+        # train.py's fast downdate-based implementation must match this
+        # exactly -- if the held-out row's own contribution leaked into the
+        # pooled mean used for its prediction (the bug this test guards
+        # against), the two would disagree.
+        db_path = self.tmp_path / "loo.sqlite"
+        conn = db.connect(db_path)
+        _seed_training_db(conn)
+        estimator_id = train.run(conn)
+        metrics = json.loads(
+            conn.execute(
+                "SELECT metrics_json FROM estimators WHERE estimator_id = ?", (estimator_id,)
+            ).fetchone()[0]
+        )
+        reported = metrics["categories"]["green"]
+
+        config = model.default_config()
+        rows = conn.execute(
+            "SELECT tc.usd AS usd, c.composite AS composite, c.c3 AS c3, c.c4 AS c4, c.c5 AS c5, "
+            "ta.model AS model, ta.effort AS effort "
+            "FROM task_costs tc JOIN complexity c ON c.task_id = tc.task_id AND c.rubric_version = '1' "
+            "JOIN task_arms ta ON ta.task_id = tc.task_id WHERE tc.category = 'green'"
+        ).fetchall()
+        X = np.array([model.features(r, config) for r in rows])
+        y = np.array([model.transform_target(r["usd"], config["epsilon"]) for r in rows])
+        arms = [(r["model"], r["effort"]) for r in rows]
+        weak = model.NIG.weak_prior(len(config["features"]))
+
+        below_p50 = below_p80 = total = 0
+        for arm in sorted(set(arms)):
+            arm_idx = [i for i, a in enumerate(arms) if a == arm]
+            if len(arm_idx) < 8:
+                continue
+            for i in arm_idx:
+                others = [j for j in range(len(rows)) if j != i]
+                pooled_fit = weak.update(X[others], y[others])
+                fold_prior = model.NIG(mu=pooled_fit.mu, Lambda=weak.Lambda, a=weak.a, b=weak.b)
+                arm_fold_idx = [j for j in arm_idx if j != i]
+                fold_posterior = fold_prior.update(X[arm_fold_idx], y[arm_fold_idx])
+                p50 = fold_posterior.quantile(X[i], 0.5)
+                p80 = fold_posterior.quantile(X[i], 0.8)
+                if y[i] <= p50:
+                    below_p50 += 1
+                if y[i] <= p80:
+                    below_p80 += 1
+                total += 1
+
+        self.assertEqual(reported["loo_n"], total)
+        self.assertAlmostEqual(reported["p50_coverage"], below_p50 / total, places=9)
+        self.assertAlmostEqual(reported["p80_coverage"], below_p80 / total, places=9)
+        conn.close()
+
     def test_train_with_no_data_returns_nonzero(self):
         db_path = self.tmp_path / "empty.sqlite"
         conn = db.connect(db_path)

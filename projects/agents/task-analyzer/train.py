@@ -18,6 +18,12 @@ row (config_json + metrics_json) and one ``estimator_params`` row per
 (category, arm) with data; prior ``estimators`` rows are never touched
 (design.md D9 -- old estimators are kept for audit/rollback).
 
+The per-category LOO calibration metric (``metrics_json``) is leak-free: the
+pooled-mean prior for each held-out fold is recomputed with that row
+excluded (a downdate of the category's precomputed ``XtX``/``Xty`` sums, not
+a reuse of the training-time pooled mean, which would have let the held-out
+row influence its own prediction).
+
 CLI: ``python3 train.py --db PATH [--config JSON]`` where ``--config`` is a
 path to a JSON file of overrides deep-merged onto ``model.default_config()``
 (e.g. to change ``epsilon``, the feature list, or prior hyperparameters).
@@ -126,6 +132,7 @@ def run(conn, config_overrides: Optional[dict] = None) -> Optional[int]:
     arm_row_counts: dict = {}   # "category|model|effort" -> n
     arm_data: dict = {}         # (category, model, effort) -> (X, y)
     category_prior_by_category: dict = {}
+    pooled_sums_by_category: dict = {}   # category -> (XtX_total, Xty_total)
     task_ids_all = set()
 
     for category, cat_rows in by_category.items():
@@ -135,34 +142,48 @@ def run(conn, config_overrides: Optional[dict] = None) -> Optional[int]:
         for row in cat_rows:
             x = model.features(row, config)
             y = model.transform_target(row["usd"], epsilon)
+            idx = len(pooled_X)
             pooled_X.append(x)
             pooled_y.append(y)
             task_ids_all.add(row["task_id"])
             key = (category, row["model"], row["effort"])
-            arm = by_arm.setdefault(key, {"X": [], "y": []})
-            arm["X"].append(x)
-            arm["y"].append(y)
+            arm = by_arm.setdefault(key, {"idx": []})
+            arm["idx"].append(idx)
+
+        pooled_X_arr = np.array(pooled_X)
+        pooled_y_arr = np.array(pooled_y)
+        pooled_XtX_total = pooled_X_arr.T @ pooled_X_arr
+        pooled_Xty_total = pooled_X_arr.T @ pooled_y_arr
+        pooled_sums_by_category[category] = (pooled_XtX_total, pooled_Xty_total)
 
         # Pooled fit across all arms in this category contributes only its
         # posterior *mean* (pulls sparse arms toward it); prior precision
         # (Lambda0/a0/b0) stays the original weak, fixed values so an arm's
         # own rows are counted exactly once (see module docstring).
-        pooled_fit = weak_prior.update(np.array(pooled_X), np.array(pooled_y))
+        pooled_fit = weak_prior.update(pooled_X_arr, pooled_y_arr)
         category_prior = model.NIG(mu=pooled_fit.mu, Lambda=weak_prior.Lambda, a=weak_prior.a, b=weak_prior.b)
         category_prior_by_category[category] = category_prior
 
         for key, arm in by_arm.items():
-            n = len(arm["y"])
+            idx = arm["idx"]
+            n = len(idx)
             if n < min_rows:
                 continue
-            arm_X = np.array(arm["X"])
-            arm_y = np.array(arm["y"])
+            arm_X = pooled_X_arr[idx]
+            arm_y = pooled_y_arr[idx]
             posteriors[key] = category_prior.update(arm_X, arm_y)
             arm_row_counts["|".join(str(part) for part in key)] = n
             arm_data[key] = (arm_X, arm_y)
 
+    # Leave-one-out calibration (arms with >= _LOO_MIN_ROWS rows): the
+    # pooled-mean prior must NOT see the held-out row, or the metric leaks
+    # (the held-out row would influence its own prediction via mu0). So for
+    # each fold, downdate the category's precomputed XtX/Xty sums to remove
+    # the held-out row's contribution, recompute the pooled mean from that,
+    # then fit the arm's fold posterior on its remaining rows only.
     metrics = {"categories": {}, "arm_row_counts": arm_row_counts}
-    for category, category_prior in category_prior_by_category.items():
+    for category in category_prior_by_category:
+        pooled_XtX_total, pooled_Xty_total = pooled_sums_by_category[category]
         below_p50 = below_p80 = total = 0
         for (cat, _mdl, _eff), (arm_X, arm_y) in arm_data.items():
             if cat != category:
@@ -171,15 +192,21 @@ def run(conn, config_overrides: Optional[dict] = None) -> Optional[int]:
             if n < _LOO_MIN_ROWS:
                 continue
             for i in range(n):
+                x_i = arm_X[i]
+                y_i = arm_y[i]
+                lambda_n_fold = weak_prior.Lambda + (pooled_XtX_total - np.outer(x_i, x_i))
+                rhs_fold = weak_prior.Lambda @ weak_prior.mu + (pooled_Xty_total - x_i * y_i)
+                mu0_fold = np.linalg.solve(lambda_n_fold, rhs_fold)
+                category_prior_fold = model.NIG(mu=mu0_fold, Lambda=weak_prior.Lambda, a=weak_prior.a, b=weak_prior.b)
+
                 mask = np.ones(n, dtype=bool)
                 mask[i] = False
-                loo_posterior = category_prior.update(arm_X[mask], arm_y[mask])
-                p50 = loo_posterior.quantile(arm_X[i], 0.5)
-                p80 = loo_posterior.quantile(arm_X[i], 0.8)
-                actual = arm_y[i]
-                if actual <= p50:
+                loo_posterior = category_prior_fold.update(arm_X[mask], arm_y[mask])
+                p50 = loo_posterior.quantile(x_i, 0.5)
+                p80 = loo_posterior.quantile(x_i, 0.8)
+                if y_i <= p50:
                     below_p50 += 1
-                if actual <= p80:
+                if y_i <= p80:
                     below_p80 += 1
                 total += 1
         if total:
