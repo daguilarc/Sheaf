@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS grades(
   n_critical INT, n_important INT, n_minor INT,
   rounds_to_accept INT, verdict_sequence_json TEXT, final_grade TEXT,
   evidence_json TEXT, excluded_reviews_json TEXT,
+  review_text TEXT,                     -- archived verbatim (design.md D9 open
+                                         -- question, resolved yes: grades'
+                                         -- provenance survives worktree/session
+                                         -- cleanup; added by Task 5/ingest.py)
   rubric_version TEXT NOT NULL, input_sha256 TEXT NOT NULL, scored_by TEXT,
   PRIMARY KEY(task_id, rubric_version));
 
@@ -78,8 +82,9 @@ CREATE TABLE IF NOT EXISTS task_arms(                 -- canonical implementer a
   basis_json TEXT);                     -- how chosen + other round-0 sessions
 
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
--- meta rows include ('schema_version','1'); schema is applied idempotently
+-- meta rows include ('schema_version','2'); schema is applied idempotently
 -- (CREATE TABLE IF NOT EXISTS); future schema changes bump schema_version.
+-- v2 (Task 5/ingest.py): added grades.review_text (see comment there).
 
 -- estimator layer
 CREATE TABLE IF NOT EXISTS estimators(
@@ -100,7 +105,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_task ON sessions(task_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_change ON tasks(change_id);
 
 -- meta seed: schema version marker (idempotent; see meta comment above).
-INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', '1');
+INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', '2');
 
 -- model_prices seed: current published USD-per-million-token list prices for
 -- the implementer/reviewer arms observed in the 2026-07-19 analysis
