@@ -15,7 +15,7 @@
 
 ## 3. Agentic scoring integration
 
-- [ ] 3.1 Implement xagent dispatch wrappers for the three scorers (grading→sonnet, complexity→sonnet, phase-labeling→haiku): batch missing items, write staged JSON, validate schema, upsert with version+hash keys
+- [x] 3.1 Implement xagent dispatch wrappers for the three scorers (grading→sonnet, complexity→sonnet, phase-labeling→haiku): batch missing items, write staged JSON, validate schema, upsert with version+hash keys
 - [ ] 3.2 End-to-end ingest test on one landed change not in the migrated set: dry-run plan, real run, verify idempotent second run (zero writes, zero dispatches)
 
 ## 4. Migration of existing dataset
