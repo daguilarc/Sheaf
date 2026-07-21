@@ -197,6 +197,45 @@ class TestUnlabeledCategory(CostsTestBase):
         self.assertAlmostEqual(table["unlabeled"]["usd"], 0.003, places=10)
         self.assertEqual(table["unlabeled"]["weighted_tokens"], 100)
 
+    def test_partially_labeled_session_puts_residual_share_in_unlabeled(self):
+        # Review fix: apportionment must divide by the session's own
+        # output_tokens, not the sum of its phase-label rows -- a session
+        # can be only partially labeled (some turns never phase-labeled).
+        # Here labels cover only 60+40=100 of a 150-output-token session;
+        # the other 50 tokens' worth of cost must land in `unlabeled`, not
+        # be silently folded into red/green (which would over-allocate
+        # them and under-count the session's true total cost).
+        task_id = self._make_task()
+        self._make_session("claude:impl-1", task_id, "implementer", SONNET[0],
+                            input_tokens=1000, cached_tokens=0, output_tokens=150, review_round=0)
+        self._make_phase_tokens("claude:impl-1", "red", 60)
+        self._make_phase_tokens("claude:impl-1", "green", 40)
+        # labeled_tokens = 60 + 40 = 100; residual = 150 - 100 = 50.
+
+        # Full session usd = (1000*2.0 + 0*0.2 + 150*10.0) / 1e6
+        #                   = (2000 + 0 + 1500) / 1e6 = 3500/1e6 = 0.0035
+        session_usd = 0.0035
+
+        costs.rebuild(self.conn, as_of="2026-07-19")
+        table = self._task_costs(task_id)
+
+        # Denominator is the session's output_tokens (150), not the labeled
+        # sum (100): red share = 60/150 = 0.4, green share = 40/150.
+        self.assertAlmostEqual(table["red"]["usd"], session_usd * (60 / 150), places=10)
+        self.assertAlmostEqual(table["green"]["usd"], session_usd * (40 / 150), places=10)
+        self.assertEqual(table["red"]["weighted_tokens"], 60)
+        self.assertEqual(table["green"]["weighted_tokens"], 40)
+
+        # Residual (50/150 share) funds `unlabeled`.
+        self.assertIn("unlabeled", table)
+        self.assertAlmostEqual(table["unlabeled"]["usd"], session_usd * (50 / 150), places=10)
+        self.assertEqual(table["unlabeled"]["weighted_tokens"], 50)
+
+        # Category totals must sum back to the full session usd -- no cost
+        # is lost or double-counted across the split.
+        total = table["red"]["usd"] + table["green"]["usd"] + table["unlabeled"]["usd"]
+        self.assertAlmostEqual(total, session_usd, places=10)
+
 
 class TestFixerRoleAlwaysFollowupFix(CostsTestBase):
     def test_fixer_session_at_round_0_still_funds_followup_fix(self):

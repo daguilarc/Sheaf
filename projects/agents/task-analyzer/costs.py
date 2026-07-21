@@ -19,11 +19,14 @@ Token/cost semantics (design.md D5):
   (it cannot be costed) -- this is a data-completeness gap, not a crash.
 - Round-0 (``review_round == 0``) ``implementer`` sessions have their dollar
   cost apportioned across the 10 TDD phases by each phase's share of that
-  session's ``phase_tokens.output_tokens`` (at the *current* taxonomy
-  version -- the numerically greatest ``taxonomy_version`` present in
-  ``phase_tokens``, unless ``taxonomy_version=`` overrides it). A round-0
-  implementer session with no phase-label rows at that version funds the
-  legal category ``unlabeled`` instead.
+  session's own ``output_tokens`` (at the *current* taxonomy version -- the
+  numerically greatest ``taxonomy_version`` present in ``phase_tokens``,
+  unless ``taxonomy_version=`` overrides it) -- **not** the sum of the
+  session's phase-label rows, since a session can be only partially
+  labeled. Whatever share of the session's output isn't covered by any
+  phase label instead funds ``unlabeled``, so a session's category totals
+  always sum back to its full session usd. A round-0 implementer session
+  with no phase-label rows at all funds ``unlabeled`` entirely.
 - ``reviewer``/``auditor`` sessions (any round) fund ``review``.
 - ``fixer`` sessions (any round) and ``implementer`` sessions with
   ``review_round >= 1`` fund ``followup_fix`` -- no phase apportionment.
@@ -205,14 +208,30 @@ def rebuild(
                         "WHERE session_id = ? AND taxonomy_version = ?",
                         (s["session_id"], taxonomy_version),
                     ).fetchall()
-                    total_phase_tokens = sum(p["output_tokens"] or 0 for p in phases)
-                    if not phases or total_phase_tokens <= 0:
+                    if not phases or output_tokens <= 0:
                         _accumulate(buckets, "unlabeled", output_tokens, usd, price_version)
                     else:
+                        # Apportion against the session's own output_tokens
+                        # -- NOT the sum of its phase-label rows. A session
+                        # can be only partially phase-labeled (turns that no
+                        # phase-labeling pass covered); dividing by the sum
+                        # of labeled phase tokens would smear the session's
+                        # *entire* dollar cost across just the labeled
+                        # phases, over-allocating them. Whatever share of
+                        # output_tokens isn't covered by any phase label
+                        # instead fund `unlabeled`, so the category totals
+                        # for this session always sum back to its full
+                        # session usd.
+                        labeled_tokens = 0
                         for p in phases:
                             phase_tokens = p["output_tokens"] or 0
-                            share = phase_tokens / total_phase_tokens
+                            labeled_tokens += phase_tokens
+                            share = phase_tokens / output_tokens
                             _accumulate(buckets, p["phase"], phase_tokens, usd * share, price_version)
+                        residual_tokens = output_tokens - labeled_tokens
+                        if residual_tokens > 0:
+                            residual_share = residual_tokens / output_tokens
+                            _accumulate(buckets, "unlabeled", residual_tokens, usd * residual_share, price_version)
                 else:
                     continue  # role == "other" (or unrecognized): not part of D5's cost model
 
