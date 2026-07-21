@@ -49,7 +49,7 @@ def default_config(features: Sequence[str] = DEFAULT_FEATURES, epsilon: float = 
             "a0": 1.0,
             "b0": 1.0,
         },
-        "pooling": "partial_pooling_pooled_posterior_as_arm_prior",
+        "pooling": "pooled-mean-weak-prior-v1",
         "training_filters": {
             "rubric_version": None,
             "taxonomy_version": None,
@@ -192,8 +192,9 @@ class NIG:
 
     An ``NIG`` instance can be either a prior or a posterior -- ``update``
     always treats ``self`` as the prior and returns a new posterior
-    ``NIG``, which is exactly what partial pooling needs: a pooled
-    posterior becomes the next arm's prior (see ``train.py``).
+    ``NIG``, which is what partial pooling needs: a pooled fit's posterior
+    *mean* becomes the center of a fresh weak-precision prior for each arm
+    (see ``train.py``'s ``pooled-mean-weak-prior-v1`` scheme).
     """
 
     mu: np.ndarray

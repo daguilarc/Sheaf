@@ -98,6 +98,36 @@ class TestNIG(unittest.TestCase):
         gap_dense = post_dense.quantile(query, 0.8) - post_dense.quantile(query, 0.5)
         self.assertGreater(gap_sparse, gap_dense)
 
+    def test_pooled_mean_weak_prior_pulls_sparse_arm_toward_pooled_mean(self):
+        # Mirrors train.py's "pooled-mean-weak-prior-v1" scheme directly at
+        # the NIG level: the pooled fit across all arms contributes only its
+        # posterior mean (not its precision) as each arm's prior center;
+        # prior precision (Lambda0/a0/b0) stays the original weak, fixed
+        # values. A sparse arm should end up closer to the pooled mean than
+        # a from-scratch (zero-mean-prior) fit on the same sparse rows would.
+        rng = np.random.default_rng(4)
+        weak = model.NIG.weak_prior(2)
+
+        X_dense, y_dense = _linear_data(rng, n=50, mu0=2.0, mu1=3.0, noise_sd=0.1)
+        X_sparse, y_sparse = _linear_data(rng, n=2, mu0=2.0, mu1=3.0, noise_sd=3.0)
+
+        pooled_fit = weak.update(np.vstack([X_dense, X_sparse]), np.concatenate([y_dense, y_sparse]))
+        category_prior = model.NIG(mu=pooled_fit.mu, Lambda=weak.Lambda, a=weak.a, b=weak.b)
+
+        sparse_posterior = category_prior.update(X_sparse, y_sparse)
+        naive_posterior = weak.update(X_sparse, y_sparse)  # zero-mean-prior fit, for comparison
+
+        dist_pooled_mean_prior = np.linalg.norm(sparse_posterior.mu - pooled_fit.mu)
+        dist_naive = np.linalg.norm(naive_posterior.mu - pooled_fit.mu)
+        self.assertLess(dist_pooled_mean_prior, dist_naive)
+
+        # Sparse-wider-than-dense still holds under the new scheme too.
+        dense_posterior = category_prior.update(X_dense, y_dense)
+        query = np.array([1.0, 0.0])
+        gap_sparse = sparse_posterior.quantile(query, 0.8) - sparse_posterior.quantile(query, 0.5)
+        gap_dense = dense_posterior.quantile(query, 0.8) - dense_posterior.quantile(query, 0.5)
+        self.assertGreater(gap_sparse, gap_dense)
+
     def test_thompson_sample_is_finite_and_seed_reproducible(self):
         rng = np.random.default_rng(3)
         X, y = _linear_data(rng, n=50)

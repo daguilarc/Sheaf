@@ -3,16 +3,20 @@
 Reads ``task_costs`` joined with the *current* ``complexity`` row (the
 numerically greatest ``rubric_version`` present) and ``task_arms`` (the
 task's canonical implementer arm -- used for every category, including
-``review``/``followup_fix``, per design.md D5). For each category, fits a
-"pooled" NIG posterior across all arms' rows (starting from a weak shared
-prior), then treats that pooled posterior as the prior for each arm and
-updates it again on just that arm's rows -- partial pooling, so sparse arms
-inherit the pooled behavior and get a wide posterior rather than
-overfitting to a handful of points (spec.md "Sparse arm yields wide
-posterior"). Writes one new ``estimators`` row (config_json + metrics_json)
-and one ``estimator_params`` row per (category, arm) with data; prior
-``estimators`` rows are never touched (design.md D9 -- old estimators are
-kept for audit/rollback).
+``review``/``followup_fix``, per design.md D5). Pooling scheme
+(``pooled-mean-weak-prior-v1``, per design.md D6 review): for each category,
+fit a pooled NIG regression across *all* arms' rows (starting from the weak
+shared prior) and take only its posterior *mean* coefficient vector; each
+arm's prior is then a fresh weak-precision NIG (``Lambda0``/``a0``/``b0``
+unchanged from the shared weak prior) centered at that pooled mean, updated
+*once* on just that arm's own rows. This avoids double-counting an arm's
+rows (once via the pooled fit, again via a from-the-pooled-posterior
+update) while still pulling sparse arms toward the pooled mean and giving
+them a wide posterior rather than overfitting to a handful of points
+(spec.md "Sparse arm yields wide posterior"). Writes one new ``estimators``
+row (config_json + metrics_json) and one ``estimator_params`` row per
+(category, arm) with data; prior ``estimators`` rows are never touched
+(design.md D9 -- old estimators are kept for audit/rollback).
 
 CLI: ``python3 train.py --db PATH [--config JSON]`` where ``--config`` is a
 path to a JSON file of overrides deep-merged onto ``model.default_config()``
@@ -121,7 +125,7 @@ def run(conn, config_overrides: Optional[dict] = None) -> Optional[int]:
     posteriors: dict = {}       # (category, model, effort) -> NIG
     arm_row_counts: dict = {}   # "category|model|effort" -> n
     arm_data: dict = {}         # (category, model, effort) -> (X, y)
-    pooled_by_category: dict = {}
+    category_prior_by_category: dict = {}
     task_ids_all = set()
 
     for category, cat_rows in by_category.items():
@@ -139,8 +143,13 @@ def run(conn, config_overrides: Optional[dict] = None) -> Optional[int]:
             arm["X"].append(x)
             arm["y"].append(y)
 
-        pooled_posterior = weak_prior.update(np.array(pooled_X), np.array(pooled_y))
-        pooled_by_category[category] = pooled_posterior
+        # Pooled fit across all arms in this category contributes only its
+        # posterior *mean* (pulls sparse arms toward it); prior precision
+        # (Lambda0/a0/b0) stays the original weak, fixed values so an arm's
+        # own rows are counted exactly once (see module docstring).
+        pooled_fit = weak_prior.update(np.array(pooled_X), np.array(pooled_y))
+        category_prior = model.NIG(mu=pooled_fit.mu, Lambda=weak_prior.Lambda, a=weak_prior.a, b=weak_prior.b)
+        category_prior_by_category[category] = category_prior
 
         for key, arm in by_arm.items():
             n = len(arm["y"])
@@ -148,12 +157,12 @@ def run(conn, config_overrides: Optional[dict] = None) -> Optional[int]:
                 continue
             arm_X = np.array(arm["X"])
             arm_y = np.array(arm["y"])
-            posteriors[key] = pooled_posterior.update(arm_X, arm_y)
+            posteriors[key] = category_prior.update(arm_X, arm_y)
             arm_row_counts["|".join(str(part) for part in key)] = n
             arm_data[key] = (arm_X, arm_y)
 
     metrics = {"categories": {}, "arm_row_counts": arm_row_counts}
-    for category, pooled_posterior in pooled_by_category.items():
+    for category, category_prior in category_prior_by_category.items():
         below_p50 = below_p80 = total = 0
         for (cat, _mdl, _eff), (arm_X, arm_y) in arm_data.items():
             if cat != category:
@@ -164,7 +173,7 @@ def run(conn, config_overrides: Optional[dict] = None) -> Optional[int]:
             for i in range(n):
                 mask = np.ones(n, dtype=bool)
                 mask[i] = False
-                loo_posterior = pooled_posterior.update(arm_X[mask], arm_y[mask])
+                loo_posterior = category_prior.update(arm_X[mask], arm_y[mask])
                 p50 = loo_posterior.quantile(arm_X[i], 0.5)
                 p80 = loo_posterior.quantile(arm_X[i], 0.8)
                 actual = arm_y[i]
