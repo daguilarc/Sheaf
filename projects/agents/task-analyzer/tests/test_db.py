@@ -77,6 +77,26 @@ class TestDb(unittest.TestCase):
         conn2 = db.connect(path)
         self.assertEqual(conn2.execute("PRAGMA foreign_keys").fetchone()[0], 1)
 
+    def test_upsert_does_not_auto_commit(self):
+        # upsert leaves transaction control to the caller (needed for
+        # one-transaction-per-task atomicity in later ingest tasks); a
+        # write is only durable across connections once the caller commits.
+        path = self.tmp_path / "t.sqlite"
+        conn1 = db.connect(path)
+        db.upsert(
+            conn1,
+            "changes",
+            {"change_id": 1, "name": "uncommitted", "ingested_at": "t0"},
+            ["change_id"],
+        )
+        conn1.commit()
+        conn1.close()
+
+        conn2 = db.connect(path, create=False)
+        self.assertEqual(
+            conn2.execute("SELECT name FROM changes").fetchone()[0], "uncommitted"
+        )
+
     def test_model_prices_seeded_for_all_observed_arms(self):
         conn = db.connect(self.tmp_path / "t.sqlite")
         observed_arms = {

@@ -41,6 +41,11 @@ def upsert(conn: sqlite3.Connection, table: str, row: dict, key_cols: list) -> N
     table's primary key). Columns present in ``row`` but not in ``key_cols``
     are overwritten with the new value on conflict; if ``row`` contains only
     key columns, a conflict is a no-op.
+
+    Does not commit — callers that need one-transaction-per-task atomicity
+    (see design.md D3) should batch upserts and commit explicitly; callers
+    that want each upsert durable immediately should call ``conn.commit()``
+    themselves after this returns.
     """
     cols = list(row.keys())
     placeholders = ", ".join("?" for _ in cols)
@@ -61,7 +66,6 @@ def upsert(conn: sqlite3.Connection, table: str, row: dict, key_cols: list) -> N
         )
 
     conn.execute(sql, [row[c] for c in cols])
-    conn.commit()
 
 
 def _primary_key_columns(conn: sqlite3.Connection, table: str) -> list:
