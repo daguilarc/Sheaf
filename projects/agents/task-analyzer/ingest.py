@@ -87,6 +87,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import assets
+import costs
 import db
 import discovery
 import extractors
@@ -1037,6 +1038,12 @@ def _dump_path_for(conn) -> Optional[Path]:
 
 def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Idempotent ingest driver for the task-analyzer pipeline.")
+    # Positional, optional, defaulting to the pre-existing (unnamed) ingest
+    # behavior -- a bare `ingest.py [flags]` invocation is unchanged.
+    # `rebuild-derived` (design.md D5/D9, costs.rebuild) recomputes
+    # task_costs/task_arms from already-ingested raw+agentic rows; it takes
+    # no flags of its own beyond --db.
+    p.add_argument("command", nargs="?", default="ingest", choices=["ingest", "rebuild-derived"])
     p.add_argument("--db", default=str(Path("data/agents/task-analyzer.sqlite")))
     p.add_argument("--repo", default=".")
     p.add_argument("--dry-run", action="store_true")
@@ -1060,6 +1067,14 @@ def _connect_for_cli(db_path, dry_run: bool):
 def main(argv=None) -> int:
     args = _build_arg_parser().parse_args(argv)
     conn = _connect_for_cli(args.db, args.dry_run)
+
+    if args.command == "rebuild-derived":
+        try:
+            rows_written = costs.rebuild(conn)
+        finally:
+            conn.close()
+        print(json.dumps({"command": "rebuild-derived", "rows_written": rows_written}, indent=2))
+        return 0
 
     agent_runner = None
     if not args.dry_run and not args.no_agents:
