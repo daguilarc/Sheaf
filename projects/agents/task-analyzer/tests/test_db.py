@@ -83,18 +83,28 @@ class TestDb(unittest.TestCase):
         # write is only durable across connections once the caller commits.
         path = self.tmp_path / "t.sqlite"
         conn1 = db.connect(path)
+        conn2 = db.connect(path, create=False)
+
         db.upsert(
             conn1,
             "changes",
             {"change_id": 1, "name": "uncommitted", "ingested_at": "t0"},
             ["change_id"],
         )
-        conn1.commit()
-        conn1.close()
 
-        conn2 = db.connect(path, create=False)
+        # Before conn1 commits, a second connection must not see the row —
+        # this is what catches a regression to auto-commit.
+        self.assertIsNone(
+            conn2.execute("SELECT name FROM changes WHERE change_id = 1").fetchone()
+        )
+
+        conn1.commit()
+
         self.assertEqual(
-            conn2.execute("SELECT name FROM changes").fetchone()[0], "uncommitted"
+            conn2.execute(
+                "SELECT name FROM changes WHERE change_id = 1"
+            ).fetchone()[0],
+            "uncommitted",
         )
 
     def test_model_prices_seeded_for_all_observed_arms(self):
