@@ -11,7 +11,7 @@
 - [x] 2.1 Implement transcript extractors as a library, porting the analysis scripts: codex sessions (`exec` + `thread_spawn`; model/effort from turn_context, token totals, per-turn deltas, compactions, peak context) and claude sessions (top-level + `subagents/agent-*.jsonl`; per-assistant-request turns), emitting condensed timelines for phase labeling
 - [x] 2.2 Implement discovery + joining: enumerate landed changes from `openspec/changes/archive/` on main, locate their SDD briefs/reports/review texts and sessions, classify session role (implementer/reviewer/fixer) and review_round by timestamp order; quarantine ambiguous joins to `ingest_log` rather than guessing
 - [x] 2.3 Implement the idempotent ingest driver: per-task transactions, cache-key checks (`rubric_version` + `input_sha256`), staging-dir resume, `--dry-run`, `--no-agents`, `--rescore <table>`, run report; archive brief text and graded tasks' review texts into the DB
-- [ ] 2.4 Implement `rebuild-derived`: `task_costs` per design D5 (phase apportionment by output-token share, `review`, `followup_fix` via review-round mechanics) using versioned `model_prices`
+- [x] 2.4 Implement `rebuild-derived`: `task_costs` per design D5 (phase apportionment by output-token share, `review`, `followup_fix` via review-round mechanics) using versioned `model_prices`
 
 ## 3. Agentic scoring integration
 
