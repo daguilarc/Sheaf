@@ -20,8 +20,8 @@
 
 ## 4. Migration of existing dataset
 
-- [ ] 4.1 Implement `migrate_v0.py` importing `analysis/sdd-model-analysis/data/` (sessions, tasks/changes, complexity, grades, phase labels + timeline turn costs) as `rubric_version` 1 rows with zero agent dispatches; flag rows `migrated_v0`
-- [ ] 4.2 Run migration + `rebuild-derived`; reconcile row counts against the analysis findings (203 implementer sessions, 143 complexity, 117 grades); commit `task-analyzer.sqlite` + JSONL dump
+- [x] 4.1 Implement `migrate_v0.py` importing `analysis/sdd-model-analysis/data/` (sessions, tasks/changes, complexity, grades, phase labels + timeline turn costs) as `rubric_version` 1 rows with zero agent dispatches; flag rows `migrated_v0`
+- [x] 4.2 Run migration + `rebuild-derived`; reconcile row counts against the analysis findings (203 implementer sessions, 143 complexity, 117 grades); commit `task-analyzer.sqlite` + JSONL dump
 
 ## 5. Cost model
 
