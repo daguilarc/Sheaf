@@ -47,13 +47,24 @@ _MESSAGE_LEN = 600
 
 @dataclass
 class TokenTotals:
-    """Cumulative token counts for a session.
+    """Cumulative token counts for a session, with cost-ready, unambiguous
+    semantics: ``input_tokens`` is every token billed at the full input
+    rate; ``cached_tokens`` is cache-READ tokens only, billed at the
+    discounted cached rate. Concretely:
 
-    ``input_tokens`` counts fresh (non-cached) input tokens; ``cached_tokens``
-    folds in both cache-read and cache-creation input tokens (claude) or the
-    provider's own cached-input counter (codex); ``output_tokens`` and
-    ``reasoning_tokens`` are as reported by the provider (claude does not
-    surface a separate reasoning-token count, so it is always 0 there).
+    - codex: ``input_tokens = provider input_tokens - cached_input_tokens``,
+      ``cached_tokens = cached_input_tokens``.
+    - claude: ``input_tokens = uncached input_tokens + cache_creation_input_tokens``.
+      Anthropic bills cache-creation tokens at ~1.25x the base input rate,
+      not the full input rate exactly, but Task 6's cost model approximates
+      cache creation at 1x for simplicity — so cache-creation tokens are
+      folded into ``input_tokens`` here (not into ``cached_tokens``, which
+      is reserved for the cheaper cache-READ rate) to match that
+      approximation. ``cached_tokens = cache_read_input_tokens`` only.
+
+    ``output_tokens``/``reasoning_tokens`` are as reported by the provider
+    (claude does not surface a separate reasoning-token count, so it is
+    always 0 there).
     """
 
     input_tokens: int = 0
@@ -194,9 +205,10 @@ def extract_codex(path) -> SessionRecord:
                 total = info.get("total_token_usage") or {}
                 last = info.get("last_token_usage") or {}
                 if total:
+                    total_cached = total.get("cached_input_tokens") or 0
                     final_totals = TokenTotals(
-                        input_tokens=total.get("input_tokens") or 0,
-                        cached_tokens=total.get("cached_input_tokens") or 0,
+                        input_tokens=(total.get("input_tokens") or 0) - total_cached,
+                        cached_tokens=total_cached,
                         output_tokens=total.get("output_tokens") or 0,
                         reasoning_tokens=total.get("reasoning_output_tokens") or 0,
                     )
@@ -362,8 +374,8 @@ def extract_claude(path) -> SessionRecord:
             cr = u.get("cache_read_input_tokens") or 0
             cc = u.get("cache_creation_input_tokens") or 0
             out = u.get("output_tokens") or 0
-            input_tokens += inp
-            cached_tokens += cr + cc
+            input_tokens += inp + cc
+            cached_tokens += cr
             output_tokens += out
             cur_output_tokens = out
             peak_context = max(peak_context, inp + cr + cc + out)
