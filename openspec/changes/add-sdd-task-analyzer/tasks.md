@@ -2,8 +2,8 @@
 
 ## 1. Assets and schema
 
-- [ ] 1.1 Create `projects/agents/task-analyzer/` skeleton (README, `rubrics/`, `prompts/`, `staging/` gitignored) and port the three 2026-07-19 rubrics as standalone versioned assets: `rubrics/complexity.md` (C1–C7 + anchors, `version: 1`), `rubrics/grading.md` (G1–G5, severity mapping, letter definitions, `version: 1`), `rubrics/phase-taxonomy.md` (10 phases + tie-break rules, `version: 1`)
-- [ ] 1.2 Port the three agent prompts from the analysis session as assets (`prompts/complexity.md`, `prompts/grading.md`, `prompts/phase-labeling.md`), parameterized by rubric path, input paths, and output staging path
+- [x] 1.1 Create `projects/agents/task-analyzer/` skeleton (README, `rubrics/`, `prompts/`, `staging/` gitignored) and port the three 2026-07-19 rubrics as standalone versioned assets: `rubrics/complexity.md` (C1–C7 + anchors, `version: 1`), `rubrics/grading.md` (G1–G5, severity mapping, letter definitions, `version: 1`), `rubrics/phase-taxonomy.md` (10 phases + tie-break rules, `version: 1`)
+- [x] 1.2 Port the three agent prompts from the analysis session as assets (`prompts/complexity.md`, `prompts/grading.md`, `prompts/phase-labeling.md`), parameterized by rubric path, input paths, and output staging path
 - [ ] 1.3 Implement `schema.sql` exactly per design D2 plus `db.py` (open/create, WAL, migrations table, stable-ordered JSONL dump writer) and seed `model_prices` for the arms observed in the corpus
 
 ## 2. Ingestion (deterministic core)
