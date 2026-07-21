@@ -25,8 +25,8 @@
 
 ## 5. Cost model
 
-- [ ] 5.1 Implement `train.py`: NIG Bayesian linear regression on log-cost per (category, arm) with pooled prior (design D6), config-driven features, persisted to `estimators`/`estimator_params` with metrics (held-out log-loss, calibration of p50/p80)
-- [ ] 5.2 Implement posterior query library: predictive quantiles + Thompson sample per (category, complexity, arm)
+- [x] 5.1 Implement `train.py`: NIG Bayesian linear regression on log-cost per (category, arm) with pooled prior (design D6), config-driven features, persisted to `estimators`/`estimator_params` with metrics (held-out log-loss, calibration of p50/p80)
+- [x] 5.2 Implement posterior query library: predictive quantiles + Thompson sample per (category, complexity, arm)
 - [ ] 5.3 Implement `estimate.py` CLI per spec (candidate YAML in → per-task arm ranking, selection with p80 guard, explore flags, totals; JSON + table output; deterministic given estimator id)
 - [ ] 5.4 Train on migrated data; sanity-check outputs against known findings (sol/high dominated by 5.5/high; terra/medium cheapest at composite ≤3; sparse arms flagged explore); commit estimator rows
 
