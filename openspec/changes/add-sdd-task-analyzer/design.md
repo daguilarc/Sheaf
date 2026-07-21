@@ -251,9 +251,12 @@ Bayesian linear regression on log(usd + ε)** with features
 `[1, composite, C3, C4, C5]` (config-driven; start small). Closed form, no
 dependencies beyond numpy, and the posterior predictive is a Student-t: p50,
 p80, or any quantile is one line, and posterior variance per arm is exactly
-what Thompson sampling needs. A weak global prior is shared across arms
-(partial pooling: prior mean = pooled fit) so sparse arms (luna, 5.4) inherit
-sensible behavior with wide intervals — which correctly surfaces them as
+what Thompson sampling needs. A weak global prior is shared across arms:
+the pooled fit over all arms contributes the prior MEAN only (its coefficient
+vector becomes μ0), while prior precision stays weak (Λ0 = I·1e-2, a0=1,
+b0=1) — the arm's own rows are then counted exactly once, in the per-arm
+update. Sparse arms (luna, 5.4) thus inherit sensible pooled behavior with
+wide intervals — which correctly surfaces them as
 "explore" candidates. Alternatives considered: full hierarchical MCMC (too
 heavy, unneeded at n≈150), quantile regression (no posterior → no
 explore/exploit), gradient boosting (data-hungry, opaque). Log-space handles
