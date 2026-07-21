@@ -1,0 +1,16 @@
+{"timestamp": "2026-07-02T00:00:00Z", "type": "session_meta", "payload": {"id": "exec-sess-1", "cwd": "/repo", "source": "exec"}}
+{"timestamp": "2026-07-02T00:00:01Z", "type": "turn_context", "payload": {"model": "gpt-5.5-codex", "effort": "high"}}
+{"timestamp": "2026-07-02T00:00:02Z", "type": "event_msg", "payload": {"type": "user_message", "message": "Session initialization only. Please stand by."}}
+{"timestamp": "2026-07-02T00:00:03Z", "type": "event_msg", "payload": {"type": "user_message", "message": "Implement task 3 in the repo."}}
+{"timestamp": "2026-07-02T00:00:04Z", "type": "response_item", "payload": {"type": "function_call", "name": "shell", "arguments": "{\"command\": [\"bash\", \"-lc\", \"ls\"]}"}}
+{"timestamp": "2026-07-02T00:00:05Z", "type": "response_item", "payload": {"type": "function_call_output", "output": {"content": "file1\nfile2"}}}
+{"timestamp": "2026-07-02T00:00:06Z", "type": "response_item", "payload": {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Checking directory contents"}]}}
+{"timestamp": "2026-07-02T00:00:07Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "I listed the files."}]}}
+{"timestamp": "2026-07-02T00:00:08Z", "type": "event_msg", "payload": {"type": "agent_message", "message": "I listed the files."}}
+{"timestamp": "2026-07-02T00:00:09Z", "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 1000, "cached_input_tokens": 200, "output_tokens": 50, "reasoning_output_tokens": 10, "total_tokens": 1050}, "last_token_usage": {"input_tokens": 1000, "cached_input_tokens": 200, "output_tokens": 50, "reasoning_output_tokens": 10, "total_tokens": 1050}, "model_context_window": 200000}}}
+{"timestamp": "2026-07-02T00:00:10Z", "type": "response_item", "payload": {"type": "function_call", "name": "apply_patch", "arguments": "{\"command\": \"apply_patch file.py\"}"}}
+{"timestamp": "2026-07-02T00:00:11Z", "type": "response_item", "payload": {"type": "function_call_output", "output": "patch applied"}}
+{"timestamp": "2026-07-02T00:00:12Z", "type": "event_msg", "payload": {"type": "compacted"}}
+{"timestamp": "2026-07-02T00:00:13Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Applied the patch and compacted context."}]}}
+{"timestamp": "2026-07-02T00:00:14Z", "type": "event_msg", "payload": {"type": "agent_message", "message": "Applied the patch and compacted context."}}
+{"timestamp": "2026-07-02T00:00:15Z", "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 1800, "cached_input_tokens": 400, "output_tokens": 90, "reasoning_output_tokens": 20, "total_tokens": 1890}, "last_token_usage": {"input_tokens": 800, "cached_input_tokens": 200, "output_tokens": 40, "reasoning_output_tokens": 10, "total_tokens": 840}, "model_context_window": 200000}}}
