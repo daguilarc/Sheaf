@@ -298,6 +298,27 @@ def _get(s: SessionLike, key: str):
     return getattr(s, key, None)
 
 
+def _output_tokens(s: SessionLike) -> int:
+    """``output_tokens`` for a session, however it's shaped.
+
+    ``extractors.SessionRecord`` (and the ``db``/``ingest`` rows built from
+    it) carry token counts nested under ``tokens`` (a ``TokenTotals``, or a
+    dict once round-tripped through JSON) rather than as a top-level field;
+    lightweight test fixtures and joined-session dicts may instead carry a
+    flat ``output_tokens``. Check the nested form first, then fall back to
+    the flat one, so both shapes work.
+    """
+    tokens = _get(s, "tokens")
+    if tokens is not None:
+        if isinstance(tokens, Mapping):
+            v = tokens.get("output_tokens")
+        else:
+            v = getattr(tokens, "output_tokens", None)
+        if v is not None:
+            return v
+    return _get(s, "output_tokens") or 0
+
+
 def assign_review_rounds(sessions: List[SessionLike]) -> Dict[str, int]:
     """Per design D5: a review boundary is the ``ended_at`` of each
     ``reviewer`` session. Implementer/fixer (and any other non-reviewer)
@@ -331,8 +352,11 @@ def canonical_arm(
     sessions: List[SessionLike],
 ) -> Tuple[Optional[str], Optional[str], Dict[str, Any]]:
     """The canonical (model, effort) arm for a task: the round-0 implementer
-    session with the greatest ``output_tokens``. Other round-0 implementer
-    sessions (if any) are recorded as alternates in ``basis``.
+    session with the greatest ``output_tokens`` (read via ``_output_tokens``,
+    so both a flat ``output_tokens`` field and a real
+    ``extractors.SessionRecord``'s nested ``tokens.output_tokens`` work).
+    Other round-0 implementer sessions (if any) are recorded as alternates in
+    ``basis``.
     """
     rounds = assign_review_rounds(sessions)
     round0_impl = [
@@ -343,18 +367,18 @@ def canonical_arm(
     if not round0_impl:
         return None, None, {"session_id": None, "output_tokens": None, "alternates": []}
 
-    round0_impl.sort(key=lambda s: _get(s, "output_tokens") or 0, reverse=True)
+    round0_impl.sort(key=_output_tokens, reverse=True)
     chosen, *rest = round0_impl
 
     basis = {
         "session_id": _get(chosen, "session_id"),
-        "output_tokens": _get(chosen, "output_tokens"),
+        "output_tokens": _output_tokens(chosen),
         "alternates": [
             {
                 "session_id": _get(s, "session_id"),
                 "model": _get(s, "model"),
                 "effort": _get(s, "effort"),
-                "output_tokens": _get(s, "output_tokens"),
+                "output_tokens": _output_tokens(s),
             }
             for s in rest
         ],

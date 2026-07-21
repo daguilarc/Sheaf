@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import discovery  # noqa: E402
+import extractors  # noqa: E402
 
 
 def _run_git(repo, *args):
@@ -263,7 +264,76 @@ class TestAssignReviewRounds(unittest.TestCase):
         self.assertEqual(rounds["aborted"], 0)
 
 
+def _session_record(session_id, output_tokens, model, effort, started_at, ended_at, role):
+    """A real extractors.SessionRecord, with `role` bolted on as a plain
+    attribute -- SessionRecord itself has no `role` field (Task 3's
+    extraction layer doesn't classify), but a real joined session (as Task 5
+    will produce) is exactly this shape: a SessionRecord plus a role decided
+    by classify_role. output_tokens lives at `tokens.output_tokens`, not as
+    a top-level field."""
+    rec = extractors.SessionRecord(
+        session_id=session_id,
+        provider="claude",
+        harness_entry="main",
+        model=model,
+        effort=effort,
+        started_at=started_at,
+        ended_at=ended_at,
+        prompt="implement the task",
+        tokens=extractors.TokenTotals(output_tokens=output_tokens),
+        peak_context=0,
+        n_compactions=0,
+        n_turns=1,
+        n_tool_calls=0,
+        turns=[],
+        last_message=None,
+    )
+    rec.role = role
+    return rec
+
+
 class TestCanonicalArm(unittest.TestCase):
+    def test_picks_larger_round0_implementer_when_two_exist_session_record(self):
+        # Regression: canonical_arm must read output_tokens from a real
+        # SessionRecord's nested `tokens.output_tokens`, not a top-level
+        # field that SessionRecord doesn't have (which would silently read
+        # as 0 for every session and degrade selection to input order).
+        sessions = [
+            _session_record(
+                "impl_a",
+                1000,
+                "gpt-5.5",
+                "high",
+                "2026-07-19T00:00:00",
+                "2026-07-19T00:30:00",
+                "implementer",
+            ),
+            _session_record(
+                "impl_b",
+                2500,
+                "claude-sonnet-5",
+                "high",
+                "2026-07-19T00:05:00",
+                "2026-07-19T00:35:00",
+                "implementer",
+            ),
+            _session_record(
+                "rev1",
+                0,
+                "claude-sonnet-5",
+                "high",
+                "2026-07-19T01:00:00",
+                "2026-07-19T01:30:00",
+                "reviewer",
+            ),
+        ]
+        model, effort, basis = discovery.canonical_arm(sessions)
+        self.assertEqual(model, "claude-sonnet-5")
+        self.assertEqual(effort, "high")
+        self.assertEqual(basis["output_tokens"], 2500)
+        alt_ids = {a["session_id"] for a in basis["alternates"]}
+        self.assertEqual(alt_ids, {"impl_a"})
+
     def test_picks_larger_round0_implementer_when_two_exist(self):
         sessions = [
             {
