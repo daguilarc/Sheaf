@@ -221,6 +221,9 @@ class TestIdempotency(IngestTestBase):
         review_text = conn.execute("SELECT review_text FROM grades").fetchone()[0]
         self.assertIn("PASS", review_text)
 
+        dump_path = self.db_path.parent / (self.db_path.stem + ".dump.jsonl")
+        dump_after_run1 = dump_path.read_bytes()
+
         # Second run: nothing new, fake runner not invoked again.
         report2 = self._run(conn, agent_runner=fake)
         self.assertEqual(report2.total_writes, 0)
@@ -228,8 +231,14 @@ class TestIdempotency(IngestTestBase):
         self.assertEqual(report2.dispatched, {})
         self.assertEqual(len(fake.calls), 3)  # unchanged from run 1
 
-        # ingest_log still gets a row every real run (audit trail).
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM ingest_log").fetchone()[0], 2)
+        # A true no-op run does NOT append to ingest_log (it would otherwise
+        # bloat the audit trail on every repeated no-op run); still exactly
+        # the 1 row from run 1's real work.
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM ingest_log").fetchone()[0], 1)
+
+        # And the JSONL dump -- which excludes ingest_log entirely -- is
+        # byte-identical across the no-op re-run.
+        self.assertEqual(dump_path.read_bytes(), dump_after_run1)
 
 
 class TestDryRun(IngestTestBase):
@@ -386,6 +395,125 @@ class TestQuarantine(IngestTestBase):
         self.assertIsNotNone(row)
         self.assertIsNone(row[0])
         self.assertEqual(len(report.quarantined), 1)
+
+
+class TestLandedOnlyBriefs(IngestTestBase):
+    """Review finding 1: brief content (and existence) must come from the
+    resolved archive-ref git tree, never the working tree filesystem --
+    otherwise `--dry-run`/`plan_work` could report work driven by
+    uncommitted edits, violating D3's "discovery is a pure diff against a
+    landed git ref" rule."""
+
+    def test_brief_added_only_to_working_tree_is_not_ingested(self):
+        # A second task brief written to disk but never `git add`/committed.
+        sdd = self.repo / ".superpowers" / "sdd" / CHANGE_NAME
+        (sdd / "task-2-brief.md").write_text("Uncommitted, working-tree-only brief.\n")
+
+        conn = self._conn()
+        plan = self._plan(conn)
+        self.assertNotIn(f"{CHANGE_NAME}/task-2", plan.new_tasks)
+
+        report = self._run(conn, agent_runner=FakeAgentRunner())
+        self.assertEqual(report.tasks_written, 1)  # only the committed task-1
+        rows = conn.execute("SELECT task_key FROM tasks").fetchall()
+        self.assertEqual([r[0] for r in rows], [TASK_KEY])
+
+    def test_brief_content_read_from_committed_ref_not_working_tree_edit(self):
+        # Edit the already-committed brief on disk without committing the
+        # edit -- the working-tree version must never be read.
+        brief_path = self.repo / ".superpowers" / "sdd" / CHANGE_NAME / f"{TASK_KEY}-brief.md"
+        brief_path.write_text("UNCOMMITTED EDIT should never be seen.\n")
+
+        conn = self._conn()
+        self._run(conn, agent_runner=FakeAgentRunner())
+        brief_text = conn.execute("SELECT brief_text FROM tasks").fetchone()[0]
+        self.assertIn("widget core module", brief_text)
+        self.assertNotIn("UNCOMMITTED EDIT", brief_text)
+
+
+class TestArchiveRefRecorded(IngestTestBase):
+    """Review finding 3: the resolved archive ref name (not just its SHA)
+    must be recoverable from ingest_log for audit purposes."""
+
+    def test_archive_ref_recorded_in_ingest_log_actions(self):
+        conn = self._conn()
+        self._run(conn, agent_runner=FakeAgentRunner(), archive_ref="refs/heads/main")
+        row = conn.execute("SELECT git_sha, actions_json FROM ingest_log").fetchone()
+        self.assertIsNotNone(row)
+        actions = json.loads(row[1])
+        self.assertEqual(actions["archive_ref"], "refs/heads/main")
+        self.assertTrue(row[0])  # git_sha (resolved commit) also present
+
+
+class TestNumericVersionOrdering(unittest.TestCase):
+    """Review finding 4: version strings are compared numerically (design.md:
+    "the row with the numerically greatest version"), never lexicographically
+    -- "10" < "2" as strings but 10 > 2 as versions."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.db_path = Path(self._tmp.name) / "t.sqlite"
+
+    def test_stale_versions_sorted_numerically_not_lexicographically(self):
+        conn = db.connect(self.db_path)
+        db.upsert(conn, "changes", {"name": "x", "ingested_at": "t0"}, ["name"])
+        change_id = conn.execute("SELECT change_id FROM changes WHERE name = 'x'").fetchone()[0]
+        db.upsert(
+            conn, "tasks",
+            {"change_id": change_id, "task_key": "task-1", "brief_text": "b"},
+            ["change_id", "task_key"],
+        )
+        task_id = conn.execute("SELECT task_id FROM tasks").fetchone()[0]
+
+        db.upsert(
+            conn, "complexity",
+            {"task_id": task_id, "rubric_version": "2", "input_sha256": "aaa"},
+            ["task_id", "rubric_version"],
+        )
+        db.upsert(
+            conn, "complexity",
+            {"task_id": task_id, "rubric_version": "10", "input_sha256": "bbb"},
+            ["task_id", "rubric_version"],
+        )
+        conn.commit()
+
+        # Current version "11": both "2" and "10" are stale -- and must be
+        # reported in numeric ascending order, not string order (which would
+        # put "10" before "2").
+        current_hash, stale = ingest._current_and_stale(
+            conn, "complexity", "rubric_version", "task_id", task_id, "11"
+        )
+        self.assertIsNone(current_hash)
+        self.assertEqual(stale, ["2", "10"])
+
+        # Exact-match resolution also must not be fooled by digit count.
+        current_hash2, stale2 = ingest._current_and_stale(
+            conn, "complexity", "rubric_version", "task_id", task_id, "10"
+        )
+        self.assertEqual(current_hash2, "bbb")
+        self.assertEqual(stale2, ["2"])
+
+
+class TestDryRunNoDbFile(unittest.TestCase):
+    """Review finding 5: `--dry-run` against a database path that doesn't
+    exist yet must not create/touch it."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = _make_repo(self.root)
+
+    def test_dry_run_on_nonexistent_db_path_creates_no_file(self):
+        missing_db = self.root / "does-not-exist" / "t.sqlite"
+        self.assertFalse(missing_db.exists())
+
+        rc = ingest.main(["--dry-run", "--repo", str(self.repo), "--db", str(missing_db)])
+
+        self.assertEqual(rc, 0)
+        self.assertFalse(missing_db.exists())
+        self.assertFalse(missing_db.parent.exists())  # not even the directory
 
 
 if __name__ == "__main__":

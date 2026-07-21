@@ -83,13 +83,19 @@ def dump_jsonl(conn: sqlite3.Connection, out_path) -> None:
     Tables are visited in name order; rows within a table are ordered by
     primary key (or table order if the table has no declared primary key).
     Output is byte-stable across repeated calls on the same database state.
+
+    ``ingest_log`` is deliberately excluded: it's volatile run-audit data
+    (a new row every real ingest run, timestamped), not part of the
+    reviewable content snapshot -- including it would make the dump change
+    on every run even when nothing else did, defeating "no-op re-run
+    produces a byte-identical dump" (design.md D3 idempotency).
     """
     out_path = Path(out_path)
     table_names = [
         r[0]
         for r in conn.execute(
             "SELECT name FROM sqlite_master "
-            "WHERE type='table' AND name NOT LIKE 'sqlite_%' "
+            "WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'ingest_log' "
             "ORDER BY name"
         )
     ]

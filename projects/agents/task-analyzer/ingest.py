@@ -19,16 +19,19 @@ guessing (discovery.Quarantine). Two public entry points:
 Directory conventions owned by this module (not fixed elsewhere):
 
 - Task briefs for a landed change ``<name>`` live at
-  ``.superpowers/sdd/<name>/<task_key>-brief.md`` under ``repo_root``
-  (matching this very repo's own SDD convention; see
-  ``discovery._BRIEF_PATH_RE``). ``<task_key>`` is whatever precedes
-  ``-brief.md`` and looks like a task key (``task-N``, ``pM-task-N``, ...);
-  files like ``task-N-review-brief.md`` are not task briefs and are
-  skipped. This assumes the SDD directory name equals the openspec change
-  name -- a simplifying assumption for new changes going forward; the
-  historical corpus (differently-named SDD dirs, e.g. this very change's
-  own ``.superpowers/sdd/task-analyzer/``) is Task 8's migration script's
-  problem, not this one's.
+  ``.superpowers/sdd/<name>/<task_key>-brief.md``, read via
+  ``git ls-tree -r``/``git show`` at the *resolved commit SHA* of the
+  archive ref (never the filesystem/working tree -- D3 requires discovery
+  to be a pure diff against a landed git ref, and that applies to brief
+  content too, not just which changes/tasks exist: a brief edited or added
+  only in the working tree must not affect ingestion). ``<task_key>`` is
+  whatever precedes ``-brief.md`` and looks like a task key (``task-N``,
+  ``pM-task-N``, ...); files like ``task-N-review-brief.md`` are not task
+  briefs and are skipped. This assumes the SDD directory name equals the
+  openspec change name -- a simplifying assumption for new changes going
+  forward; the historical corpus (differently-named SDD dirs, e.g. this
+  very change's own ``.superpowers/sdd/task-analyzer/``) is Task 8's
+  migration script's problem, not this one's.
 - Session transcripts are discovered from two corpora, independent of
   ``repo_root`` (a change's sessions accumulate across every worktree
   checkout, never just whichever one happens to be on disk right now):
@@ -76,6 +79,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -225,9 +229,10 @@ class _JoinedSession:
 @dataclass
 class _Discovery:
     ref_sha: str
+    repo_root: Any
     changes: List[Any]  # discovery.LandedChange, in scope for this run
     unlanded: List[str]
-    briefs: Dict[Tuple[str, str], Path]  # (change_name, task_key) -> brief path
+    briefs: Dict[Tuple[str, str], str]  # (change_name, task_key) -> git-relative brief path
     joined: Dict[Tuple[str, str], List[_JoinedSession]]  # (change_name, task_key) -> sessions
     quarantined: List[Any]  # discovery.Quarantine, same order as quarantined_sessions
     quarantined_sessions: List[_JoinedSession]  # task_key/change_name are "" (unjoined)
@@ -246,19 +251,54 @@ def _brief_task_key(stem: str) -> Optional[str]:
     return None
 
 
-def _iter_briefs(repo_root, change_name: str) -> List[Tuple[str, Path]]:
-    d = Path(repo_root) / ".superpowers" / "sdd" / change_name
-    if not d.is_dir():
-        return []
+def _git(repo_root, args: List[str]) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(repo_root)] + args, capture_output=True, text=True, check=True,
+    )
+    return result.stdout
+
+
+def _git_ls_tree_r(repo_root, sha: str, path: str) -> List[str]:
+    """Recursive `git ls-tree -r <sha> -- <path>`, blob paths only (full
+    repo-relative paths, since -r already expands directories). Empty list
+    if the path doesn't exist at that ref (git exits 0 with empty output,
+    not an error) -- same convention as discovery._ls_tree."""
+    out = _git(repo_root, ["ls-tree", "-r", sha, "--", path])
+    paths = []
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        meta, _, name = line.partition("\t")
+        parts = meta.split()
+        if len(parts) != 3:
+            continue
+        _mode, typ, _blob_sha = parts
+        if typ == "blob":
+            paths.append(name)
+    return paths
+
+
+def _git_show(repo_root, sha: str, path: str) -> str:
+    """Read a file's content at a specific commit -- never the working
+    tree (D3: discovery, including brief content, is a pure diff against a
+    landed git ref)."""
+    return _git(repo_root, ["show", f"{sha}:{path}"])
+
+
+def _iter_briefs(repo_root, ref_sha: str, change_name: str) -> List[Tuple[str, str]]:
+    """Task briefs for `change_name`, read via git ls-tree at `ref_sha` --
+    never the filesystem, so a brief added or edited only in the working
+    tree (not committed/landed) is invisible here."""
+    prefix = f".superpowers/sdd/{change_name}/"
     out = []
-    for p in sorted(d.iterdir()):
-        name = p.name
+    for path in sorted(_git_ls_tree_r(repo_root, ref_sha, prefix)):
+        name = Path(path).name
         for suffix in ("-brief.md", "-implementer-prompt.md"):
             if name.endswith(suffix):
                 stem = name[: -len(suffix)]
                 task_key = _brief_task_key(stem)
                 if task_key:
-                    out.append((task_key, p))
+                    out.append((task_key, path))
                 break
     return out
 
@@ -302,10 +342,10 @@ def _discover(
     else:
         changes_in_scope = list(landed)
 
-    briefs: Dict[Tuple[str, str], Path] = {}
+    briefs: Dict[Tuple[str, str], str] = {}
     brief_index: Dict[str, List[str]] = {}  # task_key -> [change_name, ...]
     for c in changes_in_scope:
-        for task_key, path in _iter_briefs(repo_root, c.name):
+        for task_key, path in _iter_briefs(repo_root, ref_sha, c.name):
             briefs[(c.name, task_key)] = path
             brief_index.setdefault(task_key, []).append(c.name)
 
@@ -364,6 +404,7 @@ def _discover(
 
     return _Discovery(
         ref_sha=ref_sha,
+        repo_root=repo_root,
         changes=changes_in_scope,
         unlanded=unlanded,
         briefs=briefs,
@@ -408,19 +449,33 @@ def _existing_task_id(conn, change_name: str, task_key: str) -> Optional[int]:
     return row[0] if row else None
 
 
+def _version_int(v: str) -> int:
+    """Versions are integer strings, compared numerically (design.md: "the
+    row with the numerically greatest version" is current) -- never
+    lexicographically (``"10" < "2"`` as strings, but 10 > 2 as versions).
+    Non-numeric input sorts as always-oldest rather than raising, since this
+    is used for sorting/reporting, not as a hard schema guarantee."""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return -1
+
+
 def _current_and_stale(conn, table: str, version_col: str, id_col: str, id_val, current_version: str):
     rows = conn.execute(
         f'SELECT "{version_col}", input_sha256 FROM "{table}" WHERE "{id_col}" = ?',
         (id_val,),
     ).fetchall()
+    current_target = _version_int(current_version)
     current_hash = None
     stale: List[str] = []
     for row in rows:
         v, h = row[0], row[1]
-        if v == current_version:
+        if _version_int(v) == current_target:
             current_hash = h
         elif v not in stale:
             stale.append(v)
+    stale.sort(key=_version_int)
     return current_hash, stale
 
 
@@ -492,7 +547,7 @@ def _compute_gaps(conn, disc: _Discovery, staging_dir):
 
     for (change_name, task_key), brief_path in disc.briefs.items():
         task_id = _existing_task_id(conn, change_name, task_key)
-        brief_text = brief_path.read_text(encoding="utf-8")
+        brief_text = _git_show(disc.repo_root, disc.ref_sha, brief_path)
         ekey = _entity_key(change_name, task_key)
 
         gap = _gap_for(conn, "complexity", ekey, "task_id", task_id, brief_text)
@@ -628,8 +683,7 @@ def _get_change_id(conn, name: str) -> int:
     return conn.execute("SELECT change_id FROM changes WHERE name = ?", (name,)).fetchone()[0]
 
 
-def _upsert_task(conn, change_id: int, task_key: str, brief_path: Path) -> int:
-    brief_text = brief_path.read_text(encoding="utf-8")
+def _upsert_task(conn, change_id: int, task_key: str, brief_path: str, brief_text: str) -> int:
     row = {
         "change_id": change_id,
         "task_key": task_key,
@@ -834,8 +888,12 @@ def run(
         try:
             change_id = _get_change_id(conn, change_name)
             existing_task_id = _existing_task_id(conn, change_name, task_key)
+            # Brief content always comes from the landed ref (D3), never the
+            # working tree -- needed both for the task row and, below, for
+            # a complexity dispatch, so fetch it once per task per run.
+            brief_text = _git_show(disc.repo_root, disc.ref_sha, brief_path)
             if existing_task_id is None:
-                task_id = _upsert_task(conn, change_id, task_key, brief_path)
+                task_id = _upsert_task(conn, change_id, task_key, brief_path, brief_text)
                 report.tasks_written += 1
             else:
                 task_id = existing_task_id
@@ -850,7 +908,6 @@ def run(
 
             if "complexity" in task_gaps:
                 gap = task_gaps["complexity"]
-                brief_text = brief_path.read_text(encoding="utf-8")
 
                 class _Item:
                     def __call__(self):
@@ -933,23 +990,30 @@ def run(
             conn.rollback()
             raise
 
-    started_at = _now_iso()
-    finished_at = started_at
-    actions = {
-        "rows_written": report.rows_written,
-        "dispatched": report.dispatched,
-        "staged_used": report.staged_used,
-        "stale": report.stale,
-        "quarantined": [q.session_id for q in report.quarantined],
-        "unlanded": report.unlanded,
-        "new_changes": plan.new_changes,
-        "new_tasks": plan.new_tasks,
-    }
-    conn.execute(
-        "INSERT INTO ingest_log(started_at, finished_at, git_sha, actions_json) VALUES (?, ?, ?, ?)",
-        (started_at, finished_at, report.ref_sha, json.dumps(actions, sort_keys=True)),
-    )
-    conn.commit()
+    # Only append an ingest_log row when the run actually did something --
+    # a true no-op re-run (zero writes, zero dispatches) is reported via the
+    # returned RunReport/stdout only, not persisted to the audit trail, so
+    # repeated no-op runs don't bloat ingest_log. (dump_jsonl also excludes
+    # ingest_log entirely, belt-and-suspenders for dump byte-stability.)
+    if report.total_writes > 0:
+        started_at = _now_iso()
+        finished_at = started_at
+        actions = {
+            "archive_ref": archive_ref,
+            "rows_written": report.rows_written,
+            "dispatched": report.dispatched,
+            "staged_used": report.staged_used,
+            "stale": report.stale,
+            "quarantined": [q.session_id for q in report.quarantined],
+            "unlanded": report.unlanded,
+            "new_changes": plan.new_changes,
+            "new_tasks": plan.new_tasks,
+        }
+        conn.execute(
+            "INSERT INTO ingest_log(started_at, finished_at, git_sha, actions_json) VALUES (?, ?, ?, ?)",
+            (started_at, finished_at, report.ref_sha, json.dumps(actions, sort_keys=True)),
+        )
+        conn.commit()
 
     dump_path = _dump_path_for(conn)
     if dump_path is not None:
@@ -982,9 +1046,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _connect_for_cli(db_path, dry_run: bool):
+    """Open the target database -- except for ``--dry-run`` against a
+    database that doesn't exist yet, which must not create/touch it (a
+    plan-only command shouldn't have any filesystem side effect): plan
+    against a throwaway in-memory database with the same (empty) schema
+    instead."""
+    if dry_run and not Path(db_path).exists():
+        return db.connect(":memory:")
+    return db.connect(db_path)
+
+
 def main(argv=None) -> int:
     args = _build_arg_parser().parse_args(argv)
-    conn = db.connect(args.db)
+    conn = _connect_for_cli(args.db, args.dry_run)
 
     agent_runner = None
     if not args.dry_run and not args.no_agents:
@@ -995,11 +1070,14 @@ def main(argv=None) -> int:
         except ImportError:
             agent_runner = None
 
-    report = run(
-        conn, args.repo,
-        dry_run=args.dry_run, no_agents=args.no_agents,
-        rescore=args.rescore, agent_runner=agent_runner, change=args.change,
-    )
+    try:
+        report = run(
+            conn, args.repo,
+            dry_run=args.dry_run, no_agents=args.no_agents,
+            rescore=args.rescore, agent_runner=agent_runner, change=args.change,
+        )
+    finally:
+        conn.close()
 
     print(json.dumps({
         "ref_sha": report.ref_sha, "dry_run": report.dry_run,
@@ -1008,6 +1086,7 @@ def main(argv=None) -> int:
         "dispatched": report.dispatched, "staged_used": report.staged_used,
         "stale": report.stale, "quarantined": len(report.quarantined),
         "unlanded": report.unlanded,
+        "total_writes": report.total_writes,
     }, indent=2))
     return 0
 
