@@ -54,20 +54,35 @@ class FakeXagent:
 
     ``behavior`` defaults to always-valid; tests override it to simulate
     malformed/missing output for specific keys on specific attempts.
+
+    ``rc_and_log`` defaults to always-succeed (exit 0, empty log); tests
+    override it to simulate a crashed/misconfigured xagent process -- it's
+    given the 1-based call index across the whole fake's lifetime and
+    returns ``(returncode, log_text)``; ``log_text`` is written to the
+    ``stdout`` file object the real code passes (mirroring how a real
+    subprocess's output lands in the log file agents.py reads back).
     """
 
-    def __init__(self, behavior=None):
+    def __init__(self, behavior=None, rc_and_log=None):
         self.calls = []  # list of (cmd, kwargs)
         self.batch_sizes = []
+        self.call_index = 0
         self._attempts = {}  # entity_key -> attempt count so far
         self.behavior = behavior or (lambda kind, key, attempt: ("valid", _canned_valid(kind, key)))
+        self.rc_and_log = rc_and_log or (lambda call_index: (0, ""))
 
     def __call__(self, cmd, **kwargs):
         self.calls.append((list(cmd), kwargs))
+        self.call_index += 1
         cwd = Path(kwargs["cwd"])
         manifest = json.loads((cwd / "items.json").read_text())
         self.batch_sizes.append(len(manifest))
         output_dir = cwd / "output"
+
+        returncode, log_text = self.rc_and_log(self.call_index)
+        kwargs["stdout"].write(log_text.encode("utf-8"))
+        kwargs["stdout"].flush()
+
         for entry in manifest:
             kind = _kind_of_entry(entry)
             entity_key = entry.get("task_key") or entry.get("session_key")
@@ -83,7 +98,7 @@ class FakeXagent:
                 pass  # no file written at all
             else:
                 raise AssertionError(f"unknown behavior action {action!r}")
-        return subprocess.CompletedProcess(cmd, 0)
+        return subprocess.CompletedProcess(cmd, returncode)
 
 
 class AgentsTestBase(unittest.TestCase):
@@ -94,6 +109,31 @@ class AgentsTestBase(unittest.TestCase):
 
         self._real_run = agents.subprocess.run
         self.addCleanup(setattr, agents.subprocess, "run", self._real_run)
+
+        # Every test gets a dummy (existing, but never executed) xagent
+        # entry point as the default -- the existence check added for the
+        # "missing binary silently drops items" fix would otherwise reject
+        # every call in this suite, since the real
+        # projects/xagent/dist/src/main.js doesn't exist in this checkout.
+        self._dummy_xagent_bin = Path(self._tmp.name) / "dummy_xagent_main.js"
+        self._dummy_xagent_bin.write_text("// dummy xagent entry point for tests\n")
+        self._orig_xagent_bin = agents._XAGENT_BIN
+        agents._XAGENT_BIN = self._dummy_xagent_bin
+        self.addCleanup(setattr, agents, "_XAGENT_BIN", self._orig_xagent_bin)
+
+        # Isolate TASK_ANALYZER_XAGENT_MAIN so host-environment leakage
+        # never affects resolution-order tests.
+        had_env = agents._XAGENT_MAIN_ENV_VAR in os.environ
+        orig_env = os.environ.get(agents._XAGENT_MAIN_ENV_VAR)
+        os.environ.pop(agents._XAGENT_MAIN_ENV_VAR, None)
+
+        def _restore_env():
+            if had_env:
+                os.environ[agents._XAGENT_MAIN_ENV_VAR] = orig_env
+            else:
+                os.environ.pop(agents._XAGENT_MAIN_ENV_VAR, None)
+
+        self.addCleanup(_restore_env)
 
     def _patch(self, fake):
         agents.subprocess.run = fake
@@ -308,6 +348,125 @@ class TestGradingReviewFiles(AgentsTestBase):
 
         data = json.loads(written[0].read_text(encoding="utf-8"))
         self.assertEqual(data["final_grade"], "A")
+
+
+class TestXagentBinResolution(AgentsTestBase):
+    """Review fix: the xagent entry point must be resolvable without editing
+    source -- explicit param beats env var beats the repo-relative default."""
+
+    def test_param_beats_env_beats_default(self):
+        fake = FakeXagent()
+        self._patch(fake)
+
+        tmp = Path(self._tmp.name)
+        env_bin = tmp / "env_main.js"
+        param_bin = tmp / "param_main.js"
+        for p in (env_bin, param_bin):
+            p.write_text("// fake xagent entry\n")
+
+        item = [{"task_key": "t1", "version": "1", "input_sha256": "a" * 64, "brief_text": "b"}]
+
+        # Default (no override) -- setUp already pointed agents._XAGENT_BIN
+        # at a dummy existing file.
+        agents.xagent_runner("complexity", item, self.staging_dir)
+        cmd = fake.calls[-1][0]
+        self.assertEqual(cmd[1], str(self._dummy_xagent_bin))
+
+        # Env var beats the default.
+        os.environ[agents._XAGENT_MAIN_ENV_VAR] = str(env_bin)
+        agents.xagent_runner("complexity", item, self.staging_dir)
+        cmd = fake.calls[-1][0]
+        self.assertEqual(cmd[1], str(env_bin))
+
+        # Explicit param beats the env var.
+        agents.xagent_runner("complexity", item, self.staging_dir, xagent_main=str(param_bin))
+        cmd = fake.calls[-1][0]
+        self.assertEqual(cmd[1], str(param_bin))
+
+
+class TestXagentBinMissing(AgentsTestBase):
+    """Review fix: a missing entry point must raise loudly, before any
+    dispatch is attempted, naming the resolved path and all three
+    resolution sources -- not silently produce zero staged files."""
+
+    def test_missing_binary_raises_before_any_dispatch(self):
+        fake = FakeXagent()
+        self._patch(fake)
+
+        missing = Path(self._tmp.name) / "does-not-exist" / "main.js"
+        item = [{"task_key": "t1", "version": "1", "input_sha256": "a" * 64, "brief_text": "b"}]
+
+        with self.assertRaises(RuntimeError) as ctx:
+            agents.xagent_runner("complexity", item, self.staging_dir, xagent_main=str(missing))
+
+        msg = str(ctx.exception)
+        self.assertIn(str(missing), msg)
+        self.assertIn("xagent_main", msg)
+        self.assertIn(agents._XAGENT_MAIN_ENV_VAR, msg)
+        self.assertEqual(len(fake.calls), 0)  # never dispatched
+
+
+class TestNonzeroExit(AgentsTestBase):
+    """Review fix: a subprocess that exits nonzero must not be silently
+    treated the same as "the model produced bad JSON" -- if it's still
+    failing after the one retry, raise with the exit code and log tail
+    rather than quietly returning fewer staged files than requested."""
+
+    def test_nonzero_exit_after_retry_raises_with_exit_code_and_log_tail(self):
+        def rc_and_log(call_index):
+            return 1, f"call {call_index}: node crash TAIL_MARKER_XYZ\n"
+
+        def behavior(kind, key, attempt):
+            return "missing", None  # process crashed -- no output ever produced
+
+        fake = FakeXagent(behavior=behavior, rc_and_log=rc_and_log)
+        self._patch(fake)
+
+        items = [{"task_key": "t1", "version": "1", "input_sha256": "a" * 64, "brief_text": "b"}]
+
+        with self.assertRaises(RuntimeError) as ctx:
+            agents.xagent_runner("complexity", items, self.staging_dir)
+
+        msg = str(ctx.exception)
+        self.assertIn("1", msg)  # exit code
+        self.assertIn("TAIL_MARKER_XYZ", msg)
+        self.assertIn("t1", msg)
+        self.assertEqual(len(fake.calls), 2)  # initial dispatch + exactly one retry, never more
+
+    def test_nonzero_exit_on_first_attempt_recovers_on_successful_retry(self):
+        def rc_and_log(call_index):
+            return (1, "boom\n") if call_index == 1 else (0, "")
+
+        def behavior(kind, key, attempt):
+            if attempt == 1:
+                return "missing", None
+            return "valid", _canned_valid(kind, key)
+
+        fake = FakeXagent(behavior=behavior, rc_and_log=rc_and_log)
+        self._patch(fake)
+
+        items = [{"task_key": "t1", "version": "1", "input_sha256": "a" * 64, "brief_text": "b"}]
+        written = agents.xagent_runner("complexity", items, self.staging_dir)
+
+        self.assertEqual(len(written), 1)
+        self.assertEqual(len(fake.calls), 2)
+
+    def test_genuine_validation_failure_with_zero_exit_still_just_drops(self):
+        """Not every retry failure is a crash -- if xagent exits 0 both times
+        but the model's output never validates, that item is still silently
+        dropped (an accepted, pre-existing behavior; only nonzero-exit
+        failures must raise)."""
+        def behavior(kind, key, attempt):
+            return "invalid", {"task_key": key}  # always missing required keys
+
+        fake = FakeXagent(behavior=behavior)  # rc_and_log defaults to always-0
+        self._patch(fake)
+
+        items = [{"task_key": "t1", "version": "1", "input_sha256": "a" * 64, "brief_text": "b"}]
+        written = agents.xagent_runner("complexity", items, self.staging_dir)
+
+        self.assertEqual(written, [])
+        self.assertEqual(len(fake.calls), 2)  # initial + 1 retry, then dropped -- no raise
 
 
 if __name__ == "__main__":

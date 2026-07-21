@@ -51,6 +51,21 @@ Model defaults to the prompt asset's ``model_hint`` frontmatter field
 (sonnet/sonnet/haiku for complexity/grading/phase_labeling), overridable via
 the ``model`` keyword argument.
 
+The xagent entry point (``node <entry point> run ...``) is resolved, in
+order: the ``xagent_main`` keyword argument -> the ``TASK_ANALYZER_XAGENT_MAIN``
+environment variable -> the repo-relative default
+``projects/xagent/dist/src/main.js``. The resolved path is checked to exist
+*before any dispatch*; a missing entry point raises ``RuntimeError`` naming
+the resolved path and all three resolution sources, rather than silently
+failing every item in the batch (a bare missing-file/misconfigured-checkout
+mistake must be loud, not indistinguishable from "the model produced bad
+JSON"). Likewise, if the xagent subprocess itself exits nonzero on both the
+initial dispatch and its one retry for a batch, ``xagent_runner`` raises
+``RuntimeError`` with the exit code and the tail of the captured log --
+never silently returning fewer staged files than were dispatched. Nonzero
+exit with items still invalid after only one attempt is retried like any
+other invalid item; only a *second* nonzero exit for the same items raises.
+
 Stdlib only.
 """
 from __future__ import annotations
@@ -60,15 +75,17 @@ import os
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import assets
 
 _ROOT = Path(__file__).resolve().parent
 _REPO_ROOT = _ROOT.parent.parent.parent
 _XAGENT_BIN = _REPO_ROOT / "projects" / "xagent" / "dist" / "src" / "main.js"
+_XAGENT_MAIN_ENV_VAR = "TASK_ANALYZER_XAGENT_MAIN"
 
 _MAX_BATCH_SIZE = 12
+_LOG_TAIL_CHARS = 4000
 
 # kind -> prompt asset basename (hyphen for phase-labeling, matching
 # prompts/phase-labeling.md -- ingest.py's KIND_PROMPT_NAME uses the same
@@ -138,6 +155,29 @@ def _write_staged(staging_dir: Path, kind: str, entity_key: str, version: str, i
     return final
 
 
+def _resolve_xagent_bin(xagent_main: Optional[str]) -> Path:
+    """Resolution order: explicit ``xagent_main`` param -> the
+    ``TASK_ANALYZER_XAGENT_MAIN`` env var -> the repo-relative default
+    (``_XAGENT_BIN``, read fresh each call so tests can monkeypatch it)."""
+    if xagent_main is not None:
+        return Path(xagent_main)
+    env_val = os.environ.get(_XAGENT_MAIN_ENV_VAR)
+    if env_val:
+        return Path(env_val)
+    return Path(_XAGENT_BIN)
+
+
+def _require_xagent_bin_exists(resolved: Path) -> None:
+    if resolved.exists():
+        return
+    raise RuntimeError(
+        f"xagent entry point not found at {resolved}. Resolved via, in order: "
+        f"xagent_main param -> {_XAGENT_MAIN_ENV_VAR} env var -> repo-relative "
+        f"default {_XAGENT_BIN}. Refusing to dispatch rather than silently "
+        f"produce zero staged files."
+    )
+
+
 def _render_prompt(prompt_text: str, rubric_path: Path, items_json_path: Path, output_dir: Path) -> str:
     return (
         prompt_text.replace("{{RUBRIC_PATH}}", str(rubric_path))
@@ -146,7 +186,7 @@ def _render_prompt(prompt_text: str, rubric_path: Path, items_json_path: Path, o
     )
 
 
-def _invoke_xagent(work_dir: Path, harness: str, model: str, prompt_path: Path) -> None:
+def _invoke_xagent(work_dir: Path, harness: str, model: str, prompt_path: Path, xagent_bin: Path) -> Tuple[int, str]:
     """Runs xagent as a subprocess with stdin closed (``/dev/null`` -- xagent
     otherwise waits for stdin JSON lines and hangs) and stdout redirected to
     a log file inside ``work_dir`` (never piped to a reader that can exit
@@ -154,23 +194,35 @@ def _invoke_xagent(work_dir: Path, harness: str, model: str, prompt_path: Path) 
     at the full rendered prompt file, not the prompt body itself -- the
     rendered prompt (which embeds the rubric) is too large/escaping-fragile
     for a CLI argument. ``cwd=work_dir`` is the seam tests use to locate
-    ``items.json``/``prompt.md``/``output/`` without any real dispatch."""
+    ``items.json``/``prompt.md``/``output/`` without any real dispatch.
+    Returns ``(returncode, log_tail)`` -- the tail of the captured
+    stdout+stderr log, for a caller to surface if the exit code is nonzero."""
     pointer = f"Read your full task prompt at {prompt_path} and follow it exactly."
     cmd = [
-        "node", str(_XAGENT_BIN), "run",
+        "node", str(xagent_bin), "run",
         "--harness", harness,
         "--model", model,
         "--subagent", pointer,
     ]
     log_path = work_dir / "xagent.log"
     with open(os.devnull, "rb") as devnull, open(log_path, "wb") as log_f:
-        subprocess.run(cmd, stdin=devnull, stdout=log_f, stderr=subprocess.STDOUT, cwd=str(work_dir), check=False)
+        result = subprocess.run(cmd, stdin=devnull, stdout=log_f, stderr=subprocess.STDOUT, cwd=str(work_dir), check=False)
+    try:
+        log_text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        log_text = ""
+    return result.returncode, log_text[-_LOG_TAIL_CHARS:]
 
 
-def _dispatch_batch(kind: str, items: List[dict], staging_dir: Path, harness: str, model: str, prompt_text: str) -> Dict[str, dict]:
+def _dispatch_batch(
+    kind: str, items: List[dict], staging_dir: Path, harness: str, model: str, prompt_text: str, xagent_bin: Path,
+) -> Tuple[Dict[str, dict], int, str]:
     """One xagent invocation for at most ``_MAX_BATCH_SIZE`` items. Returns
-    entity_key -> validated output dict for whichever items produced a
-    valid output file; items that failed are simply absent from the dict."""
+    ``(results, returncode, log_tail)``: ``results`` maps entity_key ->
+    validated output dict for whichever items produced a valid output file
+    (items that failed are simply absent); ``returncode``/``log_tail`` are
+    the subprocess's exit code and captured log tail, for the caller to
+    decide whether a nonzero exit needs to be surfaced."""
     key_field, blob_field, manifest_field = _KIND_FIELDS[kind]
 
     work_dir = Path(staging_dir) / kind / "_work" / uuid.uuid4().hex
@@ -195,7 +247,7 @@ def _dispatch_batch(kind: str, items: List[dict], staging_dir: Path, harness: st
     prompt_path = work_dir / "prompt.md"
     prompt_path.write_text(rendered, encoding="utf-8")
 
-    _invoke_xagent(work_dir, harness, model, prompt_path)
+    returncode, log_tail = _invoke_xagent(work_dir, harness, model, prompt_path, xagent_bin)
 
     results: Dict[str, dict] = {}
     for item in items:
@@ -209,7 +261,7 @@ def _dispatch_batch(kind: str, items: List[dict], staging_dir: Path, harness: st
             continue
         if _validate_output(kind, data):
             results[entity_key] = data
-    return results
+    return results, returncode, log_tail
 
 
 def xagent_runner(
@@ -219,16 +271,24 @@ def xagent_runner(
     *,
     harness: str = "claude_code",
     model: Optional[str] = None,
+    xagent_main: Optional[str] = None,
 ) -> List[Path]:
     """Real ``agent_runner`` for ``ingest.py`` (see ``ingest.py``'s module
     docstring for the exact contract this must satisfy). Batches ``items``
     into groups of at most ``_MAX_BATCH_SIZE``, dispatches each batch to
     xagent, validates/retries-once, and returns the final staged paths
-    actually written."""
+    actually written.
+
+    ``xagent_main`` overrides the resolved xagent entry point (see module
+    docstring for the full resolution order and the loud-failure guarantees
+    around a missing entry point / a subprocess that exits nonzero twice)."""
     if kind not in _KIND_FIELDS:
         raise ValueError(f"unknown kind: {kind!r}")
     if not items:
         return []
+
+    xagent_bin = _resolve_xagent_bin(xagent_main)
+    _require_xagent_bin_exists(xagent_bin)
 
     prompt_text, _prompt_version, model_hint = assets.load_prompt(_PROMPT_NAME[kind])
     resolved_model = model if model is not None else model_hint
@@ -238,18 +298,29 @@ def xagent_runner(
 
     written: List[Path] = []
     for batch in _chunks(items, _MAX_BATCH_SIZE):
-        results = _dispatch_batch(kind, batch, staging_dir, harness, resolved_model, prompt_text)
+        results, _rc, _log_tail = _dispatch_batch(kind, batch, staging_dir, harness, resolved_model, prompt_text, xagent_bin)
 
         invalid = [item for item in batch if item[key_field] not in results]
         if invalid:
-            retry_results = _dispatch_batch(kind, invalid, staging_dir, harness, resolved_model, prompt_text)
+            retry_results, retry_rc, retry_log_tail = _dispatch_batch(
+                kind, invalid, staging_dir, harness, resolved_model, prompt_text, xagent_bin
+            )
             results.update(retry_results)
+
+            still_invalid = [item for item in invalid if item[key_field] not in results]
+            if still_invalid and retry_rc != 0:
+                keys = ", ".join(item[key_field] for item in still_invalid)
+                raise RuntimeError(
+                    f"xagent exited {retry_rc} dispatching {kind} batch for [{keys}] "
+                    f"(after 1 retry) -- refusing to silently drop these items. "
+                    f"Log tail:\n{retry_log_tail}"
+                )
 
         for item in batch:
             entity_key = item[key_field]
             data = results.get(entity_key)
             if data is None:
-                continue  # still invalid after retry -- left as an open gap
+                continue  # still invalid after retry (non-crash validation failure) -- left as an open gap
             path = _write_staged(staging_dir, kind, entity_key, item["version"], item["input_sha256"], data)
             written.append(path)
 
