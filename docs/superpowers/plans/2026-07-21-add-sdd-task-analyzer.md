@@ -12,7 +12,7 @@
 
 - All new code lives under `projects/agents/task-analyzer/`; the DB at `data/agents/task-analyzer.sqlite`; nothing else in the repo is modified except `data/agents/` and this plan's sibling artifacts.
 - Python: stdlib + numpy only. No pip installs. Scripts run with `python3`.
-- Tests: `python3 -m pytest projects/agents/task-analyzer/tests -q` must pass at every commit (pytest is available; if not, fall back to `python3 -m unittest discover -s projects/agents/task-analyzer/tests`).
+- Tests: written as `unittest.TestCase` subclasses so the stdlib runner genuinely collects them; the canonical command at every commit is `python3 -m unittest discover -s projects/agents/task-analyzer/tests -v` (pytest also runs them if available, but must not be required — system Python is PEP 668-managed with no pip installs).
 - SQLite: WAL mode, foreign_keys ON, single writer. Every write path goes through `db.py`.
 - External transcript sources (`~/.codex/sessions`, `~/.claude/projects`, `~/.codex/worktrees`) are READ-ONLY.
 - Agentic judgment rows MUST carry `rubric_version` (or `taxonomy_version`), `input_sha256`, `scored_by`. Deterministic derived rows MUST be recomputable via `rebuild-derived`.
