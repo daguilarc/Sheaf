@@ -24,7 +24,14 @@ Source files consumed (all read-only, under ``--source``):
   which also carries the finer ``reviewer-rereview`` distinction folded to
   this schema's plain ``reviewer`` role).
 - ``complexity/<change>__<task_key>.json`` / ``grades/<change>__<task_key>.json``:
-  already-scored judgments, imported near-verbatim.
+  already-scored judgments, imported near-verbatim. A grade's ``review_text``
+  is stitched from the same session set and filter the source pipeline used
+  to build its own grading input (``scripts/make_manifests.py``'s Stage C):
+  ``review_sessions + audit_sessions`` (not review-only -- an auditor's
+  writeup can be part of what was graded), sorted chronologically by
+  ``started_at``, keeping only sessions whose ``final_text_file`` exists on
+  disk *and* is larger than 100 bytes (the source's own filter for
+  excluding empty/near-empty review artifacts).
 - ``phase_labels/<provider>-<native_id>.json`` + ``timelines/<provider>-<native_id>.md``:
   per-turn phase labels and the rendered timeline whose ``## Turn N
   (output_tokens=..., reasoning=..., input=...)`` headers carry each turn's
@@ -60,6 +67,14 @@ so re-running against the same source and the same DB is a no-op --
 invoked at the end with a fixed ``as_of``/``computed_at`` for the same
 reason (its own output is otherwise wall-clock-dependent).
 
+The CLI self-checks its own output against the task brief's reconciliation
+targets (``DEFAULT_RECONCILE_TARGETS``: implementer+fixer sessions 203,
+complexity rows 143, grades rows 117, phase-labeled sessions 200) after
+migrating, printing an expected/actual/delta line per metric and exiting
+nonzero if any ``|delta|`` exceeds the tolerance (default 2). ``--reconcile-
+targets``/``--reconcile-tolerance`` override this for other source trees
+(tests' miniature fixtures have their own, much smaller, expected counts).
+
 Stdlib only.
 """
 from __future__ import annotations
@@ -88,6 +103,19 @@ SCORED_BY = "migrated_v0"
 FIXED_INGESTED_AT = "2026-07-19T00:00:00Z"
 FIXED_AS_OF = "2026-07-19"
 FIXED_COMPUTED_AT = "2026-07-19T00:00:00Z"
+
+# Task brief's reconciliation targets for the real
+# analysis/sdd-model-analysis/data source tree, keyed by the matching
+# migrate()-returned stats field. Overridable via --reconcile-targets for
+# other source trees (miniature test fixtures have their own, much smaller,
+# expected counts).
+DEFAULT_RECONCILE_TARGETS: Dict[str, int] = {
+    "implementer_fixer_sessions": 203,
+    "complexity_rows": 143,
+    "grades_rows": 117,
+    "phase_labeled_session_rows": 200,
+}
+RECONCILE_TOLERANCE = 2
 
 _SESSION_LIST_FIELDS = (
     "implementer_sessions",
@@ -306,21 +334,25 @@ def migrate(conn, source_dir) -> Dict[str, int]:
             continue
         t = task_by_key[(change_name, task_key)]
 
-        reviewer_entries = []
-        for s in t["review_sessions"]:
-            if _fold_role(s["kind"]) != "reviewer":
-                continue
+        # Mirrors scripts/make_manifests.py's Stage C (the source pipeline's
+        # own grading-input selection): review_sessions + audit_sessions
+        # (both contribute to what was graded, not review-only), sorted
+        # chronologically, keeping only sessions whose final_text_file
+        # exists on disk and is > 100 bytes (excludes empty/near-empty
+        # review artifacts the source pipeline itself never fed to grading).
+        review_entries = []
+        for s in t["review_sessions"] + t["audit_sessions"]:
             raw = raw_lookup.get(s["sid"])
             started_at = (raw.get("started_at") if raw else None) or s.get("started_at") or ""
-            reviewer_entries.append((started_at, s.get("final_text_file")))
-        reviewer_entries.sort(key=lambda x: x[0])
+            review_entries.append((started_at, s.get("final_text_file")))
+        review_entries.sort(key=lambda x: x[0])
 
         texts = []
-        for _started_at, final_text_file in reviewer_entries:
+        for _started_at, final_text_file in review_entries:
             if not final_text_file:
                 continue
             p = source_dir / final_text_file
-            if p.exists():
+            if p.is_file() and p.stat().st_size > 100:
                 texts.append(p.read_text(encoding="utf-8"))
         review_text = "\n\n---\n\n".join(texts)
 
@@ -426,6 +458,43 @@ def _dump_path_for(conn) -> Optional[Path]:
 
 
 # --------------------------------------------------------------------------
+# Reconciliation
+# --------------------------------------------------------------------------
+
+
+def reconcile(
+    stats: Dict[str, int], targets: Dict[str, int], tolerance: int = RECONCILE_TOLERANCE
+) -> Tuple[bool, List[Dict[str, Any]]]:
+    """Compare ``migrate()``'s returned ``stats`` against ``targets`` (a
+    ``metric -> expected count`` mapping, a subset of ``stats``'s keys).
+
+    Returns ``(ok, rows)``: ``ok`` is True iff every metric's
+    ``|actual - expected|`` is within ``tolerance``; ``rows`` is one
+    ``{"metric", "expected", "actual", "delta"}`` dict per target, in the
+    order ``targets`` was given, for printing/logging.
+    """
+    rows: List[Dict[str, Any]] = []
+    ok = True
+    for metric, expected in targets.items():
+        actual = stats.get(metric)
+        delta = None if actual is None else actual - expected
+        if delta is None or abs(delta) > tolerance:
+            ok = False
+        rows.append({"metric": metric, "expected": expected, "actual": actual, "delta": delta})
+    return ok, rows
+
+
+def _print_reconcile_table(rows: List[Dict[str, Any]], tolerance: int) -> None:
+    print(f"Reconciliation (tolerance +/-{tolerance}):")
+    for r in rows:
+        flag = "OK" if r["delta"] is not None and abs(r["delta"]) <= tolerance else "FAIL"
+        print(
+            f"  {r['metric']:<32} expected={r['expected']!s:<6} "
+            f"actual={r['actual']!s:<6} delta={r['delta']!s:<6} {flag}"
+        )
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
@@ -437,6 +506,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--db", required=True)
     p.add_argument("--source", default=str(DEFAULT_SOURCE))
+    p.add_argument(
+        "--reconcile-targets", default=None,
+        help="JSON object overriding DEFAULT_RECONCILE_TARGETS "
+        "(implementer_fixer_sessions/complexity_rows/grades_rows/"
+        "phase_labeled_session_rows), e.g. for a test fixture's own expected counts.",
+    )
+    p.add_argument("--reconcile-tolerance", type=int, default=RECONCILE_TOLERANCE)
     return p
 
 
@@ -450,6 +526,17 @@ def main(argv=None) -> int:
     finally:
         conn.close()
     print(json.dumps(stats, indent=2, sort_keys=True))
+
+    targets = json.loads(args.reconcile_targets) if args.reconcile_targets else DEFAULT_RECONCILE_TARGETS
+    ok, rows = reconcile(stats, targets, tolerance=args.reconcile_tolerance)
+    _print_reconcile_table(rows, args.reconcile_tolerance)
+    if not ok:
+        print(
+            f"RECONCILIATION FAILED: one or more counts off by more than "
+            f"the tolerance ({args.reconcile_tolerance})",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
