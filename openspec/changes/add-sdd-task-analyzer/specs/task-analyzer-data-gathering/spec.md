@@ -22,7 +22,7 @@ for reviewable diffs.
 
 #### Scenario: Rubric bump triggers opt-in rescoring
 - **WHEN** the complexity rubric asset's version is bumped and ingestion runs with `--rescore complexity`
-- **THEN** tasks whose stored `rubric_version` differs are re-scored and their rows replaced; without the flag they are left untouched and reported as stale
+- **THEN** tasks whose stored `rubric_version` differs are re-scored with new version rows written alongside the retained prior-version rows; without the flag they are left untouched and reported as stale
 
 ### Requirement: Idempotent, atomic, offline ingestion
 The system SHALL provide an ingestion script in
@@ -68,8 +68,10 @@ The system SHALL deterministically compute per-task dollar-weighted token
 costs into `task_costs`: one category per TDD phase (session cost apportioned
 by phase output-token share), plus `review` (all reviewer/auditor sessions) and `followup_fix` per the
 design's deterministic event rules: review boundaries are reviewer-session
-end times; implementer/fixer sessions starting after a boundary are
-follow-up fixes (round n+1); re-reviews without intervening fixes contribute
+end times; implementer/fixer sessions get `review_round = n` where n is the
+count of boundaries before their start, and every session with round ≥ 1 is
+a follow-up fix; round-0 implementer sessions lacking phase labels fund the
+legal category `unlabeled`; re-reviews without intervening fixes contribute
 to `review` only; aborted and zero-output sessions are included in their
 category; quarantined sessions fund nothing. The canonical implementer arm
 per task SHALL be recorded in `task_arms` (round-0 implementer session with

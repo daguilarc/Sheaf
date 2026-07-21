@@ -127,9 +127,10 @@ CREATE TABLE model_prices(
 
 CREATE TABLE task_costs(                -- one row per task per cost category
   task_id INTEGER REFERENCES tasks, category TEXT,
-  -- categories: the 10 phases (implementer sessions, phase-weighted),
-  -- plus 'review' (all reviewer-session tokens) and
-  -- 'followup_fix' (fixer sessions + implementer sessions with review_round > 1)
+  -- categories: the 10 phases (round-0 implementer sessions, phase-weighted),
+  -- 'unlabeled' (round-0 implementer sessions lacking phase labels),
+  -- 'review' (all reviewer/auditor sessions), and
+  -- 'followup_fix' (fixer + implementer sessions with review_round >= 1)
   weighted_tokens REAL, usd REAL,
   computed_at TEXT, price_version TEXT,
   PRIMARY KEY(task_id, category));
@@ -163,8 +164,9 @@ Version semantics: one judgment row per (entity, version); re-scoring the
 same version (e.g. after an input hash change) upserts in place, while a
 rubric/taxonomy bump adds new rows and retains the old — the audit trail is
 across versions. The **current** judgment for an entity is the row with the
-lexicographically greatest version; training and derived passes filter to one
-explicitly configured version.
+numerically greatest version (versions are integer strings, compared as
+integers); training and derived passes filter to one explicitly configured
+version.
 
 Phase-token attribution note: per-phase `weighted_tokens` for a session =
 session dollar-cost × (phase output_tokens / total output_tokens). Output
@@ -219,9 +221,12 @@ Deterministic event rules over session timestamps (the only clock we have):
 - Implementer and fixer sessions that start **before the first review
   boundary** are initial implementation (`review_round = 0`) and fund the 10
   phase categories.
-- Implementer/fixer sessions that start **after a review boundary** get
-  `review_round = n+1` where n is the count of review boundaries before their
-  start; all their cost goes to `followup_fix` (no phase apportionment).
+- Implementer/fixer sessions that start after review boundaries get
+  `review_round = n` where n is the count of review boundaries before their
+  start (so the first follow-up fix is round 1); every session with
+  `review_round >= 1` funds `followup_fix` (no phase apportionment).
+- Round-0 implementer sessions without phase labels fund the `unlabeled`
+  category (a legal category alongside the 10 phases).
 - All reviewer/auditor sessions fund `review`, whatever their round; a
   re-review with no intervening implementer/fixer session contributes to
   `review` only and creates no fix rows.

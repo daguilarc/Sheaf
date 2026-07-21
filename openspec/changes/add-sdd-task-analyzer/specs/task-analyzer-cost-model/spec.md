@@ -34,8 +34,8 @@ new ingestion MUST require no inputs other than the database.
 The estimator SHALL answer, for any (category, complexity vector, model,
 effort): the predictive cost at an arbitrary quantile (e.g. p50, p80) and the
 posterior parameters sufficient for Thompson-style sampling; total task cost
-MUST be reported as the sum of per-category estimates (implementation phases +
-review + followup_fix), not a directly regressed total.
+MUST be reported as the sum of per-category estimates (implementation phases
++ unlabeled + review + followup_fix), not a directly regressed total.
 
 #### Scenario: p80 query
 - **WHEN** the estimator is queried for a task with a given complexity vector, model arm, and quantile 0.8
