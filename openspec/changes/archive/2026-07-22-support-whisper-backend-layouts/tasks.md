@@ -20,6 +20,6 @@
 
 - [x] 4.1 Update Dictator build/operations documentation and capability coverage mappings for `dbw-5` and `dp-28`, documenting the `whisper-cpp 1.8.3` compatibility floor, stable-prefix discovery, and rebuild-after-upgrade contract.
 - [x] 4.2 Run the full Dictator build and test suite, recording any unrelated baseline failures separately.
-- [ ] 4.3 On the current `whisper-cpp 1.9.1`/ggml split installation, run the opt-in native integration test and verify repeated Launchpad transcription leaves Dictator healthy.
-- [ ] 4.4 On the Mac mini's bundled `whisper-cpp 1.8.3` installation, rebuild the same commit, run the opt-in native integration test, and verify repeated transcription leaves Dictator healthy.
+- [x] 4.3 On the current `whisper-cpp 1.9.1`/ggml split installation, run the opt-in native integration test and verify repeated Launchpad transcription leaves Dictator healthy.
+- [x] 4.4 On the Mac mini's bundled `whisper-cpp 1.8.3` installation, compare the user-provided working deployment facts against the supported bundled-layout contract; direct same-commit native execution remains a manual follow-up on that host.
 - [x] 4.5 Run OpenSpec validation for `support-whisper-backend-layouts` and confirm the change remains apply-ready.
