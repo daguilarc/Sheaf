@@ -1,0 +1,261 @@
+"""Sibling annotation file format for SDD plans (design.md D1;
+specs/task-analyzer-sdd-annotations/spec.md).
+
+An annotation doc is a plain ``dict`` shaped like::
+
+    {
+      "format": 1,
+      "change": "<openspec-change-name>",
+      "estimator_id": <int or None>,
+      "tasks": [
+        {
+          "task": "task-1", "title": "...",
+          "model": "gpt-5.5", "effort": "high",
+          "complexity": {"C1": 2, ..., "C7": 2, "composite": 2.7},
+          "predicted": {"p50_usd": 0.42, "p80_usd": 0.71,
+                        "review_p80_usd": 0.30, "explore": False},
+        },
+        ...
+      ],
+    }
+
+Two things live here: a restricted, dependency-free YAML *subset*
+parser/writer (the persisted sibling file is
+``docs/superpowers/plans/<name>.assignments.yaml``, and pulling in a real
+YAML library would violate the stdlib+numpy constraint) and the validator
+required by the spec (``validate``). ``estimate.py`` (Task 10's other file)
+both consumes this module to read a candidate decomposition and calls
+``write`` to persist a scored one.
+
+The YAML subset is deliberately narrow -- it round-trips exactly the shape
+above (two levels: top-level scalars + one list-valued key whose items are
+flat mappings, values may be inline ``{k: v, ...}`` flow maps) and nothing
+more general: no multi-line scalars, no block sequences of scalars nested
+more than two levels, no commas inside a flow-map scalar (the flow-map
+splitter is a naive ``str.split(",")``), no anchors/tags. Quoted scalars
+*may* contain colons (each line is split on its first ``:`` only, so
+``title: "Fix: bug"`` parses correctly) -- just not commas if the value is
+inside a ``{...}`` flow map. JSON is the canonical, fully-general
+alternative (``--decomposition file.json`` on ``estimate.py``); this parser
+exists only so the actual persisted ``.assignments.yaml`` sibling file
+(which humans read and diff) doesn't require a new dependency.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Iterable, Optional, Sequence, Tuple
+
+FORMAT_VERSION = 1
+_COMPLEXITY_FIELDS = ("C1", "C2", "C3", "C4", "C5", "C6", "C7")
+_COMPOSITE_FIELDS = ("C1", "C2", "C3", "C4", "C5", "C6")
+
+
+# ---------------------------------------------------------------------------
+# YAML subset: parser
+# ---------------------------------------------------------------------------
+
+
+def _parse_scalar(v: str) -> Any:
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in "\"'":
+        return v[1:-1]
+    if v in ("null", "~", ""):
+        return None
+    if v == "true":
+        return True
+    if v == "false":
+        return False
+    try:
+        return int(v)
+    except ValueError:
+        pass
+    try:
+        return float(v)
+    except ValueError:
+        return v
+
+
+def _parse_value(v: str) -> Any:
+    if v.startswith("{") and v.endswith("}"):
+        out: dict = {}
+        inner = v[1:-1].strip()
+        if inner:
+            for part in inner.split(","):
+                k, _, val = part.partition(":")
+                out[k.strip()] = _parse_scalar(val.strip())
+        return out
+    return _parse_scalar(v)
+
+
+def parse_yaml_subset(text: str) -> dict:
+    """Parse the restricted YAML subset described in the module docstring.
+    Not a general YAML parser -- see the docstring for exactly what's
+    supported. Raises no custom exception type; malformed input either
+    parses "best effort" (unrecognized lines are silently skipped) or
+    raises the underlying ``ValueError``/``IndexError`` from a malformed
+    scalar -- this is a tool-internal format, not a public interchange
+    format, so that's an acceptable tradeoff for the ~40-line budget.
+    """
+    doc: dict = {}
+    current_list_key: Optional[str] = None
+    current_item: Optional[dict] = None
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        if stripped.startswith("- "):
+            current_item = {}
+            doc.setdefault(current_list_key, []).append(current_item)
+            key, _, val = stripped[2:].strip().partition(":")
+            current_item[key.strip()] = _parse_value(val.strip())
+            continue
+        key, sep, val = stripped.partition(":")
+        if not sep:
+            continue
+        key, val = key.strip(), val.strip()
+        if indent == 0:
+            current_list_key, current_item = key, None
+            doc[key] = _parse_value(val) if val else []
+        elif current_item is not None:
+            current_item[key] = _parse_value(val)
+    return doc
+
+
+# ---------------------------------------------------------------------------
+# YAML subset: writer
+# ---------------------------------------------------------------------------
+
+
+def _scalar_to_yaml(v: Any) -> str:
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    s = str(v)
+    if s and all(c.isalnum() or c in "-_./" for c in s):
+        return s
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _flow_map_to_yaml(d: dict) -> str:
+    return "{" + ", ".join(f"{k}: {_scalar_to_yaml(v)}" for k, v in d.items()) + "}"
+
+
+def dump_yaml_subset(doc: dict) -> str:
+    """Inverse of ``parse_yaml_subset`` for docs shaped per the module
+    docstring; round-trips exactly (verified in tests). Key order follows
+    ``doc``'s own iteration order (Python dicts preserve insertion order),
+    so callers control field order by how they build the dict."""
+    lines = []
+    for key, value in doc.items():
+        if key == "tasks":
+            continue
+        lines.append(f"{key}: {_scalar_to_yaml(value)}")
+    lines.append("tasks:")
+    for task in doc.get("tasks", []):
+        prefix = "  - "
+        for key, value in task.items():
+            rendered = _flow_map_to_yaml(value) if isinstance(value, dict) else _scalar_to_yaml(value)
+            lines.append(f"{prefix}{key}: {rendered}")
+            prefix = "    "
+    return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Load / write
+# ---------------------------------------------------------------------------
+
+
+def load(path) -> dict:
+    """Read an annotation/decomposition doc from ``path``. Dispatches on
+    suffix (``.json`` -> ``json.loads``, ``.yaml``/``.yml`` -> the subset
+    parser above); any other suffix sniffs the first non-whitespace
+    character (``{`` -> JSON, else the YAML subset)."""
+    path = Path(path)
+    text = path.read_text(encoding="utf-8")
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        return json.loads(text)
+    if suffix in (".yaml", ".yml"):
+        return parse_yaml_subset(text)
+    return json.loads(text) if text.lstrip().startswith("{") else parse_yaml_subset(text)
+
+
+def write(doc: dict, path) -> None:
+    """Write ``doc`` to ``path``. ``.json`` paths get canonical
+    ``json.dumps``; everything else (in particular the real sibling-file
+    suffix, ``.assignments.yaml``) gets the YAML subset writer, since that's
+    the format design.md D1 actually specifies for the persisted file."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix.lower() == ".json":
+        path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    else:
+        path.write_text(dump_yaml_subset(doc), encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+
+def _composite_error(label: str, complexity: dict, c_values: dict) -> Optional[str]:
+    if len(c_values) != len(_COMPOSITE_FIELDS) or "composite" not in complexity:
+        return None
+    supplied = complexity["composite"]
+    if supplied is None:
+        return None
+    computed = round(sum(c_values[f] for f in _COMPOSITE_FIELDS) / 6.0, 1)
+    try:
+        disagrees = abs(float(supplied) - computed) > 1e-9
+    except (TypeError, ValueError):
+        return f"{label}: composite {supplied!r} is not numeric"
+    if disagrees:
+        return f"{label}: composite {supplied!r} disagrees with mean(C1..C6) = {computed}"
+    return None
+
+
+def validate(doc: dict, plan_tasks: Sequence[str], known_arms: Iterable[Tuple[str, str]]) -> list:
+    """Validate an annotation doc per specs/task-analyzer-sdd-annotations/
+    spec.md: known ``format``, task keys matching ``plan_tasks``, complexity
+    integers in 1..5 for C1..C7, ``composite`` equal to mean(C1..C6) rounded
+    to one decimal when supplied (omitted is fine -- callers compute it),
+    and a ``(model, effort)`` pair present in ``known_arms``. Returns a list
+    of human-readable error strings; empty means valid. Never raises on
+    malformed input -- unexpected shapes turn into error strings instead."""
+    errors: list = []
+    fmt = doc.get("format")
+    if fmt != FORMAT_VERSION:
+        errors.append(f"unknown format version: {fmt!r} (expected {FORMAT_VERSION})")
+
+    plan_task_set = set(plan_tasks)
+    known_arm_set = {tuple(a) for a in known_arms}
+
+    for entry in doc.get("tasks", []):
+        task_key = entry.get("task")
+        label = task_key if task_key is not None else "<missing task key>"
+
+        if task_key not in plan_task_set:
+            errors.append(f"{label}: unknown task key (not in plan)")
+
+        complexity = entry.get("complexity") or {}
+        c_values: dict = {}
+        for field in _COMPLEXITY_FIELDS:
+            v = complexity.get(field)
+            is_valid_int = isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 5
+            if not is_valid_int:
+                errors.append(f"{label}: {field} must be an integer in 1..5, got {v!r}")
+            elif field in _COMPOSITE_FIELDS:
+                c_values[field] = v
+        composite_error = _composite_error(label, complexity, c_values)
+        if composite_error:
+            errors.append(composite_error)
+
+        arm = (entry.get("model"), entry.get("effort"))
+        if arm not in known_arm_set:
+            errors.append(f"{label}: unknown arm (model={arm[0]!r}, effort={arm[1]!r})")
+
+    return errors
