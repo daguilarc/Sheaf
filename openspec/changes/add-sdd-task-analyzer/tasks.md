@@ -16,7 +16,7 @@
 ## 3. Agentic scoring integration
 
 - [x] 3.1 Implement xagent dispatch wrappers for the three scorers (grading→sonnet, complexity→sonnet, phase-labeling→haiku): batch missing items, write staged JSON, validate schema, upsert with version+hash keys
-- [ ] 3.2 End-to-end ingest test on one landed change not in the migrated set: dry-run plan, real run, verify idempotent second run (zero writes, zero dispatches)
+- [x] 3.2 End-to-end ingest test on one landed change not in the migrated set: dry-run plan, real run, verify idempotent second run (zero writes, zero dispatches)
 
 ## 4. Migration of existing dataset
 
@@ -28,11 +28,11 @@
 - [x] 5.1 Implement `train.py`: NIG Bayesian linear regression on log-cost per (category, arm) with pooled prior (design D6), config-driven features, persisted to `estimators`/`estimator_params` with metrics (held-out log-loss, calibration of p50/p80)
 - [x] 5.2 Implement posterior query library: predictive quantiles + Thompson sample per (category, complexity, arm)
 - [x] 5.3 Implement `estimate.py` CLI per spec (candidate YAML in → per-task arm ranking, selection with p80 guard, explore flags, totals; JSON + table output; deterministic given estimator id)
-- [ ] 5.4 Train on migrated data; sanity-check outputs against known findings (sol/high dominated by 5.5/high; terra/medium cheapest at composite ≤3; sparse arms flagged explore); commit estimator rows
+- [x] 5.4 Train on migrated data; sanity-check outputs against known findings (sol/high dominated by 5.5/high; terra/medium cheapest at composite ≤3; sparse arms flagged explore); commit estimator rows
 
 ## 6. Annotations and decomposer
 
 - [x] 6.1 Implement the `.assignments.yaml` sibling format writer + validator per spec (format version, task-key match, ranges, known arms)
-- [ ] 6.2 Write `prompts/decomposer.md`: candidate-generation guidance (bracketing vs build/test-target regrouping), in-context complexity scoring against the rubric, `estimate.py` invocation protocol, guardrails (split composite >3.5, prefer C7 ≤ 2, dependency order), required outputs (annotation YAML + comparison table + rationale)
-- [ ] 6.3 Dry-run the decomposer subagent on one archived change (e.g. `add-note-system-message-mappings`) against the trained estimator; check the protocol produces ≥3 scored candidates and a defensible selection; refine prompt once
-- [ ] 6.4 Document the whole pipeline in `projects/agents/task-analyzer/README.md`: run cadence, recompute matrix (what changing each rubric/price/estimator invalidates), and explicit non-integration note (workflow rewrite is a future change)
+- [x] 6.2 Write `prompts/decomposer.md`: candidate-generation guidance (bracketing vs build/test-target regrouping), in-context complexity scoring against the rubric, `estimate.py` invocation protocol, guardrails (split composite >3.5, prefer C7 ≤ 2, dependency order), required outputs (annotation YAML + comparison table + rationale)
+- [x] 6.3 Dry-run the decomposer subagent on one archived change (e.g. `add-note-system-message-mappings`) against the trained estimator; check the protocol produces ≥3 scored candidates and a defensible selection; refine prompt once
+- [x] 6.4 Document the whole pipeline in `projects/agents/task-analyzer/README.md`: run cadence, recompute matrix (what changing each rubric/price/estimator invalidates), and explicit non-integration note (workflow rewrite is a future change)
