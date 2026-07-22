@@ -4,6 +4,8 @@ task-9-brief.md for the required test values / scenarios this covers.
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import math
 import shutil
@@ -244,8 +246,17 @@ class TestTrain(unittest.TestCase):
         n_tasks, arms = _seed_training_db(conn)
         conn.close()
 
-        rc = train.main(["--db", str(db_path)])
+        # train.main prints {"estimator_id": N} to stdout on success (see
+        # train.py's CLI) -- captured rather than left to leak into the test
+        # runner's own output, and asserted here as the one dedicated CLI
+        # check of that printed shape.
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            rc = train.main(["--db", str(db_path)])
         self.assertEqual(rc, 0)
+        printed = json.loads(stdout.getvalue())
+        self.assertIn("estimator_id", printed)
+        self.assertIsInstance(printed["estimator_id"], int)
 
         conn = db.connect(db_path, create=False)
         estimators = conn.execute("SELECT estimator_id, config_json, metrics_json, train_task_count FROM estimators").fetchall()
@@ -281,7 +292,8 @@ class TestTrain(unittest.TestCase):
             self.assertEqual(count, 20)
 
         # Re-running creates a second estimators row; the old one is kept.
-        rc2 = train.main(["--db", str(db_path)])
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc2 = train.main(["--db", str(db_path)])
         self.assertEqual(rc2, 0)
         estimators_after = conn.execute("SELECT estimator_id FROM estimators ORDER BY estimator_id").fetchall()
         self.assertEqual(len(estimators_after), 2)
