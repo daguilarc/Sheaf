@@ -10,7 +10,9 @@ import contextlib
 import io
 import json
 import math
+import os
 import shutil
+import stat
 import sys
 import tempfile
 import unittest
@@ -342,6 +344,43 @@ class TestRunAndCLI(EstimateTestCase):
         _seed_estimator_db(self.conn, estimator_id=2)
         resolved_id, _config, _posteriors = estimate.load_estimator(self.conn)
         self.assertEqual(resolved_id, 2)
+
+
+class TestReadOnlyDb(EstimateTestCase):
+    """Final review finding A: estimate.py must open its --db read-only
+    (db.connect_readonly), since that db is typically the shared
+    main-branch copy -- it must work even when the file itself is
+    filesystem-read-only, and it must not mutate/create anything."""
+
+    def test_cli_works_against_chmod_readonly_db_file(self):
+        _seed_estimator_db(self.conn)
+        self.conn.close()
+        path = self.tmp_path / "decomp.json"
+        path.write_text(json.dumps(_decomposition((("task-1", 3.0),))), encoding="utf-8")
+
+        original_mode = self.db_path.stat().st_mode
+        os.chmod(self.db_path, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+        try:
+            argv = ["--decomposition", str(path), "--db", str(self.db_path), "--estimator-id", "1", "--json"]
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = estimate.main(argv)
+            self.assertEqual(rc, 0)
+            report = json.loads(buf.getvalue())
+            self.assertEqual((report["tasks"][0]["selected"]["model"], report["tasks"][0]["selected"]["effort"]), CHEAP_ARM)
+        finally:
+            os.chmod(self.db_path, original_mode)
+
+    def test_cli_missing_db_errors_cleanly_without_creating_file(self):
+        missing = self.tmp_path / "does-not-exist.sqlite"
+        path = self.tmp_path / "decomp.json"
+        path.write_text(json.dumps(_decomposition((("task-1", 3.0),))), encoding="utf-8")
+        argv = ["--decomposition", str(path), "--db", str(missing)]
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc = estimate.main(argv)
+        self.assertEqual(rc, 1)
+        self.assertFalse(missing.exists())
 
 
 if __name__ == "__main__":

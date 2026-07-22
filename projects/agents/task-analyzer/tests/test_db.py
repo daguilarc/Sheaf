@@ -1,6 +1,7 @@
 """Tests for the task-analyzer db module (schema application, upsert, dump_jsonl)."""
 import json
 import shutil
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -135,6 +136,65 @@ class TestDb(unittest.TestCase):
         f = self.tmp_path / "f.txt"
         f.write_text(text)
         self.assertEqual(db.sha256_file(f), db.sha256_text(text))
+
+
+class TestConnectReadonly(unittest.TestCase):
+    """connect_readonly must never mutate/create the target file (final
+    review finding A): estimate.py/annotations.py open a database that is
+    typically the shared main-branch copy, and db.connect()'s WAL pragma +
+    schema.sql (re-)application both touch the filesystem even when
+    "nothing changes" -- unacceptable against a db the caller must not
+    write to at all."""
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp(prefix="task-analyzer-db-ro-test-")
+        self.tmp_path = Path(self._tmp)
+
+    def tearDown(self):
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def test_query_on_existing_db_does_not_modify_file(self):
+        path = self.tmp_path / "t.sqlite"
+        conn = db.connect(path)
+        db.upsert(conn, "changes", {"change_id": 1, "name": "x", "ingested_at": "t0"}, ["change_id"])
+        conn.commit()
+        conn.close()
+
+        mtime_before = path.stat().st_mtime_ns
+        bytes_before = path.read_bytes()
+
+        ro = db.connect_readonly(path)
+        row = ro.execute("SELECT name FROM changes WHERE change_id = 1").fetchone()
+        self.assertEqual(row["name"], "x")
+        ro.close()
+
+        self.assertEqual(path.stat().st_mtime_ns, mtime_before)
+        self.assertEqual(path.read_bytes(), bytes_before)
+
+    def test_query_only_pragma_blocks_writes(self):
+        path = self.tmp_path / "t.sqlite"
+        db.connect(path).close()
+        ro = db.connect_readonly(path)
+        with self.assertRaises(sqlite3.OperationalError):
+            ro.execute("INSERT INTO changes(name, ingested_at) VALUES ('x', 't0')")
+
+    def test_missing_path_raises_and_does_not_create_file(self):
+        path = self.tmp_path / "does-not-exist.sqlite"
+        self.assertFalse(path.exists())
+        with self.assertRaises(sqlite3.OperationalError):
+            db.connect_readonly(path)
+        self.assertFalse(path.exists())
+
+
+class TestCanonicalModel(unittest.TestCase):
+    def test_known_alias_is_normalized(self):
+        self.assertEqual(db.canonical_model("claude-haiku-4-5-20251001"), "claude-haiku-4-5")
+
+    def test_unaliased_model_passes_through(self):
+        self.assertEqual(db.canonical_model("claude-sonnet-5"), "claude-sonnet-5")
+
+    def test_none_passes_through(self):
+        self.assertIsNone(db.canonical_model(None))
 
 
 if __name__ == "__main__":

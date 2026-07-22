@@ -134,10 +134,23 @@ INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', '2');
 -- confirms real OpenAI list prices for each named model/date and updates
 -- these rows (or supersedes them with a later effective_date row, since
 -- model_prices retains history by (model, effective_date)).
+--
+-- -- TODO(price-audit): claude-sonnet-4-6 and claude-fable-5 (below) are
+-- PLACEHOLDERS ONLY, same convention as the gpt-5.x rows above --
+-- observed in ingested sessions (final review pass, 2026-07-21) with no
+-- verifiable published pricing available in this repo or the
+-- tool-provided skill context at authoring time. A third observed
+-- unpriced name, claude-haiku-4-5-20251001, is deliberately NOT a row
+-- here -- it is a dated provider variant of the already-priced
+-- claude-haiku-4-5 above, normalized onto that row at cost-derivation
+-- join time by db.MODEL_ALIASES instead of duplicated as its own price
+-- entry.
 INSERT OR IGNORE INTO model_prices(model, effective_date, usd_per_m_input, usd_per_m_cached, usd_per_m_output) VALUES
   ('claude-sonnet-5',   '2026-07-01', 2.0, 0.2, 10.0),
   ('claude-opus-4-8',   '2026-07-01', 5.0, 0.5, 25.0),
   ('claude-haiku-4-5',  '2026-07-01', 1.0, 0.1, 5.0),
+  ('claude-sonnet-4-6', '2026-07-01', 1.0, 1.0, 1.0),
+  ('claude-fable-5',    '2026-07-01', 1.0, 1.0, 1.0),
   ('gpt-5',             '2026-07-01', 1.0, 1.0, 1.0),
   ('gpt-5-codex',       '2026-07-01', 1.0, 1.0, 1.0),
   ('gpt-5.4',           '2026-07-01', 1.0, 1.0, 1.0),

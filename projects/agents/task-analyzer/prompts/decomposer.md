@@ -28,7 +28,11 @@ You are given, by the caller:
   the database path relative to the *main* checkout the caller named, not
   `cwd`. Never write to this database, and never train it either — you only
   read from it via `estimate.py`, and never run `train.py`.
-- **Output directory**: where you write your two deliverables (below).
+- **Output directory**: where you write your outputs (below) -- the chosen
+  candidate's annotation YAML, its comparison report, and the per-candidate
+  artifacts (candidate definitions and estimator results) generated along
+  the way. All three kinds are legitimate outputs under this directory, not
+  just the first two.
 - **Quantile** (optional, default `0.8`): passed through to `estimate.py
   --quantile` for the comparison.
 - **Estimator ID** (optional, default the latest trained generation):
@@ -98,12 +102,15 @@ step:
 
 ## No side effects
 
-Your only writes are the two files named in step 5 (plus the scratch
-per-candidate files from step 2/3, which may live in the same output
-directory as intermediate artifacts — do not delete them, but do not treat
-them as deliverables either). You do not modify
+Your writes are confined to the caller-designated output directory: the two
+files named in step 5 (the chosen candidate's annotation YAML and the
+comparison report), plus the per-candidate artifacts from step 2/3
+(candidate definition files and their `estimate.py` results) — all three
+are legitimate outputs of a run, not just the first two, so do not delete
+the per-candidate files once you've written them. You do not modify
 `openspec-superpowers-workflow` or any other workflow file, you do not write
 to the database, and you do not dispatch any implementation work — your job
-ends at the comparison report and the chosen annotation file. A human (or,
-in a future change, `openspec-superpowers-workflow` itself) is the consumer
-of your output.
+ends at the comparison report and the chosen annotation file, with the
+per-candidate artifacts left alongside them as supporting evidence. A human
+(or, in a future change, `openspec-superpowers-workflow` itself) is the
+consumer of your output.

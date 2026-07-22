@@ -60,9 +60,11 @@ Stdlib only.
 from __future__ import annotations
 
 import json
+import sys
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
+import db
 import discovery
 
 # The 10 TDD phase categories (rubrics/phase-taxonomy.md) plus the two legal
@@ -110,8 +112,15 @@ def _price_row(conn, model: str, as_of: str):
 
 def _session_usd(conn, session, as_of: str, price_cache: Dict[str, Any]) -> Tuple[Optional[float], Optional[str]]:
     """(usd, price_version) for one session's full token bill, or (None,
-    None) if its model has no price row on or before ``as_of``."""
-    model = session["model"]
+    None) if its model has no price row on or before ``as_of``.
+
+    Looks up ``model_prices`` under the session's *canonical* model name
+    (``db.canonical_model`` -- e.g. a dated provider variant like
+    ``claude-haiku-4-5-20251001`` normalized to the priced row
+    ``claude-haiku-4-5``), not the raw ``sessions.model`` string, so a
+    provider reporting a new dated/suffixed variant of an already-priced
+    model doesn't silently drop every session using it."""
+    model = db.canonical_model(session["model"])
     if model not in price_cache:
         price_cache[model] = _price_row(conn, model, as_of)
     price = price_cache[model]
@@ -134,6 +143,30 @@ def _accumulate(buckets: Dict[str, Dict[str, Any]], category: str, tokens: float
     bucket["usd"] += usd
     if price_version is not None:
         bucket["price_versions"].add(price_version)
+
+
+class RebuildResult(int):
+    """``rebuild()``'s return value: behaves exactly like the plain
+    row-count ``int`` it always returned (every existing caller/test uses
+    or compares it as one -- ``json.dumps``, ``==``, arithmetic all work
+    unchanged), but also carries ``unpriced_models``: the set of raw
+    ``sessions.model`` values that funded *no* cost category this rebuild
+    because no ``model_prices`` row (after alias normalization) matched
+    them as of the run's ``as_of`` date, restricted to sessions that
+    actually had nonzero token counts (a zero-token session contributes
+    $0 regardless of pricing, so an unresolved model on one isn't a real
+    "dollars silently dropped" gap worth flagging).
+
+    ``rebuild()`` also prints one ``WARN`` line per unpriced model to
+    stderr, so the common CLI path (``ingest.py rebuild-derived``)
+    surfaces the gap even when nothing inspects the return value -- see
+    the module docstring's "this is a data-completeness gap, not a
+    crash": that's still true, but it must not be a *silent* one."""
+
+    def __new__(cls, rows_written: int, unpriced_models):
+        obj = int.__new__(cls, rows_written)
+        obj.unpriced_models = frozenset(unpriced_models)
+        return obj
 
 
 def _task_ids_with_sessions(conn):
@@ -161,8 +194,11 @@ def rebuild(
     version present in ``phase_tokens``. Both are overridable for
     determinism in callers/tests that need a fixed clock.
 
-    Returns the total number of rows written across both derived tables
-    (``task_costs`` + ``task_arms``).
+    Returns a ``RebuildResult`` (an ``int`` subclass -- compares/serializes
+    identically to the plain row-count this function always returned) whose
+    ``.unpriced_models`` attribute lists any session model that funded no
+    cost category for lack of a matching (post-alias) ``model_prices`` row;
+    one ``WARN`` line per such model is also printed to stderr.
     """
     as_of = as_of if as_of is not None else date.today().isoformat()
     computed_at = computed_at if computed_at is not None else _now_iso()
@@ -175,6 +211,7 @@ def rebuild(
 
         rows_written = 0
         price_cache: Dict[str, Any] = {}
+        unpriced_models: set = set()
 
         for task_id in _task_ids_with_sessions(conn):
             sessions = conn.execute(
@@ -194,7 +231,14 @@ def rebuild(
                 review_round = s["review_round"] or 0
                 usd, price_version = _session_usd(conn, s, as_of, price_cache)
                 if usd is None:
-                    continue  # model has no price row on or before as_of -- not costable
+                    # model has no price row on or before as_of -- not
+                    # costable. Only flag it as an "unpriced model" gap if
+                    # the session actually had tokens to cost (a zero-token
+                    # session drops $0 either way, so it's not a real
+                    # silently-dropped-dollars gap).
+                    if (s["input_tokens"] or 0) or (s["cached_tokens"] or 0) or (s["output_tokens"] or 0):
+                        unpriced_models.add(s["model"])
+                    continue
 
                 output_tokens = s["output_tokens"] or 0
 
@@ -246,7 +290,13 @@ def rebuild(
                 rows_written += 1
 
         conn.commit()
-        return rows_written
+        for m in sorted(unpriced_models, key=lambda x: (x is None, x)):
+            print(
+                f"WARN: costs.rebuild: no model_prices row for model={m!r} "
+                f"(as_of={as_of}); sessions with this model were excluded from all cost categories",
+                file=sys.stderr,
+            )
+        return RebuildResult(rows_written, unpriced_models)
     except Exception:
         conn.rollback()
         raise

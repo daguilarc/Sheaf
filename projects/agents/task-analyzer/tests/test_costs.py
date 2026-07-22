@@ -7,6 +7,8 @@ category against the model_prices rows schema.sql seeds by default
 (claude-sonnet-5 / claude-opus-4-8 / claude-haiku-4-5, all effective
 2026-07-01), so no extra price rows are needed for the base scenario.
 """
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -294,6 +296,87 @@ class TestUncostableModelSkipped(CostsTestBase):
         arm = self.conn.execute("SELECT model FROM task_arms WHERE task_id = ?", (task_id,)).fetchone()
         self.assertEqual(arm["model"], "unknown-model-xyz")
         self.assertEqual(n, 1)
+
+
+class TestModelAliasNormalization(CostsTestBase):
+    """Final review finding B(1): a dated/suffixed provider variant of an
+    already-priced model must be normalized (db.MODEL_ALIASES) at
+    cost-derivation join time, not silently dropped for lacking its own
+    model_prices row."""
+
+    def test_aliased_model_is_priced_via_its_canonical_row(self):
+        task_id = self._make_task()
+        # claude-haiku-4-5-20251001 has no model_prices row of its own --
+        # it must be priced via the claude-haiku-4-5 row (HAIKU) through
+        # db.MODEL_ALIASES.
+        self._make_session("claude:impl-1", task_id, "implementer", "claude-haiku-4-5-20251001",
+                            input_tokens=500, cached_tokens=100, output_tokens=50, review_round=0)
+        n = costs.rebuild(self.conn, as_of="2026-07-19")
+        table = self._task_costs(task_id)
+        self.assertIn("unlabeled", table)
+        # Same arithmetic as the HAIKU followup_fix case in
+        # TestRebuildCategories: 500*1.0 + 100*0.1 + 50*5.0 = 760 -> 0.00076
+        self.assertAlmostEqual(table["unlabeled"]["usd"], 0.00076, places=10)
+        self.assertEqual(n.unpriced_models, frozenset())
+
+
+class TestUnpricedModelWarning(CostsTestBase):
+    """Final review finding B(3): rebuild() must WARN about unpriced
+    models (collected on the return value, printed to stderr) instead of
+    silently dropping them."""
+
+    def test_unpriced_model_with_tokens_is_warned_about(self):
+        task_id = self._make_task()
+        self._make_session("claude:impl-1", task_id, "implementer", "definitely-unpriced-model",
+                            input_tokens=1000, cached_tokens=0, output_tokens=100, review_round=0)
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            result = costs.rebuild(self.conn, as_of="2026-07-19")
+        self.assertEqual(result.unpriced_models, frozenset({"definitely-unpriced-model"}))
+        self.assertIn("WARN", buf.getvalue())
+        self.assertIn("definitely-unpriced-model", buf.getvalue())
+
+    def test_return_value_still_behaves_as_the_plain_row_count(self):
+        # RebuildResult must remain a drop-in int for every pre-existing
+        # caller/test that compares or serializes it as one.
+        task_id = self._make_task()
+        self._make_session("claude:impl-1", task_id, "implementer", SONNET[0],
+                            input_tokens=1000, cached_tokens=0, output_tokens=100, review_round=0)
+        self._make_phase_tokens("claude:impl-1", "red", 100)
+        result = costs.rebuild(self.conn, as_of="2026-07-19")
+        self.assertEqual(result, 2)  # 1 task_costs row (red) + 1 task_arms row
+        self.assertEqual(json.dumps({"rows_written": result}), '{"rows_written": 2}')
+
+    def test_zero_token_session_with_unpriced_model_is_not_warned_about(self):
+        # A session with no tokens contributes $0 regardless of pricing --
+        # an unresolved model on it isn't a real "dollars silently
+        # dropped" gap, so it must not be flagged.
+        task_id = self._make_task()
+        self._make_session("claude:impl-1", task_id, "implementer", "unpriced-but-empty",
+                            input_tokens=0, cached_tokens=0, output_tokens=0, review_round=0)
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            result = costs.rebuild(self.conn, as_of="2026-07-19")
+        self.assertEqual(result.unpriced_models, frozenset())
+        # Not asserting the stderr buffer is byte-empty: an unrelated
+        # ResourceWarning from a stale connection elsewhere in the suite
+        # can land here via GC timing. The contract under test is "no WARN
+        # line", not "stderr is pristine".
+        self.assertNotIn("WARN", buf.getvalue())
+
+    def test_priced_model_produces_no_warning(self):
+        task_id = self._make_task()
+        self._make_session("claude:impl-1", task_id, "implementer", SONNET[0],
+                            input_tokens=1000, cached_tokens=0, output_tokens=100, review_round=0)
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            result = costs.rebuild(self.conn, as_of="2026-07-19")
+        self.assertEqual(result.unpriced_models, frozenset())
+        # Not asserting the stderr buffer is byte-empty: an unrelated
+        # ResourceWarning from a stale connection elsewhere in the suite
+        # can land here via GC timing. The contract under test is "no WARN
+        # line", not "stderr is pristine".
+        self.assertNotIn("WARN", buf.getvalue())
 
 
 class TestPriceUpdateRecomputesCostsOnly(CostsTestBase):

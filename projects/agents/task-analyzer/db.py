@@ -11,6 +11,7 @@ import hashlib
 import json
 import sqlite3
 from pathlib import Path
+from urllib.parse import quote
 
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
@@ -23,6 +24,15 @@ def connect(path, create: bool = True) -> sqlite3.Connection:
     ``schema.sql`` — safe to call on an existing database since every
     statement in the schema is ``CREATE TABLE/INDEX IF NOT EXISTS`` or
     ``INSERT OR IGNORE``.
+
+    This connection can write. Callers that only ever read (e.g. scoring a
+    decomposition against the main-branch database) should use
+    ``connect_readonly`` instead -- WAL mode alone still touches the
+    filesystem (creates ``-wal``/``-shm`` sidecar files on first write) and
+    ``executescript(schema.sql)`` mutates/creates the target file even when
+    every statement is a no-op against an already-current schema, which is
+    unacceptable against a database the caller must not write to at all
+    (e.g. a read-only-mounted main-branch checkout).
     """
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
@@ -32,6 +42,54 @@ def connect(path, create: bool = True) -> sqlite3.Connection:
         conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
         conn.commit()
     return conn
+
+
+def connect_readonly(path) -> sqlite3.Connection:
+    """Open a strictly read-only connection to an existing sqlite database
+    at ``path``.
+
+    Uses the ``file:...?mode=ro`` URI form (per Python's sqlite3 URI
+    support) instead of ``connect()``: no ``schema.sql`` application, no
+    ``PRAGMA journal_mode=WAL`` (WAL requires creating/writing ``-wal``/
+    ``-shm`` sidecar files next to the db, which ``mode=ro`` forbids and
+    which would fail or silently fall back depending on platform), and no
+    implicit file creation -- ``mode=ro`` never creates a missing file, it
+    raises instead. Also sets ``PRAGMA query_only=ON`` as a second,
+    connection-level guard so an accidental write statement raises instead
+    of silently mutating the database via some other path.
+
+    Raises ``sqlite3.OperationalError`` if ``path`` does not exist (or isn't
+    a valid sqlite database) -- callers must not depend on this function
+    ever creating a file, unlike ``connect()``'s default ``create=True``.
+    """
+    resolved = Path(path).resolve()
+    uri = f"file:{quote(str(resolved))}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only=ON")
+    return conn
+
+
+# Model-name aliases: normalize a raw ``sessions.model`` string to the name
+# actually used as the ``model_prices`` lookup key, applied only at
+# cost-derivation join time (``costs.py``'s price lookup via
+# ``canonical_model``) -- never persisted back onto ``sessions.model``,
+# which always retains the raw provider-reported string exactly as
+# ingested. Add an entry here whenever a provider starts reporting a
+# dated/suffixed variant of a model that already has (or should share) a
+# priced canonical row, rather than adding a near-duplicate ``model_prices``
+# row for every date-suffixed variant a provider happens to emit.
+MODEL_ALIASES = {
+    "claude-haiku-4-5-20251001": "claude-haiku-4-5",
+}
+
+
+def canonical_model(model):
+    """Return the ``model_prices``-lookup name for a raw session ``model``
+    string: the ``MODEL_ALIASES`` target if one is registered, else
+    ``model`` unchanged. ``None`` is returned unchanged (matches no alias
+    and, correctly, no price row)."""
+    return MODEL_ALIASES.get(model, model)
 
 
 def upsert(conn: sqlite3.Connection, table: str, row: dict, key_cols: list) -> None:

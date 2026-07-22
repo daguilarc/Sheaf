@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Optional
@@ -297,7 +298,16 @@ def main(argv=None) -> int:
 
     decomposition = _sanity_decomposition() if args.sanity else annotations.load(args.decomposition)
 
-    conn = db.connect(args.db)
+    # Read-only: estimate.py only ever queries `estimators`/`estimator_params`
+    # -- it must never apply schema.sql or enable WAL against what is
+    # typically the shared main-branch database (design.md: this CLI never
+    # writes to or trains the database it reads from).
+    try:
+        conn = db.connect_readonly(args.db)
+    except sqlite3.Error as exc:
+        print(f"error: cannot open database at {args.db!r}: {exc}", file=sys.stderr)
+        return 1
+
     try:
         report = run(conn, decomposition, quantile=args.quantile, estimator_id=args.estimator_id,
                       guard_factor=args.guard_factor)

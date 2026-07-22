@@ -48,6 +48,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sqlite3
 import sys
 from collections import Counter
 from pathlib import Path
@@ -232,7 +233,9 @@ def _composite_error(label: str, complexity: dict, c_values: dict) -> Optional[s
     return None
 
 
-def validate(doc: dict, plan_tasks: Sequence[str], known_arms: Iterable[Tuple[str, str]]) -> list:
+def validate(
+    doc: dict, plan_tasks: Sequence[str], known_arms: Optional[Iterable[Tuple[str, str]]]
+) -> list:
     """Validate an annotation doc per specs/task-analyzer-sdd-annotations/
     spec.md: known ``format``, task keys matching ``plan_tasks`` as a
     *multiset* (every plan task must be annotated exactly once -- an
@@ -244,14 +247,24 @@ def validate(doc: dict, plan_tasks: Sequence[str], known_arms: Iterable[Tuple[st
     callers compute it), and a ``(model, effort)`` pair present in
     ``known_arms``. Returns a list of human-readable error strings; empty
     means valid. Never raises on malformed input -- unexpected shapes turn
-    into error strings instead."""
+    into error strings instead.
+
+    ``known_arms=None`` means "arm identities are unknown -- skip the arm
+    check entirely" (the CLI's ``--db``-omitted case: everything else still
+    validates, but there is no database to confirm arm names against, so
+    treating that as "every arm is unknown" would be a false positive, not
+    a real finding). This is distinct from an *empty* ``known_arms``
+    iterable (e.g. a real database with a trained estimator whose
+    ``config_json["arms"]`` happens to be ``[]``, or no estimator trained
+    yet at all) -- that's a real "nothing is known" state and every arm
+    correctly fails the check."""
     errors: list = []
     fmt = doc.get("format")
     if fmt != FORMAT_VERSION:
         errors.append(f"unknown format version: {fmt!r} (expected {FORMAT_VERSION})")
 
     plan_task_set = set(plan_tasks)
-    known_arm_set = {tuple(a) for a in known_arms}
+    known_arm_set = {tuple(a) for a in known_arms} if known_arms is not None else None
     task_key_counts: Counter = Counter()
 
     for entry in doc.get("tasks", []):
@@ -276,7 +289,7 @@ def validate(doc: dict, plan_tasks: Sequence[str], known_arms: Iterable[Tuple[st
             errors.append(composite_error)
 
         arm = (entry.get("model"), entry.get("effort"))
-        if arm not in known_arm_set:
+        if known_arm_set is not None and arm not in known_arm_set:
             errors.append(f"{label}: unknown arm (model={arm[0]!r}, effort={arm[1]!r})")
 
     for task_key, count in sorted(task_key_counts.items(), key=lambda kv: (kv[0] is None, kv[0])):
@@ -307,8 +320,17 @@ def _load_known_arms(db_path, estimator_id: Optional[int] = None) -> list:
     """Known ``(model, effort)`` arms from ``config_json["arms"]`` of the
     given (or latest) estimator generation in the database at ``db_path``.
     Returns ``[]`` if there's no trained estimator yet -- the CLI still
-    validates everything else, it just can't confirm arm identities."""
-    conn = db.connect(db_path)
+    validates everything else, it just can't confirm arm identities.
+
+    Opens ``db_path`` read-only (``db.connect_readonly``): this CLI only
+    ever reads arm identities from what is typically the shared main-branch
+    database, and must not apply schema.sql or enable WAL against it (see
+    ``db.connect_readonly``'s docstring). Propagates ``sqlite3.Error``
+    (e.g. a missing/invalid ``--db`` path) to the caller rather than
+    swallowing it -- unlike "no trained estimator yet", "the given database
+    doesn't exist" is a caller mistake worth surfacing, not something to
+    silently treat as "no known arms"."""
+    conn = db.connect_readonly(db_path)
     try:
         if estimator_id is None:
             row = conn.execute("SELECT MAX(estimator_id) AS id FROM estimators").fetchone()
@@ -331,7 +353,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("annotation", help="path to the annotation file (.assignments.yaml or .json)")
     p.add_argument("--plan", help="path to the sibling Superpowers plan .md (task keys parsed from '### Task N:' headers)")
     p.add_argument("--tasks", help="comma-separated explicit task key list (alternative to --plan)")
-    p.add_argument("--db", default=None, help="path to the task-analyzer sqlite database (for known arms; omit to skip arm checks)")
+    p.add_argument(
+        "--db", default=None,
+        help="path to the task-analyzer sqlite database (for known-arm validation; "
+             "omit to skip arm validation entirely -- everything else is still checked)",
+    )
     p.add_argument("--estimator-id", type=int, default=None)
     return p
 
@@ -347,7 +373,16 @@ def main(argv=None) -> int:
         if args.tasks
         else _extract_plan_task_keys(Path(args.plan).read_text(encoding="utf-8"))
     )
-    known_arms = _load_known_arms(args.db, args.estimator_id) if args.db else []
+    # known_arms=None (--db omitted) skips the arm check entirely (see
+    # validate()'s docstring) -- everything else still validates.
+    if args.db:
+        try:
+            known_arms = _load_known_arms(args.db, args.estimator_id)
+        except sqlite3.Error as exc:
+            print(f"error: cannot open database at {args.db!r}: {exc}", file=sys.stderr)
+            return 1
+    else:
+        known_arms = None
 
     doc = load(args.annotation)
     errors = validate(doc, plan_tasks, known_arms)

@@ -82,6 +82,23 @@ class TestValidate(unittest.TestCase):
         errors = annotations.validate(doc, PLAN_TASKS, KNOWN_ARMS)
         self.assertTrue(any("task-1" in e and "unknown arm" in e for e in errors))
 
+    def test_known_arms_none_skips_arm_check_entirely(self):
+        # Finding C (final review): known_arms=None (the CLI's --db-omitted
+        # signal) must skip the arm check, not be treated as "no arms are
+        # known, so every arm fails" -- that would make an otherwise-valid
+        # doc fail purely because --db wasn't given, contradicting the
+        # documented "omitting --db skips arm validation" contract.
+        doc = _valid_doc()
+        doc["tasks"][0]["model"] = "not-a-real-model"
+        self.assertEqual(annotations.validate(doc, PLAN_TASKS, None), [])
+
+    def test_known_arms_empty_list_still_flags_every_arm(self):
+        # Distinct from known_arms=None: an empty *iterable* (a real
+        # database consulted, but with zero known arms) is a real "nothing
+        # is known" state and must still flag every arm.
+        errors = annotations.validate(_valid_doc(), PLAN_TASKS, [])
+        self.assertTrue(any("unknown arm" in e for e in errors))
+
     def test_composite_disagreeing_with_mean_is_rejected(self):
         doc = _valid_doc()
         doc["tasks"][0]["complexity"]["composite"] = 9.9
@@ -291,18 +308,57 @@ class TestValidateCli(unittest.TestCase):
         self.assertEqual(rc, 2)
 
     def test_known_arms_loaded_from_db(self):
-        # Without --db, an unknown arm isn't checked against anything real
-        # (known_arms is []) so every arm looks "unknown" -- with --db
+        # Without --db, arm validation is skipped entirely (known_arms is
+        # None, not []) -- per the documented CLI contract ("omitting it
+        # skips arm validation but still runs everything else"), a doc
+        # that's otherwise valid must validate clean either way. With --db
         # pointed at a database whose latest estimator lists the doc's
-        # arms, the same doc must validate clean.
+        # arms, it must also validate clean (this time because the arms
+        # really are known, not because the check was skipped).
         annotations.write(_valid_doc(), self.annotation_path)
-        rc_without_db, _out, _err = self._run([str(self.annotation_path), "--plan", str(self.plan_path)])
+        rc_without_db, out_without_db, _err = self._run([str(self.annotation_path), "--plan", str(self.plan_path)])
         rc_with_db, out_with_db, _err2 = self._run(
             [str(self.annotation_path), "--plan", str(self.plan_path), "--db", str(self.db_path)]
         )
-        self.assertEqual(rc_without_db, 1)  # no known arms -> every arm "unknown"
+        self.assertEqual(rc_without_db, 0)
+        self.assertIn("valid", out_without_db)
         self.assertEqual(rc_with_db, 0)
         self.assertIn("valid", out_with_db)
+
+    def test_without_db_a_genuinely_unknown_arm_is_not_flagged(self):
+        # Finding C (final review): omitting --db must skip the arm check
+        # entirely, not treat an empty known-arm set as "every arm is
+        # unknown". A doc with an arm that isn't in any real estimator's
+        # config must still validate clean when --db is omitted.
+        doc = _valid_doc()
+        doc["tasks"][0]["model"] = "not-a-real-model"
+        annotations.write(doc, self.annotation_path)
+        rc, out, err = self._run([str(self.annotation_path), "--plan", str(self.plan_path)])
+        self.assertEqual(rc, 0)
+        self.assertIn("valid", out)
+        self.assertEqual(err, "")
+
+    def test_with_db_a_genuinely_unknown_arm_is_still_flagged(self):
+        # The other half of Finding C: the fix must not make the arm check
+        # a no-op altogether -- with --db given and the arm genuinely not
+        # in the estimator's known set, it's still an error.
+        doc = _valid_doc()
+        doc["tasks"][0]["model"] = "not-a-real-model"
+        annotations.write(doc, self.annotation_path)
+        rc, _out, err = self._run(
+            [str(self.annotation_path), "--plan", str(self.plan_path), "--db", str(self.db_path)]
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("unknown arm", err)
+
+    def test_missing_db_path_errors_cleanly(self):
+        annotations.write(_valid_doc(), self.annotation_path)
+        missing = self.tmp_path / "does-not-exist.sqlite"
+        rc, _out, err = self._run(
+            [str(self.annotation_path), "--plan", str(self.plan_path), "--db", str(missing)]
+        )
+        self.assertEqual(rc, 1)
+        self.assertFalse(missing.exists())
 
 
 if __name__ == "__main__":
