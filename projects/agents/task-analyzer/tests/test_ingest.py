@@ -14,6 +14,8 @@ into the staging dir per the ``kind``/``entity_key``/``version``/
 ``input_sha256`` cache key ingest.py passes it, and records every call it
 receives so tests can assert dispatch counts/idempotency directly.
 """
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -509,7 +511,11 @@ class TestDryRunNoDbFile(unittest.TestCase):
         missing_db = self.root / "does-not-exist" / "t.sqlite"
         self.assertFalse(missing_db.exists())
 
-        rc = ingest.main(["--dry-run", "--repo", str(self.repo), "--db", str(missing_db)])
+        # ingest.main prints a JSON run summary to stdout on this path (see
+        # ingest.py) -- captured rather than left to leak into the test
+        # runner's own output.
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = ingest.main(["--dry-run", "--repo", str(self.repo), "--db", str(missing_db)])
 
         self.assertEqual(rc, 0)
         self.assertFalse(missing_db.exists())

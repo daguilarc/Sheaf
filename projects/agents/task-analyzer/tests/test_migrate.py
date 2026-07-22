@@ -21,6 +21,8 @@ so grades.review_text should stitch exactly rev-1 + audit-1, in started_at
 order, skipping rev-2. Task-2 has one implementer session and no brief
 file on disk, exercising the brief_text fallback to that session's prompt.
 """
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -459,20 +461,29 @@ class MigrateCliTest(unittest.TestCase):
         self.db_path = self.tmp_path / "t.sqlite"
 
     def test_cli_exits_zero_when_reconciliation_matches_fixture_targets(self):
-        rc = migrate_v0.main([
-            "--db", str(self.db_path), "--source", str(self.source_dir),
-            "--reconcile-targets", json.dumps(FIXTURE_RECONCILE_TARGETS),
-        ])
+        # migrate_v0.main prints the stats JSON + reconciliation table to
+        # stdout unconditionally (see migrate_v0.py) -- captured rather than
+        # left to leak into the test runner's own output.
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = migrate_v0.main([
+                "--db", str(self.db_path), "--source", str(self.source_dir),
+                "--reconcile-targets", json.dumps(FIXTURE_RECONCILE_TARGETS),
+            ])
         self.assertEqual(rc, 0)
 
     def test_cli_exits_nonzero_when_reconciliation_misses_by_more_than_tolerance(self):
         bad_targets = dict(FIXTURE_RECONCILE_TARGETS)
         bad_targets["grades_rows"] = 117  # fixture only has 1 -- off by 116
-        rc = migrate_v0.main([
-            "--db", str(self.db_path), "--source", str(self.source_dir),
-            "--reconcile-targets", json.dumps(bad_targets),
-        ])
+        # This path also prints "RECONCILIATION FAILED: ..." to stderr (see
+        # migrate_v0.py) in addition to the stdout JSON/table above.
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            rc = migrate_v0.main([
+                "--db", str(self.db_path), "--source", str(self.source_dir),
+                "--reconcile-targets", json.dumps(bad_targets),
+            ])
         self.assertNotEqual(rc, 0)
+        self.assertIn("RECONCILIATION FAILED", stderr.getvalue())
 
     def test_cli_default_targets_are_the_real_dataset_targets(self):
         self.assertEqual(migrate_v0.DEFAULT_RECONCILE_TARGETS, {

@@ -395,8 +395,14 @@ class TestTrain(unittest.TestCase):
         db_path = self.tmp_path / "empty.sqlite"
         conn = db.connect(db_path)
         conn.close()
-        rc = train.main(["--db", str(db_path)])
+        # train.main prints "no training data found; nothing written" to
+        # stderr on this path (see train.py) -- captured rather than left to
+        # leak into the test runner's own output, and asserted here.
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            rc = train.main(["--db", str(db_path)])
         self.assertEqual(rc, 1)
+        self.assertIn("no training data found", stderr.getvalue())
 
     def test_posteriors_roundtrip_and_are_queryable(self):
         db_path = self.tmp_path / "t2.sqlite"
