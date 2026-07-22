@@ -14,23 +14,30 @@ unlabeled + review + followup_fix" -- whatever categories the estimator was
 actually trained on) of that category's per-arm posterior predictive,
 inverse-transformed back to USD (``model.inverse_transform``, i.e. ``usd =
 exp(y) - epsilon`` per the estimator's own ``output_format``). An arm
-missing posterior data for some category simply contributes 0 USD from that
-category and is listed under ``missing_categories`` in the output -- real
-training data is uneven across arms, and refusing to estimate at all would
-make the tool useless for exactly the sparse arms it most needs to flag.
+missing posterior data for even one category is **unscorable** -- it is
+excluded from ranking/selection entirely and reported separately (per task)
+under ``unscorable_arms`` with its ``missing_categories`` listed, rather
+than silently contributing 0 USD for the categories it lacks (an earlier
+version of this module did that, which undercounted totals and biased
+selection toward the least-covered arms -- fixed after review round 1).
 
 Selection ("expected total minimizing subject to the p_q guard", the spec's
 literal but underspecified phrase): for every task, compute two per-arm
 totals -- ``expected_total`` (sum of per-category posterior *means*) and
 ``pq_total`` (sum of per-category posterior quantiles at ``--quantile``,
-default p80). The guard excludes any arm whose ``pq_total`` exceeds
-``GUARD_FACTOR`` (2x, a documented, hardcoded constant -- no CLI flag for it
-since the brief doesn't specify one) times the *minimum* ``pq_total`` across
-all candidate arms for that task; this stops "cheap on average, catastrophic
-in the tail" arms from winning on mean alone. The selected arm is then
-whichever guard-passing arm has the lowest ``expected_total``. This is a
-documented design choice (see task-10-report.md), not something the spec
-spells out numerically.
+default p80). The guard excludes any arm whose ``pq_total`` exceeds a
+*guard factor* times the *minimum* ``pq_total`` across all fully-scorable
+candidate arms for that task; this stops "cheap on average, catastrophic in
+the tail" arms from winning on mean alone. The selected arm is then
+whichever guard-passing arm has the lowest ``expected_total``. The guard
+factor itself (default ``DEFAULT_GUARD_FACTOR = 2.0``) is resolved per run
+as: ``--guard-factor`` CLI flag, else ``config_json["guard_factor"]`` if the
+estimator's own config specifies one, else the hardcoded default -- and is
+echoed back in the JSON report as ``"guard_factor"`` so a reader always
+knows which value produced a given selection. This mechanism (both its
+existence and its exact resolution precedence) is a documented design
+choice (see task-10-report.md), not something the spec spells out
+numerically.
 
 ``explore`` (also spec-literal: "runner-up p20 < winner p80", a posterior-
 overlap proxy) compares the *selected* arm's ``p80_total`` against the best
@@ -58,8 +65,17 @@ import model
 DEFAULT_DB = Path(__file__).resolve().parents[3] / "data" / "agents" / "task-analyzer.sqlite"
 DEFAULT_QUANTILE = 0.8
 EXPLORE_LOW_Q = 0.2
-GUARD_FACTOR = 2.0
+DEFAULT_GUARD_FACTOR = 2.0
 SANITY_COMPOSITES = (2.0, 3.0, 4.0)
+
+
+def resolve_guard_factor(config: dict, guard_factor: Optional[float]) -> float:
+    """Resolve the effective guard factor: explicit ``--guard-factor`` CLI
+    value wins, then the estimator's own ``config_json["guard_factor"]``,
+    then ``DEFAULT_GUARD_FACTOR``."""
+    if guard_factor is not None:
+        return guard_factor
+    return float(config.get("guard_factor", DEFAULT_GUARD_FACTOR))
 
 
 class EstimatorError(RuntimeError):
@@ -134,24 +150,30 @@ def _arm_totals(posteriors: dict, categories, epsilon: float, x, arm, quantile: 
     }
 
 
-def score_task(config: dict, posteriors: dict, complexity: dict, quantile: float) -> dict:
+def score_task(config: dict, posteriors: dict, complexity: dict, quantile: float,
+               guard_factor: Optional[float] = None) -> dict:
     """Score every known arm (``config["arms"]``) for one task's complexity
-    vector. Returns the ranked arm list (sorted by ``pq_total_usd``
-    ascending -- "arm rankings at the configured quantile" per spec.md),
-    the selected arm (min ``expected_total_usd`` among arms passing the
-    ``pq_total_usd`` guard), and the ``explore`` flag."""
+    vector. Returns the ranked, fully-scorable arm list (sorted by
+    ``pq_total_usd`` ascending -- "arm rankings at the configured quantile"
+    per spec.md), the arms excluded as ``unscorable`` (missing a posterior
+    for at least one category), the selected arm (min ``expected_total_usd``
+    among fully-scorable arms passing the ``pq_total_usd`` guard), and the
+    ``explore`` flag. An arm is only eligible for ranking/selection at all
+    if it has a posterior for *every* category in ``config["categories"]``
+    -- see the module docstring for why partial coverage isn't just
+    "contributes 0 for what's missing"."""
     row = _recomputed_complexity(complexity)
     x = model.features(row, config)
     epsilon = config.get("epsilon", model.DEFAULT_EPSILON)
     categories = config.get("categories", [])
+    resolved_guard_factor = resolve_guard_factor(config, guard_factor)
     arms_all = [_arm_totals(posteriors, categories, epsilon, x, tuple(arm), quantile) for arm in config.get("arms", [])]
-    # An arm with zero category coverage (no posterior for any category at
-    # all) would otherwise show a $0.00 total and falsely win every
-    # ranking -- exclude it rather than silently pretend it's free.
-    # train.py-produced config["arms"] never actually contains such an arm
-    # (every listed arm has >=1 posterior by construction), so this only
-    # guards against a hand-built or corrupted config.
-    arms = [a for a in arms_all if len(a["missing_categories"]) < len(categories)] if categories else arms_all
+
+    arms = [a for a in arms_all if not a["missing_categories"]]
+    unscorable = [
+        {"model": a["model"], "effort": a["effort"], "missing_categories": a["missing_categories"]}
+        for a in arms_all if a["missing_categories"]
+    ]
 
     ranked = sorted(arms, key=lambda a: (a["pq_total_usd"], a["model"], a["effort"]))
     by_expected = sorted(arms, key=lambda a: (a["expected_total_usd"], a["model"], a["effort"]))
@@ -159,7 +181,7 @@ def score_task(config: dict, posteriors: dict, complexity: dict, quantile: float
     selected = None
     if by_expected:
         min_pq = min(a["pq_total_usd"] for a in arms)
-        guard_limit = GUARD_FACTOR * min_pq
+        guard_limit = resolved_guard_factor * min_pq
         passing = [a for a in by_expected if a["pq_total_usd"] <= guard_limit]
         selected = passing[0] if passing else by_expected[0]
 
@@ -172,6 +194,7 @@ def score_task(config: dict, posteriors: dict, complexity: dict, quantile: float
     return {
         "complexity": {**{f"C{i}": complexity.get(f"C{i}") for i in range(1, 8)}, "composite": row["composite"]},
         "arms": ranked,
+        "unscorable_arms": unscorable,
         "selected": ({"model": selected["model"], "effort": selected["effort"],
                        "expected_total_usd": selected["expected_total_usd"],
                        "pq_total_usd": selected["pq_total_usd"]} if selected else None),
@@ -179,16 +202,21 @@ def score_task(config: dict, posteriors: dict, complexity: dict, quantile: float
     }
 
 
-def run(conn, decomposition: dict, quantile: float = DEFAULT_QUANTILE, estimator_id: Optional[int] = None) -> dict:
+def run(conn, decomposition: dict, quantile: float = DEFAULT_QUANTILE, estimator_id: Optional[int] = None,
+        guard_factor: Optional[float] = None) -> dict:
     """Score every task in ``decomposition["tasks"]``; returns the full
     report dict (JSON-serializable) with per-task results and
-    decomposition-level totals of the selected arms."""
+    decomposition-level totals of the selected arms. ``guard_factor``, if
+    given, overrides both the estimator config's own value and
+    ``DEFAULT_GUARD_FACTOR`` (see ``resolve_guard_factor``); the value
+    actually used is echoed back as ``report["guard_factor"]``."""
     resolved_id, config, posteriors = load_estimator(conn, estimator_id)
+    resolved_guard_factor = resolve_guard_factor(config, guard_factor)
 
     tasks_out = []
     total_expected = total_pq = 0.0
     for entry in decomposition.get("tasks", []):
-        result = score_task(config, posteriors, entry.get("complexity", {}), quantile)
+        result = score_task(config, posteriors, entry.get("complexity", {}), quantile, resolved_guard_factor)
         result["task"] = entry.get("task")
         result["title"] = entry.get("title")
         tasks_out.append(result)
@@ -199,6 +227,7 @@ def run(conn, decomposition: dict, quantile: float = DEFAULT_QUANTILE, estimator
     return {
         "estimator_id": resolved_id,
         "quantile": quantile,
+        "guard_factor": resolved_guard_factor,
         "tasks": tasks_out,
         "decomposition_totals": {"expected_total_usd": total_expected, "pq_total_usd": total_pq},
     }
@@ -231,14 +260,19 @@ def render_table(report: dict) -> str:
                 f"{marker} {arm['model']:<20} {arm['effort']:<10}"
                 f" {arm['expected_total_usd']:>18.4f} {arm['pq_total_usd']:>18.4f}"
                 f" {arm['p20_total_usd']:>18.4f} {arm['p80_total_usd']:>18.4f}"
-                + (f"  missing={arm['missing_categories']}" if arm["missing_categories"] else "")
             )
+        if task["unscorable_arms"]:
+            for arm in task["unscorable_arms"]:
+                lines.append(f"  (unscorable: {arm['model']}/{arm['effort']}, missing={arm['missing_categories']})")
         sel = task["selected"]
         sel_desc = f"{sel['model']}/{sel['effort']}" if sel else "none"
         lines.append(f"  selected: {sel_desc}  explore={task['explore']}")
     totals = report["decomposition_totals"]
     lines.append("")
-    lines.append(f"decomposition totals: expected=${totals['expected_total_usd']:.4f} pq=${totals['pq_total_usd']:.4f}")
+    lines.append(
+        f"decomposition totals: expected=${totals['expected_total_usd']:.4f} "
+        f"pq=${totals['pq_total_usd']:.4f} (guard_factor={report['guard_factor']})"
+    )
     return "\n".join(lines)
 
 
@@ -248,6 +282,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--db", default=str(DEFAULT_DB), help="path to the task-analyzer sqlite database")
     p.add_argument("--quantile", type=float, default=DEFAULT_QUANTILE)
     p.add_argument("--estimator-id", type=int, default=None)
+    p.add_argument("--guard-factor", type=float, default=None,
+                    help="override the selection guard factor (default: the estimator config's own value, or 2.0)")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON instead of the human table")
     p.add_argument("--sanity", action="store_true", help="score the fixed reference decomposition (composites 2/3/4) instead of --decomposition")
     return p
@@ -263,7 +299,8 @@ def main(argv=None) -> int:
 
     conn = db.connect(args.db)
     try:
-        report = run(conn, decomposition, quantile=args.quantile, estimator_id=args.estimator_id)
+        report = run(conn, decomposition, quantile=args.quantile, estimator_id=args.estimator_id,
+                      guard_factor=args.guard_factor)
     except EstimatorError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

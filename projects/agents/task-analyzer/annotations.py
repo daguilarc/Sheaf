@@ -23,9 +23,12 @@ Two things live here: a restricted, dependency-free YAML *subset*
 parser/writer (the persisted sibling file is
 ``docs/superpowers/plans/<name>.assignments.yaml``, and pulling in a real
 YAML library would violate the stdlib+numpy constraint) and the validator
-required by the spec (``validate``). ``estimate.py`` (Task 10's other file)
-both consumes this module to read a candidate decomposition and calls
-``write`` to persist a scored one.
+required by the spec (``validate``), also invocable as a script per spec.md
+"Annotation validation" (``python3 annotations.py FILE (--plan PLAN.md |
+--tasks task-1,task-2) [--db PATH] [--estimator-id N]``; prints every error
+and exits nonzero if any). ``estimate.py`` (Task 10's other file) both
+consumes this module to read a candidate decomposition and calls ``write``
+to persist a scored one.
 
 The YAML subset is deliberately narrow -- it round-trips exactly the shape
 above (two levels: top-level scalars + one list-valued key whose items are
@@ -42,9 +45,15 @@ exists only so the actual persisted ``.assignments.yaml`` sibling file
 """
 from __future__ import annotations
 
+import argparse
 import json
+import re
+import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence, Tuple
+
+import db
 
 FORMAT_VERSION = 1
 _COMPLEXITY_FIELDS = ("C1", "C2", "C3", "C4", "C5", "C6", "C7")
@@ -192,7 +201,12 @@ def write(doc: dict, path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.suffix.lower() == ".json":
-        path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+        # Canonical: sorted keys + stable separators, so two writes of
+        # equivalent content (regardless of dict insertion order) are
+        # byte-identical -- verified in tests.
+        path.write_text(
+            json.dumps(doc, indent=2, sort_keys=True, separators=(",", ": ")) + "\n", encoding="utf-8"
+        )
     else:
         path.write_text(dump_yaml_subset(doc), encoding="utf-8")
 
@@ -220,12 +234,17 @@ def _composite_error(label: str, complexity: dict, c_values: dict) -> Optional[s
 
 def validate(doc: dict, plan_tasks: Sequence[str], known_arms: Iterable[Tuple[str, str]]) -> list:
     """Validate an annotation doc per specs/task-analyzer-sdd-annotations/
-    spec.md: known ``format``, task keys matching ``plan_tasks``, complexity
-    integers in 1..5 for C1..C7, ``composite`` equal to mean(C1..C6) rounded
-    to one decimal when supplied (omitted is fine -- callers compute it),
-    and a ``(model, effort)`` pair present in ``known_arms``. Returns a list
-    of human-readable error strings; empty means valid. Never raises on
-    malformed input -- unexpected shapes turn into error strings instead."""
+    spec.md: known ``format``, task keys matching ``plan_tasks`` as a
+    *multiset* (every plan task must be annotated exactly once -- an
+    annotated task not in the plan is an "unknown task key" error, a plan
+    task with no annotation at all is a "missing from annotation" error,
+    and a task key annotated more than once is a "duplicate annotation"
+    error), complexity integers in 1..5 for C1..C7, ``composite`` equal to
+    mean(C1..C6) rounded to one decimal when supplied (omitted is fine --
+    callers compute it), and a ``(model, effort)`` pair present in
+    ``known_arms``. Returns a list of human-readable error strings; empty
+    means valid. Never raises on malformed input -- unexpected shapes turn
+    into error strings instead."""
     errors: list = []
     fmt = doc.get("format")
     if fmt != FORMAT_VERSION:
@@ -233,10 +252,12 @@ def validate(doc: dict, plan_tasks: Sequence[str], known_arms: Iterable[Tuple[st
 
     plan_task_set = set(plan_tasks)
     known_arm_set = {tuple(a) for a in known_arms}
+    task_key_counts: Counter = Counter()
 
     for entry in doc.get("tasks", []):
         task_key = entry.get("task")
         label = task_key if task_key is not None else "<missing task key>"
+        task_key_counts[task_key] += 1
 
         if task_key not in plan_task_set:
             errors.append(f"{label}: unknown task key (not in plan)")
@@ -258,4 +279,87 @@ def validate(doc: dict, plan_tasks: Sequence[str], known_arms: Iterable[Tuple[st
         if arm not in known_arm_set:
             errors.append(f"{label}: unknown arm (model={arm[0]!r}, effort={arm[1]!r})")
 
+    for task_key, count in sorted(task_key_counts.items(), key=lambda kv: (kv[0] is None, kv[0])):
+        if count > 1:
+            errors.append(f"{task_key}: duplicate annotation ({count} entries)")
+
+    for task_key in sorted(plan_task_set - set(task_key_counts)):
+        errors.append(f"{task_key}: missing from annotation (required by plan)")
+
     return errors
+
+
+# ---------------------------------------------------------------------------
+# CLI: invoke the validator as a script
+# ---------------------------------------------------------------------------
+
+
+def _extract_plan_task_keys(text: str) -> list:
+    """Extract ``task-N`` keys from a Superpowers plan's ``### Task N:
+    ...`` headers (see e.g. docs/superpowers/plans/*.md) -- the convention
+    schema.sql documents for ``tasks.task_key`` (``task-3``, ``p2-task-4``,
+    ...). Only the plain ``task-N`` numbering is derived here; phased plans
+    with ``pN-task-M`` keys should pass ``--tasks`` explicitly instead."""
+    return [f"task-{m.group(1)}" for m in re.finditer(r"^### Task (\d+):", text, re.M)]
+
+
+def _load_known_arms(db_path, estimator_id: Optional[int] = None) -> list:
+    """Known ``(model, effort)`` arms from ``config_json["arms"]`` of the
+    given (or latest) estimator generation in the database at ``db_path``.
+    Returns ``[]`` if there's no trained estimator yet -- the CLI still
+    validates everything else, it just can't confirm arm identities."""
+    conn = db.connect(db_path)
+    try:
+        if estimator_id is None:
+            row = conn.execute("SELECT MAX(estimator_id) AS id FROM estimators").fetchone()
+            estimator_id = row["id"] if row else None
+        if estimator_id is None:
+            return []
+        row = conn.execute(
+            "SELECT config_json FROM estimators WHERE estimator_id = ?", (estimator_id,)
+        ).fetchone()
+        if row is None:
+            return []
+        config = json.loads(row["config_json"])
+        return [tuple(a) for a in config.get("arms", [])]
+    finally:
+        conn.close()
+
+
+def _build_arg_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Validate an SDD annotation sibling file.")
+    p.add_argument("annotation", help="path to the annotation file (.assignments.yaml or .json)")
+    p.add_argument("--plan", help="path to the sibling Superpowers plan .md (task keys parsed from '### Task N:' headers)")
+    p.add_argument("--tasks", help="comma-separated explicit task key list (alternative to --plan)")
+    p.add_argument("--db", default=None, help="path to the task-analyzer sqlite database (for known arms; omit to skip arm checks)")
+    p.add_argument("--estimator-id", type=int, default=None)
+    return p
+
+
+def main(argv=None) -> int:
+    args = _build_arg_parser().parse_args(argv)
+    if not args.plan and not args.tasks:
+        print("error: --plan or --tasks is required", file=sys.stderr)
+        return 2
+
+    plan_tasks = (
+        [t.strip() for t in args.tasks.split(",") if t.strip()]
+        if args.tasks
+        else _extract_plan_task_keys(Path(args.plan).read_text(encoding="utf-8"))
+    )
+    known_arms = _load_known_arms(args.db, args.estimator_id) if args.db else []
+
+    doc = load(args.annotation)
+    errors = validate(doc, plan_tasks, known_arms)
+
+    for error in errors:
+        print(error, file=sys.stderr)
+    if errors:
+        print(f"{len(errors)} error(s)", file=sys.stderr)
+        return 1
+    print("valid")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

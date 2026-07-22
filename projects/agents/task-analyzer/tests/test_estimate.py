@@ -110,14 +110,25 @@ class TestScoreTask(EstimateTestCase):
         result = estimate.score_task(config, posteriors, complexity, 0.8)
         self.assertEqual(result["complexity"]["composite"], 2.0)
 
-    def test_missing_category_is_reported_not_fatal(self):
+    def test_partial_coverage_arm_is_unscorable_not_partially_scored(self):
+        # An arm missing a posterior for even one category must NOT appear
+        # in the scorable "arms" ranking with a partial (undercounted)
+        # total -- it's excluded entirely and reported under
+        # "unscorable_arms" instead (review round 1 finding: silently
+        # contributing $0 for missing categories biased selection toward
+        # the least-covered arm).
         config = _seed_estimator_db(self.conn, categories=["green"])
         config["categories"] = ["green", "phantom"]
         _, _, posteriors = estimate.load_estimator(self.conn)
         result = estimate.score_task(config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, 0.8)
-        cheap = next(a for a in result["arms"] if (a["model"], a["effort"]) == CHEAP_ARM)
-        self.assertIn("phantom", cheap["missing_categories"])
-        self.assertNotIn("phantom", cheap["categories"])
+        scorable_pairs = {(a["model"], a["effort"]) for a in result["arms"]}
+        self.assertNotIn(CHEAP_ARM, scorable_pairs)
+        self.assertNotIn(SPARSE_ARM, scorable_pairs)
+        unscorable_pairs = {(a["model"], a["effort"]) for a in result["unscorable_arms"]}
+        self.assertEqual(unscorable_pairs, {CHEAP_ARM, SPARSE_ARM})
+        cheap_unscorable = next(a for a in result["unscorable_arms"] if (a["model"], a["effort"]) == CHEAP_ARM)
+        self.assertEqual(cheap_unscorable["missing_categories"], ["phantom"])
+        self.assertIsNone(result["selected"])
 
     def test_totals_sum_across_categories(self):
         config = _seed_estimator_db(self.conn)
@@ -137,37 +148,82 @@ class TestScoreTask(EstimateTestCase):
         result = estimate.score_task(config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, 0.8)
         arm_pairs = {(a["model"], a["effort"]) for a in result["arms"]}
         self.assertNotIn(("nonexistent-model", "none"), arm_pairs)
+        unscorable_pairs = {(a["model"], a["effort"]) for a in result["unscorable_arms"]}
+        self.assertIn(("nonexistent-model", "none"), unscorable_pairs)
         self.assertEqual((result["selected"]["model"], result["selected"]["effort"]), CHEAP_ARM)
 
 
+RISKY_ARM = ("gpt-5.4", "high")
+
+
 class TestGuard(EstimateTestCase):
-    def test_guard_rejects_low_mean_but_explosive_quantile_arm(self):
-        # A third arm with an even lower mean than the cheap arm but a
-        # catastrophically wide posterior (its own pq_total blows well past
-        # GUARD_FACTOR x the cheapest arm's pq_total) must lose to the cheap
-        # arm despite having the lowest raw mean.
-        risky_arm = ("gpt-5.4", "high")
+    def _seed_risky_arm(self, guard_factor=None):
+        """Seed the cheap arm plus a third, ``RISKY_ARM``: an even lower
+        raw mean than the cheap arm, but a wide-enough posterior that its
+        pq_total is ~5x the cheap arm's (verified numerically) -- fails the
+        default 2x guard, but comfortably passes a permissive (e.g. 1000x)
+        override, so the same fixture exercises both "guard rejects" and
+        "guard, when relaxed, accepts" without needing separate posteriors.
+        Optionally embeds ``guard_factor`` into the persisted estimator
+        config."""
         config = _seed_estimator_db(self.conn, arms=(CHEAP_ARM,))
-        risky_nig = model.NIG(mu=np.array([math.log(0.01 + 1e-4), 0.0]), Lambda=np.diag([0.001, 0.001]), a=1.0, b=1.0)
+        risky_nig = model.NIG(mu=np.array([math.log(0.01 + 1e-4), 0.0]), Lambda=np.diag([0.15, 0.15]), a=5.0, b=1.0)
         for category in CATEGORIES:
             db.upsert(
                 self.conn, "estimator_params",
-                {"estimator_id": 1, "category": category, "model": risky_arm[0], "effort": risky_arm[1],
+                {"estimator_id": 1, "category": category, "model": RISKY_ARM[0], "effort": RISKY_ARM[1],
                  "posterior_json": risky_nig.to_json()},
                 ["estimator_id", "category", "model", "effort"],
             )
-        config["arms"].append(list(risky_arm))
+        config["arms"].append(list(RISKY_ARM))
+        if guard_factor is not None:
+            config["guard_factor"] = guard_factor
         self.conn.execute(
             "UPDATE estimators SET config_json = ? WHERE estimator_id = 1", (json.dumps(config),)
         )
         self.conn.commit()
-        _, config2, posteriors = estimate.load_estimator(self.conn)
-        result = estimate.score_task(config2, posteriors, {f"C{i}": 3 for i in range(1, 8)}, 0.8)
-        risky = next(a for a in result["arms"] if (a["model"], a["effort"]) == risky_arm)
+        return estimate.load_estimator(self.conn)
+
+    def test_guard_rejects_low_mean_but_explosive_quantile_arm(self):
+        # With the default guard factor (2.0, absent from config here), the
+        # risky arm must lose to the cheap arm despite having the lowest
+        # raw mean.
+        _, config, posteriors = self._seed_risky_arm()
+        result = estimate.score_task(config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, 0.8)
+        risky = next(a for a in result["arms"] if (a["model"], a["effort"]) == RISKY_ARM)
         self.assertLess(risky["expected_total_usd"], next(
             a["expected_total_usd"] for a in result["arms"] if (a["model"], a["effort"]) == CHEAP_ARM
         ))
         self.assertEqual((result["selected"]["model"], result["selected"]["effort"]), CHEAP_ARM)
+
+    def test_guard_factor_read_from_estimator_config(self):
+        # A permissive guard factor persisted in the estimator's own
+        # config_json (no CLI override) must let the risky arm win, since
+        # it has the lowest mean and the guard no longer excludes it.
+        _, config, posteriors = self._seed_risky_arm(guard_factor=1000.0)
+        result = estimate.score_task(config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, 0.8)
+        self.assertEqual((result["selected"]["model"], result["selected"]["effort"]), RISKY_ARM)
+
+    def test_guard_factor_cli_override_takes_precedence_over_config(self):
+        # config_json says "permissive" (1000x) but an explicit
+        # guard_factor argument (as --guard-factor would supply) must win:
+        # a strict 1.0x factor rejects the risky arm again.
+        _, config, posteriors = self._seed_risky_arm(guard_factor=1000.0)
+        result = estimate.score_task(config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, 0.8, guard_factor=1.0)
+        self.assertEqual((result["selected"]["model"], result["selected"]["effort"]), CHEAP_ARM)
+
+    def test_guard_factor_default_when_absent_from_config_and_cli(self):
+        self.assertEqual(estimate.resolve_guard_factor({}, None), estimate.DEFAULT_GUARD_FACTOR)
+
+    def test_guard_factor_echoed_in_run_report(self):
+        self._seed_risky_arm(guard_factor=7.5)
+        report = estimate.run(self.conn, _decomposition((("task-1", 3.0),)))
+        self.assertEqual(report["guard_factor"], 7.5)
+
+    def test_guard_factor_echoed_reflects_cli_override(self):
+        self._seed_risky_arm(guard_factor=7.5)
+        report = estimate.run(self.conn, _decomposition((("task-1", 3.0),)), guard_factor=1.0)
+        self.assertEqual(report["guard_factor"], 1.0)
 
 
 class TestRunAndCLI(EstimateTestCase):
