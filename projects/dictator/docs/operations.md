@@ -9,15 +9,20 @@ checkout. Repo-wide lane rules: [Testing](../../../structure/testing.md),
 
 - macOS 13+ with a Swift 5.10 toolchain.
 - Optional, quarantined iOS checks: Xcode with an available iOS Simulator.
-- whisper.cpp libraries via Homebrew — the package links `-lwhisper -lggml
-  -lggml-base` with library search paths
-  `/opt/homebrew/Cellar/whisper-cpp/1.8.3/libexec/lib`, `/opt/homebrew/lib`,
-  `/usr/local/lib` (pinned in `Package.swift`):
+- whisper.cpp libraries via Homebrew. Dictator supports rebuilding against
+  `whisper-cpp` 1.8.3 and newer Homebrew layouts on Apple Silicon
+  (`/opt/homebrew`) and Intel (`/usr/local`):
 
   ```bash
   brew install whisper-cpp
   ```
 
+  The Swift package links `-lwhisper -lggml -lggml-base` and discovers
+  existing stable `opt` library paths at build time. Supported layouts are the
+  older bundled `whisper-cpp/libexec` layout and the newer split
+  `whisper-cpp` plus `ggml` layout. After upgrading or reinstalling
+  `whisper-cpp`/`ggml`, rebuild Dictator; already-built binaries are not
+  guaranteed ABI-compatible across Homebrew upgrades.
 - An STT model binary at the repo root, default path
   `models/ggml-base.en.bin` (configurable via `stt_model_path`; see
   [config contract](contracts/config.md)). Model binaries are not vendored
@@ -165,6 +170,7 @@ e.g.:
 ```bash
 swift test --filter LaunchpadTests
 swift test --filter DictationHTTPServerTests
+swift test --filter WhisperCPPBridgeSTTEngineTests
 ```
 
 The Swift package tests run hermetically: no live network, Launchpad
@@ -173,6 +179,26 @@ generated in-memory). `MigrationExclusionTests` additionally asserts repo
 hygiene — no legacy external-repo paths in `src/`/`tests/`, no tracked build
 artifacts or secrets in `git ls-files projects/dictator`, and git-ignored
 SwiftPM/Xcode output paths.
+
+Native whisper.cpp verification is opt-in and requires explicit private fixture
+paths:
+
+```json
+// projects/dictator/.native-whisper-fixture.json (git-ignored)
+{
+  "model_path": "models/ggml-base.en.bin",
+  "wav_path": "/path/to/fixture.wav",
+  "language": "en"
+}
+```
+
+```bash
+swift test --filter WhisperCPPBridgeSTTEngineTests/testNativeRuntimeTranscribesExplicitWhisperFixtureWhenEnabled
+```
+
+On split Homebrew installs this test verifies Dictator loads ggml backend
+plugins before creating the first Whisper context. On bundled installs it
+verifies the same source still works with already-registered backends.
 
 The retained iOS tests are quarantined manual checks:
 

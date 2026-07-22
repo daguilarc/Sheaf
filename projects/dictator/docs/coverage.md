@@ -4,7 +4,8 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
 
 | Capability | Status | Gaps |
 |---|---|---|
-| dictation-pipeline | partial | `X-Style-Prefs-Json` dead end, whisper talon decode options, segments/confidence internal shape |
+| dictation-pipeline | partial | `X-Style-Prefs-Json` dead end, whisper talon decode options, segments/confidence internal shape; `dp-28` is covered by `WhisperBackendBootstrap` unit tests and opt-in native fixture verification |
+| build-workflow | covered | `dbw-5` is covered by stable-prefix source checks in `MakefileWorkflowTests`; bundled-vs-split native rebuild verification remains manual per host |
 | service-lifecycle | partial | in-flight requests at shutdown, log rotation, server concurrency limits |
 | web-ui | partial | dashboard rendering detail, stale config-manager snapshots, 500-path messages |
 | launchpad | partial | MIDI wire protocol, render-worker timing, Talon bridge lifecycle details |

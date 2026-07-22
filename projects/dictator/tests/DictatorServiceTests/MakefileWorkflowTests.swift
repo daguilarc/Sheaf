@@ -60,6 +60,47 @@ final class MakefileWorkflowTests: XCTestCase
         XCTAssertTrue(makefile.contains("Refusing to replace existing path"))
     }
 
+    func testDictatorPackageDiscoversWhisperAndGGMLThroughStableHomebrewPrefixes() throws
+    {
+        let repoRoot = try SheafRootDiscovery.requireRepoRoot()
+        let package = try loadMakefile(
+            repoRoot.appendingPathComponent("projects/dictator/Package.swift")
+        )
+
+        XCTAssertFalse(package.contains("/Cellar/"), "Package.swift must not name version-specific Homebrew Cellar paths")
+        XCTAssertTrue(package.contains("/opt/homebrew/opt/whisper-cpp/libexec/lib"))
+        XCTAssertTrue(package.contains("/opt/homebrew/opt/whisper-cpp/lib"))
+        XCTAssertTrue(package.contains("/opt/homebrew/opt/ggml/lib"))
+        XCTAssertTrue(package.contains("/opt/homebrew/opt/whisper-cpp/libexec/include"))
+        XCTAssertTrue(package.contains("/opt/homebrew/opt/whisper-cpp/include"))
+        XCTAssertTrue(package.contains("/opt/homebrew/opt/ggml/include"))
+        XCTAssertTrue(package.contains("/usr/local/opt/whisper-cpp/libexec/lib"))
+        XCTAssertTrue(package.contains("/usr/local/opt/whisper-cpp/lib"))
+        XCTAssertTrue(package.contains("/usr/local/opt/ggml/lib"))
+        XCTAssertTrue(package.contains("/usr/local/opt/whisper-cpp/libexec/include"))
+        XCTAssertTrue(package.contains("/usr/local/opt/whisper-cpp/include"))
+        XCTAssertTrue(package.contains("/usr/local/opt/ggml/include"))
+        XCTAssertTrue(package.contains("-Xcc"))
+    }
+
+    func testCWhisperShimDiscoversHeadersThroughStableHomebrewPrefixes() throws
+    {
+        let repoRoot = try SheafRootDiscovery.requireRepoRoot()
+        let shim = try loadMakefile(
+            repoRoot.appendingPathComponent("projects/dictator/src/Sources/CWhisper/shim.h")
+        )
+
+        XCTAssertFalse(shim.contains("/Cellar/"), "CWhisper shim must not name version-specific Homebrew Cellar paths")
+        XCTAssertTrue(shim.contains("<whisper.h>"))
+        XCTAssertTrue(shim.contains("<ggml-backend.h>"))
+        XCTAssertTrue(shim.contains("/opt/homebrew/opt/whisper-cpp/libexec/include/whisper.h"))
+        XCTAssertTrue(shim.contains("/opt/homebrew/opt/whisper-cpp/include/whisper.h"))
+        XCTAssertTrue(shim.contains("/opt/homebrew/opt/ggml/include/ggml-backend.h"))
+        XCTAssertTrue(shim.contains("/usr/local/opt/whisper-cpp/libexec/include/whisper.h"))
+        XCTAssertTrue(shim.contains("/usr/local/opt/whisper-cpp/include/whisper.h"))
+        XCTAssertTrue(shim.contains("/usr/local/opt/ggml/include/ggml-backend.h"))
+    }
+
     private func loadMakefile(_ url: URL) throws -> String
     {
         try String(contentsOf: url, encoding: .utf8)

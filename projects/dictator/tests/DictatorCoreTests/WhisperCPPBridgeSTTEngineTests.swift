@@ -88,6 +88,100 @@ final class WhisperCPPBridgeSTTEngineTests: XCTestCase {
             XCTFail("unexpected error: \(error)")
         }
     }
+
+    func testWhisperBackendBootstrapLoadsBeforeCountingDevices() throws {
+        var events: [String] = []
+        let bootstrap = WhisperBackendBootstrap(
+            loadBackends: { events.append("load") },
+            deviceCount: {
+                events.append("count")
+                return 2
+            }
+        )
+
+        let count = try bootstrap.prepareBackendDeviceCount()
+
+        XCTAssertEqual(count, 2)
+        XCTAssertEqual(events, ["load", "count"])
+    }
+
+    func testWhisperBackendBootstrapLoadsAndCountsExactlyOnce() throws {
+        var loadCount = 0
+        var countCalls = 0
+        let bootstrap = WhisperBackendBootstrap(
+            loadBackends: { loadCount += 1 },
+            deviceCount: {
+                countCalls += 1
+                return countCalls
+            }
+        )
+
+        XCTAssertEqual(try bootstrap.prepareBackendDeviceCount(), 1)
+        XCTAssertEqual(try bootstrap.prepareBackendDeviceCount(), 1)
+        XCTAssertEqual(loadCount, 1)
+        XCTAssertEqual(countCalls, 1)
+    }
+
+    func testWhisperBackendBootstrapReusesCachedSuccess() throws {
+        var nextCount = 3
+        let bootstrap = WhisperBackendBootstrap(
+            loadBackends: {},
+            deviceCount: {
+                defer { nextCount = 0 }
+                return nextCount
+            }
+        )
+
+        XCTAssertEqual(try bootstrap.prepareBackendDeviceCount(), 3)
+        XCTAssertEqual(try bootstrap.prepareBackendDeviceCount(), 3)
+    }
+
+    func testWhisperBackendBootstrapFailsBeforeModelInitWhenNoDeviceExists() throws {
+        let bootstrap = WhisperBackendBootstrap(
+            loadBackends: {},
+            deviceCount: { 0 }
+        )
+
+        do {
+            _ = try bootstrap.prepareBackendDeviceCount()
+            XCTFail("expected failure")
+        } catch let error as DictatorError {
+            guard case let .sttFailed(message) = error else {
+                XCTFail("unexpected error: \(error)")
+                return
+            }
+            XCTAssertTrue(message.contains("ggml backend"))
+            XCTAssertTrue(message.contains("no devices"))
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
+    func testNativeRuntimeTranscribesExplicitWhisperFixtureWhenEnabled() async throws {
+        let repoRoot = try SheafRootDiscovery.requireRepoRoot()
+        let fixtureURL = repoRoot.appendingPathComponent("projects/dictator/.native-whisper-fixture.json")
+        guard FileManager.default.fileExists(atPath: fixtureURL.path) else {
+            throw XCTSkip("Create projects/dictator/.native-whisper-fixture.json to run native Whisper integration")
+        }
+
+        let fixture = try JSONDecoder().decode(
+            NativeWhisperFixture.self,
+            from: try Data(contentsOf: fixtureURL)
+        )
+        let response = try await WhisperCppNativeRuntime().transcribe(
+            audioFileURL: URL(fileURLWithPath: fixture.wav_path),
+            modelPath: fixture.model_path,
+            language: fixture.language ?? "en"
+        )
+
+        XCTAssertGreaterThanOrEqual(response.duration_ms, 0)
+    }
+}
+
+private struct NativeWhisperFixture: Decodable {
+    let model_path: String
+    let wav_path: String
+    let language: String?
 }
 
 private struct StubRuntime: WhisperRuntime {

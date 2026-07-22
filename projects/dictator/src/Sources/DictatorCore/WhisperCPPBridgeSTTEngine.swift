@@ -119,6 +119,8 @@ private func runNativeTranscription(
         return TranscribeResponse(raw_transcript: "", segments: [], confidence: 0, duration_ms: 0)
     }
 
+    _ = try WhisperBackendBootstrap.production.prepareBackendDeviceCount()
+
     let cparams = whisper_context_default_params()
     guard let ctx = modelPath.withCString({ whisper_init_from_file_with_params($0, cparams) }) else {
         throw DictatorError.sttFailed("failed to load whisper model at \(modelPath)")

@@ -4,6 +4,7 @@
 DerivedData/
 build/
 logs/
+.native-whisper-fixture.json
 *.app
 *.appex
 *.xctest

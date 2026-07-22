@@ -67,6 +67,7 @@ Two design choices shape most of the code:
 WAV (HTTP client / Launchpad mic / retained iOS host app)
   → header + WAV validation (HTTP) or AudioRecorder capture (Launchpad)
   → WhisperCPPBridgeSTTEngine (native whisper.cpp, temp file, stt_model_path)
+       └─ WhisperBackendBootstrap loads ggml backends once, then verifies devices before model init
   → empty-transcript short-circuit
   → RefinementPromptBuilder input (selected-text transform or context-bullet mode)
   → ProviderRoutingRefinementEngine: use_cloud ? OpenAI /v1/responses : Ollama /api/generate
@@ -84,6 +85,14 @@ Dictator is recording or processing.
 The web UI reads the same store back through `/api/interactions`, and
 `/api/status` merges service health, config, key status, STT-model presence,
 and a live Ollama probe into one dashboard payload.
+
+Native Whisper integration uses Homebrew's active stable `opt` prefixes at
+build time. The source supports the bundled `whisper-cpp/libexec` packaging
+seen in `whisper-cpp` 1.8.3 and the split `whisper-cpp` plus `ggml` packaging
+used by newer Homebrew formulae. At runtime, Dictator calls
+`ggml_backend_load_all()` once per process and checks `ggml_backend_dev_count()`
+before `whisper_init_from_file_with_params`; zero devices become a normal
+`DictatorError.sttFailed` instead of a native abort.
 
 ## Concurrency model
 
