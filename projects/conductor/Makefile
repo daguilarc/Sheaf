@@ -11,7 +11,7 @@ build:
 test:
 	npm test
 
-run:
+run: install build
 	bash start_conductor.sh
 
 clean:

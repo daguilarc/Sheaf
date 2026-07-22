@@ -45,6 +45,17 @@ test("loadServiceRegistry reads the conductor service entry", async () =>
   assert.deepEqual(conductor, expected);
 });
 
+test("registered run target bootstraps local dependencies and build", async () =>
+{
+  const makefileUrl = new URL("../../Makefile", import.meta.url);
+  const makefile = await readFile(makefileUrl, "utf8");
+  const runDeclaration = makefile
+    .split("\n")
+    .find((line) => line.startsWith("run:"));
+
+  assert.equal(runDeclaration, "run: install build");
+});
+
 test("package metadata points to built entry point files", async () =>
 {
   const packageJsonUrl = new URL("../../package.json", import.meta.url);

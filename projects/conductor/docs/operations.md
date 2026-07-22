@@ -37,22 +37,20 @@ root, which does not install).
 
 ## Run
 
-The build step must have been run first — both run paths execute the compiled
-`dist/src/main.js` and do not rebuild.
-
-Background (the registered way, logs to files):
+Background (the registered fresh-checkout path, logs to files):
 
 ```bash
 make conductor-run
 ```
 
-This runs `make -C projects/conductor run` →
-`projects/conductor/start_conductor.sh`, which appends process output to
+This runs `make -C projects/conductor run`, whose existing `install` and `build`
+prerequisites execute project-local `npm install` and `npm run build` before
+`projects/conductor/start_conductor.sh`. The launcher appends process output to
 `logs/conductor/conductor_stdout.log` and
 `logs/conductor/conductor_stderr.log` (directory created if missing) and
 exits 127 if `node` is not on `PATH`.
 
-Foreground (logs to the terminal):
+Foreground diagnostic path after the explicit Build steps above (logs to the terminal):
 
 ```bash
 npm --prefix projects/conductor start

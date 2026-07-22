@@ -649,6 +649,35 @@ final class LaunchpadTests: XCTestCase {
         XCTAssertEqual(selection?.destinationName, "Launchpad Mini MK3 LPMiniMK3 MIDI In")
     }
 
+    func testLaunchpadProfileSelectionPairsEndpointsFromSameEntity() {
+        let profiles = LaunchpadTransportProfile.profiles(for: [.miniMk3])
+
+        let selection = LaunchpadTransportProfile.selectPreferredEndpointCandidates(
+            from: profiles,
+            sources: [
+                LaunchpadTransportProfile.EndpointCandidate(
+                    name: "Launchpad Mini MK3 LPMiniMK3 MIDI Out",
+                    isOnline: true,
+                    entityID: 42
+                )
+            ],
+            destinations: [
+                LaunchpadTransportProfile.EndpointCandidate(
+                    name: "Launchpad Mini MK3 LPMiniMK3 MIDI In stale",
+                    isOnline: true,
+                    entityID: 7
+                ),
+                LaunchpadTransportProfile.EndpointCandidate(
+                    name: "Launchpad Mini MK3 LPMiniMK3 MIDI In current",
+                    isOnline: true,
+                    entityID: 42
+                )
+            ]
+        )
+
+        XCTAssertEqual(selection?.destinationName, "Launchpad Mini MK3 LPMiniMK3 MIDI In current")
+    }
+
     func testLaunchpadProfileSelectionAcceptsCoreMIDIShortNames() {
         let profiles = LaunchpadTransportProfile.profiles(for: [.proMk3, .miniMk3])
 

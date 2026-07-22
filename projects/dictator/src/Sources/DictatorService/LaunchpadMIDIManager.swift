@@ -12,6 +12,13 @@ struct LaunchpadTransportProfile: Equatable {
     struct EndpointCandidate: Equatable {
         let name: String
         let isOnline: Bool
+        let entityID: Int32?
+
+        init(name: String, isOnline: Bool, entityID: Int32? = nil) {
+            self.name = name
+            self.isOnline = isOnline
+            self.entityID = entityID
+        }
     }
 
     let model: LaunchpadModel
@@ -72,12 +79,23 @@ struct LaunchpadTransportProfile: Equatable {
     ) -> EndpointNames? {
         for profile in profiles {
             guard let source = sources.first(where: { $0.isOnline && profile.matchesSourceName($0.name) }),
-                  let destination = destinations.first(where: { $0.isOnline && profile.matchesDestinationName($0.name) }) else {
+                  let destination = destinations.first(where: {
+                      $0.isOnline
+                          && profile.matchesDestinationName($0.name)
+                          && endpointsShareEntity(source, $0)
+                  }) else {
                 continue
             }
             return EndpointNames(profile: profile, sourceName: source.name, destinationName: destination.name)
         }
         return nil
+    }
+
+    private static func endpointsShareEntity(_ source: EndpointCandidate, _ destination: EndpointCandidate) -> Bool {
+        guard let sourceEntityID = source.entityID, let destinationEntityID = destination.entityID else {
+            return true
+        }
+        return sourceEntityID == destinationEntityID
     }
 
     private func matchesEndpointName(_ name: String) -> Bool {
@@ -109,10 +127,11 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
         return coordinates
     }()
 
-    private let queue = DispatchQueue(label: "dictator.launchpad.midi")
+    private let queue = DispatchQueue.main
     private let profiles: [LaunchpadTransportProfile]
     private var scanTimer: DispatchSourceTimer?
     private var idleSleepTimer: DispatchSourceTimer?
+    private var topologyScanGeneration: UInt64 = 0
 
     private var client = MIDIClientRef()
     private var inputPort = MIDIPortRef()
@@ -158,6 +177,7 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
             }
             self.scanTimer?.cancel()
             self.scanTimer = nil
+            self.topologyScanGeneration &+= 1
             self.disarmIdleSleepTimer()
             self.disconnectCurrentEndpoints()
         }
@@ -261,8 +281,8 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
 
         var status = MIDIClientCreateWithBlock("dictator.launchpad" as CFString, &client) { [weak self] notificationPtr in
             TraceLogger.log("launchpad midi notification messageID=\(notificationPtr.pointee.messageID.rawValue)")
-            self?.queue.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-                self?.scanAndConnect()
+            self?.queue.async { [weak self] in
+                self?.scheduleTopologyScan()
             }
         }
         guard status == noErr else {
@@ -299,7 +319,7 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
     }
 
     private func scanAndConnect() {
-        guard let selection = findPreferredEndpoints() ?? findPreferredEndpointsAfterClientRefresh() else {
+        guard let selection = findPreferredEndpoints() else {
             disconnectCurrentEndpoints()
             publishState(.searching)
             return
@@ -339,15 +359,15 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
         TraceLogger.log("launchpad connected profile=\(selection.profile.model.rawValue)")
     }
 
-    private func findPreferredEndpointsAfterClientRefresh() -> EndpointSelection? {
-        TraceLogger.log("launchpad midi refreshing client after empty scan")
-        disconnectCurrentEndpoints()
-        disposeClient()
-        guard setupClientIfNeeded() else {
-            TraceLogger.log("launchpad midi setup failed after refresh")
-            return nil
+    private func scheduleTopologyScan() {
+        topologyScanGeneration &+= 1
+        let generation = topologyScanGeneration
+        queue.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self, self.topologyScanGeneration == generation else {
+                return
+            }
+            self.scanAndConnect()
         }
-        return findPreferredEndpoints()
     }
 
     private func disconnectCurrentEndpoints() {
@@ -360,21 +380,6 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
         isConnected = false
         isSleeping = false
         disarmIdleSleepTimer()
-    }
-
-    private func disposeClient() {
-        if inputPort != 0 {
-            _ = MIDIPortDispose(inputPort)
-            inputPort = 0
-        }
-        if outputPort != 0 {
-            _ = MIDIPortDispose(outputPort)
-            outputPort = 0
-        }
-        if client != 0 {
-            _ = MIDIClientDispose(client)
-            client = 0
-        }
     }
 
     private func publishState(_ state: ConnectionState) {
@@ -393,8 +398,11 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
     private func findPreferredEndpoints() -> EndpointSelection? {
         for profile in profiles {
             let source = findMatchingSource(profile: profile)
-            let destination = findMatchingDestination(profile: profile)
-            guard source != 0, destination != 0 else {
+            guard source != 0, let sourceEntityID = endpointEntityID(source) else {
+                continue
+            }
+            let destination = findMatchingDestination(profile: profile, entityID: sourceEntityID)
+            guard destination != 0 else {
                 continue
             }
             return EndpointSelection(
@@ -424,12 +432,16 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
         return 0
     }
 
-    private func findMatchingDestination(profile: LaunchpadTransportProfile) -> MIDIEndpointRef {
+    private func findMatchingDestination(
+        profile: LaunchpadTransportProfile,
+        entityID: Int32
+    ) -> MIDIEndpointRef {
         let count = MIDIGetNumberOfDestinations()
         for index in 0..<count {
             let endpoint = MIDIGetDestination(index)
             guard endpoint != 0,
                   endpointIsOnline(endpoint),
+                  endpointEntityID(endpoint) == entityID,
                   let name = endpointName(endpoint)?.lowercased() else {
                 continue
             }
@@ -439,6 +451,19 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
         }
 
         return 0
+    }
+
+    private func endpointEntityID(_ endpoint: MIDIEndpointRef) -> Int32? {
+        var entity = MIDIEntityRef()
+        guard MIDIEndpointGetEntity(endpoint, &entity) == noErr, entity != 0 else {
+            return nil
+        }
+
+        var uniqueID: Int32 = 0
+        guard MIDIObjectGetIntegerProperty(entity, kMIDIPropertyUniqueID, &uniqueID) == noErr else {
+            return nil
+        }
+        return uniqueID
     }
 
     private func endpointName(_ endpoint: MIDIEndpointRef) -> String? {
