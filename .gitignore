@@ -2,6 +2,7 @@
 .env
 .secrets.json
 config/api_keys.json
+config/dictator.json
 
 # Node packages and build/test output
 node_modules/

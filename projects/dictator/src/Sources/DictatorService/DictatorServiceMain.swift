@@ -88,10 +88,10 @@ struct DictatorServiceMain
         let configStore = RuntimeConfigStore(
             fileURL: repoRoot.appendingPathComponent("config/dictator.json", isDirectory: false)
         )
-        let safeStore = RuntimeConfigStore(
-            fileURL: repoRoot.appendingPathComponent("config/dictator.safe", isDirectory: false)
+        let exampleStore = RuntimeConfigStore(
+            fileURL: repoRoot.appendingPathComponent("config/dictator.example.json", isDirectory: false)
         )
-        let runtimeConfigProvider = RuntimeConfigProvider(store: configStore, defaultStore: safeStore)
+        let runtimeConfigProvider = RuntimeConfigProvider(store: configStore, defaultStore: exampleStore)
         let config = await runtimeConfigProvider.currentRuntimeConfig()
 
         if !config.dictatorServerEnabled
@@ -240,7 +240,8 @@ struct DictatorServiceMain
             activityTracker: activityTracker,
             talonControl: talonControlClient,
             rpcService: rpcService,
-            audioInputResolver: audioInputResolver
+            audioInputResolver: audioInputResolver,
+            launchpadModels: config.launchpadModels
         )
         await MainActor.run
         {

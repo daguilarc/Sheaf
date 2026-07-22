@@ -4,7 +4,7 @@ Dictator is a single macOS Swift process (`DictatorService`). The service owns
 one HTTP listener (SwiftNIO, one event-loop thread) on the registered Sheaf
 port `9003` and serves three surfaces from it: the dictation API, the
 operational web UI, and the standard service endpoints. A fourth surface, the
-Launchpad Pro hardware controller, runs in-process alongside the server and
+Launchpad hardware controller, runs in-process alongside the server and
 shares the same pipeline and stores. The iOS keyboard client remains in the
 repository as quarantined source, but it is not built or tested by default.
 
@@ -37,7 +37,7 @@ tree.
 `DictatorServiceMain` wires everything at startup, in order: Sheaf repo-root
 discovery → trace logger → CLI overrides → `config/services.json` registry
 entry → `RuntimeConfigProvider` (`config/dictator.json` over
-`config/dictator.safe`/bootstrap defaults) → `APIKeysStore` → interaction
+`config/dictator.example.json` defaults) → `APIKeysStore` → interaction
 store (async reload of recent JSONL history) → `WhisperCPPBridgeSTTEngine` →
 `RuntimeConfigRefinementEngine` → `PipelineOrchestrator` → `WebAPIService` →
 `LaunchpadServiceController` → `DictationHTTPServer`. Shutdown (via

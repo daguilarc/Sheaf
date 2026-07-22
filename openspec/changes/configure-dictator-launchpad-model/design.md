@@ -10,9 +10,9 @@ The change crosses configuration decoding/storage, service startup and smoke-tes
 
 **Goals:**
 
-- Select a supported Launchpad model through a typed runtime setting.
-- Connect only to the selected model and use the selected model's SysEx identifier consistently.
-- Preserve Pro Mk3 behavior for legacy configs with no model field while making the checked-in example select the Mini Mk3.
+- Select supported Launchpad models through a typed ordered runtime preference list.
+- Connect to the first preferred model with both standard MIDI endpoints and use that profile's SysEx identifier consistently.
+- Preserve legacy scalar configs as a one-item preference list while defaulting missing configs to prefer Pro Mk3 and fall back to Mini Mk3.
 - Separate tracked defaults from ignored mutable state and avoid creating a live config until a successful mutation must be persisted.
 - Use one required example file as the startup-default and reset source.
 - Preserve ignored live config when running a worktree through smoke-test mode.
@@ -20,31 +20,31 @@ The change crosses configuration decoding/storage, service startup and smoke-tes
 
 **Non-Goals:**
 
-- No automatic model detection or fallback to a different connected Launchpad.
 - No simultaneous control of multiple Launchpads.
+- No automatic use of DAW endpoints.
 - No user-configurable raw endpoint substring or SysEx byte.
-- No hot switching when `launchpad_model` changes; a service restart is required.
+- No hot switching when `launchpad_models` changes; a service restart is required.
 - No changes to pad coordinates, MIDI note mapping, layout JSON, or actions.
-- No dashboard field for editing `launchpad_model` in this change.
+- No dashboard field for editing `launchpad_models` in this change.
 - No shell-completion changes, global npm packages, or new repository bootstrap framework.
 
 ## Decisions
 
-1. Represent the selection as a closed `LaunchpadModel` configuration enum.
+1. Represent the selection as a closed ordered `LaunchpadModel` preference list.
 
-   `RuntimeConfigFile` gains `launchpad_model` with values `pro_mk3` and `mini_mk3`. Decoding a missing field yields `pro_mk3`; decoding an unknown value fails rather than guessing. The checked-in example explicitly stores `mini_mk3`. A typed value keeps protocol details out of user configuration and makes unsupported hardware visible. Alternatives considered: raw `launchpad_endpoint_match` plus `launchpad_sysex_model_id` fields expose fragile protocol details; endpoint auto-detection becomes nondeterministic when both models are connected.
+   `RuntimeConfigFile` gains `launchpad_models` with values `pro_mk3` and `mini_mk3`. Decoding a missing field yields `["pro_mk3", "mini_mk3"]`; decoding the legacy scalar `launchpad_model` yields a one-item list; decoding an empty list, duplicate model, or unknown value fails rather than guessing. The checked-in example explicitly stores the Pro-then-Mini preference. A typed list keeps protocol details out of user configuration and makes unsupported hardware visible. Alternatives considered: raw `launchpad_endpoint_match` plus `launchpad_sysex_model_id` fields expose fragile protocol details; unconfigured endpoint auto-detection becomes nondeterministic when both models are connected.
 
 2. Resolve the enum to an immutable transport profile.
 
-   A small profile value supplies the normalized endpoint substring and SysEx model byte: Pro Mk3 uses `"launchpad pro"` and `0x0E`; Mini Mk3 uses `"launchpad mini"` and `0x0D`. `LaunchpadMIDIManager` receives that profile at construction and uses it for source matching, destination matching, programmer-mode messages, RGB update messages, and sleep/wake messages. Message-building and endpoint-matching helpers remain testable without CoreMIDI endpoints.
+   A small profile value supplies the normalized endpoint substring, CoreMIDI short-name substring, standard-MIDI endpoint predicate, and SysEx model byte: Pro Mk3 uses `"launchpad pro"` / `"lppromk3"` and `0x0E`; Mini Mk3 uses `"launchpad mini"` / `"lpminimk3"` and `0x0D`. `LaunchpadMIDIManager` receives ordered profiles at construction and, on each scan, selects the first profile with both online source and destination endpoints whose names contain `MIDI` and not `DAW`; CoreMIDI endpoints marked offline are ignored so hot-swapping from Pro to Mini does not keep using stale Pro objects. If a scan finds no usable endpoint pair, the manager refreshes its CoreMIDI client and ports and retries discovery once before publishing `searching`, so a long-lived service can recover from stale client state without a Dictator restart. The same profile is used for programmer-mode messages, RGB update messages, and sleep/wake messages. Message-building and endpoint-matching helpers remain testable without CoreMIDI endpoints.
 
-3. Snapshot the Launchpad model at service startup.
+3. Snapshot the Launchpad model preferences at service startup.
 
-   `DictatorServiceMain` already obtains the current runtime config before constructing services. It passes the selected model into the Launchpad controller/transport instead of making the MIDI queue observe mutable runtime state. The existing ten-second scan still connects a configured controller that appears later, but changing the config requires restarting the service. This keeps the change small and avoids reconnect races.
+   `DictatorServiceMain` already obtains the current runtime config before constructing services. It passes the ordered model list into the Launchpad controller/transport instead of making the MIDI queue observe mutable runtime state. The existing ten-second scan connects a configured controller that appears later, switches to a higher-priority configured controller if it appears, and falls back to the next configured controller when the current controller disappears. Changing the config requires restarting the service.
 
 4. Make `config/dictator.example.json` the required production default source.
 
-   The current tracked `config/dictator.json` content is copied to tracked `config/dictator.example.json` and extended with `"launchpad_model": "mini_mk3"`. `config/dictator.json` becomes ignored and `config/dictator.safe` is retired. Production startup must decode the example successfully even when a live file exists, because API defaults and reset depend on it. Missing or invalid example/live files surface as startup configuration errors; production no longer silently substitutes `RuntimeConfigFile.bootstrap()`.
+   The current tracked `config/dictator.json` content is copied to tracked `config/dictator.example.json` and extended with `"launchpad_models": ["pro_mk3", "mini_mk3"]`. `config/dictator.json` becomes ignored and `config/dictator.safe` is retired. Production startup must decode the example successfully even when a live file exists, because API defaults and reset depend on it.
 
 5. Keep the example-backed state in memory until the first write.
 
@@ -56,7 +56,7 @@ The change crosses configuration decoding/storage, service startup and smoke-tes
 
 7. Keep the Launchpad model outside the editable dashboard field set.
 
-   The dashboard continues to expose its existing eight live-editable fields. `launchpad_model` is a startup setting edited directly in the JSON file, consistent with the restart requirement. The config API still returns example-derived defaults for the editable fields, and its first successful mutation materializes the complete config including `launchpad_model`.
+   The dashboard continues to expose its existing eight live-editable fields. `launchpad_models` is a startup setting edited directly in the JSON file, consistent with the restart requirement. The config API still returns example-derived defaults for the editable fields, and its first successful mutation materializes the complete config including `launchpad_models`.
 
 8. Make the registered Conductor run target self-bootstrap through existing targets.
 
@@ -69,12 +69,12 @@ The change crosses configuration decoding/storage, service startup and smoke-tes
 - [A bad example would disable startup for everyone] → Treat the example as a required contract, decode it in tests, and fail loudly with the offending path instead of silently running unexpected defaults.
 - [Existing clones lose the tracked live path on update] → Preserve its exact committed content in the example; document that future local customization belongs in the ignored live file.
 - [Smoke tests could mutate a developer's main live config] → Preserve the existing behavior that runtime mutations target the resolved live store, document it, and limit smoke tests to intentional configuration operations.
-- [The startup-only model may surprise dashboard users] → Document the restart requirement and omit a dashboard control that would falsely imply immediate application.
+- [The startup-only preference list may surprise dashboard users] → Document the restart requirement and omit a dashboard control that would falsely imply immediate application.
 - [Installing and building on each Conductor run adds startup latency] → Prefer deterministic, idempotent fresh-Mac startup over a fast command that depends on undocumented prior state; retain the explicit lower-level npm commands for debugging.
 
 ## Migration Plan
 
-1. Copy the tracked live configuration to `config/dictator.example.json`, add `launchpad_model: mini_mk3`, ignore `config/dictator.json`, and remove it from Git tracking without treating the example as mutable state.
+1. Copy the tracked live configuration to `config/dictator.example.json`, add `launchpad_models: ["pro_mk3", "mini_mk3"]`, ignore `config/dictator.json`, and remove it from Git tracking without treating the example as mutable state.
 2. Replace safe/bootstrap production fallback wiring with required example/live stores and lazy persistence.
 3. Add the typed Launchpad model/profile and inject it into the MIDI manager at startup.
 4. Update smoke-test asset resolution, API/reset behavior, docs, and tests.

@@ -119,6 +119,40 @@ final class RuntimeConfigProviderTests: XCTestCase {
         XCTAssertEqual(current, safe)
     }
 
+    func testExampleBackedStartupDoesNotCreatePrimaryFileUntilMutation() async throws {
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let primaryURL = tempDir.appendingPathComponent("runtime-config.json")
+        let exampleURL = tempDir.appendingPathComponent("runtime-config.example.json")
+
+        let example = RuntimeConfigFile(
+            version: 2,
+            cloudModel: "gpt-5.6-luna",
+            localModel: "qwen2.5:7b-instruct",
+            useCloud: true,
+            launchpadModels: [.proMk3, .miniMk3],
+            updatedAt: "2026-07-22T00:00:00Z"
+        )
+        try RuntimeConfigStore(fileURL: exampleURL).save(example)
+
+        let provider = RuntimeConfigProvider(
+            store: RuntimeConfigStore(fileURL: primaryURL),
+            defaultStore: RuntimeConfigStore(fileURL: exampleURL)
+        )
+
+        let current = await provider.currentRuntimeConfig()
+        XCTAssertEqual(current, example)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: primaryURL.path))
+
+        let updated = try await provider.applyPatch(RuntimeConfigPatch(systemPrompt: "conservative.md"))
+
+        XCTAssertEqual(updated.launchpadModels, [.proMk3, .miniMk3])
+        let persisted = try XCTUnwrap(try RuntimeConfigStore(fileURL: primaryURL).load())
+        XCTAssertEqual(persisted.systemPrompt, "conservative.md")
+        XCTAssertEqual(persisted.launchpadModels, [.proMk3, .miniMk3])
+    }
+
     func testApplyInMemoryPatchDoesNotPersistToPrimaryFile() async throws {
         let tempDir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -207,6 +241,93 @@ final class RuntimeConfigProviderTests: XCTestCase {
         """.data(using: .utf8)!
 
         XCTAssertThrowsError(try JSONDecoder().decode(RuntimeConfigFile.self, from: json))
+    }
+
+    func testRuntimeConfigLaunchpadModelsDefaultToProThenMiniWhenMissing() throws {
+        let decoded = try decodeRuntimeConfigJSON(audioInputLine: nil)
+
+        XCTAssertEqual(decoded.launchpadModels, [.proMk3, .miniMk3])
+    }
+
+    func testRuntimeConfigDecodesAndEncodesLaunchpadModelPreferences() throws {
+        let json = """
+        {
+          "version": 2,
+          "cloud_model": "gpt-5.6-luna",
+          "local_model": "qwen2.5:7b-instruct",
+          "launchpad_models": ["mini_mk3", "pro_mk3"],
+          "use_cloud": true,
+          "updated_at": "2026-07-22T00:00:00Z"
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(RuntimeConfigFile.self, from: json)
+        XCTAssertEqual(decoded.launchpadModels, [.miniMk3, .proMk3])
+
+        let encoded = try JSONEncoder().encode(decoded)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(object["launchpad_models"] as? [String], ["mini_mk3", "pro_mk3"])
+        XCTAssertNil(object["launchpad_model"])
+    }
+
+    func testRuntimeConfigAcceptsLegacyLaunchpadModelScalarAsSinglePreference() throws {
+        let json = """
+        {
+          "version": 2,
+          "cloud_model": "gpt-5.6-luna",
+          "local_model": "qwen2.5:7b-instruct",
+          "launchpad_model": "mini_mk3",
+          "use_cloud": true,
+          "updated_at": "2026-07-22T00:00:00Z"
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(RuntimeConfigFile.self, from: json)
+        XCTAssertEqual(decoded.launchpadModels, [.miniMk3])
+    }
+
+    func testRuntimeConfigRejectsInvalidLaunchpadModelPreferences() throws {
+        for launchpadLine in [
+            #""launchpad_models": [],"#,
+            #""launchpad_models": ["pro_mk3", "pro_mk3"],"#,
+            #""launchpad_models": ["launchpad_x"],"#
+        ] {
+            let json = """
+            {
+              "version": 2,
+              "cloud_model": "gpt-5.6-luna",
+              "local_model": "qwen2.5:7b-instruct",
+              \(launchpadLine)
+              "use_cloud": true,
+              "updated_at": "2026-07-22T00:00:00Z"
+            }
+            """.data(using: .utf8)!
+
+            XCTAssertThrowsError(try JSONDecoder().decode(RuntimeConfigFile.self, from: json))
+        }
+    }
+
+    func testUnrelatedPatchPreservesLaunchpadModelPreferences() async throws {
+        let tempDir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let fileURL = tempDir.appendingPathComponent("runtime-config.json")
+        let seed = RuntimeConfigFile(
+            version: 2,
+            cloudModel: "gpt-5.6-luna",
+            localModel: "qwen2.5:7b-instruct",
+            useCloud: true,
+            launchpadModels: [.miniMk3, .proMk3],
+            updatedAt: "2026-07-22T00:00:00Z"
+        )
+        let store = RuntimeConfigStore(fileURL: fileURL)
+        try store.save(seed)
+        let provider = RuntimeConfigProvider(store: store, defaultStore: nil)
+
+        let updated = try await provider.applyPatch(RuntimeConfigPatch(systemPrompt: "conservative.md"))
+
+        XCTAssertEqual(updated.launchpadModels, [.miniMk3, .proMk3])
+        XCTAssertEqual(try store.load()?.launchpadModels, [.miniMk3, .proMk3])
     }
 
     func testUnrelatedPatchPreservesReasoningEffort() async throws {

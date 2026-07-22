@@ -9,6 +9,13 @@ public enum OpenAIReasoningEffort: String, Codable, Sendable, CaseIterable {
     case max
 }
 
+public enum LaunchpadModel: String, Codable, Sendable, CaseIterable {
+    case proMk3 = "pro_mk3"
+    case miniMk3 = "mini_mk3"
+
+    public static let defaultPreferences: [LaunchpadModel] = [.proMk3, .miniMk3]
+}
+
 public struct RuntimeConfigFile: Codable, Sendable, Equatable {
     public static let defaultInteractionsBufferBytes: Int = 100 * 1024 * 1024
     public static let defaultOllamaHost = "http://127.0.0.1:11434"
@@ -25,6 +32,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
     public static let defaultDictatorServerEnabled = true
     public static let defaultInjectableRules: [String: String] = [:]
     public static let defaultAudioInput: String? = nil
+    public static let defaultLaunchpadModels = LaunchpadModel.defaultPreferences
 
     public let version: Int
     public let cloudModel: String
@@ -47,6 +55,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
     public let dictatorServerPort: Int
     public let dictatorServerEnabled: Bool
     public let injectableRules: [String: String]
+    public let launchpadModels: [LaunchpadModel]
     public let updatedAt: String
 
     public var model: String {
@@ -75,6 +84,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         dictatorServerPort: Int = Self.defaultDictatorServerPort,
         dictatorServerEnabled: Bool = Self.defaultDictatorServerEnabled,
         injectableRules: [String: String] = Self.defaultInjectableRules,
+        launchpadModels: [LaunchpadModel] = Self.defaultLaunchpadModels,
         updatedAt: String
     ) {
         self.version = version
@@ -98,6 +108,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         self.dictatorServerPort = dictatorServerPort
         self.dictatorServerEnabled = dictatorServerEnabled
         self.injectableRules = Self.normalizedInjectableRules(injectableRules)
+        self.launchpadModels = Self.validatedLaunchpadModels(launchpadModels)
         self.updatedAt = updatedAt
     }
 
@@ -135,6 +146,8 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         case dictatorServerPort = "dictator_server_port"
         case dictatorServerEnabled = "dictator_server_enabled"
         case injectableRules = "injectable_rules"
+        case launchpadModels = "launchpad_models"
+        case launchpadModel = "launchpad_model"
         case updatedAt = "updated_at"
     }
 
@@ -165,6 +178,8 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         let dictatorServerPort = try container.decodeIfPresent(Int.self, forKey: .dictatorServerPort)
         let dictatorServerEnabled = try container.decodeIfPresent(Bool.self, forKey: .dictatorServerEnabled)
         let injectableRules = try container.decodeIfPresent([String: String].self, forKey: .injectableRules)
+        let launchpadModels = try container.decodeIfPresent([LaunchpadModel].self, forKey: .launchpadModels)
+        let legacyLaunchpadModel = try container.decodeIfPresent(LaunchpadModel.self, forKey: .launchpadModel)
         let legacyModel = try container.decodeIfPresent(String.self, forKey: .model)
 
         let resolvedCloudModel = cloudModel ?? legacyModel ?? Self.defaultCloudModel
@@ -184,6 +199,10 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         let resolvedDictatorServerPort = dictatorServerPort ?? Self.defaultDictatorServerPort
         let resolvedDictatorServerEnabled = dictatorServerEnabled ?? Self.defaultDictatorServerEnabled
         let resolvedInjectableRules = injectableRules ?? Self.defaultInjectableRules
+        let resolvedLaunchpadModels = try Self.validatedDecodedLaunchpadModels(
+            launchpadModels ?? legacyLaunchpadModel.map { [$0] } ?? Self.defaultLaunchpadModels,
+            codingPath: container.codingPath + [launchpadModels == nil ? CodingKeys.launchpadModel : CodingKeys.launchpadModels]
+        )
 
         self.init(
             version: version,
@@ -207,6 +226,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
             dictatorServerPort: resolvedDictatorServerPort,
             dictatorServerEnabled: resolvedDictatorServerEnabled,
             injectableRules: resolvedInjectableRules,
+            launchpadModels: resolvedLaunchpadModels,
             updatedAt: updatedAt
         )
     }
@@ -234,6 +254,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
         try container.encode(dictatorServerPort, forKey: .dictatorServerPort)
         try container.encode(dictatorServerEnabled, forKey: .dictatorServerEnabled)
         try container.encode(injectableRules, forKey: .injectableRules)
+        try container.encode(launchpadModels, forKey: .launchpadModels)
         try container.encode(updatedAt, forKey: .updatedAt)
     }
 
@@ -252,6 +273,7 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
             dictatorServerPort: Self.defaultDictatorServerPort,
             dictatorServerEnabled: Self.defaultDictatorServerEnabled,
             injectableRules: Self.defaultInjectableRules,
+            launchpadModels: Self.defaultLaunchpadModels,
             updatedAt: Self.timestamp(from: now)
         )
     }
@@ -298,6 +320,36 @@ public struct RuntimeConfigFile: Codable, Sendable, Equatable {
             normalized[normalizedKey] = normalizedPath
         }
         return normalized
+    }
+
+    private static func validatedLaunchpadModels(_ models: [LaunchpadModel]) -> [LaunchpadModel] {
+        guard !models.isEmpty else {
+            return Self.defaultLaunchpadModels
+        }
+        var seen: Set<LaunchpadModel> = []
+        var result: [LaunchpadModel] = []
+        for model in models where !seen.contains(model) {
+            seen.insert(model)
+            result.append(model)
+        }
+        return result
+    }
+
+    private static func validatedDecodedLaunchpadModels(
+        _ models: [LaunchpadModel],
+        codingPath: [CodingKey]
+    ) throws -> [LaunchpadModel] {
+        guard !models.isEmpty else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(codingPath: codingPath, debugDescription: "launchpad_models cannot be empty")
+            )
+        }
+        guard Set(models).count == models.count else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(codingPath: codingPath, debugDescription: "launchpad_models cannot contain duplicates")
+            )
+        }
+        return models
     }
 
     public static func validateInjectableRule(key: String, promptPath: String?) throws -> String {
@@ -471,16 +523,23 @@ public struct RuntimeConfigStore {
         return cwd.appendingPathComponent("config/dictator.json", isDirectory: false)
     }
 
-    public static func defaultSafeFileURL(
+    public static func defaultExampleFileURL(
         currentDirectoryPath: String = FileManager.default.currentDirectoryPath,
         fileManager: FileManager = .default
     ) -> URL {
         let cwd = URL(fileURLWithPath: currentDirectoryPath, isDirectory: true)
         if let repoRoot = SheafRootDiscovery.findRepoRoot(startingAt: cwd, fileManager: fileManager) {
-            return repoRoot.appendingPathComponent("config/dictator.safe", isDirectory: false)
+            return repoRoot.appendingPathComponent("config/dictator.example.json", isDirectory: false)
         }
 
-        return cwd.appendingPathComponent("config/dictator.safe", isDirectory: false)
+        return cwd.appendingPathComponent("config/dictator.example.json", isDirectory: false)
+    }
+
+    public static func defaultSafeFileURL(
+        currentDirectoryPath: String = FileManager.default.currentDirectoryPath,
+        fileManager: FileManager = .default
+    ) -> URL {
+        defaultExampleFileURL(currentDirectoryPath: currentDirectoryPath, fileManager: fileManager)
     }
 
     public func load() throws -> RuntimeConfigFile? {
@@ -518,19 +577,16 @@ public actor RuntimeConfigProvider {
 
     public init(
         store: RuntimeConfigStore = RuntimeConfigStore(fileURL: RuntimeConfigStore.defaultFileURL()),
-        defaultStore: RuntimeConfigStore? = RuntimeConfigStore(fileURL: RuntimeConfigStore.defaultSafeFileURL())
+        defaultStore: RuntimeConfigStore? = RuntimeConfigStore(fileURL: RuntimeConfigStore.defaultExampleFileURL())
     ) {
         self.store = store
 
-        let defaultFromSafe = try? defaultStore?.load()
-        let startupDefault = defaultFromSafe ?? RuntimeConfigFile.bootstrap()
+        let defaultFromExample = try? defaultStore?.load()
+        let startupDefault = defaultFromExample ?? RuntimeConfigFile.bootstrap()
         self.defaultConfig = startupDefault
 
         let loaded = try? store.load()
         let initialConfig = loaded ?? startupDefault
-        if loaded == nil {
-            try? store.save(initialConfig)
-        }
         self.runtimeConfig = initialConfig
     }
 
@@ -642,6 +698,7 @@ public actor RuntimeConfigProvider {
             dictatorServerPort: runtimeConfig.dictatorServerPort,
             dictatorServerEnabled: runtimeConfig.dictatorServerEnabled,
             injectableRules: resolvedInjectableRules,
+            launchpadModels: runtimeConfig.launchpadModels,
             updatedAt: RuntimeConfigFile.timestamp(from: now)
         )
         return next
@@ -686,6 +743,7 @@ public actor RuntimeConfigProvider {
             dictatorServerPort: defaultConfig.dictatorServerPort,
             dictatorServerEnabled: defaultConfig.dictatorServerEnabled,
             injectableRules: defaultConfig.injectableRules,
+            launchpadModels: defaultConfig.launchpadModels,
             updatedAt: RuntimeConfigFile.timestamp(from: now)
         )
 

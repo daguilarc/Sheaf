@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make Dictator connect to the standard MIDI ports of a configured Launchpad Pro Mk3 or Mini Mk3 and never select the device's DAW ports.
+Make Dictator connect to the standard MIDI ports of the first available configured Launchpad Pro Mk3 or Mini Mk3 preference and never select the device's DAW ports.
 
 ## Current behavior
 
@@ -12,23 +12,25 @@ The earlier Pro-only implementation used the same first-match strategy for every
 
 ## Approved behavior
 
-Endpoint matching remains case-insensitive and model-specific, and also requires the endpoint's role:
+Endpoint matching remains case-insensitive and model-specific, and also requires the standard MIDI endpoint rather than the DAW endpoint. CoreMIDI's source and destination collections provide direction; the endpoint display names do not have to include `In` or `Out`. With the default preference list, Dictator tries Pro Mk3 first and Mini Mk3 second on every reconnect scan:
 
-- A source must contain the selected model substring and `midi out`.
-- A destination must contain the selected model substring and `midi in`.
-- An endpoint containing the selected model substring but only a DAW role does not match.
-- If either required MIDI endpoint is absent, Dictator remains searching and does not fall back to DAW or another Launchpad model.
+- A source must contain the candidate model substring and `midi`, and must not contain `daw`.
+- A destination must contain the candidate model substring and `midi`, and must not contain `daw`.
+- An endpoint containing the candidate model substring but only a DAW role does not match.
+- A CoreMIDI endpoint marked offline does not match, even if it belongs to a higher-priority preferred model.
+- If either required MIDI endpoint is absent, Dictator tries the next configured model.
+- If no configured model has a usable endpoint pair, Dictator refreshes its CoreMIDI client/ports and retries discovery once before publishing `searching`, keeping hot-swap recovery independent from a service restart.
 
-This rule applies identically to the Pro Mk3 and Mini Mk3 profiles. SysEx model-byte selection and all pad behavior remain unchanged.
+This rule applies identically to the Pro Mk3 and Mini Mk3 profiles. The connected profile supplies the SysEx model byte (`0x0E` for Pro, `0x0D` for Mini); all pad behavior remains unchanged.
 
 ## Implementation
 
-Extend `LaunchpadTransportProfile` with source and destination endpoint-role substrings. Make source and destination scans call role-specific matchers rather than the current model-only matcher.
+Extend `LaunchpadTransportProfile` with a standard-MIDI endpoint predicate. Make source and destination scans evaluate the ordered profile list and use the same predicate against the respective CoreMIDI endpoint collections rather than the current model-only matcher.
 
 Keep the matching logic pure so tests can provide endpoint names without requiring CoreMIDI hardware.
 
 ## Testing and specification
 
-Add regression tests that enumerate a matching DAW endpoint before a matching MIDI endpoint and prove that only `MIDI Out` is accepted as a source and only `MIDI In` is accepted as a destination. Cover both supported models, case-insensitivity, missing MIDI endpoints, and rejection of the other model.
+Add regression tests that enumerate a matching DAW endpoint before a matching MIDI endpoint and prove that the standard `MIDI` endpoint is accepted while DAW is rejected. Cover both supported models, case-insensitivity, missing MIDI endpoints, and rejection of the other model.
 
 Update OpenSpec requirement `lp-27` and its scenarios to make the MIDI-only source/destination contract and no-DAW-fallback behavior explicit. Hardware smoke evidence must report the connected MIDI source name before the pending manual pad and sleep/wake checks are marked complete.

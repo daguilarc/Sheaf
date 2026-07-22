@@ -4,7 +4,7 @@ Dictator is the Sheaf dictation service: a macOS Swift service on port
 `9003` that transcribes WAV audio with local whisper.cpp, refines the
 transcript through a configurable LLM provider (Ollama or OpenAI with
 fallback), records every interaction, and exposes an operational web
-dashboard. A Launchpad Pro hardware controller drives the same pipeline
+dashboard. A supported Launchpad hardware controller drives the same pipeline
 in-process with OS-level text insertion. The iOS keyboard host
 app/extension is retained as quarantined source for possible future revival,
 but is not part of default validation.
@@ -27,13 +27,13 @@ and known gaps are tracked in [coverage.md](coverage.md).
 | [build-workflow](../../../openspec/specs/dictator-build-workflow/spec.md) | `dbw` | Default Swift package build/test lanes, root Makefile forwarding, and opt-in quarantined iOS validation lanes |
 | [service-lifecycle](../../../openspec/specs/dictator-service-lifecycle/spec.md) | `svc` | Startup (root discovery, registry, config/secrets, health warnings), CLI overrides, `/health`, `/exit`, SIGINT shutdown, 404/405 fallbacks, trace log |
 | [web-ui](../../../openspec/specs/dictator-web-ui/spec.md) | `web` | Static dashboard shell and all `/api/*` endpoints: status, config edit/options/reset, prompts, interaction history, models, key status |
-| [launchpad](../../../openspec/specs/dictator-launchpad/spec.md) | `lp` | Launchpad Pro layout JSON, dictation pads and states, full Talon wake/sleep control, keystroke injection, shift latch, contextual backspace, safe-config restore, paste insertion |
+| [launchpad](../../../openspec/specs/dictator-launchpad/spec.md) | `lp` | Launchpad layout JSON, Pro/Mini Mk3 MIDI preference selection, dictation pads and states, full Talon wake/sleep control, keystroke injection, shift latch, contextual backspace, safe-config restore, paste insertion |
 | [ios-keyboard](../../../openspec/specs/dictator-ios-keyboard/spec.md) | `ios` | Retained/quarantined iOS host app + keyboard extension: server URL resolution, upload contract usage, app-group session state machine, Darwin notifications, diagnostics |
 
 ## Shared Contracts
 
-- [Configuration files](contracts/config.md) — `config/dictator.json` keys
-  and defaults, `config/dictator.safe` semantics, `config/api_keys.json`.
+- [Configuration files](contracts/config.md) — tracked `config/dictator.example.json`
+  defaults, ignored `config/dictator.json` runtime overrides, and `config/api_keys.json`.
 - [Interaction records](contracts/interactions.md) — the
   `data/dictator/interactions/` hourly JSONL envelope, field meanings, and
   buffer/startup-load policy.

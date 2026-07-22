@@ -1,5 +1,92 @@
 import CoreMIDI
+import DictatorCore
 import Foundation
+
+struct LaunchpadTransportProfile: Equatable {
+    struct EndpointNames: Equatable {
+        let profile: LaunchpadTransportProfile
+        let sourceName: String
+        let destinationName: String
+    }
+
+    struct EndpointCandidate: Equatable {
+        let name: String
+        let isOnline: Bool
+    }
+
+    let model: LaunchpadModel
+    let displayName: String
+    let endpointMatches: [String]
+    let sysexModelID: UInt8
+
+    static let proMk3 = LaunchpadTransportProfile(
+        model: .proMk3,
+        displayName: "Launchpad Pro Mk3",
+        endpointMatches: ["launchpad pro", "lppromk3"],
+        sysexModelID: 0x0E
+    )
+    static let miniMk3 = LaunchpadTransportProfile(
+        model: .miniMk3,
+        displayName: "Launchpad Mini Mk3",
+        endpointMatches: ["launchpad mini", "lpminimk3"],
+        sysexModelID: 0x0D
+    )
+
+    static func profile(for model: LaunchpadModel) -> LaunchpadTransportProfile {
+        switch model {
+        case .proMk3:
+            return .proMk3
+        case .miniMk3:
+            return .miniMk3
+        }
+    }
+
+    static func profiles(for models: [LaunchpadModel]) -> [LaunchpadTransportProfile] {
+        models.map(profile(for:))
+    }
+
+    func matchesSourceName(_ name: String) -> Bool {
+        matchesEndpointName(name)
+    }
+
+    func matchesDestinationName(_ name: String) -> Bool {
+        matchesEndpointName(name)
+    }
+
+    static func selectPreferredEndpointNames(
+        from profiles: [LaunchpadTransportProfile],
+        sourceNames: [String],
+        destinationNames: [String]
+    ) -> EndpointNames? {
+        selectPreferredEndpointCandidates(
+            from: profiles,
+            sources: sourceNames.map { EndpointCandidate(name: $0, isOnline: true) },
+            destinations: destinationNames.map { EndpointCandidate(name: $0, isOnline: true) }
+        )
+    }
+
+    static func selectPreferredEndpointCandidates(
+        from profiles: [LaunchpadTransportProfile],
+        sources: [EndpointCandidate],
+        destinations: [EndpointCandidate]
+    ) -> EndpointNames? {
+        for profile in profiles {
+            guard let source = sources.first(where: { $0.isOnline && profile.matchesSourceName($0.name) }),
+                  let destination = destinations.first(where: { $0.isOnline && profile.matchesDestinationName($0.name) }) else {
+                continue
+            }
+            return EndpointNames(profile: profile, sourceName: source.name, destinationName: destination.name)
+        }
+        return nil
+    }
+
+    private func matchesEndpointName(_ name: String) -> Bool {
+        let normalized = name.lowercased()
+        return endpointMatches.contains { normalized.contains($0) }
+            && normalized.contains("midi")
+            && !normalized.contains("daw")
+    }
+}
 
 final class LaunchpadMIDIManager: LaunchpadTransport {
     enum ConnectionState: Equatable {
@@ -7,8 +94,6 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
         case connected(name: String)
     }
 
-    private static let deviceMatch = "launchpad pro"
-    private static let sysexModelID: UInt8 = 0x0E
     private static let sleepCommand: UInt8 = 0x09
     private static let idleSleepInterval: TimeInterval = 600
     static let allAddressableCoordinates: [PadCoordinate] = {
@@ -25,6 +110,7 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
     }()
 
     private let queue = DispatchQueue(label: "dictator.launchpad.midi")
+    private let profiles: [LaunchpadTransportProfile]
     private var scanTimer: DispatchSourceTimer?
     private var idleSleepTimer: DispatchSourceTimer?
 
@@ -34,6 +120,7 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
 
     private var connectedSource = MIDIEndpointRef()
     private var connectedDestination = MIDIEndpointRef()
+    private var connectedProfile: LaunchpadTransportProfile?
     private var lastSentColors: [PadCoordinate: PadColor] = [:]
 
     var onConnectionStateChanged: ((ConnectionState) -> Void)?
@@ -42,6 +129,10 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
 
     private(set) var isConnected: Bool = false
     private var isSleeping: Bool = false
+
+    init(preferredModels: [LaunchpadModel] = LaunchpadModel.defaultPreferences) {
+        profiles = LaunchpadTransportProfile.profiles(for: preferredModels)
+    }
 
     func start() {
         queue.async { [weak self] in
@@ -81,8 +172,10 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
     }
 
     func setProgrammerModeIfNeeded() {
-        // Launchpad Pro Mk3: SysEx message to enter programmer mode.
-        sendRaw(bytes: [0xF0, 0x00, 0x20, 0x29, 0x02, Self.sysexModelID, 0x0E, 0x01, 0xF7])
+        guard let connectedProfile else {
+            return
+        }
+        sendRaw(bytes: Self.makeProgrammerModeSysEx(profile: connectedProfile))
     }
 
     func sendBatchPadColors(_ updates: [PadColorUpdate]) {
@@ -94,24 +187,11 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
                 return
             }
 
-            let updatesToSend = Self.makeSysExUpdates(from: updates, cachedColors: &self.lastSentColors)
-
-            var bytes: [UInt8] = [0xF0, 0x00, 0x20, 0x29, 0x02, Self.sysexModelID, 0x03]
-            bytes.reserveCapacity(8 + updatesToSend.count * 5)
-
-            for update in updatesToSend {
-                guard let note = Self.coordinateToNote(update.coordinate) else {
-                    continue
-                }
-                bytes.append(0x03)
-                bytes.append(note)
-                bytes.append(update.color.r / 2)
-                bytes.append(update.color.g / 2)
-                bytes.append(update.color.b / 2)
+            guard let connectedProfile = self.connectedProfile else {
+                return
             }
-
-            bytes.append(0xF7)
-            self.sendRaw(bytes: bytes)
+            let updatesToSend = Self.makeSysExUpdates(from: updates, cachedColors: &self.lastSentColors)
+            self.sendRaw(bytes: Self.makePadColorSysEx(from: updatesToSend, profile: connectedProfile))
         }
     }
 
@@ -133,13 +213,57 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
         }
     }
 
+    static func preferredEndpointName(displayName: String?, name: String?) -> String? {
+        if let displayName, !displayName.isEmpty {
+            return displayName
+        }
+        if let name, !name.isEmpty {
+            return name
+        }
+        return nil
+    }
+
+    static func makeProgrammerModeSysEx(profile: LaunchpadTransportProfile) -> [UInt8] {
+        [0xF0, 0x00, 0x20, 0x29, 0x02, profile.sysexModelID, 0x0E, 0x01, 0xF7]
+    }
+
+    static func makeSleepModeSysEx(profile: LaunchpadTransportProfile, isAwake: Bool) -> [UInt8] {
+        let mode: UInt8 = isAwake ? 0x01 : 0x00
+        return [0xF0, 0x00, 0x20, 0x29, 0x02, profile.sysexModelID, Self.sleepCommand, mode, 0xF7]
+    }
+
+    static func makePadColorSysEx(
+        from updates: [PadColorUpdate],
+        profile: LaunchpadTransportProfile
+    ) -> [UInt8] {
+        var bytes: [UInt8] = [0xF0, 0x00, 0x20, 0x29, 0x02, profile.sysexModelID, 0x03]
+        bytes.reserveCapacity(8 + updates.count * 5)
+
+        for update in updates {
+            guard let note = coordinateToNote(update.coordinate) else {
+                continue
+            }
+            bytes.append(0x03)
+            bytes.append(note)
+            bytes.append(update.color.r / 2)
+            bytes.append(update.color.g / 2)
+            bytes.append(update.color.b / 2)
+        }
+
+        bytes.append(0xF7)
+        return bytes
+    }
+
     private func setupClientIfNeeded() -> Bool {
         if client != 0 {
             return true
         }
 
-        var status = MIDIClientCreateWithBlock("dictator.launchpad" as CFString, &client) { notificationPtr in
+        var status = MIDIClientCreateWithBlock("dictator.launchpad" as CFString, &client) { [weak self] notificationPtr in
             TraceLogger.log("launchpad midi notification messageID=\(notificationPtr.pointee.messageID.rawValue)")
+            self?.queue.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                self?.scanAndConnect()
+            }
         }
         guard status == noErr else {
             TraceLogger.log("launchpad midi client create failed status=\(status)")
@@ -175,30 +299,35 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
     }
 
     private func scanAndConnect() {
-        let source = findMatchingSource()
-        let destination = findMatchingDestination()
-
-        if source == 0 || destination == 0 {
+        guard let selection = findPreferredEndpoints() ?? findPreferredEndpointsAfterClientRefresh() else {
             disconnectCurrentEndpoints()
             publishState(.searching)
             return
         }
 
-        if source == connectedSource && destination == connectedDestination && isConnected {
+        connect(selection)
+    }
+
+    private func connect(_ selection: EndpointSelection) {
+        if selection.source == connectedSource
+            && selection.destination == connectedDestination
+            && selection.profile == connectedProfile
+            && isConnected {
             return
         }
 
         disconnectCurrentEndpoints()
 
-        let connectStatus = MIDIPortConnectSource(inputPort, source, nil)
+        let connectStatus = MIDIPortConnectSource(inputPort, selection.source, nil)
         guard connectStatus == noErr else {
             TraceLogger.log("launchpad midi connect source failed status=\(connectStatus)")
             publishState(.searching)
             return
         }
 
-        connectedSource = source
-        connectedDestination = destination
+        connectedSource = selection.source
+        connectedDestination = selection.destination
+        connectedProfile = selection.profile
         isConnected = true
         isSleeping = false
 
@@ -206,8 +335,19 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
         sendSleepMode(isAwake: true)
         clear()
         armIdleSleepTimer()
-        publishState(.connected(name: endpointName(source) ?? "Launchpad Pro Mk3"))
-        TraceLogger.log("launchpad connected")
+        publishState(.connected(name: selection.sourceName ?? selection.profile.displayName))
+        TraceLogger.log("launchpad connected profile=\(selection.profile.model.rawValue)")
+    }
+
+    private func findPreferredEndpointsAfterClientRefresh() -> EndpointSelection? {
+        TraceLogger.log("launchpad midi refreshing client after empty scan")
+        disconnectCurrentEndpoints()
+        disposeClient()
+        guard setupClientIfNeeded() else {
+            TraceLogger.log("launchpad midi setup failed after refresh")
+            return nil
+        }
+        return findPreferredEndpoints()
     }
 
     private func disconnectCurrentEndpoints() {
@@ -216,9 +356,25 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
         }
         connectedSource = 0
         connectedDestination = 0
+        connectedProfile = nil
         isConnected = false
         isSleeping = false
         disarmIdleSleepTimer()
+    }
+
+    private func disposeClient() {
+        if inputPort != 0 {
+            _ = MIDIPortDispose(inputPort)
+            inputPort = 0
+        }
+        if outputPort != 0 {
+            _ = MIDIPortDispose(outputPort)
+            outputPort = 0
+        }
+        if client != 0 {
+            _ = MIDIClientDispose(client)
+            client = 0
+        }
     }
 
     private func publishState(_ state: ConnectionState) {
@@ -227,15 +383,40 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
         }
     }
 
-    private func findMatchingSource() -> MIDIEndpointRef {
+    private struct EndpointSelection {
+        let profile: LaunchpadTransportProfile
+        let source: MIDIEndpointRef
+        let destination: MIDIEndpointRef
+        let sourceName: String?
+    }
+
+    private func findPreferredEndpoints() -> EndpointSelection? {
+        for profile in profiles {
+            let source = findMatchingSource(profile: profile)
+            let destination = findMatchingDestination(profile: profile)
+            guard source != 0, destination != 0 else {
+                continue
+            }
+            return EndpointSelection(
+                profile: profile,
+                source: source,
+                destination: destination,
+                sourceName: endpointName(source)
+            )
+        }
+        return nil
+    }
+
+    private func findMatchingSource(profile: LaunchpadTransportProfile) -> MIDIEndpointRef {
         let count = MIDIGetNumberOfSources()
         for index in 0..<count {
             let endpoint = MIDIGetSource(index)
             guard endpoint != 0,
+                  endpointIsOnline(endpoint),
                   let name = endpointName(endpoint)?.lowercased() else {
                 continue
             }
-            if name.contains(Self.deviceMatch) {
+            if profile.matchesSourceName(name) {
                 return endpoint
             }
         }
@@ -243,15 +424,16 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
         return 0
     }
 
-    private func findMatchingDestination() -> MIDIEndpointRef {
+    private func findMatchingDestination(profile: LaunchpadTransportProfile) -> MIDIEndpointRef {
         let count = MIDIGetNumberOfDestinations()
         for index in 0..<count {
             let endpoint = MIDIGetDestination(index)
             guard endpoint != 0,
+                  endpointIsOnline(endpoint),
                   let name = endpointName(endpoint)?.lowercased() else {
                 continue
             }
-            if name.contains(Self.deviceMatch) {
+            if profile.matchesDestinationName(name) {
                 return endpoint
             }
         }
@@ -260,12 +442,24 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
     }
 
     private func endpointName(_ endpoint: MIDIEndpointRef) -> String? {
+        let displayName = endpointStringProperty(endpoint, kMIDIPropertyDisplayName)
+        let name = endpointStringProperty(endpoint, kMIDIPropertyName)
+        return Self.preferredEndpointName(displayName: displayName, name: name)
+    }
+
+    private func endpointStringProperty(_ endpoint: MIDIEndpointRef, _ property: CFString) -> String? {
         var unmanaged: Unmanaged<CFString>?
-        let status = MIDIObjectGetStringProperty(endpoint, kMIDIPropertyDisplayName, &unmanaged)
+        let status = MIDIObjectGetStringProperty(endpoint, property, &unmanaged)
         guard status == noErr, let unmanaged else {
             return nil
         }
         return unmanaged.takeRetainedValue() as String
+    }
+
+    private func endpointIsOnline(_ endpoint: MIDIEndpointRef) -> Bool {
+        var offline: Int32 = 0
+        let status = MIDIObjectGetIntegerProperty(endpoint, kMIDIPropertyOffline, &offline)
+        return status != noErr || offline == 0
     }
 
     private func handlePacketList(_ packetList: UnsafePointer<MIDIPacketList>) {
@@ -342,8 +536,10 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
     }
 
     private func sendSleepMode(isAwake: Bool) {
-        let mode: UInt8 = isAwake ? 0x01 : 0x00
-        sendRaw(bytes: [0xF0, 0x00, 0x20, 0x29, 0x02, Self.sysexModelID, Self.sleepCommand, mode, 0xF7])
+        guard let connectedProfile else {
+            return
+        }
+        sendRaw(bytes: Self.makeSleepModeSysEx(profile: connectedProfile, isAwake: isAwake))
     }
 
     private func registerInputActivity() {

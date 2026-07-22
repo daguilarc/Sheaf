@@ -44,6 +44,7 @@ final class LaunchpadServiceController
     private let talonControl: any TalonControlProviding
     private let rpcService: DictatorRPCService
     private let audioInputResolver: AudioInputResolving
+    private let launchpadModels: [LaunchpadModel]
     private let sessionID = UUID().uuidString
 
     private let audioRecorder: AudioRecorder
@@ -82,6 +83,7 @@ final class LaunchpadServiceController
         talonControl: any TalonControlProviding,
         rpcService: DictatorRPCService,
         audioInputResolver: AudioInputResolving,
+        launchpadModels: [LaunchpadModel] = LaunchpadModel.defaultPreferences,
         audioRecorder: AudioRecorder = AudioRecorder()
     )
     {
@@ -95,6 +97,7 @@ final class LaunchpadServiceController
         self.talonControl = talonControl
         self.rpcService = rpcService
         self.audioInputResolver = audioInputResolver
+        self.launchpadModels = launchpadModels
         self.audioRecorder = audioRecorder
     }
 
@@ -196,7 +199,7 @@ final class LaunchpadServiceController
             return
         }
 
-        let midiManager = LaunchpadMIDIManager()
+        let midiManager = LaunchpadMIDIManager(preferredModels: launchpadModels)
         let renderWorker = LaunchpadColorRenderWorker(
             invalidationBus: invalidationBus,
             colorProvider: pageController,

@@ -46,8 +46,9 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
   (svc-10); acceptable but unreviewed.
 
 ### launchpad
-- The Launchpad Pro Mk3 MIDI protocol (SysEx programmer-mode enter, LED
-  message format, note↔coordinate mapping, sleep detection) is implemented
+- The Launchpad Pro/Mini Mk3 MIDI protocol (profile preference selection,
+  SysEx programmer-mode enter, LED message format, note↔coordinate mapping,
+  sleep detection) is implemented
   in `LaunchpadMIDIManager` and pinned by `LaunchpadTests` but not specified
   here.
 - Render-worker cadence and diffing are Design-level only.
@@ -85,9 +86,9 @@ Last audit: living-spec migration (one-time rewrite from code), 2026-06-10
   `OllamaBootstrapper` (never invoked despite the `ollama_bin_path` config
   key), `FocusedInputDetector`, `InMemorySecretStore` (test-only), and the
   `LaunchpadArrowCycle*` event-tap trio.
-- `config/dictator.safe` does not exist in the current checkout, so reset
-  and the safe-config pad restore bootstrap defaults (`use_cloud: false`),
-  which differ from the live `config/dictator.json` (`use_cloud: true`).
+- `config/dictator.example.json` is now the reset/default source and
+  `config/dictator.json` is ignored machine-local state; concurrent external
+  edits remain unspecified.
 - `WebAPIJSON.StatusResponse.ollama_reachable` is typed optional but every
   code path sets it.
 - The old `src/contracts/dictation_v1.yaml` omits the 405/413 statuses and

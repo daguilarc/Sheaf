@@ -1,16 +1,16 @@
 ## 1. Runtime Configuration Contract
 
-- [x] 1.1 Add failing `RuntimeConfigFile` tests for `launchpad_model` decoding (`pro_mk3`, `mini_mk3`, missing defaults to Pro, unknown rejects) and encoded round trips.
+- [x] 1.1 Add failing `RuntimeConfigFile` tests for `launchpad_models` decoding (`pro_mk3`, `mini_mk3`, missing defaults to Pro then Mini, legacy scalar, empty/duplicate/unknown rejects) and encoded round trips.
 - [x] 1.2 Add failing `RuntimeConfigProvider` tests proving the required example supplies defaults/current state, absent live config is not created on startup/read, invalid required files surface errors, and the first successful persisted mutation creates a complete live snapshot.
-- [x] 1.3 Implement the public typed `LaunchpadModel` setting and preserve it through decode, encode, patch-derived copies, reset, and persistence without adding it to the dashboard-editable field set.
+- [x] 1.3 Implement the public typed ordered `LaunchpadModel` preference setting and preserve it through decode, encode, patch-derived copies, reset, and persistence without adding it to the dashboard-editable field set.
 - [x] 1.4 Replace safe/bootstrap production fallback wiring with explicit example/live stores, required decode errors, and lazy live-file persistence while retaining test-only construction helpers where useful.
-- [x] 1.5 Copy the current tracked configuration to `config/dictator.example.json`, set `launchpad_model` to `mini_mk3`, add `config/dictator.json` to `.gitignore`, remove the live file from Git tracking, and retire active `config/dictator.safe` paths.
+- [x] 1.5 Copy the current tracked configuration to `config/dictator.example.json`, set `launchpad_models` to `["pro_mk3", "mini_mk3"]`, add `config/dictator.json` to `.gitignore`, remove the live file from Git tracking, and retire active `config/dictator.safe` paths.
 
 ## 2. Launchpad Device Profiles
 
-- [x] 2.1 Add failing transport tests for Pro/Mini endpoint matching, configured-model isolation, programmer/RGB/sleep/wake SysEx headers, and legacy Pro default selection.
-- [x] 2.2 Implement immutable Pro Mk3 and Mini Mk3 transport profiles and refactor `LaunchpadMIDIManager` to use the injected endpoint substring and model byte for every scan and SysEx path.
-- [x] 2.3 Pass the startup `launchpad_model` snapshot through `DictatorServiceMain` and `LaunchpadServiceController` into the MIDI manager, preserving the selected profile until restart.
+- [x] 2.1 Add failing transport tests for Pro/Mini endpoint matching, preference ordering, Mini fallback, MIDI-only endpoint roles, and programmer/RGB/sleep/wake SysEx headers.
+- [x] 2.2 Implement immutable Pro Mk3 and Mini Mk3 transport profiles and refactor `LaunchpadMIDIManager` to use the injected ordered profiles, standard-MIDI endpoint predicate, and connected profile's model byte for every scan and SysEx path.
+- [x] 2.3 Pass the startup `launchpad_models` snapshot through `DictatorServiceMain` and `LaunchpadServiceController` into the MIDI manager, preserving the preference list until restart.
 - [x] 2.4 Retain and run existing layout, coordinate, note-mapping, input-event, color-cache, and render-worker tests to prove the controller model change does not alter pad behavior.
 
 ## 3. Worktree and Smoke-Test Configuration

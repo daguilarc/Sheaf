@@ -13,6 +13,10 @@
     "borg" : "injectable_borg_refiner_instructions_v4.md"
   },
   "interactions_buffer_bytes" : 104857600,
+  "launchpad_models" : [
+    "pro_mk3",
+    "mini_mk3"
+  ],
   "local_model" : "qwen2.5:7b-instruct",
   "ollama_bin_path" : "\/opt\/homebrew\/bin\/ollama",
   "ollama_host" : "http:\/\/127.0.0.1:11434",

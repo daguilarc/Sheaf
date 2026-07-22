@@ -7,10 +7,13 @@ every pipeline knob), [web-ui](../../../../openspec/specs/dictator-web-ui/spec.m
 Repo-wide config rules: [Configuration](../../../../structure/configuration.md).
 There is no environment-variable configuration.
 
-## `config/dictator.json`
+## `config/dictator.example.json` and `config/dictator.json`
 
-Runtime settings at the Sheaf repo root. Keys and defaults (defaults apply
-when a key is missing or, for strings, blank):
+`config/dictator.example.json` is the tracked default source at the Sheaf
+repo root. `config/dictator.json` is ignored machine-local runtime state.
+When the live file is absent, Dictator uses the example in memory and does
+not create the live file until a successful persisted mutation. Keys and
+defaults (defaults apply when a key is missing or, for strings, blank):
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
@@ -35,11 +38,14 @@ when a key is missing or, for strings, blank):
 | `dictator_server_port` | int | `9003` | Display/compat only |
 | `dictator_server_enabled` | bool | `true` | `false` logs a startup warning; service starts anyway |
 | `injectable_rules` | object | `{}` | Trigger string → prompt file path, relative to `system_prompts_dir`; matching triggers append prompt file contents during refinement |
+| `launchpad_models` | array | `["pro_mk3", "mini_mk3"]` | Ordered Launchpad preference list; Dictator connects to the first listed supported model with both standard MIDI endpoints |
 | `updated_at` | string | — (**required**) | ISO-8601 timestamp of the last write |
 
 Decode leniency: only `use_cloud` and `updated_at` are required. A legacy
 `"model"` key (version-1 files) seeds both `cloud_model` and `local_model`
-when those are absent.
+when those are absent. A legacy `"launchpad_model"` scalar is accepted as a
+one-item Launchpad preference list when `launchpad_models` is absent. Empty,
+duplicate, or unknown Launchpad preferences are rejected.
 
 `reasoning_effort` is validated as a closed vocabulary when configuration is
 decoded. When configured, it is sent to the OpenAI Responses API as
@@ -73,8 +79,8 @@ instruction text. When a trigger matches, Dictator loads that prompt file from
 the prompt catalog and appends its contents to the refinement prompt only; the
 raw transcript and refinement input are not modified.
 
-Writes (config patch, prompt selection, injectable rule edits, reset, safe restore, first-run
-creation) are atomic — pretty-printed JSON with sorted keys written to
+Writes (config patch, prompt selection, injectable rule edits, reset, safe restore)
+are atomic — pretty-printed JSON with sorted keys written to
 `<file>.tmp` then replaced — and refresh `updated_at`
 (`yyyy-MM-ddTHH:mm:ssZ`).
 
@@ -93,6 +99,7 @@ Worked example (current production shape):
   "fallback_mode": "openai",
   "injectable_rules": {},
   "interactions_buffer_bytes": 104857600,
+  "launchpad_models": ["pro_mk3", "mini_mk3"],
   "local_model": "qwen2.5:7b-instruct",
   "ollama_bin_path": "/opt/homebrew/bin/ollama",
   "ollama_host": "http://127.0.0.1:11434",
@@ -106,14 +113,9 @@ Worked example (current production shape):
 }
 ```
 
-## `config/dictator.safe`
-
-Optional file with the same schema. When present at service startup it
-becomes the *default config*: the basis for `GET /api/config` default
-values, `POST /api/config/reset`, and the Launchpad safe-config pad. When
-absent, the in-code bootstrap defaults (table above, `use_cloud: false`)
-serve that role. If `config/dictator.json` itself is missing at startup, it
-is created from this default.
+The example config is also the default source for `GET /api/config` default
+values, `POST /api/config/reset`, and the Launchpad safe-config pad. Reset
+copies example values to the ignored live file with a fresh `updated_at`.
 
 ## `config/api_keys.json`
 

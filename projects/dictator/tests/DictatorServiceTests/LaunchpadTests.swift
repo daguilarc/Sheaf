@@ -558,6 +558,155 @@ final class LaunchpadTests: XCTestCase {
         XCTAssertEqual(result, incoming)
     }
 
+    func testLaunchpadProfileSelectionPrefersProThenFallsBackToMini() {
+        let profiles = LaunchpadTransportProfile.profiles(for: [.proMk3, .miniMk3])
+
+        var selection = LaunchpadTransportProfile.selectPreferredEndpointNames(
+            from: profiles,
+            sourceNames: [
+                "Launchpad Mini MK3 LPMiniMK3 MIDI",
+                "Launchpad Pro MK3 LPProMK3 MIDI"
+            ],
+            destinationNames: [
+                "Launchpad Mini MK3 LPMiniMK3 MIDI",
+                "Launchpad Pro MK3 LPProMK3 MIDI"
+            ]
+        )
+        XCTAssertEqual(selection?.profile.model, .proMk3)
+        XCTAssertEqual(selection?.sourceName, "Launchpad Pro MK3 LPProMK3 MIDI")
+        XCTAssertEqual(selection?.destinationName, "Launchpad Pro MK3 LPProMK3 MIDI")
+
+        selection = LaunchpadTransportProfile.selectPreferredEndpointNames(
+            from: profiles,
+            sourceNames: [
+                "Launchpad Mini MK3 LPMiniMK3 MIDI"
+            ],
+            destinationNames: [
+                "Launchpad Mini MK3 LPMiniMK3 MIDI"
+            ]
+        )
+        XCTAssertEqual(selection?.profile.model, .miniMk3)
+    }
+
+    func testLaunchpadProfileSelectionRequiresMidiEndpointsAndRejectsDawEndpoints() {
+        let profiles = LaunchpadTransportProfile.profiles(for: [.miniMk3])
+
+        let dawOnlySelection = LaunchpadTransportProfile.selectPreferredEndpointNames(
+            from: profiles,
+            sourceNames: [
+                "Launchpad Mini MK3 LPMiniMK3 DAW Out"
+            ],
+            destinationNames: [
+                "Launchpad Mini MK3 LPMiniMK3 DAW In"
+            ]
+        )
+        XCTAssertNil(dawOnlySelection)
+
+        let midiSelection = LaunchpadTransportProfile.selectPreferredEndpointNames(
+            from: profiles,
+            sourceNames: [
+                "Launchpad Mini MK3 LPMiniMK3 DAW",
+                "Launchpad Mini MK3 LPMiniMK3 MIDI"
+            ],
+            destinationNames: [
+                "Launchpad Mini MK3 LPMiniMK3 DAW",
+                "Launchpad Mini MK3 LPMiniMK3 MIDI"
+            ]
+        )
+        XCTAssertEqual(midiSelection?.sourceName, "Launchpad Mini MK3 LPMiniMK3 MIDI")
+        XCTAssertEqual(midiSelection?.destinationName, "Launchpad Mini MK3 LPMiniMK3 MIDI")
+    }
+
+    func testLaunchpadProfileSelectionIgnoresOfflinePreferredEndpoints() {
+        let profiles = LaunchpadTransportProfile.profiles(for: [.proMk3, .miniMk3])
+
+        let selection = LaunchpadTransportProfile.selectPreferredEndpointCandidates(
+            from: profiles,
+            sources: [
+                LaunchpadTransportProfile.EndpointCandidate(
+                    name: "Launchpad Pro MK3 LPProMK3 MIDI",
+                    isOnline: false
+                ),
+                LaunchpadTransportProfile.EndpointCandidate(
+                    name: "Launchpad Mini MK3 LPMiniMK3 MIDI Out",
+                    isOnline: true
+                )
+            ],
+            destinations: [
+                LaunchpadTransportProfile.EndpointCandidate(
+                    name: "Launchpad Pro MK3 LPProMK3 MIDI",
+                    isOnline: false
+                ),
+                LaunchpadTransportProfile.EndpointCandidate(
+                    name: "Launchpad Mini MK3 LPMiniMK3 MIDI In",
+                    isOnline: true
+                )
+            ]
+        )
+
+        XCTAssertEqual(selection?.profile.model, .miniMk3)
+        XCTAssertEqual(selection?.sourceName, "Launchpad Mini MK3 LPMiniMK3 MIDI Out")
+        XCTAssertEqual(selection?.destinationName, "Launchpad Mini MK3 LPMiniMK3 MIDI In")
+    }
+
+    func testLaunchpadProfileSelectionAcceptsCoreMIDIShortNames() {
+        let profiles = LaunchpadTransportProfile.profiles(for: [.proMk3, .miniMk3])
+
+        var selection = LaunchpadTransportProfile.selectPreferredEndpointNames(
+            from: profiles,
+            sourceNames: [
+                "LPMiniMK3 MIDI Out",
+                "LPProMK3 MIDI"
+            ],
+            destinationNames: [
+                "LPMiniMK3 MIDI In",
+                "LPProMK3 MIDI"
+            ]
+        )
+
+        XCTAssertEqual(selection?.profile.model, .proMk3)
+        XCTAssertEqual(selection?.sourceName, "LPProMK3 MIDI")
+        XCTAssertEqual(selection?.destinationName, "LPProMK3 MIDI")
+
+        selection = LaunchpadTransportProfile.selectPreferredEndpointNames(
+            from: profiles,
+            sourceNames: [
+                "LPMiniMK3 MIDI Out"
+            ],
+            destinationNames: [
+                "LPMiniMK3 MIDI In"
+            ]
+        )
+
+        XCTAssertEqual(selection?.profile.model, .miniMk3)
+    }
+
+    func testLaunchpadEndpointNameFallsBackToNameWhenDisplayNameMissing() {
+        XCTAssertEqual(
+            LaunchpadMIDIManager.preferredEndpointName(displayName: nil, name: "Launchpad Pro MK3 LPProMK3 MIDI"),
+            "Launchpad Pro MK3 LPProMK3 MIDI"
+        )
+    }
+
+    func testLaunchpadSysExUsesSelectedProfileModelByte() {
+        XCTAssertEqual(
+            LaunchpadMIDIManager.makeProgrammerModeSysEx(profile: .proMk3),
+            [0xF0, 0x00, 0x20, 0x29, 0x02, 0x0E, 0x0E, 0x01, 0xF7]
+        )
+        XCTAssertEqual(
+            LaunchpadMIDIManager.makeProgrammerModeSysEx(profile: .miniMk3),
+            [0xF0, 0x00, 0x20, 0x29, 0x02, 0x0D, 0x0E, 0x01, 0xF7]
+        )
+        XCTAssertEqual(
+            LaunchpadMIDIManager.makeSleepModeSysEx(profile: .proMk3, isAwake: false),
+            [0xF0, 0x00, 0x20, 0x29, 0x02, 0x0E, 0x09, 0x00, 0xF7]
+        )
+        XCTAssertEqual(
+            LaunchpadMIDIManager.makeSleepModeSysEx(profile: .miniMk3, isAwake: true),
+            [0xF0, 0x00, 0x20, 0x29, 0x02, 0x0D, 0x09, 0x01, 0xF7]
+        )
+    }
+
     func testPageFactoryDispatchesToggleFullscreenOverlayAction() throws {
         let bus = RenderInvalidationBus()
         let json = """

@@ -39,9 +39,7 @@ final class VoiceConfigInteractionOrchestratorTests: XCTestCase {
         XCTAssertEqual(config.provider, .openai)
         XCTAssertEqual(config.openAIModel, "gpt-4.1-mini")
 
-        let persisted = try XCTUnwrap(try RuntimeConfigStore(fileURL: fileURL).load())
-        XCTAssertEqual(persisted.model, "qwen2.5:7b-instruct")
-        XCTAssertFalse(persisted.useCloud)
+        XCTAssertNil(try RuntimeConfigStore(fileURL: fileURL).load())
     }
 
     func testInteractionNoChangeDoesNotMutate() async throws {
