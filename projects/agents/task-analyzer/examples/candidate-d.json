@@ -1,0 +1,150 @@
+{
+  "format": 1,
+  "change": "add-note-system-message-mappings",
+  "tasks": [
+    {
+      "task": "task-1",
+      "title": "MIDI address model: type enum + matching predicate",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 2,
+        "C2": 3,
+        "C3": 3,
+        "C4": 3,
+        "C5": 2,
+        "C6": 3,
+        "C7": 2,
+        "composite": 2.7
+      }
+    },
+    {
+      "task": "task-2",
+      "title": "Press/release classification (status-authoritative note-off) + tests",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 2,
+        "C2": 3,
+        "C3": 4,
+        "C4": 2,
+        "C5": 2,
+        "C6": 2,
+        "C7": 2,
+        "composite": 2.5
+      }
+    },
+    {
+      "task": "task-3",
+      "title": "Persistence: JSON round-trip + legacy default + tests",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 2,
+        "C2": 3,
+        "C3": 2,
+        "C4": 2,
+        "C5": 1,
+        "C6": 2,
+        "C7": 1,
+        "composite": 2.0
+      }
+    },
+    {
+      "task": "task-4",
+      "title": "Profile validation: address-type rules per controller kind + tests",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 2,
+        "C2": 3,
+        "C3": 3,
+        "C4": 3,
+        "C5": 2,
+        "C6": 3,
+        "C7": 2,
+        "composite": 2.7
+      }
+    },
+    {
+      "task": "task-5",
+      "title": "Output construction: suppress CC feedback for note Generic associations + tests",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 2,
+        "C2": 3,
+        "C3": 3,
+        "C4": 3,
+        "C5": 2,
+        "C6": 3,
+        "C7": 2,
+        "composite": 2.7
+      }
+    },
+    {
+      "task": "task-6",
+      "title": "Block/coalescing message-type awareness + tests",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 2,
+        "C2": 3,
+        "C3": 3,
+        "C4": 2,
+        "C5": 2,
+        "C6": 3,
+        "C7": 2,
+        "composite": 2.5
+      }
+    },
+    {
+      "task": "task-7",
+      "title": "View-model: distinctly named Note/CC selector + numeric fields + tests",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 2,
+        "C2": 3,
+        "C3": 3,
+        "C4": 2,
+        "C5": 3,
+        "C6": 3,
+        "C7": 2,
+        "composite": 2.7
+      }
+    },
+    {
+      "task": "task-8",
+      "title": "Wire Controllers page (portable/JUCE) display + commit path + tests",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 2,
+        "C2": 3,
+        "C3": 2,
+        "C4": 3,
+        "C5": 3,
+        "C6": 3,
+        "C7": 2,
+        "composite": 2.7
+      }
+    },
+    {
+      "task": "task-9",
+      "title": "Full verification + capability coverage docs",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 1,
+        "C2": 2,
+        "C3": 1,
+        "C4": 2,
+        "C5": 1,
+        "C6": 2,
+        "C7": 1,
+        "composite": 1.5
+      }
+    }
+  ]
+}

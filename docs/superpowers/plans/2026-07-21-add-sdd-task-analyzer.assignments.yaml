@@ -1,0 +1,70 @@
+format: 1
+change: add-sdd-task-analyzer
+estimator_id: 1
+tasks:
+  - task: task-1
+    title: "Project skeleton, rubric and prompt assets"
+    model: gpt-5.5
+    effort: high
+    complexity: {C1: 4, C2: 1, C3: 1, C4: 1, C5: 1, C6: 2, C7: 1, composite: 1.7}
+    predicted: {expected_total_usd: 3.1049, pq80_total_usd: 14.2044, explore: true}
+  - task: task-2
+    title: "Database module and schema"
+    model: gpt-5.5
+    effort: high
+    complexity: {C1: 2, C2: 2, C3: 2, C4: 2, C5: 2, C6: 3, C7: 1, composite: 2.2}
+    predicted: {expected_total_usd: 3.7965, pq80_total_usd: 15.4496, explore: false}
+  - task: task-3
+    title: "Transcript extraction library"
+    model: gpt-5.5
+    effort: high
+    complexity: {C1: 3, C2: 2, C3: 4, C4: 2, C5: 3, C6: 3, C7: 3, composite: 2.8}
+    predicted: {expected_total_usd: 6.0092, pq80_total_usd: 15.6269, explore: false}
+  - task: task-4
+    title: "Discovery, joining, and role/round classification"
+    model: gpt-5.5
+    effort: high
+    complexity: {C1: 2, C2: 2, C3: 4, C4: 3, C5: 3, C6: 3, C7: 3, composite: 2.8}
+    predicted: {expected_total_usd: 17.9318, pq80_total_usd: 63.2746, explore: false}
+  - task: task-5
+    title: "Idempotent ingest driver (mechanical path)"
+    model: gpt-5.5
+    effort: high
+    complexity: {C1: 2, C2: 2, C3: 4, C4: 4, C5: 3, C6: 4, C7: 3, composite: 3.2}
+    predicted: {expected_total_usd: 24.4777, pq80_total_usd: 113.7624, explore: false}
+  - task: task-6
+    title: "Derived costs (rebuild-derived)"
+    model: gpt-5.5
+    effort: high
+    complexity: {C1: 2, C2: 3, C3: 3, C4: 3, C5: 2, C6: 3, C7: 3, composite: 2.7}
+    predicted: {expected_total_usd: 12.5893, pq80_total_usd: 35.2526, explore: false}
+  - task: task-7
+    title: "xagent dispatch wrappers (real agent_runner)"
+    model: gpt-5.5
+    effort: high
+    complexity: {C1: 2, C2: 2, C3: 3, C4: 3, C5: 3, C6: 3, C7: 2, composite: 2.7}
+    predicted: {expected_total_usd: 7.0366, pq80_total_usd: 24.6806, explore: false}
+  - task: task-8
+    title: "Migration of the 2026-07-19 dataset"
+    model: gpt-5.5
+    effort: high
+    complexity: {C1: 2, C2: 2, C3: 3, C4: 3, C5: 3, C6: 4, C7: 2, composite: 2.8}
+    predicted: {expected_total_usd: 5.7618, pq80_total_usd: 16.6104, explore: false}
+  - task: task-9
+    title: "Bayesian cost model (train + posterior queries)"
+    model: gpt-5.5
+    effort: high
+    complexity: {C1: 2, C2: 2, C3: 5, C4: 3, C5: 4, C6: 4, C7: 2, composite: 3.3}
+    predicted: {expected_total_usd: 14.7792, pq80_total_usd: 68.6798, explore: false}
+  - task: task-10
+    title: "Estimator CLI + annotation format"
+    model: gpt-5.5
+    effort: high
+    complexity: {C1: 3, C2: 2, C3: 4, C4: 3, C5: 3, C6: 4, C7: 4, composite: 3.2}
+    predicted: {expected_total_usd: 11.1712, pq80_total_usd: 27.5854, explore: false}
+  - task: task-11
+    title: "Decomposer prompt, real train, README"
+    model: gpt-5.5
+    effort: high
+    complexity: {C1: 2, C2: 3, C3: 2, C4: 2, C5: 2, C6: 5, C7: 2, composite: 2.7}
+    predicted: {expected_total_usd: 4.6777, pq80_total_usd: 10.988, explore: true}

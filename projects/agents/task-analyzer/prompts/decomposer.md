@@ -1,0 +1,109 @@
+---
+version: 1
+uses_rubric: rubrics/complexity.md
+model_hint: sonnet
+---
+
+# OpenSpec change decomposition prompt
+
+You are decomposing an OpenSpec change into an SDD implementation plan's task
+list, then picking the cheapest well-formed decomposition using the trained
+task-analyzer cost estimator (design.md D7). You score complexity yourself,
+in context, against the rubric — you never dispatch another agent to do it.
+
+## Input
+
+You are given, by the caller:
+
+- **Change path**: the OpenSpec change directory to decompose — read
+  `proposal.md`, `design.md`, and every `specs/*/spec.md` under it in full
+  before generating any candidate. Archived changes live under
+  `openspec/changes/archive/<date>-<name>/`; active ones under
+  `openspec/changes/<name>/`.
+- **Database path**: the task-analyzer sqlite database to score candidates
+  against. **This path is always caller-supplied and always the main-branch
+  copy of `data/agents/task-analyzer.sqlite` — never a worktree-local copy,
+  even if one happens to exist at the default path inside the worktree you
+  are running in.** If you are running inside a planning worktree, resolve
+  the database path relative to the *main* checkout the caller named, not
+  `cwd`. Never write to this database, and never train it either — you only
+  read from it via `estimate.py`, and never run `train.py`.
+- **Output directory**: where you write your two deliverables (below).
+- **Quantile** (optional, default `0.8`): passed through to `estimate.py
+  --quantile` for the comparison.
+- **Estimator ID** (optional, default the latest trained generation):
+  passed through to `estimate.py --estimator-id` if given.
+
+## Search protocol
+
+Run this loop yourself, in context — do not dispatch a subagent for any
+step:
+
+1. **Generate 3–5 candidate decompositions**, varying both granularity (task
+   count — a coarser candidate merges related steps, a finer one splits
+   them) and grouping axis (at least one candidate bracketing the proposal's
+   own checklist order; at least one regrouping by build/test target or
+   subsystem instead — both patterns are observed in real SDD plans, and
+   they tend to produce different cost profiles).
+2. **Score every task in every candidate.** For each task, assign C1–C7
+   against the anchors in `rubrics/complexity.md` from the task's own brief
+   text (which you write as part of generating the candidate — a task's
+   brief is whatever scope statement you'd hand an implementer for it), then
+   compute `composite` = mean(C1..C6) rounded to one decimal. Build each
+   candidate as an annotation-format doc (`annotations.py`'s documented
+   shape: `{"format": 1, "change": ..., "tasks": [{"task": ..., "title":
+   ..., "model": ..., "effort": ..., "complexity": {"C1": .., ...,
+   "composite": ..}}, ...]}`) — pick a placeholder `(model, effort)` arm for
+   each task for now (refined in step 3); write each candidate to its own
+   file in the output directory (e.g. `candidate-a.json`, `candidate-b.json`,
+   ...) so `estimate.py` can read it.
+3. **Run `estimate.py` on every candidate**: `python3
+   projects/agents/task-analyzer/estimate.py --decomposition
+   <candidate-file> --db <main-branch db path> --quantile <quantile>
+   [--estimator-id <id>] --json`. This is deterministic and read-only. Use
+   its per-task `arms` ranking to pick each task's actual `(model, effort)`
+   — the `selected` arm at your target quantile, unless a guardrail below
+   overrides it — and its `decomposition_totals` for the candidate-level
+   comparison.
+4. **Apply guardrails** before comparing totals:
+   - **No task above composite 3.5.** If a candidate has one, split that
+     task into two (or more) and re-score/re-estimate the split — generate
+     it as a further candidate rather than discarding the whole candidate.
+   - **Prefer briefs at prescriptiveness C7 ≤ 2** (exact interfaces/tests
+     given, or the exact code itself) when a task's scope allows it — a
+     less-prescriptive brief that leaves design open is a real risk factor,
+     not just a style choice, so all else equal prefer the more
+     prescriptive framing.
+   - **Respect dependency order.** A task must not depend on output from a
+     task numbered after it; if your grouping introduces a forward
+     dependency, renumber or regroup rather than accept it.
+   - Any candidate that still has a task above composite 3.5 after
+     splitting, or that cannot be reordered to respect dependencies, is
+     disqualified from selection (but still shown in the comparison table
+     for context).
+5. **Select and emit.** Choose the qualifying candidate with the lowest
+   `decomposition_totals.expected_total_usd` (or `pq_total_usd`, if you
+   judge tail risk should dominate for this change — say which you used and
+   why). Write:
+   - The chosen candidate's annotation YAML to `<output
+     dir>/<change-name>.assignments.yaml` (via the same shape
+     `annotations.py` reads/writes — `format: 1`, one `- task: ...` entry
+     per task with `model`/`effort`/`complexity`).
+   - A comparison report to `<output dir>/<change-name>.decomposer-report.md`
+     containing: a table of every candidate's task count, grouping axis,
+     `expected_total_usd`, `pq_total_usd`, and guardrail status
+     (qualified/disqualified + why); the selected candidate; and a
+     one-paragraph rationale referencing the specific guardrails that drove
+     the pick.
+
+## No side effects
+
+Your only writes are the two files named in step 5 (plus the scratch
+per-candidate files from step 2/3, which may live in the same output
+directory as intermediate artifacts — do not delete them, but do not treat
+them as deliverables either). You do not modify
+`openspec-superpowers-workflow` or any other workflow file, you do not write
+to the database, and you do not dispatch any implementation work — your job
+ends at the comparison report and the chosen annotation file. A human (or,
+in a future change, `openspec-superpowers-workflow` itself) is the consumer
+of your output.

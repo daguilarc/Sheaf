@@ -1,0 +1,182 @@
+{
+  "format": 1,
+  "change": "add-note-system-message-mappings",
+  "tasks": [
+    {
+      "task": "task-1",
+      "title": "Add address matching / press-release / mismatch tests",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 1,
+        "C2": 2,
+        "C3": 2,
+        "C4": 2,
+        "C5": 3,
+        "C6": 3,
+        "C7": 2,
+        "composite": 2.2
+      }
+    },
+    {
+      "task": "task-2",
+      "title": "Extend address model + input processors for note addressing",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 2,
+        "C2": 3,
+        "C3": 4,
+        "C4": 3,
+        "C5": 2,
+        "C6": 3,
+        "C7": 2,
+        "composite": 2.8
+      }
+    },
+    {
+      "task": "task-3",
+      "title": "Persist address message type (JSON round-trip + legacy default) with tests",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 2,
+        "C2": 3,
+        "C3": 2,
+        "C4": 2,
+        "C5": 1,
+        "C6": 2,
+        "C7": 1,
+        "composite": 2.0
+      }
+    },
+    {
+      "task": "task-4",
+      "title": "Address-type validation rules + tests per controller kind",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 2,
+        "C2": 3,
+        "C3": 3,
+        "C4": 3,
+        "C5": 2,
+        "C6": 3,
+        "C7": 2,
+        "composite": 2.7
+      }
+    },
+    {
+      "task": "task-5",
+      "title": "Suppress CC output feedback for note-addressed Generic associations + tests",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 2,
+        "C2": 3,
+        "C3": 3,
+        "C4": 3,
+        "C5": 2,
+        "C6": 3,
+        "C7": 2,
+        "composite": 2.7
+      }
+    },
+    {
+      "task": "task-6",
+      "title": "Block/coalescing message-type awareness + tests",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 2,
+        "C2": 3,
+        "C3": 3,
+        "C4": 2,
+        "C5": 2,
+        "C6": 3,
+        "C7": 2,
+        "composite": 2.5
+      }
+    },
+    {
+      "task": "task-7",
+      "title": "Carry message type through row/block schemas (no UI selector yet)",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 2,
+        "C2": 3,
+        "C3": 2,
+        "C4": 2,
+        "C5": 1,
+        "C6": 3,
+        "C7": 2,
+        "composite": 2.2
+      }
+    },
+    {
+      "task": "task-8",
+      "title": "View-model Note/CC selector + numeric fields + tests",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 2,
+        "C2": 4,
+        "C3": 3,
+        "C4": 3,
+        "C5": 3,
+        "C6": 3,
+        "C7": 2,
+        "composite": 3.0
+      }
+    },
+    {
+      "task": "task-9",
+      "title": "Wire Controllers page (portable/JUCE) display + commit",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 2,
+        "C2": 3,
+        "C3": 2,
+        "C4": 3,
+        "C5": 3,
+        "C6": 3,
+        "C7": 2,
+        "composite": 2.7
+      }
+    },
+    {
+      "task": "task-10",
+      "title": "Run focused test suites (processor/persistence/instrument/block/view-model/UI)",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 1,
+        "C2": 1,
+        "C3": 1,
+        "C4": 2,
+        "C5": 1,
+        "C6": 2,
+        "C7": 1,
+        "composite": 1.3
+      }
+    },
+    {
+      "task": "task-11",
+      "title": "Run full synth suite + update capability coverage docs",
+      "model": "gpt-5.5",
+      "effort": "medium",
+      "complexity": {
+        "C1": 1,
+        "C2": 2,
+        "C3": 1,
+        "C4": 1,
+        "C5": 1,
+        "C6": 2,
+        "C7": 1,
+        "composite": 1.3
+      }
+    }
+  ]
+}
