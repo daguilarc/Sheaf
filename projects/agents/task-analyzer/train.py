@@ -65,6 +65,10 @@ def _deep_update(base: dict, overrides: dict) -> dict:
 
 
 def _fetch_training_rows(conn, rubric_version, price_version):
+    """Rows with a usable training arm only -- ``task_arms.model``/``effort``
+    are NULL for tasks with no round-0 implementer session (review-only or
+    quarantined tasks; expected, not corrupt) and can train no arm, so
+    they're excluded at the join. See ``_count_excluded_null_arm_tasks``."""
     sql = """
         SELECT tc.task_id AS task_id, tc.category AS category, tc.usd AS usd,
                c.composite AS composite, c.c3 AS c3, c.c4 AS c4, c.c5 AS c5,
@@ -72,9 +76,22 @@ def _fetch_training_rows(conn, rubric_version, price_version):
         FROM task_costs tc
         JOIN complexity c ON c.task_id = tc.task_id AND c.rubric_version = ?
         JOIN task_arms ta ON ta.task_id = tc.task_id
-        WHERE tc.price_version = ?
+        WHERE tc.price_version = ? AND ta.model IS NOT NULL AND ta.effort IS NOT NULL
     """
     return conn.execute(sql, (rubric_version, price_version)).fetchall()
+
+
+def _count_excluded_null_arm_tasks(conn, rubric_version, price_version):
+    """Count of distinct tasks that would otherwise join for training but
+    have no canonical arm (``task_arms.model``/``effort`` NULL)."""
+    sql = """
+        SELECT COUNT(DISTINCT tc.task_id)
+        FROM task_costs tc
+        JOIN complexity c ON c.task_id = tc.task_id AND c.rubric_version = ?
+        JOIN task_arms ta ON ta.task_id = tc.task_id
+        WHERE tc.price_version = ? AND (ta.model IS NULL OR ta.effort IS NULL)
+    """
+    return conn.execute(sql, (rubric_version, price_version)).fetchone()[0]
 
 
 def run(conn, config_overrides: Optional[dict] = None) -> Optional[int]:
@@ -104,6 +121,7 @@ def run(conn, config_overrides: Optional[dict] = None) -> Optional[int]:
     taxonomy_version = _numeric_max(taxonomy_versions) if taxonomy_versions else None
 
     rows = _fetch_training_rows(conn, rubric_version, price_version)
+    excluded_null_arm_tasks = _count_excluded_null_arm_tasks(conn, rubric_version, price_version)
 
     config = model.default_config()
     if config_overrides:
@@ -181,7 +199,11 @@ def run(conn, config_overrides: Optional[dict] = None) -> Optional[int]:
     # each fold, downdate the category's precomputed XtX/Xty sums to remove
     # the held-out row's contribution, recompute the pooled mean from that,
     # then fit the arm's fold posterior on its remaining rows only.
-    metrics = {"categories": {}, "arm_row_counts": arm_row_counts}
+    metrics = {
+        "categories": {},
+        "arm_row_counts": arm_row_counts,
+        "excluded_null_arm_tasks": excluded_null_arm_tasks,
+    }
     for category in category_prior_by_category:
         pooled_XtX_total, pooled_Xty_total = pooled_sums_by_category[category]
         below_p50 = below_p80 = total = 0

@@ -194,6 +194,42 @@ def _seed_training_db(conn, n_per_arm=20, category="green", seed=42):
     return task_id, arms
 
 
+def _add_null_arm_task(conn, task_id, category="green", change_id=1):
+    """A task with a task_costs/complexity row but a NULL-arm task_arms row
+    -- e.g. a review-only or quarantined task with no round-0 implementer
+    session (design.md D5). Real, expected data: train.py must skip it, not
+    crash on it."""
+    db.upsert(
+        conn, "tasks",
+        {"task_id": task_id, "change_id": change_id, "task_key": f"task-{task_id}"},
+        ["task_id"],
+    )
+    db.upsert(
+        conn, "complexity",
+        {
+            "task_id": task_id, "c1": 1, "c2": 1, "c3": 3, "c4": 3, "c5": 3, "c6": 1, "c7": 1,
+            "composite": 3.0, "rationale_json": "{}",
+            "rubric_version": "1", "input_sha256": "deadbeef", "scored_by": "test",
+        },
+        ["task_id", "rubric_version"],
+    )
+    db.upsert(
+        conn, "task_arms",
+        {"task_id": task_id, "model": None, "effort": None, "basis_json": "{}"},
+        ["task_id"],
+    )
+    db.upsert(
+        conn, "task_costs",
+        {
+            "task_id": task_id, "category": category,
+            "weighted_tokens": 500.0, "usd": 1.23,
+            "computed_at": "t0", "price_version": "2026-07-01",
+        },
+        ["task_id", "category"],
+    )
+    conn.commit()
+
+
 class TestTrain(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.mkdtemp(prefix="task-analyzer-train-test-")
@@ -253,6 +289,37 @@ class TestTrain(unittest.TestCase):
             "SELECT COUNT(*) FROM estimator_params WHERE estimator_id = ?", (estimator_id,)
         ).fetchone()[0]
         self.assertEqual(old_params_still_present, 3)
+        conn.close()
+
+    def test_train_excludes_null_arm_tasks(self):
+        # 139 real task_arms rows have NULL model/effort in production data
+        # (review-only or quarantined tasks with no round-0 implementer
+        # session -- expected, not corruption). train.py must skip them at
+        # the join (they can train no arm) rather than crash sorting a
+        # mix of None and str arm tuples, and must record how many it
+        # skipped.
+        db_path = self.tmp_path / "null_arm.sqlite"
+        conn = db.connect(db_path)
+        n_tasks, arms = _seed_training_db(conn)
+        _add_null_arm_task(conn, task_id=n_tasks + 1)
+        _add_null_arm_task(conn, task_id=n_tasks + 2)
+
+        estimator_id = train.run(conn)
+        self.assertIsNotNone(estimator_id)
+
+        row = conn.execute(
+            "SELECT metrics_json, train_task_count FROM estimators WHERE estimator_id = ?",
+            (estimator_id,),
+        ).fetchone()
+        self.assertEqual(row["train_task_count"], n_tasks)  # the 2 null-arm tasks aren't counted
+        metrics = json.loads(row["metrics_json"])
+        self.assertEqual(metrics["excluded_null_arm_tasks"], 2)
+
+        # The null-arm tasks contributed no estimator_params row.
+        params = conn.execute(
+            "SELECT model, effort FROM estimator_params WHERE estimator_id = ?", (estimator_id,)
+        ).fetchall()
+        self.assertTrue(all(r["model"] is not None and r["effort"] is not None for r in params))
         conn.close()
 
     def test_loo_calibration_is_leak_free(self):
