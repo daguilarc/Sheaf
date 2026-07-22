@@ -35,4 +35,4 @@ implementation work.
 
 #### Scenario: No workflow side effects
 - **WHEN** the subagent completes
-- **THEN** the only files it has written are the annotation YAML and its comparison report
+- **THEN** the only files it has written are the annotation YAML, its comparison report, and per-candidate artifacts (candidate definitions and estimator results), all under the caller-designated output directory

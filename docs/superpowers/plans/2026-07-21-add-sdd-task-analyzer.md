@@ -1,6 +1,6 @@
 # SDD Task Analyzer & Decomposer Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Build `projects/agents/task-analyzer`: idempotent SQLite ingestion of landed SDD changes, a retrainable Bayesian cost estimator with quantile output, and a decomposition subagent protocol — per OpenSpec change `add-sdd-task-analyzer`.
 
@@ -39,7 +39,7 @@
 **Interfaces:**
 - Produces: rubric files whose frontmatter is exactly `---\nversion: 1\nkind: <complexity|grading|phase-taxonomy>\n---`; prompt files with frontmatter `---\nversion: 1\nuses_rubric: rubrics/<name>.md\nmodel_hint: <sonnet|haiku>\n---`. Later tasks parse `version` via `assets.py` (Task 5 defines `read_asset_version(path) -> str`).
 
-- [ ] **Step 1: Write failing asset-integrity test**
+- [x] **Step 1: Write failing asset-integrity test**
 
 ```python
 # projects/agents/task-analyzer/tests/test_assets.py
@@ -76,16 +76,16 @@ def test_prompts_reference_rubrics():
         assert (ROOT / fm["uses_rubric"]).exists()
 ```
 
-- [ ] **Step 2: Run test, verify it fails** — `python3 -m pytest projects/agents/task-analyzer/tests/test_assets.py -q` → FAIL (files missing).
+- [x] **Step 2: Run test, verify it fails** — `python3 -m pytest projects/agents/task-analyzer/tests/test_assets.py -q` → FAIL (files missing).
 
-- [ ] **Step 3: Port the rubrics.** Source: `analysis/sdd-model-analysis/rubrics.md`. Split its three sections into the three rubric files verbatim (section 1 → phase-taxonomy.md, section 2 → complexity.md, section 3 → grading.md), each with the frontmatter above. Do not edit anchor wording — these are version-1 rubrics and must match the migrated data's semantics.
+- [x] **Step 3: Port the rubrics.** Source: `analysis/sdd-model-analysis/rubrics.md`. Split its three sections into the three rubric files verbatim (section 1 → phase-taxonomy.md, section 2 → complexity.md, section 3 → grading.md), each with the frontmatter above. Do not edit anchor wording — these are version-1 rubrics and must match the migrated data's semantics.
 
-- [ ] **Step 4: Write the three prompts.** Port from the analysis session's dispatch prompts, parameterized with `{{RUBRIC_PATH}}`, `{{ITEMS_JSON_PATH}}` (a staging file listing inputs), and `{{OUTPUT_DIR}}`:
+- [x] **Step 4: Write the three prompts.** Port from the analysis session's dispatch prompts, parameterized with `{{RUBRIC_PATH}}`, `{{ITEMS_JSON_PATH}}` (a staging file listing inputs), and `{{OUTPUT_DIR}}`:
   - `complexity.md` (model_hint sonnet): score C1–C7 per rubric anchors from a brief text; composite = mean(C1..C6) to one decimal; output one JSON per item `{"task_key","C1".."C7","composite","rationale":{...}}` into `{{OUTPUT_DIR}}`.
   - `grading.md` (model_hint sonnet): grade from review texts only; severity counts, verdict sequence, rounds_to_accept, G1–G5, final letter (letter definition wins); exclude clearly mis-joined reviews into `excluded_reviews`; output `{"task_key","G1".."G5","n_critical","n_important","n_minor","verdict_sequence","rounds_to_accept","final_grade","evidence","reviewer_models","excluded_reviews"}`.
   - `phase-labeling.md` (model_hint haiku): label every timeline turn with exactly one of the 10 phase keys; label from reading, not keyword scripts; output `{"session_key","labels":{"<turn>":"<phase>"}}`.
 
-- [ ] **Step 5: Run tests, verify pass; commit** — `git add projects/agents/task-analyzer && git commit -m "feat(task-analyzer): skeleton + v1 rubric and prompt assets"`.
+- [x] **Step 5: Run tests, verify pass; commit** — `git add projects/agents/task-analyzer && git commit -m "feat(task-analyzer): skeleton + v1 rubric and prompt assets"`.
 
 ---
 
@@ -103,14 +103,14 @@ def test_prompts_reference_rubrics():
   - `db.upsert(conn, table: str, row: dict, key_cols: list[str]) -> None` — INSERT ... ON CONFLICT(key_cols) DO UPDATE.
   - `db.sha256_file(path) -> str` and `db.sha256_text(text) -> str`.
 
-- [ ] **Step 1: Write `schema.sql`** — copy the DDL from `openspec/changes/add-sdd-task-analyzer/design.md` D2 **verbatim** (it includes `task_arms` and `meta`; note the composite primary keys on complexity/grades/phase_tokens — they retain version history), changing each `CREATE TABLE` to `CREATE TABLE IF NOT EXISTS` and adding:
+- [x] **Step 1: Write `schema.sql`** — copy the DDL from `openspec/changes/add-sdd-task-analyzer/design.md` D2 **verbatim** (it includes `task_arms` and `meta`; note the composite primary keys on complexity/grades/phase_tokens — they retain version history), changing each `CREATE TABLE` to `CREATE TABLE IF NOT EXISTS` and adding:
 
 ```sql
 CREATE INDEX IF NOT EXISTS idx_sessions_task ON sessions(task_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_change ON tasks(change_id);
 ```
 
-- [ ] **Step 2: Write failing tests**
+- [x] **Step 2: Write failing tests**
 
 ```python
 # projects/agents/task-analyzer/tests/test_db.py
@@ -140,11 +140,11 @@ def test_upsert_and_stable_dump(tmp_path):
     assert set(row) == {"table", "row"}
 ```
 
-- [ ] **Step 3: Run tests, verify FAIL; implement `db.py`; run tests, verify PASS.**
+- [x] **Step 3: Run tests, verify FAIL; implement `db.py`; run tests, verify PASS.**
 
-- [ ] **Step 4: Seed prices.** Add to `schema.sql` idempotent seed INSERTs (`INSERT OR IGNORE`) for `model_prices` with `effective_date='2026-07-01'` for the observed arms — gpt-5.5, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.4, gpt-5.4-mini, gpt-5-codex, gpt-5, claude-sonnet-5, claude-opus-4-8, claude-haiku-4-5 — using the current published per-M-token prices (implementer: look them up in `analysis/sdd-model-analysis/` notes if present, else use provider list prices; exact values are data, wire the mechanism and leave a `-- TODO(price-audit)` comment listing sources). Add test: every distinct model named above has ≥1 price row.
+- [x] **Step 4: Seed prices.** Add to `schema.sql` idempotent seed INSERTs (`INSERT OR IGNORE`) for `model_prices` with `effective_date='2026-07-01'` for the observed arms — gpt-5.5, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna, gpt-5.4, gpt-5.4-mini, gpt-5-codex, gpt-5, claude-sonnet-5, claude-opus-4-8, claude-haiku-4-5 — using the current published per-M-token prices (implementer: look them up in `analysis/sdd-model-analysis/` notes if present, else use provider list prices; exact values are data, wire the mechanism and leave a `-- TODO(price-audit)` comment listing sources). Add test: every distinct model named above has ≥1 price row.
 
-- [ ] **Step 5: Commit** — `git commit -m "feat(task-analyzer): sqlite schema + db module"`.
+- [x] **Step 5: Commit** — `git commit -m "feat(task-analyzer): sqlite schema + db module"`.
 
 ---
 
@@ -164,13 +164,13 @@ def test_upsert_and_stable_dump(tmp_path):
   - `extractors.render_timeline(rec: SessionRecord) -> str` — the markdown timeline format used for phase labeling (`## Turn N  (output_tokens=…)` headers).
 - Porting source (behavioral reference, do not import): `analysis/sdd-model-analysis/scripts/extract_codex.py` and `extract_claude.py`. Key semantics to preserve: codex turns split on `token_count` events with `last_token_usage` deltas; codex `session_meta.source` distinguishes `exec` vs `thread_spawn` (capture `spawn_path`/`spawn_role`); claude turns split per assistant API message with that message's usage as the delta; claude subagent files (`*/subagents/agent-*.jsonl`) use file basename as session id; compaction markers (`compacted|compaction|context_compacted` payloads; claude `isCompactSummary`) increment `n_compactions`.
 
-- [ ] **Step 1: Build the four fixture files** — 15–30 lines each, hand-written, covering: an exec session with init handshake + 2 turns + token_counts; a thread_spawn session with `spawn_path` `/root/task_3_x`; a claude top-level session with 3 assistant messages (with usage) + tool_result; a claude subagent file. Include one compaction event in one codex fixture and `isCompactSummary` in one claude fixture.
+- [x] **Step 1: Build the four fixture files** — 15–30 lines each, hand-written, covering: an exec session with init handshake + 2 turns + token_counts; a thread_spawn session with `spawn_path` `/root/task_3_x`; a claude top-level session with 3 assistant messages (with usage) + tool_result; a claude subagent file. Include one compaction event in one codex fixture and `isCompactSummary` in one claude fixture.
 
-- [ ] **Step 2: Write failing tests asserting, for each fixture:** session_id, model/effort, harness_entry, token totals summed correctly, turn count, per-turn output_tokens, n_compactions, and that `render_timeline` output contains `## Turn 1` and a `CALL` line.
+- [x] **Step 2: Write failing tests asserting, for each fixture:** session_id, model/effort, harness_entry, token totals summed correctly, turn count, per-turn output_tokens, n_compactions, and that `render_timeline` output contains `## Turn 1` and a `CALL` line.
 
-- [ ] **Step 3: Implement `extractors.py` (port + refactor); tests PASS.**
+- [x] **Step 3: Implement `extractors.py` (port + refactor); tests PASS.**
 
-- [ ] **Step 4: Add a smoke test against one real transcript** (skipped when the path is absent):
+- [x] **Step 4: Add a smoke test against one real transcript** (skipped when the path is absent):
 
 ```python
 import os, pytest
@@ -184,7 +184,7 @@ def test_real_corpus_parses_one():
         assert rec.session_id
 ```
 
-- [ ] **Step 5: Commit** — `git commit -m "feat(task-analyzer): transcript extractors with fixtures"`.
+- [x] **Step 5: Commit** — `git commit -m "feat(task-analyzer): transcript extractors with fixtures"`.
 
 ---
 
@@ -203,9 +203,9 @@ def test_real_corpus_parses_one():
   - `discovery.assign_review_rounds(sessions) -> dict[str,int]` — per design D5's event rules: review boundaries are reviewer-session **end** times; implementer/fixer sessions starting before the first boundary get round 0; after n boundaries, round n; reviewer sessions themselves get the round they open. Aborted/zero-output sessions are numbered like any other.
   - `discovery.canonical_arm(sessions) -> (model, effort, basis: dict)` — round-0 implementer session with greatest output_tokens; alternates listed in basis.
   - `discovery.Quarantine` — record of ambiguous joins `(session_id, reason, candidates)`; ambiguous = task key matches >1 task or brief hash conflicts. Quarantined sessions get `task_id NULL`, never a guessed join.
-- [ ] **Step 1: Write failing tests** covering: classify_role on 8 canned prompts (implementer brief-file, "READ-ONLY task reviewer", RE-REVIEW, fixer, spawn_path task_4 fallback); task_keys on 6 canned prompts (brief path with change dir, openspec backtick name, `Plan 2 Task 5`, `/private/tmp/sheaf-x` fallback, `.claude/worktrees` non-greedy capture); assign_review_rounds on a synthetic task with implementer@t0, reviewer(end t1), implementer@t2, reviewer(end t3), reviewer(end t4, no intervening fix) → impl0 round 0, impl2 round 1 (followup), third reviewer contributes review only; canonical_arm picks the larger round-0 implementer when two exist; quarantine when two tasks match one key.
-- [ ] **Step 2: Implement; tests PASS.**
-- [ ] **Step 3: Commit** — `git commit -m "feat(task-analyzer): discovery, joining, review-round mechanics"`.
+- [x] **Step 1: Write failing tests** covering: classify_role on 8 canned prompts (implementer brief-file, "READ-ONLY task reviewer", RE-REVIEW, fixer, spawn_path task_4 fallback); task_keys on 6 canned prompts (brief path with change dir, openspec backtick name, `Plan 2 Task 5`, `/private/tmp/sheaf-x` fallback, `.claude/worktrees` non-greedy capture); assign_review_rounds on a synthetic task with implementer@t0, reviewer(end t1), implementer@t2, reviewer(end t3), reviewer(end t4, no intervening fix) → impl0 round 0, impl2 round 1 (followup), third reviewer contributes review only; canonical_arm picks the larger round-0 implementer when two exist; quarantine when two tasks match one key.
+- [x] **Step 2: Implement; tests PASS.**
+- [x] **Step 3: Commit** — `git commit -m "feat(task-analyzer): discovery, joining, review-round mechanics"`.
 
 ---
 
@@ -222,14 +222,14 @@ def test_real_corpus_parses_one():
   - `ingest.plan_work(conn, repo_root) -> WorkPlan` — pure function; lists new changes, new tasks, new sessions, and agentic gaps (`missing_complexity/missing_grades/missing_phase_labels`, each with its cache-key reason).
   - `ingest.run(conn, repo_root, *, dry_run, no_agents, rescore, agent_runner) -> RunReport` — `agent_runner` is the injectable callable (Task 7 provides the real one); per-task transactions; archives `brief_text` and graded tasks' review texts into the DB; appends `ingest_log` row; writes JSONL dump on success.
   - Staging contract (normative): `staging/<kind>/<entity_key>__v<version>__<sha256[:12]>.json`, written atomically (tmp + rename); invalid files renamed `.err` and re-dispatched; `plan_work` reports staging-satisfied vs to-dispatch gaps separately.
-- [ ] **Step 1: Write failing tests** using a fake repo tree in tmp_path (archive dir with one change, briefs, two fixture transcripts) and a `fake_agent_runner` that records invocations and writes canned staged JSON:
+- [x] **Step 1: Write failing tests** using a fake repo tree in tmp_path (archive dir with one change, briefs, two fixture transcripts) and a `fake_agent_runner` that records invocations and writes canned staged JSON:
   - fresh DB + run → rows appear in changes/tasks/sessions; agentic tables filled from fake runner; second `run` → RunReport shows zero writes and `fake_agent_runner` not invoked (idempotency).
   - `--dry-run` → DB byte-identical before/after, WorkPlan non-empty.
   - `--no-agents` → mechanical rows written, agentic gaps reported not dispatched.
   - crash simulation: make the fake runner raise after staging one file; re-run → completes using staged file without re-invoking for that key.
   - rescore: bump rubric version string via monkeypatched `assets.read_asset_version` → without `--rescore` rows untouched + reported stale; with `--rescore complexity` re-dispatched.
-- [ ] **Step 2: Implement; tests PASS.**
-- [ ] **Step 3: Commit** — `git commit -m "feat(task-analyzer): idempotent ingest driver"`.
+- [x] **Step 2: Implement; tests PASS.**
+- [x] **Step 3: Commit** — `git commit -m "feat(task-analyzer): idempotent ingest driver"`.
 
 ---
 
@@ -246,8 +246,8 @@ def test_real_corpus_parses_one():
   - implementer sessions with review_round 0: cost apportioned over the 10 phases by `phase_tokens.output_tokens` share at the configured taxonomy version (sessions with no phase labels → category `unlabeled`).
   - all reviewer/auditor sessions → `review`; fixer sessions and implementer sessions with review_round ≥ 1 → `followup_fix` (no phase apportionment); quarantined sessions fund nothing.
   - `costs.rebuild` also (re)writes `task_arms` via `discovery.canonical_arm`.
-- [ ] **Step 1: Failing tests:** synthetic task with one implementer session (phases red 60 / green 40 output tokens, known token totals), one reviewer, one round-2 implementer → assert exact usd per category (hand-computed against seeded price rows); price-update test: insert newer price row, `rebuild`, assert usd changed and `price_version` updated, agentic tables untouched (compare row counts + a hash of `complexity` table before/after).
-- [ ] **Step 2: Implement; tests PASS; commit** — `git commit -m "feat(task-analyzer): derived cost rebuild"`.
+- [x] **Step 1: Failing tests:** synthetic task with one implementer session (phases red 60 / green 40 output tokens, known token totals), one reviewer, one round-2 implementer → assert exact usd per category (hand-computed against seeded price rows); price-update test: insert newer price row, `rebuild`, assert usd changed and `price_version` updated, agentic tables untouched (compare row counts + a hash of `complexity` table before/after).
+- [x] **Step 2: Implement; tests PASS; commit** — `git commit -m "feat(task-analyzer): derived cost rebuild"`.
 
 ---
 
@@ -263,10 +263,10 @@ def test_real_corpus_parses_one():
   - kind ∈ {complexity, grading, phase_labeling}; model defaults from the prompt's `model_hint` (sonnet/sonnet/haiku).
   - Writes `items.json` into staging, renders the prompt with `{{…}}` substitutions, invokes `node projects/xagent/dist/src/main.js run --harness claude_code --model <m> --subagent "<short pointer prompt>" < /dev/null > log`, batches ≤12 items per invocation, validates each produced JSON against a per-kind required-key set, retries invalid items once, returns produced paths.
   - MUST close stdin (`< /dev/null`) and redirect stdout to a file (xagent hangs on open stdin; SIGPIPE kills runs — documented in the repo memory).
-- [ ] **Step 1: Failing tests** with `subprocess.run` monkeypatched: batching math (25 items → 3 invocations), prompt rendering includes rubric path and staging paths, validation rejects a malformed staged JSON and retries once, model_hint honored and overridable.
-- [ ] **Step 2: Implement; tests PASS (no real dispatches in tests).**
-- [ ] **Step 3: One real smoke run** (manual, cheap): `python3 -c` snippet dispatching a single phase-labeling item against a real timeline rendered from a fixture; verify a valid staged JSON appears. Record the command and result in the task report.
-- [ ] **Step 4: Commit** — `git commit -m "feat(task-analyzer): xagent dispatch wrappers"`.
+- [x] **Step 1: Failing tests** with `subprocess.run` monkeypatched: batching math (25 items → 3 invocations), prompt rendering includes rubric path and staging paths, validation rejects a malformed staged JSON and retries once, model_hint honored and overridable.
+- [x] **Step 2: Implement; tests PASS (no real dispatches in tests).**
+- [x] **Step 3: One real smoke run** (manual, cheap): `python3 -c` snippet dispatching a single phase-labeling item against a real timeline rendered from a fixture; verify a valid staged JSON appears. Record the command and result in the task report.
+- [x] **Step 4: Commit** — `git commit -m "feat(task-analyzer): xagent dispatch wrappers"`.
 
 ---
 
@@ -280,10 +280,10 @@ def test_real_corpus_parses_one():
 - Consumes: `db`, `discovery.assign_review_rounds`, `costs.rebuild`.
 - Source files (formats are exactly what the analysis scripts wrote): `codex_sessions.json`, `claude_sessions.json`, `tasks.json`, `complexity/*.json`, `grades/*.json`, `phase_labels/*.json`, `timelines/*.md` (turn headers carry per-turn output/reasoning tokens).
 - Mapping: sessions → `sessions` (role from `kind`; `harness_entry` from `entry`); tasks.json rows → `changes` + `tasks` (brief_text from disk if the file survives, else the implementer prompt); complexity/grades → rubric_version `'1'`, `scored_by` `'migrated_v0'`, `input_sha256` of whatever text was used; phase labels × timeline turn headers → `phase_tokens` rows (output_tokens summed per phase per session), taxonomy_version `'1'`. Then run round assignment + `costs.rebuild`. Zero agent dispatches. Idempotent: keyed upserts; second run is a no-op.
-- [ ] **Step 1: Failing tests** on a miniature copied source tree (2 tasks, 3 sessions, 1 grade, 1 complexity, 1 label+timeline pair): row counts, rubric_version=='1' everywhere, second-run no-op (dump bytes equal), `task_costs` non-empty after rebuild.
-- [ ] **Step 2: Implement; tests PASS.**
-- [ ] **Step 3: Real migration run:** `python3 projects/agents/task-analyzer/migrate_v0.py --db data/agents/task-analyzer.sqlite --source analysis/sdd-model-analysis/data` then `python3 projects/agents/task-analyzer/ingest.py --db data/agents/task-analyzer.sqlite rebuild-derived`. Reconcile and print: implementer+fixer sessions ≈ 203, complexity rows = 143, grades rows = 117, phase-labeled sessions = 200. Investigate any count off by >2 before committing.
-- [ ] **Step 4: Commit DB + dump** — `git add data/agents/ projects/agents/task-analyzer && git commit -m "feat(task-analyzer): migrate 2026-07-19 dataset"`.
+- [x] **Step 1: Failing tests** on a miniature copied source tree (2 tasks, 3 sessions, 1 grade, 1 complexity, 1 label+timeline pair): row counts, rubric_version=='1' everywhere, second-run no-op (dump bytes equal), `task_costs` non-empty after rebuild.
+- [x] **Step 2: Implement; tests PASS.**
+- [x] **Step 3: Real migration run:** `python3 projects/agents/task-analyzer/migrate_v0.py --db data/agents/task-analyzer.sqlite --source analysis/sdd-model-analysis/data` then `python3 projects/agents/task-analyzer/ingest.py --db data/agents/task-analyzer.sqlite rebuild-derived`. Reconcile and print: implementer+fixer sessions ≈ 203, complexity rows = 143, grades rows = 117, phase-labeled sessions = 200. Investigate any count off by >2 before committing.
+- [x] **Step 4: Commit DB + dump** — `git add data/agents/ projects/agents/task-analyzer && git commit -m "feat(task-analyzer): migrate 2026-07-19 dataset"`.
 
 ---
 
@@ -305,10 +305,10 @@ def test_real_corpus_parses_one():
   - Targets: `y = log(usd + 1e-4)` per (task, category); quantile answers exponentiate back.
   - `train.main`: joins `task_costs × complexity(current version) × task_arms` — the arm is ALWAYS the task's canonical implementer arm, for review/followup categories too. For each category × arm with ≥1 row: pooled prior = NIG fitted on all arms with weak hyperparameters (`μ0=0, Λ0=I·1e-2, a0=1, b0=1`) then per-arm posterior = pooled-posterior-as-prior updated on the arm's rows (partial pooling); persist per design D2 into `estimators` and `estimator_params` (`posterior_json = NIG.to_json()`). `config_json` is normative and MUST contain: feature names+order, transform+epsilon, prior hyperparameters, pooling scheme, training filters (rubric_version, taxonomy_version, price_version, min rows), category list, arm list, quantile algorithm id, output formatting rule. `metrics_json` MUST contain per-category held-out p50/p80 coverage (LOO on arms with ≥8 rows) and per-arm train row counts.
 - Student-t quantile without scipy: implement inverse-CDF via `numpy` bisection on the regularized incomplete beta series, or simpler: `mean + scale * t_ppf(q, df)` with `t_ppf` computed by bisection over the t-CDF built from `math.lgamma`-based incomplete beta continued fraction (put it in `model.py`, test against known values: `t_ppf(0.8, 5) ≈ 0.9195`, `t_ppf(0.5, 7) == 0.0`, `t_ppf(0.8, 1e6) ≈ 0.8416`).
-- [ ] **Step 1: Failing math tests:** NIG update on synthetic data recovers known coefficients (generate y = 2 + 3x + noise, n=200, assert |μn − [2,3]| < 0.2); predictive interval calibration on synthetic data (≈80% of held-out points below their p80); t_ppf values above; to_json roundtrip exact; sparse-arm test: arm with 2 rows has p80−p50 gap strictly wider than an arm with 50 rows from the same generator.
-- [ ] **Step 2: Implement `model.py`; tests PASS.**
-- [ ] **Step 3: Failing train-integration test** on a tmp DB seeded with ~60 synthetic task_costs/complexity/sessions rows across 3 arms → `train.main` writes 1 estimators row + params for every (category, arm) with data; re-running creates a second estimators row (old kept).
-- [ ] **Step 4: Implement `train.py`; tests PASS; commit** — `git commit -m "feat(task-analyzer): NIG cost model + training"`.
+- [x] **Step 1: Failing math tests:** NIG update on synthetic data recovers known coefficients (generate y = 2 + 3x + noise, n=200, assert |μn − [2,3]| < 0.2); predictive interval calibration on synthetic data (≈80% of held-out points below their p80); t_ppf values above; to_json roundtrip exact; sparse-arm test: arm with 2 rows has p80−p50 gap strictly wider than an arm with 50 rows from the same generator.
+- [x] **Step 2: Implement `model.py`; tests PASS.**
+- [x] **Step 3: Failing train-integration test** on a tmp DB seeded with ~60 synthetic task_costs/complexity/sessions rows across 3 arms → `train.main` writes 1 estimators row + params for every (category, arm) with data; re-running creates a second estimators row (old kept).
+- [x] **Step 4: Implement `train.py`; tests PASS; commit** — `git commit -m "feat(task-analyzer): NIG cost model + training"`.
 
 ---
 
@@ -324,10 +324,10 @@ def test_real_corpus_parses_one():
 - Produces:
   - `annotations.validate(doc, plan_tasks: list[str], known_arms: list[(model,effort)]) -> list[str]` (error strings; empty = valid) and `annotations.write(doc, path)`.
   - `estimate.py` output: per task, all arms ranked by expected total (sum over categories of predictive mean, in usd), selected arm = min expected total subject to p_q(total) guard; `explore: true` when runner-up's p20 < winner's p80 (posterior overlap proxy); totals per decomposition; supplied `composite` values are ignored and recomputed from C1–C6; `--json` machine output + default human table; `--sanity` emits the deterministic reference report at composites {2,3,4} across all arms; deterministic for fixed `--estimator-id` in quantile mode (assert byte-equal in test).
-- [ ] **Step 1: Failing tests:** validator catches unknown task key, C out of range, unknown arm, composite disagreeing with mean(C1..C6); estimate on a tmp DB with a hand-built estimator (two arms with known posteriors — one clearly cheaper, one sparse/wide) → cheaper arm selected, sparse arm flagged explore, byte-determinism across two runs.
-- [ ] **Step 2: Implement; tests PASS.**
-- [ ] **Step 3: Real run sanity check** against the migrated+trained DB: craft a 3-task decomposition JSON at composites {2.0, 3.0, 4.0} and verify outputs are finite, ordered, and directionally consistent with findings (report the table in the task report; do not hard-assert findings in tests).
-- [ ] **Step 4: Commit** — `git commit -m "feat(task-analyzer): estimator CLI + annotation format"`.
+- [x] **Step 1: Failing tests:** validator catches unknown task key, C out of range, unknown arm, composite disagreeing with mean(C1..C6); estimate on a tmp DB with a hand-built estimator (two arms with known posteriors — one clearly cheaper, one sparse/wide) → cheaper arm selected, sparse arm flagged explore, byte-determinism across two runs.
+- [x] **Step 2: Implement; tests PASS.**
+- [x] **Step 3: Real run sanity check** against the migrated+trained DB: craft a 3-task decomposition JSON at composites {2.0, 3.0, 4.0} and verify outputs are finite, ordered, and directionally consistent with findings (report the table in the task report; do not hard-assert findings in tests).
+- [x] **Step 4: Commit** — `git commit -m "feat(task-analyzer): estimator CLI + annotation format"`.
 
 ---
 
@@ -341,11 +341,11 @@ def test_real_corpus_parses_one():
 **Interfaces:**
 - Consumes: everything prior.
 - `prompts/decomposer.md` MUST specify: inputs (proposal/design/specs paths, main-branch DB path, quantile); the 5-step search protocol from design D7 (3–5 candidates varying granularity + grouping axis; in-context C1–C7 scoring per rubric; `estimate.py` per candidate; guardrails — split composite >3.5, prefer C7 ≤ 2, dependency order; emit chosen annotation YAML + comparison table + rationale); the rule that the DB path is caller-supplied main-branch, never a worktree copy; and the no-side-effects contract (writes only the annotation + report).
-- [ ] **Step 1: Train on real data:** `python3 projects/agents/task-analyzer/train.py --db data/agents/task-analyzer.sqlite`. Sanity-check in the task report: expected-total(5.5/high) < expected-total(sol/high) at composite 3; terra/medium cheapest arm at composite ≤3 among arms with n≥5; sparse arms (luna, 5.4) flagged wide. Commit DB.
-- [ ] **Step 2: Write `prompts/decomposer.md`** per the interface above.
-- [ ] **Step 3: Dry-run the decomposer once** (haiku or sonnet subagent, manual dispatch) against archived change `add-note-system-message-mappings` with the trained DB; verify it produces ≥3 scored candidates and a selection; capture its output under `projects/agents/task-analyzer/examples/`; refine the prompt once if the protocol was misunderstood.
-- [ ] **Step 4: Complete README.md:** run cadence (offline, occasional), command reference (ingest / rebuild-derived / migrate_v0 / train / estimate), the recompute matrix (rubric bump → `--rescore`; price change → rebuild-derived; taxonomy bump → phase relabel; estimator retrain cadence), staging/crash-recovery semantics, and the explicit note that workflow integration is a future change.
-- [ ] **Step 5: Commit** — `git commit -m "feat(task-analyzer): decomposer prompt, trained estimator, docs"`.
+- [x] **Step 1: Train on real data:** `python3 projects/agents/task-analyzer/train.py --db data/agents/task-analyzer.sqlite`. Sanity-check in the task report: expected-total(5.5/high) < expected-total(sol/high) at composite 3; terra/medium cheapest arm at composite ≤3 among arms with n≥5; sparse arms (luna, 5.4) flagged wide. Commit DB.
+- [x] **Step 2: Write `prompts/decomposer.md`** per the interface above.
+- [x] **Step 3: Dry-run the decomposer once** (haiku or sonnet subagent, manual dispatch) against archived change `add-note-system-message-mappings` with the trained DB; verify it produces ≥3 scored candidates and a selection; capture its output under `projects/agents/task-analyzer/examples/`; refine the prompt once if the protocol was misunderstood.
+- [x] **Step 4: Complete README.md:** run cadence (offline, occasional), command reference (ingest / rebuild-derived / migrate_v0 / train / estimate), the recompute matrix (rubric bump → `--rescore`; price change → rebuild-derived; taxonomy bump → phase relabel; estimator retrain cadence), staging/crash-recovery semantics, and the explicit note that workflow integration is a future change.
+- [x] **Step 5: Commit** — `git commit -m "feat(task-analyzer): decomposer prompt, trained estimator, docs"`.
 
 ---
 
