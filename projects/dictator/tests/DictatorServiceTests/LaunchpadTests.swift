@@ -736,6 +736,13 @@ final class LaunchpadTests: XCTestCase {
         )
     }
 
+    func testLaunchpadIdleSleepIsEffectivelyDisabled() {
+        XCTAssertGreaterThanOrEqual(
+            LaunchpadMIDIManager.idleSleepInterval,
+            TimeInterval(Int32.max)
+        )
+    }
+
     func testPageFactoryDispatchesToggleFullscreenOverlayAction() throws {
         let bus = RenderInvalidationBus()
         let json = """

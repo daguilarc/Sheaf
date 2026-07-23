@@ -113,7 +113,7 @@ final class LaunchpadMIDIManager: LaunchpadTransport {
     }
 
     private static let sleepCommand: UInt8 = 0x09
-    private static let idleSleepInterval: TimeInterval = 600
+    static let idleSleepInterval: TimeInterval = TimeInterval(Int32.max)
     static let allAddressableCoordinates: [PadCoordinate] = {
         var coordinates: [PadCoordinate] = []
         for y in -1...9 {
