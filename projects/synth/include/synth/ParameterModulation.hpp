@@ -136,6 +136,11 @@ enum class Modifier {
     RandomMod,
 };
 
+enum class BankDirection {
+    Next,
+    Previous,
+};
+
 using ParameterRandomFloat = std::function<float()>;
 using ParameterRandomIndex = std::function<std::size_t(std::size_t)>;
 
@@ -838,6 +843,7 @@ public:
     void HandleSetAbsolute(std::size_t slotIx, std::size_t position, float normalizedTarget,
                            std::uint64_t absoluteEpoch = 0);
     bool SelectBankForSlot(std::size_t slotIx, std::size_t bankIx);
+    bool NavigateBankForSlot(std::size_t slotIx, BankDirection direction);
 
     Modifier GetCurrentModifier() const;
 
@@ -936,6 +942,8 @@ struct MessageIn {
         GridRelease,
         GridPressureChange,
         SelectGrid,
+        NextParamBank,
+        PrevParamBank,
     };
 
     std::uint64_t timestamp = 0;
@@ -969,6 +977,8 @@ struct MessageIn {
     static MessageIn ToggleGestureSelect(std::uint64_t timestamp, std::size_t gestureIx);
     static MessageIn SetGestureSelect(std::uint64_t timestamp, std::size_t gestureIx, bool selected);
     static MessageIn SelectParamBank(std::uint64_t timestamp, std::size_t slotIx, std::size_t bankIx);
+    static MessageIn NextParamBank(std::uint64_t timestamp, std::size_t slotIx);
+    static MessageIn PrevParamBank(std::uint64_t timestamp, std::size_t slotIx);
     static MessageIn Start(std::uint64_t timestamp);
     static MessageIn Stop(std::uint64_t timestamp);
     static MessageIn Clock(std::uint64_t timestamp);

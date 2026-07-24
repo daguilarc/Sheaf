@@ -3502,6 +3502,35 @@ bool ParameterManager::SelectBankForSlot(std::size_t slotIx, std::size_t bankIx)
     return true;
 }
 
+bool ParameterManager::NavigateBankForSlot(std::size_t slotIx, BankDirection direction) {
+    BankSlot* slot = BankSlotAt(slotIx);
+    if (slot == nullptr || banks_.empty() || slot->SelectedBank() == nullptr) {
+        return false;
+    }
+
+    const auto current = std::find_if(
+        banks_.begin(), banks_.end(),
+        [selected = slot->SelectedBank()](const std::unique_ptr<Bank>& bank) {
+            return bank.get() == selected;
+        });
+    if (current == banks_.end()) {
+        return false;
+    }
+
+    const Modifier modifier = GetCurrentModifier();
+    if (modifier != Modifier::None) {
+        (*current)->ApplyModifierToTopLevel(modifier, scene_);
+        return true;
+    }
+
+    const std::size_t currentIx = static_cast<std::size_t>(std::distance(banks_.begin(), current));
+    const std::size_t nextIx = direction == BankDirection::Next
+        ? (currentIx + 1 == banks_.size() ? 0 : currentIx + 1)
+        : (currentIx == 0 ? banks_.size() - 1 : currentIx - 1);
+    slot->SelectBank(banks_[nextIx].get());
+    return true;
+}
+
 Modifier ParameterManager::GetCurrentModifier() const {
     if (randomModHeld_) {
         return Modifier::RandomMod;
@@ -3842,6 +3871,22 @@ MessageIn MessageIn::SelectParamBank(std::uint64_t timestamp, std::size_t slotIx
     return message;
 }
 
+MessageIn MessageIn::NextParamBank(std::uint64_t timestamp, std::size_t slotIx) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::NextParamBank;
+    message.slotIx = slotIx;
+    return message;
+}
+
+MessageIn MessageIn::PrevParamBank(std::uint64_t timestamp, std::size_t slotIx) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::PrevParamBank;
+    message.slotIx = slotIx;
+    return message;
+}
+
 MessageIn MessageIn::Start(std::uint64_t timestamp) {
     MessageIn message;
     message.timestamp = timestamp;
@@ -4021,6 +4066,16 @@ void MessageInBus::Apply(const MessageIn& message) {
     case MessageIn::Type::SelectParamBank:
         if (manager_ != nullptr) {
             manager_->SelectBankForSlot(message.slotIx, message.bankIx);
+        }
+        break;
+    case MessageIn::Type::NextParamBank:
+        if (manager_ != nullptr) {
+            manager_->NavigateBankForSlot(message.slotIx, BankDirection::Next);
+        }
+        break;
+    case MessageIn::Type::PrevParamBank:
+        if (manager_ != nullptr) {
+            manager_->NavigateBankForSlot(message.slotIx, BankDirection::Previous);
         }
         break;
     case MessageIn::Type::SetGestureValue:

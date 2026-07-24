@@ -5030,6 +5030,158 @@ TEST_CASE(modified_bank_selection_applies_modifier_to_target_bank_without_switch
     REQUIRE_NEAR(randomModDepth->SceneCenter(0), 0.5f, 0.0001f);
 }
 
+TEST_CASE(relative_bank_messages_navigate_wrap_and_preserve_invalid_state) {
+    const synth::MessageIn next = synth::MessageIn::NextParamBank(17, 3);
+    REQUIRE_TRUE(next.type == synth::MessageIn::Type::NextParamBank);
+    REQUIRE_TRUE(next.timestamp == 17);
+    REQUIRE_TRUE(next.slotIx == 3);
+    REQUIRE_TRUE(next.bankIx == 0);
+    const synth::MessageIn previous = synth::MessageIn::PrevParamBank(19, 4);
+    REQUIRE_TRUE(previous.type == synth::MessageIn::Type::PrevParamBank);
+    REQUIRE_TRUE(previous.timestamp == 19);
+    REQUIRE_TRUE(previous.slotIx == 4);
+    REQUIRE_TRUE(previous.bankIx == 0);
+
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
+    auto& parameter = manager.CreateParameter(group, {.name = "Relative", .defaultValue = 0.25f});
+    auto& first = manager.CreateBank();
+    first.AddMapping(10, parameter);
+    auto& second = manager.CreateBank();
+    second.AddMapping(10, parameter);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&first);
+    synth::MessageInBus bus(&manager, 8);
+
+    bus.Apply(synth::MessageIn::NextParamBank(0, 0));
+    REQUIRE_TRUE(slot.SelectedBank() == &second);
+    bus.Apply(synth::MessageIn::NextParamBank(0, 0));
+    REQUIRE_TRUE(slot.SelectedBank() == &first);
+    bus.Apply(synth::MessageIn::PrevParamBank(0, 0));
+    REQUIRE_TRUE(slot.SelectedBank() == &second);
+    bus.Apply(synth::MessageIn::PrevParamBank(0, 0));
+    REQUIRE_TRUE(slot.SelectedBank() == &first);
+
+    const float priorValue = parameter.SceneCenter(0);
+    bus.Apply(synth::MessageIn::NextParamBank(0, 99));
+    REQUIRE_TRUE(slot.SelectedBank() == &first);
+    REQUIRE_NEAR(parameter.SceneCenter(0), priorValue, 0.0f);
+
+    synth::ParameterManager oneBankManager;
+    auto& oneGroup = oneBankManager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
+    auto& oneParameter = oneBankManager.CreateParameter(oneGroup, {.name = "One", .defaultValue = 0.4f});
+    auto& onlyBank = oneBankManager.CreateBank();
+    onlyBank.AddMapping(10, oneParameter);
+    auto& oneSlot = oneBankManager.CreateBankSlot();
+    oneSlot.AddPhysicalEncoder(10);
+    oneSlot.SelectBank(&onlyBank);
+    synth::MessageInBus oneBus(&oneBankManager, 4);
+    oneBus.Apply(synth::MessageIn::NextParamBank(0, 0));
+    oneBus.Apply(synth::MessageIn::PrevParamBank(0, 0));
+    REQUIRE_TRUE(oneSlot.SelectedBank() == &onlyBank);
+
+    synth::ParameterManager zeroBanksManager;
+    auto& zeroGroup = zeroBanksManager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
+    auto& zeroParameter = zeroBanksManager.CreateParameter(zeroGroup, {.name = "Zero", .defaultValue = 0.6f});
+    auto& zeroSlot = zeroBanksManager.CreateBankSlot();
+    zeroSlot.AddPhysicalEncoder(10);
+    synth::MessageInBus zeroBus(&zeroBanksManager, 4);
+    zeroBus.Apply(synth::MessageIn::NextParamBank(0, 0));
+    zeroBus.Apply(synth::MessageIn::PrevParamBank(0, 0));
+    REQUIRE_TRUE(zeroSlot.SelectedBank() == nullptr);
+    REQUIRE_NEAR(zeroParameter.SceneCenter(0), 0.6f, 0.0f);
+
+    synth::ParameterManager noSelectionManager;
+    auto& noSelectionGroup = noSelectionManager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 1});
+    auto& noSelectionParameter = noSelectionManager.CreateParameter(
+        noSelectionGroup, {.name = "No Selection", .defaultValue = 0.7f});
+    auto& ownedBank = noSelectionManager.CreateBank();
+    ownedBank.AddMapping(10, noSelectionParameter);
+    auto& noSelectionSlot = noSelectionManager.CreateBankSlot();
+    noSelectionSlot.AddPhysicalEncoder(10);
+    synth::MessageInBus noSelectionBus(&noSelectionManager, 4);
+    noSelectionBus.Apply(synth::MessageIn::NextParamBank(0, 0));
+    REQUIRE_TRUE(noSelectionSlot.SelectedBank() == nullptr);
+    REQUIRE_NEAR(noSelectionParameter.SceneCenter(0), 0.7f, 0.0f);
+
+    synth::Bank foreignBank;
+    noSelectionSlot.SelectBank(&foreignBank);
+    noSelectionBus.Apply(synth::MessageIn::PrevParamBank(0, 0));
+    REQUIRE_TRUE(noSelectionSlot.SelectedBank() == &foreignBank);
+    REQUIRE_NEAR(noSelectionParameter.SceneCenter(0), 0.7f, 0.0f);
+}
+
+TEST_CASE(relative_bank_messages_apply_effective_modifiers_without_selection) {
+    for (const synth::BankDirection direction : {synth::BankDirection::Next, synth::BankDirection::Previous}) {
+        for (const synth::Modifier modifier : {synth::Modifier::Reset, synth::Modifier::Random,
+                                               synth::Modifier::RandomMod}) {
+            synth::ParameterManager manager;
+            auto& group = manager.CreateGroup({
+                .numVoices = 1,
+                .numModulators = 1,
+                .numScenes = 1,
+                .maxParameters = 3,
+            });
+            MarkAllModulatorsConnectedForUi(group);
+            auto& parameter = manager.CreateParameter(group, {.name = "Modified", .defaultValue = 0.25f});
+            auto& selected = manager.CreateBank();
+            selected.AddMapping(10, parameter);
+            auto& other = manager.CreateBank();
+            other.AddMapping(10, parameter);
+            auto& slot = manager.CreateBankSlot();
+            slot.AddPhysicalEncoder(10);
+            slot.SelectBank(&selected);
+            std::size_t coinCalls = 0;
+            manager.SetRandomSource([] { return 0.8f; }, [&coinCalls] { return coinCalls++ == 0 ? 0.0f : 1.0f; },
+                                    [](std::size_t) { return std::size_t{0}; });
+            parameter.SceneCenter(0) = 0.6f;
+            synth::MessageInBus bus(&manager, 4);
+
+            if (modifier == synth::Modifier::Reset) {
+                manager.SetResetHeld(true);
+            } else if (modifier == synth::Modifier::Random) {
+                manager.SetRandomHeld(true);
+            } else {
+                manager.SetRandomModHeld(true);
+            }
+            bus.Apply(direction == synth::BankDirection::Next ? synth::MessageIn::NextParamBank(0, 0)
+                                                               : synth::MessageIn::PrevParamBank(0, 0));
+            REQUIRE_TRUE(slot.SelectedBank() == &selected);
+            if (modifier == synth::Modifier::Reset) {
+                REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.0001f);
+            } else if (modifier == synth::Modifier::Random) {
+                REQUIRE_TRUE(parameter.SceneCenter(0) != 0.6f);
+            } else {
+                REQUIRE_TRUE(parameter.ModulationDepthParameter(0) != nullptr);
+            }
+        }
+    }
+
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numModulators = 1, .numScenes = 1, .maxParameters = 3});
+    MarkAllModulatorsConnectedForUi(group);
+    auto& parameter = manager.CreateParameter(group, {.name = "Precedence", .defaultValue = 0.25f});
+    auto& selected = manager.CreateBank();
+    selected.AddMapping(10, parameter);
+    auto& other = manager.CreateBank();
+    other.AddMapping(10, parameter);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&selected);
+    std::size_t coinCalls = 0;
+    manager.SetRandomSource([] { return 0.8f; }, [&coinCalls] { return coinCalls++ == 0 ? 0.0f : 1.0f; },
+                            [](std::size_t) { return std::size_t{0}; });
+    manager.SetResetHeld(true);
+    manager.SetRandomHeld(true);
+    manager.SetRandomModHeld(true);
+    synth::MessageInBus bus(&manager, 4);
+    bus.Apply(synth::MessageIn::NextParamBank(0, 0));
+    REQUIRE_TRUE(slot.SelectedBank() == &selected);
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.0001f);
+    REQUIRE_TRUE(parameter.ModulationDepthParameter(0) != nullptr);
+}
+
 TEST_CASE(reset_modifier_collects_each_affected_group_once_after_resetting_the_bank) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({
@@ -9894,6 +10046,19 @@ void SimSelectBank(SimOracle& oracle, int bankIx) {
     oracle.selectedBank = bankIx;
 }
 
+void SimNavigateBank(SimOracle& oracle, synth::BankDirection direction,
+                     SimRandomSamples& randomSamples, std::mt19937& randomRng,
+                     std::vector<std::string>* samples) {
+    if (SimCurrentModifier(oracle) != synth::Modifier::None) {
+        SimApplyModifierToBank(oracle, oracle.selectedBank, randomSamples, randomRng, samples);
+        return;
+    }
+    const int bankCount = static_cast<int>(oracle.banks.size());
+    oracle.selectedBank = direction == synth::BankDirection::Next
+        ? (oracle.selectedBank + 1) % bankCount
+        : (oracle.selectedBank == 0 ? bankCount - 1 : oracle.selectedBank - 1);
+}
+
 std::vector<unsigned> SimSeedsFromEnvironment() {
     const char* env = std::getenv("SYNTH_RANDOM_SEEDS");
     if (env == nullptr || *env == '\0') {
@@ -10864,7 +11029,7 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
                 randomSamples.RequireDrained(seed, step, action);
                 setOracleHeld(modifier, false);
             };
-            switch (rng() % 29) {
+            switch (rng() % 31) {
             case 0: {
                 const std::size_t position = rng() % encoders.size();
                 const float delta = deltaDist(rng);
@@ -11085,6 +11250,23 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
                 action = "bus grid event signed out-of-range coordinate";
                 REQUIRE_TRUE(bus.Push(synth::MessageIn::GridPressureChange(timestamp, gridSlot, x, 7, 127)));
                 bus.Process(timestamp);
+                break;
+            }
+            case 28:
+            case 29: {
+                const synth::BankDirection direction = (rng() % 2) == 0
+                    ? synth::BankDirection::Next
+                    : synth::BankDirection::Previous;
+                std::vector<std::string> samples;
+                SimNavigateBank(oracle, direction, randomSamples, randomRng, &samples);
+                action = std::string("bus ") +
+                    (direction == synth::BankDirection::Next ? "next bank" : "previous bank") +
+                    " samples=" + JoinSamples(samples);
+                REQUIRE_TRUE(bus.Push(direction == synth::BankDirection::Next
+                                          ? synth::MessageIn::NextParamBank(timestamp, 0)
+                                          : synth::MessageIn::PrevParamBank(timestamp, 0)));
+                bus.Process(timestamp);
+                randomSamples.RequireDrained(seed, step, action);
                 break;
             }
             default: {
