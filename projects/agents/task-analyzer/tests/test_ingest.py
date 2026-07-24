@@ -451,6 +451,180 @@ class TestArchiveRefRecorded(IngestTestBase):
         self.assertTrue(row[0])  # git_sha (resolved commit) also present
 
 
+class TestTaskSectionsFromPlan(unittest.TestCase):
+    """followup-6, defect 2: ``ingest._task_sections_from_plan`` ports the
+    ``subagent-driven-development`` skill's own ``task-brief`` script
+    (awk) exactly -- any markdown heading level, skip headings inside
+    fenced code blocks, a section runs through the line before the next
+    Task-heading of any number."""
+
+    def test_heading_level_agnostic(self):
+        # Real plans in this repo use "## Task N" as often as "### Task N"
+        # -- task-brief's own regex (`^#+[ \t]+Task...`) doesn't care, and
+        # neither must this.
+        plan = "## Task 1: First\n\nBody one.\n\n### Task 2: Second\n\nBody two.\n"
+        sections = ingest._task_sections_from_plan(plan)
+        self.assertEqual(set(sections), {1, 2})
+        self.assertIn("Body one.", sections[1])
+        self.assertNotIn("Body two.", sections[1])
+        self.assertIn("Body two.", sections[2])
+
+    def test_section_runs_through_next_task_heading_not_next_heading_of_any_kind(self):
+        # A subsection heading WITHIN a task (not itself a "Task N"
+        # heading) must stay part of that task's section -- only another
+        # Task-heading closes it.
+        plan = (
+            "## Task 1: First\n\n"
+            "#### Verification\n\n"
+            "Run the tests.\n\n"
+            "## Task 2: Second\n\n"
+            "Body two.\n"
+        )
+        sections = ingest._task_sections_from_plan(plan)
+        self.assertIn("#### Verification", sections[1])
+        self.assertIn("Run the tests.", sections[1])
+        self.assertNotIn("Body two.", sections[1])
+
+    def test_task_heading_inside_a_fenced_code_block_is_not_a_real_heading(self):
+        plan = (
+            "## Task 1: First\n\n"
+            "Example plan snippet:\n\n"
+            "```\n"
+            "## Task 99: not a real task heading\n"
+            "```\n\n"
+            "Real body continues.\n"
+        )
+        sections = ingest._task_sections_from_plan(plan)
+        self.assertEqual(set(sections), {1})
+        self.assertIn("Real body continues.", sections[1])
+
+    def test_no_task_headings_yields_empty_dict(self):
+        plan = "# Just a plan\n\nNo task sections here at all.\n"
+        self.assertEqual(ingest._task_sections_from_plan(plan), {})
+
+
+class TestPlanDerivedBriefs(IngestTestBase):
+    """followup-6, defect 2: the SDD workflow never commits
+    ``.superpowers/`` (it's uncommitted scratch), so a landed change's
+    task briefs are typically absent at the archive ref in steady state --
+    only the historical migrated_v0 corpus happened to have them (that
+    extraction read live worktree scratch). When a landed change has ZERO
+    committed briefs, its tasks are derived from its own committed
+    Superpowers plan file instead."""
+
+    def _commit_plan_only_change(self, change_name, plan_text, date="2026-07-11"):
+        archive = self.repo / "openspec" / "changes" / "archive" / f"{date}-{change_name}"
+        archive.mkdir(parents=True)
+        (archive / "proposal.md").write_text("proposal\n")
+        plans_dir = self.repo / "docs" / "superpowers" / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+        plan_path = plans_dir / f"{date}-{change_name}.md"
+        plan_path.write_text(plan_text)
+        _run_git(self.repo, "add", "-A")
+        _run_git(self.repo, "commit", "-q", "-m", f"add {change_name}")
+        return f"docs/superpowers/plans/{date}-{change_name}.md"
+
+    def test_tasks_derived_from_plan_when_no_briefs_committed(self):
+        change_name = "add-planonly"
+        plan_rel_path = self._commit_plan_only_change(
+            change_name,
+            "# Add Plan Only\n\n"
+            "## Task 1: First Task\n\n"
+            "Do the first thing.\n\n"
+            "## Task 2: Second Task\n\n"
+            "Do the second thing.\n",
+        )
+        _write_claude_session(
+            self.claude_root / "planonly-impl-1.jsonl", "planonly-impl-1",
+            f"Read your task brief at .superpowers/sdd/{change_name}/task-1-brief.md and implement it.",
+            "Implemented task 1.",
+        )
+
+        conn = self._conn()
+        plan = self._plan(conn, change=change_name)
+        self.assertIn(f"{change_name}/task-1", plan.new_tasks)
+        self.assertIn(f"{change_name}/task-2", plan.new_tasks)
+
+        report = self._run(conn, agent_runner=FakeAgentRunner(), change=change_name)
+        self.assertEqual(report.tasks_written, 2)
+        row = conn.execute(
+            "SELECT brief_text, brief_path, brief_sha256, brief_bytes FROM tasks t "
+            "JOIN changes c ON c.change_id = t.change_id "
+            "WHERE c.name = ? AND t.task_key = 'task-1'",
+            (change_name,),
+        ).fetchone()
+        self.assertIn("## Task 1: First Task", row["brief_text"])
+        self.assertIn("Do the first thing.", row["brief_text"])
+        self.assertNotIn("Second Task", row["brief_text"])
+        self.assertEqual(row["brief_path"], f"{plan_rel_path}#task-1")
+        # Cache-key fields derive from brief_text exactly as for a real
+        # brief -- no special-casing (followup-6 brief's own requirement).
+        self.assertEqual(row["brief_sha256"], db.sha256_text(row["brief_text"]))
+        self.assertEqual(row["brief_bytes"], len(row["brief_text"].encode("utf-8")))
+
+        # The joined implementer session actually attached to the
+        # plan-derived task.
+        session_row = conn.execute(
+            "SELECT task_id FROM sessions WHERE session_id = ?", ("claude:planonly-impl-1",)
+        ).fetchone()
+        self.assertIsNotNone(session_row["task_id"])
+
+    def test_real_briefs_win_over_plan_fallback(self):
+        change_name = "add-bothsources"
+        self._commit_plan_only_change(
+            change_name,
+            "## Task 1: Plan Version\n\nPLAN TEXT should never be used.\n",
+        )
+        sdd = self.repo / ".superpowers" / "sdd" / change_name
+        sdd.mkdir(parents=True)
+        (sdd / "task-1-brief.md").write_text("REAL BRIEF: build the thing.\n")
+        _run_git(self.repo, "add", "-A")
+        _run_git(self.repo, "commit", "-q", "-m", "add committed brief")
+
+        conn = self._conn()
+        self._run(conn, agent_runner=FakeAgentRunner(), change=change_name)
+        row = conn.execute(
+            "SELECT brief_text, brief_path FROM tasks t JOIN changes c ON c.change_id = t.change_id "
+            "WHERE c.name = ? AND t.task_key = 'task-1'",
+            (change_name,),
+        ).fetchone()
+        self.assertIn("REAL BRIEF", row["brief_text"])
+        self.assertNotIn("PLAN TEXT", row["brief_text"])
+        self.assertTrue(row["brief_path"].endswith("task-1-brief.md"))
+        self.assertNotIn("#task-1", row["brief_path"])
+
+    def test_plan_with_no_task_headers_yields_zero_tasks_no_crash(self):
+        change_name = "add-notasks"
+        self._commit_plan_only_change(change_name, "# Just a plan\n\nNo task sections at all.\n")
+
+        conn = self._conn()
+        report = self._run(conn, agent_runner=FakeAgentRunner(), change=change_name)
+        self.assertEqual(report.tasks_written, 0)
+        task_count = conn.execute(
+            "SELECT COUNT(*) FROM tasks t JOIN changes c ON c.change_id = t.change_id WHERE c.name = ?",
+            (change_name,),
+        ).fetchone()[0]
+        self.assertEqual(task_count, 0)
+        # The change itself still ingests as a row (quarantine-free, zero
+        # tasks) -- neither briefs nor task headings existing is not an
+        # error.
+        change_row = conn.execute("SELECT 1 FROM changes WHERE name = ?", (change_name,)).fetchone()
+        self.assertIsNotNone(change_row)
+
+    def test_neither_briefs_nor_plan_yields_zero_tasks(self):
+        change_name = "add-nothingatall"
+        archive = self.repo / "openspec" / "changes" / "archive" / f"2026-07-14-{change_name}"
+        archive.mkdir(parents=True)
+        (archive / "proposal.md").write_text("proposal\n")
+        _run_git(self.repo, "add", "-A")
+        _run_git(self.repo, "commit", "-q", "-m", "add change with nothing")
+
+        conn = self._conn()
+        report = self._run(conn, agent_runner=FakeAgentRunner(), change=change_name)
+        self.assertEqual(report.tasks_written, 0)
+        self.assertEqual(len(report.quarantined), 0)
+
+
 class TestNumericVersionOrdering(unittest.TestCase):
     """Review finding 4: version strings are compared numerically (design.md:
     "the row with the numerically greatest version"), never lexicographically
@@ -1103,6 +1277,67 @@ class TestVerifyTurnPhasesCli(unittest.TestCase):
         report = json.loads(buf.getvalue())
         self.assertEqual(report["violation_count"], 1)
         self.assertEqual(report["violations"][0]["session_id"], "claude:bad-1")
+
+
+class TestDryRunCliOutput(unittest.TestCase):
+    """followup-6, defect 1: ``ingest.py --dry-run`` printed a RunReport
+    shell (all-zero write counts, no plan content) instead of the actual
+    WorkPlan the README promises ("prints the work plan"). Runs the real
+    CLI entry point (``ingest.main``), not ``run()`` directly, since the
+    bug was specifically in ``main()``'s stdout formatting -- `run()`
+    itself already returned a WorkPlan-populated report before this fix."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = _make_repo(self.root)
+        self.claude_root = _make_sessions(self.root)
+        self.db_path = self.root / "t.sqlite"
+
+    def _dry_run_json(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = ingest.main([
+                "--dry-run", "--repo", str(self.repo), "--db", str(self.db_path),
+                "--change", CHANGE_NAME,
+            ])
+        self.assertEqual(rc, 0)
+        return json.loads(buf.getvalue())
+
+    def test_dry_run_prints_plan_not_a_runreport_shell(self):
+        data = self._dry_run_json()
+        self.assertTrue(data["dry_run"])
+        self.assertIn("plan", data)
+        self.assertIsInstance(data["plan"], dict)
+        # The RunReport-shaped, always-zero-on-a-dry-run fields must be
+        # ABSENT -- the pre-fix bug printed exactly these instead of a plan.
+        for key in ("changes_written", "tasks_written", "sessions_written", "total_writes"):
+            self.assertNotIn(key, data)
+
+    def test_plan_fields_present_and_populated(self):
+        # `ingest.main` has no flag to point session discovery at a fixture
+        # directory (it always scans the real ~/.codex/sessions and
+        # ~/.claude/projects, same limitation TestDryRunNoDbFile already
+        # lives with) -- so this only asserts what's true regardless of
+        # whatever real sessions happen to exist on the machine running the
+        # test: the task-level gaps (independent of session discovery) and
+        # the plan's overall shape. Session-dependent counts (grading,
+        # phase-labels, new_sessions) are exercised precisely via `run()`
+        # directly in `TestDryRun`, not through this CLI-level test.
+        data = self._dry_run_json()
+        plan = data["plan"]
+        self.assertIn(f"{CHANGE_NAME}/{TASK_KEY}", plan["new_tasks"])
+        self.assertEqual(len(plan["missing_complexity"]), 1)
+        gap = plan["missing_complexity"][0]
+        self.assertIn("entity_key", gap)
+        self.assertIn("kind", gap)
+        self.assertIn("version", gap)
+        self.assertIn("reason", gap)
+        for key in ("missing_grades", "missing_phase_labels", "new_sessions", "quarantined", "unlanded"):
+            self.assertIn(key, plan)
+        self.assertIn("new_sessions_count", plan)
+        self.assertIn("quarantined_count", plan)
 
 
 class TestDryRunNoDbFile(unittest.TestCase):

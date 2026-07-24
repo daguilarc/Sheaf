@@ -32,6 +32,32 @@ Directory conventions owned by this module (not fixed elsewhere):
   forward; the historical corpus (differently-named SDD dirs, e.g. this
   very change's own ``.superpowers/sdd/task-analyzer/``) is Task 8's
   migration script's problem, not this one's.
+- **Plan-derived briefs, the fallback (followup-6).** ``.superpowers/`` is
+  the Superpowers workflow's own uncommitted scratch space -- the SDD
+  workflow never commits it, so a landed change's task briefs are, in the
+  steady-state common case, simply absent at the archive ref (only the
+  2026-07-19 migration's historical corpus happened to have them, because
+  that extraction read live worktree scratch, not a committed ref). When
+  ``_iter_briefs`` finds ZERO committed briefs for a landed change, tasks
+  are instead derived from that change's own committed Superpowers PLAN
+  file (``discovery.landed_changes``'s already-resolved ``plan_path``,
+  read via ``git show``, never the working tree): every ``#+ Task N``
+  heading (any markdown heading level, matching the ``subagent-driven-
+  development`` skill's own ``task-brief`` script's extraction regex
+  exactly, skipping headings inside fenced code blocks) opens a task
+  section running through the line before the next such heading (any N).
+  ``task_key = "task-N"``; ``brief_path`` is the synthetic reference
+  ``"<plan_path>#task-N"`` (``_PLAN_DERIVED_PATH_RE``), distinguishing a
+  plan-derived brief from a real committed brief file's path everywhere
+  ``disc.briefs`` values are used (``_brief_text_for`` dispatches on this
+  marker). This is a per-CHANGE, all-or-nothing fallback -- real briefs,
+  when ANY exist for a change, always win outright (plan derivation is
+  never mixed in alongside them for that same change); a change with
+  neither committed briefs nor a resolvable plan file ingests as a change
+  row with zero tasks, exactly as before this fallback existed.
+  ``brief_sha256``/``brief_bytes`` and every downstream agentic cache key
+  (complexity/grading input hashes) derive from the resulting
+  ``brief_text`` exactly as for a real brief -- no special-casing.
 - Session transcripts are discovered from two corpora, independent of
   ``repo_root`` (a change's sessions accumulate across every worktree
   checkout, never just whichever one happens to be on disk right now):
@@ -309,6 +335,82 @@ def _iter_briefs(repo_root, ref_sha: str, change_name: str) -> List[Tuple[str, s
     return out
 
 
+# Plan-derived briefs (followup-6, design.md D3 amendment): a landed
+# change with zero committed briefs falls back to its Superpowers plan
+# file's own "### Task N"-style sections.
+#
+# Matches the `subagent-driven-development` skill's own `task-brief`
+# script exactly (`^#+[ \t]+Task[ \t]+[0-9]+`): ANY markdown heading level,
+# not just "###" -- real plans in this repo use "## Task N" as often as
+# "### Task N". A plan-derived brief is therefore the faithful equivalent
+# of what that script would have written to disk, had the workflow
+# committed its scratch output.
+_PLAN_TASK_HEADING_RE = re.compile(r"^#+[ \t]+Task[ \t]+(\d+)\b")
+_FENCE_LINE_RE = re.compile(r"^```")
+# `disc.briefs` values are normally a real committed brief's git-relative
+# path; a plan-derived brief instead uses this synthetic marker so
+# `_brief_text_for` knows to re-extract from the plan rather than `git
+# show` the "path" directly (which isn't a real blob).
+_PLAN_DERIVED_PATH_RE = re.compile(r"^(?P<plan_path>.+\.md)#task-(?P<task_num>\d+)$")
+
+
+def _task_sections_from_plan(plan_text: str) -> Dict[int, str]:
+    """``{task_number: full_section_text}`` for every ``#+ Task N`` heading
+    in ``plan_text`` (any heading level, skipping headings inside fenced
+    code blocks) -- a section runs from its own heading line through the
+    line before the next such heading (of any N), mirroring the
+    ``task-brief`` script's awk extraction exactly. Returns ``{}`` for a
+    plan with no task headings at all (not an error -- see
+    ``_iter_plan_derived_briefs``)."""
+    sections: Dict[int, List[str]] = {}
+    current: Optional[int] = None
+    infence = False
+    for line in plan_text.splitlines():
+        if _FENCE_LINE_RE.match(line):
+            infence = not infence
+        if not infence:
+            m = _PLAN_TASK_HEADING_RE.match(line)
+            if m:
+                current = int(m.group(1))
+                sections.setdefault(current, [])
+        if current is not None:
+            sections[current].append(line)
+    return {n: "\n".join(lines) for n, lines in sections.items()}
+
+
+def _iter_plan_derived_briefs(repo_root, ref_sha: str, plan_path: str) -> List[Tuple[str, str]]:
+    """Fallback for a landed change with zero committed briefs
+    (followup-6): ``[(task_key, synthetic_brief_path), ...]`` derived from
+    ``plan_path``'s own committed ``#+ Task N`` sections at ``ref_sha``.
+    Empty list (no error) if the plan file can't be read at that ref, or
+    has no task headings at all -- a change in either state simply
+    ingests with zero tasks, same as a change with no briefs and no plan
+    path at all."""
+    try:
+        plan_text = _git_show(repo_root, ref_sha, plan_path)
+    except subprocess.CalledProcessError:
+        return []
+    sections = _task_sections_from_plan(plan_text)
+    return [(f"task-{n}", f"{plan_path}#task-{n}") for n in sorted(sections)]
+
+
+def _brief_text_for(repo_root, ref_sha: str, brief_path: str) -> str:
+    """A task's brief text given its ``disc.briefs`` value -- either a real
+    committed brief file (``git show`` verbatim), or a synthetic
+    plan-derived reference ``"<plan_path>#task-N"`` (followup-6): re-reads
+    the plan file at ``ref_sha`` and re-extracts that task's section.
+    Re-deriving on every call (rather than caching at discovery time)
+    matches this module's existing pattern for real briefs, which are
+    likewise re-fetched via ``git show`` at each of the two call sites
+    that need brief text, not cached once and threaded through."""
+    m = _PLAN_DERIVED_PATH_RE.match(brief_path)
+    if not m:
+        return _git_show(repo_root, ref_sha, brief_path)
+    plan_text = _git_show(repo_root, ref_sha, m.group("plan_path"))
+    sections = _task_sections_from_plan(plan_text)
+    return sections[int(m.group("task_num"))]
+
+
 def _iter_session_files(codex_root, claude_root) -> List[Tuple[str, Path]]:
     files: List[Tuple[str, Path]] = []
     if codex_root and Path(codex_root).is_dir():
@@ -351,7 +453,14 @@ def _discover(
     briefs: Dict[Tuple[str, str], str] = {}
     brief_index: Dict[str, List[str]] = {}  # task_key -> [change_name, ...]
     for c in changes_in_scope:
-        for task_key, path in _iter_briefs(repo_root, ref_sha, c.name):
+        change_briefs = _iter_briefs(repo_root, ref_sha, c.name)
+        if not change_briefs and c.plan_path:
+            # Plan-derived fallback (followup-6): only when this change has
+            # NO committed briefs at all -- real briefs always take
+            # precedence outright, per-change, never mixed with plan
+            # derivation for the same change.
+            change_briefs = _iter_plan_derived_briefs(repo_root, ref_sha, c.plan_path)
+        for task_key, path in change_briefs:
             briefs[(c.name, task_key)] = path
             brief_index.setdefault(task_key, []).append(c.name)
 
@@ -562,7 +671,7 @@ def _compute_gaps(conn, disc: _Discovery, staging_dir):
 
     for (change_name, task_key), brief_path in disc.briefs.items():
         task_id = _existing_task_id(conn, change_name, task_key)
-        brief_text = _git_show(disc.repo_root, disc.ref_sha, brief_path)
+        brief_text = _brief_text_for(disc.repo_root, disc.ref_sha, brief_path)
         ekey = _entity_key(change_name, task_key)
 
         gap = _gap_for(conn, "complexity", ekey, "task_id", task_id, brief_text)
@@ -951,7 +1060,9 @@ def run(
             # Brief content always comes from the landed ref (D3), never the
             # working tree -- needed both for the task row and, below, for
             # a complexity dispatch, so fetch it once per task per run.
-            brief_text = _git_show(disc.repo_root, disc.ref_sha, brief_path)
+            # (A real committed brief or a plan-derived section -- see
+            # _brief_text_for/the module docstring's followup-6 note.)
+            brief_text = _brief_text_for(disc.repo_root, disc.ref_sha, brief_path)
             if existing_task_id is None:
                 task_id = _upsert_task(conn, change_id, task_key, brief_path, brief_text)
                 report.tasks_written += 1
@@ -1554,6 +1665,58 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     return p
 
 
+# followup-6, defect 1: a --dry-run's new_sessions list can legitimately be
+# large (a fresh DB's first run over a big historical corpus) -- print the
+# full list up to this many entries, else fall back to a count + a short
+# sample, rather than either dumping thousands of session ids or (the
+# pre-fix bug) silently showing nothing at all. changes/tasks/gaps are
+# always printed in full: those are the actionable, typically-short lists
+# a human reviewing a dry run actually needs to see completely.
+_DRY_RUN_SESSION_LIST_LIMIT = 100
+
+
+def _gap_json(gap: "GapItem") -> Dict[str, Any]:
+    return {
+        "entity_key": gap.entity_key,
+        "kind": gap.kind,
+        "version": gap.version,
+        "reason": gap.reason,
+        "staging_satisfied": gap.staging_satisfied,
+    }
+
+
+def _quarantine_json(q) -> Dict[str, Any]:
+    return {"session_id": q.session_id, "reason": q.reason, "candidates": q.candidates}
+
+
+def _plan_json(plan: WorkPlan) -> Dict[str, Any]:
+    """The WorkPlan as JSON for ``--dry-run``'s stdout -- see the README's
+    "--dry-run: prints the work plan" contract and
+    ``_DRY_RUN_SESSION_LIST_LIMIT``'s docstring for the sessions-list
+    size cutoff."""
+    new_sessions: Any
+    if len(plan.new_sessions) <= _DRY_RUN_SESSION_LIST_LIMIT:
+        new_sessions = plan.new_sessions
+    else:
+        new_sessions = {
+            "count": len(plan.new_sessions),
+            "sample": plan.new_sessions[:20],
+        }
+    return {
+        "ref_sha": plan.ref_sha,
+        "new_changes": plan.new_changes,
+        "new_tasks": plan.new_tasks,
+        "new_sessions_count": len(plan.new_sessions),
+        "new_sessions": new_sessions,
+        "missing_complexity": [_gap_json(g) for g in plan.missing_complexity],
+        "missing_grades": [_gap_json(g) for g in plan.missing_grades],
+        "missing_phase_labels": [_gap_json(g) for g in plan.missing_phase_labels],
+        "quarantined_count": len(plan.quarantined),
+        "quarantined": [_quarantine_json(q) for q in plan.quarantined],
+        "unlanded": plan.unlanded,
+    }
+
+
 def _connect_for_cli(db_path, dry_run: bool):
     """Open the target database -- except for ``--dry-run`` against a
     database that doesn't exist yet, which must not create/touch it (a
@@ -1613,6 +1776,18 @@ def main(argv=None) -> int:
         )
     finally:
         conn.close()
+
+    if report.dry_run:
+        # followup-6, defect 1: a dry run must print the actual WorkPlan
+        # (what WOULD happen), not a RunReport shell of all-zero write
+        # counts and no plan content -- `run(dry_run=True)` never writes
+        # anything, so every RunReport write-count field is meaninglessly
+        # zero on this path; `report.plan` is where the real content is.
+        print(json.dumps({
+            "ref_sha": report.ref_sha, "dry_run": True,
+            "plan": _plan_json(report.plan) if report.plan is not None else None,
+        }, indent=2))
+        return 0
 
     print(json.dumps({
         "ref_sha": report.ref_sha, "dry_run": report.dry_run,
