@@ -33,7 +33,7 @@ a scratch/test copy.
 python3 projects/agents/task-analyzer/ingest.py [ingest|rebuild-derived|backfill-turns|verify-turn-phases] \
     [--db PATH] [--repo PATH] [--dry-run] [--no-agents] \
     [--rescore complexity|grades|phase_tokens] [--change NAME] \
-    [--analysis-dir DIR]
+    [--analysis-dir DIR] [--regenerate]
 ```
 
 - `ingest` (default command): diffs landed `openspec/changes/archive/` dirs
@@ -67,7 +67,17 @@ python3 projects/agents/task-analyzer/ingest.py [ingest|rebuild-derived|backfill
   labels no longer line up with a fresh re-extraction is left (or reset
   to) empty `turn_phases` rather than silently writing wrong per-turn
   splits; safe to re-run at any time, including to self-heal rows a prior,
-  buggy backfill left behind.
+  buggy backfill left behind. Refreshes `sessions.n_turns` from the
+  re-extraction (many rows were stale from the original migration).
+  `--regenerate` (followup-5) widens the candidate set from "sessions
+  lacking `session_turns`" to EVERY session with a recoverable
+  transcript, REPLACING existing `session_turns` rows rather than
+  skipping them — use this once after an `extractors.py` change that
+  alters per-turn token deltas (the default mode would otherwise never
+  re-derive a session it already backfilled under older logic); any
+  session that already has `turn_phases` rows also gets `phase_tokens`
+  mechanically recomputed from those (unchanged) labels against the
+  refreshed deltas.
 - `verify-turn-phases`: read-only audit of the `turn_phases`/`phase_tokens`
   aggregation invariant against whatever's already committed — prints
   every violation (if any) as JSON and exits 1 if any are found, 0
@@ -198,6 +208,7 @@ prints `valid` and exits 0 otherwise.
 | New batch of ingested changes | `ingest.py`, then eyeball `--dry-run` first if the batch is large or new-provider sessions are involved | Normal cadence — no forced retrain; training is a separate, deliberate step. |
 | Estimator retrain | `train.py --db data/agents/task-analyzer.sqlite`, then `estimate.py --sanity` as a smoke check | No fixed cadence — retrain when there's enough new `task_costs` data to matter (a handful of new tasks won't move sparse-arm posteriors much). Every retrain adds a new `estimators` row; nothing is overwritten, so a bad retrain is recoverable by pinning `--estimator-id` back to the prior generation. |
 | Schema upgraded to v3 (`session_turns`/`turn_phases` added) | `ingest.py backfill-turns`, then `ingest.py rebuild-derived` | One-time, per-DB: populates per-turn data for sessions ingested before v3 (schema migration itself is automatic and idempotent on every `db.connect()` — see design.md D2 — but per-turn *data* can only come from re-reading transcripts, hence the separate explicit step); `rebuild-derived` then lets the spanning-session split (D5 amendment) use it. Safe to skip — sessions without turn data just keep the old, session-level (unsplit) apportionment. |
+| `extractors.py` per-turn delta logic changed (e.g. followup-5's silent-checkpoint fix) | `ingest.py backfill-turns --regenerate`, then `ingest.py rebuild-derived`, then `train.py` + `estimate.py --sanity` | Per-turn token deltas for ALREADY-backfilled sessions are stale until re-derived — the default (non-`--regenerate`) `backfill-turns` only fills gaps, it won't touch a session that already has `session_turns`. `--regenerate` also mechanically recomputes `phase_tokens` for sessions with existing `turn_phases`, so the aggregation invariant (`verify-turn-phases`) holds afterward. |
 
 ## Persistent agents and the spanning-session split
 
@@ -233,56 +244,58 @@ its brief is never mistaken for having rendered a verdict; a genuine
 verdict's own trailing one-line reason (including one with a backtick-quoted
 code identifier or the ordinary word "or") still matches.
 
-**Known limitation: `sessions.output_tokens` vs. `session_turns` sum, and
-what it means for the spanning-session split (fix-round-2 review).** For a
-real fraction of sessions (roughly 60% of the migrated corpus), the
+**Resolved: `sessions.output_tokens` vs. `session_turns` sum (followup-5).**
+Earlier revisions of this section documented a real gap where the
 session-level `output_tokens` total and the sum of that same session's
-`session_turns.output_tokens` disagree — sometimes by a lot. This is a real,
-reproducible property of `extractors.py`'s turn-splitting, not stale/
-corrupted data: a token-usage checkpoint (a codex `token_count` event, or a
-claude assistant message) whose corresponding content produced zero
-condensed timeline items (no `SAY:`/`CALL:`/`OUT:`/`THINK:` line — e.g. a
-reasoning-only or otherwise silent turn) is folded into the session-level
-running total but never becomes its own `Turn`, so its delta drops out of
-the per-turn sum; the largest gaps come from persistent/thread-spawned
-sessions whose visible transcript file picks up mid-conversation (after
-context compaction), where the checkpoint's *cumulative* total already
-reflects activity from before this file's own turns begin.
+`session_turns.output_tokens` disagreed — for a real fraction of sessions
+(roughly 60% of the migrated corpus), sometimes by a lot, biasing the
+spanning-session split's `followup_fix`/phase category attribution (not
+just the diagnostic `weighted_tokens` figure — see fix-round-2's report
+section for the full analysis before this was fixed). Root cause: a
+token-usage checkpoint (a codex `token_count` event, or a claude assistant
+message) whose corresponding content produced zero condensed timeline items
+(no `SAY:`/`CALL:`/`OUT:`/`THINK:` line) was folded into the session-level
+running total but never became its own `Turn`, so its delta silently
+dropped out of the per-turn sum.
 
-For a round-0 session that is NOT split (no review boundary, or a boundary
-exists but every turn is pre-boundary), this gap is genuinely
-diagnostic-only: phase shares are computed from `output_tokens` (the true
-session-level total) directly, via `phase_tokens`, never from the
-`session_turns` sum, so dollar attribution is exact regardless of turn
-coverage.
+Fixed in `extractors.py`: every such "silent checkpoint" delta is now
+folded into an EXISTING adjacent turn instead of discarded — mass before
+the first visible turn folds into turn 1, a gap between two visible turns
+folds into the next one, and trailing mass after the last turn folds into
+that last turn. Turn count and indices are never changed by this (they're
+the join key for `turn_phases` and the rendered timelines). For codex
+specifically, each checkpoint's delta is now computed from the increase in
+the cumulative `total_token_usage` counter since the previous checkpoint
+(verified monotonically non-decreasing across the whole real corpus)
+rather than trusted from `last_token_usage` directly — this also correctly
+attributes a resumed/continued (`thread_spawn`) session's inherited
+leading baseline (its file can begin with a large nonzero cumulative total
+already present at the very first checkpoint, reflecting activity from
+before this file's own recorded events start).
 
-**For a session that IS split at a review boundary, this gap is NOT merely
-diagnostic** — an earlier version of this note incorrectly said it was.
-`costs._apportion_round0_session` allocates the session's *entire* dollar
-cost by `fix_share = fix_output_tokens / total_turn_output_tokens` and
-`pre_share = 1 - fix_share`, both computed from the `session_turns` sum,
-not from `output_tokens`. When `session_turns` covers less than 100% of the
-session's true `output_tokens` (its *turn coverage*), the missing delta
-mass is implicitly distributed pro-rata across BOTH the fix and phase
-partitions according to whatever ratio the turns actually visible in
-`session_turns` happen to reflect — which may not be representative of the
-missing mass. **What remains true:** a task's TOTAL usd across every
-category is still exactly preserved (`fix_share + pre_share == 1` by
-construction, so nothing is lost or double-counted) — only the *split
-between* `followup_fix` and the phase categories for that one session is
-approximate, in proportion to `(1 - coverage)`.
+Post-fix invariant: `sum(session_turns.output_tokens) ==
+sessions.output_tokens` for every session with at least one turn —
+verified with zero exceptions across the entire real committed corpus. A
+session with genuinely zero turns (nothing to fold pending mass into) is
+an explicit, tested exception, not a silent violation of a well-formed
+transcript's reconciliation. `costs.rebuild`'s turn-coverage diagnostic
+(`RebuildResult.spanning_session_coverage`, plus a stderr `WARN` below
+`costs.DEFAULT_COVERAGE_WARN_THRESHOLD = 0.9` — see fix-round-2's report
+section for how this was added) should now read `1.0` for every spanning
+session; see `.superpowers/sdd/task-analyzer/followup-5-report.md` for the
+real dataset's per-session before/after coverage numbers and the
+quantified `followup_fix` shift this produced.
 
-`costs.rebuild` computes each split session's turn coverage
-(`sum(session_turns.output_tokens) / sessions.output_tokens`) and surfaces
-it two ways: every actually-split session's ratio is recorded on the
-returned `RebuildResult.spanning_session_coverage` (`{session_id: ratio}`),
-and any session below `coverage_warn_threshold` (`--db`-relative constant
-`costs.DEFAULT_COVERAGE_WARN_THRESHOLD = 0.9`) gets one loud `WARN` line on
-stderr naming it and its ratio. This is observability only — it does not
-change how the split itself is computed (no attribution redesign); see
-`.superpowers/sdd/task-analyzer/followup-4-report.md`'s "Fix round 2"
-section for the real dataset's 11 spanning sessions' actual coverage
-ratios and worst case.
+Already-ingested sessions need their `session_turns` (and any dependent
+`phase_tokens`) regenerated under the fixed extractor to actually benefit
+from this — `ingest.py backfill-turns --regenerate` does this (see the
+command reference above): it replaces `session_turns` for every session
+with a recoverable transcript (not just ones lacking `session_turns`), and
+for any session that already has `turn_phases` rows, mechanically
+recomputes `phase_tokens.output_tokens`/`.turns` from those (unchanged)
+phase labels joined against the refreshed deltas — phase labels are the
+agentic judgment and are never re-derived by this step, only their token
+weight.
 
 ## Staging / crash-recovery semantics
 

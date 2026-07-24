@@ -130,3 +130,45 @@ query-layer-only redesign of an already-active one.
   task before and after retraining (gpt-5.6-terra/high, gpt-5.6-terra/high,
   gpt-5.5/high) — only the reported p20/p50/p80 totals shifted slightly,
   no selection change.
+- [x] 7.6 Fix round 1 (codex review of 7.6/followup-4, four findings) — verify
+  `turn_phases` all-or-nothing against `phase_tokens` before writing
+  (self-heals a prior buggy backfill instead of silently mismatching);
+  tightened verdict-line detection to reject brief-quoting template text
+  while still matching a genuine verdict's trailing reason; fixed
+  timestamp comparisons to use parsed datetimes, not raw ISO strings;
+  separated zero-turn extractions from genuine backfills in the reported
+  counts. Added `ingest.py verify-turn-phases` (CI-usable, exits 1 on any
+  violation). 286 tests (up from 263).
+- [x] 7.7 Fix round 2 — corrected an overstated "diagnostic only" claim:
+  for a session that actually gets split at a review boundary, missing
+  `session_turns` coverage biases the `followup_fix`/phase USD split
+  itself, not just the `weighted_tokens` sanity figure. Added turn-coverage
+  computation + surfacing (`RebuildResult.spanning_session_coverage`,
+  stderr `WARN` below `costs.DEFAULT_COVERAGE_WARN_THRESHOLD = 0.9`) —
+  observability only, no attribution redesign. All 11 real spanning
+  sessions were below 100% coverage (worst ~22%). 293 tests.
+- [x] 7.8 Follow-up 5 — closed the turn-coverage gap at its root:
+  `extractors.py` was discarding "silent checkpoint" deltas (a token-usage
+  checkpoint with no accompanying condensed content) instead of folding
+  them into an adjacent existing turn; fixed for both providers (codex's
+  fix additionally sources each checkpoint's delta from the cumulative
+  `total_token_usage` counter's own step, not `last_token_usage`, closing
+  a second gap for resumed/`thread_spawn` sessions). Turn count/indices
+  are provably unchanged; `sum(session_turns.output_tokens) ==
+  sessions.output_tokens` now holds with zero exceptions across the real
+  corpus (one documented, unrelated exception: a still-growing "main"
+  claude transcript whose `sessions.output_tokens` snapshot predates
+  content the file grew to after its original ingest). Sessions with
+  existing `turn_phases` now get `phase_tokens` mechanically recomputed
+  from those (unchanged) labels against corrected deltas; `sessions.n_turns`
+  refreshed from the authoritative re-extraction. `ingest.py backfill-turns
+  --regenerate` added to re-derive already-backfilled sessions under the
+  fixed extractor. Re-ran the pipeline: `spanning_session_coverage` is
+  exactly `1.0` for all 11 spanning sessions (was as low as 0.219);
+  `followup_fix` moved to $606.87 (+3.17% vs the original followup-4
+  baseline, DOWN from the previously-reported +3.33% — confirming the
+  pre-boundary-bias analysis); grand total unchanged to the cent.
+  Retrained (`estimators` id 6, prior 1–5 kept); `--sanity` kept two of
+  three selections unchanged, with one sparse-arm (`gpt-5.6-terra/high`,
+  7 training tasks) selection changing at the synthetic high-complexity
+  tier — see the followup-5 report for the full explanation. 313 tests.

@@ -94,6 +94,12 @@ CREATE TABLE sessions(
   input_tokens INTEGER, cached_tokens INTEGER, output_tokens INTEGER,
   reasoning_tokens INTEGER, peak_context INTEGER,
   n_compactions INTEGER, n_turns INTEGER, n_tool_calls INTEGER,
+                                         -- n_turns: many rows are stale
+                                         -- from the original migration;
+                                         -- ingest.py backfill-turns
+                                         -- refreshes it from the
+                                         -- authoritative re-extraction
+                                         -- (followup-5).
   review_round INTEGER,                 -- 1..n for reviewer/fixer sessions
   verdict_boundaries_json TEXT);         -- v3 (followup-4): reviewer's detected
                                          -- per-verdict timestamps (JSON array);
@@ -137,6 +143,15 @@ CREATE TABLE turn_phases(               -- v3 (followup-4): per-turn phase
   taxonomy_version TEXT NOT NULL,       -- must equal the aggregation of this
   input_sha256 TEXT NOT NULL, scored_by TEXT,  -- table x session_turns.output_tokens
   PRIMARY KEY(session_id, turn_idx, taxonomy_version));  -- for sessions with turn rows.
+  -- followup-5 amendment: this invariant is maintained by treating
+  -- turn_phases' PHASE column as the agentic judgment (cache-keyed,
+  -- untouched by mechanical re-extraction) and phase_tokens.output_tokens/
+  -- .turns as DERIVED from it -- ingest.py's backfill-turns recomputes
+  -- phase_tokens in place (same input_sha256/scored_by) from (unchanged)
+  -- turn_phases labels x current session_turns.output_tokens whenever the
+  -- latter changes (e.g. an extractors.py delta fix). A session WITHOUT
+  -- turn_phases rows keeps its stored phase_tokens untouched (still the
+  -- only record) -- see D5's amendment below.
 
 -- reference + derived layer (deterministic; `rebuild-derived` recomputes)
 CREATE TABLE model_prices(
@@ -352,18 +367,56 @@ Both are fixed with mechanical, deterministic detection, never inference:
   that is true for an UNSPLIT round-0 session (phase shares there come
   from `output_tokens` directly, never `session_turns`), but not for a
   session that actually gets split at a review boundary.
+
+  **Silent-checkpoint reconciliation (followup-5).** The turn-coverage gap
+  above had a root cause in `extractors.py`: a token-usage checkpoint
+  whose window produced no condensed timeline items (no `SAY`/`CALL`/
+  `OUT`/`THINK`) used to discard its delta entirely -- counted in the
+  session-level cumulative total but attributed to no turn at all. Fixed
+  by folding every silent checkpoint's delta into an EXISTING adjacent
+  turn (never creating a new turn or renumbering one, since `turn_phases`
+  and the rendered timelines are keyed by turn index): mass before the
+  first visible turn folds into turn 1, a gap between two visible turns
+  folds into the next one, and trailing mass after the last visible turn
+  folds into that last turn. For codex specifically, each checkpoint's
+  delta is now computed as the increase in the cumulative
+  `total_token_usage` counter since the previous checkpoint (verified
+  monotonically non-decreasing across the entire real corpus) rather than
+  read from `last_token_usage` directly -- this also correctly attributes
+  a resumed/continued (`thread_spawn`) session's inherited leading
+  baseline, and is immune to the rare checkpoint whose own reported delta
+  doesn't match the counter's true step. Post-condition:
+  `sum(session_turns.output_tokens) == sessions.output_tokens` for every
+  session with at least one turn (verified on the entire real corpus,
+  zero exceptions among sessions with turns; a session with genuinely
+  zero turns has no turn to fold pending mass into, an explicit, tested,
+  documented exception, not a silent leak). `spanning_session_coverage`
+  should read 1.0 for every split session after `backfill-turns
+  --regenerate` + `rebuild-derived` runs against the corrected extractor;
+  see `.superpowers/sdd/task-analyzer/followup-5-report.md` for the real
+  dataset's before/after numbers.
 - **Backfill** (`ingest.py backfill-turns`): for any already-ingested
-  session lacking `session_turns`, re-extracts turns from
-  `sessions.transcript_path` if that file still exists on disk; for
-  round-0 implementer sessions that gain turns this way, also attempts to
-  backfill `turn_phases` from a still-valid staged `phase_labeling` JSON,
-  else the analysis dataset's per-turn `phase_labels/<key>.json` (the
-  2026-07-19 migration's source data — the only recoverable per-turn label
-  source for the currently 100%-`migrated_v0` corpus, which predates this
-  module's live staging path entirely). A session whose transcript file no
-  longer exists (or fails to parse) is reported unrecoverable — its cost
-  attribution simply stays session-level, unchanged. Note a real
-  recoverability limit this uncovered: the analysis dataset's rendered
+  session lacking `session_turns` (or, with `--regenerate`, EVERY session
+  with a recoverable transcript, replacing existing rows -- followup-5:
+  use this once after an `extractors.py` change that alters per-turn
+  deltas, since the default only fills gaps and would never re-derive a
+  session it already backfilled under older logic), re-extracts turns
+  from `sessions.transcript_path` if that file still exists on disk,
+  refreshing `sessions.n_turns` from the result; for round-0 implementer
+  sessions that gain turns this way, also attempts to backfill
+  `turn_phases` from a still-valid staged `phase_labeling` JSON, else the
+  analysis dataset's per-turn `phase_labels/<key>.json` (the 2026-07-19
+  migration's source data — the only recoverable per-turn label source for
+  the currently 100%-`migrated_v0` corpus, which predates this module's
+  live staging path entirely). Before that, any session that ALREADY has
+  `turn_phases` rows gets its `phase_tokens` mechanically recomputed from
+  those (untouched) labels joined against the current `session_turns`
+  (followup-5 — see D2's `turn_phases` note) — this must run first, or a
+  stale `phase_tokens` row would spuriously fail the next step's
+  verification. A session whose transcript file no longer exists (or
+  fails to parse) is reported unrecoverable — its cost attribution simply
+  stays session-level, unchanged. Note a real recoverability limit this
+  uncovered: the analysis dataset's rendered
   timelines carry per-turn output-token counts but never per-turn
   *timestamps*, so they can only ever backfill `turn_phases`, never
   `session_turns` (which needs real timestamps only available from the raw

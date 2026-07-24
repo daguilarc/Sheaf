@@ -120,21 +120,62 @@ error condition.
 The system SHALL provide an `ingest.py backfill-turns` subcommand that
 populates `session_turns` (and, for round-0 implementer sessions,
 `turn_phases`) for any already-ingested session lacking them, by re-parsing
-`sessions.transcript_path` when that file still exists on disk. Turn-level
-phase labels MAY additionally be recovered from a still-valid staged
-`phase_labeling` JSON or from a historical per-session phase-label dataset
-when the transcript-derived labels are unavailable. A session whose
-transcript can no longer be read MUST be left with no `session_turns` rows
-(and therefore no spanning-session split for it) rather than erroring the
-whole run; the subcommand MUST report backfilled and unrecoverable counts.
+`sessions.transcript_path` when that file still exists on disk, refreshing
+`sessions.n_turns` from the result. Turn-level phase labels MAY additionally
+be recovered from a still-valid staged `phase_labeling` JSON or from a
+historical per-session phase-label dataset when the transcript-derived
+labels are unavailable. A session whose transcript can no longer be read
+MUST be left with no `session_turns` rows (and therefore no spanning-session
+split for it) rather than erroring the whole run; the subcommand MUST
+report backfilled and unrecoverable counts. The subcommand SHALL also
+support a `--regenerate` mode that REPLACES `session_turns` (and refreshes
+any dependent `phase_tokens`, per the requirement below) for every session
+with a recoverable transcript, not only ones currently lacking
+`session_turns` — used to re-derive already-backfilled sessions after an
+extraction-logic change that alters per-turn token deltas.
 
 #### Scenario: Backfill recovers turns from a still-present transcript
 - **WHEN** `backfill-turns` runs against a session lacking `session_turns` whose `transcript_path` still points to a readable file
-- **THEN** `session_turns` rows are written for that session and it is counted as backfilled
+- **THEN** `session_turns` rows are written for that session, `sessions.n_turns` is refreshed to match, and the session is counted as backfilled
 
 #### Scenario: Backfill reports an unrecoverable session without erroring
 - **WHEN** `backfill-turns` runs against a session lacking `session_turns` whose `transcript_path` is missing, unset, or unreadable
 - **THEN** that session is counted as unrecoverable, no `session_turns` rows are written for it, and the run completes successfully for every other session
+
+#### Scenario: --regenerate replaces already-backfilled session_turns
+- **WHEN** `backfill-turns --regenerate` runs against a session that already has `session_turns` rows and a still-readable transcript
+- **THEN** its existing `session_turns` rows are replaced with freshly re-extracted ones (not skipped as already-present)
+
+### Requirement: Per-turn token deltas reconcile with the session total
+The system SHALL ensure that, for any session with at least one turn,
+`sum(session_turns.output_tokens) == sessions.output_tokens`:
+a token-usage checkpoint whose window produced no condensed timeline
+content MUST have its delta folded into an existing adjacent turn (mass
+before the first turn folds into turn 1; a gap between two turns folds
+into the next one; trailing mass after the last turn folds into that last
+turn) rather than discarded — extraction MUST NOT create a new turn or
+renumber an existing one to accommodate such a checkpoint, since
+`turn_phases` and rendered timelines are keyed by turn index. A session
+whose transcript yields zero turns at all is an explicit, documented
+exception to this invariant (there is no turn to fold into), not a silent
+violation of it for a well-formed transcript with turns.
+
+For a session that already has `turn_phases` rows, `phase_tokens.
+output_tokens`/`.turns` SHALL be recomputed mechanically from those
+(unchanged) phase labels joined against the session's current
+`session_turns.output_tokens` whenever the latter changes — phase labels
+are the agentic judgment (cache-keyed) and are never re-derived by this
+recomputation; only the mechanical token weight they aggregate is updated,
+in place, preserving `input_sha256`/`scored_by`. A session without
+`turn_phases` rows keeps its stored `phase_tokens` untouched.
+
+#### Scenario: A silent checkpoint's delta is folded into the next turn
+- **WHEN** a transcript contains a token-usage checkpoint with a real token delta but no accompanying condensed content, followed later by a checkpoint that does have content
+- **THEN** the silent checkpoint's delta is added to the turn created at the next content-bearing checkpoint, no new turn is created for it, and turn indices are unaffected
+
+#### Scenario: Existing turn_phases labels survive a session_turns regeneration
+- **WHEN** a session with existing `turn_phases` rows has its `session_turns` regenerated with different per-turn token deltas
+- **THEN** `phase_tokens.output_tokens` is recomputed to match the new deltas under the same (unchanged) phase labels, and the turn_phases/phase_tokens aggregation invariant holds afterward
 
 ### Requirement: Migration of the 2026-07-19 dataset
 The system SHALL provide a one-shot idempotent migration importing the
