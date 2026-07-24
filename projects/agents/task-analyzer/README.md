@@ -67,19 +67,31 @@ python3 projects/agents/task-analyzer/ingest.py [ingest|rebuild-derived|backfill
   >1 task"`. Every real run also heals any already-committed session
   whose `task_id` disagrees with the current evidence-based outcome
   (e.g. residue from a run predating this fix) — `RunReport.healed_sessions`/
-  `healed_session_ids`, logged to `ingest_log` when nonzero.
+  `healed_session_ids`, logged to `ingest_log` when nonzero. A scoped
+  `--dry-run --change NAME`'s session list matches exactly what a scoped
+  real run would write — never a session joined, with real evidence, to a
+  change outside that scope (fix-round-1; evidence is still always
+  computed against the full landed set, only *ingestion* is scoped).
 - **A grading result can legitimately find nothing gradeable** (followup-7)
   — e.g. every review joined to a task turns out to be a mis-join.
   `prompts/grading.md` requires an output file for every item always, with
-  a distinct "ungradeable" shape (all grade fields null, zero severity
+  a distinct "ungradeable" shape (all five grade fields null, zero severity
   counts, every excluded review listed, plus a `reason` string) for this
-  case. `ingest.py` records that durably WITHOUT a `grades` row
-  (`RunReport.ungradeable`/`ungradeable_items`) and the run continues. A
-  dispatch that produces no valid staged output at all (not even the
-  ungradeable shape) after retry now fails only that one item by default
-  (`RunReport.failed`/`failed_items`, left as an open gap for a future
-  run) instead of aborting the whole run — pass `--strict` to restore the
-  old abort-on-any-dispatch-failure behavior.
+  case, discriminated from a real grade on the grade fields' own values —
+  *never* on `reason`'s mere presence (fix-round-1: a populated grade may
+  also harmlessly carry a `reason` and still ingests as a grade; a
+  half-null hybrid, some grade fields null and others not, is rejected
+  outright, same as any other malformed staged file). `ingest.py` records
+  an ungradeable result durably WITHOUT a `grades` row
+  (`RunReport.ungradeable`/`ungradeable_items`) and the run continues — if
+  a `grades` row already existed for that task/rubric version (necessarily
+  stale, since a fresh, different input produced this ungradeable result),
+  it's deleted rather than left active (`RunReport.superseded_grades`,
+  logged to `ingest_log`). A dispatch that produces no valid staged output
+  at all (not even the ungradeable shape) after retry now fails only that
+  one item by default (`RunReport.failed`/`failed_items`, left as an open
+  gap for a future run) instead of aborting the whole run — pass
+  `--strict` to restore the old abort-on-any-dispatch-failure behavior.
 - `rebuild-derived`: recomputes `task_costs`/`task_arms` from already-ingested
   raw + agentic rows only — no discovery, no agent dispatch. This is the
   command to run after a price-table change (see the recompute matrix).

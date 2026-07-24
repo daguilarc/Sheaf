@@ -37,7 +37,11 @@ zero tasks, not an error.
 change/task, session identifiers (or a count plus a bounded sample for a
 very large list), and every agentic gap with its entity key, kind, version,
 and reason — rather than a summary of write counts, all of which are
-necessarily zero on a run that writes nothing.
+necessarily zero on a run that writes nothing. When `--change` is set, the
+plan's session identifiers MUST match exactly the sessions a real run with
+the same `--change` would write — never include a session joined only to
+an out-of-scope change, even though join evidence itself (see below) is
+always computed unscoped.
 
 A session joins a `(change, task_key)` pair only when the session's own
 prompt text gives affirmative evidence for that SPECIFIC change — its
@@ -61,14 +65,26 @@ rule), so that repeated runs converge to the correct join state.
 A grading result MAY legitimately find nothing gradeable in an item (e.g.
 every review joined to that task is itself a mis-join). The grading
 prompt MUST require an output file for every item unconditionally, using a
-distinct "ungradeable" shape (all grade fields null, zero severity counts,
-every excluded review listed, and a non-empty `reason` string) when this
-happens. Ingestion MUST record such a result durably without writing a
-`grades` row, and MUST continue the run rather than treat it as a failure.
-A dispatch that produces no valid staged file at all (neither a graded nor
-an ungradeable shape) after retry MUST fail only that one item by default
-— logged, gap left open for a future run, run continues — and MUST abort
-the whole run only when an explicit `--strict` flag is set.
+distinct "ungradeable" shape (all five grade fields null, zero severity
+counts, every excluded review listed, and a non-empty `reason` string)
+when this happens. Whether a staged grading result is graded or
+ungradeable MUST be discriminated on the grade fields themselves — graded
+iff every one of them is present and non-null, ungradeable iff every one
+of them is null and `reason` is a non-empty string — never on the mere
+presence of a `reason` key; a populated grade MAY also carry a harmless
+`reason` and MUST still ingest as a grade. A shape with some grade fields
+null and others not (a "half-null hybrid") is invalid and MUST be
+rejected, handled exactly like any other malformed staged file. Ingestion
+MUST record an ungradeable result durably without writing a `grades` row,
+and MUST continue the run rather than treat it as a failure; if a `grades`
+row already exists for that same task and rubric version (necessarily
+stale, since its recorded input no longer matches what's currently
+joined), ingestion MUST delete it rather than leave it active for
+downstream readers to keep consuming. A dispatch that produces no valid
+staged file at all (neither a graded nor an ungradeable shape) after retry
+MUST fail only that one item by default — logged, gap left open for a
+future run, run continues — and MUST abort the whole run only when an
+explicit `--strict` flag is set.
 
 #### Scenario: Second run is a no-op
 - **WHEN** ingestion completes successfully and is immediately re-run with no new landed changes
@@ -121,3 +137,19 @@ the whole run only when an explicit `--strict` flag is set.
 #### Scenario: A genuine dispatch failure fails one item by default, the whole run only with --strict
 - **WHEN** an agentic dispatch for one gap produces no valid staged output at all, even after the built-in retry
 - **THEN** by default that one item is recorded as failed and the run continues with every other task; only when `--strict` is passed does this abort the run
+
+#### Scenario: A scoped dry-run's session list matches what a scoped run would actually write
+- **WHEN** `ingest.py --dry-run --change NAME` runs and a session is joined, with real evidence, to a task belonging to a DIFFERENT landed change
+- **THEN** that session does not appear in the dry-run's session list, and a real run with the same `--change` never writes it either
+
+#### Scenario: A populated grade carrying a harmless reason still ingests as a grade
+- **WHEN** a staged grading result has every grade field present and non-null, and also includes a `reason` key
+- **THEN** ingestion writes a normal `grades` row from it, exactly as if `reason` were absent
+
+#### Scenario: A half-null grading shape is rejected, not guessed at
+- **WHEN** a staged grading result has some grade fields null and others non-null
+- **THEN** it is treated as an invalid staged file (marked `.err`, re-dispatched) rather than accepted as either a grade or an ungradeable result
+
+#### Scenario: An ungradeable rescore supersedes a stale grade
+- **WHEN** a `grades` row already exists for a task at the current rubric version, the task's joined review text then changes, and the resulting rescore is ungradeable
+- **THEN** the stale `grades` row for that task and rubric version no longer exists after the run, and the supersession is recorded in the run's audit trail

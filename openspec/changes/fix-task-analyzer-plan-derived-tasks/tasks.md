@@ -144,6 +144,55 @@
   mechanism (task 3.3) still applies wherever the coordinator eventually
   re-runs ingest for real.
 
+## 6. Codex review fix-round-1 (followup-7)
+
+- [x] 6.1 (Important, finding 1) `_plan_from_disc`'s `new_sessions` used to
+  list every session in `disc.joined` (the FULL landed universe, always,
+  per task 3.2's evidence fix) instead of only sessions for
+  `(change, task_key)` keys actually in `disc.briefs` (the scoped set
+  `run()` itself iterates) -- a scoped dry-run overstated what a scoped
+  real run would write. Fixed: filter joined sessions to `disc.briefs`'s
+  keys; quarantined sessions correctly stay unscoped (`run()` writes all
+  of them regardless of `--change`, since quarantine isn't per-change).
+  Test: a second landed change with its own evidenced session is listed
+  in an unscoped plan but NOT a `--change`-scoped one, and a scoped real
+  run confirms it never actually gets written.
+- [x] 6.2 (Important, finding 2) `--change`/task 4.3's original grading
+  discriminator used `reason`'s mere presence, which would have silently
+  suppressed a real, populated grade that also carried a harmless
+  explanatory `reason` -- never written to `grades` at all. Fixed:
+  `_grading_shape` (duplicated in both `ingest.py` and `agents.py`, same
+  convention as `KIND_REQUIRED_KEYS`/`_REQUIRED_KEYS`) classifies on
+  SUBSTANCE -- `"graded"` iff every `G1`-`G5` is non-null (`reason`, if
+  present, is ignored), `"ungradeable"` iff every `G` field is null AND
+  `reason` is a non-empty string, `None` (invalid) for anything else, in
+  particular a half-null hybrid. Both `_validate_staged`/`_validate_output`
+  now reject a hybrid outright (same handling as any other malformed
+  staged file: `.err`-quarantined, redispatched, dropped if still invalid
+  after retry). `prompts/grading.md` reworded: the discriminator is
+  stated explicitly (G-fields null, not `reason`'s presence), a graded
+  item is told to leave `reason` out, and mixing nulls/reals across
+  `G1`-`G5` is called out as invalid. Tests for all three shapes, both
+  modules: direct `_grading_shape`/`_validate_*` unit coverage, plus
+  end-to-end `run()`/`xagent_runner` coverage that a populated grade with
+  a reason ingests as a grade and a hybrid is rejected/retried/dropped.
+- [x] 6.3 (Important, finding 1) The ungradeable branch used to `return
+  True` without touching any pre-existing `grades` row for that
+  `(task_id, rubric_version)` -- if the gap existed because
+  `REASON_INPUT_CHANGED` (the joined review text changed since a real
+  grade was last recorded) and the FRESH result is ungradeable, the OLD
+  row (current rubric_version, stale input_sha256 not matching any real
+  input anymore) stayed active, so downstream readers kept consuming it.
+  Fixed: on an ungradeable result, `DELETE FROM grades WHERE task_id = ?
+  AND rubric_version = ?` for that task/version (a harmless no-op when no
+  prior row exists, the common `REASON_MISSING` case); tracked via
+  `RunReport.superseded_grades`/`ungradeable_items[i]
+  ["superseded_grades_row"]` and surfaced in `ingest_log`. Test:
+  stale-grade-then-ungradeable-rescore leaves zero `grades` rows,
+  `superseded_grades == 1`, logged; a first-ever ungradeable dispatch (no
+  prior row) leaves `superseded_grades == 0`.
+- [x] 6.4 Suite: 340 → 356.
+
 ## Out of scope
 
 - No change to `data/agents/task-analyzer.sqlite` or `.dump.jsonl` in

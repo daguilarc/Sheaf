@@ -78,20 +78,29 @@ direction rather than opening a new one:
 - A grading result where nothing was gradeable is no longer indistinguish-
   able from a crash: `prompts/grading.md` now requires an output file for
   every item always, with an explicit "ungradeable" shape (null grade
-  fields, a `reason` string) when nothing in it can be graded. `ingest.py`
-  records that result durably (no `grades` row; noted in the run report
-  and `ingest_log`) and continues the run. A genuinely missing/invalid
-  staged file after retry now fails only that one item by default (also
-  recorded, run continues); a new `--strict` flag (default off) restores
-  the prior abort-the-whole-run behavior for that case.
+  fields, a `reason` string) when nothing in it can be graded, discriminated
+  from a real grade on the grade fields' own values (never on `reason`'s
+  mere presence — a populated grade may also harmlessly carry one) and
+  rejecting a half-null hybrid outright. `ingest.py` records an ungradeable
+  result durably (no `grades` row — deleting one that already exists for
+  that task/rubric version if the fresh result supersedes it as stale;
+  noted in the run report and `ingest_log`) and continues the run. A
+  genuinely missing/invalid staged file after retry now fails only that
+  one item by default (also recorded, run continues); a new `--strict`
+  flag (default off) restores the prior abort-the-whole-run behavior for
+  that case.
+- (Codex review fix-round-1) A scoped `--dry-run`'s session list now
+  matches exactly what a scoped real run would write — no more listing a
+  session joined, with real evidence, to a change outside `--change`'s
+  scope.
 
 ## Impact
 
 - Affected spec: `task-analyzer-data-gathering` (amends the "Idempotent,
   atomic, offline ingestion" requirement).
 - Affected code: `projects/agents/task-analyzer/ingest.py`,
-  `projects/agents/task-analyzer/agents.py` (schema comment only, no
-  behavior change), `projects/agents/task-analyzer/prompts/grading.md`.
+  `projects/agents/task-analyzer/agents.py` (validation logic, not just a
+  comment, as of fix-round-1), `projects/agents/task-analyzer/prompts/grading.md`.
 - No schema change. Already-ingested rows are unaffected except where a
   session's `task_id` disagreed with the new evidence-based join outcome,
   in which case the next run heals it (see above).
