@@ -33,7 +33,7 @@ def _valid_doc():
                 "model": "claude-sonnet-5",
                 "effort": "medium",
                 "complexity": {"C1": 2, "C2": 3, "C3": 4, "C4": 2, "C5": 3, "C6": 2, "C7": 2, "composite": 2.7},
-                "predicted": {"p50_usd": 0.42, "p80_usd": 0.71, "review_p80_usd": 0.30, "explore": False},
+                "predicted": {"p20_usd": 0.29, "p50_usd": 0.42, "p80_usd": 0.71, "flagged": False},
             },
             {
                 "task": "task-2",
@@ -42,7 +42,7 @@ def _valid_doc():
                 "effort": "low",
                 # composite omitted -- validator must not treat this as an error.
                 "complexity": {"C1": 1, "C2": 1, "C3": 1, "C4": 1, "C5": 1, "C6": 1, "C7": 1},
-                "predicted": {"p50_usd": 0.10, "p80_usd": 0.20, "review_p80_usd": 0.05, "explore": True},
+                "predicted": {"p20_usd": 0.05, "p50_usd": 0.10, "p80_usd": 0.20, "flagged": True},
             },
         ],
     }
@@ -179,10 +179,10 @@ class TestYamlSubset(unittest.TestCase):
         self.assertIn("complexity: {C1: 2, composite: 2.7}", text)
 
     def test_parses_booleans_and_null(self):
-        text = "format: 1\nestimator_id: null\ntasks:\n  - task: task-1\n    predicted: {explore: true, other: false}\n"
+        text = "format: 1\nestimator_id: null\ntasks:\n  - task: task-1\n    predicted: {flagged: true, other: false}\n"
         doc = annotations.parse_yaml_subset(text)
         self.assertIsNone(doc["estimator_id"])
-        self.assertIs(doc["tasks"][0]["predicted"]["explore"], True)
+        self.assertIs(doc["tasks"][0]["predicted"]["flagged"], True)
         self.assertIs(doc["tasks"][0]["predicted"]["other"], False)
 
     def test_ignores_comments_and_blank_lines(self):

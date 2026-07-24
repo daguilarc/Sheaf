@@ -4,72 +4,83 @@ specs/task-analyzer-cost-model/spec.md "Decomposition estimator CLI").
 Reads a candidate decomposition (annotation-format doc with per-task
 complexity vectors -- see ``annotations.py``), queries a trained estimator's
 posteriors (``estimators``/``estimator_params``, written by ``train.py``),
-and for every task ranks every known (model, effort) arm by predicted cost,
-picks a selected arm, and flags tasks where the leading arms' posteriors
-overlap too much to be confident in that pick ("explore").
+and for every task ranks every known (model, effort) arm by predicted total
+cost and picks a selected arm.
 
-Total task cost per arm is the sum over every category in the estimator's
-``config_json["categories"]`` (per spec.md, this is "implementation phases +
-unlabeled + review + followup_fix" -- whatever categories the estimator was
-actually trained on) of that category's per-arm posterior predictive,
-inverse-transformed back to USD (``model.inverse_transform``, i.e. ``usd =
-exp(y) - epsilon`` per the estimator's own ``output_format``).
-
-An arm missing a posterior for some category falls back to that category's
-*pooled* posterior instead -- the sentinel ``estimator_params`` row
-``train.py`` persists per category (``model.POOLED_SENTINEL_ARM``), fit
-across every arm's rows in that category. This is honest and wide rather
-than silently contributing 0 USD for what's missing (an earlier version of
-this module did that, which undercounted totals and biased selection toward
-the least-covered arms -- fixed after review round 1) and rather than
-excluding the arm entirely (a later version did that -- a "full-coverage"
-rule -- but an excluded arm can never be selected, so it accrues no new
-data and is frozen out permanently; replaced by this pooled fallback per
-followup-1). Categories scored via fallback are listed per arm under
-``fallback_categories`` in the report; a *selected* arm that used any
-fallback category unconditionally sets ``explore`` (fix round 1 -- a wide
-pooled interval that happens not to overlap the runner-up is still
-low-evidence, not confidently-cheap, so overlap alone isn't a sufficient
-signal here). An arm is **unscorable** only if *even the pooled posterior*
-has no row for some category it needs; such arms are excluded from
-ranking/selection entirely and reported separately (per task) under
+Per-category diagnostics (mean/median/p20/p80) are exact and cheap: each
+category's posterior predictive is a closed-form Student-t (``model.NIG.
+predictive``/``quantile``). An arm missing a posterior for some category
+falls back to that category's *pooled* posterior instead -- the sentinel
+``estimator_params`` row ``train.py`` persists per category
+(``model.POOLED_SENTINEL_ARM``), fit across every arm's rows in that
+category. This is honest and wide rather than silently contributing 0 USD
+for what's missing, or excluding the arm entirely (an excluded arm can
+never be selected, so it accrues no new data and is frozen out
+permanently). Categories scored via fallback are listed per arm under
+``fallback_categories`` in the report -- diagnostic only, it does not by
+itself change selection. An arm is **unscorable** only if *even the pooled
+posterior* has no row for some category it needs; such arms are excluded
+from ranking/selection entirely and reported separately (per task) under
 ``unscorable_arms`` with their ``missing_categories`` listed.
 
-Selection ("expected total minimizing subject to the p_q guard", the spec's
-literal but underspecified phrase): for every task, compute two per-arm
-totals -- ``expected_total`` (sum of per-category posterior *means*) and
-``pq_total`` (sum of per-category posterior quantiles at ``--quantile``,
-default p80). The guard excludes any arm whose ``pq_total`` exceeds a
-*guard factor* times the *minimum* ``pq_total`` across all fully-scorable
-candidate arms for that task; this stops "cheap on average, catastrophic in
-the tail" arms from winning on mean alone. The selected arm is then
-whichever guard-passing arm has the lowest ``expected_total``. The guard
-factor itself (default ``DEFAULT_GUARD_FACTOR = 2.0``) is resolved per run
-as: ``--guard-factor`` CLI flag, else ``config_json["guard_factor"]`` if the
-estimator's own config specifies one, else the hardcoded default -- and is
-echoed back in the JSON report as ``"guard_factor"`` so a reader always
-knows which value produced a given selection. This mechanism (both its
-existence and its exact resolution precedence) is a documented design
-choice (see task-10-report.md), not something the spec spells out
-numerically.
+A task's TOTAL cost per arm, however, is not exact: it is the *sum* over
+categories of each category's (independent) log-space Student-t predictive,
+exponentiated back to USD. Quantiles do not commute with sums -- summing
+each category's own p80 overstates the total's true p80 (independence means
+the categories' tails don't all land together), and summing each category's
+p20 understates the total's true p20, for the same reason in the other
+direction. There is also no closed form for the quantiles of a sum of
+exponentiated Student-t's (``exp(t)`` has no finite moments). So totals are
+estimated by seeded Monte Carlo (``model.NIG.predictive_draws``): draw
+``--mc-draws`` samples per category (independent, log space), exponentiate
+each via ``model.inverse_transform_array`` (floored at 0.0 -- a dollar cost
+cannot be negative), column-sum across categories to get that many draws of
+the arm's *total* cost, then take the empirical p20/p50/p80 of those draws
+(``numpy.quantile``, linear interpolation -- fixed and bit-stable given the
+same draws). One ``numpy.random.Generator`` (seeded via ``--seed``, default
+0) is shared across the whole run and consumed in a fixed order -- tasks in
+decomposition order, arms sorted by ``(model, effort)``, categories in
+``config["categories"]`` order -- so output is byte-deterministic given
+(estimator id, seed, mc-draws) regardless of any dict's iteration order.
 
-``explore`` is the OR of two independent signals (``explore_reasons`` in the
-report names which fired, in fixed ``["fallback", "overlap"]`` order):
-"overlap" (also spec-literal: "runner-up p20 < winner p80", a posterior-
-overlap proxy) compares the *selected* arm's ``p80_total`` against the best
-non-selected arm's ``p20_total`` (ranked by ``expected_total``, regardless of
-guard status) -- if the runner-up's downside could plausibly beat the
-winner's upside, we're not confident enough to skip exploring; "fallback"
-fires whenever the selected arm's own score used any category's pooled
-fallback posterior (``selected["fallback_categories"]`` non-empty) --
-fallback evidence is low-confidence by construction, independent of how the
-resulting interval happens to compare to the runner-up's (fix round 1,
-followup-1 codex review).
+Selection ("p20 bandit selection with a p80 guard"): the selection
+statistic is each arm's MC ``p20_total_usd`` -- a *low* quantile, not a
+mean or median, because this is a cost-minimizing bandit: an arm's p20
+starts low (wide, hopeful) when data is sparse and rises as data
+accumulates if the arm turns out to be expensive, while a genuinely cheap
+arm's p20 stays low -- so minimizing p20 both exploits what's known cheap
+and explores what's still uncertain, without a separate advisory flag for
+it. The guard excludes any arm whose MC ``p80_total_usd`` exceeds a *guard
+factor* times the *minimum* MC ``p80_total_usd`` among scorable arms for
+that task (unchanged rationale from the pre-MC design: this stops "cheap at
+p20, catastrophic in the tail" arms from winning on the optimistic quantile
+alone -- but now built from an honest quantile-of-the-sum instead of a
+sum-of-quantiles, so the guard's own semantics are no longer overstated).
+The guard factor itself (default ``DEFAULT_GUARD_FACTOR = 2.0``) is
+resolved per run as: ``--guard-factor`` CLI flag, else
+``config_json["guard_factor"]`` if the estimator's own config specifies
+one, else the hardcoded default -- echoed back in the JSON report as
+``"guard_factor"``. The selected arm is whichever guard-passing arm has the
+lowest ``p20_total_usd`` (tie-break ``(model, effort)`` lexicographic); if
+the guard excludes every arm (only possible with an overridden guard factor
+below 1.0), selection falls back to the single best arm by the same
+statistic among all scorable arms, bypassing the guard. The report's
+``"arms"`` list is always ranked by ``p20_total_usd`` ascending, regardless
+of selection mode.
 
-No randomness is used anywhere in this module (no Thompson sampling) --
-every number is a closed-form function of the persisted posterior and the
-input complexity vector, so determinism for a fixed ``--estimator-id`` is
-automatic, not something this module has to work to preserve.
+``--thompson`` selects differently: for each scorable arm, draw exactly one
+predictive sample per category from the *same* shared rng (``model.NIG.
+thompson`` -- the genuine Bayesian Thompson draw: sample sigma2, then beta,
+then ``x @ beta``, per design.md D6's "Thompson sampling takes an explicit
+caller-supplied seed"), inverse-transform and floor each at 0.0, and sum
+across categories to one ``thompson_total_usd`` per arm; the selected arm is
+the guard-passing arm with the lowest ``thompson_total_usd`` (the guard
+itself is still computed from the MC ``p80_total_usd``, which is always
+computed regardless of mode). The report's top-level ``"selection_mode"``
+is ``"thompson"`` or ``"p20"``; every arm's ``thompson_total_usd`` is
+``null`` unless ``--thompson`` was given. Both modes are equally
+deterministic given the same seed -- there is no non-deterministic
+randomness anywhere in this module.
 """
 from __future__ import annotations
 
@@ -80,14 +91,16 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
+
 import annotations
 import db
 import model
 
 DEFAULT_DB = Path(__file__).resolve().parents[3] / "data" / "agents" / "task-analyzer.sqlite"
-DEFAULT_QUANTILE = 0.8
-EXPLORE_LOW_Q = 0.2
 DEFAULT_GUARD_FACTOR = 2.0
+DEFAULT_MC_DRAWS = 2000
+DEFAULT_SEED = 0
 SANITY_COMPOSITES = (2.0, 3.0, 4.0)
 
 
@@ -100,13 +113,21 @@ def resolve_guard_factor(config: dict, guard_factor: Optional[float]) -> float:
     return float(config.get("guard_factor", DEFAULT_GUARD_FACTOR))
 
 
+def _empirical_quantile(draws: np.ndarray, q: float) -> float:
+    """The ``q``-quantile of ``draws`` via sorted-array linear interpolation
+    (``numpy.quantile``'s ``method="linear"``, the default) -- fixed and
+    documented so a report is bit-stable given the same draws array."""
+    return float(np.quantile(draws, q, method="linear"))
+
+
 class EstimatorError(RuntimeError):
     pass
 
 
 def load_estimator(conn, estimator_id: Optional[int] = None):
     """Return ``(estimator_id, config, posteriors)`` where ``posteriors``
-    maps ``(category, model, effort) -> model.NIG``. Defaults to the
+    maps ``(category, model, effort) -> model.NIG`` (including the pooled
+    sentinel rows under ``model.POOLED_SENTINEL_ARM``). Defaults to the
     numerically greatest ``estimator_id`` present (the most recently
     trained generation) when ``estimator_id`` is None."""
     if estimator_id is None:
@@ -143,146 +164,220 @@ def _recomputed_complexity(complexity: dict) -> dict:
     return row
 
 
-def _arm_totals(posteriors: dict, categories, epsilon: float, x, arm, quantile: float) -> dict:
+def _resolve_category_nig(posteriors: dict, category: str, arm):
+    """The category's own (arm-specific) posterior if present, else its
+    pooled fallback (``model.POOLED_SENTINEL_ARM``), else ``None``. Returns
+    ``(nig, used_fallback)``."""
+    nig = posteriors.get((category, arm[0], arm[1]))
+    if nig is not None:
+        return nig, False
+    nig = posteriors.get((category,) + model.POOLED_SENTINEL_ARM)
+    return nig, nig is not None
+
+
+def _score_arm(posteriors: dict, categories, epsilon: float, x, arm, rng: np.random.Generator, mc_draws: int):
+    """Score one (model, effort) ``arm`` across every category (in the
+    given, fixed ``categories`` order -- see the module docstring's rng
+    consumption-order guarantee). Returns ``(public, mc_total_draws)``:
+    ``public`` is the fully JSON-serializable per-arm report dict;
+    ``mc_total_draws`` is the raw ``np.ndarray`` of ``mc_draws`` MC total-
+    cost draws (``None`` if the arm is unscorable), kept *out* of ``public``
+    so callers never need to strip anything before ``json.dumps``."""
     per_category = {}
     missing = []
     fallback = []
-    expected_total = pq_total = p20_total = p80_total = 0.0
+    category_draws = []
     for category in categories:
-        nig = posteriors.get((category, arm[0], arm[1]))
-        used_fallback = False
-        if nig is None:
-            nig = posteriors.get((category,) + model.POOLED_SENTINEL_ARM)
-            used_fallback = nig is not None
+        nig, used_fallback = _resolve_category_nig(posteriors, category, arm)
         if nig is None:
             missing.append(category)
             continue
         if used_fallback:
             fallback.append(category)
+
         mean_log, _scale, _df = nig.predictive(x)
-        mean_usd = model.inverse_transform(mean_log, epsilon)
-        pq_usd = model.inverse_transform(nig.quantile(x, quantile), epsilon)
-        p20_usd = model.inverse_transform(nig.quantile(x, EXPLORE_LOW_Q), epsilon)
-        p80_usd = model.inverse_transform(nig.quantile(x, 1.0 - EXPLORE_LOW_Q), epsilon)
         per_category[category] = {
-            "mean_usd": mean_usd, "pq_usd": pq_usd, "p20_usd": p20_usd, "p80_usd": p80_usd,
+            "mean_usd": model.inverse_transform(mean_log, epsilon),
+            "median_usd": model.inverse_transform(nig.quantile(x, 0.5), epsilon),
+            "p20_usd": model.inverse_transform(nig.quantile(x, 0.2), epsilon),
+            "p80_usd": model.inverse_transform(nig.quantile(x, 0.8), epsilon),
             "fallback": used_fallback,
         }
-        expected_total += mean_usd
-        pq_total += pq_usd
-        p20_total += p20_usd
-        p80_total += p80_usd
-    return {
+        log_draws = nig.predictive_draws(x, mc_draws, rng)
+        category_draws.append(model.inverse_transform_array(log_draws, epsilon))
+
+    public = {
         "model": arm[0], "effort": arm[1],
-        "categories": per_category, "missing_categories": missing,
+        "categories": per_category,
+        "missing_categories": missing,
         "fallback_categories": fallback,
-        "expected_total_usd": expected_total, "pq_total_usd": pq_total,
-        "p20_total_usd": p20_total, "p80_total_usd": p80_total,
+        "thompson_total_usd": None,
     }
 
+    if missing or not category_draws:
+        public["p20_total_usd"] = None
+        public["p50_total_usd"] = None
+        public["p80_total_usd"] = None
+        return public, None
 
-def score_task(config: dict, posteriors: dict, complexity: dict, quantile: float,
-               guard_factor: Optional[float] = None) -> dict:
+    total_draws = np.sum(np.vstack(category_draws), axis=0)
+    public["p20_total_usd"] = _empirical_quantile(total_draws, 0.2)
+    public["p50_total_usd"] = _empirical_quantile(total_draws, 0.5)
+    public["p80_total_usd"] = _empirical_quantile(total_draws, 0.8)
+    return public, total_draws
+
+
+def _thompson_total(posteriors: dict, categories, epsilon: float, x, arm, rng: np.random.Generator) -> float:
+    """One Thompson draw per category (fixed ``categories`` order, same
+    fallback resolution as ``_score_arm``), inverse-transformed and floored
+    at 0.0, summed to a single total. Caller guarantees ``arm`` is scorable
+    (every category resolves to a posterior, own or pooled)."""
+    total = 0.0
+    for category in categories:
+        nig, _used_fallback = _resolve_category_nig(posteriors, category, arm)
+        sample_usd = model.inverse_transform(nig.thompson(x, rng), epsilon)
+        total += max(sample_usd, 0.0)
+    return total
+
+
+def _score_task_core(config: dict, posteriors: dict, complexity: dict, rng: np.random.Generator,
+                      mc_draws: int, resolved_guard_factor: float, thompson: bool):
     """Score every known arm (``config["arms"]``) for one task's complexity
-    vector. Returns the ranked, fully-scorable arm list (sorted by
-    ``pq_total_usd`` ascending -- "arm rankings at the configured quantile"
-    per spec.md), the arms excluded as ``unscorable`` (missing a posterior,
-    *and* a pooled fallback, for at least one category), the selected arm
-    (min ``expected_total_usd`` among fully-scorable arms passing the
-    ``pq_total_usd`` guard), and the ``explore``/``explore_reasons`` flags
-    (module docstring: the OR of the overlap check and "the selected arm
-    used a pooled fallback category"). An arm is eligible for
-    ranking/selection once every category in ``config["categories"]``
-    resolves to a posterior -- its own, or (per the module docstring) that
-    category's pooled fallback; each arm's ``fallback_categories`` records
-    which categories, if any, resolved via fallback."""
+    vector. Returns ``(result, selected_mc_draws, selected_thompson_total)``:
+    ``result`` is the JSON-serializable per-task report dict; the other two
+    are the *selected* arm's raw MC-draws array / Thompson total (whichever
+    applies, else ``None``) -- used by ``run()`` to build decomposition-level
+    totals without recomputing anything. Arms are processed sorted by
+    ``(model, effort)`` (module docstring's rng consumption-order
+    guarantee), independent of ``config["arms"]``'s own order."""
     row = _recomputed_complexity(complexity)
     x = model.features(row, config)
     epsilon = config.get("epsilon", model.DEFAULT_EPSILON)
     categories = config.get("categories", [])
-    resolved_guard_factor = resolve_guard_factor(config, guard_factor)
-    arms_all = [_arm_totals(posteriors, categories, epsilon, x, tuple(arm), quantile) for arm in config.get("arms", [])]
+    arms_sorted = sorted((tuple(a) for a in config.get("arms", [])), key=lambda a: (a[0], a[1]))
 
-    arms = [a for a in arms_all if not a["missing_categories"]]
+    scored = [_score_arm(posteriors, categories, epsilon, x, arm, rng, mc_draws) for arm in arms_sorted]
+
+    if thompson:
+        for pub, _draws in scored:
+            if pub["missing_categories"]:
+                continue
+            pub["thompson_total_usd"] = _thompson_total(
+                posteriors, categories, epsilon, x, (pub["model"], pub["effort"]), rng
+            )
+
+    public_arms = [pub for pub, _draws in scored]
+    draws_by_key = {(pub["model"], pub["effort"]): draws for pub, draws in scored if draws is not None}
+
+    scorable = [a for a in public_arms if not a["missing_categories"]]
     unscorable = [
         {"model": a["model"], "effort": a["effort"], "missing_categories": a["missing_categories"]}
-        for a in arms_all if a["missing_categories"]
+        for a in public_arms if a["missing_categories"]
     ]
 
-    ranked = sorted(arms, key=lambda a: (a["pq_total_usd"], a["model"], a["effort"]))
-    by_expected = sorted(arms, key=lambda a: (a["expected_total_usd"], a["model"], a["effort"]))
+    ranked = sorted(scorable, key=lambda a: (a["p20_total_usd"], a["model"], a["effort"]))
 
     selected = None
-    if by_expected:
-        min_pq = min(a["pq_total_usd"] for a in arms)
-        guard_limit = resolved_guard_factor * min_pq
-        passing = [a for a in by_expected if a["pq_total_usd"] <= guard_limit]
-        selected = passing[0] if passing else by_expected[0]
+    if scorable:
+        min_p80 = min(a["p80_total_usd"] for a in scorable)
+        guard_limit = resolved_guard_factor * min_p80
+        passing = [a for a in scorable if a["p80_total_usd"] <= guard_limit]
+        candidates = passing if passing else scorable
+        if thompson:
+            selected = min(candidates, key=lambda a: (a["thompson_total_usd"], a["model"], a["effort"]))
+        else:
+            selected = min(candidates, key=lambda a: (a["p20_total_usd"], a["model"], a["effort"]))
 
-    # explore is the OR of two independent signals (fix round 1, codex
-    # review): "overlap" (the pre-existing runner-up-vs-winner posterior
-    # overlap check) and "fallback" (the selected arm's own score leaned on
-    # at least one category's pooled fallback -- low-evidence by
-    # construction, regardless of how tight its resulting interval looks,
-    # since the pooled posterior can be narrow if the category simply has
-    # little data across every arm). explore_reasons lists which signal(s)
-    # fired, in this fixed (fallback, overlap) order for determinism.
-    explore_overlap = False
-    explore_fallback = False
-    if selected is not None:
-        explore_fallback = bool(selected["fallback_categories"])
-        runner_up = next((a for a in by_expected if a is not selected), None)
-        if runner_up is not None:
-            explore_overlap = runner_up["p20_total_usd"] < selected["p80_total_usd"]
+    selected_draws = draws_by_key.get((selected["model"], selected["effort"])) if selected else None
+    selected_thompson = selected["thompson_total_usd"] if (selected and thompson) else None
 
-    explore_reasons = []
-    if explore_fallback:
-        explore_reasons.append("fallback")
-    if explore_overlap:
-        explore_reasons.append("overlap")
-    explore = bool(explore_reasons)
-
-    return {
+    result = {
         "complexity": {**{f"C{i}": complexity.get(f"C{i}") for i in range(1, 8)}, "composite": row["composite"]},
         "arms": ranked,
         "unscorable_arms": unscorable,
-        "selected": ({"model": selected["model"], "effort": selected["effort"],
-                       "expected_total_usd": selected["expected_total_usd"],
-                       "pq_total_usd": selected["pq_total_usd"],
-                       "fallback_categories": selected["fallback_categories"]} if selected else None),
-        "explore": explore,
-        "explore_reasons": explore_reasons,
+        "selected": ({
+            "model": selected["model"], "effort": selected["effort"],
+            "p20_total_usd": selected["p20_total_usd"],
+            "p50_total_usd": selected["p50_total_usd"],
+            "p80_total_usd": selected["p80_total_usd"],
+            "thompson_total_usd": selected["thompson_total_usd"],
+            "fallback_categories": selected["fallback_categories"],
+        } if selected else None),
     }
+    return result, selected_draws, selected_thompson
 
 
-def run(conn, decomposition: dict, quantile: float = DEFAULT_QUANTILE, estimator_id: Optional[int] = None,
-        guard_factor: Optional[float] = None) -> dict:
+def score_task(config: dict, posteriors: dict, complexity: dict, rng: np.random.Generator,
+               mc_draws: int = DEFAULT_MC_DRAWS, guard_factor: Optional[float] = None,
+               thompson: bool = False) -> dict:
+    """Public single-task scoring entry point (what ``run()`` calls per
+    task, minus the raw draws it uses only for decomposition-level
+    aggregation). ``rng`` must be a caller-owned ``numpy.random.Generator``
+    (e.g. ``np.random.default_rng(seed)``) -- callers scoring more than one
+    task and wanting the module's full run-level determinism guarantee
+    should share one ``rng`` across every call, in the same order every
+    time (``run()`` does this automatically for a whole decomposition)."""
+    resolved_guard_factor = resolve_guard_factor(config, guard_factor)
+    result, _draws, _thompson = _score_task_core(
+        config, posteriors, complexity, rng, mc_draws, resolved_guard_factor, thompson
+    )
+    return result
+
+
+def run(conn, decomposition: dict, estimator_id: Optional[int] = None, guard_factor: Optional[float] = None,
+        seed: int = DEFAULT_SEED, mc_draws: int = DEFAULT_MC_DRAWS, thompson: bool = False) -> dict:
     """Score every task in ``decomposition["tasks"]``; returns the full
     report dict (JSON-serializable) with per-task results and
-    decomposition-level totals of the selected arms. ``guard_factor``, if
-    given, overrides both the estimator config's own value and
+    decomposition-level totals. One ``numpy.random.Generator`` (seeded via
+    ``seed``) is created here and shared across every task, in decomposition
+    order -- the module docstring's determinism guarantee. ``guard_factor``,
+    if given, overrides both the estimator config's own value and
     ``DEFAULT_GUARD_FACTOR`` (see ``resolve_guard_factor``); the value
-    actually used is echoed back as ``report["guard_factor"]``."""
+    actually used is echoed back as ``report["guard_factor"]``.
+    ``decomposition_totals`` sums the *selected* arm's raw draws (MC mode)
+    or Thompson totals (Thompson mode) element-wise across tasks before
+    taking quantiles -- not a sum of each task's already-computed total
+    quantiles, for the same quantiles-don't-commute-with-sums reason the
+    per-task totals themselves are MC rather than summed per-category
+    quantiles."""
     resolved_id, config, posteriors = load_estimator(conn, estimator_id)
     resolved_guard_factor = resolve_guard_factor(config, guard_factor)
+    rng = np.random.default_rng(seed)
 
     tasks_out = []
-    total_expected = total_pq = 0.0
+    draws_sum = None
+    thompson_sum = 0.0
+    any_selected = False
+
     for entry in decomposition.get("tasks", []):
-        result = score_task(config, posteriors, entry.get("complexity", {}), quantile, resolved_guard_factor)
+        result, selected_draws, selected_thompson = _score_task_core(
+            config, posteriors, entry.get("complexity", {}), rng, mc_draws, resolved_guard_factor, thompson
+        )
         result["task"] = entry.get("task")
         result["title"] = entry.get("title")
         tasks_out.append(result)
-        if result["selected"]:
-            total_expected += result["selected"]["expected_total_usd"]
-            total_pq += result["selected"]["pq_total_usd"]
+        if result["selected"] is not None:
+            any_selected = True
+            if selected_draws is not None:
+                draws_sum = selected_draws.copy() if draws_sum is None else draws_sum + selected_draws
+            if selected_thompson is not None:
+                thompson_sum += selected_thompson
+
+    decomposition_totals = {
+        "p20_total_usd": _empirical_quantile(draws_sum, 0.2) if draws_sum is not None else 0.0,
+        "p50_total_usd": _empirical_quantile(draws_sum, 0.5) if draws_sum is not None else 0.0,
+        "p80_total_usd": _empirical_quantile(draws_sum, 0.8) if draws_sum is not None else 0.0,
+        "thompson_total_usd": (thompson_sum if any_selected else 0.0) if thompson else None,
+    }
 
     return {
         "estimator_id": resolved_id,
-        "quantile": quantile,
+        "seed": seed,
+        "mc_draws": mc_draws,
         "guard_factor": resolved_guard_factor,
+        "selection_mode": "thompson" if thompson else "p20",
         "tasks": tasks_out,
-        "decomposition_totals": {"expected_total_usd": total_expected, "pq_total_usd": total_pq},
+        "decomposition_totals": decomposition_totals,
     }
 
 
@@ -301,33 +396,43 @@ def _sanity_decomposition() -> dict:
     }
 
 
+def _fmt(value) -> str:
+    return f"{value:>14.4f}" if value is not None else f"{'-':>14}"
+
+
 def render_table(report: dict) -> str:
-    lines = [f"estimator_id={report['estimator_id']} quantile={report['quantile']}"]
+    lines = [
+        f"estimator_id={report['estimator_id']} seed={report['seed']} "
+        f"mc_draws={report['mc_draws']} selection_mode={report['selection_mode']}"
+    ]
     for task in report["tasks"]:
         lines.append("")
         lines.append(f"task: {task['task']}  composite={task['complexity']['composite']}")
-        lines.append(f"  {'model':<20} {'effort':<10} {'expected$':>18} {'pq$':>18} {'p20$':>18} {'p80$':>18}")
+        lines.append(f"  {'model':<20} {'effort':<10} {'p20$':>14} {'p50$':>14} {'p80$':>14} {'thompson$':>14}")
         for arm in task["arms"]:
             marker = "*" if task["selected"] and arm["model"] == task["selected"]["model"] and arm["effort"] == task["selected"]["effort"] else " "
             fallback_note = f"  (pooled: {', '.join(arm['fallback_categories'])})" if arm["fallback_categories"] else ""
             lines.append(
                 f"{marker} {arm['model']:<20} {arm['effort']:<10}"
-                f" {arm['expected_total_usd']:>18.4f} {arm['pq_total_usd']:>18.4f}"
-                f" {arm['p20_total_usd']:>18.4f} {arm['p80_total_usd']:>18.4f}"
+                f" {_fmt(arm['p20_total_usd'])} {_fmt(arm['p50_total_usd'])}"
+                f" {_fmt(arm['p80_total_usd'])} {_fmt(arm['thompson_total_usd'])}"
                 f"{fallback_note}"
             )
         if task["unscorable_arms"]:
             for arm in task["unscorable_arms"]:
                 lines.append(f"  (unscorable: {arm['model']}/{arm['effort']}, missing={arm['missing_categories']})")
         sel = task["selected"]
-        sel_desc = f"{sel['model']}/{sel['effort']}" if sel else "none"
-        reasons_desc = f" ({', '.join(task['explore_reasons'])})" if task["explore_reasons"] else ""
-        lines.append(f"  selected: {sel_desc}  explore={task['explore']}{reasons_desc}")
+        sel_desc = (
+            f"{sel['model']}/{sel['effort']}  p20=${sel['p20_total_usd']:.4f} "
+            f"p50=${sel['p50_total_usd']:.4f} p80=${sel['p80_total_usd']:.4f}"
+            if sel else "none"
+        )
+        lines.append(f"  selected: {sel_desc}")
     totals = report["decomposition_totals"]
     lines.append("")
     lines.append(
-        f"decomposition totals: expected=${totals['expected_total_usd']:.4f} "
-        f"pq=${totals['pq_total_usd']:.4f} (guard_factor={report['guard_factor']})"
+        f"decomposition totals: p20=${totals['p20_total_usd']:.4f} p50=${totals['p50_total_usd']:.4f} "
+        f"p80=${totals['p80_total_usd']:.4f} (guard_factor={report['guard_factor']})"
     )
     return "\n".join(lines)
 
@@ -336,10 +441,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="Score a candidate decomposition against a trained cost estimator.")
     p.add_argument("--decomposition", help="path to a decomposition file (.json or annotation-subset .yaml)")
     p.add_argument("--db", default=str(DEFAULT_DB), help="path to the task-analyzer sqlite database")
-    p.add_argument("--quantile", type=float, default=DEFAULT_QUANTILE)
     p.add_argument("--estimator-id", type=int, default=None)
     p.add_argument("--guard-factor", type=float, default=None,
                     help="override the selection guard factor (default: the estimator config's own value, or 2.0)")
+    p.add_argument("--seed", type=int, default=DEFAULT_SEED, help="seed for the shared Monte Carlo/Thompson rng")
+    p.add_argument("--mc-draws", type=int, default=DEFAULT_MC_DRAWS,
+                    help="number of Monte Carlo draws per (arm, category) used for total-cost quantiles")
+    p.add_argument("--thompson", action="store_true",
+                    help="select via one Thompson draw per arm instead of minimum MC p20 total")
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON instead of the human table")
     p.add_argument("--sanity", action="store_true", help="score the fixed reference decomposition (composites 2/3/4) instead of --decomposition")
     return p
@@ -364,8 +473,10 @@ def main(argv=None) -> int:
         return 1
 
     try:
-        report = run(conn, decomposition, quantile=args.quantile, estimator_id=args.estimator_id,
-                      guard_factor=args.guard_factor)
+        report = run(
+            conn, decomposition, estimator_id=args.estimator_id, guard_factor=args.guard_factor,
+            seed=args.seed, mc_draws=args.mc_draws, thompson=args.thompson,
+        )
     except EstimatorError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

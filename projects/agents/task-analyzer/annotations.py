@@ -12,8 +12,7 @@ An annotation doc is a plain ``dict`` shaped like::
           "task": "task-1", "title": "...",
           "model": "gpt-5.5", "effort": "high",
           "complexity": {"C1": 2, ..., "C7": 2, "composite": 2.7},
-          "predicted": {"p50_usd": 0.42, "p80_usd": 0.71,
-                        "review_p80_usd": 0.30, "explore": False},
+          "predicted": {"p20_usd": 0.29, "p50_usd": 0.42, "p80_usd": 0.71},
         },
         ...
       ],

@@ -85,6 +85,28 @@ def inverse_transform(y: float, epsilon: float = DEFAULT_EPSILON) -> float:
     return math.exp(y) - epsilon
 
 
+def inverse_transform_array(y: np.ndarray, epsilon: float = DEFAULT_EPSILON) -> np.ndarray:
+    """Vectorized ``inverse_transform``, floored at ``0.0`` (followup-2's
+    Monte Carlo totals; see ``NIG.predictive_draws``). A dollar cost cannot
+    be negative, but the log-space predictive's support runs to ``-inf``, so
+    a sufficiently unlucky left-tail draw can transform to a value below
+    ``-epsilon`` before flooring -- the scalar ``inverse_transform`` above is
+    intentionally left unfloored (it's used for exact analytic quantiles,
+    which stay well above zero for the quantile levels this module queries).
+
+    On the *right* tail, a sufficiently sparse/heavy-tailed posterior (low
+    ``a`` -- few degrees of freedom -- and/or a wide pooled fallback) can
+    draw a log-cost sample large enough that ``exp`` overflows to ``inf``;
+    that is a faithful (if extreme) representation of genuine unbounded
+    Student-t tail risk, not a bug, and does not corrupt the p20/p50/p80
+    quantiles this feeds (a handful of ``inf`` draws just sort to the very
+    top of ``mc-draws`` samples, below the noticing threshold of any
+    quantile at or under p80) -- so the expected overflow is silenced here
+    rather than left to spam a ``RuntimeWarning`` on every such draw."""
+    with np.errstate(over="ignore"):
+        return np.maximum(np.exp(y) - epsilon, 0.0)
+
+
 def features(complexity_row, config: Optional[dict] = None) -> np.ndarray:
     """Build the feature vector for one task's complexity row, per
     ``config["features"]`` (default ``[1, composite, C3, C4, C5]``).
@@ -254,6 +276,26 @@ class NIG:
         estimators; callers exponentiate via ``inverse_transform``)."""
         mean, scale, df = self.predictive(x)
         return mean + scale * t_ppf(q, df)
+
+    def predictive_draws(self, x: np.ndarray, n: int, rng: np.random.Generator) -> np.ndarray:
+        """``n`` i.i.d. draws from the posterior predictive at ``x``, in
+        whatever space this ``NIG`` was trained (log-usd for cost
+        estimators; callers exponentiate via ``inverse_transform``/
+        ``inverse_transform_array``). The predictive is location-scale
+        Student-t (``predictive()``'s ``loc``/``scale``/``df``), so a draw is
+        ``loc + scale * standard_t(df)`` -- vectorized via
+        ``rng.standard_t(df, size=n)``. Used by estimate.py's seeded Monte
+        Carlo total-cost estimation (followup-2): quantiles of a *sum* of
+        these predictives have no closed form (independent Student-t's in
+        log space; ``exp(t)`` has no finite moments, so summed-then-
+        exponentiated draws are the only way to get the total's own
+        quantiles, as opposed to a quantile *of* the sum of each category's
+        already-exponentiated quantile, which is a different and biased
+        number -- see the module docstring's discussion in ``estimate.py``).
+        ``rng`` is a caller-supplied ``numpy.random.Generator`` (explicit
+        seed, never persisted, same convention as ``thompson()``)."""
+        mean, scale, df = self.predictive(x)
+        return mean + scale * rng.standard_t(df, size=n)
 
     def thompson(self, x: np.ndarray, rng: np.random.Generator) -> float:
         """One Thompson sample at ``x``: draw ``sigma2 ~ InvGamma(a, b)``,

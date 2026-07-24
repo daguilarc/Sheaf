@@ -47,6 +47,24 @@ class TestTPpf(unittest.TestCase):
             model.t_ppf(1.0, 5)
 
 
+class TestInverseTransformArray(unittest.TestCase):
+    def test_matches_scalar_inverse_transform_elementwise(self):
+        ys = np.array([-2.0, -0.5, 0.0, 1.0, 3.0])
+        got = model.inverse_transform_array(ys)
+        expected = np.array([model.inverse_transform(float(y)) for y in ys])
+        np.testing.assert_allclose(got, expected)
+
+    def test_floors_at_zero_for_deeply_negative_log_draws(self):
+        # A left-tail MC draw well below -epsilon must floor at 0.0 (a
+        # dollar cost cannot be negative), unlike the scalar
+        # inverse_transform used for analytic quantiles (module docstring).
+        ys = np.array([-50.0, -20.0, -1e-3])
+        got = model.inverse_transform_array(ys)
+        self.assertTrue(np.all(got >= 0.0))
+        self.assertEqual(got[0], 0.0)
+        self.assertEqual(got[1], 0.0)
+
+
 class TestNIG(unittest.TestCase):
     def test_update_recovers_known_coefficients(self):
         rng = np.random.default_rng(0)
@@ -139,6 +157,34 @@ class TestNIG(unittest.TestCase):
         s2 = post.thompson(np.array([1.0, 0.5]), np.random.default_rng(7))
         self.assertEqual(s1, s2)
         self.assertTrue(math.isfinite(s1))
+
+    def test_predictive_draws_matches_analytic_mean_and_quantiles(self):
+        # followup-2: predictive_draws is what estimate.py's Monte Carlo
+        # totals are built from -- its empirical mean/median/quantiles must
+        # converge to the closed-form predictive() values it's drawing from.
+        rng = np.random.default_rng(5)
+        X, y = _linear_data(rng, n=200)
+        post = model.NIG.weak_prior(2).update(X, y)
+        x = np.array([1.0, 0.5])
+
+        draws = post.predictive_draws(x, 200_000, np.random.default_rng(11))
+        self.assertEqual(draws.shape, (200_000,))
+        self.assertTrue(np.all(np.isfinite(draws)))
+
+        mean, _scale, _df = post.predictive(x)
+        self.assertAlmostEqual(float(np.mean(draws)), mean, delta=0.05)
+        for q in (0.2, 0.5, 0.8):
+            self.assertAlmostEqual(float(np.quantile(draws, q)), post.quantile(x, q), delta=0.05)
+
+    def test_predictive_draws_seed_reproducible(self):
+        rng = np.random.default_rng(3)
+        X, y = _linear_data(rng, n=50)
+        post = model.NIG.weak_prior(2).update(X, y)
+        x = np.array([1.0, 0.5])
+
+        d1 = post.predictive_draws(x, 100, np.random.default_rng(7))
+        d2 = post.predictive_draws(x, 100, np.random.default_rng(7))
+        np.testing.assert_array_equal(d1, d2)
 
     def test_features_default_layout(self):
         row = {"composite": 3.5, "c3": 2, "c4": 4, "c5": 1}
