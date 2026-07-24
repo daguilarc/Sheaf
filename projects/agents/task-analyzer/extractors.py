@@ -275,7 +275,68 @@ def _call_snippet(arguments):
 
 
 def extract_codex(path) -> SessionRecord:
-    """Parse a codex rollout JSONL file into a SessionRecord."""
+    """Parse a codex rollout JSONL file into a SessionRecord.
+
+    **Silent-checkpoint reconciliation (followup-5, design.md D5/D2
+    amendment).** A ``token_count`` checkpoint whose window produced no
+    condensed timeline items (no intervening ``CALL``/``OUT``/``THINK``/
+    ``SAY``) used to simply discard its ``last_token_usage`` delta -- it
+    updated the session-level cumulative total (``final_totals``, read
+    from ``total_token_usage``) but became no ``Turn`` at all, since a
+    ``Turn`` was only ever appended ``if cur_items:``. Over a whole
+    session this could drop a large fraction of the true output-token
+    mass from the per-turn sum (see ``projects/agents/task-analyzer/
+    README.md``'s former "known limitation" section for the empirical
+    scale of this before the fix). Fixed here by accumulating every
+    silent checkpoint's delta in ``pending_output_tokens``/
+    ``pending_reasoning_tokens`` and folding it into the next turn that
+    DOES get created -- never creating a new turn or changing any turn's
+    index for a silent checkpoint. Three cases, one mechanism:
+
+    - mass accrued before the first visible turn (e.g. history discarded
+      by a context compaction) accumulates in `pending_*` from the start
+      and is folded into turn 1, the first turn actually created;
+    - a silent gap between two visible turns accumulates the same way and
+      is folded into the NEXT visible turn (whose closing checkpoint is
+      the first non-silent one after the gap);
+    - trailing silent mass after the last visible turn (checkpoints that
+      fire after all real content, before the transcript ends) has
+      nothing left to fold forward into, so it's added to the LAST
+      already-appended turn once the main loop ends.
+
+    Post-condition: ``sum(t.output_tokens for t in turns) ==
+    final_totals.output_tokens`` for any well-formed transcript with at
+    least one turn (verified by ``tests/test_extractors.py``'s
+    reconciliation tests, and empirically against the real committed
+    corpus). A transcript with ZERO turns at all (only silent checkpoints,
+    no content whatsoever) has no turn to fold pending mass into --the
+    ``pending_output_tokens`` accumulator is simply discarded in that
+    degenerate case, an explicit, documented, and tested exception, not a
+    silent leak of a well-formed transcript's real turn data.
+
+    **Delta source: the cumulative counter, not ``last_token_usage``.**
+    Each checkpoint's own output/reasoning delta is computed as the
+    increase in ``total_token_usage`` (the provider's cumulative counter)
+    since the previous checkpoint, not read directly from
+    ``last_token_usage`` -- verified monotonically non-decreasing across
+    every session in the real corpus, this delta telescopes exactly to
+    the session's final cumulative total by construction, closing two
+    real gaps ``last_token_usage`` alone left open: (1) a resumed/
+    continued (``thread_spawn``) session's file can begin with a large
+    nonzero cumulative baseline already present at its very first
+    checkpoint, reflecting activity from before this file's own recorded
+    events start -- ``last_token_usage`` at that checkpoint only reports
+    its own small window, silently losing the inherited baseline (folded
+    in here as leading mass, same as any other pre-first-turn gap); (2) a
+    small minority of checkpoints (also `thread_spawn`-only in the real
+    corpus) report a ``last_token_usage`` delta that doesn't match the
+    cumulative counter's own actual step for that checkpoint (a data-
+    quality quirk in a handful of thread-spawned sessions' own event
+    reporting) -- the cumulative-counter delta is authoritative here, not
+    the possibly-inconsistent per-checkpoint delta. Falls back to
+    ``last_token_usage`` only when a ``token_count`` event lacks
+    ``total_token_usage`` entirely (rare/degenerate).
+    """
     session_id = None
     harness_entry = "exec"
     spawn_path = None
@@ -290,12 +351,16 @@ def extract_codex(path) -> SessionRecord:
     n_compactions = 0
     n_tool_calls = 0
     final_totals = TokenTotals()
+    prev_cumulative_output = 0
+    prev_cumulative_reasoning = 0
 
     turns: List[Turn] = []
     cur_items: List[str] = []
     cur_turn_start: Optional[str] = None
     cur_turn_end: Optional[str] = None
     cur_turn_is_verdict = False
+    pending_output_tokens = 0
+    pending_reasoning_tokens = 0
 
     def _note(ts):
         """Record `ts` as covering the in-progress turn: the first call
@@ -350,12 +415,32 @@ def extract_codex(path) -> SessionRecord:
                     )
                 ctx = (last.get("input_tokens") or 0) + (last.get("output_tokens") or 0)
                 peak_context = max(peak_context, ctx)
+                # Delta source: the cumulative counter's own step, not
+                # last_token_usage (followup-5 reconciliation) -- see this
+                # function's docstring. Falls back to last_token_usage
+                # only if this event has no total_token_usage at all.
+                delta_output = last.get("output_tokens") or 0
+                delta_reasoning = last.get("reasoning_output_tokens") or 0
+                if total:
+                    cur_cumulative_output = total.get("output_tokens") or 0
+                    cur_cumulative_reasoning = total.get("reasoning_output_tokens") or 0
+                    reconciled_output = cur_cumulative_output - prev_cumulative_output
+                    reconciled_reasoning = cur_cumulative_reasoning - prev_cumulative_reasoning
+                    if reconciled_output >= 0:
+                        delta_output = reconciled_output
+                    if reconciled_reasoning >= 0:
+                        delta_reasoning = reconciled_reasoning
+                    prev_cumulative_output = cur_cumulative_output
+                    prev_cumulative_reasoning = cur_cumulative_reasoning
                 if cur_items:
+                    # This checkpoint's window has real content -- fold in
+                    # any mass silent checkpoints before it accumulated
+                    # (followup-5 reconciliation), never discarding it.
                     turns.append(
                         Turn(
                             index=len(turns) + 1,
-                            output_tokens=last.get("output_tokens") or 0,
-                            reasoning_tokens=last.get("reasoning_output_tokens") or 0,
+                            output_tokens=pending_output_tokens + delta_output,
+                            reasoning_tokens=pending_reasoning_tokens + delta_reasoning,
                             items=cur_items,
                             started_at=cur_turn_start,
                             ended_at=ts or cur_turn_end,
@@ -366,6 +451,15 @@ def extract_codex(path) -> SessionRecord:
                     cur_turn_start = None
                     cur_turn_end = None
                     cur_turn_is_verdict = False
+                    pending_output_tokens = 0
+                    pending_reasoning_tokens = 0
+                else:
+                    # Silent checkpoint: no content, but a real delta --
+                    # accumulate it for the next turn that does get
+                    # created (or, if none does, the trailing-mass fold
+                    # after the main loop below).
+                    pending_output_tokens += delta_output
+                    pending_reasoning_tokens += delta_reasoning
             elif pt == "user_message":
                 msg = p.get("message") or ""
                 if "Session initialization only" in msg:
@@ -419,13 +513,42 @@ def extract_codex(path) -> SessionRecord:
             _note(ts)
 
     if cur_items:
+        # A final, dangling turn with no closing token_count checkpoint of
+        # its own (no last_token_usage delta to attribute to it) -- but
+        # any EARLIER silent-checkpoint mass still accumulated in
+        # `pending_*` folds forward into it, per the same "next visible
+        # turn" rule as any other gap (followup-5 reconciliation).
         turns.append(
             Turn(
-                index=len(turns) + 1, output_tokens=0, reasoning_tokens=0, items=cur_items,
+                index=len(turns) + 1, output_tokens=pending_output_tokens,
+                reasoning_tokens=pending_reasoning_tokens, items=cur_items,
                 started_at=cur_turn_start, ended_at=cur_turn_end or ended_at,
                 is_verdict=cur_turn_is_verdict,
             )
         )
+        pending_output_tokens = 0
+        pending_reasoning_tokens = 0
+    elif turns and (pending_output_tokens or pending_reasoning_tokens):
+        # Trailing silent mass: checkpoints fired after the last visible
+        # turn closed, with no further content before the transcript
+        # ends -- nothing to fold FORWARD into, so it folds into the LAST
+        # turn instead (followup-5 reconciliation, "trailing" case).
+        last_turn = turns[-1]
+        turns[-1] = Turn(
+            index=last_turn.index,
+            output_tokens=last_turn.output_tokens + pending_output_tokens,
+            reasoning_tokens=last_turn.reasoning_tokens + pending_reasoning_tokens,
+            items=last_turn.items,
+            started_at=last_turn.started_at,
+            ended_at=last_turn.ended_at,
+            is_verdict=last_turn.is_verdict,
+        )
+        pending_output_tokens = 0
+        pending_reasoning_tokens = 0
+    # else: turns is empty and pending mass (if any) has nowhere to fold
+    # into -- a genuinely turn-less transcript (only silent checkpoints,
+    # no content at all). Explicit, documented exception (see this
+    # function's docstring), not a silent leak of real turn data.
 
     return SessionRecord(
         session_id=session_id,
@@ -455,7 +578,23 @@ def extract_codex(path) -> SessionRecord:
 
 def extract_claude(path) -> SessionRecord:
     """Parse a Claude Code project transcript (top-level session or
-    subagent) JSONL file into a SessionRecord."""
+    subagent) JSONL file into a SessionRecord.
+
+    **Silent-checkpoint reconciliation (followup-5, design.md D5/D2
+    amendment).** An assistant message whose content produced no condensed
+    timeline items (no ``SAY``/``THINK``/``CALL`` -- e.g. an empty or
+    all-whitespace response) used to have its own ``output_tokens`` folded
+    into the session-level running total but discarded from every turn,
+    since ``flush()`` only ever appended a ``Turn`` ``if cur_items:``.
+    Fixed the same way as ``extract_codex``: a `pending_output_tokens`
+    accumulator carries a silent message's tokens forward until the next
+    turn that DOES get created (leading/gap cases), or, if none does
+    before the transcript ends, folds into the last turn already created
+    (trailing case) -- never creating a new turn or renumbering any
+    existing one. See ``extract_codex``'s docstring for the full
+    three-case rationale (identical here, just triggered by an empty
+    assistant message instead of a checkpoint with no intervening
+    content)."""
     session_id = None
     is_subagent = "/subagents/" in str(path).replace(os.sep, "/")
     model = None
@@ -476,14 +615,17 @@ def extract_claude(path) -> SessionRecord:
     cur_turn_start: Optional[str] = None
     cur_turn_end: Optional[str] = None
     cur_turn_is_verdict = False
+    pending_output_tokens = 0
 
     def flush():
-        nonlocal cur_items, cur_output_tokens, cur_turn_start, cur_turn_end, cur_turn_is_verdict
+        nonlocal cur_items, cur_output_tokens, cur_turn_start, cur_turn_end, cur_turn_is_verdict, pending_output_tokens
         if cur_items:
+            # Real content -- fold in any mass a preceding silent message
+            # accumulated (followup-5 reconciliation), never discarding it.
             turns.append(
                 Turn(
                     index=len(turns) + 1,
-                    output_tokens=cur_output_tokens,
+                    output_tokens=cur_output_tokens + pending_output_tokens,
                     reasoning_tokens=0,
                     items=cur_items,
                     started_at=cur_turn_start,
@@ -491,6 +633,12 @@ def extract_claude(path) -> SessionRecord:
                     is_verdict=cur_turn_is_verdict,
                 )
             )
+            pending_output_tokens = 0
+        else:
+            # Silent message (no items) -- accumulate its own tokens for
+            # the next turn that does get created (or the trailing-mass
+            # fold after the main loop, if none does).
+            pending_output_tokens += cur_output_tokens
         cur_items = []
         cur_output_tokens = 0
         cur_turn_start = None
@@ -582,6 +730,26 @@ def extract_claude(path) -> SessionRecord:
                     _note(ts)
 
     flush()
+    if turns and pending_output_tokens:
+        # Trailing silent mass: one or more silent assistant messages
+        # after the last visible turn closed, with no further real
+        # content before the transcript ends -- nothing to fold FORWARD
+        # into, so it folds into the LAST turn instead (followup-5
+        # reconciliation, "trailing" case).
+        last_turn = turns[-1]
+        turns[-1] = Turn(
+            index=last_turn.index,
+            output_tokens=last_turn.output_tokens + pending_output_tokens,
+            reasoning_tokens=last_turn.reasoning_tokens,
+            items=last_turn.items,
+            started_at=last_turn.started_at,
+            ended_at=last_turn.ended_at,
+            is_verdict=last_turn.is_verdict,
+        )
+        pending_output_tokens = 0
+    # else: turns is empty and pending mass (if any) has nowhere to fold
+    # into -- a genuinely turn-less transcript. Explicit, documented
+    # exception (see this function's docstring), not a silent leak.
 
     if is_subagent or session_id is None:
         base = os.path.basename(str(path))

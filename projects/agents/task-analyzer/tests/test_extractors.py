@@ -19,8 +19,10 @@ per the Task 6 cost-model approximation), cached_tokens =
 cache_read_input_tokens only.
 """
 import glob
+import json
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -114,6 +116,151 @@ class TestExtractCodexPersistentReviewer(unittest.TestCase):
         boundaries = [t.ended_at for t in self.rec.turns if t.is_verdict]
         self.assertEqual(boundaries, ["2026-07-05T00:00:08Z", "2026-07-05T01:00:05Z"])
         self.assertEqual(len(set(boundaries)), 2)
+
+
+class TestExtractCodexLeaky(unittest.TestCase):
+    """followup-5: silent-checkpoint reconciliation. codex_leaky.jsonl has
+    three real (visible-content) turns plus THREE silent token_count
+    checkpoints that used to leak their deltas entirely: one before the
+    first turn (leading mass), one between turns 2 and 3 (a mid-session
+    gap), and one after the last turn (trailing mass). None of them may
+    create a new turn or renumber an existing one -- each must fold into
+    the correct EXISTING adjacent turn (leading/gap -> the next visible
+    turn; trailing -> the last visible turn), per design.md D5's
+    followup-5 amendment.
+
+    Hand-traced expected values (see the fixture file's own token_count
+    events): turn 1 = 200 (leading, silent) + 50 (its own delta) = 250;
+    turn 2 = 50 (its own delta only, no adjacent silent checkpoint);
+    turn 3 = 40 (its own delta) + 20 (trailing, silent) = 60 + ... =
+    100. Reasoning tokens fold identically: turn 1 = 5+3=8, turn 2 = 2,
+    turn 3 = 1+2+1 = 4. Session totals (final cumulative checkpoint):
+    output_tokens=400, reasoning_tokens=14.
+    """
+
+    def setUp(self):
+        self.rec = extractors.extract_codex(os.path.join(FIXTURES, "codex_leaky.jsonl"))
+
+    def test_turn_count_and_indices_unchanged_by_folding(self):
+        # The hard constraint: folding silent deltas must never create a
+        # new turn or renumber an existing one.
+        self.assertEqual(self.rec.n_turns, 3)
+        self.assertEqual([t.index for t in self.rec.turns], [1, 2, 3])
+
+    def test_leading_silent_mass_folds_into_turn_one(self):
+        self.assertEqual(self.rec.turns[0].output_tokens, 250)
+        self.assertEqual(self.rec.turns[0].reasoning_tokens, 8)
+
+    def test_mid_session_gap_has_no_effect_when_absent(self):
+        # Turn 2 has no adjacent silent checkpoint of its own in this
+        # fixture (the gap sits between turns 2 and 3) -- its own delta
+        # is unmodified.
+        self.assertEqual(self.rec.turns[1].output_tokens, 50)
+        self.assertEqual(self.rec.turns[1].reasoning_tokens, 2)
+
+    def test_trailing_silent_mass_folds_into_last_turn(self):
+        self.assertEqual(self.rec.turns[2].output_tokens, 100)
+        self.assertEqual(self.rec.turns[2].reasoning_tokens, 4)
+
+    def test_turn_items_unchanged_by_folding(self):
+        # Folded deltas change turn TOKEN numbers, never turn TEXT.
+        self.assertEqual(
+            self.rec.turns[0].items,
+            ["CALL shell: bash -lc ls", "OUT: file1\nfile2", "SAY: Turn 1 content."],
+        )
+
+    def test_reconciliation_invariant_sum_equals_session_totals(self):
+        self.assertEqual(sum(t.output_tokens for t in self.rec.turns), self.rec.tokens.output_tokens)
+        self.assertEqual(sum(t.reasoning_tokens for t in self.rec.turns), self.rec.tokens.reasoning_tokens)
+        self.assertEqual(self.rec.tokens.output_tokens, 400)
+        self.assertEqual(self.rec.tokens.reasoning_tokens, 14)
+
+
+class TestExtractCodexDecreasingTotalFallback(unittest.TestCase):
+    """followup-5: total_token_usage is monotonically non-decreasing in
+    every real transcript checked (see followup-5-report.md), but the
+    cumulative-diff reconciliation must not crash or invent a negative
+    delta if it somehow isn't -- it falls back to this checkpoint's own
+    last_token_usage instead, exactly the pre-fix behavior for that one
+    checkpoint."""
+
+    def test_a_decreasing_total_falls_back_to_last_token_usage(self):
+        lines = [
+            {"timestamp": "2026-07-20T00:00:00Z", "type": "session_meta",
+             "payload": {"id": "decrease-sess", "cwd": "/repo", "source": "exec"}},
+            {"timestamp": "2026-07-20T00:00:01Z", "type": "event_msg",
+             "payload": {"type": "user_message", "message": "Do the thing."}},
+            {"timestamp": "2026-07-20T00:00:02Z", "type": "response_item",
+             "payload": {"type": "message", "role": "assistant",
+                         "content": [{"type": "output_text", "text": "First."}]}},
+            {"timestamp": "2026-07-20T00:00:03Z", "type": "event_msg", "payload": {
+                "type": "token_count",
+                "info": {"total_token_usage": {"output_tokens": 500, "reasoning_output_tokens": 0},
+                          "last_token_usage": {"output_tokens": 500, "reasoning_output_tokens": 0}},
+            }},
+            {"timestamp": "2026-07-20T00:00:04Z", "type": "response_item",
+             "payload": {"type": "message", "role": "assistant",
+                         "content": [{"type": "output_text", "text": "Second."}]}},
+            # Total went DOWN from 500 to 100 -- not physically possible in
+            # practice (never observed in the real corpus), but must not
+            # produce a negative delta; falls back to last_token_usage's
+            # own reported 30 for this checkpoint instead.
+            {"timestamp": "2026-07-20T00:00:05Z", "type": "event_msg", "payload": {
+                "type": "token_count",
+                "info": {"total_token_usage": {"output_tokens": 100, "reasoning_output_tokens": 0},
+                          "last_token_usage": {"output_tokens": 30, "reasoning_output_tokens": 0}},
+            }},
+        ]
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as fh:
+            for line in lines:
+                fh.write(json.dumps(line) + "\n")
+            path = fh.name
+        try:
+            rec = extractors.extract_codex(path)
+        finally:
+            os.unlink(path)
+
+        self.assertEqual(rec.n_turns, 2)
+        self.assertEqual(rec.turns[0].output_tokens, 500)
+        # Falls back to last_token_usage (30), not a negative/garbage value.
+        self.assertEqual(rec.turns[1].output_tokens, 30)
+
+
+class TestExtractClaudeLeaky(unittest.TestCase):
+    """followup-5: silent-checkpoint reconciliation, claude side.
+    claude_leaky.jsonl has a silent (whitespace-only text) assistant
+    message before the first real turn, and a silent (empty content)
+    assistant message trailing the last real turn -- neither may create a
+    new turn; both must fold into the adjacent existing one.
+
+    Hand-traced: turn 1 = 15 (leading, silent) + 50 (its own) = 65;
+    turn 2 = 40 (its own) + 25 (trailing, silent) = 65. Session total
+    output_tokens = 15 + 50 + 40 + 25 = 130.
+    """
+
+    def setUp(self):
+        self.rec = extractors.extract_claude(os.path.join(FIXTURES, "claude_leaky.jsonl"))
+
+    def test_turn_count_and_indices_unchanged_by_folding(self):
+        self.assertEqual(self.rec.n_turns, 2)
+        self.assertEqual([t.index for t in self.rec.turns], [1, 2])
+
+    def test_leading_silent_mass_folds_into_turn_one(self):
+        self.assertEqual(self.rec.turns[0].output_tokens, 65)
+
+    def test_trailing_silent_mass_folds_into_last_turn(self):
+        self.assertEqual(self.rec.turns[1].output_tokens, 65)
+
+    def test_turn_items_unchanged_by_folding(self):
+        self.assertEqual(
+            self.rec.turns[0].items,
+            ["SAY: Turn 1 content.", "CALL Bash: ls", "OUT: file1\nfile2"],
+        )
+        self.assertEqual(self.rec.turns[1].items, ["SAY: Turn 2 content."])
+
+    def test_reconciliation_invariant_sum_equals_session_totals(self):
+        self.assertEqual(sum(t.output_tokens for t in self.rec.turns), self.rec.tokens.output_tokens)
+        self.assertEqual(self.rec.tokens.output_tokens, 130)
 
 
 class TestExtractCodexSpawn(unittest.TestCase):
