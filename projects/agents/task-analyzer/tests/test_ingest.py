@@ -452,27 +452,64 @@ class TestArchiveRefRecorded(IngestTestBase):
 
 
 class TestTaskSectionsFromPlan(unittest.TestCase):
-    """followup-6, defect 2: ``ingest._task_sections_from_plan`` ports the
-    ``subagent-driven-development`` skill's own ``task-brief`` script
-    (awk) exactly -- any markdown heading level, skip headings inside
-    fenced code blocks, a section runs through the line before the next
-    Task-heading of any number."""
+    """followup-6, defect 2 (fix-round-1): ``ingest._task_sections_from_plan``
+    accepts ``Task N:`` headings (colon required -- every one of the 362
+    real task headings surveyed across ``docs/superpowers/plans/*.md`` has
+    one; it's what excludes a plan's own "Task N Review" sub-headings from
+    being mistaken for a task boundary) at any consistent heading level,
+    skipping headings inside fenced code blocks. A section runs from its
+    own heading through the line before the NEXT heading at the SAME
+    level -- not "the next Task heading of any number" (the original,
+    looser rule the `subagent-driven-development` skill's own
+    `task-brief` script uses, which folded a real plan's "Task 1 Review"
+    section into Task 1's brief_text, polluting brief_sha256 and every
+    downstream agentic cache key -- see followup-6-report.md's "Fix round
+    1")."""
 
-    def test_heading_level_agnostic(self):
-        # Real plans in this repo use "## Task N" as often as "### Task N"
-        # -- task-brief's own regex (`^#+[ \t]+Task...`) doesn't care, and
-        # neither must this.
-        plan = "## Task 1: First\n\nBody one.\n\n### Task 2: Second\n\nBody two.\n"
+    def test_heading_level_two_consistent_throughout(self):
+        plan = "## Task 1: First\n\nBody one.\n\n## Task 2: Second\n\nBody two.\n"
         sections = ingest._task_sections_from_plan(plan)
         self.assertEqual(set(sections), {1, 2})
         self.assertIn("Body one.", sections[1])
         self.assertNotIn("Body two.", sections[1])
         self.assertIn("Body two.", sections[2])
 
-    def test_section_runs_through_next_task_heading_not_next_heading_of_any_kind(self):
-        # A subsection heading WITHIN a task (not itself a "Task N"
-        # heading) must stay part of that task's section -- only another
-        # Task-heading closes it.
+    def test_heading_level_three_consistent_throughout(self):
+        # Real plans use "## Task N" as often as "### Task N" -- but never
+        # mixed levels for task headings within one plan (surveyed on
+        # main: zero exceptions) -- so this is a SEPARATE plan example,
+        # not a level mixed into the same one.
+        plan = "### Task 1: First\n\nBody one.\n\n### Task 2: Second\n\nBody two.\n"
+        sections = ingest._task_sections_from_plan(plan)
+        self.assertEqual(set(sections), {1, 2})
+        self.assertIn("Body one.", sections[1])
+        self.assertNotIn("Body two.", sections[1])
+        self.assertIn("Body two.", sections[2])
+
+    def test_review_subheading_at_the_same_level_closes_the_task_without_becoming_one(self):
+        # The exact real-corpus shape (docs/superpowers/plans/2026-06-26-
+        # add-synth-midi-controller-io.md): "### Task 1 Review" at the SAME
+        # level as "### Task 1:" must close task 1's section -- and must
+        # NOT itself become a phantom "task 1 review" task, since it has
+        # no colon right after the number.
+        plan = (
+            "### Task 1: First\n\n"
+            "Body one.\n\n"
+            "### Task 1 Review\n\n"
+            "Reviewer notes that must never appear in task 1's brief.\n\n"
+            "### Task 2: Second\n\n"
+            "Body two.\n"
+        )
+        sections = ingest._task_sections_from_plan(plan)
+        self.assertEqual(set(sections), {1, 2})  # no phantom task for "1 Review"
+        self.assertNotIn("Reviewer notes", sections[1])
+        self.assertNotIn("Task 1 Review", sections[1])
+        self.assertIn("Body one.", sections[1])
+        self.assertIn("Body two.", sections[2])
+
+    def test_section_runs_through_next_same_level_heading_not_next_task_heading_of_any_kind(self):
+        # A DEEPER subsection heading within a task (not at the task's own
+        # level) must stay part of that task's section.
         plan = (
             "## Task 1: First\n\n"
             "#### Verification\n\n"
@@ -484,6 +521,21 @@ class TestTaskSectionsFromPlan(unittest.TestCase):
         self.assertIn("#### Verification", sections[1])
         self.assertIn("Run the tests.", sections[1])
         self.assertNotIn("Body two.", sections[1])
+
+    def test_non_task_heading_at_the_same_level_still_closes_the_task(self):
+        # Not just "Task N Review" specifically -- ANY heading at the same
+        # level closes the currently open task's section.
+        plan = (
+            "## Task 1: First\n\n"
+            "Body one.\n\n"
+            "## Notes\n\n"
+            "Some unrelated notes that must not leak into task 1.\n\n"
+            "## Task 2: Second\n\n"
+            "Body two.\n"
+        )
+        sections = ingest._task_sections_from_plan(plan)
+        self.assertNotIn("unrelated notes", sections[1])
+        self.assertIn("Body two.", sections[2])
 
     def test_task_heading_inside_a_fenced_code_block_is_not_a_real_heading(self):
         plan = (
@@ -500,6 +552,15 @@ class TestTaskSectionsFromPlan(unittest.TestCase):
 
     def test_no_task_headings_yields_empty_dict(self):
         plan = "# Just a plan\n\nNo task sections here at all.\n"
+        self.assertEqual(ingest._task_sections_from_plan(plan), {})
+
+    def test_task_heading_without_colon_is_not_a_task_heading(self):
+        # Every real task heading on main has a colon right after the
+        # number -- a bare "Task N" with no colon (and no real corpus
+        # example of this shape) is deliberately not accepted, since
+        # relaxing it is exactly what let "Task N Review" masquerade as a
+        # task heading before this fix.
+        plan = "## Task 1 no colon here\n\nBody.\n"
         self.assertEqual(ingest._task_sections_from_plan(plan), {})
 
 
@@ -623,6 +684,55 @@ class TestPlanDerivedBriefs(IngestTestBase):
         report = self._run(conn, agent_runner=FakeAgentRunner(), change=change_name)
         self.assertEqual(report.tasks_written, 0)
         self.assertEqual(len(report.quarantined), 0)
+
+    def test_review_subsections_excluded_from_task_briefs(self):
+        # fix-round-1 (codex review, Important finding): regression
+        # fixture modeled directly on the real
+        # docs/superpowers/plans/2026-06-26-add-synth-midi-controller-io.md
+        # shape -- "### Task N:" followed later by "### Task N Review"
+        # before the next "### Task N+1:". The original (pre-fix) rule
+        # ("section runs until the next Task heading of any number")
+        # folded the whole review section into the preceding task's
+        # brief_text; the fixed rule (close on the next SAME-level
+        # heading, and require a colon for a line to count as a task
+        # heading at all) must not.
+        change_name = "add-planreview"
+        self._commit_plan_only_change(
+            change_name,
+            "# Add Plan Review\n\n"
+            "### Task 1: First Task\n\n"
+            "Do the first thing.\n\n"
+            "### Task 1 Review\n\n"
+            "Reviewer verdict: PASS. This text must never appear in any brief.\n\n"
+            "### Task 2: Second Task\n\n"
+            "Do the second thing.\n",
+        )
+
+        conn = self._conn()
+        plan = self._plan(conn, change=change_name)
+        self.assertIn(f"{change_name}/task-1", plan.new_tasks)
+        self.assertIn(f"{change_name}/task-2", plan.new_tasks)
+        # Exactly two tasks -- no phantom "task-1-review" (or similar)
+        # task from the plan's own "### Task 1 Review" sub-heading. (Note:
+        # can't substring-match "review" against the whole
+        # "<change>/<task_key>" entry here -- the change name itself,
+        # "add-planreview", contains that substring.)
+        self.assertEqual(sorted(plan.new_tasks), [f"{change_name}/task-1", f"{change_name}/task-2"])
+
+        self._run(conn, agent_runner=FakeAgentRunner(), change=change_name)
+        rows = {
+            r["task_key"]: r["brief_text"]
+            for r in conn.execute(
+                "SELECT t.task_key, t.brief_text FROM tasks t "
+                "JOIN changes c ON c.change_id = t.change_id WHERE c.name = ?",
+                (change_name,),
+            ).fetchall()
+        }
+        self.assertEqual(set(rows), {"task-1", "task-2"})  # exactly two tasks, no phantom
+        self.assertNotIn("Reviewer verdict", rows["task-1"])
+        self.assertNotIn("Task 1 Review", rows["task-1"])
+        self.assertIn("Do the first thing.", rows["task-1"])
+        self.assertIn("Do the second thing.", rows["task-2"])
 
 
 class TestNumericVersionOrdering(unittest.TestCase):

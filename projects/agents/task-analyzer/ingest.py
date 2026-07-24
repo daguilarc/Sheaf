@@ -41,12 +41,15 @@ Directory conventions owned by this module (not fixed elsewhere):
   ``_iter_briefs`` finds ZERO committed briefs for a landed change, tasks
   are instead derived from that change's own committed Superpowers PLAN
   file (``discovery.landed_changes``'s already-resolved ``plan_path``,
-  read via ``git show``, never the working tree): every ``#+ Task N``
-  heading (any markdown heading level, matching the ``subagent-driven-
-  development`` skill's own ``task-brief`` script's extraction regex
-  exactly, skipping headings inside fenced code blocks) opens a task
-  section running through the line before the next such heading (any N).
-  ``task_key = "task-N"``; ``brief_path`` is the synthetic reference
+  read via ``git show``, never the working tree): every ``Task N:``
+  heading (any markdown heading level, colon required -- see
+  ``_PLAN_TASK_HEADING_RE``'s comment for why: every real task heading on
+  main has one, and it's what excludes a plan's own "Task N Review"
+  sub-headings from being mistaken for a task boundary, skipping headings
+  inside fenced code blocks) opens a task section running through the
+  line before the next heading at the SAME level (whether or not that
+  heading is itself a task heading). ``task_key = "task-N"``;
+  ``brief_path`` is the synthetic reference
   ``"<plan_path>#task-N"`` (``_PLAN_DERIVED_PATH_RE``), distinguishing a
   plan-derived brief from a real committed brief file's path everywhere
   ``disc.briefs`` values are used (``_brief_text_for`` dispatches on this
@@ -337,15 +340,30 @@ def _iter_briefs(repo_root, ref_sha: str, change_name: str) -> List[Tuple[str, s
 
 # Plan-derived briefs (followup-6, design.md D3 amendment): a landed
 # change with zero committed briefs falls back to its Superpowers plan
-# file's own "### Task N"-style sections.
+# file's own "Task N:" sections.
 #
-# Matches the `subagent-driven-development` skill's own `task-brief`
-# script exactly (`^#+[ \t]+Task[ \t]+[0-9]+`): ANY markdown heading level,
-# not just "###" -- real plans in this repo use "## Task N" as often as
-# "### Task N". A plan-derived brief is therefore the faithful equivalent
-# of what that script would have written to disk, had the workflow
-# committed its scratch output.
-_PLAN_TASK_HEADING_RE = re.compile(r"^#+[ \t]+Task[ \t]+(\d+)\b")
+# Accepted task-heading form, from direct inspection of every plan
+# committed on main (``docs/superpowers/plans/*.md``, 362 real task
+# headings surveyed): ANY markdown heading level (real plans use "## Task
+# N" as often as "### Task N") followed by "Task", whitespace, digits, and
+# a COLON -- every single real task heading in the corpus has the colon
+# immediately after the number, with no exception. The colon is required
+# specifically to exclude a plan's own "### Task N Review" sub-headings
+# (a real, common shape -- e.g. docs/superpowers/plans/2026-06-26-add-
+# synth-midi-controller-io.md has "### Task 1 Review" before "### Task
+# 2"): without it, followup-6's original fix-round-1 review found this
+# folded an entire review section's instructions/results into the
+# preceding task's brief_text, polluting brief_sha256 and every downstream
+# agentic cache key. A section runs from its own heading line through the
+# line before the NEXT heading at the SAME level (whether or not that
+# heading is itself a task heading) -- not "the next Task heading of any
+# number" (the `subagent-driven-development` skill's own `task-brief`
+# script uses that looser rule, which is exactly what let "Task 1 Review"
+# leak into Task 1's section in the first place; same-level closing fixes
+# it while still leaving a task's own deeper subsections, e.g. "####
+# Verification", correctly inside its section).
+_PLAN_TASK_HEADING_RE = re.compile(r"^(#+)[ \t]+Task[ \t]+(\d+):")
+_HEADING_RE = re.compile(r"^(#+)[ \t]")
 _FENCE_LINE_RE = re.compile(r"^```")
 # `disc.briefs` values are normally a real committed brief's git-relative
 # path; a plan-derived brief instead uses this synthetic marker so
@@ -355,23 +373,31 @@ _PLAN_DERIVED_PATH_RE = re.compile(r"^(?P<plan_path>.+\.md)#task-(?P<task_num>\d
 
 
 def _task_sections_from_plan(plan_text: str) -> Dict[int, str]:
-    """``{task_number: full_section_text}`` for every ``#+ Task N`` heading
+    """``{task_number: full_section_text}`` for every ``Task N:`` heading
     in ``plan_text`` (any heading level, skipping headings inside fenced
     code blocks) -- a section runs from its own heading line through the
-    line before the next such heading (of any N), mirroring the
-    ``task-brief`` script's awk extraction exactly. Returns ``{}`` for a
-    plan with no task headings at all (not an error -- see
-    ``_iter_plan_derived_briefs``)."""
+    line before the next heading at the SAME level, per this module's
+    task-heading comment above. Returns ``{}`` for a plan with no task
+    headings at all (not an error -- see ``_iter_plan_derived_briefs``)."""
     sections: Dict[int, List[str]] = {}
     current: Optional[int] = None
+    current_level: Optional[int] = None
     infence = False
     for line in plan_text.splitlines():
         if _FENCE_LINE_RE.match(line):
             infence = not infence
         if not infence:
-            m = _PLAN_TASK_HEADING_RE.match(line)
-            if m:
-                current = int(m.group(1))
+            heading_m = _HEADING_RE.match(line)
+            if heading_m and current is not None and len(heading_m.group(1)) == current_level:
+                # A heading at the SAME level as the currently open task
+                # closes it, whether or not this heading is itself a new
+                # task heading (e.g. "Task N Review" at the same level).
+                current = None
+                current_level = None
+            task_m = _PLAN_TASK_HEADING_RE.match(line)
+            if task_m:
+                current = int(task_m.group(2))
+                current_level = len(task_m.group(1))
                 sections.setdefault(current, [])
         if current is not None:
             sections[current].append(line)
@@ -381,7 +407,7 @@ def _task_sections_from_plan(plan_text: str) -> Dict[int, str]:
 def _iter_plan_derived_briefs(repo_root, ref_sha: str, plan_path: str) -> List[Tuple[str, str]]:
     """Fallback for a landed change with zero committed briefs
     (followup-6): ``[(task_key, synthetic_brief_path), ...]`` derived from
-    ``plan_path``'s own committed ``#+ Task N`` sections at ``ref_sha``.
+    ``plan_path``'s own committed ``Task N:`` sections at ``ref_sha``.
     Empty list (no error) if the plan file can't be read at that ref, or
     has no task headings at all -- a change in either state simply
     ingests with zero tasks, same as a change with no briefs and no plan
