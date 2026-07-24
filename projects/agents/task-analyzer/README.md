@@ -42,7 +42,17 @@ python3 projects/agents/task-analyzer/ingest.py [ingest|rebuild-derived|backfill
   `refs/heads/main`), ingests new tasks/sessions (populating `session_turns`
   for each, alongside its `sessions` row), dispatches agentic scoring for
   cache misses (complexity/grading/phase-labeling — phase-labeling also
-  populates `turn_phases`), and calls `costs.rebuild` at the end.
+  populates `turn_phases`), and calls `costs.rebuild` at the end. A landed
+  change's tasks come from its committed SDD briefs
+  (`.superpowers/sdd/<change>/*-brief.md`) when any exist at the ref; since
+  `.superpowers/` is the SDD workflow's own uncommitted scratch and is
+  never committed, the steady-state case is usually zero committed briefs
+  — a change with none falls back to deriving tasks from its own committed
+  Superpowers plan file instead (every "Task N" heading, any level, is one
+  task's brief text; `task-N` keys). Committed briefs, when any exist for
+  a change, always win outright over plan derivation for that change
+  (followup-6; see the data-gathering spec's "Idempotent, atomic, offline
+  ingestion" requirement for the full contract).
 - `rebuild-derived`: recomputes `task_costs`/`task_arms` from already-ingested
   raw + agentic rows only — no discovery, no agent dispatch. This is the
   command to run after a price-table change (see the recompute matrix).
@@ -82,9 +92,15 @@ python3 projects/agents/task-analyzer/ingest.py [ingest|rebuild-derived|backfill
   aggregation invariant against whatever's already committed — prints
   every violation (if any) as JSON and exits 1 if any are found, 0
   otherwise, so it's usable as a CI/pre-commit gate. Takes `--db` only.
-- `--dry-run`: prints the work plan (which tasks, which agent calls would
-  fire) without writing anything; against a DB that doesn't exist yet, it
-  plans against a throwaway in-memory schema instead of creating the file.
+- `--dry-run`: prints the actual computed work plan as JSON — new changes,
+  new tasks, session identifiers (or, past `_DRY_RUN_SESSION_LIST_LIMIT`
+  = 100, a count plus a 20-id sample instead of the full list), and every
+  agentic gap with its `entity_key`/`kind`/`version`/`reason` — without
+  writing anything; against a DB that doesn't exist yet, it plans against
+  a throwaway in-memory schema instead of creating the file. (followup-6:
+  an earlier version of this flag printed a RunReport-shaped summary
+  instead — all write counts trivially zero on a run that writes nothing,
+  and no plan content at all.)
 - `--no-agents`: mechanical ingestion only — no xagent dispatch, no cost to
   a fleet.
 - `--rescore TABLE`: opt-in re-scoring of everything whose stored
