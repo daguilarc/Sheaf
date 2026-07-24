@@ -27,6 +27,41 @@ Token/cost semantics (design.md D5):
   phase label instead funds ``unlabeled``, so a session's category totals
   always sum back to its full session usd. A round-0 implementer session
   with no phase-label rows at all funds ``unlabeled`` entirely.
+
+  **Spanning-session split (design.md D5 amendment, followup-4).** The
+  workflow now deliberately keeps a round-0 implementer session open across
+  fix/re-review rounds, so a "round-0" session can still contain turns
+  performed strictly *after* the task's first review verdict -- those turns
+  are fix work, not implementation, and must fund ``followup_fix``, not the
+  phase categories, even though the session's own ``review_round`` column
+  stays 0 (design D5: round is a session-*start*-time property, unchanged).
+  For a round-0 session WITH ``session_turns`` rows, its turns are
+  partitioned at the task's first review boundary (the union of every
+  reviewer session's detected verdict-turn timestamps, or their ``ended_at``
+  fallback -- ``discovery.review_boundaries``): turns starting strictly
+  after it form the *fix partition*, funding ``followup_fix`` at
+  ``output_tokens`` (weighted_tokens) and a proportional
+  ``session_usd * fix_output_tokens / total_turn_output_tokens`` (the same
+  "apportion by output_tokens share of session usd" convention the phase
+  split already uses -- turn_phases/turn text has no separate input/cached
+  token breakdown to cost more precisely than that). The remaining
+  pre-boundary turns fund the phase categories: if ``turn_phases`` rows
+  exist for this session at the current taxonomy version, phase shares are
+  computed directly from just the pre-boundary turns' own labels (residual
+  pre-boundary output not covered by any label funds ``unlabeled``, same
+  residual rule as always); otherwise (a backfilled session whose per-turn
+  labels didn't survive, only the aggregated ``phase_tokens`` did) each
+  existing ``phase_tokens`` share is *scaled* by
+  ``pre_boundary_output_tokens / total_turn_output_tokens`` -- less precise
+  (it assumes phase proportions are uniform across the session's turns,
+  which the fix partition may violate) but still exact on the sum-preserving
+  invariant, since the scale factor is defined so pre-boundary + fix-
+  partition shares add back to exactly the full session usd. A round-0
+  session WITHOUT ``session_turns`` rows (not yet backfilled, or
+  unrecoverable -- ``ingest.py backfill-turns``) uses the original,
+  session-level apportionment unchanged, with no fix-partition split at
+  all -- this is a real, documented approximation for such sessions, not a
+  bug: the split can only ever be as good as the per-turn data available.
 - ``reviewer``/``auditor`` sessions (any round) fund ``review``.
 - ``fixer`` sessions (any round) and ``implementer`` sessions with
   ``review_round >= 1`` fund ``followup_fix`` -- no phase apportionment.
@@ -62,7 +97,7 @@ from __future__ import annotations
 import json
 import sys
 from datetime import date, datetime, timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import db
 import discovery
@@ -178,6 +213,152 @@ def _task_ids_with_sessions(conn):
     ]
 
 
+def _session_dicts_with_verdict_boundaries(sessions) -> List[dict]:
+    """Plain dicts for `sessions` (``sqlite3.Row`` objects) with
+    ``verdict_boundaries_json`` parsed into a ``verdict_boundaries`` list --
+    the shape ``discovery.py``'s ``SessionLike`` protocol expects
+    (design.md D5 amendment, followup-4). Used for both
+    ``discovery.canonical_arm`` (which internally re-derives rounds via
+    ``assign_review_rounds``) and ``discovery.review_boundaries`` (this
+    module's own use, for the spanning-session split below)."""
+    out = []
+    for s in sessions:
+        d = dict(s)
+        vb_json = d.get("verdict_boundaries_json")
+        d["verdict_boundaries"] = json.loads(vb_json) if vb_json else []
+        out.append(d)
+    return out
+
+
+def _session_turns(conn, session_id: str):
+    return conn.execute(
+        "SELECT turn_idx, started_at, output_tokens FROM session_turns "
+        "WHERE session_id = ? ORDER BY turn_idx",
+        (session_id,),
+    ).fetchall()
+
+
+def _phase_shares(conn, session_id: str, output_tokens: float, usd: float, taxonomy_version) -> Dict[str, Tuple[float, float]]:
+    """``{category: (tokens, category_usd)}`` for one round-0 session's
+    full, unsplit phase apportionment against its OWN ``phase_tokens`` rows
+    -- the original (pre-followup-4) per-session apportionment logic,
+    factored out so both the unsplit path and the followup-4 scaled-
+    fallback split path (``_apportion_round0_session``) share one
+    implementation. The returned shares always sum to exactly
+    ``(output_tokens, usd)`` -- the sum-preserving invariant this module's
+    docstring describes."""
+    phases = conn.execute(
+        "SELECT phase, output_tokens FROM phase_tokens WHERE session_id = ? AND taxonomy_version = ?",
+        (session_id, taxonomy_version),
+    ).fetchall()
+    shares: Dict[str, Tuple[float, float]] = {}
+    if not phases or output_tokens <= 0:
+        shares["unlabeled"] = (output_tokens, usd)
+        return shares
+    labeled_tokens = 0
+    for p in phases:
+        phase_tokens = p["output_tokens"] or 0
+        labeled_tokens += phase_tokens
+        share = phase_tokens / output_tokens
+        shares[p["phase"]] = (phase_tokens, usd * share)
+    residual_tokens = output_tokens - labeled_tokens
+    if residual_tokens > 0:
+        residual_share = residual_tokens / output_tokens
+        shares["unlabeled"] = (residual_tokens, usd * residual_share)
+    return shares
+
+
+def _apportion_phases(conn, buckets, session_id: str, output_tokens: float, usd: float, price_version, taxonomy_version) -> None:
+    """The original (pre-followup-4) round-0 implementer apportionment:
+    dollar cost divided across this session's own ``phase_tokens`` rows by
+    output-token share, residual funding ``unlabeled``. Used directly for
+    sessions with no ``session_turns`` rows, or no task review boundary
+    yet -- the spanning-session split (below) has nothing to split against
+    in either case, so this stays the whole story for them."""
+    for category, (tokens, cat_usd) in _phase_shares(conn, session_id, output_tokens, usd, taxonomy_version).items():
+        _accumulate(buckets, category, tokens, cat_usd, price_version)
+
+
+def _apportion_round0_session(
+    conn, buckets, session_id: str, output_tokens: float, usd: float, price_version, taxonomy_version, first_boundary: str,
+) -> None:
+    """Round-0 implementer apportionment WITH the task's first review
+    boundary known (design.md D5 amendment, followup-4): partitions this
+    session's ``session_turns`` at ``first_boundary`` and funds
+    ``followup_fix`` from the post-boundary (fix) partition, phases from
+    the pre-boundary partition. Falls back to the unsplit
+    ``_apportion_phases`` if this session has no ``session_turns`` rows at
+    all, or if every turn is pre-boundary (nothing to split off)."""
+    turns = _session_turns(conn, session_id)
+    if not turns:
+        _apportion_phases(conn, buckets, session_id, output_tokens, usd, price_version, taxonomy_version)
+        return
+
+    total_turn_output_tokens = sum(t["output_tokens"] or 0 for t in turns)
+    fix_turn_idx = {t["turn_idx"] for t in turns if t["started_at"] and t["started_at"] > first_boundary}
+    fix_output_tokens = sum((t["output_tokens"] or 0) for t in turns if t["turn_idx"] in fix_turn_idx)
+
+    if fix_output_tokens <= 0 or total_turn_output_tokens <= 0:
+        _apportion_phases(conn, buckets, session_id, output_tokens, usd, price_version, taxonomy_version)
+        return
+
+    fix_share = fix_output_tokens / total_turn_output_tokens
+    _accumulate(buckets, "followup_fix", fix_output_tokens, usd * fix_share, price_version)
+
+    pre_output_tokens = total_turn_output_tokens - fix_output_tokens
+    pre_share = pre_output_tokens / total_turn_output_tokens
+    pre_usd = usd * pre_share
+    if pre_output_tokens <= 0:
+        return  # every turn was in the fix partition -- nothing pre-boundary to apportion
+
+    turn_phase_rows = _turn_phases_for_session(conn, session_id, taxonomy_version)
+    if turn_phase_rows:
+        # Direct: phase shares computed from just the pre-boundary turns'
+        # own labels (per-turn data survived for this session).
+        turn_output = {t["turn_idx"]: (t["output_tokens"] or 0) for t in turns}
+        phase_by_idx = {r["turn_idx"]: r["phase"] for r in turn_phase_rows}
+
+        labeled_pre_tokens = 0
+        phase_pre_tokens: Dict[str, int] = {}
+        for turn_idx in turn_output:
+            if turn_idx in fix_turn_idx:
+                continue
+            phase = phase_by_idx.get(turn_idx)
+            if phase is None:
+                continue
+            tok = turn_output[turn_idx]
+            phase_pre_tokens[phase] = phase_pre_tokens.get(phase, 0) + tok
+            labeled_pre_tokens += tok
+
+        for phase, tok in phase_pre_tokens.items():
+            share = tok / pre_output_tokens
+            _accumulate(buckets, phase, tok, pre_usd * share, price_version)
+        residual = pre_output_tokens - labeled_pre_tokens
+        if residual > 0:
+            residual_share = residual / pre_output_tokens
+            _accumulate(buckets, "unlabeled", residual, pre_usd * residual_share, price_version)
+    else:
+        # Fallback (design.md D5 amendment, followup-4, documented
+        # explicitly): no per-turn labels survived for this session (a
+        # backfilled session whose analysis-dataset/staged JSON didn't have
+        # them) -- scale this session's ORIGINAL, full-session phase shares
+        # by the pre-boundary share of its total turn output. Less precise
+        # than the direct branch (assumes phase proportions are uniform
+        # across the session's turns, which the fix partition may violate),
+        # but still exact on the sum-preserving invariant: fix_share +
+        # pre_share == 1 by construction, so this plus the already-
+        # accumulated fix partition still sums to exactly `usd`.
+        for category, (tokens, cat_usd) in _phase_shares(conn, session_id, output_tokens, usd, taxonomy_version).items():
+            _accumulate(buckets, category, tokens * pre_share, cat_usd * pre_share, price_version)
+
+
+def _turn_phases_for_session(conn, session_id: str, taxonomy_version):
+    return conn.execute(
+        "SELECT turn_idx, phase FROM turn_phases WHERE session_id = ? AND taxonomy_version = ?",
+        (session_id, taxonomy_version),
+    ).fetchall()
+
+
 def rebuild(
     conn,
     *,
@@ -217,13 +398,24 @@ def rebuild(
             sessions = conn.execute(
                 "SELECT * FROM sessions WHERE task_id = ?", (task_id,)
             ).fetchall()
+            session_dicts = _session_dicts_with_verdict_boundaries(sessions)
 
-            model, effort, basis = discovery.canonical_arm([dict(s) for s in sessions])
+            model, effort, basis = discovery.canonical_arm(session_dicts)
             conn.execute(
                 "INSERT INTO task_arms(task_id, model, effort, basis_json) VALUES (?, ?, ?, ?)",
                 (task_id, model, effort, json.dumps(basis, sort_keys=True)),
             )
             rows_written += 1
+
+            # The task's review boundaries (design.md D5 amendment,
+            # followup-4) -- the union of every reviewer session's detected
+            # verdict-turn timestamps, or their `ended_at` fallback. Only
+            # the FIRST one matters for the spanning-session split: turns
+            # after it fund followup_fix regardless of how many later
+            # boundaries exist (a round-0 session resumed across several
+            # re-review rounds still has just one "was this a fix" cutoff).
+            boundaries = discovery.review_boundaries(session_dicts)
+            first_boundary = boundaries[0] if boundaries else None
 
             buckets: Dict[str, Dict[str, Any]] = {}
             for s in sessions:
@@ -247,35 +439,13 @@ def rebuild(
                 elif role == "fixer" or (role == "implementer" and review_round >= 1):
                     _accumulate(buckets, "followup_fix", output_tokens, usd, price_version)
                 elif role == "implementer":  # review_round == 0
-                    phases = conn.execute(
-                        "SELECT phase, output_tokens FROM phase_tokens "
-                        "WHERE session_id = ? AND taxonomy_version = ?",
-                        (s["session_id"], taxonomy_version),
-                    ).fetchall()
-                    if not phases or output_tokens <= 0:
-                        _accumulate(buckets, "unlabeled", output_tokens, usd, price_version)
+                    if first_boundary is not None:
+                        _apportion_round0_session(
+                            conn, buckets, s["session_id"], output_tokens, usd, price_version,
+                            taxonomy_version, first_boundary,
+                        )
                     else:
-                        # Apportion against the session's own output_tokens
-                        # -- NOT the sum of its phase-label rows. A session
-                        # can be only partially phase-labeled (turns that no
-                        # phase-labeling pass covered); dividing by the sum
-                        # of labeled phase tokens would smear the session's
-                        # *entire* dollar cost across just the labeled
-                        # phases, over-allocating them. Whatever share of
-                        # output_tokens isn't covered by any phase label
-                        # instead fund `unlabeled`, so the category totals
-                        # for this session always sum back to its full
-                        # session usd.
-                        labeled_tokens = 0
-                        for p in phases:
-                            phase_tokens = p["output_tokens"] or 0
-                            labeled_tokens += phase_tokens
-                            share = phase_tokens / output_tokens
-                            _accumulate(buckets, p["phase"], phase_tokens, usd * share, price_version)
-                        residual_tokens = output_tokens - labeled_tokens
-                        if residual_tokens > 0:
-                            residual_share = residual_tokens / output_tokens
-                            _accumulate(buckets, "unlabeled", residual_tokens, usd * residual_share, price_version)
+                        _apportion_phases(conn, buckets, s["session_id"], output_tokens, usd, price_version, taxonomy_version)
                 else:
                     continue  # role == "other" (or unrecognized): not part of D5's cost model
 

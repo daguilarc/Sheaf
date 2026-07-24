@@ -96,6 +96,11 @@ _ROOT = Path(__file__).resolve().parent
 DEFAULT_STAGING_DIR = _ROOT / "staging"
 DEFAULT_CODEX_SESSIONS_ROOT = Path("~/.codex/sessions").expanduser()
 DEFAULT_CLAUDE_PROJECTS_ROOT = Path("~/.claude/projects").expanduser()
+# The one-shot 2026-07-19 migration's source tree (migrate_v0.py) -- also
+# `backfill-turns`'s fallback source of per-turn phase labels for migrated_v0
+# sessions, none of which have a staging/phase_labeling/ file of their own
+# (they never went through this module's live agentic-dispatch path).
+DEFAULT_ANALYSIS_DIR = _ROOT.parents[2] / "analysis" / "sdd-model-analysis" / "data"
 
 # kind (agent-dispatch vocabulary, Task 7) -> table name
 KIND_TABLE = {"complexity": "complexity", "grading": "grades", "phase_labeling": "phase_tokens"}
@@ -362,6 +367,15 @@ def _discover(
             rec = _extract(provider, path)
         except Exception:
             continue
+
+        # Mechanical, role-independent fact about the transcript (followup-4,
+        # design.md D5 amendment): every verdict turn's own ended_at is a
+        # review boundary once this session is classified as a reviewer
+        # (discovery.review_boundaries only reads this for role=="reviewer";
+        # computed unconditionally here since role isn't known yet).
+        rec.verdict_boundaries = [
+            t.ended_at for t in rec.turns if getattr(t, "is_verdict", False) and t.ended_at
+        ]
 
         keys = discovery.task_keys(rec.prompt)
         task_key = keys.get("task")
@@ -721,8 +735,29 @@ def _upsert_session(conn, task_id: Optional[int], js: _JoinedSession):
         "n_turns": rec.n_turns,
         "n_tool_calls": rec.n_tool_calls,
         "review_round": js.review_round,
+        "verdict_boundaries_json": json.dumps(getattr(rec, "verdict_boundaries", None) or []),
     }
     db.upsert(conn, "sessions", row, ["session_id"])
+
+
+def _upsert_session_turns(conn, session_id: str, rec) -> int:
+    """Populate ``session_turns`` for one session's already-extracted
+    ``rec.turns`` (design.md D5 amendment, followup-4) -- mechanical,
+    deterministic from the transcript, alongside its ``sessions`` row.
+    Returns the number of turn rows upserted."""
+    n = 0
+    for turn in rec.turns:
+        db.upsert(
+            conn, "session_turns",
+            {
+                "session_id": session_id, "turn_idx": turn.index,
+                "started_at": turn.started_at, "ended_at": turn.ended_at,
+                "output_tokens": turn.output_tokens,
+            },
+            ["session_id", "turn_idx"],
+        )
+        n += 1
+    return n
 
 
 def _upsert_complexity(conn, task_id: int, gap: GapItem, data: dict, scored_by: str):
@@ -778,6 +813,29 @@ def _upsert_phase_tokens(conn, session_id: str, rec, gap: GapItem, data: dict, s
         db.upsert(conn, "phase_tokens", row, ["session_id", "phase", "taxonomy_version"])
 
 
+def _upsert_turn_phases(conn, session_id: str, rec, gap: GapItem, data: dict, scored_by: str):
+    """Populate ``turn_phases`` from the same staged labeling JSON that just
+    fed ``_upsert_phase_tokens`` -- design.md D5 amendment, followup-4.
+    ``_validate_staged``'s completeness check (every turn 1..n_turns has a
+    label key) guarantees one row per turn here for a freshly-dispatched or
+    freshly-staged session, matching ``phase_tokens``'s aggregation exactly
+    (unlike ``_upsert_phase_tokens`` above, which defaults an unlabeled turn
+    to ``"other"`` rather than dropping it -- kept here too, for the same
+    aggregation-equals-phase_tokens invariant to hold turn-for-turn)."""
+    labels: Dict[str, str] = data["labels"]
+    for turn in rec.turns:
+        phase = labels.get(str(turn.index), "other")
+        db.upsert(
+            conn, "turn_phases",
+            {
+                "session_id": session_id, "turn_idx": turn.index, "phase": phase,
+                "taxonomy_version": gap.version, "input_sha256": gap.input_sha256,
+                "scored_by": scored_by,
+            },
+            ["session_id", "turn_idx", "taxonomy_version"],
+        )
+
+
 def _scored_by_for(kind: str) -> str:
     try:
         _text, _version, model_hint = assets.load_prompt(KIND_PROMPT_NAME[kind])
@@ -831,6 +889,7 @@ def _resolve_gap(conn, staging_dir, kind: str, gap: GapItem, agent_runner, no_ag
     else:
         rec = item_builder.rec
         _upsert_phase_tokens(conn, gap.entity_key, rec, gap, data, scored_by)
+        _upsert_turn_phases(conn, gap.entity_key, rec, gap, data, scored_by)
 
     report.rows_written[kind] = report.rows_written.get(kind, 0) + 1
     return True
@@ -903,6 +962,7 @@ def run(
             for js in sessions:
                 if not _session_exists(conn, js.session_id):
                     _upsert_session(conn, task_id, js)
+                    _upsert_session_turns(conn, js.session_id, js.rec)
                     report.sessions_written += 1
 
             task_gaps = gaps_by_task.get((change_name, task_key), {})
@@ -985,6 +1045,7 @@ def run(
         try:
             for js in new_quarantined:
                 _upsert_session(conn, None, js)
+                _upsert_session_turns(conn, js.session_id, js.rec)
                 report.sessions_written += 1
             conn.commit()
         except Exception:
@@ -1032,6 +1093,180 @@ def _dump_path_for(conn) -> Optional[Path]:
 
 
 # --------------------------------------------------------------------------
+# backfill-turns (design.md D5 amendment, followup-4)
+# --------------------------------------------------------------------------
+
+
+def _analysis_phase_labels_key(session_id: str) -> Optional[str]:
+    """``"{provider}:{native_id}"`` -> the analysis dataset's
+    ``phase_labels``/``timelines`` file stem, ``"{provider}-{native_id}"``
+    (the inverse of ``migrate_v0.py``'s ``_session_key_to_sid``)."""
+    provider, sep, native_id = session_id.partition(":")
+    if not sep or not native_id:
+        return None
+    return f"{provider}-{native_id}"
+
+
+def _find_staged_phase_labels(session_id: str, version: str, input_sha256: str, staging_dir=None) -> Optional[dict]:
+    """A live-ingested session's own ``staging/phase_labeling/`` JSON, if it
+    still exists at the exact cache key its persisted ``phase_tokens`` row
+    was built from. (None of the currently-committed dataset's sessions
+    have one -- they all predate this module's live staging path, see
+    ``DEFAULT_ANALYSIS_DIR``'s docstring -- but a future backfill run
+    against live-ingested sessions whose staged file survived should prefer
+    this over the analysis-dataset fallback below.)"""
+    staging_dir = Path(staging_dir) if staging_dir is not None else DEFAULT_STAGING_DIR
+    path = staging_dir / "phase_labeling" / _staging_filename(session_id, version, input_sha256)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    labels = data.get("labels")
+    return labels if isinstance(labels, dict) and labels else None
+
+
+def _find_turn_labels(conn, session_id: str, analysis_dir: Path):
+    """``(labels, taxonomy_version, input_sha256, scored_by)`` for
+    backfilling ``turn_phases``, reusing the cache-key metadata of this
+    session's own (already-persisted) ``phase_tokens`` rows at their
+    numerically-greatest ``taxonomy_version`` -- so a backfilled
+    ``turn_phases`` row is directly comparable/joinable with the
+    ``phase_tokens`` row it must aggregate up to. Returns
+    ``(None, None, None, None)`` if this session has no ``phase_tokens`` at
+    all (never phase-labeled -- nothing to backfill turn-level detail for)
+    or no per-turn label source (staged JSON, else the analysis dataset's
+    ``phase_labels/<key>.json``) survives for it."""
+    existing = conn.execute(
+        "SELECT DISTINCT taxonomy_version, input_sha256, scored_by FROM phase_tokens WHERE session_id = ?",
+        (session_id,),
+    ).fetchall()
+    if not existing:
+        return None, None, None, None
+    row = max(existing, key=lambda r: _version_int(r["taxonomy_version"]))
+    version, input_sha256, scored_by = row["taxonomy_version"], row["input_sha256"], row["scored_by"]
+
+    staged = _find_staged_phase_labels(session_id, version, input_sha256)
+    if staged is not None:
+        return staged, version, input_sha256, scored_by
+
+    key = _analysis_phase_labels_key(session_id)
+    if key:
+        path = Path(analysis_dir) / "phase_labels" / f"{key}.json"
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                labels = data.get("labels")
+                if isinstance(labels, dict) and labels:
+                    return labels, version, input_sha256, scored_by
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    return None, None, None, None
+
+
+def backfill_turns(conn, *, analysis_dir=None) -> Dict[str, int]:
+    """For every already-ingested session lacking ``session_turns`` rows,
+    re-extract turns from ``sessions.transcript_path`` if that file still
+    exists on disk (design.md D5 amendment, followup-4); a session with no
+    recoverable transcript simply keeps session-level cost attribution
+    unchanged (documented limitation, not an error). For round-0
+    implementer sessions that gain ``session_turns`` this way, also
+    attempts to backfill ``turn_phases`` -- from a still-valid staged
+    ``phase_labeling`` JSON if one exists, else the analysis dataset's
+    per-turn ``phase_labels/<key>.json`` (see ``_find_turn_labels``) --
+    else leaves ``turn_phases`` empty for that session (costs.py's
+    documented fallback: pre-boundary phase shares scale the session-level
+    ``phase_tokens`` ratios instead of being computed directly per turn).
+
+    Note a real recoverability limit this uncovered: the analysis dataset's
+    rendered timelines (``timelines/<key>.md``) carry per-turn OUTPUT
+    TOKENS only, never per-turn TIMESTAMPS (``extractors.render_timeline``'s
+    header format never included them) -- so a migrated_v0 session whose
+    raw transcript file has since been deleted cannot have ``session_turns``
+    backfilled from the analysis dataset at all, even though its
+    ``phase_tokens``/labels survive; only a still-present transcript file
+    can supply the timestamps ``costs.py``'s turn split needs. This is why
+    the analysis dataset is a ``turn_phases``-only fallback here, never a
+    ``session_turns`` source.
+
+    Returns a dict of counts: ``session_turns_backfilled``,
+    ``session_turns_unrecoverable`` (transcript missing or unparseable),
+    ``turn_phases_backfilled``, ``turn_phases_unavailable`` (round-0
+    sessions that gained ``session_turns`` but have no per-turn label
+    source to backfill ``turn_phases`` from)."""
+    analysis_dir = Path(analysis_dir) if analysis_dir is not None else DEFAULT_ANALYSIS_DIR
+
+    rows = conn.execute(
+        "SELECT session_id, provider, role, review_round, transcript_path FROM sessions "
+        "WHERE session_id NOT IN (SELECT DISTINCT session_id FROM session_turns)"
+    ).fetchall()
+
+    counts = {
+        "session_turns_backfilled": 0, "session_turns_unrecoverable": 0,
+        "turn_phases_backfilled": 0, "turn_phases_unavailable": 0,
+    }
+
+    try:
+        for row in rows:
+            session_id = row["session_id"]
+            transcript_path = row["transcript_path"]
+            if not transcript_path or not Path(transcript_path).exists():
+                counts["session_turns_unrecoverable"] += 1
+                continue
+            try:
+                rec = _extract(row["provider"], Path(transcript_path))
+            except Exception:
+                counts["session_turns_unrecoverable"] += 1
+                continue
+
+            rec.verdict_boundaries = [
+                t.ended_at for t in rec.turns if getattr(t, "is_verdict", False) and t.ended_at
+            ]
+            _upsert_session_turns(conn, session_id, rec)
+            # A plain UPDATE, not db.upsert: db.upsert's ON CONFLICT DO
+            # UPDATE still builds a full INSERT row first (defaulting every
+            # column not in `row` to NULL), which would violate sessions'
+            # NOT NULL columns (provider, role) on this already-existing
+            # row -- this call only ever touches an existing session, never
+            # inserts a new one, so a targeted UPDATE is both correct and
+            # simpler.
+            conn.execute(
+                "UPDATE sessions SET verdict_boundaries_json = ? WHERE session_id = ?",
+                (json.dumps(rec.verdict_boundaries), session_id),
+            )
+            counts["session_turns_backfilled"] += 1
+
+            if row["role"] != "implementer" or (row["review_round"] or 0) != 0:
+                continue
+            labels, version, input_sha256, scored_by = _find_turn_labels(conn, session_id, analysis_dir)
+            if labels is None:
+                counts["turn_phases_unavailable"] += 1
+                continue
+            for turn in rec.turns:
+                phase = labels.get(str(turn.index))
+                if phase is None:
+                    continue
+                db.upsert(
+                    conn, "turn_phases",
+                    {
+                        "session_id": session_id, "turn_idx": turn.index, "phase": phase,
+                        "taxonomy_version": version, "input_sha256": input_sha256, "scored_by": scored_by,
+                    },
+                    ["session_id", "turn_idx", "taxonomy_version"],
+                )
+            counts["turn_phases_backfilled"] += 1
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    return counts
+
+
+# --------------------------------------------------------------------------
 # CLI
 # --------------------------------------------------------------------------
 
@@ -1042,14 +1277,20 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     # behavior -- a bare `ingest.py [flags]` invocation is unchanged.
     # `rebuild-derived` (design.md D5/D9, costs.rebuild) recomputes
     # task_costs/task_arms from already-ingested raw+agentic rows; it takes
-    # no flags of its own beyond --db.
-    p.add_argument("command", nargs="?", default="ingest", choices=["ingest", "rebuild-derived"])
+    # no flags of its own beyond --db. `backfill-turns` (design.md D5
+    # amendment, followup-4) populates session_turns/turn_phases for
+    # already-ingested sessions that predate those tables; takes --db and
+    # --analysis-dir only.
+    p.add_argument("command", nargs="?", default="ingest", choices=["ingest", "rebuild-derived", "backfill-turns"])
     p.add_argument("--db", default=str(Path("data/agents/task-analyzer.sqlite")))
     p.add_argument("--repo", default=".")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--no-agents", action="store_true")
     p.add_argument("--rescore", default=None, help="table name to opt in to rescoring (complexity|grades|phase_tokens)")
     p.add_argument("--change", default=None)
+    p.add_argument("--analysis-dir", default=None,
+                    help="backfill-turns only: analysis dataset dir for the turn_phases fallback "
+                         "(default: analysis/sdd-model-analysis/data)")
     return p
 
 
@@ -1074,6 +1315,14 @@ def main(argv=None) -> int:
         finally:
             conn.close()
         print(json.dumps({"command": "rebuild-derived", "rows_written": rows_written}, indent=2))
+        return 0
+
+    if args.command == "backfill-turns":
+        try:
+            stats = backfill_turns(conn, analysis_dir=args.analysis_dir)
+        finally:
+            conn.close()
+        print(json.dumps({"command": "backfill-turns", **stats}, indent=2))
         return 0
 
     agent_runner = None

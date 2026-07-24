@@ -90,6 +90,41 @@ class CostsTestBase(unittest.TestCase):
         ).fetchall()
         return {r["category"]: dict(r) for r in rows}
 
+    def _make_session_turn(self, session_id, turn_idx, started_at, output_tokens):
+        db.upsert(
+            self.conn, "session_turns",
+            {
+                "session_id": session_id, "turn_idx": turn_idx,
+                "started_at": started_at, "ended_at": started_at,
+                "output_tokens": output_tokens,
+            },
+            ["session_id", "turn_idx"],
+        )
+        self.conn.commit()
+
+    def _make_turn_phase(self, session_id, turn_idx, phase, taxonomy_version="1"):
+        db.upsert(
+            self.conn, "turn_phases",
+            {
+                "session_id": session_id, "turn_idx": turn_idx, "phase": phase,
+                "taxonomy_version": taxonomy_version, "input_sha256": "x", "scored_by": "test",
+            },
+            ["session_id", "turn_idx", "taxonomy_version"],
+        )
+        self.conn.commit()
+
+    def _set_verdict_boundaries(self, session_id, boundaries):
+        # db.upsert always builds a full INSERT attempt first (defaulting
+        # unlisted NOT NULL columns to NULL) before falling back to
+        # ON CONFLICT DO UPDATE, so it can't patch a single column on a row
+        # with other NOT NULL columns (e.g. sessions.provider) -- a plain
+        # UPDATE is required here.
+        self.conn.execute(
+            "UPDATE sessions SET verdict_boundaries_json = ? WHERE session_id = ?",
+            (json.dumps(boundaries), session_id),
+        )
+        self.conn.commit()
+
 
 class TestRebuildCategories(CostsTestBase):
     """The brief's core scenario: one round-0 implementer session labeled
@@ -445,6 +480,147 @@ class TestPriceUpdateRecomputesCostsOnly(CostsTestBase):
         counts_after["model_prices"] -= 1  # we deliberately added one price row
         self.assertEqual(counts_before, counts_after)
         self.assertEqual(complexity_before, self._complexity_snapshot())
+
+
+class TestSpanningSessionSplit(CostsTestBase):
+    """design.md D5 amendment (followup-4): a round-0 implementer session
+    kept open across a review boundary must have its post-boundary turns
+    fund ``followup_fix`` instead of the phase categories. Scenario shared
+    across these tests: one round-0 implementer session (claude-sonnet-5,
+    in=1000 cached=0 out=100) with 4 turns of output_tokens 30/20/30/20 --
+    turns 0-1 (50 tokens) started before the review boundary, turns 2-3 (50
+    tokens) started after it -- plus one reviewer session whose detected
+    verdict boundary sits between turn 1 and turn 2.
+
+    Full session usd = (1000*2.0 + 0*0.2 + 100*10.0) / 1e6
+                      = (2000 + 1000) / 1e6 = 0.003
+    """
+
+    SESSION_USD = 0.003
+
+    def _make_spanning_task(self):
+        task_id = self._make_task()
+        self._make_session(
+            "claude:impl-1", task_id, "implementer", SONNET[0],
+            input_tokens=1000, cached_tokens=0, output_tokens=100, review_round=0,
+            started_at="2026-07-10T00:00:00Z", ended_at="2026-07-10T00:10:00Z",
+        )
+        self._make_session_turn("claude:impl-1", 0, "2026-07-10T00:00:00Z", 30)
+        self._make_session_turn("claude:impl-1", 1, "2026-07-10T00:02:00Z", 20)
+        self._make_session_turn("claude:impl-1", 2, "2026-07-10T00:05:00Z", 30)
+        self._make_session_turn("claude:impl-1", 3, "2026-07-10T00:07:00Z", 20)
+
+        # Reviewer session whose one detected verdict boundary
+        # (2026-07-10T00:04:00Z) falls strictly between turn 1's start
+        # (00:02) and turn 2's start (00:05) -- turns 2-3 are the fix
+        # partition.
+        self._make_session(
+            "claude:review-1", task_id, "reviewer", OPUS[0],
+            input_tokens=100, cached_tokens=0, output_tokens=10, review_round=1,
+            started_at="2026-07-10T00:03:00Z", ended_at="2026-07-10T00:04:30Z",
+        )
+        self._set_verdict_boundaries("claude:review-1", ["2026-07-10T00:04:00Z"])
+        return task_id
+
+    def test_fix_partition_funds_followup_fix(self):
+        task_id = self._make_spanning_task()
+        # No turn_phases at all -- exercise the fallback branch's fix half
+        # (which is computed identically to the direct branch's).
+        self._make_phase_tokens("claude:impl-1", "red", 60)
+        self._make_phase_tokens("claude:impl-1", "green", 40)
+        costs.rebuild(self.conn, as_of="2026-07-19")
+        table = self._task_costs(task_id)
+
+        self.assertIn("followup_fix", table)
+        # fix partition = turns 2+3 = 30+20 = 50 of 100 total turn tokens.
+        self.assertEqual(table["followup_fix"]["weighted_tokens"], 50)
+        self.assertAlmostEqual(table["followup_fix"]["usd"], self.SESSION_USD * 0.5, places=10)
+
+    def test_per_turn_phase_shares_direct_branch(self):
+        task_id = self._make_spanning_task()
+        # Direct branch: turn_phases rows exist for the pre-boundary turns.
+        # (A phase_tokens row is also needed so _current_taxonomy_version
+        # resolves to "1" -- rebuild() reads taxonomy version from
+        # phase_tokens, not turn_phases.)
+        self._make_phase_tokens("claude:impl-1", "red", 30)
+        self._make_turn_phase("claude:impl-1", 0, "red")
+        self._make_turn_phase("claude:impl-1", 1, "green")
+
+        costs.rebuild(self.conn, as_of="2026-07-19")
+        table = self._task_costs(task_id)
+
+        # pre-boundary turns: turn0 (red, 30) + turn1 (green, 20) = 50 tokens
+        # = pre_output_tokens, so no residual/unlabeled.
+        pre_usd = self.SESSION_USD * 0.5
+        self.assertEqual(table["red"]["weighted_tokens"], 30)
+        self.assertAlmostEqual(table["red"]["usd"], pre_usd * (30 / 50), places=10)
+        self.assertEqual(table["green"]["weighted_tokens"], 20)
+        self.assertAlmostEqual(table["green"]["usd"], pre_usd * (20 / 50), places=10)
+        self.assertNotIn("unlabeled", table)
+        self.assertEqual(table["followup_fix"]["weighted_tokens"], 50)
+
+    def test_scaled_fallback_when_no_turn_phases(self):
+        task_id = self._make_spanning_task()
+        # Only session-level phase_tokens survive (e.g. a backfilled
+        # session) -- no turn_phases rows at all for this session.
+        self._make_phase_tokens("claude:impl-1", "red", 60)
+        self._make_phase_tokens("claude:impl-1", "green", 40)
+
+        costs.rebuild(self.conn, as_of="2026-07-19")
+        table = self._task_costs(task_id)
+
+        # Original full-session shares: red 60/100=0.6, green 40/100=0.4,
+        # each then scaled by pre_share=0.5 (50 pre-boundary / 100 total).
+        self.assertAlmostEqual(table["red"]["usd"], self.SESSION_USD * 0.6 * 0.5, places=10)
+        self.assertEqual(table["red"]["weighted_tokens"], 60 * 0.5)
+        self.assertAlmostEqual(table["green"]["usd"], self.SESSION_USD * 0.4 * 0.5, places=10)
+        self.assertEqual(table["green"]["weighted_tokens"], 40 * 0.5)
+        self.assertNotIn("unlabeled", table)
+
+    def test_sum_preservation_across_split(self):
+        # Whichever branch fires (direct or scaled fallback), the split
+        # category totals must sum back to exactly the session's full usd.
+        task_id = self._make_spanning_task()
+        self._make_phase_tokens("claude:impl-1", "red", 30)
+        self._make_turn_phase("claude:impl-1", 0, "red")
+        self._make_turn_phase("claude:impl-1", 1, "green")
+
+        costs.rebuild(self.conn, as_of="2026-07-19")
+        table = self._task_costs(task_id)
+        # Sum only impl-1's own split categories -- the task also has a
+        # reviewer session funding its own separate `review` category.
+        total = sum(
+            row["usd"] for cat, row in table.items() if cat != "review"
+        )
+        self.assertAlmostEqual(total, self.SESSION_USD, places=10)
+
+    def test_no_session_turns_rows_uses_original_unsplit_apportionment(self):
+        # A round-0 session with a review boundary in play but NO
+        # session_turns rows (not backfilled, or unrecoverable) must fall
+        # back to the pre-followup-4 whole-session apportionment -- no
+        # followup_fix split at all for it.
+        task_id = self._make_task()
+        self._make_session(
+            "claude:impl-1", task_id, "implementer", SONNET[0],
+            input_tokens=1000, cached_tokens=0, output_tokens=100, review_round=0,
+            started_at="2026-07-10T00:00:00Z", ended_at="2026-07-10T00:05:00Z",
+        )
+        self._make_phase_tokens("claude:impl-1", "red", 60)
+        self._make_phase_tokens("claude:impl-1", "green", 40)
+        # A reviewer session establishing a review boundary, but impl-1 has
+        # no session_turns rows to split against.
+        self._make_session(
+            "claude:review-1", task_id, "reviewer", OPUS[0],
+            input_tokens=100, cached_tokens=0, output_tokens=10, review_round=1,
+            started_at="2026-07-10T01:00:00Z", ended_at="2026-07-10T01:10:00Z",
+        )
+
+        costs.rebuild(self.conn, as_of="2026-07-19")
+        table = self._task_costs(task_id)
+
+        self.assertNotIn("followup_fix", table)
+        self.assertAlmostEqual(table["red"]["usd"], self.SESSION_USD * 0.6, places=10)
+        self.assertAlmostEqual(table["green"]["usd"], self.SESSION_USD * 0.4, places=10)
 
 
 if __name__ == "__main__":

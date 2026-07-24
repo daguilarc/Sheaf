@@ -28,7 +28,10 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import assets  # noqa: E402
 import db  # noqa: E402
+import extractors  # noqa: E402
 import ingest  # noqa: E402
+
+FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 
 
 def _run_git(repo, *args):
@@ -495,6 +498,245 @@ class TestNumericVersionOrdering(unittest.TestCase):
         )
         self.assertEqual(current_hash2, "bbb")
         self.assertEqual(stale2, ["2"])
+
+
+class TestTurnPersistence(IngestTestBase):
+    """design.md D5 amendment (followup-4): a live `run()` must populate
+    ``session_turns`` (and, for phase-labeled round-0 implementers,
+    ``turn_phases``) for every session it writes, alongside the existing
+    ``sessions`` row -- not just at some later ``backfill-turns`` step. The
+    fixture sessions each hand-write exactly one assistant message, so each
+    produces exactly one turn (extractors.py: claude turns split per
+    assistant API message)."""
+
+    def test_session_turns_populated_at_ingest_time(self):
+        conn = self._conn()
+        self._run(conn, agent_runner=FakeAgentRunner())
+
+        impl_turns = conn.execute(
+            "SELECT turn_idx, started_at, ended_at, output_tokens FROM session_turns "
+            "WHERE session_id = ? ORDER BY turn_idx",
+            ("claude:impl-1",),
+        ).fetchall()
+        self.assertEqual(len(impl_turns), 1)
+        self.assertEqual(impl_turns[0]["turn_idx"], 1)
+        self.assertEqual(impl_turns[0]["started_at"], "2026-07-10T00:05:00Z")
+        self.assertEqual(impl_turns[0]["ended_at"], "2026-07-10T00:05:00Z")
+        self.assertEqual(impl_turns[0]["output_tokens"], 50)
+
+        review_turns = conn.execute(
+            "SELECT turn_idx, started_at, output_tokens FROM session_turns "
+            "WHERE session_id = ? ORDER BY turn_idx",
+            ("claude:review-1",),
+        ).fetchall()
+        self.assertEqual(len(review_turns), 1)
+        self.assertEqual(review_turns[0]["started_at"], "2026-07-10T01:10:00Z")
+
+    def test_verdict_boundaries_json_persisted_on_sessions(self):
+        # Neither fixture session's message matches the SPEC:/QUALITY:
+        # verdict regex, so both sessions must persist an empty (not NULL)
+        # boundaries list -- the documented no-verdict-data fallback.
+        conn = self._conn()
+        self._run(conn, agent_runner=FakeAgentRunner())
+        for session_id in ("claude:impl-1", "claude:review-1"):
+            vb_json = conn.execute(
+                "SELECT verdict_boundaries_json FROM sessions WHERE session_id = ?", (session_id,)
+            ).fetchone()[0]
+            self.assertEqual(json.loads(vb_json), [])
+
+    def test_turn_phases_matches_phase_tokens_aggregation(self):
+        # Integrity invariant (design.md D2/D5 amendment): turn_phases,
+        # aggregated by (phase, taxonomy_version) with session_turns'
+        # output_tokens, must equal phase_tokens exactly for any session
+        # with turn-level data.
+        conn = self._conn()
+        self._run(conn, agent_runner=FakeAgentRunner())  # cans "green" for turn 1
+
+        phase_tokens_row = conn.execute(
+            "SELECT phase, output_tokens, taxonomy_version FROM phase_tokens "
+            "WHERE session_id = ?",
+            ("claude:impl-1",),
+        ).fetchone()
+        self.assertIsNotNone(phase_tokens_row)
+
+        turn_phase_rows = conn.execute(
+            "SELECT tp.phase, st.output_tokens FROM turn_phases tp "
+            "JOIN session_turns st ON st.session_id = tp.session_id AND st.turn_idx = tp.turn_idx "
+            "WHERE tp.session_id = ? AND tp.taxonomy_version = ?",
+            ("claude:impl-1", phase_tokens_row["taxonomy_version"]),
+        ).fetchall()
+        aggregated = sum(r["output_tokens"] for r in turn_phase_rows if r["phase"] == phase_tokens_row["phase"])
+        self.assertEqual(aggregated, phase_tokens_row["output_tokens"])
+
+
+def _write_one_turn_claude_transcript(path: Path, session_id: str):
+    """A standalone (not through IngestTestBase's git/staging fixtures)
+    one-turn claude transcript, for backfill-turns tests that need a real
+    transcript file to re-extract but don't need the full ingest join."""
+    _write_claude_session(
+        path, session_id, "Implement something.", "Done.",
+        ts_start="2026-07-01T00:00:00Z", ts_end="2026-07-01T00:05:00Z",
+    )
+
+
+class TestBackfillTurns(unittest.TestCase):
+    """``ingest.py backfill-turns`` (design.md D5 amendment, followup-4):
+    populates session_turns (and, for round-0 implementers, turn_phases)
+    for already-ingested sessions that predate those tables, keyed off
+    ``sessions.transcript_path`` directly -- independent of `run()`'s git/
+    prompt join machinery, since these sessions were ingested before that
+    column/tables existed at all."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.db_path = self.root / "t.sqlite"
+        self.conn = db.connect(self.db_path)
+        self.no_analysis_dir = self.root / "no-analysis-dir"  # deliberately absent
+
+    def _insert_session(self, session_id, provider, role, transcript_path, review_round=0):
+        db.upsert(
+            self.conn, "sessions",
+            {
+                "session_id": session_id, "task_id": None, "provider": provider,
+                "role": role, "model": "claude-sonnet-5",
+                "transcript_path": str(transcript_path) if transcript_path else None,
+                "input_tokens": 0, "cached_tokens": 0, "output_tokens": 0,
+                "review_round": review_round,
+            },
+            ["session_id"],
+        )
+        self.conn.commit()
+
+    def test_backfills_session_turns_from_existing_transcript(self):
+        transcript = self.root / "reviewer.jsonl"
+        shutil.copy(os.path.join(FIXTURES, "codex_persistent_reviewer.jsonl"), transcript)
+        self._insert_session("codex:reviewer-sess-1", "codex", "reviewer", transcript, review_round=1)
+
+        stats = ingest.backfill_turns(self.conn, analysis_dir=self.no_analysis_dir)
+
+        self.assertEqual(stats["session_turns_backfilled"], 1)
+        self.assertEqual(stats["session_turns_unrecoverable"], 0)
+
+        turns = self.conn.execute(
+            "SELECT turn_idx, output_tokens FROM session_turns WHERE session_id = ? ORDER BY turn_idx",
+            ("codex:reviewer-sess-1",),
+        ).fetchall()
+        self.assertEqual([r["output_tokens"] for r in turns], [200, 150])
+
+        # Both verdict turns' ended_at persisted as review boundaries
+        # (fixture has two SPEC:/QUALITY: verdicts -- see
+        # test_extractors.TestExtractCodexPersistentReviewer).
+        vb = json.loads(
+            self.conn.execute(
+                "SELECT verdict_boundaries_json FROM sessions WHERE session_id = ?",
+                ("codex:reviewer-sess-1",),
+            ).fetchone()[0]
+        )
+        self.assertEqual(vb, ["2026-07-05T00:00:08Z", "2026-07-05T01:00:05Z"])
+
+    def test_missing_transcript_path_is_unrecoverable(self):
+        self._insert_session("codex:gone-1", "codex", "implementer", None)
+        stats = ingest.backfill_turns(self.conn, analysis_dir=self.no_analysis_dir)
+        self.assertEqual(stats["session_turns_unrecoverable"], 1)
+        self.assertEqual(stats["session_turns_backfilled"], 0)
+        count = self.conn.execute(
+            "SELECT COUNT(*) FROM session_turns WHERE session_id = ?", ("codex:gone-1",)
+        ).fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_deleted_transcript_file_is_unrecoverable(self):
+        transcript = self.root / "deleted.jsonl"
+        transcript.write_text('{"not": "used"}\n')
+        self._insert_session("codex:deleted-1", "codex", "implementer", transcript)
+        transcript.unlink()
+        stats = ingest.backfill_turns(self.conn, analysis_dir=self.no_analysis_dir)
+        self.assertEqual(stats["session_turns_unrecoverable"], 1)
+        self.assertEqual(stats["session_turns_backfilled"], 0)
+
+    def test_turn_phases_backfilled_from_analysis_dataset_for_round0_implementer(self):
+        transcript = self.root / "impl.jsonl"
+        _write_one_turn_claude_transcript(transcript, "old-impl-1")
+        self._insert_session("claude:old-impl-1", "claude", "implementer", transcript, review_round=0)
+        # Existing session-level phase_tokens row -- backfill reuses its
+        # cache-key metadata (taxonomy_version/input_sha256/scored_by) so
+        # the backfilled turn_phases row is directly comparable to it.
+        db.upsert(
+            self.conn, "phase_tokens",
+            {
+                "session_id": "claude:old-impl-1", "phase": "red", "output_tokens": 50,
+                "turns": 1, "taxonomy_version": "1", "input_sha256": "x", "scored_by": "test",
+            },
+            ["session_id", "phase", "taxonomy_version"],
+        )
+        self.conn.commit()
+
+        analysis_dir = self.root / "analysis"
+        (analysis_dir / "phase_labels").mkdir(parents=True)
+        (analysis_dir / "phase_labels" / "claude-old-impl-1.json").write_text(
+            json.dumps({"labels": {"1": "red"}})
+        )
+
+        stats = ingest.backfill_turns(self.conn, analysis_dir=analysis_dir)
+        self.assertEqual(stats["session_turns_backfilled"], 1)
+        self.assertEqual(stats["turn_phases_backfilled"], 1)
+        self.assertEqual(stats["turn_phases_unavailable"], 0)
+
+        row = self.conn.execute(
+            "SELECT phase, taxonomy_version, input_sha256 FROM turn_phases "
+            "WHERE session_id = ? AND turn_idx = 1",
+            ("claude:old-impl-1",),
+        ).fetchone()
+        self.assertEqual(row["phase"], "red")
+        self.assertEqual(row["taxonomy_version"], "1")
+        self.assertEqual(row["input_sha256"], "x")
+
+    def test_turn_phases_unavailable_when_no_label_source_survives(self):
+        transcript = self.root / "impl2.jsonl"
+        _write_one_turn_claude_transcript(transcript, "old-impl-2")
+        self._insert_session("claude:old-impl-2", "claude", "implementer", transcript, review_round=0)
+        db.upsert(
+            self.conn, "phase_tokens",
+            {
+                "session_id": "claude:old-impl-2", "phase": "red", "output_tokens": 50,
+                "turns": 1, "taxonomy_version": "1", "input_sha256": "x", "scored_by": "test",
+            },
+            ["session_id", "phase", "taxonomy_version"],
+        )
+        self.conn.commit()
+
+        stats = ingest.backfill_turns(self.conn, analysis_dir=self.no_analysis_dir)
+        self.assertEqual(stats["session_turns_backfilled"], 1)
+        self.assertEqual(stats["turn_phases_unavailable"], 1)
+        self.assertEqual(stats["turn_phases_backfilled"], 0)
+
+    def test_non_round0_session_never_gets_turn_phases_backfill_attempt(self):
+        # A fixer/reviewer/round>=1 session has no phase categories to
+        # backfill turn_phases for at all -- must not even be attempted.
+        transcript = self.root / "fixer.jsonl"
+        _write_one_turn_claude_transcript(transcript, "old-fixer-1")
+        self._insert_session("claude:old-fixer-1", "claude", "fixer", transcript, review_round=1)
+        stats = ingest.backfill_turns(self.conn, analysis_dir=self.no_analysis_dir)
+        self.assertEqual(stats["session_turns_backfilled"], 1)
+        self.assertEqual(stats["turn_phases_backfilled"], 0)
+        self.assertEqual(stats["turn_phases_unavailable"], 0)
+
+    def test_idempotent_second_backfill_is_a_no_op(self):
+        transcript = self.root / "reviewer2.jsonl"
+        shutil.copy(os.path.join(FIXTURES, "codex_persistent_reviewer.jsonl"), transcript)
+        self._insert_session("codex:reviewer-sess-2", "codex", "reviewer", transcript)
+
+        stats1 = ingest.backfill_turns(self.conn, analysis_dir=self.no_analysis_dir)
+        self.assertEqual(stats1["session_turns_backfilled"], 1)
+
+        stats2 = ingest.backfill_turns(self.conn, analysis_dir=self.no_analysis_dir)
+        self.assertEqual(stats2["session_turns_backfilled"], 0)
+        self.assertEqual(stats2["session_turns_unrecoverable"], 0)
+        count = self.conn.execute(
+            "SELECT COUNT(*) FROM session_turns WHERE session_id = ?", ("codex:reviewer-sess-2",)
+        ).fetchone()[0]
+        self.assertEqual(count, 2)  # not doubled
 
 
 class TestDryRunNoDbFile(unittest.TestCase):
