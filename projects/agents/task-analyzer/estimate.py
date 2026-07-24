@@ -19,29 +19,77 @@ never be selected, so it accrues no new data and is frozen out
 permanently). Categories scored via fallback are listed per arm under
 ``fallback_categories`` in the report -- diagnostic only, it does not by
 itself change selection. An arm is **unscorable** only if *even the pooled
-posterior* has no row for some category it needs; such arms are excluded
-from ranking/selection entirely and reported separately (per task) under
-``unscorable_arms`` with their ``missing_categories`` listed.
+posterior* has no row for some category it needs, or if every one of its
+Monte Carlo total-cost draws came back non-finite (see the finite-draws
+paragraph below); such arms are excluded from ranking/selection entirely
+and reported separately (per task) under ``unscorable_arms`` with a
+``reason`` (``"missing_categories"`` or ``"all_draws_nonfinite"``).
 
 A task's TOTAL cost per arm, however, is not exact: it is the *sum* over
 categories of each category's (independent) log-space Student-t predictive,
 exponentiated back to USD. Quantiles do not commute with sums -- summing
-each category's own p80 overstates the total's true p80 (independence means
-the categories' tails don't all land together), and summing each category's
-p20 understates the total's true p20, for the same reason in the other
-direction. There is also no closed form for the quantiles of a sum of
-exponentiated Student-t's (``exp(t)`` has no finite moments). So totals are
-estimated by seeded Monte Carlo (``model.NIG.predictive_draws``): draw
-``--mc-draws`` samples per category (independent, log space), exponentiate
-each via ``model.inverse_transform_array`` (floored at 0.0 -- a dollar cost
-cannot be negative), column-sum across categories to get that many draws of
-the arm's *total* cost, then take the empirical p20/p50/p80 of those draws
+each category's own p80 overstates the total's true p80, and summing each
+category's p20 understates the total's true p20, when each category's own
+tail is moderate. (This directional claim is not universal: at very heavy
+tails -- low degrees of freedom, i.e. a sparse/pooled-fallback posterior --
+independence no longer guarantees this ordering, a known phenomenon for
+sufficiently heavy-tailed risks. The requirement this module actually
+satisfies is the defensible one: totals are quantiles *of the sum*, not
+sums *of quantiles* -- never the reverse -- regardless of which direction
+the inequality happens to point for a given posterior.) There is also no
+closed form for the quantiles of a sum of exponentiated Student-t's
+(``exp(t)`` has no finite moments). So totals are estimated by seeded Monte
+Carlo (``model.NIG.predictive_draws``): draw ``--mc-draws`` samples per
+category (independent, log space), exponentiate each via
+``model.inverse_transform_array`` (floored at 0.0 -- a dollar cost cannot
+be negative), column-sum across categories to get that many draws of the
+arm's *total* cost, then take the empirical p20/p50/p80 of those draws
 (``numpy.quantile``, linear interpolation -- fixed and bit-stable given the
-same draws). One ``numpy.random.Generator`` (seeded via ``--seed``, default
-0) is shared across the whole run and consumed in a fixed order -- tasks in
-decomposition order, arms sorted by ``(model, effort)``, categories in
-``config["categories"]`` order -- so output is byte-deterministic given
-(estimator id, seed, mc-draws) regardless of any dict's iteration order.
+same draws).
+
+**Finite draws (fix round 1, codex review).** A sufficiently sparse/heavy-
+tailed posterior can draw a log-cost sample large enough that ``exp``
+overflows to float ``inf`` -- a faithful (if extreme) representation of
+genuine unbounded Student-t tail risk, not a bug, but one that must never
+reach a JSON report (``json.dumps(..., allow_nan=False)`` in ``main()``
+raises rather than silently emit non-standard ``Infinity``/``NaN`` tokens).
+So every arm's MC total-cost quantiles are computed over the *finite*
+subset of its draws only; the count of non-finite draws is reported per
+arm as ``nonfinite_draws`` (0 in the overwhelmingly common case). If *no*
+draw is finite, the arm's totals are ``null`` and it is excluded from
+ranking/selection the same way a missing-posterior arm is (see above). The
+same finite-filtering applies to ``decomposition_totals`` (built from
+raw, unfiltered per-task draws summed element-wise -- see ``run()``) and to
+every scalar USD figure this module computes (``model.inverse_transform``
+returns ``inf`` rather than raising on overflow -- see its docstring -- so
+every value this module puts in a report is passed through a finite check
+before being stored, becoming ``null`` if it would have been non-finite).
+
+**RNG stream separation (fix round 1, codex review).** ``--thompson``
+selects differently: for each scorable arm, draw exactly one predictive
+sample per category (``model.NIG.thompson`` -- the genuine Bayesian
+Thompson draw: sample sigma2, then beta, then ``x @ beta``, per design.md
+D6's "Thompson sampling takes an explicit caller-supplied seed"), inverse-
+transform and floor each at 0.0, and sum across categories to one
+``thompson_total_usd`` per arm; the selected arm is the guard-passing arm
+with the lowest ``thompson_total_usd`` (the guard itself is still computed
+from the MC ``p80_total_usd``, which is always computed regardless of
+mode). Thompson draws are consumed from a **separate rng stream** than MC
+draws (``_derive_rngs`` splits one ``--seed`` into two independent child
+generators via ``numpy.random.SeedSequence.spawn(2)``) -- if they shared one
+stream, running the same seed with and without ``--thompson`` would consume
+a different number of random numbers per task, desynchronizing every
+*later* task's MC draws between the two runs (an earlier version of this
+module did share one stream and had exactly this bug). With separate
+streams, a report's MC ``p20``/``p50``/``p80`` totals are always byte-
+identical for a given (estimator id, seed, mc-draws) regardless of whether
+``--thompson`` was also given. The report's top-level ``"selection_mode"``
+is ``"thompson"`` or ``"p20"``; every arm's ``thompson_total_usd`` is
+``null`` unless ``--thompson`` was given. Each stream is itself consumed in
+a fixed order -- tasks in decomposition order, arms sorted by
+``(model, effort)``, categories in ``config["categories"]`` order -- so
+output is fully byte-deterministic given (estimator id, seed, mc-draws,
+thompson mode) regardless of any dict's iteration order.
 
 Selection ("p20 bandit selection with a p80 guard"): the selection
 statistic is each arm's MC ``p20_total_usd`` -- a *low* quantile, not a
@@ -52,44 +100,32 @@ arm's p20 stays low -- so minimizing p20 both exploits what's known cheap
 and explores what's still uncertain, without a separate advisory flag for
 it. The guard excludes any arm whose MC ``p80_total_usd`` exceeds a *guard
 factor* times the *minimum* MC ``p80_total_usd`` among scorable arms for
-that task (unchanged rationale from the pre-MC design: this stops "cheap at
-p20, catastrophic in the tail" arms from winning on the optimistic quantile
-alone -- but now built from an honest quantile-of-the-sum instead of a
-sum-of-quantiles, so the guard's own semantics are no longer overstated).
-The guard factor itself (default ``DEFAULT_GUARD_FACTOR = 2.0``) is
-resolved per run as: ``--guard-factor`` CLI flag, else
-``config_json["guard_factor"]`` if the estimator's own config specifies
-one, else the hardcoded default -- echoed back in the JSON report as
-``"guard_factor"``. The selected arm is whichever guard-passing arm has the
-lowest ``p20_total_usd`` (tie-break ``(model, effort)`` lexicographic); if
-the guard excludes every arm (only possible with an overridden guard factor
-below 1.0), selection falls back to the single best arm by the same
-statistic among all scorable arms, bypassing the guard. The report's
+that task (this stops "cheap at p20, catastrophic in the tail" arms from
+winning on the optimistic quantile alone). The guard factor itself (default
+``DEFAULT_GUARD_FACTOR = 2.0``) is resolved per run as: ``--guard-factor``
+CLI flag, else ``config_json["guard_factor"]`` if the estimator's own
+config specifies one, else the hardcoded default -- echoed back in the
+JSON report as ``"guard_factor"``. The selected arm is whichever guard-
+passing arm has the lowest ``p20_total_usd`` (tie-break ``(model,
+effort)`` lexicographic); if the guard excludes every arm (only possible
+with an overridden guard factor below 1.0), selection falls back to the
+single best arm by the same statistic among all scorable arms, bypassing
+the guard. In ``--thompson`` mode, if no guard-passing arm has a finite
+Thompson total (pathological -- would require every candidate's single
+draw to overflow), selection falls back to the p20 statistic among the
+same guard-passing set rather than crash comparing ``None``s. The report's
 ``"arms"`` list is always ranked by ``p20_total_usd`` ascending, regardless
 of selection mode.
-
-``--thompson`` selects differently: for each scorable arm, draw exactly one
-predictive sample per category from the *same* shared rng (``model.NIG.
-thompson`` -- the genuine Bayesian Thompson draw: sample sigma2, then beta,
-then ``x @ beta``, per design.md D6's "Thompson sampling takes an explicit
-caller-supplied seed"), inverse-transform and floor each at 0.0, and sum
-across categories to one ``thompson_total_usd`` per arm; the selected arm is
-the guard-passing arm with the lowest ``thompson_total_usd`` (the guard
-itself is still computed from the MC ``p80_total_usd``, which is always
-computed regardless of mode). The report's top-level ``"selection_mode"``
-is ``"thompson"`` or ``"p20"``; every arm's ``thompson_total_usd`` is
-``null`` unless ``--thompson`` was given. Both modes are equally
-deterministic given the same seed -- there is no non-deterministic
-randomness anywhere in this module.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import sqlite3
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -113,11 +149,49 @@ def resolve_guard_factor(config: dict, guard_factor: Optional[float]) -> float:
     return float(config.get("guard_factor", DEFAULT_GUARD_FACTOR))
 
 
+def _derive_rngs(seed: int) -> Tuple[np.random.Generator, np.random.Generator]:
+    """Split one integer ``seed`` into two statistically independent child
+    generators -- ``(mc_rng, thompson_rng)`` -- via ``numpy.random.
+    SeedSequence(seed).spawn(2)``. Deterministic given ``seed`` (spawning is
+    itself a pure function of the parent ``SeedSequence`` and the number/
+    order of children requested, never called more than once per ``seed``
+    here), and this is the *only* mechanism this module uses for stream
+    separation -- see the module docstring's "RNG stream separation"
+    paragraph for why MC and Thompson draws must never share one stream."""
+    mc_seed, thompson_seed = np.random.SeedSequence(seed).spawn(2)
+    return np.random.default_rng(mc_seed), np.random.default_rng(thompson_seed)
+
+
 def _empirical_quantile(draws: np.ndarray, q: float) -> float:
     """The ``q``-quantile of ``draws`` via sorted-array linear interpolation
     (``numpy.quantile``'s ``method="linear"``, the default) -- fixed and
-    documented so a report is bit-stable given the same draws array."""
+    documented so a report is bit-stable given the same draws array. Caller
+    guarantees ``draws`` is non-empty and finite (see ``_finite_quantiles``)."""
     return float(np.quantile(draws, q, method="linear"))
+
+
+def _finite_quantiles(draws: np.ndarray):
+    """``(p20, p50, p80, n_nonfinite)`` computed over the finite subset of
+    ``draws`` only (module docstring's "Finite draws" paragraph). All three
+    quantiles are ``None`` if no draw in ``draws`` is finite."""
+    finite = draws[np.isfinite(draws)]
+    n_nonfinite = int(draws.size - finite.size)
+    if finite.size == 0:
+        return None, None, None, n_nonfinite
+    return (
+        _empirical_quantile(finite, 0.2),
+        _empirical_quantile(finite, 0.5),
+        _empirical_quantile(finite, 0.8),
+        n_nonfinite,
+    )
+
+
+def _finite_usd(value: float) -> Optional[float]:
+    """``value`` if finite, else ``None`` -- keeps every scalar USD figure
+    in the JSON report finite (module docstring's "Finite draws" paragraph;
+    ``json.dumps(..., allow_nan=False)`` in ``main()`` is the hard boundary
+    this exists to satisfy)."""
+    return value if math.isfinite(value) else None
 
 
 class EstimatorError(RuntimeError):
@@ -175,14 +249,19 @@ def _resolve_category_nig(posteriors: dict, category: str, arm):
     return nig, nig is not None
 
 
-def _score_arm(posteriors: dict, categories, epsilon: float, x, arm, rng: np.random.Generator, mc_draws: int):
+def _score_arm(posteriors: dict, categories, epsilon: float, x, arm, mc_rng: np.random.Generator, mc_draws: int):
     """Score one (model, effort) ``arm`` across every category (in the
     given, fixed ``categories`` order -- see the module docstring's rng
     consumption-order guarantee). Returns ``(public, mc_total_draws)``:
     ``public`` is the fully JSON-serializable per-arm report dict;
-    ``mc_total_draws`` is the raw ``np.ndarray`` of ``mc_draws`` MC total-
-    cost draws (``None`` if the arm is unscorable), kept *out* of ``public``
-    so callers never need to strip anything before ``json.dumps``."""
+    ``mc_total_draws`` is the raw, *unfiltered* ``np.ndarray`` of
+    ``mc_draws`` MC total-cost draws (may contain ``inf`` -- ``None`` if the
+    arm is unscorable), kept *out* of ``public`` so callers never need to
+    strip anything before ``json.dumps``; callers needing decomposition-
+    level totals accumulate this raw array (see ``run()``) and apply
+    ``_finite_quantiles`` once at the end, same as this function does per
+    arm -- summing raw arrays element-wise before filtering, not filtering
+    then summing, keeps every task's draws aligned by index."""
     per_category = {}
     missing = []
     fallback = []
@@ -197,13 +276,13 @@ def _score_arm(posteriors: dict, categories, epsilon: float, x, arm, rng: np.ran
 
         mean_log, _scale, _df = nig.predictive(x)
         per_category[category] = {
-            "mean_usd": model.inverse_transform(mean_log, epsilon),
-            "median_usd": model.inverse_transform(nig.quantile(x, 0.5), epsilon),
-            "p20_usd": model.inverse_transform(nig.quantile(x, 0.2), epsilon),
-            "p80_usd": model.inverse_transform(nig.quantile(x, 0.8), epsilon),
+            "mean_usd": _finite_usd(model.inverse_transform(mean_log, epsilon)),
+            "median_usd": _finite_usd(model.inverse_transform(nig.quantile(x, 0.5), epsilon)),
+            "p20_usd": _finite_usd(model.inverse_transform(nig.quantile(x, 0.2), epsilon)),
+            "p80_usd": _finite_usd(model.inverse_transform(nig.quantile(x, 0.8), epsilon)),
             "fallback": used_fallback,
         }
-        log_draws = nig.predictive_draws(x, mc_draws, rng)
+        log_draws = nig.predictive_draws(x, mc_draws, mc_rng)
         category_draws.append(model.inverse_transform_array(log_draws, epsilon))
 
     public = {
@@ -218,61 +297,82 @@ def _score_arm(posteriors: dict, categories, epsilon: float, x, arm, rng: np.ran
         public["p20_total_usd"] = None
         public["p50_total_usd"] = None
         public["p80_total_usd"] = None
+        public["nonfinite_draws"] = None
         return public, None
 
     total_draws = np.sum(np.vstack(category_draws), axis=0)
-    public["p20_total_usd"] = _empirical_quantile(total_draws, 0.2)
-    public["p50_total_usd"] = _empirical_quantile(total_draws, 0.5)
-    public["p80_total_usd"] = _empirical_quantile(total_draws, 0.8)
+    p20, p50, p80, n_nonfinite = _finite_quantiles(total_draws)
+    public["p20_total_usd"] = p20
+    public["p50_total_usd"] = p50
+    public["p80_total_usd"] = p80
+    public["nonfinite_draws"] = n_nonfinite
+    if p20 is None:
+        # Every draw overflowed -- cannot form any quantile; treated as
+        # unscorable by the caller (module docstring's "Finite draws").
+        return public, None
     return public, total_draws
 
 
-def _thompson_total(posteriors: dict, categories, epsilon: float, x, arm, rng: np.random.Generator) -> float:
+def _thompson_total(posteriors: dict, categories, epsilon: float, x, arm, thompson_rng: np.random.Generator):
     """One Thompson draw per category (fixed ``categories`` order, same
-    fallback resolution as ``_score_arm``), inverse-transformed and floored
-    at 0.0, summed to a single total. Caller guarantees ``arm`` is scorable
-    (every category resolves to a posterior, own or pooled)."""
+    fallback resolution as ``_score_arm``, drawn from the dedicated
+    ``thompson_rng`` stream -- module docstring's "RNG stream separation"),
+    inverse-transformed and floored at 0.0, summed to a single total.
+    Returns ``None`` if the total is non-finite (module docstring's "Finite
+    draws"). Caller guarantees ``arm`` is scorable (every category resolves
+    to a posterior, own or pooled)."""
     total = 0.0
     for category in categories:
         nig, _used_fallback = _resolve_category_nig(posteriors, category, arm)
-        sample_usd = model.inverse_transform(nig.thompson(x, rng), epsilon)
+        sample_usd = model.inverse_transform(nig.thompson(x, thompson_rng), epsilon)
         total += max(sample_usd, 0.0)
-    return total
+    return _finite_usd(total)
 
 
-def _score_task_core(config: dict, posteriors: dict, complexity: dict, rng: np.random.Generator,
-                      mc_draws: int, resolved_guard_factor: float, thompson: bool):
+def _score_task_core(config: dict, posteriors: dict, complexity: dict, mc_rng: np.random.Generator,
+                      thompson_rng: Optional[np.random.Generator], mc_draws: int,
+                      resolved_guard_factor: float, thompson: bool):
     """Score every known arm (``config["arms"]``) for one task's complexity
     vector. Returns ``(result, selected_mc_draws, selected_thompson_total)``:
     ``result`` is the JSON-serializable per-task report dict; the other two
-    are the *selected* arm's raw MC-draws array / Thompson total (whichever
-    applies, else ``None``) -- used by ``run()`` to build decomposition-level
-    totals without recomputing anything. Arms are processed sorted by
-    ``(model, effort)`` (module docstring's rng consumption-order
-    guarantee), independent of ``config["arms"]``'s own order."""
+    are the *selected* arm's raw (unfiltered) MC-draws array / Thompson
+    total (whichever applies, else ``None``) -- used by ``run()`` to build
+    decomposition-level totals without recomputing anything. Arms are
+    processed sorted by ``(model, effort)`` (module docstring's rng
+    consumption-order guarantee), independent of ``config["arms"]``'s own
+    order. ``mc_rng``/``thompson_rng`` are separate streams (see
+    ``_derive_rngs``); ``thompson_rng`` may be ``None`` iff ``thompson`` is
+    False (never dereferenced in that case)."""
     row = _recomputed_complexity(complexity)
     x = model.features(row, config)
     epsilon = config.get("epsilon", model.DEFAULT_EPSILON)
     categories = config.get("categories", [])
     arms_sorted = sorted((tuple(a) for a in config.get("arms", [])), key=lambda a: (a[0], a[1]))
 
-    scored = [_score_arm(posteriors, categories, epsilon, x, arm, rng, mc_draws) for arm in arms_sorted]
+    scored = [_score_arm(posteriors, categories, epsilon, x, arm, mc_rng, mc_draws) for arm in arms_sorted]
 
     if thompson:
         for pub, _draws in scored:
             if pub["missing_categories"]:
                 continue
             pub["thompson_total_usd"] = _thompson_total(
-                posteriors, categories, epsilon, x, (pub["model"], pub["effort"]), rng
+                posteriors, categories, epsilon, x, (pub["model"], pub["effort"]), thompson_rng
             )
 
     public_arms = [pub for pub, _draws in scored]
     draws_by_key = {(pub["model"], pub["effort"]): draws for pub, draws in scored if draws is not None}
 
-    scorable = [a for a in public_arms if not a["missing_categories"]]
+    # "Scorable" is a single condition regardless of *why* an arm has no
+    # total: missing category coverage (own + pooled) or every MC draw
+    # overflowing both set p20_total_usd to None (see _score_arm).
+    scorable = [a for a in public_arms if a["p20_total_usd"] is not None]
     unscorable = [
-        {"model": a["model"], "effort": a["effort"], "missing_categories": a["missing_categories"]}
-        for a in public_arms if a["missing_categories"]
+        {
+            "model": a["model"], "effort": a["effort"],
+            "missing_categories": a["missing_categories"],
+            "reason": "missing_categories" if a["missing_categories"] else "all_draws_nonfinite",
+        }
+        for a in public_arms if a["p20_total_usd"] is None
     ]
 
     ranked = sorted(scorable, key=lambda a: (a["p20_total_usd"], a["model"], a["effort"]))
@@ -284,7 +384,15 @@ def _score_task_core(config: dict, posteriors: dict, complexity: dict, rng: np.r
         passing = [a for a in scorable if a["p80_total_usd"] <= guard_limit]
         candidates = passing if passing else scorable
         if thompson:
-            selected = min(candidates, key=lambda a: (a["thompson_total_usd"], a["model"], a["effort"]))
+            thompson_candidates = [a for a in candidates if a["thompson_total_usd"] is not None]
+            if thompson_candidates:
+                selected = min(thompson_candidates, key=lambda a: (a["thompson_total_usd"], a["model"], a["effort"]))
+            else:
+                # Pathological: no guard-passing arm's single Thompson draw
+                # was finite. Fall back to the p20 statistic rather than
+                # crash comparing None -- documented, not silent (module
+                # docstring's Selection paragraph).
+                selected = min(candidates, key=lambda a: (a["p20_total_usd"], a["model"], a["effort"]))
         else:
             selected = min(candidates, key=lambda a: (a["p20_total_usd"], a["model"], a["effort"]))
 
@@ -307,19 +415,23 @@ def _score_task_core(config: dict, posteriors: dict, complexity: dict, rng: np.r
     return result, selected_draws, selected_thompson
 
 
-def score_task(config: dict, posteriors: dict, complexity: dict, rng: np.random.Generator,
-               mc_draws: int = DEFAULT_MC_DRAWS, guard_factor: Optional[float] = None,
-               thompson: bool = False) -> dict:
+def score_task(config: dict, posteriors: dict, complexity: dict, mc_rng: np.random.Generator,
+               thompson_rng: Optional[np.random.Generator] = None, mc_draws: int = DEFAULT_MC_DRAWS,
+               guard_factor: Optional[float] = None, thompson: bool = False) -> dict:
     """Public single-task scoring entry point (what ``run()`` calls per
     task, minus the raw draws it uses only for decomposition-level
-    aggregation). ``rng`` must be a caller-owned ``numpy.random.Generator``
-    (e.g. ``np.random.default_rng(seed)``) -- callers scoring more than one
-    task and wanting the module's full run-level determinism guarantee
-    should share one ``rng`` across every call, in the same order every
-    time (``run()`` does this automatically for a whole decomposition)."""
+    aggregation). ``mc_rng``/``thompson_rng`` must be caller-owned,
+    *independent* ``numpy.random.Generator``s (e.g. via ``_derive_rngs`` --
+    module docstring's "RNG stream separation"); ``thompson_rng`` is
+    required iff ``thompson=True``. Callers scoring more than one task and
+    wanting the module's full run-level determinism guarantee should share
+    each rng across every call, in the same order every time (``run()``
+    does this automatically for a whole decomposition)."""
+    if thompson and thompson_rng is None:
+        raise ValueError("thompson_rng is required when thompson=True")
     resolved_guard_factor = resolve_guard_factor(config, guard_factor)
     result, _draws, _thompson = _score_task_core(
-        config, posteriors, complexity, rng, mc_draws, resolved_guard_factor, thompson
+        config, posteriors, complexity, mc_rng, thompson_rng, mc_draws, resolved_guard_factor, thompson
     )
     return result
 
@@ -328,46 +440,56 @@ def run(conn, decomposition: dict, estimator_id: Optional[int] = None, guard_fac
         seed: int = DEFAULT_SEED, mc_draws: int = DEFAULT_MC_DRAWS, thompson: bool = False) -> dict:
     """Score every task in ``decomposition["tasks"]``; returns the full
     report dict (JSON-serializable) with per-task results and
-    decomposition-level totals. One ``numpy.random.Generator`` (seeded via
-    ``seed``) is created here and shared across every task, in decomposition
-    order -- the module docstring's determinism guarantee. ``guard_factor``,
+    decomposition-level totals. Two independent ``numpy.random.Generator``s
+    (``_derive_rngs(seed)`` -- module docstring's "RNG stream separation")
+    are created here and each shared across every task, in decomposition
+    order -- the module docstring's determinism guarantee, including "MC
+    totals are identical with or without ``--thompson``". ``guard_factor``,
     if given, overrides both the estimator config's own value and
     ``DEFAULT_GUARD_FACTOR`` (see ``resolve_guard_factor``); the value
     actually used is echoed back as ``report["guard_factor"]``.
-    ``decomposition_totals`` sums the *selected* arm's raw draws (MC mode)
-    or Thompson totals (Thompson mode) element-wise across tasks before
-    taking quantiles -- not a sum of each task's already-computed total
-    quantiles, for the same quantiles-don't-commute-with-sums reason the
-    per-task totals themselves are MC rather than summed per-category
-    quantiles."""
+    ``decomposition_totals`` sums the *selected* arm's raw (unfiltered) MC
+    draws element-wise across tasks, THEN applies ``_finite_quantiles``
+    once -- not a sum of each task's already-computed (and already-
+    filtered) total quantiles, for the same quantiles-don't-commute-with-
+    sums reason the per-task totals themselves are MC rather than summed
+    per-category quantiles; Thompson totals (already per-task scalars) are
+    summed directly, no MC involved at that level."""
     resolved_id, config, posteriors = load_estimator(conn, estimator_id)
     resolved_guard_factor = resolve_guard_factor(config, guard_factor)
-    rng = np.random.default_rng(seed)
+    mc_rng, thompson_rng = _derive_rngs(seed)
 
     tasks_out = []
     draws_sum = None
     thompson_sum = 0.0
-    any_selected = False
+    any_thompson_selected = False
 
     for entry in decomposition.get("tasks", []):
         result, selected_draws, selected_thompson = _score_task_core(
-            config, posteriors, entry.get("complexity", {}), rng, mc_draws, resolved_guard_factor, thompson
+            config, posteriors, entry.get("complexity", {}), mc_rng, thompson_rng, mc_draws,
+            resolved_guard_factor, thompson
         )
         result["task"] = entry.get("task")
         result["title"] = entry.get("title")
         tasks_out.append(result)
-        if result["selected"] is not None:
-            any_selected = True
-            if selected_draws is not None:
-                draws_sum = selected_draws.copy() if draws_sum is None else draws_sum + selected_draws
-            if selected_thompson is not None:
-                thompson_sum += selected_thompson
+        if selected_draws is not None:
+            draws_sum = selected_draws.copy() if draws_sum is None else draws_sum + selected_draws
+        if selected_thompson is not None:
+            any_thompson_selected = True
+            thompson_sum += selected_thompson
+
+    if draws_sum is not None:
+        p20, p50, p80, n_nonfinite = _finite_quantiles(draws_sum)
+    else:
+        p20 = p50 = p80 = None
+        n_nonfinite = None
 
     decomposition_totals = {
-        "p20_total_usd": _empirical_quantile(draws_sum, 0.2) if draws_sum is not None else 0.0,
-        "p50_total_usd": _empirical_quantile(draws_sum, 0.5) if draws_sum is not None else 0.0,
-        "p80_total_usd": _empirical_quantile(draws_sum, 0.8) if draws_sum is not None else 0.0,
-        "thompson_total_usd": (thompson_sum if any_selected else 0.0) if thompson else None,
+        "p20_total_usd": p20,
+        "p50_total_usd": p50,
+        "p80_total_usd": p80,
+        "nonfinite_draws": n_nonfinite,
+        "thompson_total_usd": (thompson_sum if any_thompson_selected else None) if thompson else None,
     }
 
     return {
@@ -420,7 +542,10 @@ def render_table(report: dict) -> str:
             )
         if task["unscorable_arms"]:
             for arm in task["unscorable_arms"]:
-                lines.append(f"  (unscorable: {arm['model']}/{arm['effort']}, missing={arm['missing_categories']})")
+                lines.append(
+                    f"  (unscorable: {arm['model']}/{arm['effort']}, reason={arm['reason']}, "
+                    f"missing={arm['missing_categories']})"
+                )
         sel = task["selected"]
         sel_desc = (
             f"{sel['model']}/{sel['effort']}  p20=${sel['p20_total_usd']:.4f} "
@@ -430,10 +555,13 @@ def render_table(report: dict) -> str:
         lines.append(f"  selected: {sel_desc}")
     totals = report["decomposition_totals"]
     lines.append("")
-    lines.append(
-        f"decomposition totals: p20=${totals['p20_total_usd']:.4f} p50=${totals['p50_total_usd']:.4f} "
-        f"p80=${totals['p80_total_usd']:.4f} (guard_factor={report['guard_factor']})"
-    )
+    if totals["p20_total_usd"] is None:
+        lines.append("decomposition totals: none selected")
+    else:
+        lines.append(
+            f"decomposition totals: p20=${totals['p20_total_usd']:.4f} p50=${totals['p50_total_usd']:.4f} "
+            f"p80=${totals['p80_total_usd']:.4f} (guard_factor={report['guard_factor']})"
+        )
     return "\n".join(lines)
 
 
@@ -444,7 +572,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--estimator-id", type=int, default=None)
     p.add_argument("--guard-factor", type=float, default=None,
                     help="override the selection guard factor (default: the estimator config's own value, or 2.0)")
-    p.add_argument("--seed", type=int, default=DEFAULT_SEED, help="seed for the shared Monte Carlo/Thompson rng")
+    p.add_argument("--seed", type=int, default=DEFAULT_SEED,
+                    help="seed split into independent MC/Thompson rng streams (see _derive_rngs)")
     p.add_argument("--mc-draws", type=int, default=DEFAULT_MC_DRAWS,
                     help="number of Monte Carlo draws per (arm, category) used for total-cost quantiles")
     p.add_argument("--thompson", action="store_true",
@@ -484,7 +613,12 @@ def main(argv=None) -> int:
         conn.close()
 
     if args.json:
-        print(json.dumps(report, sort_keys=True))
+        # allow_nan=False: every numeric field this module produces has
+        # already been passed through a finite check (module docstring's
+        # "Finite draws" paragraph) -- this is the hard boundary that turns
+        # a missed spot into a loud ValueError instead of silently emitting
+        # non-standard `Infinity`/`NaN` tokens (invalid per RFC 8259).
+        print(json.dumps(report, sort_keys=True, allow_nan=False))
     else:
         print(render_table(report))
     return 0

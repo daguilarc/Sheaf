@@ -235,12 +235,23 @@ class TestMonteCarloProperties(EstimateTestCase):
         )
 
     def test_mc_total_quantiles_vs_sum_of_analytic_quantiles(self):
-        # On a 2-category posterior (independent draws per category): the
-        # MC total's p80 <= the sum of each category's own analytic p80
-        # (summing overstates the true upper tail), and the MC total's p20
-        # >= the sum of each category's own analytic p20 (summing
-        # understates the true lower tail) -- the central rationale for
-        # Monte Carlo totals over sum-of-quantiles (module docstring).
+        # On a 2-category, MODERATE-tail posterior (independent draws per
+        # category): the MC total's p80 <= the sum of each category's own
+        # analytic p80, and the MC total's p20 >= the sum of each category's
+        # own analytic p20 -- i.e. summing overstates the true upper tail
+        # and understates the true lower tail here. This directional
+        # inequality is NOT the normative requirement (spec.md, fix round 1:
+        # it can flip for sufficiently heavy tails -- independence no longer
+        # guarantees the usual diversification benefit); it's a property of
+        # this specific moderate-tail fixture, checked as a non-normative
+        # sanity note. The requirement this module actually satisfies,
+        # unconditionally, is narrower and always true: totals are
+        # quantiles *of the sum* of draws (this MC procedure), never a sum
+        # *of* per-category quantiles (the design this replaced) -- see
+        # test_selection_is_min_p20_not_min_p50 and the module docstring for
+        # why that distinction is what matters for selection correctness,
+        # independent of which way any particular posterior's inequality
+        # happens to point.
         arm = ("claude-sonnet-5", "medium")
         nig = _moderate_nig()
         config = model.default_config(features=["1", "composite"])
@@ -262,15 +273,119 @@ class TestMonteCarloProperties(EstimateTestCase):
         self.assertGreaterEqual(arm_result["p20_total_usd"], analytic_p20_sum - tolerance)
 
 
+class TestNonFiniteDraws(EstimateTestCase):
+    """Fix round 1 (codex review, Important finding 4): overflowed Monte
+    Carlo/Thompson draws must never reach the JSON report as Infinity/NaN --
+    quantiles are computed over the finite subset only, non-finite counts
+    are reported diagnostically, and an arm with zero finite draws is
+    unscorable rather than silently producing a non-finite total."""
+
+    # mu itself is already far beyond exp() overflow (~709) -- essentially
+    # every draw for this posterior overflows (verified: 0/2000 finite).
+    _ALL_OVERFLOW_NIG = model.NIG(mu=np.array([1000.0, 0.0]), Lambda=np.diag([1000.0, 1000.0]), a=1000.0, b=1.0)
+    # Wide, heavy-tailed (df=1, Cauchy) but centered at a plausible cost --
+    # most draws are large-but-finite, a minority overflow (verified: ~32 of
+    # 2000 at seed 0).
+    _PARTIAL_OVERFLOW_NIG = model.NIG(mu=np.array([50.0, 0.0]), Lambda=np.diag([0.01, 0.01]), a=0.5, b=0.5)
+
+    def _seed_with_overflow_arm(self, nig, arm=("gpt-5.4", "high")):
+        config = _seed_estimator_db(self.conn, arms=(CHEAP_ARM,))
+        for category in CATEGORIES:
+            db.upsert(
+                self.conn, "estimator_params",
+                {"estimator_id": 1, "category": category, "model": arm[0], "effort": arm[1],
+                 "posterior_json": nig.to_json()},
+                ["estimator_id", "category", "model", "effort"],
+            )
+        config["arms"].append(list(arm))
+        self.conn.execute("UPDATE estimators SET config_json = ? WHERE estimator_id = 1", (json.dumps(config),))
+        self.conn.commit()
+        return config, arm
+
+    def test_partial_overflow_reports_nonfinite_draws_and_stays_scorable(self):
+        config, arm = self._seed_with_overflow_arm(self._PARTIAL_OVERFLOW_NIG)
+        _, _, posteriors = estimate.load_estimator(self.conn)
+        rng = np.random.default_rng(0)
+        result = estimate.score_task(config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, rng)
+        risky = next(a for a in result["arms"] if (a["model"], a["effort"]) == arm)
+        self.assertGreater(risky["nonfinite_draws"], 0)
+        self.assertIsNotNone(risky["p20_total_usd"])
+        self.assertIsNotNone(risky["p50_total_usd"])
+        self.assertIsNotNone(risky["p80_total_usd"])
+        self.assertTrue(math.isfinite(risky["p20_total_usd"]))
+        self.assertTrue(math.isfinite(risky["p50_total_usd"]))
+        self.assertTrue(math.isfinite(risky["p80_total_usd"]))
+
+    def test_all_overflow_arm_is_unscorable_with_reason(self):
+        config, arm = self._seed_with_overflow_arm(self._ALL_OVERFLOW_NIG)
+        _, _, posteriors = estimate.load_estimator(self.conn)
+        rng = np.random.default_rng(0)
+        result = estimate.score_task(config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, rng)
+        arm_pairs = {(a["model"], a["effort"]) for a in result["arms"]}
+        self.assertNotIn(arm, arm_pairs)
+        unscorable = next(u for u in result["unscorable_arms"] if (u["model"], u["effort"]) == arm)
+        self.assertEqual(unscorable["reason"], "all_draws_nonfinite")
+        self.assertEqual(unscorable["missing_categories"], [])  # not a coverage problem
+        # CHEAP_ARM must still win -- one unscorable arm shouldn't break selection.
+        self.assertEqual((result["selected"]["model"], result["selected"]["effort"]), CHEAP_ARM)
+
+    def test_json_output_is_rfc_compliant_with_overflow_heavy_fixture(self):
+        # allow_nan=False must not raise -- every field reaching main()'s
+        # json.dumps has already been through a finite check.
+        config, arm = self._seed_with_overflow_arm(self._PARTIAL_OVERFLOW_NIG)
+        self.conn.commit()
+        path = self.tmp_path / "decomp.json"
+        path.write_text(json.dumps(_decomposition((("task-1", 3.0),))), encoding="utf-8")
+        argv = ["--decomposition", str(path), "--db", str(self.db_path), "--estimator-id", "1", "--json"]
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = estimate.main(argv)
+        self.assertEqual(rc, 0)
+        raw = buf.getvalue()
+        self.assertNotIn("Infinity", raw)
+        self.assertNotIn("NaN", raw)
+        # json.loads accepts Infinity/NaN by default (it's forgiving on
+        # read), so the real assertion is that dumping with allow_nan=False
+        # (main()'s own call) didn't need to raise -- confirmed by rc == 0
+        # above; parse here just double-checks the output is otherwise
+        # well-formed JSON.
+        json.loads(raw)
+
+    def test_thompson_total_null_and_finite_when_present(self):
+        # A Thompson draw can itself overflow (single sample, no averaging
+        # to smooth it out); such an arm's thompson_total_usd must be null,
+        # not inf/nan, and must not crash selection.
+        config, arm = self._seed_with_overflow_arm(self._ALL_OVERFLOW_NIG)
+        config["guard_factor"] = 1.0e12  # let the overflow arm pass the guard if it were scorable
+        self.conn.execute("UPDATE estimators SET config_json = ? WHERE estimator_id = 1", (json.dumps(config),))
+        self.conn.commit()
+        mc_rng, thompson_rng = estimate._derive_rngs(0)
+        _, _, posteriors = estimate.load_estimator(self.conn)
+        result = estimate.score_task(
+            config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, mc_rng,
+            thompson_rng=thompson_rng, thompson=True,
+        )
+        # The all-overflow arm is unscorable at the MC-total level already
+        # (finding 4's primary mechanism), so it never reaches the Thompson
+        # pass at all -- confirms Thompson mode doesn't crash on it either.
+        arm_pairs = {(a["model"], a["effort"]) for a in result["arms"]}
+        self.assertNotIn(arm, arm_pairs)
+        for a in result["arms"]:
+            if a["thompson_total_usd"] is not None:
+                self.assertTrue(math.isfinite(a["thompson_total_usd"]))
+        self.assertIsNotNone(result["selected"])
+
+
 class TestThompsonMode(EstimateTestCase):
     def test_thompson_mode_deterministic_and_selects_guard_passing_arm(self):
         config = _seed_estimator_db(self.conn)
         _, _, posteriors = estimate.load_estimator(self.conn)
 
         def _run():
-            rng = np.random.default_rng(0)
+            mc_rng, thompson_rng = estimate._derive_rngs(0)
             result = estimate.score_task(
-                config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, rng, thompson=True
+                config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, mc_rng,
+                thompson_rng=thompson_rng, thompson=True,
             )
             return result
 
@@ -286,6 +401,15 @@ class TestThompsonMode(EstimateTestCase):
         for arm in result_a["arms"]:
             self.assertIsNotNone(arm["thompson_total_usd"])
 
+    def test_thompson_requires_thompson_rng(self):
+        config = _seed_estimator_db(self.conn)
+        _, _, posteriors = estimate.load_estimator(self.conn)
+        with self.assertRaises(ValueError):
+            estimate.score_task(
+                config, posteriors, {f"C{i}": 3 for i in range(1, 8)},
+                np.random.default_rng(0), thompson=True,
+            )
+
     def test_p20_mode_leaves_thompson_total_null(self):
         config = _seed_estimator_db(self.conn)
         _, _, posteriors = estimate.load_estimator(self.conn)
@@ -294,6 +418,64 @@ class TestThompsonMode(EstimateTestCase):
         for arm in result["arms"]:
             self.assertIsNone(arm["thompson_total_usd"])
         self.assertIsNone(result["selected"]["thompson_total_usd"])
+
+
+class TestRngStreamSeparation(EstimateTestCase):
+    """Fix round 1 (codex review, Important finding 1): MC and Thompson
+    draws must come from independent rng streams, so a report's MC
+    p20/p50/p80 totals are identical for a given seed whether or not
+    --thompson was also requested -- otherwise Thompson's extra draws
+    inside task 1 desynchronize task 2's (and later tasks') MC draws
+    between the two modes."""
+
+    def test_mc_totals_identical_with_and_without_thompson_multi_task(self):
+        _seed_estimator_db(self.conn)
+        decomposition = _decomposition((("task-1", 2.0), ("task-2", 4.0)))
+
+        report_p20 = estimate.run(self.conn, decomposition, seed=0, thompson=False)
+        report_thompson = estimate.run(self.conn, decomposition, seed=0, thompson=True)
+
+        for task_p20, task_thompson in zip(report_p20["tasks"], report_thompson["tasks"]):
+            arms_p20 = {(a["model"], a["effort"]): a for a in task_p20["arms"]}
+            arms_thompson = {(a["model"], a["effort"]): a for a in task_thompson["arms"]}
+            self.assertEqual(set(arms_p20), set(arms_thompson))
+            for key, arm_p20 in arms_p20.items():
+                arm_thompson = arms_thompson[key]
+                self.assertEqual(arm_p20["p20_total_usd"], arm_thompson["p20_total_usd"])
+                self.assertEqual(arm_p20["p50_total_usd"], arm_thompson["p50_total_usd"])
+                self.assertEqual(arm_p20["p80_total_usd"], arm_thompson["p80_total_usd"])
+                for category, diag_p20 in arm_p20["categories"].items():
+                    self.assertEqual(diag_p20, arm_thompson["categories"][category])
+
+        # Sanity: this isn't trivially true because nothing used the rng --
+        # the Thompson-mode report really did draw extra (Thompson) samples
+        # per arm, evidenced by non-null thompson_total_usd everywhere a
+        # p20-mode report has null.
+        for task_thompson in report_thompson["tasks"]:
+            for arm in task_thompson["arms"]:
+                self.assertIsNotNone(arm["thompson_total_usd"])
+
+    def test_cli_mc_totals_identical_with_and_without_thompson_flag(self):
+        _seed_estimator_db(self.conn)
+        path = self.tmp_path / "decomp.json"
+        path.write_text(json.dumps(_decomposition((("task-1", 2.0), ("task-2", 4.0)))), encoding="utf-8")
+
+        def _capture(extra_args):
+            argv = ["--decomposition", str(path), "--db", str(self.db_path), "--estimator-id", "1",
+                    "--json", "--seed", "0"] + extra_args
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                estimate.main(argv)
+            return json.loads(buf.getvalue())
+
+        report_p20 = _capture([])
+        report_thompson = _capture(["--thompson"])
+        for task_p20, task_thompson in zip(report_p20["tasks"], report_thompson["tasks"]):
+            arms_p20 = {(a["model"], a["effort"]): (a["p20_total_usd"], a["p50_total_usd"], a["p80_total_usd"])
+                        for a in task_p20["arms"]}
+            arms_thompson = {(a["model"], a["effort"]): (a["p20_total_usd"], a["p50_total_usd"], a["p80_total_usd"])
+                              for a in task_thompson["arms"]}
+            self.assertEqual(arms_p20, arms_thompson)
 
 
 class TestPooledFallback(EstimateTestCase):

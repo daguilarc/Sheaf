@@ -81,8 +81,19 @@ def transform_target(usd: float, epsilon: float = DEFAULT_EPSILON) -> float:
 
 def inverse_transform(y: float, epsilon: float = DEFAULT_EPSILON) -> float:
     """Inverse of ``transform_target``: recover a dollar figure from a
-    log-space prediction/quantile."""
-    return math.exp(y) - epsilon
+    log-space prediction/quantile.
+
+    Uses ``numpy.exp`` (via a 0-d array), not ``math.exp``: a sufficiently
+    extreme ``y`` (e.g. a Thompson draw or an analytic quantile against a
+    very wide/sparse pooled-fallback posterior -- followup-2 fix round 1)
+    overflows the exponential, and ``math.exp`` *raises* ``OverflowError``
+    on that, while ``numpy.exp`` returns ``inf`` (silenced via
+    ``errstate``, same convention as ``inverse_transform_array``) -- a
+    representable float callers can detect and handle (see
+    ``estimate.py``'s finite-draws/finite-usd handling), not a crash. Never
+    floored (see ``inverse_transform_array`` for why the array version is)."""
+    with np.errstate(over="ignore"):
+        return float(np.exp(y)) - epsilon
 
 
 def inverse_transform_array(y: np.ndarray, epsilon: float = DEFAULT_EPSILON) -> np.ndarray:
