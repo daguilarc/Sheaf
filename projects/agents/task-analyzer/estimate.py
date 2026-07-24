@@ -49,7 +49,9 @@ category (independent, log space), exponentiate each via
 be negative), column-sum across categories to get that many draws of the
 arm's *total* cost, then take the empirical p20/p50/p80 of those draws
 (``numpy.quantile``, linear interpolation -- fixed and bit-stable given the
-same draws).
+same draws). All three are reported for every scorable arm -- p20/p50 are
+diagnostic; p80 is reported as budgeting information only (it does not gate
+selection, see below).
 
 **Finite draws (fix round 1, codex review).** A sufficiently sparse/heavy-
 tailed posterior can draw a log-cost sample large enough that ``exp``
@@ -86,11 +88,10 @@ floor each at 0.0, and sum across categories to one ``thompson_total_usd``
 per arm (each summand is thus the dollar *median* implied by the drawn
 parameters -- the natural per-draw objective here, since the dollar mean
 under drawn parameters, exp(x·beta + sigma2/2), would penalize noisy arms
-for a tail the log-space model never pays); the selected arm is the guard-passing arm
-with the lowest ``thompson_total_usd`` (the guard itself is still computed
-from the MC ``p80_total_usd``, which is always computed regardless of
-mode). Thompson draws are consumed from a **separate rng stream** than MC
-draws (``_derive_rngs`` splits one ``--seed`` into two independent child
+for a tail the log-space model never pays); the selected arm is the arm
+with the lowest ``thompson_total_usd`` among all scorable arms. Thompson
+draws are consumed from a **separate rng stream** than MC draws
+(``_derive_rngs`` splits one ``--seed`` into two independent child
 generators via ``numpy.random.SeedSequence.spawn(2)``) -- if they shared one
 stream, running the same seed with and without ``--thompson`` would consume
 a different number of random numbers per task, desynchronizing every
@@ -106,33 +107,23 @@ a fixed order -- tasks in decomposition order, arms sorted by
 output is fully byte-deterministic given (estimator id, seed, mc-draws,
 thompson mode) regardless of any dict's iteration order.
 
-Selection ("p20 bandit selection with a p80 guard"): the selection
-statistic is each arm's MC ``p20_total_usd`` -- a *low* quantile, not a
-mean or median, because this is a cost-minimizing bandit: an arm's p20
-starts low (wide, hopeful) when data is sparse and rises as data
-accumulates if the arm turns out to be expensive, while a genuinely cheap
-arm's p20 stays low -- so minimizing p20 both exploits what's known cheap
-and explores what's still uncertain, without a separate advisory flag for
-it. The guard excludes any arm whose MC ``p80_total_usd`` exceeds a *guard
-factor* times the *minimum* MC ``p80_total_usd`` among scorable arms for
-that task (this stops "cheap at p20, catastrophic in the tail" arms from
-winning on the optimistic quantile alone). The guard factor itself (default
-``DEFAULT_GUARD_FACTOR = 2.0`` -- an implementation-time judgment call, not
-a value the spec mandated or any data fitted; revisit it once real
-selections accrue) is resolved per run as: ``--guard-factor``
-CLI flag, else ``config_json["guard_factor"]`` if the estimator's own
-config specifies one, else the hardcoded default -- echoed back in the
-JSON report as ``"guard_factor"``. The selected arm is whichever guard-
-passing arm has the lowest ``p20_total_usd`` (tie-break ``(model,
-effort)`` lexicographic); if the guard excludes every arm (only possible
-with an overridden guard factor below 1.0), selection falls back to the
-single best arm by the same statistic among all scorable arms, bypassing
-the guard. In ``--thompson`` mode, if no guard-passing arm has a finite
-Thompson total (pathological -- would require every candidate's single
-draw to overflow), selection falls back to the p20 statistic among the
-same guard-passing set rather than crash comparing ``None``s. The report's
-``"arms"`` list is always ranked by ``p20_total_usd`` ascending, regardless
-of selection mode.
+Selection ("p20 bandit selection"): the selection statistic is each arm's
+MC ``p20_total_usd`` -- a *low* quantile, not a mean or median, because
+this is a cost-minimizing bandit: an arm's p20 starts low (wide, hopeful)
+when data is sparse and rises as data accumulates if the arm turns out to
+be expensive, while a genuinely cheap arm's p20 stays low -- so minimizing
+p20 both exploits what's known cheap and explores what's still uncertain,
+without a separate advisory flag for it. The selected arm is whichever
+scorable arm has the lowest ``p20_total_usd`` (tie-break ``(model,
+effort)`` lexicographic) -- there is no tail-risk exclusion of any kind;
+``p80_total_usd`` is reported for every arm as budgeting information but
+never excludes an arm from winning, however large. In ``--thompson`` mode,
+selection is the argmin of ``thompson_total_usd`` among all scorable arms
+with a finite Thompson total (falling back to the p20 statistic among all
+scorable arms if none is finite -- pathological, would require every
+candidate's single draw to overflow -- rather than crash comparing
+``None``s). The report's ``"arms"`` list is always ranked by
+``p20_total_usd`` ascending, regardless of selection mode.
 """
 from __future__ import annotations
 
@@ -151,19 +142,9 @@ import db
 import model
 
 DEFAULT_DB = Path(__file__).resolve().parents[3] / "data" / "agents" / "task-analyzer.sqlite"
-DEFAULT_GUARD_FACTOR = 2.0
 DEFAULT_MC_DRAWS = 2000
 DEFAULT_SEED = 0
 SANITY_COMPOSITES = (2.0, 3.0, 4.0)
-
-
-def resolve_guard_factor(config: dict, guard_factor: Optional[float]) -> float:
-    """Resolve the effective guard factor: explicit ``--guard-factor`` CLI
-    value wins, then the estimator's own ``config_json["guard_factor"]``,
-    then ``DEFAULT_GUARD_FACTOR``."""
-    if guard_factor is not None:
-        return guard_factor
-    return float(config.get("guard_factor", DEFAULT_GUARD_FACTOR))
 
 
 def _derive_rngs(seed: int) -> Tuple[np.random.Generator, np.random.Generator]:
@@ -345,8 +326,7 @@ def _thompson_total(posteriors: dict, categories, epsilon: float, x, arm, thomps
 
 
 def _score_task_core(config: dict, posteriors: dict, complexity: dict, mc_rng: np.random.Generator,
-                      thompson_rng: Optional[np.random.Generator], mc_draws: int,
-                      resolved_guard_factor: float, thompson: bool):
+                      thompson_rng: Optional[np.random.Generator], mc_draws: int, thompson: bool):
     """Score every known arm (``config["arms"]``) for one task's complexity
     vector. Returns ``(result, selected_mc_draws, selected_thompson_total)``:
     ``result`` is the JSON-serializable per-task report dict; the other two
@@ -357,7 +337,8 @@ def _score_task_core(config: dict, posteriors: dict, complexity: dict, mc_rng: n
     consumption-order guarantee), independent of ``config["arms"]``'s own
     order. ``mc_rng``/``thompson_rng`` are separate streams (see
     ``_derive_rngs``); ``thompson_rng`` may be ``None`` iff ``thompson`` is
-    False (never dereferenced in that case)."""
+    False (never dereferenced in that case). Selection considers every
+    scorable arm -- no tail-risk exclusion (see module docstring)."""
     row = _recomputed_complexity(complexity)
     x = model.features(row, config)
     epsilon = config.get("epsilon", model.DEFAULT_EPSILON)
@@ -394,22 +375,18 @@ def _score_task_core(config: dict, posteriors: dict, complexity: dict, mc_rng: n
 
     selected = None
     if scorable:
-        min_p80 = min(a["p80_total_usd"] for a in scorable)
-        guard_limit = resolved_guard_factor * min_p80
-        passing = [a for a in scorable if a["p80_total_usd"] <= guard_limit]
-        candidates = passing if passing else scorable
         if thompson:
-            thompson_candidates = [a for a in candidates if a["thompson_total_usd"] is not None]
+            thompson_candidates = [a for a in scorable if a["thompson_total_usd"] is not None]
             if thompson_candidates:
                 selected = min(thompson_candidates, key=lambda a: (a["thompson_total_usd"], a["model"], a["effort"]))
             else:
-                # Pathological: no guard-passing arm's single Thompson draw
-                # was finite. Fall back to the p20 statistic rather than
-                # crash comparing None -- documented, not silent (module
+                # Pathological: no scorable arm's single Thompson draw was
+                # finite. Fall back to the p20 statistic rather than crash
+                # comparing None -- documented, not silent (module
                 # docstring's Selection paragraph).
-                selected = min(candidates, key=lambda a: (a["p20_total_usd"], a["model"], a["effort"]))
+                selected = min(scorable, key=lambda a: (a["p20_total_usd"], a["model"], a["effort"]))
         else:
-            selected = min(candidates, key=lambda a: (a["p20_total_usd"], a["model"], a["effort"]))
+            selected = min(scorable, key=lambda a: (a["p20_total_usd"], a["model"], a["effort"]))
 
     selected_draws = draws_by_key.get((selected["model"], selected["effort"])) if selected else None
     selected_thompson = selected["thompson_total_usd"] if (selected and thompson) else None
@@ -432,7 +409,7 @@ def _score_task_core(config: dict, posteriors: dict, complexity: dict, mc_rng: n
 
 def score_task(config: dict, posteriors: dict, complexity: dict, mc_rng: np.random.Generator,
                thompson_rng: Optional[np.random.Generator] = None, mc_draws: int = DEFAULT_MC_DRAWS,
-               guard_factor: Optional[float] = None, thompson: bool = False) -> dict:
+               thompson: bool = False) -> dict:
     """Public single-task scoring entry point (what ``run()`` calls per
     task, minus the raw draws it uses only for decomposition-level
     aggregation). ``mc_rng``/``thompson_rng`` must be caller-owned,
@@ -444,14 +421,13 @@ def score_task(config: dict, posteriors: dict, complexity: dict, mc_rng: np.rand
     does this automatically for a whole decomposition)."""
     if thompson and thompson_rng is None:
         raise ValueError("thompson_rng is required when thompson=True")
-    resolved_guard_factor = resolve_guard_factor(config, guard_factor)
     result, _draws, _thompson = _score_task_core(
-        config, posteriors, complexity, mc_rng, thompson_rng, mc_draws, resolved_guard_factor, thompson
+        config, posteriors, complexity, mc_rng, thompson_rng, mc_draws, thompson
     )
     return result
 
 
-def run(conn, decomposition: dict, estimator_id: Optional[int] = None, guard_factor: Optional[float] = None,
+def run(conn, decomposition: dict, estimator_id: Optional[int] = None,
         seed: int = DEFAULT_SEED, mc_draws: int = DEFAULT_MC_DRAWS, thompson: bool = False) -> dict:
     """Score every task in ``decomposition["tasks"]``; returns the full
     report dict (JSON-serializable) with per-task results and
@@ -459,10 +435,7 @@ def run(conn, decomposition: dict, estimator_id: Optional[int] = None, guard_fac
     (``_derive_rngs(seed)`` -- module docstring's "RNG stream separation")
     are created here and each shared across every task, in decomposition
     order -- the module docstring's determinism guarantee, including "MC
-    totals are identical with or without ``--thompson``". ``guard_factor``,
-    if given, overrides both the estimator config's own value and
-    ``DEFAULT_GUARD_FACTOR`` (see ``resolve_guard_factor``); the value
-    actually used is echoed back as ``report["guard_factor"]``.
+    totals are identical with or without ``--thompson``".
     ``decomposition_totals`` sums the *selected* arm's raw (unfiltered) MC
     draws element-wise across tasks, THEN applies ``_finite_quantiles``
     once -- not a sum of each task's already-computed (and already-
@@ -471,7 +444,6 @@ def run(conn, decomposition: dict, estimator_id: Optional[int] = None, guard_fac
     per-category quantiles; Thompson totals (already per-task scalars) are
     summed directly, no MC involved at that level."""
     resolved_id, config, posteriors = load_estimator(conn, estimator_id)
-    resolved_guard_factor = resolve_guard_factor(config, guard_factor)
     mc_rng, thompson_rng = _derive_rngs(seed)
 
     tasks_out = []
@@ -481,8 +453,7 @@ def run(conn, decomposition: dict, estimator_id: Optional[int] = None, guard_fac
 
     for entry in decomposition.get("tasks", []):
         result, selected_draws, selected_thompson = _score_task_core(
-            config, posteriors, entry.get("complexity", {}), mc_rng, thompson_rng, mc_draws,
-            resolved_guard_factor, thompson
+            config, posteriors, entry.get("complexity", {}), mc_rng, thompson_rng, mc_draws, thompson
         )
         result["task"] = entry.get("task")
         result["title"] = entry.get("title")
@@ -511,7 +482,6 @@ def run(conn, decomposition: dict, estimator_id: Optional[int] = None, guard_fac
         "estimator_id": resolved_id,
         "seed": seed,
         "mc_draws": mc_draws,
-        "guard_factor": resolved_guard_factor,
         "selection_mode": "thompson" if thompson else "p20",
         "tasks": tasks_out,
         "decomposition_totals": decomposition_totals,
@@ -575,7 +545,7 @@ def render_table(report: dict) -> str:
     else:
         lines.append(
             f"decomposition totals: p20=${totals['p20_total_usd']:.4f} p50=${totals['p50_total_usd']:.4f} "
-            f"p80=${totals['p80_total_usd']:.4f} (guard_factor={report['guard_factor']})"
+            f"p80=${totals['p80_total_usd']:.4f}"
         )
     return "\n".join(lines)
 
@@ -585,8 +555,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--decomposition", help="path to a decomposition file (.json or annotation-subset .yaml)")
     p.add_argument("--db", default=str(DEFAULT_DB), help="path to the task-analyzer sqlite database")
     p.add_argument("--estimator-id", type=int, default=None)
-    p.add_argument("--guard-factor", type=float, default=None,
-                    help="override the selection guard factor (default: the estimator config's own value, or 2.0)")
     p.add_argument("--seed", type=int, default=DEFAULT_SEED,
                     help="seed split into independent MC/Thompson rng streams (see _derive_rngs)")
     p.add_argument("--mc-draws", type=int, default=DEFAULT_MC_DRAWS,
@@ -618,7 +586,7 @@ def main(argv=None) -> int:
 
     try:
         report = run(
-            conn, decomposition, estimator_id=args.estimator_id, guard_factor=args.guard_factor,
+            conn, decomposition, estimator_id=args.estimator_id,
             seed=args.seed, mc_draws=args.mc_draws, thompson=args.thompson,
         )
     except EstimatorError as exc:

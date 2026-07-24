@@ -77,21 +77,22 @@ computed by Monte Carlo, never sum-*of*-quantiles.
 ### Requirement: Decomposition estimator CLI
 The system SHALL provide `estimate.py` taking a proposed decomposition
 (annotation-format YAML with complexity vectors), a database path (defaulting
-to the main-branch database), a Monte Carlo seed and draw count, and a guard
-factor; it SHALL output, per task, each arm's total-cost quantiles (p20,
-p50, p80, computed per the Monte Carlo requirement above), the arm selected
-by minimizing p20 among arms passing the p80 guard (excluding any arm whose
-p80 total exceeds the guard factor times the minimum p80 total among
-scorable arms), and decomposition-level totals — as machine-readable JSON
-and a human-readable table. An alternate Thompson-sampling selection mode
-MUST be available (one Thompson draw per arm, summed across categories,
-argmin among guard-passing arms), reported as the run's selection mode.
-Output MUST be byte-deterministic given a fixed estimator id, seed, and
-draw count — there is no other source of randomness or non-determinism.
-Monte Carlo draws and Thompson draws MUST be consumed from independent
-random streams derived from the same seed, so that a report's Monte Carlo
-p20/p50/p80 totals are identical for a given (estimator id, seed, draw
-count) whether or not `--thompson` was also given.
+to the main-branch database), and a Monte Carlo seed and draw count; it
+SHALL output, per task, each arm's total-cost quantiles (p20, p50, p80,
+computed per the Monte Carlo requirement above), the arm selected by
+minimizing p20 among ALL scorable arms — there is no tail-risk exclusion of
+any kind; p80 is reported for every arm as budgeting information only and
+never excludes an arm from selection — and decomposition-level totals — as
+machine-readable JSON and a human-readable table. An alternate
+Thompson-sampling selection mode MUST be available (one Thompson draw per
+arm, summed across categories, argmin among all scorable arms with a
+finite total), reported as the run's selection mode. Output MUST be
+byte-deterministic given a fixed estimator id, seed, and draw count — there
+is no other source of randomness or non-determinism. Monte Carlo draws and
+Thompson draws MUST be consumed from independent random streams derived
+from the same seed, so that a report's Monte Carlo p20/p50/p80 totals are
+identical for a given (estimator id, seed, draw count) whether or not
+`--thompson` was also given.
 
 #### Scenario: Scoring a candidate decomposition
 - **WHEN** `estimate.py` runs on a candidate YAML with three tasks
@@ -109,9 +110,13 @@ count) whether or not `--thompson` was also given.
 - **WHEN** one arm has a lower total p50 (median) than another but a higher total p20 (its width pulls its own low quantile down less than the other arm's)
 - **THEN** the arm with the lower p20 is selected, not the arm with the lower p50
 
+#### Scenario: An arm with a very high p80 can still win
+- **WHEN** an arm has the lowest p20 total among all scorable arms but a p80 total orders of magnitude above the other arms'
+- **THEN** that arm is still selected — no arm is excluded from selection on the basis of its p80 total
+
 #### Scenario: Thompson mode selects and reports differently
 - **WHEN** `estimate.py --thompson` runs on a candidate decomposition
-- **THEN** each arm's report includes a Thompson total, the selected arm is the guard-passing arm with the lowest Thompson total, and the report's selection mode reads `thompson` instead of `p20`
+- **THEN** each arm's report includes a Thompson total, the selected arm is the scorable arm with the lowest Thompson total, and the report's selection mode reads `thompson` instead of `p20`
 
 #### Scenario: Thompson mode does not perturb Monte Carlo totals
 - **WHEN** `estimate.py` runs on a multi-task candidate decomposition with the same seed, once with `--thompson` and once without

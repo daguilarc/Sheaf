@@ -77,3 +77,13 @@ query-layer-only redesign of an already-active one.
   `estimate.py`'s module docstring and design.md D6 for the full rationale.
   Estimator training/persistence and the database are unchanged; this was a
   query-layer-only redesign.
+- [x] 7.5 Follow-up 3 — p80 guard removed: the guard introduced in 7.4
+  (exclude any arm whose MC p80 total exceeded a guard factor times the
+  minimum p80 among scorable arms) suppressed exploration of exactly the
+  sparse arms p20 selection exists to explore, so it was removed entirely
+  (user decision) — selection is now the lowest p20 total among ALL
+  scorable arms (Thompson mode likewise ungated); `p20`/`p50`/`p80` stay as
+  reported diagnostics. `DEFAULT_GUARD_FACTOR`, `resolve_guard_factor`,
+  `--guard-factor`, and `config_json["guard_factor"]` handling are removed
+  outright. Estimator training/persistence and the database are unchanged;
+  this was a query-layer-only change.

@@ -92,14 +92,14 @@ estimators stay for audit/rollback (D9), so `estimate.py` always defaults to
 the numerically greatest `estimator_id` unless `--estimator-id` pins an
 older one. `--config` is a path to a JSON file of overrides deep-merged onto
 `model.default_config()` (feature list, epsilon, prior hyperparameters,
-`min_rows_per_arm`, guard factor).
+`min_rows_per_arm`).
 
 ### `estimate.py` — score a candidate decomposition
 
 ```
 python3 projects/agents/task-analyzer/estimate.py \
     (--decomposition FILE | --sanity) [--db PATH] \
-    [--estimator-id N] [--guard-factor F] [--seed N] [--mc-draws N] \
+    [--estimator-id N] [--seed N] [--mc-draws N] \
     [--thompson] [--json]
 ```
 
@@ -129,17 +129,18 @@ as a sum of each category's own quantile. Non-finite draws (an overflowed
 `exp` on a sufficiently heavy-tailed posterior) are excluded before
 quantiles are taken; an arm with zero finite draws is `unscorable`
 (`reason: "all_draws_nonfinite"`), and no report ever contains an
-`Infinity`/`NaN` value. Selection is **"p20 bandit with a p80
-guard"**: the selected arm is the one with the lowest MC `p20_total_usd`
-among arms whose MC `p80_total_usd` doesn't exceed `--guard-factor` (default
-2.0, or the estimator's own `config_json["guard_factor"]`) times the
-cheapest scorable arm's p80 total. Minimizing a *low* quantile is
-deliberately explore-friendly — a sparse arm's wide posterior pulls its own
-p20 down even when its median is high — so there is no separate advisory
-flag for exploration; `--thompson` selects via one Thompson draw per arm
-instead (summed across categories), reported as `"selection_mode":
-"thompson"` vs. the default `"p20"`. Thompson draws come from a rng stream
-independent of the MC draws (both derived from `--seed` via
+`Infinity`/`NaN` value. Selection is **"p20 bandit"**: the selected arm is
+the one with the lowest MC `p20_total_usd` among all scorable arms — no
+tail-risk exclusion of any kind (an earlier p80-based guard was removed;
+see design.md D6's rationale note); `p80_total_usd` is still reported for
+every arm as budgeting information, it just never excludes an arm from
+winning. Minimizing a *low* quantile is deliberately explore-friendly — a
+sparse arm's wide posterior pulls its own p20 down even when its median is
+high — so there is no separate advisory flag for exploration; `--thompson`
+selects via one Thompson draw per arm instead (summed across categories),
+argmin among all scorable arms with a finite total, reported as
+`"selection_mode": "thompson"` vs. the default `"p20"`. Thompson draws come
+from a rng stream independent of the MC draws (both derived from `--seed` via
 `numpy.random.SeedSequence.spawn(2)`) — a report's MC `p20`/`p50`/`p80`
 totals are identical whether or not `--thompson` was given, since one mode
 never perturbs the other's stream. Both modes are fully deterministic given

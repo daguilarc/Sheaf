@@ -329,30 +329,30 @@ not `--thompson` was given (an earlier version of this design shared one
 stream for both, which desynchronized later tasks' MC draws between the
 two modes at the same seed — fix round 1).
 
-Selection is **"p20 bandit with a p80 guard"**, not "minimize expected
-total": the selection statistic is each arm's MC `p20_total_usd` — a *low*
-quantile, chosen because this is a cost-minimizing bandit, and low
-quantiles are intrinsically explore-friendly (an unknown/sparse arm's wide
-posterior pulls its own p20 down even though its median may be high; a
-genuinely cheap, well-sampled arm's p20 stays low too) — so minimizing p20
-both exploits what's known-cheap and explores what's still uncertain,
-without any separate advisory exploration flag. The
-guard (kept, same rationale, now built on an honest MC quantity instead of
-an overstated sum-of-quantiles one) excludes any arm whose MC
-`p80_total_usd` exceeds a *guard factor* (default `2.0`, same CLI/config
-precedence as before) times the minimum MC `p80_total_usd` among scorable
-arms for that task; the selected arm is the guard-passing arm with the
-lowest `p20_total_usd` (tie-break `(model, effort)` lexicographic).
-`estimate.py --thompson` selects differently: one Thompson draw
-(`model.NIG.thompson`, the classic sample-sigma2-then-beta-then-x·beta
-procedure) per (arm, category) from the dedicated Thompson rng stream,
-summed to one `thompson_total_usd` per arm (`None` if non-finite), argmin
-among guard-passing arms with a finite total (the guard itself is still the
-MC one, computed regardless of mode; falls back to the p20 statistic if no
-guard-passing arm has a finite Thompson total, rather than crash comparing
-`None`s). Both modes are fully deterministic given the same seed; see
-`estimate.py`'s module docstring for the complete rng-consumption-order
-contract.
+Selection is **"p20 bandit"**, not "minimize expected total": the
+selection statistic is each arm's MC `p20_total_usd` — a *low* quantile,
+chosen because this is a cost-minimizing bandit, and low quantiles are
+intrinsically explore-friendly (an unknown/sparse arm's wide posterior
+pulls its own p20 down even though its median may be high; a genuinely
+cheap, well-sampled arm's p20 stays low too) — so minimizing p20 both
+exploits what's known-cheap and explores what's still uncertain, without
+any separate advisory exploration flag. The selected arm is whichever
+scorable arm has the lowest `p20_total_usd` (tie-break `(model, effort)`
+lexicographic), among *all* scorable arms — no tail-risk exclusion.
+`p80_total_usd` is still reported per arm as budgeting information; it
+just never gates selection (followup-3: a p80-based guard was tried and
+then deliberately removed — it suppressed exploration of exactly the
+sparse arms p20-selection exists to explore, which defeated the point of
+the bandit; reintroducing some form of tail-risk guard remains an option
+if real usage shows a need for one). `estimate.py --thompson` selects
+differently: one Thompson draw (`model.NIG.thompson`, the classic
+sample-sigma2-then-beta-then-x·beta procedure) per (arm, category) from
+the dedicated Thompson rng stream, summed to one `thompson_total_usd` per
+arm (`None` if non-finite), argmin among all scorable arms with a finite
+total (falls back to the p20 statistic if none is finite, rather than
+crash comparing `None`s). Both modes are fully deterministic given the
+same seed; see `estimate.py`'s module docstring for the complete
+rng-consumption-order contract.
 
 ### D7. Decomposition subagent protocol
 
@@ -367,10 +367,12 @@ subagent with the proposal/design/specs as input:
 3. Run `estimate.py` on each candidate (deterministic; reads the **main
    branch** database path passed in by the caller, never the worktree copy).
 4. Compare each candidate's total p20 cost (the arm-selection statistic
-   `estimate.py` itself ranks and picks by — a p80-guard-passing arm's
-   lowest Monte Carlo p20 total, not a configured quantile knob); apply
+   `estimate.py` itself ranks and picks by — the lowest Monte Carlo p20
+   total among all scorable arms, not a configured quantile knob); apply
    guardrails: no task above composite 3.5 (split it), prefer C7 ≤ 2
-   briefs, respect dependency order.
+   briefs, respect dependency order. (These are the decomposer's own
+   candidate-shape guardrails, unrelated to `estimate.py`'s selection
+   statistic — the latter no longer has any guard of its own, see D6.)
 5. Emit: chosen decomposition, its annotation YAML, the per-candidate score
    table, and a one-paragraph rationale.
 

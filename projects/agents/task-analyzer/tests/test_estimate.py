@@ -2,6 +2,9 @@
 .superpowers/sdd/task-analyzer/followup-2-brief.md for the p20-bandit/
 Monte-Carlo redesign this covers (supersedes the old expected/pq/explore-flag
 design; see git history for that version's tests) and
+.superpowers/sdd/task-analyzer/followup-3-brief.md for the removal of the
+p80 tail-risk guard (selection is now min p20 among ALL scorable arms, no
+exclusion by p80; see git history for the guard-era tests) and
 specs/task-analyzer-cost-model/spec.md "Decomposition estimator CLI" for the
 required scenarios. Per convention, estimators are hand-built directly into
 ``estimators``/``estimator_params`` -- no training run needed.
@@ -112,15 +115,24 @@ class EstimateTestCase(unittest.TestCase):
 
 
 class TestScoreTask(EstimateTestCase):
-    def test_cheap_arm_selected_via_p20(self):
-        # Default guard (2.0) excludes SPARSE_ARM (its MC p80 total is
-        # orders of magnitude above CHEAP_ARM's), so CHEAP_ARM wins on p20
-        # among the guard-passing arms.
+    def test_huge_p80_but_lowest_p20_arm_now_wins(self):
+        # Followup-3: the p80 guard is gone. SPARSE_ARM's p80 total (~52) is
+        # roughly 500x CHEAP_ARM's (~0.10) -- the exact case the old guard
+        # used to exclude -- but SPARSE_ARM's width pulls its own p20 (~0.03)
+        # BELOW CHEAP_ARM's (~0.10), so it now wins selection outright, no
+        # override/permissive config needed. This is the intended behavior
+        # (user decision, followup-3 brief): the guard was suppressing
+        # exploration of exactly the sparse arms p20-selection exists to
+        # explore.
         config = _seed_estimator_db(self.conn)
         _, _, posteriors = estimate.load_estimator(self.conn)
         rng = np.random.default_rng(0)
         result = estimate.score_task(config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, rng)
-        self.assertEqual((result["selected"]["model"], result["selected"]["effort"]), CHEAP_ARM)
+        cheap = next(a for a in result["arms"] if (a["model"], a["effort"]) == CHEAP_ARM)
+        sparse = next(a for a in result["arms"] if (a["model"], a["effort"]) == SPARSE_ARM)
+        self.assertLess(sparse["p20_total_usd"], cheap["p20_total_usd"])
+        self.assertGreater(sparse["p80_total_usd"], 10 * cheap["p80_total_usd"])
+        self.assertEqual((result["selected"]["model"], result["selected"]["effort"]), SPARSE_ARM)
 
     def test_arm_ranking_sorted_by_p20_ascending(self):
         config = _seed_estimator_db(self.conn)
@@ -190,17 +202,20 @@ class TestScoreTask(EstimateTestCase):
         self.assertNotIn(("nonexistent-model", "none"), arm_pairs)
         unscorable_pairs = {(a["model"], a["effort"]) for a in result["unscorable_arms"]}
         self.assertIn(("nonexistent-model", "none"), unscorable_pairs)
-        self.assertEqual((result["selected"]["model"], result["selected"]["effort"]), CHEAP_ARM)
+        # Among the two real arms, SPARSE_ARM has the lower p20 (no guard to
+        # exclude it despite its huge p80 -- see
+        # test_huge_p80_but_lowest_p20_arm_now_wins) and wins; the point of
+        # this test is only that the zero-coverage arm never wins by
+        # default, not which real arm does.
+        self.assertEqual((result["selected"]["model"], result["selected"]["effort"]), SPARSE_ARM)
 
     def test_selection_is_min_p20_not_min_p50(self):
         # SPARSE_ARM's total p50 (median) is far ABOVE CHEAP_ARM's -- under a
         # min-p50/median selection rule CHEAP_ARM would win outright. But
         # SPARSE_ARM's width pulls its p20 BELOW CHEAP_ARM's, so under the
-        # actual (p20, guard-passing) rule it wins instead, once a
-        # permissive guard factor stops the p80 guard from excluding it.
-        # This is the core "why p20, not p50" property from the brief.
+        # actual min-p20-among-all-scorable-arms rule it wins instead. This
+        # is the core "why p20, not p50" property from the brief.
         config = _seed_estimator_db(self.conn)
-        config["guard_factor"] = 1.0e6
         _, _, posteriors = estimate.load_estimator(self.conn)
         rng = np.random.default_rng(0)
         result = estimate.score_task(config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, rng)
@@ -361,9 +376,6 @@ class TestNonFiniteDraws(EstimateTestCase):
         # to smooth it out); such an arm's thompson_total_usd must be null,
         # not inf/nan, and must not crash selection.
         config, arm = self._seed_with_overflow_arm(self._ALL_OVERFLOW_NIG)
-        config["guard_factor"] = 1.0e12  # let the overflow arm pass the guard if it were scorable
-        self.conn.execute("UPDATE estimators SET config_json = ? WHERE estimator_id = 1", (json.dumps(config),))
-        self.conn.commit()
         mc_rng, thompson_rng = estimate._derive_rngs(0)
         _, _, posteriors = estimate.load_estimator(self.conn)
         result = estimate.score_task(
@@ -382,7 +394,7 @@ class TestNonFiniteDraws(EstimateTestCase):
 
 
 class TestThompsonMode(EstimateTestCase):
-    def test_thompson_mode_deterministic_and_selects_guard_passing_arm(self):
+    def test_thompson_mode_deterministic_and_selects_among_all_scorable_arms(self):
         config = _seed_estimator_db(self.conn)
         _, _, posteriors = estimate.load_estimator(self.conn)
 
@@ -400,9 +412,10 @@ class TestThompsonMode(EstimateTestCase):
 
         self.assertIsNotNone(result_a["selected"]["thompson_total_usd"])
         selected_pair = (result_a["selected"]["model"], result_a["selected"]["effort"])
-        # The default guard (2.0) excludes SPARSE_ARM (its MC p80 dwarfs
-        # CHEAP_ARM's), so the only guard-passing arm is CHEAP_ARM.
-        self.assertEqual(selected_pair, CHEAP_ARM)
+        # No guard: the selected arm is whichever of CHEAP_ARM/SPARSE_ARM
+        # drew the lower single Thompson sample at this seed (both are
+        # eligible candidates -- there is no tail-risk exclusion of either).
+        self.assertIn(selected_pair, (CHEAP_ARM, SPARSE_ARM))
         for arm in result_a["arms"]:
             self.assertIsNotNone(arm["thompson_total_usd"])
 
@@ -559,84 +572,6 @@ class TestPooledFallback(EstimateTestCase):
         for arm in result["unscorable_arms"]:
             self.assertEqual(arm["missing_categories"], ["phantom"])
         self.assertIsNone(result["selected"])
-
-
-RISKY_ARM = ("gpt-5.4", "high")
-
-
-class TestGuard(EstimateTestCase):
-    def _seed_risky_arm(self, guard_factor=None):
-        """Seed the cheap arm plus a third, ``RISKY_ARM``: an even lower
-        raw mean than the cheap arm, but a wide-enough posterior that its MC
-        p80 total is far above the cheap arm's -- fails the default 2x
-        guard, but comfortably passes a permissive (e.g. 1000x) override, so
-        the same fixture exercises both "guard rejects" and "guard, when
-        relaxed, accepts" without needing separate posteriors. Optionally
-        embeds ``guard_factor`` into the persisted estimator config."""
-        config = _seed_estimator_db(self.conn, arms=(CHEAP_ARM,))
-        risky_nig = model.NIG(mu=np.array([math.log(0.01 + 1e-4), 0.0]), Lambda=np.diag([0.15, 0.15]), a=5.0, b=1.0)
-        for category in CATEGORIES:
-            db.upsert(
-                self.conn, "estimator_params",
-                {"estimator_id": 1, "category": category, "model": RISKY_ARM[0], "effort": RISKY_ARM[1],
-                 "posterior_json": risky_nig.to_json()},
-                ["estimator_id", "category", "model", "effort"],
-            )
-        config["arms"].append(list(RISKY_ARM))
-        if guard_factor is not None:
-            config["guard_factor"] = guard_factor
-        self.conn.execute(
-            "UPDATE estimators SET config_json = ? WHERE estimator_id = 1", (json.dumps(config),)
-        )
-        self.conn.commit()
-        return estimate.load_estimator(self.conn)
-
-    def test_guard_excludes_arm_whose_mc_p80_exceeds_default_factor(self):
-        # With the default guard factor (2.0, absent from config here), the
-        # risky arm's MC p80 total is far more than 2x the cheap arm's, so
-        # it must lose despite having the lowest p20 -- the guard, not p20
-        # ranking, is what excludes it.
-        _, config, posteriors = self._seed_risky_arm()
-        rng = np.random.default_rng(0)
-        result = estimate.score_task(config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, rng)
-        risky = next(a for a in result["arms"] if (a["model"], a["effort"]) == RISKY_ARM)
-        cheap = next(a for a in result["arms"] if (a["model"], a["effort"]) == CHEAP_ARM)
-        self.assertLess(risky["p20_total_usd"], cheap["p20_total_usd"])
-        self.assertGreater(risky["p80_total_usd"], 2.0 * cheap["p80_total_usd"])
-        self.assertEqual((result["selected"]["model"], result["selected"]["effort"]), CHEAP_ARM)
-
-    def test_guard_factor_read_from_estimator_config(self):
-        # A permissive guard factor persisted in the estimator's own
-        # config_json (no CLI override) must let the risky arm win, since
-        # it has the lowest p20 and the guard no longer excludes it.
-        _, config, posteriors = self._seed_risky_arm(guard_factor=1000.0)
-        rng = np.random.default_rng(0)
-        result = estimate.score_task(config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, rng)
-        self.assertEqual((result["selected"]["model"], result["selected"]["effort"]), RISKY_ARM)
-
-    def test_guard_factor_cli_override_takes_precedence_over_config(self):
-        # config_json says "permissive" (1000x) but an explicit
-        # guard_factor argument (as --guard-factor would supply) must win:
-        # a strict 1.0x factor rejects the risky arm again.
-        _, config, posteriors = self._seed_risky_arm(guard_factor=1000.0)
-        rng = np.random.default_rng(0)
-        result = estimate.score_task(
-            config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, rng, guard_factor=1.0
-        )
-        self.assertEqual((result["selected"]["model"], result["selected"]["effort"]), CHEAP_ARM)
-
-    def test_guard_factor_default_when_absent_from_config_and_cli(self):
-        self.assertEqual(estimate.resolve_guard_factor({}, None), estimate.DEFAULT_GUARD_FACTOR)
-
-    def test_guard_factor_echoed_in_run_report(self):
-        self._seed_risky_arm(guard_factor=7.5)
-        report = estimate.run(self.conn, _decomposition((("task-1", 3.0),)))
-        self.assertEqual(report["guard_factor"], 7.5)
-
-    def test_guard_factor_echoed_reflects_cli_override(self):
-        self._seed_risky_arm(guard_factor=7.5)
-        report = estimate.run(self.conn, _decomposition((("task-1", 3.0),)), guard_factor=1.0)
-        self.assertEqual(report["guard_factor"], 1.0)
 
 
 class TestRunAndCLI(EstimateTestCase):
@@ -819,7 +754,10 @@ class TestReadOnlyDb(EstimateTestCase):
                 rc = estimate.main(argv)
             self.assertEqual(rc, 0)
             report = json.loads(buf.getvalue())
-            self.assertEqual((report["tasks"][0]["selected"]["model"], report["tasks"][0]["selected"]["effort"]), CHEAP_ARM)
+            # SPARSE_ARM has the lower p20 in this fixture (no guard to
+            # exclude it) -- see test_huge_p80_but_lowest_p20_arm_now_wins;
+            # the point of this test is only the read-only-db plumbing.
+            self.assertEqual((report["tasks"][0]["selected"]["model"], report["tasks"][0]["selected"]["effort"]), SPARSE_ARM)
         finally:
             os.chmod(self.db_path, original_mode)
 

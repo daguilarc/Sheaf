@@ -70,9 +70,11 @@ step:
    <mc-draws> [--estimator-id <id>] --json`. This is deterministic (given a
    fixed seed and draw count) and read-only. Use its per-task `arms` ranking
    (sorted by total p20, the selection statistic) to pick each task's actual
-   `(model, effort)` — the `selected` arm (lowest p20 total among arms
-   passing the p80 guard), unless a guardrail below overrides it — and its
-   `decomposition_totals` for the candidate-level comparison.
+   `(model, effort)` — the `selected` arm (lowest p20 total among *all*
+   scorable arms; `estimate.py` has no tail-risk exclusion of its own, so a
+   high-p80 arm can still be `selected` — this is expected, not a bug),
+   unless a guardrail below overrides it — and its `decomposition_totals`
+   for the candidate-level comparison.
 4. **Apply guardrails** before comparing totals:
    - **No task above composite 3.5.** If a candidate has one, split that
      task into two (or more) and re-score/re-estimate the split — generate
