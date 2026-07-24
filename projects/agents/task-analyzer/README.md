@@ -233,8 +233,9 @@ its brief is never mistaken for having rendered a verdict; a genuine
 verdict's own trailing one-line reason (including one with a backtick-quoted
 code identifier or the ordinary word "or") still matches.
 
-**Known limitation: `sessions.output_tokens` vs. `session_turns` sum.**
-For a real fraction of sessions (roughly 60% of the migrated corpus), the
+**Known limitation: `sessions.output_tokens` vs. `session_turns` sum, and
+what it means for the spanning-session split (fix-round-2 review).** For a
+real fraction of sessions (roughly 60% of the migrated corpus), the
 session-level `output_tokens` total and the sum of that same session's
 `session_turns.output_tokens` disagree — sometimes by a lot. This is a real,
 reproducible property of `extractors.py`'s turn-splitting, not stale/
@@ -246,16 +247,42 @@ running total but never becomes its own `Turn`, so its delta drops out of
 the per-turn sum; the largest gaps come from persistent/thread-spawned
 sessions whose visible transcript file picks up mid-conversation (after
 context compaction), where the checkpoint's *cumulative* total already
-reflects activity from before this file's own turns begin. **This does not
-affect dollar correctness**: `costs.py` always prices a session from its own
-`input_tokens`/`cached_tokens`/`output_tokens` fields, never from summed
-`session_turns`; the spanning-session split's fix/pre-boundary shares are
-ratios computed entirely *within* a session's own `session_turns` data, then
-multiplied against that session's true (session-level) dollar cost, so the
-split stays proportionally sound regardless of this gap. Only
-`task_costs.weighted_tokens` for a split session — explicitly documented as
-a diagnostic, price-independent sanity-check figure — under-reports the
-true output-token count for affected sessions.
+reflects activity from before this file's own turns begin.
+
+For a round-0 session that is NOT split (no review boundary, or a boundary
+exists but every turn is pre-boundary), this gap is genuinely
+diagnostic-only: phase shares are computed from `output_tokens` (the true
+session-level total) directly, via `phase_tokens`, never from the
+`session_turns` sum, so dollar attribution is exact regardless of turn
+coverage.
+
+**For a session that IS split at a review boundary, this gap is NOT merely
+diagnostic** — an earlier version of this note incorrectly said it was.
+`costs._apportion_round0_session` allocates the session's *entire* dollar
+cost by `fix_share = fix_output_tokens / total_turn_output_tokens` and
+`pre_share = 1 - fix_share`, both computed from the `session_turns` sum,
+not from `output_tokens`. When `session_turns` covers less than 100% of the
+session's true `output_tokens` (its *turn coverage*), the missing delta
+mass is implicitly distributed pro-rata across BOTH the fix and phase
+partitions according to whatever ratio the turns actually visible in
+`session_turns` happen to reflect — which may not be representative of the
+missing mass. **What remains true:** a task's TOTAL usd across every
+category is still exactly preserved (`fix_share + pre_share == 1` by
+construction, so nothing is lost or double-counted) — only the *split
+between* `followup_fix` and the phase categories for that one session is
+approximate, in proportion to `(1 - coverage)`.
+
+`costs.rebuild` computes each split session's turn coverage
+(`sum(session_turns.output_tokens) / sessions.output_tokens`) and surfaces
+it two ways: every actually-split session's ratio is recorded on the
+returned `RebuildResult.spanning_session_coverage` (`{session_id: ratio}`),
+and any session below `coverage_warn_threshold` (`--db`-relative constant
+`costs.DEFAULT_COVERAGE_WARN_THRESHOLD = 0.9`) gets one loud `WARN` line on
+stderr naming it and its ratio. This is observability only — it does not
+change how the split itself is computed (no attribution redesign); see
+`.superpowers/sdd/task-analyzer/followup-4-report.md`'s "Fix round 2"
+section for the real dataset's 11 spanning sessions' actual coverage
+ratios and worst case.
 
 ## Staging / crash-recovery semantics
 

@@ -328,6 +328,30 @@ Both are fixed with mechanical, deterministic detection, never inference:
   or unrecoverable) uses the original, unsplit whole-session apportionment
   — a real, documented approximation, not a bug: the split can only ever
   be as good as the per-turn data available.
+
+  **Turn coverage caveat (fix-round-2 review).** `fix_share`/`pre_share`
+  are computed entirely against `total_turn_output_tokens` (the
+  `session_turns` sum for this session), NOT against the session's own
+  `output_tokens` — and the two can disagree (a real, documented gap in
+  `extractors.py`'s turn-splitting; see `README.md`'s "known limitation"
+  section). The split still allocates the session's *entire* usd
+  (`fix_share + pre_share == 1` by construction, so the task-level total
+  is unaffected), but when `total_turn_output_tokens` is less than the
+  session's true `output_tokens` (turn coverage < 100%), the *missing*
+  delta mass is implicitly distributed pro-rata across BOTH the fix and
+  phase partitions in whatever ratio the turns actually present in
+  `session_turns` happen to reflect — so the split *between*
+  `followup_fix` and the phase categories for that session is only as
+  accurate as its coverage ratio, not exact. `costs.rebuild` computes and
+  surfaces each split session's coverage (`RebuildResult.
+  spanning_session_coverage`), warning loudly (stderr) below a documented
+  threshold (`costs.DEFAULT_COVERAGE_WARN_THRESHOLD = 0.9`) — this is
+  observability, not an attribution redesign: a fix-round-1 version of
+  this document (and the followup-4 report) incorrectly characterized the
+  coverage gap as affecting only the diagnostic `weighted_tokens` figure;
+  that is true for an UNSPLIT round-0 session (phase shares there come
+  from `output_tokens` directly, never `session_turns`), but not for a
+  session that actually gets split at a review boundary.
 - **Backfill** (`ingest.py backfill-turns`): for any already-ingested
   session lacking `session_turns`, re-extracts turns from
   `sessions.transcript_path` if that file still exists on disk; for

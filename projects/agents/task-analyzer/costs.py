@@ -62,6 +62,38 @@ Token/cost semantics (design.md D5):
   session-level apportionment unchanged, with no fix-partition split at
   all -- this is a real, documented approximation for such sessions, not a
   bug: the split can only ever be as good as the per-turn data available.
+
+  **Turn coverage and category-attribution accuracy (fix-round-2 review).**
+  The split above always allocates the session's FULL usd -- ``fix_share``
+  and ``pre_share`` are defined so they sum to exactly 1, by construction,
+  regardless of how much of the session's real activity ``session_turns``
+  actually captures. This is exact ONLY when ``total_turn_output_tokens``
+  (the sum of this session's ``session_turns.output_tokens``) equals the
+  session's own ``output_tokens`` -- 100% *turn coverage*. When it's less
+  (a real, documented gap in ``extractors.py``'s turn-splitting -- see
+  ``projects/agents/task-analyzer/README.md``'s "known limitation" section;
+  as of the 2026-07 real dataset, ALL 11 sessions that actually span a
+  review boundary have coverage below 100%, some well below), the *missing*
+  turn-delta mass is implicitly distributed pro-rata across BOTH the fix
+  and phase partitions in whatever ratio the OBSERVED (covered) turns
+  happen to reflect -- e.g. at 60% coverage, a fix/phase split computed
+  from the visible 60% of turns is assumed representative of the missing
+  40%, which may not hold. Fix-round-1's report characterized this as
+  "diagnostic only" (affecting only the ``weighted_tokens`` sanity-check
+  column) -- that was **incorrect** for spanning sessions specifically: the
+  missing mass changes the actual USD split between ``followup_fix`` and
+  the phase categories, not just the reported token count. What remains
+  true: the TOTAL usd across all of a task's categories is still exactly
+  preserved (nothing is lost or double-counted at the task level -- only
+  redistributed, in proportion to coverage, between followup_fix and the
+  phase categories for split sessions specifically). ``rebuild()`` computes
+  each split session's coverage ratio and surfaces it two ways: on the
+  returned ``RebuildResult.spanning_session_coverage`` (session_id ->
+  ratio, every actually-split session, not just low ones), and as a
+  stderr ``WARN`` for any session below ``coverage_warn_threshold``
+  (default ``DEFAULT_COVERAGE_WARN_THRESHOLD = 0.9``) -- no attribution
+  redesign, purely observability: callers/analysts can see exactly which
+  sessions' fix/phase split is trustworthy and which isn't.
 - ``reviewer``/``auditor`` sessions (any round) fund ``review``.
 - ``fixer`` sessions (any round) and ``implementer`` sessions with
   ``review_round >= 1`` fund ``followup_fix`` -- no phase apportionment.
@@ -106,6 +138,14 @@ import discovery
 # non-phase round-0 outcomes are not enumerated here as a closed set --
 # `phase_tokens.phase` values are trusted verbatim as category names, and
 # `unlabeled` is added only when a round-0 session has no phase rows at all.
+
+# fix-round-2 review: a spanning-session split's fix/phase category
+# attribution is only as trustworthy as its turn coverage (see the module
+# docstring's "Turn coverage and category-attribution accuracy" section).
+# Below this ratio, rebuild() prints a loud WARN naming the session so the
+# gap isn't silently invisible to anyone who doesn't inspect
+# RebuildResult.spanning_session_coverage directly.
+DEFAULT_COVERAGE_WARN_THRESHOLD = 0.9
 
 
 def _now_iso() -> str:
@@ -196,11 +236,24 @@ class RebuildResult(int):
     stderr, so the common CLI path (``ingest.py rebuild-derived``)
     surfaces the gap even when nothing inspects the return value -- see
     the module docstring's "this is a data-completeness gap, not a
-    crash": that's still true, but it must not be a *silent* one."""
+    crash": that's still true, but it must not be a *silent* one.
 
-    def __new__(cls, rows_written: int, unpriced_models):
+    ``spanning_session_coverage`` (fix-round-2 review) is ``{session_id:
+    ratio}`` for every round-0 implementer session this rebuild actually
+    split at a review boundary (design.md D5 amendment's spanning-session
+    split) -- ``ratio = sum(session_turns.output_tokens) /
+    sessions.output_tokens`` for that session, i.e. how much of its real
+    activity the turn-level split's fix/phase allocation is actually based
+    on. 1.0 means the split is exact; anything less means the missing
+    delta mass was implicitly distributed pro-rata across both partitions
+    (see the module docstring). A session below
+    ``coverage_warn_threshold`` also gets one ``WARN`` line on stderr,
+    naming it and its ratio."""
+
+    def __new__(cls, rows_written: int, unpriced_models, spanning_session_coverage=None):
         obj = int.__new__(cls, rows_written)
         obj.unpriced_models = frozenset(unpriced_models)
+        obj.spanning_session_coverage = dict(spanning_session_coverage or {})
         return obj
 
 
@@ -281,6 +334,7 @@ def _apportion_phases(conn, buckets, session_id: str, output_tokens: float, usd:
 
 def _apportion_round0_session(
     conn, buckets, session_id: str, output_tokens: float, usd: float, price_version, taxonomy_version, first_boundary: str,
+    coverage_report: Optional[Dict[str, float]] = None,
 ) -> None:
     """Round-0 implementer apportionment WITH the task's first review
     boundary known (design.md D5 amendment, followup-4): partitions this
@@ -288,7 +342,14 @@ def _apportion_round0_session(
     ``followup_fix`` from the post-boundary (fix) partition, phases from
     the pre-boundary partition. Falls back to the unsplit
     ``_apportion_phases`` if this session has no ``session_turns`` rows at
-    all, or if every turn is pre-boundary (nothing to split off)."""
+    all, or if every turn is pre-boundary (nothing to split off).
+
+    When an actual split happens (a fix partition exists), and
+    ``coverage_report`` is given, records this session's *turn coverage*
+    (``total_turn_output_tokens / output_tokens`` -- see the module
+    docstring's "Turn coverage and category-attribution accuracy",
+    fix-round-2 review) under ``coverage_report[session_id]``. Not
+    recorded when no split occurs (nothing to be inexact about)."""
     turns = _session_turns(conn, session_id)
     if not turns:
         _apportion_phases(conn, buckets, session_id, output_tokens, usd, price_version, taxonomy_version)
@@ -309,6 +370,9 @@ def _apportion_round0_session(
     if fix_output_tokens <= 0 or total_turn_output_tokens <= 0:
         _apportion_phases(conn, buckets, session_id, output_tokens, usd, price_version, taxonomy_version)
         return
+
+    if coverage_report is not None and output_tokens > 0:
+        coverage_report[session_id] = total_turn_output_tokens / output_tokens
 
     fix_share = fix_output_tokens / total_turn_output_tokens
     _accumulate(buckets, "followup_fix", fix_output_tokens, usd * fix_share, price_version)
@@ -469,6 +533,7 @@ def rebuild(
     as_of: Optional[str] = None,
     taxonomy_version: Optional[str] = None,
     computed_at: Optional[str] = None,
+    coverage_warn_threshold: float = DEFAULT_COVERAGE_WARN_THRESHOLD,
 ) -> int:
     """Recompute ``task_costs`` and ``task_arms`` from scratch, from
     ``sessions``/``phase_tokens``/``model_prices``. Touches no other table.
@@ -477,13 +542,21 @@ def rebuild(
     -- the "today" of design D5's "newest model_prices row <= today".
     ``taxonomy_version`` defaults to the current (numerically greatest)
     version present in ``phase_tokens``. Both are overridable for
-    determinism in callers/tests that need a fixed clock.
+    determinism in callers/tests that need a fixed clock. ``coverage_warn_
+    threshold`` (fix-round-2 review) gates the per-session stderr WARN for
+    low turn coverage on a spanning-session split (see
+    ``RebuildResult.spanning_session_coverage``'s docstring) -- every
+    split session's ratio is always recorded on the return value
+    regardless of this threshold, which only controls the stderr noise.
 
     Returns a ``RebuildResult`` (an ``int`` subclass -- compares/serializes
     identically to the plain row-count this function always returned) whose
     ``.unpriced_models`` attribute lists any session model that funded no
     cost category for lack of a matching (post-alias) ``model_prices`` row;
-    one ``WARN`` line per such model is also printed to stderr.
+    one ``WARN`` line per such model is also printed to stderr. Its
+    ``.spanning_session_coverage`` attribute similarly lists every actually-
+    split session's turn-coverage ratio, with one stderr ``WARN`` per
+    session below ``coverage_warn_threshold``.
     """
     as_of = as_of if as_of is not None else date.today().isoformat()
     computed_at = computed_at if computed_at is not None else _now_iso()
@@ -497,6 +570,7 @@ def rebuild(
         rows_written = 0
         price_cache: Dict[str, Any] = {}
         unpriced_models: set = set()
+        spanning_session_coverage: Dict[str, float] = {}
 
         for task_id in _task_ids_with_sessions(conn):
             sessions = conn.execute(
@@ -547,6 +621,7 @@ def rebuild(
                         _apportion_round0_session(
                             conn, buckets, s["session_id"], output_tokens, usd, price_version,
                             taxonomy_version, first_boundary,
+                            coverage_report=spanning_session_coverage,
                         )
                     else:
                         _apportion_phases(conn, buckets, s["session_id"], output_tokens, usd, price_version, taxonomy_version)
@@ -570,7 +645,29 @@ def rebuild(
                 f"(as_of={as_of}); sessions with this model were excluded from all cost categories",
                 file=sys.stderr,
             )
-        return RebuildResult(rows_written, unpriced_models)
+        # fix-round-2 review: a spanning-session split whose turn coverage
+        # is low means its followup_fix/phase attribution (not just
+        # weighted_tokens) is correspondingly approximate -- see the
+        # module docstring. Loudest sessions first (lowest coverage), so
+        # the worst case is never scrolled past.
+        low_coverage = sorted(
+            (
+                (sid, ratio)
+                for sid, ratio in spanning_session_coverage.items()
+                if ratio < coverage_warn_threshold
+            ),
+            key=lambda pair: pair[1],
+        )
+        for session_id, ratio in low_coverage:
+            print(
+                f"WARN: costs.rebuild: spanning-session turn coverage {ratio:.3f} for "
+                f"session_id={session_id!r} is below coverage_warn_threshold="
+                f"{coverage_warn_threshold} -- its followup_fix/phase category split "
+                f"is approximate in proportion to the missing coverage (see costs.py's "
+                f"module docstring, 'Turn coverage and category-attribution accuracy')",
+                file=sys.stderr,
+            )
+        return RebuildResult(rows_written, unpriced_models, spanning_session_coverage)
     except Exception:
         conn.rollback()
         raise

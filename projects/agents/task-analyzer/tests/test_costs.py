@@ -662,6 +662,113 @@ class TestSpanningSessionSplit(CostsTestBase):
         self.assertAlmostEqual(table["green"]["usd"], self.SESSION_USD * 0.4, places=10)
 
 
+class TestSpanningSessionTurnCoverage(CostsTestBase):
+    """fix-round-2 review: a spanning-session split always allocates the
+    session's FULL usd via fix_share/pre_share, which is exact only when
+    ``session_turns`` covers 100% of the session's own ``output_tokens``.
+    ``costs.rebuild`` must compute this "turn coverage" ratio for every
+    session it actually splits, surface it on
+    ``RebuildResult.spanning_session_coverage``, and warn loudly (stderr)
+    for any session below ``coverage_warn_threshold``."""
+
+    def _make_spanning_task(self, session_output_tokens, task_key=TASK_KEY):
+        # Same 4-turn/boundary shape as TestSpanningSessionSplit (turns sum
+        # to 100, split 50/50 across the boundary), but the SESSION's own
+        # output_tokens is a parameter so the coverage ratio
+        # (100 / session_output_tokens) can be controlled directly.
+        task_id = self._make_task(task_key=task_key)
+        self._make_session(
+            "claude:impl-1", task_id, "implementer", SONNET[0],
+            input_tokens=1000, cached_tokens=0, output_tokens=session_output_tokens, review_round=0,
+            started_at="2026-07-10T00:00:00Z", ended_at="2026-07-10T00:10:00Z",
+        )
+        self._make_session_turn("claude:impl-1", 0, "2026-07-10T00:00:00Z", 30)
+        self._make_session_turn("claude:impl-1", 1, "2026-07-10T00:02:00Z", 20)
+        self._make_session_turn("claude:impl-1", 2, "2026-07-10T00:05:00Z", 30)
+        self._make_session_turn("claude:impl-1", 3, "2026-07-10T00:07:00Z", 20)
+        self._make_phase_tokens("claude:impl-1", "red", 60)
+        self._make_phase_tokens("claude:impl-1", "green", 40)
+
+        self._make_session(
+            "claude:review-1", task_id, "reviewer", OPUS[0],
+            input_tokens=100, cached_tokens=0, output_tokens=10, review_round=1,
+            started_at="2026-07-10T00:03:00Z", ended_at="2026-07-10T00:04:30Z",
+        )
+        self._set_verdict_boundaries("claude:review-1", ["2026-07-10T00:04:00Z"])
+        return task_id
+
+    def test_full_coverage_records_ratio_one_and_no_warning(self):
+        self._make_spanning_task(session_output_tokens=100)  # 100/100 = 1.0
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            result = costs.rebuild(self.conn, as_of="2026-07-19")
+        self.assertAlmostEqual(result.spanning_session_coverage["claude:impl-1"], 1.0, places=10)
+        self.assertNotIn("WARN", buf.getvalue())
+
+    def test_low_coverage_split_recorded_and_warned(self):
+        self._make_spanning_task(session_output_tokens=200)  # 100/200 = 0.5
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            result = costs.rebuild(self.conn, as_of="2026-07-19")
+        self.assertAlmostEqual(result.spanning_session_coverage["claude:impl-1"], 0.5, places=10)
+        self.assertIn("WARN", buf.getvalue())
+        self.assertIn("claude:impl-1", buf.getvalue())
+        self.assertIn("0.500", buf.getvalue())  # ratio formatted to 3 decimals
+
+    def test_coverage_at_or_above_threshold_is_not_warned(self):
+        self._make_spanning_task(session_output_tokens=100)  # ratio = 1.0
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            result = costs.rebuild(self.conn, as_of="2026-07-19", coverage_warn_threshold=1.0)
+        # Exactly at threshold -- "below" is strict, so no warning.
+        self.assertAlmostEqual(result.spanning_session_coverage["claude:impl-1"], 1.0, places=10)
+        self.assertNotIn("WARN", buf.getvalue())
+
+    def test_custom_threshold_is_respected(self):
+        self._make_spanning_task(session_output_tokens=200)  # ratio = 0.5
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            costs.rebuild(self.conn, as_of="2026-07-19", coverage_warn_threshold=0.3)
+        # 0.5 >= 0.3 (the custom, lower threshold) -- no warning.
+        self.assertNotIn("WARN", buf.getvalue())
+
+    def test_default_threshold_matches_documented_constant(self):
+        self.assertEqual(costs.DEFAULT_COVERAGE_WARN_THRESHOLD, 0.9)
+
+    def test_non_spanning_round0_session_has_no_coverage_entry(self):
+        # A round-0 session with no review boundary at all (nothing to
+        # split against) must not appear in spanning_session_coverage --
+        # coverage is only meaningful once an actual split happens.
+        task_id = self._make_task()
+        self._make_session(
+            "claude:impl-only", task_id, "implementer", SONNET[0],
+            input_tokens=1000, cached_tokens=0, output_tokens=100, review_round=0,
+        )
+        self._make_phase_tokens("claude:impl-only", "red", 100)
+        result = costs.rebuild(self.conn, as_of="2026-07-19")
+        self.assertEqual(result.spanning_session_coverage, {})
+
+    def test_boundary_present_but_all_turns_pre_boundary_has_no_coverage_entry(self):
+        # A review boundary exists for the task, but every one of this
+        # session's turns started before it -- no fix partition, so no
+        # split actually happens, so no coverage entry either.
+        task_id = self._make_task()
+        self._make_session(
+            "claude:impl-1", task_id, "implementer", SONNET[0],
+            input_tokens=1000, cached_tokens=0, output_tokens=100, review_round=0,
+            started_at="2026-07-10T00:00:00Z", ended_at="2026-07-10T00:01:00Z",
+        )
+        self._make_session_turn("claude:impl-1", 0, "2026-07-10T00:00:00Z", 100)
+        self._make_phase_tokens("claude:impl-1", "red", 100)
+        self._make_session(
+            "claude:review-1", task_id, "reviewer", OPUS[0],
+            input_tokens=100, cached_tokens=0, output_tokens=10, review_round=1,
+            started_at="2026-07-10T01:00:00Z", ended_at="2026-07-10T01:10:00Z",
+        )
+        result = costs.rebuild(self.conn, as_of="2026-07-19")
+        self.assertEqual(result.spanning_session_coverage, {})
+
+
 class TestTurnPhasesIntegrityCheck(CostsTestBase):
     """fix-round-1 review, finding 1: the turn_phases x
     session_turns.output_tokens aggregation must equal the corresponding
