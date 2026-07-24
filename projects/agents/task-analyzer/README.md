@@ -82,9 +82,14 @@ Reads `task_costs` joined against the *current* (numerically greatest)
 `complexity` rubric version and each task's canonical `task_arms` row (tasks
 with no determinable arm — no round-0 implementer session — are excluded, not
 crashed on). Writes one new `estimators` row + one `estimator_params` row per
-(category, arm) with data; **never** touches or deletes a prior generation —
-old estimators stay for audit/rollback (D9), so `estimate.py` always defaults
-to the numerically greatest `estimator_id` unless `--estimator-id` pins an
+(category, arm) with data, **plus one sentinel row per category** —
+`model = effort = "(pooled)"` (`model.POOLED_SENTINEL_ARM`, a value no real
+provider ever reports) — carrying that category's pooled posterior (every
+arm's rows in that category, fit from the weak prior); `estimate.py` falls
+back to this row for any (category, arm) cell that has no posterior of its
+own. `train.py` **never** touches or deletes a prior generation — old
+estimators stay for audit/rollback (D9), so `estimate.py` always defaults to
+the numerically greatest `estimator_id` unless `--estimator-id` pins an
 older one. `--config` is a path to a JSON file of overrides deep-merged onto
 `model.default_config()` (feature list, epsilon, prior hyperparameters,
 `min_rows_per_arm`, guard factor).
@@ -104,6 +109,12 @@ reference decomposition at composites {2, 3, 4} instead, for smoke-checking a
 freshly trained estimator without hand-writing an input file. `--json` emits
 the full machine-readable report; omit it for the human table (arm rankings,
 selected-arm marker, `unscorable_arms`, decomposition totals).
+
+An arm missing a per-arm posterior for some category falls back to that
+category's pooled posterior (the `"(pooled)"` sentinel row `train.py`
+persists — see above); each arm's `fallback_categories` in the report lists
+which categories, if any, resolved that way. An arm is `unscorable` only if
+even the pooled fallback has no row for a category it needs.
 
 ### `annotations.py` — validate a sibling annotation file
 

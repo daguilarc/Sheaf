@@ -269,7 +269,10 @@ class TestTrain(unittest.TestCase):
             (estimator_id,),
         ).fetchall()
         got = {(r["category"], r["model"], r["effort"]) for r in params}
+        # One row per (category, arm), plus one sentinel row per category
+        # carrying the pooled fallback posterior (followup-1 Part A).
         expected = {("green", m, e) for m, e in arms}
+        expected.add(("green",) + model.POOLED_SENTINEL_ARM)
         self.assertEqual(got, expected)
 
         config = json.loads(estimators[0]["config_json"])
@@ -300,7 +303,7 @@ class TestTrain(unittest.TestCase):
         old_params_still_present = conn.execute(
             "SELECT COUNT(*) FROM estimator_params WHERE estimator_id = ?", (estimator_id,)
         ).fetchone()[0]
-        self.assertEqual(old_params_still_present, 3)
+        self.assertEqual(old_params_still_present, 4)  # 3 arms + 1 pooled sentinel row
         conn.close()
 
     def test_train_excludes_null_arm_tasks(self):
@@ -403,6 +406,53 @@ class TestTrain(unittest.TestCase):
             rc = train.main(["--db", str(db_path)])
         self.assertEqual(rc, 1)
         self.assertIn("no training data found", stderr.getvalue())
+
+    def test_pooled_posterior_persisted_as_sentinel_row(self):
+        # Follow-up 1, Part A: train.py must persist each category's pooled
+        # fit (all arms' rows, from the weak prior) as a sentinel
+        # estimator_params row -- estimate.py's fallback for a (category,
+        # arm) cell with no posterior of its own.
+        db_path = self.tmp_path / "pooled.sqlite"
+        conn = db.connect(db_path)
+        _seed_training_db(conn)
+        estimator_id = train.run(conn)
+
+        pooled_model, pooled_effort = model.POOLED_SENTINEL_ARM
+        row = conn.execute(
+            "SELECT posterior_json FROM estimator_params "
+            "WHERE estimator_id = ? AND category = 'green' AND model = ? AND effort = ?",
+            (estimator_id, pooled_model, pooled_effort),
+        ).fetchone()
+        self.assertIsNotNone(row, "no pooled sentinel row persisted for category 'green'")
+        pooled = model.NIG.from_json(row["posterior_json"])
+
+        # Independently recompute the category's pooled fit -- the weak
+        # prior updated on every arm's rows combined -- and compare exactly.
+        config = model.default_config()
+        rows = conn.execute(
+            "SELECT tc.usd AS usd, c.composite AS composite, c.c3 AS c3, c.c4 AS c4, c.c5 AS c5 "
+            "FROM task_costs tc JOIN complexity c ON c.task_id = tc.task_id AND c.rubric_version = '1' "
+            "JOIN task_arms ta ON ta.task_id = tc.task_id WHERE tc.category = 'green'"
+        ).fetchall()
+        X = np.array([model.features(r, config) for r in rows])
+        y = np.array([model.transform_target(r["usd"], config["epsilon"]) for r in rows])
+        weak = model.NIG.weak_prior(len(config["features"]))
+        expected = weak.update(X, y)
+
+        np.testing.assert_allclose(pooled.mu, expected.mu)
+        np.testing.assert_allclose(pooled.Lambda, expected.Lambda)
+        self.assertAlmostEqual(pooled.a, expected.a)
+        self.assertAlmostEqual(pooled.b, expected.b)
+
+        # The sentinel arm must never leak into config["arms"] -- it's not a
+        # real, selectable (model, effort) arm.
+        config_json = json.loads(
+            conn.execute(
+                "SELECT config_json FROM estimators WHERE estimator_id = ?", (estimator_id,)
+            ).fetchone()[0]
+        )
+        self.assertNotIn(list(model.POOLED_SENTINEL_ARM), config_json["arms"])
+        conn.close()
 
     def test_posteriors_roundtrip_and_are_queryable(self):
         db_path = self.tmp_path / "t2.sqlite"

@@ -13,13 +13,26 @@ Total task cost per arm is the sum over every category in the estimator's
 unlabeled + review + followup_fix" -- whatever categories the estimator was
 actually trained on) of that category's per-arm posterior predictive,
 inverse-transformed back to USD (``model.inverse_transform``, i.e. ``usd =
-exp(y) - epsilon`` per the estimator's own ``output_format``). An arm
-missing posterior data for even one category is **unscorable** -- it is
-excluded from ranking/selection entirely and reported separately (per task)
-under ``unscorable_arms`` with its ``missing_categories`` listed, rather
-than silently contributing 0 USD for the categories it lacks (an earlier
-version of this module did that, which undercounted totals and biased
-selection toward the least-covered arms -- fixed after review round 1).
+exp(y) - epsilon`` per the estimator's own ``output_format``).
+
+An arm missing a posterior for some category falls back to that category's
+*pooled* posterior instead -- the sentinel ``estimator_params`` row
+``train.py`` persists per category (``model.POOLED_SENTINEL_ARM``), fit
+across every arm's rows in that category. This is honest and wide rather
+than silently contributing 0 USD for what's missing (an earlier version of
+this module did that, which undercounted totals and biased selection toward
+the least-covered arms -- fixed after review round 1) and rather than
+excluding the arm entirely (a later version did that -- a "full-coverage"
+rule -- but an excluded arm can never be selected, so it accrues no new
+data and is frozen out permanently; replaced by this pooled fallback per
+followup-1). Categories scored via fallback are listed per arm under
+``fallback_categories`` in the report, and (per spec.md "Sparse arm yields
+wide posterior") their contribution to the total is wider than a
+well-sampled cell's, which the existing ``explore`` overlap check already
+treats as low-evidence. An arm is **unscorable** only if *even the pooled
+posterior* has no row for some category it needs; such arms are excluded
+from ranking/selection entirely and reported separately (per task) under
+``unscorable_arms`` with their ``missing_categories`` listed.
 
 Selection ("expected total minimizing subject to the p_q guard", the spec's
 literal but underspecified phrase): for every task, compute two per-arm
@@ -125,12 +138,19 @@ def _recomputed_complexity(complexity: dict) -> dict:
 def _arm_totals(posteriors: dict, categories, epsilon: float, x, arm, quantile: float) -> dict:
     per_category = {}
     missing = []
+    fallback = []
     expected_total = pq_total = p20_total = p80_total = 0.0
     for category in categories:
         nig = posteriors.get((category, arm[0], arm[1]))
+        used_fallback = False
+        if nig is None:
+            nig = posteriors.get((category,) + model.POOLED_SENTINEL_ARM)
+            used_fallback = nig is not None
         if nig is None:
             missing.append(category)
             continue
+        if used_fallback:
+            fallback.append(category)
         mean_log, _scale, _df = nig.predictive(x)
         mean_usd = model.inverse_transform(mean_log, epsilon)
         pq_usd = model.inverse_transform(nig.quantile(x, quantile), epsilon)
@@ -138,6 +158,7 @@ def _arm_totals(posteriors: dict, categories, epsilon: float, x, arm, quantile: 
         p80_usd = model.inverse_transform(nig.quantile(x, 1.0 - EXPLORE_LOW_Q), epsilon)
         per_category[category] = {
             "mean_usd": mean_usd, "pq_usd": pq_usd, "p20_usd": p20_usd, "p80_usd": p80_usd,
+            "fallback": used_fallback,
         }
         expected_total += mean_usd
         pq_total += pq_usd
@@ -146,6 +167,7 @@ def _arm_totals(posteriors: dict, categories, epsilon: float, x, arm, quantile: 
     return {
         "model": arm[0], "effort": arm[1],
         "categories": per_category, "missing_categories": missing,
+        "fallback_categories": fallback,
         "expected_total_usd": expected_total, "pq_total_usd": pq_total,
         "p20_total_usd": p20_total, "p80_total_usd": p80_total,
     }
@@ -156,13 +178,14 @@ def score_task(config: dict, posteriors: dict, complexity: dict, quantile: float
     """Score every known arm (``config["arms"]``) for one task's complexity
     vector. Returns the ranked, fully-scorable arm list (sorted by
     ``pq_total_usd`` ascending -- "arm rankings at the configured quantile"
-    per spec.md), the arms excluded as ``unscorable`` (missing a posterior
-    for at least one category), the selected arm (min ``expected_total_usd``
-    among fully-scorable arms passing the ``pq_total_usd`` guard), and the
-    ``explore`` flag. An arm is only eligible for ranking/selection at all
-    if it has a posterior for *every* category in ``config["categories"]``
-    -- see the module docstring for why partial coverage isn't just
-    "contributes 0 for what's missing"."""
+    per spec.md), the arms excluded as ``unscorable`` (missing a posterior,
+    *and* a pooled fallback, for at least one category), the selected arm
+    (min ``expected_total_usd`` among fully-scorable arms passing the
+    ``pq_total_usd`` guard), and the ``explore`` flag. An arm is eligible
+    for ranking/selection once every category in ``config["categories"]``
+    resolves to a posterior -- its own, or (per the module docstring) that
+    category's pooled fallback; each arm's ``fallback_categories`` records
+    which categories, if any, resolved via fallback."""
     row = _recomputed_complexity(complexity)
     x = model.features(row, config)
     epsilon = config.get("epsilon", model.DEFAULT_EPSILON)
@@ -198,7 +221,8 @@ def score_task(config: dict, posteriors: dict, complexity: dict, quantile: float
         "unscorable_arms": unscorable,
         "selected": ({"model": selected["model"], "effort": selected["effort"],
                        "expected_total_usd": selected["expected_total_usd"],
-                       "pq_total_usd": selected["pq_total_usd"]} if selected else None),
+                       "pq_total_usd": selected["pq_total_usd"],
+                       "fallback_categories": selected["fallback_categories"]} if selected else None),
         "explore": explore,
     }
 
@@ -257,10 +281,12 @@ def render_table(report: dict) -> str:
         lines.append(f"  {'model':<20} {'effort':<10} {'expected$':>18} {'pq$':>18} {'p20$':>18} {'p80$':>18}")
         for arm in task["arms"]:
             marker = "*" if task["selected"] and arm["model"] == task["selected"]["model"] and arm["effort"] == task["selected"]["effort"] else " "
+            fallback_note = f"  (pooled: {', '.join(arm['fallback_categories'])})" if arm["fallback_categories"] else ""
             lines.append(
                 f"{marker} {arm['model']:<20} {arm['effort']:<10}"
                 f" {arm['expected_total_usd']:>18.4f} {arm['pq_total_usd']:>18.4f}"
                 f" {arm['p20_total_usd']:>18.4f} {arm['p80_total_usd']:>18.4f}"
+                f"{fallback_note}"
             )
         if task["unscorable_arms"]:
             for arm in task["unscorable_arms"]:

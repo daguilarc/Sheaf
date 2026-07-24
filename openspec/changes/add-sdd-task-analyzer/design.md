@@ -278,6 +278,26 @@ the arm minimizing expected total (implementation + predicted review +
 followup) subject to a p80 guard, and emits the annotation YAML of D1 plus an
 `explore` flag where the chosen-vs-runner-up posteriors overlap heavily.
 
+**Pooled fallback (followup-1, Part A).** In addition to the per-(category,
+arm) mean-only pooling above, `train.py` also persists the *full* pooled
+posterior per category (the weak prior updated on every arm's rows in that
+category combined) as one `estimator_params` row per category, under a
+sentinel arm key `("(pooled)", "(pooled)")` (`model.POOLED_SENTINEL_ARM`) —
+a value no real provider ever reports, so it can't collide with an actual
+arm. `estimate.py` uses this as its fallback whenever a real (category,
+arm) cell has no posterior: honest and wide, and it correctly surfaces the
+arm as an "explore" candidate for that category via the existing
+overlap-based `explore` flag, rather than making the arm **unscorable**. An
+arm is unscorable only if even the pooled fallback has no row for some
+category it needs (e.g. a category absent from the training data
+entirely). This replaces an earlier, rejected "full-coverage" rule that
+excluded any arm missing even one per-arm posterior cell from scoring
+altogether — with the migrated dataset that left only 2 of 10 arms
+scorable, and an excluded arm can never be selected, so it never accrues
+new data (the arm set freezes, defeating explore/exploit). Every arm's
+`fallback_categories` (which categories, if any, resolved via the pooled
+row rather than its own posterior) is echoed in `estimate.py`'s report.
+
 ### D7. Decomposition subagent protocol
 
 A prompt asset (`prompts/decomposer.md`) defining a search loop, run as a

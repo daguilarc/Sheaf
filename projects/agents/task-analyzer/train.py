@@ -24,6 +24,18 @@ excluded (a downdate of the category's precomputed ``XtX``/``Xty`` sums, not
 a reuse of the training-time pooled mean, which would have let the held-out
 row influence its own prediction).
 
+In addition to each (category, arm) posterior, the category's own pooled fit
+(the full NIG posterior over *all* arms' rows in that category, from the
+weak prior -- not just its mean, which is all the per-arm priors use) is
+itself persisted as one ``estimator_params`` row per category, under the
+sentinel key ``model.POOLED_SENTINEL_ARM`` (``("(pooled)", "(pooled)")``).
+``estimate.py`` reads this row as its fallback whenever a real (category,
+model, effort) cell has no posterior -- honest and wide, since it reflects
+however little (or however skewed) data the category has across all arms,
+rather than making an arm permanently unscorable and therefore never
+selectable (which would freeze the arm set: an excluded arm can never
+accrue new data). See design.md D6 "pooled fallback".
+
 CLI: ``python3 train.py --db PATH [--config JSON]`` where ``--config`` is a
 path to a JSON file of overrides deep-merged onto ``model.default_config()``
 (e.g. to change ``epsilon``, the feature list, or prior hyperparameters).
@@ -151,6 +163,7 @@ def run(conn, config_overrides: Optional[dict] = None) -> Optional[int]:
     arm_data: dict = {}         # (category, model, effort) -> (X, y)
     category_prior_by_category: dict = {}
     pooled_sums_by_category: dict = {}   # category -> (XtX_total, Xty_total)
+    pooled_posteriors: dict = {}         # category -> NIG (persisted as the sentinel row)
     task_ids_all = set()
 
     for category, cat_rows in by_category.items():
@@ -181,6 +194,10 @@ def run(conn, config_overrides: Optional[dict] = None) -> Optional[int]:
         pooled_fit = weak_prior.update(pooled_X_arr, pooled_y_arr)
         category_prior = model.NIG(mu=pooled_fit.mu, Lambda=weak_prior.Lambda, a=weak_prior.a, b=weak_prior.b)
         category_prior_by_category[category] = category_prior
+        # The pooled fit's *full* posterior (not just its mean, which is all
+        # `category_prior` above uses) is persisted verbatim as this
+        # category's fallback -- see module docstring.
+        pooled_posteriors[category] = pooled_fit
 
         for key, arm in by_arm.items():
             idx = arm["idx"]
@@ -261,6 +278,26 @@ def run(conn, config_overrides: Optional[dict] = None) -> Optional[int]:
                 "category": category,
                 "model": mdl,
                 "effort": eff,
+                "posterior_json": posterior.to_json(),
+            },
+            ["estimator_id", "category", "model", "effort"],
+        )
+
+    # One sentinel row per category (model.POOLED_SENTINEL_ARM) carrying that
+    # category's pooled posterior -- estimate.py's fallback for any (category,
+    # arm) cell with no posterior of its own. Written after the per-arm loop
+    # above so it can never be mistaken for a real arm (config["arms"] was
+    # already computed from `posteriors` alone, not this dict).
+    pooled_model, pooled_effort = model.POOLED_SENTINEL_ARM
+    for category, posterior in pooled_posteriors.items():
+        db.upsert(
+            conn,
+            "estimator_params",
+            {
+                "estimator_id": estimator_id,
+                "category": category,
+                "model": pooled_model,
+                "effort": pooled_effort,
                 "posterior_json": posterior.to_json(),
             },
             ["estimator_id", "category", "model", "effort"],

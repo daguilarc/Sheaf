@@ -41,6 +41,12 @@ def _sparse_nig():
     return model.NIG(mu=np.array([math.log(0.06 + 1e-4), 0.05]), Lambda=np.diag([0.5, 0.5]), a=2.0, b=2.0)
 
 
+def _pooled_nig():
+    # A category's pooled fit: wider than _cheap_nig() (low precision, low
+    # a/b), representing "honest but wide" fallback evidence.
+    return model.NIG(mu=np.array([math.log(0.07 + 1e-4), 0.02]), Lambda=np.diag([0.05, 0.05]), a=1.5, b=1.5)
+
+
 def _seed_estimator_db(conn, estimator_id=1, categories=CATEGORIES, arms=(CHEAP_ARM, SPARSE_ARM)):
     config = model.default_config(features=["1", "composite"])
     config["categories"] = list(categories)
@@ -153,6 +159,79 @@ class TestScoreTask(EstimateTestCase):
         unscorable_pairs = {(a["model"], a["effort"]) for a in result["unscorable_arms"]}
         self.assertIn(("nonexistent-model", "none"), unscorable_pairs)
         self.assertEqual((result["selected"]["model"], result["selected"]["effort"]), CHEAP_ARM)
+
+
+class TestPooledFallback(EstimateTestCase):
+    """Follow-up 1, Part A: an arm missing a (category, arm) posterior falls
+    back to that category's pooled posterior (model.POOLED_SENTINEL_ARM)
+    instead of being excluded outright -- see estimate.py's module
+    docstring and .superpowers/sdd/task-analyzer/followup-1-brief.md."""
+
+    def _seed_with_missing_review_cell(self):
+        # CHEAP_ARM has real posteriors for both categories; SPARSE_ARM has
+        # no posterior of its own for "review" (simulating a near-empty
+        # category for that arm), but the estimator persisted a pooled
+        # fallback row for "review".
+        config = _seed_estimator_db(self.conn, arms=(CHEAP_ARM,))
+        db.upsert(
+            self.conn, "estimator_params",
+            {"estimator_id": 1, "category": "green", "model": SPARSE_ARM[0], "effort": SPARSE_ARM[1],
+             "posterior_json": _sparse_nig().to_json()},
+            ["estimator_id", "category", "model", "effort"],
+        )
+        # Deliberately no ("review", *SPARSE_ARM) row.
+        db.upsert(
+            self.conn, "estimator_params",
+            {"estimator_id": 1, "category": "review",
+             "model": model.POOLED_SENTINEL_MODEL, "effort": model.POOLED_SENTINEL_EFFORT,
+             "posterior_json": _pooled_nig().to_json()},
+            ["estimator_id", "category", "model", "effort"],
+        )
+        config["arms"].append(list(SPARSE_ARM))
+        self.conn.execute("UPDATE estimators SET config_json = ? WHERE estimator_id = 1", (json.dumps(config),))
+        self.conn.commit()
+        return config
+
+    def test_missing_cell_scored_via_pooled_fallback_with_wider_interval(self):
+        config = self._seed_with_missing_review_cell()
+        _, _, posteriors = estimate.load_estimator(self.conn)
+        result = estimate.score_task(config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, 0.8)
+        sparse = next(a for a in result["arms"] if (a["model"], a["effort"]) == SPARSE_ARM)
+        self.assertEqual(sparse["missing_categories"], [])
+        self.assertTrue(sparse["categories"]["review"]["fallback"])
+        self.assertFalse(sparse["categories"]["green"]["fallback"])
+        review_width = sparse["categories"]["review"]["p80_usd"] - sparse["categories"]["review"]["p20_usd"]
+        green_width = sparse["categories"]["green"]["p80_usd"] - sparse["categories"]["green"]["p20_usd"]
+        self.assertGreater(review_width, green_width)
+
+    def test_fallback_categories_reported_per_arm_and_selection(self):
+        config = self._seed_with_missing_review_cell()
+        _, _, posteriors = estimate.load_estimator(self.conn)
+        result = estimate.score_task(config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, 0.8)
+        sparse = next(a for a in result["arms"] if (a["model"], a["effort"]) == SPARSE_ARM)
+        self.assertEqual(sparse["fallback_categories"], ["review"])
+        cheap = next(a for a in result["arms"] if (a["model"], a["effort"]) == CHEAP_ARM)
+        self.assertEqual(cheap["fallback_categories"], [])
+        self.assertEqual(result["unscorable_arms"], [])
+        # SPARSE_ARM was scored (via fallback), not excluded -- it must be
+        # eligible to be selected, unlike the old full-coverage exclusion
+        # rule this replaces.
+        arm_pairs = {(a["model"], a["effort"]) for a in result["arms"]}
+        self.assertEqual(arm_pairs, {CHEAP_ARM, SPARSE_ARM})
+
+    def test_unscorable_only_when_pooled_fallback_also_missing(self):
+        # A category with neither a per-arm posterior NOR a pooled fallback
+        # (e.g. a brand-new category name not present at training time)
+        # still makes an arm unscorable -- fallback isn't magic.
+        config = self._seed_with_missing_review_cell()
+        config["categories"] = ["green", "review", "phantom"]
+        _, _, posteriors = estimate.load_estimator(self.conn)
+        result = estimate.score_task(config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, 0.8)
+        unscorable_pairs = {(a["model"], a["effort"]) for a in result["unscorable_arms"]}
+        self.assertEqual(unscorable_pairs, {CHEAP_ARM, SPARSE_ARM})
+        for arm in result["unscorable_arms"]:
+            self.assertEqual(arm["missing_categories"], ["phantom"])
+        self.assertIsNone(result["selected"])
 
 
 RISKY_ARM = ("gpt-5.4", "high")

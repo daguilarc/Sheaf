@@ -29,6 +29,17 @@ DEFAULT_FEATURES = ["1", "composite", "c3", "c4", "c5"]
 DEFAULT_EPSILON = 1e-4
 QUANTILE_ALGORITHM = "student_t_ppf_incomplete_beta_bisection_v1"
 
+# Sentinel ``estimator_params`` key under which ``train.py`` persists each
+# category's *pooled* posterior (the NIG fit across every arm's rows in that
+# category, from the shared weak prior -- see ``train.py``'s per-category
+# loop). ``estimate.py`` falls back to this row whenever a real (category,
+# model, effort) cell has no posterior of its own (design.md D6, "pooled
+# fallback"). No real provider ever reports a model or effort literally
+# ``"(pooled)"``, so this key can never collide with an actual arm row.
+POOLED_SENTINEL_MODEL = "(pooled)"
+POOLED_SENTINEL_EFFORT = "(pooled)"
+POOLED_SENTINEL_ARM = (POOLED_SENTINEL_MODEL, POOLED_SENTINEL_EFFORT)
+
 
 def default_config(features: Sequence[str] = DEFAULT_FEATURES, epsilon: float = DEFAULT_EPSILON) -> dict:
     """The baseline ``config_json`` payload (design.md D6 / spec.md
