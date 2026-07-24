@@ -31,7 +31,16 @@ CREATE TABLE IF NOT EXISTS sessions(
   input_tokens INTEGER, cached_tokens INTEGER, output_tokens INTEGER,
   reasoning_tokens INTEGER, peak_context INTEGER,
   n_compactions INTEGER, n_turns INTEGER, n_tool_calls INTEGER,
-  review_round INTEGER);                -- 1..n for reviewer/fixer sessions
+  review_round INTEGER,                 -- 1..n for reviewer/fixer sessions
+  verdict_boundaries_json TEXT);        -- v3: reviewer's detected per-verdict
+                                         -- timestamps (JSON array), see D5 amendment;
+                                         -- db.py ALTER-TABLEs this onto pre-v3 DBs
+                                         -- since CREATE TABLE IF NOT EXISTS can't.
+
+CREATE TABLE IF NOT EXISTS session_turns(     -- v3: per-turn timing, mechanical
+  session_id TEXT REFERENCES sessions, turn_idx INTEGER,
+  started_at TEXT, ended_at TEXT, output_tokens INTEGER,
+  PRIMARY KEY(session_id, turn_idx));
 
 -- agentic layer (cache-keyed judgments; re-run when rubric_version changes)
 CREATE TABLE IF NOT EXISTS complexity(
@@ -60,6 +69,13 @@ CREATE TABLE IF NOT EXISTS phase_tokens(
   taxonomy_version TEXT NOT NULL, input_sha256 TEXT NOT NULL, scored_by TEXT,
   PRIMARY KEY(session_id, phase, taxonomy_version));
 
+CREATE TABLE IF NOT EXISTS turn_phases(       -- v3: per-turn phase labels (same
+  session_id TEXT REFERENCES sessions,        -- cache keys as phase_tokens, which
+  turn_idx INTEGER, phase TEXT,               -- REMAINS and must equal the
+  taxonomy_version TEXT NOT NULL,             -- aggregation of this table x
+  input_sha256 TEXT NOT NULL, scored_by TEXT, -- session_turns.output_tokens for
+  PRIMARY KEY(session_id, turn_idx, taxonomy_version));  -- sessions with turn rows.
+
 -- reference + derived layer (deterministic; `rebuild-derived` recomputes)
 CREATE TABLE IF NOT EXISTS model_prices(
   model TEXT, effective_date TEXT,
@@ -82,9 +98,16 @@ CREATE TABLE IF NOT EXISTS task_arms(                 -- canonical implementer a
   basis_json TEXT);                     -- how chosen + other round-0 sessions
 
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
--- meta rows include ('schema_version','2'); schema is applied idempotently
+-- meta rows include ('schema_version','3'); schema is applied idempotently
 -- (CREATE TABLE IF NOT EXISTS); future schema changes bump schema_version.
 -- v2 (Task 5/ingest.py): added grades.review_text (see comment there).
+-- v3 (followup-4, design.md D5 amendment): added session_turns/turn_phases
+-- (new tables -- CREATE TABLE IF NOT EXISTS handles these on any pre-v3 DB
+-- unaided) and sessions.verdict_boundaries_json (a new COLUMN on an
+-- already-existing table, which CREATE TABLE IF NOT EXISTS cannot retrofit
+-- -- db.py's connect() ALTER TABLEs it in when missing, and bumps this
+-- meta row from '2' to '3', since INSERT OR IGNORE below never overwrites
+-- an existing key). See db.py's ``_migrate`` for the idempotent mechanics.
 
 -- estimator layer
 CREATE TABLE IF NOT EXISTS estimators(
@@ -105,7 +128,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_task ON sessions(task_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_change ON tasks(change_id);
 
 -- meta seed: schema version marker (idempotent; see meta comment above).
-INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', '2');
+INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', '3');
 
 -- model_prices seed: current published USD-per-million-token list prices for
 -- the implementer/reviewer arms observed in the 2026-07-19 analysis

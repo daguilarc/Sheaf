@@ -319,22 +319,61 @@ def _output_tokens(s: SessionLike) -> int:
     return _get(s, "output_tokens") or 0
 
 
-def assign_review_rounds(sessions: List[SessionLike]) -> Dict[str, int]:
-    """Per design D5: a review boundary is the ``ended_at`` of each
-    ``reviewer`` session. Implementer/fixer (and any other non-reviewer)
-    sessions get ``review_round`` = the count of boundaries strictly before
-    their ``started_at`` (so sessions starting before the first review are
-    round 0, the first follow-up is round 1, ...). A reviewer session itself
-    gets the round its own boundary opens -- the count of boundaries at or
-    before its own ``ended_at`` (so the first reviewer opens round 1, the
-    second round 2, ...). Sessions with no ``ended_at`` (aborted) still get
-    numbered, using ``started_at`` as their boundary contribution.
-    """
-    boundaries = sorted(
-        (_get(s, "ended_at") or _get(s, "started_at") or "")
+def _reviewer_boundaries(s: SessionLike) -> List[str]:
+    """All review boundaries one reviewer session contributes.
+
+    followup-4 (design.md D5 amendment): the workflow now deliberately keeps
+    reviewer sessions open across review + re-review, so a single session
+    can carry more than one verdict. If ``s`` exposes a non-empty
+    ``verdict_boundaries`` (a list of ISO timestamps -- one per detected
+    verdict turn, see ``extractors.Turn.is_verdict``), every one of them is
+    a boundary. Otherwise -- a session with no recoverable turn/verdict
+    data, or a genuinely single-verdict session -- this falls back to the
+    session's own ``ended_at`` (or ``started_at`` if aborted), exactly the
+    single-boundary-per-session behavior this replaces. Callers needing
+    only the parsed value (not the DB's raw ``verdict_boundaries_json``
+    column) are responsible for parsing it first -- see
+    ``costs.py``'s session-dict transform."""
+    vb = _get(s, "verdict_boundaries")
+    if vb:
+        return list(vb)
+    return [_get(s, "ended_at") or _get(s, "started_at") or ""]
+
+
+def review_boundaries(sessions: List[SessionLike]) -> List[str]:
+    """Every review boundary for a task's sessions, sorted ascending -- the
+    union of each ``reviewer`` session's own boundaries (see
+    ``_reviewer_boundaries``). Used both by ``assign_review_rounds`` (to
+    number non-reviewer sessions) and by ``costs.py`` (to split a spanning
+    round-0 implementer session's turns at the first boundary -- design.md
+    D5 amendment, followup-4)."""
+    return sorted(
+        b
         for s in sessions
         if _get(s, "role") == "reviewer"
+        for b in _reviewer_boundaries(s)
     )
+
+
+def assign_review_rounds(sessions: List[SessionLike]) -> Dict[str, int]:
+    """Per design D5 (amended followup-4): a review boundary is either a
+    reviewer session's detected per-verdict timestamp(s) or, absent those,
+    its ``ended_at`` -- see ``review_boundaries``/``_reviewer_boundaries``.
+    Implementer/fixer (and any other non-reviewer) sessions get
+    ``review_round`` = the count of boundaries strictly before their
+    ``started_at`` (so sessions starting before the first review are round
+    0, the first follow-up is round 1, ...). A reviewer session itself gets
+    the round its own (last) boundary opens -- the count of ALL boundaries
+    at or before its own ``ended_at`` (so the first reviewer opens round 1,
+    the second round 2, ...; a persistent reviewer producing verdicts for
+    rounds 1 and 2 in one session is counted at round 2, its own final
+    state). Sessions with no ``ended_at`` (aborted) still get numbered,
+    using ``started_at`` as their boundary contribution. Sessions without
+    turn/verdict data behave exactly as before this amendment (single
+    boundary per reviewer session) -- this is a strict generalization, not
+    a behavior change, for that case.
+    """
+    boundaries = review_boundaries(sessions)
 
     rounds: Dict[str, int] = {}
     for s in sessions:

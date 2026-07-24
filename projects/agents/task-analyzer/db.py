@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from pathlib import Path
 from urllib.parse import quote
 
 _SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
+_SCHEMA_VERSION_RE = re.compile(r"schema_version',\s*'(\d+)'\)")
 
 
 def connect(path, create: bool = True) -> sqlite3.Connection:
@@ -40,8 +42,58 @@ def connect(path, create: bool = True) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
     if create:
         conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
+        _migrate(conn)
         conn.commit()
     return conn
+
+
+# schema_version -> (table, column, SQL type) for every column a schema bump
+# added to a table that predates it. CREATE TABLE IF NOT EXISTS (schema.sql)
+# creates brand-new tables fine on any pre-existing DB, but cannot retrofit a
+# new COLUMN onto a table the DB already has -- those need an explicit
+# ALTER TABLE, applied here, gated on the column's actual absence (checked
+# via PRAGMA table_info, not the stored schema_version) so this is safe to
+# run unconditionally on every connect(), including brand-new DBs where
+# schema.sql's own CREATE TABLE already included the column.
+_COLUMN_MIGRATIONS = [
+    # v3 (followup-4, design.md D5 amendment): reviewer sessions' detected
+    # per-verdict-turn boundaries, JSON-encoded (see discovery.py
+    # review_boundaries/costs.py's session-dict transform).
+    ("sessions", "verdict_boundaries_json", "TEXT"),
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Idempotent post-schema.sql migration: ALTER TABLE for any column in
+    ``_COLUMN_MIGRATIONS`` missing from its table, then bump
+    ``meta.schema_version`` up to the current schema.sql-seeded value if the
+    stored one is lower (``INSERT OR IGNORE`` in schema.sql never overwrites
+    an already-present key, so an existing DB's version marker would
+    otherwise never advance). Safe to call every ``connect()`` -- both
+    checks are idempotent no-ops once applied."""
+    for table, column, sql_type in _COLUMN_MIGRATIONS:
+        existing_cols = {r[1] for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()}
+        if column not in existing_cols:
+            conn.execute(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {sql_type}')
+
+    row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+    if row is not None:
+        # The row above may be an OLD value: schema.sql's own seed line is
+        # `INSERT OR IGNORE`, so re-executing it against a pre-existing DB
+        # never overwrites an already-present key -- exactly the case this
+        # detects and corrects. schema.sql's literal seed value is the
+        # ceiling this DB should be at; read from the just-executed
+        # schema.sql text rather than hardcoding the target version here too.
+        try:
+            stored_version = int(row["value"])
+        except (TypeError, ValueError):
+            stored_version = 0
+        m = _SCHEMA_VERSION_RE.search(_SCHEMA_PATH.read_text(encoding="utf-8"))
+        target_version = int(m.group(1)) if m else stored_version
+        if stored_version < target_version:
+            conn.execute(
+                "UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(target_version),)
+            )
 
 
 def connect_readonly(path) -> sqlite3.Connection:

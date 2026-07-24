@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -43,6 +44,31 @@ COMPACT_TYPES = {"compacted", "compaction", "context_compacted"}
 # Condensed item snippets are truncated to keep timelines readable.
 _SNIPPET_LEN = 400
 _MESSAGE_LEN = 600
+
+# Verdict-turn detection (followup-4, design.md D5 amendment): a reviewer
+# turn whose assistant text contains BOTH a "SPEC: PASS/FAIL" line and a
+# "QUALITY: ..." line is a genuine review verdict, not incidental prose that
+# happens to mention "spec" or "quality" separately. The QUALITY alternation
+# is deliberately permissive -- real transcripts (grepped from
+# analysis/sdd-model-analysis/data/*.json and ~/.codex/sessions) use
+# APPROVE(D), NEEDS-FIXES, PASS, FAIL, and REVISE across different rubric
+# iterations, not one fixed vocabulary. Checked against the FULL (untruncated)
+# assistant text at extraction time, never the condensed/truncated `SAY:`
+# timeline snippet (_MESSAGE_LEN=600) a long review response's verdict lines
+# -- conventionally at the very END, per every reviewer prompt's "End with
+# EXACTLY: ..." instruction -- would frequently fall outside of.
+_SPEC_VERDICT_RE = re.compile(r"\bSPEC:\s*(PASS|FAIL)\b", re.I)
+_QUALITY_VERDICT_RE = re.compile(r"\bQUALITY:\s*(APPROVE[D]?|NEEDS[- ]FIXES|PASS|FAIL|REVISE)\b", re.I)
+
+
+def _is_verdict_text(text: str) -> bool:
+    """True iff ``text`` (an assistant turn's full, untruncated text)
+    contains both a SPEC and a QUALITY verdict line -- see the module-level
+    regex comments for why both are required and why the alternation is
+    this permissive."""
+    if not text:
+        return False
+    return bool(_SPEC_VERDICT_RE.search(text) and _QUALITY_VERDICT_RE.search(text))
 
 
 @dataclass
@@ -77,12 +103,29 @@ class TokenTotals:
 class Turn:
     """One condensed turn: the tool calls/thinking/messages between two
     token-usage checkpoints (codex) or around one assistant API message
-    (claude), plus the output/reasoning token delta charged to it."""
+    (claude), plus the output/reasoning token delta charged to it.
+
+    ``started_at``/``ended_at`` (followup-4, ``session_turns``) are the
+    transcript timestamps of the first and last raw event folded into this
+    turn -- for codex, the closing ``token_count`` event's own timestamp is
+    ``ended_at`` (there is no later event that belongs to the turn); for
+    claude, ``ended_at`` is the last event appended before the turn is
+    flushed (NOT the timestamp of the *next* turn's opening event, which is
+    what triggers the flush but isn't part of this turn). Both are ``None``
+    only if the turn has no items at all (shouldn't happen in practice --
+    a turn is only ever constructed from a non-empty ``items`` list).
+    ``is_verdict`` (followup-4, review-boundary detection) is True iff this
+    turn's own assistant text matched both verdict regexes (see
+    ``_is_verdict_text``) -- only ever set on turns closed by an assistant
+    SAY, never on the codex fallback trailing-turn-with-no-SAY case."""
 
     index: int
     output_tokens: int
     reasoning_tokens: int
     items: List[str] = field(default_factory=list)
+    started_at: Optional[str] = None
+    ended_at: Optional[str] = None
+    is_verdict: bool = False
 
 
 @dataclass
@@ -170,6 +213,19 @@ def extract_codex(path) -> SessionRecord:
 
     turns: List[Turn] = []
     cur_items: List[str] = []
+    cur_turn_start: Optional[str] = None
+    cur_turn_end: Optional[str] = None
+    cur_turn_is_verdict = False
+
+    def _note(ts):
+        """Record `ts` as covering the in-progress turn: the first call
+        since the last flush sets `cur_turn_start`; every call updates
+        `cur_turn_end`, so it ends up as the last-noted event's timestamp."""
+        nonlocal cur_turn_start, cur_turn_end
+        if ts:
+            if cur_turn_start is None:
+                cur_turn_start = ts
+            cur_turn_end = ts
 
     for e in _iter_jsonl(path):
         ts = e.get("timestamp")
@@ -221,9 +277,15 @@ def extract_codex(path) -> SessionRecord:
                             output_tokens=last.get("output_tokens") or 0,
                             reasoning_tokens=last.get("reasoning_output_tokens") or 0,
                             items=cur_items,
+                            started_at=cur_turn_start,
+                            ended_at=ts or cur_turn_end,
+                            is_verdict=cur_turn_is_verdict,
                         )
                     )
                     cur_items = []
+                    cur_turn_start = None
+                    cur_turn_end = None
+                    cur_turn_is_verdict = False
             elif pt == "user_message":
                 msg = p.get("message") or ""
                 if "Session initialization only" in msg:
@@ -232,11 +294,13 @@ def extract_codex(path) -> SessionRecord:
                     prompt = msg
                 else:
                     cur_items.append(f"USER: {msg[:_SNIPPET_LEN]}")
+                    _note(ts)
             elif pt == "agent_message":
                 last_message = p.get("message") or last_message
             elif pt in COMPACT_TYPES:
                 n_compactions += 1
                 cur_items.append("[CONTEXT COMPACTION]")
+                _note(ts)
 
         elif t == "response_item":
             pt = p.get("type")
@@ -245,30 +309,43 @@ def extract_codex(path) -> SessionRecord:
                 name = p.get("name")
                 snippet = _call_snippet(p.get("arguments"))
                 cur_items.append(f"CALL {name}: {snippet}")
+                _note(ts)
             elif pt == "function_call_output":
                 out = p.get("output")
                 if isinstance(out, dict):
                     out = out.get("content") or ""
                 cur_items.append(f"OUT: {str(out)[:_SNIPPET_LEN]}")
+                _note(ts)
             elif pt == "reasoning":
                 txt = "".join(
                     s.get("text", "") for s in (p.get("summary") or []) if isinstance(s, dict)
                 )
                 if txt:
                     cur_items.append(f"THINK: {txt[:_SNIPPET_LEN]}")
+                    _note(ts)
             elif pt == "message" and p.get("role") == "assistant":
                 txt = "".join(
                     c.get("text", "") for c in (p.get("content") or []) if isinstance(c, dict)
                 )
                 if txt:
                     cur_items.append(f"SAY: {txt[:_MESSAGE_LEN]}")
+                    _note(ts)
+                    if _is_verdict_text(txt):
+                        cur_turn_is_verdict = True
 
         elif t in COMPACT_TYPES:
             n_compactions += 1
             cur_items.append("[CONTEXT COMPACTION]")
+            _note(ts)
 
     if cur_items:
-        turns.append(Turn(index=len(turns) + 1, output_tokens=0, reasoning_tokens=0, items=cur_items))
+        turns.append(
+            Turn(
+                index=len(turns) + 1, output_tokens=0, reasoning_tokens=0, items=cur_items,
+                started_at=cur_turn_start, ended_at=cur_turn_end or ended_at,
+                is_verdict=cur_turn_is_verdict,
+            )
+        )
 
     return SessionRecord(
         session_id=session_id,
@@ -316,9 +393,12 @@ def extract_claude(path) -> SessionRecord:
     turns: List[Turn] = []
     cur_items: List[str] = []
     cur_output_tokens = 0
+    cur_turn_start: Optional[str] = None
+    cur_turn_end: Optional[str] = None
+    cur_turn_is_verdict = False
 
     def flush():
-        nonlocal cur_items, cur_output_tokens
+        nonlocal cur_items, cur_output_tokens, cur_turn_start, cur_turn_end, cur_turn_is_verdict
         if cur_items:
             turns.append(
                 Turn(
@@ -326,10 +406,23 @@ def extract_claude(path) -> SessionRecord:
                     output_tokens=cur_output_tokens,
                     reasoning_tokens=0,
                     items=cur_items,
+                    started_at=cur_turn_start,
+                    ended_at=cur_turn_end,
+                    is_verdict=cur_turn_is_verdict,
                 )
             )
         cur_items = []
         cur_output_tokens = 0
+        cur_turn_start = None
+        cur_turn_end = None
+        cur_turn_is_verdict = False
+
+    def _note(ts):
+        nonlocal cur_turn_start, cur_turn_end
+        if ts:
+            if cur_turn_start is None:
+                cur_turn_start = ts
+            cur_turn_end = ts
 
     for e in _iter_jsonl(path):
         ts = e.get("timestamp")
@@ -344,6 +437,7 @@ def extract_claude(path) -> SessionRecord:
         if e.get("isCompactSummary"):
             n_compactions += 1
             cur_items.append("[CONTEXT COMPACTION]")
+            _note(ts)
 
         t = e.get("type")
         if t == "user":
@@ -357,6 +451,7 @@ def extract_claude(path) -> SessionRecord:
                 else:
                     flush()
                     cur_items.append(f"USER: {txt[:_SNIPPET_LEN]}")
+                    _note(ts)
             cont = m.get("content")
             if isinstance(cont, list):
                 for x in cont:
@@ -364,6 +459,7 @@ def extract_claude(path) -> SessionRecord:
                         s = x.get("content")
                         s = _text_of(s) if not isinstance(s, str) else s
                         cur_items.append(f"OUT: {str(s)[:_SNIPPET_LEN]}")
+                        _note(ts)
 
         elif t == "assistant":
             flush()
@@ -386,8 +482,12 @@ def extract_claude(path) -> SessionRecord:
                 if xt == "text" and x.get("text", "").strip():
                     last_message = x["text"]
                     cur_items.append(f"SAY: {x['text'][:_MESSAGE_LEN]}")
+                    _note(ts)
+                    if _is_verdict_text(x["text"]):
+                        cur_turn_is_verdict = True
                 elif xt == "thinking" and x.get("thinking", "").strip():
                     cur_items.append(f"THINK: {x['thinking'][:_SNIPPET_LEN]}")
+                    _note(ts)
                 elif xt == "tool_use":
                     n_tool_calls += 1
                     name = x.get("name")
@@ -399,6 +499,7 @@ def extract_claude(path) -> SessionRecord:
                         or json.dumps(args)
                     )
                     cur_items.append(f"CALL {name}: {str(snippet)[:_SNIPPET_LEN]}")
+                    _note(ts)
 
     flush()
 

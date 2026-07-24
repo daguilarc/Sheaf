@@ -83,6 +83,38 @@ class TestExtractCodexExec(unittest.TestCase):
     def test_last_message(self):
         self.assertEqual(self.rec.last_message, "Applied the patch and compacted context.")
 
+    def test_turn_timestamps(self):
+        # followup-4 (session_turns): turn 1's items span timestamps 04-08
+        # (closed by the token_count event at 09, whose own ts is ended_at);
+        # turn 2's items span 10-14 (closed by the token_count at 15).
+        self.assertEqual(self.rec.turns[0].started_at, "2026-07-02T00:00:04Z")
+        self.assertEqual(self.rec.turns[0].ended_at, "2026-07-02T00:00:09Z")
+        self.assertEqual(self.rec.turns[1].started_at, "2026-07-02T00:00:10Z")
+        self.assertEqual(self.rec.turns[1].ended_at, "2026-07-02T00:00:15Z")
+
+    def test_no_verdict_turns(self):
+        self.assertFalse(any(t.is_verdict for t in self.rec.turns))
+
+
+class TestExtractCodexPersistentReviewer(unittest.TestCase):
+    """followup-4: a persistent reviewer session doing review + re-review
+    inside one transcript -- two assistant turns, each ending with a
+    SPEC/QUALITY verdict pair, must both be detected as verdict turns with
+    their own (distinct) ended_at timestamps."""
+
+    def setUp(self):
+        self.rec = extractors.extract_codex(os.path.join(FIXTURES, "codex_persistent_reviewer.jsonl"))
+
+    def test_two_turns_both_flagged_as_verdicts(self):
+        self.assertEqual(self.rec.n_turns, 2)
+        self.assertTrue(self.rec.turns[0].is_verdict)
+        self.assertTrue(self.rec.turns[1].is_verdict)
+
+    def test_verdict_turns_have_distinct_ended_at(self):
+        boundaries = [t.ended_at for t in self.rec.turns if t.is_verdict]
+        self.assertEqual(boundaries, ["2026-07-05T00:00:08Z", "2026-07-05T01:00:05Z"])
+        self.assertEqual(len(set(boundaries)), 2)
+
 
 class TestExtractCodexSpawn(unittest.TestCase):
     def setUp(self):
@@ -166,6 +198,25 @@ class TestExtractClaudeSession(unittest.TestCase):
     def test_peak_context(self):
         # per-message inp+cr+cc+out: 730, 870, 410 -> max 870
         self.assertEqual(self.rec.peak_context, 870)
+
+    def test_turn_timestamps(self):
+        # followup-4 (session_turns): turn 1 opens at its own assistant
+        # message (ts05) and its last item is the tool_result at ts07
+        # (ts08's queue-operation isn't a turn item and doesn't extend it,
+        # and flush() happens at ts10, which belongs to turn 2, not 1).
+        # Turn 2 opens at ts10 and its last item is the [CONTEXT
+        # COMPACTION] marker at ts14 (isCompactSummary, appended before the
+        # next assistant message flushes it at ts15). Turn 3 is just its
+        # own single assistant message at ts15.
+        self.assertEqual(self.rec.turns[0].started_at, "2026-07-03T00:00:05Z")
+        self.assertEqual(self.rec.turns[0].ended_at, "2026-07-03T00:00:07Z")
+        self.assertEqual(self.rec.turns[1].started_at, "2026-07-03T00:00:10Z")
+        self.assertEqual(self.rec.turns[1].ended_at, "2026-07-03T00:00:14Z")
+        self.assertEqual(self.rec.turns[2].started_at, "2026-07-03T00:00:15Z")
+        self.assertEqual(self.rec.turns[2].ended_at, "2026-07-03T00:00:15Z")
+
+    def test_no_verdict_turns(self):
+        self.assertFalse(any(t.is_verdict for t in self.rec.turns))
 
     def test_compaction_counted_via_isCompactSummary(self):
         self.assertEqual(self.rec.n_compactions, 1)
@@ -260,6 +311,29 @@ class TestRealCorpusSmoke(unittest.TestCase):
         for f in files:
             rec = extractors.extract_codex(f)
             self.assertTrue(rec.session_id)
+
+
+class TestIsVerdictText(unittest.TestCase):
+    """followup-4: verdict-turn detection requires BOTH a SPEC and a
+    QUALITY line (real transcripts use a varying vocabulary for the
+    QUALITY line across rubric iterations -- APPROVE(D)/NEEDS-FIXES/
+    PASS/FAIL/REVISE -- grepped from analysis/sdd-model-analysis/data and
+    ~/.codex/sessions during authoring)."""
+
+    def test_both_lines_present_is_a_verdict(self):
+        self.assertTrue(extractors._is_verdict_text("Findings.\n\nSPEC: PASS\nQUALITY: APPROVED"))
+        self.assertTrue(extractors._is_verdict_text("SPEC: FAIL (bug)\nQUALITY: NEEDS-FIXES"))
+        self.assertTrue(extractors._is_verdict_text("spec: pass\nquality: revise"))
+        self.assertTrue(extractors._is_verdict_text("SPEC: PASS\nQUALITY: APPROVE"))
+
+    def test_only_one_line_is_not_a_verdict(self):
+        self.assertFalse(extractors._is_verdict_text("SPEC: PASS only, no quality line"))
+        self.assertFalse(extractors._is_verdict_text("QUALITY: APPROVED only, no spec line"))
+
+    def test_incidental_prose_is_not_a_verdict(self):
+        self.assertFalse(extractors._is_verdict_text("This spec covers quality separately in prose."))
+        self.assertFalse(extractors._is_verdict_text(""))
+        self.assertFalse(extractors._is_verdict_text(None))
 
 
 if __name__ == "__main__":

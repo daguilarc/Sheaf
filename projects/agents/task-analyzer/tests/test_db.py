@@ -137,6 +137,96 @@ class TestDb(unittest.TestCase):
         f.write_text(text)
         self.assertEqual(db.sha256_file(f), db.sha256_text(text))
 
+    def test_fresh_db_has_v3_tables_and_column(self):
+        conn = db.connect(self.tmp_path / "fresh.sqlite")
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertIn("session_turns", tables)
+        self.assertIn("turn_phases", tables)
+        cols = {r[1] for r in conn.execute('PRAGMA table_info("sessions")')}
+        self.assertIn("verdict_boundaries_json", cols)
+        self.assertEqual(
+            conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "3"
+        )
+
+
+class TestSchemaMigrationV2ToV3(unittest.TestCase):
+    """followup-4 (design.md D5 amendment): session_turns/turn_phases are
+    brand-new tables (CREATE TABLE IF NOT EXISTS handles those on any
+    pre-v3 DB unaided), but sessions.verdict_boundaries_json is a new
+    COLUMN on an already-existing table -- schema.sql's CREATE TABLE IF NOT
+    EXISTS cannot retrofit that, so db.py's connect() must ALTER TABLE it
+    in explicitly, and bump the schema_version meta row (whose own
+    INSERT OR IGNORE seed line never overwrites an existing key)."""
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp(prefix="task-analyzer-migration-test-")
+        self.tmp_path = Path(self._tmp)
+        self.db_path = self.tmp_path / "v2.sqlite"
+
+    def tearDown(self):
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _make_v2_db(self):
+        """A minimal, hand-built v2-shaped DB: sessions table without
+        verdict_boundaries_json, no session_turns/turn_phases tables,
+        schema_version='2' -- what every already-ingested DB (including
+        the real committed one, pre-followup-4) actually looked like."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            """CREATE TABLE sessions(
+                 session_id TEXT PRIMARY KEY, task_id INTEGER, provider TEXT NOT NULL,
+                 harness_entry TEXT, role TEXT NOT NULL, model TEXT, effort TEXT,
+                 started_at TEXT, ended_at TEXT, transcript_path TEXT,
+                 input_tokens INTEGER, cached_tokens INTEGER, output_tokens INTEGER,
+                 reasoning_tokens INTEGER, peak_context INTEGER,
+                 n_compactions INTEGER, n_turns INTEGER, n_tool_calls INTEGER,
+                 review_round INTEGER)"""
+        )
+        conn.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT INTO meta(key, value) VALUES ('schema_version', '2')")
+        conn.execute(
+            "INSERT INTO sessions(session_id, provider, role, output_tokens) "
+            "VALUES ('codex:existing-1', 'codex', 'implementer', 500)"
+        )
+        conn.commit()
+        conn.close()
+
+    def test_migration_adds_column_and_bumps_version_preserving_data(self):
+        self._make_v2_db()
+        conn = db.connect(self.db_path)
+
+        cols = {r[1] for r in conn.execute('PRAGMA table_info("sessions")')}
+        self.assertIn("verdict_boundaries_json", cols)
+        self.assertEqual(
+            conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "3"
+        )
+        # The pre-existing row survived the ALTER TABLE untouched.
+        row = conn.execute(
+            "SELECT provider, role, output_tokens, verdict_boundaries_json FROM sessions "
+            "WHERE session_id = 'codex:existing-1'"
+        ).fetchone()
+        self.assertEqual((row["provider"], row["role"], row["output_tokens"]), ("codex", "implementer", 500))
+        self.assertIsNone(row["verdict_boundaries_json"])
+        # New v3 tables exist too.
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertIn("session_turns", tables)
+        self.assertIn("turn_phases", tables)
+        conn.close()
+
+    def test_migration_is_idempotent_on_repeated_connect(self):
+        self._make_v2_db()
+        conn1 = db.connect(self.db_path)
+        conn1.close()
+        # Second connect() must not raise (e.g. "duplicate column") and must
+        # leave the DB in the same already-migrated state.
+        conn2 = db.connect(self.db_path)
+        cols = [r[1] for r in conn2.execute('PRAGMA table_info("sessions")')]
+        self.assertEqual(cols.count("verdict_boundaries_json"), 1)
+        self.assertEqual(
+            conn2.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0], "3"
+        )
+        conn2.close()
+
 
 class TestConnectReadonly(unittest.TestCase):
     """connect_readonly must never mutate/create the target file (final

@@ -1,0 +1,15 @@
+{"timestamp": "2026-07-05T00:00:00Z", "type": "session_meta", "payload": {"id": "reviewer-sess-1", "cwd": "/repo", "source": "exec"}}
+{"timestamp": "2026-07-05T00:00:01Z", "type": "turn_context", "payload": {"model": "gpt-5.5-codex", "effort": "high"}}
+{"timestamp": "2026-07-05T00:00:02Z", "type": "event_msg", "payload": {"type": "user_message", "message": "Session initialization only."}}
+{"timestamp": "2026-07-05T00:00:03Z", "type": "event_msg", "payload": {"type": "user_message", "message": "Review task 4 for spec compliance and code quality."}}
+{"timestamp": "2026-07-05T00:00:04Z", "type": "response_item", "payload": {"type": "function_call", "name": "shell", "arguments": "{\"command\": [\"bash\", \"-lc\", \"git diff\"]}"}}
+{"timestamp": "2026-07-05T00:00:05Z", "type": "response_item", "payload": {"type": "function_call_output", "output": {"content": "diff contents"}}}
+{"timestamp": "2026-07-05T00:00:06Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Findings: none critical.\n\nSPEC: PASS\nQUALITY: APPROVED"}]}}
+{"timestamp": "2026-07-05T00:00:07Z", "type": "event_msg", "payload": {"type": "agent_message", "message": "Findings: none critical.\n\nSPEC: PASS\nQUALITY: APPROVED"}}
+{"timestamp": "2026-07-05T00:00:08Z", "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 500, "cached_input_tokens": 100, "output_tokens": 200, "reasoning_output_tokens": 10, "total_tokens": 700}, "last_token_usage": {"input_tokens": 500, "cached_input_tokens": 100, "output_tokens": 200, "reasoning_output_tokens": 10, "total_tokens": 700}, "model_context_window": 200000}}}
+{"timestamp": "2026-07-05T01:00:00Z", "type": "event_msg", "payload": {"type": "user_message", "message": "Re-review after the fixer applied changes."}}
+{"timestamp": "2026-07-05T01:00:01Z", "type": "response_item", "payload": {"type": "function_call", "name": "shell", "arguments": "{\"command\": [\"bash\", \"-lc\", \"git diff\"]}"}}
+{"timestamp": "2026-07-05T01:00:02Z", "type": "response_item", "payload": {"type": "function_call_output", "output": {"content": "updated diff"}}}
+{"timestamp": "2026-07-05T01:00:03Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Re-checked the fix.\n\nSPEC: PASS\nQUALITY: APPROVED"}]}}
+{"timestamp": "2026-07-05T01:00:04Z", "type": "event_msg", "payload": {"type": "agent_message", "message": "Re-checked the fix.\n\nSPEC: PASS\nQUALITY: APPROVED"}}
+{"timestamp": "2026-07-05T01:00:05Z", "type": "event_msg", "payload": {"type": "token_count", "info": {"total_token_usage": {"input_tokens": 900, "cached_input_tokens": 200, "output_tokens": 350, "reasoning_output_tokens": 15, "total_tokens": 1265}, "last_token_usage": {"input_tokens": 400, "cached_input_tokens": 100, "output_tokens": 150, "reasoning_output_tokens": 5, "total_tokens": 650}, "model_context_window": 200000}}}

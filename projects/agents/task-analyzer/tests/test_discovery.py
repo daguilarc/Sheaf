@@ -264,6 +264,93 @@ class TestAssignReviewRounds(unittest.TestCase):
         self.assertEqual(rounds["aborted"], 0)
 
 
+class TestReviewBoundaries(unittest.TestCase):
+    """followup-4 (design.md D5 amendment): a persistent reviewer session
+    doing review + re-review contributes ONE boundary per detected verdict
+    turn, not just its final ended_at -- so a later implementer/fixer
+    session starting between two verdicts gets the round the FIRST verdict
+    opened, not round 0."""
+
+    def test_multi_verdict_reviewer_contributes_multiple_boundaries(self):
+        sessions = [
+            {
+                "session_id": "rev-persistent",
+                "role": "reviewer",
+                "started_at": "2026-07-19T00:00:00",
+                "ended_at": "2026-07-19T02:00:00",
+                "verdict_boundaries": ["2026-07-19T00:30:00", "2026-07-19T01:30:00"],
+            },
+        ]
+        self.assertEqual(
+            discovery.review_boundaries(sessions),
+            ["2026-07-19T00:30:00", "2026-07-19T01:30:00"],
+        )
+
+    def test_session_without_verdict_boundaries_falls_back_to_ended_at(self):
+        # Unchanged single-boundary-per-session behavior for a session with
+        # no recoverable turn/verdict data (or a genuinely single-verdict
+        # session whose verdict_boundaries key is simply absent).
+        sessions = [
+            {
+                "session_id": "rev-plain",
+                "role": "reviewer",
+                "started_at": "2026-07-19T00:00:00",
+                "ended_at": "2026-07-19T00:30:00",
+            },
+        ]
+        self.assertEqual(discovery.review_boundaries(sessions), ["2026-07-19T00:30:00"])
+
+    def test_empty_verdict_boundaries_list_falls_back_to_ended_at(self):
+        sessions = [
+            {
+                "session_id": "rev-empty",
+                "role": "reviewer",
+                "started_at": "2026-07-19T00:00:00",
+                "ended_at": "2026-07-19T00:30:00",
+                "verdict_boundaries": [],
+            },
+        ]
+        self.assertEqual(discovery.review_boundaries(sessions), ["2026-07-19T00:30:00"])
+
+    def test_implementer_between_two_verdicts_gets_round_opened_by_first(self):
+        # A persistent reviewer session detects verdicts at t=30 and t=90;
+        # a fixer session starting at t=60 (after the first verdict, before
+        # the second) must be round 1, not round 0 -- the exact bug
+        # (single-boundary-per-session) this amendment fixes.
+        sessions = [
+            {
+                "session_id": "impl0", "role": "implementer",
+                "started_at": "2026-07-19T00:00:00", "ended_at": "2026-07-19T00:20:00",
+            },
+            {
+                "session_id": "rev-persistent", "role": "reviewer",
+                "started_at": "2026-07-19T00:25:00", "ended_at": "2026-07-19T02:00:00",
+                "verdict_boundaries": ["2026-07-19T00:30:00", "2026-07-19T01:30:00"],
+            },
+            {
+                "session_id": "fix1", "role": "fixer",
+                "started_at": "2026-07-19T01:00:00", "ended_at": "2026-07-19T01:10:00",
+            },
+        ]
+        rounds = discovery.assign_review_rounds(sessions)
+        self.assertEqual(rounds["impl0"], 0)
+        self.assertEqual(rounds["fix1"], 1)
+
+    def test_reviewer_own_round_reflects_its_latest_verdict(self):
+        sessions = [
+            {
+                "session_id": "rev-persistent", "role": "reviewer",
+                "started_at": "2026-07-19T00:25:00", "ended_at": "2026-07-19T02:00:00",
+                "verdict_boundaries": ["2026-07-19T00:30:00", "2026-07-19T01:30:00"],
+            },
+        ]
+        rounds = discovery.assign_review_rounds(sessions)
+        # Both of this session's own boundaries are <= its own ended_at, so
+        # it's counted at round 2 (its final state), matching the original
+        # single-boundary-per-session semantics generalized to N boundaries.
+        self.assertEqual(rounds["rev-persistent"], 2)
+
+
 def _session_record(session_id, output_tokens, model, effort, started_at, ended_at, role):
     """A real extractors.SessionRecord, with `role` bolted on as a plain
     attribute -- SessionRecord itself has no `role` field (Task 3's
