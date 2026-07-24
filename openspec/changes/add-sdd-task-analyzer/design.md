@@ -94,7 +94,18 @@ CREATE TABLE sessions(
   input_tokens INTEGER, cached_tokens INTEGER, output_tokens INTEGER,
   reasoning_tokens INTEGER, peak_context INTEGER,
   n_compactions INTEGER, n_turns INTEGER, n_tool_calls INTEGER,
-  review_round INTEGER);                -- 1..n for reviewer/fixer sessions
+  review_round INTEGER,                 -- 1..n for reviewer/fixer sessions
+  verdict_boundaries_json TEXT);         -- v3 (followup-4): reviewer's detected
+                                         -- per-verdict timestamps (JSON array);
+                                         -- a new column on an existing table,
+                                         -- so db.py ALTER TABLEs it onto pre-v3
+                                         -- DBs (CREATE TABLE IF NOT EXISTS can't).
+
+CREATE TABLE session_turns(             -- v3 (followup-4): per-turn timing,
+  session_id TEXT REFERENCES sessions,  -- mechanical (from extractors.py, or
+  turn_idx INTEGER,                     -- backfilled from transcript_path).
+  started_at TEXT, ended_at TEXT, output_tokens INTEGER,
+  PRIMARY KEY(session_id, turn_idx));
 
 -- agentic layer (cache-keyed judgments; re-run when rubric_version changes)
 CREATE TABLE complexity(
@@ -120,6 +131,13 @@ CREATE TABLE phase_tokens(
   taxonomy_version TEXT NOT NULL, input_sha256 TEXT NOT NULL, scored_by TEXT,
   PRIMARY KEY(session_id, phase, taxonomy_version));
 
+CREATE TABLE turn_phases(               -- v3 (followup-4): per-turn phase
+  session_id TEXT REFERENCES sessions,  -- labels; same cache keys as
+  turn_idx INTEGER, phase TEXT,         -- phase_tokens, which REMAINS and
+  taxonomy_version TEXT NOT NULL,       -- must equal the aggregation of this
+  input_sha256 TEXT NOT NULL, scored_by TEXT,  -- table x session_turns.output_tokens
+  PRIMARY KEY(session_id, turn_idx, taxonomy_version));  -- for sessions with turn rows.
+
 -- reference + derived layer (deterministic; `rebuild-derived` recomputes)
 CREATE TABLE model_prices(
   model TEXT, effective_date TEXT,
@@ -142,8 +160,17 @@ CREATE TABLE task_arms(                 -- canonical implementer arm per task
   basis_json TEXT);                     -- how chosen + other round-0 sessions
 
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
--- meta rows include ('schema_version','1'); schema is applied idempotently
+-- meta rows include ('schema_version','3'); schema is applied idempotently
 -- (CREATE TABLE IF NOT EXISTS); future schema changes bump schema_version.
+-- v2 (Task 5/ingest.py): added grades.review_text.
+-- v3 (followup-4): added session_turns/turn_phases (new tables -- CREATE
+-- TABLE IF NOT EXISTS handles these on any pre-v3 DB unaided) and
+-- sessions.verdict_boundaries_json (a new COLUMN on an already-existing
+-- table, which CREATE TABLE IF NOT EXISTS cannot retrofit -- db.py's
+-- connect() ALTER TABLEs it in when missing, and bumps this meta row from
+-- '2' to '3' since the seed INSERT OR IGNORE never overwrites an existing
+-- key). db.py's `_migrate` implements this idempotently, gated on
+-- PRAGMA table_info column-presence checks, not the stored version number.
 
 -- estimator layer
 CREATE TABLE estimators(
@@ -243,6 +270,81 @@ Deterministic event rules over session timestamps (the only clock we have):
 This is computable from the already-extracted 2026-07-19 session records — no
 re-labeling needed. Letter grades stay recorded for offline analysis but are
 not a regression target.
+
+**Amendment (followup-4): persistent sessions and multi-verdict boundaries.**
+The `openspec-superpowers-workflow` skill's "Provider and model rules" now
+deliberately keep implementer and reviewer sessions **open and resumed**
+across fix/re-review rounds, rather than spawning a fresh session per round.
+This broke two assumptions the original rules above depended on:
+
+1. A resumed round-0 implementer session can contain turns performed
+   *after* the task's first review verdict — pure session-level
+   apportionment would misattribute that fix work to the phase categories
+   (or `unlabeled`) instead of `followup_fix`, even though `review_round`
+   correctly stays 0 (round is a session-*start*-time property, unchanged).
+2. A resumed reviewer session doing review + re-review is still just *one*
+   session row, so "one review boundary per reviewer session's `ended_at`"
+   collapsed multiple real verdicts into a single boundary — an
+   implementer/fixer session starting between the first and second verdict
+   was incorrectly assigned round 0 instead of round 1.
+
+Both are fixed with mechanical, deterministic detection, never inference:
+
+- **Verdict-turn detection** (`extractors.py`): a turn is a verdict turn iff
+  its assistant text (the FULL, untruncated text — not the condensed/
+  truncated timeline snippet used for phase labeling, since verdict lines
+  conventionally sit at the very end of a long review response and would
+  often fall outside the truncated form) matches both a `SPEC: PASS|FAIL`
+  regex and a permissive `QUALITY: APPROVE[D]?|NEEDS[- ]FIXES|PASS|FAIL|
+  REVISE` regex. Every verdict turn's own `ended_at` is persisted as one of
+  the session's `verdict_boundaries` (`sessions.verdict_boundaries_json`).
+- **Review boundaries are now the union of every reviewer session's
+  detected verdict-turn timestamps** (`discovery.review_boundaries`),
+  sorted, not one boundary per reviewer session. `assign_review_rounds`
+  uses this union unchanged otherwise (implementer/fixer round = count of
+  boundaries strictly before its `started_at`; a reviewer's own round =
+  count of boundaries at-or-before its own `ended_at`). A reviewer session
+  with no detected verdict turns at all (no SPEC:/QUALITY: co-occurrence
+  found, or predating this amendment with no `session_turns` to re-derive
+  it from) falls back to its own `ended_at` as a single boundary — the
+  original, pre-amendment behavior — so this is a strict generalization,
+  never a regression for data without verdict detail.
+- **Spanning-session split** (`costs.py`): for a round-0 implementer session
+  that has `session_turns` rows AND the task has at least one review
+  boundary, turns starting strictly *after* the first boundary are the
+  **fix partition** — they fund `followup_fix` at their summed
+  `output_tokens`, and a proportional `session_usd * fix_output_tokens /
+  total_turn_output_tokens` (the same "apportion by output_tokens share of
+  session usd" convention the phase split already uses). The remaining
+  pre-boundary turns fund the phase categories: if `turn_phases` rows exist
+  for this session (direct — phase shares computed from just the
+  pre-boundary turns' own labels, residual funding `unlabeled` as usual),
+  else the session's original, full-session `phase_tokens` shares are
+  *scaled* by `pre_boundary_output_tokens / total_turn_output_tokens`
+  (less precise — assumes uniform phase proportions across turns — but
+  still exact on the sum-preserving invariant, since the fix and scaled
+  pre-boundary shares are defined to add back to exactly `session_usd`). A
+  round-0 session with no `session_turns` rows at all (not yet backfilled,
+  or unrecoverable) uses the original, unsplit whole-session apportionment
+  — a real, documented approximation, not a bug: the split can only ever
+  be as good as the per-turn data available.
+- **Backfill** (`ingest.py backfill-turns`): for any already-ingested
+  session lacking `session_turns`, re-extracts turns from
+  `sessions.transcript_path` if that file still exists on disk; for
+  round-0 implementer sessions that gain turns this way, also attempts to
+  backfill `turn_phases` from a still-valid staged `phase_labeling` JSON,
+  else the analysis dataset's per-turn `phase_labels/<key>.json` (the
+  2026-07-19 migration's source data — the only recoverable per-turn label
+  source for the currently 100%-`migrated_v0` corpus, which predates this
+  module's live staging path entirely). A session whose transcript file no
+  longer exists (or fails to parse) is reported unrecoverable — its cost
+  attribution simply stays session-level, unchanged. Note a real
+  recoverability limit this uncovered: the analysis dataset's rendered
+  timelines carry per-turn output-token counts but never per-turn
+  *timestamps*, so they can only ever backfill `turn_phases`, never
+  `session_turns` (which needs real timestamps only available from the raw
+  transcript file itself) — the analysis dataset is therefore a
+  `turn_phases`-only fallback, never a `session_turns` source.
 
 ### D6. Estimator: conjugate Bayesian regression per (category, arm)
 

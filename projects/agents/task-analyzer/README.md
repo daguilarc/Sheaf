@@ -30,20 +30,37 @@ a scratch/test copy.
 ### `ingest.py` — mechanical + agentic ingestion
 
 ```
-python3 projects/agents/task-analyzer/ingest.py [ingest|rebuild-derived] \
+python3 projects/agents/task-analyzer/ingest.py [ingest|rebuild-derived|backfill-turns] \
     [--db PATH] [--repo PATH] [--dry-run] [--no-agents] \
-    [--rescore complexity|grades|phase_tokens] [--change NAME]
+    [--rescore complexity|grades|phase_tokens] [--change NAME] \
+    [--analysis-dir DIR]
 ```
 
 - `ingest` (default command): diffs landed `openspec/changes/archive/` dirs
   against git (never the worktree filesystem — a change only qualifies once
   its archive dir is present at the resolved ref, default
-  `refs/heads/main`), ingests new tasks/sessions, dispatches agentic scoring
-  for cache misses (complexity/grading/phase-labeling), and calls
-  `costs.rebuild` at the end.
+  `refs/heads/main`), ingests new tasks/sessions (populating `session_turns`
+  for each, alongside its `sessions` row), dispatches agentic scoring for
+  cache misses (complexity/grading/phase-labeling — phase-labeling also
+  populates `turn_phases`), and calls `costs.rebuild` at the end.
 - `rebuild-derived`: recomputes `task_costs`/`task_arms` from already-ingested
   raw + agentic rows only — no discovery, no agent dispatch. This is the
   command to run after a price-table change (see the recompute matrix).
+- `backfill-turns` (design.md D5 amendment, followup-4): for every already-
+  ingested session lacking `session_turns` rows — i.e. every session ingested
+  before those tables existed, which today means the entire `migrated_v0`
+  corpus — re-extracts turns from `sessions.transcript_path` if that file
+  still exists on disk, and (for round-0 implementer sessions that gain
+  turns this way) attempts to backfill `turn_phases` too, from a still-valid
+  staged `phase_labeling` JSON or else the analysis dataset's per-turn
+  `phase_labels/<key>.json` (`--analysis-dir`, default
+  `analysis/sdd-model-analysis/data`). Prints backfilled/unrecoverable
+  counts as JSON. A session whose transcript no longer exists on disk simply
+  keeps session-level cost attribution — not an error, just a documented
+  precision limit (see design.md D5 amendment). Run this once after
+  upgrading to schema v3, before the next `rebuild-derived`, so the
+  spanning-session split has turn data to work with wherever it's
+  recoverable.
 - `--dry-run`: prints the work plan (which tasks, which agent calls would
   fire) without writing anything; against a DB that doesn't exist yet, it
   plans against a throwaway in-memory schema instead of creating the file.
@@ -169,6 +186,35 @@ prints `valid` and exits 0 otherwise.
 | Phase taxonomy bump (new/renamed phase keys) | `ingest.py --rescore phase_tokens`, then relabel/remap any downstream category naming assumptions by hand (the taxonomy's phase keys feed `task_costs.category` via D5's event rules) | A taxonomy version bump changes what a "phase" *is*, not just its price — treat it as a relabel, not a mechanical recompute; review before retraining. |
 | New batch of ingested changes | `ingest.py`, then eyeball `--dry-run` first if the batch is large or new-provider sessions are involved | Normal cadence — no forced retrain; training is a separate, deliberate step. |
 | Estimator retrain | `train.py --db data/agents/task-analyzer.sqlite`, then `estimate.py --sanity` as a smoke check | No fixed cadence — retrain when there's enough new `task_costs` data to matter (a handful of new tasks won't move sparse-arm posteriors much). Every retrain adds a new `estimators` row; nothing is overwritten, so a bad retrain is recoverable by pinning `--estimator-id` back to the prior generation. |
+| Schema upgraded to v3 (`session_turns`/`turn_phases` added) | `ingest.py backfill-turns`, then `ingest.py rebuild-derived` | One-time, per-DB: populates per-turn data for sessions ingested before v3 (schema migration itself is automatic and idempotent on every `db.connect()` — see design.md D2 — but per-turn *data* can only come from re-reading transcripts, hence the separate explicit step); `rebuild-derived` then lets the spanning-session split (D5 amendment) use it. Safe to skip — sessions without turn data just keep the old, session-level (unsplit) apportionment. |
+
+## Persistent agents and the spanning-session split
+
+The `openspec-superpowers-workflow` skill's "Provider and model rules" now
+deliberately keep an implementer's and a reviewer's session **open and
+resumed** across fix/re-review rounds, rather than spawning a fresh session
+per round (cheaper, keeps context). That broke a session-granularity
+assumption the original cost model (D5) depended on: a "round-0" implementer
+session can, in practice, still contain turns performed *after* the task's
+first review verdict — pure session-level apportionment would misattribute
+that fix work to the phase categories instead of `followup_fix`. Likewise, a
+resumed reviewer session doing review + re-review is still one session row,
+so counting "one review boundary per reviewer session" undercounted rounds
+for anything that started between two verdicts.
+
+The fix (design.md D5 amendment, followup-4) is per-turn, not per-session:
+every verdict is detected mechanically inside the transcript (a `SPEC:
+PASS|FAIL` + `QUALITY: ...` co-occurrence on the same turn's assistant
+text), review boundaries become the union of every detected verdict turn
+(not one per reviewer session), and `costs.py` splits a spanning round-0
+session's *turns* at the task's first boundary — pre-boundary turns fund the
+phase categories, post-boundary turns fund `followup_fix` — rather than
+assuming a session belongs entirely to one category. This needs per-turn
+timing/labels (`session_turns`/`turn_phases`, schema v3) that didn't exist
+before; `ingest.py backfill-turns` populates them for already-ingested
+sessions where the source transcript is still recoverable (see the recompute
+matrix row above and design.md D5's amendment section for the exact fallback
+rules when it isn't).
 
 ## Staging / crash-recovery semantics
 

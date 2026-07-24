@@ -87,3 +87,46 @@ query-layer-only redesign of an already-active one.
   `--guard-factor`, and `config_json["guard_factor"]` handling are removed
   outright. Estimator training/persistence and the database are unchanged;
   this was a query-layer-only change.
+- [x] 7.6 Follow-up 4 — persistent-session review-round attribution fix
+  (design.md D5 amendment): the `openspec-superpowers-workflow` skill's
+  "Provider and model rules" now keep implementer/reviewer sessions open
+  across fix/re-review rounds, which broke session-granularity cost
+  attribution two ways — a fix performed inside a resumed round-0
+  implementer session was misattributed to phases instead of
+  `followup_fix`, and a resumed reviewer session doing review + re-review
+  contributed one review boundary instead of one per verdict. Fixed with:
+  new `session_turns`/`turn_phases` tables + `sessions.verdict_boundaries_json`
+  column (schema v2→v3, idempotent `ALTER TABLE`-based migration in
+  `db.py`); mechanical verdict-turn detection in `extractors.py` (`SPEC:
+  PASS|FAIL` + `QUALITY: ...` co-occurrence on one turn's full assistant
+  text); `discovery.review_boundaries` generalized to the union of every
+  reviewer session's detected verdict timestamps (falling back to the old
+  one-boundary-per-session behavior when no verdict data exists); a
+  spanning-session split in `costs.py` that partitions a round-0
+  implementer session's turns at the task's first review boundary
+  (post-boundary turns fund `followup_fix`, pre-boundary turns fund the
+  phase categories — directly from `turn_phases` when present, else scaled
+  from the session's aggregate `phase_tokens`), with a proven
+  sum-preservation invariant (every split sums back to exactly the
+  session's usd); and a new `ingest.py backfill-turns` subcommand that
+  re-extracts turns from `sessions.transcript_path` for any session
+  predating these tables, with `turn_phases` recovered from the analysis
+  dataset's per-turn labels where the transcript-derived source doesn't
+  survive. 32 new tests added (263 total, up from a 231 baseline), covering
+  turn persistence, verdict-boundary detection, the spanning split (direct
+  and scaled-fallback branches, sum-preservation, no-turn-data fallback),
+  and backfill (recoverable/unrecoverable, idempotency, phase-label
+  aggregation integrity). Ran against the real dataset: `backfill-turns`
+  recovered `session_turns` for all 616 already-ingested sessions (0
+  unrecoverable) and `turn_phases` for 161 of 164 eligible round-0
+  implementer sessions (3 unavailable — no surviving per-turn label
+  source); found 3 real reviewer sessions with multiple detected verdicts
+  and 11 real round-0 implementer sessions spanning a review boundary.
+  `rebuild-derived` shifted `followup_fix` from $588.25 to $607.83 (+$19.58,
+  +3.33%), pulled proportionally from the phase/`unlabeled` categories,
+  with the grand total across all categories unchanged to the cent
+  ($2141.50263245 before and after, byte-identical). Retrained
+  (`estimators` id 4, prior 1–3 kept); `--sanity` selected the same arm per
+  task before and after retraining (gpt-5.6-terra/high, gpt-5.6-terra/high,
+  gpt-5.5/high) — only the reported p20/p50/p80 totals shifted slightly,
+  no selection change.

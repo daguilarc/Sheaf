@@ -5,12 +5,15 @@
 ### Requirement: SQLite dataset with specified schema
 The system SHALL maintain the dataset in `data/agents/task-analyzer.sqlite`
 using the schema defined in this change's design (tables: changes, tasks,
-sessions, complexity, grades, phase_tokens, model_prices, task_costs,
-task_arms, meta, estimators, estimator_params, ingest_log). Every agentic judgment row
-(complexity, grades, phase_tokens) MUST carry `rubric_version`/
-`taxonomy_version`, `input_sha256`, and `scored_by`. Each ingest MUST also
-write a stable-ordered JSONL export (`data/agents/task-analyzer.dump.jsonl`)
-for reviewable diffs.
+sessions, session_turns, complexity, grades, phase_tokens, turn_phases,
+model_prices, task_costs, task_arms, meta, estimators, estimator_params,
+ingest_log). Every agentic judgment row (complexity, grades, phase_tokens,
+turn_phases) MUST carry `rubric_version`/`taxonomy_version`, `input_sha256`,
+and `scored_by`. Each ingest MUST also write a stable-ordered JSONL export
+(`data/agents/task-analyzer.dump.jsonl`) for reviewable diffs. Schema changes
+MUST be applied idempotently on every connect (new tables via `CREATE TABLE
+IF NOT EXISTS`; new columns on existing tables via an explicit, column-
+presence-gated `ALTER TABLE`), bumping `meta.schema_version`.
 
 #### Scenario: Judgments are cache-keyed
 - **WHEN** a task already has a complexity row whose `rubric_version` matches the current rubric asset and whose `input_sha256` matches the brief
@@ -23,6 +26,10 @@ for reviewable diffs.
 #### Scenario: Rubric bump triggers opt-in rescoring
 - **WHEN** the complexity rubric asset's version is bumped and ingestion runs with `--rescore complexity`
 - **THEN** tasks whose stored `rubric_version` differs are re-scored with new version rows written alongside the retained prior-version rows; without the flag they are left untouched and reported as stale
+
+#### Scenario: Schema migration is idempotent and preserves data
+- **WHEN** an existing database created under an older schema version is opened by a newer version of the tooling
+- **THEN** any missing tables are created, any missing columns on existing tables are added via `ALTER TABLE`, `meta.schema_version` is bumped to match, all pre-existing rows and columns are left unchanged, and repeating the connect a second time makes no further changes
 
 ### Requirement: Idempotent, atomic, offline ingestion
 The system SHALL provide an ingestion script in
@@ -67,21 +74,67 @@ NOT be part of ingestion.
 The system SHALL deterministically compute per-task dollar-weighted token
 costs into `task_costs`: one category per TDD phase (session cost apportioned
 by phase output-token share), plus `review` (all reviewer/auditor sessions) and `followup_fix` per the
-design's deterministic event rules: review boundaries are reviewer-session
-end times; implementer/fixer sessions get `review_round = n` where n is the
-count of boundaries before their start, and every session with round ≥ 1 is
-a follow-up fix; round-0 implementer sessions lacking phase labels fund the
-legal category `unlabeled`; re-reviews without intervening fixes contribute
-to `review` only; aborted and zero-output sessions are included in their
-category; quarantined sessions fund nothing. The canonical implementer arm
-per task SHALL be recorded in `task_arms` (round-0 implementer session with
-greatest output tokens; alternates recorded in `basis_json`).
+design's deterministic event rules: a review boundary is the timestamp of a
+detected review verdict turn (a co-occurring `SPEC: PASS|FAIL` and `QUALITY:
+...` match within one reviewer turn's assistant text), falling back to a
+reviewer session's own `ended_at` when no turn-level verdict data exists for
+it; a task's review boundaries are the sorted union of every reviewer
+session's detected verdict-turn timestamps (or fallback); implementer/fixer
+sessions get `review_round = n` where n is the count of boundaries strictly
+before their start, and every session with round ≥ 1 is a follow-up fix;
+round-0 implementer sessions lacking phase labels fund the legal category
+`unlabeled`; re-reviews without intervening fixes contribute to `review`
+only; aborted and zero-output sessions are included in their category;
+quarantined sessions fund nothing. The canonical implementer arm per task
+SHALL be recorded in `task_arms` (round-0 implementer session with greatest
+output tokens; alternates recorded in `basis_json`).
 Dollar weighting MUST use the versioned `model_prices` table, and a
 `rebuild-derived` subcommand MUST recompute all derived rows from raw data.
+
+A round-0 implementer session whose own transcript turns span the task's
+first review boundary (a persistent session resumed across fix/re-review
+rounds) MUST have its turns partitioned at that boundary: turns starting
+strictly after it fund `followup_fix` (proportional to their share of the
+session's total turn output tokens); the remaining turns fund the phase
+categories exactly as an unsplit round-0 session would, scaled to their
+share of the session's total turn output tokens. Every category split MUST
+sum back to exactly the session's full dollar cost (no cost lost or double-
+counted across the split). A round-0 session with no per-turn data at all
+MUST fall back to the prior (unsplit, whole-session) apportionment
+unchanged — this is a documented approximation for such sessions, not an
+error condition.
 
 #### Scenario: Price update recomputes derived costs only
 - **WHEN** a new `model_prices` row is added and `rebuild-derived` runs
 - **THEN** `task_costs` rows are recomputed with the new `price_version` and no agentic tables are touched
+
+#### Scenario: Multi-verdict reviewer session contributes multiple boundaries
+- **WHEN** a single (persistent, resumed) reviewer session's transcript contains two distinct detected review verdicts
+- **THEN** the task's review boundaries include both verdict timestamps, and an implementer/fixer session starting between them is assigned the review round opened by the first verdict, not round 0
+
+#### Scenario: Spanning round-0 session's fix turns fund followup_fix
+- **WHEN** a round-0 implementer session has per-turn data and some of its turns start strictly after the task's first review boundary
+- **THEN** those turns' dollar cost funds `followup_fix` and the session's remaining turns fund the phase categories, with the category totals summing back to exactly the session's full cost
+
+### Requirement: Backfill of per-turn data for pre-existing sessions
+The system SHALL provide an `ingest.py backfill-turns` subcommand that
+populates `session_turns` (and, for round-0 implementer sessions,
+`turn_phases`) for any already-ingested session lacking them, by re-parsing
+`sessions.transcript_path` when that file still exists on disk. Turn-level
+phase labels MAY additionally be recovered from a still-valid staged
+`phase_labeling` JSON or from a historical per-session phase-label dataset
+when the transcript-derived labels are unavailable. A session whose
+transcript can no longer be read MUST be left with no `session_turns` rows
+(and therefore no spanning-session split for it) rather than erroring the
+whole run; the subcommand MUST report backfilled and unrecoverable counts.
+
+#### Scenario: Backfill recovers turns from a still-present transcript
+- **WHEN** `backfill-turns` runs against a session lacking `session_turns` whose `transcript_path` still points to a readable file
+- **THEN** `session_turns` rows are written for that session and it is counted as backfilled
+
+#### Scenario: Backfill reports an unrecoverable session without erroring
+- **WHEN** `backfill-turns` runs against a session lacking `session_turns` whose `transcript_path` is missing, unset, or unreadable
+- **THEN** that session is counted as unrecoverable, no `session_turns` rows are written for it, and the run completes successfully for every other session
 
 ### Requirement: Migration of the 2026-07-19 dataset
 The system SHALL provide a one-shot idempotent migration importing the
