@@ -7,9 +7,13 @@ posteriors (``estimators``/``estimator_params``, written by ``train.py``),
 and for every task ranks every known (model, effort) arm by predicted total
 cost and picks a selected arm.
 
-Per-category diagnostics (mean/median/p20/p80) are exact and cheap: each
+Per-category diagnostics (median/p20/p80) are exact and cheap: each
 category's posterior predictive is a closed-form Student-t (``model.NIG.
-predictive``/``quantile``). An arm missing a posterior for some category
+predictive``/``quantile``). There is deliberately no ``mean_usd``: the
+dollar-space predictive is exp of a Student-t, which has no finite moments
+at all, so no honest dollar mean exists (an earlier field named
+``mean_usd`` was exp of the log-space mean -- i.e. exactly the dollar
+*median* again, under a misleading name -- and was removed). An arm missing a posterior for some category
 falls back to that category's *pooled* posterior instead -- the sentinel
 ``estimator_params`` row ``train.py`` persists per category
 (``model.POOLED_SENTINEL_ARM``), fit across every arm's rows in that
@@ -55,7 +59,13 @@ reach a JSON report (``json.dumps(..., allow_nan=False)`` in ``main()``
 raises rather than silently emit non-standard ``Infinity``/``NaN`` tokens).
 So every arm's MC total-cost quantiles are computed over the *finite*
 subset of its draws only; the count of non-finite draws is reported per
-arm as ``nonfinite_draws`` (0 in the overwhelmingly common case). If *no*
+arm as ``nonfinite_draws`` (0 in the overwhelmingly common case). Note
+the direction of the resulting bias: dropping only the *largest* draws
+shifts every quantile of the finite subset LOW, so an arm with a large
+``nonfinite_draws`` count has understated p20/p50/p80 totals (for a
+handful of drops out of thousands the shift is negligible; a consumer
+seeing a materially nonzero ``nonfinite_draws`` should treat that arm's
+totals as optimistic and its tail as effectively unbounded). If *no*
 draw is finite, the arm's totals are ``null`` and it is excluded from
 ranking/selection the same way a missing-posterior arm is (see above). The
 same finite-filtering applies to ``decomposition_totals`` (built from
@@ -66,12 +76,17 @@ every value this module puts in a report is passed through a finite check
 before being stored, becoming ``null`` if it would have been non-finite).
 
 **RNG stream separation (fix round 1, codex review).** ``--thompson``
-selects differently: for each scorable arm, draw exactly one predictive
-sample per category (``model.NIG.thompson`` -- the genuine Bayesian
-Thompson draw: sample sigma2, then beta, then ``x @ beta``, per design.md
-D6's "Thompson sampling takes an explicit caller-supplied seed"), inverse-
-transform and floor each at 0.0, and sum across categories to one
-``thompson_total_usd`` per arm; the selected arm is the guard-passing arm
+selects differently: for each scorable arm, draw one posterior *parameter*
+sample per category (``model.NIG.thompson`` -- classical Thompson: sample
+sigma2, then beta, then evaluate ``x @ beta``; deliberately NOT a
+predictive draw, which would add an observation-noise term on top and
+over-explore by the noise variance -- per design.md D6's "Thompson
+sampling takes an explicit caller-supplied seed"), inverse-transform and
+floor each at 0.0, and sum across categories to one ``thompson_total_usd``
+per arm (each summand is thus the dollar *median* implied by the drawn
+parameters -- the natural per-draw objective here, since the dollar mean
+under drawn parameters, exp(x·beta + sigma2/2), would penalize noisy arms
+for a tail the log-space model never pays); the selected arm is the guard-passing arm
 with the lowest ``thompson_total_usd`` (the guard itself is still computed
 from the MC ``p80_total_usd``, which is always computed regardless of
 mode). Thompson draws are consumed from a **separate rng stream** than MC
@@ -102,7 +117,9 @@ it. The guard excludes any arm whose MC ``p80_total_usd`` exceeds a *guard
 factor* times the *minimum* MC ``p80_total_usd`` among scorable arms for
 that task (this stops "cheap at p20, catastrophic in the tail" arms from
 winning on the optimistic quantile alone). The guard factor itself (default
-``DEFAULT_GUARD_FACTOR = 2.0``) is resolved per run as: ``--guard-factor``
+``DEFAULT_GUARD_FACTOR = 2.0`` -- an implementation-time judgment call, not
+a value the spec mandated or any data fitted; revisit it once real
+selections accrue) is resolved per run as: ``--guard-factor``
 CLI flag, else ``config_json["guard_factor"]`` if the estimator's own
 config specifies one, else the hardcoded default -- echoed back in the
 JSON report as ``"guard_factor"``. The selected arm is whichever guard-
@@ -274,9 +291,7 @@ def _score_arm(posteriors: dict, categories, epsilon: float, x, arm, mc_rng: np.
         if used_fallback:
             fallback.append(category)
 
-        mean_log, _scale, _df = nig.predictive(x)
         per_category[category] = {
-            "mean_usd": _finite_usd(model.inverse_transform(mean_log, epsilon)),
             "median_usd": _finite_usd(model.inverse_transform(nig.quantile(x, 0.5), epsilon)),
             "p20_usd": _finite_usd(model.inverse_transform(nig.quantile(x, 0.2), epsilon)),
             "p80_usd": _finite_usd(model.inverse_transform(nig.quantile(x, 0.8), epsilon)),

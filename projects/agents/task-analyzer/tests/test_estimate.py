@@ -170,8 +170,13 @@ class TestScoreTask(EstimateTestCase):
         self.assertLessEqual(cheap["p50_total_usd"], cheap["p80_total_usd"])
         self.assertIsNone(cheap["thompson_total_usd"])  # not --thompson mode
         for cat_diag in cheap["categories"].values():
-            for key in ("mean_usd", "median_usd", "p20_usd", "p80_usd", "fallback"):
+            for key in ("median_usd", "p20_usd", "p80_usd", "fallback"):
                 self.assertIn(key, cat_diag)
+            # No dollar-mean field: exp(Student-t) has no finite moments, so
+            # a "mean_usd" cannot honestly exist (the removed field of that
+            # name was exp of the log-space mean -- the median again, under
+            # a misleading name).
+            self.assertNotIn("mean_usd", cat_diag)
 
     def test_zero_coverage_arm_is_excluded_not_falsely_cheapest(self):
         # A hand-built/corrupted config listing an arm with no posterior
