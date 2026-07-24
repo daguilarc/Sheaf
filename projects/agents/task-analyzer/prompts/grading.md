@@ -39,8 +39,11 @@ upstream join error). Exclude those from scoring, list them in
 
 ## Output
 
-For every item, write one JSON file to `{{OUTPUT_DIR}}/<task_key>.json` with
-exactly these keys:
+For every item, write one JSON file to `{{OUTPUT_DIR}}/<task_key>.json` --
+always, even when nothing in the item turns out to be gradeable. There are
+two valid shapes.
+
+**Gradeable** (at least one non-excluded review remains):
 
 ```json
 {
@@ -62,5 +65,36 @@ exactly these keys:
 }
 ```
 
-Grade every gradeable item in the batch. Output is idempotent — one file per
-item; re-running the batch just overwrites it.
+**Ungradeable** (every review for this item was excluded as mis-joined, or
+grading is otherwise impossible): write the same keys, with `G1`-`G5`,
+`verdict_sequence`, `rounds_to_accept`, `final_grade`, and `evidence` all
+`null`, `n_critical`/`n_important`/`n_minor` at `0`, `reviewer_models` as
+`[]`, `excluded_reviews` listing every review you excluded, plus a `reason`
+string explaining why nothing was gradeable:
+
+```json
+{
+  "task_key": "...",
+  "G1": null,
+  "G2": null,
+  "G3": null,
+  "G4": null,
+  "G5": null,
+  "n_critical": 0,
+  "n_important": 0,
+  "n_minor": 0,
+  "verdict_sequence": null,
+  "rounds_to_accept": null,
+  "final_grade": null,
+  "evidence": null,
+  "reviewer_models": [],
+  "excluded_reviews": ["..."],
+  "reason": "all N review(s) joined to this task discuss unrelated work; nothing gradeable"
+}
+```
+
+Never skip an item's output file because nothing was gradeable for it -- an
+absent output file is indistinguishable downstream from a crashed or broken
+run and aborts the whole ingest. Grade every gradeable item normally; for
+every other item, write the ungradeable shape instead. Output is idempotent
+— one file per item; re-running the batch just overwrites it.

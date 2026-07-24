@@ -350,6 +350,57 @@ class TestGradingReviewFiles(AgentsTestBase):
         self.assertEqual(data["final_grade"], "A")
 
 
+def _canned_ungradeable(entity_key: str, reason: str = "all reviews mis-joined; nothing gradeable") -> dict:
+    """followup-7, defect 2: prompts/grading.md's "Ungradeable" output
+    shape -- same required keys as a normal grade, G1-G5/verdict_sequence/
+    rounds_to_accept/final_grade/evidence null, reviewer_models empty,
+    plus a non-empty ``reason`` string."""
+    return {
+        "task_key": entity_key,
+        "G1": None, "G2": None, "G3": None, "G4": None, "G5": None,
+        "n_critical": 0, "n_important": 0, "n_minor": 0,
+        "verdict_sequence": None, "rounds_to_accept": None,
+        "final_grade": None, "evidence": None,
+        "reviewer_models": [], "excluded_reviews": ["reviewer-1", "reviewer-2"],
+        "reason": reason,
+    }
+
+
+class TestGradingUngradeableShape(AgentsTestBase):
+    """followup-7, defect 2: a grading item where every joined review is
+    mis-joined (or grading is otherwise impossible) must not crash the
+    dispatcher or get treated as a validation failure/retried -- the
+    ungradeable shape (see prompts/grading.md) validates and stages exactly
+    like a normal grade, first attempt, no retry."""
+
+    def test_ungradeable_shape_validates_directly(self):
+        self.assertTrue(agents._validate_output("grading", _canned_ungradeable("add-widget--task-1")))
+
+    def test_ungradeable_output_is_accepted_first_attempt_no_retry(self):
+        def behavior(kind, key, attempt):
+            return "valid", _canned_ungradeable(key)
+
+        fake = FakeXagent(behavior=behavior)
+        self._patch(fake)
+
+        items = [
+            {
+                "task_key": "add-widget--task-1",
+                "version": "1",
+                "input_sha256": "8" * 64,
+                "review_text": "unrelated content, mis-joined",
+            }
+        ]
+        written = agents.xagent_runner("grading", items, self.staging_dir)
+
+        self.assertEqual(len(fake.calls), 1)  # no retry -- accepted first attempt
+        self.assertEqual(len(written), 1)
+        data = json.loads(written[0].read_text(encoding="utf-8"))
+        self.assertIsNone(data["final_grade"])
+        self.assertIsNone(data["G1"])
+        self.assertEqual(data["reason"], "all reviews mis-joined; nothing gradeable")
+
+
 class TestXagentBinResolution(AgentsTestBase):
     """Review fix: the xagent entry point must be resolvable without editing
     source -- explicit param beats env var beats the repo-relative default."""

@@ -113,6 +113,19 @@ _KIND_FIELDS = {
 # kind -> required top-level keys of a valid produced JSON file for that
 # kind. Matches ingest.py's KIND_REQUIRED_KEYS exactly (duplicated
 # deliberately -- see module docstring).
+#
+# followup-7, defect 2: "grading" items have a second valid shape --
+# prompts/grading.md's "Ungradeable" contract -- for when every review
+# joined to a task turns out to be mis-joined (or grading is otherwise
+# impossible) and the agent correctly declines to grade rather than
+# fabricating a verdict. That shape carries the SAME required keys (with
+# G1-G5/verdict_sequence/rounds_to_accept/final_grade/evidence set to
+# `null` rather than real values) plus one additional key, `reason` (a
+# non-empty string). `_validate_output` below only checks required-key
+# *presence*, never value types, so the ungradeable shape already validates
+# as-is -- no schema change needed here to accept it; `reason`'s presence
+# is what ingest.py's `_resolve_gap` uses to decide "record durably, no
+# grades row" instead of "upsert a graded row".
 _REQUIRED_KEYS = {
     "complexity": {"task_key", "C1", "C2", "C3", "C4", "C5", "C6", "C7", "composite", "rationale"},
     "grading": {

@@ -231,6 +231,23 @@ class RunReport:
     quarantined: List[Any] = field(default_factory=list)
     unlanded: List[str] = field(default_factory=list)
     plan: Optional[WorkPlan] = None
+    # followup-7, defect 2: distinguish "the agent correctly declined --
+    # nothing gradeable" from "infra genuinely failed to produce output",
+    # so a run report can show scored/ungradeable/failed counts separately
+    # instead of only a single crash-or-succeed outcome. `ungradeable`/
+    # `failed` are kind -> count (mirroring rows_written's shape);
+    # `ungradeable_items`/`failed_items` carry the per-item detail (entity
+    # key + reason/error) for the report and ingest_log.
+    ungradeable: Dict[str, int] = field(default_factory=dict)
+    failed: Dict[str, int] = field(default_factory=dict)
+    ungradeable_items: List[Dict[str, str]] = field(default_factory=list)
+    failed_items: List[Dict[str, str]] = field(default_factory=list)
+    # followup-7, defect 1 amendment: sessions whose sessions.task_id was
+    # reconciled this run because it disagreed with today's evidence-based
+    # join/quarantine outcome (e.g. residue from a run predating the
+    # evidence-gated join fix). See run()'s healing pass.
+    healed_sessions: int = 0
+    healed_session_ids: List[str] = field(default_factory=list)
 
     @property
     def total_writes(self) -> int:
@@ -454,6 +471,53 @@ def _extract(provider: str, path: Path):
     return extractors.extract_claude(path)
 
 
+def _has_change_evidence(rec, landed_change: "discovery.LandedChange", keys: Dict[str, str]) -> bool:
+    """True iff ``rec``'s own prompt affirmatively identifies
+    ``landed_change`` SPECIFICALLY -- followup-7, defect 1: a session may
+    only join a (change, task_key) pair with real evidence tying it to
+    that exact change, never merely because narrowing to ``--change``
+    happened to leave it as the sole remaining candidate (that made
+    ``ingest.py --change add-sdd-task-analyzer`` join ~75 unrelated
+    sessions to ``add-sdd-task-analyzer--task-1`` in the first real canary
+    run, sessions that correctly quarantine as ambiguous in a full,
+    unscoped run against all ~70 landed changes). Three evidence sources,
+    reusing ``discovery.task_keys``'s own extraction rather than
+    reimplementing it:
+
+    - ``keys["change_dir"]``/``keys["openspec_change"]`` name the change
+      explicitly (a ``.superpowers/sdd/<name>/task-N-brief.md`` path, or an
+      ``openspec/changes/<name>`` path / "OpenSpec change `<name>`"
+      mention).
+    - ``keys["plan"]`` (a ``plans/<file>.md`` path mention) matches this
+      change's own resolved ``plan_path`` basename.
+    - the change's own SDD brief directory, ``.superpowers/sdd/<name>/``,
+      appears literally in the prompt -- broader than the two
+      ``task_keys``-derived checks above (which require an exact
+      ``-brief.md``/``-implementer-prompt.md`` filename suffix): this also
+      covers a reviewer/auditor session whose prompt names a sibling file
+      under the same directory (a ``-report.md``/``-review-package.md``/
+      etc., none of which ``task_keys`` extracts a change_dir from today).
+
+    Deliberately does NOT try to resolve the historical mismatch between
+    an SDD directory name and its openspec change name (e.g. this very
+    project's own ``.superpowers/sdd/task-analyzer/`` for the
+    ``add-sdd-task-analyzer`` change) -- ingest.py's module docstring
+    already documents that as the migration script's problem, not the
+    live join path's; a session referencing only the SDD-dir alias
+    correctly quarantines here (see followup-7-report.md for how many of
+    the real corpus's quarantines are exactly this case)."""
+    name = landed_change.name
+    if keys.get("change_dir") == name or keys.get("openspec_change") == name:
+        return True
+    plan_key = keys.get("plan")
+    if plan_key and landed_change.plan_path and Path(landed_change.plan_path).name == plan_key:
+        return True
+    prompt = rec.prompt or ""
+    if f".superpowers/sdd/{name}/" in prompt:
+        return True
+    return False
+
+
 def _discover(
     conn,
     repo_root,
@@ -476,9 +540,17 @@ def _discover(
     else:
         changes_in_scope = list(landed)
 
-    briefs: Dict[Tuple[str, str], str] = {}
-    brief_index: Dict[str, List[str]] = {}  # task_key -> [change_name, ...]
-    for c in changes_in_scope:
+    # Join EVIDENCE is computed over the FULL landed set, always --
+    # regardless of `--change` scoping (followup-7, defect 1). `--change`
+    # narrows `changes_in_scope`, which in turn narrows `briefs` below
+    # (and therefore which tasks/sessions actually get INGESTED this run
+    # -- see run()/`_plan_from_disc`, both keyed off `disc.briefs`), but
+    # it must never narrow which candidates a session's task_key is
+    # matched against: doing so is exactly what made a bare "task-1"
+    # mention join whatever the sole in-scope change happened to be.
+    all_briefs: Dict[Tuple[str, str], str] = {}
+    all_brief_index: Dict[str, List[str]] = {}  # task_key -> [change_name, ...]
+    for c in landed:
         change_briefs = _iter_briefs(repo_root, ref_sha, c.name)
         if not change_briefs and c.plan_path:
             # Plan-derived fallback (followup-6): only when this change has
@@ -487,8 +559,11 @@ def _discover(
             # derivation for the same change.
             change_briefs = _iter_plan_derived_briefs(repo_root, ref_sha, c.plan_path)
         for task_key, path in change_briefs:
-            briefs[(c.name, task_key)] = path
-            brief_index.setdefault(task_key, []).append(c.name)
+            all_briefs[(c.name, task_key)] = path
+            all_brief_index.setdefault(task_key, []).append(c.name)
+
+    in_scope_names = {c.name for c in changes_in_scope}
+    briefs = {k: v for k, v in all_briefs.items() if k[0] in in_scope_names}
 
     codex_root = codex_sessions_root if codex_sessions_root is not None else DEFAULT_CODEX_SESSIONS_ROOT
     claude_root = claude_projects_root if claude_projects_root is not None else DEFAULT_CLAUDE_PROJECTS_ROOT
@@ -517,21 +592,38 @@ def _discover(
         if not task_key:
             continue  # no task reference at all -- not part of this pipeline
 
-        change_dir = keys.get("change_dir") or keys.get("openspec_change")
-        candidates = brief_index.get(task_key, [])
-        if change_dir:
-            candidates = [c for c in candidates if c == change_dir]
-
+        task_candidates = all_brief_index.get(task_key, [])
         role = discovery.classify_role(rec.prompt, rec.spawn_path)
 
-        if len(candidates) == 0:
-            continue  # no known brief for this key -- irrelevant, not ambiguous
-        if len(candidates) > 1:
+        if len(task_candidates) == 0:
+            continue  # no landed change has a brief for this key at all -- irrelevant, not ambiguous
+
+        evidenced = [c for c in task_candidates if _has_change_evidence(rec, landed_by_name[c], keys)]
+
+        if len(evidenced) == 0:
+            # A task_key that some landed change(s) recognize, but this
+            # session gives no affirmative evidence for any specific one
+            # of them (followup-7, defect 1) -- e.g. a bare "implement
+            # task 1" mention, or a reference to an SDD directory whose
+            # name doesn't match its change's own openspec name. Quarantine,
+            # never guess via "only one was in scope."
+            quarantined.append(
+                discovery.Quarantine(
+                    session_id=f"{provider}:{rec.session_id}",
+                    reason="no change evidence for task key",
+                    candidates=sorted(f"{c}/{task_key}" for c in task_candidates),
+                )
+            )
+            quarantined_sessions.append(
+                _JoinedSession(rec=rec, provider=provider, role=role, change_name="", task_key="")
+            )
+            continue
+        if len(evidenced) > 1:
             quarantined.append(
                 discovery.Quarantine(
                     session_id=f"{provider}:{rec.session_id}",
                     reason="task key matches >1 task",
-                    candidates=sorted(f"{c}/{task_key}" for c in candidates),
+                    candidates=sorted(f"{c}/{task_key}" for c in evidenced),
                 )
             )
             # Still recorded mechanically -- task_id NULL, never a guessed
@@ -541,7 +633,7 @@ def _discover(
             )
             continue
 
-        change_name = candidates[0]
+        change_name = evidenced[0]
         joined.setdefault((change_name, task_key), []).append(
             _JoinedSession(rec=rec, provider=provider, role=role, change_name=change_name, task_key=task_key)
         )
@@ -979,10 +1071,21 @@ def _scored_by_for(kind: str) -> str:
         return "unknown"
 
 
-def _resolve_gap(conn, staging_dir, kind: str, gap: GapItem, agent_runner, no_agents: bool, rescore_set: Set[str], report: RunReport, item_builder) -> bool:
-    """Ensure `gap` is satisfied (dispatching if needed), returning True if a
-    row was upserted for it this call. Mutates `report`'s dispatched/staged_used/
-    stale counters. Does not commit -- caller owns the transaction."""
+def _resolve_gap(conn, staging_dir, kind: str, gap: GapItem, agent_runner, no_agents: bool, rescore_set: Set[str], report: RunReport, item_builder, *, strict: bool = False) -> bool:
+    """Ensure `gap` is satisfied (dispatching if needed), returning True if
+    the gap no longer needs work this run (a row was upserted, OR -- grading
+    only, followup-7 defect 2 -- the result was durably recorded as
+    ungradeable). Mutates `report`'s dispatched/staged_used/stale/ungradeable/
+    failed counters. Does not commit -- caller owns the transaction.
+
+    ``strict`` controls what happens when ``agent_runner`` runs without
+    raising but no valid staged file appears afterward (followup-7, defect
+    2): by default this fails just THIS item (logged in
+    ``report.failed``/``report.failed_items``, gap left open for a future
+    run) and lets the caller's run continue; with ``strict=True`` it raises
+    ``RuntimeError`` as before, aborting the run. A missing ``agent_runner``
+    entirely (genuine misconfiguration, not a per-item outcome) always
+    raises regardless of ``strict``."""
     if gap.reason == REASON_STALE_VERSION and kind not in rescore_set:
         report.stale[kind] = report.stale.get(kind, 0) + 1
         return False
@@ -1007,9 +1110,39 @@ def _resolve_gap(conn, staging_dir, kind: str, gap: GapItem, agent_runner, no_ag
         report.dispatched[kind] = report.dispatched.get(kind, 0) + 1
         path, data, exists = _check_staged(staging_dir, kind, gap.entity_key, gap.version, gap.input_sha256, n_turns=n_turns)
         if path is None:
-            raise RuntimeError(f"agent_runner did not produce a valid staged file for {kind}/{gap.entity_key}")
+            # followup-7, defect 2: agent_runner ran without raising, but no
+            # valid staged file resulted. agents.py's own retry logic
+            # already distinguishes "the model declined" (silently dropped,
+            # exit 0) from "the subprocess itself crashed" (raises there);
+            # by the time control reaches here, neither of those raised, so
+            # this is either an agent that ignored its own output contract
+            # (prompts/*.md now require a file for every item, always) or a
+            # softer infra hiccup. Fail just this item, not the whole run,
+            # unless the caller opted into --strict.
+            msg = f"agent_runner did not produce a valid staged file for {kind}/{gap.entity_key}"
+            report.failed[kind] = report.failed.get(kind, 0) + 1
+            report.failed_items.append({"kind": kind, "entity_key": gap.entity_key, "error": msg})
+            if strict:
+                raise RuntimeError(msg)
+            return False
     else:
         report.staged_used[kind] = report.staged_used.get(kind, 0) + 1
+
+    if kind == "grading":
+        # followup-7, defect 2: a "reason" key present (see
+        # prompts/grading.md's Ungradeable shape) means the agent correctly
+        # found nothing gradeable (e.g. every joined review was mis-joined)
+        # rather than fabricating a verdict. Record this durably WITHOUT a
+        # grades row -- the staged JSON file itself is the durable record,
+        # already written under the deterministic staging path keyed by
+        # (entity_key, version, input_sha256), so it's found again (and
+        # this same branch re-taken, idempotently) on any future run over
+        # unchanged input -- and let the run continue.
+        reason = data.get("reason") if isinstance(data, dict) else None
+        if reason:
+            report.ungradeable[kind] = report.ungradeable.get(kind, 0) + 1
+            report.ungradeable_items.append({"kind": kind, "entity_key": gap.entity_key, "reason": str(reason)})
+            return True
 
     scored_by = _scored_by_for(kind)
     if kind == "complexity":
@@ -1043,6 +1176,7 @@ def run(
     staging_dir=None,
     codex_sessions_root=None,
     claude_projects_root=None,
+    strict: bool = False,
 ) -> RunReport:
     staging_dir = Path(staging_dir) if staging_dir is not None else DEFAULT_STAGING_DIR
     rescore_set = _normalize_rescore(rescore)
@@ -1114,7 +1248,7 @@ def run(
                             "input_sha256": gap.input_sha256, "brief_text": brief_text,
                         }
 
-                _resolve_gap(conn, staging_dir, "complexity", gap, agent_runner, no_agents, rescore_set, report, _Item())
+                _resolve_gap(conn, staging_dir, "complexity", gap, agent_runner, no_agents, rescore_set, report, _Item(), strict=strict)
 
             if "grading" in task_gaps:
                 gap = task_gaps["grading"]
@@ -1134,7 +1268,7 @@ def run(
 
                 gi = _GradeItem()
                 gi.review_text = review_text
-                _resolve_gap(conn, staging_dir, "grading", gap, agent_runner, no_agents, rescore_set, report, gi)
+                _resolve_gap(conn, staging_dir, "grading", gap, agent_runner, no_agents, rescore_set, report, gi, strict=strict)
 
             for js in sessions:
                 if js.role != "implementer" or js.review_round != 0:
@@ -1170,7 +1304,7 @@ def run(
                         }
 
                 pi = _PhaseItem()
-                _resolve_gap(conn, staging_dir, "phase_labeling", gap, agent_runner, no_agents, rescore_set, report, pi)
+                _resolve_gap(conn, staging_dir, "phase_labeling", gap, agent_runner, no_agents, rescore_set, report, pi, strict=strict)
 
             conn.commit()
         except Exception:
@@ -1189,12 +1323,53 @@ def run(
             conn.rollback()
             raise
 
+    # Healing (followup-7, defect 1 amendment): reconcile any ALREADY
+    # committed session whose stored task_id disagrees with today's
+    # evidence-based join/quarantine outcome -- e.g. residue from a run
+    # that predates the evidence-gated join fix (a session the old
+    # scope-narrowing bug joined to a task it had no real evidence for).
+    # Computed over the full disc.joined/disc.quarantined_sessions universe
+    # -- never narrowed by --change, same principle as the join logic
+    # itself -- and run AFTER the per-task loop and new-quarantined writes
+    # above so any task/session this run just created is already visible.
+    # A session with no row yet is untouched here (the paths above handle
+    # it); a session whose correct target task doesn't exist in the DB at
+    # all (that change/task has never been ingested) heals to NULL
+    # (quarantined) rather than being left pointing at a demonstrably wrong
+    # task_id -- a later run that ingests that change/task heals it again,
+    # this time to the real task_id. This is what makes a re-run after this
+    # fix converge/idempotently heal any mis-joined session.task_id rows
+    # left by the canary, rather than freezing them in place forever (the
+    # insert-only guards elsewhere in run() only ever add brand-new
+    # sessions; they never revisit ones already present).
+    expected_target: Dict[str, Optional[Tuple[str, str]]] = {}
+    for (jn_change, jn_task), sessions in disc.joined.items():
+        for js in sessions:
+            expected_target[js.session_id] = (jn_change, jn_task)
+    for js in disc.quarantined_sessions:
+        expected_target.setdefault(js.session_id, None)
+
+    healed_ids: List[str] = []
+    for session_id, target in expected_target.items():
+        row = conn.execute("SELECT task_id FROM sessions WHERE session_id = ?", (session_id,)).fetchone()
+        if row is None:
+            continue  # not yet committed -- handled by the insert paths above
+        current_task_id = row[0]
+        correct_task_id = _existing_task_id(conn, target[0], target[1]) if target is not None else None
+        if current_task_id != correct_task_id:
+            conn.execute("UPDATE sessions SET task_id = ? WHERE session_id = ?", (correct_task_id, session_id))
+            healed_ids.append(session_id)
+    if healed_ids:
+        conn.commit()
+        report.healed_sessions = len(healed_ids)
+        report.healed_session_ids = sorted(healed_ids)
+
     # Only append an ingest_log row when the run actually did something --
     # a true no-op re-run (zero writes, zero dispatches) is reported via the
     # returned RunReport/stdout only, not persisted to the audit trail, so
     # repeated no-op runs don't bloat ingest_log. (dump_jsonl also excludes
     # ingest_log entirely, belt-and-suspenders for dump byte-stability.)
-    if report.total_writes > 0:
+    if report.total_writes > 0 or report.healed_sessions > 0 or report.ungradeable_items or report.failed_items:
         started_at = _now_iso()
         finished_at = started_at
         actions = {
@@ -1207,6 +1382,12 @@ def run(
             "unlanded": report.unlanded,
             "new_changes": plan.new_changes,
             "new_tasks": plan.new_tasks,
+            "ungradeable": report.ungradeable,
+            "ungradeable_items": report.ungradeable_items,
+            "failed": report.failed,
+            "failed_items": report.failed_items,
+            "healed_sessions": report.healed_sessions,
+            "healed_session_ids": report.healed_session_ids,
         }
         conn.execute(
             "INSERT INTO ingest_log(started_at, finished_at, git_sha, actions_json) VALUES (?, ?, ?, ?)",
@@ -1688,6 +1869,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                          "recoverable transcript, not just ones lacking session_turns -- use once "
                          "after an extractors.py change that alters per-turn token deltas "
                          "(followup-5)")
+    p.add_argument("--strict", action="store_true",
+                    help="ingest only (followup-7, defect 2): abort the whole run if any single "
+                         "agentic gap's agent_runner produces no valid staged file (the pre-fix "
+                         "behavior). Default off -- such an item now fails on its own (recorded "
+                         "in the run report's failed/failed_items) and the run continues with "
+                         "every other task. Has no effect on a correctly-declined 'ungradeable' "
+                         "grading result (see prompts/grading.md), which is never an error.")
     return p
 
 
@@ -1799,6 +1987,7 @@ def main(argv=None) -> int:
             conn, args.repo,
             dry_run=args.dry_run, no_agents=args.no_agents,
             rescore=args.rescore, agent_runner=agent_runner, change=args.change,
+            strict=args.strict,
         )
     finally:
         conn.close()
@@ -1823,6 +2012,9 @@ def main(argv=None) -> int:
         "stale": report.stale, "quarantined": len(report.quarantined),
         "unlanded": report.unlanded,
         "total_writes": report.total_writes,
+        "ungradeable": report.ungradeable, "ungradeable_items": report.ungradeable_items,
+        "failed": report.failed, "failed_items": report.failed_items,
+        "healed_sessions": report.healed_sessions, "healed_session_ids": report.healed_session_ids,
     }, indent=2))
     return 0
 

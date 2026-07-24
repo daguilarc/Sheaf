@@ -320,6 +320,143 @@ class TestCrashResume(IngestTestBase):
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM phase_tokens").fetchone()[0], 1)
 
 
+class SelectiveAgentRunner:
+    """Like ``FakeAgentRunner`` for complexity/phase_labeling (always canned
+    valid output), but "grading" items are handled per ``grading_mode``
+    (followup-7, defect 2):
+
+    - ``"valid"`` (default): canned normal grade, same as FakeAgentRunner.
+    - ``"decline"``: writes NO output file at all for grading items --
+      simulating a scorer that correctly found nothing gradeable but (the
+      pre-fix bug) never wrote a file, which used to crash the whole run.
+    - ``"ungradeable"``: writes prompts/grading.md's Ungradeable shape (all
+      G-fields null, a non-empty ``reason``) -- the fixed contract for the
+      same "nothing gradeable" situation.
+    """
+
+    def __init__(self, grading_mode="valid", reason="all reviews mis-joined; nothing gradeable"):
+        self.calls = []
+        self.grading_mode = grading_mode
+        self.reason = reason
+        self._canned_runner = FakeAgentRunner()
+
+    def __call__(self, kind, items, staging_dir):
+        self.calls.append((kind, [dict(i) for i in items]))
+        written = []
+        for item in items:
+            if kind == "grading" and self.grading_mode == "decline":
+                continue  # write nothing at all for this item
+            data = self._canned(kind, item)
+            entity_key = item.get("task_key") or item.get("session_key")
+            fname = ingest._staging_filename(entity_key, item["version"], item["input_sha256"])
+            out_dir = Path(staging_dir) / kind
+            out_dir.mkdir(parents=True, exist_ok=True)
+            tmp = out_dir / (fname + ".tmp")
+            tmp.write_text(json.dumps(data), encoding="utf-8")
+            final = out_dir / fname
+            os.replace(tmp, final)
+            written.append(final)
+        return written
+
+    def _canned(self, kind, item):
+        if kind == "grading" and self.grading_mode == "ungradeable":
+            return {
+                "task_key": item["task_key"],
+                "G1": None, "G2": None, "G3": None, "G4": None, "G5": None,
+                "n_critical": 0, "n_important": 0, "n_minor": 0,
+                "verdict_sequence": None, "rounds_to_accept": None,
+                "final_grade": None, "evidence": None,
+                "reviewer_models": [], "excluded_reviews": ["review-1", "review-2"],
+                "reason": self.reason,
+            }
+        return self._canned_runner._canned(kind, item)
+
+
+class TestScorerDeclineRobustness(IngestTestBase):
+    """followup-7, defect 2: a scorer that correctly declines (nothing
+    gradeable, e.g. every joined review turned out to be mis-joined) must
+    not crash the run; a genuinely missing/invalid output (decline against
+    the prompt's own contract, or broken infra -- indistinguishable from
+    here) fails only that one item by default, aborting the whole run only
+    under --strict."""
+
+    def test_grading_decline_without_output_fails_only_that_item_by_default(self):
+        conn = self._conn()
+        runner = SelectiveAgentRunner(grading_mode="decline")
+
+        report = self._run(conn, agent_runner=runner)  # strict defaults to False
+
+        # The task's OTHER work still landed -- one broken item doesn't
+        # abort the whole task's transaction, let alone the whole run.
+        self.assertEqual(report.tasks_written, 1)
+        self.assertEqual(report.rows_written.get("complexity"), 1)
+        self.assertEqual(report.rows_written.get("phase_labeling"), 1)
+        self.assertNotIn("grading", report.rows_written)
+
+        self.assertEqual(report.failed.get("grading"), 1)
+        self.assertEqual(len(report.failed_items), 1)
+        self.assertEqual(report.failed_items[0]["kind"], "grading")
+        self.assertIn(f"{CHANGE_NAME}--{TASK_KEY}", report.failed_items[0]["entity_key"])
+        self.assertNotIn("grading", report.ungradeable)
+
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM grades").fetchone()[0], 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM complexity").fetchone()[0], 1)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 1)
+
+    def test_grading_decline_without_output_raises_with_strict(self):
+        conn = self._conn()
+        runner = SelectiveAgentRunner(grading_mode="decline")
+
+        with self.assertRaises(RuntimeError):
+            self._run(conn, agent_runner=runner, strict=True)
+
+        # strict restores the pre-fix behavior: the whole task's transaction
+        # rolls back (same as TestCrashResume's raise-from-runner case).
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 0)
+
+    def test_ungradeable_result_recorded_durably_without_grades_row_and_run_continues(self):
+        conn = self._conn()
+        runner = SelectiveAgentRunner(grading_mode="ungradeable", reason="both reviews mis-joined")
+
+        report = self._run(conn, agent_runner=runner)
+
+        self.assertEqual(report.tasks_written, 1)
+        self.assertEqual(report.rows_written.get("complexity"), 1)
+        self.assertEqual(report.rows_written.get("phase_labeling"), 1)
+        self.assertNotIn("grading", report.rows_written)  # no grades row written
+
+        self.assertEqual(report.ungradeable.get("grading"), 1)
+        self.assertEqual(len(report.ungradeable_items), 1)
+        self.assertEqual(report.ungradeable_items[0]["reason"], "both reviews mis-joined")
+        self.assertIn(f"{CHANGE_NAME}--{TASK_KEY}", report.ungradeable_items[0]["entity_key"])
+        self.assertNotIn("grading", report.failed)
+
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM grades").fetchone()[0], 0)
+
+        # Durable in the audit trail too.
+        log_row = conn.execute(
+            "SELECT actions_json FROM ingest_log ORDER BY run_id DESC LIMIT 1"
+        ).fetchone()
+        actions = json.loads(log_row[0])
+        self.assertEqual(actions["ungradeable"].get("grading"), 1)
+        self.assertEqual(len(actions["ungradeable_items"]), 1)
+
+    def test_ungradeable_result_is_idempotent_across_reruns(self):
+        conn = self._conn()
+        runner = SelectiveAgentRunner(grading_mode="ungradeable")
+        self._run(conn, agent_runner=runner)
+        self.assertEqual(len(runner.calls), 3)  # complexity, grading, phase_labeling
+
+        # Second run: the staged ungradeable file satisfies the cache key
+        # -- no re-dispatch, still no grades row, still recorded.
+        report2 = self._run(conn, agent_runner=runner)
+        self.assertEqual(len(runner.calls), 3)  # unchanged -- nothing new to dispatch
+        self.assertEqual(report2.total_writes, 0)  # no NEW rows this run
+        self.assertEqual(report2.ungradeable.get("grading"), 1)
+        self.assertEqual(report2.staged_used.get("grading"), 1)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM grades").fetchone()[0], 0)
+
+
 class TestRescore(IngestTestBase):
     def test_rubric_bump_reported_stale_then_rescored_with_flag(self):
         conn = self._conn()
@@ -401,6 +538,190 @@ class TestQuarantine(IngestTestBase):
         self.assertIsNotNone(row)
         self.assertIsNone(row[0])
         self.assertEqual(len(report.quarantined), 1)
+
+    def test_reason_is_no_evidence_not_ambiguity_when_prompt_names_neither_change(self):
+        # followup-7, defect 1: this session's prompt names NEITHER change
+        # (no change_dir/openspec_change/plan/brief-dir evidence at all)
+        # -- it must quarantine as "no change evidence", distinct from the
+        # "task key matches >1 task" reason reserved for a session that
+        # DOES give evidence, just for more than one change at once.
+        conn = self._conn()
+        plan = self._plan(conn)
+        self.assertEqual(plan.quarantined[0].reason, "no change evidence for task key")
+
+    def test_scoped_and_unscoped_join_outcomes_are_identical(self):
+        # followup-7, defect 1 (the actual canary bug): --change must only
+        # filter which JOINED sessions get ingested, never alter the join
+        # decision itself. Before the fix, `--change add-widget` collapsed
+        # brief_index to a single candidate, so this same ambiguous session
+        # would have joined add-widget/task-1 outright instead of
+        # quarantining -- exactly what happened to ~75 real sessions
+        # against add-sdd-task-analyzer in the first canary run.
+        conn_unscoped = self._conn()
+        plan_unscoped = self._plan(conn_unscoped)
+
+        conn_scoped = db.connect(self.root / "scoped.sqlite")
+        plan_scoped = ingest.plan_work(
+            conn_scoped, self.repo, change=CHANGE_NAME,
+            staging_dir=self.staging_dir,
+            codex_sessions_root=self.root / "no-codex-here",
+            claude_projects_root=self.claude_root,
+        )
+
+        self.assertEqual(len(plan_unscoped.quarantined), 1)
+        self.assertEqual(len(plan_scoped.quarantined), 1)
+        self.assertEqual(plan_unscoped.quarantined[0].session_id, plan_scoped.quarantined[0].session_id)
+        self.assertEqual(plan_unscoped.quarantined[0].reason, plan_scoped.quarantined[0].reason)
+        self.assertEqual(
+            sorted(plan_unscoped.quarantined[0].candidates),
+            sorted(plan_scoped.quarantined[0].candidates),
+        )
+        # Sanity: --change still discovers add-widget's own (unambiguous)
+        # task normally -- only the AMBIGUOUS session's outcome is what
+        # must match between scoped and unscoped runs.
+        self.assertIn(f"{CHANGE_NAME}/{TASK_KEY}", plan_scoped.new_tasks)
+        report_scoped = self._run(conn_scoped, agent_runner=FakeAgentRunner(), change=CHANGE_NAME)
+        row = conn_scoped.execute(
+            "SELECT task_id FROM sessions WHERE session_id = ?", ("claude:ambiguous-1",)
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertIsNone(row[0])  # quarantined, not guessed onto add-widget/task-1
+        self.assertEqual(len(report_scoped.quarantined), 1)
+
+    def test_reason_is_ambiguity_when_prompt_gives_evidence_for_both_changes(self):
+        # The complementary case to the "no evidence" test above: a
+        # session whose prompt affirmatively names BOTH changes' SDD
+        # directories (e.g. a coordinator session comparing them) still
+        # correctly quarantines, but with the "task key matches >1 task"
+        # reason -- real evidence for more than one candidate, not an
+        # absence of evidence.
+        _write_claude_session(
+            self.claude_root / "evidenced-ambiguous-session.jsonl", "evidenced-ambiguous-1",
+            "Compare .superpowers/sdd/add-widget/task-1-brief.md against "
+            ".superpowers/sdd/add-gadget/task-1-brief.md for task 1.",
+            "Compared both.",
+        )
+        conn = self._conn()
+        plan = self._plan(conn)
+        self.assertEqual(len(plan.quarantined), 2)
+        q = next(q for q in plan.quarantined if q.session_id == "claude:evidenced-ambiguous-1")
+        self.assertEqual(q.reason, "task key matches >1 task")
+        self.assertIn("add-widget/task-1", q.candidates)
+        self.assertIn("add-gadget/task-1", q.candidates)
+
+    def test_healing_pass_corrects_pre_fix_residue_and_is_idempotent(self):
+        # followup-7, defect 1 amendment: simulate exactly the canary's
+        # residue shape -- a session row already committed with a task_id
+        # from the OLD scope-narrowing bug (it would have joined
+        # "claude:ambiguous-1" onto add-widget/task-1 under `--change
+        # add-widget`, despite giving zero real evidence for either
+        # candidate). A re-run under the fixed evidence-based logic must
+        # heal it back to quarantined (task_id NULL), and a further re-run
+        # must find nothing left to heal.
+        conn = self._conn()
+        report1 = self._run(conn, agent_runner=FakeAgentRunner())
+        row = conn.execute(
+            "SELECT task_id FROM sessions WHERE session_id = ?", ("claude:ambiguous-1",)
+        ).fetchone()
+        self.assertIsNone(row[0])  # correctly quarantined by the fixed logic already
+
+        widget_task_id = conn.execute(
+            "SELECT t.task_id FROM tasks t JOIN changes c ON c.change_id = t.change_id "
+            "WHERE c.name = ? AND t.task_key = ?", (CHANGE_NAME, TASK_KEY),
+        ).fetchone()[0]
+
+        # Corrupt it to look like pre-fix residue: wrongly joined to
+        # add-widget/task-1, exactly what the old scope-narrowing bug did.
+        conn.execute(
+            "UPDATE sessions SET task_id = ? WHERE session_id = ?",
+            (widget_task_id, "claude:ambiguous-1"),
+        )
+        conn.commit()
+        corrupted = conn.execute(
+            "SELECT task_id FROM sessions WHERE session_id = ?", ("claude:ambiguous-1",)
+        ).fetchone()[0]
+        self.assertEqual(corrupted, widget_task_id)
+
+        report2 = self._run(conn, agent_runner=FakeAgentRunner())
+        self.assertEqual(report2.healed_sessions, 1)
+        self.assertEqual(report2.healed_session_ids, ["claude:ambiguous-1"])
+        healed = conn.execute(
+            "SELECT task_id FROM sessions WHERE session_id = ?", ("claude:ambiguous-1",)
+        ).fetchone()[0]
+        self.assertIsNone(healed)
+
+        # Idempotent: nothing left to heal on a further re-run.
+        report3 = self._run(conn, agent_runner=FakeAgentRunner())
+        self.assertEqual(report3.healed_sessions, 0)
+        self.assertEqual(report3.healed_session_ids, [])
+
+
+class TestChangeEvidenceJoining(IngestTestBase):
+    """followup-7, defect 1: the two ADDITIONAL evidence sources beyond
+    change_dir/openspec_change (which the pre-existing fixtures already
+    exercise via their `.superpowers/sdd/<change>/task-N-brief.md`
+    prompts) -- a mention of the change's own plan file, and a mention of
+    its SDD brief directory via a file `discovery.task_keys` doesn't
+    itself extract a change_dir from."""
+
+    def setUp(self):
+        super().setUp()
+        # A second landed change with a task-1 brief AND a committed plan
+        # file, disambiguating add-widget/task-1 vs add-gadget/task-1 via
+        # evidence OTHER than an exact brief-path match.
+        sdd2 = self.repo / ".superpowers" / "sdd" / "add-gadget"
+        sdd2.mkdir(parents=True)
+        (sdd2 / "task-1-brief.md").write_text("Implement the gadget core module.\n")
+        archive2 = self.repo / "openspec" / "changes" / "archive" / "2026-07-11-add-gadget"
+        archive2.mkdir(parents=True)
+        (archive2 / "proposal.md").write_text("proposal\n")
+        plans_dir = self.repo / "docs" / "superpowers" / "plans"
+        plans_dir.mkdir(parents=True, exist_ok=True)
+        (plans_dir / "2026-07-11-add-gadget.md").write_text(
+            "## Task 1: Gadget Core\n\nBuild the gadget.\n"
+        )
+        _run_git(self.repo, "add", "-A")
+        _run_git(self.repo, "commit", "-q", "-m", "add second change with a plan file")
+
+    def test_joins_via_plan_path_mention_alone(self):
+        # No ".superpowers/sdd/..." path anywhere in the prompt -- only a
+        # mention of add-gadget's own plan file.
+        _write_claude_session(
+            self.claude_root / "plan-evidence-session.jsonl", "plan-evidence-1",
+            "See docs/superpowers/plans/2026-07-11-add-gadget.md for context. "
+            "Implement task 1.",
+            "Implemented.",
+        )
+        conn = self._conn()
+        plan = self._plan(conn)
+        self.assertEqual(plan.quarantined, [])
+        self.assertIn("add-gadget/task-1", plan.new_tasks)
+
+        self._run(conn, agent_runner=FakeAgentRunner())
+        row = conn.execute(
+            "SELECT t.task_key, c.name FROM sessions s "
+            "JOIN tasks t ON t.task_id = s.task_id JOIN changes c ON c.change_id = t.change_id "
+            "WHERE s.session_id = ?",
+            ("claude:plan-evidence-1",),
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual((row["task_key"], row["name"]), ("task-1", "add-gadget"))
+
+    def test_joins_via_sdd_directory_mention_without_exact_brief_suffix(self):
+        # References a sibling file under the change's SDD directory that
+        # discovery.task_keys does NOT extract a change_dir from (only
+        # "-brief.md"/"-implementer-prompt.md" suffixes populate
+        # change_dir) -- the broader substring check must still catch it.
+        _write_claude_session(
+            self.claude_root / "dir-evidence-session.jsonl", "dir-evidence-1",
+            "Read .superpowers/sdd/add-gadget/task-1-review-package.md and "
+            "address task 1 feedback.",
+            "Addressed.",
+        )
+        conn = self._conn()
+        plan = self._plan(conn)
+        self.assertEqual(plan.quarantined, [])
+        self.assertIn("add-gadget/task-1", plan.new_tasks)
 
 
 class TestLandedOnlyBriefs(IngestTestBase):
