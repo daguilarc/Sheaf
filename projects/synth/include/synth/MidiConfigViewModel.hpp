@@ -200,6 +200,8 @@ enum class UISystemMessage {
     SetGestureValue,
     SceneSelect,
     SetSceneBlend,
+    NextParamBank,
+    PrevParamBank,
 };
 
 struct UISystemMessageChoice {

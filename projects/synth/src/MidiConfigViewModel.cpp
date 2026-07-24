@@ -24,6 +24,9 @@ std::optional<std::size_t> PrimaryMessageArg(const MessageIn& message) {
             return message.gestureIx;
         case MessageIn::Type::SelectParamBank:
             return message.bankIx;
+        case MessageIn::Type::NextParamBank:
+        case MessageIn::Type::PrevParamBank:
+            return message.slotIx;
         case MessageIn::Type::SceneSelect:
             return message.sceneIx;
         case MessageIn::Type::ToggleReset:
@@ -57,6 +60,10 @@ bool SetPrimaryMessageArg(MessageIn& message, std::size_t arg) {
         case MessageIn::Type::SelectParamBank:
             message.bankIx = arg;
             return true;
+        case MessageIn::Type::NextParamBank:
+        case MessageIn::Type::PrevParamBank:
+            message.slotIx = arg;
+            return true;
         case MessageIn::Type::SceneSelect:
             message.sceneIx = arg;
             return true;
@@ -84,6 +91,8 @@ bool UISystemMessageHasArg(UISystemMessage message) {
         case UISystemMessage::ToggleGestureSelect:
         case UISystemMessage::HoldGestureSelect:
         case UISystemMessage::SelectParamBank:
+        case UISystemMessage::NextParamBank:
+        case UISystemMessage::PrevParamBank:
         case UISystemMessage::SetGestureValue:
         case UISystemMessage::SceneSelect:
             return true;
@@ -135,6 +144,10 @@ UISystemMessage UISystemMessageForAssociation(const MidiControllerSystemMessageA
             return UISystemMessage::HoldGestureSelect;
         case MessageIn::Type::SelectParamBank:
             return UISystemMessage::SelectParamBank;
+        case MessageIn::Type::NextParamBank:
+            return UISystemMessage::NextParamBank;
+        case MessageIn::Type::PrevParamBank:
+            return UISystemMessage::PrevParamBank;
         case MessageIn::Type::Start:
             return UISystemMessage::Start;
         case MessageIn::Type::Stop:
@@ -183,6 +196,10 @@ MessageIn PressForUISystemMessage(UISystemMessage message, const MidiControllerS
             return MessageIn::SetGestureSelect(0, arg, true);
         case UISystemMessage::SelectParamBank:
             return MessageIn::SelectParamBank(0, previous.press.slotIx, arg);
+        case UISystemMessage::NextParamBank:
+            return MessageIn::NextParamBank(0, arg);
+        case UISystemMessage::PrevParamBank:
+            return MessageIn::PrevParamBank(0, arg);
         case UISystemMessage::Start:
             return MessageIn::Start(0);
         case UISystemMessage::Stop:
@@ -217,6 +234,8 @@ std::optional<MessageIn> ReleaseForUISystemMessage(UISystemMessage message, cons
         case UISystemMessage::ToggleRandomMod:
         case UISystemMessage::ToggleGestureSelect:
         case UISystemMessage::SelectParamBank:
+        case UISystemMessage::NextParamBank:
+        case UISystemMessage::PrevParamBank:
         case UISystemMessage::Start:
         case UISystemMessage::Stop:
         case UISystemMessage::Clock:
@@ -403,6 +422,8 @@ const std::vector<UISystemMessageChoice>& UISystemMessageCatalog() {
         {"Toggle Gesture Select", UISystemMessage::ToggleGestureSelect},
         {"Hold Gesture Select", UISystemMessage::HoldGestureSelect},
         {"Bank Select", UISystemMessage::SelectParamBank},
+        {"Next Bank", UISystemMessage::NextParamBank},
+        {"Previous Bank", UISystemMessage::PrevParamBank},
         {"Start", UISystemMessage::Start},
         {"Stop", UISystemMessage::Stop},
         {"Clock", UISystemMessage::Clock},
@@ -483,6 +504,12 @@ std::string DescribeMessage(const MessageIn& message) {
             break;
         case MessageIn::Type::SelectParamBank:
             oss << "select bank " << message.bankIx << " (slot " << message.slotIx << ")";
+            break;
+        case MessageIn::Type::NextParamBank:
+            oss << "next bank (slot " << message.slotIx << ")";
+            break;
+        case MessageIn::Type::PrevParamBank:
+            oss << "previous bank (slot " << message.slotIx << ")";
             break;
         case MessageIn::Type::Start:
             oss << "start";

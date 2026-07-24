@@ -199,6 +199,10 @@ const char* MessageTypeName(MessageIn::Type type) {
         return "setGestureSelect";
     case MessageIn::Type::SelectParamBank:
         return "selectParamBank";
+    case MessageIn::Type::NextParamBank:
+        return "nextParamBank";
+    case MessageIn::Type::PrevParamBank:
+        return "prevParamBank";
     case MessageIn::Type::Start:
         return "start";
     case MessageIn::Type::Stop:
@@ -242,6 +246,10 @@ bool ParseMessageType(std::string_view value, MessageIn::Type& type) {
         type = MessageIn::Type::SetGestureSelect;
     } else if (value == "selectParamBank") {
         type = MessageIn::Type::SelectParamBank;
+    } else if (value == "nextParamBank") {
+        type = MessageIn::Type::NextParamBank;
+    } else if (value == "prevParamBank") {
+        type = MessageIn::Type::PrevParamBank;
     } else if (value == "start") {
         type = MessageIn::Type::Start;
     } else if (value == "stop") {
@@ -1367,6 +1375,8 @@ SystemMessageOutputState SystemMessageOutputInfo::Evaluate(const MessageIn& mess
     case MessageIn::Type::ParamIncDec:
     case MessageIn::Type::ParamSetAbsolute:
     case MessageIn::Type::ParamPush:
+    case MessageIn::Type::NextParamBank:
+    case MessageIn::Type::PrevParamBank:
     case MessageIn::Type::Start:
     case MessageIn::Type::Stop:
     case MessageIn::Type::Clock:
@@ -1859,6 +1869,8 @@ JSON ToJSON(JsonArena& arena, const MessageIn& value) {
     case MessageIn::Type::ToggleGestureSelect:
     case MessageIn::Type::SetGestureSelect:
     case MessageIn::Type::SelectParamBank:
+    case MessageIn::Type::NextParamBank:
+    case MessageIn::Type::PrevParamBank:
     case MessageIn::Type::Start:
     case MessageIn::Type::Stop:
     case MessageIn::Type::Clock:
@@ -1919,6 +1931,8 @@ bool FromJSON(JSON json, MessageIn& value) {
     case MessageIn::Type::ToggleGestureSelect:
     case MessageIn::Type::SetGestureSelect:
     case MessageIn::Type::SelectParamBank:
+    case MessageIn::Type::NextParamBank:
+    case MessageIn::Type::PrevParamBank:
     case MessageIn::Type::Start:
     case MessageIn::Type::Stop:
     case MessageIn::Type::Clock:

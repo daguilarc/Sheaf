@@ -3805,6 +3805,10 @@ TEST_CASE(UISystemMessageCatalogExpansionCoversPressAndReleaseSemantics) {
          synth::MessageIn::Type::SetGestureSelect, false, true},
         {UISystemMessage::SelectParamBank, synth::MessageIn::Type::SelectParamBank, false, false,
          synth::MessageIn::Type::Clock, false, true},
+        {UISystemMessage::NextParamBank, synth::MessageIn::Type::NextParamBank, false, false,
+         synth::MessageIn::Type::Clock, false, true},
+        {UISystemMessage::PrevParamBank, synth::MessageIn::Type::PrevParamBank, false, false,
+         synth::MessageIn::Type::Clock, false, true},
         {UISystemMessage::Start, synth::MessageIn::Type::Start, false, false,
          synth::MessageIn::Type::Clock, false, false},
         {UISystemMessage::Stop, synth::MessageIn::Type::Stop, false, false,
@@ -3932,6 +3936,9 @@ TEST_CASE(TwisterSystemMessagesRandomizedOpenSessionOracle) {
                 return message.sceneIx;
             case synth::MessageIn::Type::SelectParamBank:
                 return message.bankIx;
+            case synth::MessageIn::Type::NextParamBank:
+            case synth::MessageIn::Type::PrevParamBank:
+                return message.slotIx;
             case synth::MessageIn::Type::SetGestureSelect:
                 return message.gestureIx;
             default:
@@ -3944,6 +3951,10 @@ TEST_CASE(TwisterSystemMessagesRandomizedOpenSessionOracle) {
                 return UISystemMessage::SceneSelect;
             case synth::MessageIn::Type::SelectParamBank:
                 return UISystemMessage::SelectParamBank;
+            case synth::MessageIn::Type::NextParamBank:
+                return UISystemMessage::NextParamBank;
+            case synth::MessageIn::Type::PrevParamBank:
+                return UISystemMessage::PrevParamBank;
             case synth::MessageIn::Type::SetGestureSelect:
                 return UISystemMessage::HoldGestureSelect;
             default:
@@ -3985,6 +3996,12 @@ TEST_CASE(TwisterSystemMessagesRandomizedOpenSessionOracle) {
                 }
                 if (static_cast<int>(association.control->cc - 8) == row.button &&
                     uiMessageOf(association) == row.message && argOf(association.press) == row.arg) {
+                    if (row.message == UISystemMessage::NextParamBank ||
+                        row.message == UISystemMessage::PrevParamBank) {
+                        REQUIRE_TRUE(!association.release.has_value());
+                        REQUIRE_TRUE(association.feedback.type == association.press.type);
+                        REQUIRE_TRUE(association.feedback.slotIx == association.press.slotIx);
+                    }
                     found = true;
                     break;
                 }
@@ -4027,6 +4044,8 @@ TEST_CASE(TwisterSystemMessagesRandomizedOpenSessionOracle) {
         UISystemMessage::SceneSelect,
         UISystemMessage::SelectParamBank,
         UISystemMessage::HoldGestureSelect,
+        UISystemMessage::NextParamBank,
+        UISystemMessage::PrevParamBank,
     };
 
     for (int step = 0; step < 400; ++step) {
@@ -4061,7 +4080,7 @@ TEST_CASE(TwisterSystemMessagesRandomizedOpenSessionOracle) {
             oracle.push_back(row);
         } else if (action == 1 && !oracle.empty()) {
             const std::size_t ix = static_cast<std::size_t>(rng() % oracle.size());
-            const UISystemMessage message = messages[rng() % 3];
+            const UISystemMessage message = messages[rng() % std::size(messages)];
             REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, ix,
                                              MidiMappingRowVM::Field::MessageKind,
                                              static_cast<double>(UISystemMessageIndex(message)), out, &reason));
@@ -4107,6 +4126,59 @@ TEST_CASE(TwisterSystemMessagesRandomizedOpenSessionOracle) {
         expectMatches(vm, oracle);
         expectTruthMatches(instrument, oracle);
     }
+}
+
+TEST_CASE(RelativeBankSystemMessagesExposeCatalogAndKeepSlotsAcrossEdits) {
+    const auto& catalog = synth::UISystemMessageCatalog();
+    const auto next = std::find_if(catalog.begin(), catalog.end(), [](const auto& choice) {
+        return choice.message == UISystemMessage::NextParamBank && choice.label == "Next Bank";
+    });
+    const auto previous = std::find_if(catalog.begin(), catalog.end(), [](const auto& choice) {
+        return choice.message == UISystemMessage::PrevParamBank && choice.label == "Previous Bank";
+    });
+    REQUIRE_TRUE(next != catalog.end());
+    REQUIRE_TRUE(previous != catalog.end());
+
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot slot = MakeTwisterSlot("relative-bank");
+    slot.config.systemMessages.clear();
+    slot.config.systemMessages.push_back({
+        .control = MidiControlAddress{.channel = 3, .cc = 8},
+        .press = synth::MessageIn::NextParamBank(0, 2),
+        .feedback = synth::MessageIn::NextParamBank(0, 2),
+    });
+    REQUIRE_TRUE(instrument.AddController(slot));
+    MidiConnectionState connection;
+    connection.controllers.push_back({});
+
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, connection);
+    vm.ToggleSection(0, MidiConfigSection::SystemMessages);
+    double arg = -1.0;
+    REQUIRE_TRUE(vm.RowFieldValue(0, MidiConfigSection::SystemMessages, 0,
+                                  MidiMappingRowVM::Field::MessageArg, arg));
+    REQUIRE_TRUE(arg == 2.0);
+
+    std::string reason;
+    MidiInstrumentConfig edited;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0,
+                                     MidiMappingRowVM::Field::MessageArg, 5.0, edited, &reason));
+    const auto& afterArg = edited.controllers[0].config.systemMessages[0];
+    REQUIRE_TRUE(afterArg.press.slotIx == 5);
+    REQUIRE_TRUE(afterArg.feedback.slotIx == 5);
+    REQUIRE_TRUE(!afterArg.release.has_value());
+
+    vm.Rebuild(edited, connection);
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::SystemMessages, 0,
+                                     MidiMappingRowVM::Field::MessageKind,
+                                     static_cast<double>(UISystemMessageIndex(UISystemMessage::PrevParamBank)),
+                                     edited, &reason));
+    const auto& afterKind = edited.controllers[0].config.systemMessages[0];
+    REQUIRE_TRUE(afterKind.press.type == synth::MessageIn::Type::PrevParamBank);
+    REQUIRE_TRUE(afterKind.press.slotIx == 5);
+    REQUIRE_TRUE(afterKind.feedback.type == synth::MessageIn::Type::PrevParamBank);
+    REQUIRE_TRUE(afterKind.feedback.slotIx == 5);
+    REQUIRE_TRUE(!afterKind.release.has_value());
 }
 
 TEST_CASE(GenericSystemBlocksRandomizedOpenSessionOracle) {

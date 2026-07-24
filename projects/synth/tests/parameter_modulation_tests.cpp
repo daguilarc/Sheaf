@@ -7137,6 +7137,14 @@ TEST_CASE(system_message_output_info_reports_colors_and_on_state) {
     REQUIRE_TRUE(!state.isOn);
     REQUIRE_TRUE(state.color == synth::Color::Off);
 
+    const auto nextState = info.Evaluate(synth::MessageIn::NextParamBank(0, 2));
+    REQUIRE_TRUE(nextState.color == synth::Color::Off);
+    REQUIRE_TRUE(!nextState.isOn);
+
+    const auto prevState = info.Evaluate(synth::MessageIn::PrevParamBank(0, 3));
+    REQUIRE_TRUE(prevState.color == synth::Color::Off);
+    REQUIRE_TRUE(!prevState.isOn);
+
     state = info.Evaluate(synth::MessageIn::ToggleReset(0));
     REQUIRE_TRUE(state.isOn);
     REQUIRE_TRUE(state.color == synth::Color::White);
@@ -7197,6 +7205,27 @@ TEST_CASE(system_message_output_info_reports_colors_and_on_state) {
     state = info.Evaluate(synth::MessageIn::ParamPush(0, 0, 0));
     REQUIRE_TRUE(!state.isOn);
     REQUIRE_TRUE(state.color == synth::Color::Off);
+}
+
+TEST_CASE(relative_bank_messages_json_round_trip_with_exact_type_names_and_slots) {
+    const std::array messages{
+        synth::MessageIn::NextParamBank(17, 2),
+        synth::MessageIn::PrevParamBank(19, 3),
+    };
+    const std::array<std::string_view, 2> typeNames{"nextParamBank", "prevParamBank"};
+
+    for (std::size_t ix = 0; ix < messages.size(); ++ix) {
+        synth::JsonArena arena(4096);
+        const synth::JSON json = synth::ToJSON(arena, messages[ix]);
+        REQUIRE_TRUE(!arena.Failed());
+        REQUIRE_TRUE(std::string_view(json.Get("type").StringValue()) == typeNames[ix]);
+        REQUIRE_TRUE(json.Get("slotIx").IntegerValue() == static_cast<int64_t>(messages[ix].slotIx));
+
+        synth::MessageIn loaded;
+        REQUIRE_TRUE(synth::FromJSON(json, loaded));
+        REQUIRE_TRUE(loaded.type == messages[ix].type);
+        REQUIRE_TRUE(loaded.slotIx == messages[ix].slotIx);
+    }
 }
 
 TEST_CASE(system_output_processors_debounce_reset_and_render_cc_and_wrld_bldr) {

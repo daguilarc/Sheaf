@@ -62,6 +62,10 @@ SystemMessageSortKey ComputeSystemMessageSortKey(const MidiControllerSystemMessa
             key.arg1 = message.slotIx;
             key.arg2 = message.bankIx;
             break;
+        case MessageIn::Type::NextParamBank:
+        case MessageIn::Type::PrevParamBank:
+            key.arg1 = message.slotIx;
+            break;
         case MessageIn::Type::ToggleGestureSelect:
             key.arg1 = message.gestureIx;
             break;

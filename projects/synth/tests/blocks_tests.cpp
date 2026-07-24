@@ -125,6 +125,9 @@ bool MessageInFullyEquivalent(const MessageIn& a, const MessageIn& b) {
             return a.gestureIx == b.gestureIx && a.hasBoolValue == b.hasBoolValue && a.boolValue == b.boolValue;
         case MessageIn::Type::SelectParamBank:
             return a.slotIx == b.slotIx && a.bankIx == b.bankIx;
+        case MessageIn::Type::NextParamBank:
+        case MessageIn::Type::PrevParamBank:
+            return a.slotIx == b.slotIx;
         case MessageIn::Type::SetGestureValue:
             return a.gestureIx == b.gestureIx && a.value == b.value;
         case MessageIn::Type::SceneSelect:
@@ -454,6 +457,46 @@ TEST_CASE(NormalizeIsStableForExactDuplicates) {
     // Stable sort: original relative order preserved among exact duplicates.
     REQUIRE_TRUE(config.systemMessages[0].control->cc == 3);
     REQUIRE_TRUE(config.systemMessages[1].control->cc == 3);
+}
+
+TEST_CASE(RelativeBankMessagesSortBySlotAndReconstructAsIndividualCanonicalRows) {
+    MidiControllerSystemMessageAssociation nextHigh;
+    nextHigh.control = MidiControlAddress{.channel = 0, .cc = 4};
+    nextHigh.press = MessageIn::NextParamBank(0, 3);
+    nextHigh.feedback = nextHigh.press;
+
+    MidiControllerSystemMessageAssociation nextLow = nextHigh;
+    nextLow.control->cc = 5;
+    nextLow.press = MessageIn::NextParamBank(0, 1);
+    nextLow.feedback = nextLow.press;
+
+    MidiControllerSystemMessageAssociation previous;
+    previous.control = MidiControlAddress{.channel = 0, .cc = 6};
+    previous.press = MessageIn::PrevParamBank(0, 2);
+    previous.feedback = previous.press;
+
+    REQUIRE_TRUE(ComputeSystemMessageSortKey(nextLow, MidiProfileKind::Generic) <
+                 ComputeSystemMessageSortKey(nextHigh, MidiProfileKind::Generic));
+
+    MidiControllerProfileConfig config;
+    config.systemMessages = {nextHigh, previous, nextLow, nextLow};
+    NormalizeMidiProfileConfig(config, MidiProfileKind::Generic);
+    REQUIRE_TRUE(config.systemMessages[0].press.type == MessageIn::Type::NextParamBank);
+    REQUIRE_TRUE(config.systemMessages[0].press.slotIx == 1);
+    REQUIRE_TRUE(config.systemMessages[1].press.type == MessageIn::Type::NextParamBank);
+    REQUIRE_TRUE(config.systemMessages[1].press.slotIx == 1);
+    REQUIRE_TRUE(config.systemMessages[2].press.type == MessageIn::Type::NextParamBank);
+    REQUIRE_TRUE(config.systemMessages[2].press.slotIx == 3);
+    REQUIRE_TRUE(config.systemMessages[3].press.type == MessageIn::Type::PrevParamBank);
+    REQUIRE_TRUE(config.systemMessages[3].press.slotIx == 2);
+
+    const auto rows = ReconstructSystemBlocks(config.systemMessages, MidiProfileKind::Generic);
+    REQUIRE_TRUE(rows.size() == config.systemMessages.size());
+    for (std::size_t ix = 0; ix < rows.size(); ++ix) {
+        REQUIRE_TRUE(!rows[ix].isBlock);
+        REQUIRE_TRUE(rows[ix].indices.size() == 1);
+        REQUIRE_TRUE(rows[ix].indices[0] == ix);
+    }
 }
 
 TEST_CASE(NormalizeSortsPressureMappingsByLogicalTargetThenPhysicalAddress) {
