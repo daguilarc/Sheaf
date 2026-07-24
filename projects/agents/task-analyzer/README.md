@@ -30,7 +30,7 @@ a scratch/test copy.
 ### `ingest.py` — mechanical + agentic ingestion
 
 ```
-python3 projects/agents/task-analyzer/ingest.py [ingest|rebuild-derived|backfill-turns] \
+python3 projects/agents/task-analyzer/ingest.py [ingest|rebuild-derived|backfill-turns|verify-turn-phases] \
     [--db PATH] [--repo PATH] [--dry-run] [--no-agents] \
     [--rescore complexity|grades|phase_tokens] [--change NAME] \
     [--analysis-dir DIR]
@@ -60,7 +60,18 @@ python3 projects/agents/task-analyzer/ingest.py [ingest|rebuild-derived|backfill
   precision limit (see design.md D5 amendment). Run this once after
   upgrading to schema v3, before the next `rebuild-derived`, so the
   spanning-session split has turn data to work with wherever it's
-  recoverable.
+  recoverable. `turn_phases` is only ever written after verifying, per
+  session, that its implied aggregation (per-turn labels summed against
+  `session_turns.output_tokens`) equals the session's own `phase_tokens`
+  rows EXACTLY — an all-or-nothing check, so a session whose historical
+  labels no longer line up with a fresh re-extraction is left (or reset
+  to) empty `turn_phases` rather than silently writing wrong per-turn
+  splits; safe to re-run at any time, including to self-heal rows a prior,
+  buggy backfill left behind.
+- `verify-turn-phases`: read-only audit of the `turn_phases`/`phase_tokens`
+  aggregation invariant against whatever's already committed — prints
+  every violation (if any) as JSON and exits 1 if any are found, 0
+  otherwise, so it's usable as a CI/pre-commit gate. Takes `--db` only.
 - `--dry-run`: prints the work plan (which tasks, which agent calls would
   fire) without writing anything; against a DB that doesn't exist yet, it
   plans against a throwaway in-memory schema instead of creating the file.
@@ -214,7 +225,37 @@ timing/labels (`session_turns`/`turn_phases`, schema v3) that didn't exist
 before; `ingest.py backfill-turns` populates them for already-ingested
 sessions where the source transcript is still recoverable (see the recompute
 matrix row above and design.md D5's amendment section for the exact fallback
-rules when it isn't).
+rules when it isn't). Verdict detection requires a standalone, single-valued
+`SPEC:`/`QUALITY:` line near the end of the message — never a line that
+names both alternatives (every review brief's own instructions quote the
+format that way, e.g. `SPEC: PASS or SPEC: FAIL`), so a reviewer restating
+its brief is never mistaken for having rendered a verdict; a genuine
+verdict's own trailing one-line reason (including one with a backtick-quoted
+code identifier or the ordinary word "or") still matches.
+
+**Known limitation: `sessions.output_tokens` vs. `session_turns` sum.**
+For a real fraction of sessions (roughly 60% of the migrated corpus), the
+session-level `output_tokens` total and the sum of that same session's
+`session_turns.output_tokens` disagree — sometimes by a lot. This is a real,
+reproducible property of `extractors.py`'s turn-splitting, not stale/
+corrupted data: a token-usage checkpoint (a codex `token_count` event, or a
+claude assistant message) whose corresponding content produced zero
+condensed timeline items (no `SAY:`/`CALL:`/`OUT:`/`THINK:` line — e.g. a
+reasoning-only or otherwise silent turn) is folded into the session-level
+running total but never becomes its own `Turn`, so its delta drops out of
+the per-turn sum; the largest gaps come from persistent/thread-spawned
+sessions whose visible transcript file picks up mid-conversation (after
+context compaction), where the checkpoint's *cumulative* total already
+reflects activity from before this file's own turns begin. **This does not
+affect dollar correctness**: `costs.py` always prices a session from its own
+`input_tokens`/`cached_tokens`/`output_tokens` fields, never from summed
+`session_turns`; the spanning-session split's fix/pre-boundary shares are
+ratios computed entirely *within* a session's own `session_turns` data, then
+multiplied against that session's true (session-level) dollar cost, so the
+split stays proportionally sound regardless of this gap. Only
+`task_costs.weighted_tokens` for a split session — explicitly documented as
+a diagnostic, price-independent sanity-check figure — under-reports the
+true output-token count for affected sessions.
 
 ## Staging / crash-recovery semantics
 
