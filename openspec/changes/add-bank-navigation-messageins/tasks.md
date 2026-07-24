@@ -26,6 +26,6 @@
 
 ## 5. Verification
 
-- [ ] 5.1 Run the focused synth tests while iterating, then run `make -C projects/synth test`.
-- [ ] 5.2 Audit exhaustive `MessageIn::Type` and `UISystemMessage` switches and confirm existing absolute bank-selection behavior and profile compatibility remain unchanged.
-- [ ] 5.3 Run `openspec status --change "add-bank-navigation-messageins"` and mark task checkboxes complete only after implementation, review, and verification pass.
+- [x] 5.1 Run the focused synth tests while iterating, then run `make -C projects/synth test`.
+- [x] 5.2 Audit exhaustive `MessageIn::Type` and `UISystemMessage` switches and confirm existing absolute bank-selection behavior and profile compatibility remain unchanged.
+- [x] 5.3 Run `openspec status --change "add-bank-navigation-messageins"` and mark task checkboxes complete only after implementation, review, and verification pass.
