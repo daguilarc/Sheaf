@@ -854,7 +854,12 @@ class TestBackfillTurns(unittest.TestCase):
             "type": "user", "message": {"role": "user", "content": "hello"},
             "sessionId": "zero-turns-1", "timestamp": "2026-07-01T00:00:00Z",
         }) + "\n")
-        self._insert_session("claude:zero-turns-1", "claude", "implementer", transcript)
+        # A stale n_turns from an earlier (pre-followup-5) migration/ingest
+        # -- fix-round-1 review of followup-5, High finding: the original
+        # code `continue`d on the zero-turns path BEFORE ever reaching the
+        # n_turns UPDATE, so a zero-turn session kept whatever stale value
+        # it had instead of being corrected to 0.
+        self._insert_session("claude:zero-turns-1", "claude", "implementer", transcript, n_turns=1)
 
         stats = ingest.backfill_turns(self.conn, analysis_dir=self.no_analysis_dir)
         self.assertEqual(stats["session_turns_zero_turns"], 1)
@@ -863,6 +868,10 @@ class TestBackfillTurns(unittest.TestCase):
             "SELECT COUNT(*) FROM session_turns WHERE session_id = ?", ("claude:zero-turns-1",)
         ).fetchone()[0]
         self.assertEqual(count, 0)
+        n_turns = self.conn.execute(
+            "SELECT n_turns FROM sessions WHERE session_id = ?", ("claude:zero-turns-1",)
+        ).fetchone()[0]
+        self.assertEqual(n_turns, 0)  # refreshed to the true (zero) count, not left stale
 
     def test_verification_failure_writes_nothing_and_counts_separately(self):
         # fix-round-1 review, finding 1: turn_phases must be verified

@@ -1446,14 +1446,6 @@ def backfill_turns(conn, *, analysis_dir=None, regenerate: bool = False) -> Dict
                 # even if the turn count ever differs from before).
                 conn.execute("DELETE FROM session_turns WHERE session_id = ?", (session_id,))
             n_turns_written = _upsert_session_turns(conn, session_id, rec)
-            if n_turns_written == 0:
-                # Parsed cleanly but the transcript yielded no turns at all
-                # (e.g. an aborted session with no assistant response) --
-                # not a genuine backfill; counted separately so
-                # session_turns_backfilled means what it says (fix-round-1
-                # review, finding 4).
-                counts["session_turns_zero_turns"] += 1
-                continue
             # A plain UPDATE, not db.upsert: db.upsert's ON CONFLICT DO
             # UPDATE still builds a full INSERT row first (defaulting every
             # column not in `row` to NULL), which would violate sessions'
@@ -1462,11 +1454,24 @@ def backfill_turns(conn, *, analysis_dir=None, regenerate: bool = False) -> Dict
             # inserts a new one, so a targeted UPDATE is both correct and
             # simpler. Also refreshes n_turns from the authoritative
             # re-extraction (followup-5: many rows were stale from the
-            # original migration).
+            # original migration) -- unconditionally, BEFORE the zero-turn
+            # early-return below, so a session whose transcript re-parses
+            # to zero turns also gets n_turns corrected to 0 rather than
+            # left at a stale prior value (fix-round-1 review of
+            # followup-5, High finding: the original code `continue`d on
+            # n_turns_written == 0 before ever reaching this UPDATE).
             conn.execute(
                 "UPDATE sessions SET verdict_boundaries_json = ?, n_turns = ? WHERE session_id = ?",
                 (json.dumps(rec.verdict_boundaries), len(rec.turns), session_id),
             )
+            if n_turns_written == 0:
+                # Parsed cleanly but the transcript yielded no turns at all
+                # (e.g. an aborted session with no assistant response) --
+                # not a genuine backfill; counted separately so
+                # session_turns_backfilled means what it says (fix-round-1
+                # review, finding 4).
+                counts["session_turns_zero_turns"] += 1
+                continue
             if had_turns_already:
                 counts["session_turns_regenerated"] += 1
             else:
