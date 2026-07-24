@@ -107,8 +107,10 @@ def inverse_transform_array(y: np.ndarray, epsilon: float = DEFAULT_EPSILON) -> 
     be negative, but the log-space predictive's support runs to ``-inf``, so
     a sufficiently unlucky left-tail draw can transform to a value below
     ``-epsilon`` before flooring -- the scalar ``inverse_transform`` above is
-    intentionally left unfloored (it's used for exact analytic quantiles,
-    which stay well above zero for the quantile levels this module queries).
+    intentionally left unfloored for exact invertibility with
+    ``transform_target``; its output can be as low as ``-epsilon``, so
+    near-zero-cost categories can report slightly negative analytic
+    quantiles (a diagnostic-only artifact; see ``inverse_transform``).
 
     On the *right* tail, a sufficiently sparse/heavy-tailed posterior (low
     ``a`` -- few degrees of freedom -- and/or a wide pooled fallback) can
