@@ -1,16 +1,16 @@
 ## 1. Regression Tests First
 
-- [ ] 1.1 Add focused `MessageIn` and `MessageInBus` tests for next/previous factories, forward/backward movement, wrapping at both ends, a one-bank range, and slot-only message arguments.
-- [ ] 1.2 Add focused tests proving reset, random, and random-mod next/previous actions modify the current bank through existing modifier behavior and never change selection.
-- [ ] 1.3 Add mutation-free no-op tests for an invalid slot, no manager banks, no selected bank, and a selected bank not owned by the manager.
+- [x] 1.1 Add focused `MessageIn` and `MessageInBus` tests for next/previous factories, forward/backward movement, wrapping at both ends, a one-bank range, and slot-only message arguments.
+- [x] 1.2 Add focused tests proving reset, random, and random-mod next/previous actions modify the current bank through existing modifier behavior and never change selection.
+- [x] 1.3 Add mutation-free no-op tests for an invalid slot, no manager banks, no selected bank, and a selected bank not owned by the manager.
 - [ ] 1.4 Add MIDI profile tests for `nextParamBank`/`prevParamBank` JSON and in-memory round trips, message equality/sorting, direction-and-slot descriptions, and default-off output-info evaluation.
 - [ ] 1.5 Add JUCE-free controller view-model tests for Next Bank/Previous Bank catalog choices, slot-as-Arg editing and kind conversion, absent releases, feedback mirroring, canonical ordering, and non-blockable individual-row reconstruction.
 
 ## 2. Relative Bank Runtime
 
-- [ ] 2.1 Add `NextParamBank` and `PrevParamBank` enum cases and factories that store `slotIx` without a bank index.
-- [ ] 2.2 Add one `ParameterManager` relative-bank operation that resolves the current manager-owned bank, applies the effective modifier to it when present, and otherwise selects the explicitly wrapped neighbor without unsigned underflow.
-- [ ] 2.3 Route both new types through `MessageInBus` and preserve mutation-free no-op behavior for invalid or incomplete state.
+- [x] 2.1 Add `NextParamBank` and `PrevParamBank` enum cases and factories that store `slotIx` without a bank index.
+- [x] 2.2 Add one `ParameterManager` relative-bank operation that resolves the current manager-owned bank, applies the effective modifier to it when present, and otherwise selects the explicitly wrapped neighbor without unsigned underflow.
+- [x] 2.3 Route both new types through `MessageInBus` and preserve mutation-free no-op behavior for invalid or incomplete state.
 
 ## 3. Persistence, Feedback, and Controller Configuration
 
@@ -21,7 +21,7 @@
 
 ## 4. Deterministic Simulation Coverage
 
-- [ ] 4.1 Extend the message-driven randomized parameter simulation and its independent oracle with next/previous movement, wrapping, current-bank modifier actions, invalid states, replayable seeds, and failure traces.
+- [x] 4.1 Extend the message-driven randomized parameter simulation and its independent oracle with next/previous movement, wrapping, current-bank modifier actions, invalid states, replayable seeds, and failure traces.
 - [ ] 4.2 Extend the deterministic controller view-model simulation and oracle with add, kind conversion, slot edit, rebuild, ordering, and delete actions for relative bank mappings.
 
 ## 5. Verification
