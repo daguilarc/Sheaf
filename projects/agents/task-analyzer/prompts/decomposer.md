@@ -33,8 +33,11 @@ You are given, by the caller:
   artifacts (candidate definitions and estimator results) generated along
   the way. All three kinds are legitimate outputs under this directory, not
   just the first two.
-- **Quantile** (optional, default `0.8`): passed through to `estimate.py
-  --quantile` for the comparison.
+- **Seed** (optional, default `0`) and **MC draws** (optional, default
+  `2000`): passed through to `estimate.py --seed`/`--mc-draws`. Total-cost
+  quantiles are a seeded Monte Carlo estimate (quantiles don't commute with
+  sums of the per-category predictives), so pin these if you need a
+  comparison to be reproducible byte-for-byte across runs.
 - **Estimator ID** (optional, default the latest trained generation):
   passed through to `estimate.py --estimator-id` if given.
 
@@ -63,12 +66,13 @@ step:
    ...) so `estimate.py` can read it.
 3. **Run `estimate.py` on every candidate**: `python3
    projects/agents/task-analyzer/estimate.py --decomposition
-   <candidate-file> --db <main-branch db path> --quantile <quantile>
-   [--estimator-id <id>] --json`. This is deterministic and read-only. Use
-   its per-task `arms` ranking to pick each task's actual `(model, effort)`
-   — the `selected` arm at your target quantile, unless a guardrail below
-   overrides it — and its `decomposition_totals` for the candidate-level
-   comparison.
+   <candidate-file> --db <main-branch db path> --seed <seed> --mc-draws
+   <mc-draws> [--estimator-id <id>] --json`. This is deterministic (given a
+   fixed seed and draw count) and read-only. Use its per-task `arms` ranking
+   (sorted by total p20, the selection statistic) to pick each task's actual
+   `(model, effort)` — the `selected` arm (lowest p20 total among arms
+   passing the p80 guard), unless a guardrail below overrides it — and its
+   `decomposition_totals` for the candidate-level comparison.
 4. **Apply guardrails** before comparing totals:
    - **No task above composite 3.5.** If a candidate has one, split that
      task into two (or more) and re-score/re-estimate the split — generate
@@ -86,16 +90,16 @@ step:
      disqualified from selection (but still shown in the comparison table
      for context).
 5. **Select and emit.** Choose the qualifying candidate with the lowest
-   `decomposition_totals.expected_total_usd` (or `pq_total_usd`, if you
-   judge tail risk should dominate for this change — say which you used and
-   why). Write:
+   `decomposition_totals.p20_total_usd` (or `p80_total_usd`, if you judge
+   tail risk should dominate for this change — say which you used and why).
+   Write:
    - The chosen candidate's annotation YAML to `<output
      dir>/<change-name>.assignments.yaml` (via the same shape
      `annotations.py` reads/writes — `format: 1`, one `- task: ...` entry
      per task with `model`/`effort`/`complexity`).
    - A comparison report to `<output dir>/<change-name>.decomposer-report.md`
      containing: a table of every candidate's task count, grouping axis,
-     `expected_total_usd`, `pq_total_usd`, and guardrail status
+     `p20_total_usd`, `p80_total_usd`, and guardrail status
      (qualified/disqualified + why); the selected candidate; and a
      one-paragraph rationale referencing the specific guardrails that drove
      the pick.

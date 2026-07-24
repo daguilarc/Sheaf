@@ -1,7 +1,30 @@
 # Decomposer report: add-note-system-message-mappings
 
+> **Schema note (followup-2, 2026-07-23):** this report was generated
+> against `estimate.py`'s pre-followup-2 design -- `--quantile`,
+> `expected_total_usd` (sum of per-category posterior means) and
+> `pq_total_usd` (sum of per-category quantiles at `--quantile`) no longer
+> exist; selection is now p20-of-the-Monte-Carlo-total-distribution with a
+> p80 guard (see the current `estimate.py` module docstring / README.md).
+> The decomposer agent that wrote this narrative was **not** re-run (the
+> followup-2 brief explicitly scopes that out -- only `estimate.py`'s own
+> output artifacts, `examples/*.result.json`, were regenerated against the
+> current CLI), so the specific numbers and field names below are historical
+> and kept verbatim for provenance. Spot-checked against the regenerated
+> `examples/*.result.json` (estimator_id 1, same as below): the bottom-line
+> pick is unchanged -- every candidate's every task still selects
+> `gpt-5.5/high` (the data-sparsity caveat below is unaffected: estimator_id
+> 1 predates the pooled-fallback mechanism, so the same 8 arms are still
+> `unscorable` for it), and B-split is still the cheapest *qualifying*
+> candidate by the new p20 statistic (86.42 vs. D's 144.59), so "Selected:
+> B-split" still holds -- but the specific percentages and the "B-split vs.
+> D tail-risk" comparison in the prose below were computed under the old
+> sum-of-quantiles `pq_total_usd` and have not been re-derived under the new
+> MC `p80_total_usd` (which in fact now favors B-split even more clearly
+> than the old figures suggested).
+
 Change: `openspec/changes/archive/2026-07-17-add-note-system-message-mappings/`
-Database: `data/agents/task-analyzer.sqlite` (estimator_id 1, `python3 projects/agents/task-analyzer/estimate.py --quantile 0.8`)
+Database: `data/agents/task-analyzer.sqlite` (estimator_id 1, `python3 projects/agents/task-analyzer/estimate.py --quantile 0.8` -- pre-followup-2 CLI, see schema note above)
 
 This change is already implemented and archived; its real commits
 (`514fdee2`, `8fb482a6`, `b24c24aa`, `d9cc2c28`, `57bfa907`) were used only to

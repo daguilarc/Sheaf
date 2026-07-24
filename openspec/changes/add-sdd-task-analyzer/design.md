@@ -55,7 +55,7 @@ tasks:
     model: gpt-5.5        # implementer arm
     effort: high
     complexity: {C1: 2, C2: 3, C3: 4, C4: 2, C5: 3, C6: 2, C7: 2, composite: 2.7}
-    predicted: {p50_usd: 0.42, p80_usd: 0.71, review_p80_usd: 0.30, explore: false}
+    predicted: {p20_usd: 0.29, p50_usd: 0.42, p80_usd: 0.71}
 ```
 
 ### D2. SQLite schema
@@ -256,11 +256,11 @@ the pooled fit over all arms contributes the prior MEAN only (its coefficient
 vector becomes μ0), while prior precision stays weak (Λ0 = I·1e-2, a0=1,
 b0=1) — the arm's own rows are then counted exactly once, in the per-arm
 update. Sparse arms (luna, 5.4) thus inherit sensible pooled behavior with
-wide intervals — which correctly surfaces them as
-"explore" candidates. Alternatives considered: full hierarchical MCMC (too
-heavy, unneeded at n≈150), quantile regression (no posterior → no
-explore/exploit), gradient boosting (data-hungry, opaque). Log-space handles
-the observed heavy right tail.
+wide intervals, which is exactly what the p20-bandit selection rule below
+is built to exploit/explore on. Alternatives considered: full hierarchical
+MCMC (too heavy, unneeded at n≈150), quantile regression (no posterior →
+no explore/exploit), gradient boosting (data-hungry, opaque). Log-space
+handles the observed heavy right tail.
 
 `train.py` reads `task_costs × complexity × task_arms`, writes one
 `estimators` row + `estimator_params` rows; old estimators are kept
@@ -270,15 +270,7 @@ prior hyperparameters and pooling scheme, training filters (rubric_version,
 taxonomy_version, price_version, date range, min rows per arm), the category
 list, the arm list, the quantile algorithm identifier, and canonical output
 formatting rules. Thompson sampling takes an explicit caller-supplied seed
-(never persisted); `estimate.py` without a seed uses quantiles only, which is
-what its byte-determinism guarantee covers.
-`estimate.py --decomposition <yaml> [--db <path>] [--quantile 0.8]` loads the
-newest estimator and, per task: computes cost quantiles for every arm, picks
-the arm minimizing expected total (implementation + predicted review +
-followup) subject to a p80 guard, and emits the annotation YAML of D1 plus an
-`explore` flag where the chosen-vs-runner-up posteriors overlap heavily
-(or, per the pooled-fallback rule below, where the selection itself rests on
-low-evidence data).
+(never persisted).
 
 **Pooled fallback (followup-1, Part A).** In addition to the per-(category,
 arm) mean-only pooling above, `train.py` also persists the *full* pooled
@@ -296,19 +288,54 @@ scoring altogether — with the migrated dataset that left only 2 of 10 arms
 scorable, and an excluded arm can never be selected, so it never accrues
 new data (the arm set freezes, defeating explore/exploit). Every arm's
 `fallback_categories` (which categories, if any, resolved via the pooled
-row rather than its own posterior) is echoed in `estimate.py`'s report.
+row rather than its own posterior) is echoed in `estimate.py`'s report as
+a diagnostic; it does not, by itself, change selection.
 
-`explore` is the **OR of two independent signals**, both surfaced in a
-report's `explore_reasons` list (fix round 1, codex review of followup-1):
-"overlap" (the original chosen-vs-runner-up posterior-overlap check above)
-and "fallback" (the *selected* arm's own score used at least one category's
-pooled-fallback posterior — `selected["fallback_categories"]` non-empty).
-"fallback" fires unconditionally on fallback use, independent of how tight
-the resulting interval happens to look, since a category can have a narrow
-pooled posterior (little data, but little *variance* in what data exists)
-that would otherwise dodge the overlap check while still resting on
-low-evidence — exactly the case the pooled-fallback mechanism exists to
-flag for exploration.
+**p20-bandit selection via Monte Carlo (followup-2, replacing the
+sum-of-quantiles/`explore`-flag design D6 originally shipped with).**
+A task's total cost per arm is the *sum* over categories of each category's
+own (independent) log-space Student-t predictive, exponentiated to USD.
+Quantiles do not commute with sums: summing each category's own p80
+overstates the true p80 of the total (independence means the categories'
+tails don't all land together), and summing each category's p20
+understates the true p20 of the total, for the same reason in the other
+direction — and there is no closed form for the quantiles of a sum of
+exponentiated Student-t's (`exp(t)` has no finite moments). So totals are
+estimated by seeded Monte Carlo (`model.NIG.predictive_draws`, `loc + scale
+* rng.standard_t(df, size=n)`): draw `--mc-draws` samples per category
+(independent), exponentiate each (floored at 0.0 — a dollar cost cannot be
+negative), column-sum across categories, then take the empirical
+p20/p50/p80 of the resulting per-arm total draws (`numpy.quantile`, linear
+interpolation). One `numpy.random.Generator` (seeded via `--seed`) is
+shared across a whole `estimate.py` run and consumed in a fixed order
+(tasks in decomposition order, arms sorted by `(model, effort)`, categories
+in `config["categories"]` order), so output is byte-deterministic given
+(estimator id, seed, mc-draws).
+
+Selection is **"p20 bandit with a p80 guard"**, not "minimize expected
+total": the selection statistic is each arm's MC `p20_total_usd` — a *low*
+quantile, chosen because this is a cost-minimizing bandit, and low
+quantiles are intrinsically explore-friendly (an unknown/sparse arm's wide
+posterior pulls its own p20 down even though its median may be high; a
+genuinely cheap, well-sampled arm's p20 stays low too) — so minimizing p20
+both exploits what's known-cheap and explores what's still uncertain,
+without a separate advisory flag for it (the `explore` flag `estimate.py`
+originally shipped with — "runner-up p20 < winner p80" overlap, later
+extended to also fire when the winner used pooled fallback — is removed
+entirely as redundant/confusing once selection itself is p20-driven). The
+guard (kept, same rationale, now built on an honest MC quantity instead of
+an overstated sum-of-quantiles one) excludes any arm whose MC
+`p80_total_usd` exceeds a *guard factor* (default `2.0`, same CLI/config
+precedence as before) times the minimum MC `p80_total_usd` among scorable
+arms for that task; the selected arm is the guard-passing arm with the
+lowest `p20_total_usd` (tie-break `(model, effort)` lexicographic).
+`estimate.py --thompson` selects differently: one Thompson draw
+(`model.NIG.thompson`, the classic sample-sigma2-then-beta-then-x·beta
+procedure) per (arm, category) from the same shared rng, summed to one
+`thompson_total_usd` per arm, argmin among guard-passing arms (the guard
+itself is still the MC one, computed regardless of mode). Both modes are
+fully deterministic given the same seed; see `estimate.py`'s module
+docstring for the complete rng-consumption-order contract.
 
 ### D7. Decomposition subagent protocol
 
@@ -355,7 +382,9 @@ regenerable-only.
 ## Risks / Trade-offs
 
 - [Sparse arms → garbage point estimates] → partial pooling + wide posterior
-  intervals; estimator emits `explore` flags instead of false confidence.
+  intervals; p20-bandit selection (followup-2) turns that width into low,
+  optimistic p20 scores directly instead of a separate advisory flag, so a
+  sparse arm's own uncertainty is what gets it tried.
 - [Task-key mis-joins across reused worktrees (observed repeatedly)] →
   ingester requires change-scoped brief names when present, stores
   `brief_sha256`, and quarantines ambiguous joins into `ingest_log` for

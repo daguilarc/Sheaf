@@ -9,9 +9,11 @@ OpenSpec change's proposal/design/specs and a database path, instructs the
 agent to: generate 3–5 candidate decompositions varying granularity and
 grouping axis; score each task's C1–C7 against the pinned complexity rubric;
 run `estimate.py` on every candidate; and select the candidate minimizing
-total cost at the configured quantile subject to guardrails (no task above
-composite 3.5 — split instead; prefer briefs at prescriptiveness C7 ≤ 2;
-dependency order respected).
+total p20 cost (the arm-selection statistic `estimate.py` itself ranks and
+picks by — a p80-guard-passing arm's lowest Monte Carlo p20 total, not a
+directly regressed or configured-quantile total) subject to guardrails (no
+task above composite 3.5 — split instead; prefer briefs at prescriptiveness
+C7 ≤ 2; dependency order respected).
 
 #### Scenario: Candidate search produces a comparison
 - **WHEN** the decomposition subagent runs on an OpenSpec change

@@ -36,3 +36,42 @@
 - [x] 6.2 Write `prompts/decomposer.md`: candidate-generation guidance (bracketing vs build/test-target regrouping), in-context complexity scoring against the rubric, `estimate.py` invocation protocol, guardrails (split composite >3.5, prefer C7 ≤ 2, dependency order), required outputs (annotation YAML + comparison table + rationale)
 - [x] 6.3 Dry-run the decomposer subagent on one archived change (e.g. `add-note-system-message-mappings`) against the trained estimator; check the protocol produces ≥3 scored candidates and a defensible selection; refine prompt once
 - [x] 6.4 Document the whole pipeline in `projects/agents/task-analyzer/README.md`: run cadence, recompute matrix (what changing each rubric/price/estimator invalidates), and explicit non-integration note (workflow rewrite is a future change)
+
+## 7. Amendments
+
+Two approved follow-ups landed after the change above was implemented and
+reviewed (5.1–6.4); this change was kept active rather than archived so
+these could amend its deltas directly instead of opening a new change for a
+query-layer-only redesign of an already-active one.
+
+- [x] 7.1 Follow-up 1, Part A — pooled-posterior fallback: `train.py` now
+  also persists each category's pooled fit as a sentinel `estimator_params`
+  row (`model.POOLED_SENTINEL_ARM`); `estimate.py` falls back to it for any
+  (category, arm) cell with no posterior of its own instead of excluding
+  the arm outright (the prior "full-coverage" exclusion rule left only 2 of
+  10 arms scorable on the migrated dataset, and an excluded arm can never
+  accrue new data). `fallback_categories` reported per arm.
+- [x] 7.2 Follow-up 1, Part B — real model prices: replaced the ten
+  `$1`/`$1`/`$1` `TODO(price-audit)` placeholder rows in `model_prices`
+  (eight gpt-5.x models, claude-sonnet-4-6, claude-fable-5) with verified
+  July-2026 list prices; rebuilt `task_costs`, retrained (new `estimators`
+  generation, prior generations kept), regenerated the JSONL dump.
+- [x] 7.3 Follow-up 1 fix round — a selected arm that scored via pooled
+  fallback could report `explore: false` if its interval happened not to
+  overlap the runner-up's; fixed to fold fallback into the (then-existing)
+  `explore` signal. Superseded by 7.4 below, which removes `explore`
+  entirely.
+- [x] 7.4 Follow-up 2 — p20-bandit selection via Monte Carlo, `explore` flag
+  removed: total task cost per arm is now a seeded Monte Carlo quantile of
+  the *sum* of per-category predictives (`model.NIG.predictive_draws`), not
+  a sum of each category's own quantile (quantiles don't commute with sums,
+  and summing overstates p80 / understates p20 under independence).
+  Selection is the lowest Monte Carlo p20 total among arms passing a p80
+  guard (same guard factor/precedence as before); a `--thompson` mode
+  selects via one Thompson draw per arm instead. The `explore`/
+  `explore_reasons` flags, the p20/p80 overlap check, and the
+  `expected_total_usd`/`pq_total_usd`/`--quantile` fields are removed
+  outright (no longer needed once selection is p20-driven) — see
+  `estimate.py`'s module docstring and design.md D6 for the full rationale.
+  Estimator training/persistence and the database are unchanged; this was a
+  query-layer-only redesign.

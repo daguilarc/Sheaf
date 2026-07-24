@@ -98,8 +98,9 @@ older one. `--config` is a path to a JSON file of overrides deep-merged onto
 
 ```
 python3 projects/agents/task-analyzer/estimate.py \
-    (--decomposition FILE | --sanity) [--db PATH] [--quantile 0.8] \
-    [--estimator-id N] [--guard-factor F] [--json]
+    (--decomposition FILE | --sanity) [--db PATH] \
+    [--estimator-id N] [--guard-factor F] [--seed N] [--mc-draws N] \
+    [--thompson] [--json]
 ```
 
 Read-only against the database — never writes to it. `--decomposition` takes
@@ -113,15 +114,26 @@ selected-arm marker, `unscorable_arms`, decomposition totals).
 An arm missing a per-arm posterior for some category falls back to that
 category's pooled posterior (the `"(pooled)"` sentinel row `train.py`
 persists — see above); each arm's `fallback_categories` in the report lists
-which categories, if any, resolved that way. An arm is `unscorable` only if
-even the pooled fallback has no row for a category it needs.
+which categories, if any, resolved that way (diagnostic only — it does not
+by itself change selection). An arm is `unscorable` only if even the pooled
+fallback has no row for a category it needs.
 
-`explore` is the OR of two signals, both named in the report's
-`explore_reasons` list: `"overlap"` (the selected arm's p80 total overlaps
-the runner-up's p20 total) and `"fallback"` (the selected arm's own score
-used a pooled-fallback category — low-evidence regardless of how narrow that
-particular pooled posterior happens to be). Either signal alone is enough
-to set `explore: true`.
+A task's total cost per arm is the *sum* of independent per-category
+predictives — and quantiles don't commute with sums (summing each
+category's p80 overstates the total's true p80; summing each category's p20
+understates it), so totals are computed by seeded Monte Carlo
+(`--seed`, default 0; `--mc-draws`, default 2000) rather than as a sum of
+each category's own quantile. Selection is **"p20 bandit with a p80
+guard"**: the selected arm is the one with the lowest MC `p20_total_usd`
+among arms whose MC `p80_total_usd` doesn't exceed `--guard-factor` (default
+2.0, or the estimator's own `config_json["guard_factor"]`) times the
+cheapest scorable arm's p80 total. Minimizing a *low* quantile is
+deliberately explore-friendly — a sparse arm's wide posterior pulls its own
+p20 down even when its median is high — so there is no separate advisory
+flag for exploration; `--thompson` selects via one Thompson draw per arm
+instead (summed across categories from the same seeded rng), reported as
+`"selection_mode": "thompson"` vs. the default `"p20"`. Both modes are
+fully deterministic given the same `--seed`/`--mc-draws`/`--estimator-id`.
 
 ### `annotations.py` — validate a sibling annotation file
 
