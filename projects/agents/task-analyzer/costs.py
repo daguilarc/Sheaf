@@ -294,8 +294,16 @@ def _apportion_round0_session(
         _apportion_phases(conn, buckets, session_id, output_tokens, usd, price_version, taxonomy_version)
         return
 
+    # Parsed-datetime comparison, never raw string comparison (fix-round-1
+    # review, finding 3) -- see discovery.parse_timestamp's docstring for
+    # why string comparison of ISO timestamps is unsafe across providers/
+    # fractional-second precision.
+    first_boundary_dt = discovery.parse_timestamp(first_boundary)
     total_turn_output_tokens = sum(t["output_tokens"] or 0 for t in turns)
-    fix_turn_idx = {t["turn_idx"] for t in turns if t["started_at"] and t["started_at"] > first_boundary}
+    fix_turn_idx = {
+        t["turn_idx"] for t in turns
+        if t["started_at"] and discovery.parse_timestamp(t["started_at"]) > first_boundary_dt
+    }
     fix_output_tokens = sum((t["output_tokens"] or 0) for t in turns if t["turn_idx"] in fix_turn_idx)
 
     if fix_output_tokens <= 0 or total_turn_output_tokens <= 0:
@@ -357,6 +365,102 @@ def _turn_phases_for_session(conn, session_id: str, taxonomy_version):
         "SELECT turn_idx, phase FROM turn_phases WHERE session_id = ? AND taxonomy_version = ?",
         (session_id, taxonomy_version),
     ).fetchall()
+
+
+# --------------------------------------------------------------------------
+# turn_phases/phase_tokens aggregation invariant (design.md D2; fix-round-1
+# review, finding 1) -- read-only, reusable by both ingest.py's
+# backfill-turns (verify BEFORE writing, all-or-nothing per session) and a
+# standalone audit of whatever is already committed (``verify-turn-phases``
+# CLI subcommand, and this module's own tests).
+# --------------------------------------------------------------------------
+
+
+def phase_tokens_for_session(conn, session_id: str, taxonomy_version: str) -> Dict[str, int]:
+    """``{phase: output_tokens}`` for one session's already-persisted
+    ``phase_tokens`` rows at exactly ``taxonomy_version`` -- the versioned
+    agentic record this module treats as ground truth. Never regenerated
+    from re-extracted turns (ingest.py's backfill must not do that either
+    -- see design.md D5 amendment's backfill section): this is what any
+    ``turn_phases`` aggregation for the same session/version MUST equal
+    exactly for the invariant to hold."""
+    rows = conn.execute(
+        "SELECT phase, output_tokens FROM phase_tokens WHERE session_id = ? AND taxonomy_version = ?",
+        (session_id, taxonomy_version),
+    ).fetchall()
+    return {r["phase"]: r["output_tokens"] or 0 for r in rows}
+
+
+def turn_phases_aggregation_for_session(conn, session_id: str, taxonomy_version: str) -> Dict[str, int]:
+    """``{phase: output_tokens}`` implied by this session's *committed*
+    ``turn_phases`` rows joined against ``session_turns.output_tokens``, at
+    exactly ``taxonomy_version`` -- what MUST equal
+    ``phase_tokens_for_session``'s result for the aggregation invariant to
+    hold. (Read-only audit of what's already in the database -- contrast
+    with ingest.py's pre-write candidate check, which computes the same
+    shape of aggregation from turns-about-to-be-written, before anything
+    is committed.)"""
+    rows = conn.execute(
+        "SELECT tp.phase, SUM(st.output_tokens) as tok FROM turn_phases tp "
+        "JOIN session_turns st ON st.session_id = tp.session_id AND st.turn_idx = tp.turn_idx "
+        "WHERE tp.session_id = ? AND tp.taxonomy_version = ? GROUP BY tp.phase",
+        (session_id, taxonomy_version),
+    ).fetchall()
+    return {r["phase"]: r["tok"] or 0 for r in rows}
+
+
+def turn_phases_integrity_violations(conn, session_id: str) -> Dict[str, Dict[str, Dict[str, int]]]:
+    """``{taxonomy_version: {phase: {"stored": x, "aggregated": y}}}`` for
+    every ``taxonomy_version`` this session has ``turn_phases`` rows at
+    whose aggregation doesn't exactly equal ``phase_tokens`` -- empty if
+    the invariant holds for every version this session has ``turn_phases``
+    at (including trivially, if it has none at all)."""
+    out: Dict[str, Dict[str, Dict[str, int]]] = {}
+    versions = [
+        r[0] for r in conn.execute(
+            "SELECT DISTINCT taxonomy_version FROM turn_phases WHERE session_id = ?", (session_id,)
+        ).fetchall()
+    ]
+    for version in versions:
+        agg = turn_phases_aggregation_for_session(conn, session_id, version)
+        stored = phase_tokens_for_session(conn, session_id, version)
+        if agg != stored:
+            mismatch: Dict[str, Dict[str, int]] = {}
+            for phase in set(agg) | set(stored):
+                a, s = agg.get(phase, 0), stored.get(phase, 0)
+                if a != s:
+                    mismatch[phase] = {"stored": s, "aggregated": a}
+            out[version] = mismatch
+    return out
+
+
+def verify_turn_phases_integrity(conn) -> List[Dict[str, Any]]:
+    """Full-database scan of the ``turn_phases``/``phase_tokens``
+    aggregation invariant (design.md D2): every session with any
+    ``turn_phases`` rows must have ``turn_phases`` joined against
+    ``session_turns.output_tokens`` aggregate to EXACTLY its
+    ``phase_tokens`` rows, for every ``taxonomy_version`` it has
+    ``turn_phases`` at -- ``costs.py``'s spanning-session split takes the
+    per-turn "direct" branch whenever ANY ``turn_phases`` rows exist for a
+    session, so a silently-wrong aggregation would silently corrupt cost
+    attribution (fix-round-1 review, finding 1: exactly this went
+    undetected in the original followup-4 backfill).
+
+    Returns a list of violation records -- empty iff the whole database
+    satisfies the invariant -- each ``{"session_id", "taxonomy_version",
+    "phases"}`` where ``phases`` maps a mismatching phase name to
+    ``{"stored": ..., "aggregated": ...}``. Read-only; safe to run against
+    a live/committed database at any time. ``ingest.py``'s
+    ``verify-turn-phases`` CLI subcommand and this module's own tests both
+    call this directly rather than duplicating the query."""
+    out: List[Dict[str, Any]] = []
+    session_ids = [
+        r[0] for r in conn.execute("SELECT DISTINCT session_id FROM turn_phases").fetchall()
+    ]
+    for session_id in session_ids:
+        for version, phases in turn_phases_integrity_violations(conn, session_id).items():
+            out.append({"session_id": session_id, "taxonomy_version": version, "phases": phases})
+    return out
 
 
 def rebuild(

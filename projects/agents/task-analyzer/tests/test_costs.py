@@ -594,6 +594,45 @@ class TestSpanningSessionSplit(CostsTestBase):
         )
         self.assertAlmostEqual(total, self.SESSION_USD, places=10)
 
+    def test_split_correct_under_mixed_timestamp_precision(self):
+        # fix-round-1 review, finding 3: the boundary/turn-start comparison
+        # in costs._apportion_round0_session must compare parsed datetimes,
+        # not raw ISO strings -- otherwise a bare-second boundary vs a
+        # fractional-second turn start (or vice versa) at the same whole
+        # second can misclassify which partition a turn belongs to.
+        task_id = self._make_task()
+        self._make_session(
+            "claude:impl-1", task_id, "implementer", SONNET[0],
+            input_tokens=1000, cached_tokens=0, output_tokens=100, review_round=0,
+            started_at="2026-07-10T00:00:00Z", ended_at="2026-07-10T00:00:09Z",
+        )
+        # Boundary at the bare second 00:00:08Z (== 08.000). A turn started
+        # at 08.500Z (chronologically AFTER the boundary, despite
+        # "08.500Z" < "08Z" under raw string comparison) must land in the
+        # fix partition; a turn started at 07.900Z (chronologically
+        # BEFORE) must land in the pre-boundary partition.
+        self._make_session_turn("claude:impl-1", 0, "2026-07-10T00:00:07.900Z", 60)
+        self._make_session_turn("claude:impl-1", 1, "2026-07-10T00:00:08.500Z", 40)
+        self._make_phase_tokens("claude:impl-1", "red", 60)
+        self._make_turn_phase("claude:impl-1", 0, "red")
+
+        self._make_session(
+            "claude:review-1", task_id, "reviewer", OPUS[0],
+            input_tokens=100, cached_tokens=0, output_tokens=10, review_round=1,
+            started_at="2026-07-10T00:00:01Z", ended_at="2026-07-10T00:00:08Z",
+        )
+        self._set_verdict_boundaries("claude:review-1", ["2026-07-10T00:00:08Z"])
+
+        costs.rebuild(self.conn, as_of="2026-07-19")
+        table = self._task_costs(task_id)
+
+        # turn 1 (40 tokens, started 08.500Z) is strictly after the 08.000Z
+        # boundary -> fix partition. turn 0 (60 tokens, started 07.900Z) is
+        # strictly before -> phase partition (all "red", per phase_tokens).
+        self.assertEqual(table["followup_fix"]["weighted_tokens"], 40)
+        self.assertEqual(table["red"]["weighted_tokens"], 60)
+        self.assertNotIn("unlabeled", table)
+
     def test_no_session_turns_rows_uses_original_unsplit_apportionment(self):
         # A round-0 session with a review boundary in play but NO
         # session_turns rows (not backfilled, or unrecoverable) must fall
@@ -621,6 +660,80 @@ class TestSpanningSessionSplit(CostsTestBase):
         self.assertNotIn("followup_fix", table)
         self.assertAlmostEqual(table["red"]["usd"], self.SESSION_USD * 0.6, places=10)
         self.assertAlmostEqual(table["green"]["usd"], self.SESSION_USD * 0.4, places=10)
+
+
+class TestTurnPhasesIntegrityCheck(CostsTestBase):
+    """fix-round-1 review, finding 1: the turn_phases x
+    session_turns.output_tokens aggregation must equal the corresponding
+    phase_tokens rows EXACTLY. costs.py's spanning-session split silently
+    takes the wrong (mismatched) numbers whenever this invariant is
+    violated, so it must be checkable directly against a real (or
+    fixture) database -- not just implied by other tests passing."""
+
+    def _make_clean_session(self, session_id="claude:clean-1"):
+        task_id = self._make_task(task_key="task-clean")
+        self._make_session(session_id, task_id, "implementer", SONNET[0],
+                            input_tokens=1000, cached_tokens=0, output_tokens=100, review_round=0)
+        self._make_session_turn(session_id, 0, "2026-07-10T00:00:00Z", 60)
+        self._make_session_turn(session_id, 1, "2026-07-10T00:00:01Z", 40)
+        self._make_phase_tokens(session_id, "red", 60)
+        self._make_phase_tokens(session_id, "green", 40)
+        self._make_turn_phase(session_id, 0, "red")
+        self._make_turn_phase(session_id, 1, "green")
+        return session_id
+
+    def _make_mismatched_session(self, session_id="claude:bad-1"):
+        # Mirrors the real dataset's discovered bug: a turn_phases row
+        # whose per-turn output_tokens sum (via session_turns) doesn't
+        # match the stored phase_tokens row for the same phase -- e.g. a
+        # historical label source whose turn indices don't line up with a
+        # freshly re-extracted transcript's turn count/order.
+        task_id = self._make_task(task_key="task-bad")
+        self._make_session(session_id, task_id, "implementer", SONNET[0],
+                            input_tokens=1000, cached_tokens=0, output_tokens=100, review_round=0)
+        self._make_session_turn(session_id, 0, "2026-07-10T00:00:00Z", 60)
+        self._make_session_turn(session_id, 1, "2026-07-10T00:00:01Z", 40)
+        # Stored (versioned, ground-truth) phase_tokens: report=100.
+        self._make_phase_tokens(session_id, "report", 100)
+        # But the turn_phases rows only cover turn 0 (60 tokens) -- the
+        # aggregation (60) doesn't match the stored value (100).
+        self._make_turn_phase(session_id, 0, "report")
+        return session_id
+
+    def test_clean_backfilled_session_has_no_violations(self):
+        sid = self._make_clean_session()
+        self.assertEqual(costs.turn_phases_integrity_violations(self.conn, sid), {})
+        self.assertEqual(costs.verify_turn_phases_integrity(self.conn), [])
+
+    def test_mismatched_session_is_flagged_by_both_apis(self):
+        sid = self._make_mismatched_session()
+        violations = costs.turn_phases_integrity_violations(self.conn, sid)
+        self.assertIn("1", violations)  # taxonomy_version "1"
+        self.assertEqual(violations["1"]["report"], {"stored": 100, "aggregated": 60})
+
+        db_violations = costs.verify_turn_phases_integrity(self.conn)
+        self.assertEqual(len(db_violations), 1)
+        self.assertEqual(db_violations[0]["session_id"], sid)
+        self.assertEqual(db_violations[0]["taxonomy_version"], "1")
+        self.assertEqual(db_violations[0]["phases"]["report"], {"stored": 100, "aggregated": 60})
+
+    def test_verify_over_a_db_with_both_clean_and_mismatched_sessions(self):
+        # Regression: one bad session's violation must not be masked or
+        # duplicated by an unrelated clean session also present in the DB
+        # (the standalone/CLI check scans every session with turn_phases).
+        clean_sid = self._make_clean_session()
+        bad_sid = self._make_mismatched_session()
+        violations = costs.verify_turn_phases_integrity(self.conn)
+        self.assertEqual(len(violations), 1)
+        self.assertEqual(violations[0]["session_id"], bad_sid)
+        self.assertNotIn(clean_sid, [v["session_id"] for v in violations])
+
+    def test_session_with_no_turn_phases_rows_has_no_violations(self):
+        # Trivially satisfies the invariant -- nothing to check.
+        task_id = self._make_task(task_key="task-none")
+        self._make_session("claude:none-1", task_id, "implementer", SONNET[0],
+                            input_tokens=100, cached_tokens=0, output_tokens=10, review_round=0)
+        self.assertEqual(costs.turn_phases_integrity_violations(self.conn, "claude:none-1"), {})
 
 
 if __name__ == "__main__":

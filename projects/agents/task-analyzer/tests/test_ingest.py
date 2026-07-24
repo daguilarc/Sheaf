@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import assets  # noqa: E402
+import costs  # noqa: E402
 import db  # noqa: E402
 import extractors  # noqa: E402
 import ingest  # noqa: E402
@@ -737,6 +738,191 @@ class TestBackfillTurns(unittest.TestCase):
             "SELECT COUNT(*) FROM session_turns WHERE session_id = ?", ("codex:reviewer-sess-2",)
         ).fetchone()[0]
         self.assertEqual(count, 2)  # not doubled
+
+    def test_zero_turn_extraction_counted_separately_not_as_backfilled(self):
+        # fix-round-1 review, finding 4: a transcript that parses cleanly
+        # but yields zero turns (only a user message, no assistant
+        # response at all) must not inflate session_turns_backfilled.
+        transcript = self.root / "zero_turns.jsonl"
+        transcript.write_text(json.dumps({
+            "type": "user", "message": {"role": "user", "content": "hello"},
+            "sessionId": "zero-turns-1", "timestamp": "2026-07-01T00:00:00Z",
+        }) + "\n")
+        self._insert_session("claude:zero-turns-1", "claude", "implementer", transcript)
+
+        stats = ingest.backfill_turns(self.conn, analysis_dir=self.no_analysis_dir)
+        self.assertEqual(stats["session_turns_zero_turns"], 1)
+        self.assertEqual(stats["session_turns_backfilled"], 0)
+        count = self.conn.execute(
+            "SELECT COUNT(*) FROM session_turns WHERE session_id = ?", ("claude:zero-turns-1",)
+        ).fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_verification_failure_writes_nothing_and_counts_separately(self):
+        # fix-round-1 review, finding 1: turn_phases must be verified
+        # against the stored phase_tokens BEFORE anything is written --
+        # a mismatch writes zero rows for that session, counted distinctly
+        # from "no label source at all".
+        transcript = self.root / "impl3.jsonl"
+        _write_one_turn_claude_transcript(transcript, "old-impl-3")
+        self._insert_session("claude:old-impl-3", "claude", "implementer", transcript, review_round=0)
+        # Stored phase_tokens (999) does not match what the label file
+        # implies for the actual re-extracted turn (output_tokens=50) --
+        # simulates a historical label source that no longer lines up
+        # with this transcript.
+        db.upsert(
+            self.conn, "phase_tokens",
+            {
+                "session_id": "claude:old-impl-3", "phase": "red", "output_tokens": 999,
+                "turns": 1, "taxonomy_version": "1", "input_sha256": "x", "scored_by": "test",
+            },
+            ["session_id", "phase", "taxonomy_version"],
+        )
+        self.conn.commit()
+
+        analysis_dir = self.root / "analysis3"
+        (analysis_dir / "phase_labels").mkdir(parents=True)
+        (analysis_dir / "phase_labels" / "claude-old-impl-3.json").write_text(
+            json.dumps({"labels": {"1": "red"}})
+        )
+
+        stats = ingest.backfill_turns(self.conn, analysis_dir=analysis_dir)
+        self.assertEqual(stats["turn_phases_verification_failed"], 1)
+        self.assertEqual(stats["turn_phases_backfilled"], 0)
+        count = self.conn.execute(
+            "SELECT COUNT(*) FROM turn_phases WHERE session_id = ?", ("claude:old-impl-3",)
+        ).fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_self_heals_wrong_turn_phases_rows_from_a_prior_buggy_backfill(self):
+        # fix-round-1 review, finding 1: re-running backfill-turns must
+        # remove turn_phases rows a pre-fix-round-1 buggy backfill left
+        # behind, not merely refuse to add MORE wrong rows on top.
+        transcript = self.root / "impl4.jsonl"
+        _write_one_turn_claude_transcript(transcript, "old-impl-4")
+        self._insert_session("claude:old-impl-4", "claude", "implementer", transcript, review_round=0)
+        db.upsert(
+            self.conn, "phase_tokens",
+            {
+                "session_id": "claude:old-impl-4", "phase": "red", "output_tokens": 50,
+                "turns": 1, "taxonomy_version": "1", "input_sha256": "x", "scored_by": "test",
+            },
+            ["session_id", "phase", "taxonomy_version"],
+        )
+        # session_turns already present (as if backfilled by a prior run),
+        # with a WRONG turn_phases row already sitting there (the old
+        # buggy backfill's output): its per-turn output_tokens (999)
+        # doesn't match the session's real phase_tokens total (50).
+        db.upsert(
+            self.conn, "session_turns",
+            {
+                "session_id": "claude:old-impl-4", "turn_idx": 1,
+                "started_at": "t", "ended_at": "t", "output_tokens": 999,
+            },
+            ["session_id", "turn_idx"],
+        )
+        db.upsert(
+            self.conn, "turn_phases",
+            {
+                "session_id": "claude:old-impl-4", "turn_idx": 1, "phase": "red",
+                "taxonomy_version": "1", "input_sha256": "x", "scored_by": "buggy-old-run",
+            },
+            ["session_id", "turn_idx", "taxonomy_version"],
+        )
+        self.conn.commit()
+        self.assertNotEqual(costs.turn_phases_integrity_violations(self.conn, "claude:old-impl-4"), {})
+
+        analysis_dir = self.root / "analysis4"
+        (analysis_dir / "phase_labels").mkdir(parents=True)
+        (analysis_dir / "phase_labels" / "claude-old-impl-4.json").write_text(
+            json.dumps({"labels": {"1": "red"}})
+        )
+
+        stats = ingest.backfill_turns(self.conn, analysis_dir=analysis_dir)
+        self.assertEqual(stats["session_turns_backfilled"], 0)  # already had session_turns
+        self.assertEqual(stats["turn_phases_verification_failed"], 1)
+        self.assertEqual(stats["turn_phases_backfilled"], 0)
+
+        count = self.conn.execute(
+            "SELECT COUNT(*) FROM turn_phases WHERE session_id = ?", ("claude:old-impl-4",)
+        ).fetchone()[0]
+        self.assertEqual(count, 0)  # self-healed: the wrong row is gone
+        self.assertEqual(costs.turn_phases_integrity_violations(self.conn, "claude:old-impl-4"), {})
+
+
+class TestVerifyTurnPhasesCli(unittest.TestCase):
+    """fix-round-1 review, finding 1: ``ingest.py verify-turn-phases`` is
+    the standalone check the review asked for -- so the turn_phases/
+    phase_tokens invariant can be asserted against a real, committed
+    database (e.g. a CI gate), not just implied by other tests passing."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.db_path = Path(self._tmp.name) / "t.sqlite"
+        self.conn = db.connect(self.db_path)
+
+    def _make_session_with_turn_data(self, session_id, output_tokens):
+        db.upsert(self.conn, "changes", {"name": "c", "ingested_at": "t"}, ["name"])
+        change_id = self.conn.execute("SELECT change_id FROM changes WHERE name = 'c'").fetchone()[0]
+        db.upsert(
+            self.conn, "tasks", {"change_id": change_id, "task_key": "task-1", "brief_text": "b"},
+            ["change_id", "task_key"],
+        )
+        task_id = self.conn.execute("SELECT task_id FROM tasks").fetchone()[0]
+        db.upsert(
+            self.conn, "sessions",
+            {
+                "session_id": session_id, "task_id": task_id, "provider": "claude",
+                "role": "implementer", "model": "claude-sonnet-5", "review_round": 0,
+                "input_tokens": 0, "cached_tokens": 0, "output_tokens": 50,
+            },
+            ["session_id"],
+        )
+        db.upsert(
+            self.conn, "session_turns",
+            {"session_id": session_id, "turn_idx": 1, "started_at": "t", "ended_at": "t", "output_tokens": output_tokens},
+            ["session_id", "turn_idx"],
+        )
+        db.upsert(
+            self.conn, "phase_tokens",
+            {
+                "session_id": session_id, "phase": "red", "output_tokens": 50,
+                "turns": 1, "taxonomy_version": "1", "input_sha256": "x",
+            },
+            ["session_id", "phase", "taxonomy_version"],
+        )
+        db.upsert(
+            self.conn, "turn_phases",
+            {
+                "session_id": session_id, "turn_idx": 1, "phase": "red",
+                "taxonomy_version": "1", "input_sha256": "x",
+            },
+            ["session_id", "turn_idx", "taxonomy_version"],
+        )
+        self.conn.commit()
+
+    def test_exit_zero_on_a_clean_database(self):
+        self._make_session_with_turn_data("claude:clean-1", output_tokens=50)  # matches stored red=50
+        self.conn.close()
+
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            rc = ingest.main(["verify-turn-phases", "--db", str(self.db_path)])
+        self.assertEqual(rc, 0)
+        report = json.loads(buf.getvalue())
+        self.assertEqual(report["violation_count"], 0)
+        self.assertEqual(report["violations"], [])
+
+    def test_exit_one_on_a_database_with_a_violation(self):
+        self._make_session_with_turn_data("claude:bad-1", output_tokens=999)  # mismatches stored red=50
+        self.conn.close()
+
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            rc = ingest.main(["verify-turn-phases", "--db", str(self.db_path)])
+        self.assertEqual(rc, 1)
+        report = json.loads(buf.getvalue())
+        self.assertEqual(report["violation_count"], 1)
+        self.assertEqual(report["violations"][0]["session_id"], "claude:bad-1")
 
 
 class TestDryRunNoDbFile(unittest.TestCase):

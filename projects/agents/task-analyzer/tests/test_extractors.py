@@ -335,6 +335,61 @@ class TestIsVerdictText(unittest.TestCase):
         self.assertFalse(extractors._is_verdict_text(""))
         self.assertFalse(extractors._is_verdict_text(None))
 
+    def test_reviewer_quoting_its_own_brief_is_not_a_verdict(self):
+        # fix-round-1 review, finding 2: every review brief literally
+        # contains this template text ("End with EXACTLY: SPEC: PASS or
+        # SPEC: FAIL / QUALITY: APPROVE or QUALITY: REVISE"). A reviewer
+        # restating its own instructions must NOT be treated as having
+        # rendered a verdict.
+        self.assertFalse(extractors._is_verdict_text(
+            "As instructed, I will end with SPEC: PASS or SPEC: FAIL\n"
+            "and QUALITY: APPROVE or QUALITY: REVISE."
+        ))
+
+    def test_backtick_quoted_brief_format_is_not_a_verdict(self):
+        self.assertFalse(extractors._is_verdict_text(
+            "I must end with exactly two lines: `SPEC: PASS|FAIL` and "
+            "`QUALITY: APPROVE|REVISE`."
+        ))
+
+    def test_pipe_alternation_brief_format_is_not_a_verdict(self):
+        self.assertFalse(extractors._is_verdict_text(
+            "Return SPEC: PASS|FAIL\nQUALITY: APPROVE|REVISE as your final answer."
+        ))
+
+    def test_genuine_verdict_with_trailing_reason_still_matches(self):
+        # Real corpus format (analysis/sdd-model-analysis/data/timelines):
+        # a genuine verdict line commonly carries a one-line parenthetical
+        # reason -- this must still be recognized, not just a bare
+        # "SPEC: PASS" with nothing else on the line.
+        self.assertTrue(extractors._is_verdict_text(
+            "Findings: none critical. I verified all six prior issues.\n\n"
+            "SPEC: PASS (required kind input addresses are now enforced)\n"
+            "QUALITY: APPROVED"
+        ))
+        self.assertTrue(extractors._is_verdict_text(
+            "SPEC: FAIL (non-Launchpad system-message entries can be "
+            "accepted without the required chan/CC address variant.)\n"
+            "QUALITY: NEEDS-FIXES"
+        ))
+
+    def test_verdict_lines_far_from_each_other_is_not_a_verdict(self):
+        # "adjacent or near-adjacent" -- a SPEC line and a QUALITY line
+        # separated by many lines of unrelated prose is not a genuine
+        # two-line verdict block.
+        filler = "\n".join(f"finding {i}: some unrelated prose line" for i in range(20))
+        self.assertFalse(extractors._is_verdict_text(f"SPEC: PASS\n{filler}\nQUALITY: APPROVED"))
+
+    def test_verdict_lines_not_near_the_end_is_not_a_verdict(self):
+        # "in the trailing portion of the message" -- a clean SPEC/QUALITY
+        # pair that appears early, followed by a long report, is not
+        # treated as the message's real (i.e. final) verdict.
+        trailer = "\n".join(f"additional finding {i} after the verdict-looking lines" for i in range(30))
+        self.assertFalse(extractors._is_verdict_text(f"SPEC: PASS\nQUALITY: APPROVED\n{trailer}"))
+
+    def test_multiple_verdict_values_on_one_line_is_not_a_verdict(self):
+        self.assertFalse(extractors._is_verdict_text("SPEC: PASS or FAIL (one-line reason)\nQUALITY: APPROVED or NEEDS-FIXES"))
+
 
 if __name__ == "__main__":
     unittest.main()

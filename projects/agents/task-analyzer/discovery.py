@@ -32,9 +32,47 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Tuple, Union
 
 SessionLike = Union[Mapping[str, Any], Any]
+
+# The earliest possible sortable value (fix-round-1 review, finding 3): used
+# for missing/empty/unparseable timestamps so they sort as "earliest ever"
+# rather than crashing a comparison.
+_MIN_DATETIME = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def parse_timestamp(ts: Optional[str]) -> datetime:
+    """Parse an ISO-8601 session/turn timestamp into a timezone-aware UTC
+    ``datetime`` for sortable/comparable use (fix-round-1 review, finding
+    3). Comparing/sorting the raw timestamp STRINGS is unsafe: providers
+    format timestamps differently (``Z`` suffix vs explicit ``+00:00``
+    offset) and even within one provider, two events at the same whole
+    second may differ in whether they carry a fractional-second component
+    at all -- ``"...T00:00:08Z"`` sorts AFTER ``"...T00:00:08.123Z"`` under
+    plain string comparison (``'.'`` (0x2E) < ``'Z'`` (0x5A)), which is
+    backwards (the first has strictly *more* elapsed time in that second,
+    zero vs 123ms). Every boundary/timestamp comparison in
+    ``review_boundaries``/``assign_review_rounds`` (this module) and the
+    spanning-session split (``costs.py``) MUST go through this function,
+    never compare the raw strings directly.
+
+    Missing, empty, or unparseable input returns ``datetime.min`` (UTC) --
+    sorts as the earliest possible boundary, never raises -- covering an
+    aborted session with no ``ended_at`` (falls back to ``started_at``,
+    which itself may be empty) and any genuinely malformed data.
+    """
+    if not ts:
+        return _MIN_DATETIME
+    normalized = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError:
+        return _MIN_DATETIME
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 class LandedChange(NamedTuple):
@@ -346,12 +384,18 @@ def review_boundaries(sessions: List[SessionLike]) -> List[str]:
     ``_reviewer_boundaries``). Used both by ``assign_review_rounds`` (to
     number non-reviewer sessions) and by ``costs.py`` (to split a spanning
     round-0 implementer session's turns at the first boundary -- design.md
-    D5 amendment, followup-4)."""
+    D5 amendment, followup-4). Sorted by parsed timestamp value
+    (``parse_timestamp``), never raw string order (fix-round-1 review,
+    finding 3) -- the returned list is still plain ISO strings, just in the
+    correct chronological order."""
     return sorted(
-        b
-        for s in sessions
-        if _get(s, "role") == "reviewer"
-        for b in _reviewer_boundaries(s)
+        (
+            b
+            for s in sessions
+            if _get(s, "role") == "reviewer"
+            for b in _reviewer_boundaries(s)
+        ),
+        key=parse_timestamp,
     )
 
 
@@ -374,16 +418,17 @@ def assign_review_rounds(sessions: List[SessionLike]) -> Dict[str, int]:
     a behavior change, for that case.
     """
     boundaries = review_boundaries(sessions)
+    boundary_dts = [parse_timestamp(b) for b in boundaries]
 
     rounds: Dict[str, int] = {}
     for s in sessions:
         sid = _get(s, "session_id")
-        started = _get(s, "started_at") or ""
+        started = parse_timestamp(_get(s, "started_at"))
         if _get(s, "role") == "reviewer":
-            ended = _get(s, "ended_at") or started
-            rounds[sid] = sum(1 for b in boundaries if b <= ended)
+            ended = parse_timestamp(_get(s, "ended_at")) if _get(s, "ended_at") else started
+            rounds[sid] = sum(1 for b in boundary_dts if b <= ended)
         else:
-            rounds[sid] = sum(1 for b in boundaries if b < started)
+            rounds[sid] = sum(1 for b in boundary_dts if b < started)
     return rounds
 
 

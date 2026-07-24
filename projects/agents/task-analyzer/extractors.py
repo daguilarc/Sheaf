@@ -45,30 +45,110 @@ COMPACT_TYPES = {"compacted", "compaction", "context_compacted"}
 _SNIPPET_LEN = 400
 _MESSAGE_LEN = 600
 
-# Verdict-turn detection (followup-4, design.md D5 amendment): a reviewer
-# turn whose assistant text contains BOTH a "SPEC: PASS/FAIL" line and a
-# "QUALITY: ..." line is a genuine review verdict, not incidental prose that
-# happens to mention "spec" or "quality" separately. The QUALITY alternation
-# is deliberately permissive -- real transcripts (grepped from
-# analysis/sdd-model-analysis/data/*.json and ~/.codex/sessions) use
-# APPROVE(D), NEEDS-FIXES, PASS, FAIL, and REVISE across different rubric
-# iterations, not one fixed vocabulary. Checked against the FULL (untruncated)
-# assistant text at extraction time, never the condensed/truncated `SAY:`
-# timeline snippet (_MESSAGE_LEN=600) a long review response's verdict lines
-# -- conventionally at the very END, per every reviewer prompt's "End with
-# EXACTLY: ..." instruction -- would frequently fall outside of.
-_SPEC_VERDICT_RE = re.compile(r"\bSPEC:\s*(PASS|FAIL)\b", re.I)
-_QUALITY_VERDICT_RE = re.compile(r"\bQUALITY:\s*(APPROVE[D]?|NEEDS[- ]FIXES|PASS|FAIL|REVISE)\b", re.I)
+# Verdict-turn detection (followup-4, design.md D5 amendment; tightened in
+# the fix-round-1 review): a reviewer turn whose assistant text contains
+# BOTH a standalone "SPEC: PASS/FAIL" line and a standalone "QUALITY: ..."
+# line, near each other, near the end of the message, is a genuine review
+# verdict -- not incidental prose that happens to mention "spec" or
+# "quality" separately, and NOT a reviewer merely quoting its own brief's
+# instructions back (every review brief literally contains template text
+# like "SPEC: PASS or SPEC: FAIL" / "`SPEC: PASS|FAIL`" / "QUALITY: APPROVE
+# or QUALITY: REVISE" -- an earlier looser regex treated that quoted
+# instruction text itself as a verdict, corrupting review-boundary
+# detection). The QUALITY alternation is deliberately permissive -- real
+# transcripts (grepped from analysis/sdd-model-analysis/data/*.json and
+# ~/.codex/sessions) use APPROVE(D), NEEDS-FIXES, PASS, FAIL, and REVISE
+# across different rubric iterations, not one fixed vocabulary. A genuine
+# verdict line MAY carry a trailing one-line reason (real corpus examples:
+# "SPEC: FAIL (non-Launchpad system-message entries can be accepted
+# without the required chan/CC address variant.)") -- only template/
+# quoting artifacts are rejected: a line naming BOTH alternatives (almost
+# always joined by literal " or ", "|", or backticks in every brief we
+# grepped) is never a real verdict, since a real verdict commits to
+# exactly one value.
+#
+# Checked against the FULL (untruncated) assistant text at extraction
+# time, never the condensed/truncated `SAY:` timeline snippet
+# (_MESSAGE_LEN=600) a long review response's verdict lines -- conventionally
+# at the very END, per every reviewer prompt's "End with EXACTLY: ..."
+# instruction -- would frequently fall outside of.
+_SPEC_LINE_RE = re.compile(r"^\s*SPEC:\s*(PASS|FAIL)\b", re.I)
+_QUALITY_LINE_RE = re.compile(r"^\s*QUALITY:\s*(APPROVE[D]?|NEEDS[- ]FIXES|PASS|FAIL|REVISE)\b", re.I)
+# Any of these on a candidate verdict line marks it as template/quoted
+# instructional text rather than a real, committed verdict: a literal
+# "or" between alternatives, a "|" alternation, or a backtick (every brief
+# quotes the verdict format in one of exactly these three ways). Checked
+# only against the verdict line's CORE -- everything up to its first
+# reason delimiter (" - ", " -- ", em-dash, or an opening paren) -- never
+# the full line: a genuine verdict's trailing one-line reason routinely
+# contains the word "or" in ordinary prose (e.g. "missing signature or
+# wrong type") or a backtick-quoted code identifier (e.g. "SPEC: FAIL -
+# `LoadPatchJSON` uses..."), real examples grepped from
+# analysis/sdd-model-analysis/data/timelines -- scanning the whole line
+# for these artifacts (an earlier version of this fix did) incorrectly
+# rejected such genuine verdicts as though they were brief-quoting.
+_QUOTING_ARTIFACT_RE = re.compile(r"`|\|| or ", re.I)
+_VERDICT_CORE_DELIMITER_RE = re.compile(r"\(| --? |—")
+# A verdict pair must be within this many lines of each other ("adjacent or
+# near-adjacent" -- real verdicts are always two consecutive lines, but
+# tolerate a small gap for stray blank lines or a short intervening label).
+_VERDICT_ADJACENCY_LINES = 3
+# ...and within this many lines of the END of the message ("the trailing
+# portion") -- real verdicts are the literal last thing a reviewer prompt
+# demands ("End with EXACTLY: ..."), never buried mid-report.
+_VERDICT_TRAILING_LINES = 20
+
+
+def _verdict_core(line: str) -> str:
+    """`line` truncated at its first reason delimiter (opening paren, " - ",
+    " -- ", or an em-dash) -- the part of a verdict line that actually
+    DECLARES the value, as opposed to a free-text reason that follows it.
+    Quoting-artifact detection (`_is_clean_verdict_line`) only inspects
+    this core, never the trailing reason."""
+    m = _VERDICT_CORE_DELIMITER_RE.search(line)
+    return line[: m.start()] if m else line
+
+
+def _is_clean_verdict_line(line: str, pattern: "re.Pattern") -> bool:
+    """True iff `line` opens with `pattern` (anchored at line start) and its
+    CORE (see `_verdict_core`) contains none of the template/quoting
+    artifacts (see `_QUOTING_ARTIFACT_RE`) that mark it as instructional
+    text quoting the verdict format rather than a real, single-valued
+    verdict."""
+    if not pattern.match(line):
+        return False
+    return not _QUOTING_ARTIFACT_RE.search(_verdict_core(line))
 
 
 def _is_verdict_text(text: str) -> bool:
     """True iff ``text`` (an assistant turn's full, untruncated text)
-    contains both a SPEC and a QUALITY verdict line -- see the module-level
-    regex comments for why both are required and why the alternation is
-    this permissive."""
+    contains a standalone SPEC verdict line and a standalone QUALITY
+    verdict line -- neither a template/quoting artifact (see
+    `_QUOTING_ARTIFACT_RE`) -- within `_VERDICT_ADJACENCY_LINES` of each
+    other and within `_VERDICT_TRAILING_LINES` of the message's end. See
+    the module-level comment for the false-positive this replaced (a
+    reviewer's own brief-quoting text) and why trailing one-line reasons
+    are still accepted."""
     if not text:
         return False
-    return bool(_SPEC_VERDICT_RE.search(text) and _QUALITY_VERDICT_RE.search(text))
+    lines = text.splitlines()
+    n = len(lines)
+    spec_idxs = [i for i, ln in enumerate(lines) if _is_clean_verdict_line(ln, _SPEC_LINE_RE)]
+    if not spec_idxs:
+        return False
+    quality_idxs = [i for i, ln in enumerate(lines) if _is_clean_verdict_line(ln, _QUALITY_LINE_RE)]
+    if not quality_idxs:
+        return False
+    trailing_cutoff = n - _VERDICT_TRAILING_LINES
+    for i in spec_idxs:
+        if i < trailing_cutoff:
+            continue
+        for j in quality_idxs:
+            if j < trailing_cutoff:
+                continue
+            if abs(i - j) <= _VERDICT_ADJACENCY_LINES:
+                return True
+    return False
 
 
 @dataclass

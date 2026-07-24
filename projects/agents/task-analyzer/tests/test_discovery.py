@@ -351,6 +351,77 @@ class TestReviewBoundaries(unittest.TestCase):
         self.assertEqual(rounds["rev-persistent"], 2)
 
 
+class TestParseTimestamp(unittest.TestCase):
+    """fix-round-1 review, finding 3: raw ISO timestamp STRINGS must never
+    be sorted/compared directly -- providers format them differently ('Z'
+    suffix vs explicit '+00:00' offset) and even within one provider, two
+    events at the same whole second may differ in whether they carry a
+    fractional-second component, which flips string-comparison order
+    ('.' (0x2E) sorts before 'Z' (0x5A))."""
+
+    def test_z_suffix_and_offset_form_parse_equal(self):
+        a = discovery.parse_timestamp("2026-07-19T00:00:08Z")
+        b = discovery.parse_timestamp("2026-07-19T00:00:08+00:00")
+        self.assertEqual(a, b)
+
+    def test_bare_second_sorts_after_fractional_same_second_by_value(self):
+        # The exact failure mode: a fractional-second timestamp sorts
+        # BEFORE a bare-second timestamp at the same whole second under
+        # plain string comparison ('.' (0x2E) < 'Z' (0x5A)), even though
+        # 08.500 is chronologically LATER than (bare) 08.000 -- string
+        # order gets it backwards.
+        bare = "2026-07-19T00:00:08Z"  # == 08.000
+        fractional = "2026-07-19T00:00:08.500Z"
+        self.assertLess(fractional, bare)  # string order: backwards
+        # ...but as real instants, the datetime parse must reflect the
+        # TRUE order: bare (08.000) is earlier than fractional (08.500).
+        self.assertLess(discovery.parse_timestamp(bare), discovery.parse_timestamp(fractional))
+
+    def test_missing_or_empty_parses_to_earliest_possible(self):
+        self.assertEqual(discovery.parse_timestamp(None), discovery.parse_timestamp(""))
+        self.assertLessEqual(discovery.parse_timestamp(None), discovery.parse_timestamp("2026-01-01T00:00:00Z"))
+
+    def test_unparseable_falls_back_to_earliest_without_raising(self):
+        self.assertEqual(discovery.parse_timestamp("not-a-timestamp"), discovery.parse_timestamp(None))
+
+    def test_review_boundaries_sorted_by_value_not_string_across_mixed_precision(self):
+        # A task whose reviewer boundaries mix bare-second and
+        # fractional-second timestamps must still sort into true
+        # chronological order, not raw string order.
+        sessions = [
+            {
+                "session_id": "rev-1", "role": "reviewer",
+                "started_at": "2026-07-19T00:00:00Z", "ended_at": "2026-07-19T00:00:09Z",
+                "verdict_boundaries": ["2026-07-19T00:00:08Z", "2026-07-19T00:00:08.500Z"],
+            },
+        ]
+        # True chronological order: 08Z (=08.000) before 08.500Z.
+        self.assertEqual(
+            discovery.review_boundaries(sessions),
+            ["2026-07-19T00:00:08Z", "2026-07-19T00:00:08.500Z"],
+        )
+
+    def test_assign_review_rounds_correct_under_mixed_timestamp_precision(self):
+        # A fixer session starting at 08.250Z (between the two boundaries
+        # in TRUE chronological order) must land in round 1 -- a plain
+        # string comparison would place it incorrectly since "08.250Z" <
+        # "08Z" as strings even though 08.250 is chronologically AFTER
+        # 08.000 (bare "08Z").
+        sessions = [
+            {
+                "session_id": "rev-1", "role": "reviewer",
+                "started_at": "2026-07-19T00:00:00Z", "ended_at": "2026-07-19T00:00:09Z",
+                "verdict_boundaries": ["2026-07-19T00:00:08Z", "2026-07-19T00:00:08.500Z"],
+            },
+            {
+                "session_id": "fix-1", "role": "fixer",
+                "started_at": "2026-07-19T00:00:08.250Z", "ended_at": "2026-07-19T00:00:08.900Z",
+            },
+        ]
+        rounds = discovery.assign_review_rounds(sessions)
+        self.assertEqual(rounds["fix-1"], 1)
+
+
 def _session_record(session_id, output_tokens, model, effort, started_at, ended_at, role):
     """A real extractors.SessionRecord, with `role` bolted on as a plain
     attribute -- SessionRecord itself has no `role` field (Task 3's

@@ -1166,19 +1166,107 @@ def _find_turn_labels(conn, session_id: str, analysis_dir: Path):
     return None, None, None, None
 
 
+def _verify_and_backfill_turn_phases(conn, session_id: str, analysis_dir: Path, counts: Dict[str, int]) -> None:
+    """(Re-)compute ``turn_phases`` for one round-0 implementer session
+    from its already-committed ``session_turns`` rows, verifying the
+    aggregation-equals-``phase_tokens`` invariant BEFORE writing anything
+    (fix-round-1 review, finding 1: the original backfill wrote whatever
+    partial set of rows a turn-index-keyed label lookup happened to
+    produce, with no check that it actually summed back to the stored
+    ``phase_tokens`` -- on the real dataset this silently produced 9
+    row-level mismatches across 3 sessions, plus 39 sessions counted as
+    "backfilled" despite writing zero rows at all, because every label
+    lookup missed).
+
+    All-or-nothing per (session, taxonomy_version): the full candidate
+    aggregation is computed and compared against ``phase_tokens`` first;
+    only if it matches EXACTLY are any ``turn_phases`` rows written. On a
+    mismatch, no rows are written and any PRE-EXISTING (possibly wrong,
+    left by an earlier buggy backfill run) ``turn_phases`` rows for this
+    session/version are deleted first -- self-healing, and idempotent
+    (both first-run-clean and every re-run converge to the same state: a
+    session whose per-turn labels can never realign with its re-extracted
+    turns stays at zero ``turn_phases`` rows forever, correctly falling
+    back to ``costs.py``'s session-level-scaled apportionment). Reads
+    ``session_turns`` from the database rather than re-parsing the
+    transcript again -- the caller has usually just written it in this
+    same transaction, and it's the authoritative per-turn output-token
+    source either way.
+
+    Mutates ``counts``: ``turn_phases_backfilled`` (verified and written),
+    ``turn_phases_unavailable`` (no per-turn label source survives at
+    all -- existing turn_phases, if any, are left untouched, since this
+    session was never a candidate for backfill in the first place),
+    ``turn_phases_verification_failed`` (a label source was found, but its
+    implied aggregation doesn't match the stored ``phase_tokens`` -- the
+    do-not-write / self-heal-by-deletion path)."""
+    turns = conn.execute(
+        "SELECT turn_idx, output_tokens FROM session_turns WHERE session_id = ? ORDER BY turn_idx",
+        (session_id,),
+    ).fetchall()
+    if not turns:
+        return
+
+    labels, version, input_sha256, scored_by = _find_turn_labels(conn, session_id, analysis_dir)
+    if labels is None:
+        counts["turn_phases_unavailable"] += 1
+        return
+
+    # Candidate aggregation implied by writing one turn_phases row per
+    # session_turns entry with the same "other"-default convention
+    # ``_upsert_turn_phases`` uses at live-ingest time -- computed BEFORE
+    # anything is written, so a mismatch costs zero writes.
+    candidate: Dict[str, int] = {}
+    for t in turns:
+        phase = labels.get(str(t["turn_idx"]), "other")
+        candidate[phase] = candidate.get(phase, 0) + (t["output_tokens"] or 0)
+    stored = costs.phase_tokens_for_session(conn, session_id, version)
+
+    # Clear any existing rows for this (session, version) now -- whether
+    # they're about to be replaced by a freshly-verified set, or (on a
+    # verification failure below) simply removed as self-heal of a prior
+    # buggy write. Scoped to this exact version, never other versions.
+    conn.execute(
+        "DELETE FROM turn_phases WHERE session_id = ? AND taxonomy_version = ?",
+        (session_id, version),
+    )
+
+    if candidate != stored:
+        counts["turn_phases_verification_failed"] += 1
+        return
+
+    for t in turns:
+        phase = labels.get(str(t["turn_idx"]), "other")
+        db.upsert(
+            conn, "turn_phases",
+            {
+                "session_id": session_id, "turn_idx": t["turn_idx"], "phase": phase,
+                "taxonomy_version": version, "input_sha256": input_sha256, "scored_by": scored_by,
+            },
+            ["session_id", "turn_idx", "taxonomy_version"],
+        )
+    counts["turn_phases_backfilled"] += 1
+
+
 def backfill_turns(conn, *, analysis_dir=None) -> Dict[str, int]:
     """For every already-ingested session lacking ``session_turns`` rows,
     re-extract turns from ``sessions.transcript_path`` if that file still
     exists on disk (design.md D5 amendment, followup-4); a session with no
     recoverable transcript simply keeps session-level cost attribution
-    unchanged (documented limitation, not an error). For round-0
-    implementer sessions that gain ``session_turns`` this way, also
-    attempts to backfill ``turn_phases`` -- from a still-valid staged
+    unchanged (documented limitation, not an error). Then, for EVERY
+    round-0 implementer session that has ``session_turns`` (whether just
+    backfilled, backfilled by a prior run, or live-ingested), (re-)verifies
+    and (re-)backfills ``turn_phases`` from a still-valid staged
     ``phase_labeling`` JSON if one exists, else the analysis dataset's
-    per-turn ``phase_labels/<key>.json`` (see ``_find_turn_labels``) --
-    else leaves ``turn_phases`` empty for that session (costs.py's
-    documented fallback: pre-boundary phase shares scale the session-level
-    ``phase_tokens`` ratios instead of being computed directly per turn).
+    per-turn ``phase_labels/<key>.json`` (see ``_find_turn_labels`` and
+    ``_verify_and_backfill_turn_phases``) -- verified all-or-nothing against
+    the session's own ``phase_tokens`` before anything is written, which
+    also self-heals any wrong rows a prior (fix-round-1-and-earlier) buggy
+    backfill left behind. A session with no recoverable per-turn label
+    source, or whose implied aggregation doesn't match ``phase_tokens``,
+    is left (or reset to) empty ``turn_phases`` -- costs.py's documented
+    fallback then scales the session-level ``phase_tokens`` ratios instead
+    of computing shares directly per turn.
 
     Note a real recoverability limit this uncovered: the analysis dataset's
     rendered timelines (``timelines/<key>.md``) carry per-turn OUTPUT
@@ -1191,24 +1279,33 @@ def backfill_turns(conn, *, analysis_dir=None) -> Dict[str, int]:
     the analysis dataset is a ``turn_phases``-only fallback here, never a
     ``session_turns`` source.
 
-    Returns a dict of counts: ``session_turns_backfilled``,
-    ``session_turns_unrecoverable`` (transcript missing or unparseable),
-    ``turn_phases_backfilled``, ``turn_phases_unavailable`` (round-0
-    sessions that gained ``session_turns`` but have no per-turn label
-    source to backfill ``turn_phases`` from)."""
+    Returns a dict of counts: ``session_turns_backfilled`` (>=1 turn row
+    actually written), ``session_turns_zero_turns`` (transcript parsed
+    cleanly but yielded zero turns -- reported separately from a genuine
+    backfill, fix-round-1 review finding 4), ``session_turns_unrecoverable``
+    (transcript missing or unparseable), ``turn_phases_backfilled``,
+    ``turn_phases_unavailable`` (no per-turn label source at all), and
+    ``turn_phases_verification_failed`` (a label source was found but its
+    aggregation didn't match ``phase_tokens`` -- nothing was written, and
+    any pre-existing wrong rows for that session were removed)."""
     analysis_dir = Path(analysis_dir) if analysis_dir is not None else DEFAULT_ANALYSIS_DIR
 
-    rows = conn.execute(
-        "SELECT session_id, provider, role, review_round, transcript_path FROM sessions "
-        "WHERE session_id NOT IN (SELECT DISTINCT session_id FROM session_turns)"
-    ).fetchall()
-
     counts = {
-        "session_turns_backfilled": 0, "session_turns_unrecoverable": 0,
-        "turn_phases_backfilled": 0, "turn_phases_unavailable": 0,
+        "session_turns_backfilled": 0,
+        "session_turns_zero_turns": 0,
+        "session_turns_unrecoverable": 0,
+        "turn_phases_backfilled": 0,
+        "turn_phases_unavailable": 0,
+        "turn_phases_verification_failed": 0,
     }
 
     try:
+        # Pass 1: sessions lacking session_turns entirely -- re-extract from
+        # the still-on-disk transcript.
+        rows = conn.execute(
+            "SELECT session_id, provider, transcript_path FROM sessions "
+            "WHERE session_id NOT IN (SELECT DISTINCT session_id FROM session_turns)"
+        ).fetchall()
         for row in rows:
             session_id = row["session_id"]
             transcript_path = row["transcript_path"]
@@ -1224,7 +1321,15 @@ def backfill_turns(conn, *, analysis_dir=None) -> Dict[str, int]:
             rec.verdict_boundaries = [
                 t.ended_at for t in rec.turns if getattr(t, "is_verdict", False) and t.ended_at
             ]
-            _upsert_session_turns(conn, session_id, rec)
+            n_turns_written = _upsert_session_turns(conn, session_id, rec)
+            if n_turns_written == 0:
+                # Parsed cleanly but the transcript yielded no turns at all
+                # (e.g. an aborted session with no assistant response) --
+                # not a genuine backfill; counted separately so
+                # session_turns_backfilled means what it says (fix-round-1
+                # review, finding 4).
+                counts["session_turns_zero_turns"] += 1
+                continue
             # A plain UPDATE, not db.upsert: db.upsert's ON CONFLICT DO
             # UPDATE still builds a full INSERT row first (defaulting every
             # column not in `row` to NULL), which would violate sessions'
@@ -1238,25 +1343,20 @@ def backfill_turns(conn, *, analysis_dir=None) -> Dict[str, int]:
             )
             counts["session_turns_backfilled"] += 1
 
-            if row["role"] != "implementer" or (row["review_round"] or 0) != 0:
-                continue
-            labels, version, input_sha256, scored_by = _find_turn_labels(conn, session_id, analysis_dir)
-            if labels is None:
-                counts["turn_phases_unavailable"] += 1
-                continue
-            for turn in rec.turns:
-                phase = labels.get(str(turn.index))
-                if phase is None:
-                    continue
-                db.upsert(
-                    conn, "turn_phases",
-                    {
-                        "session_id": session_id, "turn_idx": turn.index, "phase": phase,
-                        "taxonomy_version": version, "input_sha256": input_sha256, "scored_by": scored_by,
-                    },
-                    ["session_id", "turn_idx", "taxonomy_version"],
-                )
-            counts["turn_phases_backfilled"] += 1
+        # Pass 2: every round-0 implementer session with session_turns (from
+        # pass 1 just now, an earlier backfill run, or live ingestion) gets
+        # its turn_phases (re-)verified -- see _verify_and_backfill_turn_phases
+        # for why this is unconditional (self-healing) rather than only for
+        # sessions newly touched above.
+        round0_session_ids = [
+            r[0] for r in conn.execute(
+                "SELECT session_id FROM sessions WHERE role = 'implementer' "
+                "AND (review_round IS NULL OR review_round = 0) "
+                "AND session_id IN (SELECT DISTINCT session_id FROM session_turns)"
+            ).fetchall()
+        ]
+        for session_id in round0_session_ids:
+            _verify_and_backfill_turn_phases(conn, session_id, analysis_dir, counts)
 
         conn.commit()
     except Exception:
@@ -1280,8 +1380,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     # no flags of its own beyond --db. `backfill-turns` (design.md D5
     # amendment, followup-4) populates session_turns/turn_phases for
     # already-ingested sessions that predate those tables; takes --db and
-    # --analysis-dir only.
-    p.add_argument("command", nargs="?", default="ingest", choices=["ingest", "rebuild-derived", "backfill-turns"])
+    # --analysis-dir only. `verify-turn-phases` (fix-round-1 review, finding
+    # 1) is a read-only audit of the turn_phases/phase_tokens aggregation
+    # invariant against whatever's already committed -- takes --db only;
+    # exits 1 if any violation is found, so it's usable as a CI/pre-commit
+    # gate, not just an interactive report.
+    p.add_argument(
+        "command", nargs="?", default="ingest",
+        choices=["ingest", "rebuild-derived", "backfill-turns", "verify-turn-phases"],
+    )
     p.add_argument("--db", default=str(Path("data/agents/task-analyzer.sqlite")))
     p.add_argument("--repo", default=".")
     p.add_argument("--dry-run", action="store_true")
@@ -1324,6 +1431,17 @@ def main(argv=None) -> int:
             conn.close()
         print(json.dumps({"command": "backfill-turns", **stats}, indent=2))
         return 0
+
+    if args.command == "verify-turn-phases":
+        try:
+            violations = costs.verify_turn_phases_integrity(conn)
+        finally:
+            conn.close()
+        print(json.dumps(
+            {"command": "verify-turn-phases", "violation_count": len(violations), "violations": violations},
+            indent=2, sort_keys=True,
+        ))
+        return 1 if violations else 0
 
     agent_runner = None
     if not args.dry_run and not args.no_agents:
