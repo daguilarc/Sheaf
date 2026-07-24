@@ -5169,17 +5169,33 @@ TEST_CASE(relative_bank_messages_apply_effective_modifiers_without_selection) {
     auto& slot = manager.CreateBankSlot();
     slot.AddPhysicalEncoder(10);
     slot.SelectBank(&selected);
+    std::size_t valueCalls = 0;
     std::size_t coinCalls = 0;
-    manager.SetRandomSource([] { return 0.8f; }, [&coinCalls] { return coinCalls++ == 0 ? 0.0f : 1.0f; },
-                            [](std::size_t) { return std::size_t{0}; });
+    std::size_t indexCalls = 0;
+    manager.SetRandomSource(
+        [&valueCalls] {
+            ++valueCalls;
+            return 0.8f;
+        },
+        [&coinCalls] { return coinCalls++ == 0 ? 0.0f : 1.0f; },
+        [&indexCalls](std::size_t) {
+            ++indexCalls;
+            return std::size_t{0};
+        });
+    parameter.SceneCenter(0) = 0.6f;
     manager.SetResetHeld(true);
     manager.SetRandomHeld(true);
     manager.SetRandomModHeld(true);
     synth::MessageInBus bus(&manager, 4);
     bus.Apply(synth::MessageIn::NextParamBank(0, 0));
     REQUIRE_TRUE(slot.SelectedBank() == &selected);
-    REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.0001f);
-    REQUIRE_TRUE(parameter.ModulationDepthParameter(0) != nullptr);
+    REQUIRE_NEAR(parameter.SceneCenter(0), 0.6f, 0.0001f);
+    synth::Parameter* depth = parameter.ModulationDepthParameter(0);
+    REQUIRE_TRUE(depth != nullptr);
+    REQUIRE_NEAR(depth->SceneCenter(0), 0.8f, 0.0001f);
+    REQUIRE_TRUE(valueCalls == 1);
+    REQUIRE_TRUE(coinCalls == 2);
+    REQUIRE_TRUE(indexCalls == 1);
 }
 
 TEST_CASE(reset_modifier_collects_each_affected_group_once_after_resetting_the_bank) {
@@ -9192,6 +9208,9 @@ struct SimRandomSamples {
     std::size_t valueIx = 0;
     std::size_t coinIx = 0;
     std::size_t indexIx = 0;
+    unsigned diagnosticSeed = 0;
+    int diagnosticStep = -1;
+    std::string diagnosticAction;
 
     void Clear() {
         values.clear();
@@ -9202,23 +9221,36 @@ struct SimRandomSamples {
         indexIx = 0;
     }
 
+    void SetDiagnosticContext(unsigned seed, int step, std::string action) {
+        diagnosticSeed = seed;
+        diagnosticStep = step;
+        diagnosticAction = std::move(action);
+    }
+
+    [[noreturn]] void FailUnderflow(const char* sampleType) const {
+        std::ostringstream oss;
+        oss << "seed " << diagnosticSeed << " step " << diagnosticStep << " action " << diagnosticAction
+            << " random " << sampleType << " sample underflow";
+        throw std::runtime_error(oss.str());
+    }
+
     float PopValue() {
         if (valueIx >= values.size()) {
-            throw std::runtime_error("random value sample underflow");
+            FailUnderflow("value");
         }
         return values[valueIx++];
     }
 
     float PopCoin() {
         if (coinIx >= coins.size()) {
-            throw std::runtime_error("random coin sample underflow");
+            FailUnderflow("coin");
         }
         return coins[coinIx++];
     }
 
     std::size_t PopIndex(std::size_t) {
         if (indexIx >= indices.size()) {
-            throw std::runtime_error("random index sample underflow");
+            FailUnderflow("index");
         }
         return indices[indexIx++];
     }
@@ -10075,9 +10107,12 @@ void SimSelectBank(SimOracle& oracle, int bankIx) {
     oracle.selectedBank = bankIx;
 }
 
-void SimNavigateBank(SimOracle& oracle, synth::BankDirection direction,
+void SimNavigateBank(SimOracle& oracle, std::size_t slotIx, synth::BankDirection direction,
                      SimRandomSamples& randomSamples, std::mt19937& randomRng,
                      std::vector<std::string>* samples) {
+    if (slotIx != 0) {
+        return;
+    }
     if (SimCurrentModifier(oracle) != synth::Modifier::None) {
         SimApplyModifierToBank(oracle, oracle.selectedBank, randomSamples, randomRng, samples);
         return;
@@ -11058,7 +11093,7 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
                 randomSamples.RequireDrained(seed, step, action);
                 setOracleHeld(modifier, false);
             };
-            switch (rng() % 31) {
+            switch (rng() % 32) {
             case 0: {
                 const std::size_t position = rng() % encoders.size();
                 const float delta = deltaDist(rng);
@@ -11287,13 +11322,32 @@ TEST_CASE(randomized_message_bus_ui_state_simulation) {
                     ? synth::BankDirection::Next
                     : synth::BankDirection::Previous;
                 std::vector<std::string> samples;
-                SimNavigateBank(oracle, direction, randomSamples, randomRng, &samples);
+                SimNavigateBank(oracle, 0, direction, randomSamples, randomRng, &samples);
                 action = std::string("bus ") +
                     (direction == synth::BankDirection::Next ? "next bank" : "previous bank") +
                     " samples=" + JoinSamples(samples);
                 REQUIRE_TRUE(bus.Push(direction == synth::BankDirection::Next
                                           ? synth::MessageIn::NextParamBank(timestamp, 0)
                                           : synth::MessageIn::PrevParamBank(timestamp, 0)));
+                bus.Process(timestamp);
+                randomSamples.RequireDrained(seed, step, action);
+                break;
+            }
+            case 30: {
+                const synth::BankDirection direction = (rng() % 2) == 0
+                    ? synth::BankDirection::Next
+                    : synth::BankDirection::Previous;
+                constexpr std::size_t invalidSlot = 99;
+                std::vector<std::string> samples;
+                SimNavigateBank(oracle, invalidSlot, direction, randomSamples, randomRng, &samples);
+                action = std::string("bus invalid slot ") + std::to_string(invalidSlot) + " " +
+                    (direction == synth::BankDirection::Next ? "next bank" : "previous bank") +
+                    " modifier=" + modifierName(SimCurrentModifier(oracle)) +
+                    " samples=" + JoinSamples(samples);
+                randomSamples.SetDiagnosticContext(seed, step, action);
+                REQUIRE_TRUE(bus.Push(direction == synth::BankDirection::Next
+                                          ? synth::MessageIn::NextParamBank(timestamp, invalidSlot)
+                                          : synth::MessageIn::PrevParamBank(timestamp, invalidSlot)));
                 bus.Process(timestamp);
                 randomSamples.RequireDrained(seed, step, action);
                 break;
