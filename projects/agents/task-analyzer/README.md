@@ -32,7 +32,7 @@ a scratch/test copy.
 ```
 python3 projects/agents/task-analyzer/ingest.py [ingest|rebuild-derived|backfill-turns|verify-turn-phases] \
     [--db PATH] [--repo PATH] [--dry-run] [--no-agents] \
-    [--rescore complexity|grades|phase_tokens] [--change NAME] \
+    [--rescore complexity|grades|phase_tokens] [--change NAME] [--strict] \
     [--analysis-dir DIR] [--regenerate]
 ```
 
@@ -53,6 +53,33 @@ python3 projects/agents/task-analyzer/ingest.py [ingest|rebuild-derived|backfill
   a change, always win outright over plan derivation for that change
   (followup-6; see the data-gathering spec's "Idempotent, atomic, offline
   ingestion" requirement for the full contract).
+- **Session-to-task joining is evidence-based** (followup-7): a session
+  joins `(change, task_key)` only when its own prompt affirmatively names
+  that specific change — its change directory/OpenSpec change name, its
+  committed Superpowers plan file, or its SDD brief directory path — never
+  merely because it's the sole candidate left after `--change` narrowed
+  the field. This evidence check runs over the FULL landed set always;
+  `--change` only filters which of the resulting joins get ingested this
+  run, so join/quarantine outcomes are identical scoped or unscoped. A
+  session with a recognized task_key but no evidence for any change
+  quarantines with reason `"no change evidence for task key"`; one with
+  evidence for more than one change quarantines with `"task key matches
+  >1 task"`. Every real run also heals any already-committed session
+  whose `task_id` disagrees with the current evidence-based outcome
+  (e.g. residue from a run predating this fix) — `RunReport.healed_sessions`/
+  `healed_session_ids`, logged to `ingest_log` when nonzero.
+- **A grading result can legitimately find nothing gradeable** (followup-7)
+  — e.g. every review joined to a task turns out to be a mis-join.
+  `prompts/grading.md` requires an output file for every item always, with
+  a distinct "ungradeable" shape (all grade fields null, zero severity
+  counts, every excluded review listed, plus a `reason` string) for this
+  case. `ingest.py` records that durably WITHOUT a `grades` row
+  (`RunReport.ungradeable`/`ungradeable_items`) and the run continues. A
+  dispatch that produces no valid staged output at all (not even the
+  ungradeable shape) after retry now fails only that one item by default
+  (`RunReport.failed`/`failed_items`, left as an open gap for a future
+  run) instead of aborting the whole run — pass `--strict` to restore the
+  old abort-on-any-dispatch-failure behavior.
 - `rebuild-derived`: recomputes `task_costs`/`task_arms` from already-ingested
   raw + agentic rows only — no discovery, no agent dispatch. This is the
   command to run after a price-table change (see the recompute matrix).
@@ -108,7 +135,15 @@ python3 projects/agents/task-analyzer/ingest.py [ingest|rebuild-derived|backfill
   version (a rubric bump alone does not silently trigger a fleet-wide
   re-score; you ask for it).
 - `--change NAME`: restricts ingestion to one change within the already-landed
-  set — it never bypasses the landed check, it only narrows it.
+  set — it never bypasses the landed check, and never changes any session's
+  join/quarantine outcome, only which of them get ingested this run (see
+  evidence-based joining above).
+- `--strict` (followup-7): abort the whole run if any single agentic gap's
+  dispatch produces no valid staged file at all, even after the built-in
+  retry (the pre-followup-7 behavior). Default off — such an item now fails
+  on its own and the run continues with every other task. Never triggered
+  by a correctly-declined "ungradeable" grading result, which is not an
+  error.
 - Both commands write the refreshed `<db>.dump.jsonl` sibling next to the
   database on every real (non-dry-run) run — that JSONL file is what PRs
   should be reviewed against, since the sqlite binary itself doesn't diff
