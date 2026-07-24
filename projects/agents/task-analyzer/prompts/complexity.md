@@ -30,6 +30,8 @@ separately and never fold it into the composite.
 For every item, write one JSON file to `{{OUTPUT_DIR}}/<task_key>.json` with
 exactly these keys:
 
+Create each output file with the harness's file-write tool (Write), not with bash/heredocs/python scripts -- shell file writes may be sandboxed in the dispatch context and will silently fail the item.
+
 ```json
 {
   "task_key": "...",

@@ -48,6 +48,8 @@ numbers (never mix nulls and numbers across them), and an ungradeable item
 MUST have all five as `null`. A `reason` on a gradeable item is harmless
 and ignored; leave it out.
 
+Create each output file with the harness's file-write tool (Write), not with bash/heredocs/python scripts -- shell file writes may be sandboxed in the dispatch context and will silently fail the item.
+
 **Gradeable** (at least one non-excluded review remains):
 
 ```json

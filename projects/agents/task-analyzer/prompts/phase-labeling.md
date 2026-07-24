@@ -35,6 +35,8 @@ Every turn must receive exactly one label; there is no "unlabeled" state.
 For every item, write one JSON file to `{{OUTPUT_DIR}}/<session_key>.json`
 with exactly these keys:
 
+Create each output file with the harness's file-write tool (Write), not with bash/heredocs/python scripts -- shell file writes may be sandboxed in the dispatch context and will silently fail the item.
+
 ```json
 {
   "session_key": "...",
