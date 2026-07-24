@@ -30,14 +30,16 @@ exercised:
 - When a landed change has no committed briefs at the archive ref, its
   tasks are now derived from its committed Superpowers plan file instead
   (`discovery.landed_changes`'s already-resolved `plan_path`): every
-  `#+ Task N` heading (any markdown heading level, mirroring the
-  `subagent-driven-development` skill's own `task-brief` extraction
-  script exactly) opens a task section running through the line before
-  the next such heading. Real committed briefs, when any exist for a
-  change, always take precedence outright over plan derivation for that
-  same change (never mixed). A change with neither committed briefs nor a
-  resolvable plan file still ingests as a change row with zero tasks,
-  exactly as before this fallback existed.
+  `Task N:` heading (any markdown heading level; colon required — every
+  real task heading across the plans committed on main has one, and it's
+  what excludes a plan's own "Task N Review" sub-heading from being
+  mistaken for a task boundary) opens a task section running through the
+  line before the next heading at the SAME level, whether or not that
+  heading is itself a task heading. Real committed briefs, when any exist
+  for a change, always take precedence outright over plan derivation for
+  that same change (never mixed). A change with neither committed briefs
+  nor a resolvable plan file still ingests as a change row with zero
+  tasks, exactly as before this fallback existed.
 
 ## Impact
 

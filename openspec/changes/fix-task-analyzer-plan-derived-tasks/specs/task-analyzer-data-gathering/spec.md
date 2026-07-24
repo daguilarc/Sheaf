@@ -19,12 +19,15 @@ When a landed change has NO committed briefs at that ref — the steady-state
 case, since `.superpowers/` is the SDD workflow's own uncommitted scratch
 space and is never committed — its tasks SHALL instead be derived from its
 own committed Superpowers plan file (already resolved as `plan_path` by
-change discovery): every task-numbered heading in the plan (any markdown
-heading level naming "Task N", matching the `subagent-driven-development`
-skill's own brief-extraction script) opens one task section running through
-the line before the next such heading; the section's task key is `task-N`
-and its full text becomes that task's brief text, hashed and cached exactly
-like a real committed brief. Real committed briefs, when any exist for a
+change discovery): every heading of the form "Task N:" (a colon
+immediately after the number, at any markdown heading level — every real
+task heading across the plans committed on main has this shape, which is
+what distinguishes a genuine task heading from a same-plan "Task N Review"
+sub-heading) opens one task section running through the line before the
+next heading at the SAME level, whether or not that next heading is
+itself a task heading; the section's task key is `task-N` and its full
+text becomes that task's brief text, hashed and cached exactly like a
+real committed brief. Real committed briefs, when any exist for a
 change, MUST take precedence outright over plan derivation for that same
 change (never mixed within one change); a change with neither committed
 briefs nor a resolvable plan file MUST still ingest as a change row with
@@ -54,7 +57,11 @@ necessarily zero on a run that writes nothing.
 
 #### Scenario: Tasks derived from a committed plan when no briefs are committed
 - **WHEN** a landed change has zero committed task briefs at the archive ref but a resolvable committed Superpowers plan file
-- **THEN** its tasks are ingested with `task-N` keys and brief text equal to that plan's own "Task N" section text, and their cache-key hashes derive from that text exactly as for a committed brief
+- **THEN** its tasks are ingested with `task-N` keys and brief text equal to that plan's own "Task N:" section text, and their cache-key hashes derive from that text exactly as for a committed brief
+
+#### Scenario: A plan's own review sub-section is excluded from the preceding task's brief
+- **WHEN** a plan-derived task's section is followed by a same-level heading that is not itself a "Task N:" heading (e.g. a "Task N Review" sub-heading) before the next task's heading
+- **THEN** that section's text is excluded from the preceding task's brief text, and no task is created for it
 
 #### Scenario: Committed briefs take precedence over plan derivation
 - **WHEN** a landed change has at least one committed task brief at the archive ref
