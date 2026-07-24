@@ -76,11 +76,22 @@ def _deep_update(base: dict, overrides: dict) -> dict:
     return base
 
 
-def _fetch_training_rows(conn, rubric_version, price_version):
+def _fetch_training_rows(conn, rubric_version):
     """Rows with a usable training arm only -- ``task_arms.model``/``effort``
     are NULL for tasks with no round-0 implementer session (review-only or
     quarantined tasks; expected, not corrupt) and can train no arm, so
-    they're excluded at the join. See ``_count_excluded_null_arm_tasks``."""
+    they're excluded at the join. See ``_count_excluded_null_arm_tasks``.
+
+    No ``price_version`` predicate: ``task_costs`` holds exactly one current
+    row per (task, category) (its PRIMARY KEY; ``costs.rebuild`` is a full
+    DELETE + recompute), so there are never multiple price generations to
+    disambiguate between. ``price_version`` is a *per-model* effective date
+    (different models legitimately have different newest price rows), so
+    filtering rows to any single date would silently drop every category
+    funded by a model whose newest price row is older -- an earlier version
+    of this query did exactly that (latent only because every seeded price
+    row happened to share one effective_date). The newest date present is
+    still recorded in ``training_filters`` as provenance (see ``run``)."""
     sql = """
         SELECT tc.task_id AS task_id, tc.category AS category, tc.usd AS usd,
                c.composite AS composite, c.c3 AS c3, c.c4 AS c4, c.c5 AS c5,
@@ -88,12 +99,12 @@ def _fetch_training_rows(conn, rubric_version, price_version):
         FROM task_costs tc
         JOIN complexity c ON c.task_id = tc.task_id AND c.rubric_version = ?
         JOIN task_arms ta ON ta.task_id = tc.task_id
-        WHERE tc.price_version = ? AND ta.model IS NOT NULL AND ta.effort IS NOT NULL
+        WHERE ta.model IS NOT NULL AND ta.effort IS NOT NULL
     """
-    return conn.execute(sql, (rubric_version, price_version)).fetchall()
+    return conn.execute(sql, (rubric_version,)).fetchall()
 
 
-def _count_excluded_null_arm_tasks(conn, rubric_version, price_version):
+def _count_excluded_null_arm_tasks(conn, rubric_version):
     """Count of distinct tasks that would otherwise join for training but
     have no canonical arm (``task_arms.model``/``effort`` NULL)."""
     sql = """
@@ -101,9 +112,9 @@ def _count_excluded_null_arm_tasks(conn, rubric_version, price_version):
         FROM task_costs tc
         JOIN complexity c ON c.task_id = tc.task_id AND c.rubric_version = ?
         JOIN task_arms ta ON ta.task_id = tc.task_id
-        WHERE tc.price_version = ? AND (ta.model IS NULL OR ta.effort IS NULL)
+        WHERE ta.model IS NULL OR ta.effort IS NULL
     """
-    return conn.execute(sql, (rubric_version, price_version)).fetchone()[0]
+    return conn.execute(sql, (rubric_version,)).fetchone()[0]
 
 
 def run(conn, config_overrides: Optional[dict] = None) -> Optional[int]:
@@ -117,6 +128,11 @@ def run(conn, config_overrides: Optional[dict] = None) -> Optional[int]:
         return None
     rubric_version = _numeric_max(rubric_versions)
 
+    # Provenance only, never a row filter (see _fetch_training_rows):
+    # price_version is a per-model effective date, and the newest one present
+    # is recorded in training_filters so a reader knows how fresh the priced
+    # costs were at training time. No priced cost rows at all means there is
+    # nothing to train on.
     price_versions = [
         r[0]
         for r in conn.execute(
@@ -132,8 +148,8 @@ def run(conn, config_overrides: Optional[dict] = None) -> Optional[int]:
     ]
     taxonomy_version = _numeric_max(taxonomy_versions) if taxonomy_versions else None
 
-    rows = _fetch_training_rows(conn, rubric_version, price_version)
-    excluded_null_arm_tasks = _count_excluded_null_arm_tasks(conn, rubric_version, price_version)
+    rows = _fetch_training_rows(conn, rubric_version)
+    excluded_null_arm_tasks = _count_excluded_null_arm_tasks(conn, rubric_version)
 
     config = model.default_config()
     if config_overrides:

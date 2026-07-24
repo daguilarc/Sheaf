@@ -352,6 +352,48 @@ class TestTrain(unittest.TestCase):
         self.assertEqual(old_params_still_present, 4)  # 3 arms + 1 pooled sentinel row
         conn.close()
 
+    def test_train_keeps_rows_across_mixed_price_versions(self):
+        # task_costs.price_version is a *per-model* effective date, so a
+        # perfectly healthy rebuild can leave different arms' rows carrying
+        # different dates (each model priced by its own newest price row).
+        # Training must not filter rows to any single date -- an earlier
+        # version filtered to the global max price_version and silently
+        # dropped every category funded by a model with an older price row.
+        db_path = self.tmp_path / "mixed_prices.sqlite"
+        conn = db.connect(db_path)
+        n_tasks, arms = _seed_training_db(conn)  # all rows at "2026-07-01"
+        # Re-date one arm's rows to an older per-model effective date.
+        conn.execute(
+            "UPDATE task_costs SET price_version = '2026-06-01' WHERE task_id IN "
+            "(SELECT task_id FROM task_arms WHERE model = ? AND effort = ?)",
+            arms[0],
+        )
+        conn.commit()
+
+        estimator_id = train.run(conn)
+        self.assertIsNotNone(estimator_id)
+
+        row = conn.execute(
+            "SELECT config_json, metrics_json, train_task_count FROM estimators WHERE estimator_id = ?",
+            (estimator_id,),
+        ).fetchone()
+        # Every task still trains -- nothing dropped by price date.
+        self.assertEqual(row["train_task_count"], n_tasks)
+        metrics = json.loads(row["metrics_json"])
+        self.assertEqual(len(metrics["arm_row_counts"]), len(arms))
+        for count in metrics["arm_row_counts"].values():
+            self.assertEqual(count, 20)
+        # The old-dated arm still gets its own posterior row.
+        params = conn.execute(
+            "SELECT model, effort FROM estimator_params WHERE estimator_id = ?",
+            (estimator_id,),
+        ).fetchall()
+        self.assertIn(arms[0], {(r["model"], r["effort"]) for r in params})
+        # The newest date present is recorded as provenance.
+        config = json.loads(row["config_json"])
+        self.assertEqual(config["training_filters"]["price_version"], "2026-07-01")
+        conn.close()
+
     def test_train_excludes_null_arm_tasks(self):
         # 139 real task_arms rows have NULL model/effort in production data
         # (review-only or quarantined tasks with no round-0 implementer
