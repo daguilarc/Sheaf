@@ -64,8 +64,10 @@ query-layer-only redesign of an already-active one.
 - [x] 7.4 Follow-up 2 — p20-bandit selection via Monte Carlo, `explore` flag
   removed: total task cost per arm is now a seeded Monte Carlo quantile of
   the *sum* of per-category predictives (`model.NIG.predictive_draws`), not
-  a sum of each category's own quantile (quantiles don't commute with sums,
-  and summing overstates p80 / understates p20 under independence).
+  a sum of each category's own quantile — quantiles don't commute with sums
+  in general (summing typically overstates p80 / understates p20 under
+  independence for moderate tails, though the direction isn't universal at
+  very heavy tails; see spec.md "Total cost is a quantile of the sum").
   Selection is the lowest Monte Carlo p20 total among arms passing a p80
   guard (same guard factor/precedence as before); a `--thompson` mode
   selects via one Thompson draw per arm instead. The `explore`/

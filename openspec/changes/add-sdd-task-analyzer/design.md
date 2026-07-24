@@ -295,22 +295,40 @@ a diagnostic; it does not, by itself, change selection.
 sum-of-quantiles/`explore`-flag design D6 originally shipped with).**
 A task's total cost per arm is the *sum* over categories of each category's
 own (independent) log-space Student-t predictive, exponentiated to USD.
-Quantiles do not commute with sums: summing each category's own p80
-overstates the true p80 of the total (independence means the categories'
-tails don't all land together), and summing each category's p20
-understates the true p20 of the total, for the same reason in the other
-direction — and there is no closed form for the quantiles of a sum of
-exponentiated Student-t's (`exp(t)` has no finite moments). So totals are
-estimated by seeded Monte Carlo (`model.NIG.predictive_draws`, `loc + scale
-* rng.standard_t(df, size=n)`): draw `--mc-draws` samples per category
+Quantiles do not commute with sums in general, and there is no closed form
+for the quantiles of a sum of exponentiated Student-t's (`exp(t)` has no
+finite moments) — for a moderate-tailed posterior, summing each category's
+own p80 typically overstates the true p80 of the total and summing each
+category's p20 typically understates the true p20 (independence means the
+categories' tails don't usually all land together), but this direction is
+**not guaranteed** at very heavy tails (a sparse or pooled-fallback
+posterior can have few enough degrees of freedom that independence no
+longer implies it, a known property of sufficiently heavy-tailed risks) —
+so totals are always estimated by Monte Carlo *of the sum*, never a sum
+*of* quantiles, regardless of which way any given posterior's inequality
+happens to point (fix round 1, codex review of followup-2). Estimated by
+seeded Monte Carlo (`model.NIG.predictive_draws`, `loc + scale *
+rng.standard_t(df, size=n)`): draw `--mc-draws` samples per category
 (independent), exponentiate each (floored at 0.0 — a dollar cost cannot be
 negative), column-sum across categories, then take the empirical
-p20/p50/p80 of the resulting per-arm total draws (`numpy.quantile`, linear
-interpolation). One `numpy.random.Generator` (seeded via `--seed`) is
-shared across a whole `estimate.py` run and consumed in a fixed order
+p20/p50/p80 of the resulting per-arm total draws over the *finite* subset
+only (`numpy.quantile`, linear interpolation) — a sufficiently heavy-tailed
+draw can overflow `exp` to `inf`; the count of non-finite draws is reported
+per arm (`nonfinite_draws`), and an arm with zero finite draws is
+unscorable (`reason: "all_draws_nonfinite"`) rather than producing a
+non-finite total (`json.dumps(..., allow_nan=False)` in `estimate.py`'s CLI
+entry point is the hard boundary this exists to satisfy — a report must
+never contain `Infinity`/`NaN`). Two independent `numpy.random.Generator`s
+(one for MC draws, one for Thompson draws, both derived from one `--seed`
+via `numpy.random.SeedSequence.spawn(2)` — `estimate._derive_rngs`) are
+each shared across a whole `estimate.py` run and consumed in a fixed order
 (tasks in decomposition order, arms sorted by `(model, effort)`, categories
 in `config["categories"]` order), so output is byte-deterministic given
-(estimator id, seed, mc-draws).
+(estimator id, seed, mc-draws, thompson mode) — and, because the two
+streams never share state, a report's MC totals are identical whether or
+not `--thompson` was given (an earlier version of this design shared one
+stream for both, which desynchronized later tasks' MC draws between the
+two modes at the same seed — fix round 1).
 
 Selection is **"p20 bandit with a p80 guard"**, not "minimize expected
 total": the selection statistic is each arm's MC `p20_total_usd` — a *low*
@@ -331,11 +349,14 @@ arms for that task; the selected arm is the guard-passing arm with the
 lowest `p20_total_usd` (tie-break `(model, effort)` lexicographic).
 `estimate.py --thompson` selects differently: one Thompson draw
 (`model.NIG.thompson`, the classic sample-sigma2-then-beta-then-x·beta
-procedure) per (arm, category) from the same shared rng, summed to one
-`thompson_total_usd` per arm, argmin among guard-passing arms (the guard
-itself is still the MC one, computed regardless of mode). Both modes are
-fully deterministic given the same seed; see `estimate.py`'s module
-docstring for the complete rng-consumption-order contract.
+procedure) per (arm, category) from the dedicated Thompson rng stream,
+summed to one `thompson_total_usd` per arm (`None` if non-finite), argmin
+among guard-passing arms with a finite total (the guard itself is still the
+MC one, computed regardless of mode; falls back to the p20 statistic if no
+guard-passing arm has a finite Thompson total, rather than crash comparing
+`None`s). Both modes are fully deterministic given the same seed; see
+`estimate.py`'s module docstring for the complete rng-consumption-order
+contract.
 
 ### D7. Decomposition subagent protocol
 
@@ -349,8 +370,11 @@ subagent with the proposal/design/specs as input:
    (agentic, in-context) and write a candidate YAML.
 3. Run `estimate.py` on each candidate (deterministic; reads the **main
    branch** database path passed in by the caller, never the worktree copy).
-4. Compare totals at the configured quantile; apply guardrails: no task above
-   composite 3.5 (split it), prefer C7 ≤ 2 briefs, respect dependency order.
+4. Compare each candidate's total p20 cost (the arm-selection statistic
+   `estimate.py` itself ranks and picks by — a p80-guard-passing arm's
+   lowest Monte Carlo p20 total, not a configured quantile knob); apply
+   guardrails: no task above composite 3.5 (split it), prefer C7 ≤ 2
+   briefs, respect dependency order.
 5. Emit: chosen decomposition, its annotation YAML, the per-candidate score
    table, and a one-paragraph rationale.
 

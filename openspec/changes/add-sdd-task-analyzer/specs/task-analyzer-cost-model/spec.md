@@ -40,20 +40,39 @@ effort): the predictive cost at an arbitrary quantile (e.g. p50, p80) and the
 posterior parameters sufficient for Thompson-style sampling. Per-category
 quantiles are exact (closed-form Student-t). A task's TOTAL cost per arm,
 however, is the sum of independent per-category predictives, and quantiles
-do not commute with sums — summing each category's own p80 overstates the
-total's true p80, and summing each category's own p20 understates the
-total's true p20 — so total-cost quantiles MUST be computed as the empirical
-quantiles of a seeded Monte Carlo sample of the summed per-category draws
-(not as a sum of each category's own quantile), deterministic given a fixed
-random seed and draw count.
+in general do not commute with sums, so total-cost quantiles MUST be
+computed as the empirical quantiles of a seeded Monte Carlo sample of the
+*summed* per-category draws — never as a sum of each category's own
+quantile — deterministic given a fixed random seed and draw count. Every
+non-finite draw (a sufficiently heavy-tailed posterior can overflow when
+exponentiated back to USD) MUST be excluded before computing quantiles; an
+arm with zero finite draws MUST be reported as unscorable rather than
+producing a non-finite total, and no non-finite value (`Infinity`/`NaN`)
+MUST ever appear in a machine-readable report.
+
+*Non-normative note:* for posteriors with moderate tails, summing each
+category's own p80 typically overstates the true total p80, and summing
+each category's own p20 typically understates the true total p20 (the
+usual diversification effect of independence). This direction is **not
+guaranteed** at very heavy tails (low degrees of freedom, e.g. a sparse or
+pooled-fallback posterior) — independence does not guarantee it there, a
+known property of sufficiently heavy-tailed risks — so no requirement or
+scenario in this spec depends on which way the inequality points for any
+particular posterior. The only guarantee that holds unconditionally, and
+the one this requirement actually normalizes, is quantile-*of*-the-sum
+computed by Monte Carlo, never sum-*of*-quantiles.
 
 #### Scenario: p80 query
 - **WHEN** the estimator is queried for a single category, a given complexity vector, and a model arm, at quantile 0.8
 - **THEN** it returns that category's exact p80 cost, computed in closed form from the stored posterior
 
-#### Scenario: Total cost is a Monte Carlo quantile of the sum, not a sum of quantiles
+#### Scenario: Total cost is a quantile of the sum, not a sum of quantiles
 - **WHEN** a task's total cost is computed for an arm spanning two or more categories, at a fixed seed and draw count
-- **THEN** the reported total p80 is less than or equal to the sum of each category's own analytic p80 (within Monte Carlo tolerance), and the reported total p20 is greater than or equal to the sum of each category's own analytic p20
+- **THEN** the reported total p20/p50/p80 are the empirical quantiles of the seeded Monte Carlo sample of summed per-category draws, not a sum of each category's own p20/p50/p80
+
+#### Scenario: Non-finite draws are excluded, never reported
+- **WHEN** an arm's per-category posteriors are heavy-tailed enough that some Monte Carlo draws overflow to a non-finite value
+- **THEN** the reported total-cost quantiles are computed over the finite draws only, the count of non-finite draws is reported alongside the total, and if every draw for that arm is non-finite the arm is reported as unscorable — no report ever contains a non-finite (`Infinity`/`NaN`) value
 
 ### Requirement: Decomposition estimator CLI
 The system SHALL provide `estimate.py` taking a proposed decomposition
@@ -69,6 +88,10 @@ MUST be available (one Thompson draw per arm, summed across categories,
 argmin among guard-passing arms), reported as the run's selection mode.
 Output MUST be byte-deterministic given a fixed estimator id, seed, and
 draw count — there is no other source of randomness or non-determinism.
+Monte Carlo draws and Thompson draws MUST be consumed from independent
+random streams derived from the same seed, so that a report's Monte Carlo
+p20/p50/p80 totals are identical for a given (estimator id, seed, draw
+count) whether or not `--thompson` was also given.
 
 #### Scenario: Scoring a candidate decomposition
 - **WHEN** `estimate.py` runs on a candidate YAML with three tasks
@@ -89,6 +112,10 @@ draw count — there is no other source of randomness or non-determinism.
 #### Scenario: Thompson mode selects and reports differently
 - **WHEN** `estimate.py --thompson` runs on a candidate decomposition
 - **THEN** each arm's report includes a Thompson total, the selected arm is the guard-passing arm with the lowest Thompson total, and the report's selection mode reads `thompson` instead of `p20`
+
+#### Scenario: Thompson mode does not perturb Monte Carlo totals
+- **WHEN** `estimate.py` runs on a multi-task candidate decomposition with the same seed, once with `--thompson` and once without
+- **THEN** every arm's Monte Carlo p20/p50/p80 totals are identical between the two runs, for every task including tasks after the first
 
 #### Scenario: Supplied composites are not trusted
 - **WHEN** a decomposition file supplies a `composite` that differs from the mean of its C1–C6

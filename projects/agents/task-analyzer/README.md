@@ -119,11 +119,17 @@ by itself change selection). An arm is `unscorable` only if even the pooled
 fallback has no row for a category it needs.
 
 A task's total cost per arm is the *sum* of independent per-category
-predictives — and quantiles don't commute with sums (summing each
-category's p80 overstates the total's true p80; summing each category's p20
-understates it), so totals are computed by seeded Monte Carlo
-(`--seed`, default 0; `--mc-draws`, default 2000) rather than as a sum of
-each category's own quantile. Selection is **"p20 bandit with a p80
+predictives — and quantiles don't commute with sums in general (for
+moderate-tailed posteriors, summing each category's p80 typically
+overstates the total's true p80 and summing each category's p20 typically
+understates it, though that direction isn't guaranteed at very heavy tails
+— see `estimate.py`'s module docstring), so totals are computed by seeded
+Monte Carlo (`--seed`, default 0; `--mc-draws`, default 2000) rather than
+as a sum of each category's own quantile. Non-finite draws (an overflowed
+`exp` on a sufficiently heavy-tailed posterior) are excluded before
+quantiles are taken; an arm with zero finite draws is `unscorable`
+(`reason: "all_draws_nonfinite"`), and no report ever contains an
+`Infinity`/`NaN` value. Selection is **"p20 bandit with a p80
 guard"**: the selected arm is the one with the lowest MC `p20_total_usd`
 among arms whose MC `p80_total_usd` doesn't exceed `--guard-factor` (default
 2.0, or the estimator's own `config_json["guard_factor"]`) times the
@@ -131,9 +137,13 @@ cheapest scorable arm's p80 total. Minimizing a *low* quantile is
 deliberately explore-friendly — a sparse arm's wide posterior pulls its own
 p20 down even when its median is high — so there is no separate advisory
 flag for exploration; `--thompson` selects via one Thompson draw per arm
-instead (summed across categories from the same seeded rng), reported as
-`"selection_mode": "thompson"` vs. the default `"p20"`. Both modes are
-fully deterministic given the same `--seed`/`--mc-draws`/`--estimator-id`.
+instead (summed across categories), reported as `"selection_mode":
+"thompson"` vs. the default `"p20"`. Thompson draws come from a rng stream
+independent of the MC draws (both derived from `--seed` via
+`numpy.random.SeedSequence.spawn(2)`) — a report's MC `p20`/`p50`/`p80`
+totals are identical whether or not `--thompson` was given, since one mode
+never perturbs the other's stream. Both modes are fully deterministic given
+the same `--seed`/`--mc-draws`/`--estimator-id`.
 
 ### `annotations.py` — validate a sibling annotation file
 
