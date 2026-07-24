@@ -769,6 +769,74 @@ class TestSpanningSessionTurnCoverage(CostsTestBase):
         self.assertEqual(result.spanning_session_coverage, {})
 
 
+class TestSpanningSplitOnReconciledLeakyFixtureNumbers(CostsTestBase):
+    """followup-5: costs.py's spanning-session split against a session
+    whose per-turn tokens now reconcile exactly with its session-level
+    total (the extractors.py silent-checkpoint fix) -- using the exact
+    turn values ``tests/fixtures/codex_leaky.jsonl`` reconciles to (see
+    ``TestExtractCodexLeaky``: turns 250/50/100, session total 400) in a
+    3-turn session split after turn 2 (turn 3 is the fix partition).
+    Turn coverage must be exactly 1.0 (no more warning), and the category
+    split must match hand-computed shares exactly."""
+
+    SESSION_OUTPUT_TOKENS = 400  # 250 + 50 + 100, matches the reconciled fixture
+    # usd = (1000*2.0 + 0*0.2 + 400*10.0) / 1e6 = (2000 + 4000) / 1e6 = 0.006
+    SESSION_USD = 0.006
+
+    def setUp(self):
+        super().setUp()
+        self.task_id = self._make_task()
+        self._make_session(
+            "claude:impl-1", self.task_id, "implementer", SONNET[0],
+            input_tokens=1000, cached_tokens=0, output_tokens=self.SESSION_OUTPUT_TOKENS, review_round=0,
+            started_at="2026-07-20T00:00:00Z", ended_at="2026-07-20T00:10:00Z",
+        )
+        self._make_session_turn("claude:impl-1", 1, "2026-07-20T00:00:00Z", 250)
+        self._make_session_turn("claude:impl-1", 2, "2026-07-20T00:02:00Z", 50)
+        self._make_session_turn("claude:impl-1", 3, "2026-07-20T00:05:00Z", 100)
+        self._make_phase_tokens("claude:impl-1", "red", 250)
+        self._make_phase_tokens("claude:impl-1", "green", 50)
+        self._make_turn_phase("claude:impl-1", 1, "red")
+        self._make_turn_phase("claude:impl-1", 2, "green")
+
+        self._make_session(
+            "claude:review-1", self.task_id, "reviewer", OPUS[0],
+            input_tokens=100, cached_tokens=0, output_tokens=10, review_round=1,
+            started_at="2026-07-20T00:03:00Z", ended_at="2026-07-20T00:04:00Z",
+        )
+        self._set_verdict_boundaries("claude:review-1", ["2026-07-20T00:03:30Z"])
+
+    def test_turn_coverage_is_exactly_one(self):
+        result = costs.rebuild(self.conn, as_of="2026-07-19")
+        self.assertEqual(result.spanning_session_coverage["claude:impl-1"], 1.0)
+
+    def test_category_split_matches_hand_computed_shares(self):
+        costs.rebuild(self.conn, as_of="2026-07-19")
+        table = self._task_costs(self.task_id)
+
+        # fix partition = turn 3 = 100 of 400 total turn tokens -> 0.25
+        self.assertEqual(table["followup_fix"]["weighted_tokens"], 100)
+        self.assertAlmostEqual(table["followup_fix"]["usd"], self.SESSION_USD * 0.25, places=10)
+
+        # pre-boundary = turns 1+2 = 300 of 400 -> 0.75; red=250/300, green=50/300
+        pre_usd = self.SESSION_USD * 0.75
+        self.assertEqual(table["red"]["weighted_tokens"], 250)
+        self.assertAlmostEqual(table["red"]["usd"], pre_usd * (250 / 300), places=10)
+        self.assertEqual(table["green"]["weighted_tokens"], 50)
+        self.assertAlmostEqual(table["green"]["usd"], pre_usd * (50 / 300), places=10)
+        self.assertNotIn("unlabeled", table)
+
+        # Sum preservation across impl-1's own split categories.
+        total = table["followup_fix"]["usd"] + table["red"]["usd"] + table["green"]["usd"]
+        self.assertAlmostEqual(total, self.SESSION_USD, places=10)
+
+    def test_no_coverage_warning(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            costs.rebuild(self.conn, as_of="2026-07-19")
+        self.assertNotIn("WARN", buf.getvalue())
+
+
 class TestTurnPhasesIntegrityCheck(CostsTestBase):
     """fix-round-1 review, finding 1: the turn_phases x
     session_turns.output_tokens aggregation must equal the corresponding

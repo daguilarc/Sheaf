@@ -596,7 +596,7 @@ class TestBackfillTurns(unittest.TestCase):
         self.conn = db.connect(self.db_path)
         self.no_analysis_dir = self.root / "no-analysis-dir"  # deliberately absent
 
-    def _insert_session(self, session_id, provider, role, transcript_path, review_round=0):
+    def _insert_session(self, session_id, provider, role, transcript_path, review_round=0, n_turns=None):
         db.upsert(
             self.conn, "sessions",
             {
@@ -604,7 +604,7 @@ class TestBackfillTurns(unittest.TestCase):
                 "role": role, "model": "claude-sonnet-5",
                 "transcript_path": str(transcript_path) if transcript_path else None,
                 "input_tokens": 0, "cached_tokens": 0, "output_tokens": 0,
-                "review_round": review_round,
+                "review_round": review_round, "n_turns": n_turns,
             },
             ["session_id"],
         )
@@ -655,6 +655,112 @@ class TestBackfillTurns(unittest.TestCase):
         stats = ingest.backfill_turns(self.conn, analysis_dir=self.no_analysis_dir)
         self.assertEqual(stats["session_turns_unrecoverable"], 1)
         self.assertEqual(stats["session_turns_backfilled"], 0)
+
+    def test_n_turns_refreshed_from_authoritative_reextraction(self):
+        # followup-5 (design.md D5/D2 amendment): sessions.n_turns is
+        # refreshed from the freshly re-extracted turn count during
+        # backfill -- many rows are stale from the original migration and
+        # were never corrected since.
+        transcript = self.root / "reviewer.jsonl"
+        shutil.copy(os.path.join(FIXTURES, "codex_persistent_reviewer.jsonl"), transcript)
+        self._insert_session("codex:reviewer-sess-1", "codex", "reviewer", transcript, n_turns=999)
+
+        ingest.backfill_turns(self.conn, analysis_dir=self.no_analysis_dir)
+
+        n_turns = self.conn.execute(
+            "SELECT n_turns FROM sessions WHERE session_id = ?", ("codex:reviewer-sess-1",)
+        ).fetchone()[0]
+        self.assertEqual(n_turns, 2)  # the fixture's real turn count, not the stale 999
+
+    def test_regenerate_false_leaves_existing_session_turns_untouched(self):
+        # Default behavior (regenerate=False) only fills gaps -- a session
+        # that already has session_turns rows (even under an older,
+        # leakier extractor) is left alone.
+        transcript = self.root / "leaky.jsonl"
+        shutil.copy(os.path.join(FIXTURES, "codex_leaky.jsonl"), transcript)
+        self._insert_session("codex:leaky-1", "codex", "implementer", transcript, review_round=0)
+        db.upsert(
+            self.conn, "session_turns",
+            {
+                "session_id": "codex:leaky-1", "turn_idx": 1,
+                "started_at": "t", "ended_at": "t", "output_tokens": 1,  # deliberately stale/wrong
+            },
+            ["session_id", "turn_idx"],
+        )
+        self.conn.commit()
+
+        stats = ingest.backfill_turns(self.conn, analysis_dir=self.no_analysis_dir, regenerate=False)
+        self.assertEqual(stats["session_turns_backfilled"], 0)
+        self.assertEqual(stats["session_turns_regenerated"], 0)
+        row = self.conn.execute(
+            "SELECT output_tokens FROM session_turns WHERE session_id = ? AND turn_idx = 1",
+            ("codex:leaky-1",),
+        ).fetchone()
+        self.assertEqual(row["output_tokens"], 1)  # unchanged
+
+    def test_regenerate_true_replaces_existing_session_turns(self):
+        # followup-5: regenerate=True widens the candidate set to every
+        # session with a transcript, replacing existing (possibly stale,
+        # pre-fix) session_turns rows with freshly re-extracted ones.
+        transcript = self.root / "leaky.jsonl"
+        shutil.copy(os.path.join(FIXTURES, "codex_leaky.jsonl"), transcript)
+        self._insert_session("codex:leaky-1", "codex", "implementer", transcript, review_round=0)
+        db.upsert(
+            self.conn, "session_turns",
+            {
+                "session_id": "codex:leaky-1", "turn_idx": 1,
+                "started_at": "t", "ended_at": "t", "output_tokens": 1,  # stale/wrong
+            },
+            ["session_id", "turn_idx"],
+        )
+        self.conn.commit()
+
+        stats = ingest.backfill_turns(self.conn, analysis_dir=self.no_analysis_dir, regenerate=True)
+        self.assertEqual(stats["session_turns_regenerated"], 1)
+        self.assertEqual(stats["session_turns_backfilled"], 0)
+
+        turns = self.conn.execute(
+            "SELECT turn_idx, output_tokens FROM session_turns WHERE session_id = ? ORDER BY turn_idx",
+            ("codex:leaky-1",),
+        ).fetchall()
+        # Matches TestExtractCodexLeaky's hand-traced values exactly.
+        self.assertEqual([r["output_tokens"] for r in turns], [250, 50, 100])
+
+    def test_regenerate_true_reconciles_previously_leaky_session(self):
+        # End-to-end: a session whose session_turns were originally
+        # written under the pre-followup-5 (leaky) extractor no longer
+        # reconciles with sessions.output_tokens; --regenerate must fix
+        # that by re-deriving session_turns under the fixed extractor.
+        transcript = self.root / "leaky.jsonl"
+        shutil.copy(os.path.join(FIXTURES, "codex_leaky.jsonl"), transcript)
+        # sessions.output_tokens is the session-level total the (already
+        # correct, untouched-by-this-fix) codex token_count cumulative
+        # counter reports -- 400, matching the fixture's final checkpoint.
+        self._insert_session("codex:leaky-2", "codex", "implementer", transcript, review_round=0)
+        self.conn.execute(
+            "UPDATE sessions SET output_tokens = 400 WHERE session_id = ?", ("codex:leaky-2",)
+        )
+        # Simulate the OLD leaky extraction's under-counted session_turns
+        # (only the turns' own last_token_usage deltas, none of the
+        # silent-checkpoint mass folded in): 50 + 50 + 40 = 140, not 400.
+        for idx, tok in enumerate([50, 50, 40], start=1):
+            db.upsert(
+                self.conn, "session_turns",
+                {"session_id": "codex:leaky-2", "turn_idx": idx, "started_at": "t", "ended_at": "t", "output_tokens": tok},
+                ["session_id", "turn_idx"],
+            )
+        self.conn.commit()
+        stale_sum = self.conn.execute(
+            "SELECT SUM(output_tokens) FROM session_turns WHERE session_id = ?", ("codex:leaky-2",)
+        ).fetchone()[0]
+        self.assertNotEqual(stale_sum, 400)
+
+        ingest.backfill_turns(self.conn, analysis_dir=self.no_analysis_dir, regenerate=True)
+
+        fresh_sum = self.conn.execute(
+            "SELECT SUM(output_tokens) FROM session_turns WHERE session_id = ?", ("codex:leaky-2",)
+        ).fetchone()[0]
+        self.assertEqual(fresh_sum, 400)  # reconciles exactly after regeneration
 
     def test_turn_phases_backfilled_from_analysis_dataset_for_round0_implementer(self):
         transcript = self.root / "impl.jsonl"
@@ -794,10 +900,17 @@ class TestBackfillTurns(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(count, 0)
 
-    def test_self_heals_wrong_turn_phases_rows_from_a_prior_buggy_backfill(self):
-        # fix-round-1 review, finding 1: re-running backfill-turns must
-        # remove turn_phases rows a pre-fix-round-1 buggy backfill left
-        # behind, not merely refuse to add MORE wrong rows on top.
+    def test_existing_turn_phases_gets_phase_tokens_recomputed_not_deleted(self):
+        # followup-5 (design.md D5/D2 amendment): a session that ALREADY
+        # has turn_phases rows has its LABELS trusted (the agentic
+        # judgment, cache-keyed) -- if the stored phase_tokens weight is
+        # stale relative to the CURRENT session_turns (e.g. after an
+        # extractors.py delta fix changed per-turn token counts),
+        # backfill_turns must RECOMPUTE phase_tokens to match those
+        # existing labels, not delete them as if they were wrong. This
+        # supersedes the old fix-round-1 self-heal-by-deletion behavior
+        # for this exact shape of input -- deletion is now reserved for a
+        # genuine LABEL mismatch (see the sibling test below).
         transcript = self.root / "impl4.jsonl"
         _write_one_turn_claude_transcript(transcript, "old-impl-4")
         self._insert_session("claude:old-impl-4", "claude", "implementer", transcript, review_round=0)
@@ -809,10 +922,11 @@ class TestBackfillTurns(unittest.TestCase):
             },
             ["session_id", "phase", "taxonomy_version"],
         )
-        # session_turns already present (as if backfilled by a prior run),
-        # with a WRONG turn_phases row already sitting there (the old
-        # buggy backfill's output): its per-turn output_tokens (999)
-        # doesn't match the session's real phase_tokens total (50).
+        # session_turns already present (as if backfilled by a prior run
+        # under an OLDER extractor whose deltas have since been
+        # corrected) -- its current output_tokens (999) no longer matches
+        # the STALE stored phase_tokens weight (50), even though the
+        # LABEL itself (turn 1 -> "red") is correct and unchanged.
         db.upsert(
             self.conn, "session_turns",
             {
@@ -825,7 +939,7 @@ class TestBackfillTurns(unittest.TestCase):
             self.conn, "turn_phases",
             {
                 "session_id": "claude:old-impl-4", "turn_idx": 1, "phase": "red",
-                "taxonomy_version": "1", "input_sha256": "x", "scored_by": "buggy-old-run",
+                "taxonomy_version": "1", "input_sha256": "x", "scored_by": "prior-run",
             },
             ["session_id", "turn_idx", "taxonomy_version"],
         )
@@ -840,14 +954,71 @@ class TestBackfillTurns(unittest.TestCase):
 
         stats = ingest.backfill_turns(self.conn, analysis_dir=analysis_dir)
         self.assertEqual(stats["session_turns_backfilled"], 0)  # already had session_turns
+        self.assertEqual(stats["phase_tokens_recomputed"], 1)
+        self.assertEqual(stats["turn_phases_verification_failed"], 0)
+        self.assertEqual(stats["turn_phases_backfilled"], 1)
+
+        row = self.conn.execute(
+            "SELECT output_tokens FROM phase_tokens WHERE session_id = ? AND phase = 'red'",
+            ("claude:old-impl-4",),
+        ).fetchone()
+        self.assertEqual(row["output_tokens"], 999)  # recomputed to match session_turns
+        self.assertEqual(costs.turn_phases_integrity_violations(self.conn, "claude:old-impl-4"), {})
+
+    def test_genuine_label_mismatch_self_heals_by_deletion(self):
+        # A real label discrepancy (not just a stale token weight): the
+        # existing turn_phases row says turn 1 is "red", but the
+        # authoritative historical label source says it should be
+        # "green". Recomputing phase_tokens from the EXISTING (arguably
+        # wrong) label first, then finding pass 2's independently-derived
+        # candidate disagrees, must still self-heal by removing the
+        # session's turn_phases entirely -- not silently keep the
+        # mismatched label.
+        transcript = self.root / "impl5.jsonl"
+        _write_one_turn_claude_transcript(transcript, "old-impl-5")
+        self._insert_session("claude:old-impl-5", "claude", "implementer", transcript, review_round=0)
+        db.upsert(
+            self.conn, "phase_tokens",
+            {
+                "session_id": "claude:old-impl-5", "phase": "red", "output_tokens": 50,
+                "turns": 1, "taxonomy_version": "1", "input_sha256": "x", "scored_by": "test",
+            },
+            ["session_id", "phase", "taxonomy_version"],
+        )
+        db.upsert(
+            self.conn, "session_turns",
+            {
+                "session_id": "claude:old-impl-5", "turn_idx": 1,
+                "started_at": "t", "ended_at": "t", "output_tokens": 50,
+            },
+            ["session_id", "turn_idx"],
+        )
+        db.upsert(
+            self.conn, "turn_phases",
+            {
+                "session_id": "claude:old-impl-5", "turn_idx": 1, "phase": "red",
+                "taxonomy_version": "1", "input_sha256": "x", "scored_by": "prior-run",
+            },
+            ["session_id", "turn_idx", "taxonomy_version"],
+        )
+        self.conn.commit()
+
+        analysis_dir = self.root / "analysis5"
+        (analysis_dir / "phase_labels").mkdir(parents=True)
+        # The authoritative historical source disagrees: turn 1 should be
+        # "green", not "red".
+        (analysis_dir / "phase_labels" / "claude-old-impl-5.json").write_text(
+            json.dumps({"labels": {"1": "green"}})
+        )
+
+        stats = ingest.backfill_turns(self.conn, analysis_dir=analysis_dir)
         self.assertEqual(stats["turn_phases_verification_failed"], 1)
         self.assertEqual(stats["turn_phases_backfilled"], 0)
 
         count = self.conn.execute(
-            "SELECT COUNT(*) FROM turn_phases WHERE session_id = ?", ("claude:old-impl-4",)
+            "SELECT COUNT(*) FROM turn_phases WHERE session_id = ?", ("claude:old-impl-5",)
         ).fetchone()[0]
-        self.assertEqual(count, 0)  # self-healed: the wrong row is gone
-        self.assertEqual(costs.turn_phases_integrity_violations(self.conn, "claude:old-impl-4"), {})
+        self.assertEqual(count, 0)  # self-healed: the mismatched label is gone
 
 
 class TestVerifyTurnPhasesCli(unittest.TestCase):

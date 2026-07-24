@@ -1166,6 +1166,60 @@ def _find_turn_labels(conn, session_id: str, analysis_dir: Path):
     return None, None, None, None
 
 
+def _recompute_phase_tokens_from_turn_phases(conn, session_id: str) -> int:
+    """For a session with EXISTING ``turn_phases`` rows, recompute
+    ``phase_tokens.output_tokens``/``.turns`` mechanically from those rows'
+    (unchanged) phase LABELS joined against the session's CURRENT
+    ``session_turns.output_tokens`` -- design.md D5/D2 amendment,
+    followup-5. Phase labels are the agentic judgment (cache-keyed,
+    untouched here); per-turn token weights are mechanical, so when
+    ``session_turns`` is regenerated under a corrected extractor (its
+    deltas change), the ``phase_tokens`` row those labels aggregate up to
+    must be updated to match -- never re-derived from an external label
+    source (that's ``_verify_and_backfill_turn_phases``'s job, for
+    sessions that don't have ``turn_phases`` yet at all). Only
+    ``output_tokens``/``turns`` are updated in place; ``input_sha256``/
+    ``scored_by`` (the cache-key columns) are left untouched, since the
+    underlying agentic judgment hasn't changed.
+
+    MUST run before ``_verify_and_backfill_turn_phases`` for the same
+    session in the same ``backfill_turns`` call: that function's
+    all-or-nothing check compares a fresh candidate (labels x current
+    session_turns) against whatever's currently stored in
+    ``phase_tokens`` -- if this session's ``session_turns`` were just
+    regenerated with different deltas, an un-recomputed (stale)
+    ``phase_tokens`` row would spuriously fail that comparison and
+    wrongly self-heal-delete a session's already-correct labels.
+
+    Returns the number of (phase, taxonomy_version) rows updated."""
+    versions = [
+        r[0] for r in conn.execute(
+            "SELECT DISTINCT taxonomy_version FROM turn_phases WHERE session_id = ?", (session_id,)
+        ).fetchall()
+    ]
+    updated = 0
+    for version in versions:
+        rows = conn.execute(
+            "SELECT tp.phase, st.output_tokens FROM turn_phases tp "
+            "JOIN session_turns st ON st.session_id = tp.session_id AND st.turn_idx = tp.turn_idx "
+            "WHERE tp.session_id = ? AND tp.taxonomy_version = ?",
+            (session_id, version),
+        ).fetchall()
+        agg: Dict[str, Dict[str, int]] = {}
+        for r in rows:
+            bucket = agg.setdefault(r["phase"], {"output_tokens": 0, "turns": 0})
+            bucket["output_tokens"] += r["output_tokens"] or 0
+            bucket["turns"] += 1
+        for phase, totals in agg.items():
+            conn.execute(
+                "UPDATE phase_tokens SET output_tokens = ?, turns = ? "
+                "WHERE session_id = ? AND phase = ? AND taxonomy_version = ?",
+                (totals["output_tokens"], totals["turns"], session_id, phase, version),
+            )
+            updated += 1
+    return updated
+
+
 def _verify_and_backfill_turn_phases(conn, session_id: str, analysis_dir: Path, counts: Dict[str, int]) -> None:
     """(Re-)compute ``turn_phases`` for one round-0 implementer session
     from its already-committed ``session_turns`` rows, verifying the
@@ -1248,25 +1302,59 @@ def _verify_and_backfill_turn_phases(conn, session_id: str, analysis_dir: Path, 
     counts["turn_phases_backfilled"] += 1
 
 
-def backfill_turns(conn, *, analysis_dir=None) -> Dict[str, int]:
+def backfill_turns(conn, *, analysis_dir=None, regenerate: bool = False) -> Dict[str, int]:
     """For every already-ingested session lacking ``session_turns`` rows,
     re-extract turns from ``sessions.transcript_path`` if that file still
     exists on disk (design.md D5 amendment, followup-4); a session with no
     recoverable transcript simply keeps session-level cost attribution
-    unchanged (documented limitation, not an error). Then, for EVERY
-    round-0 implementer session that has ``session_turns`` (whether just
-    backfilled, backfilled by a prior run, or live-ingested), (re-)verifies
-    and (re-)backfills ``turn_phases`` from a still-valid staged
-    ``phase_labeling`` JSON if one exists, else the analysis dataset's
-    per-turn ``phase_labels/<key>.json`` (see ``_find_turn_labels`` and
-    ``_verify_and_backfill_turn_phases``) -- verified all-or-nothing against
-    the session's own ``phase_tokens`` before anything is written, which
-    also self-heals any wrong rows a prior (fix-round-1-and-earlier) buggy
-    backfill left behind. A session with no recoverable per-turn label
-    source, or whose implied aggregation doesn't match ``phase_tokens``,
-    is left (or reset to) empty ``turn_phases`` -- costs.py's documented
-    fallback then scales the session-level ``phase_tokens`` ratios instead
-    of computing shares directly per turn.
+    unchanged (documented limitation, not an error).
+
+    ``regenerate=True`` (design.md D5/D2 amendment, followup-5) widens the
+    candidate set from "sessions lacking session_turns" to EVERY session
+    with a ``transcript_path``, REPLACING existing ``session_turns`` rows
+    (idempotent: old rows for that session are deleted before the fresh
+    ones are written) rather than skipping sessions that already have
+    them. Use this the first time ``backfill-turns`` runs after an
+    ``extractors.py`` change that alters per-turn token deltas (like
+    followup-5's silent-checkpoint reconciliation fix) -- the default
+    ``regenerate=False`` behavior would otherwise never re-derive
+    ``session_turns`` for a session it already backfilled under the OLD,
+    leakier extractor logic. A session that already has ``session_turns``
+    but whose transcript is no longer recoverable is left untouched (its
+    existing rows, however out of date, are the best available) and
+    counted under ``session_turns_regenerate_skipped``, not
+    ``session_turns_unrecoverable`` (reserved for a session with NO
+    ``session_turns`` at all and no way to get any).
+
+    Refreshes ``sessions.n_turns`` from the freshly re-extracted
+    ``len(rec.turns)`` for every session this touches (design.md D5/D2
+    amendment, followup-5: many rows were stale from the original
+    migration and never corrected since).
+
+    Then: for every session that already has ``turn_phases`` rows (from
+    live ingestion, an earlier backfill, or just-regenerated above),
+    recomputes ``phase_tokens.output_tokens``/``.turns`` mechanically
+    from those rows' existing phase labels joined against the (possibly
+    just-changed) ``session_turns`` (``_recompute_phase_tokens_from_turn_phases``
+    -- design.md D5/D2 amendment, followup-5: labels are the untouched
+    agentic judgment, only the mechanical token weight they aggregate
+    needs to track deltas that changed).
+
+    Finally, for EVERY round-0 implementer session that has
+    ``session_turns`` (whether just backfilled, backfilled by a prior
+    run, or live-ingested), (re-)verifies and (re-)backfills
+    ``turn_phases`` from a still-valid staged ``phase_labeling`` JSON if
+    one exists, else the analysis dataset's per-turn
+    ``phase_labels/<key>.json`` (see ``_find_turn_labels`` and
+    ``_verify_and_backfill_turn_phases``) -- verified all-or-nothing
+    against the session's own (by now up to date) ``phase_tokens`` before
+    anything is written, which also self-heals any wrong rows a prior
+    (fix-round-1-and-earlier) buggy backfill left behind. A session with
+    no recoverable per-turn label source, or whose implied aggregation
+    doesn't match ``phase_tokens``, is left (or reset to) empty
+    ``turn_phases`` -- costs.py's documented fallback then scales the
+    session-level ``phase_tokens`` ratios instead of computing shares
+    directly per turn.
 
     Note a real recoverability limit this uncovered: the analysis dataset's
     rendered timelines (``timelines/<key>.md``) carry per-turn OUTPUT
@@ -1279,48 +1367,84 @@ def backfill_turns(conn, *, analysis_dir=None) -> Dict[str, int]:
     the analysis dataset is a ``turn_phases``-only fallback here, never a
     ``session_turns`` source.
 
-    Returns a dict of counts: ``session_turns_backfilled`` (>=1 turn row
-    actually written), ``session_turns_zero_turns`` (transcript parsed
-    cleanly but yielded zero turns -- reported separately from a genuine
-    backfill, fix-round-1 review finding 4), ``session_turns_unrecoverable``
-    (transcript missing or unparseable), ``turn_phases_backfilled``,
-    ``turn_phases_unavailable`` (no per-turn label source at all), and
-    ``turn_phases_verification_failed`` (a label source was found but its
-    aggregation didn't match ``phase_tokens`` -- nothing was written, and
-    any pre-existing wrong rows for that session were removed)."""
+    Returns a dict of counts: ``session_turns_backfilled`` (a session with
+    NO prior session_turns got its first rows), ``session_turns_regenerated``
+    (``regenerate=True`` only -- an existing session's rows were replaced),
+    ``session_turns_zero_turns`` (transcript parsed cleanly but yielded
+    zero turns -- reported separately from a genuine backfill, fix-round-1
+    review finding 4), ``session_turns_unrecoverable`` (no session_turns at
+    all, transcript missing or unparseable), ``session_turns_regenerate_skipped``
+    (``regenerate=True`` only -- already had session_turns, but the
+    transcript is no longer recoverable to refresh them from),
+    ``phase_tokens_recomputed`` (sessions whose phase_tokens weights were
+    mechanically recomputed from their existing turn_phases labels),
+    ``turn_phases_backfilled``, ``turn_phases_unavailable`` (no per-turn
+    label source at all), and ``turn_phases_verification_failed`` (a label
+    source was found but its aggregation didn't match ``phase_tokens`` --
+    nothing was written, and any pre-existing wrong rows for that session
+    were removed)."""
     analysis_dir = Path(analysis_dir) if analysis_dir is not None else DEFAULT_ANALYSIS_DIR
 
     counts = {
         "session_turns_backfilled": 0,
+        "session_turns_regenerated": 0,
         "session_turns_zero_turns": 0,
         "session_turns_unrecoverable": 0,
+        "session_turns_regenerate_skipped": 0,
+        "phase_tokens_recomputed": 0,
         "turn_phases_backfilled": 0,
         "turn_phases_unavailable": 0,
         "turn_phases_verification_failed": 0,
     }
 
     try:
-        # Pass 1: sessions lacking session_turns entirely -- re-extract from
-        # the still-on-disk transcript.
-        rows = conn.execute(
-            "SELECT session_id, provider, transcript_path FROM sessions "
-            "WHERE session_id NOT IN (SELECT DISTINCT session_id FROM session_turns)"
-        ).fetchall()
+        # Pass 1: sessions lacking session_turns (default), or every
+        # session with a transcript_path at all (regenerate=True) -- see
+        # this function's docstring.
+        if regenerate:
+            rows = conn.execute(
+                "SELECT session_id, provider, transcript_path FROM sessions "
+                "WHERE transcript_path IS NOT NULL"
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT session_id, provider, transcript_path FROM sessions "
+                "WHERE session_id NOT IN (SELECT DISTINCT session_id FROM session_turns)"
+            ).fetchall()
+
         for row in rows:
             session_id = row["session_id"]
             transcript_path = row["transcript_path"]
+            had_turns_already = (
+                conn.execute(
+                    "SELECT 1 FROM session_turns WHERE session_id = ? LIMIT 1", (session_id,)
+                ).fetchone()
+                is not None
+            )
             if not transcript_path or not Path(transcript_path).exists():
-                counts["session_turns_unrecoverable"] += 1
+                if had_turns_already:
+                    counts["session_turns_regenerate_skipped"] += 1
+                else:
+                    counts["session_turns_unrecoverable"] += 1
                 continue
             try:
                 rec = _extract(row["provider"], Path(transcript_path))
             except Exception:
-                counts["session_turns_unrecoverable"] += 1
+                if had_turns_already:
+                    counts["session_turns_regenerate_skipped"] += 1
+                else:
+                    counts["session_turns_unrecoverable"] += 1
                 continue
 
             rec.verdict_boundaries = [
                 t.ended_at for t in rec.turns if getattr(t, "is_verdict", False) and t.ended_at
             ]
+            if had_turns_already and regenerate:
+                # Idempotent replace: clear this session's existing rows
+                # before writing the freshly re-extracted ones, rather
+                # than relying on db.upsert's per-turn_idx overwrite (safe
+                # even if the turn count ever differs from before).
+                conn.execute("DELETE FROM session_turns WHERE session_id = ?", (session_id,))
             n_turns_written = _upsert_session_turns(conn, session_id, rec)
             if n_turns_written == 0:
                 # Parsed cleanly but the transcript yielded no turns at all
@@ -1336,12 +1460,31 @@ def backfill_turns(conn, *, analysis_dir=None) -> Dict[str, int]:
             # NOT NULL columns (provider, role) on this already-existing
             # row -- this call only ever touches an existing session, never
             # inserts a new one, so a targeted UPDATE is both correct and
-            # simpler.
+            # simpler. Also refreshes n_turns from the authoritative
+            # re-extraction (followup-5: many rows were stale from the
+            # original migration).
             conn.execute(
-                "UPDATE sessions SET verdict_boundaries_json = ? WHERE session_id = ?",
-                (json.dumps(rec.verdict_boundaries), session_id),
+                "UPDATE sessions SET verdict_boundaries_json = ?, n_turns = ? WHERE session_id = ?",
+                (json.dumps(rec.verdict_boundaries), len(rec.turns), session_id),
             )
-            counts["session_turns_backfilled"] += 1
+            if had_turns_already:
+                counts["session_turns_regenerated"] += 1
+            else:
+                counts["session_turns_backfilled"] += 1
+
+        # Pass 1.5: for every session with EXISTING turn_phases rows,
+        # recompute phase_tokens mechanically from those (untouched)
+        # labels joined against the (possibly just-regenerated)
+        # session_turns -- MUST run before pass 2 below, whose
+        # verify-against-phase_tokens check would otherwise compare
+        # against stale weights. See
+        # _recompute_phase_tokens_from_turn_phases's docstring.
+        turn_phases_session_ids = [
+            r[0] for r in conn.execute("SELECT DISTINCT session_id FROM turn_phases").fetchall()
+        ]
+        for session_id in turn_phases_session_ids:
+            if _recompute_phase_tokens_from_turn_phases(conn, session_id) > 0:
+                counts["phase_tokens_recomputed"] += 1
 
         # Pass 2: every round-0 implementer session with session_turns (from
         # pass 1 just now, an earlier backfill run, or live ingestion) gets
@@ -1398,6 +1541,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--analysis-dir", default=None,
                     help="backfill-turns only: analysis dataset dir for the turn_phases fallback "
                          "(default: analysis/sdd-model-analysis/data)")
+    p.add_argument("--regenerate", action="store_true",
+                    help="backfill-turns only: REPLACE session_turns for every session with a "
+                         "recoverable transcript, not just ones lacking session_turns -- use once "
+                         "after an extractors.py change that alters per-turn token deltas "
+                         "(followup-5)")
     return p
 
 
@@ -1426,7 +1574,7 @@ def main(argv=None) -> int:
 
     if args.command == "backfill-turns":
         try:
-            stats = backfill_turns(conn, analysis_dir=args.analysis_dir)
+            stats = backfill_turns(conn, analysis_dir=args.analysis_dir, regenerate=args.regenerate)
         finally:
             conn.close()
         print(json.dumps({"command": "backfill-turns", **stats}, indent=2))
