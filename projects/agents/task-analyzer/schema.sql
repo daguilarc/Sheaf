@@ -121,41 +121,38 @@ INSERT OR IGNORE INTO meta(key, value) VALUES ('schema_version', '2');
 -- (~0.1x base input price; shared/prompt-caching.md), not an independent
 -- published number.
 --
--- -- TODO(price-audit): the eight gpt-5.x rows below (gpt-5, gpt-5-codex,
--- gpt-5.4, gpt-5.4-mini, gpt-5.5, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna)
--- are PLACEHOLDERS ONLY. No OpenAI pricing reference was available in this
--- repo or in the tool-provided skill context to confirm them, and some of
--- these model names (gpt-5.6-sol/terra/luna in particular) are not
--- verifiable against any source accessible during this task. All eight use
--- an identical, obviously-synthetic placeholder value (usd_per_m_input=1,
--- usd_per_m_cached=1, usd_per_m_output=1) so the mechanism (join, cost
--- derivation) is exercisable end-to-end, but every downstream dollar
--- figure computed from these eight rows is not meaningful until a human
--- confirms real OpenAI list prices for each named model/date and updates
--- these rows (or supersedes them with a later effective_date row, since
--- model_prices retains history by (model, effective_date)).
---
--- -- TODO(price-audit): claude-sonnet-4-6 and claude-fable-5 (below) are
--- PLACEHOLDERS ONLY, same convention as the gpt-5.x rows above --
--- observed in ingested sessions (final review pass, 2026-07-21) with no
--- verifiable published pricing available in this repo or the
--- tool-provided skill context at authoring time. A third observed
--- unpriced name, claude-haiku-4-5-20251001, is deliberately NOT a row
--- here -- it is a dated provider variant of the already-priced
--- claude-haiku-4-5 above, normalized onto that row at cost-derivation
--- join time by db.MODEL_ALIASES instead of duplicated as its own price
--- entry.
+-- The remaining ten rows (eight gpt-5.x models plus claude-sonnet-4-6 and
+-- claude-fable-5) were PLACEHOLDERS ($1/$1/$1, TODO(price-audit)) as of the
+-- 2026-07-19 migration; a follow-up price audit (dispatcher, 2026-07-23)
+-- replaced them with verified July-2026 list prices, effective_date left at
+-- '2026-07-01' since these are corrections to the prices actually in effect
+-- for the ingested sessions, not a later price change to layer in as new
+-- history:
+--   OpenAI published API pricing, aggregated July 2026: gpt-5.6 GA
+--   2026-07-09 (sol $5/$30, terra $2.50/$15, luna $1/$6 per MTok input/
+--   output); gpt-5.5 $5/$30; gpt-5.4 $2.50/$15, gpt-5.4-mini $0.75/$4.50;
+--   gpt-5 and gpt-5-codex $1.25/$10; cache reads 10% of input for all of
+--   the above (OpenAI's standard prompt-caching discount).
+--   Anthropic pricing per the claude-api skill's current model table:
+--   claude-sonnet-4-6 $3/$15, claude-fable-5 $10/$50 per MTok input/output;
+--   cache reads ~0.1x input, same convention as the other Anthropic rows
+--   above.
+-- A third observed unpriced name, claude-haiku-4-5-20251001, is
+-- deliberately NOT a row here -- it is a dated provider variant of the
+-- already-priced claude-haiku-4-5 above, normalized onto that row at
+-- cost-derivation join time by db.MODEL_ALIASES instead of duplicated as
+-- its own price entry.
 INSERT OR IGNORE INTO model_prices(model, effective_date, usd_per_m_input, usd_per_m_cached, usd_per_m_output) VALUES
-  ('claude-sonnet-5',   '2026-07-01', 2.0, 0.2, 10.0),
-  ('claude-opus-4-8',   '2026-07-01', 5.0, 0.5, 25.0),
-  ('claude-haiku-4-5',  '2026-07-01', 1.0, 0.1, 5.0),
-  ('claude-sonnet-4-6', '2026-07-01', 1.0, 1.0, 1.0),
-  ('claude-fable-5',    '2026-07-01', 1.0, 1.0, 1.0),
-  ('gpt-5',             '2026-07-01', 1.0, 1.0, 1.0),
-  ('gpt-5-codex',       '2026-07-01', 1.0, 1.0, 1.0),
-  ('gpt-5.4',           '2026-07-01', 1.0, 1.0, 1.0),
-  ('gpt-5.4-mini',      '2026-07-01', 1.0, 1.0, 1.0),
-  ('gpt-5.5',           '2026-07-01', 1.0, 1.0, 1.0),
-  ('gpt-5.6-sol',       '2026-07-01', 1.0, 1.0, 1.0),
-  ('gpt-5.6-terra',     '2026-07-01', 1.0, 1.0, 1.0),
-  ('gpt-5.6-luna',      '2026-07-01', 1.0, 1.0, 1.0);
+  ('claude-sonnet-5',   '2026-07-01', 2.0,  0.20,  10.0),
+  ('claude-opus-4-8',   '2026-07-01', 5.0,  0.50,  25.0),
+  ('claude-haiku-4-5',  '2026-07-01', 1.0,  0.10,  5.0),
+  ('claude-sonnet-4-6', '2026-07-01', 3.0,  0.30,  15.0),
+  ('claude-fable-5',    '2026-07-01', 10.0, 1.00,  50.0),
+  ('gpt-5',             '2026-07-01', 1.25, 0.125, 10.0),
+  ('gpt-5-codex',       '2026-07-01', 1.25, 0.125, 10.0),
+  ('gpt-5.4',           '2026-07-01', 2.5,  0.25,  15.0),
+  ('gpt-5.4-mini',      '2026-07-01', 0.75, 0.075, 4.5),
+  ('gpt-5.5',           '2026-07-01', 5.0,  0.50,  30.0),
+  ('gpt-5.6-sol',       '2026-07-01', 5.0,  0.50,  30.0),
+  ('gpt-5.6-terra',     '2026-07-01', 2.5,  0.25,  15.0),
+  ('gpt-5.6-luna',      '2026-07-01', 1.0,  0.10,  6.0);

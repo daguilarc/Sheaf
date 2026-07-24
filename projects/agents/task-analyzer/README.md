@@ -188,11 +188,15 @@ dispatch against an already-archived change.
 
 - **Price audit**: `data/agents/task-analyzer.sqlite`'s `model_prices` table
   was populated during migration (D8) from the 2026-07-19 dataset's
-  point-in-time price assumptions and has not been independently audited
-  against each provider's actual current pricing pages since. Before relying
-  on `estimate.py`'s dollar figures for a real budget decision (as opposed to
-  the relative/directional comparisons the decomposer uses), audit
-  `model_prices` and, if it's stale, add a new `price_version` row and run
+  point-in-time price assumptions; ten rows (the eight gpt-5.x models plus
+  claude-sonnet-4-6 and claude-fable-5) were $1/$1/$1 placeholders until a
+  follow-up price audit (2026-07-23, see `schema.sql`'s seed comment)
+  replaced them with verified list prices and retrained the estimator. No
+  row here is independently re-audited on a schedule, though — before
+  relying on `estimate.py`'s dollar figures for a real budget decision (as
+  opposed to the relative/directional comparisons the decomposer uses),
+  re-check `model_prices` against each provider's current pricing pages and,
+  if it's stale, add a new `price_version` row and run
   `ingest.py rebuild-derived` to repropagate it into `task_costs`.
 
 ## Tests
