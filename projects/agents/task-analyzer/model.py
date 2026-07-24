@@ -91,7 +91,12 @@ def inverse_transform(y: float, epsilon: float = DEFAULT_EPSILON) -> float:
     ``errstate``, same convention as ``inverse_transform_array``) -- a
     representable float callers can detect and handle (see
     ``estimate.py``'s finite-draws/finite-usd handling), not a crash. Never
-    floored (see ``inverse_transform_array`` for why the array version is)."""
+    floored (see ``inverse_transform_array`` for why the array version is):
+    since ``exp(y) > 0`` the result is bounded below by ``-epsilon``, so the
+    worst an analytic quantile of a near-zero-cost category can report is a
+    dollar figure a hair below zero (>= -1e-4 at the default epsilon) --
+    accepted as-is rather than floored, so the value stays exactly
+    invertible back to its log-space quantile."""
     with np.errstate(over="ignore"):
         return float(np.exp(y)) - epsilon
 
@@ -109,10 +114,12 @@ def inverse_transform_array(y: np.ndarray, epsilon: float = DEFAULT_EPSILON) -> 
     ``a`` -- few degrees of freedom -- and/or a wide pooled fallback) can
     draw a log-cost sample large enough that ``exp`` overflows to ``inf``;
     that is a faithful (if extreme) representation of genuine unbounded
-    Student-t tail risk, not a bug, and does not corrupt the p20/p50/p80
-    quantiles this feeds (a handful of ``inf`` draws just sort to the very
-    top of ``mc-draws`` samples, below the noticing threshold of any
-    quantile at or under p80) -- so the expected overflow is silenced here
+    Student-t tail risk, not a bug. ``estimate.py`` drops non-finite draws
+    before taking quantiles and reports the dropped count per arm as
+    ``nonfinite_draws`` (see its "Finite draws" docstring paragraph,
+    including the direction of the bias when that count is large) -- for
+    the overwhelmingly common handful-out-of-thousands case the effect on
+    p20/p50/p80 is negligible. The expected overflow is silenced here
     rather than left to spam a ``RuntimeWarning`` on every such draw."""
     with np.errstate(over="ignore"):
         return np.maximum(np.exp(y) - epsilon, 0.0)
@@ -310,9 +317,13 @@ class NIG:
 
     def thompson(self, x: np.ndarray, rng: np.random.Generator) -> float:
         """One Thompson sample at ``x``: draw ``sigma2 ~ InvGamma(a, b)``,
-        then ``beta ~ N(mu, sigma2 * Lambda^-1)``, return ``xᵀbeta``.
-        ``rng`` is a caller-supplied ``numpy.random.Generator`` (explicit
-        seed, never persisted -- see design.md D6)."""
+        then ``beta ~ N(mu, sigma2 * Lambda^-1)``, return ``xᵀbeta``. This
+        is a *parameter-only* draw (classical Thompson sampling: sample a
+        world, act optimally in it) -- deliberately narrower than a
+        ``predictive_draws`` sample, which adds the observation-noise term
+        ``N(0, sigma2)`` on top and would over-explore by the noise
+        variance. ``rng`` is a caller-supplied ``numpy.random.Generator``
+        (explicit seed, never persisted -- see design.md D6)."""
         x = np.asarray(x, dtype=float).reshape(-1)
         sigma2 = 1.0 / rng.gamma(shape=self.a, scale=1.0 / self.b)
         cov = sigma2 * np.linalg.inv(self.Lambda)
