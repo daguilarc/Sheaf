@@ -291,8 +291,7 @@ new data (the arm set freezes, defeating explore/exploit). Every arm's
 row rather than its own posterior) is echoed in `estimate.py`'s report as
 a diagnostic; it does not, by itself, change selection.
 
-**p20-bandit selection via Monte Carlo (followup-2, replacing the
-sum-of-quantiles/`explore`-flag design D6 originally shipped with).**
+**p20-bandit selection via Monte Carlo.**
 A task's total cost per arm is the *sum* over categories of each category's
 own (independent) log-space Student-t predictive, exponentiated to USD.
 Quantiles do not commute with sums in general, and there is no closed form
@@ -337,10 +336,7 @@ quantiles are intrinsically explore-friendly (an unknown/sparse arm's wide
 posterior pulls its own p20 down even though its median may be high; a
 genuinely cheap, well-sampled arm's p20 stays low too) — so minimizing p20
 both exploits what's known-cheap and explores what's still uncertain,
-without a separate advisory flag for it (the `explore` flag `estimate.py`
-originally shipped with — "runner-up p20 < winner p80" overlap, later
-extended to also fire when the winner used pooled fallback — is removed
-entirely as redundant/confusing once selection itself is p20-driven). The
+without any separate advisory exploration flag. The
 guard (kept, same rationale, now built on an honest MC quantity instead of
 an overstated sum-of-quantiles one) excludes any arm whose MC
 `p80_total_usd` exceeds a *guard factor* (default `2.0`, same CLI/config
