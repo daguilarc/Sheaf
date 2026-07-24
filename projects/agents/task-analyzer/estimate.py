@@ -26,12 +26,13 @@ excluding the arm entirely (a later version did that -- a "full-coverage"
 rule -- but an excluded arm can never be selected, so it accrues no new
 data and is frozen out permanently; replaced by this pooled fallback per
 followup-1). Categories scored via fallback are listed per arm under
-``fallback_categories`` in the report, and (per spec.md "Sparse arm yields
-wide posterior") their contribution to the total is wider than a
-well-sampled cell's, which the existing ``explore`` overlap check already
-treats as low-evidence. An arm is **unscorable** only if *even the pooled
-posterior* has no row for some category it needs; such arms are excluded
-from ranking/selection entirely and reported separately (per task) under
+``fallback_categories`` in the report; a *selected* arm that used any
+fallback category unconditionally sets ``explore`` (fix round 1 -- a wide
+pooled interval that happens not to overlap the runner-up is still
+low-evidence, not confidently-cheap, so overlap alone isn't a sufficient
+signal here). An arm is **unscorable** only if *even the pooled posterior*
+has no row for some category it needs; such arms are excluded from
+ranking/selection entirely and reported separately (per task) under
 ``unscorable_arms`` with their ``missing_categories`` listed.
 
 Selection ("expected total minimizing subject to the p_q guard", the spec's
@@ -52,11 +53,18 @@ existence and its exact resolution precedence) is a documented design
 choice (see task-10-report.md), not something the spec spells out
 numerically.
 
-``explore`` (also spec-literal: "runner-up p20 < winner p80", a posterior-
+``explore`` is the OR of two independent signals (``explore_reasons`` in the
+report names which fired, in fixed ``["fallback", "overlap"]`` order):
+"overlap" (also spec-literal: "runner-up p20 < winner p80", a posterior-
 overlap proxy) compares the *selected* arm's ``p80_total`` against the best
 non-selected arm's ``p20_total`` (ranked by ``expected_total``, regardless of
 guard status) -- if the runner-up's downside could plausibly beat the
-winner's upside, we're not confident enough to skip exploring.
+winner's upside, we're not confident enough to skip exploring; "fallback"
+fires whenever the selected arm's own score used any category's pooled
+fallback posterior (``selected["fallback_categories"]`` non-empty) --
+fallback evidence is low-confidence by construction, independent of how the
+resulting interval happens to compare to the runner-up's (fix round 1,
+followup-1 codex review).
 
 No randomness is used anywhere in this module (no Thompson sampling) --
 every number is a closed-form function of the persisted posterior and the
@@ -181,8 +189,10 @@ def score_task(config: dict, posteriors: dict, complexity: dict, quantile: float
     per spec.md), the arms excluded as ``unscorable`` (missing a posterior,
     *and* a pooled fallback, for at least one category), the selected arm
     (min ``expected_total_usd`` among fully-scorable arms passing the
-    ``pq_total_usd`` guard), and the ``explore`` flag. An arm is eligible
-    for ranking/selection once every category in ``config["categories"]``
+    ``pq_total_usd`` guard), and the ``explore``/``explore_reasons`` flags
+    (module docstring: the OR of the overlap check and "the selected arm
+    used a pooled fallback category"). An arm is eligible for
+    ranking/selection once every category in ``config["categories"]``
     resolves to a posterior -- its own, or (per the module docstring) that
     category's pooled fallback; each arm's ``fallback_categories`` records
     which categories, if any, resolved via fallback."""
@@ -209,11 +219,28 @@ def score_task(config: dict, posteriors: dict, complexity: dict, quantile: float
         passing = [a for a in by_expected if a["pq_total_usd"] <= guard_limit]
         selected = passing[0] if passing else by_expected[0]
 
-    explore = False
+    # explore is the OR of two independent signals (fix round 1, codex
+    # review): "overlap" (the pre-existing runner-up-vs-winner posterior
+    # overlap check) and "fallback" (the selected arm's own score leaned on
+    # at least one category's pooled fallback -- low-evidence by
+    # construction, regardless of how tight its resulting interval looks,
+    # since the pooled posterior can be narrow if the category simply has
+    # little data across every arm). explore_reasons lists which signal(s)
+    # fired, in this fixed (fallback, overlap) order for determinism.
+    explore_overlap = False
+    explore_fallback = False
     if selected is not None:
+        explore_fallback = bool(selected["fallback_categories"])
         runner_up = next((a for a in by_expected if a is not selected), None)
         if runner_up is not None:
-            explore = runner_up["p20_total_usd"] < selected["p80_total_usd"]
+            explore_overlap = runner_up["p20_total_usd"] < selected["p80_total_usd"]
+
+    explore_reasons = []
+    if explore_fallback:
+        explore_reasons.append("fallback")
+    if explore_overlap:
+        explore_reasons.append("overlap")
+    explore = bool(explore_reasons)
 
     return {
         "complexity": {**{f"C{i}": complexity.get(f"C{i}") for i in range(1, 8)}, "composite": row["composite"]},
@@ -224,6 +251,7 @@ def score_task(config: dict, posteriors: dict, complexity: dict, quantile: float
                        "pq_total_usd": selected["pq_total_usd"],
                        "fallback_categories": selected["fallback_categories"]} if selected else None),
         "explore": explore,
+        "explore_reasons": explore_reasons,
     }
 
 
@@ -293,7 +321,8 @@ def render_table(report: dict) -> str:
                 lines.append(f"  (unscorable: {arm['model']}/{arm['effort']}, missing={arm['missing_categories']})")
         sel = task["selected"]
         sel_desc = f"{sel['model']}/{sel['effort']}" if sel else "none"
-        lines.append(f"  selected: {sel_desc}  explore={task['explore']}")
+        reasons_desc = f" ({', '.join(task['explore_reasons'])})" if task["explore_reasons"] else ""
+        lines.append(f"  selected: {sel_desc}  explore={task['explore']}{reasons_desc}")
     totals = report["decomposition_totals"]
     lines.append("")
     lines.append(

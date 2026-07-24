@@ -116,6 +116,13 @@ persists — see above); each arm's `fallback_categories` in the report lists
 which categories, if any, resolved that way. An arm is `unscorable` only if
 even the pooled fallback has no row for a category it needs.
 
+`explore` is the OR of two signals, both named in the report's
+`explore_reasons` list: `"overlap"` (the selected arm's p80 total overlaps
+the runner-up's p20 total) and `"fallback"` (the selected arm's own score
+used a pooled-fallback category — low-evidence regardless of how narrow that
+particular pooled posterior happens to be). Either signal alone is enough
+to set `explore: true`.
+
 ### `annotations.py` — validate a sibling annotation file
 
 ```

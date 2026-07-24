@@ -219,6 +219,56 @@ class TestPooledFallback(EstimateTestCase):
         arm_pairs = {(a["model"], a["effort"]) for a in result["arms"]}
         self.assertEqual(arm_pairs, {CHEAP_ARM, SPARSE_ARM})
 
+    def test_fallback_selected_arm_forces_explore_even_without_overlap(self):
+        # Fix round 1 (codex review, Important): a selected arm that scored
+        # via pooled fallback must set explore=True even when its interval
+        # doesn't overlap the runner-up's -- fallback evidence is
+        # low-confidence by construction, independent of how narrow the
+        # pooled posterior happens to be. Two tight, non-overlapping NIGs
+        # (verified numerically: runner's p20 > winner's p80) isolate the
+        # "fallback" signal from the pre-existing "overlap" signal.
+        winner_pooled = model.NIG(mu=np.array([math.log(0.02 + 1e-4)]), Lambda=np.array([[500.0]]), a=500.0, b=1.0)
+        runner_real = model.NIG(mu=np.array([math.log(0.05 + 1e-4)]), Lambda=np.array([[500.0]]), a=500.0, b=1.0)
+        winner_arm = ("winner-model", "low")
+        runner_arm = ("runner-model", "low")
+
+        config = model.default_config(features=["1"])
+        config["categories"] = ["solo"]
+        config["arms"] = [list(winner_arm), list(runner_arm)]
+        self.conn.execute(
+            "INSERT INTO estimators (estimator_id, trained_at, code_version, train_task_count, config_json, metrics_json) "
+            "VALUES (1, 't0', 'test', 0, ?, '{}')",
+            (json.dumps(config),),
+        )
+        # winner-model has NO posterior of its own for "solo" -- only the
+        # pooled sentinel row, so it must be scored via fallback.
+        db.upsert(
+            self.conn, "estimator_params",
+            {"estimator_id": 1, "category": "solo",
+             "model": model.POOLED_SENTINEL_MODEL, "effort": model.POOLED_SENTINEL_EFFORT,
+             "posterior_json": winner_pooled.to_json()},
+            ["estimator_id", "category", "model", "effort"],
+        )
+        db.upsert(
+            self.conn, "estimator_params",
+            {"estimator_id": 1, "category": "solo", "model": runner_arm[0], "effort": runner_arm[1],
+             "posterior_json": runner_real.to_json()},
+            ["estimator_id", "category", "model", "effort"],
+        )
+        self.conn.commit()
+
+        _, config, posteriors = estimate.load_estimator(self.conn)
+        result = estimate.score_task(config, posteriors, {f"C{i}": 3 for i in range(1, 8)}, 0.8)
+
+        self.assertEqual((result["selected"]["model"], result["selected"]["effort"]), winner_arm)
+        self.assertEqual(result["selected"]["fallback_categories"], ["solo"])
+        # Confirm the overlap signal alone would NOT have fired.
+        winner = next(a for a in result["arms"] if (a["model"], a["effort"]) == winner_arm)
+        runner = next(a for a in result["arms"] if (a["model"], a["effort"]) == runner_arm)
+        self.assertGreaterEqual(runner["p20_total_usd"], winner["p80_total_usd"])
+        self.assertTrue(result["explore"])
+        self.assertEqual(result["explore_reasons"], ["fallback"])
+
     def test_unscorable_only_when_pooled_fallback_also_missing(self):
         # A category with neither a per-arm posterior NOR a pooled fallback
         # (e.g. a brand-new category name not present at training time)

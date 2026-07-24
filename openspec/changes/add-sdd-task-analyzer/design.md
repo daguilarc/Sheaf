@@ -276,7 +276,9 @@ what its byte-determinism guarantee covers.
 newest estimator and, per task: computes cost quantiles for every arm, picks
 the arm minimizing expected total (implementation + predicted review +
 followup) subject to a p80 guard, and emits the annotation YAML of D1 plus an
-`explore` flag where the chosen-vs-runner-up posteriors overlap heavily.
+`explore` flag where the chosen-vs-runner-up posteriors overlap heavily
+(or, per the pooled-fallback rule below, where the selection itself rests on
+low-evidence data).
 
 **Pooled fallback (followup-1, Part A).** In addition to the per-(category,
 arm) mean-only pooling above, `train.py` also persists the *full* pooled
@@ -285,18 +287,28 @@ category combined) as one `estimator_params` row per category, under a
 sentinel arm key `("(pooled)", "(pooled)")` (`model.POOLED_SENTINEL_ARM`) —
 a value no real provider ever reports, so it can't collide with an actual
 arm. `estimate.py` uses this as its fallback whenever a real (category,
-arm) cell has no posterior: honest and wide, and it correctly surfaces the
-arm as an "explore" candidate for that category via the existing
-overlap-based `explore` flag, rather than making the arm **unscorable**. An
-arm is unscorable only if even the pooled fallback has no row for some
-category it needs (e.g. a category absent from the training data
-entirely). This replaces an earlier, rejected "full-coverage" rule that
-excluded any arm missing even one per-arm posterior cell from scoring
-altogether — with the migrated dataset that left only 2 of 10 arms
+arm) cell has no posterior: honest and wide, rather than making the arm
+**unscorable**. An arm is unscorable only if even the pooled fallback has
+no row for some category it needs (e.g. a category absent from the
+training data entirely). This replaces an earlier, rejected "full-coverage"
+rule that excluded any arm missing even one per-arm posterior cell from
+scoring altogether — with the migrated dataset that left only 2 of 10 arms
 scorable, and an excluded arm can never be selected, so it never accrues
 new data (the arm set freezes, defeating explore/exploit). Every arm's
 `fallback_categories` (which categories, if any, resolved via the pooled
 row rather than its own posterior) is echoed in `estimate.py`'s report.
+
+`explore` is the **OR of two independent signals**, both surfaced in a
+report's `explore_reasons` list (fix round 1, codex review of followup-1):
+"overlap" (the original chosen-vs-runner-up posterior-overlap check above)
+and "fallback" (the *selected* arm's own score used at least one category's
+pooled-fallback posterior — `selected["fallback_categories"]` non-empty).
+"fallback" fires unconditionally on fallback use, independent of how tight
+the resulting interval happens to look, since a category can have a narrow
+pooled posterior (little data, but little *variance* in what data exists)
+that would otherwise dodge the overlap check while still resting on
+low-evidence — exactly the case the pooled-fallback mechanism exists to
+flag for exploration.
 
 ### D7. Decomposition subagent protocol
 
