@@ -23,7 +23,7 @@ std::vector<SystemAddressField> SystemAddressSchema(MidiProfileKind kind) {
 
 namespace {
 
-// MessageIn::Type's declaration order (ParamIncDec .. SelectGrid) IS the
+// MessageIn::Type's declaration order (ParamIncDec .. PrevParamBank) IS the
 // type ordering component of SystemMessageSortKey -- static_cast the enum
 // directly rather than maintaining a parallel table that could drift.
 int TypeOrder(MessageIn::Type type) {
