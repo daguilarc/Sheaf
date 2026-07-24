@@ -266,6 +266,52 @@ class TestDryRun(IngestTestBase):
         self.assertEqual(len(report.plan.missing_grades), 1)
         self.assertEqual(len(report.plan.missing_phase_labels), 1)
 
+    def test_scoped_dry_run_lists_only_in_scope_sessions(self):
+        # fix-round-1, finding 3: disc.joined spans the FULL landed
+        # universe always (evidence is computed unscoped -- see
+        # _has_change_evidence), but run() only ever WRITES sessions for
+        # (change, task_key) keys in disc.briefs, which --change DOES
+        # narrow. A scoped dry-run's new_sessions must match that -- not
+        # overstate it with a real, evidenced join to an out-of-scope
+        # change.
+        sdd2 = self.repo / ".superpowers" / "sdd" / "add-gadget"
+        sdd2.mkdir(parents=True)
+        (sdd2 / "task-1-brief.md").write_text("Implement the gadget core module.\n")
+        archive2 = self.repo / "openspec" / "changes" / "archive" / "2026-07-11-add-gadget"
+        archive2.mkdir(parents=True)
+        (archive2 / "proposal.md").write_text("proposal\n")
+        _run_git(self.repo, "add", "-A")
+        _run_git(self.repo, "commit", "-q", "-m", "add second change")
+
+        _write_claude_session(
+            self.claude_root / "gadget-impl-session.jsonl", "gadget-impl-1",
+            "Read your task brief at .superpowers/sdd/add-gadget/task-1-brief.md and implement it.",
+            "Implemented the gadget core.",
+        )
+
+        conn_unscoped = self._conn()
+        plan_unscoped = self._plan(conn_unscoped)
+        self.assertIn("claude:gadget-impl-1", plan_unscoped.new_sessions)
+        self.assertIn("claude:impl-1", plan_unscoped.new_sessions)
+
+        conn_scoped = db.connect(self.root / "scoped.sqlite")
+        plan_scoped = ingest.plan_work(
+            conn_scoped, self.repo, change=CHANGE_NAME,
+            staging_dir=self.staging_dir,
+            codex_sessions_root=self.root / "no-codex-here",
+            claude_projects_root=self.claude_root,
+        )
+        self.assertIn("claude:impl-1", plan_scoped.new_sessions)
+        self.assertIn("claude:review-1", plan_scoped.new_sessions)
+        self.assertNotIn("claude:gadget-impl-1", plan_scoped.new_sessions)
+
+        # The scoped plan must match what a scoped real run actually writes.
+        self._run(conn_scoped, agent_runner=FakeAgentRunner(), change=CHANGE_NAME)
+        row = conn_scoped.execute(
+            "SELECT session_id FROM sessions WHERE session_id = ?", ("claude:gadget-impl-1",)
+        ).fetchone()
+        self.assertIsNone(row)
+
 
 class TestNoAgents(IngestTestBase):
     def test_no_agents_writes_mechanical_rows_only(self):
@@ -332,6 +378,13 @@ class SelectiveAgentRunner:
     - ``"ungradeable"``: writes prompts/grading.md's Ungradeable shape (all
       G-fields null, a non-empty ``reason``) -- the fixed contract for the
       same "nothing gradeable" situation.
+    - ``"valid_with_reason"`` (fix-round-1, finding 2): a fully populated,
+      real grade (all G-fields real ints) that ALSO carries a harmless
+      explanatory ``reason`` -- must still ingest as a real grade, never
+      be mistaken for the ungradeable shape.
+    - ``"half_null_hybrid"`` (fix-round-1, finding 2): SOME G-fields null,
+      some not -- invalid under either shape; must be rejected, never
+      silently accepted as either "graded" or "ungradeable".
     """
 
     def __init__(self, grading_mode="valid", reason="all reviews mis-joined; nothing gradeable"):
@@ -369,6 +422,14 @@ class SelectiveAgentRunner:
                 "reviewer_models": [], "excluded_reviews": ["review-1", "review-2"],
                 "reason": self.reason,
             }
+        if kind == "grading" and self.grading_mode == "valid_with_reason":
+            data = dict(self._canned_runner._canned(kind, item))
+            data["reason"] = self.reason
+            return data
+        if kind == "grading" and self.grading_mode == "half_null_hybrid":
+            data = dict(self._canned_runner._canned(kind, item))
+            data["G1"] = None  # only G1 null -- the rest stay real ints
+            return data
         return self._canned_runner._canned(kind, item)
 
 
@@ -455,6 +516,147 @@ class TestScorerDeclineRobustness(IngestTestBase):
         self.assertEqual(report2.ungradeable.get("grading"), 1)
         self.assertEqual(report2.staged_used.get("grading"), 1)
         self.assertEqual(conn.execute("SELECT COUNT(*) FROM grades").fetchone()[0], 0)
+
+    def test_ungradeable_rescore_supersedes_stale_grade(self):
+        # fix-round-1, finding 1: a real grades row already exists (from a
+        # normal first run). A second reviewer session then changes the
+        # joined review text (REASON_INPUT_CHANGED), and THIS TIME the
+        # scorer correctly finds nothing gradeable. The stale row's
+        # input_sha256 no longer matches any real input -- it must not
+        # survive, or a downstream reader would keep consuming a grade for
+        # review text that isn't what's actually joined anymore.
+        conn = self._conn()
+        self._run(conn, agent_runner=FakeAgentRunner())
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM grades").fetchone()[0], 1)
+
+        _write_claude_session(
+            self.claude_root / "review-session-2.jsonl", "review-2", REVIEWER_PROMPT,
+            "REVISE: actually this whole review is about the wrong module.",
+            ts_start="2026-07-10T02:00:00Z", ts_end="2026-07-10T02:10:00Z",
+        )
+
+        runner = SelectiveAgentRunner(grading_mode="ungradeable", reason="the new review is mis-joined")
+        report2 = self._run(conn, agent_runner=runner)
+
+        self.assertEqual(report2.ungradeable.get("grading"), 1)
+        self.assertEqual(report2.superseded_grades, 1)
+        self.assertTrue(report2.ungradeable_items[0].get("superseded_grades_row"))
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM grades").fetchone()[0], 0)
+
+        log_row = conn.execute(
+            "SELECT actions_json FROM ingest_log ORDER BY run_id DESC LIMIT 1"
+        ).fetchone()
+        actions = json.loads(log_row[0])
+        self.assertEqual(actions["superseded_grades"], 1)
+
+    def test_ungradeable_first_dispatch_does_not_touch_grades_table(self):
+        # The DELETE in the grading branch must be a harmless no-op (0
+        # rows) in the far more common REASON_MISSING case -- no prior
+        # grades row exists at all yet.
+        conn = self._conn()
+        runner = SelectiveAgentRunner(grading_mode="ungradeable")
+        report = self._run(conn, agent_runner=runner)
+        self.assertEqual(report.superseded_grades, 0)
+        self.assertNotIn("superseded_grades_row", report.ungradeable_items[0])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM grades").fetchone()[0], 0)
+
+    def test_populated_grade_with_harmless_reason_ingests_as_a_grade(self):
+        # fix-round-1, finding 2: a `reason` key alone must not
+        # discriminate -- a fully populated, real grade (all G fields
+        # non-null) that also happens to carry an explanatory `reason`
+        # must ingest as a grade, not be silently suppressed.
+        conn = self._conn()
+        runner = SelectiveAgentRunner(grading_mode="valid_with_reason", reason="fyi, borderline but clean")
+
+        report = self._run(conn, agent_runner=runner)
+
+        self.assertEqual(report.rows_written.get("grading"), 1)
+        self.assertNotIn("grading", report.ungradeable)
+        self.assertEqual(report.superseded_grades, 0)
+        row = conn.execute("SELECT g1, final_grade FROM grades").fetchone()
+        self.assertEqual(row[0], 5)
+        self.assertEqual(row[1], "A")
+
+    def test_half_null_hybrid_grading_shape_is_rejected(self):
+        # fix-round-1, finding 2: a shape with SOME G fields null and some
+        # not is neither a valid grade nor a valid ungradeable result --
+        # _validate_staged rejects it outright (same as any other
+        # malformed staged file), so _resolve_gap sees "no valid staged
+        # file resulted" and fails just this item (report.failed) rather
+        # than guessing at either shape; the run continues for other kinds.
+        conn = self._conn()
+        runner = SelectiveAgentRunner(grading_mode="half_null_hybrid")
+
+        report = self._run(conn, agent_runner=runner)
+
+        self.assertNotIn("grading", report.rows_written)
+        self.assertNotIn("grading", report.ungradeable)
+        self.assertEqual(report.failed.get("grading"), 1)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM grades").fetchone()[0], 0)
+        self.assertEqual(report.rows_written.get("complexity"), 1)
+
+
+class TestGradingShapeDiscrimination(unittest.TestCase):
+    """fix-round-1, finding 2: direct unit coverage of ingest.py's
+    ``_grading_shape``/``_validate_staged`` for grading -- the three
+    shapes a staged grading JSON can take."""
+
+    def test_graded_shape(self):
+        data = {
+            "task_key": "t", "G1": 5, "G2": 4, "G3": 5, "G4": 5, "G5": 4,
+            "n_critical": 0, "n_important": 1, "n_minor": 0,
+            "verdict_sequence": "PASS", "rounds_to_accept": 1,
+            "final_grade": "A", "evidence": "e",
+            "reviewer_models": ["m"], "excluded_reviews": [],
+        }
+        self.assertEqual(ingest._grading_shape(data), "graded")
+        self.assertTrue(ingest._validate_staged("grading", data))
+
+    def test_graded_shape_with_harmless_reason_is_still_graded(self):
+        data = {
+            "task_key": "t", "G1": 5, "G2": 4, "G3": 5, "G4": 5, "G5": 4,
+            "n_critical": 0, "n_important": 1, "n_minor": 0,
+            "verdict_sequence": "PASS", "rounds_to_accept": 1,
+            "final_grade": "A", "evidence": "e",
+            "reviewer_models": ["m"], "excluded_reviews": [],
+            "reason": "harmless note",
+        }
+        self.assertEqual(ingest._grading_shape(data), "graded")
+        self.assertTrue(ingest._validate_staged("grading", data))
+
+    def test_ungradeable_shape(self):
+        data = {
+            "task_key": "t", "G1": None, "G2": None, "G3": None, "G4": None, "G5": None,
+            "n_critical": 0, "n_important": 0, "n_minor": 0,
+            "verdict_sequence": None, "rounds_to_accept": None,
+            "final_grade": None, "evidence": None,
+            "reviewer_models": [], "excluded_reviews": ["r1"],
+            "reason": "all reviews mis-joined",
+        }
+        self.assertEqual(ingest._grading_shape(data), "ungradeable")
+        self.assertTrue(ingest._validate_staged("grading", data))
+
+    def test_all_null_without_reason_is_invalid(self):
+        data = {
+            "task_key": "t", "G1": None, "G2": None, "G3": None, "G4": None, "G5": None,
+            "n_critical": 0, "n_important": 0, "n_minor": 0,
+            "verdict_sequence": None, "rounds_to_accept": None,
+            "final_grade": None, "evidence": None,
+            "reviewer_models": [], "excluded_reviews": [],
+        }
+        self.assertIsNone(ingest._grading_shape(data))
+        self.assertFalse(ingest._validate_staged("grading", data))
+
+    def test_half_null_hybrid_is_invalid(self):
+        data = {
+            "task_key": "t", "G1": None, "G2": 4, "G3": 5, "G4": 5, "G5": 4,
+            "n_critical": 0, "n_important": 1, "n_minor": 0,
+            "verdict_sequence": "PASS", "rounds_to_accept": 1,
+            "final_grade": "A", "evidence": "e",
+            "reviewer_models": ["m"], "excluded_reviews": [],
+        }
+        self.assertIsNone(ingest._grading_shape(data))
+        self.assertFalse(ingest._validate_staged("grading", data))
 
 
 class TestRescore(IngestTestBase):

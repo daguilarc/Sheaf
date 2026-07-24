@@ -121,11 +121,7 @@ _KIND_FIELDS = {
 # fabricating a verdict. That shape carries the SAME required keys (with
 # G1-G5/verdict_sequence/rounds_to_accept/final_grade/evidence set to
 # `null` rather than real values) plus one additional key, `reason` (a
-# non-empty string). `_validate_output` below only checks required-key
-# *presence*, never value types, so the ungradeable shape already validates
-# as-is -- no schema change needed here to accept it; `reason`'s presence
-# is what ingest.py's `_resolve_gap` uses to decide "record durably, no
-# grades row" instead of "upsert a graded row".
+# non-empty string).
 _REQUIRED_KEYS = {
     "complexity": {"task_key", "C1", "C2", "C3", "C4", "C5", "C6", "C7", "composite", "rationale"},
     "grading": {
@@ -135,6 +131,32 @@ _REQUIRED_KEYS = {
     },
     "phase_labeling": {"session_key", "labels"},
 }
+
+# followup-7, fix-round-1 (finding 2): the two valid grading shapes are
+# discriminated on SUBSTANCE (whether the G fields are null), never on the
+# mere presence of a `reason` key -- an earlier version of this fix used
+# `reason`'s presence alone, which would have silently suppressed a real,
+# populated grade that happened to also carry a harmless explanatory
+# `reason`. Matches ingest.py's identical, deliberately-duplicated copy.
+_GRADING_G_FIELDS = ("G1", "G2", "G3", "G4", "G5")
+
+
+def _grading_shape(data: dict) -> Optional[str]:
+    """``"graded"`` when every G field is present and non-null (`reason`,
+    if present, is ignored for this classification); ``"ungradeable"``
+    when every G field is null AND `reason` is a non-empty string;
+    ``None`` (invalid) for anything else -- in particular a half-null
+    hybrid (some G fields null, some not)."""
+    g_values = [data.get(f) for f in _GRADING_G_FIELDS]
+    n_null = sum(1 for v in g_values if v is None)
+    if n_null == 0:
+        return "graded"
+    if n_null == len(g_values):
+        reason = data.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            return "ungradeable"
+        return None
+    return None  # half-null hybrid -- reject
 
 
 def _chunks(items: List[dict], size: int) -> List[List[dict]]:
@@ -149,6 +171,9 @@ def _validate_output(kind: str, data: Any) -> bool:
     if kind == "phase_labeling":
         labels = data.get("labels")
         if not isinstance(labels, dict) or not labels:
+            return False
+    if kind == "grading":
+        if _grading_shape(data) is None:
             return False
     return True
 

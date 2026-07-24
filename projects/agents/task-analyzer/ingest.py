@@ -159,6 +159,35 @@ KIND_REQUIRED_KEYS = {
     "phase_labeling": {"session_key", "labels"},
 }
 
+# followup-7, fix-round-1 (finding 2): a grading result's shape is
+# discriminated on its SUBSTANCE (whether the G fields are null), never on
+# the mere presence of a `reason` key -- a populated grade may legitimately
+# carry a harmless explanatory `reason` too, and must still ingest as a
+# grade. Matches agents.py's identical, deliberately-duplicated copy (see
+# that module's docstring for why the duplication).
+_GRADING_G_FIELDS = ("G1", "G2", "G3", "G4", "G5")
+
+
+def _grading_shape(data: dict) -> Optional[str]:
+    """``"graded"`` when every G field is present and non-null (a `reason`
+    key, if present, is ignored for this classification); ``"ungradeable"``
+    when every G field is null AND `reason` is a non-empty string
+    (prompts/grading.md's Ungradeable shape); ``None`` (invalid) for
+    anything else -- in particular a half-null hybrid (some G fields null,
+    some not) or an all-null shape with no real `reason`, both rejected
+    outright rather than guessed at."""
+    g_values = [data.get(f) for f in _GRADING_G_FIELDS]
+    n_null = sum(1 for v in g_values if v is None)
+    if n_null == 0:
+        return "graded"
+    if n_null == len(g_values):
+        reason = data.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            return "ungradeable"
+        return None
+    return None  # half-null hybrid -- reject
+
+
 REASON_MISSING = "missing"
 REASON_INPUT_CHANGED = "input_changed"
 REASON_STALE_VERSION = "stale_version"
@@ -248,6 +277,12 @@ class RunReport:
     # evidence-gated join fix). See run()'s healing pass.
     healed_sessions: int = 0
     healed_session_ids: List[str] = field(default_factory=list)
+    # fix-round-1, finding 1: a stale `grades` row (current rubric_version,
+    # OLD input_sha256 -- REASON_INPUT_CHANGED) deleted because this task's
+    # fresh result turned out to be ungradeable; see the grading branch of
+    # _resolve_gap. Also surfaced per-item via
+    # ungradeable_items[i]["superseded_grades_row"].
+    superseded_grades: int = 0
 
     @property
     def total_writes(self) -> int:
@@ -738,6 +773,12 @@ def _validate_staged(kind: str, data: Any, n_turns: Optional[int] = None) -> boo
             for i in range(1, n_turns + 1):
                 if str(i) not in labels:
                     return False
+    if kind == "grading":
+        # followup-7, fix-round-1 (finding 2): enforce the two valid
+        # grading shapes exclusively -- reject a half-null hybrid outright
+        # rather than let it slip through as either shape.
+        if _grading_shape(data) is None:
+            return False
     return True
 
 
@@ -869,10 +910,21 @@ def _plan_from_disc(conn, disc: _Discovery, staging_dir) -> WorkPlan:
     existing_session_ids = {
         r[0] for r in conn.execute("SELECT session_id FROM sessions").fetchall()
     }
+    # followup-7, fix-round-1 (finding 3): joined sessions must be filtered
+    # to `disc.briefs`'s keys -- the SCOPED (change, task_key) set -- not
+    # every key `disc.joined` (which spans the FULL landed universe,
+    # always, for evidence purposes; see _discover) happens to have. run()
+    # itself only ever writes sessions for keys in disc.briefs (its
+    # per-task loop iterates sorted(disc.briefs.items())), so a scoped
+    # dry-run's new_sessions must match that, not overstate it with joins
+    # to out-of-scope changes that this run would never actually write.
+    # Quarantined sessions are correctly UNSCOPED here -- run()'s
+    # new_quarantined block writes every one of them regardless of
+    # --change, since quarantine isn't a per-change concept.
     new_sessions = [
         js.session_id
-        for sessions in disc.joined.values()
-        for js in sessions
+        for key in disc.briefs
+        for js in disc.joined.get(key, [])
         if js.session_id not in existing_session_ids
     ] + [
         js.session_id for js in disc.quarantined_sessions if js.session_id not in existing_session_ids
@@ -1129,19 +1181,52 @@ def _resolve_gap(conn, staging_dir, kind: str, gap: GapItem, agent_runner, no_ag
         report.staged_used[kind] = report.staged_used.get(kind, 0) + 1
 
     if kind == "grading":
-        # followup-7, defect 2: a "reason" key present (see
-        # prompts/grading.md's Ungradeable shape) means the agent correctly
-        # found nothing gradeable (e.g. every joined review was mis-joined)
-        # rather than fabricating a verdict. Record this durably WITHOUT a
-        # grades row -- the staged JSON file itself is the durable record,
-        # already written under the deterministic staging path keyed by
-        # (entity_key, version, input_sha256), so it's found again (and
-        # this same branch re-taken, idempotently) on any future run over
-        # unchanged input -- and let the run continue.
-        reason = data.get("reason") if isinstance(data, dict) else None
-        if reason:
+        # followup-7, defect 2 (and fix-round-1, finding 2): the shape --
+        # not the mere presence of a "reason" key -- discriminates a
+        # correctly-declined grading result (every G field null, see
+        # prompts/grading.md's Ungradeable shape) from a real grade that
+        # merely also carries a harmless explanatory `reason`.
+        # _validate_staged already rejected anything else (a half-null
+        # hybrid) before this data could ever reach here, so this
+        # reclassification is just reading back that same decision.
+        shape = _grading_shape(data) if isinstance(data, dict) else None
+        if shape == "ungradeable":
+            # Record this durably WITHOUT a grades row -- the staged JSON
+            # file itself is the durable record, already written under the
+            # deterministic staging path keyed by (entity_key, version,
+            # input_sha256), so it's found again (and this same branch
+            # re-taken, idempotently) on any future run over unchanged
+            # input -- and let the run continue.
+            #
+            # fix-round-1, finding 1: an existing `grades` row for this
+            # exact (task_id, rubric_version) may already exist and be
+            # STALE -- e.g. the gap exists because REASON_INPUT_CHANGED
+            # (the joined review text changed since that row was scored),
+            # and the new input's own result is "nothing gradeable." That
+            # old row's input_sha256 no longer matches any real input, so
+            # leaving it in place would have downstream readers silently
+            # keep consuming a grade for text that's no longer what's
+            # actually joined to this task. Delete/supersede it -- deletion
+            # or its cache key: rubric_version does not track
+            # input_sha256, and the old row can never become "current"
+            # again just from the ungradeable result. The DELETE is a
+            # no-op (0 rows) in the far more common REASON_MISSING case,
+            # where no prior row exists at all.
+            change_name, task_key = gap.entity_key.split("--", 1)
+            task_id = _existing_task_id(conn, change_name, task_key)
+            superseded = 0
+            if task_id is not None:
+                cur = conn.execute(
+                    "DELETE FROM grades WHERE task_id = ? AND rubric_version = ?",
+                    (task_id, gap.version),
+                )
+                superseded = cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
             report.ungradeable[kind] = report.ungradeable.get(kind, 0) + 1
-            report.ungradeable_items.append({"kind": kind, "entity_key": gap.entity_key, "reason": str(reason)})
+            entry = {"kind": kind, "entity_key": gap.entity_key, "reason": str(data.get("reason"))}
+            if superseded:
+                entry["superseded_grades_row"] = True
+                report.superseded_grades += superseded
+            report.ungradeable_items.append(entry)
             return True
 
     scored_by = _scored_by_for(kind)
@@ -1388,6 +1473,7 @@ def run(
             "failed_items": report.failed_items,
             "healed_sessions": report.healed_sessions,
             "healed_session_ids": report.healed_session_ids,
+            "superseded_grades": report.superseded_grades,
         }
         conn.execute(
             "INSERT INTO ingest_log(started_at, finished_at, git_sha, actions_json) VALUES (?, ?, ?, ?)",
@@ -2015,6 +2101,7 @@ def main(argv=None) -> int:
         "ungradeable": report.ungradeable, "ungradeable_items": report.ungradeable_items,
         "failed": report.failed, "failed_items": report.failed_items,
         "healed_sessions": report.healed_sessions, "healed_session_ids": report.healed_session_ids,
+        "superseded_grades": report.superseded_grades,
     }, indent=2))
     return 0
 

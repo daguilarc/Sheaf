@@ -401,6 +401,84 @@ class TestGradingUngradeableShape(AgentsTestBase):
         self.assertEqual(data["reason"], "all reviews mis-joined; nothing gradeable")
 
 
+class TestGradingShapeDiscrimination(AgentsTestBase):
+    """fix-round-1, finding 2: `_grading_shape` (and `_validate_output`
+    built on it) discriminates on SUBSTANCE -- whether G1-G5 are null --
+    never on the mere presence of a `reason` key. Covers all three
+    reachable shapes: a real grade (reason optional and harmless when
+    present), the ungradeable shape, and a rejected half-null hybrid."""
+
+    def test_populated_grade_with_reason_is_graded_not_ungradeable(self):
+        data = _canned_valid("grading", "add-widget--task-1")
+        data["reason"] = "borderline call, but clean"
+        self.assertEqual(agents._grading_shape(data), "graded")
+        self.assertTrue(agents._validate_output("grading", data))
+
+    def test_ungradeable_shape_is_ungradeable(self):
+        data = _canned_ungradeable("add-widget--task-1")
+        self.assertEqual(agents._grading_shape(data), "ungradeable")
+        self.assertTrue(agents._validate_output("grading", data))
+
+    def test_half_null_hybrid_is_rejected(self):
+        data = _canned_valid("grading", "add-widget--task-1")
+        data["G1"] = None  # only G1 null -- the rest stay real ints
+        self.assertIsNone(agents._grading_shape(data))
+        self.assertFalse(agents._validate_output("grading", data))
+
+    def test_all_null_without_reason_is_rejected(self):
+        data = _canned_ungradeable("add-widget--task-1")
+        data["reason"] = None
+        self.assertIsNone(agents._grading_shape(data))
+        self.assertFalse(agents._validate_output("grading", data))
+
+    def test_populated_grade_with_reason_is_accepted_end_to_end_no_retry(self):
+        def behavior(kind, key, attempt):
+            data = _canned_valid(kind, key)
+            data["reason"] = "harmless note"
+            return "valid", data
+
+        fake = FakeXagent(behavior=behavior)
+        self._patch(fake)
+
+        items = [
+            {
+                "task_key": "add-widget--task-1",
+                "version": "1",
+                "input_sha256": "9" * 64,
+                "review_text": "clean review",
+            }
+        ]
+        written = agents.xagent_runner("grading", items, self.staging_dir)
+
+        self.assertEqual(len(fake.calls), 1)  # no retry
+        self.assertEqual(len(written), 1)
+        data = json.loads(written[0].read_text(encoding="utf-8"))
+        self.assertEqual(data["final_grade"], "A")
+        self.assertIsNotNone(data["G1"])
+
+    def test_half_null_hybrid_is_retried_then_dropped(self):
+        def behavior(kind, key, attempt):
+            data = _canned_valid(kind, key)
+            data["G1"] = None
+            return "valid", data  # "valid" JSON, but an invalid grading shape
+
+        fake = FakeXagent(behavior=behavior)
+        self._patch(fake)
+
+        items = [
+            {
+                "task_key": "add-widget--task-1",
+                "version": "1",
+                "input_sha256": "a" * 64,
+                "review_text": "clean review",
+            }
+        ]
+        written = agents.xagent_runner("grading", items, self.staging_dir)
+
+        self.assertEqual(len(fake.calls), 2)  # initial + one retry
+        self.assertEqual(len(written), 0)  # still invalid after retry -- dropped
+
+
 class TestXagentBinResolution(AgentsTestBase):
     """Review fix: the xagent entry point must be resolvable without editing
     source -- explicit param beats env var beats the repo-relative default."""

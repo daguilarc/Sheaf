@@ -41,7 +41,12 @@ upstream join error). Exclude those from scoring, list them in
 
 For every item, write one JSON file to `{{OUTPUT_DIR}}/<task_key>.json` --
 always, even when nothing in the item turns out to be gradeable. There are
-two valid shapes.
+exactly two valid shapes, and which one you wrote is read back by whether
+`G1`-`G5` are null — not by whether you included a `reason` — so get this
+exactly right: a gradeable item MUST have all five of `G1`-`G5` as real
+numbers (never mix nulls and numbers across them), and an ungradeable item
+MUST have all five as `null`. A `reason` on a gradeable item is harmless
+and ignored; leave it out.
 
 **Gradeable** (at least one non-excluded review remains):
 
@@ -96,5 +101,7 @@ string explaining why nothing was gradeable:
 Never skip an item's output file because nothing was gradeable for it -- an
 absent output file is indistinguishable downstream from a crashed or broken
 run and aborts the whole ingest. Grade every gradeable item normally; for
-every other item, write the ungradeable shape instead. Output is idempotent
-— one file per item; re-running the batch just overwrites it.
+every other item, write the ungradeable shape instead. A shape that mixes
+nulls and real numbers across `G1`-`G5` is invalid and will be rejected --
+pick one shape fully, never partially. Output is idempotent — one file per
+item; re-running the batch just overwrites it.
