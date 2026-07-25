@@ -207,7 +207,13 @@ class TestPromptRendering(AgentsTestBase):
         cwd = Path(fake.calls[0][1]["cwd"])
         prompt_text = (cwd / "prompt.md").read_text(encoding="utf-8")
 
-        self.assertIn(str(agents._RUBRIC_PATH["complexity"]), prompt_text)
+        # The rubric is copied into the work dir (so scorers never read
+        # outside their sandbox cwd); the prompt must point at the copy.
+        self.assertIn(str(cwd / "rubric.md"), prompt_text)
+        self.assertEqual(
+            (cwd / "rubric.md").read_text(encoding="utf-8"),
+            Path(agents._RUBRIC_PATH["complexity"]).read_text(encoding="utf-8"),
+        )
         self.assertIn(str(cwd / "items.json"), prompt_text)
         self.assertIn(str(cwd / "output"), prompt_text)
         # placeholders must be fully substituted, none left over.
