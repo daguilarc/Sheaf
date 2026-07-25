@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import shutil
@@ -18,6 +19,7 @@ from typing import Sequence
 PLUGIN_NAME = "xagent"
 MANAGED_FILE = ".sheaf-managed"
 MANAGED_CONTENT = "sheaf-xagent-plugin\n"
+MARKETPLACE_PLUGIN_PATH = f"./.agents/plugins/plugins/{PLUGIN_NAME}"
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HELPER_NAMES = (
@@ -121,6 +123,27 @@ def require_installed_plugin(plugin_list: str, destination: Path) -> None:
         )
 
 
+def point_marketplace_entry_to_destination(marketplace_path: Path) -> None:
+    payload = json.loads(marketplace_path.read_text(encoding="utf-8"))
+    plugins = payload.get("plugins")
+    if not isinstance(plugins, list):
+        raise RuntimeError(f"{marketplace_path} field 'plugins' must be an array")
+    for entry in plugins:
+        if isinstance(entry, dict) and entry.get("name") == PLUGIN_NAME:
+            source = entry.setdefault("source", {})
+            if not isinstance(source, dict):
+                source = {}
+                entry["source"] = source
+            source["source"] = "local"
+            source["path"] = MARKETPLACE_PLUGIN_PATH
+            marketplace_path.write_text(
+                json.dumps(payload, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            return
+    raise RuntimeError(f"marketplace entry '{PLUGIN_NAME}' missing in {marketplace_path}")
+
+
 def install_global(
     *,
     repo_root: Path,
@@ -199,6 +222,7 @@ def install_global(
             ],
             cwd=repo_root,
         )
+        point_marketplace_entry_to_destination(marketplace_path)
         marketplace_name = run_command(
             [
                 sys.executable,

@@ -177,7 +177,10 @@ if args == ["plugin", "list"]:
             [
                 {
                     "name": "xagent",
-                    "source": {"source": "local", "path": "./plugins/xagent"},
+                    "source": {
+                        "source": "local",
+                        "path": "./.agents/plugins/plugins/xagent",
+                    },
                     "policy": {
                         "installation": "AVAILABLE",
                         "authentication": "ON_INSTALL",
@@ -221,6 +224,10 @@ if args == ["plugin", "list"]:
         self.assertEqual(existing["interface"], marketplace["interface"])
         self.assertEqual(existing["plugins"][0], marketplace["plugins"][0])
         self.assertEqual(["other", "xagent"], [entry["name"] for entry in marketplace["plugins"]])
+        self.assertEqual(
+            "./.agents/plugins/plugins/xagent",
+            marketplace["plugins"][1]["source"]["path"],
+        )
         self.assertIn(
             "plugin add xagent@joyo_local",
             self.codex_log.read_text(encoding="utf-8").splitlines(),

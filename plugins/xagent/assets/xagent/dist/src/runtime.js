@@ -213,6 +213,7 @@ async function startSession(options, _runRecord, _clock) {
         cwd: options.cwd,
         model: options.adapter.capabilities.forwardsModel ? options.model : undefined,
         thinkingLevel: options.adapter.capabilities.forwardsThinkingLevel ? options.thinkingLevel : undefined,
+        permissionMode: options.permissionMode,
     });
 }
 function withRuntimeTurnContext(event, turnId) {

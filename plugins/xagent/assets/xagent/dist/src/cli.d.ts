@@ -7,6 +7,7 @@ export type CliCommand = {
     mode: OutputMode;
     model?: string;
     thinkingLevel?: ThinkingLevel;
+    permissionMode?: string;
     initialMessage?: string;
 } | {
     command: "list";

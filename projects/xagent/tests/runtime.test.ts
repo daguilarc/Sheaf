@@ -410,7 +410,12 @@ test("runtime emits warnings when selected adapter ignores requested model or th
     clock: fixedClock(),
   });
 
-  assert.deepEqual(adapter.startOptions, { cwd: repoRoot, model: undefined, thinkingLevel: undefined });
+  assert.deepEqual(adapter.startOptions, {
+    cwd: repoRoot,
+    model: undefined,
+    thinkingLevel: undefined,
+    permissionMode: undefined,
+  });
   const warnings = parseJsonl(stdout.text).filter((event) => event.type === "status" && event.level === "warning");
   assert.deepEqual(
     warnings.map((event) => event.type === "status" ? event.code : undefined),

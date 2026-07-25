@@ -24,7 +24,7 @@ function buildClaudeCommand(context, state, options) {
         "--include-partial-messages",
         "--verbose",
         "--permission-mode",
-        "auto",
+        options.permissionMode ?? "auto",
     ];
     if (state.providerThreadId !== undefined) {
         args.push("--resume", state.providerThreadId);

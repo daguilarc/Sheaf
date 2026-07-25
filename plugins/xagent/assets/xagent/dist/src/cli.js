@@ -41,6 +41,7 @@ export async function main(argv, stdin, stdout, stderr, cwd, dependencies = {}) 
             mode: command.mode,
             model: command.model,
             thinkingLevel: command.thinkingLevel,
+            permissionMode: command.permissionMode,
             repoRoot: cwd,
             logRoot,
             cwd,
@@ -116,6 +117,7 @@ function parseRunArgs(argv) {
     let harness;
     let model;
     let thinkingLevel;
+    let permissionMode;
     let mode;
     const initialMessageParts = [];
     let positionalOnly = false;
@@ -154,6 +156,14 @@ function parseRunArgs(argv) {
             index += 1;
             continue;
         }
+        if (flag === "--permission-mode") {
+            if (permissionMode !== undefined) {
+                throw new Error("xagent run accepts --permission-mode at most once.");
+            }
+            permissionMode = readFlagValue(argv, index, flag);
+            index += 1;
+            continue;
+        }
         if (flag === "--thinking-level") {
             if (thinkingLevel !== undefined) {
                 throw new Error("xagent run accepts --thinking-level at most once.");
@@ -186,6 +196,7 @@ function parseRunArgs(argv) {
         mode,
         model,
         thinkingLevel,
+        permissionMode,
         initialMessage: initialMessageParts.length > 0 ? initialMessageParts.join(" ") : undefined,
     };
 }

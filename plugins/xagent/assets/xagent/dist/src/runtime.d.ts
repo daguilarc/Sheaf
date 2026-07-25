@@ -6,6 +6,7 @@ export type RunSessionOptions = {
     readonly mode: OutputMode;
     readonly model?: string;
     readonly thinkingLevel?: ThinkingLevel;
+    readonly permissionMode?: string;
     readonly repoRoot: string;
     readonly logRoot?: string;
     readonly cwd: string;

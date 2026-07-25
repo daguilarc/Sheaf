@@ -11,6 +11,16 @@ import { main, parseArgs, runCli } from "../src/cli.js";
 import type { OutputEvent } from "../src/events.js";
 import { appendNormalizedEvent, createRunRecord, getDefaultLogRoot, listRuns } from "../src/logs.js";
 
+const originalLogRoot = process.env.XAGENT_LOG_ROOT;
+delete process.env.XAGENT_LOG_ROOT;
+test.after(() => {
+  if (originalLogRoot === undefined) {
+    delete process.env.XAGENT_LOG_ROOT;
+    return;
+  }
+  process.env.XAGENT_LOG_ROOT = originalLogRoot;
+});
+
 test("parses a valid run command", () => {
   assert.deepEqual(parseArgs(["run", "--harness", "codex", "--subagent"]), {
     command: "run",
@@ -18,6 +28,7 @@ test("parses a valid run command", () => {
     mode: "subagent",
     model: undefined,
     thinkingLevel: undefined,
+    permissionMode: undefined,
     initialMessage: undefined,
   });
 });
@@ -29,6 +40,7 @@ test("parses a valid run command with an initial message", () => {
     mode: "subagent",
     model: undefined,
     thinkingLevel: undefined,
+    permissionMode: undefined,
     initialMessage: "hello there",
   });
 });
@@ -51,6 +63,7 @@ test("parses a valid full run command with options", () => {
       mode: "full",
       model: "sonnet",
       thinkingLevel: "high",
+      permissionMode: undefined,
       initialMessage: undefined,
     },
   );
