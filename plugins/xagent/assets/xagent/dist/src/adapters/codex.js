@@ -24,7 +24,7 @@ export function buildCodexCommand(context, state, options) {
         args.push("--model", options.model);
     }
     if (options.thinkingLevel !== undefined) {
-        args.push("--reasoning-effort", options.thinkingLevel);
+        args.push("--config", `model_reasoning_effort="${options.thinkingLevel}"`);
     }
     if (state.providerThreadId !== undefined) {
         args.push(state.providerThreadId);

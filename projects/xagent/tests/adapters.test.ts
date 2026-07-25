@@ -141,7 +141,8 @@ test("codex adapter launches child sessions without approval or sandbox prompts"
     "--dangerously-bypass-approvals-and-sandbox",
   ]);
   assert.ok(resumed.args.includes("--model"));
-  assert.ok(resumed.args.includes("--reasoning-effort"));
+  assert.ok(resumed.args.includes("--config"));
+  assert.ok(resumed.args.includes('model_reasoning_effort="high"'));
   assert.equal(resumed.args.at(-2), "codex-thread-1");
   assert.equal(resumed.args.at(-1), context.text);
 });
