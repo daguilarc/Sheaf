@@ -199,11 +199,17 @@ test("decodes the bounded C++ MIDI output ABI descriptor", () => {
     _free() {},
     lengthBytesUTF8: (value) => new TextEncoder().encode(value).length,
     stringToUTF8() {},
+    emscriptenRegisterAudioObject: () => 1,
+    _synth_browser_abi_version: () => 2,
+    _synth_browser_ui_protocol_version: () => 1,
+    _synth_browser_runtime_config_version: () => 1,
     _synth_browser_create: () => 1,
+    _synth_browser_set_timestamp_epoch_offset: () => 0,
     _synth_browser_audio_output_channels: () => 2,
     _synth_browser_initialize: () => 0,
     _synth_browser_prepare: () => 0,
     _synth_browser_process: () => 0,
+    _synth_browser_start_audio_worklet: () => 0,
     _synth_browser_message_tick: () => 0,
     _synth_browser_build_ui_frame: () => 0,
     _synth_browser_dispatch_action: () => 0,
@@ -244,6 +250,9 @@ test("decodes the bounded C++ MIDI output ABI descriptor", () => {
 test("normalizes a distinct worker time origin into the document engine epoch", async () => {
   const offsets = [];
   const worker = new BrowserRuntimeWorker(async () => ({
+    abiVersion: 2,
+    uiProtocolVersion: 1,
+    runtimeConfigVersion: 1,
     create: () => 3,
     setTimestampEpochOffset: (_handle, offsetMicros) => { offsets.push(offsetMicros); return 0; },
     audioOutputChannels: () => 2,
@@ -265,7 +274,10 @@ test("normalizes a distinct worker time origin into the document engine epoch", 
     destroy: () => {},
   }), undefined, undefined, () => 1_700_000_000_250);
 
-  await worker.handle({ type: "load" });
+  await worker.handle({
+    type: "load",
+    module: { entryUrl: "blob:test", locateFile: {}, mainScriptUrlOrBlob: "blob:test" },
+  });
   assert.deepEqual(await worker.handle({
     type: "create",
     documentTimeOriginMillis: 1_700_000_000_000,

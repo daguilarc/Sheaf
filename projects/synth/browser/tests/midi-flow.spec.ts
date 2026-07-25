@@ -425,14 +425,14 @@ test("real miniapp WASM keeps two Web MIDI controller slots independent through 
       return response;
     };
 
-    const moduleUrl = new URL("/dist/wasm/miniapp.js", location.href).href;
+    const moduleUrl = new URL("/dist/wasm/apps/miniapp/miniapp.js", location.href).href;
     await request({
       type: "load",
       module: {
         entryUrl: moduleUrl,
         locateFile: {
           "miniapp.js": moduleUrl,
-          "miniapp.wasm": new URL("/dist/wasm/miniapp.wasm", location.href).href,
+          "miniapp.wasm": new URL("/dist/wasm/apps/miniapp/miniapp.wasm", location.href).href,
         },
         mainScriptUrlOrBlob: moduleUrl,
       },

@@ -101,10 +101,13 @@ test("real miniapp WASM runs DSP from the runtime-owned AudioWorklet callback", 
             if (response.type !== expected) throw new Error(response.type === "error" ? response.error : `expected ${expected}, got ${response.type}`);
             return response;
           };
-          const moduleUrl = new URL("/dist/wasm/miniapp.js", location.href).href;
+          const moduleUrl = new URL("/dist/wasm/apps/miniapp/miniapp.js", location.href).href;
           await request({ type: "load", module: {
             entryUrl: moduleUrl,
-            locateFile: { "miniapp.js": moduleUrl, "miniapp.wasm": new URL("/dist/wasm/miniapp.wasm", location.href).href },
+            locateFile: {
+              "miniapp.js": moduleUrl,
+              "miniapp.wasm": new URL("/dist/wasm/apps/miniapp/miniapp.wasm", location.href).href,
+            },
             mainScriptUrlOrBlob: moduleUrl,
           } }, "ok");
           await request({ type: "create" }, "created");
@@ -178,10 +181,13 @@ test("runtime-owned AudioWorklet applies browser-time encoder actions promptly",
             };
           };
 
-          const moduleUrl = new URL("/dist/wasm/miniapp.js", location.href).href;
+          const moduleUrl = new URL("/dist/wasm/apps/miniapp/miniapp.js", location.href).href;
           await request({ type: "load", module: {
             entryUrl: moduleUrl,
-            locateFile: { "miniapp.js": moduleUrl, "miniapp.wasm": new URL("/dist/wasm/miniapp.wasm", location.href).href },
+            locateFile: {
+              "miniapp.js": moduleUrl,
+              "miniapp.wasm": new URL("/dist/wasm/apps/miniapp/miniapp.wasm", location.href).href,
+            },
             mainScriptUrlOrBlob: moduleUrl,
           } }, "ok");
           await request({ type: "create" }, "created");

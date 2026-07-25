@@ -314,7 +314,7 @@ test("real fake-app WASM stages, validates, saves, and reopens Sync", async ({ p
   await expect(page.locator('[data-synth-node-id="runtime.sync.receive_transport"] input')).toBeChecked();
 
   const actions = await page.evaluate(() =>
-    (window as any).__task5Fake.observations.commands
+    (window as any).__task4Fake.observations.commands
       .filter((command: { type: string }) => command.type === "dispatch-action")
       .map((command: { name?: string; value?: string }) => [command.name, command.value]),
   );
