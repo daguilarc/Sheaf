@@ -103,7 +103,7 @@ Last audit: master-clock/MIDI-sync acceptance traces, host scheduling contracts,
 | `sar-18` (modified) | covered | Engine load-before-rebuild/default/save cases; runtime-config migration/atomic-save/patch-exclusion cases; JUCE/browser Sync Back persistence |
 | `sru-2` (modified) | covered | `TestSidebarOpensEachPageAndBackRestoresApp`, `TestRefreshUpdatesRuntimePageModelsAndRollingDeadline`, portable sidebar assertions, JUCE runtime-page/session tests, browser navigation |
 | `sru-12` (modified) | covered | `TestBackFromConfigurationPageSavesRuntimeConfiguration`, `TestSyncStagesRefreshesCommitsAndReopensFromEngineSnapshot`, JUCE runtime-shell Sync save/reopen, browser Sync Back persistence |
-| `sru-30` | covered | portable Sync surface assertions, `TestSyncStagesRefreshesCommitsAndReopensFromEngineSnapshot`, `TestBrowserSyncUsesSharedStagingPersistsAndResolvesSourceNames`, JUCE runtime-page/session and fake-app Playwright Sync cases |
+| `sru-31` | covered | portable Sync surface assertions, `TestSyncStagesRefreshesCommitsAndReopensFromEngineSnapshot`, `TestBrowserSyncUsesSharedStagingPersistsAndResolvesSourceNames`, JUCE runtime-page/session and fake-app Playwright Sync cases |
 
 ## Requirement Mappings
 
@@ -1072,7 +1072,7 @@ Last audit: master-clock/MIDI-sync acceptance traces, host scheduling contracts,
   JUCE runtime-shell and browser Sync tests exercise save/reopen through both
   concrete hosts.
 
-### `sru-2`, `sru-12`, And `sru-30` - Sync Runtime UI
+### `sru-2`, `sru-12`, And `sru-31` - Sync Runtime UI
 
 - [`runtime_main_component_tests.cpp`](../tests/runtime_main_component_tests.cpp):
   `TestSidebarOpensEachPageAndBackRestoresApp` opens Sync through the shared tab;
@@ -1082,7 +1082,7 @@ Last audit: master-clock/MIDI-sync acceptance traces, host scheduling contracts,
   `TestSyncStagesRefreshesCommitsAndReopensFromEngineSnapshot` distinguish
   Audio/Controllers/Sync save-on-Back from File Back and prove atomic staged
   Sync commit, rejection, persistence, diagnostics refresh, and reopen
-  (`sru-12`, `sru-30`).
+  (`sru-12`, `sru-31`).
 - [`portable_ui_tests.cpp`](../tests/portable_ui_tests.cpp) checks all safe
   defaults, four toggles, strict PPQN `1..960` validation, the non-24 warning,
   all diagnostics labels, and narrow layout. [`RuntimePagesJuceTests.cpp`](../juce/RuntimePagesJuceTests.cpp)

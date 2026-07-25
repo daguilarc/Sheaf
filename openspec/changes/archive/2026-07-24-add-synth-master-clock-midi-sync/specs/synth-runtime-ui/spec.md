@@ -38,7 +38,7 @@ WHEN the user dismisses a runtime configuration page with Back, THE runtime libr
 
 ## ADDED Requirements
 
-### Requirement: sru-30 — Sync page: portable clock configuration and status
+### Requirement: sru-31 — Sync page: portable clock configuration and status
 WHEN the runtime Sync page is open, THE runtime library SHALL render through the shared portable UI a send-clock toggle, receive-clock toggle, send-transport toggle, receive-transport toggle, integer PPQN control limited to `1..960`, Back action, and read-only current BPM, lock state, active-source, output-latency, ignored-input, late-event, and dropped-output status; edits SHALL stage in JUCE-free page state and commit through generic host services without application-specific or host-specific UI logic.
 
 #### Scenario: Defaults are safe and standard

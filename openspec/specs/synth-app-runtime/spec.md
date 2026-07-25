@@ -42,11 +42,11 @@ WHEN a synth application is defined, THE application SHALL supply a JUCE-free `R
 - **AND** the runtime resolves those paths from runtime-owned data paths instead
 
 ### Requirement: sar-3 — Context: application access to managers and configuration
-WHEN the runtime initializes an application, THE runtime SHALL pass a pointer to an `AppContext` holding non-owning, address-stable pointers to the parameter manager, runtime-owned grid manager, patch manager, UI message input bus, MIDI message input bus, parameter message output bus, patch message input and output buses, MIDI sender, live and default MIDI instrument configurations, the runtime configuration, and the host's shared monotonic timestamp provider (so application UI code timestamps messages from the same clock as the engine); the grid-manager pointer SHALL be available during `Init` so an application can declare fixed grid/slot topology before runtime finalization, while the context's UI-state pointer SHALL be null during `Init` and SHALL be populated before MIDI processors, audio, or UI processing begin; all pointees SHALL remain valid for the application's lifetime.
+WHEN the runtime initializes an application, THE runtime SHALL pass a pointer to an `AppContext` holding non-owning, address-stable pointers to the parameter manager, runtime-owned grid manager, runtime-owned master clock, patch manager, UI message input bus, MIDI message input bus, parameter message output bus, patch message input and output buses, MIDI sender, live and default MIDI instrument configurations, the runtime configuration, and the host's shared monotonic timestamp provider (so application UI code timestamps messages from the same clock as the engine); the grid-manager pointer SHALL be available during `Init` so an application can declare fixed grid/slot topology before runtime finalization, the master-clock pointer SHALL be available during `Init` for stable storage but SHALL report prepared output-sample-domain values and a current committed plan only after the host prepare entry point and first block commit respectively, while the context's UI-state pointer SHALL be null during `Init` and SHALL be populated before MIDI processors, audio, or UI processing begin; all pointees SHALL remain valid for the application's lifetime.
 
 #### Scenario: Context grants manager access during Init
 - **WHEN** the application's `Init(AppContext*)` runs
-- **THEN** the application can create groups, register modules and parameters, configure pages and banks through the context's parameter manager pointer, and declare fixed grid/slot topology through the runtime-owned grid-manager pointer
+- **THEN** the application can create groups, register modules and parameters, configure pages and banks through the context's parameter manager pointer, declare fixed grid/slot topology through the runtime-owned grid-manager pointer, and retain the runtime-owned master-clock pointer
 
 #### Scenario: Context pointers remain stable
 - **WHEN** the application stores the context pointer during `Init` and dereferences a member from a hook permitted to touch that member under the sar-7 threading contract
@@ -60,6 +60,10 @@ WHEN the runtime initializes an application, THE runtime SHALL pass a pointer to
 #### Scenario: Application seeds a default instrument
 - **WHEN** the application's `Init` populates the live MIDI instrument configuration through the context
 - **THEN** the runtime snapshots it as the default instrument restored by revert/new
+
+#### Scenario: Clock is prepared from negotiated audio
+- **WHEN** the host calls Engine prepare with its actual sample rate and block size
+- **THEN** the retained master clock computes its increment and scheduling horizon from those negotiated values before the first application block
 
 ### Requirement: sar-4 — Application contract: compile-time interface
 WHEN an application type is passed to the runtime template, THE runtime SHALL be a class template parameterized on the application type and SHALL verify at compile time (via C++20 concepts or equivalent static checks) a layered contract: a JUCE-free application-core concept requiring a runtime-config accessor, `Init(AppContext*)`, and a block-processing function, and a full application concept additionally requiring a UI-component hook; the JUCE runtime SHALL require the full concept while the engine and test rig SHALL require only the core concept; optional hooks (including the prepare hook and a control-rate frame hook) SHALL be detected at compile time and skipped when absent, and a type missing a required member SHALL fail compilation with a diagnostic naming the missing member.
@@ -105,28 +109,34 @@ WHEN the runtime starts, THE runtime SHALL construct the framework objects and a
 - **AND** open MIDI input and output devices are closed
 
 ### Requirement: sar-6 — Audio: device ownership and block delegation
-WHEN audio is running, THE runtime SHALL own the JUCE audio device and its callback, and per device block SHALL apply pending patch messages (using an engine-owned preallocated patch serialization context whose arena growth and retry are owned by the message thread), process the UI and MIDI message buses into the parameter manager, and call the application's block-processing function exactly once with a JUCE-free audio block view exposing input pointers, output pointers, actual channel counts, frame count, and the block's monotonic starting audio sample index; THE runtime SHALL NOT use host audio block boundaries as the steady-state parameter target recomputation cadence, SHALL NOT call `Process` on any DSP module, and SHALL NOT perform per-sample parameter processing — per-sample work (parameter target refresh through the parameter system's configured sample interval, parameter `ProcessLite`, modulation-source updates, module processing, output writes) SHALL be owned by the application's block-processing function.
+WHEN audio is running, THE runtime SHALL own the JUCE audio device and its callback, and per device block SHALL apply pending patch messages (using an engine-owned preallocated patch serialization context whose arena growth and retry are owned by the message thread), process the UI and MIDI message buses into the parameter manager and runtime-owned master clock, commit one immutable affine `ClockBlockPlan` over the block's monotonic half-open output-sample range, analytically enqueue that plan's enabled MIDI clock crossings, and call the application's block-processing function exactly once with a JUCE-free audio block view exposing input pointers, output pointers, actual channel counts, frame count, monotonic starting output-sample index, and a non-owning pointer to the exact committed clock plan also returned by `MasterClock::CurrentPlan()`; that plan pointer SHALL remain valid through the callback. THE runtime SHALL NOT use host audio block boundaries as the steady-state parameter target recomputation cadence, SHALL NOT call `Process` on any application DSP module, and SHALL NOT perform per-sample parameter processing — application per-sample work (parameter target refresh through the parameter system's configured sample interval, parameter `ProcessLite`, modulation-source updates, module processing, output writes) SHALL be owned by the application's block-processing function. Runtime clock work SHALL remain output-block-rate plus enumerated musical crossings, and applications SHALL obtain sample-accurate clock values by direct integer-or-fractional output-sample queries rather than advancing runtime time.
 
-#### Scenario: Runtime pumps then delegates
+#### Scenario: Runtime commits clock then delegates
 - **WHEN** an audio device block is processed
-- **THEN** queued patch, UI, and MIDI messages are applied to the manager before the application's block-processing function is called
-- **AND** the application's block-processing function is called exactly once for that block
+- **THEN** queued patch, UI, and MIDI messages are applied before the clock plan is committed and enabled crossings are enqueued
+- **AND** the application's block-processing function is called exactly once with that immutable plan
 
 #### Scenario: Control edits slew rather than snap
 - **WHEN** an encoder message changes a parameter target while audio runs
 - **THEN** the parameter's audible value approaches the new target through the parameter system's per-sample processing and `ProcessLite` slewing over subsequent samples rather than jumping in one block
 
-#### Scenario: Application owns per-sample processing
+#### Scenario: Application owns per-sample DSP processing
 - **WHEN** the application's block-processing function runs
-- **THEN** module processing, per-sample parameter processing, and modulation-source updates are invoked by application code, not by runtime code
+- **THEN** application module processing, per-sample parameter processing, and modulation-source updates are invoked by application code, not by runtime code
+- **AND** the runtime-provided clock plan requires no application call to advance global time
 
-#### Scenario: Block view is JUCE-free
+#### Scenario: Clock plan is JUCE-free
 - **WHEN** the application's block-processing code is compiled in a JUCE-free translation unit
-- **THEN** the audio block view type compiles without JUCE headers
+- **THEN** the audio block and clock plan types compile without JUCE headers
 
 #### Scenario: Block view exposes monotonic sample position
 - **WHEN** the runtime calls the application's block-processing function for consecutive blocks
 - **THEN** the second block's starting sample index equals the first block's starting sample index plus the first block's frame count
+
+#### Scenario: App-owned oversampling maps into output time
+- **WHEN** an application renders an internal sample at local oversampled index `i` and factor `F`
+- **THEN** it may query the committed plan at `block.startSample + i / F` without informing the runtime of `F`
+- **AND** the runtime does not call into the application once per internal sample
 
 ### Requirement: sar-7 — Threading: ownership and queue handoff
 WHILE audio is running, THE runtime SHALL treat the audio thread as the sole consumer of the UI, MIDI, and patch input buses and the sole thread that mutates or reads the parameter manager (including absolute-event processing acknowledgement and UI-state population at a throttled control cadence), SHALL keep the message thread as the sole producer of the UI and patch input buses and the sole thread performing parameter-storage-batch replies, patch manager responses and file IO, MIDI output processor polling, and MIDI device management, and SHALL keep MIDI input callbacks as the sole producer of the MIDI input bus; UI- and MIDI-originated messages SHALL be timestamped from one shared monotonic timestamp provider owned by the runtime, with timestamp-gated ordering guaranteed within each bus (cross-bus application order is by bus drain order within a block, not global timestamp order); the engine SHALL own one fixed-capacity thread-safe absolute-feedback coordinator whose runtime-local monotonic epoch allocator and per-controller-route expectation state survive controller processor rebuilds, whose input alert is linearized before the corresponding absolute message becomes visible to the audio consumer, and whose output decision is synchronized with that alert without requiring the audio thread to lock or allocate; patch command application MAY perform bounded non-real-time work (arena JSON serialization or parse, message payload destruction) at the block boundary as an accepted, user-initiated exception to the steady-state pump's allocation-free contract.
@@ -196,7 +206,7 @@ WHEN an application runs under the runtime, THE runtime SHALL own the MIDI sende
 - **THEN** it contains no MIDI device enumeration, open/close, reconciliation, or processor construction code
 
 ### Requirement: sar-10 — UI: runtime shell hosting an application component
-WHEN a JUCE or browser runtime presents UI, THE runtime SHALL own its host-specific application/window or browser integration and SHALL render one shared JUCE-free runtime main component templated on the application and host services; that component SHALL host the library sidebar with Audio/Controllers/File pages and deadline readout plus the application's portable UI surface as default content, the runtime SHALL drive shared component refresh from manager UI-state atomics at the configured frame rate, and each host entry point SHALL define its executable or static WASM application by naming only the application type.
+WHEN a JUCE or browser runtime presents UI, THE runtime SHALL own its host-specific application/window or browser integration and SHALL render one shared JUCE-free runtime main component templated on the application and host services; that component SHALL host the library sidebar with Audio/Controllers/Sync/File pages and deadline readout plus the application's portable UI surface as default content, the runtime SHALL drive shared component refresh from manager and master-clock UI-state atomics at the configured frame rate, and each host entry point SHALL define its executable or static WASM application by naming only the application type.
 
 #### Scenario: Shell hosts the complete application surface
 - **WHEN** the JUCE window or Chrome static site opens
@@ -207,27 +217,27 @@ WHEN a JUCE or browser runtime presents UI, THE runtime SHALL own its host-speci
 #### Scenario: Both hosts share top-level behavior
 - **WHEN** sidebar navigation, runtime-page Back, or application actions are dispatched in JUCE and Chrome
 - **THEN** both hosts route them through the same portable runtime main component
-- **AND** host adapters contain no concrete-application UI behavior
+- **AND** host adapters contain no concrete-application UI or sync-policy behavior
 
 #### Scenario: Repaint reads UI-state atomics
 - **WHEN** the UI timer fires
-- **THEN** sidebar and application widgets render from the published manager UI state without touching the parameter manager directly
+- **THEN** sidebar, runtime Sync status, and application widgets render from published UI state without touching the parameter manager or mutable master-clock DSP state directly
 
 #### Scenario: Typed application entry points
 - **WHEN** a JUCE or browser application entry point names a conforming application type
 - **THEN** the build produces the corresponding runtime-hosted application without application-specific host source
 
 ### Requirement: sar-11 — Miniapp: runtime-hosted reference application
-WHEN the miniapp is ported to the runtime, THE miniapp application at `projects/synth/apps/miniapp` SHALL contain only application-specific content — runtime config, duophonic group and VCO/LFO/filter module setup, page/bank/slot layout, scope wiring, per-sample block processing, and its bespoke widgets — SHALL preserve the existing specced miniapp behaviors (encoder grid, pages, scenes, gestures, MIDI controller configuration, patch commands, waveform pane), SHALL process its parameter group through the synth parameter system's group-level per-sample processing API using the audio block's monotonic sample index, SHALL expose the VCO page as module-backed VCO controls plus filter Cutoff, Resonance, and Blend controls, SHALL expose the LFO page as five module-backed parameters, and SHALL write its filtered VCO output to the negotiated audio device outputs using the device-provided sample rate.
+WHEN the miniapp is ported to the runtime, THE miniapp application at `projects/synth/apps/miniapp` SHALL contain only application-specific content — runtime config, duophonic group and VCO/LFO/filter/ADSR module setup, page/bank/slot layout, scope wiring, per-sample block processing, clock-derived gate construction, and its bespoke widgets — SHALL preserve the existing specced miniapp behaviors (encoder grid, pages, scenes, gestures, MIDI controller configuration, patch commands, waveform pane), SHALL process its parameter group through the synth parameter system's group-level per-sample processing API using the audio block's monotonic sample index, SHALL expose the VCO page as module-backed VCO controls plus filter Cutoff, Resonance, and Blend controls, SHALL expose the LFO page and bank in order as five module-backed LFO parameters, ADSR Attack/Decay/Sustain/Release, and Tempo, SHALL copy `AdsrModule<2>::Outputs()` after each process call into an application-owned stable two-float mirror registered as one polyphonic modulation source at index 7 before the same-frame modulation-value update, and SHALL write its filtered VCO output to the negotiated audio device outputs using the device-provided sample rate.
 
 #### Scenario: Miniapp init is application content only
 - **WHEN** the miniapp sources are inspected
-- **THEN** manager/bus/patch-manager construction, message pumping, MIDI device glue, and patch orchestration are absent, provided instead by the runtime
+- **THEN** manager/bus/patch-manager/master-clock construction, message pumping, MIDI device glue, and patch orchestration are absent, provided instead by the runtime
 
 #### Scenario: Miniapp produces audible filtered output
 - **WHEN** the miniapp runs with an output-capable audio device
 - **THEN** the filtered VCO voices are written to the device output channels
-- **AND** the VCO and filter modules use the negotiated device sample rate
+- **AND** the VCO, filter, LFO, and ADSR modules use the negotiated device sample rate
 
 #### Scenario: Miniapp VCO page exposes filter controls
 - **WHEN** the miniapp VCO page is active
@@ -236,8 +246,26 @@ WHEN the miniapp is ported to the runtime, THE miniapp application at `projects/
 
 #### Scenario: Miniapp LFO page is module-backed
 - **WHEN** the miniapp LFO page is active
-- **THEN** the selected slot exposes Frequency, Shape, Phase Offset, Skew, and Exponent from `BasicLfoModule<2>`
-- **AND** the LFO modulation source is produced by that module during per-sample block processing
+- **THEN** the selected slot exposes Frequency, Shape, Phase Offset, Skew, Exponent, Attack, Decay, Sustain, Release, and Tempo in that visible order
+- **AND** the first five controls come from `BasicLfoModule<2>`, the next four come from `AdsrModule<2>`, and Tempo maps 30–300 BPM with a 120 BPM default
+
+#### Scenario: Miniapp ADSR gate follows transport quarters
+- **WHEN** transport is Running
+- **THEN** MiniApp queries the committed plan at each frame's absolute output-sample position and both ADSR voices receive a high gate for transport quarter-note phase `[0, 0.5)` and a low gate for `[0.5, 1.0)` modulo one
+- **AND** every integer quarter-note boundary retriggers an eighth-note-long gate
+- **WHEN** transport Stops
+- **THEN** the next processed ADSR sample receives gate low
+
+#### Scenario: Miniapp ADSR is a modulation source
+- **WHEN** MiniApp processes an audio frame
+- **THEN** it processes `AdsrModule<2>` before the group modulation-value update
+- **AND** the current per-voice envelope outputs are available from one connected application modulator index in that same frame
+
+#### Scenario: Miniapp tempo control uses clock authority
+- **WHEN** MiniApp's effective Tempo parameter changes with receive-clock disabled
+- **THEN** it calls the master-clock tempo API and the new manual tempo applies no later than the next audio block
+- **WHEN** receive-clock is enabled
+- **THEN** the same control call is ignored by MasterClock and external tempo remains authoritative
 
 #### Scenario: Miniapp uses parameter-owned compute cadence
 - **WHEN** the miniapp's per-sample block processing is inspected
@@ -372,21 +400,23 @@ WHEN a synth application exposes user interface content to a host runtime, THE a
 - **THEN** application widgets, portable UI interfaces, miniapp UI layout/drawing logic, and synth core tests do not include JUCE headers or refer to `juce::` symbols
 
 ### Requirement: sar-18 — Configuration: runtime startup load and save ownership
-WHEN the runtime starts, THE runtime SHALL initialize the application-defined synth topology first, then load the runtime configuration document from the runtime-owned data root if it exists, applying MIDI instrument/controller configuration and audio device selection before MIDI processors are built, controller reconciliation starts, or the audio device is opened; WHEN the runtime is asked to save configuration, THE runtime SHALL write the current MIDI instrument/controller configuration and audio device selection to that document without writing synthesizer patch data.
+WHEN the runtime starts, THE runtime SHALL initialize the application-defined synth topology first, then load the runtime configuration document from the runtime-owned data root if it exists, applying MIDI instrument/controller configuration, audio device selection, and sync configuration before MIDI processors are built, controller reconciliation starts, the master clock is prepared for output, or the audio device is opened; WHEN the runtime is asked to save configuration, THE runtime SHALL write the current MIDI instrument/controller configuration, audio device selection, and sync configuration to that document without writing synthesizer patch data.
 
 #### Scenario: Missing configuration keeps app defaults
 - **WHEN** the runtime starts and no runtime configuration document exists
 - **THEN** the MIDI instrument and audio device state established by application initialization and system defaults remain active
+- **AND** sync uses all-disabled flags with PPQN 24
 - **AND** startup continues without reporting a persistence failure
 
 #### Scenario: Configuration loads before controller reconciliation
-- **WHEN** the runtime configuration document contains a MIDI instrument with controller endpoint references
+- **WHEN** the runtime configuration document contains a MIDI instrument with controller endpoint references and non-default sync settings
 - **THEN** MIDI processors are built from that loaded instrument
 - **AND** startup controller reconciliation uses the loaded endpoint references
+- **AND** the master clock uses the loaded sync settings before its first processed audio block
 
 #### Scenario: Configuration save excludes patch state
-- **WHEN** runtime configuration is saved after Audio or Controllers page edits
-- **THEN** the saved document contains MIDI instrument/controller configuration and audio device state
+- **WHEN** runtime configuration is saved after Audio, Controllers, or Sync page edits
+- **THEN** the saved document contains MIDI instrument/controller configuration, audio device state, and sync configuration
 - **AND** it does not contain patch parameter values or patch identity
 
 ### Requirement: sar-19 — Apps: manifest metadata and registry
