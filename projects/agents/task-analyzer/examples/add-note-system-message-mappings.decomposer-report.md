@@ -74,7 +74,7 @@ All figures are `decomposition_totals` from the regenerated
 - **Prescriptiveness (C7 ≤ 2)**: every task in every qualifying candidate
   (A, B-split, C, D) already scores C7 ≤ 2 — each task's brief traces
   directly to an explicit design.md decision (D1–D5) or spec scenario
-  (`spm-80`/`smi-9`/`sru-27`), so this guardrail didn't need to break any
+  (`spm-89`/`smi-9`/`sru-27`), so this guardrail didn't need to break any
   ties here.
 - **Dependency order**: all four qualifying candidates number tasks so the
   address-model/type-enum work precedes persistence, validation, and

@@ -2626,7 +2626,7 @@ WHEN a Generic controller profile contains encoder-turn input mappings and no ex
 - **WHEN** a Generic profile has no encoder input
 - **THEN** profile construction creates no automatic Generic encoder output
 
-### Requirement: spm-80 — MIDI input: note-addressed controller buttons
+### Requirement: spm-89 — MIDI input: note-addressed controller buttons
 
 WHEN a controller profile configures an encoder push or Generic system-message control address, THE synth parameter modulation system SHALL allow the address
 to select CC or note while retaining numeric channel and message-number fields,

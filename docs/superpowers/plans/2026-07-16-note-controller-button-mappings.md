@@ -298,14 +298,14 @@ git commit -m "feat(synth): edit note button mappings in controllers page"
 
 **Interfaces:**
 - Consumes: completed, reviewed implementation from Tasks 1–3.
-- Produces: coverage entries for `spm-80`, `smi-9`, and `sru-27` that name their concrete test files and behaviors.
+- Produces: coverage entries for `spm-89`, `smi-9`, and `sru-27` that name their concrete test files and behaviors.
 
 - [ ] **Step 1: Update capability coverage**
 
 Add concise rows in the current synth coverage summary:
 
 ```markdown
-| `spm-80` | covered | typed controller address matching, note press/release including raw zero-velocity note-on and nonzero-velocity note-off, persistence compatibility, and note-feedback suppression in `parameter_modulation_tests` |
+| `spm-89` | covered | typed controller address matching, note press/release including raw zero-velocity note-on and nonzero-velocity note-off, persistence compatibility, and note-feedback suppression in `parameter_modulation_tests` |
 | `smi-9` | covered | per-section and per-kind address-type acceptance/rejection in `instrument_tests` |
 | `sru-27` | covered | type-aware block round trips in `blocks_tests`, row editing in `viewmodel_tests`, and portable combo rendering/dispatch in `controllers_page_ui_tests` |
 ```
