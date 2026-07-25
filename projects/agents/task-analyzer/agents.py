@@ -287,7 +287,14 @@ def _dispatch_batch(
     items_json_path = work_dir / "items.json"
     items_json_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-    rendered = _render_prompt(prompt_text, _RUBRIC_PATH[kind], items_json_path, output_dir)
+    # Copy the rubric into the work dir so every path the scorer touches is
+    # under its own cwd -- headless sessions cannot answer the approval
+    # prompt that reads outside the sandbox root can trigger (mode/model
+    # dependent; observed blocking haiku and sonnet scorers alike).
+    local_rubric_path = work_dir / "rubric.md"
+    local_rubric_path.write_text(Path(_RUBRIC_PATH[kind]).read_text(encoding="utf-8"), encoding="utf-8")
+
+    rendered = _render_prompt(prompt_text, local_rubric_path, items_json_path, output_dir)
     prompt_path = work_dir / "prompt.md"
     prompt_path.write_text(rendered, encoding="utf-8")
 
