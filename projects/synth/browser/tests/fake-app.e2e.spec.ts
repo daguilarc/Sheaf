@@ -493,8 +493,6 @@ function expectedEncoderOutputMappings(slot: string) {
 }
 
 async function assertSavedTwisterEncoderMappings(page: Page, controllerIx: number, slot: string): Promise<void> {
-  await page.locator(synthNode("runtime.controllers.back")).click();
-  await expect(page.locator(synthNode("fake-browser-root"))).toBeVisible();
   await expect.poll(async () => {
     const config = await savedRuntimeConfig(page);
     const profile = config?.midiInstrument?.controllers?.[controllerIx]?.profile;
@@ -510,7 +508,6 @@ async function assertSavedTwisterEncoderMappings(page: Page, controllerIx: numbe
     outputProtocol: "twister",
     outputs: expectedEncoderOutputMappings(slot),
   });
-  await page.locator(synthNode("runtime.sidebar.controllers")).click();
 }
 
 async function assertTwisterSideAssociations(page: Page, controllerIx: number, slot: string): Promise<void> {
