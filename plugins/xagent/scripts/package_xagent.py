@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import os
 import shutil
 import subprocess
@@ -12,6 +13,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = PLUGIN_ROOT.parents[1]
 XAGENT_ROOT = REPO_ROOT / "projects" / "xagent"
 ASSET_ROOT = PLUGIN_ROOT / "assets" / "xagent"
+PACKAGE_DIRECTORIES = (".codex-plugin", "skills", "scripts")
 
 
 def run(
@@ -34,17 +36,35 @@ def run(
     )
 
 
-def stage_runtime() -> None:
+def copy_runtime(asset_root: Path) -> None:
     run(["npm", "run", "build"], cwd=XAGENT_ROOT)
-    if ASSET_ROOT.exists():
-        shutil.rmtree(ASSET_ROOT)
-    (ASSET_ROOT / "dist").mkdir(parents=True)
-    shutil.copy2(XAGENT_ROOT / "package.json", ASSET_ROOT / "package.json")
-    shutil.copytree(XAGENT_ROOT / "dist" / "src", ASSET_ROOT / "dist" / "src")
+    if asset_root.exists():
+        shutil.rmtree(asset_root)
+    (asset_root / "dist").mkdir(parents=True)
+    shutil.copy2(XAGENT_ROOT / "package.json", asset_root / "package.json")
+    shutil.copytree(XAGENT_ROOT / "dist" / "src", asset_root / "dist" / "src")
 
 
-def validate_launcher() -> None:
-    launcher = PLUGIN_ROOT / "scripts" / "xagent"
+def build_package(destination: Path) -> None:
+    destination = destination.resolve()
+    if destination.exists():
+        shutil.rmtree(destination)
+    destination.mkdir(parents=True)
+    for directory in PACKAGE_DIRECTORIES:
+        shutil.copytree(
+            PLUGIN_ROOT / directory,
+            destination / directory,
+            copy_function=shutil.copy2,
+        )
+    copy_runtime(destination / "assets" / "xagent")
+
+
+def stage_runtime() -> None:
+    copy_runtime(ASSET_ROOT)
+
+
+def validate_launcher(plugin_root: Path) -> None:
+    launcher = plugin_root / "scripts" / "xagent"
     with tempfile.TemporaryDirectory(prefix="xagent-plugin-help-") as tempdir:
         help_result = run([str(launcher), "--help"], cwd=Path(tempdir))
     if "xagent run" not in help_result.stdout:
@@ -61,22 +81,23 @@ def validate_launcher() -> None:
             raise RuntimeError("packaged launcher did not write logs under the configured log root")
         if (repo / "data" / "xagent").exists():
             raise RuntimeError("packaged launcher wrote logs under the active repository")
-    validate_missing_runtime_error(launcher)
+    validate_missing_runtime_error(plugin_root, launcher)
 
 
-def validate_missing_runtime_error(launcher: Path) -> None:
-    entrypoint = ASSET_ROOT / "dist" / "src" / "main.js"
+def validate_missing_runtime_error(plugin_root: Path, launcher: Path) -> None:
+    entrypoint = plugin_root / "assets" / "xagent" / "dist" / "src" / "main.js"
     hidden_entrypoint = entrypoint.with_name("main.js.hidden-for-validation")
     entrypoint.rename(hidden_entrypoint)
     try:
-        result = subprocess.run(
-            [str(launcher), "--help"],
-            cwd=Path(tempfile.mkdtemp(prefix="xagent-plugin-missing-runtime-")),
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
+        with tempfile.TemporaryDirectory(prefix="xagent-plugin-missing-runtime-") as tempdir:
+            result = subprocess.run(
+                [str(launcher), "--help"],
+                cwd=Path(tempdir),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
         if result.returncode == 0:
             raise RuntimeError("launcher succeeded even though packaged runtime was missing")
         if "xagent packaged runtime is missing" not in result.stderr:
@@ -85,10 +106,28 @@ def validate_missing_runtime_error(launcher: Path) -> None:
         hidden_entrypoint.rename(entrypoint)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build and validate the xagent Codex plugin.")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Build a complete plugin package at this untracked destination.",
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
-    stage_runtime()
-    validate_launcher()
-    print(f"staged xagent runtime in {ASSET_ROOT}")
+    args = parse_args()
+    if args.output is None:
+        stage_runtime()
+        package_root = PLUGIN_ROOT
+        message = f"staged xagent runtime in {ASSET_ROOT}"
+    else:
+        package_root = args.output.expanduser().resolve()
+        build_package(package_root)
+        message = f"staged xagent plugin package in {package_root}"
+    validate_launcher(package_root)
+    print(message)
     return 0
 
 
