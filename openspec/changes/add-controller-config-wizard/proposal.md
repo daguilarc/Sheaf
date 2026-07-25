@@ -10,7 +10,7 @@ Configuring a newly connected MIDI controller currently requires manually adding
 - Let a unique available controller open its wizard directly; let users choose among candidates when more than one is available.
 - Add an explicit `Ignore` path for available controllers. Ignored pairs persist as visible blacklisted controller records, never open either endpoint, and provide rename, configure, and remove-from-blacklist actions.
 - Add rename, delete, and wizard-based reconfiguration for existing controller profiles.
-- Generate and install an MF Twister profile from a six-row, two-column form. Its defaults are hold Reset, hold Random, hold Random Mod, Next Bank for slot 0, Start Transport, and Previous Bank for slot 0.
+- Generate and install an MF Twister profile with exactly six buttons total, arranged as two columns of three message/argument pairs. Its defaults are hold Reset, hold Random, hold Random Mod, Next Bank for slot 0, Start Transport, and Previous Bank for slot 0.
 - Verify the complete browser flow first with Playwright, then verify the same portable contracts and interactions through the JUCE backend.
 
 ## Capabilities
