@@ -255,7 +255,6 @@ const TWISTER_WIZARD_CHOICES = [
   "Clock",
   "Scene Select",
 ] as const;
-const TWISTER_SIDE_CCS = [8, 9, 10, 11, 12, 13] as const;
 
 function synthNode(id: string): string {
   return `[data-synth-node-id="${id}"]`;
@@ -270,7 +269,34 @@ function wizardArgument(page: Page, index: number) {
 }
 
 function controllerRow(page: Page, index: number) {
-  return page.locator(synthNode(`runtime.controllers.record.${index}`));
+  return page.locator(synthNode(`runtime.controllers.row.${index}`));
+}
+
+const CONTROLLER_SECTION = {
+  encoders: 0,
+  systemMessages: 1,
+} as const;
+
+const MAPPING_FIELD = {
+  addressType: 27,
+  channel: 0,
+  blockStartCc: 15,
+  blockEndCc: 16,
+  slotIx: 2,
+  blockStartPos: 17,
+  button: 14,
+  messageKind: 6,
+  messageArg: 7,
+} as const;
+
+function controllerSectionBody(page: Page, controllerIx: number, section: number) {
+  return page.locator(synthNode(`runtime.controllers.row.${controllerIx}.section.${section}.body`));
+}
+
+function mappingField(page: Page, controllerIx: number, section: number, rowIx: number, field: number) {
+  return page.locator(
+    synthNode(`runtime.controllers.row.${controllerIx}.section.${section}.body.mapping.${rowIx}.field.${field}`),
+  );
 }
 
 async function latestMidiEndpoints(page: Page): Promise<Array<{ identifier: string; name: string; kind: string }>> {
@@ -328,30 +354,90 @@ async function assertTwisterWizardColumnGeometry(page: Page): Promise<void> {
   expect(left2.y).toBeGreaterThan(left1.y);
 }
 
+async function expandControllerSection(page: Page, controllerIx: number, section: number): Promise<void> {
+  const sectionToggle = page.locator(synthNode(`runtime.controllers.row.${controllerIx}.section.${section}.toggle`));
+  if (await sectionToggle.count() === 0)
+    await page.locator(synthNode(`runtime.controllers.row.${controllerIx}.disclosure`)).click();
+  await expect(sectionToggle).toBeVisible();
+  if (await controllerSectionBody(page, controllerIx, section).count() === 0)
+    await sectionToggle.click();
+  await expect(controllerSectionBody(page, controllerIx, section)).toBeVisible();
+}
+
+async function expectMappingInputValue(
+  page: Page,
+  controllerIx: number,
+  section: number,
+  rowIx: number,
+  field: number,
+  value: string,
+): Promise<void> {
+  await expect(mappingField(page, controllerIx, section, rowIx, field).locator("input")).toHaveValue(value);
+}
+
+async function expectMappingSelectLabel(
+  page: Page,
+  controllerIx: number,
+  section: number,
+  rowIx: number,
+  field: number,
+  label: string,
+): Promise<void> {
+  await expect(mappingField(page, controllerIx, section, rowIx, field).locator("select")).toHaveValue(
+    await mappingField(page, controllerIx, section, rowIx, field)
+      .locator("select option")
+      .filter({ hasText: label })
+      .getAttribute("value") ?? "",
+  );
+}
+
+async function assertTwisterEncoderMappings(page: Page, controllerIx: number, slot: string): Promise<void> {
+  await expandControllerSection(page, controllerIx, CONTROLLER_SECTION.encoders);
+  await expect(controllerSectionBody(page, controllerIx, CONTROLLER_SECTION.encoders)
+    .locator('[data-synth-node-id*=".mapping."]')).toHaveCount(4);
+
+  await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.encoders, 0, MAPPING_FIELD.channel, "0");
+  await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.encoders, 0, MAPPING_FIELD.blockStartCc, "0");
+  await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.encoders, 0, MAPPING_FIELD.blockEndCc, "16");
+  await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.encoders, 0, MAPPING_FIELD.slotIx, slot);
+  await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.encoders, 0, MAPPING_FIELD.blockStartPos, "0");
+
+  await expectMappingSelectLabel(page, controllerIx, CONTROLLER_SECTION.encoders, 1, MAPPING_FIELD.addressType, "CC");
+  await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.encoders, 1, MAPPING_FIELD.channel, "1");
+  await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.encoders, 1, MAPPING_FIELD.blockStartCc, "0");
+  await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.encoders, 1, MAPPING_FIELD.blockEndCc, "16");
+  await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.encoders, 1, MAPPING_FIELD.slotIx, slot);
+  await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.encoders, 1, MAPPING_FIELD.blockStartPos, "0");
+}
+
+async function assertTwisterSideAssociations(page: Page, controllerIx: number, slot: string): Promise<void> {
+  await expandControllerSection(page, controllerIx, CONTROLLER_SECTION.systemMessages);
+  await expect(controllerSectionBody(page, controllerIx, CONTROLLER_SECTION.systemMessages)
+    .locator('[data-synth-node-id*=".mapping."]')).toHaveCount(6);
+  for (let side = 0; side < 6; side += 1) {
+    await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.systemMessages, side, MAPPING_FIELD.button, String(side));
+    await expectMappingSelectLabel(
+      page,
+      controllerIx,
+      CONTROLLER_SECTION.systemMessages,
+      side,
+      MAPPING_FIELD.messageKind,
+      TWISTER_WIZARD_DEFAULTS[side],
+    );
+  }
+  await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.systemMessages, 3, MAPPING_FIELD.messageArg, slot);
+  await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.systemMessages, 5, MAPPING_FIELD.messageArg, slot);
+}
+
 async function assertActiveTwisterRecord(page: Page, index: number, name: string, ordinal: number, slot: string): Promise<void> {
   const row = controllerRow(page, index);
-  await expect(row).toContainText(name);
-  await expect(row.locator(synthNode(`runtime.controllers.record.${index}.disposition`))).toHaveText("Active");
-  await expect(row.locator(synthNode(`runtime.controllers.record.${index}.wizard_id`))).toHaveText(/\S+/);
-  await expect(row.locator(synthNode(`runtime.controllers.record.${index}.input`))).toContainText(`twister-in-${ordinal}`);
-  await expect(row.locator(synthNode(`runtime.controllers.record.${index}.input`))).toContainText(TWISTER_DEVICE_NAME);
-  await expect(row.locator(synthNode(`runtime.controllers.record.${index}.output`))).toContainText(`twister-out-${ordinal}`);
-  await expect(row.locator(synthNode(`runtime.controllers.record.${index}.output`))).toContainText(TWISTER_DEVICE_NAME);
-
-  for (const section of ["turn", "push", "output"] as const) {
-    const mappings = row.locator(`[data-synth-node-id^="runtime.controllers.record.${index}.mapping.encoder.${section}."]`);
-    await expect(mappings).toHaveCount(16);
-    for (let encoder = 0; encoder < 16; encoder += 1)
-      await expect(row.locator(synthNode(`runtime.controllers.record.${index}.mapping.encoder.${section}.${encoder}`))).toContainText(`slot ${slot}`);
-  }
-
-  const sideMappings = row.locator(`[data-synth-node-id^="runtime.controllers.record.${index}.mapping.side."]`);
-  await expect(sideMappings).toHaveCount(6);
-  for (let side = 0; side < 6; side += 1) {
-    const mapping = row.locator(synthNode(`runtime.controllers.record.${index}.mapping.side.${side}`));
-    await expect(mapping).toContainText(`CC ${TWISTER_SIDE_CCS[side]}`);
-    await expect(mapping).toContainText(TWISTER_WIZARD_DEFAULTS[side]);
-  }
+  await expect(row.locator(synthNode(`runtime.controllers.row.${index}.name`))).toHaveText(name);
+  await expect(row.locator(synthNode(`runtime.controllers.row.${index}.kind`))).toHaveText("MF Twister");
+  await expect(row.locator(synthNode(`runtime.controllers.row.${index}.input`)).locator("select")).toHaveValue(`twister-in-${ordinal}`);
+  await expect(row.locator(synthNode(`runtime.controllers.row.${index}.output`)).locator("select")).toHaveValue(`twister-out-${ordinal}`);
+  await expect(row.locator(synthNode(`runtime.controllers.row.${index}.wizard_id`))).toHaveText(/\S+/);
+  await assertTwisterEncoderMappings(page, index, slot);
+  await assertTwisterSideAssociations(page, index, slot);
 }
 
 async function expectControllersWarning(page: Page, visible: boolean): Promise<void> {
@@ -444,7 +530,7 @@ test("controller wizard ignores an available row and restores warning after blac
   await expect(controllerRow(page, 0)).toContainText("twister-in-1");
   await expect(controllerRow(page, 0).locator('[data-synth-node-id*=".mapping."]')).toHaveCount(0);
   await expectControllersWarning(page, false);
-  await page.locator(synthNode("runtime.controllers.record.0.remove_blacklist")).click();
+  await page.locator(synthNode("runtime.controllers.row.0.remove_blacklist")).click();
   await expect(controllerRow(page, 0)).toHaveCount(0);
   await expect(page.locator(synthNode("runtime.controllers.available.0"))).toContainText(TWISTER_DISPLAY_NAME);
   await expectControllersWarning(page, true);
@@ -483,6 +569,9 @@ test("controller wizard stale and invalid submit preserve entered values", async
   await removeTwisterPair(page, 1);
   await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
   await expect(page.locator(synthNode("runtime.controllers.wizard.status"))).toContainText("reconnect");
+  await expect(page.locator(`${synthNode("runtime.controllers.wizard.encoder_slot")} input`)).toHaveValue("4");
+  await expect(wizardArgument(page, 0).locator("input")).toHaveValue("7");
+  await expect(wizardArgument(page, 1).locator("input")).toHaveValue("999999999999999999999999999999999999999");
   await expect(controllerRow(page, 0)).toHaveCount(0);
 });
 
@@ -494,11 +583,11 @@ test("controller wizard supports rename and delete on active records", async ({ 
   await page.locator(synthNode("runtime.sidebar.controllers")).click();
   await page.locator(synthNode("runtime.controllers.wizard.open")).click();
   await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
-  await page.locator(synthNode("runtime.controllers.record.0.rename")).click();
+  await page.locator(synthNode("runtime.controllers.row.0.rename")).click();
   await page.locator(`${synthNode("runtime.controllers.rename.name")} input`).fill("Studio Twister");
   await page.locator(synthNode("runtime.controllers.rename.submit")).click();
   await expect(controllerRow(page, 0)).toContainText("Studio Twister");
-  await page.locator(synthNode("runtime.controllers.record.0.delete")).click();
+  await page.locator(synthNode("runtime.controllers.row.0.delete")).click();
   await page.locator(synthNode("runtime.controllers.delete.confirm")).click();
   await expect(controllerRow(page, 0)).toHaveCount(0);
   await expectControllersWarning(page, true);
@@ -512,7 +601,7 @@ test("controller wizard retains dormant profile when an active record is blackli
   await page.locator(synthNode("runtime.sidebar.controllers")).click();
   await page.locator(synthNode("runtime.controllers.wizard.open")).click();
   await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
-  await page.locator(synthNode("runtime.controllers.record.0.blacklist")).click();
+  await page.locator(synthNode("runtime.controllers.row.0.blacklist")).click();
   await expect(controllerRow(page, 0)).toContainText("Blacklisted");
   await expect(controllerRow(page, 0).locator('[data-synth-node-id*=".mapping."]')).toHaveCount(0);
   await expect(controllerRow(page, 0)).toContainText("dormant profile retained");
@@ -526,7 +615,7 @@ test("controller wizard configures a blacklisted record through its wizard", asy
   await page.locator(synthNode("runtime.sidebar.controllers")).click();
   await page.locator(synthNode("runtime.controllers.available.0.ignore")).click();
   await expect(controllerRow(page, 0)).toContainText("Blacklisted");
-  await page.locator(synthNode("runtime.controllers.record.0.configure")).click();
+  await page.locator(synthNode("runtime.controllers.row.0.configure")).click();
   await assertTwisterWizardDefaults(page);
   await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
   await assertActiveTwisterRecord(page, 0, TWISTER_DISPLAY_NAME, 1, "0");
@@ -540,7 +629,7 @@ test("controller wizard reconfigure seeds exact-shape profiles", async ({ page }
   await page.locator(synthNode("runtime.sidebar.controllers")).click();
   await page.locator(synthNode("runtime.controllers.wizard.open")).click();
   await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
-  await page.locator(synthNode("runtime.controllers.record.0.reconfigure")).click();
+  await page.locator(synthNode("runtime.controllers.row.0.reconfigure")).click();
   await expect(page.locator(`${synthNode("runtime.controllers.wizard.encoder_slot")} input`)).toHaveValue("0");
   await expect(page.locator(synthNode("runtime.controllers.wizard.ignore"))).toHaveCount(0);
   await page.locator(`${synthNode("runtime.controllers.wizard.encoder_slot")} input`).fill("4");
@@ -556,13 +645,15 @@ test("controller wizard reconfigure warns and replaces incompatible profiles", a
   await page.locator(synthNode("runtime.sidebar.controllers")).click();
   await page.locator(synthNode("runtime.controllers.wizard.open")).click();
   await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
-  await page.locator(synthNode("runtime.controllers.record.0.mapping.add_extra")).click();
-  await page.locator(synthNode("runtime.controllers.record.0.reconfigure")).click();
+  await expandControllerSection(page, 0, CONTROLLER_SECTION.systemMessages);
+  await page.locator(synthNode("runtime.controllers.row.0.section.1.body.header.0.add_single")).click();
+  await page.locator(synthNode("runtime.controllers.row.0.reconfigure")).click();
   await expect(page.locator(synthNode("runtime.controllers.wizard.warning"))).toContainText("replaces the whole profile");
   await expect(page.locator(`${synthNode("runtime.controllers.wizard.encoder_slot")} input`)).toHaveValue("0");
   await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
   await assertActiveTwisterRecord(page, 0, TWISTER_DISPLAY_NAME, 1, "0");
-  await expect(controllerRow(page, 0).locator(synthNode("runtime.controllers.record.0.mapping.extra"))).toHaveCount(0);
+  await expect(controllerSectionBody(page, 0, CONTROLLER_SECTION.systemMessages)
+    .locator('[data-synth-node-id*=".mapping."]')).toHaveCount(6);
 });
 
 test("real fake-app WASM renders and refreshes the shared runtime shell", async ({ page }) => {
