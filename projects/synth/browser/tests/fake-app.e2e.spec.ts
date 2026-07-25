@@ -80,10 +80,11 @@ async function installRealFakeApp(page: Page): Promise<void> {
     root.dataset.synthAuto = "false";
     root.dataset.synthLauncher = "false";
     const main = await (new Function("return import('/dist/src/main.js?task4-fake')")() as Promise<any>);
+    const worker = await (new Function("return import('/dist/src/worker.js?task4-fake')")() as Promise<any>);
+    const packageLoader = await (new Function("return import('/dist/src/package-loader.js?task4-fake')")() as Promise<any>);
     const { decodeCommandBuffer } = await (new Function("return import('/dist/src/protocol.js')")() as Promise<any>);
     const { materializePackage } = await (new Function("return import('/dist/src/package-loader.js')")() as Promise<any>);
     const { ActivationLease } = await (new Function("return import('/dist/src/activation.js')")() as Promise<any>);
-    const client = main.createDirectRuntimeClient();
     const observations = {
       commands: [] as Array<Record<string, unknown> & { type: string; name?: string; value?: string }>,
       responses: [] as Array<{ type: string; error?: string }>,
@@ -101,6 +102,58 @@ async function installRealFakeApp(page: Page): Promise<void> {
       materializations: 0,
       packageDisposals: 0,
     };
+
+    const createObservedRuntimeClient = () => {
+      const statusHandlers = new Set<(response: any) => void>();
+      const runtime = new worker.BrowserRuntimeWorker(async (materialized: any) => {
+        const imported = await (new Function("url", "return import(url)")(materialized.entryUrl) as Promise<any>);
+        const factory = imported.default ?? imported.createSynthBrowserModule;
+        if (!factory) throw new Error("runtime module does not export an Emscripten factory");
+        const module = await factory({
+          locateFile(requestedPath: string) {
+            const normalized = packageLoader.normalizeMaterializedPath(
+              requestedPath,
+              `Emscripten requested path ${String(requestedPath)}`,
+            );
+            const url = materialized.locateFile[normalized];
+            if (typeof url !== "string" || url.length === 0)
+              throw new Error(`Emscripten requested unmapped package path ${requestedPath}; file was not materialized`);
+            return url;
+          },
+          mainScriptUrlOrBlob: materialized.mainScriptUrlOrBlob,
+        });
+        const idbfs = module.IDBFS ?? module.FS.filesystems?.IDBFS;
+        if (!idbfs) throw new Error("runtime module does not include IDBFS");
+        (window as any).__task4FakeRuntimeFs = module.FS;
+        return {
+          ...worker.emscriptenRuntimeFacade(module),
+          filesystem: {
+            filesystems: { IDBFS: idbfs },
+            mkdir: (path: string) => module.FS.mkdir(path),
+            mount: (type: unknown, options: object, path: string) => module.FS.mount(type, options, path),
+            syncfs: (populate: boolean, complete: (error?: Error) => void) => module.FS.syncfs(populate, complete),
+          },
+        };
+      }, undefined, (response: any) => statusHandlers.forEach((handler) => handler(response)));
+      let queue: Promise<void> = Promise.resolve();
+      const request = (command: any) => {
+        const run = () => runtime.handle(command);
+        const response = queue.then(run, run);
+        queue = response.then(() => {}, () => {});
+        return response;
+      };
+      return {
+        request,
+        startAudioWorklet: async (context?: AudioContext) => {
+          const response = await runtime.startAudioWorklet(context);
+          if (response.type === "ok") return { started: true };
+          return { started: false, diagnostic: response.type === "error" ? response.error : "audio-worklet-start-failed" };
+        },
+        onStatus: (handler: (response: any) => void) => { statusHandlers.add(handler); },
+        terminate: async () => { await request({ type: "destroy" }); },
+      };
+    };
+    const client = createObservedRuntimeClient();
     const observingClient = {
       ...client,
       async request(command: { type: string; name?: string; value?: string }) {
@@ -203,6 +256,7 @@ async function stopRealFakeApp(page: Page): Promise<void> {
     if (state.resources.closes !== 1 || state.resources.nodeDisconnects !== 1 || state.resources.packageDisposals !== 1)
       throw new Error(`runtime resources were not released exactly once: ${JSON.stringify(state.resources)}`);
     delete (window as any).__task4Fake;
+    delete (window as any).__task4FakeRuntimeFs;
   });
 }
 
@@ -410,6 +464,55 @@ async function assertTwisterEncoderMappings(page: Page, controllerIx: number, sl
   await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.encoders, 1, MAPPING_FIELD.blockStartPos, "0");
 }
 
+async function savedRuntimeConfig(page: Page): Promise<any | undefined> {
+  return page.evaluate(() => {
+    const fs = (window as any).__task4FakeRuntimeFs;
+    if (!fs) throw new Error("runtime filesystem is unavailable");
+    try {
+      return JSON.parse(fs.readFile("/data/config.json", { encoding: "utf8" }));
+    } catch {
+      return undefined;
+    }
+  });
+}
+
+function expectedEncoderInputMappings(channel: number, slot: string) {
+  return [...Array(16).keys()].map((position) => ({
+    control: { channel, cc: position },
+    slotIx: Number(slot),
+    position,
+  }));
+}
+
+function expectedEncoderOutputMappings(slot: string) {
+  return [...Array(16).keys()].map((position) => ({
+    slotIx: Number(slot),
+    position,
+    cc: position,
+  }));
+}
+
+async function assertSavedTwisterEncoderMappings(page: Page, controllerIx: number, slot: string): Promise<void> {
+  await page.locator(synthNode("runtime.controllers.back")).click();
+  await expect(page.locator(synthNode("fake-browser-root"))).toBeVisible();
+  await expect.poll(async () => {
+    const config = await savedRuntimeConfig(page);
+    const profile = config?.midiInstrument?.controllers?.[controllerIx]?.profile;
+    return profile === undefined ? undefined : {
+      turns: profile.encoderInput?.turns,
+      pushes: profile.encoderInput?.pushes,
+      outputProtocol: profile.encoderOutput?.protocol,
+      outputs: profile.encoderOutput?.mappings,
+    };
+  }).toEqual({
+    turns: expectedEncoderInputMappings(0, slot),
+    pushes: expectedEncoderInputMappings(1, slot),
+    outputProtocol: "twister",
+    outputs: expectedEncoderOutputMappings(slot),
+  });
+  await page.locator(synthNode("runtime.sidebar.controllers")).click();
+}
+
 async function assertTwisterSideAssociations(page: Page, controllerIx: number, slot: string): Promise<void> {
   await expandControllerSection(page, controllerIx, CONTROLLER_SECTION.systemMessages);
   await expect(controllerSectionBody(page, controllerIx, CONTROLLER_SECTION.systemMessages)
@@ -438,6 +541,7 @@ async function assertActiveTwisterRecord(page: Page, index: number, name: string
   await expect(row.locator(synthNode(`runtime.controllers.row.${index}.wizard_id`))).toHaveText(/\S+/);
   await assertTwisterEncoderMappings(page, index, slot);
   await assertTwisterSideAssociations(page, index, slot);
+  await assertSavedTwisterEncoderMappings(page, index, slot);
 }
 
 async function expectControllersWarning(page: Page, visible: boolean): Promise<void> {
