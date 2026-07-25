@@ -71,9 +71,15 @@ Write the review prompt with the scope and output shape:
 
 ## Worker Routing
 
-Use Cursor through xagent when a competent worker pass is useful. Treat
-Composer 2.5 as a solid worker for straightforward implementation, cleanup,
-alternate drafts, or exploratory passes.
+Use Cursor through xagent when a competent worker pass is useful:
+
+```shell
+XAGENT_PLUGIN_ROOT="${HOME}/.agents/plugins/plugins/xagent"
+"${XAGENT_PLUGIN_ROOT}/scripts/xagent" run --harness cursor --model composer-2.5 --subagent "<worker prompt>"
+```
+
+Treat Composer 2.5 as a solid worker for straightforward implementation,
+cleanup, alternate drafts, or exploratory passes.
 
 For the trickiest implementation tasks, prefer a GPT or Codex-backed worker
 agent instead of Composer. Use the strongest available GPT/Codex worker when
