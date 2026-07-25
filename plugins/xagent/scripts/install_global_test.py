@@ -12,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from plugins.xagent.scripts import install_global
+from plugins.xagent.scripts import install_global, package_xagent
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -42,6 +42,24 @@ def tree_snapshot(root: Path) -> dict[str, tuple[int, str]]:
             hashlib.sha256(path.read_bytes()).hexdigest(),
         )
     return snapshot
+
+
+class PackageXagentOutputTests(unittest.TestCase):
+    def test_non_empty_output_is_rejected_without_deleting_contents(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="xagent-package-output-test-") as tempdir:
+            destination = Path(tempdir) / "existing-output"
+            destination.mkdir()
+            sentinel = destination / "keep.txt"
+            sentinel.write_text("user data\n", encoding="utf-8")
+
+            with (
+                mock.patch.object(package_xagent, "copy_runtime"),
+                self.assertRaisesRegex(RuntimeError, "non-empty"),
+            ):
+                package_xagent.build_package(destination)
+
+            self.assertEqual("user data\n", sentinel.read_text(encoding="utf-8"))
+            self.assertEqual(["keep.txt"], [path.name for path in destination.iterdir()])
 
 
 class GlobalPluginInstallTests(unittest.TestCase):

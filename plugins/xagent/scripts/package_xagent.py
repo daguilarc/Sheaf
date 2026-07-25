@@ -48,8 +48,14 @@ def copy_runtime(asset_root: Path) -> None:
 def build_package(destination: Path) -> None:
     destination = destination.resolve()
     if destination.exists():
-        shutil.rmtree(destination)
-    destination.mkdir(parents=True)
+        if not destination.is_dir():
+            raise RuntimeError(f"package output destination is not a directory: {destination}")
+        if any(destination.iterdir()):
+            raise RuntimeError(
+                f"refusing to use non-empty package output destination: {destination}"
+            )
+    else:
+        destination.mkdir(parents=True)
     for directory in PACKAGE_DIRECTORIES:
         shutil.copytree(
             PLUGIN_ROOT / directory,
