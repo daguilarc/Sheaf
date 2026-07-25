@@ -353,6 +353,17 @@ function mappingField(page: Page, controllerIx: number, section: number, rowIx: 
   );
 }
 
+async function expectMappingRowCount(page: Page, controllerIx: number, section: number, count: number): Promise<void> {
+  const rowIdPattern = `^runtime\\.controllers\\.row\\.${controllerIx}\\.section\\.${section}\\.body\\.mapping\\.\\d+$`;
+  await expect.poll(async () =>
+    controllerSectionBody(page, controllerIx, section)
+      .locator("[data-synth-node-id]")
+      .evaluateAll((nodes, pattern) =>
+        nodes.filter((node) => new RegExp(pattern).test((node as HTMLElement).dataset.synthNodeId ?? "")).length,
+      rowIdPattern),
+  ).toBe(count);
+}
+
 async function latestMidiEndpoints(page: Page): Promise<Array<{ identifier: string; name: string; kind: string }>> {
   return page.evaluate(() => {
     const commands = ((window as any).__task4Fake?.observations.commands ?? []) as Array<any>;
@@ -447,8 +458,7 @@ async function expectMappingSelectLabel(
 
 async function assertTwisterEncoderMappings(page: Page, controllerIx: number, slot: string): Promise<void> {
   await expandControllerSection(page, controllerIx, CONTROLLER_SECTION.encoders);
-  await expect(controllerSectionBody(page, controllerIx, CONTROLLER_SECTION.encoders)
-    .locator('[data-synth-node-id*=".mapping."]')).toHaveCount(4);
+  await expectMappingRowCount(page, controllerIx, CONTROLLER_SECTION.encoders, 4);
 
   await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.encoders, 0, MAPPING_FIELD.channel, "0");
   await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.encoders, 0, MAPPING_FIELD.blockStartCc, "0");
@@ -512,8 +522,7 @@ async function assertSavedTwisterEncoderMappings(page: Page, controllerIx: numbe
 
 async function assertTwisterSideAssociations(page: Page, controllerIx: number, slot: string): Promise<void> {
   await expandControllerSection(page, controllerIx, CONTROLLER_SECTION.systemMessages);
-  await expect(controllerSectionBody(page, controllerIx, CONTROLLER_SECTION.systemMessages)
-    .locator('[data-synth-node-id*=".mapping."]')).toHaveCount(6);
+  await expectMappingRowCount(page, controllerIx, CONTROLLER_SECTION.systemMessages, 6);
   for (let side = 0; side < 6; side += 1) {
     await expectMappingInputValue(page, controllerIx, CONTROLLER_SECTION.systemMessages, side, MAPPING_FIELD.button, String(side));
     await expectMappingSelectLabel(
@@ -753,8 +762,7 @@ test("controller wizard reconfigure warns and replaces incompatible profiles", a
   await expect(page.locator(`${synthNode("runtime.controllers.wizard.encoder_slot")} input`)).toHaveValue("0");
   await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
   await assertActiveTwisterRecord(page, 0, TWISTER_DISPLAY_NAME, 1, "0");
-  await expect(controllerSectionBody(page, 0, CONTROLLER_SECTION.systemMessages)
-    .locator('[data-synth-node-id*=".mapping."]')).toHaveCount(6);
+  await expectMappingRowCount(page, 0, CONTROLLER_SECTION.systemMessages, 6);
 });
 
 test("real fake-app WASM renders and refreshes the shared runtime shell", async ({ page }) => {
