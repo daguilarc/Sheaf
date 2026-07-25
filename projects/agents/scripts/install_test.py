@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -27,6 +29,22 @@ def hook_outputs(outputs: list[object], codex_home: Path) -> list[object]:
         codex_home / "hooks.json",
     }
     return [output for output in outputs if output.path in wanted]
+
+
+def copied_repo_fixture(tempdir: str) -> Path:
+    repo_root = Path(tempdir) / "repo"
+    agents_dest = repo_root / "projects" / "agents"
+    shutil.copytree(
+        REPO_ROOT / "projects" / "agents",
+        agents_dest,
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    return repo_root
+
+
+def run_main(*args: str) -> int:
+    with mock.patch.object(sys, "argv", ["install.py", *args]):
+        return install.main()
 
 
 class CodexHookOutputTests(unittest.TestCase):
@@ -95,31 +113,53 @@ class CodexHookOutputTests(unittest.TestCase):
             self.assertTrue(config_path.exists())
 
 
-class CodexOnlySkillOutputTests(unittest.TestCase):
-    skill_id = "xagent-subagents"
-
-    def test_repo_outputs_include_xagent_subagents_only_for_codex(self) -> None:
+class SkillScopeOutputTests(unittest.TestCase):
+    def test_repo_outputs_include_only_sheaf_skills(self) -> None:
         outputs = install.build_repo_outputs(REPO_ROOT)
         paths = {output.path.relative_to(REPO_ROOT) for output in outputs}
+        _global_source, global_skills, sheaf_skills = install.read_sources(REPO_ROOT)
 
-        self.assertIn(
-            Path(".codex/skills") / self.skill_id / "SKILL.md",
-            paths,
-        )
-        self.assertNotIn(
-            Path(".claude/skills") / self.skill_id / "SKILL.md",
-            paths,
-        )
-        self.assertNotIn(
-            Path(".cursor/skills") / self.skill_id / "SKILL.md",
-            paths,
-        )
-        self.assertNotIn(
-            Path(".pi/skills") / self.skill_id / "SKILL.md",
-            paths,
-        )
+        self.assertIn(Path("AGENTS.md"), paths)
+        self.assertIn(Path("CLAUDE.md"), paths)
+        for skill in sheaf_skills:
+            for target in skill.targets:
+                self.assertIn(
+                    install.REPO_TARGET_DIRS[target] / skill.skill_id / "SKILL.md",
+                    paths,
+                )
+        for skill in global_skills:
+            for target_dir in install.REPO_TARGET_DIRS.values():
+                self.assertNotIn(target_dir / skill.skill_id / "SKILL.md", paths)
 
-    def test_global_outputs_include_xagent_subagents_only_for_codex(self) -> None:
+    def test_repo_outputs_honor_synthetic_codex_only_sheaf_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo_root = copied_repo_fixture(tempdir)
+            skill_root = repo_root / "projects" / "agents" / "sheaf" / "skills" / "codex-only"
+            skill_root.mkdir(parents=True)
+            (skill_root / "skill.yaml").write_text(
+                "\n".join(
+                    [
+                        "id: codex-only",
+                        "name: codex-only",
+                        "description: Synthetic Codex-only Sheaf skill.",
+                        "targets:",
+                        "  - codex",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (skill_root / "SKILL.md").write_text("# Codex Only\n", encoding="utf-8")
+
+            outputs = install.build_repo_outputs(repo_root)
+            paths = {output.path.relative_to(repo_root) for output in outputs}
+
+            self.assertIn(Path(".codex/skills/codex-only/SKILL.md"), paths)
+            self.assertNotIn(Path(".claude/skills/codex-only/SKILL.md"), paths)
+            self.assertNotIn(Path(".cursor/skills/codex-only/SKILL.md"), paths)
+            self.assertNotIn(Path(".pi/skills/codex-only/SKILL.md"), paths)
+
+    def test_global_outputs_include_only_non_plugin_global_skills(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             home = (Path(tempdir) / "home").resolve()
             codex_home = (Path(tempdir) / "codex-home").resolve()
@@ -129,27 +169,84 @@ class CodexOnlySkillOutputTests(unittest.TestCase):
                 codex_home=codex_home,
             )
             paths = {output.path for output in outputs}
+            _global_source, global_skills, _sheaf_skills = install.read_sources(REPO_ROOT)
+            plugin_owned_global_ids = {"xagent-subagents"}
 
-            self.assertIn(
-                home / ".agents" / "skills" / self.skill_id / "SKILL.md",
-                paths,
+            for skill in global_skills:
+                expected_paths = []
+                if "claude" in skill.targets:
+                    expected_paths.append(
+                        home / ".claude" / "skills" / skill.skill_id / "SKILL.md"
+                    )
+                if "cursor" in skill.targets:
+                    expected_paths.append(
+                        home / ".cursor" / "skills" / skill.skill_id / "SKILL.md"
+                    )
+                if "pi" in skill.targets:
+                    expected_paths.append(
+                        home / ".pi" / "skills" / skill.skill_id / "SKILL.md"
+                    )
+                if "codex" in skill.targets:
+                    expected_paths.extend(
+                        [
+                            home / ".agents" / "skills" / skill.skill_id / "SKILL.md",
+                            codex_home / "skills" / skill.skill_id / "SKILL.md",
+                        ]
+                    )
+
+                for path in expected_paths:
+                    if skill.skill_id in plugin_owned_global_ids:
+                        self.assertNotIn(path, paths)
+                    else:
+                        self.assertIn(path, paths)
+
+
+class ObsoleteRepoOutputTests(unittest.TestCase):
+    def test_repo_obsolete_outputs_cover_all_global_ids_and_retired_xagent(self) -> None:
+        outputs = install.build_obsolete_repo_outputs(REPO_ROOT)
+        paths = {output.path.relative_to(REPO_ROOT) for output in outputs}
+        _global_source, global_skills, _sheaf_skills = install.read_sources(REPO_ROOT)
+        obsolete_ids = {skill.skill_id for skill in global_skills}
+        obsolete_ids.add("xagent-subagents")
+
+        self.assertEqual(
+            {
+                target_dir / skill_id / "SKILL.md"
+                for skill_id in obsolete_ids
+                for target_dir in install.REPO_TARGET_DIRS.values()
+            },
+            paths,
+        )
+
+    def test_repo_install_check_clean_handle_only_managed_obsolete_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo_root = copied_repo_fixture(tempdir)
+            managed_obsolete = repo_root / ".claude" / "skills" / "about-me" / "SKILL.md"
+            unmanaged_obsolete = repo_root / ".cursor" / "skills" / "about-me" / "SKILL.md"
+            managed_obsolete.parent.mkdir(parents=True)
+            unmanaged_obsolete.parent.mkdir(parents=True)
+            managed_obsolete.write_text(
+                "<!-- sheaf-agents-managed: DO NOT EDIT; source=old -->\n",
+                encoding="utf-8",
             )
-            self.assertIn(
-                codex_home / "skills" / self.skill_id / "SKILL.md",
-                paths,
+            unmanaged_obsolete.write_text("personal skill\n", encoding="utf-8")
+
+            self.assertEqual(
+                0,
+                run_main("install", "--scope", "repo", "--repo-root", str(repo_root)),
             )
-            self.assertNotIn(
-                home / ".claude" / "skills" / self.skill_id / "SKILL.md",
-                paths,
+            self.assertFalse(managed_obsolete.exists())
+            self.assertTrue(unmanaged_obsolete.exists())
+
+            self.assertEqual(
+                0,
+                run_main("check", "--scope", "repo", "--repo-root", str(repo_root)),
             )
-            self.assertNotIn(
-                home / ".cursor" / "skills" / self.skill_id / "SKILL.md",
-                paths,
+            self.assertEqual(
+                0,
+                run_main("clean", "--scope", "repo", "--repo-root", str(repo_root)),
             )
-            self.assertNotIn(
-                home / ".pi" / "skills" / self.skill_id / "SKILL.md",
-                paths,
-            )
+            self.assertTrue(unmanaged_obsolete.exists())
 
 
 if __name__ == "__main__":

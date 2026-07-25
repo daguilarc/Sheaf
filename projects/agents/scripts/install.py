@@ -14,7 +14,8 @@ from pathlib import Path
 
 SUPPORTED_TARGETS = ("claude", "cursor", "pi", "codex")
 SCOPES = ("repo", "global", "all")
-OBSOLETE_GLOBAL_SKILL_IDS = ("smoke-test",)
+RETIRED_REPO_SKILL_IDS = ("xagent-subagents",)
+OBSOLETE_GLOBAL_SKILL_IDS = ("smoke-test", "xagent-subagents")
 REPO_TARGET_DIRS = {
     "claude": Path(".claude/skills"),
     "cursor": Path(".cursor/skills"),
@@ -227,13 +228,13 @@ def read_sources(repo_root: Path) -> tuple[Path, list[Skill], list[Skill]]:
 
 
 def build_repo_outputs(repo_root: Path) -> list[Output]:
-    global_source, global_skills, sheaf_skills = read_sources(repo_root)
+    global_source, _global_skills, sheaf_skills = read_sources(repo_root)
     outputs: list[Output] = []
     global_content = global_content_for(global_source, repo_root)
     outputs.append(Output(repo_root / "AGENTS.md", global_content))
     outputs.append(Output(repo_root / "CLAUDE.md", global_content))
 
-    for skill in [*global_skills, *sheaf_skills]:
+    for skill in sheaf_skills:
         rendered = render_skill(skill, repo_root)
         for target in skill.targets:
             outputs.append(
@@ -244,6 +245,17 @@ def build_repo_outputs(repo_root: Path) -> list[Output]:
             )
 
     return outputs
+
+
+def build_obsolete_repo_outputs(repo_root: Path) -> list[Output]:
+    _global_source, global_skills, _sheaf_skills = read_sources(repo_root)
+    skill_ids = {skill.skill_id for skill in global_skills}
+    skill_ids.update(RETIRED_REPO_SKILL_IDS)
+    return [
+        Output(repo_root / target_dir / skill_id / "SKILL.md", "")
+        for skill_id in sorted(skill_ids)
+        for target_dir in REPO_TARGET_DIRS.values()
+    ]
 
 
 def codex_home_for(home: Path, explicit_codex_home: Path | None) -> Path:
@@ -272,6 +284,8 @@ def build_global_outputs(
     outputs = [Output(path, global_content) for path in instruction_paths]
 
     for skill in global_skills:
+        if skill.skill_id in OBSOLETE_GLOBAL_SKILL_IDS:
+            continue
         rendered = render_skill(skill, repo_root)
         if "claude" in skill.targets:
             outputs.append(
@@ -486,10 +500,14 @@ def main() -> int:
         codex_home=args.codex_home,
     )
     obsolete_outputs: list[Output] = []
+    if args.scope in ("repo", "all"):
+        obsolete_outputs.extend(build_obsolete_repo_outputs(repo_root))
     if args.scope in ("global", "all"):
-        obsolete_outputs = build_obsolete_global_outputs(
-            home=args.home,
-            codex_home=args.codex_home,
+        obsolete_outputs.extend(
+            build_obsolete_global_outputs(
+                home=args.home,
+                codex_home=args.codex_home,
+            )
         )
 
     if args.mode == "install":

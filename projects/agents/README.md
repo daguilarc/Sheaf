@@ -49,16 +49,17 @@ targets:
 
 Supported targets are `claude`, `cursor`, `pi`, and `codex`.
 
-Skills may target any subset of supported harnesses. For example, a Codex-only
-skill declares only:
+Skills may target any subset of supported harnesses. For example, a Sheaf-only
+Codex skill declares only:
 
 ```yaml
 targets:
   - codex
 ```
 
-Repo-local installs render that skill only under `.codex/skills/`. User-global
-installs render it only to the documented Codex user skill locations:
+Repo-local installs render that Sheaf skill only under `.codex/skills/`.
+User-global installs render shared Codex skills only to the documented Codex
+user skill locations:
 `~/.agents/skills/` and `$CODEX_HOME/skills/`.
 
 ## Commands
@@ -91,8 +92,9 @@ make agents-clean-global
 
 Default `install`, `check`, and `clean` operate on both repo-local and
 user-global outputs. The `*-repo` and `*-global` targets limit the scope.
-Repo-local outputs include both global skills and Sheaf-only skills. User-global
-outputs include only global skills.
+Repo-local outputs contain repository instructions and Sheaf-only skills.
+Shared skills install only through agents-install-global.
+Plugin-owned skills such as xagent-subagents are excluded from the agents installer.
 
 User-global outputs are written to:
 
