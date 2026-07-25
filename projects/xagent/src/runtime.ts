@@ -27,6 +27,7 @@ export type RunSessionOptions = {
   readonly mode: OutputMode;
   readonly model?: string;
   readonly thinkingLevel?: ThinkingLevel;
+  readonly permissionMode?: string;
   readonly repoRoot: string;
   readonly logRoot?: string;
   readonly cwd: string;
@@ -256,6 +257,7 @@ async function startSession(
     cwd: options.cwd,
     model: options.adapter.capabilities.forwardsModel ? options.model : undefined,
     thinkingLevel: options.adapter.capabilities.forwardsThinkingLevel ? options.thinkingLevel : undefined,
+    permissionMode: options.permissionMode,
   });
 }
 

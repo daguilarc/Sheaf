@@ -22,6 +22,7 @@ export type HarnessStartOptions = {
   readonly cwd: string;
   readonly model?: string;
   readonly thinkingLevel?: ThinkingLevel;
+  readonly permissionMode?: string;
 };
 
 export type AdapterTurnContext = {

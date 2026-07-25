@@ -242,6 +242,12 @@ def _invoke_xagent(work_dir: Path, harness: str, model: str, prompt_path: Path, 
         "--model", model,
         "--subagent", pointer,
     ]
+    if harness == "claude_code":
+        # Headless scorers must Write their staged output with no human
+        # attached to answer an approval prompt; xagent's default
+        # ("--permission-mode auto") empirically blocks Write for some
+        # models (haiku), stranding the labels in the transcript.
+        cmd.extend(["--permission-mode", "acceptEdits"])
     log_path = work_dir / "xagent.log"
     with open(os.devnull, "rb") as devnull, open(log_path, "wb") as log_f:
         result = subprocess.run(cmd, stdin=devnull, stdout=log_f, stderr=subprocess.STDOUT, cwd=str(work_dir), check=False)

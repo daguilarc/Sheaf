@@ -22,6 +22,7 @@ export type CliCommand =
       mode: OutputMode;
       model?: string;
       thinkingLevel?: ThinkingLevel;
+      permissionMode?: string;
       initialMessage?: string;
     }
   | { command: "list" }
@@ -85,6 +86,7 @@ export async function main(
       mode: command.mode,
       model: command.model,
       thinkingLevel: command.thinkingLevel,
+      permissionMode: command.permissionMode,
       repoRoot: cwd,
       logRoot,
       cwd,
@@ -176,6 +178,7 @@ function parseRunArgs(argv: string[]): CliCommand {
   let harness: HarnessName | undefined;
   let model: string | undefined;
   let thinkingLevel: ThinkingLevel | undefined;
+  let permissionMode: string | undefined;
   let mode: OutputMode | undefined;
   const initialMessageParts: string[] = [];
   let positionalOnly = false;
@@ -221,6 +224,15 @@ function parseRunArgs(argv: string[]): CliCommand {
       continue;
     }
 
+    if (flag === "--permission-mode") {
+      if (permissionMode !== undefined) {
+        throw new Error("xagent run accepts --permission-mode at most once.");
+      }
+      permissionMode = readFlagValue(argv, index, flag);
+      index += 1;
+      continue;
+    }
+
     if (flag === "--thinking-level") {
       if (thinkingLevel !== undefined) {
         throw new Error("xagent run accepts --thinking-level at most once.");
@@ -258,6 +270,7 @@ function parseRunArgs(argv: string[]): CliCommand {
     mode,
     model,
     thinkingLevel,
+    permissionMode,
     initialMessage: initialMessageParts.length > 0 ? initialMessageParts.join(" ") : undefined,
   };
 }
