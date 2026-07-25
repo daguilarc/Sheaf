@@ -1,5 +1,0 @@
-id: xagent-subagents
-name: xagent-subagents
-description: Use xagent from Codex to launch cross-provider review and worker subagents, especially Claude review passes and Cursor/GPT worker comparisons.
-targets:
-  - codex

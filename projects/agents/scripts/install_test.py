@@ -114,6 +114,27 @@ class CodexHookOutputTests(unittest.TestCase):
 
 
 class SkillScopeOutputTests(unittest.TestCase):
+    def test_xagent_skill_is_not_an_agents_source_or_desired_output(self) -> None:
+        self.assertFalse(
+            (REPO_ROOT / "projects/agents/global/skills/xagent-subagents").exists()
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            output_sets = [
+                install.build_repo_outputs(REPO_ROOT),
+                install.build_global_outputs(
+                    REPO_ROOT,
+                    home=Path(tempdir) / "home",
+                    codex_home=Path(tempdir) / "codex-home",
+                ),
+            ]
+            for outputs in output_sets:
+                for output in outputs:
+                    self.assertNotEqual(
+                        Path("xagent-subagents/SKILL.md"),
+                        Path(*output.path.parts[-2:]),
+                    )
+
     def test_repo_outputs_include_only_sheaf_skills(self) -> None:
         outputs = install.build_repo_outputs(REPO_ROOT)
         paths = {output.path.relative_to(REPO_ROOT) for output in outputs}

@@ -9,24 +9,27 @@ Use this skill when Codex needs an external review opinion, a cross-provider
 second pass, or a delegated worker through packaged `xagent`.
 
 Prefer the xagent Codex plugin launcher instead of assuming a bare `xagent`
-binary exists on `PATH`. In this repository, the source launcher is:
+binary exists on `PATH`. Before invocation, `codex plugin list` must report
+the xagent plugin installed and enabled at
+`$HOME/.agents/plugins/plugins/xagent`.
 
 ```shell
-plugins/xagent/scripts/xagent
+XAGENT_PLUGIN_ROOT="${HOME}/.agents/plugins/plugins/xagent"
+"${XAGENT_PLUGIN_ROOT}/scripts/xagent" run --harness claude_code --model opus --subagent "<review prompt>"
 ```
 
-When xagent is installed as a Codex plugin in another repository, resolve the
-launcher from the installed plugin package and run it from the active worktree
-root. The xagent executable code comes from the plugin assets; the child
-harness working directory belongs to the active repository. Packaged xagent
-logs default to `/Users/joyo/Sheaf/data/xagent`; set `XAGENT_LOG_ROOT` only
-when intentionally validating or isolating logs somewhere else.
+Run the command with the active repository as the working directory. The xagent
+executable code comes from the installed plugin package; the child harness
+working directory belongs to the active repository. Packaged xagent logs default
+to `/Users/joyo/Sheaf/data/xagent`; set `XAGENT_LOG_ROOT` only when
+intentionally validating or isolating logs somewhere else.
 
 Sandboxed agents can invoke xagent even when they cannot complete a real run.
 If the central log root cannot be written, xagent reports a structured
-`log_root_unavailable` error. If the selected child harness lacks auth,
-network, process, or cache permissions, xagent reports the harness-specific
-failure. Surface those failures instead of silently switching tools.
+`log_root_unavailable` error. If the launcher, requested model, selected child
+harness, or supporting infrastructure lacks auth, network, process, or cache
+permissions, xagent reports the harness-specific failure. Surface those
+failures instead of silently switching tools or bypassing the plugin package.
 
 When xagent launches the Codex harness, it passes Codex's explicit
 `--dangerously-bypass-approvals-and-sandbox` flag so the xagent-spawned Codex
@@ -42,7 +45,8 @@ silently fall back to a different agent path.
 For review tasks, prefer a Claude-backed reviewer through xagent:
 
 ```shell
-plugins/xagent/scripts/xagent run --harness claude_code --model opus --subagent "<review prompt>"
+XAGENT_PLUGIN_ROOT="${HOME}/.agents/plugins/plugins/xagent"
+"${XAGENT_PLUGIN_ROOT}/scripts/xagent" run --harness claude_code --model opus --subagent "<review prompt>"
 ```
 
 Pick the model by review depth:
@@ -67,14 +71,9 @@ Write the review prompt with the scope and output shape:
 
 ## Worker Routing
 
-Use Cursor through xagent when a competent worker pass is useful:
-
-```shell
-plugins/xagent/scripts/xagent run --harness cursor --model composer-2.5 --subagent "<worker prompt>"
-```
-
-Treat Composer 2.5 as a solid worker for straightforward implementation,
-cleanup, alternate drafts, or exploratory passes.
+Use Cursor through xagent when a competent worker pass is useful. Treat
+Composer 2.5 as a solid worker for straightforward implementation, cleanup,
+alternate drafts, or exploratory passes.
 
 For the trickiest implementation tasks, prefer a GPT or Codex-backed worker
 agent instead of Composer. Use the strongest available GPT/Codex worker when

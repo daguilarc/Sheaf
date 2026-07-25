@@ -96,6 +96,25 @@ Repo-local outputs contain repository instructions and Sheaf-only skills.
 Shared skills install only through agents-install-global.
 Plugin-owned skills such as xagent-subagents are excluded from the agents installer.
 
+## Skill Ownership
+
+```text
+Shared skills: projects/agents/global/skills -> agents-install-global
+smoke-test: projects/agents/sheaf/skills/smoke-test -> agents-install-repo
+xagent-subagents + launcher + runtime: plugins/xagent -> xagent-plugin-install-global
+```
+
+Install or update the xagent plugin package with:
+
+```shell
+make xagent-plugin-install-global
+```
+
+Open a new Codex conversation after installing or updating the plugin so Codex
+reloads the installed skill and launcher metadata. If recovery is needed, rerun
+`make xagent-plugin-install-global`. If the installed package is unmarked,
+inspect it and move it aside manually rather than forcing overwrite.
+
 User-global outputs are written to:
 
 - `~/.claude/CLAUDE.md`
