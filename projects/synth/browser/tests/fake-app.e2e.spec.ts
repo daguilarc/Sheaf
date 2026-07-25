@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { installTwisterPair, removeTwisterPair, TWISTER_DEVICE_NAME } from "./helpers/fake-midi.js";
 
 type FrameNode = {
   id: string;
@@ -72,6 +73,9 @@ async function installRealFakeApp(page: Page): Promise<void> {
   });
   await page.goto("http://127.0.0.1:4174/public/index.html");
   await page.evaluate(async (application) => {
+    const controllerWizardMidi = (window as any).__controllerWizardMidi ??= {
+      access: { inputs: new Map(), outputs: new Map(), onstatechange: null },
+    };
     const root = document.querySelector<HTMLElement>("#synth-root")!;
     root.dataset.synthAuto = "false";
     root.dataset.synthLauncher = "false";
@@ -81,7 +85,7 @@ async function installRealFakeApp(page: Page): Promise<void> {
     const { ActivationLease } = await (new Function("return import('/dist/src/activation.js')")() as Promise<any>);
     const client = main.createDirectRuntimeClient();
     const observations = {
-      commands: [] as Array<{ type: string; name?: string; value?: string }>,
+      commands: [] as Array<Record<string, unknown> & { type: string; name?: string; value?: string }>,
       responses: [] as Array<{ type: string; error?: string }>,
       frames: [] as FrameObservation[],
       terminated: false,
@@ -100,7 +104,7 @@ async function installRealFakeApp(page: Page): Promise<void> {
     const observingClient = {
       ...client,
       async request(command: { type: string; name?: string; value?: string }) {
-        observations.commands.push({ type: command.type, name: command.name, value: command.value });
+        observations.commands.push({ ...command });
         const response = await client.request(command);
         observations.responses.push({ type: response.type, error: response.type === "error" ? response.error : undefined });
         if (response.type === "ui-frame") {
@@ -158,7 +162,7 @@ async function installRealFakeApp(page: Page): Promise<void> {
           audioContextFactory: () => context,
           requestMIDIAccess: async () => {
             resources.midiRequests += 1;
-            return { inputs: new Map(), outputs: new Map(), onstatechange: null };
+            return controllerWizardMidi.access;
           },
         });
       },
@@ -184,7 +188,7 @@ async function installRealFakeApp(page: Page): Promise<void> {
   await expect(page.locator('[data-synth-node-id="fake-browser-root"]')).toBeVisible();
 }
 
-test.afterEach(async ({ page }) => {
+async function stopRealFakeApp(page: Page): Promise<void> {
   await page.evaluate(async () => {
     const state = (window as any).__task4Fake;
     if (!state) return;
@@ -200,6 +204,10 @@ test.afterEach(async ({ page }) => {
       throw new Error(`runtime resources were not released exactly once: ${JSON.stringify(state.resources)}`);
     delete (window as any).__task4Fake;
   });
+}
+
+test.afterEach(async ({ page }) => {
+  await stopRealFakeApp(page);
 });
 
 async function assertNoContentSidebarOverlap(page: Page): Promise<void> {
@@ -219,6 +227,343 @@ async function assertNoContentSidebarOverlap(page: Page): Promise<void> {
   expect(geometry.sidebarRight).toBeLessThanOrEqual(geometry.compositeRight + 0.5);
   expect(geometry.compositeRight).toBeLessThanOrEqual(geometry.viewportWidth + 0.5);
 }
+
+const TWISTER_DISPLAY_NAME = "MIDI Fighter Twister";
+const TWISTER_WIZARD_DEFAULTS = [
+  "Hold Reset",
+  "Hold Random",
+  "Hold Random Mod",
+  "Next Bank",
+  "Start",
+  "Previous Bank",
+] as const;
+const TWISTER_WIZARD_CHOICES = [
+  "Toggle Reset",
+  "Hold Reset",
+  "Toggle Random",
+  "Hold Random",
+  "Toggle Random Mod",
+  "Hold Random Mod",
+  "Toggle Gesture Select",
+  "Hold Gesture Select",
+  "Bank Select",
+  "Next Bank",
+  "Previous Bank",
+  "Start",
+  "Continue",
+  "Stop",
+  "Clock",
+  "Scene Select",
+] as const;
+const TWISTER_SIDE_CCS = [8, 9, 10, 11, 12, 13] as const;
+
+function synthNode(id: string): string {
+  return `[data-synth-node-id="${id}"]`;
+}
+
+function wizardMessage(page: Page, index: number) {
+  return page.locator(synthNode(`runtime.controllers.wizard.message.${index}`));
+}
+
+function wizardArgument(page: Page, index: number) {
+  return page.locator(synthNode(`runtime.controllers.wizard.argument.${index}`));
+}
+
+function controllerRow(page: Page, index: number) {
+  return page.locator(synthNode(`runtime.controllers.record.${index}`));
+}
+
+async function latestMidiEndpoints(page: Page): Promise<Array<{ identifier: string; name: string; kind: string }>> {
+  return page.evaluate(() => {
+    const commands = ((window as any).__task4Fake?.observations.commands ?? []) as Array<any>;
+    const snapshot = commands.filter((command) => command.type === "midi-endpoints").at(-1);
+    return snapshot?.endpoints ?? [];
+  });
+}
+
+async function waitForTwisterEndpointSnapshot(page: Page, ordinal: number): Promise<void> {
+  await expect.poll(() => latestMidiEndpoints(page)).toEqual(expect.arrayContaining([
+    { identifier: `twister-in-${ordinal}`, name: TWISTER_DEVICE_NAME, kind: "input" },
+    { identifier: `twister-out-${ordinal}`, name: TWISTER_DEVICE_NAME, kind: "output" },
+  ]));
+}
+
+async function selectedWizardMessageLabels(page: Page): Promise<string[]> {
+  return page.locator('[data-synth-node-id^="runtime.controllers.wizard.message."]').evaluateAll((controls) =>
+    controls.map((control) => {
+      const select = control.querySelector("select");
+      return select?.selectedOptions[0]?.textContent?.trim() ?? control.textContent?.trim() ?? "";
+    }),
+  );
+}
+
+async function wizardMessageChoices(page: Page, index: number): Promise<string[]> {
+  return wizardMessage(page, index).locator("select option").evaluateAll((options) =>
+    options.map((option) => option.textContent?.trim() ?? ""),
+  );
+}
+
+async function assertTwisterWizardDefaults(page: Page): Promise<void> {
+  await expect(page.locator(synthNode("runtime.controllers.wizard.encoder_slot"))).toHaveCount(1);
+  await expect(page.locator(`${synthNode("runtime.controllers.wizard.encoder_slot")} input`)).toHaveValue("0");
+  await expect(page.locator('[data-synth-node-id^="runtime.controllers.wizard.message."]')).toHaveCount(6);
+  await expect(page.locator('[data-synth-node-id^="runtime.controllers.wizard.argument."]')).toHaveCount(6);
+  expect(await selectedWizardMessageLabels(page)).toEqual([...TWISTER_WIZARD_DEFAULTS]);
+  expect(await wizardMessageChoices(page, 0)).toEqual([...TWISTER_WIZARD_CHOICES]);
+  for (let index = 0; index < 6; index += 1)
+    await expect(wizardArgument(page, index).locator("input")).toBeDisabled();
+}
+
+async function assertTwisterWizardColumnGeometry(page: Page): Promise<void> {
+  const boxes = await Promise.all([...Array(6).keys()].map((index) => wizardMessage(page, index).boundingBox()));
+  expect(boxes.every(Boolean), JSON.stringify(boxes)).toBe(true);
+  const [left0, left1, left2, right0, right1, right2] = boxes as NonNullable<(typeof boxes)[number]>[];
+  for (const box of [left1, left2]) expect(Math.abs(box.x - left0.x)).toBeLessThanOrEqual(1);
+  for (const box of [right1, right2]) expect(Math.abs(box.x - right0.x)).toBeLessThanOrEqual(1);
+  for (const [left, right] of [[left0, right0], [left1, right1], [left2, right2]] as const) {
+    expect(right.x).toBeGreaterThan(left.x + left.width);
+    expect(Math.abs(right.y - left.y)).toBeLessThanOrEqual(1);
+  }
+  expect(left1.y).toBeGreaterThan(left0.y);
+  expect(left2.y).toBeGreaterThan(left1.y);
+}
+
+async function assertActiveTwisterRecord(page: Page, index: number, name: string, ordinal: number, slot: string): Promise<void> {
+  const row = controllerRow(page, index);
+  await expect(row).toContainText(name);
+  await expect(row.locator(synthNode(`runtime.controllers.record.${index}.disposition`))).toHaveText("Active");
+  await expect(row.locator(synthNode(`runtime.controllers.record.${index}.wizard_id`))).toHaveText(/\S+/);
+  await expect(row.locator(synthNode(`runtime.controllers.record.${index}.input`))).toContainText(`twister-in-${ordinal}`);
+  await expect(row.locator(synthNode(`runtime.controllers.record.${index}.input`))).toContainText(TWISTER_DEVICE_NAME);
+  await expect(row.locator(synthNode(`runtime.controllers.record.${index}.output`))).toContainText(`twister-out-${ordinal}`);
+  await expect(row.locator(synthNode(`runtime.controllers.record.${index}.output`))).toContainText(TWISTER_DEVICE_NAME);
+
+  for (const section of ["turn", "push", "output"] as const) {
+    const mappings = row.locator(`[data-synth-node-id^="runtime.controllers.record.${index}.mapping.encoder.${section}."]`);
+    await expect(mappings).toHaveCount(16);
+    for (let encoder = 0; encoder < 16; encoder += 1)
+      await expect(row.locator(synthNode(`runtime.controllers.record.${index}.mapping.encoder.${section}.${encoder}`))).toContainText(`slot ${slot}`);
+  }
+
+  const sideMappings = row.locator(`[data-synth-node-id^="runtime.controllers.record.${index}.mapping.side."]`);
+  await expect(sideMappings).toHaveCount(6);
+  for (let side = 0; side < 6; side += 1) {
+    const mapping = row.locator(synthNode(`runtime.controllers.record.${index}.mapping.side.${side}`));
+    await expect(mapping).toContainText(`CC ${TWISTER_SIDE_CCS[side]}`);
+    await expect(mapping).toContainText(TWISTER_WIZARD_DEFAULTS[side]);
+  }
+}
+
+async function expectControllersWarning(page: Page, visible: boolean): Promise<void> {
+  const warning = page.locator(synthNode("runtime.sidebar.controllers.warning"));
+  if (visible) await expect(warning).toBeVisible();
+  else await expect(warning).toHaveCount(0);
+}
+
+async function stopAndRelaunchRealFakeApp(page: Page): Promise<void> {
+  await stopRealFakeApp(page);
+  await installRealFakeApp(page);
+}
+
+test("controller wizard unique candidate configures a default Twister profile in exactly three clicks", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await installRealFakeApp(page);
+  await installTwisterPair(page, 1);
+  await waitForTwisterEndpointSnapshot(page, 1);
+
+  await page.locator('[data-synth-node-id="runtime.sidebar.controllers"]').click();
+  await page.locator('[data-synth-node-id="runtime.controllers.wizard.open"]').click();
+  await assertTwisterWizardDefaults(page);
+  await assertTwisterWizardColumnGeometry(page);
+  await page.locator('[data-synth-node-id="runtime.controllers.wizard.submit"]').click();
+
+  await assertActiveTwisterRecord(page, 0, TWISTER_DISPLAY_NAME, 1, "0");
+  await expectControllersWarning(page, false);
+  await stopAndRelaunchRealFakeApp(page);
+  await installTwisterPair(page, 1);
+  await page.locator(synthNode("runtime.sidebar.controllers")).click();
+  await assertActiveTwisterRecord(page, 0, TWISTER_DISPLAY_NAME, 1, "0");
+});
+
+test("controller wizard disables configuration when no candidate exists", async ({ page }) => {
+  await installRealFakeApp(page);
+
+  await page.locator(synthNode("runtime.sidebar.controllers")).click();
+  await expect(page.locator(synthNode("runtime.controllers.wizard.open"))).toBeDisabled();
+  await expect(page.locator(synthNode("runtime.controllers.available.empty"))).toContainText(
+    "No recognized unconfigured controller pair is present",
+  );
+});
+
+test("controller wizard presents a chooser for duplicate available Twisters", async ({ page }) => {
+  await installRealFakeApp(page);
+  await installTwisterPair(page, 1);
+  await installTwisterPair(page, 2);
+  await waitForTwisterEndpointSnapshot(page, 1);
+  await waitForTwisterEndpointSnapshot(page, 2);
+
+  await page.locator(synthNode("runtime.sidebar.controllers")).click();
+  await page.locator(synthNode("runtime.controllers.wizard.open")).click();
+  const choices = page.locator('[data-synth-node-id^="runtime.controllers.wizard.candidate."]');
+  await expect(choices).toHaveCount(2);
+  await expect(page.locator(synthNode("runtime.controllers.wizard.candidate.0"))).toContainText(TWISTER_DISPLAY_NAME);
+  await expect(page.locator(synthNode("runtime.controllers.wizard.candidate.0"))).toContainText("twister-in-1");
+  await expect(page.locator(synthNode("runtime.controllers.wizard.candidate.0"))).toContainText("twister-out-1");
+  await expect(page.locator(synthNode("runtime.controllers.wizard.candidate.1"))).toContainText(TWISTER_DISPLAY_NAME);
+  await expect(page.locator(synthNode("runtime.controllers.wizard.candidate.1"))).toContainText("twister-in-2");
+  await expect(page.locator(synthNode("runtime.controllers.wizard.candidate.1"))).toContainText("twister-out-2");
+  await page.locator(synthNode("runtime.controllers.wizard.candidate.1.configure")).click();
+  await assertTwisterWizardDefaults(page);
+});
+
+test("controller wizard uses deterministic names for duplicate submitted Twisters", async ({ page }) => {
+  await installRealFakeApp(page);
+  await installTwisterPair(page, 1);
+  await installTwisterPair(page, 2);
+  await waitForTwisterEndpointSnapshot(page, 1);
+  await waitForTwisterEndpointSnapshot(page, 2);
+
+  await page.locator(synthNode("runtime.sidebar.controllers")).click();
+  await page.locator(synthNode("runtime.controllers.wizard.open")).click();
+  await page.locator(synthNode("runtime.controllers.wizard.candidate.1.configure")).click();
+  await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
+  await assertActiveTwisterRecord(page, 0, TWISTER_DISPLAY_NAME, 2, "0");
+  await page.locator(synthNode("runtime.controllers.wizard.open")).click();
+  await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
+  await assertActiveTwisterRecord(page, 1, `${TWISTER_DISPLAY_NAME} 2`, 1, "0");
+});
+
+test("controller wizard ignores an available row and restores warning after blacklist removal", async ({ page }) => {
+  await installRealFakeApp(page);
+  await installTwisterPair(page, 1);
+  await waitForTwisterEndpointSnapshot(page, 1);
+
+  await page.locator(synthNode("runtime.sidebar.controllers")).click();
+  await page.locator(synthNode("runtime.controllers.available.0.ignore")).click();
+  await expect(controllerRow(page, 0)).toContainText("Blacklisted");
+  await expect(controllerRow(page, 0)).toContainText("twister-in-1");
+  await expect(controllerRow(page, 0).locator('[data-synth-node-id*=".mapping."]')).toHaveCount(0);
+  await expectControllersWarning(page, false);
+  await page.locator(synthNode("runtime.controllers.record.0.remove_blacklist")).click();
+  await expect(controllerRow(page, 0)).toHaveCount(0);
+  await expect(page.locator(synthNode("runtime.controllers.available.0"))).toContainText(TWISTER_DISPLAY_NAME);
+  await expectControllersWarning(page, true);
+});
+
+test("controller wizard ignores from a new-candidate form", async ({ page }) => {
+  await installRealFakeApp(page);
+  await installTwisterPair(page, 1);
+  await waitForTwisterEndpointSnapshot(page, 1);
+
+  await page.locator(synthNode("runtime.sidebar.controllers")).click();
+  await page.locator(synthNode("runtime.controllers.wizard.open")).click();
+  await page.locator(synthNode("runtime.controllers.wizard.ignore")).click();
+  await expect(controllerRow(page, 0)).toContainText("Blacklisted");
+  await expect(controllerRow(page, 0)).toContainText("twister-in-1");
+  await expectControllersWarning(page, false);
+});
+
+test("controller wizard stale and invalid submit preserve entered values", async ({ page }) => {
+  await installRealFakeApp(page);
+  await installTwisterPair(page, 1);
+  await waitForTwisterEndpointSnapshot(page, 1);
+
+  await page.locator(synthNode("runtime.sidebar.controllers")).click();
+  await page.locator(synthNode("runtime.controllers.wizard.open")).click();
+  await page.locator(`${synthNode("runtime.controllers.wizard.encoder_slot")} input`).fill("4");
+  await wizardMessage(page, 0).locator("select").selectOption({ label: "Bank Select" });
+  await wizardArgument(page, 0).locator("input").fill("7");
+  await wizardMessage(page, 1).locator("select").selectOption({ label: "Scene Select" });
+  await wizardArgument(page, 1).locator("input").fill("999999999999999999999999999999999999999");
+  await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
+  await expect(page.locator(synthNode("runtime.controllers.wizard.status"))).toContainText("button 1");
+  await expect(page.locator(`${synthNode("runtime.controllers.wizard.encoder_slot")} input`)).toHaveValue("4");
+  await expect(wizardArgument(page, 0).locator("input")).toHaveValue("7");
+  await expect(wizardArgument(page, 1).locator("input")).toHaveValue("999999999999999999999999999999999999999");
+  await removeTwisterPair(page, 1);
+  await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
+  await expect(page.locator(synthNode("runtime.controllers.wizard.status"))).toContainText("reconnect");
+  await expect(controllerRow(page, 0)).toHaveCount(0);
+});
+
+test("controller wizard supports rename and delete on active records", async ({ page }) => {
+  await installRealFakeApp(page);
+  await installTwisterPair(page, 1);
+  await waitForTwisterEndpointSnapshot(page, 1);
+
+  await page.locator(synthNode("runtime.sidebar.controllers")).click();
+  await page.locator(synthNode("runtime.controllers.wizard.open")).click();
+  await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
+  await page.locator(synthNode("runtime.controllers.record.0.rename")).click();
+  await page.locator(`${synthNode("runtime.controllers.rename.name")} input`).fill("Studio Twister");
+  await page.locator(synthNode("runtime.controllers.rename.submit")).click();
+  await expect(controllerRow(page, 0)).toContainText("Studio Twister");
+  await page.locator(synthNode("runtime.controllers.record.0.delete")).click();
+  await page.locator(synthNode("runtime.controllers.delete.confirm")).click();
+  await expect(controllerRow(page, 0)).toHaveCount(0);
+  await expectControllersWarning(page, true);
+});
+
+test("controller wizard retains dormant profile when an active record is blacklisted", async ({ page }) => {
+  await installRealFakeApp(page);
+  await installTwisterPair(page, 1);
+  await waitForTwisterEndpointSnapshot(page, 1);
+
+  await page.locator(synthNode("runtime.sidebar.controllers")).click();
+  await page.locator(synthNode("runtime.controllers.wizard.open")).click();
+  await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
+  await page.locator(synthNode("runtime.controllers.record.0.blacklist")).click();
+  await expect(controllerRow(page, 0)).toContainText("Blacklisted");
+  await expect(controllerRow(page, 0).locator('[data-synth-node-id*=".mapping."]')).toHaveCount(0);
+  await expect(controllerRow(page, 0)).toContainText("dormant profile retained");
+});
+
+test("controller wizard configures a blacklisted record through its wizard", async ({ page }) => {
+  await installRealFakeApp(page);
+  await installTwisterPair(page, 1);
+  await waitForTwisterEndpointSnapshot(page, 1);
+
+  await page.locator(synthNode("runtime.sidebar.controllers")).click();
+  await page.locator(synthNode("runtime.controllers.available.0.ignore")).click();
+  await expect(controllerRow(page, 0)).toContainText("Blacklisted");
+  await page.locator(synthNode("runtime.controllers.record.0.configure")).click();
+  await assertTwisterWizardDefaults(page);
+  await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
+  await assertActiveTwisterRecord(page, 0, TWISTER_DISPLAY_NAME, 1, "0");
+});
+
+test("controller wizard reconfigure seeds exact-shape profiles", async ({ page }) => {
+  await installRealFakeApp(page);
+  await installTwisterPair(page, 1);
+  await waitForTwisterEndpointSnapshot(page, 1);
+
+  await page.locator(synthNode("runtime.sidebar.controllers")).click();
+  await page.locator(synthNode("runtime.controllers.wizard.open")).click();
+  await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
+  await page.locator(synthNode("runtime.controllers.record.0.reconfigure")).click();
+  await expect(page.locator(`${synthNode("runtime.controllers.wizard.encoder_slot")} input`)).toHaveValue("0");
+  await expect(page.locator(synthNode("runtime.controllers.wizard.ignore"))).toHaveCount(0);
+  await page.locator(`${synthNode("runtime.controllers.wizard.encoder_slot")} input`).fill("4");
+  await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
+  await assertActiveTwisterRecord(page, 0, TWISTER_DISPLAY_NAME, 1, "4");
+});
+
+test("controller wizard reconfigure warns and replaces incompatible profiles", async ({ page }) => {
+  await installRealFakeApp(page);
+  await installTwisterPair(page, 1);
+  await waitForTwisterEndpointSnapshot(page, 1);
+
+  await page.locator(synthNode("runtime.sidebar.controllers")).click();
+  await page.locator(synthNode("runtime.controllers.wizard.open")).click();
+  await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
+  await page.locator(synthNode("runtime.controllers.record.0.mapping.add_extra")).click();
+  await page.locator(synthNode("runtime.controllers.record.0.reconfigure")).click();
+  await expect(page.locator(synthNode("runtime.controllers.wizard.warning"))).toContainText("replaces the whole profile");
+  await expect(page.locator(`${synthNode("runtime.controllers.wizard.encoder_slot")} input`)).toHaveValue("0");
+  await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
+  await assertActiveTwisterRecord(page, 0, TWISTER_DISPLAY_NAME, 1, "0");
+  await expect(controllerRow(page, 0).locator(synthNode("runtime.controllers.record.0.mapping.extra"))).toHaveCount(0);
+});
 
 test("real fake-app WASM renders and refreshes the shared runtime shell", async ({ page }) => {
   await page.setViewportSize({ width: 1200, height: 800 });
