@@ -3,7 +3,7 @@
 - [x] 1.1 Add failing fake-clock tests for supervised run states, sequenced `supervision.*` events, terminal-state durability, and cursor deduplication.
 - [x] 1.2 Implement the transport-independent supervisor state machine and event queue behind narrow clock, process, adapter, and classifier interfaces.
 - [x] 1.3 Extend run metadata and logs with supervisor state, event cursor, progress timestamps, owned-process identity, and sanitized watchdog telemetry.
-- [ ] 1.4 Add startup reconciliation and orderly process-group cleanup tests, then implement `abandoned` reconciliation for active metadata that cannot be safely reattached.
+- [x] 1.4 Add startup reconciliation and orderly process-group cleanup tests, then implement `abandoned` reconciliation for active metadata that cannot be safely reattached.
 
 ## 2. Deterministic Health and Evidence
 
@@ -26,7 +26,7 @@
 - [ ] 4.2 Add `xagent` at `127.0.0.1:9005` to `config/services.json` plus tracked root/project `xagent-service-run` Make targets, and implement the HTTP service entry point.
 - [ ] 4.3 Move supervised-run ownership into the long-lived service so MCP/HTTP request cancellation and controller disconnect leave the provider, timers, event queue, and logs active.
 - [ ] 4.4 Add service lifecycle tests proving Conductor-style start, health, log capture, stop, and restart behavior, including orderly closure of owned provider process groups.
-- [ ] 4.5 Persist PID plus process-start identity and test startup reconciliation that marks stale runs `abandoned`, cleans up only proven owned processes, and never signals a PID with mismatched identity.
+- [x] 4.5 Persist PID plus process-start identity and test startup reconciliation that marks stale runs `abandoned`, cleans up only proven owned processes, and never signals a PID with mismatched identity.
 
 ## 5. Streamable HTTP MCP and Final Report Delivery
 
