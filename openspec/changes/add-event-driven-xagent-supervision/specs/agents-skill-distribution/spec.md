@@ -62,7 +62,7 @@ WHEN Codex uses the distributed `xagent-subagents` skill for a long-running exte
 
 - **WHEN** an xagent worker is healthy and the controller has no independent work
 - **THEN** the skill instructs Codex not to poll `xagent list`, xagent logs, terminal `write_stdin`, or unchanged status at a short fixed interval
-- **AND** instructs Codex to inspect progress only after attention, a long await deadline, or an explicit user status request
+- **AND** instructs Codex to inspect supervision state only after attention, a long await deadline, or an explicit user status request, and that the supervised path persists lifecycle, attention, and watchdog records rather than a provider transcript
 
 #### Scenario: Skill documents quiet CLI fallback
 

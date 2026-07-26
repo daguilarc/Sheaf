@@ -55,8 +55,11 @@ poll at a short fixed interval. Specifically, do not poll `write_stdin`,
 `xagent list`, xagent logs, terminal status, or unchanged MCP inspect output
 merely to observe progress.
 
-Inspect progress only after attention, a long await deadline, or an explicit
-user status request. One long blocking await is the default wait mechanism.
+Inspect supervision state only after attention, a long await deadline, or an explicit
+user status request. On the supervised path the persisted surfaces are lifecycle
+phase, attention events, and watchdog telemetry — not a provider transcript; the
+service does not persist routine provider output to the run logs. One long
+blocking await is the default wait mechanism.
 
 ## Quiet Service-Client Fallback
 

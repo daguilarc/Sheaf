@@ -226,7 +226,7 @@ WHEN a controller awaits a supervised run after an event sequence, THE xagent su
 - **WHEN** a controller awaits after the latest event sequence
 - **AND** the worker emits only healthy tokens and tool progress
 - **THEN** the await remains blocked
-- **AND** routine provider output is written to logs rather than returned to the controller
+- **AND** routine provider output is neither returned to the controller nor persisted on the supervised path; the supervisor persists only lifecycle, attention, and watchdog records
 
 #### Scenario: Completion wakes await
 

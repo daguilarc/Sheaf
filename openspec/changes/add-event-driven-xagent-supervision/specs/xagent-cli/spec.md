@@ -2,7 +2,7 @@
 
 ### Requirement: xa-16 — CLI: quiet supervision command
 
-WHEN a controller starts `xagent supervise`, THE xagent CLI SHALL accept the supported harness, model, thinking-level, permission-mode, supervision-policy, working-directory, and initial-prompt options; SHALL create and await the run through the Conductor-managed xagent service; and SHALL keep routine provider output off stdout while the service preserves it in run logs.
+WHEN a controller starts `xagent supervise`, THE xagent CLI SHALL accept the supported harness, model, thinking-level, permission-mode, supervision-policy, working-directory, and initial-prompt options; SHALL create and await the run through the Conductor-managed xagent service; and SHALL keep routine provider output off stdout. The supervised path persists lifecycle, attention, and watchdog records only; it does not persist routine provider output to the run logs.
 
 #### Scenario: Valid supervised command
 
@@ -13,8 +13,8 @@ WHEN a controller starts `xagent supervise`, THE xagent CLI SHALL accept the sup
 #### Scenario: Healthy progress remains quiet
 
 - **WHEN** a supervised worker emits assistant deltas and routine tool events
-- **THEN** the xagent service writes those events to the configured run logs
-- **AND** does not emit them on controller-facing stdout
+- **THEN** the xagent service does not emit them on controller-facing stdout
+- **AND** does not persist them to the configured run logs on the supervised path; only lifecycle, attention, and watchdog records are persisted
 
 #### Scenario: Supervised command emits attention
 

@@ -163,7 +163,7 @@ Add `xagent supervise` with the existing harness/model/thinking/permission optio
 - terminal completion/failure/cancellation;
 - final session close.
 
-All deltas, tools, raw provider events, and healthy watchdog results remain in service-owned logs. When an attention event is emitted, the process and provider remain service-owned so a later CLI invocation or MCP controller can reattach using `run_id`. The xagent skill treats the CLI as a fallback when MCP discovery is unavailable but the xagent service is healthy, uses one service-side blocking await, and never polls `xagent list` for routine progress.
+All deltas, tools, raw provider events, and healthy watchdog results stay out of the leader context. On the supervised path the service does not persist routine provider output to the run logs; it persists only lifecycle phase transitions, attention events, and watchdog telemetry (see decision 8). The legacy `xagent run` runtime continues to persist normalized and raw provider events to the same log root. When an attention event is emitted, the process and provider remain service-owned so a later CLI invocation or MCP controller can reattach using `run_id`. The xagent skill treats the CLI as a fallback when MCP discovery is unavailable but the xagent service is healthy, uses one service-side blocking await, and never polls `xagent list` for routine progress.
 
 The quiet CLI exposes explicit follow-up, interrupt, inspect, await, and close operations against an existing `run_id`. A follow-up is accepted only in `ready`; interrupt is accepted only in `running`; close ends the session from any non-terminal phase. Invalid state/command combinations emit one compact error without changing the worker.
 
@@ -179,7 +179,7 @@ Controller delivery is cursor-based rather than destructive dequeue. Therefore a
 
 ### 9. Keep progress observable outside the leader context
 
-`xagent list`, `xagent logs`, persisted metadata, and the Codex subagent/activity UI remain the progress surfaces. They are not part of the wait loop. The controller may inspect them after an attention event, a long await deadline, or an explicit user status request.
+The supervised path persists only lifecycle phase transitions, attention events, and watchdog telemetry (decision 8); it does not persist a provider transcript. `xagent inspect`, persisted metadata, `xagent logs` (which on the supervised path surfaces only the lifecycle/attention/watchdog records above), and the Codex subagent/activity UI remain the post-hoc surfaces. They are not part of the wait loop. The controller may inspect them after an attention event, a long await deadline, or an explicit user status request — but on the supervised path there is no provider transcript to inspect; remediation that needs the worker's intermediate output must request it from the worker or rely on the legacy `xagent run` runtime, which continues to persist normalized and raw provider events.
 
 Skill guidance for both native and xagent workers will require:
 
