@@ -33,11 +33,13 @@
 
 ## Resume Note (2026-07-26)
 
-Tasks 1–5 are complete on `codex/add-event-driven-xagent-supervision` at `35a18559`. Codex stopped before Task 6 (thread context exhausted / pause). The original plan predated the current OpenSpec→Superpowers workflow (no task-analyzer decomposition; reviews via xagent). Remaining work is replanned below with judgment-based decomposition because the task-analyzer has no Cursor model data yet. This run is a Cursor native-subagent baseline:
+Tasks 1–5 completed under Codex on `codex/add-event-driven-xagent-supervision` through `35a18559` (thread exhausted before Task 6). The original plan predated the current OpenSpec→Superpowers workflow (no task-analyzer decomposition; reviews via xagent). Remaining OpenSpec work (sections 4–8) was judgment-re-decomposed into Tasks 6–12 because the task-analyzer has no Cursor model data yet. This run is a Cursor native-subagent baseline for the analyzer:
 
 - **Bucket A (more complex):** alternate `glm-5.2-high` and `cursor-grok-4.5-high` between implementer and reviewer.
 - **Bucket B (less complex):** `composer-2.5-fast` implementer, `cursor-grok-4.5-high` reviewer.
 - Transport: native Cursor subagents only (no xagent, no kimi).
+
+**Progress:** Task 6 (Conductor-managed HTTP service / OpenSpec 4.1–4.4) is complete at `86fa3825`. Resume SDD at Task 7.
 
 Sibling assignments: `docs/superpowers/plans/2026-07-25-xagent-event-driven-supervision.assignments.yaml`.
 

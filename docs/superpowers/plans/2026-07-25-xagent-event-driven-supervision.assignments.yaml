@@ -24,13 +24,14 @@ completed_prior:
   - task: task-5
     title: Process ownership, interruption, and restart reconciliation
     status: complete
-tasks:
   - task: task-6
     title: Conductor-managed xagent HTTP service
+    status: complete
     bucket: A
     implementer: glm-5.2-high
     reviewer: cursor-grok-4.5-high
     openspec: [4.1, 4.2, 4.3, 4.4]
+tasks:
   - task: task-7
     title: Streamable HTTP MCP tool surface
     bucket: A
