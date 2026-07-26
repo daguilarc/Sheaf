@@ -54,7 +54,7 @@
 
 ## 8. Validation and Cost Regression
 
-- [ ] 8.1 Extend packaged validation with Conductor-managed service and temporary-repository CLI/MCP smoke runs covering discovery, health, blocking wait, full final-report delivery, controller disconnect/reattachment, attention, cursor deduplication, cancellation, and owned-process cleanup.
-- [ ] 8.2 Add recorded-transcript watchdog fixtures for healthy exploration, repeated-tool loops, error thrashing, task contradiction, insufficient evidence, silence, and crash; measure and document false-alert behavior.
-- [ ] 8.3 Add a controlled long-fake-run comparison that reports controller-visible wake count and parent processed tokens for 30-second polling, service-client fallback, and MCP await, including a 90-minute case.
-- [ ] 8.4 Run xagent unit/e2e/package tests, Conductor service tests, agents installer tests, strict OpenSpec validation, and `git diff --check`; document the verified service topology, final-report envelope, watchdog cadence, budgets, timeouts, and rollback procedure.
+- [x] 8.1 Extend packaged validation with Conductor-managed service and temporary-repository CLI/MCP smoke runs covering discovery, health, blocking wait, full final-report delivery, controller disconnect/reattachment, attention, cursor deduplication, cancellation, and owned-process cleanup.
+- [x] 8.2 Add recorded-transcript watchdog fixtures for healthy exploration, repeated-tool loops, error thrashing, task contradiction, insufficient evidence, silence, and crash; measure and document false-alert behavior.
+- [x] 8.3 Add a controlled long-fake-run comparison that reports controller-visible wake count and parent processed tokens for 30-second polling, service-client fallback, and MCP await, including a 90-minute case.
+- [x] 8.4 Run xagent unit/e2e/package tests, Conductor service tests, agents installer tests, strict OpenSpec validation, and `git diff --check`; document the verified service topology, final-report envelope, watchdog cadence, budgets, timeouts, and rollback procedure.
