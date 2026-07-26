@@ -159,6 +159,145 @@ test("dispatches each generic text input event with one separator-appended value
   ]);
 });
 
+const disabledFrame = makeCommandBuffer([
+  { id: "root", kind: NodeKind.Root, bounds: [0, 0, 320, 240], children: ["button", "toggle", "slider", "combo", "field", "row", "draw"] },
+  { id: "button", kind: NodeKind.Button, bounds: [10, 10, 80, 20], label: "Submit", enabled: false, action: { name: "generic.button", value: "press" } },
+  { id: "toggle", kind: NodeKind.Toggle, bounds: [10, 40, 80, 20], label: "Feedback", checked: false, enabled: false, action: { name: "generic.toggle", value: "" } },
+  { id: "slider", kind: NodeKind.Slider, bounds: [10, 70, 80, 20], value: 3, minValue: 0, maxValue: 10, step: 1, enabled: false, action: { name: "generic.slider", value: "" } },
+  { id: "combo", kind: NodeKind.ComboBox, bounds: [10, 100, 80, 20], selectedOption: "two", enabled: false,
+    options: [{ id: "one", label: "One" }, { id: "two", label: "Two" }], action: { name: "generic.combo", value: "" } },
+  { id: "field", kind: NodeKind.TextField, bounds: [10, 130, 80, 20], text: "before", enabled: false, action: { name: "generic.text", value: "" } },
+  { id: "row", kind: NodeKind.Row, bounds: [120, 10, 80, 20], enabled: false, doubleClickAction: { name: "generic.row", value: "open" } },
+  { id: "draw", kind: NodeKind.Draw, bounds: [120, 40, 80, 40], enabled: false,
+    pointerDragAction: { name: "generic.drag", value: "axis:0" }, doubleClickAction: { name: "generic.draw", value: "open" } },
+]);
+
+test("renders disabled native controls and keeps their portable values", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+  }, Array.from(new Uint8Array(disabledFrame)));
+
+  for (const [id, control] of [["button", ""], ["toggle", " input"], ["slider", " input"], ["combo", " select"], ["field", " input"]] as const)
+    await expect(page.locator(`[data-synth-node-id="${id}"]${control}`)).toBeDisabled();
+  for (const id of ["button", "toggle", "slider", "combo", "field", "row", "draw"])
+    await expect(page.locator(`[data-synth-node-id="${id}"]`)).toHaveAttribute("aria-disabled", "true");
+  await expect(page.locator('[data-synth-node-id="combo"] select')).toHaveValue("two");
+  await expect(page.locator('[data-synth-node-id="combo"] select option')).toHaveText(["One", "Two"]);
+  await expect(page.locator('[data-synth-node-id="field"] input')).toHaveValue("before");
+  await expect(page.locator('[data-synth-node-id="slider"] input')).toHaveValue("3");
+});
+
+test("suppresses actions from disabled native controls", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const dispatched = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const actions: Array<{ name: string; value: string }> = [];
+    const backend = new BrowserUiBackend(document.querySelector("#synth-root")!, (action: { name: string; value: string }) => actions.push(action));
+    backend.renderFrame(new Uint8Array(bytes).buffer);
+    const controlIn = (id: string) => document.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-synth-node-id="${id}"] :is(input, select)`)!;
+    document.querySelector<HTMLButtonElement>('[data-synth-node-id="button"]')!.click();
+    const toggle = controlIn("toggle") as HTMLInputElement;
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    const slider = controlIn("slider") as HTMLInputElement;
+    slider.value = "9";
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    const combo = controlIn("combo") as HTMLSelectElement;
+    combo.value = "one";
+    combo.dispatchEvent(new Event("change", { bubbles: true }));
+    const field = controlIn("field") as HTMLInputElement;
+    field.value = "after";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    return actions;
+  }, Array.from(new Uint8Array(disabledFrame)));
+
+  expect(dispatched).toEqual([]);
+});
+
+test("suppresses double-click and drag actions from disabled semantic nodes", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const actions: Array<{ name: string; value: string }> = [];
+    const backend = new BrowserUiBackend(document.querySelector("#synth-root")!, (action: { name: string; value: string }) => actions.push(action));
+    backend.renderFrame(new Uint8Array(bytes).buffer);
+    const row = document.querySelector<HTMLElement>('[data-synth-node-id="row"]')!;
+    const draw = document.querySelector<HTMLElement>('[data-synth-node-id="draw"]')!;
+    const captures: number[] = [];
+    draw.setPointerCapture = (pointerId) => { captures.push(pointerId); };
+    draw.releasePointerCapture = () => {};
+    row.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    draw.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    draw.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 5, clientX: 10, clientY: 10 }));
+    draw.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 5, clientX: 40, clientY: 10 }));
+    draw.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 5, clientX: 40, clientY: 10 }));
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(undefined)));
+    return { actions, captures };
+  }, Array.from(new Uint8Array(disabledFrame)));
+
+  expect(result).toEqual({ actions: [], captures: [] });
+});
+
+test("stops an in-flight drag when its node becomes disabled", async ({ page }) => {
+  const draggableFrames = ([true, false] as const).map((enabled) => makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 100], children: ["drag"] },
+    { id: "drag", kind: NodeKind.Draw, bounds: [10, 10, 40, 40], enabled, pointerDragAction: { name: "generic.drag", value: "axis:0" } },
+  ]));
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async ([enabledBytes, disabledBytes]) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const actions: Array<{ name: string; value: string }> = [];
+    const backend = new BrowserUiBackend(document.querySelector("#synth-root")!, (action: { name: string; value: string }) => actions.push(action));
+    backend.renderFrame(new Uint8Array(enabledBytes).buffer);
+    const drag = document.querySelector<HTMLElement>('[data-synth-node-id="drag"]')!;
+    const releases: number[] = [];
+    drag.setPointerCapture = () => {};
+    drag.releasePointerCapture = (pointerId) => { releases.push(pointerId); };
+    drag.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 6, clientX: 10, clientY: 10 }));
+    backend.renderFrame(new Uint8Array(disabledBytes).buffer);
+    drag.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 6, clientX: 60, clientY: 10 }));
+    drag.dispatchEvent(new PointerEvent("pointermove", { bubbles: true, pointerId: 6, clientX: 110, clientY: 10 }));
+    return { actions, releases };
+  }, [Array.from(new Uint8Array(draggableFrames[0])), Array.from(new Uint8Array(draggableFrames[1]))]);
+
+  expect(result).toEqual({ actions: [], releases: [6] });
+});
+
+test("keeps dispatching once a previously disabled node becomes enabled", async ({ page }) => {
+  const enabledFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 320, 240], children: ["button", "combo", "field", "row"] },
+    { id: "button", kind: NodeKind.Button, bounds: [10, 10, 80, 20], label: "Submit", action: { name: "generic.button", value: "press" } },
+    { id: "combo", kind: NodeKind.ComboBox, bounds: [10, 40, 80, 20], selectedOption: "two",
+      options: [{ id: "one", label: "One" }, { id: "two", label: "Two" }], action: { name: "generic.combo", value: "" } },
+    { id: "field", kind: NodeKind.TextField, bounds: [10, 70, 80, 20], text: "before", action: { name: "generic.text", value: "" } },
+    { id: "row", kind: NodeKind.Row, bounds: [120, 10, 80, 20], doubleClickAction: { name: "generic.row", value: "open" } },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await page.evaluate(async ({ disabled, enabled }) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const browserWindow = window as unknown as { actions: unknown[]; backend: { renderFrame(buffer: ArrayBuffer): void } };
+    browserWindow.actions = [];
+    browserWindow.backend = new BrowserUiBackend(document.querySelector("#synth-root")!, (action: unknown) => browserWindow.actions.push(action));
+    browserWindow.backend.renderFrame(new Uint8Array(disabled).buffer);
+    browserWindow.backend.renderFrame(new Uint8Array(enabled).buffer);
+  }, { disabled: Array.from(new Uint8Array(disabledFrame)), enabled: Array.from(new Uint8Array(enabledFrame)) });
+
+  await page.locator('[data-synth-node-id="button"]').click();
+  await page.locator('[data-synth-node-id="combo"] select').selectOption("one");
+  await page.locator('[data-synth-node-id="field"] input').fill("after");
+  await page.locator('[data-synth-node-id="row"]').dblclick();
+  expect(await page.evaluate(() => (window as unknown as { actions: unknown[] }).actions)).toEqual([
+    { name: "generic.button", value: "press" },
+    { name: "generic.combo", value: "one" },
+    { name: "generic.text", value: "after" },
+    { name: "generic.row", value: "open" },
+  ]);
+  for (const id of ["button", "combo", "field", "row"])
+    await expect(page.locator(`[data-synth-node-id="${id}"]`)).not.toHaveAttribute("aria-disabled");
+});
+
 test("preserves focused combo boxes across stale frame refreshes", async ({ page }) => {
   await page.goto("http://127.0.0.1:4173/public/index.html");
   await page.evaluate(async (bytes) => {

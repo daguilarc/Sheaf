@@ -152,6 +152,47 @@ void TestNodeIdsAreStableAcrossFrames()
     Require(FindNode(secondDecoded, "slider").value == 0.75f, "second frame value changes");
 }
 
+void TestDisabledSemanticNodesCarryEnabledState()
+{
+    using namespace synth::ui;
+    NodeTree tree;
+    tree.nodes = {
+        Node{.id = NodeId("root"), .kind = NodeKind::Root, .bounds = {0, 0, 320, 240},
+             .children = {NodeId("button"), NodeId("combo"), NodeId("field"), NodeId("toggle"),
+                          NodeId("slider"), NodeId("row"), NodeId("draw")}},
+        Node{.id = NodeId("button"), .kind = NodeKind::Button, .enabled = false, .bounds = {4, 4, 100, 24},
+             .label = "Submit", .action = Action::Named("generic.button")},
+        Node{.id = NodeId("combo"), .kind = NodeKind::ComboBox, .enabled = false, .bounds = {4, 32, 100, 24},
+             .label = "Message", .options = {{"one", "One"}, {"two", "Two"}}, .selectedOption = "two",
+             .action = Action::Named("generic.combo")},
+        Node{.id = NodeId("field"), .kind = NodeKind::TextField, .enabled = false, .bounds = {4, 60, 100, 24},
+             .label = "Argument", .text = "7", .action = Action::Named("generic.text")},
+        Node{.id = NodeId("toggle"), .kind = NodeKind::Toggle, .enabled = false, .bounds = {4, 88, 100, 24},
+             .label = "Feedback", .action = Action::Named("generic.toggle")},
+        Node{.id = NodeId("slider"), .kind = NodeKind::Slider, .enabled = false, .bounds = {4, 116, 100, 24},
+             .label = "Gain", .action = Action::Named("generic.slider")},
+        Node{.id = NodeId("row"), .kind = NodeKind::Row, .enabled = false, .bounds = {120, 4, 100, 24},
+             .doubleClickAction = Action::Named("generic.row")},
+        Node{.id = NodeId("draw"), .kind = NodeKind::Draw, .enabled = false, .bounds = {120, 32, 100, 40},
+             .pointerDragAction = Action::Named("generic.drag"),
+             .doubleClickAction = Action::Named("generic.draw")},
+    };
+
+    const auto decoded = synth_browser::DecodeCommandBuffer(synth_browser::SerializeNodeTree(tree).bytes);
+    Require(decoded.diagnostics.empty(), "disabled semantic nodes need no browser fallback");
+    Require(FindNode(decoded, "root").enabled, "root keeps its default enabled state");
+    for (const char* id : {"button", "combo", "field", "toggle", "slider", "row", "draw"})
+    {
+        Require(!FindNode(decoded, id).enabled, "disabled semantic node keeps its disabled state");
+    }
+    Require(FindNode(decoded, "combo").selectedOption == "two",
+            "disabled combo box keeps its selected option");
+    Require(FindNode(decoded, "field").text == "7", "disabled text field keeps its text");
+    Require(FindNode(decoded, "row").doubleClickAction.has_value() &&
+                FindNode(decoded, "draw").pointerDragAction.has_value(),
+            "disabled semantic nodes still carry their actions for the backend to suppress");
+}
+
 void TestSyncPageRoundTripsPortableControlsAndActions()
 {
     synth::runtime_ui::SyncPageSurface surface;
@@ -342,6 +383,7 @@ int main()
 {
     TestCompleteTreeRoundTrips();
     TestNodeIdsAreStableAcrossFrames();
+    TestDisabledSemanticNodesCarryEnabledState();
     TestSyncPageRoundTripsPortableControlsAndActions();
     TestUnsupportedPortableFeatureIsGeneric();
     TestUnsupportedDrawFeatureIsGeneric();

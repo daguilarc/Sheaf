@@ -107,7 +107,8 @@ export class BrowserUiBackend {
     const acceptsPointer = acceptsPointerEvents(node);
     element.style.pointerEvents = acceptsPointer ? "auto" : "none";
     element.style.zIndex = acceptsPointer ? "1" : "0";
-    element.toggleAttribute("aria-disabled", !node.enabled);
+    if (node.enabled) element.removeAttribute("aria-disabled");
+    else element.setAttribute("aria-disabled", "true");
     this.updateControl(element, node);
     this.updatePointerGesture(element, node);
   }
@@ -154,7 +155,7 @@ export class BrowserUiBackend {
   }
 
   private beginPointerDrag(element: NodeElement, event: PointerEvent) {
-    const action = element.synthNode?.pointerDragAction;
+    const action = enabledNodeOf(element)?.pointerDragAction;
     if (!action) return;
     for (const captured of this.capturedPointers.values())
       if (captured.element === element) return;
@@ -171,6 +172,7 @@ export class BrowserUiBackend {
   private continuePointerDrag(element: NodeElement, event: PointerEvent) {
     const captured = this.capturedPointers.get(event.pointerId);
     if (!captured || captured.element !== element) return;
+    if (!enabledNodeOf(element)) return this.clearPointer(event.pointerId, true);
     const delta = (((event.clientX - captured.anchorClientX) / this.surfaceScale) -
       ((event.clientY - captured.anchorClientY) / this.surfaceScale)) * 0.0025;
     if (Math.abs(delta) < 0.001) return;
@@ -242,11 +244,11 @@ export class BrowserUiBackend {
   }
 
   private dispatchValue(element: NodeElement, value?: string) {
-    const action = element.synthNode?.action;
+    const action = enabledNodeOf(element)?.action;
     if (!action) return;
     this.dispatchBrowserAction({ name: action.name, value: value === undefined ? action.value : appendActionValue(action.value, value) });
   }
-  private dispatchDoubleClick(element: NodeElement) { const action = element.synthNode?.doubleClickAction; if (action) this.dispatchBrowserAction(action); }
+  private dispatchDoubleClick(element: NodeElement) { const action = enabledNodeOf(element)?.doubleClickAction; if (action) this.dispatchBrowserAction(action); }
   private dispatchDrag(action: Action, delta: number) {
     const separator = action.value.lastIndexOf(":");
     const prefix = separator < 0 ? "" : action.value.slice(0, separator + 1);
@@ -456,6 +458,7 @@ function defaultSize(node: Node, availableWidth: number): Pick<Bounds, "width" |
   }
 }
 
+function enabledNodeOf(element: NodeElement) { const node = element.synthNode; return node?.enabled ? node : undefined; }
 function colorCss(color: Color) { return `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a / 255})`; }
 function appendActionValue(prefix: string, value: string) { return prefix.length > 0 ? `${prefix}:${value}` : value; }
 function portableAngleToCanvas(radians: number) { return radians - Math.PI / 2; }
