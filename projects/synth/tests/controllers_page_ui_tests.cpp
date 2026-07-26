@@ -904,6 +904,57 @@ void TestWizardIgnoreCommitsOneInertBlacklistedRecord()
             "exact-identity refusal leaves the changed candidate available for a fresh action");
 }
 
+void TestEndpointSelectorsPreferTheExactStoredIdentifier()
+{
+    TestHarness harness;
+    harness.devices.inputs.clear();
+    harness.devices.outputs.clear();
+    harness.devices.inputs.push_back({"twister-in-1", "Midi Fighter Twister"});
+    harness.devices.inputs.push_back({"twister-in-2", "Midi Fighter Twister"});
+    harness.devices.outputs.push_back({"twister-out-1", "Midi Fighter Twister"});
+    harness.devices.outputs.push_back({"twister-out-2", "Midi Fighter Twister"});
+    harness.instrument.controllers.clear();
+    for (const char* ordinal : {"1", "2"})
+    {
+        synth::MidiControllerSlot slot;
+        slot.name = std::string("twister ") + ordinal;
+        slot.kind = synth::MidiProfileKind::MfTwister;
+        slot.config = synth::MfTwisterDefaultProfileConfig();
+        slot.wizardId = "com.sheaf.midi-fighter-twister";
+        slot.input = {.identifier = std::string("twister-in-") + ordinal, .name = "Midi Fighter Twister"};
+        slot.output = {.identifier = std::string("twister-out-") + ordinal, .name = "Midi Fighter Twister"};
+        Require(harness.instrument.AddController(slot), "add duplicate-name twister");
+    }
+    harness.connection.controllers.assign(harness.instrument.controllers.size(), {});
+    for (auto& controller : harness.connection.controllers)
+    {
+        controller.input.status = synth::MidiEndpointStatus::Online;
+        controller.output.status = synth::MidiEndpointStatus::Online;
+    }
+
+    auto surface = harness.MakeSurface();
+    surface.SetEnumerateDevices(harness.devices);
+    surface.SetContentBounds({0.0f, 0.0f, 900.0f, 700.0f});
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    const synth::ui::NodeTree tree = surface.BuildTree();
+    // Duplicate units share a device name, so a name-only match would select
+    // the same endpoint for both rows. Reconciliation identity semantics put
+    // the exact identifier first.
+    for (std::size_t controllerIx = 0; controllerIx < 2; ++controllerIx)
+    {
+        const std::string ordinal = std::to_string(controllerIx + 1);
+        const synth::ui::Node* input =
+            FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerInput(controllerIx));
+        const synth::ui::Node* output =
+            FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerOutput(controllerIx));
+        Require(input != nullptr && input->selectedOption == "twister-in-" + ordinal,
+                "input selector resolves its own duplicate-name device");
+        Require(output != nullptr && output->selectedOption == "twister-out-" + ordinal,
+                "output selector resolves its own duplicate-name device");
+    }
+}
+
 void TestControllerLifecycleActionsUseTheNormalCommitAndSavePath()
 {
     TestHarness harness;
@@ -967,6 +1018,22 @@ void TestControllerLifecycleActionsUseTheNormalCommitAndSavePath()
     Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerConfigure(4)) == nullptr &&
                 FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerRemoveBlacklist(4)) != nullptr,
             "unknown blacklisted id preserves Remove but gates Configure");
+    // sru-4: a blacklisted row shows its stored endpoint labels. Its endpoints
+    // stay deliberately Unconfigured, so the label cannot come from connection
+    // status, and the identifier must survive so duplicate same-name devices
+    // remain distinguishable.
+    const synth::ui::Node* blacklistedInputLabel = FindNodeById(
+        initialTree, synth::runtime_ui::NodeIds::ControllerInputLabel(3));
+    const synth::ui::Node* blacklistedOutputLabel = FindNodeById(
+        initialTree, synth::runtime_ui::NodeIds::ControllerOutputLabel(3));
+    Require(blacklistedInputLabel != nullptr &&
+                blacklistedInputLabel->text.find("Known Input") != std::string::npos &&
+                blacklistedInputLabel->text.find("known-in") != std::string::npos,
+            "blacklisted row shows its stored input name and identifier");
+    Require(blacklistedOutputLabel != nullptr &&
+                blacklistedOutputLabel->text.find("Known Output") != std::string::npos &&
+                blacklistedOutputLabel->text.find("known-out") != std::string::npos,
+            "blacklisted row shows its stored output name and identifier");
     const synth::ui::Node* incompleteBlacklist = FindNodeById(
         initialTree, synth::runtime_ui::NodeIds::ControllerBlacklist(5));
     Require(incompleteBlacklist != nullptr && !incompleteBlacklist->enabled,
@@ -1112,6 +1179,7 @@ int main()
     TestReconfigureSeedsExactProfilesAndReplacesOnlyTheValidatedRecord();
     TestReconfigureRefusesEveryChangedExistingRecordIdentity();
     TestWizardIgnoreCommitsOneInertBlacklistedRecord();
+    TestEndpointSelectorsPreferTheExactStoredIdentifier();
     TestControllerLifecycleActionsUseTheNormalCommitAndSavePath();
 
     TestHarness harness;

@@ -486,6 +486,7 @@ std::string DeviceLabel(const MidiEndpointRef& ref, MidiEndpointStatus status) {
     return stored;
 }
 
+
 std::vector<MidiConfigSection> SectionsForKind(MidiProfileKind kind) {
     const MidiKindSupport support = KindSupport(kind);
     std::vector<MidiConfigSection> sections;
@@ -710,6 +711,8 @@ void MidiConfigViewModel::Rebuild(const MidiInstrumentConfig& instrument, const 
         row.outputStatus = outputConnection.status;
         row.inputDeviceLabel = DeviceLabel(slot.input, inputConnection.status);
         row.outputDeviceLabel = DeviceLabel(slot.output, outputConnection.status);
+        row.storedInput = slot.input;
+        row.storedOutput = slot.output;
         row.sections = SectionsForKind(slot.kind);
 
         // Ensure expand state exists for this controller (first appearance

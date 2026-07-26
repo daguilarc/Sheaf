@@ -434,6 +434,7 @@ namespace ControllersLayout {
 inline constexpr float kPageMargin = 4.0f;
 inline constexpr float kBackRowHeight = 32.0f;
 inline constexpr float kBackButtonWidth = 80.0f;
+inline constexpr float kWizardIgnoreWidth = 160.0f;
 inline constexpr float kRowGap = 6.0f;
 inline constexpr float kStatusRowHeight = 24.0f;
 inline constexpr float kControllerHeaderHeight = 36.0f;
@@ -465,7 +466,7 @@ inline constexpr float kActiveLifecycleWidth =
     kLifecycleDraftWidth + kLifecycleControlGap + kLifecycleRenameWidth +
     kLifecycleControlGap + kLifecycleDeleteWidth + kLifecycleControlGap +
     kLifecycleReconfigureWidth + kLifecycleControlGap + kLifecycleBlacklistWidth;
-inline constexpr float kBlacklistedEndpointLabelWidth = 150.0f;
+inline constexpr float kBlacklistedEndpointLabelWidth = 240.0f;
 inline constexpr float kBlacklistedBadgeWidth = 84.0f;
 inline constexpr float kBlacklistedLifecycleWidth =
     kLifecycleDraftWidth + kLifecycleControlGap + kLifecycleRenameWidth +
@@ -714,8 +715,28 @@ inline Color EndpointStatusColor(MidiEndpointStatus status)
     return Color::Rgb(128, 128, 128);
 }
 
+// Stored endpoint identity, independent of connection status, so a
+// deliberately inert Blacklisted record still shows which endpoints it holds.
+inline std::string StoredEndpointLabel(const MidiEndpointRef& ref)
+{
+    if (!ref.IsConfigured())
+    {
+        return "(none)";
+    }
+    if (ref.name.empty())
+    {
+        return ref.identifier;
+    }
+    if (ref.identifier.empty())
+    {
+        return ref.name;
+    }
+    return ref.name + " (" + ref.identifier + ")";
+}
+
 inline std::vector<ui::ControlOption> BuildEndpointOptions(const std::vector<MidiDeviceInfoRef>& devices,
                                                            MidiEndpointStatus status,
+                                                           const MidiEndpointRef& stored,
                                                            const std::string& storedLabel,
                                                            std::string& selectedOptionId)
 {
@@ -723,10 +744,23 @@ inline std::vector<ui::ControlOption> BuildEndpointOptions(const std::vector<Mid
     options.push_back({kEndpointNoneOptionId, "(none)"});
     selectedOptionId = kEndpointNoneOptionId;
 
+    // Follow reconciliation identity semantics: the exact stored identifier
+    // wins, and the stored name is only a fallback. Duplicate same-name units
+    // are otherwise indistinguishable in this picker.
+    bool selectedByIdentifier = false;
     for (const MidiDeviceInfoRef& device : devices)
     {
         options.push_back({device.identifier, device.name});
-        if (status == MidiEndpointStatus::Online && device.name == storedLabel)
+        if (status != MidiEndpointStatus::Online)
+        {
+            continue;
+        }
+        if (!stored.identifier.empty() && device.identifier == stored.identifier)
+        {
+            selectedOptionId = device.identifier;
+            selectedByIdentifier = true;
+        }
+        else if (!selectedByIdentifier && device.name == storedLabel)
         {
             selectedOptionId = device.identifier;
         }
@@ -2176,9 +2210,18 @@ private:
         {
             return tree;
         }
+        // The form lays itself out and reports its intrinsic height, so the
+        // page places its own session chrome underneath instead of flowing it
+        // over the form's controls. The page learns nothing about the form's
+        // contents beyond that height.
+        const float formHeight = tree.nodes.front().bounds.height;
         tree.nodes.front().id = NodeIds::kWizardForm;
         tree.nodes.front().bounds = m_contentBounds;
-        auto append = [&](ui::Node node) {
+        float chromeX = ControllersLayout::kPageMargin;
+        const float chromeY = formHeight + ControllersLayout::kRowGap;
+        auto append = [&](ui::Node node, float width) {
+            node.bounds = {chromeX, chromeY, width, ControllersLayout::kBackRowHeight};
+            chromeX += width + ControllersLayout::kRowGap;
             tree.nodes.front().children.push_back(node.id);
             tree.nodes.push_back(std::move(node));
         };
@@ -2188,21 +2231,21 @@ private:
         back.kind = ui::NodeKind::Button;
         back.label = "Back";
         back.action = ui::Action::Named(Actions::kWizardBack);
-        append(std::move(back));
+        append(std::move(back), ControllersLayout::kBackButtonWidth);
 
         ui::Node cancel;
         cancel.id = NodeIds::kWizardCancel;
         cancel.kind = ui::NodeKind::Button;
         cancel.label = "Cancel";
         cancel.action = ui::Action::Named(Actions::kWizardCancel);
-        append(std::move(cancel));
+        append(std::move(cancel), ControllersLayout::kBackButtonWidth);
 
         ui::Node submit;
         submit.id = NodeIds::kWizardSubmit;
         submit.kind = ui::NodeKind::Button;
         submit.label = "Submit";
         submit.action = ui::Action::Named(Actions::kWizardSubmit);
-        append(std::move(submit));
+        append(std::move(submit), ControllersLayout::kBackButtonWidth);
 
         if (std::holds_alternative<WizardCandidate>(m_wizardSession->target))
         {
@@ -2211,15 +2254,25 @@ private:
             ignore.kind = ui::NodeKind::Button;
             ignore.label = "Ignore this controller";
             ignore.action = ui::Action::Named(Actions::kWizardIgnore);
-            append(std::move(ignore));
+            append(std::move(ignore), ControllersLayout::kWizardIgnoreWidth);
         }
+        float messageY = chromeY + ControllersLayout::kBackRowHeight + ControllersLayout::kRowGap;
+        const float messageWidth =
+            std::max(0.0f, m_contentBounds.width - ControllersLayout::kPageMargin * 2.0f);
+        auto appendMessage = [&](ui::Node node) {
+            node.bounds = {ControllersLayout::kPageMargin, messageY, messageWidth,
+                           ControllersLayout::kStatusRowHeight};
+            messageY += ControllersLayout::kStatusRowHeight + ControllersLayout::kRowGap;
+            tree.nodes.front().children.push_back(node.id);
+            tree.nodes.push_back(std::move(node));
+        };
         if (!m_wizardSession->warning.empty())
         {
             ui::Node warning;
             warning.id = NodeIds::kWizardWarning;
             warning.kind = ui::NodeKind::StatusText;
             warning.text = m_wizardSession->warning;
-            append(std::move(warning));
+            appendMessage(std::move(warning));
         }
         if (!m_wizardSession->status.empty())
         {
@@ -2227,7 +2280,7 @@ private:
             status.id = NodeIds::kWizardStatus;
             status.kind = ui::NodeKind::StatusText;
             status.text = m_wizardSession->status;
-            append(std::move(status));
+            appendMessage(std::move(status));
         }
         return tree;
     }
@@ -2456,7 +2509,7 @@ private:
                 ui::Node inputLabel;
                 inputLabel.id = ui::NodeId(NodeIds::ControllerInputLabel(controllerIx));
                 inputLabel.kind = ui::NodeKind::Label;
-                inputLabel.text = "Input: " + rowVm.inputDeviceLabel;
+                inputLabel.text = "Input: " + ControllersLayout::StoredEndpointLabel(rowVm.storedInput);
                 inputLabel.bounds = {lifecycleX, 0.0f, ControllersLayout::kBlacklistedEndpointLabelWidth,
                                      ControllersLayout::kControllerHeaderHeight};
                 appendControllerChild(std::move(inputLabel));
@@ -2466,7 +2519,7 @@ private:
                 ui::Node outputLabel;
                 outputLabel.id = ui::NodeId(NodeIds::ControllerOutputLabel(controllerIx));
                 outputLabel.kind = ui::NodeKind::Label;
-                outputLabel.text = "Output: " + rowVm.outputDeviceLabel;
+                outputLabel.text = "Output: " + ControllersLayout::StoredEndpointLabel(rowVm.storedOutput);
                 outputLabel.bounds = {lifecycleX, 0.0f, ControllersLayout::kBlacklistedEndpointLabelWidth,
                                       ControllersLayout::kControllerHeaderHeight};
                 appendControllerChild(std::move(outputLabel));
@@ -2579,7 +2632,8 @@ private:
             inputCombo.kind = ui::NodeKind::ComboBox;
             inputCombo.label = "Input";
             inputCombo.options =
-                ControllersLayout::BuildEndpointOptions(devices.inputs, rowVm.inputStatus, rowVm.inputDeviceLabel, selectedInput);
+                ControllersLayout::BuildEndpointOptions(devices.inputs, rowVm.inputStatus, rowVm.storedInput,
+                                                       rowVm.inputDeviceLabel, selectedInput);
             inputCombo.selectedOption = selectedInput;
             inputCombo.bounds = {headerX, 0.0f, ControllersLayout::kEndpointBoxWidth,
                                  ControllersLayout::kControllerHeaderHeight};
@@ -2593,6 +2647,7 @@ private:
             std::string selectedOutput;
             outputCombo.options = ControllersLayout::BuildEndpointOptions(devices.outputs,
                                                              rowVm.outputStatus,
+                                                             rowVm.storedOutput,
                                                              rowVm.outputDeviceLabel,
                                                              selectedOutput);
             outputCombo.selectedOption = selectedOutput;

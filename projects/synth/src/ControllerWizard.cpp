@@ -50,6 +50,46 @@ std::string ButtonFieldId(std::size_t buttonIx, std::string_view field) {
            std::string(field);
 }
 
+// Twister form layout. scw-3 requires the six buttons to be presented as two
+// columns of three in physical CC order, so the form owns this geometry rather
+// than leaving it to each host's default flow. Every child's bounds are local
+// to its parent, so hosts can nest the form anywhere.
+namespace TwisterFormLayout {
+
+inline constexpr float kMargin = 8.0f;
+inline constexpr float kControlHeight = 28.0f;
+inline constexpr float kErrorHeight = 20.0f;
+inline constexpr float kErrorGap = 2.0f;
+inline constexpr float kFieldGap = 8.0f;
+inline constexpr float kRowGap = 6.0f;
+inline constexpr float kSlotWidth = 160.0f;
+inline constexpr float kSlotErrorWidth = 320.0f;
+inline constexpr float kMessageWidth = 150.0f;
+inline constexpr float kArgumentWidth = 80.0f;
+inline constexpr float kColumnHeaderHeight = 22.0f;
+inline constexpr float kColumnGap = 16.0f;
+inline constexpr std::size_t kColumnCount = 2;
+inline constexpr std::size_t kRowsPerColumn = 3;
+
+inline constexpr float kColumnWidth = kMessageWidth + kFieldGap + kArgumentWidth;
+inline constexpr float kButtonRowHeight = kControlHeight + kErrorGap + kErrorHeight;
+inline constexpr float kColumnsTop = kMargin + kControlHeight + kErrorGap + kErrorHeight + kRowGap;
+inline constexpr float kColumnHeight =
+    kColumnHeaderHeight + kRowsPerColumn * kButtonRowHeight + (kRowsPerColumn - 1) * kRowGap;
+inline constexpr float kFormWidth =
+    kMargin * 2.0f + kColumnCount * kColumnWidth + (kColumnCount - 1) * kColumnGap;
+inline constexpr float kFormHeight = kColumnsTop + kColumnHeight + kMargin;
+
+inline constexpr float ColumnX(std::size_t column) {
+    return kMargin + static_cast<float>(column) * (kColumnWidth + kColumnGap);
+}
+
+inline constexpr float ButtonRowY(std::size_t row) {
+    return kColumnHeaderHeight + static_cast<float>(row) * (kButtonRowHeight + kRowGap);
+}
+
+}  // namespace TwisterFormLayout
+
 std::string MessageOptionId(UISystemMessage message) {
     for (const TwisterMessageChoice& choice : kTwisterMessageChoices) {
         if (choice.message == message) {
@@ -132,22 +172,25 @@ std::size_t AppendNode(ui::NodeTree& tree, std::size_t parentIx, ui::Node node) 
     return tree.nodes.size() - 1;
 }
 
-ui::Node TextFieldNode(std::string id, std::string label, std::string text, bool enabled = true) {
+ui::Node TextFieldNode(std::string id, std::string label, std::string text, ui::Bounds bounds,
+                       bool enabled = true) {
     ui::Node node;
     node.id = ui::NodeId(id);
     node.kind = ui::NodeKind::TextField;
     node.label = std::move(label);
     node.text = std::move(text);
     node.enabled = enabled;
+    node.bounds = bounds;
     node.action = ui::Action::Named(std::move(id));
     return node;
 }
 
-ui::Node StatusNode(std::string id, std::string text) {
+ui::Node StatusNode(std::string id, std::string text, ui::Bounds bounds) {
     ui::Node node;
     node.id = ui::NodeId(std::move(id));
     node.kind = ui::NodeKind::StatusText;
     node.text = std::move(text);
+    node.bounds = bounds;
     return node;
 }
 
@@ -353,35 +396,49 @@ std::string_view MfTwisterConfigForm::WizardId() const {
 }
 
 ui::NodeTree MfTwisterConfigForm::BuildTree() {
+    namespace Layout = TwisterFormLayout;
+
     ui::NodeTree tree;
     ui::Node root;
     root.id = ui::NodeId(std::string(kMfTwisterFormRootId));
     root.kind = ui::NodeKind::Root;
+    root.bounds = {0.0f, 0.0f, Layout::kFormWidth, Layout::kFormHeight};
     tree.nodes.push_back(std::move(root));
 
     const std::string slotId = std::string(kMfTwisterFormRootId) + ".encoder-slot";
-    AppendNode(tree, 0, TextFieldNode(slotId, "Encoder Slot", encoderSlotText));
+    AppendNode(tree, 0,
+               TextFieldNode(slotId, "Encoder Slot", encoderSlotText,
+                             {Layout::kMargin, Layout::kMargin, Layout::kSlotWidth,
+                              Layout::kControlHeight}));
     if (FieldHasError(encoderSlotText)) {
-        AppendNode(tree, 0, StatusNode(slotId + ".error",
-                                       "Encoder Slot must be a non-negative base-10 integer"));
+        AppendNode(tree, 0,
+                   StatusNode(slotId + ".error",
+                              "Encoder Slot must be a non-negative base-10 integer",
+                              {Layout::kMargin,
+                               Layout::kMargin + Layout::kControlHeight + Layout::kErrorGap,
+                               Layout::kSlotErrorWidth, Layout::kErrorHeight}));
     }
 
-    for (std::size_t column = 0; column < 2; ++column) {
+    for (std::size_t column = 0; column < Layout::kColumnCount; ++column) {
         ui::Node columnNode;
         columnNode.id = ui::NodeId(std::string(kMfTwisterFormRootId) + ".column." +
                                    std::to_string(column));
         columnNode.kind = ui::NodeKind::Section;
         columnNode.label = column == 0 ? "Left (CC 8-10)" : "Right (CC 11-13)";
+        columnNode.bounds = {Layout::ColumnX(column), Layout::kColumnsTop, Layout::kColumnWidth,
+                             Layout::kColumnHeight};
         const std::size_t columnIx = AppendNode(tree, 0, std::move(columnNode));
 
-        for (std::size_t row = 0; row < 3; ++row) {
-            const std::size_t buttonIx = column * 3 + row;
+        for (std::size_t row = 0; row < Layout::kRowsPerColumn; ++row) {
+            const std::size_t buttonIx = column * Layout::kRowsPerColumn + row;
             const MfTwisterButtonConfig& button = buttons[buttonIx];
             ui::Node buttonNode;
             buttonNode.id = ui::NodeId(std::string(kMfTwisterFormRootId) + ".button." +
                                        std::to_string(buttonIx));
             buttonNode.kind = ui::NodeKind::Row;
             buttonNode.label = "Button " + std::to_string(buttonIx + 1);
+            buttonNode.bounds = {0.0f, Layout::ButtonRowY(row), Layout::kColumnWidth,
+                                 Layout::kButtonRowHeight};
             const std::size_t buttonNodeIx = AppendNode(tree, columnIx, std::move(buttonNode));
 
             const std::string messageId = ButtonFieldId(buttonIx, "message");
@@ -390,6 +447,7 @@ ui::NodeTree MfTwisterConfigForm::BuildTree() {
             messageNode.kind = ui::NodeKind::ComboBox;
             messageNode.label = "Message";
             messageNode.selectedOption = MessageOptionId(button.message);
+            messageNode.bounds = {0.0f, 0.0f, Layout::kMessageWidth, Layout::kControlHeight};
             messageNode.action = ui::Action::Named(messageId);
             for (const TwisterMessageChoice& choice : kTwisterMessageChoices) {
                 const UISystemMessageChoice* catalogChoice = FindUISystemMessageChoice(choice.message);
@@ -403,11 +461,16 @@ ui::NodeTree MfTwisterConfigForm::BuildTree() {
             const std::string argumentId = ButtonFieldId(buttonIx, "argument");
             const bool argumentEnabled = TwisterArgumentEnabled(button.message);
             AppendNode(tree, buttonNodeIx,
-                       TextFieldNode(argumentId, "Argument", button.argumentText, argumentEnabled));
+                       TextFieldNode(argumentId, "Argument", button.argumentText,
+                                     {Layout::kMessageWidth + Layout::kFieldGap, 0.0f,
+                                      Layout::kArgumentWidth, Layout::kControlHeight},
+                                     argumentEnabled));
             if (argumentEnabled && FieldHasError(button.argumentText)) {
                 AppendNode(tree, buttonNodeIx,
                            StatusNode(argumentId + ".error",
-                                      "Argument must be a non-negative base-10 integer"));
+                                      "Argument must be a non-negative base-10 integer",
+                                      {0.0f, Layout::kControlHeight + Layout::kErrorGap,
+                                       Layout::kColumnWidth, Layout::kErrorHeight}));
             }
         }
     }

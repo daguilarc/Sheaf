@@ -278,6 +278,13 @@ struct MidiControllerRowVM {
     MidiEndpointStatus outputStatus = MidiEndpointStatus::Unconfigured;
     std::string inputDeviceLabel;   // present device name; stored ref + " (offline)"; or "(none)"
     std::string outputDeviceLabel;
+    // Stored endpoint references, independent of connection status. A
+    // Blacklisted record's endpoints stay deliberately Unconfigured, so sru-4's
+    // "show their stored endpoint labels" cannot be served by the
+    // status-derived labels above, and endpoint pickers need the exact stored
+    // identifier to stay unambiguous across duplicate same-name devices.
+    MidiEndpointRef storedInput;
+    MidiEndpointRef storedOutput;
     bool configExpanded = false;    // starts false
     std::vector<MidiConfigSection> sections;  // kind-filtered via KindSupport, each starts collapsed
 };

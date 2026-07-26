@@ -223,6 +223,42 @@ const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, std::string
     return nullptr;
 }
 
+// Resolves a form node's position in the form's own coordinate space the way a
+// host does: every child's bounds are parent-local, so absolute position is the
+// sum of its ancestors' origins.
+synth::ui::Bounds FormBounds(const synth::ui::NodeTree& tree, const std::string& id) {
+    const synth::ui::Node* node = FindNodeById(tree, id);
+    if (node == nullptr) {
+        throw std::runtime_error("form node missing: " + id);
+    }
+    synth::ui::Bounds bounds = node->bounds;
+    std::string childId = id;
+    bool climbing = true;
+    while (climbing) {
+        climbing = false;
+        for (const synth::ui::Node& candidate : tree.nodes) {
+            for (const synth::ui::NodeId& child : candidate.children) {
+                if (child.value != childId) {
+                    continue;
+                }
+                bounds.x += candidate.bounds.x;
+                bounds.y += candidate.bounds.y;
+                childId = candidate.id.value;
+                climbing = true;
+                break;
+            }
+            if (climbing) {
+                break;
+            }
+        }
+    }
+    return bounds;
+}
+
+std::string TwisterButtonField(std::size_t buttonIx, std::string_view field) {
+    return "controller-wizard.twister.button." + std::to_string(buttonIx) + "." + std::string(field);
+}
+
 std::vector<const synth::ui::Node*> NodesOfKind(const synth::ui::NodeTree& tree,
                                                 synth::ui::NodeKind kind) {
     std::vector<const synth::ui::Node*> result;
@@ -232,6 +268,40 @@ std::vector<const synth::ui::Node*> NodesOfKind(const synth::ui::NodeTree& tree,
         }
     }
     return result;
+}
+
+TEST_CASE(MfTwisterConfigFormPlacesSixButtonsInTwoColumnsOfThree) {
+    synth::MfTwisterConfigForm form;
+    const synth::ui::NodeTree tree = form.BuildTree();
+
+    const synth::ui::Bounds slot = FormBounds(tree, "controller-wizard.twister.encoder-slot");
+    REQUIRE_TRUE(slot.width > 0.0f && slot.height > 0.0f);
+
+    std::vector<synth::ui::Bounds> message;
+    for (std::size_t buttonIx = 0; buttonIx < synth::MfTwisterConfigForm::kButtonCount; ++buttonIx) {
+        const synth::ui::Bounds messageBounds = FormBounds(tree, TwisterButtonField(buttonIx, "message"));
+        const synth::ui::Bounds argumentBounds = FormBounds(tree, TwisterButtonField(buttonIx, "argument"));
+        REQUIRE_TRUE(messageBounds.width > 0.0f && messageBounds.height > 0.0f);
+        REQUIRE_TRUE(argumentBounds.width > 0.0f && argumentBounds.height > 0.0f);
+        REQUIRE_TRUE(argumentBounds.x >= messageBounds.x + messageBounds.width);
+        REQUIRE_TRUE(argumentBounds.y == messageBounds.y);
+        message.push_back(messageBounds);
+    }
+
+    // Buttons 0-2 are the first column, buttons 3-5 the second, in CC order.
+    for (std::size_t row = 0; row < 3; ++row) {
+        REQUIRE_TRUE(message[row].x == message[0].x);
+        REQUIRE_TRUE(message[row + 3].x == message[3].x);
+        REQUIRE_TRUE(message[row + 3].y == message[row].y);
+    }
+    REQUIRE_TRUE(message[1].y > message[0].y);
+    REQUIRE_TRUE(message[2].y > message[1].y);
+    REQUIRE_TRUE(message[3].x > message[0].x + message[0].width);
+
+    // The one controller-wide Encoder Slot precedes both columns, and the form
+    // reports an intrinsic height that covers everything it laid out.
+    REQUIRE_TRUE(message[0].y >= slot.y + slot.height);
+    REQUIRE_TRUE(tree.nodes.front().bounds.height >= message[2].y + message[2].height);
 }
 
 TEST_CASE(MfTwisterConfigFormBuildsClosedSixButtonSurfaceAndRoutesPortableActions) {
