@@ -481,8 +481,13 @@ export class Supervisor {
           await this.#closeSessionOnce();
           return;
         }
-        this.#health.recordMechanicalEvent({ type: "cancelled" });
+        const classification = this.#health.recordMechanicalEvent({ type: "cancelled" });
+        const closingPhase = this.#phase;
         await this.#closeSessionOnce();
+        if (classification?.kind === "cancellation" && closingPhase === "running") {
+          await this.#publishState("cancelled", classification.reason, true);
+          return;
+        }
         await this.#publishState("completed", "session_closed", true);
       });
       this.#closePromise = closeSession.then(() => this.#settleWatchdog());

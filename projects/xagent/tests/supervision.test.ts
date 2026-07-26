@@ -327,7 +327,76 @@ test("close keeps terminal state durable when an in-flight turn iterator settles
   releaseScript.resolve(undefined);
   await turn;
 
+  assert.equal(supervisor.inspect().phase, "cancelled");
+});
+
+test("closing a ready session publishes completed, not cancelled", async () => {
+  const events: SupervisionEvent[] = [];
+  const supervisor = new Supervisor({
+    runId: "xrun_close_ready",
+    adapter: new FakeHarnessAdapter(),
+    startOptions: { cwd: "/tmp" },
+    policy,
+    clock: fixedClock,
+    eventSink: async (event) => {
+      events.push(event);
+    },
+  });
+  await supervisor.start();
+  assert.equal(supervisor.inspect().phase, "ready");
+
+  await supervisor.close();
+
   assert.equal(supervisor.inspect().phase, "completed");
+  const terminal = events.find((event) => event.type === "supervision.state"
+    && (event.phase === "completed" || event.phase === "cancelled"));
+  assert.equal(terminal?.phase, "completed");
+  assert.equal(terminal?.reason, "session_closed");
+});
+
+test("closing a mid-turn running session publishes cancelled", async () => {
+  const events: SupervisionEvent[] = [];
+  const scriptStarted = deferred<void>();
+  const releaseScript = deferred<void>();
+  async function* blockedTurn() {
+    scriptStarted.resolve(undefined);
+    await releaseScript.promise;
+    yield {
+      type: "message.completed" as const,
+      role: "assistant" as const,
+      message_id: "message_cancelled",
+      text: "ignored",
+    };
+    yield {
+      type: "turn.completed" as const,
+      final_text: "ignored",
+    };
+  }
+  const supervisor = new Supervisor({
+    runId: "xrun_close_running_cancel",
+    adapter: new FakeHarnessAdapter({ scriptedEvents: [blockedTurn()] }),
+    startOptions: { cwd: "/tmp" },
+    policy,
+    clock: fixedClock,
+    eventSink: async (event) => {
+      events.push(event);
+    },
+  });
+  await supervisor.start();
+  const turn = supervisor.submit("work");
+  await scriptStarted.promise;
+  assert.equal(supervisor.inspect().phase, "running");
+
+  await supervisor.close();
+  releaseScript.resolve(undefined);
+  await turn;
+
+  assert.equal(supervisor.inspect().phase, "cancelled");
+  const terminal = events.filter((event) => event.type === "supervision.state"
+    && (event.phase === "completed" || event.phase === "cancelled"));
+  assert.equal(terminal.length, 1);
+  assert.equal(terminal[0]?.phase, "cancelled");
+  assert.equal(terminal[0]?.reason, "cancelled");
 });
 
 test("close waits for pending start and concurrent closes close the opened session once", async () => {
