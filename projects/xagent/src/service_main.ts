@@ -7,9 +7,14 @@ import {
   type XagentServer,
   type XagentShutdownController,
 } from "./service/server.js";
+import { platformProcessInspector } from "./supervision/process_identity.js";
+import { reconcileStaleRuns } from "./supervision/reconcile.js";
 
 async function main(): Promise<void> {
   const config = await loadXagentServiceConfig();
+
+  await reconcileStaleRuns(config.logRoot, platformProcessInspector);
+
   const runManager = new XagentRunManager({
     repoRoot: config.repoRoot,
     logRoot: config.logRoot,

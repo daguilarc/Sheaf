@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { writeFile, mkdtemp, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdtemp, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -17,6 +17,7 @@ import {
   loadXagentServiceConfig,
   resolveXagentLogRoot,
 } from "../src/service/config.js";
+import { createRunRecord, updateRunSupervision } from "../src/logs.js";
 import { XagentRunManager } from "../src/service/run_manager.js";
 import {
   createXagentServer,
@@ -371,6 +372,84 @@ test("spawned service_main captures Conductor-style stdout/stderr logs and exits
     "service must emit capturable process output for Conductor log capture",
   );
   assert.match(capturedStderr, /xagent service listening on 127\.0\.0\.1:\d+/);
+});
+
+test("service_main reconciles stale active runs before accepting work", async () => {
+  const sheafRoot = await mkdtemp(path.join(tmpdir(), "xagent-svc-reconcile-"));
+  await mkdir(path.join(sheafRoot, "config"), { recursive: true });
+  await mkdir(path.join(sheafRoot, "structure"), { recursive: true });
+  await writeFile(path.join(sheafRoot, "structure", ".gitkeep"), "", "utf8");
+  const servicesJsonPath = path.join(sheafRoot, "config", "services.json");
+  await writeFile(
+    servicesJsonPath,
+    `${JSON.stringify([
+      {
+        name: "xagent",
+        host: "127.0.0.1",
+        port: 0,
+        command: "make xagent-service-run",
+      },
+    ])}\n`,
+    "utf8",
+  );
+
+  const logRoot = path.join(sheafRoot, "data", "xagent");
+  await mkdir(logRoot, { recursive: true });
+  const staleRunId = "xrun_stale_at_boot";
+  const record = await createRunRecord({
+    repoRoot: sheafRoot,
+    logRoot,
+    runId: staleRunId,
+    harness: "codex",
+    mode: "subagent",
+    clock: () => new Date("2026-07-25T12:00:00.000Z"),
+  });
+  await updateRunSupervision(record, {
+    phase: "running",
+    sequence: 3,
+    provider_thread_id: "provider-thread-stale",
+    last_transport_progress_at: "2026-07-25T12:01:00.000Z",
+    last_semantic_progress_at: "2026-07-25T12:00:30.000Z",
+    owned_process: {
+      pid: 4_999_999,
+      process_group_id: 4_999_999,
+      started_at: "2026-07-25T11:59:59.000Z",
+      start_identity: "stale-boot-start",
+    },
+  });
+  const metadataBefore = JSON.parse(await readFile(record.metadataPath, "utf8")) as {
+    supervision: { phase: string };
+  };
+  assert.equal(metadataBefore.supervision.phase, "running");
+
+  const serviceMain = path.join(process.cwd(), "dist", "src", "service_main.js");
+  const child = trackChild(
+    spawn(process.execPath, [serviceMain], {
+      cwd: sheafRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+  );
+
+  const stderrChunks: Buffer[] = [];
+  child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+  const port = await waitForPort(stderrChunks, 10_000);
+
+  // Reconciliation runs before the listener accepts work; by the time the
+  // listening line is printed the stale run must already be abandoned.
+  const metadataAfter = JSON.parse(await readFile(record.metadataPath, "utf8")) as {
+    supervision: { phase: string };
+    exit_status: string;
+  };
+  assert.equal(metadataAfter.supervision.phase, "abandoned");
+  assert.equal(metadataAfter.exit_status, "failed");
+
+  const exitResponse = await fetchJson(port, "POST", "/exit");
+  assert.equal(exitResponse.status, 200);
+  assert.deepEqual(exitResponse.body, { exiting: true });
+
+  const exitCode = await waitForExit(child, 10_000);
+  assert.equal(exitCode, 0);
 });
 
 async function waitForPort(stderrChunks: Buffer[], timeoutMs: number): Promise<number> {
