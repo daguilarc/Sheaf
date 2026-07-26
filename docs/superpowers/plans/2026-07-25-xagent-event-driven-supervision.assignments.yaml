@@ -1,0 +1,69 @@
+format: 1
+change: add-event-driven-xagent-supervision
+estimator: none
+selection_policy: cursor-baseline-ab-judgment
+notes: >
+  No Cursor rows in the task-analyzer yet. Remaining tasks 6–12 were
+  judgment-decomposed for a native Cursor SDD baseline. Bucket A alternates
+  glm-5.2-high and cursor-grok-4.5-high between implementer and reviewer.
+  Bucket B uses composer-2.5-fast implementer with cursor-grok-4.5-high reviewer.
+  Transport is native Cursor subagents only (no xagent, no kimi).
+completed_prior:
+  - task: task-1
+    title: Restore permission-mode baseline and commit planning artifacts
+    status: complete
+  - task: task-2
+    title: Durable supervisor state machine and metadata
+    status: complete
+  - task: task-3
+    title: Deterministic health and bounded semantic evidence
+    status: complete
+  - task: task-4
+    title: Isolated Haiku semantic watchdog
+    status: complete
+  - task: task-5
+    title: Process ownership, interruption, and restart reconciliation
+    status: complete
+tasks:
+  - task: task-6
+    title: Conductor-managed xagent HTTP service
+    bucket: A
+    implementer: glm-5.2-high
+    reviewer: cursor-grok-4.5-high
+    openspec: [4.1, 4.2, 4.3, 4.4]
+  - task: task-7
+    title: Streamable HTTP MCP tool surface
+    bucket: A
+    implementer: cursor-grok-4.5-high
+    reviewer: glm-5.2-high
+    openspec: [5.1, 5.2]
+  - task: task-8
+    title: Blocking await and final-report envelopes
+    bucket: A
+    implementer: glm-5.2-high
+    reviewer: cursor-grok-4.5-high
+    openspec: [5.3, 5.4, 5.5, 5.6]
+  - task: task-9
+    title: Plugin HTTP MCP discovery packaging
+    bucket: B
+    implementer: composer-2.5-fast
+    reviewer: cursor-grok-4.5-high
+    openspec: [5.7]
+  - task: task-10
+    title: Quiet service-client CLI
+    bucket: A
+    implementer: cursor-grok-4.5-high
+    reviewer: glm-5.2-high
+    openspec: [6.1, 6.2, 6.3, 6.4, 6.5]
+  - task: task-11
+    title: Xagent and Superpowers workflow skill updates
+    bucket: B
+    implementer: composer-2.5-fast
+    reviewer: cursor-grok-4.5-high
+    openspec: [7.1, 7.2, 7.3]
+  - task: task-12
+    title: End-to-end supervision, cost, and packaging validation
+    bucket: A
+    implementer: glm-5.2-high
+    reviewer: cursor-grok-4.5-high
+    openspec: [8.1, 8.2, 8.3, 8.4]

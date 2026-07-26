@@ -30,6 +30,18 @@
 
 ---
 
+
+## Resume Note (2026-07-26)
+
+Tasks 1–5 are complete on `codex/add-event-driven-xagent-supervision` at `35a18559`. Codex stopped before Task 6 (thread context exhausted / pause). The original plan predated the current OpenSpec→Superpowers workflow (no task-analyzer decomposition; reviews via xagent). Remaining work is replanned below with judgment-based decomposition because the task-analyzer has no Cursor model data yet. This run is a Cursor native-subagent baseline:
+
+- **Bucket A (more complex):** alternate `glm-5.2-high` and `cursor-grok-4.5-high` between implementer and reviewer.
+- **Bucket B (less complex):** `composer-2.5-fast` implementer, `cursor-grok-4.5-high` reviewer.
+- Transport: native Cursor subagents only (no xagent, no kimi).
+
+Sibling assignments: `docs/superpowers/plans/2026-07-25-xagent-event-driven-supervision.assignments.yaml`.
+
+
 ### Task 1: Restore the Permission-Mode Baseline and Commit Planning Artifacts
 
 **OpenSpec mapping:** prerequisite only; no OpenSpec checkbox closes.
@@ -391,6 +403,8 @@ git commit -m "feat(xagent): own and reconcile provider processes"
 
 ### Task 6: Add the Conductor-Managed Xagent HTTP Service
 
+**Bucket:** A (complex)
+**Models:** implementer `glm-5.2-high`, reviewer `cursor-grok-4.5-high`
 **OpenSpec mapping:** 4.1, 4.2, 4.3, 4.4.
 
 **Files:**
@@ -403,12 +417,14 @@ git commit -m "feat(xagent): own and reconcile provider processes"
 - Modify: `projects/xagent/Makefile`
 - Modify: `Makefile`
 - Modify: `config/services.json`
-- Modify: `projects/conductor/tests/service_registry.test.ts` or the existing registry test file located by `rg`
+- Modify: `projects/conductor/tests/registry.test.ts` (and/or `scaffold.test.ts` as needed)
 
 **Interfaces:**
-- Produces: `XagentRunManager` owning `Map<runId, Supervisor>`.
+- Consumes: `Supervisor` (`start`, `submit`, `awaitEvent`, `inspect`, `interrupt`, `close`) from Tasks 2–5.
+- Produces: `XagentRunManager` owning `Map<runId, Supervisor>` independently of HTTP request objects.
 - Produces: `createXagentServer({ bindHost, bindPort, runManager, shutdownController })`.
-- Produces: `GET /health`, `POST /exit`, JSON 404.
+- Produces: Conductor-compatible `GET /health` → `{healthy:true, uptime}` (+ optional `warning`); `POST /exit` → `{exiting:true}` then orderly close of owned supervisors/process groups; JSON 404 for unknown routes.
+- Produces: registry entry `xagent` / `127.0.0.1` / `9005` / `make xagent-service-run`.
 
 - [ ] **Step 1: Write registry and HTTP lifecycle tests**
 
@@ -423,7 +439,9 @@ Assert tracked registry entry equals:
 }
 ```
 
-HTTP tests assert health shape, warning only when degraded, bounded JSON 404, exit acknowledgement before cleanup, repeated exit idempotence, and request disconnect does not close a run.
+HTTP tests assert health shape, warning only when degraded, bounded JSON 404, exit acknowledgement before cleanup, repeated exit idempotence, and request disconnect does not close a run owned by the manager.
+
+Follow Conductor contract patterns in `projects/conductor/src/server.ts` and sheaf-chat `projects/sheaf-chat/src/server/server.ts` (`exiting: true`, not `status: exiting`).
 
 - [ ] **Step 2: Verify red**
 
@@ -431,7 +449,7 @@ Run xagent service tests and the relevant Conductor registry test. Expected: ser
 
 - [ ] **Step 3: Implement service config and run manager**
 
-Locate the Sheaf root by finding `config/services.json` plus `structure/`, load the `xagent` entry, require loopback in shipped configuration, and resolve the central xagent log root. The run manager owns supervisors independently of request objects.
+Locate the Sheaf root by finding `config/services.json` plus `structure/`, load the `xagent` entry, require loopback in shipped configuration, and resolve the central xagent log root. The run manager owns supervisors independently of request objects and can create/start/submit/await/inspect/interrupt/close by `run_id`.
 
 - [ ] **Step 4: Implement standard service endpoints and shutdown**
 
@@ -446,7 +464,7 @@ xagent-service-run:
 	$(MAKE) -C projects/xagent service-run
 ```
 
-The project target installs, builds, and runs `dist/src/service_main.js`.
+The project target installs, builds, and runs `dist/src/service_main.js`. Bind host/port from the registry (sheaf-chat style).
 
 - [ ] **Step 6: Verify and commit**
 
@@ -468,6 +486,8 @@ git commit -m "feat(xagent): add Conductor-managed service"
 
 ### Task 7: Expose Service-Owned Runs Through Streamable HTTP MCP
 
+**Bucket:** A (complex)
+**Models:** implementer `cursor-grok-4.5-high`, reviewer `glm-5.2-high`
 **OpenSpec mapping:** 5.1, 5.2.
 
 **Files:**
@@ -480,8 +500,10 @@ git commit -m "feat(xagent): add Conductor-managed service"
 - Modify: `projects/xagent/src/service/run_manager.ts`
 
 **Interfaces:**
+- Consumes: Task 6 `XagentRunManager` and HTTP server.
 - Produces MCP tools: `xagent_start`, `xagent_await`, `xagent_inspect`, `xagent_message`, `xagent_interrupt`, `xagent_close`.
 - Produces service methods with typed inputs/outputs and no MCP objects below the transport boundary.
+- `xagent_await` may return a provisional structured result in this task; Task 8 owns the final versioned completion envelope and blocking semantics hardening.
 
 - [ ] **Step 1: Install the official SDK as tracked dependencies**
 
@@ -521,16 +543,19 @@ git commit -m "feat(xagent): expose supervision over HTTP MCP"
 
 ### Task 8: Implement Blocking Await and Direct Final-Report Delivery
 
+**Bucket:** A (complex)
+**Models:** implementer `glm-5.2-high`, reviewer `cursor-grok-4.5-high`
 **OpenSpec mapping:** 5.3, 5.4, 5.5, 5.6.
 
 **Files:**
 - Modify: `projects/xagent/src/service/run_manager.ts`
 - Modify: `projects/xagent/src/service/mcp.ts`
-- Modify: `projects/xagent/src/supervision/event_queue.ts`
-- Modify: `projects/xagent/src/supervision/supervisor.ts`
+- Modify: `projects/xagent/src/supervision/event_queue.ts` (only if envelope shaping requires it)
+- Modify: `projects/xagent/src/supervision/supervisor.ts` (only if final-report retention requires it)
 - Create: `projects/xagent/tests/mcp_await.test.ts`
 
 **Interfaces:**
+- Consumes: Task 7 MCP tools and Task 6 run manager.
 - Produces: versioned completion/attention/failure/deadline envelopes.
 - Preserves: service-owned run on request abort/deadline.
 
@@ -562,7 +587,7 @@ Run compiled `mcp_await.test.js`; expected: await envelope behavior missing.
 
 - [ ] **Step 4: Implement durable delivery envelopes**
 
-Sanitize the final assistant message once at the supervisor boundary and retain it in the durable completion event. Do not summarize or replace it with a path. Failure/attention/cancellation/abandonment/deadline share the versioned outer envelope with compact event-specific payloads.
+Sanitize the final assistant message once at the supervisor/service boundary and retain it in the durable completion event. Do not summarize or replace it with a path. Failure/attention/cancellation/abandonment/deadline share the versioned outer envelope with compact event-specific payloads.
 
 - [ ] **Step 5: Implement request lifetime behavior**
 
@@ -581,26 +606,35 @@ git commit -m "feat(xagent): deliver final reports through blocking await"
 
 ### Task 9: Package HTTP MCP Discovery Without a Local Supervisor
 
+**Bucket:** B (less complex)
+**Models:** implementer `composer-2.5-fast`, reviewer `cursor-grok-4.5-high`
 **OpenSpec mapping:** 5.7.
 
 **Files:**
 - Create: `plugins/xagent/.mcp.json`
 - Modify: `plugins/xagent/.codex-plugin/plugin.json`
 - Modify: `plugins/xagent/scripts/package_xagent.py`
-- Create or modify: `plugins/xagent/scripts/package_xagent_test.py`
-- Modify: `plugins/xagent/assets/xagent/package.json`
+- Modify: `plugins/xagent/scripts/install_global_test.py` (extend `PackageXagentOutputTests`; there is no separate `package_xagent_test.py`)
+- Modify: `plugins/xagent/assets/xagent/package.json` only if packaging regenerates it
 
 **Interfaces:**
+- Consumes: Task 7 `/mcp` endpoint contract.
 - Produces: plugin MCP entry `xagent` of type `http`, URL `http://127.0.0.1:9005/mcp`, `tool_timeout_sec: 7200`.
 - Preserves: packaged compatibility launcher for legacy `xagent run`.
 
 - [ ] **Step 1: Write behavioral package validation**
 
-Build into a temporary plugin staging root, load manifest plus `.mcp.json`, connect through the declared URL to a fake service, and assert tool discovery. Assert the package contains no stdio MCP command or second service entry point.
+Build into a temporary plugin staging root, load manifest plus `.mcp.json`, connect through the declared URL to a fake/ephemeral service when practical, and assert tool discovery or at least declared URL/timeout shape. Assert the package contains no stdio MCP command or second service entry point.
 
 - [ ] **Step 2: Verify red**
 
-Run the package test; expected: `.mcp.json` absent and manifest lacks `mcpServers`.
+Run:
+
+```bash
+python3 plugins/xagent/scripts/install_global_test.py
+```
+
+Expected: `.mcp.json` absent and/or manifest lacks `mcpServers`.
 
 - [ ] **Step 3: Add HTTP MCP declaration**
 
@@ -625,7 +659,7 @@ Reference it as `"mcpServers": "./.mcp.json"` in the plugin manifest. Package on
 Run:
 
 ```bash
-python3 plugins/xagent/scripts/package_xagent_test.py
+python3 plugins/xagent/scripts/install_global_test.py
 make xagent-plugin-test
 ```
 
@@ -640,6 +674,8 @@ git commit -m "feat(xagent): package HTTP MCP discovery"
 
 ### Task 10: Add the Quiet Service-Client CLI
 
+**Bucket:** A (complex)
+**Models:** implementer `cursor-grok-4.5-high`, reviewer `glm-5.2-high`
 **OpenSpec mapping:** 6.1, 6.2, 6.3, 6.4, 6.5.
 
 **Files:**
@@ -647,11 +683,12 @@ git commit -m "feat(xagent): package HTTP MCP discovery"
 - Create: `projects/xagent/tests/service_client.test.ts`
 - Modify: `projects/xagent/src/cli.ts`
 - Modify: `projects/xagent/tests/cli.test.ts`
-- Modify: `projects/xagent/tests/e2e.test.ts`
+- Modify: `projects/xagent/tests/e2e.test.ts` only if legacy coverage needs an explicit non-regression hook
 
 **Interfaces:**
+- Consumes: Task 6–8 service operations (HTTP/MCP or typed client over the same operations).
 - Produces commands: `xagent supervise`, `xagent await`, `xagent inspect`, `xagent message`, `xagent interrupt`, `xagent close`.
-- Consumes: service MCP/controller operations; never constructs a `Supervisor`.
+- Consumes: service operations; never constructs a `Supervisor`.
 - Preserves: all existing `run`, `list`, and `logs` behavior.
 
 - [ ] **Step 1: Write parser/help tests**
@@ -687,6 +724,8 @@ git commit -m "feat(xagent): add quiet supervision client"
 
 ### Task 11: Update Xagent and Superpowers Workflow Skills
 
+**Bucket:** B (less complex)
+**Models:** implementer `composer-2.5-fast`, reviewer `cursor-grok-4.5-high`
 **OpenSpec mapping:** 7.1, 7.2, 7.3.
 
 **Files:**
@@ -733,7 +772,7 @@ Explicitly state deterministic versus semantic watchdog responsibility and that 
 
 - [ ] **Step 4: Tighten OpenSpec/Superpowers coordinator waits**
 
-Require one long native mailbox wait after independent work, sparse blocker/final child messages, and reason-gated inspection. For xagent, use service MCP rather than terminal polling.
+Require one long native mailbox wait after independent work, sparse blocker/final child messages, and reason-gated inspection. For xagent, use service MCP rather than terminal polling. Prefer native harness subagents when the assigned model is available; do not prescribe xagent as the default transport for same-provider work.
 
 - [ ] **Step 5: Regenerate distributed copies and verify**
 
@@ -756,14 +795,16 @@ git commit -m "feat(agents): use event-driven xagent supervision"
 
 ### Task 12: Add End-to-End Supervision, Cost, and Packaging Validation
 
+**Bucket:** A (complex)
+**Models:** implementer `glm-5.2-high`, reviewer `cursor-grok-4.5-high`
 **OpenSpec mapping:** 8.1, 8.2, 8.3, 8.4.
 
 **Files:**
 - Create: `projects/xagent/tests/fixtures/watchdog/*.json`
 - Create: `projects/xagent/tests/supervision_e2e.test.ts`
 - Create: `projects/xagent/tests/supervision_cost.test.ts`
-- Modify: `projects/xagent/tests/e2e.test.ts`
-- Modify: `plugins/xagent/scripts/package_xagent_test.py`
+- Modify: `projects/xagent/tests/e2e.test.ts` only if needed for shared helpers
+- Modify: `plugins/xagent/scripts/install_global_test.py` and/or packaging validation as needed
 - Create: `projects/xagent/docs/supervision.md`
 
 **Interfaces:**
