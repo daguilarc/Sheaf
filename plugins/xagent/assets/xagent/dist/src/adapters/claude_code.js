@@ -13,6 +13,9 @@ export class ClaudeCodeAdapter {
             cwd: options.cwd,
             buildCommand: (context, state) => buildClaudeCommand(context, state, options),
             parseEvent: parseClaudeProviderEvent,
+            ...(options.providerThreadId === undefined
+                ? {}
+                : { initialProviderThreadId: options.providerThreadId }),
         });
     }
 }

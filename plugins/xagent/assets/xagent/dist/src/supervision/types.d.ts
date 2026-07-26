@@ -44,6 +44,10 @@ export type SupervisorInspection = {
     phase: SupervisionPhase;
     sequence: number;
     provider_thread_id: string | undefined;
+    callback_failure?: {
+        source: "health_callback" | "watchdog_callback";
+        message: string;
+    };
 };
 export type WatchdogAggregate = {
     invocation_count: number;

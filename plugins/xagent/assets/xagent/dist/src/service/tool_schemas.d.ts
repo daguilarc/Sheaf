@@ -18,6 +18,7 @@ export declare const XagentStartInputSchema: z.ZodObject<{
     model: z.ZodOptional<z.ZodString>;
     thinking_level: z.ZodOptional<z.ZodEnum<["low", "medium", "high", "xhigh"]>>;
     permission_mode: z.ZodOptional<z.ZodString>;
+    provider_thread_id: z.ZodOptional<z.ZodString>;
     policy: z.ZodOptional<z.ZodObject<{
         silenceTimeoutMs: z.ZodNumber;
         hardDeadlineMs: z.ZodOptional<z.ZodNumber>;
@@ -98,6 +99,7 @@ export declare const XagentStartInputSchema: z.ZodObject<{
     cwd: string;
     model?: string | undefined;
     thinking_level?: "low" | "medium" | "high" | "xhigh" | undefined;
+    provider_thread_id?: string | undefined;
     permission_mode?: string | undefined;
     policy?: {
         watchdog: {
@@ -123,6 +125,7 @@ export declare const XagentStartInputSchema: z.ZodObject<{
     mode?: "subagent" | "full" | undefined;
     model?: string | undefined;
     thinking_level?: "low" | "medium" | "high" | "xhigh" | undefined;
+    provider_thread_id?: string | undefined;
     permission_mode?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;

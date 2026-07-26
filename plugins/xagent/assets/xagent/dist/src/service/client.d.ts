@@ -3,6 +3,7 @@ import type { StructuredToolError, XagentAwaitInput, XagentCloseInput, XagentIns
 export declare const XAGENT_DEFAULT_SERVICE_BASE_URL = "http://127.0.0.1:9005";
 export type XagentServiceClientOptions = {
     readonly baseUrl?: string;
+    readonly awaitHttpChunkSeconds?: number;
 };
 export type XagentServiceClient = {
     start(input: XagentStartInput): Promise<StartRunResult>;
@@ -23,4 +24,12 @@ export declare class XagentServiceToolError extends Error {
 }
 export declare function resolveXagentServiceBaseUrl(explicit?: string, env?: NodeJS.ProcessEnv): string;
 export declare function createXagentServiceClient(options?: XagentServiceClientOptions): XagentServiceClient;
+export declare const x_McpAwaitTimeoutSlackSeconds = 30;
+export declare const x_McpAwaitHttpChunkSeconds = 240;
+export type McpToolRequestOptions = {
+    readonly timeout?: number;
+    readonly maxTotalTimeout?: number;
+    readonly signal?: AbortSignal;
+};
+export declare function mcpToolRequestOptions(toolName: string, args: Record<string, unknown>, signal?: AbortSignal): McpToolRequestOptions;
 //# sourceMappingURL=client.d.ts.map

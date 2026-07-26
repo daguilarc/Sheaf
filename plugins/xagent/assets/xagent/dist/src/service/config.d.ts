@@ -1,6 +1,8 @@
 export declare const XAGENT_SERVICE_NAME = "xagent";
 export declare const XAGENT_DEFAULT_BIND_PORT = 9005;
 export declare const XAGENT_DEFAULT_BIND_HOST = "127.0.0.1";
+export declare const x_ServiceRequestTimeoutMs = 7200000;
+export declare const x_ServiceHeadersTimeoutMs = 7270000;
 export type XagentServiceConfig = {
     readonly repoRoot: string;
     readonly bindHost: string;

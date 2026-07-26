@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { XAGENT_DEFAULT_BIND_HOST, XAGENT_DEFAULT_BIND_PORT, } from "./config.js";
+import { XAGENT_DEFAULT_BIND_HOST, XAGENT_DEFAULT_BIND_PORT, x_ServiceRequestTimeoutMs, } from "./config.js";
+import { x_DefaultAwaitDeadlineSeconds, x_MaxAwaitDeadlineSeconds, } from "./tool_schemas.js";
 export const XAGENT_DEFAULT_SERVICE_BASE_URL = `http://${XAGENT_DEFAULT_BIND_HOST}:${XAGENT_DEFAULT_BIND_PORT}`;
 export class XagentServiceUnavailableError extends Error {
     structured;
@@ -31,6 +32,7 @@ export function resolveXagentServiceBaseUrl(explicit, env = process.env) {
 }
 export function createXagentServiceClient(options = {}) {
     const baseUrl = resolveXagentServiceBaseUrl(options.baseUrl);
+    const awaitHttpChunkSeconds = positiveChunkSeconds(options.awaitHttpChunkSeconds ?? x_McpAwaitHttpChunkSeconds);
     const mcpUrl = new URL("/mcp", `${baseUrl}/`);
     let client;
     let transport;
@@ -64,7 +66,18 @@ export function createXagentServiceClient(options = {}) {
         })();
         return connectPromise;
     }
-    async function callTool(name, args, signal) {
+    async function resetConnection() {
+        const activeClient = client;
+        const activeTransport = transport;
+        client = undefined;
+        transport = undefined;
+        connectPromise = undefined;
+        await Promise.allSettled([
+            activeClient?.close() ?? Promise.resolve(),
+            activeTransport?.close() ?? Promise.resolve(),
+        ]);
+    }
+    async function callToolOnce(name, args, signal) {
         let connected;
         try {
             connected = await ensureConnected();
@@ -74,19 +87,85 @@ export function createXagentServiceClient(options = {}) {
         }
         let result;
         try {
-            result = await connected.callTool({ name, arguments: args }, undefined, signal === undefined ? undefined : { signal });
+            result = await connected.callTool({ name, arguments: args }, undefined, mcpToolRequestOptions(name, args, signal));
         }
         catch (error) {
             throw toUnavailableError(error, baseUrl);
         }
         return unpackToolResult(result);
     }
+    async function callTool(name, args, signal) {
+        try {
+            return await callToolOnce(name, args, signal);
+        }
+        catch (error) {
+            if (!(error instanceof XagentServiceUnavailableError) || closed) {
+                throw error;
+            }
+            // One reconnect covers transient stream drops mid-request.
+            //
+            await resetConnection();
+            return callToolOnce(name, args, signal);
+        }
+    }
+    async function awaitRun(input, signal) {
+        const applicationDeadlineSeconds = awaitDeadlineSeconds(input.deadline_seconds);
+        const applicationDeadlineMs = Date.now() + applicationDeadlineSeconds * 1000;
+        let lastDeadline;
+        for (;;) {
+            if (signal?.aborted === true) {
+                throw new XagentServiceUnavailableError(`xagent service unavailable at ${baseUrl}: aborted`, { cause: "aborted" });
+            }
+            const remainingSeconds = Math.max(0, Math.ceil((applicationDeadlineMs - Date.now()) / 1000));
+            if (remainingSeconds <= 0) {
+                return lastDeadline ?? {
+                    schema_version: 1,
+                    event: "supervision.deadline",
+                    run_id: input.run_id,
+                    sequence: input.after_sequence,
+                    phase: "running",
+                    elapsed_ms: applicationDeadlineSeconds * 1000,
+                    reason: "await_deadline",
+                };
+            }
+            // Keep each HTTP MCP POST under the typical fetch/undici body idle
+            // timeout (~300s). The server returns a clean await_deadline for the
+            // chunk; the client continues until the application deadline.
+            //
+            const chunkSeconds = Math.min(remainingSeconds, awaitHttpChunkSeconds);
+            let result;
+            try {
+                result = await callToolOnce("xagent_await", {
+                    run_id: input.run_id,
+                    after_sequence: input.after_sequence,
+                    deadline_seconds: chunkSeconds,
+                }, signal);
+            }
+            catch (error) {
+                if (!(error instanceof XagentServiceUnavailableError) || closed) {
+                    throw error;
+                }
+                await resetConnection();
+                if (Date.now() >= applicationDeadlineMs) {
+                    throw error;
+                }
+                continue;
+            }
+            if (result.event === "supervision.deadline"
+                && result.reason === "await_deadline"
+                && Date.now() < applicationDeadlineMs) {
+                lastDeadline = result;
+                continue;
+            }
+            return result;
+        }
+    }
     return {
         start(input) {
             return callTool("xagent_start", { ...input });
         },
         await(input, signal) {
-            return callTool("xagent_await", { ...input }, signal);
+            return awaitRun(input, signal);
         },
         inspect(input) {
             return callTool("xagent_inspect", { ...input });
@@ -102,15 +181,7 @@ export function createXagentServiceClient(options = {}) {
         },
         async close() {
             closed = true;
-            const activeClient = client;
-            const activeTransport = transport;
-            client = undefined;
-            transport = undefined;
-            connectPromise = undefined;
-            await Promise.allSettled([
-                activeClient?.close() ?? Promise.resolve(),
-                activeTransport?.close() ?? Promise.resolve(),
-            ]);
+            await resetConnection();
         },
     };
 }
@@ -150,5 +221,39 @@ function toUnavailableError(error, baseUrl) {
     }
     const message = error instanceof Error ? error.message : String(error);
     return new XagentServiceUnavailableError(`xagent service unavailable at ${baseUrl}: ${message}`, { cause: message });
+}
+// MCP SDK defaults callTool requests to 60s. Node's fetch/undici stack also
+// idles out bodies around 300s, which aborts a single long xagent_await POST
+// with "fetch failed" while the service-owned worker keeps running. Chunk each
+// MCP await under that ceiling and continue until the application deadline.
+//
+export const x_McpAwaitTimeoutSlackSeconds = 30;
+export const x_McpAwaitHttpChunkSeconds = 240;
+export function mcpToolRequestOptions(toolName, args, signal) {
+    if (toolName !== "xagent_await") {
+        return signal === undefined ? {} : { signal };
+    }
+    const deadlineSeconds = awaitDeadlineSeconds(args.deadline_seconds);
+    const timeoutMs = Math.min(x_ServiceRequestTimeoutMs, (deadlineSeconds + x_McpAwaitTimeoutSlackSeconds) * 1000);
+    return {
+        timeout: timeoutMs,
+        maxTotalTimeout: timeoutMs,
+        ...(signal === undefined ? {} : { signal }),
+    };
+}
+function awaitDeadlineSeconds(value) {
+    if (typeof value === "number"
+        && Number.isFinite(value)
+        && value > 0
+        && value <= x_MaxAwaitDeadlineSeconds) {
+        return Math.floor(value);
+    }
+    return x_DefaultAwaitDeadlineSeconds;
+}
+function positiveChunkSeconds(value) {
+    if (!Number.isFinite(value) || value <= 0) {
+        return x_McpAwaitHttpChunkSeconds;
+    }
+    return Math.min(x_MaxAwaitDeadlineSeconds, Math.floor(value));
 }
 //# sourceMappingURL=client.js.map

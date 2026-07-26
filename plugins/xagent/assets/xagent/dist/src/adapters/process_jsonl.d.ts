@@ -23,6 +23,7 @@ export type ProcessJsonlSessionOptions = {
     readonly parseEvent: ProviderEventParser;
     readonly spawnProcess?: SpawnProcess;
     readonly terminationGraceMs?: number;
+    readonly initialProviderThreadId?: string;
     readonly captureProcessIdentity?: (pid: number) => OwnedProcessIdentity | undefined;
 };
 export declare class ProcessJsonlSession implements HarnessSession {

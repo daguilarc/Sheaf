@@ -8,6 +8,11 @@ import { getDefaultLogRoot, listRuns, readNormalizedLog } from "./logs.js";
 import { runSession } from "./runtime.js";
 import { createXagentServiceClient, resolveXagentServiceBaseUrl, XagentServiceToolError, XagentServiceUnavailableError, } from "./service/client.js";
 import { x_DefaultAwaitDeadlineSeconds, } from "./service/tool_schemas.js";
+const nonTerminalSupervisionPhases = new Set([
+    "starting",
+    "running",
+    "ready",
+]);
 export function parseArgs(argv) {
     const [command, ...rest] = argv;
     if (command === undefined || command === "--help" || command === "-h") {
@@ -103,6 +108,9 @@ async function runQuietServiceCommand(command, stdout, cwd, dependencies) {
                 ...(command.model === undefined ? {} : { model: command.model }),
                 ...(command.thinkingLevel === undefined ? {} : { thinking_level: command.thinkingLevel }),
                 ...(command.permissionMode === undefined ? {} : { permission_mode: command.permissionMode }),
+                ...(command.providerThreadId === undefined
+                    ? {}
+                    : { provider_thread_id: command.providerThreadId }),
                 ...(command.policy === undefined
                     ? {}
                     : { policy: command.policy }),
@@ -162,7 +170,8 @@ async function awaitControllerEvent(client, runId, afterSequence, deadlineSecond
             after_sequence: cursor,
             deadline_seconds: Math.min(remainingSeconds, deadlineSeconds),
         });
-        if (awaited.event === "supervision.state") {
+        if (awaited.event === "supervision.state"
+            && nonTerminalSupervisionPhases.has(awaited.phase)) {
             cursor = awaited.sequence;
             if (Date.now() >= deadlineMs) {
                 return {
@@ -190,7 +199,10 @@ function exitCodeForAwait(awaited) {
     if (awaited.reason === "missing_final_report") {
         return 1;
     }
-    return awaited.event === "supervision.state" ? 0 : 1;
+    if (awaited.event === "supervision.state") {
+        return awaited.phase === "failed" || awaited.phase === "abandoned" ? 1 : 0;
+    }
+    return 1;
 }
 async function resolveLogRoot(cwd) {
     const configured = process.env.XAGENT_LOG_ROOT?.trim();
@@ -335,6 +347,7 @@ function parseSuperviseArgs(argv) {
     let model;
     let thinkingLevel;
     let permissionMode;
+    let providerThreadId;
     let cwd;
     let policy;
     let deadlineSeconds;
@@ -380,6 +393,14 @@ function parseSuperviseArgs(argv) {
                 throw new Error("xagent supervise accepts --permission-mode at most once.");
             }
             permissionMode = readFlagValue(argv, index, flag);
+            index += 1;
+            continue;
+        }
+        if (flag === "--resume") {
+            if (providerThreadId !== undefined) {
+                throw new Error("xagent supervise accepts --resume at most once.");
+            }
+            providerThreadId = readFlagValue(argv, index, flag);
             index += 1;
             continue;
         }
@@ -431,6 +452,7 @@ function parseSuperviseArgs(argv) {
         ...(model === undefined ? {} : { model }),
         ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
         ...(permissionMode === undefined ? {} : { permissionMode }),
+        ...(providerThreadId === undefined ? {} : { providerThreadId }),
         ...(cwd === undefined ? {} : { cwd }),
         ...(policy === undefined ? {} : { policy }),
         ...(deadlineSeconds === undefined ? {} : { deadlineSeconds }),
@@ -591,7 +613,7 @@ function usage(topic) {
     if (topic === "supervise") {
         return [
             "Usage:",
-            "  xagent supervise --harness <codex|pi|cursor|claude_code> [--model <model>] [--thinking-level <low|medium|high|xhigh>] [--permission-mode <mode>] [--cwd <abs-path>] [--policy <json>] [--deadline-seconds <n>] <prompt>",
+            "  xagent supervise --harness <codex|pi|cursor|claude_code> [--model <model>] [--thinking-level <low|medium|high|xhigh>] [--permission-mode <mode>] [--resume <provider-thread-id>] [--cwd <abs-path>] [--policy <json>] [--deadline-seconds <n>] <prompt>",
             "  xagent await <run_id> --after-sequence <n> [--deadline-seconds <n>]",
             "  xagent inspect <run_id>",
             "  xagent message <run_id> <text>",

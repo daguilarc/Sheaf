@@ -17,6 +17,7 @@ export type CliCommand = {
     model?: string;
     thinkingLevel?: ThinkingLevel;
     permissionMode?: string;
+    providerThreadId?: string;
     cwd?: string;
     policy?: SupervisionPolicy;
     deadlineSeconds?: number;

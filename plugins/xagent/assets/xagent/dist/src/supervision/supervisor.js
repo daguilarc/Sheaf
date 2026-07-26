@@ -44,6 +44,7 @@ export class Supervisor {
     #previousWatchdogVerdict;
     #healthCallbackFailure;
     #watchdogCallbackFailure;
+    #callbackFailureSurfaced = false;
     constructor(options) {
         this.#runId = options.runId;
         this.#adapter = options.adapter;
@@ -79,7 +80,7 @@ export class Supervisor {
             ...(options.scheduler === undefined ? {} : { scheduler: options.scheduler }),
             onClassification: (classification) => {
                 void this.#applyHealthClassification(classification).catch((error) => {
-                    this.#healthCallbackFailure = asError(error);
+                    void this.#surfaceCallbackFailure(asError(error));
                 });
             },
         });
@@ -110,11 +111,22 @@ export class Supervisor {
         this.#initialPersistence = this.#publishState("starting", "supervisor_created", false);
     }
     inspect() {
+        const callbackFailure = this.#healthCallbackFailure ?? this.#watchdogCallbackFailure;
         return {
             run_id: this.#runId,
             phase: this.#phase,
             sequence: Math.max(1, this.#events.sequence),
             provider_thread_id: this.#providerThreadId,
+            ...(callbackFailure === undefined
+                ? {}
+                : {
+                    callback_failure: {
+                        source: this.#healthCallbackFailure !== undefined
+                            ? "health_callback"
+                            : "watchdog_callback",
+                        message: callbackFailure.message,
+                    },
+                }),
         };
     }
     evidenceSnapshot() {
@@ -300,22 +312,33 @@ export class Supervisor {
                 return;
             }
             const sanitizedReport = sanitizeValue({ text: reportText }, this.#startOptions.cwd);
-            await this.#withLifecycleMutation(async () => {
-                if (terminalPhases.has(this.#phase)) {
-                    return;
-                }
-                await this.#publishEvent({
-                    type: "turn.completed",
-                    phase: "ready",
-                    reason: "turn_completed",
-                    payload: {
-                        report: sanitizedReport,
-                        turn_id: turn.turnId,
-                        provider_thread_id: completed.provider_thread_id ?? turn.session.providerThreadId,
-                        ...(completed.usage === undefined ? {} : { usage: completed.usage }),
-                    },
-                }, true);
-            });
+            try {
+                await this.#withLifecycleMutation(async () => {
+                    if (terminalPhases.has(this.#phase)) {
+                        return;
+                    }
+                    await this.#publishEvent({
+                        type: "turn.completed",
+                        phase: "ready",
+                        reason: "turn_completed",
+                        payload: {
+                            report: sanitizedReport,
+                            turn_id: turn.turnId,
+                            provider_thread_id: completed.provider_thread_id ?? turn.session.providerThreadId,
+                            ...(completed.usage === undefined ? {} : { usage: completed.usage }),
+                        },
+                    }, true);
+                });
+            }
+            catch (error) {
+                // A mid-run persistence failure must not leave the run in a non-terminal
+                // phase. Attempt to publish a terminal failed state so awaiters see a
+                // durable failure instead of waiting silently. If the failed-state
+                // publish also fails (sink still broken), the original error is still
+                // re-thrown so the caller observes the persistence failure.
+                await this.#rescuePublishFailure(error, turn.turnId);
+                throw error;
+            }
         }
         finally {
             await this.#settleWatchdog();
@@ -539,7 +562,58 @@ export class Supervisor {
             await this.#watchdogScheduler.settle();
         }
         catch (error) {
+            // Watchdog settle failures (e.g. telemetry sink errors) are secondary:
+            // expose them via inspect without transitioning the run to failed, so
+            // a successful submit is not rejected by a telemetry-only failure.
             this.#watchdogCallbackFailure = asError(error);
+        }
+    }
+    async #surfaceCallbackFailure(error) {
+        // Surface a health-callback failure (timer-driven silence/hard-deadline
+        // attention publish) so the controller is not left waiting silently for
+        // an attention that will never arrive.
+        if (this.#healthCallbackFailure !== undefined) {
+            return;
+        }
+        this.#healthCallbackFailure = error;
+        if (this.#callbackFailureSurfaced) {
+            return;
+        }
+        this.#callbackFailureSurfaced = true;
+        try {
+            await this.#withLifecycleMutation(async () => {
+                if (terminalPhases.has(this.#phase)) {
+                    return;
+                }
+                await this.#publishState("failed", "health_callback_failed", true, {
+                    message: error.message,
+                    source: "health_callback",
+                });
+            });
+        }
+        catch {
+            // The terminal publish itself failed; the failure remains visible via
+            // inspect() so a controller polling is not left waiting silently.
+        }
+    }
+    async #rescuePublishFailure(error, turnId) {
+        // Best-effort transition to a terminal failed state when a mid-run
+        // persistence failure leaves the phase non-terminal. The original error is
+        // re-thrown by the caller regardless of whether this rescue succeeds.
+        try {
+            await this.#withLifecycleMutation(async () => {
+                if (terminalPhases.has(this.#phase)) {
+                    return;
+                }
+                await this.#publishState("failed", "event_persistence_failed", true, {
+                    message: error instanceof Error ? error.message : String(error),
+                    turn_id: turnId,
+                });
+            });
+        }
+        catch {
+            // The failed-state publish also failed; nothing more we can do here. The
+            // caller re-throws the original error so the submit rejection is visible.
         }
     }
     #closeSessionOnce() {
@@ -607,6 +681,14 @@ function mechanicalEventClassification(monitor, event) {
             message: event.message,
         });
     }
+    if (event.code === "process_exit") {
+        const exitStatus = processExitFromDetails(event.details);
+        return monitor.recordMechanicalEvent({
+            type: "process.exited",
+            exitCode: exitStatus.exitCode,
+            signal: exitStatus.signal,
+        });
+    }
     return undefined;
 }
 function isActiveSemanticEvidence(event) {
@@ -642,6 +724,20 @@ function permissionFromDetails(details) {
         return details.permission;
     }
     return undefined;
+}
+function processExitFromDetails(details) {
+    if (typeof details !== "object" || details === null) {
+        return { exitCode: null, signal: null };
+    }
+    const exitCode = "exit_code" in details
+        && (typeof details.exit_code === "number" || details.exit_code === null)
+        ? details.exit_code
+        : null;
+    const signal = "signal" in details
+        && (typeof details.signal === "string" || details.signal === null)
+        ? details.signal
+        : null;
+    return { exitCode, signal };
 }
 function asError(error) {
     return error instanceof Error ? error : new Error(String(error));
