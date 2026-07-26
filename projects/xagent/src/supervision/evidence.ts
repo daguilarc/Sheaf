@@ -180,9 +180,9 @@ export class SemanticEvidenceWindow {
       && (toolFingerprints.length > 0 || failureFingerprints.length > 0)
     ) {
       if (toolFingerprints.length >= failureFingerprints.length) {
-        toolFingerprints = toolFingerprints.slice(0, -1);
+        toolFingerprints = withoutLowestPriorityFingerprint(toolFingerprints);
       } else {
-        failureFingerprints = failureFingerprints.slice(0, -1);
+        failureFingerprints = withoutLowestPriorityFingerprint(failureFingerprints);
       }
       truncated = true;
       input = this.#createInput(
@@ -429,6 +429,30 @@ function aggregateFingerprints(
 
 function distinctFingerprintCount(entries: readonly TimedFingerprint[]): number {
   return new Set(entries.map(({ fingerprint: value }) => value)).size;
+}
+
+function withoutLowestPriorityFingerprint(
+  entries: readonly EvidenceFingerprint[],
+): EvidenceFingerprint[] {
+  let dropIndex = 0;
+  for (let index = 1; index < entries.length; index += 1) {
+    const candidate = entries[index];
+    const selected = entries[dropIndex];
+    if (
+      candidate !== undefined
+      && selected !== undefined
+      && (
+        candidate.count < selected.count
+        || (
+          candidate.count === selected.count
+          && candidate.fingerprint > selected.fingerprint
+        )
+      )
+    ) {
+      dropIndex = index;
+    }
+  }
+  return entries.filter((_entry, index) => index !== dropIndex);
 }
 
 function boundEvent(event: Record<string, unknown>): {

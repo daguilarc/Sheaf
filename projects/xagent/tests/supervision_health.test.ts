@@ -373,6 +373,46 @@ test("interrupt keeps deterministic monitoring active until the provider turn se
   await turn;
 });
 
+test("an interrupted iterator ending without completion clears health timers at terminal failure", async () => {
+  const clock = new FakeClock();
+  const turnStarted = deferred<void>();
+  const endTurn = deferred<void>();
+  const reasons: string[] = [];
+  async function* interruptedTurn() {
+    turnStarted.resolve(undefined);
+    await endTurn.promise;
+  }
+  const supervisor = new Supervisor({
+    runId: "xrun_interrupted_missing_report",
+    adapter: new FakeHarnessAdapter({
+      supportsInterrupt: true,
+      scriptedEvents: [interruptedTurn()],
+    }),
+    startOptions: { cwd: "/private/tmp/sheaf-xagent-supervision" },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    clock: clock.now,
+    scheduler: clock,
+    eventSink: async (event) => {
+      reasons.push(event.reason);
+    },
+  });
+  await supervisor.start();
+  const turn = supervisor.submit("Implement the task.");
+  await turnStarted.promise;
+
+  await supervisor.interrupt();
+  endTurn.resolve(undefined);
+  await turn;
+
+  assert.equal(supervisor.inspect().phase, "failed");
+  assert.equal(reasons.includes("missing_final_report"), true);
+  assert.equal(clock.pendingCount(), 0);
+
+  clock.advance(300_000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(reasons.includes("silence_timeout"), false);
+});
+
 class ClassifierSpy {
   readonly calls: unknown[] = [];
 }
@@ -400,6 +440,10 @@ class FakeClock implements SupervisionScheduler {
 
   clearTimeout(handle: unknown): void {
     (handle as Scheduled).cancelled = true;
+  }
+
+  pendingCount(): number {
+    return this.#scheduled.filter(({ cancelled }) => !cancelled).length;
   }
 
   advance(durationMs: number): void {

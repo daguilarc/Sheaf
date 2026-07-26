@@ -175,6 +175,34 @@ test("a 1 KiB configured cap shrinks distinct fingerprint counters to fit", () =
   assert.equal(snapshot.truncated, true);
 });
 
+test("fingerprint byte pressure retains repeated evidence ahead of singletons", () => {
+  const evidence = new SemanticEvidenceWindow({
+    repoRoot,
+    originalPrompt: "Detect repeated tool activity.",
+    maxInputBytes: 700,
+  });
+  for (let index = 0; index < 12; index += 1) {
+    evidence.record({
+      type: "tool.started",
+      name: "shell",
+      tool_call_id: `hot-${index}`,
+      input: { cmd: "hot-29" },
+    });
+  }
+  for (let index = 0; index < 12; index += 1) {
+    evidence.record({
+      type: "tool.started",
+      name: "shell",
+      tool_call_id: `single-${index}`,
+      input: { cmd: `single-${index}` },
+    });
+  }
+
+  const snapshot = evidence.snapshot();
+  assert.equal(snapshot.tool_fingerprints.some(({ count }) => count === 12), true);
+  assert.equal(snapshot.suspicion_signals.includes("repeated_tool_fingerprint"), true);
+});
+
 test("snapshot considers each retained event within a linear serialization budget", () => {
   const evidence = new SemanticEvidenceWindow({
     repoRoot,

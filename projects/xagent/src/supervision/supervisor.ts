@@ -279,6 +279,11 @@ export class Supervisor {
         if (terminalPhases.has(this.#phase)) {
           return;
         }
+        this.#health.recordMechanicalEvent({
+          type: "provider.failed",
+          code: "missing_final_report",
+          message: "Provider turn ended without a final report.",
+        });
         await this.#publishState("failed", "missing_final_report", true, {
           turn_id: turn.turnId,
         });
