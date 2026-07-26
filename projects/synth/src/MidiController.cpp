@@ -2959,6 +2959,7 @@ MidiControllerSlot WrldBldrDefaultControllerSlot(std::string name, WrldBldrDefau
     MidiControllerSlot slot;
     slot.name = std::move(name);
     slot.kind = MidiProfileKind::WrldBldr;
+    slot.disposition = MidiControllerDisposition::Active;
     slot.config = WrldBldrDefaultProfileConfig(options);
     return slot;
 }
@@ -3113,51 +3114,50 @@ bool Fail(std::string* reason, const char* message) {
     return false;
 }
 
-} // namespace
+bool ProfileConfigValidForKind(MidiProfileKind kind, const MidiControllerProfileConfig& config,
+                               std::string* reason) {
+    const MidiKindSupport support = KindSupport(kind);
 
-bool SlotValidForKind(const MidiControllerSlot& slot, std::string* reason) {
-    const MidiKindSupport support = KindSupport(slot.kind);
-
-    if (!support.encoders && (slot.config.encoderInput.has_value() || slot.config.encoderOutput.has_value())) {
+    if (!support.encoders && (config.encoderInput.has_value() || config.encoderOutput.has_value())) {
         return Fail(reason, "encoders not supported by this controller kind");
     }
-    if (!support.analogs && slot.config.analogInput.has_value()) {
+    if (!support.analogs && config.analogInput.has_value()) {
         return Fail(reason, "analog input not supported by this controller kind");
     }
-    if (!support.systemMessages && !slot.config.systemMessages.empty()) {
+    if (!support.systemMessages && !config.systemMessages.empty()) {
         return Fail(reason, "system messages not supported by this controller kind");
     }
-    if (slot.config.pressureInput.has_value()) {
-        if (const char* error = PolyphonicPressureConfigError(*slot.config.pressureInput)) {
+    if (config.pressureInput.has_value()) {
+        if (const char* error = PolyphonicPressureConfigError(*config.pressureInput)) {
             return Fail(reason, error);
         }
     }
 
-    if (slot.config.encoderInput.has_value()) {
-        for (const EncoderMidiMapping& mapping : slot.config.encoderInput->turns) {
+    if (config.encoderInput.has_value()) {
+        for (const EncoderMidiMapping& mapping : config.encoderInput->turns) {
             if (mapping.control.type != MidiControlType::Cc) {
                 return Fail(reason, "encoder turns must use CC control addresses");
             }
         }
     }
-    if (slot.config.analogInput.has_value()) {
-        if (slot.config.analogInput->sceneBlend.has_value() &&
-            slot.config.analogInput->sceneBlend->type != MidiControlType::Cc) {
+    if (config.analogInput.has_value()) {
+        if (config.analogInput->sceneBlend.has_value() &&
+            config.analogInput->sceneBlend->type != MidiControlType::Cc) {
             return Fail(reason, "scene blend must use a CC control address");
         }
-        for (const AnalogMidiMapping& mapping : slot.config.analogInput->gestures) {
+        for (const AnalogMidiMapping& mapping : config.analogInput->gestures) {
             if (mapping.control.type != MidiControlType::Cc) {
                 return Fail(reason, "analog gestures must use CC control addresses");
             }
         }
     }
 
-    for (const MidiControllerSystemMessageAssociation& association : slot.config.systemMessages) {
-        if (slot.kind != MidiProfileKind::Generic && association.control.has_value() &&
+    for (const MidiControllerSystemMessageAssociation& association : config.systemMessages) {
+        if (kind != MidiProfileKind::Generic && association.control.has_value() &&
             association.control->type != MidiControlType::Cc) {
             return Fail(reason, "this controller kind requires CC system-message control addresses");
         }
-        if (slot.kind == MidiProfileKind::Launchpad) {
+        if (kind == MidiProfileKind::Launchpad) {
             if (!association.launchpadPosition.has_value()) {
                 return Fail(reason, "launchpad system-message entries must carry a launchpad position");
             }
@@ -3167,7 +3167,7 @@ bool SlotValidForKind(const MidiControllerSlot& slot, std::string* reason) {
             if (association.wrldBldrPosition.has_value()) {
                 return Fail(reason, "launchpad system-message entries must not carry a WRLD.Bldr position");
             }
-        } else if (slot.kind == MidiProfileKind::WrldBldr) {
+        } else if (kind == MidiProfileKind::WrldBldr) {
             if (association.launchpadPosition.has_value()) {
                 return Fail(reason, "wrldbldr system-message entries must not carry a launchpad position");
             }
@@ -3185,7 +3185,7 @@ bool SlotValidForKind(const MidiControllerSlot& slot, std::string* reason) {
             if (!association.control.has_value()) {
                 return Fail(reason, "this controller kind requires a control address for system-message entries");
             }
-            if (slot.kind == MidiProfileKind::MfTwister) {
+            if (kind == MidiProfileKind::MfTwister) {
                 // Finding 5: the physical MF Twister side buttons are a
                 // fixed hardware shape -- channel 3, cc 8..13 (6 logical
                 // buttons, control->cc = 8 + button per D1) -- not an
@@ -3204,6 +3204,36 @@ bool SlotValidForKind(const MidiControllerSlot& slot, std::string* reason) {
     }
 
     return true;
+}
+
+} // namespace
+
+bool IsActive(const MidiControllerSlot& slot) {
+    return slot.disposition == MidiControllerDisposition::Active;
+}
+
+bool SlotValidForKind(const MidiControllerSlot& slot, std::string* reason) {
+    if (slot.wizardId.has_value() && slot.wizardId->empty()) {
+        return Fail(reason, "wizard id must be non-empty when present");
+    }
+
+    if (!IsActive(slot)) {
+        if (!slot.wizardId.has_value()) {
+            return Fail(reason, "blacklisted controller records require a wizard id");
+        }
+        if (!slot.input.IsConfigured() || !slot.output.IsConfigured()) {
+            return Fail(reason, "blacklisted controller records require both endpoint references");
+        }
+        if (slot.dormantConfig.has_value()) {
+            return ProfileConfigValidForKind(slot.kind, *slot.dormantConfig, reason);
+        }
+        return true;
+    }
+
+    if (slot.dormantConfig.has_value()) {
+        return Fail(reason, "active controller records must not carry dormant profile data");
+    }
+    return ProfileConfigValidForKind(slot.kind, slot.config, reason);
 }
 
 bool MidiInstrumentConfig::AddController(MidiControllerSlot slot) {

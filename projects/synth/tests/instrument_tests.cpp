@@ -46,6 +46,7 @@ struct Register {
     } while (false)
 
 using synth::MidiControllerProfileConfig;
+using synth::MidiControllerDisposition;
 using synth::MidiControllerSlot;
 using synth::MidiControllerSystemMessageAssociation;
 using synth::MidiControlAddress;
@@ -100,6 +101,25 @@ MidiControllerSlot MakeGenericSlot(const char* name) {
     MidiControllerSlot slot;
     slot.name = name;
     slot.kind = MidiProfileKind::Generic;
+    slot.disposition = MidiControllerDisposition::Active;
+    return slot;
+}
+
+MidiEndpointRef MakeEndpointRef(const char* identifier, const char* name) {
+    MidiEndpointRef ref;
+    ref.identifier = identifier;
+    ref.name = name;
+    return ref;
+}
+
+MidiControllerSlot MakeBlacklistedSlot(const char* name) {
+    MidiControllerSlot slot;
+    slot.name = name;
+    slot.kind = MidiProfileKind::MfTwister;
+    slot.disposition = MidiControllerDisposition::Blacklisted;
+    slot.wizardId = "com.sheaf.midi-fighter-twister";
+    slot.input = MakeEndpointRef("twister-in-id", "MIDI Fighter Twister In");
+    slot.output = MakeEndpointRef("twister-out-id", "MIDI Fighter Twister Out");
     return slot;
 }
 
@@ -628,6 +648,85 @@ TEST_CASE(KindSupportMatrix) {
     REQUIRE_TRUE(generic.analogs);
 }
 
+TEST_CASE(ActiveSlotsAcceptManualAndOpaqueWizardIdentity) {
+    MidiControllerSlot manual = MakeGenericSlot("manual");
+    std::string reason;
+    REQUIRE_TRUE(synth::IsActive(manual));
+    REQUIRE_TRUE(!manual.wizardId.has_value());
+    REQUIRE_TRUE(synth::SlotValidForKind(manual, &reason));
+
+    MidiControllerSlot wizard = MakeGenericSlot("unknown wizard");
+    wizard.wizardId = "third.party.future.wizard";
+    wizard.input = MakeEndpointRef("unknown-in", "Unknown In");
+    wizard.output = MakeEndpointRef("unknown-out", "Unknown Out");
+    reason.clear();
+    REQUIRE_TRUE(synth::IsActive(wizard));
+    REQUIRE_TRUE(synth::SlotValidForKind(wizard, &reason));
+}
+
+TEST_CASE(BlacklistedIgnoredSlotsRequireIdentityButNoDormantProfile) {
+    MidiControllerSlot ignored = MakeBlacklistedSlot("ignored");
+    ignored.kind = MidiProfileKind::Launchpad;
+    ignored.config.encoderInput = synth::EncoderMidiInConfig{};
+
+    std::string reason;
+    REQUIRE_TRUE(!synth::IsActive(ignored));
+    REQUIRE_TRUE(!ignored.dormantConfig.has_value());
+    REQUIRE_TRUE(synth::SlotValidForKind(ignored, &reason));
+}
+
+TEST_CASE(BlacklistedSlotsRejectMissingWizardOrEndpointRefs) {
+    MidiControllerSlot missingWizard = MakeBlacklistedSlot("missing-wizard");
+    missingWizard.wizardId.reset();
+    std::string reason;
+    REQUIRE_TRUE(!synth::SlotValidForKind(missingWizard, &reason));
+    REQUIRE_TRUE(!reason.empty());
+
+    MidiControllerSlot emptyWizard = MakeBlacklistedSlot("empty-wizard");
+    emptyWizard.wizardId = "";
+    reason.clear();
+    REQUIRE_TRUE(!synth::SlotValidForKind(emptyWizard, &reason));
+    REQUIRE_TRUE(!reason.empty());
+
+    MidiControllerSlot missingInput = MakeBlacklistedSlot("missing-input");
+    missingInput.input = MidiEndpointRef{};
+    reason.clear();
+    REQUIRE_TRUE(!synth::SlotValidForKind(missingInput, &reason));
+    REQUIRE_TRUE(!reason.empty());
+
+    MidiControllerSlot missingOutput = MakeBlacklistedSlot("missing-output");
+    missingOutput.output = MidiEndpointRef{};
+    reason.clear();
+    REQUIRE_TRUE(!synth::SlotValidForKind(missingOutput, &reason));
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(BlacklistedSlotsRetainDormantProfileWithoutRuntimeActiveConfig) {
+    MidiControllerProfileConfig prior = synth::MfTwisterDefaultProfileConfig();
+    MidiControllerSlot slot = MakeBlacklistedSlot("retained");
+    slot.config = MidiControllerProfileConfig{};
+    slot.dormantConfig = prior;
+
+    std::string reason;
+    REQUIRE_TRUE(synth::SlotValidForKind(slot, &reason));
+    REQUIRE_TRUE(!slot.config.encoderInput.has_value());
+    REQUIRE_TRUE(slot.dormantConfig.has_value());
+    REQUIRE_TRUE(slot.dormantConfig->encoderInput.has_value());
+    REQUIRE_TRUE(slot.dormantConfig->encoderInput->turns.size() == prior.encoderInput->turns.size());
+}
+
+TEST_CASE(BlacklistedDormantProfilesAreValidatedForKind) {
+    MidiControllerSlot slot = MakeBlacklistedSlot("bad dormant");
+    slot.kind = MidiProfileKind::Launchpad;
+    slot.config = MidiControllerProfileConfig{};
+    slot.dormantConfig = MidiControllerProfileConfig{};
+    slot.dormantConfig->encoderInput = synth::EncoderMidiInConfig{};
+
+    std::string reason;
+    REQUIRE_TRUE(!synth::SlotValidForKind(slot, &reason));
+    REQUIRE_TRUE(!reason.empty());
+}
+
 TEST_CASE(SlotValidForKindRejectsLaunchpadWithEncoders) {
     MidiControllerSlot slot = MakeGenericSlot("pad");
     slot.kind = MidiProfileKind::Launchpad;
@@ -897,6 +996,20 @@ TEST_CASE(AddControllerRejectsDuplicateName) {
     REQUIRE_TRUE(instrument.controllers[0].kind == MidiProfileKind::Generic);
 }
 
+TEST_CASE(AddControllerRejectsDuplicateNameAcrossDispositions) {
+    MidiInstrumentConfig activeFirst;
+    REQUIRE_TRUE(activeFirst.AddController(MakeGenericSlot("twist")));
+    REQUIRE_TRUE(!activeFirst.AddController(MakeBlacklistedSlot("twist")));
+    REQUIRE_TRUE(activeFirst.controllers.size() == 1);
+    REQUIRE_TRUE(synth::IsActive(activeFirst.controllers[0]));
+
+    MidiInstrumentConfig blacklistedFirst;
+    REQUIRE_TRUE(blacklistedFirst.AddController(MakeBlacklistedSlot("twist")));
+    REQUIRE_TRUE(!blacklistedFirst.AddController(MakeGenericSlot("twist")));
+    REQUIRE_TRUE(blacklistedFirst.controllers.size() == 1);
+    REQUIRE_TRUE(!synth::IsActive(blacklistedFirst.controllers[0]));
+}
+
 TEST_CASE(AddControllerRejectsInvalidSlot) {
     MidiInstrumentConfig instrument;
     MidiControllerSlot invalid = MakeGenericSlot("bad");
@@ -931,6 +1044,37 @@ TEST_CASE(OrderedIterationPreservedAfterAddRemove) {
     REQUIRE_TRUE(instrument.FindController("c") != nullptr);
     REQUIRE_TRUE(instrument.FindController("d") != nullptr);
     REQUIRE_TRUE(instrument.FindController("b") == nullptr);
+}
+
+TEST_CASE(OrderedIterationPreservedAcrossReplaceAndMiddleAndTrailingRemove) {
+    MidiInstrumentConfig instrument;
+    REQUIRE_TRUE(instrument.AddController(MakeGenericSlot("a")));
+    REQUIRE_TRUE(instrument.AddController(MakeBlacklistedSlot("b")));
+    REQUIRE_TRUE(instrument.AddController(MakeGenericSlot("c")));
+    REQUIRE_TRUE(instrument.AddController(MakeBlacklistedSlot("d")));
+
+    MidiControllerSlot replacement = MakeBlacklistedSlot("bb");
+    replacement.input.identifier = "twister-in-bb";
+    replacement.output.identifier = "twister-out-bb";
+    REQUIRE_TRUE(instrument.ReplaceController(1, replacement));
+
+    REQUIRE_TRUE(instrument.controllers.size() == 4);
+    REQUIRE_TRUE(instrument.controllers[0].name == "a");
+    REQUIRE_TRUE(instrument.controllers[1].name == "bb");
+    REQUIRE_TRUE(!synth::IsActive(instrument.controllers[1]));
+    REQUIRE_TRUE(instrument.controllers[2].name == "c");
+    REQUIRE_TRUE(instrument.controllers[3].name == "d");
+
+    instrument.RemoveController(2);
+    REQUIRE_TRUE(instrument.controllers.size() == 3);
+    REQUIRE_TRUE(instrument.controllers[0].name == "a");
+    REQUIRE_TRUE(instrument.controllers[1].name == "bb");
+    REQUIRE_TRUE(instrument.controllers[2].name == "d");
+
+    instrument.RemoveController(2);
+    REQUIRE_TRUE(instrument.controllers.size() == 2);
+    REQUIRE_TRUE(instrument.controllers[0].name == "a");
+    REQUIRE_TRUE(instrument.controllers[1].name == "bb");
 }
 
 TEST_CASE(RenameControllerRejectsDuplicate) {

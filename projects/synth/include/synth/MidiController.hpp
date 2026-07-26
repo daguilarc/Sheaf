@@ -899,16 +899,22 @@ struct MidiEndpointRef {
     bool IsConfigured() const { return !identifier.empty() || !name.empty(); }
 };
 
+enum class MidiControllerDisposition { Active, Blacklisted };
+
 struct MidiControllerSlot {
     std::string name;
     MidiProfileKind kind = MidiProfileKind::Generic;
+    MidiControllerDisposition disposition = MidiControllerDisposition::Active;
+    std::optional<std::string> wizardId;
     MidiControllerProfileConfig config;
+    std::optional<MidiControllerProfileConfig> dormantConfig;
     MidiEndpointRef input;
     MidiEndpointRef output;
 };
 
 // Sections + address variants (Global Constraints matrices). Returns false and
 // fills `reason` (for UI/status) when invalid.
+bool IsActive(const MidiControllerSlot& slot);
 bool SlotValidForKind(const MidiControllerSlot& slot, std::string* reason = nullptr);
 
 struct MidiInstrumentConfig {
