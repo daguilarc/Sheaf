@@ -137,9 +137,11 @@ Sheaf-managed global deployment.
 ### 5. Provide one global plugin install target
 
 The root Makefile will expose `xagent-plugin-install-global`. Existing package
-build/test targets remain developer checks. Plugin removal and marketplace
-administration remain owned by Codex; this change does not add parallel
-check/clean abstractions.
+build/test targets remain developer checks: the build target refreshes tracked
+plugin runtime assets from source, while the test target verifies those tracked
+assets match a fresh untracked package build and fails on drift without
+rewriting them. Plugin removal and marketplace administration remain owned by
+Codex; this change does not add parallel check/clean abstractions.
 
 ## Risks / Trade-offs
 

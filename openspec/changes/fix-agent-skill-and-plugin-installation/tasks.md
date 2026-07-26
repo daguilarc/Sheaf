@@ -25,7 +25,7 @@
 ## 4. Verification
 
 - [x] 4.1 Run `make -C projects/agents test`, `make agents-check-repo`, and `make agents-check-global`; verify all installer tests pass and no obsolete managed skill outputs remain.
-- [x] 4.2 Run `make -C projects/xagent test` and `make xagent-plugin-test`; verify the CLI, packaged launcher, missing-runtime behavior, and plugin manifest validation pass.
+- [x] 4.2 Run `make -C projects/xagent test` and `make xagent-plugin-test`; verify the CLI, packaged launcher, missing-runtime behavior, tracked plugin runtime asset currency, global installer tests, and plugin manifest validation pass.
 - [x] 4.3 Run `make xagent-plugin-install-global` and `codex plugin list`; verify exactly one installed and enabled `xagent@<marketplace-name>` plugin is reported at the staged package path.
 - [x] 4.4 From a temporary non-Sheaf repository, invoke the installed plugin launcher with `XAGENT_TEST_ADAPTER=fake` and an explicit temporary `XAGENT_LOG_ROOT`; verify it uses packaged assets, preserves the temporary repository as the child working directory, and writes logs only to that configured root.
 - [x] 4.5 Run `openspec validate fix-agent-skill-and-plugin-installation --strict` and `git diff --check`, then confirm a new Codex conversation discovers `xagent-subagents` from the installed plugin and does not discover standalone repo-local or user-global copies.

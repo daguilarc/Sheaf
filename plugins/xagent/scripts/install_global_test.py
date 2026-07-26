@@ -139,6 +139,42 @@ class PackageXagentOutputTests(unittest.TestCase):
 
             self.assertEqual(1, len(validated_roots))
 
+    def test_check_main_uses_shared_drift_guard(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="xagent-package-check-test-") as tempdir:
+            asset_root = Path(tempdir) / "plugin" / "assets" / "xagent"
+            asset_root.mkdir(parents=True)
+            (asset_root / "package.json").write_text('{"name":"xagent"}\n', encoding="utf-8")
+            calls: list[bool] = []
+
+            def build_package(destination: Path) -> None:
+                (destination / "assets" / "xagent").mkdir(parents=True)
+                (destination / "assets" / "xagent" / "package.json").write_text(
+                    '{"name":"xagent"}\n',
+                    encoding="utf-8",
+                )
+
+            def check_tracked_assets_current(*, validate: bool = False) -> None:
+                calls.append(validate)
+
+            with (
+                mock.patch.object(
+                    package_xagent,
+                    "parse_args",
+                    return_value=mock.Mock(check=True, output=None),
+                ),
+                mock.patch.object(package_xagent, "ASSET_ROOT", asset_root),
+                mock.patch.object(package_xagent, "build_package", build_package),
+                mock.patch.object(package_xagent, "validate_launcher"),
+                mock.patch.object(
+                    package_xagent,
+                    "check_tracked_assets_current",
+                    check_tracked_assets_current,
+                ),
+            ):
+                self.assertEqual(0, package_xagent.main())
+
+            self.assertEqual([True], calls)
+
 
 class GlobalPluginInstallTests(unittest.TestCase):
     def setUp(self) -> None:

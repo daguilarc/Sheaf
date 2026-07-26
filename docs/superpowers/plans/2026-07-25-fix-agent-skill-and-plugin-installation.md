@@ -175,7 +175,7 @@ def validate_launcher(plugin_root: Path) -> None:
     # against plugin_root/scripts/xagent.
 ```
 
-Add `--output PATH`; retain the current source-package behavior only when no output is supplied so existing `xagent-plugin-build` and `xagent-plugin-test` remain compatible. Preserve `scripts/xagent` mode with `shutil.copy2`.
+Add `--output PATH`; retain the current source-package behavior only when no output is supplied so `xagent-plugin-build` remains the mutating tracked-asset refresh path. `xagent-plugin-test` must use a non-mutating check that builds an untracked package and fails when tracked runtime assets drift from source. Preserve `scripts/xagent` mode with `shutil.copy2`.
 
 - [ ] **Step 4: Implement deterministic global installation**
 
@@ -361,6 +361,7 @@ make xagent-plugin-test
 ```
 
 Expected: every command exits zero.
+`make xagent-plugin-test` must also run the global installer unit tests and verify tracked plugin runtime assets match a fresh untracked package build without rewriting them.
 
 - [ ] **Step 2: Install and inspect the real global plugin**
 

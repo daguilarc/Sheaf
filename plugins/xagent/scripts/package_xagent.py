@@ -95,10 +95,12 @@ def describe_snapshot_drift(
     return lines
 
 
-def check_tracked_assets_current() -> None:
+def check_tracked_assets_current(*, validate: bool = False) -> None:
     with tempfile.TemporaryDirectory(prefix="xagent-plugin-check-") as tempdir:
         package_root = Path(tempdir) / "package"
         build_package(package_root)
+        if validate:
+            validate_launcher(package_root)
         expected = file_snapshot(package_root / "assets" / "xagent")
     actual = file_snapshot(ASSET_ROOT)
     if expected != actual:
@@ -177,19 +179,7 @@ def main() -> int:
     if args.check:
         if args.output is not None:
             raise RuntimeError("--check cannot be combined with --output")
-        with tempfile.TemporaryDirectory(prefix="xagent-plugin-check-") as tempdir:
-            package_root = Path(tempdir) / "package"
-            build_package(package_root)
-            validate_launcher(package_root)
-            expected = file_snapshot(package_root / "assets" / "xagent")
-        actual = file_snapshot(ASSET_ROOT)
-        if expected != actual:
-            drift = "\n".join(describe_snapshot_drift(expected, actual))
-            raise RuntimeError(
-                "tracked xagent plugin assets are stale; run `make xagent-plugin-build` "
-                "and commit the regenerated assets"
-                + (f"\n{drift}" if drift else "")
-            )
+        check_tracked_assets_current(validate=True)
         message = f"tracked xagent runtime assets are current in {ASSET_ROOT}"
         print(message)
         return 0
