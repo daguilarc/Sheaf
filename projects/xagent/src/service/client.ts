@@ -13,6 +13,7 @@ import type {
   MessageRunResult,
   StartRunResult,
 } from "./run_manager.js";
+import { x_ServiceRequestTimeoutMs } from "./server.js";
 import type {
   StructuredToolError,
   XagentAwaitInput,
@@ -21,6 +22,10 @@ import type {
   XagentInterruptInput,
   XagentMessageInput,
   XagentStartInput,
+} from "./tool_schemas.js";
+import {
+  x_DefaultAwaitDeadlineSeconds,
+  x_MaxAwaitDeadlineSeconds,
 } from "./tool_schemas.js";
 
 export const XAGENT_DEFAULT_SERVICE_BASE_URL =
@@ -130,7 +135,7 @@ export function createXagentServiceClient(
       result = await connected.callTool(
         { name, arguments: args },
         undefined,
-        signal === undefined ? undefined : { signal },
+        mcpToolRequestOptions(name, args, signal),
       );
     } catch (error) {
       throw toUnavailableError(error, baseUrl);
@@ -225,4 +230,47 @@ function toUnavailableError(error: unknown, baseUrl: string): XagentServiceUnava
     `xagent service unavailable at ${baseUrl}: ${message}`,
     { cause: message },
   );
+}
+
+// MCP SDK defaults callTool requests to 60s. xagent_await must survive the full
+// application deadline (up to 7000s) within the service's 7200s HTTP lifetime.
+//
+export const x_McpAwaitTimeoutSlackSeconds = 30;
+
+export type McpToolRequestOptions = {
+  readonly timeout?: number;
+  readonly maxTotalTimeout?: number;
+  readonly signal?: AbortSignal;
+};
+
+export function mcpToolRequestOptions(
+  toolName: string,
+  args: Record<string, unknown>,
+  signal?: AbortSignal,
+): McpToolRequestOptions {
+  if (toolName !== "xagent_await") {
+    return signal === undefined ? {} : { signal };
+  }
+  const deadlineSeconds = awaitDeadlineSeconds(args.deadline_seconds);
+  const timeoutMs = Math.min(
+    x_ServiceRequestTimeoutMs,
+    (deadlineSeconds + x_McpAwaitTimeoutSlackSeconds) * 1000,
+  );
+  return {
+    timeout: timeoutMs,
+    maxTotalTimeout: timeoutMs,
+    ...(signal === undefined ? {} : { signal }),
+  };
+}
+
+function awaitDeadlineSeconds(value: unknown): number {
+  if (
+    typeof value === "number"
+    && Number.isFinite(value)
+    && value > 0
+    && value <= x_MaxAwaitDeadlineSeconds
+  ) {
+    return Math.floor(value);
+  }
+  return x_DefaultAwaitDeadlineSeconds;
 }

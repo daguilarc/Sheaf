@@ -10,19 +10,46 @@ import { fileURLToPath } from "node:url";
 import { FakeHarnessAdapter } from "../src/adapters/fake.js";
 import type { AdapterEvent } from "../src/adapters/types.js";
 import { main } from "../src/cli.js";
-import { createXagentServiceClient } from "../src/service/client.js";
+import {
+  createXagentServiceClient,
+  mcpToolRequestOptions,
+  x_McpAwaitTimeoutSlackSeconds,
+} from "../src/service/client.js";
 import { XagentRunManager } from "../src/service/run_manager.js";
 import {
   createXagentServer,
+  x_ServiceRequestTimeoutMs,
   type XagentServer,
   type XagentShutdownController,
 } from "../src/service/server.js";
+import {
+  x_DefaultAwaitDeadlineSeconds,
+} from "../src/service/tool_schemas.js";
 import type { SupervisionPolicy } from "../src/supervision/types.js";
 
 const testPolicy: SupervisionPolicy = {
   silenceTimeoutMs: 600_000,
   watchdog: {},
 };
+
+test("mcp await request options cover the await deadline instead of the SDK 60s default", () => {
+  const short = mcpToolRequestOptions("xagent_await", { deadline_seconds: 5 });
+  assert.equal(short.timeout, (5 + x_McpAwaitTimeoutSlackSeconds) * 1000);
+  assert.equal(short.maxTotalTimeout, short.timeout);
+
+  const defaulted = mcpToolRequestOptions("xagent_await", {});
+  assert.equal(
+    defaulted.timeout,
+    Math.min(
+      x_ServiceRequestTimeoutMs,
+      (x_DefaultAwaitDeadlineSeconds + x_McpAwaitTimeoutSlackSeconds) * 1000,
+    ),
+  );
+  assert.ok((defaulted.timeout ?? 0) > 60_000);
+
+  const other = mcpToolRequestOptions("xagent_inspect", { run_id: "xrun_1" });
+  assert.equal(other.timeout, undefined);
+});
 
 test("quiet supervise emits no stdout during healthy progress and one completion JSON", async () => {
   await withFakeService(async ({ baseUrl, adapterFactory }) => {
