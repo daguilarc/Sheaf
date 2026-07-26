@@ -180,7 +180,7 @@ class TestScoreTask(EstimateTestCase):
         self.assertEqual(set(cheap["categories"]), set(CATEGORIES))
         self.assertLessEqual(cheap["p20_total_usd"], cheap["p50_total_usd"])
         self.assertLessEqual(cheap["p50_total_usd"], cheap["p80_total_usd"])
-        self.assertIsNone(cheap["thompson_total_usd"])  # not --thompson mode
+        self.assertIsNone(cheap["thompson_total_usd"])  # explicit p20 mode
         for cat_diag in cheap["categories"].values():
             for key in ("median_usd", "p20_usd", "p80_usd", "fallback"):
                 self.assertIn(key, cat_diag)
@@ -441,8 +441,8 @@ class TestThompsonMode(EstimateTestCase):
 class TestRngStreamSeparation(EstimateTestCase):
     """Fix round 1 (codex review, Important finding 1): MC and Thompson
     draws must come from independent rng streams, so a report's MC
-    p20/p50/p80 totals are identical for a given seed whether or not
-    --thompson was also requested -- otherwise Thompson's extra draws
+    p20/p50/p80 totals are identical for a given seed in default Thompson
+    and explicit p20 modes -- otherwise Thompson's extra draws
     inside task 1 desynchronize task 2's (and later tasks') MC draws
     between the two modes."""
 
@@ -473,7 +473,7 @@ class TestRngStreamSeparation(EstimateTestCase):
             for arm in task_thompson["arms"]:
                 self.assertIsNotNone(arm["thompson_total_usd"])
 
-    def test_cli_mc_totals_identical_with_and_without_thompson_flag(self):
+    def test_cli_mc_totals_identical_in_default_thompson_and_p20_modes(self):
         _seed_estimator_db(self.conn)
         path = self.tmp_path / "decomp.json"
         path.write_text(json.dumps(_decomposition((("task-1", 2.0), ("task-2", 4.0)))), encoding="utf-8")
@@ -486,8 +486,8 @@ class TestRngStreamSeparation(EstimateTestCase):
                 estimate.main(argv)
             return json.loads(buf.getvalue())
 
-        report_p20 = _capture([])
-        report_thompson = _capture(["--thompson"])
+        report_thompson = _capture([])
+        report_p20 = _capture(["--p20"])
         for task_p20, task_thompson in zip(report_p20["tasks"], report_thompson["tasks"]):
             arms_p20 = {(a["model"], a["effort"]): (a["p20_total_usd"], a["p50_total_usd"], a["p80_total_usd"])
                         for a in task_p20["arms"]}
@@ -591,7 +591,7 @@ class TestRunAndCLI(EstimateTestCase):
         self.assertEqual(report["estimator_id"], 1)
         self.assertEqual(report["seed"], estimate.DEFAULT_SEED)
         self.assertEqual(report["mc_draws"], estimate.DEFAULT_MC_DRAWS)
-        self.assertEqual(report["selection_mode"], "p20")
+        self.assertEqual(report["selection_mode"], "thompson")
         self.assertGreater(report["decomposition_totals"]["p50_total_usd"], 0.0)
 
     def test_run_honors_seed_and_mc_draws_arguments(self):
@@ -644,11 +644,11 @@ class TestRunAndCLI(EstimateTestCase):
 
         self.assertNotEqual(_capture(0), _capture(1))
 
-    def test_cli_thompson_flag_selects_and_reports_thompson_mode(self):
+    def test_cli_defaults_to_thompson_selection(self):
         _seed_estimator_db(self.conn)
         path = self._write_decomposition(".json")
         argv = ["--decomposition", str(path), "--db", str(self.db_path), "--estimator-id", "1",
-                "--json", "--thompson"]
+                "--json"]
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             rc = estimate.main(argv)
@@ -748,7 +748,10 @@ class TestReadOnlyDb(EstimateTestCase):
         original_mode = self.db_path.stat().st_mode
         os.chmod(self.db_path, stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
         try:
-            argv = ["--decomposition", str(path), "--db", str(self.db_path), "--estimator-id", "1", "--json"]
+            argv = [
+                "--decomposition", str(path), "--db", str(self.db_path),
+                "--estimator-id", "1", "--json", "--p20",
+            ]
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 rc = estimate.main(argv)

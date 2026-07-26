@@ -201,7 +201,7 @@ older one. `--config` is a path to a JSON file of overrides deep-merged onto
 python3 projects/agents/task-analyzer/estimate.py \
     (--decomposition FILE | --sanity) [--db PATH] \
     [--estimator-id N] [--seed N] [--mc-draws N] \
-    [--thompson] [--json]
+    [--p20] [--json]
 ```
 
 Read-only against the database — never writes to it. `--decomposition` takes
@@ -230,22 +230,15 @@ as a sum of each category's own quantile. Non-finite draws (an overflowed
 `exp` on a sufficiently heavy-tailed posterior) are excluded before
 quantiles are taken; an arm with zero finite draws is `unscorable`
 (`reason: "all_draws_nonfinite"`), and no report ever contains an
-`Infinity`/`NaN` value. Selection is **"p20 bandit"**: the selected arm is
-the one with the lowest MC `p20_total_usd` among all scorable arms — no
-tail-risk exclusion of any kind (an earlier p80-based guard was removed;
-see design.md D6's rationale note); `p80_total_usd` is still reported for
-every arm as budgeting information, it just never excludes an arm from
-winning. Minimizing a *low* quantile is deliberately explore-friendly — a
-sparse arm's wide posterior pulls its own p20 down even when its median is
-high — so there is no separate advisory flag for exploration; `--thompson`
-selects via one Thompson draw per arm instead (summed across categories),
-argmin among all scorable arms with a finite total, reported as
-`"selection_mode": "thompson"` vs. the default `"p20"`. Thompson draws come
-from a rng stream independent of the MC draws (both derived from `--seed` via
-`numpy.random.SeedSequence.spawn(2)`) — a report's MC `p20`/`p50`/`p80`
-totals are identical whether or not `--thompson` was given, since one mode
-never perturbs the other's stream. Both modes are fully deterministic given
-the same `--seed`/`--mc-draws`/`--estimator-id`.
+`Infinity`/`NaN` value. Selection defaults to **Thompson sampling**: one
+posterior draw per arm (summed across categories), argmin among all scorable
+arms with a finite total. `--p20` selects the arm with the lowest MC
+`p20_total_usd` instead. `p80_total_usd` is reported for budgeting and never
+excludes an arm in either mode. Thompson draws come from a rng stream
+independent of the MC draws (both derived from `--seed` via
+`numpy.random.SeedSequence.spawn(2)`), so a report's MC
+`p20`/`p50`/`p80` totals are identical between modes. Both modes are fully
+deterministic given the same `--seed`/`--mc-draws`/`--estimator-id`.
 
 ### `annotations.py` — validate a sibling annotation file
 

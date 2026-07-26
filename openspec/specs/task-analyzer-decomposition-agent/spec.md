@@ -10,13 +10,10 @@ OpenSpec change's proposal/design/specs and a database path, instructs the
 agent to: generate 3–5 candidate decompositions varying granularity and
 grouping axis; score each task's C1–C7 against the pinned complexity rubric;
 run `estimate.py` on every candidate; and select the candidate minimizing
-total p20 cost (the arm-selection statistic `estimate.py` itself ranks and
-picks by — the lowest Monte Carlo p20 total among all scorable arms, not a
-directly regressed or configured-quantile total) subject to guardrails (no
-task above composite 3.5 — split instead; prefer briefs at prescriptiveness
-C7 ≤ 2; dependency order respected). These guardrails are the decomposer's
-own candidate-shape checks, independent of `estimate.py`'s own selection
-statistic, which has no tail-risk guard of its own.
+total Thompson cost subject to guardrails (no task above composite 3.5 —
+split instead; prefer briefs at prescriptiveness C7 ≤ 2; dependency order
+respected). These guardrails are the decomposer's own candidate-shape checks,
+independent of `estimate.py`'s selection statistic.
 
 #### Scenario: Candidate search produces a comparison
 - **WHEN** the decomposition subagent runs on an OpenSpec change
@@ -41,4 +38,3 @@ implementation work.
 #### Scenario: No workflow side effects
 - **WHEN** the subagent completes
 - **THEN** the only files it has written are the annotation YAML, its comparison report, and per-candidate artifacts (candidate definitions and estimator results), all under the caller-designated output directory
-

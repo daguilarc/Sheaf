@@ -68,13 +68,10 @@ step:
    projects/agents/task-analyzer/estimate.py --decomposition
    <candidate-file> --db <main-branch db path> --seed <seed> --mc-draws
    <mc-draws> [--estimator-id <id>] --json`. This is deterministic (given a
-   fixed seed and draw count) and read-only. Use its per-task `arms` ranking
-   (sorted by total p20, the selection statistic) to pick each task's actual
-   `(model, effort)` — the `selected` arm (lowest p20 total among *all*
-   scorable arms; `estimate.py` has no tail-risk exclusion of its own, so a
-   high-p80 arm can still be `selected` — this is expected, not a bug),
-   unless a guardrail below overrides it — and its `decomposition_totals`
-   for the candidate-level comparison.
+   fixed seed and draw count) and read-only. Use its per-task `selected` arm
+   (the lowest Thompson total among all scorable arms by default) as that
+   task's actual `(model, effort)`, unless a guardrail below overrides it,
+   and its `decomposition_totals` for the candidate-level comparison.
 4. **Apply guardrails** before comparing totals:
    - **No task above composite 3.5.** If a candidate has one, split that
      task into two (or more) and re-score/re-estimate the split — generate
@@ -92,8 +89,7 @@ step:
      disqualified from selection (but still shown in the comparison table
      for context).
 5. **Select and emit.** Choose the qualifying candidate with the lowest
-   `decomposition_totals.p20_total_usd` (or `p80_total_usd`, if you judge
-   tail risk should dominate for this change — say which you used and why).
+   `decomposition_totals.thompson_total_usd`.
    Write:
    - The chosen candidate's annotation YAML to `<output
      dir>/<change-name>.assignments.yaml` (via the same shape
@@ -101,7 +97,7 @@ step:
      per task with `model`/`effort`/`complexity`).
    - A comparison report to `<output dir>/<change-name>.decomposer-report.md`
      containing: a table of every candidate's task count, grouping axis,
-     `p20_total_usd`, `p80_total_usd`, and guardrail status
+     `thompson_total_usd`, `p20_total_usd`, `p80_total_usd`, and guardrail status
      (qualified/disqualified + why); the selected candidate; and a
      one-paragraph rationale referencing the specific guardrails that drove
      the pick.

@@ -77,8 +77,8 @@ returns ``inf`` rather than raising on overflow -- see its docstring -- so
 every value this module puts in a report is passed through a finite check
 before being stored, becoming ``null`` if it would have been non-finite).
 
-**RNG stream separation (fix round 1, codex review).** ``--thompson``
-selects differently: for each scorable arm, draw one posterior *parameter*
+**RNG stream separation (fix round 1, codex review).** Thompson selection
+is the default: for each scorable arm, draw one posterior *parameter*
 sample per category (``model.NIG.thompson`` -- classical Thompson: sample
 sigma2, then beta, then evaluate ``x @ beta``; deliberately NOT a
 predictive draw, which would add an observation-noise term on top and
@@ -93,21 +93,21 @@ with the lowest ``thompson_total_usd`` among all scorable arms. Thompson
 draws are consumed from a **separate rng stream** than MC draws
 (``_derive_rngs`` splits one ``--seed`` into two independent child
 generators via ``numpy.random.SeedSequence.spawn(2)``) -- if they shared one
-stream, running the same seed with and without ``--thompson`` would consume
+stream, running the same seed in Thompson and ``--p20`` modes would consume
 a different number of random numbers per task, desynchronizing every
 *later* task's MC draws between the two runs (an earlier version of this
 module did share one stream and had exactly this bug). With separate
 streams, a report's MC ``p20``/``p50``/``p80`` totals are always byte-
-identical for a given (estimator id, seed, mc-draws) regardless of whether
-``--thompson`` was also given. The report's top-level ``"selection_mode"``
-is ``"thompson"`` or ``"p20"``; every arm's ``thompson_total_usd`` is
-``null`` unless ``--thompson`` was given. Each stream is itself consumed in
+identical for a given (estimator id, seed, mc-draws) in either mode. The
+report's top-level ``"selection_mode"`` is ``"thompson"`` or ``"p20"``;
+every arm's ``thompson_total_usd`` is ``null`` in ``--p20`` mode. Each
+stream is itself consumed in
 a fixed order -- tasks in decomposition order, arms sorted by
 ``(model, effort)``, categories in ``config["categories"]`` order -- so
 output is fully byte-deterministic given (estimator id, seed, mc-draws,
-thompson mode) regardless of any dict's iteration order.
+selection mode) regardless of any dict's iteration order.
 
-Selection ("p20 bandit selection"): the selection statistic is each arm's
+In the alternate ``--p20`` mode, the selection statistic is each arm's
 MC ``p20_total_usd`` -- a *low* quantile, not a mean or median, because
 this is a cost-minimizing bandit: an arm's p20 starts low (wide, hopeful)
 when data is sparse and rises as data accumulates if the arm turns out to
@@ -117,9 +117,9 @@ without a separate advisory flag for it. The selected arm is whichever
 scorable arm has the lowest ``p20_total_usd`` (tie-break ``(model,
 effort)`` lexicographic) -- there is no tail-risk exclusion of any kind;
 ``p80_total_usd`` is reported for every arm as budgeting information but
-never excludes an arm from winning, however large. In ``--thompson`` mode,
-selection is the argmin of ``thompson_total_usd`` among all scorable arms
-with a finite Thompson total (falling back to the p20 statistic among all
+never excludes an arm from winning, however large. By default, selection
+is the argmin of ``thompson_total_usd`` among all scorable arms with a
+finite Thompson total (falling back to the p20 statistic among all
 scorable arms if none is finite -- pathological, would require every
 candidate's single draw to overflow -- rather than crash comparing
 ``None``s). The report's ``"arms"`` list is always ranked by
@@ -428,14 +428,14 @@ def score_task(config: dict, posteriors: dict, complexity: dict, mc_rng: np.rand
 
 
 def run(conn, decomposition: dict, estimator_id: Optional[int] = None,
-        seed: int = DEFAULT_SEED, mc_draws: int = DEFAULT_MC_DRAWS, thompson: bool = False) -> dict:
+        seed: int = DEFAULT_SEED, mc_draws: int = DEFAULT_MC_DRAWS, thompson: bool = True) -> dict:
     """Score every task in ``decomposition["tasks"]``; returns the full
     report dict (JSON-serializable) with per-task results and
     decomposition-level totals. Two independent ``numpy.random.Generator``s
     (``_derive_rngs(seed)`` -- module docstring's "RNG stream separation")
     are created here and each shared across every task, in decomposition
     order -- the module docstring's determinism guarantee, including "MC
-    totals are identical with or without ``--thompson``".
+    totals are identical in Thompson and p20 modes".
     ``decomposition_totals`` sums the *selected* arm's raw (unfiltered) MC
     draws element-wise across tasks, THEN applies ``_finite_quantiles``
     once -- not a sum of each task's already-computed (and already-
@@ -559,8 +559,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                     help="seed split into independent MC/Thompson rng streams (see _derive_rngs)")
     p.add_argument("--mc-draws", type=int, default=DEFAULT_MC_DRAWS,
                     help="number of Monte Carlo draws per (arm, category) used for total-cost quantiles")
-    p.add_argument("--thompson", action="store_true",
-                    help="select via one Thompson draw per arm instead of minimum MC p20 total")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("--p20", dest="thompson", action="store_false",
+                      help="select via minimum MC p20 total instead of the default Thompson draw")
+    mode.add_argument("--thompson", dest="thompson", action="store_true",
+                      help=argparse.SUPPRESS)
+    p.set_defaults(thompson=True)
     p.add_argument("--json", action="store_true", help="emit machine-readable JSON instead of the human table")
     p.add_argument("--sanity", action="store_true", help="score the fixed reference decomposition (composites 2/3/4) instead of --decomposition")
     return p
