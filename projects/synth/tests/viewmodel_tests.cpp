@@ -5104,6 +5104,25 @@ TEST_CASE(ControllerLifecycleMutationsPreserveIdentityAndGateRegistryActions) {
     REQUIRE_TRUE(!vm.RenameController(0, "manual", out, &reason));
     REQUIRE_TRUE(out.controllers.empty() && reason.find("unchanged") != std::string::npos);
 
+    // sru-4: rename uniqueness spans both dispositions in both directions. An
+    // Active record cannot take a Blacklisted record's name, a Blacklisted
+    // record cannot take an Active record's name, and each refusal retains the
+    // prior name without mutating the live instrument.
+    out = MidiInstrumentConfig{};
+    REQUIRE_TRUE(!vm.RenameController(0, "blacklisted", out, &reason));
+    REQUIRE_TRUE(out.controllers.empty() &&
+                 reason.find("already exists") != std::string::npos);
+    REQUIRE_TRUE(!vm.RenameController(3, "manual", out, &reason));
+    REQUIRE_TRUE(out.controllers.empty() &&
+                 reason.find("already exists") != std::string::npos);
+    REQUIRE_TRUE(instrument.controllers[0].disposition ==
+                     synth::MidiControllerDisposition::Active &&
+                 instrument.controllers[0].name == "manual" &&
+                 instrument.controllers[3].disposition ==
+                     synth::MidiControllerDisposition::Blacklisted &&
+                 instrument.controllers[3].name == "blacklisted" &&
+                 DumpInstrument(instrument) == beforeRefusedRename);
+
     REQUIRE_TRUE(vm.BlacklistController(1, out, &reason));
     const MidiControllerSlot& blacklistedKnown = out.controllers[1];
     REQUIRE_TRUE(blacklistedKnown.disposition == synth::MidiControllerDisposition::Blacklisted &&

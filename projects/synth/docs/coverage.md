@@ -114,7 +114,7 @@ Last audit: controller configuration wizard (baked registry, candidate discovery
 | `smi-6` (modified) | covered | `blacklisted_slot_with_present_populated_refs_stays_unconfigured_and_inert` plus retained `startup_shaped_reconcile_one_of_two_controllers_present_no_failure` |
 | `smi-8` (modified) | covered | `engine_tests` drop-only profile, Active/Blacklisted rebuild switch, and middle-slot resize cases; `TestActiveToBlacklistedTearsDownEndpointsAndDropsStaleBrowserCallback` |
 | `smi-10` (modified) | covered | retained terminal-realtime cases plus the blacklisted drop-only and rebuild-switch `engine_tests` cases |
-| `sru-4` (modified) | covered | `TestDiscoveryRendersPortableAvailableRowsAndDiagnostics`, `TestControllerLifecycleActionsUseTheNormalCommitAndSavePath`, `ControllerLifecycleMutationsPreserveIdentityAndGateRegistryActions`, JUCE manual-record simulation, fake-app lifecycle Playwright |
+| `sru-4` (modified) | covered | `TestDiscoveryRendersPortableAvailableRowsAndDiagnostics`, `TestControllerLifecycleActionsUseTheNormalCommitAndSavePath`, `ControllerLifecycleMutationsPreserveIdentityAndGateRegistryActions` (including both cross-disposition duplicate-rename directions), JUCE manual-record simulation, fake-app lifecycle Playwright |
 | `sru-30` (modified) | covered | retained low-level relative-bank view-model/blocks cases plus the wizard-owned argument table in `controller_wizard_tests` |
 | `sru-32` | covered | `controllers_page_ui_tests` session/chooser/submit/ignore cases, `TestThreeClickWizardSubmitCommitsThenSaves`, JUCE wizard parity simulation, fake-app three-click Playwright |
 | `sru-33` | covered | `portable_ui_tests` wizard-session composition, `ControllersPageSimulationTests` parity simulations, fake-app Playwright, `check-ui-boundary` and `check:generic-runtime` |
@@ -1363,9 +1363,14 @@ Last audit: controller configuration wizard (baked registry, candidate discovery
   unknown-id rows; mandatory `config` to `dormantConfig` retention with name,
   kind, wizard id, and both endpoints preserved; Blacklist refused for a manual
   record, an unknown id, and an incomplete endpoint pair; and Delete/Remove
-  preserving list order. Uniqueness spans both dispositions because rename
-  delegates to `MidiInstrumentConfig::RenameController`, whose cross-disposition
-  rule is covered by `AddControllerRejectsDuplicateNameAcrossDispositions`.
+  preserving list order. The same case asserts the "Rename rejects duplicates"
+  scenario directly in **both** cross-disposition directions: renaming the Active
+  record to the Blacklisted record's name and renaming the Blacklisted record to
+  an Active record's name are each refused with an "already exists" reason, and
+  both prior names are retained with the live instrument unmutated. The model
+  rule those refusals delegate to is additionally covered by
+  `AddControllerRejectsDuplicateNameAcrossDispositions` in
+  [`instrument_tests.cpp`](../tests/instrument_tests.cpp).
   The retained `AddControllerDuplicateNameFails`,
   `AddControllerLaunchpadSeedsDefaultProfile`, and
   `AddControllerGenericSeedsEmptyConfig` cases keep the manual "+" add contract.
