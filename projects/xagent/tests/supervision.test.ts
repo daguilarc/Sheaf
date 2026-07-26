@@ -2,6 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { FakeHarnessAdapter } from "../src/adapters/fake.js";
+import type {
+  HarnessAdapter,
+  HarnessCapabilities,
+  HarnessSession,
+  HarnessStartOptions,
+} from "../src/adapters/types.js";
 import { SequencedEventQueue } from "../src/supervision/event_queue.js";
 import { Supervisor } from "../src/supervision/supervisor.js";
 import type {
@@ -324,6 +330,124 @@ test("close keeps terminal state durable when an in-flight turn iterator settles
   assert.equal(supervisor.inspect().phase, "completed");
 });
 
+test("close waits for pending start and concurrent closes close the opened session once", async () => {
+  const adapter = new StartBlockedAdapter();
+  const supervisor = new Supervisor({
+    runId: "xrun_close_during_start",
+    adapter,
+    startOptions: { cwd: "/tmp" },
+    policy,
+    clock: fixedClock,
+  });
+  const starting = supervisor.start();
+  await adapter.startCalled.promise;
+
+  const firstClose = supervisor.close();
+  const secondClose = supervisor.close();
+  adapter.releaseStart.resolve(undefined);
+
+  await Promise.all([starting, firstClose, secondClose]);
+  assert.equal(adapter.startCount, 1);
+  assert.equal(adapter.closeCount, 1);
+  assert.deepEqual(supervisor.inspect(), {
+    run_id: "xrun_close_during_start",
+    phase: "completed",
+    sequence: 3,
+    provider_thread_id: "blocked-thread",
+  });
+});
+
+test("inspect and await remain at prior state until event and metadata sinks both persist", async () => {
+  const readyMetadataStarted = deferred<void>();
+  const releaseReadyMetadata = deferred<void>();
+  const supervisor = new Supervisor({
+    runId: "xrun_metadata_delay",
+    adapter: new FakeHarnessAdapter(),
+    startOptions: { cwd: "/tmp" },
+    policy,
+    clock: fixedClock,
+    metadataSink: async (state) => {
+      if (state.phase === "ready") {
+        readyMetadataStarted.resolve(undefined);
+        await releaseReadyMetadata.promise;
+      }
+    },
+  });
+  const starting = supervisor.start();
+  await readyMetadataStarted.promise;
+  const awaiting = supervisor.awaitEvent(1, 1_000);
+  let delivered = false;
+  void awaiting.then(() => {
+    delivered = true;
+  });
+  await Promise.resolve();
+
+  assert.deepEqual(supervisor.inspect(), {
+    run_id: "xrun_metadata_delay",
+    phase: "starting",
+    sequence: 1,
+    provider_thread_id: undefined,
+  });
+  assert.equal(delivered, false);
+
+  releaseReadyMetadata.resolve(undefined);
+  await starting;
+  assert.equal((await awaiting).phase, "ready");
+  assert.deepEqual(supervisor.inspect(), {
+    run_id: "xrun_metadata_delay",
+    phase: "ready",
+    sequence: 2,
+    provider_thread_id: "fake-thread-1",
+  });
+});
+
+test("metadata persistence failure rejects transition waiters and leaves inspection committed", async () => {
+  const metadataFailure = new Error("metadata persistence failed");
+  const adapter = new FakeHarnessAdapter();
+  const supervisor = new Supervisor({
+    runId: "xrun_metadata_failure",
+    adapter,
+    startOptions: { cwd: "/tmp" },
+    policy,
+    clock: fixedClock,
+    metadataSink: async (state) => {
+      if (state.phase === "ready") {
+        throw metadataFailure;
+      }
+    },
+  });
+  const awaiting = supervisor.awaitEvent(1, 1_000);
+
+  await assert.rejects(supervisor.start(), metadataFailure);
+  await assert.rejects(awaiting, metadataFailure);
+  assert.deepEqual(supervisor.inspect(), {
+    run_id: "xrun_metadata_failure",
+    phase: "starting",
+    sequence: 1,
+    provider_thread_id: undefined,
+  });
+  assert.equal(adapter.closeCount, 1);
+});
+
+test("concurrent close calls share a close failure without closing the session twice", async () => {
+  const adapter = new CloseFailingAdapter();
+  const supervisor = new Supervisor({
+    runId: "xrun_close_failure_once",
+    adapter,
+    startOptions: { cwd: "/tmp" },
+    policy,
+    clock: fixedClock,
+  });
+  await supervisor.start();
+
+  const firstClose = supervisor.close();
+  const secondClose = supervisor.close();
+  const results = await Promise.allSettled([firstClose, secondClose]);
+
+  assert.deepEqual(results.map((result) => result.status), ["rejected", "rejected"]);
+  assert.equal(adapter.closeCount, 1);
+});
+
 function fixedClock(): Date {
   return new Date("2026-07-25T12:00:00.000Z");
 }
@@ -371,5 +495,52 @@ class FakeScheduler {
     assert.ok(next);
     this.#callbacks.delete(next[0]);
     next[1]();
+  }
+}
+
+class StartBlockedAdapter implements HarnessAdapter {
+  readonly harness = "codex";
+  readonly capabilities: HarnessCapabilities = {
+    forwardsModel: true,
+    forwardsThinkingLevel: true,
+    streamsDeltas: true,
+  };
+  readonly startCalled = deferred<void>();
+  readonly releaseStart = deferred<void>();
+  startCount = 0;
+  closeCount = 0;
+
+  async start(_options: HarnessStartOptions): Promise<HarnessSession> {
+    this.startCount += 1;
+    this.startCalled.resolve(undefined);
+    await this.releaseStart.promise;
+    return {
+      providerThreadId: "blocked-thread",
+      submit: async function* () {},
+      close: async () => {
+        this.closeCount += 1;
+      },
+    };
+  }
+}
+
+class CloseFailingAdapter implements HarnessAdapter {
+  readonly harness = "codex";
+  readonly capabilities: HarnessCapabilities = {
+    forwardsModel: true,
+    forwardsThinkingLevel: true,
+    streamsDeltas: true,
+  };
+  closeCount = 0;
+
+  async start(_options: HarnessStartOptions): Promise<HarnessSession> {
+    return {
+      providerThreadId: "close-failure-thread",
+      submit: async function* () {},
+      close: async () => {
+        this.closeCount += 1;
+        throw new Error("session close failed");
+      },
+    };
   }
 }

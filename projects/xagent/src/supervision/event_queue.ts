@@ -9,6 +9,8 @@ export type PublishableSupervisionEvent = Omit<
   "schema_version" | "run_id" | "sequence" | "timestamp"
 >;
 
+export type PersistedEventCommit = (event: SupervisionEvent) => Promise<void>;
+
 type Waiter = {
   readonly afterSequence: number;
   readonly resolve: (event: SupervisionEvent | undefined) => void;
@@ -22,6 +24,7 @@ export class SequencedEventQueue {
   readonly #deliverableEvents: SupervisionEvent[] = [];
   readonly #waiters = new Set<Waiter>();
   #sequence = 0;
+  #nextSequence = 0;
   #publishTail: Promise<void> = Promise.resolve();
 
   constructor(
@@ -35,25 +38,39 @@ export class SequencedEventQueue {
     return this.#sequence;
   }
 
-  publish(body: PublishableSupervisionEvent, deliverable = true): Promise<SupervisionEvent> {
-    this.#sequence += 1;
+  publish(
+    body: PublishableSupervisionEvent,
+    deliverable = true,
+    commit: PersistedEventCommit = async () => {},
+  ): Promise<SupervisionEvent> {
+    this.#nextSequence += 1;
     const event: SupervisionEvent = {
       ...body,
       schema_version: 1,
       run_id: this.runId,
-      sequence: this.#sequence,
+      sequence: this.#nextSequence,
       timestamp: this.clock().toISOString(),
     };
     const persisted = this.#publishTail.then(async () => {
-      await this.sink(event);
-      if (!deliverable) {
-        return;
-      }
-      this.#deliverableEvents.push(event);
-      for (const waiter of [...this.#waiters]) {
-        if (waiter.afterSequence < event.sequence) {
-          this.#settle(waiter, event);
+      try {
+        await this.sink(event);
+        await commit(event);
+        this.#sequence = event.sequence;
+        if (!deliverable) {
+          return;
         }
+        this.#deliverableEvents.push(event);
+        for (const waiter of [...this.#waiters]) {
+          if (waiter.afterSequence < event.sequence) {
+            this.#settle(waiter, event);
+          }
+        }
+      } catch (error) {
+        const persistenceError = asError(error);
+        for (const waiter of [...this.#waiters]) {
+          this.#reject(waiter, persistenceError);
+        }
+        throw error;
       }
     });
     this.#publishTail = persisted;
@@ -121,6 +138,10 @@ export class SequencedEventQueue {
 
 function abortError(): Error {
   return new DOMException("The operation was aborted.", "AbortError");
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 const systemScheduler: SupervisionScheduler = {

@@ -51,8 +51,12 @@ export class Supervisor {
     evidence_truncation_count: 0,
   };
   readonly #initialPersistence: Promise<void>;
+  #lifecycleTail: Promise<void> = Promise.resolve();
   #phase: SupervisionPhase = "starting";
+  #providerThreadId?: string;
   #session?: HarnessSession;
+  #sessionClosePromise?: Promise<void>;
+  #closePromise?: Promise<void>;
   #inputSequence = 0;
   #startRequested = false;
   #lastTransportProgressAt: string;
@@ -81,42 +85,63 @@ export class Supervisor {
     return {
       run_id: this.#runId,
       phase: this.#phase,
-      sequence: this.#events.sequence,
-      provider_thread_id: this.#session?.providerThreadId,
+      sequence: Math.max(1, this.#events.sequence),
+      provider_thread_id: this.#providerThreadId,
     };
   }
 
-  async start(): Promise<void> {
-    if (this.#phase !== "starting") {
-      throw invalidPhase("start", this.#phase);
-    }
-    if (this.#startRequested) {
-      throw new Error("Supervisor start has already been requested.");
-    }
-    this.#startRequested = true;
-    await this.#initialPersistence;
-    try {
-      this.#session = await this.#adapter.start(this.#startOptions);
-    } catch (error) {
-      await this.#publishState("failed", errorCode(error), true);
-      throw error;
-    }
-    await this.#publishState("ready", "session_ready", true);
+  start(): Promise<void> {
+    return this.#withLifecycleMutation(async () => {
+      if (terminalPhases.has(this.#phase)) {
+        throw invalidPhase("start", this.#phase);
+      }
+      if (this.#startRequested) {
+        throw new Error("Supervisor start has already been requested.");
+      }
+      if (this.#phase !== "starting") {
+        throw invalidPhase("start", this.#phase);
+      }
+      this.#startRequested = true;
+      await this.#initialPersistence;
+      try {
+        this.#session = await this.#adapter.start(this.#startOptions);
+      } catch (error) {
+        await this.#publishState("failed", errorCode(error), true);
+        throw error;
+      }
+      try {
+        await this.#publishState("ready", "session_ready", true);
+      } catch (error) {
+        try {
+          await this.#closeSessionOnce();
+        } catch {
+          // Preserve the persistence failure that prevented the ready commit.
+        }
+        throw error;
+      }
+    });
   }
 
   async submit(text: string): Promise<void> {
-    if (this.#phase !== "ready" || this.#session === undefined) {
-      throw invalidPhase("submit", this.#phase);
-    }
-    this.#inputSequence += 1;
-    const inputSequence = this.#inputSequence;
-    const turnId = `turn_${inputSequence}`;
-    await this.#publishState("running", "turn_started", false);
+    const turn = await this.#withLifecycleMutation(async () => {
+      if (this.#phase !== "ready" || this.#session === undefined) {
+        throw invalidPhase("submit", this.#phase);
+      }
+      this.#inputSequence += 1;
+      const inputSequence = this.#inputSequence;
+      const turnId = `turn_${inputSequence}`;
+      await this.#publishState("running", "turn_started", false);
+      return { inputSequence, turnId, session: this.#session };
+    });
 
     let lastAssistantText: string | undefined;
     let completed: Extract<AdapterEvent, { type: "turn.completed" }> | undefined;
     try {
-      for await (const event of this.#session.submit({ text, turnId, inputSequence })) {
+      for await (const event of turn.session.submit({
+        text,
+        turnId: turn.turnId,
+        inputSequence: turn.inputSequence,
+      })) {
         if (terminalPhases.has(this.#phase)) {
           return;
         }
@@ -125,9 +150,14 @@ export class Supervisor {
           lastAssistantText = event.text;
         }
         if (event.type === "turn.failed") {
-          await this.#publishState("failed", event.code, true, {
-            message: event.message,
-            turn_id: turnId,
+          await this.#withLifecycleMutation(async () => {
+            if (terminalPhases.has(this.#phase)) {
+              return;
+            }
+            await this.#publishState("failed", event.code, true, {
+              message: event.message,
+              turn_id: turn.turnId,
+            });
           });
           return;
         }
@@ -139,9 +169,14 @@ export class Supervisor {
       if (terminalPhases.has(this.#phase)) {
         return;
       }
-      await this.#publishState("failed", errorCode(error), true, {
-        message: error instanceof Error ? error.message : String(error),
-        turn_id: turnId,
+      await this.#withLifecycleMutation(async () => {
+        if (terminalPhases.has(this.#phase)) {
+          return;
+        }
+        await this.#publishState("failed", errorCode(error), true, {
+          message: error instanceof Error ? error.message : String(error),
+          turn_id: turn.turnId,
+        });
       });
       return;
     }
@@ -151,21 +186,33 @@ export class Supervisor {
     }
     const reportText = completed?.final_text || lastAssistantText;
     if (completed === undefined || reportText === undefined) {
-      await this.#publishState("failed", "missing_final_report", true, { turn_id: turnId });
+      await this.#withLifecycleMutation(async () => {
+        if (terminalPhases.has(this.#phase)) {
+          return;
+        }
+        await this.#publishState("failed", "missing_final_report", true, {
+          turn_id: turn.turnId,
+        });
+      });
       return;
     }
 
-    await this.#publishEvent({
-      type: "turn.completed",
-      phase: "ready",
-      reason: "turn_completed",
-      payload: {
-        report: { text: reportText },
-        turn_id: turnId,
-        provider_thread_id: completed.provider_thread_id ?? this.#session.providerThreadId,
-        ...(completed.usage === undefined ? {} : { usage: completed.usage }),
-      },
-    }, true);
+    await this.#withLifecycleMutation(async () => {
+      if (terminalPhases.has(this.#phase)) {
+        return;
+      }
+      await this.#publishEvent({
+        type: "turn.completed",
+        phase: "ready",
+        reason: "turn_completed",
+        payload: {
+          report: { text: reportText },
+          turn_id: turn.turnId,
+          provider_thread_id: completed.provider_thread_id ?? turn.session.providerThreadId,
+          ...(completed.usage === undefined ? {} : { usage: completed.usage }),
+        },
+      }, true);
+    });
   }
 
   async awaitEvent(
@@ -188,39 +235,44 @@ export class Supervisor {
     };
   }
 
-  async publishAttention(reason: string, payload?: unknown): Promise<SupervisionEvent> {
-    if (terminalPhases.has(this.#phase)) {
-      throw invalidPhase("publish attention", this.#phase);
-    }
-    this.#watchdog.controller_wake_count += 1;
-    this.#watchdog.deterministic_alert_count += 1;
-    return this.#publishEvent({
-      type: "supervision.attention",
-      phase: this.#phase,
-      reason,
-      ...(payload === undefined ? {} : { payload }),
-    }, true);
+  publishAttention(reason: string, payload?: unknown): Promise<SupervisionEvent> {
+    return this.#withLifecycleMutation(async () => {
+      if (terminalPhases.has(this.#phase)) {
+        throw invalidPhase("publish attention", this.#phase);
+      }
+      return this.#publishEvent({
+        type: "supervision.attention",
+        phase: this.#phase,
+        reason,
+        ...(payload === undefined ? {} : { payload }),
+      }, true);
+    });
   }
 
-  async interrupt(): Promise<void> {
-    if (this.#phase !== "running" || this.#session === undefined) {
-      throw invalidPhase("interrupt", this.#phase);
-    }
-    if (this.#session.interrupt === undefined) {
-      throw new Error("Harness session does not support interrupt.");
-    }
-    await this.#session.interrupt();
+  interrupt(): Promise<void> {
+    return this.#withLifecycleMutation(async () => {
+      if (this.#phase !== "running" || this.#session === undefined) {
+        throw invalidPhase("interrupt", this.#phase);
+      }
+      if (this.#session.interrupt === undefined) {
+        throw new Error("Harness session does not support interrupt.");
+      }
+      await this.#session.interrupt();
+    });
   }
 
-  async close(): Promise<void> {
-    await this.#initialPersistence;
-    if (terminalPhases.has(this.#phase)) {
-      return;
+  close(): Promise<void> {
+    if (this.#closePromise === undefined) {
+      this.#closePromise = this.#withLifecycleMutation(async () => {
+        await this.#initialPersistence;
+        if (terminalPhases.has(this.#phase)) {
+          return;
+        }
+        await this.#closeSessionOnce();
+        await this.#publishState("completed", "session_closed", true);
+      });
     }
-    if (this.#session !== undefined) {
-      await this.#session.close();
-    }
-    await this.#publishState("completed", "session_closed", true);
+    return this.#closePromise;
   }
 
   async #publishState(
@@ -242,13 +294,24 @@ export class Supervisor {
     deliverable: boolean,
   ): Promise<SupervisionEvent> {
     this.#assertTransition(body.phase);
-    this.#phase = body.phase;
-    const event = await this.#events.publish(body, deliverable);
-    if (deliverable) {
-      this.#watchdog.controller_wake_count += body.type === "supervision.attention" ? 0 : 1;
-    }
-    await this.#metadataSink(this.#persistenceState());
-    return event;
+    const nextWatchdog = {
+      ...this.#watchdog,
+      controller_wake_count: this.#watchdog.controller_wake_count + (deliverable ? 1 : 0),
+      deterministic_alert_count: this.#watchdog.deterministic_alert_count
+        + (body.type === "supervision.attention" ? 1 : 0),
+    };
+    return this.#events.publish(body, deliverable, async (event) => {
+      const providerThreadId = this.#session?.providerThreadId;
+      await this.#metadataSink(this.#persistenceState(
+        body.phase,
+        event.sequence,
+        providerThreadId,
+        nextWatchdog,
+      ));
+      this.#phase = body.phase;
+      this.#providerThreadId = providerThreadId;
+      Object.assign(this.#watchdog, nextWatchdog);
+    });
   }
 
   #assertTransition(next: SupervisionPhase): void {
@@ -284,14 +347,41 @@ export class Supervisor {
     }
   }
 
-  #persistenceState(): SupervisionPersistenceState {
+  #persistenceState(
+    phase: SupervisionPhase,
+    sequence: number,
+    providerThreadId: string | undefined,
+    watchdog: WatchdogAggregate,
+  ): SupervisionPersistenceState {
     return {
-      ...this.inspect(),
+      run_id: this.#runId,
+      phase,
+      sequence,
+      provider_thread_id: providerThreadId,
       last_transport_progress_at: this.#lastTransportProgressAt,
       last_semantic_progress_at: this.#lastSemanticProgressAt,
       owned_process: this.#session?.ownedProcess,
-      watchdog: { ...this.#watchdog },
+      watchdog: { ...watchdog },
     };
+  }
+
+  #withLifecycleMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.#lifecycleTail.then(operation);
+    this.#lifecycleTail = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
+
+  #closeSessionOnce(): Promise<void> {
+    if (this.#session === undefined) {
+      return Promise.resolve();
+    }
+    if (this.#sessionClosePromise === undefined) {
+      this.#sessionClosePromise = this.#session.close();
+    }
+    return this.#sessionClosePromise;
   }
 }
 
