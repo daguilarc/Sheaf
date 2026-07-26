@@ -1,0 +1,21 @@
+{
+  "name": "error_thrashing",
+  "description": "The worker produces new semantic content but repeatedly fails with the same error fingerprint. Two identical failure fingerprints in ten minutes trigger a suspicion signal and an early watchdog check.",
+  "original_prompt": "Refactor the run manager to close owned sessions on shutdown.",
+  "elapsed_ms": 360000,
+  "events": [
+    { "type": "message.delta", "role": "assistant", "delta": "Editing the run manager" },
+    { "type": "tool.started", "name": "edit_file", "input": { "path": "src/service/run_manager.ts" } },
+    { "type": "tool.completed", "name": "edit_file", "status": "completed", "output": { "applied": true } },
+    { "type": "tool.started", "name": "shell", "input": { "cmd": "npm run build" } },
+    { "type": "tool.completed", "name": "shell", "status": "failed", "error": "tsc error TS2345: Argument of type 'X' is not assignable to parameter of type 'Y'." },
+    { "type": "message.delta", "role": "assistant", "delta": "Trying a different approach" },
+    { "type": "tool.started", "name": "shell", "input": { "cmd": "npm run build" } },
+    { "type": "tool.completed", "name": "shell", "status": "failed", "error": "tsc error TS2345: Argument of type 'X' is not assignable to parameter of type 'Y'." }
+  ],
+  "expected_classifier_eligible": true,
+  "expected_suspicion_signals": ["repeated_failure_fingerprint"],
+  "scripted_verdict": { "verdict": "derailed", "confidence": 0.84, "reason_code": "repeated_failed_tool", "evidence": ["Same compiler error recurred without resolving the underlying type mismatch."] },
+  "expected_attention": true,
+  "false_alert_note": "The repetition signal alone does not declare the worker derailed; Haiku confirms it. A controller interrupt is the leader's choice, not automatic."
+}

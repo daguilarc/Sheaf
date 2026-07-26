@@ -1,0 +1,22 @@
+{
+  "name": "healthy_exploration",
+  "description": "A worker steadily explores the task with diverse tools and produces a final report. The semantic watchdog should be eligible at the first periodic checkpoint and return a healthy verdict, emitting no controller attention.",
+  "original_prompt": "Implement the bounded watchdog scheduler and add tests.",
+  "elapsed_ms": 600000,
+  "events": [
+    { "type": "message.delta", "role": "assistant", "delta": "Reading the supervisor module" },
+    { "type": "tool.started", "name": "read_file", "input": { "path": "src/supervision/supervisor.ts" } },
+    { "type": "tool.completed", "name": "read_file", "status": "completed", "output": { "lines": 825 } },
+    { "type": "message.delta", "role": "assistant", "delta": "Adding a periodic cadence test" },
+    { "type": "tool.started", "name": "edit_file", "input": { "path": "tests/watchdog.test.ts" } },
+    { "type": "tool.completed", "name": "edit_file", "status": "completed", "output": { "applied": true } },
+    { "type": "message.delta", "role": "assistant", "delta": "Running the new test" },
+    { "type": "tool.started", "name": "shell", "input": { "cmd": "npm test" } },
+    { "type": "tool.completed", "name": "shell", "status": "completed", "output": { "exit_code": 0 } }
+  ],
+  "expected_classifier_eligible": true,
+  "expected_suspicion_signals": [],
+  "scripted_verdict": { "verdict": "healthy", "confidence": 0.92, "reason_code": "steady_progress", "evidence": ["Diverse tools and new semantic progress each step."] },
+  "expected_attention": false,
+  "false_alert_note": "Healthy high-confidence verdict stays controller-silent; no false alert."
+}
