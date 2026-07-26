@@ -19,9 +19,11 @@ import { XagentRunManager } from "../src/service/run_manager.js";
 import {
   createShutdownController,
   createXagentServer,
-  x_ServiceRequestTimeoutMs,
   type XagentServer,
 } from "../src/service/server.js";
+import {
+  x_ServiceRequestTimeoutMs,
+} from "../src/service/config.js";
 import {
   x_DefaultAwaitDeadlineSeconds,
 } from "../src/service/tool_schemas.js";

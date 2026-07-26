@@ -2,6 +2,10 @@ import { createServer, type Server } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { createXagentMcpHandler, type XagentMcpHandler } from "./mcp.js";
+import {
+  x_ServiceHeadersTimeoutMs,
+  x_ServiceRequestTimeoutMs,
+} from "./config.js";
 import type { XagentRunManager } from "./run_manager.js";
 
 export type XagentShutdownController = {
@@ -59,9 +63,6 @@ export type XagentServer = {
   listen(): Promise<number>;
   close(): Promise<void>;
 };
-
-export const x_ServiceRequestTimeoutMs = 7_200_000;
-export const x_ServiceHeadersTimeoutMs = 7_270_000;
 
 export function createXagentServer(options: XagentServerOptions): XagentServer {
   const serverStartTime = options.serverStartTime ?? Date.now();
@@ -133,19 +134,29 @@ export function createXagentServer(options: XagentServerOptions): XagentServer {
     },
     close(): Promise<void> {
       acceptingConnections = false;
-      return new Promise((resolve, reject) => {
+      // Release the listening handle and transport resources without waiting
+      // for in-flight HTTP connections to drain. With enableJsonResponse, a
+      // pending xagent_await POST never settles after transport.close() —
+      // the SDK only deletes its stream mapping and never calls resolveJson —
+      // so the httpServer.close() drain callback would never fire and the
+      // shutdown controller's closeRuns() would be gated forever, orphaning
+      // owned provider process groups. The listening handle itself is
+      // released synchronously inside httpServer.close(), so Conductor can
+      // rebind the port immediately while stubborn children are still being
+      // cleaned up.
+      //
+      return new Promise((resolve) => {
         void mcpHandler.close().finally(() => {
-          httpServer.close((error) => {
-            if (error && (error as NodeJS.ErrnoException).code === "ERR_SERVER_NOT_RUNNING") {
-              resolve();
-              return;
-            }
-            if (error) {
-              reject(error);
-              return;
-            }
-            resolve();
-          });
+          try {
+            httpServer.close(() => {
+              // Drain completion is intentionally ignored; see comment above.
+              //
+            });
+          } catch {
+            // Listener already closed or never started.
+            //
+          }
+          resolve();
         });
       });
     },

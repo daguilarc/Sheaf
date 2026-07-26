@@ -4,6 +4,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import {
   XAGENT_DEFAULT_BIND_HOST,
   XAGENT_DEFAULT_BIND_PORT,
+  x_ServiceRequestTimeoutMs,
 } from "./config.js";
 import type {
   AwaitRunResult,
@@ -13,7 +14,6 @@ import type {
   MessageRunResult,
   StartRunResult,
 } from "./run_manager.js";
-import { x_ServiceRequestTimeoutMs } from "./server.js";
 import type {
   StructuredToolError,
   XagentAwaitInput,

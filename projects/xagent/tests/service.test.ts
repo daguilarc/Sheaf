@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile, writeFile, mkdtemp, mkdir } from "node:fs/promises";
 import { createServer } from "node:http";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -151,6 +152,59 @@ test("POST /exit closes the listener before owned runs so the bind port is free 
       await shutdownController.shutdownComplete();
       assert.deepEqual(events, ["server-closed", "runs-closed"]);
       assert.equal(reboundDuringRunClose, true);
+    },
+  );
+});
+
+test("POST /exit with an in-flight HTTP connection still closes owned runs (drain does not gate cleanup)", async () => {
+  const events: string[] = [];
+  let closeRunsRan = false;
+
+  await withServiceServer(
+    {
+      closeRuns: async (runManager) => {
+        events.push("runs-closed");
+        closeRunsRan = true;
+        await runManager.closeAll();
+      },
+      closeServer: async (server) => {
+        events.push("server-closed");
+        await server.close();
+      },
+    },
+    async ({ port, shutdownController }) => {
+      // Open a hung HTTP connection that never completes its body. This
+      // mimics a pending xagent_await POST whose JSON response cannot
+      // settle after transport.close() with enableJsonResponse: the
+      // connection never becomes idle, so httpServer.close()'s drain
+      // callback would never fire if we waited for it.
+      //
+      const hungSocket = net.createConnection({ host: "127.0.0.1", port });
+      await new Promise<void>((resolve) => hungSocket.once("connect", resolve));
+      hungSocket.write(
+        "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 100\r\nMCP-Session-Id: hung-session\r\n\r\n",
+      );
+
+      try {
+        const response = await fetchJson(port, "POST", "/exit");
+        assert.equal(response.status, 200);
+        assert.deepEqual(response.body, { exiting: true });
+
+        const completed = await Promise.race([
+          shutdownController.shutdownComplete().then(() => true),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5_000)),
+        ]);
+
+        assert.equal(
+          completed,
+          true,
+          "closeRuns must run even when an in-flight HTTP connection never drains",
+        );
+        assert.equal(closeRunsRan, true);
+        assert.deepEqual(events, ["server-closed", "runs-closed"]);
+      } finally {
+        hungSocket.destroy();
+      }
     },
   );
 });

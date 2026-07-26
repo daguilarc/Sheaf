@@ -9,6 +9,16 @@ export const XAGENT_SERVICE_NAME = "xagent";
 export const XAGENT_DEFAULT_BIND_PORT = 9005;
 export const XAGENT_DEFAULT_BIND_HOST = "127.0.0.1";
 
+// Service-side HTTP timeouts shared between the server (so it can apply them
+// to the underlying http.Server) and the client (so it can cap individual
+// MCP await POSTs below the same ceiling). Kept here rather than in
+// server.ts so the client-only plugin asset bundle — which excludes the
+// full server module — can import the constant without pulling in the
+// entire supervised service.
+//
+export const x_ServiceRequestTimeoutMs = 7_200_000;
+export const x_ServiceHeadersTimeoutMs = 7_270_000;
+
 export type XagentServiceConfig = {
   readonly repoRoot: string;
   readonly bindHost: string;
