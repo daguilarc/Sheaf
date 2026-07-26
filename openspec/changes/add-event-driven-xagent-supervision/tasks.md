@@ -1,8 +1,8 @@
 ## 1. Supervision State and Persistence
 
-- [ ] 1.1 Add failing fake-clock tests for supervised run states, sequenced `supervision.*` events, terminal-state durability, and cursor deduplication.
-- [ ] 1.2 Implement the transport-independent supervisor state machine and event queue behind narrow clock, process, adapter, and classifier interfaces.
-- [ ] 1.3 Extend run metadata and logs with supervisor state, event cursor, progress timestamps, owned-process identity, and sanitized watchdog telemetry.
+- [x] 1.1 Add failing fake-clock tests for supervised run states, sequenced `supervision.*` events, terminal-state durability, and cursor deduplication.
+- [x] 1.2 Implement the transport-independent supervisor state machine and event queue behind narrow clock, process, adapter, and classifier interfaces.
+- [x] 1.3 Extend run metadata and logs with supervisor state, event cursor, progress timestamps, owned-process identity, and sanitized watchdog telemetry.
 - [ ] 1.4 Add startup reconciliation and orderly process-group cleanup tests, then implement `abandoned` reconciliation for active metadata that cannot be safely reattached.
 
 ## 2. Deterministic Health and Evidence
