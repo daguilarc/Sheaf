@@ -17,6 +17,7 @@
 - Managed obsolete files may be removed; unmanaged files at the same paths must be preserved.
 - A new marketplace defaults to name `personal`; an existing non-empty marketplace name is preserved.
 - The marketplace entry uses `policy.installation: "AVAILABLE"`, `policy.authentication: "ON_INSTALL"`, and `category: "Productivity"`.
+- The xagent marketplace entry uses a local `source.path` that resolves under the invoking home to `$HOME/.agents/plugins/plugins/xagent`.
 - Build and validate the install package in a temporary directory without modifying tracked plugin assets.
 - Use the installed plugin-creator helpers and fail explicitly if they, the Codex CLI, validation, or plugin registration fail.
 - Do not copy an xagent launcher or runtime to `PATH`, a standalone skill directory, or a repo-local harness directory.
@@ -198,9 +199,10 @@ The function must:
 4. Reject an existing destination unless its `.sheaf-managed` contents exactly equal `MANAGED_CONTENT`.
 5. Copy to a sibling staging directory, write the marker, apply one cachebuster to the staged manifest, then atomically replace the managed destination with rollback on rename failure.
 6. Run `create_basic_plugin.py xagent --path <temporary-scaffold-parent> --with-marketplace --marketplace-path <marketplace.json> --install-policy AVAILABLE --auth-policy ON_INSTALL --category Productivity --force`.
-7. Read the actual marketplace name through `read_marketplace_name.py`.
-8. Run `codex plugin add xagent@<name>`, then `codex plugin list`.
-9. Parse the xagent row and require installed/enabled status plus the resolved staged package path.
+7. Normalize the xagent marketplace entry's local `source.path` to the staged package path relative to the selected home.
+8. Read the actual marketplace name through `read_marketplace_name.py`.
+9. Run `codex plugin add xagent@<name>`, then `codex plugin list` using the same selected home.
+10. Parse the xagent row and require installed/enabled status plus the resolved staged package path.
 
 Catch dependency and subprocess errors at the CLI boundary, print the named failed dependency or command to stderr, and exit non-zero without selecting another install path.
 

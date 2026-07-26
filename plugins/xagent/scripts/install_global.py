@@ -19,7 +19,6 @@ from typing import Sequence
 PLUGIN_NAME = "xagent"
 MANAGED_FILE = ".sheaf-managed"
 MANAGED_CONTENT = "sheaf-xagent-plugin\n"
-MARKETPLACE_PLUGIN_PATH = f"./.agents/plugins/plugins/{PLUGIN_NAME}"
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HELPER_NAMES = (
@@ -30,11 +29,20 @@ HELPER_NAMES = (
 )
 
 
-def run_command(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+def run_command(
+    args: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    merged_env = os.environ.copy()
+    if env:
+        merged_env.update(env)
     try:
         return subprocess.run(
             args,
             cwd=cwd,
+            env=merged_env,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -123,7 +131,19 @@ def require_installed_plugin(plugin_list: str, destination: Path) -> None:
         )
 
 
-def point_marketplace_entry_to_destination(marketplace_path: Path) -> None:
+def marketplace_source_path(*, home: Path, destination: Path) -> str:
+    try:
+        relative = destination.resolve().relative_to(home.resolve())
+    except ValueError:
+        return str(destination.resolve())
+    return f"./{relative.as_posix()}"
+
+
+def point_marketplace_entry_to_destination(
+    marketplace_path: Path,
+    *,
+    source_path: str,
+) -> None:
     payload = json.loads(marketplace_path.read_text(encoding="utf-8"))
     plugins = payload.get("plugins")
     if not isinstance(plugins, list):
@@ -135,7 +155,7 @@ def point_marketplace_entry_to_destination(marketplace_path: Path) -> None:
                 source = {}
                 entry["source"] = source
             source["source"] = "local"
-            source["path"] = MARKETPLACE_PLUGIN_PATH
+            source["path"] = source_path
             marketplace_path.write_text(
                 json.dumps(payload, indent=2) + "\n",
                 encoding="utf-8",
@@ -162,6 +182,11 @@ def install_global(
     marketplace_root = home / ".agents" / "plugins"
     marketplace_path = marketplace_root / "marketplace.json"
     destination = marketplace_root / "plugins" / PLUGIN_NAME
+    source_path = marketplace_source_path(home=home, destination=destination)
+    codex_env = {
+        "HOME": str(home),
+        "CODEX_HOME": str(codex_home.expanduser().resolve()),
+    }
 
     with tempfile.TemporaryDirectory(prefix="sheaf-xagent-install-") as tempdir:
         temporary_root = Path(tempdir)
@@ -222,7 +247,7 @@ def install_global(
             ],
             cwd=repo_root,
         )
-        point_marketplace_entry_to_destination(marketplace_path)
+        point_marketplace_entry_to_destination(marketplace_path, source_path=source_path)
         marketplace_name = run_command(
             [
                 sys.executable,
@@ -239,10 +264,12 @@ def install_global(
         run_command(
             [codex, "plugin", "add", f"{PLUGIN_NAME}@{marketplace_name}"],
             cwd=repo_root,
+            env=codex_env,
         )
         plugin_list = run_command(
             [codex, "plugin", "list"],
             cwd=repo_root,
+            env=codex_env,
         ).stdout
         require_installed_plugin(plugin_list, destination)
 

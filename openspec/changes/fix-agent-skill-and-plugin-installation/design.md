@@ -102,9 +102,13 @@ The Make target will:
 3. use the installed `plugin-creator` helpers to create the marketplace entry
    when absent and to apply a single cachebuster to the staged manifest,
    failing explicitly if those helpers are unavailable;
-4. read the marketplace's actual name and run
+4. normalize the `xagent` marketplace entry's local `source.path` to the staged
+   package path relative to the invoking home, because Codex resolves personal
+   marketplace local paths from that home rather than from the temporary
+   scaffold path used by the helper;
+5. read the marketplace's actual name and run
    `codex plugin add xagent@<marketplace-name>`;
-5. verify `codex plugin list` reports xagent installed and enabled.
+6. verify `codex plugin list` reports xagent installed and enabled.
 
 The staged copy contains a `.sheaf-managed` file whose exact contents are
 `sheaf-xagent-plugin\n` and preserves the launcher's executable mode. The
@@ -113,8 +117,9 @@ replacing an existing destination. The target fails on an unmarked conflicting
 destination, a missing Codex CLI or plugin-creator helper, any package
 validation failure, or any non-zero Codex plugin command. Repeated runs update
 the one staged plugin package and reinstall the same plugin identity. The
-installer validates the resolved path reported by `codex plugin list` rather
-than assuming Codex's internal cache layout.
+installer invokes Codex with the same selected home used for staging and
+marketplace writes, then validates the resolved path reported by
+`codex plugin list` rather than assuming Codex's internal cache layout.
 
 Alternative considered: configure each worktree as a local marketplace.
 Rejected because worktree paths are temporary and would leave global plugin

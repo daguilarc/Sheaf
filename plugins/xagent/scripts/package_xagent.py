@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import shutil
 import subprocess
@@ -65,6 +66,50 @@ def build_package(destination: Path) -> None:
     copy_runtime(destination / "assets" / "xagent")
 
 
+def file_snapshot(root: Path) -> dict[str, tuple[int, str]]:
+    snapshot: dict[str, tuple[int, str]] = {}
+    if not root.exists():
+        return snapshot
+    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+        snapshot[str(path.relative_to(root))] = (
+            path.stat().st_mode & 0o777,
+            hashlib.sha256(path.read_bytes()).hexdigest(),
+        )
+    return snapshot
+
+
+def describe_snapshot_drift(
+    expected: dict[str, tuple[int, str]],
+    actual: dict[str, tuple[int, str]],
+) -> list[str]:
+    lines: list[str] = []
+    expected_paths = set(expected)
+    actual_paths = set(actual)
+    for path in sorted(expected_paths - actual_paths):
+        lines.append(f"missing: {path}")
+    for path in sorted(actual_paths - expected_paths):
+        lines.append(f"extra: {path}")
+    for path in sorted(expected_paths & actual_paths):
+        if expected[path] != actual[path]:
+            lines.append(f"changed: {path}")
+    return lines
+
+
+def check_tracked_assets_current() -> None:
+    with tempfile.TemporaryDirectory(prefix="xagent-plugin-check-") as tempdir:
+        package_root = Path(tempdir) / "package"
+        build_package(package_root)
+        expected = file_snapshot(package_root / "assets" / "xagent")
+    actual = file_snapshot(ASSET_ROOT)
+    if expected != actual:
+        drift = "\n".join(describe_snapshot_drift(expected, actual))
+        raise RuntimeError(
+            "tracked xagent plugin assets are stale; run `make xagent-plugin-build` "
+            "and commit the regenerated assets"
+            + (f"\n{drift}" if drift else "")
+        )
+
+
 def stage_runtime() -> None:
     copy_runtime(ASSET_ROOT)
 
@@ -119,12 +164,36 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Build a complete plugin package at this untracked destination.",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Verify tracked plugin runtime assets match the built xagent package.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    if args.output is None:
+    if args.check:
+        if args.output is not None:
+            raise RuntimeError("--check cannot be combined with --output")
+        with tempfile.TemporaryDirectory(prefix="xagent-plugin-check-") as tempdir:
+            package_root = Path(tempdir) / "package"
+            build_package(package_root)
+            validate_launcher(package_root)
+            expected = file_snapshot(package_root / "assets" / "xagent")
+        actual = file_snapshot(ASSET_ROOT)
+        if expected != actual:
+            drift = "\n".join(describe_snapshot_drift(expected, actual))
+            raise RuntimeError(
+                "tracked xagent plugin assets are stale; run `make xagent-plugin-build` "
+                "and commit the regenerated assets"
+                + (f"\n{drift}" if drift else "")
+            )
+        message = f"tracked xagent runtime assets are current in {ASSET_ROOT}"
+        print(message)
+        return 0
+    elif args.output is None:
         stage_runtime()
         package_root = PLUGIN_ROOT
         message = f"staged xagent runtime in {ASSET_ROOT}"

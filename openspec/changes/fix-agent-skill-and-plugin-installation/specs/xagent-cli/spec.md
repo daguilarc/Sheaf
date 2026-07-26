@@ -25,6 +25,7 @@ WHEN a developer invokes the xagent global plugin install target, THE Sheaf buil
 - **WHEN** `make xagent-plugin-install-global` runs successfully
 - **THEN** it builds and validates an untracked temporary xagent plugin package without modifying tracked plugin assets
 - **AND** it creates or updates an `xagent` entry in the personal marketplace at `$HOME/.agents/plugins/marketplace.json`
+- **AND** that entry uses `source.source: "local"` with a `source.path` that resolves under the invoking home to `$HOME/.agents/plugins/plugins/xagent`
 - **AND** it stages the managed plugin package under `$HOME/.agents/plugins/plugins/xagent/`
 - **AND** the staged package contains `.sheaf-managed` with exact contents `sheaf-xagent-plugin\n`
 - **AND** the entry contains `policy.installation: "AVAILABLE"`, `policy.authentication: "ON_INSTALL"`, and `category: "Productivity"`

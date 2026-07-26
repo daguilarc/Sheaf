@@ -61,6 +61,84 @@ class PackageXagentOutputTests(unittest.TestCase):
             self.assertEqual("user data\n", sentinel.read_text(encoding="utf-8"))
             self.assertEqual(["keep.txt"], [path.name for path in destination.iterdir()])
 
+    def test_check_tracked_assets_accepts_current_assets(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="xagent-package-check-test-") as tempdir:
+            root = Path(tempdir)
+            plugin_root = root / "plugin"
+            asset_root = plugin_root / "assets" / "xagent"
+            for directory in (".codex-plugin", "skills", "scripts"):
+                (plugin_root / directory).mkdir(parents=True)
+            asset_root.mkdir(parents=True)
+            (asset_root / "package.json").write_text('{"name":"xagent"}\n', encoding="utf-8")
+
+            def copy_runtime(destination: Path) -> None:
+                destination.mkdir(parents=True)
+                (destination / "package.json").write_text('{"name":"xagent"}\n', encoding="utf-8")
+
+            with (
+                mock.patch.object(package_xagent, "PLUGIN_ROOT", plugin_root),
+                mock.patch.object(package_xagent, "ASSET_ROOT", asset_root),
+                mock.patch.object(package_xagent, "copy_runtime", copy_runtime),
+            ):
+                package_xagent.check_tracked_assets_current()
+
+    def test_check_tracked_assets_reports_stale_assets_without_rewriting(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="xagent-package-check-test-") as tempdir:
+            root = Path(tempdir)
+            plugin_root = root / "plugin"
+            asset_root = plugin_root / "assets" / "xagent"
+            for directory in (".codex-plugin", "skills", "scripts"):
+                (plugin_root / directory).mkdir(parents=True)
+            asset_root.mkdir(parents=True)
+            tracked = asset_root / "package.json"
+            tracked.write_text('{"name":"stale"}\n', encoding="utf-8")
+
+            def copy_runtime(destination: Path) -> None:
+                destination.mkdir(parents=True)
+                (destination / "package.json").write_text('{"name":"current"}\n', encoding="utf-8")
+
+            with (
+                mock.patch.object(package_xagent, "PLUGIN_ROOT", plugin_root),
+                mock.patch.object(package_xagent, "ASSET_ROOT", asset_root),
+                mock.patch.object(package_xagent, "copy_runtime", copy_runtime),
+                self.assertRaisesRegex(RuntimeError, "tracked xagent plugin assets are stale"),
+            ):
+                package_xagent.check_tracked_assets_current()
+
+            self.assertEqual('{"name":"stale"}\n', tracked.read_text(encoding="utf-8"))
+
+    def test_check_main_validates_temporary_package_before_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="xagent-package-check-test-") as tempdir:
+            root = Path(tempdir)
+            asset_root = root / "plugin" / "assets" / "xagent"
+            asset_root.mkdir(parents=True)
+            (asset_root / "package.json").write_text('{"name":"xagent"}\n', encoding="utf-8")
+            validated_roots: list[Path] = []
+
+            def build_package(destination: Path) -> None:
+                (destination / "assets" / "xagent").mkdir(parents=True)
+                (destination / "assets" / "xagent" / "package.json").write_text(
+                    '{"name":"xagent"}\n',
+                    encoding="utf-8",
+                )
+                (destination / "scripts").mkdir()
+                (destination / "scripts" / "xagent").write_text("#!/bin/sh\n", encoding="utf-8")
+
+            def validate_launcher(plugin_root: Path) -> None:
+                if not plugin_root.exists():
+                    raise RuntimeError(f"validated after cleanup: {plugin_root}")
+                validated_roots.append(plugin_root)
+
+            with (
+                mock.patch.object(package_xagent, "parse_args", return_value=mock.Mock(check=True, output=None)),
+                mock.patch.object(package_xagent, "ASSET_ROOT", asset_root),
+                mock.patch.object(package_xagent, "build_package", build_package),
+                mock.patch.object(package_xagent, "validate_launcher", validate_launcher),
+            ):
+                self.assertEqual(0, package_xagent.main())
+
+            self.assertEqual(1, len(validated_roots))
+
 
 class GlobalPluginInstallTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -160,11 +238,14 @@ if args == ["plugin", "list"]:
         self.temporary.cleanup()
 
     def install(self) -> None:
+        self.install_with_codex(self.bin_root / "codex")
+
+    def install_with_codex(self, codex: Path) -> None:
         install_global.install_global(
             repo_root=self.repo_root,
             home=self.home,
             codex_home=self.codex_home,
-            codex=str(self.bin_root / "codex"),
+            codex=str(codex),
             cachebuster=FIXED_CACHEBUSTER,
         )
 
@@ -291,6 +372,49 @@ if args == ["plugin", "list"]:
                 f"xagent  enabled  {self.destination.resolve()}\n",
                 self.destination,
             )
+
+    def test_non_default_home_is_used_for_codex_marketplace_resolution(self) -> None:
+        write_executable(
+            self.bin_root / "codex-home-aware",
+            """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+expected_home = Path(os.environ["EXPECTED_HOME"]).resolve()
+actual_home = Path(os.environ["HOME"]).resolve()
+if actual_home != expected_home:
+    print(f"HOME mismatch: {actual_home} != {expected_home}", file=sys.stderr)
+    raise SystemExit(24)
+args = sys.argv[1:]
+if args == ["plugin", "add", "xagent@personal"]:
+    raise SystemExit(0)
+if args == ["plugin", "list"]:
+    marketplace = json.loads(
+        (actual_home / ".agents" / "plugins" / "marketplace.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    [entry] = [item for item in marketplace["plugins"] if item["name"] == "xagent"]
+    source_path = Path(entry["source"]["path"])
+    if not source_path.is_absolute():
+        source_path = actual_home / source_path
+    print("NAME    VERSION    STATUS               PATH")
+    print("xagent  0.1.0     installed, enabled   " + str(source_path.resolve()))
+    raise SystemExit(0)
+raise SystemExit(f"unexpected fake codex arguments: {args!r}")
+""",
+        )
+        with mock.patch.dict(os.environ, {"EXPECTED_HOME": str(self.home)}):
+            self.install_with_codex(self.bin_root / "codex-home-aware")
+
+        marketplace = json.loads(self.marketplace_path.read_text(encoding="utf-8"))
+        [entry] = [item for item in marketplace["plugins"] if item["name"] == "xagent"]
+        self.assertEqual(
+            f"./{self.destination.relative_to(self.home).as_posix()}",
+            entry["source"]["path"],
+        )
 
     def test_tracked_plugin_tree_is_unchanged(self) -> None:
         plugin_root = self.repo_root / "plugins" / "xagent"

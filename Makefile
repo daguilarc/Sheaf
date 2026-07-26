@@ -158,7 +158,7 @@ xagent-plugin-build:
 	python3 plugins/xagent/scripts/package_xagent.py
 
 xagent-plugin-test:
-	python3 plugins/xagent/scripts/package_xagent.py
+	python3 plugins/xagent/scripts/package_xagent.py --check
 	python3 /Users/joyo/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py plugins/xagent
 
 xagent-plugin-install-global:
