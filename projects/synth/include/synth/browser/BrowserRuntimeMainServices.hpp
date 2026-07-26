@@ -124,14 +124,26 @@ public:
         fileService_.Dispatch(action);
     }
 
-    void RefreshControllers(synth::runtime_ui::ControllersPageSurface& surface)
+    // Recompute the cached classification as soon as the host learns the device
+    // list changed, instead of waiting for the next frame build. Submit
+    // rechecks its candidate through the enumerateDevices callback, so a
+    // controller unplugged between two frames must already be gone from the
+    // cache by the time that recheck runs. An unchanged list is a no-op, and
+    // this neither enumerates devices nor reconciles endpoints.
+    void NoteMidiDeviceListChanged()
     {
         const std::uint64_t deviceListRevision = midiBridge_.DeviceListRevision();
-        if (!wizardDiscoveryCache_.HasDeviceList() || deviceListRevision != cachedDeviceListRevision_)
+        if (wizardDiscoveryCache_.HasDeviceList() && deviceListRevision == cachedDeviceListRevision_)
         {
-            wizardDiscoveryCache_.UpdateDeviceList(midiBridge_.LatestDeviceList());
-            cachedDeviceListRevision_ = deviceListRevision;
+            return;
         }
+        wizardDiscoveryCache_.UpdateDeviceList(midiBridge_.LatestDeviceList());
+        cachedDeviceListRevision_ = deviceListRevision;
+    }
+
+    void RefreshControllers(synth::runtime_ui::ControllersPageSurface& surface)
+    {
+        NoteMidiDeviceListChanged();
         surface.SetEnumerateDevices(wizardDiscoveryCache_.DeviceList());
         if (instrumentSnapshotDirty_)
         {

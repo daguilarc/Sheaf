@@ -401,6 +401,42 @@ void TestBrowserControllerDiscoveryCacheUsesSignalsAndSuccessfulCommits()
     bridge.Stop();
 }
 
+void TestWizardSubmitRefusesACandidateRemovedSinceTheLastFrame()
+{
+    RuntimeFixture fixture;
+    using Bridge = synth_browser::BrowserMidiBridge<synth::Engine<ValidApp>>;
+    const std::vector<Bridge::Endpoint> twisterPair = {
+        {.identifier = "twister-in", .name = "Midi Fighter Twister", .kind = Bridge::EndpointKind::Input},
+        {.identifier = "twister-out", .name = "Midi Fighter Twister", .kind = Bridge::EndpointKind::Output},
+    };
+    fixture.runtime.SubmitMidiEndpoints(twisterPair);
+    fixture.runtime.MessageTick(2);
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSidebarControllers, "");
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardOpen, "");
+    const synth_browser::DecodedCommandBuffer openFrame = fixture.Frame();
+    Require(FindNode(openFrame, "controller-wizard.twister.encoder-slot") != nullptr,
+            "the unique candidate opens its wizard form");
+
+    // The controller is unplugged and Submit is activated before the host
+    // builds another frame. D5 requires Submit to recheck that the candidate is
+    // still present, so the cached classification has to follow the device-list
+    // change itself rather than the next frame build.
+    fixture.runtime.SubmitMidiEndpoints({});
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardSubmit, "");
+
+    const synth_browser::DecodedCommandBuffer refusedFrame = fixture.Frame();
+    const synth_browser::DecodedNode* status =
+        FindNode(refusedFrame, synth::runtime_ui::NodeIds::kWizardStatus);
+    Require(status != nullptr && status->text.find("reconnect") != std::string::npos,
+            "Submit refuses a candidate removed since the last frame with a reconnect message");
+    Require(FindNode(refusedFrame, "controller-wizard.twister.encoder-slot") != nullptr,
+            "the refused wizard session stays open");
+    Require(fixture.runtime.Engine().InstrumentSnapshot().FindController("MIDI Fighter Twister") == nullptr,
+            "a refused stale Submit commits no controller");
+    Require(!fixture.runtime.ConsumePersistenceDirty(),
+            "a refused stale Submit saves no runtime configuration");
+}
+
 void TestBrowserPrepareFeedsNegotiatedAudioPageAndRejectsOversizedBlocks()
 {
     RuntimeFixture fixture;
@@ -1034,6 +1070,7 @@ int main()
     TestBrowserSyncUsesSharedStagingPersistsAndResolvesSourceNames();
     TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack();
     TestBrowserControllerDiscoveryCacheUsesSignalsAndSuccessfulCommits();
+    TestWizardSubmitRefusesACandidateRemovedSinceTheLastFrame();
     TestFilePageDispatchesPatchLifecycleThroughBrowserRuntime();
     TestPersistenceDirtyConsumesRuntimeAndServicesSourcesTogether();
     TestAudioWorkletDeadlineMeterAveragesQuantizedTimerSamples();

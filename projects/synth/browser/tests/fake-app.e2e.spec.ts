@@ -746,10 +746,6 @@ test("controller wizard stale and invalid submit preserve entered values", async
   await wizardArgument(page, 1).locator("input").fill("5");
   await removeTwisterPair(page, 1);
   await waitForTwisterEndpointRemoval(page, 1);
-  // The runtime refreshes its cached device snapshot while building a frame,
-  // and this harness only builds one per dispatched action. Re-enter the same
-  // slot value so the snapshot behind Submit's staleness check is current.
-  await wizardSlot(page).locator("input").fill("4");
   await page.locator(synthNode("runtime.controllers.wizard.submit")).click();
   await expect(page.locator(synthNode("runtime.controllers.wizard.status"))).toContainText("reconnect");
   await expect(page.locator(`${synthNode(WIZARD_SLOT)} input`)).toHaveValue("4");

@@ -282,6 +282,7 @@ public:
     {
         RequireStarted();
         midiBridge_.SubmitEndpoints(endpoints);
+        services_.NoteMidiDeviceListChanged();
     }
 
     std::optional<typename BrowserMidiBridge<synth::Engine<App>>::Action> DequeueMidiAction()
