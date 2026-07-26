@@ -33,6 +33,7 @@ a scratch/test copy.
 python3 projects/agents/task-analyzer/ingest.py [ingest|rebuild-derived|backfill-turns|verify-turn-phases] \
     [--db PATH] [--repo PATH] [--dry-run] [--no-agents] \
     [--rescore complexity|grades|phase_tokens] [--change NAME] [--strict] \
+    [--staging-dir DIR] [--codex-sessions-root DIR] [--claude-projects-root DIR] \
     [--analysis-dir DIR] [--regenerate]
 ```
 
@@ -156,6 +157,15 @@ python3 projects/agents/task-analyzer/ingest.py [ingest|rebuild-derived|backfill
   on its own and the run continues with every other task. Never triggered
   by a correctly-declined "ungradeable" grading result, which is not an
   error.
+- `--staging-dir DIR`: where agentic dispatch stages its output (default
+  `projects/agents/task-analyzer/staging/`). Point it at a scratch dir to
+  keep an experimental run from sharing — or writing into — the source
+  tree's staging cache. See "Running against a different data directory".
+- `--codex-sessions-root DIR` / `--claude-projects-root DIR`: the two
+  session corpora discovery scans (defaults `~/.codex/sessions`,
+  `~/.claude/projects`). Both are independent of `--repo`: a change's
+  sessions accumulate across every worktree checkout, so they are *not*
+  derived from the repo path.
 - Both commands write the refreshed `<db>.dump.jsonl` sibling next to the
   database on every real (non-dry-run) run — that JSONL file is what PRs
   should be reviewed against, since the sqlite binary itself doesn't diff
@@ -390,6 +400,41 @@ decomposer being invoked by hand against an already-written plan) is
 explicitly deferred to a future change (design.md's Migration Plan, step 3).
 See `projects/agents/task-analyzer/examples/` for a worked dry-run of manual
 dispatch against an already-archived change.
+
+## Running against a different data directory
+
+Nothing in the pipeline is pinned to `data/agents/` — every data location is
+a command-line argument, so a scratch/experimental instance can live
+anywhere:
+
+| Location | Default | Flag |
+| --- | --- | --- |
+| Database (+ its `.dump.jsonl` sibling, derived from the db path) | `data/agents/task-analyzer.sqlite` | `--db` on `ingest.py`, `train.py`, `estimate.py`, `annotations.py` |
+| Agentic staging output | `projects/agents/task-analyzer/staging/` | `--staging-dir` on `ingest.py` |
+| codex session corpus | `~/.codex/sessions` | `--codex-sessions-root` on `ingest.py` |
+| claude session corpus | `~/.claude/projects` | `--claude-projects-root` on `ingest.py` |
+| `backfill-turns` phase-label fallback dataset | `analysis/sdd-model-analysis/data` | `--analysis-dir` on `ingest.py` |
+
+So a self-contained instance under `/tmp/ta` is:
+
+```
+python3 projects/agents/task-analyzer/ingest.py \
+    --db /tmp/ta/task-analyzer.sqlite --staging-dir /tmp/ta/staging
+python3 projects/agents/task-analyzer/train.py --db /tmp/ta/task-analyzer.sqlite
+python3 projects/agents/task-analyzer/estimate.py \
+    --decomposition candidate.yaml --db /tmp/ta/task-analyzer.sqlite
+```
+
+`--db` is enough on its own for the decomposition side (`estimate.py` /
+`annotations.py` are read-only and touch no other path); `--staging-dir` is
+what keeps an ingest run from writing into the checked-out source tree.
+
+Note that the decomposer prompt (`prompts/decomposer.md`) still *instructs*
+its subagent to score against the main-branch database rather than a
+worktree-local copy — that's a deliberate policy about which numbers a real
+decomposition is allowed to use, not a mechanical limitation. Pass a
+different `--db` when you're deliberately working against a scratch
+instance.
 
 ## Configuration
 

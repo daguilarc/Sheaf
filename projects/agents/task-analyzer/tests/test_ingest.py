@@ -1949,15 +1949,15 @@ class TestDryRunCliOutput(unittest.TestCase):
             self.assertNotIn(key, data)
 
     def test_plan_fields_present_and_populated(self):
-        # `ingest.main` has no flag to point session discovery at a fixture
-        # directory (it always scans the real ~/.codex/sessions and
-        # ~/.claude/projects, same limitation TestDryRunNoDbFile already
-        # lives with) -- so this only asserts what's true regardless of
-        # whatever real sessions happen to exist on the machine running the
-        # test: the task-level gaps (independent of session discovery) and
-        # the plan's overall shape. Session-dependent counts (grading,
-        # phase-labels, new_sessions) are exercised precisely via `run()`
-        # directly in `TestDryRun`, not through this CLI-level test.
+        # This case deliberately runs WITHOUT the corpus-root flags (see
+        # TestDataDirFlags for those), i.e. against whatever real
+        # ~/.codex/sessions and ~/.claude/projects happen to exist on the
+        # machine running the test -- so it only asserts what's true
+        # regardless of them: the task-level gaps (independent of session
+        # discovery) and the plan's overall shape. Session-dependent counts
+        # (grading, phase-labels, new_sessions) are exercised precisely via
+        # `run()` directly in `TestDryRun`, and through the CLI in
+        # `TestDataDirFlags`.
         data = self._dry_run_json()
         plan = data["plan"]
         self.assertIn(f"{CHANGE_NAME}/{TASK_KEY}", plan["new_tasks"])
@@ -1996,6 +1996,67 @@ class TestDryRunNoDbFile(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertFalse(missing_db.exists())
         self.assertFalse(missing_db.parent.exists())  # not even the directory
+
+
+class TestDataDirFlags(unittest.TestCase):
+    """Every data location the CLI touches is selectable from the command
+    line: the two session-corpus roots (``--codex-sessions-root`` /
+    ``--claude-projects-root``) and the agentic staging directory
+    (``--staging-dir``). Before these flags existed they were library-only
+    keyword arguments, so `ingest.main` always scanned the real
+    ``~/.codex/sessions`` / ``~/.claude/projects`` and always wrote staging
+    into the source tree."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.repo = _make_repo(self.root)
+        self.claude_root = _make_sessions(self.root)
+        self.codex_root = self.root / "codex_sessions"
+        self.codex_root.mkdir()
+        self.db_path = self.root / "data" / "t.sqlite"
+        self.db_path.parent.mkdir()
+
+        # A sentinel default that must never be created: proves the run used
+        # the explicit --staging-dir rather than the source-tree default.
+        self.default_staging = self.root / "never-used-staging"
+        self._real_default_staging = ingest.DEFAULT_STAGING_DIR
+        ingest.DEFAULT_STAGING_DIR = self.default_staging
+        self.addCleanup(setattr, ingest, "DEFAULT_STAGING_DIR", self._real_default_staging)
+
+    def _main(self, *extra):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = ingest.main([
+                "--repo", str(self.repo), "--db", str(self.db_path),
+                "--change", CHANGE_NAME,
+                "--codex-sessions-root", str(self.codex_root),
+                "--claude-projects-root", str(self.claude_root),
+            ] + list(extra))
+        self.assertEqual(rc, 0)
+        return json.loads(buf.getvalue())
+
+    def test_corpus_roots_scoped_to_the_given_dirs(self):
+        plan = self._main("--dry-run")["plan"]
+        # Exactly the two fixture sessions -- nothing from this machine's
+        # real ~/.claude/projects or ~/.codex/sessions leaked in.
+        self.assertEqual(plan["new_sessions_count"], 2)
+
+    def test_staging_dir_flag_redirects_all_staging_writes(self):
+        staging = self.root / "scratch-staging"
+        self._main("--no-agents", "--staging-dir", str(staging))
+
+        for kind in ingest.KIND_TABLE:
+            self.assertTrue((staging / kind).is_dir(), f"missing staging dir for {kind}")
+        self.assertFalse(self.default_staging.exists())
+
+    def test_db_flag_also_moves_the_dump_sibling(self):
+        # The reviewable `.dump.jsonl` is derived from the db path, so `--db`
+        # alone is enough to relocate the whole data store.
+        self._main("--no-agents", "--staging-dir", str(self.root / "scratch-staging"))
+        self.assertTrue(self.db_path.exists())
+        self.assertTrue((self.db_path.parent / "t.dump.jsonl").exists())
 
 
 if __name__ == "__main__":

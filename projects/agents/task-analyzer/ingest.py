@@ -68,7 +68,8 @@ Directory conventions owned by this module (not fixed elsewhere):
   ``~/.codex/sessions``, glob ``**/rollout-*.jsonl``) and claude project
   transcripts under ``claude_projects_root`` (default
   ``~/.claude/projects``, glob ``**/*.jsonl``). Both roots are overridable
-  keyword arguments (tests point them at fixture directories).
+  keyword arguments (tests point them at fixture directories) and, on the
+  CLI, ``--codex-sessions-root`` / ``--claude-projects-root``.
 - A session joins a task when ``discovery.task_keys(session.prompt)``
   yields a ``task`` key matching exactly one brief's task_key among the
   briefs whose ``change_dir`` (or ``openspec_change``) equals a change
@@ -1943,6 +1944,24 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--db", default=str(Path("data/agents/task-analyzer.sqlite")))
     p.add_argument("--repo", default=".")
+    # Data-location overrides (all three were library-only keyword arguments
+    # before this): every path this pipeline reads its corpus from or writes
+    # its intermediates to is now selectable from the command line, so a
+    # scratch/experimental instance can be pointed at a different data
+    # directory entirely (`--db` already moves the database AND its
+    # `.dump.jsonl` sibling, which is derived from the db path).
+    p.add_argument("--staging-dir", default=None,
+                    help="ingest only: directory for agentic staging output "
+                         f"(default: {DEFAULT_STAGING_DIR}). Point this at a scratch dir to keep "
+                         "an experimental run from sharing (or writing into) the source tree's "
+                         "staging cache.")
+    p.add_argument("--codex-sessions-root", default=None,
+                    help="ingest only: root of the codex rollout corpus to discover sessions from "
+                         f"(default: {DEFAULT_CODEX_SESSIONS_ROOT}, glob '**/rollout-*.jsonl')")
+    p.add_argument("--claude-projects-root", default=None,
+                    help="ingest only: root of the claude project transcript corpus to discover "
+                         f"sessions from (default: {DEFAULT_CLAUDE_PROJECTS_ROOT}, glob "
+                         "'**/*.jsonl')")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--no-agents", action="store_true")
     p.add_argument("--rescore", default=None, help="table name to opt in to rescoring (complexity|grades|phase_tokens)")
@@ -2074,6 +2093,9 @@ def main(argv=None) -> int:
             dry_run=args.dry_run, no_agents=args.no_agents,
             rescore=args.rescore, agent_runner=agent_runner, change=args.change,
             strict=args.strict,
+            staging_dir=args.staging_dir,
+            codex_sessions_root=args.codex_sessions_root,
+            claude_projects_root=args.claude_projects_root,
         )
     finally:
         conn.close()
