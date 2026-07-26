@@ -26,7 +26,7 @@ Returns `200` with `{ "healthy": true, "uptime": <seconds> }` while the service 
 curl -s -XPOST http://127.0.0.1:9005/exit
 ```
 
-Returns `{ "exiting": true }`, stops accepting new connections, closes every owned session/process group, and exits `0`. A `SIGINT`/`SIGTERM` to the process triggers the same orderly path.
+Returns `{ "exiting": true }`, stops accepting new connections, closes every owned session/process group, and exits `0`. Conductor stops the service primarily via `POST /exit`; a direct `SIGINT`/`SIGTERM` to the process is not currently trapped and will terminate it without the orderly close path, so prefer `/exit` for clean shutdown.
 
 ## Endpoint and tools
 
@@ -39,7 +39,7 @@ Returns `{ "exiting": true }`, stops accepting new connections, closes every own
 The six MCP tools exposed by the service:
 
 1. `xagent_start` — create a run from an absolute existing `cwd`, a `prompt`, a `harness`, and an optional `mode`/`policy`.
-2. `xagent_submit` — send a new user message to a running worker.
+2. `xagent_message` — send a new user message to a running worker.
 3. `xagent_await` — block until the next deliverable event after `after_sequence` or until `deadline_seconds` elapses.
 4. `xagent_inspect` — return the compact phase/sequence snapshot for a run without blocking.
 5. `xagent_interrupt` — request a cooperative interrupt of the active turn.
