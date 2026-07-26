@@ -10,6 +10,25 @@ include $(APP_DIR)/../../runtime/juce_build.mk
 MINIAPP_DIR := $(APP_DIR)/../miniapp
 BRAID4_DIR := $(APP_DIR)/../braid-4
 CPPFLAGS += -I$(BRAID4_DIR)
+
+# Optional out-of-tree application. Setting EXTRA_APP_DIR requires all of the
+# other EXTRA_APP_* variables; with none of them set the build is unchanged.
+EXTRA_APP_DIR ?=
+EXTRA_APP_HEADER ?=
+EXTRA_APP_TYPE ?=
+EXTRA_APP_REGISTRAR ?=
+EXTRA_APP_HEADERS ?=
+ifneq ($(EXTRA_APP_DIR),)
+$(if $(EXTRA_APP_HEADER),,$(error EXTRA_APP_HEADER is required when EXTRA_APP_DIR is set))
+$(if $(EXTRA_APP_TYPE),,$(error EXTRA_APP_TYPE is required when EXTRA_APP_DIR is set))
+$(if $(EXTRA_APP_REGISTRAR),,$(error EXTRA_APP_REGISTRAR is required when EXTRA_APP_DIR is set))
+$(if $(EXTRA_APP_HEADERS),,$(error EXTRA_APP_HEADERS is required when EXTRA_APP_DIR is set; list the headers so edits trigger a rebuild))
+CPPFLAGS += -I$(EXTRA_APP_DIR) \
+	-DSHEAF_PATCH_EXTRA_APP_HEADER='"$(EXTRA_APP_HEADER)"' \
+	-DSHEAF_PATCH_EXTRA_APP_TYPE=$(EXTRA_APP_TYPE) \
+	-DSHEAF_PATCH_EXTRA_APP_REGISTRAR=$(EXTRA_APP_REGISTRAR)
+endif
+
 APP_HEADERS := $(APP_DIR)/Launcher.hpp \
 	$(BRAID4_DIR)/Braid4Registration.hpp \
 	$(BRAID4_DIR)/Braid4.hpp \
@@ -24,6 +43,8 @@ APP_HEADERS := $(APP_DIR)/Launcher.hpp \
 	$(MINIAPP_DIR)/MiniAppDraw.hpp \
 	$(MINIAPP_DIR)/MiniAppCore.hpp \
 	$(MINIAPP_DIR)/DemoModulation.hpp
+# Must stay after the APP_HEADERS assignment and before the rules that use it.
+APP_HEADERS += $(EXTRA_APP_HEADERS)
 $(APP): $(APP_HEADERS)
 
 LAUNCHER_HARNESS_TEST_SRC := $(APP_DIR)/LauncherHarnessTests.cpp

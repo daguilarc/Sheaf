@@ -5,6 +5,11 @@
 #include "Shell.hpp"
 #include "synth/ThreadId.hpp"
 
+// Optional out-of-tree application supplied by the EXTRA_APP_* build variables.
+#ifdef SHEAF_PATCH_EXTRA_APP_TYPE
+#include SHEAF_PATCH_EXTRA_APP_HEADER
+#endif
+
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include <exception>
@@ -35,6 +40,11 @@ public:
             apps.push_back(synth_braid4::MakeBraid4Registration([this](synth::RuntimeDataPaths paths) {
                 LaunchRegisteredApp<synth_braid4::Braid4>(std::move(paths));
             }));
+#ifdef SHEAF_PATCH_EXTRA_APP_TYPE
+            apps.push_back(SHEAF_PATCH_EXTRA_APP_REGISTRAR([this](synth::RuntimeDataPaths paths) {
+                LaunchRegisteredApp<SHEAF_PATCH_EXTRA_APP_TYPE>(std::move(paths));
+            }));
+#endif
 
             launcher_ = std::make_unique<LauncherComponent>(std::move(apps), dataRoot_);
             window_->ShowContent(*launcher_, 720, 420);

@@ -510,6 +510,29 @@ WHEN the Sheaf Patch registry is built, THE synth application runtime SHALL incl
 - **THEN** Sheaf Patch includes Braid 4
 - **AND** no standalone Braid 4 `Main.cpp`, executable, or app-bundle target is required
 
+### Requirement: sar-24 — Apps: build-time external application injection
+WHEN the Sheaf Patch executable is built, THE synth application runtime SHALL support adding one out-of-tree synth application to the launcher registry through build configuration alone, SHALL require the injecting build to supply that application's include directory, header, application type, registration factory, and header dependency list together, and SHALL produce an unchanged Sheaf Patch build when no external application is configured. The external application SHALL reach the registry through the same manifest contract, typed launch binding, and generic session ownership as in-tree registrations, and the launcher SHALL NOT gain app-specific knowledge of it.
+
+#### Scenario: Unconfigured build is unchanged
+- **WHEN** Sheaf Patch is built with no external application configured
+- **THEN** the launcher registry contains only the in-tree registrations
+- **AND** no external-application preprocessor definition reaches the compiler
+
+#### Scenario: Configured external application joins the registry
+- **WHEN** Sheaf Patch is built with a complete external application configuration
+- **THEN** the launcher lists the external application alongside the in-tree registrations
+- **AND** selecting it constructs and starts its runtime through the typed launch binding and the generic session owner
+- **AND** the launcher declares no member, launch method, or UI specific to that application
+
+#### Scenario: Partial configuration fails the build
+- **WHEN** an external application is configured with any required build variable missing
+- **THEN** the build fails with a diagnostic naming the missing variable
+- **AND** no partially configured executable is produced
+
+#### Scenario: External headers participate in rebuild detection
+- **WHEN** a declared external application header changes
+- **THEN** the next Sheaf Patch build recompiles rather than reporting the executable up to date
+
 ### Requirement: sar-25 — Control topology: runtime-owned button grids
 WHEN a synth application runs under the engine runtime, THE runtime SHALL own one `GridManager` as a sibling of its `ParameterManager`, SHALL attach both the UI and MIDI `MessageInBus` instances to both managers, SHALL finalize and allocate grid UI topology during initialization, SHALL drain grid and parameter messages through the existing ordered bus pumps before application block processing, SHALL publish parameter and selected-grid state into one stable internal runtime UI snapshot used by MIDI processors, and SHALL destroy the grid manager only after audio and MIDI processing have stopped; this change SHALL NOT require an existing application to create, expose, or render a grid.
 
