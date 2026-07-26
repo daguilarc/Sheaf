@@ -16,12 +16,14 @@
 #include <cstdio>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <set>
 #include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
+#include <variant>
 
 namespace synth::runtime_ui {
 
@@ -42,6 +44,21 @@ inline constexpr const char* kAvailable = "runtime.controllers.available";
 inline constexpr const char* kAvailableEmpty = "runtime.controllers.available.empty";
 inline constexpr const char* kAvailableUnmatchedInputs = "runtime.controllers.available.unmatched_inputs";
 inline constexpr const char* kAvailableUnmatchedOutputs = "runtime.controllers.available.unmatched_outputs";
+inline constexpr const char* kWizardLaunch = "runtime.controllers.wizard.launch";
+inline constexpr const char* kWizardChooser = "runtime.controllers.wizard.chooser";
+inline constexpr const char* kWizardChooserEmpty = "runtime.controllers.wizard.chooser.empty";
+inline constexpr const char* kWizardForm = "runtime.controllers.wizard.form";
+inline constexpr const char* kWizardBack = "runtime.controllers.wizard.back";
+inline constexpr const char* kWizardCancel = "runtime.controllers.wizard.cancel";
+inline constexpr const char* kWizardSubmit = "runtime.controllers.wizard.submit";
+inline constexpr const char* kWizardIgnore = "runtime.controllers.wizard.ignore";
+inline constexpr const char* kWizardWarning = "runtime.controllers.wizard.warning";
+inline constexpr const char* kWizardStatus = "runtime.controllers.wizard.status";
+
+inline std::string WizardChooserCandidate(std::size_t candidateIx)
+{
+    return std::string(kWizardChooser) + ".candidate." + std::to_string(candidateIx);
+}
 
 inline std::string AvailableRow(std::size_t candidateIx)
 {
@@ -166,6 +183,12 @@ inline constexpr const char* kAddKindDraft = "runtime.controllers.add_kind_draft
 inline constexpr const char* kAddController = "runtime.controllers.add_controller";
 inline constexpr const char* kAvailableConfigure = "runtime.controllers.available.configure";
 inline constexpr const char* kAvailableIgnore = "runtime.controllers.available.ignore";
+inline constexpr const char* kWizardOpen = "runtime.controllers.wizard.open";
+inline constexpr const char* kWizardChoose = "runtime.controllers.wizard.choose";
+inline constexpr const char* kWizardBack = "runtime.controllers.wizard.back";
+inline constexpr const char* kWizardCancel = "runtime.controllers.wizard.cancel";
+inline constexpr const char* kWizardSubmit = "runtime.controllers.wizard.submit";
+inline constexpr const char* kWizardIgnore = "runtime.controllers.wizard.ignore";
 
 }  // namespace Actions
 
@@ -507,6 +530,14 @@ struct ControllersPageCallbacks
     std::function<void()> onBack;
 };
 
+struct WizardSession {
+    std::variant<WizardCandidate, std::size_t> target;
+    std::unique_ptr<ControllerWizard> wizard;
+    std::unique_ptr<ControllerConfigForm> form;
+    std::string warning;
+    std::string status;
+};
+
 inline bool WizardDiscoveryEqual(const WizardDiscovery& lhs, const WizardDiscovery& rhs)
 {
     if (lhs.unmatchedInputs != rhs.unmatchedInputs || lhs.unmatchedOutputs != rhs.unmatchedOutputs ||
@@ -538,6 +569,14 @@ public:
 
     ui::NodeTree BuildTree() override
     {
+        if (m_wizardSession.has_value())
+        {
+            return BuildWizardFormTree();
+        }
+        if (m_wizardChooserOpen)
+        {
+            return BuildWizardChooserTree();
+        }
         return BuildControllersPageTree(m_vm,
                                         m_devices,
                                         m_discovery,
@@ -597,6 +636,75 @@ public:
     const WizardDiscovery& Discovery() const
     {
         return m_discovery;
+    }
+
+    const WizardSession* ActiveWizardSession() const
+    {
+        return m_wizardSession ? &*m_wizardSession : nullptr;
+    }
+
+    bool OpenCandidate(std::size_t candidateIx)
+    {
+        if (m_wizardSession || candidateIx >= m_discovery.available.size())
+        {
+            return false;
+        }
+
+        const WizardCandidate candidate = m_discovery.available[candidateIx];
+        std::unique_ptr<ControllerWizard> wizard = MakeControllerWizard(candidate.wizardId);
+        if (!wizard)
+        {
+            SetStatus("Refused: controller wizard is unavailable");
+            return false;
+        }
+        std::unique_ptr<ControllerConfigForm> form = wizard->ConfigForm(std::nullopt);
+        if (!form)
+        {
+            SetStatus("Refused: controller wizard could not open a form");
+            return false;
+        }
+
+        m_wizardSession.emplace(WizardSession{.target = candidate,
+                                              .wizard = std::move(wizard),
+                                              .form = std::move(form)});
+        m_wizardChooserOpen = false;
+        ++m_treeRevision;
+        return true;
+    }
+
+    bool OpenExisting(std::size_t controllerIx)
+    {
+        if (m_wizardSession || !m_callbacks.instrumentSnapshot)
+        {
+            return false;
+        }
+        const MidiInstrumentConfig instrument = m_callbacks.instrumentSnapshot();
+        if (controllerIx >= instrument.controllers.size())
+        {
+            return false;
+        }
+        const MidiControllerSlot& controller = instrument.controllers[controllerIx];
+        if (!controller.wizardId.has_value())
+        {
+            return false;
+        }
+        std::unique_ptr<ControllerWizard> wizard = MakeControllerWizard(*controller.wizardId);
+        if (!wizard)
+        {
+            return false;
+        }
+        std::unique_ptr<ControllerConfigForm> form = wizard->ConfigForm(controller);
+        if (!form)
+        {
+            return false;
+        }
+
+        m_wizardSession.emplace(WizardSession{.target = controllerIx,
+                                              .wizard = std::move(wizard),
+                                              .form = std::move(form)});
+        m_wizardChooserOpen = false;
+        ++m_treeRevision;
+        return true;
     }
 
     void MarkDirty()
@@ -724,6 +832,39 @@ private:
 
     void HandleAction(const ui::Action& action)
     {
+        if (m_wizardSession.has_value())
+        {
+            if (action.name == Actions::kWizardBack || action.name == Actions::kWizardCancel)
+            {
+                CloseWizardSession();
+                return;
+            }
+
+            // Task 12 owns new-candidate Submit/Ignore revalidation and commits.
+            // Keep the session open until that policy is installed.
+            if (action.name == Actions::kWizardSubmit || action.name == Actions::kWizardIgnore)
+            {
+                return;
+            }
+
+            m_wizardSession->form->DispatchAction(action);
+            return;
+        }
+
+        if (m_wizardChooserOpen)
+        {
+            if (action.name == Actions::kWizardBack || action.name == Actions::kWizardCancel)
+            {
+                m_wizardChooserOpen = false;
+                ++m_treeRevision;
+            }
+            else if (action.name == Actions::kWizardChoose)
+            {
+                OpenCandidate(ParseIndex(action.value));
+            }
+            return;
+        }
+
         if (action.name == Actions::kBack)
         {
             if (m_callbacks.onBack)
@@ -808,6 +949,26 @@ private:
         if (action.name == Actions::kAddController)
         {
             HandleAddController(action.value);
+            return;
+        }
+
+        if (action.name == Actions::kWizardOpen)
+        {
+            if (m_discovery.available.size() == 1)
+            {
+                OpenCandidate(0);
+            }
+            else if (m_discovery.available.size() > 1)
+            {
+                m_wizardChooserOpen = true;
+                ++m_treeRevision;
+            }
+            return;
+        }
+
+        if (action.name == Actions::kAvailableConfigure)
+        {
+            OpenCandidate(ParseIndex(action.value));
         }
     }
 
@@ -1072,6 +1233,126 @@ private:
         }
     }
 
+    void CloseWizardSession()
+    {
+        m_wizardSession.reset();
+        ++m_treeRevision;
+    }
+
+    ui::NodeTree BuildWizardChooserTree() const
+    {
+        ui::NodeTree tree;
+        ui::Node root;
+        root.id = NodeIds::kWizardChooser;
+        root.kind = ui::NodeKind::Root;
+        root.bounds = m_contentBounds;
+        tree.nodes.push_back(std::move(root));
+        auto append = [&](ui::Node node) {
+            tree.nodes.front().children.push_back(node.id);
+            tree.nodes.push_back(std::move(node));
+        };
+
+        ui::Node back;
+        back.id = NodeIds::kWizardBack;
+        back.kind = ui::NodeKind::Button;
+        back.label = "Back";
+        back.action = ui::Action::Named(Actions::kWizardBack);
+        append(std::move(back));
+
+        ui::Node heading;
+        heading.id = ui::NodeId(std::string(NodeIds::kWizardChooser) + ".heading");
+        heading.kind = ui::NodeKind::Label;
+        heading.text = "Choose a controller to configure";
+        append(std::move(heading));
+
+        if (m_discovery.available.empty())
+        {
+            ui::Node empty;
+            empty.id = NodeIds::kWizardChooserEmpty;
+            empty.kind = ui::NodeKind::StatusText;
+            empty.text = "No recognized unconfigured controller pair is present";
+            append(std::move(empty));
+            return tree;
+        }
+
+        for (std::size_t candidateIx = 0; candidateIx < m_discovery.available.size(); ++candidateIx)
+        {
+            const WizardCandidate& candidate = m_discovery.available[candidateIx];
+            ui::Node choice;
+            choice.id = ui::NodeId(NodeIds::WizardChooserCandidate(candidateIx));
+            choice.kind = ui::NodeKind::Button;
+            choice.label = candidate.displayName + " — " + candidate.input.name + " (" +
+                           candidate.input.identifier + ") / " + candidate.output.name + " (" +
+                           candidate.output.identifier + ")";
+            choice.action = ui::Action::WithValue(Actions::kWizardChoose, std::to_string(candidateIx));
+            append(std::move(choice));
+        }
+        return tree;
+    }
+
+    ui::NodeTree BuildWizardFormTree()
+    {
+        ui::NodeTree tree = m_wizardSession->form->BuildTree();
+        if (tree.nodes.empty())
+        {
+            return tree;
+        }
+        tree.nodes.front().id = NodeIds::kWizardForm;
+        tree.nodes.front().bounds = m_contentBounds;
+        auto append = [&](ui::Node node) {
+            tree.nodes.front().children.push_back(node.id);
+            tree.nodes.push_back(std::move(node));
+        };
+
+        ui::Node back;
+        back.id = NodeIds::kWizardBack;
+        back.kind = ui::NodeKind::Button;
+        back.label = "Back";
+        back.action = ui::Action::Named(Actions::kWizardBack);
+        append(std::move(back));
+
+        ui::Node cancel;
+        cancel.id = NodeIds::kWizardCancel;
+        cancel.kind = ui::NodeKind::Button;
+        cancel.label = "Cancel";
+        cancel.action = ui::Action::Named(Actions::kWizardCancel);
+        append(std::move(cancel));
+
+        ui::Node submit;
+        submit.id = NodeIds::kWizardSubmit;
+        submit.kind = ui::NodeKind::Button;
+        submit.label = "Submit";
+        submit.action = ui::Action::Named(Actions::kWizardSubmit);
+        append(std::move(submit));
+
+        if (std::holds_alternative<WizardCandidate>(m_wizardSession->target))
+        {
+            ui::Node ignore;
+            ignore.id = NodeIds::kWizardIgnore;
+            ignore.kind = ui::NodeKind::Button;
+            ignore.label = "Ignore this controller";
+            ignore.action = ui::Action::Named(Actions::kWizardIgnore);
+            append(std::move(ignore));
+        }
+        if (!m_wizardSession->warning.empty())
+        {
+            ui::Node warning;
+            warning.id = NodeIds::kWizardWarning;
+            warning.kind = ui::NodeKind::StatusText;
+            warning.text = m_wizardSession->warning;
+            append(std::move(warning));
+        }
+        if (!m_wizardSession->status.empty())
+        {
+            ui::Node status;
+            status.id = NodeIds::kWizardStatus;
+            status.kind = ui::NodeKind::StatusText;
+            status.text = m_wizardSession->status;
+            append(std::move(status));
+        }
+        return tree;
+    }
+
     static ui::NodeTree BuildControllersPageTree(const MidiConfigViewModel& vm,
                                                    const MidiDeviceList& devices,
                                                    const WizardDiscovery& discovery,
@@ -1103,6 +1384,16 @@ private:
         backButton.bounds = {contentX, y, ControllersLayout::kBackButtonWidth, ControllersLayout::kBackRowHeight};
         backButton.action = ui::Action::Named(Actions::kBack);
         appendChild(std::move(backButton));
+
+        ui::Node wizardLaunch;
+        wizardLaunch.id = NodeIds::kWizardLaunch;
+        wizardLaunch.kind = ui::NodeKind::Button;
+        wizardLaunch.label = "Configuration Wizard";
+        wizardLaunch.enabled = !discovery.available.empty();
+        wizardLaunch.bounds = {contentX + ControllersLayout::kBackButtonWidth + ControllersLayout::kRowGap,
+                               y, 180.0f, ControllersLayout::kBackRowHeight};
+        wizardLaunch.action = ui::Action::Named(Actions::kWizardOpen);
+        appendChild(std::move(wizardLaunch));
 
         y += ControllersLayout::kBackRowHeight + ControllersLayout::kRowGap;
 
@@ -1664,6 +1955,8 @@ private:
     MidiConfigViewModel m_vm;
     MidiDeviceList m_devices;
     WizardDiscovery m_discovery;
+    std::optional<WizardSession> m_wizardSession;
+    bool m_wizardChooserOpen = false;
     ui::Bounds m_contentBounds{0.0f, 0.0f, 640.0f, 480.0f};
     std::string m_statusText = "Ready";
     std::string m_addControllerName;

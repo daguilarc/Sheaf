@@ -345,6 +345,23 @@ void TestControllerDraftActionsReachControllerSurface()
             "controller add-name draft routes through runtime component");
     Require(addKind != nullptr && addKind->selectedOption == "generic",
             "controller add-kind draft routes through runtime component");
+
+    fixture.services.controllerDevices.inputs.push_back(
+        {.identifier = "twister-in", .name = "Midi Fighter Twister"});
+    fixture.services.controllerDevices.outputs.push_back(
+        {.identifier = "twister-out", .name = "Midi Fighter Twister"});
+    fixture.component.Refresh();
+    fixture.component.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
+    Require(FindNodeById(fixture.component.BuildTree(),
+                         synth::runtime_ui::NodeIds::kWizardForm) != nullptr,
+            "wizard launch routes through runtime component to the Controllers surface");
+    fixture.component.DispatchAction(
+        synth::ui::Action::WithValue("controller-wizard.twister.encoder-slot", "5"));
+    const synth::ui::Node* encoderSlot = FindNodeById(
+        fixture.component.BuildTree(), "controller-wizard.twister.encoder-slot");
+    Require(encoderSlot != nullptr && encoderSlot->text == "5",
+            "wizard form field actions route through runtime component to the session-owned form");
 }
 
 void TestBackFromConfigurationPageSavesRuntimeConfiguration()

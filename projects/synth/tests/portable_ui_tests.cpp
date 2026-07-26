@@ -1509,5 +1509,28 @@ int main()
     controllersSurface.RefreshOnTick();
     Require(controllersSurface.BuildTree().nodes.size() >= 4, "controllers surface builds semantic tree");
 
+    synth::WizardCandidate twisterCandidate{
+        .wizardId = "com.sheaf.midi-fighter-twister",
+        .displayName = "MIDI Fighter Twister",
+        .kind = synth::MidiProfileKind::MfTwister,
+        .input = {"twister-in", "Midi Fighter Twister"},
+        .output = {"twister-out", "Midi Fighter Twister"}};
+    controllersSurface.SetDiscovery({.available = {twisterCandidate}});
+    const synth::ui::NodeTree launchTree = controllersSurface.BuildTree();
+    const synth::ui::Node* wizardLaunch = FindNodeById(
+        launchTree, synth::runtime_ui::NodeIds::kWizardLaunch);
+    Require(wizardLaunch != nullptr && wizardLaunch->enabled && wizardLaunch->action.has_value() &&
+                wizardLaunch->action->name == synth::runtime_ui::Actions::kWizardOpen,
+            "portable Controllers page exposes the enabled wizard launch action");
+    controllersSurface.DispatchAction(*wizardLaunch->action);
+    const synth::ui::NodeTree wizardTree = controllersSurface.BuildTree();
+    const synth::ui::Node* wizardRoot = FindNodeById(
+        wizardTree, synth::runtime_ui::NodeIds::kWizardForm);
+    Require(wizardRoot != nullptr &&
+                NodeHasChild(wizardRoot, synth::ui::NodeId("controller-wizard.twister.encoder-slot")) &&
+                NodeHasChild(wizardRoot, synth::ui::NodeId(synth::runtime_ui::NodeIds::kWizardSubmit)) &&
+                NodeHasChild(wizardRoot, synth::ui::NodeId(synth::runtime_ui::NodeIds::kWizardIgnore)),
+            "portable wizard session composes the form and workflow actions into one tree");
+
     return 0;
 }

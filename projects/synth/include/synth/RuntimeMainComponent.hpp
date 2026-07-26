@@ -291,7 +291,14 @@ private:
                         Actions::kAddKindDraft,
                         Actions::kAddController,
                         Actions::kAvailableConfigure,
-                        Actions::kAvailableIgnore});
+                        Actions::kAvailableIgnore,
+                        Actions::kWizardOpen,
+                        Actions::kWizardChoose,
+                        Actions::kWizardBack,
+                        Actions::kWizardCancel,
+                        Actions::kWizardSubmit,
+                        Actions::kWizardIgnore}) ||
+               action.starts_with("controller-wizard.");
     }
 
     static ui::NodeTree MoveRootFirst(ui::NodeTree tree, std::size_t rootIndex)

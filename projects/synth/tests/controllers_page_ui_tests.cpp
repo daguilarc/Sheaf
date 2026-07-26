@@ -202,6 +202,129 @@ void TestDiscoveryRendersPortableAvailableRowsAndDiagnostics()
             "changed discovery snapshot revises the portable tree exactly once");
 }
 
+std::string VisibleTextLower(const synth::ui::NodeTree& tree);
+
+void TestWizardSessionRoutesPortableChooserAndForm()
+{
+    const synth::WizardCandidate first{
+        .wizardId = "com.sheaf.midi-fighter-twister",
+        .displayName = "MIDI Fighter Twister",
+        .kind = synth::MidiProfileKind::MfTwister,
+        .input = {"twister-in-a", "Midi Fighter Twister"},
+        .output = {"twister-out-a", "Midi Fighter Twister"}};
+    const synth::WizardCandidate second{
+        .wizardId = "com.sheaf.midi-fighter-twister",
+        .displayName = "MIDI Fighter Twister",
+        .kind = synth::MidiProfileKind::MfTwister,
+        .input = {"twister-in-b", "Midi Fighter Twister"},
+        .output = {"twister-out-b", "Midi Fighter Twister"}};
+
+    TestHarness emptyHarness;
+    auto emptySurface = emptyHarness.MakeSurface();
+    const synth::ui::NodeTree emptyTree = emptySurface.BuildTree();
+    const synth::ui::Node* emptyLaunch =
+        FindNodeById(emptyTree, "runtime.controllers.wizard.launch");
+    Require(emptyLaunch != nullptr && !emptyLaunch->enabled,
+            "zero candidates leave Configuration Wizard visibly disabled");
+    Require(VisibleTextLower(emptyTree).find("no recognized unconfigured controller pair") !=
+                std::string::npos,
+            "zero candidates explain why the wizard is disabled");
+
+    TestHarness uniqueHarness;
+    auto uniqueSurface = uniqueHarness.MakeSurface();
+    uniqueSurface.SetDiscovery({.available = {first}});
+    uniqueSurface.DispatchAction(
+        synth::ui::Action::Named("runtime.controllers.wizard.open"));
+    const synth::ui::NodeTree formTree = uniqueSurface.BuildTree();
+    Require(FindNodeById(formTree, "runtime.controllers.wizard.form") != nullptr,
+            "unique candidate opens its form directly");
+    Require(FindNodeById(formTree, "runtime.controllers.wizard.launch") == nullptr,
+            "open form exposes no second launch action");
+    Require(FindNodeById(formTree, "runtime.controllers.wizard.submit") != nullptr,
+            "form exposes portable Submit action");
+    Require(FindNodeById(formTree, "runtime.controllers.wizard.ignore") != nullptr,
+            "new candidate form exposes portable Ignore action");
+    Require(FindNodeById(formTree, "controller-wizard.twister.encoder-slot") != nullptr,
+            "session dispatches the Twister form with its one Encoder Slot");
+    Require(FindNodeById(formTree, "controller-wizard.twister.column.0") != nullptr &&
+                FindNodeById(formTree, "controller-wizard.twister.column.1") != nullptr,
+            "Twister form retains its two portable columns");
+    std::size_t twisterRows = 0;
+    for (const synth::ui::Node& node : formTree.nodes)
+    {
+        if (node.kind == synth::ui::NodeKind::Row &&
+            node.id.value.rfind("controller-wizard.twister.button.", 0) == 0)
+        {
+            ++twisterRows;
+        }
+    }
+    Require(twisterRows == 6, "Twister form renders exactly six button rows through the session");
+    uniqueSurface.DispatchAction(
+        synth::ui::Action::WithValue("controller-wizard.twister.encoder-slot", "5"));
+    const synth::ui::Node* editedSlot =
+        FindNodeById(uniqueSurface.BuildTree(), "controller-wizard.twister.encoder-slot");
+    Require(editedSlot != nullptr && editedSlot->text == "5",
+            "page routing dispatches edits into the form-owned state");
+    uniqueSurface.SetDiscovery({});
+    const synth::ui::Node* preservedSlot =
+        FindNodeById(uniqueSurface.BuildTree(), "controller-wizard.twister.encoder-slot");
+    Require(preservedSlot != nullptr && preservedSlot->text == "5",
+            "discovery refresh does not replace an open form or its entered state");
+    const std::size_t uniqueControllerCount = uniqueHarness.instrument.controllers.size();
+    uniqueSurface.DispatchAction(
+        synth::ui::Action::Named("runtime.controllers.wizard.cancel"));
+    Require(FindNodeById(uniqueSurface.BuildTree(), "runtime.controllers.wizard.launch") != nullptr,
+            "Cancel closes the session back to the Controllers list");
+    Require(uniqueHarness.instrument.controllers.size() == uniqueControllerCount && uniqueHarness.commits == 0,
+            "Cancel preserves the instrument without a commit");
+
+    TestHarness chooserHarness;
+    auto chooserSurface = chooserHarness.MakeSurface();
+    chooserSurface.SetDiscovery({.available = {first, second}});
+    chooserSurface.DispatchAction(
+        synth::ui::Action::Named("runtime.controllers.wizard.open"));
+    const synth::ui::NodeTree chooserTree = chooserSurface.BuildTree();
+    Require(FindNodeById(chooserTree, "runtime.controllers.wizard.chooser.candidate.0") != nullptr &&
+                FindNodeById(chooserTree, "runtime.controllers.wizard.chooser.candidate.1") != nullptr,
+            "multiple candidates open a deterministic portable chooser");
+    Require(VisibleTextLower(chooserTree).find("twister-in-a") != std::string::npos &&
+                VisibleTextLower(chooserTree).find("twister-out-b") != std::string::npos,
+            "chooser labels expose paired endpoint identifiers");
+    chooserSurface.SetDiscovery({.available = {second}});
+    const synth::ui::NodeTree refreshedChooser = chooserSurface.BuildTree();
+    Require(FindNodeById(refreshedChooser, "runtime.controllers.wizard.chooser.candidate.0") != nullptr &&
+                FindNodeById(refreshedChooser, "runtime.controllers.wizard.chooser.candidate.1") == nullptr,
+            "chooser refresh drops disappeared candidates");
+    chooserSurface.SetDiscovery({});
+    Require(FindNodeById(chooserSurface.BuildTree(), "runtime.controllers.wizard.chooser.empty") != nullptr,
+            "empty refreshed chooser explains that no candidates remain");
+    chooserSurface.SetDiscovery({.available = {second}});
+    chooserSurface.DispatchAction(
+        synth::ui::Action::WithValue("runtime.controllers.wizard.choose", "0"));
+    Require(FindNodeById(chooserSurface.BuildTree(), "runtime.controllers.wizard.form") != nullptr,
+            "chooser selection opens the selected form");
+
+    TestHarness existingHarness;
+    synth::MidiControllerSlot existing;
+    existing.name = "existing twister";
+    existing.kind = synth::MidiProfileKind::MfTwister;
+    existing.config = synth::MfTwisterDefaultProfileConfig();
+    existing.wizardId = "com.sheaf.midi-fighter-twister";
+    existing.input = {.identifier = first.input.identifier, .name = first.input.name};
+    existing.output = {.identifier = first.output.identifier, .name = first.output.name};
+    Require(existingHarness.instrument.AddController(std::move(existing)), "add existing Twister record");
+    auto existingSurface = existingHarness.MakeSurface();
+    Require(existingSurface.OpenExisting(3), "existing wizard record opens a portable session");
+    const synth::ui::NodeTree existingTree = existingSurface.BuildTree();
+    Require(FindNodeById(existingTree, "runtime.controllers.wizard.ignore") == nullptr,
+            "existing-record session does not expose Ignore");
+    const std::size_t existingControllerCount = existingHarness.instrument.controllers.size();
+    existingSurface.DispatchAction(
+        synth::ui::Action::Named("runtime.controllers.wizard.back"));
+    Require(existingHarness.instrument.controllers.size() == existingControllerCount && existingHarness.commits == 0,
+            "Back closes an existing-record session without changing the instrument");
+}
+
 std::string VisibleTextLower(const synth::ui::NodeTree& tree)
 {
     std::string text;
@@ -227,6 +350,7 @@ std::string VisibleTextLower(const synth::ui::NodeTree& tree)
 int main()
 {
     TestDiscoveryRendersPortableAvailableRowsAndDiagnostics();
+    TestWizardSessionRoutesPortableChooserAndForm();
 
     TestHarness harness;
     synth::runtime_ui::ControllersPageSurface surface = harness.MakeSurface();
