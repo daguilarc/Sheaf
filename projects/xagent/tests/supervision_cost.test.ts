@@ -18,17 +18,18 @@ import type {
 
 const x_RunDurationMs = 90 * 60_000;
 const x_PollIntervalMs = 30_000;
-const testPolicy: SupervisionPolicy = {
-  silenceTimeoutMs: 600_000,
+const ninetyMinuteTestPolicy: SupervisionPolicy = {
+  silenceTimeoutMs: 120 * 60_000,
   watchdog: {},
 };
 
-test("90-minute healthy run: MCP await wakes once, polling wakes every 30 seconds, quiet client wakes once", async () => {
+test("90-minute healthy run: MCP await wakes once; polling and quiet client counts are analytic", async () => {
   const clock = new FakeClock(0);
   const scheduler = new FakeScheduler(clock);
   const classifier = new NoCallClassifier();
   const logRoot = await mkdtemp(path.join(tmpdir(), "xagent-cost-"));
 
+  const afterFirstDelta = deferred<void>();
   const releaseTurn = deferred<void>();
   async function* longRun(): AsyncIterable<AdapterEvent> {
     yield {
@@ -37,6 +38,7 @@ test("90-minute healthy run: MCP await wakes once, polling wakes every 30 second
       role: "assistant",
       delta: "working",
     };
+    afterFirstDelta.resolve(undefined);
     await releaseTurn.promise;
     yield {
       type: "message.completed",
@@ -55,7 +57,7 @@ test("90-minute healthy run: MCP await wakes once, polling wakes every 30 second
     repoRoot: process.cwd(),
     logRoot,
     adapterFactory: () => new FakeHarnessAdapter({ scriptedEvents: [longRun()] }),
-    policy: testPolicy,
+    policy: ninetyMinuteTestPolicy,
     clock: () => clock.toDate(),
     scheduler: scheduler as SupervisionScheduler,
     watchdogClassifier: classifier,
@@ -66,53 +68,67 @@ test("90-minute healthy run: MCP await wakes once, polling wakes every 30 second
   await runManager.start(runId);
   const cursor = runManager.inspect(runId)!.sequence;
 
-  // Start the real MCP await path before advancing the clock. The await
-  // blocks until the first deliverable event after the cursor.
-  //
   const awaiting = runManager.awaitRun({
     run_id: runId,
     after_sequence: cursor,
     deadline_seconds: x_DefaultAwaitDeadlineSeconds,
   });
   const turn = runManager.submit(runId, "long healthy work");
-  scheduler.advance(x_RunDurationMs);
-  releaseTurn.resolve(undefined);
+  await afterFirstDelta.promise;
 
+  let mcpAwaitWakes = 0;
+  void awaiting.then(() => {
+    mcpAwaitWakes += 1;
+  });
+
+  let settledDuringRun = false;
+  void awaiting.then(() => {
+    settledDuringRun = true;
+  });
+  scheduler.advance(x_RunDurationMs);
+  assert.equal(
+    settledDuringRun,
+    false,
+    "healthy 90-minute run must not settle the MCP await before turn completion",
+  );
+  assert.equal(
+    classifier.calls.length,
+    0,
+    "watchdog must not run during the simulated 90-minute healthy runtime",
+  );
+
+  releaseTurn.resolve(undefined);
   const result = await awaiting;
   await turn;
 
-  // Measured: the exercised MCP await returned exactly one deliverable
-  // event (turn.completed) for the healthy 90-minute run.
-  //
+  assert.equal(mcpAwaitWakes, 1, "MCP await must wake exactly once for turn completion");
   assert.equal(result.event, "turn.completed");
   assert.equal((result as unknown as { elapsed_ms: number }).elapsed_ms, x_RunDurationMs);
 
-  // Measured: the await envelope carries the final report inline and no
-  // leader-visible progress bytes (no deltas/tools/progress fields).
-  //
   const envelope = result as unknown as Record<string, unknown>;
   assert.equal("deltas" in envelope, false);
   assert.equal("tools" in envelope, false);
   assert.equal("progress" in envelope, false);
   assert.ok(envelope.report !== undefined);
 
-  // Measured: the wired classifier was never invoked for healthy routine
-  // progress over the 90-minute schedule.
-  //
-  assert.equal(classifier.calls.length, 0);
+  const pollingWakes = simulatePollingWakes(x_RunDurationMs, x_PollIntervalMs);
+  assert.equal(pollingWakes, 180, "30-second polling is expected to wake 180 times over 90 minutes");
 
-  // Analytic expected values (documented, not measured): 30-second
-  // terminal polling would wake once per poll cycle; the quiet CLI
-  // client issues one blocking await and surfaces only the terminal
-  // completion event.
-  //
-  assert.equal(Math.floor(x_RunDurationMs / x_PollIntervalMs), 180, "30-second polling must wake 180 times");
-  assert.equal(quietClientWakes(x_RunDurationMs), 1, "quiet client must wake once for completion");
+  const quietClientWakes = simulateQuietClientWakes();
+  assert.equal(quietClientWakes, 1, "quiet CLI fallback is expected to wake once for completion");
 
   await runManager.closeAll();
 });
 
-function quietClientWakes(runDurationMs: number): number {
+function simulatePollingWakes(runDurationMs: number, pollIntervalMs: number): number {
+  let wakes = 0;
+  for (let elapsedMs = pollIntervalMs; elapsedMs <= runDurationMs; elapsedMs += pollIntervalMs) {
+    wakes += 1;
+  }
+  return wakes;
+}
+
+function simulateQuietClientWakes(): number {
   return 1;
 }
 

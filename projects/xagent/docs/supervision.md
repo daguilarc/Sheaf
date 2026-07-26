@@ -100,17 +100,17 @@ The watchdog fixtures document the false-alert boundary for each scenario:
 
 In all cases the worker is never auto-interrupted, auto-killed, or auto-restarted by the watchdog.
 
-## Measured wake comparison
+## Wake comparison
 
-A 90-minute healthy run (fake clock, single delta then completion) yields the following controller-visible wake counts:
+A 90-minute healthy run (fake clock, single delta then completion) compares controller-visible wake counts as follows. The MCP await row is measured by `supervision_cost.test.ts`; polling and quiet-client rows are analytic expectations for alternative wait strategies.
 
 | Wait mode | Wake count | Leader-visible progress bytes before final report |
 | --- | --- | --- |
-| 30-second terminal polling (`xagent_inspect` every 30 s) | 180 | n/a (inspect snapshots are not leader-visible progress) |
-| Quiet CLI fallback (one blocking await) | 1 | 0 |
-| MCP await (`xagent_await`) | 1 | 0 |
+| 30-second terminal polling (`xagent_inspect` every 30 s) | 180 (analytic) | none — inspect snapshots are not leader-visible progress |
+| Quiet CLI fallback (one blocking await) | 1 (analytic) | none — only the terminal completion event is surfaced |
+| MCP await (`xagent_await`) | 1 (measured) | none — measured by envelope shape in `supervision_cost.test.ts` |
 
-The MCP await and quiet client each wake exactly once for the terminal `turn.completed` event. Routine deltas, tools, raw events, status, and healthy watchdog verdicts never complete an await and never surface leader-visible progress bytes. The 30-second polling mode wakes once per poll cycle (180 times over 90 minutes) but does not deliver leader-visible progress bytes — it only returns compact phase/sequence snapshots.
+The MCP await path wakes exactly once for the terminal `turn.completed` event. Routine deltas, tools, raw events, status, and healthy watchdog verdicts never complete an await and never surface leader-visible progress bytes in the completion envelope. The 30-second polling mode would wake once per poll cycle (180 times over 90 minutes) but only returns compact phase/sequence snapshots, not leader-visible progress bytes.
 
 ## Timeouts
 

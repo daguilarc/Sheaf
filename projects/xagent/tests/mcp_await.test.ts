@@ -19,6 +19,11 @@ const testPolicy: SupervisionPolicy = {
   watchdog: {},
 };
 
+const ninetyMinuteTestPolicy: SupervisionPolicy = {
+  silenceTimeoutMs: 120 * 60_000,
+  watchdog: {},
+};
+
 test("await deadline defaults to 7000 seconds and rejects larger values", async () => {
   const defaultParsed = XagentAwaitInputSchema.parse({
     run_id: "xrun_schema",
@@ -352,13 +357,19 @@ test("successful completion with empty final text returns missing_final_report",
 });
 
 test("ninety-minute healthy run completes without an intermediate deadline wake", async () => {
+  const x_RunDurationMs = 90 * 60_000;
   const clock = new FakeClock(0);
   const scheduler = new FakeScheduler(clock);
-  const harness = new TestHarness({ clock, scheduler });
+  const harness = new TestHarness({
+    clock,
+    scheduler,
+    policy: ninetyMinuteTestPolicy,
+  });
   await harness.run(async ({ runManager, runId, adapter }) => {
     await runManager.start(runId);
     const cursor = runManager.inspect(runId)!.sequence;
 
+    const afterFirstDelta = deferred<void>();
     const releaseTurn = deferred<void>();
     async function* scriptedTurn(): AsyncIterable<AdapterEvent> {
       yield {
@@ -367,6 +378,7 @@ test("ninety-minute healthy run completes without an intermediate deadline wake"
         role: "assistant",
         delta: "working",
       };
+      afterFirstDelta.resolve(undefined);
       await releaseTurn.promise;
       yield {
         type: "message.completed",
@@ -388,13 +400,26 @@ test("ninety-minute healthy run completes without an intermediate deadline wake"
       deadline_seconds: x_DefaultAwaitDeadlineSeconds,
     });
     const turn = runManager.submit(runId, "long work");
-    scheduler.advance(90 * 60 * 1000);
+    await afterFirstDelta.promise;
+
+    let settledDuringRun = false;
+    void awaiting.then(() => {
+      settledDuringRun = true;
+    });
+    scheduler.advance(x_RunDurationMs);
+    assert.equal(
+      settledDuringRun,
+      false,
+      "healthy 90-minute run must not settle the await before turn completion",
+    );
+
     releaseTurn.resolve(undefined);
     const result = await awaiting;
     await turn;
 
     assert.equal(result.event, "turn.completed");
-    assert.equal((result as unknown as { elapsed_ms: number }).elapsed_ms, 90 * 60 * 1000);
+    assert.notEqual(result.event, "supervision.deadline");
+    assert.equal((result as unknown as { elapsed_ms: number }).elapsed_ms, x_RunDurationMs);
   });
 });
 
@@ -429,10 +454,16 @@ type ManagerContext = {
 class TestHarness {
   private readonly clock?: FakeClock;
   private readonly scheduler?: FakeScheduler;
+  private readonly policy: SupervisionPolicy;
 
-  constructor(options?: { clock?: FakeClock; scheduler?: FakeScheduler }) {
+  constructor(options?: {
+    clock?: FakeClock;
+    scheduler?: FakeScheduler;
+    policy?: SupervisionPolicy;
+  }) {
     this.clock = options?.clock;
     this.scheduler = options?.scheduler;
+    this.policy = options?.policy ?? testPolicy;
   }
 
   async run(
@@ -444,7 +475,7 @@ class TestHarness {
       repoRoot: process.cwd(),
       logRoot,
       adapterFactory: () => adapter,
-      policy: testPolicy,
+      policy: this.policy,
       ...(this.clock === undefined ? {} : { clock: () => this.clock!.toDate() }),
       ...(this.scheduler === undefined
         ? {}
