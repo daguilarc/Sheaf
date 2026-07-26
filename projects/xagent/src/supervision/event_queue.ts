@@ -73,7 +73,10 @@ export class SequencedEventQueue {
         throw error;
       }
     });
-    this.#publishTail = persisted;
+    this.#publishTail = persisted.then(
+      () => {},
+      () => {},
+    );
     return persisted.then(() => event);
   }
 
