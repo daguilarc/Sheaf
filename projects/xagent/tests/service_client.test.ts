@@ -51,6 +51,59 @@ test("mcp await request options cover the await deadline instead of the SDK 60s 
   assert.equal(other.timeout, undefined);
 });
 
+test("client await chunks HTTP MCP deadlines until the application deadline", async () => {
+  await withFakeService(async ({ baseUrl, adapterFactory }) => {
+    const releaseTurn = deferred<void>();
+    async function* scriptedTurn(): AsyncIterable<AdapterEvent> {
+      yield {
+        type: "message.delta",
+        message_id: "message_1",
+        role: "assistant",
+        delta: "still working",
+      };
+      await releaseTurn.promise;
+      yield {
+        type: "message.completed",
+        message_id: "message_1",
+        role: "assistant",
+        text: "done after chunks",
+      };
+      yield {
+        type: "turn.completed",
+        final_text: "done after chunks",
+        provider_thread_id: "fake-thread-chunk",
+      };
+    }
+    adapterFactory.queueScripts([scriptedTurn()]);
+
+    const client = createXagentServiceClient({
+      baseUrl,
+      awaitHttpChunkSeconds: 1,
+    });
+    try {
+      const cwd = await mkdtemp(path.join(tmpdir(), "xagent-chunk-"));
+      const started = await client.start({
+        cwd,
+        prompt: "chunked await",
+        harness: "codex",
+        mode: "subagent",
+      });
+      const awaiting = client.await({
+        run_id: started.run_id,
+        after_sequence: started.sequence,
+        deadline_seconds: 10,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      releaseTurn.resolve(undefined);
+      const result = await awaiting;
+      assert.equal(result.event, "turn.completed");
+      assert.equal(result.report?.text, "done after chunks");
+    } finally {
+      await client.close();
+    }
+  });
+});
+
 test("quiet supervise emits no stdout during healthy progress and one completion JSON", async () => {
   await withFakeService(async ({ baseUrl, adapterFactory }) => {
     const releaseTurn = deferred<void>();
