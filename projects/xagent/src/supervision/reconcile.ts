@@ -25,7 +25,8 @@ export type ReconciliationCleanup =
   | "process_not_found"
   | "process_group_unproven"
   | "inspection_failed"
-  | "termination_failed";
+  | "termination_failed"
+  | "persistence_failed";
 
 export type ReconciliationResult = {
   readonly run_id: string;
@@ -41,32 +42,53 @@ export async function reconcileStaleRuns(
     if (!activePhases.has(metadata.supervision.phase)) {
       continue;
     }
-    const record = await openRunRecord(logRoot, metadata.run_id);
-    record.exit_status = "failed";
-    await persistReconciliationEvent(record, {
-      type: "supervision.state",
-      phase: "abandoned",
-      reason: "stale_run_abandoned",
-    });
-    await persistReconciliationEvent(record, {
-      type: "supervision.attention",
-      phase: "abandoned",
-      reason: "stale_run_abandoned",
-      payload: {
-        cleanup: "pending",
-        owned_process_recorded: record.owned_process !== undefined,
-      },
-    }, true);
-
-    const cleanup = await cleanupOwnedProcess(record.owned_process, processInspector);
-    await persistReconciliationEvent(record, {
-      type: "supervision.state",
-      phase: "abandoned",
-      reason: cleanupReason(cleanup),
-    });
-    results.push({ run_id: record.run_id, cleanup });
+    try {
+      results.push(
+        await reconcileStaleRun(
+          logRoot,
+          metadata.run_id,
+          processInspector,
+        ),
+      );
+    } catch {
+      results.push({
+        run_id: metadata.run_id,
+        cleanup: "persistence_failed",
+      });
+    }
   }
   return results;
+}
+
+async function reconcileStaleRun(
+  logRoot: string,
+  runId: string,
+  processInspector: ProcessInspector,
+): Promise<ReconciliationResult> {
+  const record = await openRunRecord(logRoot, runId);
+  record.exit_status = "failed";
+  await persistReconciliationEvent(record, {
+    type: "supervision.state",
+    phase: "abandoned",
+    reason: "stale_run_abandoned",
+  });
+  await persistReconciliationEvent(record, {
+    type: "supervision.attention",
+    phase: "abandoned",
+    reason: "stale_run_abandoned",
+    payload: {
+      cleanup: "pending",
+      owned_process_recorded: record.owned_process !== undefined,
+    },
+  }, true);
+
+  const cleanup = await cleanupOwnedProcess(record.owned_process, processInspector);
+  await persistReconciliationEvent(record, {
+    type: "supervision.state",
+    phase: "abandoned",
+    reason: cleanupReason(cleanup),
+  });
+  return { run_id: record.run_id, cleanup };
 }
 
 async function cleanupOwnedProcess(
@@ -145,6 +167,7 @@ function cleanupReason(cleanup: ReconciliationCleanup): string {
     process_group_unproven: "stale_process_group_unproven",
     inspection_failed: "stale_process_inspection_failed",
     termination_failed: "stale_process_termination_failed",
+    persistence_failed: "stale_run_persistence_failed",
   };
   return reasons[cleanup];
 }

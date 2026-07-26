@@ -4,9 +4,11 @@ import {
   type ChildProcess,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { EventEmitter } from "node:events";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import { ProcessJsonlSession } from "../src/adapters/process_jsonl.js";
@@ -113,6 +115,141 @@ test("ending provider iteration early terminates only that turn's owned process 
   } finally {
     await session.close();
     stopChild(sentinel);
+  }
+});
+
+test("ending a failed provider turn escalates when the process ignores SIGTERM", async () => {
+  const sentinel = spawnLongLivedChild();
+  const fixture = createSigtermIgnoringSession("failed");
+  const adapter: HarnessAdapter = {
+    harness: "codex",
+    capabilities: {
+      forwardsModel: true,
+      forwardsThinkingLevel: true,
+      streamsDeltas: true,
+    },
+    async start(): Promise<HarnessSession> {
+      return fixture.session;
+    },
+  };
+  const supervisor = new Supervisor({
+    runId: "xrun_sigterm_ignoring_failure",
+    adapter,
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 60_000, watchdog: {} },
+  });
+  let turn: Promise<void> | undefined;
+
+  await supervisor.start();
+  try {
+    turn = supervisor.submit("fail without exiting");
+    await within(turn, 1_000, "failed provider cleanup did not escalate");
+
+    assert.equal(supervisor.inspect().phase, "failed");
+    assert.ok(fixture.child()?.pid);
+    assert.equal(isProcessAlive(fixture.child()?.pid), false);
+    assert.equal(isProcessAlive(sentinel.pid), true);
+  } finally {
+    forceStopChild(fixture.child());
+    stopChild(sentinel);
+    await turn?.catch(() => {});
+    await supervisor.close().catch(() => {});
+  }
+});
+
+test("session close escalates and remains idempotent when the process ignores SIGTERM", async () => {
+  const sentinel = spawnLongLivedChild();
+  const fixture = createSigtermIgnoringSession("ready");
+  const turn = drainTurn(fixture.session.submit(turnContext));
+
+  try {
+    await fixture.providerReady;
+    const pid = fixture.child()?.pid;
+    assert.ok(pid);
+
+    await within(
+      Promise.all([
+        fixture.session.close(),
+        fixture.session.close(),
+        fixture.session.close(),
+      ]),
+      1_000,
+      "session close did not escalate",
+    );
+    await turn;
+
+    assert.equal(isProcessAlive(pid), false);
+    assert.equal(isProcessAlive(sentinel.pid), true);
+  } finally {
+    forceStopChild(fixture.child());
+    stopChild(sentinel);
+    await fixture.session.close().catch(() => {});
+    await turn.catch(() => {});
+  }
+});
+
+test("returning an unconsumed primed iterator cannot wait forever on its pending next", async () => {
+  const fixture = createSigtermIgnoringSession("silent");
+  const events = fixture.session.submit(turnContext);
+  const iterator = events[Symbol.asyncIterator]();
+
+  try {
+    await fixture.providerReady;
+    const pid = fixture.child()?.pid;
+    assert.ok(pid);
+    assert.ok(iterator.return);
+
+    await within(
+      iterator.return(),
+      1_000,
+      "primed iterator return did not interrupt its provider",
+    );
+
+    assert.equal(isProcessAlive(pid), false);
+    assert.equal(fixture.session.processIdentity, undefined);
+  } finally {
+    forceStopChild(fixture.child());
+    await fixture.session.close().catch(() => {});
+  }
+});
+
+test("session close is bounded when no exit event arrives after SIGKILL", async () => {
+  const child = createNonClosingChild();
+  const session = new ProcessJsonlSession({
+    harness: "codex",
+    cwd: process.cwd(),
+    buildCommand: () => ({
+      command: "non-closing-provider",
+      args: [],
+    }),
+    parseEvent: (): AdapterEvent[] => [],
+    spawnProcess: () => child,
+    captureProcessIdentity: (pid) => ({
+      pid,
+      process_group_id: process.platform === "win32" ? undefined : pid,
+      started_at: "2026-07-25T12:00:00.000Z",
+      start_identity: "non-closing-provider",
+    }),
+    terminationGraceMs: 10,
+  });
+  const iterator = session.submit(turnContext)[Symbol.asyncIterator]();
+
+  try {
+    await assert.rejects(
+      within(
+        session.close(),
+        250,
+        "session close exceeded its final cleanup bound",
+      ),
+      (error: unknown) =>
+        error instanceof Error
+        && "code" in error
+        && error.code === "harness_process_cleanup_timeout",
+    );
+  } finally {
+    child.stdout.end();
+    child.emit("close", null, "SIGKILL");
+    await iterator.next().catch(() => {});
   }
 });
 
@@ -547,6 +684,100 @@ test("reconciliation skips stray and corrupt entries while cleaning valid stale 
   assert.equal(metadata.supervision.phase, "abandoned");
 });
 
+test("reconciliation contains an invalid run id and continues with later stale runs", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-reconcile-invalid-open-"));
+  const logRoot = path.join(repoRoot, "xagent");
+  const invalid = await createActiveRunIn(
+    repoRoot,
+    logRoot,
+    "invalid_open",
+    "2026-07-25T12:02:00.000Z",
+    { pid: 4201, processGroupId: 5201, startIdentity: "invalid-open-start" },
+  );
+  const valid = await createActiveRunIn(
+    repoRoot,
+    logRoot,
+    "after_invalid_open",
+    "2026-07-25T12:01:00.000Z",
+    { pid: 4202, processGroupId: 5202, startIdentity: "valid-after-open-start" },
+  );
+  const invalidMetadata = JSON.parse(
+    await readFile(invalid.record.metadataPath, "utf8"),
+  ) as Record<string, unknown>;
+  invalidMetadata.run_id = "../invalid";
+  await writeFile(
+    invalid.record.metadataPath,
+    `${JSON.stringify(invalidMetadata, null, 2)}\n`,
+  );
+  const signalledGroups: number[] = [];
+
+  const result = await reconcileStaleRuns(
+    logRoot,
+    mappedInspector([
+      { pid: 4201, process_group_id: 5201, start_identity: "invalid-open-start" },
+      { pid: 4202, process_group_id: 5202, start_identity: "valid-after-open-start" },
+    ], signalledGroups),
+  );
+
+  assert.deepEqual(result, [
+    { run_id: "../invalid", cleanup: "persistence_failed" },
+    { run_id: valid.runId, cleanup: "terminated" },
+  ]);
+  assert.deepEqual(signalledGroups, [5202]);
+  assert.equal(
+    JSON.parse(await readFile(invalid.record.metadataPath, "utf8")).supervision.phase,
+    "running",
+  );
+  assert.equal(
+    JSON.parse(await readFile(valid.record.metadataPath, "utf8")).supervision.phase,
+    "abandoned",
+  );
+});
+
+test("reconciliation contains persistence failure without signalling and continues", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-reconcile-persist-"));
+  const logRoot = path.join(repoRoot, "xagent");
+  const failing = await createActiveRunIn(
+    repoRoot,
+    logRoot,
+    "persistence_failure",
+    "2026-07-25T12:02:00.000Z",
+    { pid: 4301, processGroupId: 5301, startIdentity: "persistence-failure-start" },
+  );
+  const valid = await createActiveRunIn(
+    repoRoot,
+    logRoot,
+    "after_persistence_failure",
+    "2026-07-25T12:01:00.000Z",
+    { pid: 4302, processGroupId: 5302, startIdentity: "valid-after-persist-start" },
+  );
+  await rm(failing.record.normalizedLogPath);
+  await mkdir(failing.record.normalizedLogPath);
+  const signalledGroups: number[] = [];
+
+  const result = await reconcileStaleRuns(
+    logRoot,
+    mappedInspector([
+      { pid: 4301, process_group_id: 5301, start_identity: "persistence-failure-start" },
+      { pid: 4302, process_group_id: 5302, start_identity: "valid-after-persist-start" },
+    ], signalledGroups),
+  );
+
+  assert.deepEqual(result, [
+    { run_id: failing.runId, cleanup: "persistence_failed" },
+    { run_id: valid.runId, cleanup: "terminated" },
+  ]);
+  assert.deepEqual(signalledGroups, [5302]);
+  assert.equal(
+    JSON.parse(await readFile(failing.record.metadataPath, "utf8")).supervision.phase,
+    "running",
+  );
+  assert.equal(
+    JSON.parse(await readFile(valid.record.metadataPath, "utf8")).supervision.phase,
+    "abandoned",
+  );
+});
+
 function createLongLivedSession(
   options: { readonly emitReady?: boolean } = {},
 ): ProcessJsonlSession {
@@ -570,6 +801,63 @@ function createLongLivedSession(
     spawnProcess: (command, args, childOptions) =>
       trackChild(spawn(command, [...args], childOptions)),
   });
+}
+
+function createSigtermIgnoringSession(
+  mode: "failed" | "ready" | "silent",
+): {
+  readonly session: ProcessJsonlSession;
+  readonly providerReady: Promise<void>;
+  readonly child: () => ChildProcessWithoutNullStreams | undefined;
+} {
+  let child: ChildProcessWithoutNullStreams | undefined;
+  let markProviderReady: (() => void) | undefined;
+  const providerReady = new Promise<void>((resolve) => {
+    markProviderReady = resolve;
+  });
+  const commandLines = [
+    "process.on('SIGTERM', () => {})",
+    "process.stderr.write('provider-ready\\n')",
+    ...(mode === "failed"
+      ? ["console.log(JSON.stringify({ type: 'failed' }))"]
+      : mode === "ready"
+        ? ["console.log(JSON.stringify({ type: 'ready' }))"]
+        : []),
+    "setInterval(() => {}, 1000)",
+  ];
+  const options = {
+    harness: "codex" as const,
+    cwd: process.cwd(),
+    buildCommand: () => ({
+      command: process.execPath,
+      args: ["-e", commandLines.join(";")],
+    }),
+    parseEvent: (raw: unknown): AdapterEvent[] =>
+      isRecord(raw) && raw.type === "failed"
+        ? [{
+            type: "turn.failed",
+            code: "provider_failed",
+            message: "provider reported failure",
+          }]
+        : [],
+    spawnProcess: (
+      command: string,
+      args: readonly string[],
+      childOptions: { cwd: string; detached: boolean },
+    ) => {
+      child = trackChild(spawn(command, [...args], childOptions));
+      child.stderr.once("data", () => {
+        markProviderReady?.();
+      });
+      return child;
+    },
+    terminationGraceMs: 25,
+  };
+  return {
+    session: new ProcessJsonlSession(options),
+    providerReady,
+    child: () => child,
+  };
 }
 
 function spawnLongLivedChild(): ChildProcess {
@@ -646,6 +934,32 @@ function stopChild(child: ChildProcess): void {
   }
 }
 
+function forceStopChild(child: ChildProcess | undefined): void {
+  if (child?.pid !== undefined && isProcessAlive(child.pid)) {
+    child.kill("SIGKILL");
+  }
+}
+
+function createNonClosingChild(): ChildProcessWithoutNullStreams & {
+  readonly stdout: PassThrough;
+} {
+  const child = new EventEmitter() as EventEmitter & {
+    pid: number;
+    stdin: PassThrough;
+    stdout: PassThrough;
+    stderr: PassThrough;
+    kill(signal?: NodeJS.Signals): boolean;
+  };
+  child.pid = 999_999_999;
+  child.stdin = new PassThrough();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.kill = () => true;
+  return child as unknown as ChildProcessWithoutNullStreams & {
+    readonly stdout: PassThrough;
+  };
+}
+
 function trackChild<T extends ChildProcess>(child: T): T {
   fixtureChildren.add(child);
   child.once("close", () => {
@@ -657,6 +971,26 @@ function trackChild<T extends ChildProcess>(child: T): T {
 async function createActiveRunFixture(suffix: string) {
   const repoRoot = await mkdtemp(path.join(tmpdir(), `xagent-reconcile-${suffix}-`));
   const logRoot = path.join(repoRoot, "xagent");
+  return createActiveRunIn(
+    repoRoot,
+    logRoot,
+    suffix,
+    "2026-07-25T12:00:00.000Z",
+    { pid: 4101, processGroupId: 5101, startIdentity: "process-start-a" },
+  );
+}
+
+async function createActiveRunIn(
+  repoRoot: string,
+  logRoot: string,
+  suffix: string,
+  createdAt: string,
+  identity: {
+    readonly pid: number;
+    readonly processGroupId: number;
+    readonly startIdentity: string;
+  },
+) {
   const runId = `xrun_reconcile_${suffix}`;
   const record = await createRunRecord({
     repoRoot,
@@ -664,7 +998,7 @@ async function createActiveRunFixture(suffix: string) {
     runId,
     harness: "codex",
     mode: "subagent",
-    clock: () => new Date("2026-07-25T12:00:00.000Z"),
+    clock: () => new Date(createdAt),
   });
   await updateRunSupervision(record, {
     phase: "running",
@@ -673,10 +1007,10 @@ async function createActiveRunFixture(suffix: string) {
     last_transport_progress_at: "2026-07-25T12:01:00.000Z",
     last_semantic_progress_at: "2026-07-25T12:00:30.000Z",
     owned_process: {
-      pid: 4101,
-      process_group_id: 5101,
+      pid: identity.pid,
+      process_group_id: identity.processGroupId,
       started_at: "2026-07-25T11:59:59.000Z",
-      start_identity: "process-start-a",
+      start_identity: identity.startIdentity,
     },
   });
   return { repoRoot, logRoot, runId, record };
@@ -691,6 +1025,20 @@ function fakeInspector(
       return inspection;
     },
     async terminateProcessGroup(processGroupId: number): Promise<void> {
+      signalledGroups.push(processGroupId);
+    },
+  };
+}
+
+function mappedInspector(
+  inspections: readonly ProcessInspection[],
+  signalledGroups: number[],
+): ProcessInspector {
+  return {
+    async inspect(pid): Promise<ProcessInspection | undefined> {
+      return inspections.find((inspection) => inspection.pid === pid);
+    },
+    async terminateProcessGroup(processGroupId): Promise<void> {
       signalledGroups.push(processGroupId);
     },
   };

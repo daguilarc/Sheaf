@@ -47,10 +47,13 @@ export type ProcessJsonlSessionOptions = {
   readonly buildCommand: ProcessCommandBuilder;
   readonly parseEvent: ProviderEventParser;
   readonly spawnProcess?: SpawnProcess;
+  readonly terminationGraceMs?: number;
   readonly captureProcessIdentity?: (
     pid: number,
   ) => OwnedProcessIdentity | undefined;
 };
+
+const DEFAULT_TERMINATION_GRACE_MS = 5_000;
 
 export class ProcessJsonlSession implements HarnessSession {
   readonly #state: ProcessHarnessState = { providerSequence: 0 };
@@ -58,6 +61,7 @@ export class ProcessJsonlSession implements HarnessSession {
   readonly #captureProcessIdentity: NonNullable<
     ProcessJsonlSessionOptions["captureProcessIdentity"]
   >;
+  readonly #terminationGraceMs: number;
   #activeTurn?: ActiveProcessTurn;
   #closed = false;
   #closePromise?: Promise<void>;
@@ -66,6 +70,9 @@ export class ProcessJsonlSession implements HarnessSession {
     this.#spawnProcess = options.spawnProcess ?? ((command, args, childOptions) => spawn(command, args, childOptions));
     this.#captureProcessIdentity = options.captureProcessIdentity
       ?? captureOwnedProcessIdentity;
+    this.#terminationGraceMs = validateTerminationGrace(
+      options.terminationGraceMs ?? DEFAULT_TERMINATION_GRACE_MS,
+    );
   }
 
   get providerThreadId(): string | undefined {
@@ -139,13 +146,19 @@ export class ProcessJsonlSession implements HarnessSession {
       identity,
       lines,
       stderrChunks,
+      terminationGraceMs: this.#terminationGraceMs,
       interrupted: false,
     };
     this.#activeTurn = activeTurn;
     const iterator = this.#runTurn(context, activeTurn)[Symbol.asyncIterator]();
     const firstResult = iterator.next();
     void firstResult.catch(() => {});
-    return consumePrimedIterator(iterator, firstResult);
+    return consumePrimedIterator(
+      iterator,
+      firstResult,
+      () => interruptActiveTurn(activeTurn),
+      activeTurn.terminationGraceMs,
+    );
   }
 
   async *#runTurn(
@@ -236,12 +249,16 @@ type ActiveProcessTurn = {
   readonly identity?: OwnedProcessIdentity;
   readonly lines: Interface;
   readonly stderrChunks: string[];
+  readonly terminationGraceMs: number;
   interrupted: boolean;
+  cleanupPromise?: Promise<void>;
 };
 
 function consumePrimedIterator<T>(
   iterator: AsyncIterator<T>,
   firstResult: Promise<IteratorResult<T>>,
+  interrupt: () => Promise<void>,
+  cleanupWaitMs: number,
 ): AsyncIterableIterator<T> {
   let initialResult: Promise<IteratorResult<T>> | undefined = firstResult;
   let closed = false;
@@ -265,7 +282,16 @@ function consumePrimedIterator<T>(
     async return(): Promise<IteratorResult<T>> {
       if (!closed) {
         closed = true;
-        await iterator.return?.();
+        const iteratorReturn = iterator.return?.();
+        void iteratorReturn?.catch(() => {});
+        await interrupt();
+        if (iteratorReturn !== undefined) {
+          await promiseWithin(
+            iteratorReturn,
+            cleanupWaitMs,
+            "Provider iterator did not settle after process cleanup.",
+          );
+        }
       }
       return { done: true, value: undefined };
     },
@@ -318,27 +344,116 @@ function waitForExit(child: ChildProcessWithoutNullStreams): Promise<{ code?: nu
   });
 }
 
-async function interruptActiveTurn(activeTurn: ActiveProcessTurn): Promise<void> {
-  if (!activeTurn.interrupted) {
-    if (process.platform === "win32") {
-      activeTurn.interrupted = true;
-      activeTurn.child.kill("SIGTERM");
-    } else {
-      const processGroupId = activeTurn.identity?.process_group_id;
-      if (processGroupId === undefined || processGroupId !== activeTurn.child.pid) {
-        throw new Error("Cannot safely interrupt provider process without owned process-group identity.");
-      }
-      activeTurn.interrupted = true;
-      try {
-        process.kill(-processGroupId, "SIGTERM");
-      } catch (error) {
-        if (!isNodeError(error) || error.code !== "ESRCH") {
-          throw error;
-        }
-      }
+function interruptActiveTurn(activeTurn: ActiveProcessTurn): Promise<void> {
+  if (activeTurn.cleanupPromise === undefined) {
+    activeTurn.cleanupPromise = terminateActiveTurn(activeTurn);
+  }
+  return activeTurn.cleanupPromise;
+}
+
+async function terminateActiveTurn(activeTurn: ActiveProcessTurn): Promise<void> {
+  activeTurn.interrupted = true;
+  signalActiveTurn(activeTurn, "SIGTERM");
+  if (
+    await exitWithin(
+      activeTurn.exitPromise,
+      activeTurn.terminationGraceMs,
+    )
+  ) {
+    return;
+  }
+
+  signalActiveTurn(activeTurn, "SIGKILL");
+  if (
+    await exitWithin(
+      activeTurn.exitPromise,
+      activeTurn.terminationGraceMs,
+    )
+  ) {
+    return;
+  }
+
+  const error = new Error(
+    "Provider process did not exit after SIGTERM and SIGKILL.",
+  );
+  Object.assign(error, { code: "harness_process_cleanup_timeout" });
+  throw error;
+}
+
+function signalActiveTurn(
+  activeTurn: ActiveProcessTurn,
+  signal: "SIGTERM" | "SIGKILL",
+): void {
+  if (process.platform === "win32") {
+    activeTurn.child.kill(signal);
+    return;
+  }
+  const processGroupId = activeTurn.identity?.process_group_id;
+  if (processGroupId === undefined || processGroupId !== activeTurn.child.pid) {
+    throw new Error(
+      "Cannot safely interrupt provider process without owned process-group identity.",
+    );
+  }
+  try {
+    process.kill(-processGroupId, signal);
+  } catch (error) {
+    if (!isNodeError(error) || error.code !== "ESRCH") {
+      throw error;
     }
   }
-  await activeTurn.exitPromise;
+}
+
+function exitWithin(
+  exitPromise: ActiveProcessTurn["exitPromise"],
+  timeoutMs: number,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        resolve(false);
+      }
+    }, timeoutMs);
+    timeout.unref();
+    void exitPromise.then(() => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timeout);
+        resolve(true);
+      }
+    });
+  });
+}
+
+async function promiseWithin<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      const error = new Error(message);
+      Object.assign(error, { code: "harness_process_cleanup_timeout" });
+      reject(error);
+    }, timeoutMs);
+    timeout.unref();
+  });
+  try {
+    return await Promise.race([promise, deadline]);
+  } finally {
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+  }
+}
+
+function validateTerminationGrace(value: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("Process termination grace must be a positive integer.");
+  }
+  return value;
 }
 
 function terminateUnownedSpawn(child: ChildProcessWithoutNullStreams): void {
