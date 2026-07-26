@@ -507,6 +507,26 @@ struct ControllersPageCallbacks
     std::function<void()> onBack;
 };
 
+inline bool WizardDiscoveryEqual(const WizardDiscovery& lhs, const WizardDiscovery& rhs)
+{
+    if (lhs.unmatchedInputs != rhs.unmatchedInputs || lhs.unmatchedOutputs != rhs.unmatchedOutputs ||
+        lhs.available.size() != rhs.available.size())
+    {
+        return false;
+    }
+    for (std::size_t ix = 0; ix < lhs.available.size(); ++ix)
+    {
+        const WizardCandidate& left = lhs.available[ix];
+        const WizardCandidate& right = rhs.available[ix];
+        if (left.wizardId != right.wizardId || left.displayName != right.displayName ||
+            left.kind != right.kind || left.input != right.input || left.output != right.output)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 class ControllersPageSurface final : public ui::Surface
 {
 public:
@@ -566,6 +586,10 @@ public:
 
     void SetDiscovery(WizardDiscovery discovery)
     {
+        if (WizardDiscoveryEqual(m_discovery, discovery))
+        {
+            return;
+        }
         m_discovery = std::move(discovery);
         ++m_treeRevision;
     }

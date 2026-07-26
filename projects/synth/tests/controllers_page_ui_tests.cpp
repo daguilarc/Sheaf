@@ -179,7 +179,11 @@ void TestDiscoveryRendersPortableAvailableRowsAndDiagnostics()
     discovery.unmatchedInputs.push_back({"unknown-in", "Unknown Input"});
     discovery.unmatchedOutputs.push_back({"unknown-out", "Unknown Output"});
 
-    surface.SetDiscovery(std::move(discovery));
+    surface.SetDiscovery(discovery);
+    const std::uint64_t discoveryRevision = surface.TreeRevision();
+    surface.SetDiscovery(discovery);
+    Require(surface.TreeRevision() == discoveryRevision,
+            "identical discovery snapshot does not revise the portable tree");
     const synth::ui::NodeTree tree = surface.BuildTree();
     const synth::ui::Node* row = FindNodeById(tree, "runtime.controllers.available.0");
     Require(row != nullptr, "available controller row exists");
@@ -191,6 +195,11 @@ void TestDiscoveryRendersPortableAvailableRowsAndDiagnostics()
             "unmatched input diagnostics are portable data");
     Require(FindNodeById(tree, "runtime.controllers.available.unmatched_outputs") != nullptr,
             "unmatched output diagnostics are portable data");
+
+    discovery.available.clear();
+    surface.SetDiscovery(std::move(discovery));
+    Require(surface.TreeRevision() == discoveryRevision + 1,
+            "changed discovery snapshot revises the portable tree exactly once");
 }
 
 std::string VisibleTextLower(const synth::ui::NodeTree& tree)

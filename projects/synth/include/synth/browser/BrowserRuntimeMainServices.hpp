@@ -1,6 +1,7 @@
 #pragma once
 
 #include "synth/ControllersPageUI.hpp"
+#include "synth/ControllerWizardDiscoveryCache.hpp"
 #include "synth/Engine.hpp"
 #include "synth/RuntimeFileService.hpp"
 #include "synth/RuntimePages.hpp"
@@ -49,15 +50,15 @@ public:
             return midiBridge_.ConnectionState();
         };
         callbacks.enumerateDevices = [this] {
-            return cachedDevices_;
+            return wizardDiscoveryCache_.DeviceList();
         };
         callbacks.commitInstrument = [this](synth::MidiInstrumentConfig instrument) {
             engine_.EditInstrument([&instrument](synth::MidiInstrumentConfig& current) {
                 current = std::move(instrument);
             });
-            cachedInstrument_ = engine_.InstrumentSnapshot();
-            RecomputeDiscovery();
+            wizardDiscoveryCache_.UpdateInstrumentSnapshot(engine_.InstrumentSnapshot());
             controllersDirty_ = true;
+            instrumentSnapshotDirty_ = false;
         };
         callbacks.setStatus = [](std::string) {};
         callbacks.onBack = std::move(onBack);
@@ -116,22 +117,23 @@ public:
     void RefreshControllers(synth::runtime_ui::ControllersPageSurface& surface)
     {
         const std::uint64_t deviceListRevision = midiBridge_.DeviceListRevision();
-        if (!hasCachedDevices_ || deviceListRevision != cachedDeviceListRevision_)
+        if (!wizardDiscoveryCache_.HasDeviceList() || deviceListRevision != cachedDeviceListRevision_)
         {
-            cachedDevices_ = midiBridge_.LatestDeviceList();
-            hasCachedDevices_ = true;
+            wizardDiscoveryCache_.UpdateDeviceList(midiBridge_.LatestDeviceList());
             cachedDeviceListRevision_ = deviceListRevision;
-            RecomputeDiscovery();
         }
-        surface.SetEnumerateDevices(cachedDevices_);
+        surface.SetEnumerateDevices(wizardDiscoveryCache_.DeviceList());
+        if (instrumentSnapshotDirty_)
+        {
+            wizardDiscoveryCache_.UpdateInstrumentSnapshot(engine_.InstrumentSnapshot());
+            instrumentSnapshotDirty_ = false;
+        }
         if (controllersDirty_)
         {
-            cachedInstrument_ = engine_.InstrumentSnapshot();
-            RecomputeDiscovery();
             surface.MarkDirty();
             controllersDirty_ = false;
         }
-        surface.SetDiscovery(cachedDiscovery_);
+        surface.SetDiscovery(wizardDiscoveryCache_.Discovery());
         surface.RefreshOnTick();
     }
 
@@ -172,12 +174,6 @@ public:
     }
 
 private:
-    void RecomputeDiscovery()
-    {
-        cachedDiscovery_ = synth::DiscoverControllerWizards(
-            cachedDevices_, cachedInstrument_, synth::ControllerWizardRegistry());
-    }
-
     synth::runtime_ui::RuntimeFileCallbacks MakeFileCallbacks()
     {
         synth::runtime_ui::RuntimeFileCallbacks callbacks;
@@ -209,12 +205,10 @@ private:
     std::optional<double> negotiatedSampleRate_;
     std::optional<int> negotiatedBlockSize_;
     std::optional<std::string> audioStatus_;
-    synth::MidiDeviceList cachedDevices_;
-    synth::MidiInstrumentConfig cachedInstrument_;
-    synth::WizardDiscovery cachedDiscovery_;
-    bool hasCachedDevices_ = false;
+    synth::ControllerWizardDiscoveryCache wizardDiscoveryCache_;
     std::uint64_t cachedDeviceListRevision_ = 0;
     bool controllersDirty_ = true;
+    bool instrumentSnapshotDirty_ = true;
     bool persistenceDirty_ = false;
 };
 

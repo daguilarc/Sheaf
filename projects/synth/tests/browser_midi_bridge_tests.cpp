@@ -551,6 +551,22 @@ void TestActiveToBlacklistedTearsDownEndpointsAndDropsStaleBrowserCallback()
     bridge.Stop();
 }
 
+void TestDeviceListRevisionChangesOnlyWhenEndpointSnapshotChanges()
+{
+    FakeEngine engine;
+    Bridge bridge(engine);
+    Require(bridge.DeviceListRevision() == 0, "empty bridge begins with no device-list change");
+    bridge.SubmitEndpoints({});
+    Require(bridge.DeviceListRevision() == 0,
+            "identical initial endpoint submission does not signal a device change");
+    bridge.SubmitEndpoints(Endpoints());
+    const std::uint64_t changedRevision = bridge.DeviceListRevision();
+    Require(changedRevision == 1, "changed endpoint submission signals once");
+    bridge.SubmitEndpoints(Endpoints());
+    Require(bridge.DeviceListRevision() == changedRevision,
+            "identical endpoint submission does not signal again");
+}
+
 }  // namespace
 
 int main()
@@ -565,5 +581,6 @@ int main()
     TestNameFallbackUpdatesStoredReferencesThroughTheBridge();
     TestLatestDeviceListMatchesSubmittedEndpoints();
     TestActiveToBlacklistedTearsDownEndpointsAndDropsStaleBrowserCallback();
+    TestDeviceListRevisionChangesOnlyWhenEndpointSnapshotChanges();
     return 0;
 }

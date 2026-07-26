@@ -1185,6 +1185,7 @@ private:
             {
                 auto label = std::make_unique<juce::Label>();
                 label->setJustificationType(juce::Justification::centredLeft);
+                label->setInterceptsMouseClicks(false, false);
                 return label;
             }
             case synth::ui::NodeKind::Row:

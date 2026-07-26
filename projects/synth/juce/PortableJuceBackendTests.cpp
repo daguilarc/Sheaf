@@ -95,6 +95,28 @@ int main()
     Require(component.FindByNodeId("device") != nullptr, "combo control is registered by node id");
     Require(component.FindByNodeId("missing") == nullptr, "missing node id returns null");
 
+    RecordingSurface statusSurface;
+    statusSurface.tree.nodes = {
+        {.id = synth::ui::NodeId("status.root"),
+         .kind = synth::ui::NodeKind::Root,
+         .bounds = {0.0f, 0.0f, 160.0f, 48.0f},
+         .children = {synth::ui::NodeId("status.marker")}},
+        {.id = synth::ui::NodeId("status.marker"),
+         .kind = synth::ui::NodeKind::StatusText,
+         .bounds = {0.0f, 0.0f, 160.0f, 48.0f},
+         .text = "!"},
+    };
+    synth_juce::PortableComponent statusComponent(statusSurface);
+    statusComponent.setSize(160, 48);
+    statusComponent.RefreshFromSurface();
+    auto* marker = statusComponent.FindByNodeId("status.marker");
+    Require(marker != nullptr, "status marker is retained");
+    bool markerIntercepts = true;
+    bool markerChildrenIntercept = true;
+    marker->getInterceptsMouseClicks(markerIntercepts, markerChildrenIntercept);
+    Require(!markerIntercepts && !markerChildrenIntercept,
+            "status text is pointer-transparent and cannot block an overlapping button");
+
     auto* button = dynamic_cast<juce::TextButton*>(component.FindByNodeId("start"));
     Require(button != nullptr, "start node is a TextButton");
     juce::Component* retainedButtonComponent = button;

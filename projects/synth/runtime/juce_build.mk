@@ -56,6 +56,7 @@ SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/AtomicColor.hpp $(SYNTH_ROOT)/inclu
 	$(SYNTH_ROOT)/include/synth/MidiConfigViewModel.hpp \
 	$(SYNTH_ROOT)/include/synth/MidiConfigBlocks.hpp \
 	$(SYNTH_ROOT)/include/synth/ControllerWizard.hpp \
+	$(SYNTH_ROOT)/include/synth/ControllerWizardDiscoveryCache.hpp \
 	$(SYNTH_ROOT)/include/synth/EncoderDraw.hpp \
 	$(SYNTH_ROOT)/include/synth/PortableUI.hpp \
 	$(SYNTH_ROOT)/include/synth/PortableUIBuilders.hpp \

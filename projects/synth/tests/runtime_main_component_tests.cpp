@@ -1,5 +1,6 @@
 #include "synth/RuntimeMainComponent.hpp"
 #include "synth/ControllerWizard.hpp"
+#include "synth/ControllerWizardDiscoveryCache.hpp"
 
 #include <functional>
 #include <iostream>
@@ -123,18 +124,13 @@ struct FakeServices
     synth::runtime_ui::SyncPageStatus syncStatus{};
     synth::MidiInstrumentConfig instrument;
     synth::MidiDeviceList controllerDevices;
-    int controllerEnumerationCount = 0;
-    int controllerReconciliationCount = 0;
 
     synth::runtime_ui::ControllersPageCallbacks MakeControllersCallbacks(std::function<void()> onBack)
     {
         synth::runtime_ui::ControllersPageCallbacks callbacks;
         callbacks.instrumentSnapshot = [this] { return instrument; };
         callbacks.connectionState = [] { return synth::MidiConnectionState{}; };
-        callbacks.enumerateDevices = [this] {
-            ++controllerEnumerationCount;
-            return controllerDevices;
-        };
+        callbacks.enumerateDevices = [this] { return controllerDevices; };
         callbacks.commitInstrument = [this](synth::MidiInstrumentConfig next) {
             instrument = std::move(next);
         };
@@ -471,7 +467,7 @@ void TestRefreshUpdatesRuntimePageModelsAndRollingDeadline()
     Require(deadline->text == "12.5%", "sidebar displays rolling deadline maximum");
 }
 
-void TestCachedControllerDiscoveryWarnsOutsideControllersWithoutEnumerationOrReconcile()
+void TestSidebarWarningReflectsControllersDiscoverySnapshot()
 {
     Fixture fixture;
     fixture.services.controllerDevices.inputs.push_back(
@@ -484,10 +480,22 @@ void TestCachedControllerDiscoveryWarnsOutsideControllersWithoutEnumerationOrRec
     Require(FindNodeById(fixture.component.BuildTree(),
                          "runtime.sidebar.controllers.warning") != nullptr,
             "unclaimed recognized cached pair warns while application is open");
-    Require(fixture.services.controllerEnumerationCount == 0,
-            "cached classification does not enumerate devices through the page callback");
-    Require(fixture.services.controllerReconciliationCount == 0,
-            "cached classification does not reconcile devices");
+}
+
+void TestWizardDiscoveryCacheRecomputesOnlyForCachedSnapshotChanges()
+{
+    synth::ControllerWizardDiscoveryCache cache;
+    const synth::MidiDeviceList twisterPair{
+        .inputs = {{.identifier = "twister-input", .name = "Midi Fighter Twister"}},
+        .outputs = {{.identifier = "twister-output", .name = "Midi Fighter Twister"}},
+    };
+
+    Require(cache.UpdateDeviceList(twisterPair), "first device signal updates cached device snapshot");
+    const std::uint64_t afterDeviceSignal = cache.Revision();
+    Require(afterDeviceSignal == 1, "first device signal recomputes discovery once");
+    Require(!cache.UpdateDeviceList(twisterPair), "unchanged device source does not update cache");
+    Require(cache.Revision() == afterDeviceSignal,
+            "unchanged device source does not recompute discovery");
 
     synth::MfTwisterControllerWizard wizard;
     synth::MfTwisterConfigForm form;
@@ -495,39 +503,13 @@ void TestCachedControllerDiscoveryWarnsOutsideControllersWithoutEnumerationOrRec
         form,
         {.name = "claimed", .input = {"twister-input", "Midi Fighter Twister"},
          .output = {"twister-output", "Midi Fighter Twister"}});
-    Require(static_cast<bool>(generated), "create claimed controller");
-    synth::MidiInstrumentConfig configured;
-    configured.controllers.push_back(*generated.controller);
-    auto callbacks = fixture.services.MakeControllersCallbacks([] {});
-    callbacks.commitInstrument(std::move(configured));
-    fixture.component.Refresh();
-    Require(FindNodeById(fixture.component.BuildTree(),
-                         "runtime.sidebar.controllers.warning") == nullptr,
-            "successful Configure commit clears cached warning while application remains open");
-
-    synth::MidiControllerSlot ignored = *generated.controller;
-    ignored.disposition = synth::MidiControllerDisposition::Blacklisted;
-    ignored.dormantConfig = ignored.config;
-    ignored.config = {};
-    synth::MidiInstrumentConfig blacklisted;
-    blacklisted.controllers.push_back(std::move(ignored));
-    callbacks.commitInstrument(std::move(blacklisted));
-    fixture.component.Refresh();
-    Require(FindNodeById(fixture.component.BuildTree(),
-                         "runtime.sidebar.controllers.warning") == nullptr,
-            "successful Ignore commit keeps the cached warning clear");
-
-    callbacks.commitInstrument({});
-    fixture.component.Refresh();
-    Require(FindNodeById(fixture.component.BuildTree(),
-                         "runtime.sidebar.controllers.warning") != nullptr,
-            "successful Delete commit recomputes availability from cached devices");
-
-    callbacks.commitInstrument({});
-    fixture.component.Refresh();
-    Require(FindNodeById(fixture.component.BuildTree(),
-                         "runtime.sidebar.controllers.warning") != nullptr,
-            "successful Remove from blacklist commit recomputes without a device-list change");
+    Require(static_cast<bool>(generated), "create instrument snapshot for successful commit");
+    synth::MidiInstrumentConfig committed;
+    committed.controllers.push_back(*generated.controller);
+    cache.UpdateInstrumentSnapshot(std::move(committed));
+    Require(cache.Revision() == afterDeviceSignal + 1,
+            "successful instrument commit recomputes against cached devices");
+    Require(cache.Discovery().available.empty(), "committed claim clears cached candidate");
 }
 
 void RequireInvalidTree(synth::ui::NodeTree tree, const char* expectedMessage)
@@ -663,8 +645,10 @@ int main()
         TestSyncStagesRefreshesCommitsAndReopensFromEngineSnapshot);
     Run("TestRefreshUpdatesRuntimePageModelsAndRollingDeadline",
         TestRefreshUpdatesRuntimePageModelsAndRollingDeadline);
-    Run("TestCachedControllerDiscoveryWarnsOutsideControllersWithoutEnumerationOrReconcile",
-        TestCachedControllerDiscoveryWarnsOutsideControllersWithoutEnumerationOrReconcile);
+    Run("TestSidebarWarningReflectsControllersDiscoverySnapshot",
+        TestSidebarWarningReflectsControllersDiscoverySnapshot);
+    Run("TestWizardDiscoveryCacheRecomputesOnlyForCachedSnapshotChanges",
+        TestWizardDiscoveryCacheRecomputesOnlyForCachedSnapshotChanges);
     Run("TestRejectsRootSizeMismatch", TestRejectsRootSizeMismatch);
     Run("TestRejectsDuplicateNodeIds", TestRejectsDuplicateNodeIds);
     Run("TestRejectsUnknownChild", TestRejectsUnknownChild);

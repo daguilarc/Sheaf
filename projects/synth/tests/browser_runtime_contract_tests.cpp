@@ -292,6 +292,55 @@ void TestBrowserRuntimeUsesSharedFrameAndActionRouting()
     Require(surface.lastValue == "17", "application receives action value");
 }
 
+void TestBrowserControllerDiscoveryCacheUsesSignalsAndSuccessfulCommits()
+{
+    synth::Engine<ValidApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    synth_browser::BrowserMidiBridge<synth::Engine<ValidApp>> bridge(engine);
+    bridge.Start();
+    synth_browser::BrowserRuntimeMainServices<ValidApp> services(engine, bridge);
+    synth::runtime_ui::ControllersPageSurface surface(
+        services.MakeControllersCallbacks([] {}));
+
+    services.RefreshControllers(surface);
+    const std::uint64_t initialRevision = surface.TreeRevision();
+    bridge.SubmitEndpoints({
+        {.identifier = "twister-input",
+         .name = "Midi Fighter Twister",
+         .kind = synth_browser::BrowserMidiBridge<synth::Engine<ValidApp>>::EndpointKind::Input},
+        {.identifier = "twister-output",
+         .name = "Midi Fighter Twister",
+         .kind = synth_browser::BrowserMidiBridge<synth::Engine<ValidApp>>::EndpointKind::Output},
+    });
+    services.RefreshControllers(surface);
+    Require(surface.Discovery().available.size() == 1,
+            "real browser service classifies one changed device-list signal");
+    const std::uint64_t deviceRevision = surface.TreeRevision();
+    Require(deviceRevision > initialRevision, "changed device signal revises the Controllers surface");
+
+    services.RefreshControllers(surface);
+    Require(surface.TreeRevision() == deviceRevision,
+            "unchanged browser source does not reclassify or revise the Controllers surface");
+
+    synth::MfTwisterControllerWizard wizard;
+    synth::MfTwisterConfigForm form;
+    const synth::WizardGenerationResult generated = wizard.GenerateProfile(
+        form,
+        {.name = "claimed", .input = {"twister-input", "Midi Fighter Twister"},
+         .output = {"twister-output", "Midi Fighter Twister"}});
+    Require(static_cast<bool>(generated), "create a committed Twister record");
+    synth::MidiInstrumentConfig committed;
+    committed.controllers.push_back(*generated.controller);
+    auto callbacks = services.MakeControllersCallbacks([] {});
+    callbacks.commitInstrument(std::move(committed));
+    services.RefreshControllers(surface);
+    Require(surface.Discovery().available.empty(),
+            "successful real-browser instrument commit reclassifies cached devices");
+    Require(surface.TreeRevision() > deviceRevision,
+            "successful instrument commit revises the Controllers surface");
+    bridge.Stop();
+}
+
 void TestBrowserPrepareFeedsNegotiatedAudioPageAndRejectsOversizedBlocks()
 {
     RuntimeFixture fixture;
@@ -806,6 +855,7 @@ int main()
     TestSharedBrowserNavigationReplacesAndRestoresEveryRuntimePage();
     TestBrowserSyncUsesSharedStagingPersistsAndResolvesSourceNames();
     TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack();
+    TestBrowserControllerDiscoveryCacheUsesSignalsAndSuccessfulCommits();
     TestFilePageDispatchesPatchLifecycleThroughBrowserRuntime();
     TestPersistenceDirtyConsumesRuntimeAndServicesSourcesTogether();
     TestAudioWorkletDeadlineMeterAveragesQuantizedTimerSamples();
