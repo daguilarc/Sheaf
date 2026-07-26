@@ -241,6 +241,28 @@ void TestDiscoveryRendersPortableAvailableRowsAndDiagnostics()
     const synth::ui::NodeTree tree = surface.BuildTree();
     const synth::ui::Node* row = FindNodeById(tree, "runtime.controllers.available.0");
     Require(row != nullptr, "available controller row exists");
+    // D8: no backend paints a container's own label, so the area heading and the
+    // recognized controller's descriptor name must be rendered child nodes. The
+    // descriptor name is not derivable from the endpoint device names beside it.
+    Require(row->label.empty(), "available controller row carries no unrendered label");
+    const synth::ui::Node* availableSection = FindNodeById(tree, "runtime.controllers.available");
+    Require(availableSection != nullptr && availableSection->label.empty(),
+            "available controllers section carries no unrendered label");
+    const synth::ui::Node* heading = FindNodeById(tree, "runtime.controllers.available.heading");
+    Require(heading != nullptr && heading->kind == synth::ui::NodeKind::Label &&
+                heading->text == "Available controllers",
+            "available controllers area renders its heading");
+    const synth::ui::Node* name = FindNodeById(tree, "runtime.controllers.available.0.name");
+    Require(name != nullptr && name->kind == synth::ui::NodeKind::Label &&
+                name->text == "MIDI Fighter Twister",
+            "available controller row renders its recognized controller name");
+    const synth::ui::Node* endpoints =
+        FindNodeById(tree, "runtime.controllers.available.0.endpoints");
+    Require(endpoints != nullptr &&
+                endpoints->text == "Midi Fighter Twister / Midi Fighter Twister",
+            "available controller row keeps its paired endpoint labels as their own node");
+    Require(name->bounds.x + name->bounds.width <= endpoints->bounds.x,
+            "the recognized controller name does not overlap its endpoint labels");
     Require(FindNodeById(tree, "runtime.controllers.available.0.configure") != nullptr,
             "available controller row exposes portable Configure action");
     Require(FindNodeById(tree, "runtime.controllers.available.0.ignore") != nullptr,

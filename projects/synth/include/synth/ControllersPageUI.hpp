@@ -44,6 +44,7 @@ inline constexpr const char* kAddName = "runtime.controllers.add_name";
 inline constexpr const char* kAddKind = "runtime.controllers.add_kind";
 inline constexpr const char* kAddButton = "runtime.controllers.add_button";
 inline constexpr const char* kAvailable = "runtime.controllers.available";
+inline constexpr const char* kAvailableHeading = "runtime.controllers.available.heading";
 inline constexpr const char* kAvailableEmpty = "runtime.controllers.available.empty";
 inline constexpr const char* kAvailableUnmatchedInputs = "runtime.controllers.available.unmatched_inputs";
 inline constexpr const char* kAvailableUnmatchedOutputs = "runtime.controllers.available.unmatched_outputs";
@@ -180,6 +181,11 @@ inline std::string WizardChooserCandidate(const WizardCandidate& candidate)
 inline std::string AvailableRow(std::size_t candidateIx)
 {
     return "runtime.controllers.available." + std::to_string(candidateIx);
+}
+
+inline std::string AvailableName(std::size_t candidateIx)
+{
+    return AvailableRow(candidateIx) + ".name";
 }
 
 inline std::string AvailableConfigure(std::size_t candidateIx)
@@ -450,6 +456,13 @@ inline constexpr float kStatusDotsWidth = 32.0f;
 inline constexpr float kHeaderControlsX = 256.0f;
 inline constexpr float kEndpointBoxWidth = 160.0f;
 inline constexpr float kEndpointBoxGap = 8.0f;
+// Available-controller row columns: the recognized controller's descriptor
+// display name, then its paired endpoint names, then the two lifecycle actions.
+inline constexpr float kAvailableNameWidth = 200.0f;
+inline constexpr float kAvailableEndpointsWidth = 260.0f;
+inline constexpr float kAvailableConfigureWidth = 92.0f;
+inline constexpr float kAvailableIgnoreWidth = 72.0f;
+inline constexpr float kAvailableControlGap = 8.0f;
 inline constexpr float kControllerNameWidth = 120.0f;
 inline constexpr float kControllerKindWidth = 100.0f;
 inline constexpr float kControllerIdentityGap = 4.0f;
@@ -2355,7 +2368,6 @@ private:
         ui::Node available;
         available.id = NodeIds::kAvailable;
         available.kind = ui::NodeKind::Section;
-        available.label = "Available controllers";
         available.bounds = {0.0f, scrollY, scrollWidth, 0.0f};
         tree.nodes[scrollAreaIndex].children.push_back(available.id);
         const std::size_t availableNodeIndex = tree.nodes.size();
@@ -2365,13 +2377,23 @@ private:
             tree.nodes.push_back(std::move(node));
         };
 
+        // No backend paints a container node's own label, so the area heading is
+        // an explicit child node like every other heading in the runtime UI.
+        ui::Node availableHeading;
+        availableHeading.id = NodeIds::kAvailableHeading;
+        availableHeading.kind = ui::NodeKind::Label;
+        availableHeading.text = "Available controllers";
+        availableHeading.bounds = {0.0f, scrollY, scrollWidth, ControllersLayout::kStatusRowHeight};
+        appendAvailableChild(std::move(availableHeading));
+        scrollY += ControllersLayout::kStatusRowHeight;
+
         if (discovery.available.empty())
         {
             ui::Node empty;
             empty.id = NodeIds::kAvailableEmpty;
             empty.kind = ui::NodeKind::StatusText;
             empty.text = "No recognized unconfigured controller pair is present";
-            empty.bounds = {0.0f, 0.0f, scrollWidth, ControllersLayout::kStatusRowHeight};
+            empty.bounds = {0.0f, scrollY, scrollWidth, ControllersLayout::kStatusRowHeight};
             appendAvailableChild(std::move(empty));
             scrollY += ControllersLayout::kStatusRowHeight;
         }
@@ -2383,7 +2405,6 @@ private:
                 ui::Node row;
                 row.id = ui::NodeId(NodeIds::AvailableRow(candidateIx));
                 row.kind = ui::NodeKind::Row;
-                row.label = candidate.displayName;
                 row.bounds = {0.0f, scrollY, scrollWidth, ControllersLayout::kControllerHeaderHeight};
                 const std::size_t rowNodeIndex = tree.nodes.size();
                 tree.nodes.push_back(std::move(row));
@@ -2393,30 +2414,45 @@ private:
                     tree.nodes.push_back(std::move(node));
                 };
 
+                float availableX = 0.0f;
+                const auto appendAvailableColumn = [&](ui::Node node, float width) {
+                    node.bounds = {availableX, 0.0f, width,
+                                   ControllersLayout::kControllerHeaderHeight};
+                    availableX += width + ControllersLayout::kAvailableControlGap;
+                    appendRowChild(std::move(node));
+                };
+
+                // The recognized controller is named by its registry descriptor,
+                // which need not resemble the endpoint device names beside it.
+                ui::Node name;
+                name.id = ui::NodeId(NodeIds::AvailableName(candidateIx));
+                name.kind = ui::NodeKind::Label;
+                name.text = candidate.displayName;
+                appendAvailableColumn(std::move(name), ControllersLayout::kAvailableNameWidth);
+
                 ui::Node endpoints;
                 endpoints.id = ui::NodeId(NodeIds::AvailableRow(candidateIx) + ".endpoints");
                 endpoints.kind = ui::NodeKind::Label;
                 endpoints.text = candidate.input.name + " / " + candidate.output.name;
-                endpoints.bounds = {0.0f, 0.0f, 260.0f, ControllersLayout::kControllerHeaderHeight};
-                appendRowChild(std::move(endpoints));
+                appendAvailableColumn(std::move(endpoints),
+                                      ControllersLayout::kAvailableEndpointsWidth);
 
                 ui::Node configure;
                 configure.id = ui::NodeId(NodeIds::AvailableConfigure(candidateIx));
                 configure.kind = ui::NodeKind::Button;
                 configure.label = "Configure";
-                configure.bounds = {268.0f, 0.0f, 92.0f, ControllersLayout::kControllerHeaderHeight};
                 configure.action = ui::Action::WithValue(Actions::kAvailableConfigure,
                                                          std::to_string(candidateIx));
-                appendRowChild(std::move(configure));
+                appendAvailableColumn(std::move(configure),
+                                      ControllersLayout::kAvailableConfigureWidth);
 
                 ui::Node ignore;
                 ignore.id = ui::NodeId(NodeIds::AvailableIgnore(candidateIx));
                 ignore.kind = ui::NodeKind::Button;
                 ignore.label = "Ignore";
-                ignore.bounds = {368.0f, 0.0f, 72.0f, ControllersLayout::kControllerHeaderHeight};
                 ignore.action = ui::Action::WithValue(Actions::kAvailableIgnore,
                                                       NodeIds::WizardCandidateToken(candidate));
-                appendRowChild(std::move(ignore));
+                appendAvailableColumn(std::move(ignore), ControllersLayout::kAvailableIgnoreWidth);
                 scrollY += ControllersLayout::kControllerHeaderHeight;
             }
         }

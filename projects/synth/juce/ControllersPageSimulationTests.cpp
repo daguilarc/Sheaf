@@ -792,6 +792,9 @@ void RunControllerWizardParitySimulation()
     Require(RenderedLabelText(*fixture.Renderer().FindByNodeId(NodeIds::kAvailableEmpty)) ==
                 "No recognized unconfigured controller pair is present",
             "no candidate explains the disabled action");
+    Require(RenderedLabelText(*fixture.Renderer().FindByNodeId(NodeIds::kAvailableHeading)) ==
+                "Available controllers",
+            "the available controllers area renders its heading");
     fixture.Click(NodeIds::kWizardLaunch, "disabled launch");
     Require(fixture.Exists(NodeIds::kWizardLaunch) && !fixture.Exists(kEncoderSlotId),
             "a disabled Configuration Wizard opens no session");
@@ -802,6 +805,12 @@ void RunControllerWizardParitySimulation()
     fixture.Tick("one candidate");
     Require(RequireButton(fixture.Renderer(), NodeIds::kWizardLaunch, "one candidate").isEnabled(),
             "one candidate enables Configuration Wizard");
+    // D8: the row names the recognized controller by its registry descriptor and
+    // its paired endpoints by their device names, in two separate rendered
+    // nodes. Both hosts are pinned to the same two strings.
+    Require(RenderedLabelText(*fixture.Renderer().FindByNodeId(NodeIds::AvailableName(0))) ==
+                kTwisterDisplayName,
+            "the available row names the recognized controller");
     Require(RenderedLabelText(
                 *fixture.Renderer().FindByNodeId(NodeIds::AvailableRow(0) + ".endpoints"))
                 .find(synth_runtime::test::kTwisterDeviceName) != std::string::npos,

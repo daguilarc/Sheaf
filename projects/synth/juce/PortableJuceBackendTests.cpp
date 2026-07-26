@@ -818,10 +818,16 @@ int main()
     }
 
     {
-        // sru-33: neither backend renders a Row's or Section's own label, so a
-        // container label is semantic metadata rather than displayed text. The
-        // browser backend only writes textContent for Button/Label/StatusText;
-        // this pins the same contract for JUCE.
+        // sru-33 host parity: a Row's or Section's own label paints nothing in
+        // either host. The browser backend writes textContent only for
+        // Button/Label/StatusText, and this pins JUCE to the same rule so the
+        // two hosts cannot drift.
+        //
+        // This is a statement about renderers, not a way to convey content: a
+        // container label is invisible to the user, so any text a page needs to
+        // show -- a heading, a row's identity -- belongs in an explicit Label or
+        // StatusText child node. Making a renderer paint container labels would
+        // change generic layout on every page and is deliberately not done.
         RecordingSurface containerSurface;
         containerSurface.tree.nodes = {
             {.id = synth::ui::NodeId("root"),

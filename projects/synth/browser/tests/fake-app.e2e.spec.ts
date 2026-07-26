@@ -651,6 +651,7 @@ test("controller wizard disables configuration when no candidate exists", async 
 
   await page.locator(synthNode("runtime.sidebar.controllers")).click();
   await expect(page.locator(synthNode("runtime.controllers.wizard.launch"))).toBeDisabled();
+  await expect(page.locator(synthNode("runtime.controllers.available.heading"))).toHaveText("Available controllers");
   await expect(page.locator(synthNode("runtime.controllers.available.empty"))).toContainText(
     "No recognized unconfigured controller pair is present",
   );
@@ -706,8 +707,12 @@ test("controller wizard ignores an available row and restores warning after blac
   await expectControllersWarning(page, false);
   await page.locator(synthNode("runtime.controllers.row.0.remove_blacklist")).click();
   await expect(controllerRow(page, 0)).toHaveCount(0);
-  // The available row lists the recognized pair by its endpoint device names.
-  await expect(page.locator(synthNode("runtime.controllers.available.0"))).toContainText(TWISTER_DEVICE_NAME);
+  // The available row names the recognized controller by its registry
+  // descriptor and its paired endpoints by their device names. The two strings
+  // differ, so asserting the descriptor name is what proves the row identifies
+  // the controller rather than echoing the device.
+  await expect(page.locator(synthNode("runtime.controllers.available.0.name"))).toHaveText(TWISTER_DISPLAY_NAME);
+  await expect(page.locator(synthNode("runtime.controllers.available.0.endpoints"))).toContainText(TWISTER_DEVICE_NAME);
   await expectControllersWarning(page, true);
 });
 
