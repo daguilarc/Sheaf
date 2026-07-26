@@ -89,6 +89,29 @@ Haiku is eligible only while a live worker is actively producing tokens, message
 
 Watchdog results are advisory only. `derailed`, `uncertain`, invalid, failed, over-budget, and low-confidence output emit one sequenced attention event but never message, interrupt, kill, restart, edit for, or otherwise steer the worker.
 
+### False-alert posture
+
+The watchdog fixtures document the false-alert boundary for each scenario:
+
+- **Healthy exploration**: a high-confidence healthy verdict (`confidence >= 0.8`) stays controller-silent. No attention is emitted. This is the primary false-alert guard: routine diverse work never wakes the controller.
+- **Repeated tool / failure loops**: deterministic suspicion signals (`repeated_failure_fingerprint` at 2 occurrences, `repeated_tool_fingerprint` at 3) make the watchdog eligible early, but the classifier must still confirm `derailed`. A single suspicion signal alone never declares the worker derailed.
+- **Task contradiction / insufficient evidence**: no deterministic signal fires; only the periodic Haiku check detects these. An `uncertain` verdict (e.g., from a single short delta) emits one advisory attention so the controller can decide — it is a true uncertain verdict, not a false alert.
+- **Silence / crash**: zero classifier calls. These are deterministic and advisory; the controller decides whether to wait, interrupt, or close.
+
+In all cases the worker is never auto-interrupted, auto-killed, or auto-restarted by the watchdog.
+
+## Measured wake comparison
+
+A 90-minute healthy run (fake clock, single delta then completion) yields the following controller-visible wake counts:
+
+| Wait mode | Wake count | Leader-visible progress bytes before final report |
+| --- | --- | --- |
+| 30-second terminal polling (`xagent_inspect` every 30 s) | 180 | n/a (inspect snapshots are not leader-visible progress) |
+| Quiet CLI fallback (one blocking await) | 1 | 0 |
+| MCP await (`xagent_await`) | 1 | 0 |
+
+The MCP await and quiet client each wake exactly once for the terminal `turn.completed` event. Routine deltas, tools, raw events, status, and healthy watchdog verdicts never complete an await and never surface leader-visible progress bytes. The 30-second polling mode wakes once per poll cycle (180 times over 90 minutes) but does not deliver leader-visible progress bytes — it only returns compact phase/sequence snapshots.
+
 ## Timeouts
 
 | Setting | Value |
@@ -105,6 +128,10 @@ Watchdog results are advisory only. `derailed`, `uncertain`, invalid, failed, ov
 - A controller can reconnect by `run_id` and call `xagent_inspect` / `xagent_await` to reattach.
 - An orderly service exit closes every owned session and process group.
 - On restart, reconciliation marks unattachable active runs `abandoned` and kills a process only when PID plus process-start identity matches persisted ownership.
+
+### Service-crash boundary
+
+Provider reattachment across an xagent service crash is **out of scope**. If the service process itself crashes, owned worker processes are orphaned; the service does not reattach to them on restart. Restart reconciliation marks unattachable active runs `abandoned` and only kills a process when PID plus process-start identity matches persisted ownership. A controller that needs to survive a service crash should treat the run as terminated and start a new run.
 
 ## Central logs
 

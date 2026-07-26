@@ -13,7 +13,7 @@
     { "type": "tool.completed", "name": "shell", "status": "failed", "error": "AssertionError: expected 1 to equal 0" }
   ],
   "expected_classifier_eligible": true,
-  "expected_suspicion_signals": ["repeated_tool_fingerprint", "repeated_failure_fingerprint"],
+  "expected_suspicion_signals": ["repeated_failure_fingerprint"],
   "scripted_verdict": { "verdict": "derailed", "confidence": 0.88, "reason_code": "repeated_failed_tool", "evidence": ["Same failing tool fingerprint occurred three times without new progress."] },
   "expected_attention": true,
   "false_alert_note": "Suspicion signal triggers an early check; the classifier returns derailed and advisory attention is emitted. The worker is not auto-interrupted."

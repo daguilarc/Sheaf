@@ -92,11 +92,12 @@ async function runFixture(fixture: Fixture): Promise<void> {
       1,
       `${fixture.name}: expected one classifier call`,
     );
-    if (fixture.scripted_verdict) {
-      assert.equal(
-        classifier.calls.length > 0,
-        true,
-        `${fixture.name}: request carries no verdict`,
+    if (fixture.expected_suspicion_signals !== undefined) {
+      const actualSignals = classifier.calls[0]?.suspicion_signals ?? [];
+      assert.deepEqual(
+        [...actualSignals].sort(),
+        [...fixture.expected_suspicion_signals].sort(),
+        `${fixture.name}: suspicion signals`,
       );
     }
   } else {
@@ -124,6 +125,14 @@ async function runFixture(fixture: Fixture): Promise<void> {
       supervisor.inspect().phase,
       fixture.expected_terminal_phase,
       `${fixture.name}: terminal phase`,
+    );
+  }
+
+  if (fixture.expected_terminal_reason) {
+    assert.equal(
+      reasons.some((reason) => reason === fixture.expected_terminal_reason),
+      true,
+      `${fixture.name}: terminal reason ${fixture.expected_terminal_reason}`,
     );
   }
 
@@ -179,8 +188,7 @@ async function* replayFixture(fixture: Fixture, clock: FakeClock): AsyncIterable
   };
 }
 
-test("complete fake-provider service lifecycle through packaged MCP declaration", async () => {
-  const mcp = JSON.parse(await readFile(x_PackagedMcpPath, "utf8")) as {
+test("complete fake-provider service lifecycle through packaged MCP declaration", async () => {  const mcp = JSON.parse(await readFile(x_PackagedMcpPath, "utf8")) as {
     mcpServers: { xagent: { url: string } };
   };
   const packagedUrl = new URL(mcp.mcpServers.xagent.url);
@@ -291,6 +299,197 @@ test("complete fake-provider service lifecycle through packaged MCP declaration"
     assert.equal(runManager.size, 0);
     assert.equal(adapterCreated, 1);
   } finally {
+    if (!shutdownController.wasShutdownRequested()) {
+      await server.close();
+    }
+    await runManager.closeAll();
+  }
+});
+
+test("health endpoint reports healthy and uptime on the ephemeral service", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-e2e-health-repo-"));
+  const logRoot = path.join(tmpdir(), `xagent-e2e-health-logs-${Math.random().toString(36).slice(2)}`);
+  const runManager = new XagentRunManager({
+    repoRoot,
+    logRoot,
+    adapterFactory: () => new FakeHarnessAdapter(),
+    policy: testPolicy,
+  });
+  let server: XagentServer | undefined;
+  const shutdownController = createShutdownController({
+    closeRuns: async () => { await runManager.closeAll(); },
+    closeServer: async () => { await server?.close(); },
+  });
+  server = createXagentServer({
+    bindHost: "127.0.0.1",
+    bindPort: 0,
+    runManager,
+    shutdownController,
+  });
+  const port = await server.listen();
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/health`);
+    assert.equal(response.status, 200);
+    const body = await response.json() as { healthy: boolean; uptime: number };
+    assert.equal(body.healthy, true);
+    assert.ok(typeof body.uptime === "number" && body.uptime >= 0);
+  } finally {
+    if (!shutdownController.wasShutdownRequested()) {
+      await server.close();
+    }
+    await runManager.closeAll();
+  }
+});
+
+test("silence attention is delivered to a controller through xagent_await", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-e2e-attention-repo-"));
+  const logRoot = path.join(tmpdir(), `xagent-e2e-attention-logs-${Math.random().toString(36).slice(2)}`);
+  const shortSilencePolicy: SupervisionPolicy = {
+    silenceTimeoutMs: 1_000,
+    watchdog: {},
+  };
+  const releaseTurn = deferred<void>();
+  async function* silentTurn(): AsyncIterable<AdapterEvent> {
+    yield { type: "message.delta", message_id: "m1", role: "assistant", delta: "starting" };
+    await releaseTurn.promise;
+    yield { type: "turn.completed", final_text: "done after attention", provider_thread_id: "fake-thread-1" };
+  }
+  const runManager = new XagentRunManager({
+    repoRoot,
+    logRoot,
+    adapterFactory: () => new FakeHarnessAdapter({ scriptedEvents: [silentTurn()] }),
+    policy: shortSilencePolicy,
+  });
+  let server: XagentServer | undefined;
+  const shutdownController = createShutdownController({
+    closeRuns: async () => { await runManager.closeAll(); },
+    closeServer: async () => { await server?.close(); },
+  });
+  server = createXagentServer({
+    bindHost: "127.0.0.1",
+    bindPort: 0,
+    runManager,
+    shutdownController,
+  });
+  const port = await server.listen();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const client = new Client({ name: "xagent-e2e-attention", version: "0.0.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`));
+  await client.connect(transport);
+  try {
+    const cwd = await mkdtemp(path.join(tmpdir(), "xagent-e2e-attention-cwd-"));
+    const startResult = asBody(await client.callTool({
+      name: "xagent_start",
+      arguments: { cwd, prompt: "work then go silent", harness: "codex" },
+    }));
+    const runId = startResult.body.run_id as string;
+    const cursor = startResult.body.sequence as number;
+
+    const attentionResult = asBody(await client.callTool({
+      name: "xagent_await",
+      arguments: { run_id: runId, after_sequence: cursor, deadline_seconds: 30 },
+    }));
+    assert.equal(attentionResult.isError ?? false, false);
+    const attentionEvent = attentionResult.body.event as string;
+    assert.ok(
+      attentionEvent === "supervision.attention" || attentionEvent === "supervision.deadline",
+      `expected attention or deadline event, got ${attentionEvent}`,
+    );
+    if (attentionEvent === "supervision.attention") {
+      assert.equal(attentionResult.body.reason, "silence_timeout");
+    }
+
+    releaseTurn.resolve(undefined);
+    const completionResult = asBody(await client.callTool({
+      name: "xagent_await",
+      arguments: { run_id: runId, after_sequence: attentionResult.body.sequence as number, deadline_seconds: 30 },
+    }));
+    assert.equal(completionResult.body.event, "turn.completed");
+
+    const closeResult = asBody(await client.callTool({
+      name: "xagent_close",
+      arguments: { run_id: runId },
+    }));
+    assert.equal(closeResult.body.closed, true);
+  } finally {
+    await client.close().catch(() => {});
+    await transport.close().catch(() => {});
+    if (!shutdownController.wasShutdownRequested()) {
+      await server.close();
+    }
+    await runManager.closeAll();
+  }
+});
+
+test("cursor deduplication: a second await with the same cursor does not redeliver the prior event", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-e2e-dedup-repo-"));
+  const logRoot = path.join(tmpdir(), `xagent-e2e-dedup-logs-${Math.random().toString(36).slice(2)}`);
+  const releaseTurn = deferred<void>();
+  async function* scriptedTurn(): AsyncIterable<AdapterEvent> {
+    yield { type: "message.delta", message_id: "m1", role: "assistant", delta: "progress" };
+    await releaseTurn.promise;
+    yield { type: "message.completed", message_id: "m1", role: "assistant", text: "final report" };
+    yield { type: "turn.completed", final_text: "final report", provider_thread_id: "fake-thread-1" };
+  }
+  const runManager = new XagentRunManager({
+    repoRoot,
+    logRoot,
+    adapterFactory: () => new FakeHarnessAdapter({ scriptedEvents: [scriptedTurn()] }),
+    policy: testPolicy,
+  });
+  let server: XagentServer | undefined;
+  const shutdownController = createShutdownController({
+    closeRuns: async () => { await runManager.closeAll(); },
+    closeServer: async () => { await server?.close(); },
+  });
+  server = createXagentServer({
+    bindHost: "127.0.0.1",
+    bindPort: 0,
+    runManager,
+    shutdownController,
+  });
+  const port = await server.listen();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const client = new Client({ name: "xagent-e2e-dedup", version: "0.0.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`));
+  await client.connect(transport);
+  try {
+    const cwd = await mkdtemp(path.join(tmpdir(), "xagent-e2e-dedup-cwd-"));
+    const startResult = asBody(await client.callTool({
+      name: "xagent_start",
+      arguments: { cwd, prompt: "produce a final report", harness: "codex" },
+    }));
+    const runId = startResult.body.run_id as string;
+    const cursor = startResult.body.sequence as number;
+
+    releaseTurn.resolve(undefined);
+
+    const firstAwait = asBody(await client.callTool({
+      name: "xagent_await",
+      arguments: { run_id: runId, after_sequence: cursor, deadline_seconds: 30 },
+    }));
+    assert.equal(firstAwait.body.event, "turn.completed");
+    const firstSequence = firstAwait.body.sequence as number;
+
+    const secondAwait = asBody(await client.callTool({
+      name: "xagent_await",
+      arguments: { run_id: runId, after_sequence: cursor, deadline_seconds: 5 },
+    }));
+    assert.equal(
+      secondAwait.body.sequence as number,
+      firstSequence,
+      "second await with same cursor replays the same event (cursor dedup)",
+    );
+    assert.equal(secondAwait.body.event, "turn.completed");
+
+    const closeResult = asBody(await client.callTool({
+      name: "xagent_close",
+      arguments: { run_id: runId },
+    }));
+    assert.equal(closeResult.body.closed, true);
+  } finally {
+    await client.close().catch(() => {});
+    await transport.close().catch(() => {});
     if (!shutdownController.wasShutdownRequested()) {
       await server.close();
     }

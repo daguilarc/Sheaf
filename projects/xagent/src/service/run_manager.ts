@@ -10,6 +10,7 @@ import type {
   SupervisionPolicy,
   SupervisionScheduler,
   SupervisorInspection,
+  WatchdogClassifier,
 } from "../supervision/types.js";
 import { createAdapter } from "../adapters/index.js";
 import type { HarnessAdapter } from "../adapters/types.js";
@@ -33,6 +34,7 @@ export type XagentRunManagerOptions = {
   readonly clock?: () => Date;
   readonly scheduler?: SupervisionScheduler;
   readonly policy?: SupervisionPolicy;
+  readonly watchdogClassifier?: WatchdogClassifier;
 };
 
 export type CreateRunOptions = {
@@ -101,6 +103,7 @@ export class XagentRunManager {
   readonly #clock: () => Date;
   readonly #scheduler: SupervisionScheduler | undefined;
   readonly #defaultPolicy: SupervisionPolicy;
+  readonly #watchdogClassifier: WatchdogClassifier | undefined;
   readonly #runs = new Map<string, OwnedRun>();
   #closed = false;
 
@@ -114,6 +117,7 @@ export class XagentRunManager {
       silenceTimeoutMs: 300_000,
       watchdog: {},
     };
+    this.#watchdogClassifier = options.watchdogClassifier;
   }
 
   async create(options: CreateRunOptions): Promise<{ readonly runId: string }> {
@@ -148,6 +152,7 @@ export class XagentRunManager {
       policy,
       clock: this.#clock,
       ...(this.#scheduler === undefined ? {} : { scheduler: this.#scheduler }),
+      ...(this.#watchdogClassifier === undefined ? {} : { watchdogClassifier: this.#watchdogClassifier }),
       eventSink: async (event) => {
         await appendNormalizedEvent(record, event);
       },

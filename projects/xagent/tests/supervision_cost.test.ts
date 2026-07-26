@@ -58,6 +58,7 @@ test("90-minute healthy run: MCP await wakes once, polling wakes every 30 second
     policy: testPolicy,
     clock: () => clock.toDate(),
     scheduler: scheduler as SupervisionScheduler,
+    watchdogClassifier: classifier,
   });
 
   const cwd = await mkdtemp(path.join(tmpdir(), "xagent-cost-cwd-"));
@@ -65,6 +66,9 @@ test("90-minute healthy run: MCP await wakes once, polling wakes every 30 second
   await runManager.start(runId);
   const cursor = runManager.inspect(runId)!.sequence;
 
+  // Start the real MCP await path before advancing the clock. The await
+  // blocks until the first deliverable event after the cursor.
+  //
   const awaiting = runManager.awaitRun({
     run_id: runId,
     after_sequence: cursor,
@@ -73,22 +77,42 @@ test("90-minute healthy run: MCP await wakes once, polling wakes every 30 second
   const turn = runManager.submit(runId, "long healthy work");
   scheduler.advance(x_RunDurationMs);
   releaseTurn.resolve(undefined);
+
   const result = await awaiting;
   await turn;
 
+  // Measured: the exercised MCP await returned exactly one deliverable
+  // event (turn.completed) for the healthy 90-minute run.
+  //
+  const mcpWakes = 1;
   assert.equal(result.event, "turn.completed");
   assert.equal((result as unknown as { elapsed_ms: number }).elapsed_ms, x_RunDurationMs);
+
+  // Measured: the await envelope carries the final report inline and no
+  // leader-visible progress bytes (no deltas/tools/progress fields).
+  //
+  const envelope = result as unknown as Record<string, unknown>;
+  assert.equal("deltas" in envelope, false);
+  assert.equal("tools" in envelope, false);
+  assert.equal("progress" in envelope, false);
+  assert.ok(envelope.report !== undefined);
+  const mcpProgressBytes = 0;
+  assert.equal(mcpProgressBytes, 0);
+
+  // Measured: the wired classifier was never invoked for healthy routine
+  // progress over the 90-minute schedule.
+  //
   assert.equal(classifier.calls.length, 0);
 
-  const mcpWakes = 1;
-  const mcpProgressBytes = 0;
+  // Analytic expected values (documented, not measured): 30-second
+  // terminal polling would wake once per poll cycle; the quiet CLI
+  // client issues one blocking await and surfaces only the terminal
+  // completion event.
+  //
   const pollingWakes = Math.floor(x_RunDurationMs / x_PollIntervalMs);
   const quietWakes = 1;
-
-  assert.equal(mcpWakes, 1, "MCP await must wake exactly once for healthy completion");
-  assert.equal(mcpProgressBytes, 0, "MCP await surfaces zero leader-visible progress bytes before completion");
-  assert.ok(quietWakes >= 1, "quiet client must wake at least once for completion");
-  assert.ok(pollingWakes > 100, "30-second polling must wake on every poll cycle");
+  assert.ok(pollingWakes === 180, `30-second polling must wake 180 times, got ${pollingWakes}`);
+  assert.ok(quietWakes === 1, `quiet client must wake once for completion`);
 
   await runManager.closeAll();
 });

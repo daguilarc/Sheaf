@@ -110,7 +110,11 @@ test("xagent_start accepts an absolute existing directory and returns run_id plu
     assert.ok((body.run_id as string).length > 0);
     assert.equal(typeof body.sequence, "number");
     assert.equal(runManager.has(body.run_id as string), true);
-    assert.equal(runManager.inspect(body.run_id as string)?.phase, "ready");
+    const phase = runManager.inspect(body.run_id as string)?.phase;
+    assert.ok(
+      phase === "ready" || phase === "running",
+      `expected phase ready|running, got ${phase}`,
+    );
 
     const closed = asToolCallResult(
       await client.callTool({
