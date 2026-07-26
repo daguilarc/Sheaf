@@ -213,6 +213,44 @@ test("returning an unconsumed primed iterator cannot wait forever on its pending
   }
 });
 
+// C1 regression: ProcessJsonlSession writes `command.input` to the
+// child's stdin and then SIGTERM/SIGKILLs the child when the turn is
+// interrupted. If the child is killed while the stdin write is still
+// buffered, Node emits `error` on the Socket — not on the ChildProcess —
+// and an unhandled stream error would crash the entire xagent service.
+// This test proves the stdin error guard swallows the EPIPE and the
+// session still resolves the turn with a proper interrupted outcome.
+//
+test("interrupting a turn with buffered stdin does not crash the session via EPIPE", async () => {
+  const session = new ProcessJsonlSession({
+    harness: "codex",
+    cwd: process.cwd(),
+    buildCommand: () => ({
+      command: process.execPath,
+      // Child never reads stdin and never exits on its own, so the 64 KiB
+      // stdin write stays buffered until SIGTERM/SIGKILL lands mid-write.
+      //
+      args: ["-e", "setInterval(() => {}, 1000)"],
+      input: "x".repeat(64 * 1024),
+    }),
+    parseEvent: (): AdapterEvent[] => [],
+    spawnProcess: (command, args, childOptions) =>
+      trackChild(spawn(command, [...args], childOptions)),
+    terminationGraceMs: 25,
+  });
+  const turn = drainTurn(session.submit(turnContext));
+
+  await waitUntil(() => session.processIdentity !== undefined);
+  const pid = session.processIdentity?.pid;
+  assert.ok(pid);
+
+  await within(session.close(), 1_000, "session close did not settle");
+  await turn;
+
+  await waitUntil(() => !isProcessAlive(pid), 1_000);
+  assert.equal(isProcessAlive(pid), false);
+});
+
 test("session close is bounded when no exit event arrives after SIGKILL", async () => {
   const child = createNonClosingChild();
   const session = new ProcessJsonlSession({
