@@ -68,6 +68,7 @@ export type AwaitRunResult = {
   readonly elapsed_ms: number;
   readonly reason?: string;
   readonly report?: { readonly text: string };
+  readonly usage?: { readonly input_tokens?: number; readonly output_tokens?: number };
   readonly payload?: unknown;
 };
 
@@ -376,7 +377,10 @@ function shapeAwaitEnvelope(result: AwaitResult, elapsedMs: number): AwaitRunRes
   };
   if (result.type === "turn.completed") {
     const payload = ("payload" in result ? result.payload : undefined) as
-      | { readonly report?: { readonly text?: string } }
+      | {
+          readonly report?: { readonly text?: string };
+          readonly usage?: { readonly input_tokens?: number; readonly output_tokens?: number };
+        }
       | undefined;
     const report = payload?.report;
     if (report === undefined || report.text === undefined) {
@@ -385,9 +389,11 @@ function shapeAwaitEnvelope(result: AwaitResult, elapsedMs: number): AwaitRunRes
         reason: "missing_final_report",
       };
     }
+    const usage = payload?.usage;
     return {
       ...base,
       report: { text: report.text },
+      ...(usage === undefined ? {} : { usage }),
     };
   }
   if (result.type === "supervision.deadline") {

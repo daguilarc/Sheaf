@@ -231,7 +231,7 @@ test("sequence zero lets a replacement boss recover a durable deliverable event"
   });
 });
 
-test("completion envelope carries the versioned shape with report and elapsed_ms only", async () => {
+test("completion envelope carries the versioned shape with report, elapsed_ms, and provider usage", async () => {
   const clock = new FakeClock(0);
   const scheduler = new FakeScheduler(clock);
   const harness = new TestHarness({ clock, scheduler });
@@ -239,12 +239,6 @@ test("completion envelope carries the versioned shape with report and elapsed_ms
     await runManager.start(runId);
     const cursor = runManager.inspect(runId)!.sequence;
 
-    for (let i = 0; i < 38; i += 1) {
-      await runManager.publishAttention(runId, `attention_${i}`, { index: i });
-    }
-    const runningSequence = runManager.inspect(runId)!.sequence;
-
-    const releaseTurn = deferred<void>();
     async function* scriptedTurn(): AsyncIterable<AdapterEvent> {
       yield {
         type: "message.completed",
@@ -263,7 +257,7 @@ test("completion envelope carries the versioned shape with report and elapsed_ms
 
     const awaiting = runManager.awaitRun({
       run_id: runId,
-      after_sequence: runningSequence,
+      after_sequence: cursor,
       deadline_seconds: 5,
     });
     clock.advance(123_456);
@@ -275,10 +269,11 @@ test("completion envelope carries the versioned shape with report and elapsed_ms
       schema_version: 1,
       event: "turn.completed",
       run_id: runId,
-      sequence: runningSequence + 2,
+      sequence: cursor + 2,
       phase: "ready",
       report: { text: "complete final assistant message" },
       elapsed_ms: 123_456,
+      usage: { input_tokens: 10, output_tokens: 20 },
     });
     assert.equal("deltas" in result, false);
     assert.equal("tools" in result, false);
@@ -286,11 +281,45 @@ test("completion envelope carries the versioned shape with report and elapsed_ms
     assert.equal("watchdog" in result, false);
     assert.equal("turn_id" in result, false);
     assert.equal("provider_thread_id" in result, false);
-    assert.equal("usage" in result, false);
     assert.equal("payload" in result, false);
     assert.equal("reason" in result, false);
   });
 });
+
+test("completion envelope omits usage when the provider does not report it", async () => {
+  const harness = new TestHarness();
+  await harness.run(async ({ runManager, runId, adapter }) => {
+    await runManager.start(runId);
+    const cursor = runManager.inspect(runId)!.sequence;
+
+    async function* scriptedTurn(): AsyncIterable<AdapterEvent> {
+      yield {
+        type: "message.completed",
+        message_id: "message_1",
+        role: "assistant",
+        text: "no usage reported",
+      };
+      yield {
+        type: "turn.completed",
+        final_text: "no usage reported",
+        provider_thread_id: "fake-thread-1",
+      };
+    }
+    adapter.options.scriptedEvents = [scriptedTurn()];
+
+    const turn = runManager.submit(runId, "work");
+    const result = await runManager.awaitRun({
+      run_id: runId,
+      after_sequence: cursor,
+      deadline_seconds: 5,
+    });
+    await turn;
+
+    assert.equal(result.event, "turn.completed");
+    assert.equal("usage" in result, false);
+  });
+});
+
 
 test("successful completion with empty final text returns missing_final_report", async () => {
   const harness = new TestHarness();
