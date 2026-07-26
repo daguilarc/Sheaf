@@ -273,6 +273,7 @@ struct MidiControllerRowVM {
     // Registry resolution gates only portable lifecycle affordances. The
     // persisted opaque id remains valid even when this is false.
     bool hasResolvedWizard = false;
+    bool hasCompleteEndpointPair = false;
     MidiEndpointStatus inputStatus = MidiEndpointStatus::Unconfigured;
     MidiEndpointStatus outputStatus = MidiEndpointStatus::Unconfigured;
     std::string inputDeviceLabel;   // present device name; stored ref + " (offline)"; or "(none)"

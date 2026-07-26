@@ -81,7 +81,7 @@ $(BUILD_DIR)/MidiReconcile.o: src/MidiReconcile.cpp include/synth/MidiReconcile.
 $(BUILD_DIR)/MidiDevicePoller.o: src/MidiDevicePoller.cpp include/synth/MidiDevicePoller.hpp include/synth/MidiReconcile.hpp include/synth/ThreadId.hpp include/synth/AsyncLogger.hpp | $(BUILD_SENTINEL)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/MidiConfigViewModel.o: src/MidiConfigViewModel.cpp include/synth/MidiConfigViewModel.hpp include/synth/MidiConfigBlocks.hpp include/synth/MidiController.hpp include/synth/MidiReconcile.hpp | $(BUILD_SENTINEL)
+$(BUILD_DIR)/MidiConfigViewModel.o: src/MidiConfigViewModel.cpp include/synth/MidiConfigViewModel.hpp include/synth/ControllerWizard.hpp include/synth/MidiConfigBlocks.hpp include/synth/MidiController.hpp include/synth/MidiReconcile.hpp | $(BUILD_SENTINEL)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/MidiConfigBlocks.o: src/MidiConfigBlocks.cpp include/synth/MidiConfigBlocks.hpp include/synth/MidiController.hpp | $(BUILD_SENTINEL)

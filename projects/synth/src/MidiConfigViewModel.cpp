@@ -705,6 +705,7 @@ void MidiConfigViewModel::Rebuild(const MidiInstrumentConfig& instrument, const 
                         [&](const ControllerWizardDescriptor& descriptor) {
                             return descriptor.id == *slot.wizardId;
                         });
+        row.hasCompleteEndpointPair = slot.input.IsConfigured() && slot.output.IsConfigured();
         row.inputStatus = inputConnection.status;
         row.outputStatus = outputConnection.status;
         row.inputDeviceLabel = DeviceLabel(slot.input, inputConnection.status);
@@ -1382,7 +1383,6 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
     if (controllerIx >= instrument_.controllers.size()) {
         return false;
     }
-
     // Same gate ApplyMappingEdit applies before touching anything: refuse a
     // field this row doesn't advertise. SectionRows() is the single source
     // of truth for row shape/editable fields, reused here so the two can
@@ -2505,6 +2505,12 @@ bool MidiConfigViewModel::RenameController(std::size_t controllerIx, std::string
         }
         return false;
     }
+    if (instrument_.controllers[controllerIx].name == name) {
+        if (reason != nullptr) {
+            *reason = "name is unchanged";
+        }
+        return false;
+    }
 
     MidiInstrumentConfig scratch = instrument_;
     if (!scratch.RenameController(controllerIx, std::move(name))) {
@@ -2547,6 +2553,12 @@ bool MidiConfigViewModel::BlacklistController(std::size_t controllerIx, MidiInst
         return false;
     }
     const MidiControllerSlot& existing = instrument_.controllers[controllerIx];
+    if (!existing.input.IsConfigured() || !existing.output.IsConfigured()) {
+        if (reason != nullptr) {
+            *reason = "blacklisting requires both input and output endpoint references";
+        }
+        return false;
+    }
     const bool resolved = existing.wizardId.has_value() &&
         std::any_of(ControllerWizardRegistry().begin(), ControllerWizardRegistry().end(),
                     [&](const ControllerWizardDescriptor& descriptor) {

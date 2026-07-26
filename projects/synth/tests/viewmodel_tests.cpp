@@ -5101,6 +5101,8 @@ TEST_CASE(ControllerLifecycleMutationsPreserveIdentityAndGateRegistryActions) {
     REQUIRE_TRUE(!vm.RenameController(0, "", out, &reason));
     REQUIRE_TRUE(out.controllers.empty() && DumpInstrument(instrument) == beforeRefusedRename);
     REQUIRE_TRUE(!vm.RenameController(0, "known", out, &reason));
+    REQUIRE_TRUE(!vm.RenameController(0, "manual", out, &reason));
+    REQUIRE_TRUE(out.controllers.empty() && reason.find("unchanged") != std::string::npos);
 
     REQUIRE_TRUE(vm.BlacklistController(1, out, &reason));
     const MidiControllerSlot& blacklistedKnown = out.controllers[1];
@@ -5129,6 +5131,18 @@ TEST_CASE(ControllerLifecycleMutationsPreserveIdentityAndGateRegistryActions) {
     REQUIRE_TRUE(!vm.BlacklistController(0, out, &reason));
     REQUIRE_TRUE(!vm.BlacklistController(2, out, &reason));
     REQUIRE_TRUE(out.controllers.empty());
+
+    MidiControllerSlot incomplete = known;
+    incomplete.name = "incomplete";
+    incomplete.output = {};
+    MidiInstrumentConfig incompleteInstrument;
+    REQUIRE_TRUE(incompleteInstrument.AddController(incomplete));
+    MidiConfigViewModel incompleteVm;
+    incompleteVm.Rebuild(incompleteInstrument, MidiConnectionState{{MidiControllerConnection{}}});
+    const std::string beforeIncompleteBlacklist = DumpInstrument(incompleteInstrument);
+    REQUIRE_TRUE(!incompleteVm.BlacklistController(0, out, &reason));
+    REQUIRE_TRUE(out.controllers.empty() && reason.find("endpoint") != std::string::npos &&
+                 DumpInstrument(incompleteInstrument) == beforeIncompleteBlacklist);
 
     REQUIRE_TRUE(vm.DeleteController(0, out, &reason));
     REQUIRE_TRUE(out.controllers.size() == 3 && out.controllers[0].name == "known");

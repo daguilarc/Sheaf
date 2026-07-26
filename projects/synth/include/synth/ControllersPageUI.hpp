@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -284,6 +285,11 @@ inline std::string ControllerRename(std::size_t controllerIx)
     return ControllerRow(controllerIx) + ".rename";
 }
 
+inline std::string ControllerRenameDraft(std::size_t controllerIx)
+{
+    return ControllerRow(controllerIx) + ".rename_draft";
+}
+
 inline std::string ControllerDelete(std::size_t controllerIx)
 {
     return ControllerRow(controllerIx) + ".delete";
@@ -414,6 +420,7 @@ inline constexpr const char* kWizardCancel = "runtime.controllers.wizard.cancel"
 inline constexpr const char* kWizardSubmit = "runtime.controllers.wizard.submit";
 inline constexpr const char* kWizardIgnore = "runtime.controllers.wizard.ignore";
 inline constexpr const char* kControllerRename = "runtime.controllers.controller.rename";
+inline constexpr const char* kControllerRenameDraft = "runtime.controllers.controller.rename_draft";
 inline constexpr const char* kControllerDelete = "runtime.controllers.controller.delete";
 inline constexpr const char* kControllerBlacklist = "runtime.controllers.controller.blacklist";
 inline constexpr const char* kControllerRemoveBlacklist = "runtime.controllers.controller.remove_blacklist";
@@ -442,8 +449,40 @@ inline constexpr float kStatusDotsWidth = 32.0f;
 inline constexpr float kHeaderControlsX = 256.0f;
 inline constexpr float kEndpointBoxWidth = 160.0f;
 inline constexpr float kEndpointBoxGap = 8.0f;
+inline constexpr float kControllerNameWidth = 120.0f;
+inline constexpr float kControllerKindWidth = 100.0f;
+inline constexpr float kControllerIdentityGap = 4.0f;
+inline constexpr float kControllerDisclosureWidth = 24.0f;
+inline constexpr float kLifecycleDraftWidth = 120.0f;
+inline constexpr float kLifecycleRenameWidth = 72.0f;
+inline constexpr float kLifecycleDeleteWidth = 66.0f;
+inline constexpr float kLifecycleReconfigureWidth = 94.0f;
+inline constexpr float kLifecycleBlacklistWidth = 78.0f;
+inline constexpr float kLifecycleConfigureWidth = 86.0f;
+inline constexpr float kLifecycleRemoveWidth = 72.0f;
+inline constexpr float kLifecycleControlGap = 4.0f;
+inline constexpr float kActiveLifecycleWidth =
+    kLifecycleDraftWidth + kLifecycleControlGap + kLifecycleRenameWidth +
+    kLifecycleControlGap + kLifecycleDeleteWidth + kLifecycleControlGap +
+    kLifecycleReconfigureWidth + kLifecycleControlGap + kLifecycleBlacklistWidth;
+inline constexpr float kBlacklistedEndpointLabelWidth = 150.0f;
+inline constexpr float kBlacklistedBadgeWidth = 84.0f;
+inline constexpr float kBlacklistedLifecycleWidth =
+    kLifecycleDraftWidth + kLifecycleControlGap + kLifecycleRenameWidth +
+    kLifecycleControlGap + kLifecycleConfigureWidth + kLifecycleControlGap +
+    kLifecycleRemoveWidth;
+inline constexpr float kActiveControllerHeaderWidth =
+    kHeaderControlsX + kStatusDotsWidth + kLifecycleControlGap + kEndpointBoxWidth +
+    kEndpointBoxGap + kEndpointBoxWidth + kEndpointBoxGap + kVariantBoxWidth +
+    kEndpointBoxGap + kActiveLifecycleWidth;
+inline constexpr float kBlacklistedControllerHeaderWidth =
+    kControllerNameWidth + kLifecycleControlGap + kControllerKindWidth +
+    kLifecycleControlGap + kBlacklistedBadgeWidth + kLifecycleControlGap +
+    kBlacklistedEndpointLabelWidth + kLifecycleControlGap +
+    kBlacklistedEndpointLabelWidth + kLifecycleControlGap +
+    kBlacklistedLifecycleWidth;
 inline constexpr float kControllerHeaderMinWidth =
-    1120.0f;
+    std::max(kActiveControllerHeaderWidth, kBlacklistedControllerHeaderWidth);
 inline constexpr float kSectionMaxHeight = 220.0f;
 inline constexpr float kSectionPadding = 8.0f;
 
@@ -813,7 +852,8 @@ public:
                                         m_contentBounds,
                                         m_statusText,
                                         m_addControllerName,
-                                        m_addControllerKindId);
+                                        m_addControllerKindId,
+                                        m_renameDrafts);
     }
 
     void SetActionHandler(ActionHandler handler) override
@@ -913,28 +953,7 @@ public:
         {
             return false;
         }
-        const MidiControllerSlot& controller = instrument.controllers[controllerIx];
-        if (!controller.wizardId.has_value())
-        {
-            return false;
-        }
-        std::unique_ptr<ControllerWizard> wizard = MakeControllerWizard(*controller.wizardId);
-        if (!wizard)
-        {
-            return false;
-        }
-        std::unique_ptr<ControllerConfigForm> form = wizard->ConfigForm(controller);
-        if (!form)
-        {
-            return false;
-        }
-
-        m_wizardSession.emplace(WizardSession{.target = controllerIx,
-                                              .wizard = std::move(wizard),
-                                              .form = std::move(form)});
-        m_wizardChooserOpen = false;
-        ++m_treeRevision;
-        return true;
+        return OpenExistingFromSnapshot(instrument, controllerIx);
     }
 
     void MarkDirty()
@@ -1027,6 +1046,7 @@ public:
                action.name == Actions::kWizardCancel ||
                action.name == Actions::kWizardSubmit ||
                action.name == Actions::kWizardIgnore ||
+               action.name == Actions::kControllerRenameDraft ||
                action.name == Actions::kControllerRename ||
                action.name == Actions::kControllerDelete ||
                action.name == Actions::kControllerBlacklist ||
@@ -1036,6 +1056,37 @@ public:
     }
 
 private:
+    bool OpenExistingFromSnapshot(const MidiInstrumentConfig& instrument,
+                                  std::size_t controllerIx)
+    {
+        if (m_wizardSession || controllerIx >= instrument.controllers.size())
+        {
+            return false;
+        }
+        const MidiControllerSlot& controller = instrument.controllers[controllerIx];
+        if (!controller.wizardId.has_value())
+        {
+            return false;
+        }
+        std::unique_ptr<ControllerWizard> wizard = MakeControllerWizard(*controller.wizardId);
+        if (!wizard)
+        {
+            return false;
+        }
+        std::unique_ptr<ControllerConfigForm> form = wizard->ConfigForm(controller);
+        if (!form)
+        {
+            return false;
+        }
+
+        m_wizardSession.emplace(WizardSession{.target = controllerIx,
+                                              .wizard = std::move(wizard),
+                                              .form = std::move(form)});
+        m_wizardChooserOpen = false;
+        ++m_treeRevision;
+        return true;
+    }
+
     static std::string ConnectionFingerprint(const MidiConnectionState& state)
     {
         std::string fp;
@@ -1235,7 +1286,7 @@ private:
             return;
         }
 
-        if (action.name == Actions::kControllerRename)
+        if (action.name == Actions::kControllerRenameDraft)
         {
             const std::size_t firstSeparator = action.value.find(':');
             const std::size_t separator = firstSeparator == std::string::npos
@@ -1246,8 +1297,21 @@ private:
                 SetStatus("Refused: invalid rename request");
                 return;
             }
-            HandleRenameController(action.value.substr(0, separator),
-                                   action.value.substr(separator + 1));
+            const std::optional<std::pair<std::size_t, std::string>> identity =
+                NodeIds::ControllerActionIdentityFromToken(action.value.substr(0, separator));
+            if (!identity.has_value())
+            {
+                SetStatus("Refused: invalid controller identity");
+                return;
+            }
+            m_renameDrafts[identity->second] = action.value.substr(separator + 1);
+            ++m_treeRevision;
+            return;
+        }
+
+        if (action.name == Actions::kControllerRename)
+        {
+            HandleRenameController(action.value);
             return;
         }
 
@@ -1274,11 +1338,12 @@ private:
         {
             const std::optional<std::pair<std::size_t, std::string>> identity =
                 NodeIds::ControllerActionIdentityFromToken(action.value);
-            if (!RebuildForLifecycleIdentity(identity))
+            MidiInstrumentConfig instrument;
+            if (!SnapshotForLifecycleIdentity(identity, instrument))
             {
                 return;
             }
-            OpenExisting(identity->first);
+            OpenExistingFromSnapshot(instrument, identity->first);
         }
     }
 
@@ -1442,40 +1507,42 @@ private:
         return SaveCommittedWizardAction(sessionStatus);
     }
 
-    bool RebuildForLifecycleIdentity(
-        const std::optional<std::pair<std::size_t, std::string>>& identity)
+    bool SnapshotForLifecycleIdentity(
+        const std::optional<std::pair<std::size_t, std::string>>& identity,
+        MidiInstrumentConfig& instrument)
     {
         if (!identity.has_value() || !m_callbacks.instrumentSnapshot)
         {
             SetStatus("Refused: invalid controller identity");
             return false;
         }
-        const MidiInstrumentConfig instrument = m_callbacks.instrumentSnapshot();
+        instrument = m_callbacks.instrumentSnapshot();
         if (identity->first >= instrument.controllers.size() ||
             instrument.controllers[identity->first].name != identity->second)
         {
             SetStatus("Refused: controller record changed; refresh and try again");
             return false;
         }
-        m_vm.Rebuild(instrument,
-                     m_callbacks.connectionState ? m_callbacks.connectionState()
-                                                 : MidiConnectionState{});
         return true;
     }
 
     bool CommitLifecycleAction(const std::string& token,
-                               const std::function<bool(std::size_t, MidiInstrumentConfig&, std::string*)>& mutate,
+                               const std::function<bool(MidiConfigViewModel&, std::size_t,
+                                                        MidiInstrumentConfig&, std::string*)>& mutate,
                                std::string success)
     {
         const std::optional<std::pair<std::size_t, std::string>> identity =
             NodeIds::ControllerActionIdentityFromToken(token);
-        if (!RebuildForLifecycleIdentity(identity))
+        MidiInstrumentConfig instrument;
+        if (!SnapshotForLifecycleIdentity(identity, instrument))
         {
             return false;
         }
+        MidiConfigViewModel mutationViewModel;
+        mutationViewModel.Rebuild(instrument, MidiConnectionState{});
         MidiInstrumentConfig out;
         std::string reason;
-        if (!mutate(identity->first, out, &reason))
+        if (!mutate(mutationViewModel, identity->first, out, &reason))
         {
             SetStatus("Refused: " + reason);
             return false;
@@ -1494,20 +1561,34 @@ private:
         return true;
     }
 
-    void HandleRenameController(const std::string& token, const std::string& name)
+    void HandleRenameController(const std::string& token)
     {
-        CommitLifecycleAction(
-            token, [&](std::size_t controllerIx, MidiInstrumentConfig& out, std::string* reason) {
-                return m_vm.RenameController(controllerIx, name, out, reason);
+        const std::optional<std::pair<std::size_t, std::string>> identity =
+            NodeIds::ControllerActionIdentityFromToken(token);
+        if (!identity.has_value())
+        {
+            SetStatus("Refused: invalid controller identity");
+            return;
+        }
+        const auto draft = m_renameDrafts.find(identity->second);
+        const std::string name = draft != m_renameDrafts.end() ? draft->second : identity->second;
+        if (CommitLifecycleAction(
+            token, [&](MidiConfigViewModel& viewModel, std::size_t controllerIx,
+                       MidiInstrumentConfig& out, std::string* reason) {
+                return viewModel.RenameController(controllerIx, name, out, reason);
             },
-            "Renamed " + name);
+            "Renamed " + name))
+        {
+            m_renameDrafts.erase(identity->second);
+        }
     }
 
     void HandleDeleteController(const std::string& token)
     {
         CommitLifecycleAction(
-            token, [&](std::size_t controllerIx, MidiInstrumentConfig& out, std::string* reason) {
-                return m_vm.DeleteController(controllerIx, out, reason);
+            token, [&](MidiConfigViewModel& viewModel, std::size_t controllerIx,
+                       MidiInstrumentConfig& out, std::string* reason) {
+                return viewModel.DeleteController(controllerIx, out, reason);
             },
             "Deleted controller");
     }
@@ -1515,8 +1596,9 @@ private:
     void HandleBlacklistController(const std::string& token)
     {
         CommitLifecycleAction(
-            token, [&](std::size_t controllerIx, MidiInstrumentConfig& out, std::string* reason) {
-                return m_vm.BlacklistController(controllerIx, out, reason);
+            token, [&](MidiConfigViewModel& viewModel, std::size_t controllerIx,
+                       MidiInstrumentConfig& out, std::string* reason) {
+                return viewModel.BlacklistController(controllerIx, out, reason);
             },
             "Blacklisted controller");
     }
@@ -1524,8 +1606,9 @@ private:
     void HandleRemoveFromBlacklist(const std::string& token)
     {
         CommitLifecycleAction(
-            token, [&](std::size_t controllerIx, MidiInstrumentConfig& out, std::string* reason) {
-                return m_vm.RemoveFromBlacklist(controllerIx, out, reason);
+            token, [&](MidiConfigViewModel& viewModel, std::size_t controllerIx,
+                       MidiInstrumentConfig& out, std::string* reason) {
+                return viewModel.RemoveFromBlacklist(controllerIx, out, reason);
             },
             "Removed controller from blacklist");
     }
@@ -2049,10 +2132,15 @@ private:
                                                    const MidiDeviceList& devices,
                                                    const WizardDiscovery& discovery,
                                                    ui::Bounds area,
-                                                   const std::string& statusText,
-                                                   const std::string& addControllerName,
-                                                   const std::string& addControllerKindId)
+                                                  const std::string& statusText,
+                                                  const std::string& addControllerName,
+                                                  const std::string& addControllerKindId,
+                                                  const std::map<std::string, std::string>& renameDrafts)
     {
+        const auto renameDraftFor = [&](const std::string& name) {
+            const auto it = renameDrafts.find(name);
+            return it != renameDrafts.end() ? it->second : name;
+        };
         ui::NodeTree tree;
         ui::Node root;
         root.id = NodeIds::kRoot;
@@ -2230,69 +2318,101 @@ private:
 
             if (rowVm.disposition == MidiControllerDisposition::Blacklisted)
             {
+                float lifecycleX = 0.0f;
                 ui::Node nameLabel;
                 nameLabel.id = ui::NodeId(NodeIds::ControllerName(controllerIx));
                 nameLabel.kind = ui::NodeKind::Label;
                 nameLabel.text = rowVm.name;
-                nameLabel.bounds = {0.0f, 0.0f, 120.0f, ControllersLayout::kControllerHeaderHeight};
+                nameLabel.bounds = {lifecycleX, 0.0f, ControllersLayout::kControllerNameWidth,
+                                    ControllersLayout::kControllerHeaderHeight};
                 appendControllerChild(std::move(nameLabel));
+                lifecycleX += ControllersLayout::kControllerNameWidth +
+                              ControllersLayout::kControllerIdentityGap;
 
                 ui::Node kindLabel;
                 kindLabel.id = ui::NodeId(NodeIds::ControllerKind(controllerIx));
                 kindLabel.kind = ui::NodeKind::Label;
                 kindLabel.text = MidiProfileKindName(rowVm.kind);
-                kindLabel.bounds = {124.0f, 0.0f, 100.0f, ControllersLayout::kControllerHeaderHeight};
+                kindLabel.bounds = {lifecycleX, 0.0f, ControllersLayout::kControllerKindWidth,
+                                    ControllersLayout::kControllerHeaderHeight};
                 appendControllerChild(std::move(kindLabel));
+                lifecycleX += ControllersLayout::kControllerKindWidth +
+                              ControllersLayout::kControllerIdentityGap;
 
                 ui::Node badge;
                 badge.id = ui::NodeId(NodeIds::ControllerBadge(controllerIx));
                 badge.kind = ui::NodeKind::Label;
                 badge.text = "Blacklisted";
-                badge.bounds = {228.0f, 0.0f, 84.0f, ControllersLayout::kControllerHeaderHeight};
+                badge.bounds = {lifecycleX, 0.0f, ControllersLayout::kBlacklistedBadgeWidth,
+                                ControllersLayout::kControllerHeaderHeight};
                 appendControllerChild(std::move(badge));
+                lifecycleX += ControllersLayout::kBlacklistedBadgeWidth +
+                              ControllersLayout::kControllerIdentityGap;
 
                 ui::Node inputLabel;
                 inputLabel.id = ui::NodeId(NodeIds::ControllerInputLabel(controllerIx));
                 inputLabel.kind = ui::NodeKind::Label;
                 inputLabel.text = "Input: " + rowVm.inputDeviceLabel;
-                inputLabel.bounds = {316.0f, 0.0f, 150.0f, ControllersLayout::kControllerHeaderHeight};
+                inputLabel.bounds = {lifecycleX, 0.0f, ControllersLayout::kBlacklistedEndpointLabelWidth,
+                                     ControllersLayout::kControllerHeaderHeight};
                 appendControllerChild(std::move(inputLabel));
+                lifecycleX += ControllersLayout::kBlacklistedEndpointLabelWidth +
+                              ControllersLayout::kControllerIdentityGap;
 
                 ui::Node outputLabel;
                 outputLabel.id = ui::NodeId(NodeIds::ControllerOutputLabel(controllerIx));
                 outputLabel.kind = ui::NodeKind::Label;
                 outputLabel.text = "Output: " + rowVm.outputDeviceLabel;
-                outputLabel.bounds = {470.0f, 0.0f, 150.0f, ControllersLayout::kControllerHeaderHeight};
+                outputLabel.bounds = {lifecycleX, 0.0f, ControllersLayout::kBlacklistedEndpointLabelWidth,
+                                      ControllersLayout::kControllerHeaderHeight};
                 appendControllerChild(std::move(outputLabel));
+                lifecycleX += ControllersLayout::kBlacklistedEndpointLabelWidth +
+                              ControllersLayout::kLifecycleControlGap;
 
                 ui::Node rename;
-                rename.id = ui::NodeId(NodeIds::ControllerRename(controllerIx));
+                rename.id = ui::NodeId(NodeIds::ControllerRenameDraft(controllerIx));
                 rename.kind = ui::NodeKind::TextField;
                 rename.label = "Rename";
-                rename.text = rowVm.name;
-                rename.bounds = {624.0f, 0.0f, 120.0f, ControllersLayout::kControllerHeaderHeight};
-                rename.action = ui::Action::WithValue(Actions::kControllerRename,
-                                                      NodeIds::ControllerActionToken(controllerIx, rowVm.name) + ":");
+                rename.text = renameDraftFor(rowVm.name);
+                rename.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleDraftWidth,
+                                 ControllersLayout::kControllerHeaderHeight};
+                rename.action = ui::Action::WithValue(Actions::kControllerRenameDraft,
+                                                      NodeIds::ControllerActionToken(controllerIx, rowVm.name));
                 appendControllerChild(std::move(rename));
 
-                float lifecycleX = 748.0f;
+                lifecycleX += ControllersLayout::kLifecycleDraftWidth +
+                              ControllersLayout::kLifecycleControlGap;
+                ui::Node renameButton;
+                renameButton.id = ui::NodeId(NodeIds::ControllerRename(controllerIx));
+                renameButton.kind = ui::NodeKind::Button;
+                renameButton.label = "Rename";
+                renameButton.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleRenameWidth,
+                                       ControllersLayout::kControllerHeaderHeight};
+                renameButton.action = ui::Action::WithValue(Actions::kControllerRename,
+                                                            NodeIds::ControllerActionToken(controllerIx, rowVm.name));
+                appendControllerChild(std::move(renameButton));
+                lifecycleX += ControllersLayout::kLifecycleRenameWidth +
+                              ControllersLayout::kLifecycleControlGap;
                 if (rowVm.hasResolvedWizard)
                 {
                     ui::Node configure;
                     configure.id = ui::NodeId(NodeIds::ControllerConfigure(controllerIx));
                     configure.kind = ui::NodeKind::Button;
                     configure.label = "Configure";
-                    configure.bounds = {lifecycleX, 0.0f, 86.0f, ControllersLayout::kControllerHeaderHeight};
+                    configure.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleConfigureWidth,
+                                        ControllersLayout::kControllerHeaderHeight};
                     configure.action = ui::Action::WithValue(Actions::kControllerConfigure,
                                                              NodeIds::ControllerActionToken(controllerIx, rowVm.name));
                     appendControllerChild(std::move(configure));
-                    lifecycleX += 90.0f;
+                    lifecycleX += ControllersLayout::kLifecycleConfigureWidth +
+                                  ControllersLayout::kLifecycleControlGap;
                 }
                 ui::Node remove;
                 remove.id = ui::NodeId(NodeIds::ControllerRemoveBlacklist(controllerIx));
                 remove.kind = ui::NodeKind::Button;
                 remove.label = "Remove";
-                remove.bounds = {lifecycleX, 0.0f, 72.0f, ControllersLayout::kControllerHeaderHeight};
+                remove.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleRemoveWidth,
+                                 ControllersLayout::kControllerHeaderHeight};
                 remove.action = ui::Action::WithValue(Actions::kControllerRemoveBlacklist,
                                                        NodeIds::ControllerActionToken(controllerIx, rowVm.name));
                 appendControllerChild(std::move(remove));
@@ -2305,7 +2425,8 @@ private:
             disclosure.id = ui::NodeId(NodeIds::ControllerDisclosure(controllerIx));
             disclosure.kind = ui::NodeKind::Button;
             disclosure.label = rowVm.configExpanded ? "v" : ">";
-            disclosure.bounds = {0.0f, 0.0f, 24.0f, ControllersLayout::kControllerHeaderHeight};
+            disclosure.bounds = {0.0f, 0.0f, ControllersLayout::kControllerDisclosureWidth,
+                                 ControllersLayout::kControllerHeaderHeight};
             disclosure.action = ui::Action::WithValue(Actions::kToggleConfig, std::to_string(controllerIx));
             appendControllerChild(std::move(disclosure));
 
@@ -2313,14 +2434,24 @@ private:
             nameLabel.id = ui::NodeId(NodeIds::ControllerName(controllerIx));
             nameLabel.kind = ui::NodeKind::Label;
             nameLabel.text = rowVm.name;
-            nameLabel.bounds = {28.0f, 0.0f, 120.0f, ControllersLayout::kControllerHeaderHeight};
+            nameLabel.bounds = {ControllersLayout::kControllerDisclosureWidth +
+                                    ControllersLayout::kControllerIdentityGap,
+                                0.0f,
+                                ControllersLayout::kControllerNameWidth,
+                                ControllersLayout::kControllerHeaderHeight};
             appendControllerChild(std::move(nameLabel));
 
             ui::Node kindLabel;
             kindLabel.id = ui::NodeId(NodeIds::ControllerKind(controllerIx));
             kindLabel.kind = ui::NodeKind::Label;
             kindLabel.text = MidiProfileKindName(rowVm.kind);
-            kindLabel.bounds = {152.0f, 0.0f, 100.0f, ControllersLayout::kControllerHeaderHeight};
+            kindLabel.bounds = {ControllersLayout::kControllerDisclosureWidth +
+                                    ControllersLayout::kControllerIdentityGap +
+                                    ControllersLayout::kControllerNameWidth +
+                                    ControllersLayout::kControllerIdentityGap,
+                                0.0f,
+                                ControllersLayout::kControllerKindWidth,
+                                ControllersLayout::kControllerHeaderHeight};
             appendControllerChild(std::move(kindLabel));
 
             float headerX = ControllersLayout::kHeaderControlsX;
@@ -2336,7 +2467,7 @@ private:
                 {14.0f, 0.0f, 8.0f, 8.0f}, ControllersLayout::EndpointStatusColor(rowVm.outputStatus)));
             appendControllerChild(std::move(statusDots));
 
-            headerX += ControllersLayout::kStatusDotsWidth + 4.0f;
+            headerX += ControllersLayout::kStatusDotsWidth + ControllersLayout::kLifecycleControlGap;
 
             std::string selectedInput;
             ui::Node inputCombo;
@@ -2395,42 +2526,61 @@ private:
             }
 
             ui::Node rename;
-            rename.id = ui::NodeId(NodeIds::ControllerRename(controllerIx));
+            rename.id = ui::NodeId(NodeIds::ControllerRenameDraft(controllerIx));
             rename.kind = ui::NodeKind::TextField;
             rename.label = "Rename";
-            rename.text = rowVm.name;
-            rename.bounds = {lifecycleX, 0.0f, 120.0f, ControllersLayout::kControllerHeaderHeight};
-            rename.action = ui::Action::WithValue(Actions::kControllerRename,
-                                                  NodeIds::ControllerActionToken(controllerIx, rowVm.name) + ":");
+            rename.text = renameDraftFor(rowVm.name);
+            rename.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleDraftWidth,
+                             ControllersLayout::kControllerHeaderHeight};
+            rename.action = ui::Action::WithValue(Actions::kControllerRenameDraft,
+                                                  NodeIds::ControllerActionToken(controllerIx, rowVm.name));
             appendControllerChild(std::move(rename));
 
-            lifecycleX += 124.0f;
+            lifecycleX += ControllersLayout::kLifecycleDraftWidth +
+                          ControllersLayout::kLifecycleControlGap;
+            ui::Node renameButton;
+            renameButton.id = ui::NodeId(NodeIds::ControllerRename(controllerIx));
+            renameButton.kind = ui::NodeKind::Button;
+            renameButton.label = "Rename";
+            renameButton.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleRenameWidth,
+                                   ControllersLayout::kControllerHeaderHeight};
+            renameButton.action = ui::Action::WithValue(Actions::kControllerRename,
+                                                        NodeIds::ControllerActionToken(controllerIx, rowVm.name));
+            appendControllerChild(std::move(renameButton));
+            lifecycleX += ControllersLayout::kLifecycleRenameWidth +
+                          ControllersLayout::kLifecycleControlGap;
             ui::Node remove;
             remove.id = ui::NodeId(NodeIds::ControllerDelete(controllerIx));
             remove.kind = ui::NodeKind::Button;
             remove.label = "Delete";
-            remove.bounds = {lifecycleX, 0.0f, 66.0f, ControllersLayout::kControllerHeaderHeight};
+            remove.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleDeleteWidth,
+                             ControllersLayout::kControllerHeaderHeight};
             remove.action = ui::Action::WithValue(Actions::kControllerDelete,
                                                    NodeIds::ControllerActionToken(controllerIx, rowVm.name));
             appendControllerChild(std::move(remove));
-            lifecycleX += 70.0f;
+            lifecycleX += ControllersLayout::kLifecycleDeleteWidth +
+                          ControllersLayout::kLifecycleControlGap;
             if (rowVm.hasResolvedWizard)
             {
                 ui::Node reconfigure;
                 reconfigure.id = ui::NodeId(NodeIds::ControllerReconfigure(controllerIx));
                 reconfigure.kind = ui::NodeKind::Button;
                 reconfigure.label = "Reconfigure";
-                reconfigure.bounds = {lifecycleX, 0.0f, 94.0f, ControllersLayout::kControllerHeaderHeight};
+                reconfigure.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleReconfigureWidth,
+                                      ControllersLayout::kControllerHeaderHeight};
                 reconfigure.action = ui::Action::WithValue(Actions::kControllerReconfigure,
                                                             NodeIds::ControllerActionToken(controllerIx, rowVm.name));
                 appendControllerChild(std::move(reconfigure));
-                lifecycleX += 98.0f;
+                lifecycleX += ControllersLayout::kLifecycleReconfigureWidth +
+                              ControllersLayout::kLifecycleControlGap;
 
                 ui::Node blacklist;
                 blacklist.id = ui::NodeId(NodeIds::ControllerBlacklist(controllerIx));
                 blacklist.kind = ui::NodeKind::Button;
                 blacklist.label = "Blacklist";
-                blacklist.bounds = {lifecycleX, 0.0f, 78.0f, ControllersLayout::kControllerHeaderHeight};
+                blacklist.enabled = rowVm.hasCompleteEndpointPair;
+                blacklist.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleBlacklistWidth,
+                                    ControllersLayout::kControllerHeaderHeight};
                 blacklist.action = ui::Action::WithValue(Actions::kControllerBlacklist,
                                                           NodeIds::ControllerActionToken(controllerIx, rowVm.name));
                 appendControllerChild(std::move(blacklist));
@@ -2775,6 +2925,7 @@ private:
     ui::Bounds m_contentBounds{0.0f, 0.0f, 640.0f, 480.0f};
     std::string m_statusText = "Ready";
     std::string m_addControllerName;
+    std::map<std::string, std::string> m_renameDrafts;
     std::string m_addControllerKindId = "wrldbldr";
     bool m_dirty = true;
     std::string m_lastFingerprint;

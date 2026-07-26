@@ -722,19 +722,29 @@ void TestControllerLifecycleActionsUseTheNormalCommitAndSavePath()
     synth::MidiControllerSlot blacklistedUnknown = blacklistedKnown;
     blacklistedUnknown.name = "blacklisted unknown";
     blacklistedUnknown.wizardId = "com.example.missing-wizard";
+    synth::MidiControllerSlot incomplete = known;
+    incomplete.name = "incomplete";
+    incomplete.output = {};
     Require(harness.instrument.AddController(MakeGenericSlot("manual")), "add manual controller");
     Require(harness.instrument.AddController(known), "add resolved controller");
     Require(harness.instrument.AddController(unknown), "add unknown active controller");
     Require(harness.instrument.AddController(blacklistedKnown), "add resolved blacklisted controller");
     Require(harness.instrument.AddController(blacklistedUnknown), "add unknown blacklisted controller");
+    Require(harness.instrument.AddController(incomplete), "add incomplete resolved controller");
     harness.connection.controllers.resize(harness.instrument.controllers.size());
 
     auto surface = harness.MakeSurface();
     surface.MarkDirty();
     surface.RefreshOnTick();
     const synth::ui::NodeTree initialTree = surface.BuildTree();
-    Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerRename(0)) != nullptr,
-            "every active row exposes Rename");
+    const synth::ui::Node* renameDraft = FindNodeById(
+        initialTree, synth::runtime_ui::NodeIds::ControllerRenameDraft(0));
+    const synth::ui::Node* renameButton = FindNodeById(
+        initialTree, synth::runtime_ui::NodeIds::ControllerRename(0));
+    Require(renameDraft != nullptr && renameDraft->action.has_value() &&
+                renameDraft->action->value.back() != ':' &&
+                renameButton != nullptr && renameButton->action.has_value(),
+            "Rename exposes a draft field with an unambiguous renderer prefix and an explicit commit button");
     Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerDelete(0)) != nullptr,
             "manual active row exposes Delete");
     Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerBlacklist(1)) != nullptr &&
@@ -754,6 +764,21 @@ void TestControllerLifecycleActionsUseTheNormalCommitAndSavePath()
     Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerConfigure(4)) == nullptr &&
                 FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerRemoveBlacklist(4)) != nullptr,
             "unknown blacklisted id preserves Remove but gates Configure");
+    const synth::ui::Node* incompleteBlacklist = FindNodeById(
+        initialTree, synth::runtime_ui::NodeIds::ControllerBlacklist(5));
+    Require(incompleteBlacklist != nullptr && !incompleteBlacklist->enabled,
+            "resolved Active records with incomplete endpoints keep a disabled Blacklist affordance");
+    const synth::ui::Node* lifecycleScroll = FindNodeById(
+        initialTree, synth::runtime_ui::NodeIds::kScroll);
+    Require(lifecycleScroll != nullptr, "lifecycle tree includes its scroll container");
+    for (const synth::ui::Node& node : initialTree.nodes)
+    {
+        if (node.id.value.starts_with("runtime.controllers.row.") &&
+            node.bounds.x + node.bounds.width > lifecycleScroll->scrollContentWidth)
+        {
+            Require(false, "controller lifecycle control exceeds the horizontal scroll content width");
+        }
+    }
 
     TestHarness staleHarness;
     staleHarness.instrument = harness.instrument;
@@ -769,6 +794,14 @@ void TestControllerLifecycleActionsUseTheNormalCommitAndSavePath()
     Require(staleHarness.commits == 0 && staleHarness.saves == 0 &&
                 staleHarness.instrument.controllers[2].name == "blacklisted known",
             "stale row action cannot retarget the record now occupying its old index");
+    const synth::ui::NodeTree staleRefusalTree = staleSurface.BuildTree();
+    Require(FindNodeById(staleRefusalTree, synth::runtime_ui::NodeIds::ControllerDelete(1)) != nullptr &&
+                FindNodeById(staleRefusalTree, synth::runtime_ui::NodeIds::ControllerDelete(2)) == nullptr,
+            "a refusal publishes the current controller structure without retaining a stale lifecycle row");
+    staleSurface.DispatchAction(staleDelete);
+    Require(staleHarness.commits == 0 && staleHarness.saves == 0 &&
+                FindNodeById(staleSurface.BuildTree(), synth::runtime_ui::NodeIds::ControllerDelete(2)) == nullptr,
+            "repeated stale lifecycle refusals leave the published controller tree consistent");
 
     surface.DispatchAction(synth::ui::Action::WithValue(
         synth::runtime_ui::Actions::kControllerDelete,
@@ -776,16 +809,31 @@ void TestControllerLifecycleActionsUseTheNormalCommitAndSavePath()
     surface.DispatchAction(synth::ui::Action::WithValue(
         synth::runtime_ui::Actions::kControllerBlacklist,
         synth::runtime_ui::NodeIds::ControllerActionToken(0, "manual")));
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kControllerBlacklist,
+        synth::runtime_ui::NodeIds::ControllerActionToken(5, "incomplete")));
     Require(harness.commits == 0 && harness.saves == 0,
             "refused stale lifecycle actions perform neither a commit nor a save");
+    Require(surface.StatusText().find("endpoint") != std::string::npos &&
+                harness.instrument.FindController("incomplete")->disposition ==
+                    synth::MidiControllerDisposition::Active,
+            "incomplete endpoint pairs are refused by the view model without mutating the active record");
 
-    synth::ui::Action rename = *FindNodeById(
-        initialTree, synth::runtime_ui::NodeIds::ControllerRename(0))->action;
-    rename.value += "manual:renamed";
+    synth::ui::Action rename = *renameDraft->action;
+    rename.value += ":manual:renamed";
     surface.DispatchAction(rename);
+    Require(harness.commits == 0 && harness.saves == 0 &&
+                FindNodeById(surface.BuildTree(), synth::runtime_ui::NodeIds::ControllerRenameDraft(0))->text ==
+                    "manual:renamed",
+            "rename typing updates only the portable draft without committing or saving");
+    surface.DispatchAction(*renameButton->action);
     Require(harness.commits == 1 && harness.saves == 1 &&
                 harness.instrument.controllers[0].name == "manual:renamed",
             "Rename preserves a colon-containing valid name through the lifecycle callback path");
+    surface.DispatchAction(*FindNodeById(
+        surface.BuildTree(), synth::runtime_ui::NodeIds::ControllerRename(0))->action);
+    Require(harness.commits == 1 && harness.saves == 1,
+            "unchanged rename is refused without a second commit or save");
     harness.connection.controllers[1].input = {
         .status = synth::MidiEndpointStatus::Online, .openIdentifier = "known-in"};
     harness.connection.controllers[1].output = {

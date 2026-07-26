@@ -136,6 +136,29 @@ test("appends control values to action prefixes without losing option ids", asyn
   ]);
 });
 
+test("dispatches each generic text input event with one separator-appended value", async ({ page }) => {
+  const draftFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 80], children: ["draft"] },
+    { id: "draft", kind: NodeKind.TextField, bounds: [0, 0, 160, 24], text: "",
+      action: { name: "generic.rename_draft", value: "0:6d616e75616c" } },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const browserWindow = window as unknown as { actions: unknown[] };
+    browserWindow.actions = [];
+    const backend = new BrowserUiBackend(document.querySelector("#synth-root")!, (action: unknown) => browserWindow.actions.push(action));
+    backend.renderFrame(new Uint8Array(bytes).buffer);
+  }, Array.from(new Uint8Array(draftFrame)));
+  await page.locator('[data-synth-node-id="draft"] input').pressSequentially("abc");
+  const dispatched = await page.evaluate(() => (window as unknown as { actions: unknown[] }).actions);
+  expect(dispatched).toEqual([
+    { name: "generic.rename_draft", value: "0:6d616e75616c:a" },
+    { name: "generic.rename_draft", value: "0:6d616e75616c:ab" },
+    { name: "generic.rename_draft", value: "0:6d616e75616c:abc" },
+  ]);
+});
+
 test("preserves focused combo boxes across stale frame refreshes", async ({ page }) => {
   await page.goto("http://127.0.0.1:4173/public/index.html");
   await page.evaluate(async (bytes) => {
