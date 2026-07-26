@@ -10,9 +10,9 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { FakeHarnessAdapter } from "../src/adapters/fake.js";
 import { XagentRunManager } from "../src/service/run_manager.js";
 import {
+  createShutdownController,
   createXagentServer,
   type XagentServer,
-  type XagentShutdownController,
 } from "../src/service/server.js";
 import type { SupervisionPolicy } from "../src/supervision/types.js";
 
@@ -204,28 +204,4 @@ async function withMcpService(
     }
     await runManager.closeAll();
   }
-}
-
-function createShutdownController(deps: {
-  closeRuns: () => Promise<void>;
-  closeServer: () => Promise<void>;
-}): XagentShutdownController {
-  let requested = false;
-  let pending: Promise<void> | undefined;
-  return {
-    requestShutdown(): Promise<void> {
-      if (pending !== undefined) {
-        return pending;
-      }
-      requested = true;
-      pending = (async () => {
-        await deps.closeRuns();
-        await deps.closeServer();
-      })();
-      return pending;
-    },
-    wasShutdownRequested(): boolean {
-      return requested;
-    },
-  };
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile, writeFile, mkdtemp, mkdir } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -20,6 +21,7 @@ import {
 import { createRunRecord, updateRunSupervision } from "../src/logs.js";
 import { XagentRunManager } from "../src/service/run_manager.js";
 import {
+  createShutdownController,
   createXagentServer,
   type XagentServer,
   type XagentShutdownController,
@@ -104,13 +106,36 @@ test("unknown routes return a bounded JSON 404 and do not change supervised runs
   });
 });
 
-test("POST /exit acknowledges shutdown before closing owned supervisors and listeners", async () => {
+test("POST /exit closes the listener before owned runs so the bind port is free during cleanup", async () => {
   const events: string[] = [];
+  let bindPort = 0;
+  let reboundDuringRunClose = false;
 
   await withServiceServer(
     {
       closeRuns: async (runManager) => {
         events.push("runs-closed");
+        // The listener must already be closed so Conductor can rebind immediately
+        // while stubborn children are still being cleaned up.
+        //
+        try {
+          const probe = createServer();
+          await new Promise<void>((resolve, reject) => {
+            probe.once("error", reject);
+            probe.listen(bindPort, "127.0.0.1", () => {
+              probe.close((error) => {
+                if (error) {
+                  reject(error);
+                  return;
+                }
+                resolve();
+              });
+            });
+          });
+          reboundDuringRunClose = true;
+        } catch {
+          reboundDuringRunClose = false;
+        }
         await runManager.closeAll();
       },
       closeServer: async (server) => {
@@ -119,11 +144,13 @@ test("POST /exit acknowledges shutdown before closing owned supervisors and list
       },
     },
     async ({ port, shutdownController }) => {
+      bindPort = port;
       const response = await fetchJson(port, "POST", "/exit");
       assert.equal(response.status, 200);
       assert.deepEqual(response.body, { exiting: true });
       await shutdownController.shutdownComplete();
-      assert.deepEqual(events, ["runs-closed", "server-closed"]);
+      assert.deepEqual(events, ["server-closed", "runs-closed"]);
+      assert.equal(reboundDuringRunClose, true);
     },
   );
 });
@@ -578,28 +605,24 @@ function createTrackingShutdownController(deps: {
   closeServer: () => Promise<void>;
   closeRuns: () => Promise<void>;
 }): TrackingShutdownController {
-  let requested = false;
-  let pending: Promise<void> | undefined;
   let resolveShutdown: (() => void) | undefined;
   const shutdownDone = new Promise<void>((resolve) => {
     resolveShutdown = resolve;
   });
+  const inner = createShutdownController({
+    closeServer: deps.closeServer,
+    closeRuns: deps.closeRuns,
+    onShutdownComplete: () => {
+      resolveShutdown?.();
+    },
+  });
 
   return {
     requestShutdown(): Promise<void> {
-      if (pending !== undefined) {
-        return pending;
-      }
-      requested = true;
-      pending = (async () => {
-        await deps.closeRuns();
-        await deps.closeServer();
-        resolveShutdown?.();
-      })();
-      return pending;
+      return inner.requestShutdown();
     },
     wasShutdownRequested(): boolean {
-      return requested;
+      return inner.wasShutdownRequested();
     },
     shutdownComplete(): Promise<void> {
       return shutdownDone;

@@ -11,9 +11,9 @@ import { FakeHarnessAdapter } from "../src/adapters/fake.js";
 import type { AdapterEvent } from "../src/adapters/types.js";
 import { XagentRunManager } from "../src/service/run_manager.js";
 import {
+  createShutdownController,
   createXagentServer,
   type XagentServer,
-  type XagentShutdownController,
 } from "../src/service/server.js";
 import type {
   SupervisionPolicy,
@@ -548,23 +548,6 @@ function asBody(result: unknown): { body: Record<string, unknown>; isError?: boo
   const text = content?.find((part) => part.type === "text")?.text;
   assert.ok(text);
   return { body: JSON.parse(text) as Record<string, unknown>, isError: value.isError };
-}
-
-function createShutdownController(deps: {
-  closeRuns: () => Promise<void>;
-  closeServer: () => Promise<void>;
-}): XagentShutdownController {
-  let requested = false;
-  let pending: Promise<void> | undefined;
-  return {
-    requestShutdown(): Promise<void> {
-      if (pending !== undefined) return pending;
-      requested = true;
-      pending = (async () => { await deps.closeRuns(); await deps.closeServer(); })();
-      return pending;
-    },
-    wasShutdownRequested(): boolean { return requested; },
-  };
 }
 
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {

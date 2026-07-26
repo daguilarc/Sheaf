@@ -9,6 +9,41 @@ export type XagentShutdownController = {
   wasShutdownRequested(): boolean;
 };
 
+export function createShutdownController(deps: {
+  closeRuns: () => Promise<void>;
+  closeServer: () => Promise<void>;
+  onShutdownComplete?: () => void;
+}): XagentShutdownController {
+  let requested = false;
+  let pending: Promise<void> | undefined;
+  return {
+    requestShutdown(): Promise<void> {
+      if (pending !== undefined) {
+        return pending;
+      }
+      requested = true;
+      // Close the listener first so Conductor can rebind the port while
+      // stubborn child process groups are still being cleaned up.
+      //
+      pending = (async () => {
+        try {
+          await deps.closeServer();
+        } finally {
+          try {
+            await deps.closeRuns();
+          } finally {
+            deps.onShutdownComplete?.();
+          }
+        }
+      })();
+      return pending;
+    },
+    wasShutdownRequested(): boolean {
+      return requested;
+    },
+  };
+}
+
 export type XagentServerOptions = {
   readonly bindHost: string;
   readonly bindPort: number;

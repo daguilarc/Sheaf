@@ -17,10 +17,10 @@ import {
 } from "../src/service/client.js";
 import { XagentRunManager } from "../src/service/run_manager.js";
 import {
+  createShutdownController,
   createXagentServer,
   x_ServiceRequestTimeoutMs,
   type XagentServer,
-  type XagentShutdownController,
 } from "../src/service/server.js";
 import {
   x_DefaultAwaitDeadlineSeconds,
@@ -714,30 +714,6 @@ async function withFakeService(
     }
     await runManager.closeAll();
   }
-}
-
-function createShutdownController(deps: {
-  closeRuns: () => Promise<void>;
-  closeServer: () => Promise<void>;
-}): XagentShutdownController {
-  let requested = false;
-  let pending: Promise<void> | undefined;
-  return {
-    requestShutdown(): Promise<void> {
-      if (pending !== undefined) {
-        return pending;
-      }
-      requested = true;
-      pending = (async () => {
-        await deps.closeRuns();
-        await deps.closeServer();
-      })();
-      return pending;
-    },
-    wasShutdownRequested(): boolean {
-      return requested;
-    },
-  };
 }
 
 function deferred<T>(): {
