@@ -76,6 +76,72 @@ test("rejects malformed or action-bearing verdicts as uncertain", () => {
   }
 });
 
+test("scheduler drops malformed usage, cost, and output telemetry from injected classifiers", async () => {
+  const clock = new FakeClock();
+  let observed: WatchdogVerdict | undefined;
+  const classifier: WatchdogClassifier = {
+    async classify() {
+      return {
+        verdict: "healthy",
+        confidence: 0.9,
+        reason_code: "steady_progress",
+        evidence: [],
+        usage: {
+          input_tokens: "100",
+          output_tokens: Number.NaN,
+        },
+        estimated_cost_usd: "0.01",
+        output_bytes: -1,
+      } as unknown as WatchdogVerdict;
+    },
+  };
+  const scheduler = new WatchdogScheduler({
+    classifier,
+    clock: clock.now,
+    onVerdict: (_request, verdict) => {
+      observed = verdict;
+    },
+  });
+
+  clock.advance(10 * 60_000);
+  await scheduler.onActiveEvidence(request());
+
+  assert.deepEqual(observed, {
+    verdict: "healthy",
+    confidence: 0.9,
+    reason_code: "steady_progress",
+    evidence: [],
+  });
+});
+
+test("scheduler caps oversized output telemetry at the bounded overflow marker", async () => {
+  const clock = new FakeClock();
+  let observed: WatchdogVerdict | undefined;
+  const classifier: WatchdogClassifier = {
+    async classify() {
+      return {
+        verdict: "uncertain",
+        confidence: 0,
+        reason_code: "classifier_output_too_large",
+        evidence: [],
+        output_bytes: 999_999,
+      };
+    },
+  };
+  const scheduler = new WatchdogScheduler({
+    classifier,
+    clock: clock.now,
+    onVerdict: (_request, verdict) => {
+      observed = verdict;
+    },
+  });
+
+  clock.advance(10 * 60_000);
+  await scheduler.onActiveEvidence(request());
+
+  assert.equal(observed?.output_bytes, 2 * 1024 + 1);
+});
+
 test("default active cadence is 10, 20, then repeated 40 minute intervals", async () => {
   const clock = new FakeClock();
   const classifier = new ClassifierSpy();
@@ -103,6 +169,54 @@ test("default active cadence is 10, 20, then repeated 40 minute intervals", asyn
   await scheduler.onActiveEvidence(request());
   assert.equal(classifier.calls.length, 3);
   clock.advance(2_400_000);
+  await scheduler.onActiveEvidence(request());
+  assert.equal(classifier.calls.length, 4);
+});
+
+test("periodic backoff advances only after healthy verdicts and resets after uncertainty", async () => {
+  const clock = new FakeClock();
+  const classifier = new SequenceClassifier([
+    {
+      verdict: "derailed",
+      confidence: 0.9,
+      reason_code: "looping",
+      evidence: [],
+    },
+    {
+      verdict: "healthy",
+      confidence: 0.9,
+      reason_code: "steady_progress",
+      evidence: [],
+    },
+    {
+      verdict: "uncertain",
+      confidence: 0.5,
+      reason_code: "insufficient_evidence",
+      evidence: [],
+    },
+    {
+      verdict: "healthy",
+      confidence: 0.9,
+      reason_code: "recovered",
+      evidence: [],
+    },
+  ]);
+  const scheduler = new WatchdogScheduler({
+    classifier,
+    clock: clock.now,
+  });
+
+  clock.advance(10 * 60_000);
+  await scheduler.onActiveEvidence(request());
+  clock.advance(10 * 60_000);
+  await scheduler.onActiveEvidence(request());
+  assert.equal(classifier.calls.length, 2);
+
+  clock.advance(20 * 60_000);
+  await scheduler.onActiveEvidence(request());
+  assert.equal(classifier.calls.length, 3);
+
+  clock.advance(10 * 60_000);
   await scheduler.onActiveEvidence(request());
   assert.equal(classifier.calls.length, 4);
 });
@@ -298,6 +412,265 @@ test("supervisor classifier seam is bypassed by mechanical completion, input, cr
   await silentSubmission;
 });
 
+test("mechanical-only provider events beyond every cadence checkpoint never invoke the classifier", async () => {
+  const clock = new FakeClock();
+  const classifier = new ClassifierSpy();
+  async function* mechanicalOnlyTurn() {
+    for (let minute = 4; minute <= 32; minute += 4) {
+      clock.advance(4 * 60_000);
+      yield {
+        type: "raw.provider" as const,
+        harness: "codex" as const,
+        payload: { bytes: minute },
+      };
+    }
+    clock.advance(60_000);
+    yield {
+      type: "status" as const,
+      level: "warning" as const,
+      code: "input_required",
+      message: "Choose a migration.",
+    };
+    yield {
+      type: "turn.completed" as const,
+      final_text: "mechanically complete",
+    };
+  }
+  const supervisor = new Supervisor({
+    runId: "xrun_watchdog_mechanical_past_cadence",
+    adapter: new FakeHarnessAdapter({ scriptedEvents: [mechanicalOnlyTurn()] }),
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    clock: clock.now,
+    scheduler: clock,
+    watchdogClassifier: classifier,
+  });
+  await supervisor.start();
+  await supervisor.submit("implement");
+
+  assert.equal(classifier.calls.length, 0);
+});
+
+test("a classifier verdict completed after close still persists aggregate cost and coverage", async () => {
+  const clock = new FakeClock();
+  const classifierStarted = deferred<void>();
+  const releaseClassifier = deferred<void>();
+  const releaseTurn = deferred<void>();
+  const telemetry: WatchdogTelemetry[] = [];
+  const metadata: Array<{
+    watchdog: {
+      invocation_count: number;
+      coverage_exhausted?: boolean;
+      estimated_cost_usd?: number;
+    };
+  }> = [];
+  const reasons: string[] = [];
+  const classifier: WatchdogClassifier = {
+    async classify() {
+      classifierStarted.resolve(undefined);
+      await releaseClassifier.promise;
+      return {
+        verdict: "derailed",
+        confidence: 0.9,
+        reason_code: "looping",
+        evidence: ["Repeated the same approach."],
+        usage: { input_tokens: 100, output_tokens: 20 },
+        estimated_cost_usd: 0.002,
+        output_bytes: 200,
+      };
+    },
+  };
+  async function* activeTurn() {
+    for (const minute of [4, 8]) {
+      clock.advance(4 * 60_000);
+      yield {
+        type: "raw.provider" as const,
+        harness: "codex" as const,
+        payload: { bytes: minute },
+      };
+    }
+    clock.advance(2 * 60_000);
+    yield {
+      type: "message.delta" as const,
+      message_id: "message_terminal_edge",
+      role: "assistant" as const,
+      delta: "classify this",
+    };
+    await releaseTurn.promise;
+    yield { type: "turn.completed" as const, final_text: "late completion" };
+  }
+  const supervisor = new Supervisor({
+    runId: "xrun_watchdog_terminal_telemetry",
+    adapter: new FakeHarnessAdapter({ scriptedEvents: [activeTurn()] }),
+    startOptions: { cwd: process.cwd() },
+    policy: {
+      silenceTimeoutMs: 300_000,
+      watchdog: { maximumCalls: 1 },
+    },
+    clock: clock.now,
+    scheduler: clock,
+    watchdogClassifier: classifier,
+    watchdogTelemetrySink: async (entry) => {
+      telemetry.push(entry);
+    },
+    metadataSink: async (state) => {
+      metadata.push(state);
+    },
+    eventSink: async (event) => {
+      reasons.push(event.reason);
+    },
+  });
+  await supervisor.start();
+  const submission = supervisor.submit("implement");
+  await classifierStarted.promise;
+  await supervisor.close();
+
+  releaseClassifier.resolve(undefined);
+  await waitForCondition(() => telemetry.length === 1);
+  releaseTurn.resolve(undefined);
+  await submission;
+
+  assert.equal(supervisor.inspect().phase, "completed");
+  assert.equal(reasons.includes("watchdog_derailed"), false);
+  assert.equal(telemetry[0]?.estimated_cost_usd, 0.002);
+  assert.equal(metadata.at(-1)?.watchdog.invocation_count, 1);
+  assert.equal(metadata.at(-1)?.watchdog.coverage_exhausted, true);
+  assert.equal(metadata.at(-1)?.watchdog.estimated_cost_usd, 0.002);
+});
+
+test("an in-flight classifier does not delay deterministic transport failure", async () => {
+  const clock = new FakeClock();
+  const classifierStarted = deferred<void>();
+  const releaseClassifier = deferred<void>();
+  const classifier: WatchdogClassifier = {
+    async classify() {
+      classifierStarted.resolve(undefined);
+      await releaseClassifier.promise;
+      return {
+        verdict: "healthy",
+        confidence: 0.9,
+        reason_code: "steady_progress",
+        evidence: [],
+      };
+    },
+  };
+  async function* activeThenFailedTurn() {
+    for (const minute of [4, 8]) {
+      clock.advance(4 * 60_000);
+      yield {
+        type: "raw.provider" as const,
+        harness: "codex" as const,
+        payload: { bytes: minute },
+      };
+    }
+    clock.advance(2 * 60_000);
+    yield {
+      type: "message.delta" as const,
+      message_id: "message_before_failure",
+      role: "assistant" as const,
+      delta: "active progress",
+    };
+    yield {
+      type: "error" as const,
+      code: "transport_lost",
+      message: "provider stdout closed",
+      recoverable: false,
+    };
+  }
+  const supervisor = new Supervisor({
+    runId: "xrun_watchdog_out_of_band",
+    adapter: new FakeHarnessAdapter({ scriptedEvents: [activeThenFailedTurn()] }),
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    clock: clock.now,
+    scheduler: clock,
+    watchdogClassifier: classifier,
+  });
+  await supervisor.start();
+  const submission = supervisor.submit("implement");
+  await classifierStarted.promise;
+
+  await waitForCondition(() => supervisor.inspect().phase === "failed");
+  assert.equal(supervisor.inspect().phase, "failed");
+
+  releaseClassifier.resolve(undefined);
+  await submission;
+});
+
+test("a prior-turn verdict cannot publish attention into a later running turn", async () => {
+  const clock = new FakeClock();
+  const classifierStarted = deferred<void>();
+  const releaseClassifier = deferred<void>();
+  const releaseSecondTurn = deferred<void>();
+  const reasons: string[] = [];
+  const telemetry: WatchdogTelemetry[] = [];
+  const classifier: WatchdogClassifier = {
+    async classify() {
+      classifierStarted.resolve(undefined);
+      await releaseClassifier.promise;
+      return {
+        verdict: "derailed",
+        confidence: 0.9,
+        reason_code: "stale_turn_loop",
+        evidence: ["This verdict belongs to the prior turn."],
+      };
+    },
+  };
+  async function* firstTurn() {
+    for (const minute of [4, 8]) {
+      clock.advance(4 * 60_000);
+      yield {
+        type: "raw.provider" as const,
+        harness: "codex" as const,
+        payload: { bytes: minute },
+      };
+    }
+    clock.advance(2 * 60_000);
+    yield {
+      type: "message.delta" as const,
+      message_id: "message_prior_turn",
+      role: "assistant" as const,
+      delta: "trigger classifier",
+    };
+    yield { type: "turn.completed" as const, final_text: "first complete" };
+  }
+  async function* secondTurn() {
+    await releaseSecondTurn.promise;
+    yield { type: "turn.completed" as const, final_text: "second complete" };
+  }
+  const supervisor = new Supervisor({
+    runId: "xrun_watchdog_stale_turn",
+    adapter: new FakeHarnessAdapter({
+      scriptedEvents: [firstTurn(), secondTurn()],
+    }),
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    clock: clock.now,
+    scheduler: clock,
+    watchdogClassifier: classifier,
+    watchdogTelemetrySink: async (entry) => {
+      telemetry.push(entry);
+    },
+    eventSink: async (event) => {
+      reasons.push(event.reason);
+    },
+  });
+  await supervisor.start();
+  await supervisor.submit("first");
+  await classifierStarted.promise;
+  const secondSubmission = supervisor.submit("second");
+  await waitForCondition(() => supervisor.inspect().phase === "running");
+
+  releaseClassifier.resolve(undefined);
+  await waitForCondition(() => telemetry.length === 1);
+
+  assert.equal(reasons.includes("watchdog_derailed"), false);
+  assert.equal(supervisor.inspect().phase, "running");
+
+  releaseSecondTurn.resolve(undefined);
+  await secondSubmission;
+});
+
 test("derailed semantic checks emit advisory attention without acting on the worker", async () => {
   const clock = new FakeClock();
   const telemetry: WatchdogTelemetry[] = [];
@@ -363,6 +736,67 @@ test("derailed semantic checks emit advisory attention without acting on the wor
   assert.match(telemetry[0]?.request_hash ?? "", /^[0-9a-f]{64}$/);
   assert.equal(JSON.stringify(telemetry).includes("original_prompt"), false);
   assert.equal(JSON.stringify(telemetry).includes("implement"), false);
+});
+
+test("classifier-authored attention evidence is sanitized before durable delivery", async () => {
+  const clock = new FakeClock();
+  const releaseTurn = deferred<void>();
+  const attentionSeen = deferred<{
+    readonly payload?: unknown;
+  }>();
+  const repoRoot = process.cwd();
+  const classifier = new ClassifierSpy({
+    verdict: "derailed",
+    confidence: 0.9,
+    reason_code: "secret_path_echo",
+    evidence: [`Read ${repoRoot}/.env api_key=classifier-secret`],
+  });
+  async function* activeTurn() {
+    for (const minute of [4, 8]) {
+      clock.advance(4 * 60_000);
+      yield {
+        type: "raw.provider" as const,
+        harness: "codex" as const,
+        payload: { bytes: minute },
+      };
+    }
+    clock.advance(2 * 60_000);
+    yield {
+      type: "message.delta" as const,
+      message_id: "message_sanitized_attention",
+      role: "assistant" as const,
+      delta: "active",
+    };
+    await releaseTurn.promise;
+    yield { type: "turn.completed" as const, final_text: "finished" };
+  }
+  const supervisor = new Supervisor({
+    runId: "xrun_watchdog_sanitized_attention",
+    adapter: new FakeHarnessAdapter({ scriptedEvents: [activeTurn()] }),
+    startOptions: { cwd: repoRoot },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    clock: clock.now,
+    scheduler: clock,
+    watchdogClassifier: classifier,
+    eventSink: async (event) => {
+      if (event.reason === "watchdog_derailed") {
+        attentionSeen.resolve(event);
+      }
+    },
+  });
+  await supervisor.start();
+  const submission = supervisor.submit("implement");
+  const attention = await attentionSeen.promise;
+
+  assert.deepEqual(attention.payload, {
+    verdict: "derailed",
+    confidence: 0.9,
+    reason_code: "secret_path_echo",
+    evidence: ["Read ./.env api_key=[REDACTED]"],
+  });
+
+  releaseTurn.resolve(undefined);
+  await submission;
 });
 
 test("high-confidence healthy semantic checks remain controller-silent", async () => {
@@ -616,6 +1050,21 @@ class ClassifierSpy implements WatchdogClassifier {
   }
 }
 
+class SequenceClassifier implements WatchdogClassifier {
+  readonly calls: WatchdogRequest[] = [];
+  #index = 0;
+
+  constructor(private readonly results: readonly WatchdogVerdict[]) {}
+
+  async classify(requestValue: WatchdogRequest): Promise<WatchdogVerdict> {
+    this.calls.push(requestValue);
+    const result = this.results[this.#index];
+    this.#index += 1;
+    assert.ok(result);
+    return result;
+  }
+}
+
 class FakeClock implements SupervisionScheduler {
   #now = Date.parse("2026-07-25T12:00:00.000Z");
   readonly #scheduled: {
@@ -660,4 +1109,14 @@ function deferred<T>(): {
     resolve = resolver;
   });
   return { promise, resolve };
+}
+
+async function waitForCondition(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.fail("condition was not observed");
 }

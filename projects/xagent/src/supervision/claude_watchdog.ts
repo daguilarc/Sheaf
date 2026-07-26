@@ -15,7 +15,9 @@ import { normalizeWatchdogVerdict } from "./watchdog.js";
 const DEFAULT_INPUT_LIMIT_BYTES = 64 * 1024;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 2 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
-const DEFAULT_MAX_BUDGET_USD = 0.01;
+const HAIKU_INPUT_USD_PER_MILLION_TOKENS = 1;
+const HAIKU_OUTPUT_USD_PER_MILLION_TOKENS = 5;
+const CLAUDE_CODE_OVERHEAD_RESERVE_USD = 0.02;
 
 const WATCHDOG_SCHEMA = {
   type: "object",
@@ -112,10 +114,17 @@ export class ClaudeWatchdogClassifier implements WatchdogClassifier {
       "outputLimitBytes",
     );
     this.#timeoutMs = positiveNumber(options.timeoutMs ?? DEFAULT_TIMEOUT_MS, "timeoutMs");
+    const minimumBudget = minimumWatchdogBudgetUsd(
+      this.#inputLimitBytes,
+      this.#outputLimitBytes,
+    );
     this.#maxBudgetUsd = positiveNumber(
-      options.maxBudgetUsd ?? DEFAULT_MAX_BUDGET_USD,
+      options.maxBudgetUsd ?? minimumBudget,
       "maxBudgetUsd",
     );
+    if (this.#maxBudgetUsd < minimumBudget) {
+      throw new Error(`maxBudgetUsd must be at least ${minimumBudget}.`);
+    }
     this.#confidenceFloor = confidence(options.confidenceFloor ?? 0.8);
   }
 
@@ -213,6 +222,30 @@ export class ClaudeWatchdogClassifier implements WatchdogClassifier {
       await rm(cwd, { recursive: true, force: true });
     }
   }
+}
+
+export function minimumWatchdogBudgetUsd(
+  inputLimitBytes: number,
+  outputLimitBytes: number,
+): number {
+  const inputBytes = nonNegativeSafeInteger(inputLimitBytes, "inputLimitBytes");
+  const outputBytes = nonNegativeSafeInteger(outputLimitBytes, "outputLimitBytes");
+  // One token per bounded UTF-8 byte is deliberately conservative for the
+  // request/response payload. The fixed reserve covers Claude Code's safe-mode
+  // system/schema prompt outside that byte envelope.
+  const envelopeCost =
+    inputBytes * HAIKU_INPUT_USD_PER_MILLION_TOKENS / 1_000_000
+    + outputBytes * HAIKU_OUTPUT_USD_PER_MILLION_TOKENS / 1_000_000;
+  return roundUpCents(envelopeCost + CLAUDE_CODE_OVERHEAD_RESERVE_USD);
+}
+
+export function maximumWatchdogRunExposureUsd(
+  maxBudgetUsd: number,
+  maximumCalls: number,
+): number {
+  const budget = positiveNumber(maxBudgetUsd, "maxBudgetUsd");
+  const calls = nonNegativeSafeInteger(maximumCalls, "maximumCalls");
+  return Math.round(budget * calls * 100) / 100;
 }
 
 export const spawnWatchdogProcess: WatchdogSpawn = async (
@@ -358,6 +391,17 @@ function positiveNumber(value: number, name: string): number {
     throw new Error(`${name} must be a positive finite number.`);
   }
   return value;
+}
+
+function nonNegativeSafeInteger(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative safe integer.`);
+  }
+  return value;
+}
+
+function roundUpCents(value: number): number {
+  return Math.ceil((value - Number.EPSILON) * 100) / 100;
 }
 
 function confidence(value: number): number {

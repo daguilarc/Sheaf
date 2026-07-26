@@ -2,6 +2,7 @@ import type {
   WatchdogClassifier,
   WatchdogPolicy,
   WatchdogRequest,
+  WatchdogUsage,
   WatchdogVerdict,
 } from "./types.js";
 
@@ -23,6 +24,7 @@ export type WatchdogSchedulerOptions = {
     request: WatchdogRequest,
     verdict: WatchdogVerdict,
     callCount: number,
+    currentTurn: boolean,
   ) => Promise<void> | void;
 };
 
@@ -33,6 +35,7 @@ export class WatchdogScheduler {
   readonly #minimumIntervalMs: number;
   readonly #maximumCalls: number;
   readonly #confidenceFloor: number;
+  readonly #outputLimitBytes: number;
   readonly #onVerdict: NonNullable<WatchdogSchedulerOptions["onVerdict"]>;
   #turnStartedAt = 0;
   #nextPeriodicAt = 0;
@@ -40,6 +43,7 @@ export class WatchdogScheduler {
   #lastInvocationAt?: number;
   #callsUsed = 0;
   #inFlight?: Promise<void>;
+  #turnGeneration = 0;
 
   constructor(options: WatchdogSchedulerOptions) {
     this.#classifier = options.classifier;
@@ -65,6 +69,7 @@ export class WatchdogScheduler {
     this.#confidenceFloor = validatedConfidence(
       options.policy?.confidenceFloor ?? DEFAULT_CONFIDENCE_FLOOR,
     );
+    this.#outputLimitBytes = options.policy?.outputLimitBytes ?? MAX_OUTPUT_BYTES;
     this.#onVerdict = options.onVerdict ?? (() => {});
     this.resetTurn();
   }
@@ -78,6 +83,7 @@ export class WatchdogScheduler {
   }
 
   resetTurn(): void {
+    this.#turnGeneration += 1;
     this.#turnStartedAt = this.#clock().getTime();
     this.#cadenceIndex = 0;
     this.#nextPeriodicAt = this.#turnStartedAt + this.#cadenceMs[0]!;
@@ -99,8 +105,11 @@ export class WatchdogScheduler {
     this.#callsUsed += 1;
     const callCount = this.#callsUsed;
     this.#lastInvocationAt = now;
-    this.#cadenceIndex = Math.min(this.#cadenceIndex + 1, this.#cadenceMs.length - 1);
-    this.#nextPeriodicAt = now + this.#cadenceMs[this.#cadenceIndex]!;
+    const trigger = periodicEligible ? "periodic" : "suspicion";
+    const turnGeneration = this.#turnGeneration;
+    if (trigger === "periodic") {
+      this.#nextPeriodicAt = now + this.#cadenceMs[this.#cadenceIndex]!;
+    }
     const controller = new AbortController();
     const pending = (async () => {
       let verdict: WatchdogVerdict;
@@ -109,11 +118,19 @@ export class WatchdogScheduler {
         verdict = withClassifierTelemetry(
           normalizeWatchdogVerdict(raw, this.#confidenceFloor),
           raw,
+          this.#outputLimitBytes,
         );
       } catch {
         verdict = uncertain("classifier_invocation_failed");
       }
-      await this.#onVerdict(request, verdict, callCount);
+      const currentTurn = turnGeneration === this.#turnGeneration;
+      if (trigger === "periodic" && currentTurn) {
+        this.#cadenceIndex = verdict.verdict === "healthy"
+          ? Math.min(this.#cadenceIndex + 1, this.#cadenceMs.length - 1)
+          : 0;
+        this.#nextPeriodicAt = now + this.#cadenceMs[this.#cadenceIndex]!;
+      }
+      await this.#onVerdict(request, verdict, callCount, currentTurn);
     })();
     this.#inFlight = pending.finally(() => {
       this.#inFlight = undefined;
@@ -179,15 +196,52 @@ export function normalizeWatchdogVerdict(
 function withClassifierTelemetry(
   normalized: WatchdogVerdict,
   raw: WatchdogVerdict,
+  outputLimitBytes: number,
 ): WatchdogVerdict {
+  const usage = normalizedUsage(raw.usage);
+  const estimatedCost = finiteNonNegative(raw.estimated_cost_usd);
+  const outputBytes = boundedNonNegativeInteger(raw.output_bytes, outputLimitBytes);
   return {
     ...normalized,
-    ...(raw.usage === undefined ? {} : { usage: raw.usage }),
-    ...(raw.estimated_cost_usd === undefined
-      ? {}
-      : { estimated_cost_usd: raw.estimated_cost_usd }),
-    ...(raw.output_bytes === undefined ? {} : { output_bytes: raw.output_bytes }),
+    ...(usage === undefined ? {} : { usage }),
+    ...(estimatedCost === undefined ? {} : { estimated_cost_usd: estimatedCost }),
+    ...(outputBytes === undefined ? {} : { output_bytes: outputBytes }),
   };
+}
+
+function normalizedUsage(value: unknown): WatchdogUsage | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const inputTokens = nonNegativeSafeInteger(value.input_tokens);
+  const outputTokens = nonNegativeSafeInteger(value.output_tokens);
+  if (inputTokens === undefined && outputTokens === undefined) {
+    return undefined;
+  }
+  return {
+    ...(inputTokens === undefined ? {} : { input_tokens: inputTokens }),
+    ...(outputTokens === undefined ? {} : { output_tokens: outputTokens }),
+  };
+}
+
+function finiteNonNegative(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function nonNegativeSafeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function boundedNonNegativeInteger(
+  value: unknown,
+  maximum: number,
+): number | undefined {
+  const normalized = nonNegativeSafeInteger(value);
+  return normalized === undefined ? undefined : Math.min(normalized, maximum + 1);
 }
 
 function validatedCadence(value: readonly number[] | undefined): readonly number[] {

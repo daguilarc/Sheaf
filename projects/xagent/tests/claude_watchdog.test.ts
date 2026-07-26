@@ -5,6 +5,8 @@ import test from "node:test";
 import {
   ClaudeWatchdogClassifier,
   WATCHDOG_SCHEMA_JSON,
+  maximumWatchdogRunExposureUsd,
+  minimumWatchdogBudgetUsd,
   spawnWatchdogProcess,
   type WatchdogSpawn,
   type WatchdogSpawnRequest,
@@ -59,12 +61,29 @@ test("launches one fresh isolated no-tools Haiku invocation with bounded stdin",
     "--mcp-config",
   ]);
   assert.equal(call.args[13], '{"mcpServers":{}}');
-  assert.ok(call.args.includes("--max-budget-usd"));
+  const budgetIndex = call.args.indexOf("--max-budget-usd");
+  assert.ok(budgetIndex >= 0);
+  assert.equal(call.args[budgetIndex + 1], "0.1");
   assert.deepEqual(call.cwdEntries, []);
   assert.ok(Buffer.byteLength(call.input, "utf8") <= 64 * 1024);
   assert.equal(call.args.some((arg) => arg.includes(process.cwd())), false);
   assert.equal(call.args.includes("--resume"), false);
   assert.equal(call.args.includes("--continue"), false);
+});
+
+test("default budget covers the maximum envelope and bounds eight-call exposure", () => {
+  assert.equal(minimumWatchdogBudgetUsd(64 * 1024, 2 * 1024), 0.1);
+  assert.equal(maximumWatchdogRunExposureUsd(0.1, 8), 0.8);
+  assert.throws(() => new ClaudeWatchdogClassifier({
+    maxBudgetUsd: 0.09,
+  }), /maxBudgetUsd must be at least 0.1/);
+
+  assert.equal(minimumWatchdogBudgetUsd(1024, 512), 0.03);
+  assert.doesNotThrow(() => new ClaudeWatchdogClassifier({
+    inputLimitBytes: 1024,
+    outputLimitBytes: 512,
+    maxBudgetUsd: 0.03,
+  }));
 });
 
 test("normalizes invalid JSON, failed invocation, over-budget, and oversized output", async () => {

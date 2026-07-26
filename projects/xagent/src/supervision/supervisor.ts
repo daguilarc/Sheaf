@@ -92,6 +92,7 @@ export class Supervisor {
     readonly reason_code: string;
   };
   #healthCallbackFailure?: Error;
+  #watchdogCallbackFailure?: Error;
 
   constructor(options: SupervisorOptions) {
     this.#runId = options.runId;
@@ -158,8 +159,8 @@ export class Supervisor {
       classifier,
       policy: this.#policy.watchdog,
       clock: this.#clock,
-      onVerdict: (request, verdict, callCount) =>
-        this.#recordWatchdogVerdict(request, verdict, callCount),
+      onVerdict: (request, verdict, callCount, currentTurn) =>
+        this.#recordWatchdogVerdict(request, verdict, callCount, currentTurn),
     });
     this.#initialPersistence = this.#publishState("starting", "supervisor_created", false);
   }
@@ -254,7 +255,7 @@ export class Supervisor {
         if (terminalPhases.has(this.#phase)) {
           return;
         }
-        await this.#recordProgress(event);
+        this.#recordProgress(event);
         const mechanical = mechanicalEventClassification(this.#health, event);
         if (mechanical?.kind === "attention") {
           await this.#applyHealthClassification(mechanical);
@@ -486,14 +487,18 @@ export class Supervisor {
     }
   }
 
-  async #recordProgress(event: AdapterEvent): Promise<void> {
+  #recordProgress(event: AdapterEvent): void {
     const activeSemanticEvidence = isActiveSemanticEvidence(event);
     this.#health.recordProviderActivity(activeSemanticEvidence ? "semantic" : "transport");
     this.#lastTransportProgressAt = this.#health.lastTransportActivityAt;
     this.#lastSemanticProgressAt = this.#health.lastSemanticActivityAt;
     this.#evidence?.record(event);
     if (activeSemanticEvidence && this.#evidence !== undefined) {
-      await this.#watchdogScheduler.onActiveEvidence(this.#evidence.snapshot());
+      void this.#watchdogScheduler
+        .onActiveEvidence(this.#evidence.snapshot())
+        .catch((error: unknown) => {
+          this.#watchdogCallbackFailure = asError(error);
+        });
     }
   }
 
@@ -501,11 +506,9 @@ export class Supervisor {
     request: WatchdogRequest,
     verdict: WatchdogVerdict,
     callCount: number,
+    currentTurn: boolean,
   ): Promise<void> {
     return this.#withLifecycleMutation(async () => {
-      if (this.#phase !== "running") {
-        return;
-      }
       this.#previousWatchdogVerdict = {
         verdict: verdict.verdict,
         confidence: verdict.confidence,
@@ -537,7 +540,11 @@ export class Supervisor {
           : { estimated_cost_usd: verdict.estimated_cost_usd }),
       };
 
-      if (verdict.verdict === "healthy") {
+      if (
+        this.#phase !== "running"
+        || !currentTurn
+        || verdict.verdict === "healthy"
+      ) {
         await this.#metadataSink(this.#persistenceState(
           this.#phase,
           this.#events.sequence,
@@ -553,12 +560,12 @@ export class Supervisor {
         type: "supervision.attention",
         phase: this.#phase,
         reason: `watchdog_${verdict.verdict}`,
-        payload: {
+        payload: sanitizeValue({
           verdict: verdict.verdict,
           confidence: verdict.confidence,
           reason_code: verdict.reason_code,
           evidence: verdict.evidence,
-        },
+        }, this.#startOptions.cwd),
       }, true, {
         watchdog: nextWatchdog,
         semanticAttention: true,
