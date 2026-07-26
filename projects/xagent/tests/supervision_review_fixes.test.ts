@@ -232,6 +232,103 @@ test("xagent_inspect reports an abandoned run from a prior incarnation via persi
   }
 });
 
+test("xagent_await delivers a durable attention event for an abandoned run on disk", async () => {
+  const sheafRoot = await mkdtemp(path.join(tmpdir(), "xagent-await-abandoned-"));
+  const logRoot = path.join(sheafRoot, "data", "xagent");
+  const {
+    appendNormalizedEvent,
+    createRunRecord,
+    updateRunSupervision,
+  } = await import("../src/logs.js");
+
+  const abandonedRunId = "xrun_abandoned_await";
+  const record = await createRunRecord({
+    repoRoot: sheafRoot,
+    logRoot,
+    runId: abandonedRunId,
+    harness: "codex",
+    mode: "subagent",
+    clock: () => new Date("2026-07-25T12:00:00.000Z"),
+  });
+  await appendNormalizedEvent(record, {
+    schema_version: 1,
+    type: "supervision.state",
+    run_id: abandonedRunId,
+    sequence: 4,
+    timestamp: "2026-07-25T12:02:00.000Z",
+    phase: "abandoned",
+    reason: "stale_run_abandoned",
+  });
+  await appendNormalizedEvent(record, {
+    schema_version: 1,
+    type: "supervision.attention",
+    run_id: abandonedRunId,
+    sequence: 5,
+    timestamp: "2026-07-25T12:02:00.001Z",
+    phase: "abandoned",
+    reason: "stale_run_abandoned",
+    payload: {
+      cleanup: "pending",
+      owned_process_recorded: false,
+    },
+  });
+  await appendNormalizedEvent(record, {
+    schema_version: 1,
+    type: "supervision.state",
+    run_id: abandonedRunId,
+    sequence: 6,
+    timestamp: "2026-07-25T12:02:00.002Z",
+    phase: "abandoned",
+    reason: "stale_process_not_found",
+  });
+  await updateRunSupervision(record, {
+    phase: "abandoned",
+    sequence: 6,
+    last_transport_progress_at: "2026-07-25T12:01:00.000Z",
+    last_semantic_progress_at: "2026-07-25T12:00:30.000Z",
+    watchdog: {
+      invocation_count: 0,
+      controller_wake_count: 1,
+      deterministic_alert_count: 1,
+      evidence_truncation_count: 0,
+    },
+  });
+
+  const runManager = new XagentRunManager({
+    repoRoot: sheafRoot,
+    logRoot,
+    adapterFactory: () => new FakeHarnessAdapter(),
+    policy: testPolicy,
+  });
+  try {
+    const first = await runManager.awaitRun({
+      run_id: abandonedRunId,
+      after_sequence: 0,
+      deadline_seconds: 5,
+    });
+    assert.equal(first.event, "supervision.state");
+    assert.equal(first.phase, "abandoned");
+    assert.equal(first.reason, "stale_run_abandoned");
+    assert.equal(first.sequence, 4);
+
+    const attention = await runManager.awaitRun({
+      run_id: abandonedRunId,
+      after_sequence: first.sequence,
+      deadline_seconds: 5,
+    });
+    assert.equal(attention.event, "supervision.attention");
+    assert.equal(attention.phase, "abandoned");
+    assert.equal(attention.reason, "stale_run_abandoned");
+    assert.equal(attention.sequence, 5);
+    assert.deepEqual(attention.payload, {
+      cleanup: "pending",
+      owned_process_recorded: false,
+    });
+  } finally {
+    await runManager.closeAll();
+  }
+});
+
 // Finding #4: xagent_inspect live run surfaces callback_failure from finding #1.
 test("xagent_inspect surfaces a live supervisor callback_failure", async () => {
   const logRoot = await mkdtemp(path.join(tmpdir(), "xagent-inspect-live-"));
