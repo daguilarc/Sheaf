@@ -443,6 +443,24 @@ const std::vector<UISystemMessageChoice>& UISystemMessageCatalog() {
     return catalog;
 }
 
+const UISystemMessageChoice* FindUISystemMessageChoice(UISystemMessage message) {
+    const auto& catalog = UISystemMessageCatalog();
+    const auto found = std::find_if(catalog.begin(), catalog.end(), [message](const auto& choice) {
+        return choice.message == message;
+    });
+    return found == catalog.end() ? nullptr : &*found;
+}
+
+MidiControllerSystemMessageAssociation MakeUISystemMessageAssociation(
+    UISystemMessage message, std::size_t argument) {
+    MidiControllerSystemMessageAssociation association;
+    association.press = MessageIn::Clock(0);
+    association.feedback = association.press;
+    ApplyUISystemMessage(association, message);
+    SetUISystemMessageArg(association, argument);
+    return association;
+}
+
 namespace {
 
 std::string DeviceLabel(const MidiEndpointRef& ref, MidiEndpointStatus status) {

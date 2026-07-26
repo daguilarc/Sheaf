@@ -6,6 +6,7 @@
 
 #include <iostream>
 #include <initializer_list>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -211,6 +212,165 @@ void RequireDeviceIds(const std::vector<synth::MidiDeviceInfoRef>& devices,
         REQUIRE_TRUE(devices[ix].identifier == id);
         ++ix;
     }
+}
+
+const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, std::string_view id) {
+    for (const synth::ui::Node& node : tree.nodes) {
+        if (node.id.value == id) {
+            return &node;
+        }
+    }
+    return nullptr;
+}
+
+std::vector<const synth::ui::Node*> NodesOfKind(const synth::ui::NodeTree& tree,
+                                                synth::ui::NodeKind kind) {
+    std::vector<const synth::ui::Node*> result;
+    for (const synth::ui::Node& node : tree.nodes) {
+        if (node.kind == kind) {
+            result.push_back(&node);
+        }
+    }
+    return result;
+}
+
+TEST_CASE(MfTwisterConfigFormBuildsClosedSixButtonSurfaceAndRoutesPortableActions) {
+    synth::MfTwisterConfigForm form;
+    const synth::ui::NodeTree initialTree = form.BuildTree();
+
+    const synth::ui::Node* slot =
+        FindNodeById(initialTree, "controller-wizard.twister.encoder-slot");
+    REQUIRE_TRUE(slot != nullptr);
+    REQUIRE_TRUE(slot->kind == synth::ui::NodeKind::TextField);
+    REQUIRE_TRUE(slot->text == "0");
+
+    const std::vector<const synth::ui::Node*> combos =
+        NodesOfKind(initialTree, synth::ui::NodeKind::ComboBox);
+    const std::vector<const synth::ui::Node*> arguments =
+        NodesOfKind(initialTree, synth::ui::NodeKind::TextField);
+    REQUIRE_TRUE(combos.size() == synth::MfTwisterConfigForm::kButtonCount);
+    REQUIRE_TRUE(arguments.size() == synth::MfTwisterConfigForm::kButtonCount + 1);
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.button.0.message") != nullptr);
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.button.5.message") != nullptr);
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.button.0.argument") != nullptr);
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.button.5.argument") != nullptr);
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.0")->label ==
+                 "Left (CC 8-10)");
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.1")->label ==
+                 "Right (CC 11-13)");
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.0")->children.size() == 3);
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.1")->children.size() == 3);
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.0")->children[0].value ==
+                 "controller-wizard.twister.button.0");
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.0")->children[2].value ==
+                 "controller-wizard.twister.button.2");
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.1")->children[0].value ==
+                 "controller-wizard.twister.button.3");
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.1")->children[2].value ==
+                 "controller-wizard.twister.button.5");
+
+    const std::vector<std::string> expectedLabels = {
+        "Toggle Reset", "Hold Reset", "Toggle Random", "Hold Random",
+        "Toggle Random Mod", "Hold Random Mod", "Toggle Gesture Select",
+        "Hold Gesture Select", "Bank Select", "Next Bank", "Previous Bank",
+        "Start", "Continue", "Stop", "Clock", "Scene Select"};
+    REQUIRE_TRUE(combos.front()->options.size() == expectedLabels.size());
+    for (std::size_t ix = 0; ix < expectedLabels.size(); ++ix) {
+        REQUIRE_TRUE(combos.front()->options[ix].label == expectedLabels[ix]);
+    }
+    REQUIRE_TRUE(combos.front()->selectedOption == "hold-reset");
+    REQUIRE_TRUE(combos[1]->selectedOption == "hold-random");
+    REQUIRE_TRUE(combos[2]->selectedOption == "hold-random-mod");
+    REQUIRE_TRUE(combos[3]->selectedOption == "next-bank");
+    REQUIRE_TRUE(combos[4]->selectedOption == "start");
+    REQUIRE_TRUE(combos[5]->selectedOption == "previous-bank");
+    REQUIRE_TRUE(!FindNodeById(initialTree, "controller-wizard.twister.button.3.argument")->enabled);
+
+    form.DispatchAction(synth::ui::Action::WithValue(
+        "controller-wizard.twister.encoder-slot", "17"));
+    form.DispatchAction(synth::ui::Action::WithValue(
+        "controller-wizard.twister.button.3.message", "scene-select"));
+    form.DispatchAction(synth::ui::Action::WithValue(
+        "controller-wizard.twister.button.3.argument", "6"));
+    const synth::ui::NodeTree editedTree = form.BuildTree();
+    REQUIRE_TRUE(FindNodeById(editedTree, "controller-wizard.twister.encoder-slot")->text == "17");
+    REQUIRE_TRUE(FindNodeById(editedTree, "controller-wizard.twister.button.3.message")->selectedOption ==
+                 "scene-select");
+    REQUIRE_TRUE(FindNodeById(editedTree, "controller-wizard.twister.button.3.argument")->enabled);
+    REQUIRE_TRUE(FindNodeById(editedTree, "controller-wizard.twister.button.3.argument")->text == "6");
+
+    const std::vector<std::pair<std::string, bool>> argumentEnabled = {
+        {"toggle-reset", false}, {"hold-reset", false},
+        {"toggle-random", false}, {"hold-random", false},
+        {"toggle-random-mod", false}, {"hold-random-mod", false},
+        {"toggle-gesture-select", true}, {"hold-gesture-select", true},
+        {"bank-select", true}, {"next-bank", false}, {"previous-bank", false},
+        {"start", false}, {"continue", false}, {"stop", false},
+        {"clock", false}, {"scene-select", true}};
+    for (const auto& [messageId, enabled] : argumentEnabled) {
+        form.DispatchAction(synth::ui::Action::WithValue(
+            "controller-wizard.twister.button.0.message", messageId));
+        REQUIRE_TRUE(FindNodeById(form.BuildTree(), "controller-wizard.twister.button.0.argument")->enabled ==
+                     enabled);
+    }
+}
+
+TEST_CASE(MfTwisterConfigFormValidatesExactSizeTIntegerTextAndIgnoresDisabledArguments) {
+    synth::MfTwisterConfigForm form;
+    std::string error;
+
+    form.encoderSlotText = "0";
+    REQUIRE_TRUE(form.Validate(error));
+    form.encoderSlotText = std::to_string(std::numeric_limits<std::size_t>::max());
+    REQUIRE_TRUE(form.Validate(error));
+
+    for (const std::string& invalid : std::vector<std::string>{
+             {}, "-1", "1x", "   ", "184467440737095516160"}) {
+        form.encoderSlotText = invalid;
+        REQUIRE_TRUE(!form.Validate(error));
+        REQUIRE_TRUE(!error.empty());
+    }
+
+    form.encoderSlotText = "0";
+    form.buttons[0].message = synth::UISystemMessage::Start;
+    form.buttons[0].argumentText = "not-a-number";
+    REQUIRE_TRUE(form.Validate(error));
+    form.buttons[0].message = synth::UISystemMessage::SceneSelect;
+    REQUIRE_TRUE(!form.Validate(error));
+    form.buttons[0].argumentText = std::to_string(std::numeric_limits<std::size_t>::max());
+    REQUIRE_TRUE(form.Validate(error));
+    for (const std::string& invalid : std::vector<std::string>{
+             {}, "-1", "1x", "   ", "184467440737095516160"}) {
+        form.buttons[0].argumentText = invalid;
+        REQUIRE_TRUE(!form.Validate(error));
+        REQUIRE_TRUE(!error.empty());
+    }
+    form.buttons[0].argumentText = "1x";
+    const synth::ui::NodeTree invalidTree = form.BuildTree();
+    REQUIRE_TRUE(FindNodeById(invalidTree, "controller-wizard.twister.button.0.argument.error") != nullptr);
+    form.buttons[0].message = synth::UISystemMessage::NextParamBank;
+    REQUIRE_TRUE(form.Validate(error));
+    const synth::ui::NodeTree disabledTree = form.BuildTree();
+    REQUIRE_TRUE(FindNodeById(disabledTree, "controller-wizard.twister.button.0.argument.error") == nullptr);
+
+    form.buttons[0].message = synth::UISystemMessage::ParamIncDec;
+    REQUIRE_TRUE(!form.Validate(error));
+    REQUIRE_TRUE(!error.empty());
+}
+
+TEST_CASE(UISystemMessageHelpersExposeCatalogLabelsAndPreserveBankSlotArguments) {
+    const synth::UISystemMessageChoice* holdReset =
+        synth::FindUISystemMessageChoice(synth::UISystemMessage::HoldReset);
+    REQUIRE_TRUE(holdReset != nullptr);
+    REQUIRE_TRUE(holdReset->label == "Hold Reset");
+    REQUIRE_TRUE(synth::FindUISystemMessageChoice(synth::UISystemMessage::SceneSelect) != nullptr);
+
+    const synth::MidiControllerSystemMessageAssociation next =
+        synth::MakeUISystemMessageAssociation(synth::UISystemMessage::NextParamBank, 23);
+    REQUIRE_TRUE(next.press.type == synth::MessageIn::Type::NextParamBank);
+    REQUIRE_TRUE(next.press.slotIx == 23);
+    REQUIRE_TRUE(next.feedback.type == synth::MessageIn::Type::NextParamBank);
+    REQUIRE_TRUE(next.feedback.slotIx == 23);
 }
 
 TEST_CASE(ConfigFormOwnsStateAndDispatchActionMutatesIt) {

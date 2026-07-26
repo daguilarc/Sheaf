@@ -1,9 +1,11 @@
 #pragma once
 
 #include "synth/MidiController.hpp"
+#include "synth/MidiConfigViewModel.hpp"
 #include "synth/MidiReconcile.hpp"
 #include "synth/PortableUI.hpp"
 
+#include <array>
 #include <cassert>
 #include <concepts>
 #include <functional>
@@ -22,6 +24,30 @@ public:
     ~ControllerConfigForm() override = default;
     virtual std::string_view WizardId() const = 0;
     virtual bool Validate(std::string& error) const = 0;
+};
+
+struct MfTwisterButtonConfig {
+    UISystemMessage message;
+    std::string argumentText = "0";
+};
+
+class MfTwisterConfigForm final : public ControllerConfigForm {
+public:
+    static constexpr std::size_t kButtonCount = 6;
+
+    MfTwisterConfigForm();
+
+    std::string encoderSlotText = "0";
+    std::array<MfTwisterButtonConfig, kButtonCount> buttons;
+
+    std::string_view WizardId() const override;
+    ui::NodeTree BuildTree() override;
+    void SetActionHandler(ActionHandler handler) override;
+    void DispatchAction(const ui::Action&) override;
+    bool Validate(std::string& error) const override;
+
+private:
+    ActionHandler actionHandler_;
 };
 
 struct WizardGenerationContext {

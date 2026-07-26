@@ -212,6 +212,17 @@ struct UISystemMessageChoice {
 
 const std::vector<UISystemMessageChoice>& UISystemMessageCatalog();
 
+// Finds the catalog entry for a message value.  Forms use this instead of
+// duplicating the Controllers page's display labels.
+const UISystemMessageChoice* FindUISystemMessageChoice(UISystemMessage message);
+
+// Builds the press/release/feedback association used by the Controllers
+// page for a catalog message.  `argument` follows the existing low-level
+// mapping policy: Next/Previous Bank store it in slotIx, while Bank Select,
+// Gesture Select, and Scene Select use their respective argument fields.
+MidiControllerSystemMessageAssociation MakeUISystemMessageAssociation(
+    UISystemMessage message, std::size_t argument = 0);
+
 // True for every field the renderer formats as a plain integer (no decimal
 // places -- Channel, Cc, SlotIx, Position, GestureIx, LaunchpadX/Y,
 // WrldBldrX/Y). False for TurnStep (a decimal float) and for the
