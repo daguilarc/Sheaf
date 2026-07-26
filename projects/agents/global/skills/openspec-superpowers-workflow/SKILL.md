@@ -12,6 +12,8 @@ instructions.
 
 These rules apply to every subagent dispatched anywhere in this workflow:
 
+- If the user specifically tells you to use the OpenSpec Superpowers workflow,
+  you are authorized to use xagent for the current change's SDD.
 - **Reviews run on the opposite provider via xagent.** Any review — the
   pre-planning spec review, per-task spec/quality reviews, re-reviews, and
   the final whole-branch review — is dispatched through xagent
