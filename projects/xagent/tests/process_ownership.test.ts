@@ -608,6 +608,130 @@ test("ownership persistence failure closes a primed provider turn before termina
   }
 });
 
+test("reconciliation skips runs owned by the live manager (I-1 race regression)", async () => {
+  // Reproduces the I-1 race: after C1 moved reconciliation to run after
+  // `listen()` resolved, a run created in the listen→reconcile window
+  // would be enumerated from the log root, classified as stale, marked
+  // `abandoned`, and have its (matching) owned provider process group
+  // SIGTERMed — silently destroying in-flight work owned by this very
+  // service instance. The live manager's `listRunIds()` is passed to
+  // `reconcileStaleRuns` so those runs are skipped.
+  //
+  const fixture = await createActiveRunFixture("live_owned");
+  const signalledGroups: number[] = [];
+  const inspector = fakeInspector(
+    {
+      pid: 4101,
+      process_group_id: 5101,
+      start_identity: "process-start-a",
+    },
+    signalledGroups,
+  );
+  const metadataBefore = await readFile(fixture.record.metadataPath, "utf8");
+  const logBefore = await readFile(fixture.record.normalizedLogPath, "utf8");
+
+  // With the live manager owning this run, reconciliation must skip it.
+  //
+  const skipped = await reconcileStaleRuns(
+    fixture.logRoot,
+    inspector,
+    new Set([fixture.runId]),
+  );
+
+  assert.deepEqual(skipped, []);
+  assert.deepEqual(signalledGroups, []);
+  assert.equal(await readFile(fixture.record.metadataPath, "utf8"), metadataBefore);
+  assert.equal(await readFile(fixture.record.normalizedLogPath, "utf8"), logBefore);
+
+  // Without the liveRunIds guard, the same run WOULD be abandoned —
+  // proving the skip (not some other condition) is what protects it.
+  //
+  const notSkipped = await reconcileStaleRuns(fixture.logRoot, inspector);
+  assert.deepEqual(notSkipped, [{
+    run_id: fixture.runId,
+    cleanup: "terminated",
+  }]);
+  assert.deepEqual(signalledGroups, [5101]);
+  const metadataAfter = JSON.parse(await readFile(fixture.record.metadataPath, "utf8"));
+  assert.equal(metadataAfter.supervision.phase, "abandoned");
+  assert.equal(metadataAfter.exit_status, "failed");
+});
+
+test("reconciliation does not abandon a completed legacy run (I-2 regression)", async () => {
+  // Reproduces the I-2 bug: the legacy `xagent run` runtime only calls
+  // `updateRunExitStatus` and never advances `supervision.phase`, so a
+  // successful interactive run persisted `phase: "starting"` alongside
+  // `exit_status: "completed"`. The next service start enumerated it
+  // as stale and rewrote it to `abandoned`/`failed` with fabricated
+  // `stale_run_abandoned` attention events. The fix advances the
+  // supervision phase to a terminal value inside `updateRunExitStatus`,
+  // so list/reconcile stay consistent for both supervised and legacy
+  // paths.
+  //
+  const fixture = await createActiveRunFixture("legacy_completed");
+  // Simulate the legacy runtime's terminal update: a successful
+  // interactive run that calls only `updateRunExitStatus("completed")`.
+  //
+  await updateRunExitStatus(fixture.record, "completed");
+
+  const metadataAfterExit = JSON.parse(await readFile(fixture.record.metadataPath, "utf8"));
+  assert.equal(metadataAfterExit.exit_status, "completed");
+  assert.equal(
+    metadataAfterExit.supervision.phase,
+    "completed",
+    "updateRunExitStatus must advance supervision.phase to a terminal value matching the exit status",
+  );
+
+  // Reconciliation must NOT enumerate a `completed` run as stale.
+  //
+  const signalledGroups: number[] = [];
+  const result = await reconcileStaleRuns(
+    fixture.logRoot,
+    fakeInspector(
+      {
+        pid: 4101,
+        process_group_id: 5101,
+        start_identity: "process-start-a",
+      },
+      signalledGroups,
+    ),
+  );
+
+  assert.deepEqual(result, []);
+  assert.deepEqual(signalledGroups, []);
+  const metadataAfterReconcile = JSON.parse(await readFile(fixture.record.metadataPath, "utf8"));
+  assert.equal(metadataAfterReconcile.supervision.phase, "completed");
+  assert.equal(metadataAfterReconcile.exit_status, "completed");
+  // No fabricated `stale_run_abandoned` attention events in the log.
+  //
+  const events = await readJsonLines(fixture.record.normalizedLogPath);
+  assert.equal(
+    events.some((event) => event.reason === "stale_run_abandoned"),
+    false,
+    "a completed legacy run must not be abandoned on reconcile",
+  );
+});
+
+test("updateRunExitStatus does not overwrite a more specific terminal phase already published", async () => {
+  // A supervised run that already published `cancelled` or `abandoned`
+  // through the supervisor's metadataSink must not have its phase
+  // rewritten by a later `updateRunExitStatus("failed")` call (e.g. a
+  // crash-handler close path). Only non-terminal phases are advanced.
+  //
+  const fixture = await createActiveRunFixture("already_terminal");
+  await updateRunSupervision(fixture.record, {
+    ...fixture.record.supervision,
+    phase: "cancelled",
+    sequence: 9,
+    owned_process: fixture.record.owned_process,
+  });
+  await updateRunExitStatus(fixture.record, "failed");
+
+  const metadata = JSON.parse(await readFile(fixture.record.metadataPath, "utf8"));
+  assert.equal(metadata.exit_status, "failed");
+  assert.equal(metadata.supervision.phase, "cancelled");
+});
+
 test("reconciliation terminates only a matching owned process group and records abandonment first", async () => {
   const fixture = await createActiveRunFixture("matching");
   const signalledGroups: number[] = [];

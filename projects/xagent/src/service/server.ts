@@ -56,6 +56,7 @@ export type XagentServerOptions = {
   readonly shutdownController: XagentShutdownController;
   readonly serverStartTime?: number;
   readonly warning?: string;
+  readonly ready?: boolean;
   readonly mcpHandler?: XagentMcpHandler;
 };
 
@@ -69,6 +70,15 @@ export type XagentServer = {
   // post-listen rather than passed at construction time.
   //
   setWarning(warning: string | undefined): void;
+  // Gates request acceptance and `/health`'s `healthy` field. service_main
+  // constructs the server with `ready: false` and flips it to `true` only
+  // after startup reconciliation resolves, so `/health` does not report
+  // `healthy: true` (and `/mcp` rejects with 503) during the
+  // listen→reconcile window. This prevents the skill's "verify healthy,
+  // then `xagent_start`" sequence from landing a brand-new run in the
+  // reconciliation scan window where it could be marked abandoned.
+  //
+  setReady(ready: boolean): void;
 };
 
 export function createXagentServer(options: XagentServerOptions): XagentServer {
@@ -79,6 +89,13 @@ export function createXagentServer(options: XagentServerOptions): XagentServer {
   // the same wiring. See setWarning below.
   //
   let healthWarning: string | undefined = options.warning;
+  // `ready` gates `/health`'s `healthy` field and `/mcp` request
+  // acceptance. It defaults to `true` so the existing test helpers that
+  // build a server and immediately serve requests (without going through
+  // service_main) keep working; service_main passes `ready: false` and
+  // flips it after reconciliation resolves.
+  //
+  let ready = options.ready ?? true;
   // DNS rebinding protection allow lists. The shipped production port
   // (9005) is always allowed so a service that rebinds to that port
   // before `listen()` resolves is still reachable; the actual ephemeral
@@ -127,9 +144,12 @@ export function createXagentServer(options: XagentServerOptions): XagentServer {
 
     if (method === "GET" && url.pathname === "/health") {
       const body: Record<string, unknown> = {
-        healthy: true,
+        healthy: ready,
         uptime: computeUptimeSeconds(serverStartTime),
       };
+      if (!ready) {
+        body.reason = "reconciling";
+      }
       if (healthWarning !== undefined) {
         body.warning = healthWarning;
       }
@@ -146,6 +166,18 @@ export function createXagentServer(options: XagentServerOptions): XagentServer {
     }
 
     if (url.pathname === "/mcp") {
+      // Reject controller work while startup reconciliation is still
+      // running: a run created in the listen→reconcile window would be
+      // enumerated from the log root and could be marked abandoned by
+      // the in-flight reconciliation scan. Conductor polls `/health`
+      // and only proceeds once `healthy: true`, so this 503 is the
+      // primary gate; the liveRunIds skip in reconcileStaleRuns is the
+      // defense-in-depth backstop for any caller that races the gate.
+      //
+      if (!ready) {
+        sendJson(response, 503, { error: "not_ready", reason: "reconciling" });
+        return;
+      }
       await mcpHandler.handleRequest(request, response);
       return;
     }
@@ -181,6 +213,9 @@ export function createXagentServer(options: XagentServerOptions): XagentServer {
     },
     setWarning(warning: string | undefined): void {
       healthWarning = warning;
+    },
+    setReady(value: boolean): void {
+      ready = value;
     },
     close(): Promise<void> {
       acceptingConnections = false;

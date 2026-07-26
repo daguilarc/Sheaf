@@ -86,9 +86,38 @@ export async function appendWatchdogTelemetry(record, telemetry) {
 }
 export async function updateRunExitStatus(record, exitStatus, clock = () => new Date()) {
     record.exit_status = exitStatus;
+    // Advance the supervision phase to a terminal value matching the exit
+    // status. The legacy `xagent run` runtime (runtime.ts) only calls
+    // `updateRunExitStatus` and never advances `supervision.phase`, so
+    // without this advancement a successful interactive run would persist
+    // `phase: "starting"` alongside `exit_status: "completed"`. The next
+    // service start would then enumerate it from the log root as stale
+    // and rewrite it to `abandoned`/`failed` with fabricated
+    // `stale_run_abandoned` attention events — corrupting every
+    // historical successful interactive run. Advancing phase here keeps
+    // list/reconcile consistent for both supervised and legacy paths. We
+    // only advance when the exit status is terminal AND the current phase
+    // is non-terminal, so a supervised run that already published a more
+    // specific terminal phase (`cancelled`/`abandoned`) is not
+    // overwritten, and an intermediate `running` status update does not
+    // falsely mark a run completed.
+    //
+    if ((exitStatus === "completed" || exitStatus === "failed")
+        && !terminalSupervisionPhases.has(record.supervision.phase)) {
+        record.supervision = {
+            ...record.supervision,
+            phase: exitStatus === "failed" ? "failed" : "completed",
+        };
+    }
     record.updated_at = clock().toISOString();
     await writeMetadata(record);
 }
+const terminalSupervisionPhases = new Set([
+    "completed",
+    "failed",
+    "cancelled",
+    "abandoned",
+]);
 export async function updateRunSupervision(record, update, clock = () => new Date()) {
     const { watchdog, owned_process, ...supervision } = update;
     record.supervision = supervision;

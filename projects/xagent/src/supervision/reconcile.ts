@@ -36,10 +36,23 @@ export type ReconciliationResult = {
 export async function reconcileStaleRuns(
   logRoot: string,
   processInspector: ProcessInspector,
+  liveRunIds?: ReadonlySet<string>,
 ): Promise<ReconciliationResult[]> {
   const results: ReconciliationResult[] = [];
   for (const metadata of await listRuns(logRoot)) {
     if (!activePhases.has(metadata.supervision.phase)) {
+      continue;
+    }
+    // Skip runs owned by the live XagentRunManager of this same service
+    // instance. After C1 moved reconciliation to run after `listen()`
+    // resolved, a run created in the listen→reconcile window would
+    // otherwise be enumerated from the log root, classified as stale,
+    // marked `abandoned`, and have its (matching) owned provider
+    // process group SIGTERMed — silently destroying in-flight work
+    // owned by this very instance. The live manager's `listRunIds()`
+    // is the authoritative set of runs this instance owns.
+    //
+    if (liveRunIds !== undefined && liveRunIds.has(metadata.run_id)) {
       continue;
     }
     try {

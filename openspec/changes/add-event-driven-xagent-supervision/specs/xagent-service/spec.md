@@ -129,7 +129,7 @@ WHEN `xagent_start` receives a working directory, THE xagent service SHALL requi
 
 ### Requirement: xsvc-7 — Recovery: stale ownership reconciliation
 
-WHEN the xagent service starts with metadata for a non-terminal run that it cannot safely reattach, THE service SHALL mark the run `abandoned`, emit deterministic attention, and clean up a stale provider process only when persisted PID and process-start identity prove that the process is the one xagent owned. THE service SHALL bind its listener (or otherwise acquire exclusive ownership of the bind port) BEFORE running reconciliation, so a duplicate start against an already-occupied port exits on `EADDRINUSE` without reconciling, signalling, or abandoning runs owned by the running instance.
+WHEN the xagent service starts with metadata for a non-terminal run that it cannot safely reattach, THE service SHALL mark the run `abandoned`, emit deterministic attention, and clean up a stale provider process only when persisted PID and process-start identity prove that the process is the one xagent owned. THE service SHALL bind its listener (or otherwise acquire exclusive ownership of the bind port) BEFORE running reconciliation, so a duplicate start against an already-occupied port exits on `EADDRINUSE` without reconciling, signalling, or abandoning runs owned by the running instance. THE service SHALL NOT accept controller work (`/mcp`) or report `healthy: true` on `/health` until startup reconciliation resolves, so a run created in the listen→reconcile window cannot be enumerated by the in-flight reconciliation scan. THE service SHALL skip runs owned by the live `XagentRunManager` of this same instance when reconciling, so a run created after the bind but before reconciliation resolves is not marked `abandoned` or signalled. Reconciliation SHALL only enumerate runs whose persisted `supervision.phase` is non-terminal (`starting`, `running`, or `ready`); runs whose persisted phase is already terminal (`completed`, `failed`, `cancelled`, or `abandoned`) — including legacy `xagent run` records advanced to a terminal phase by their exit-status update — SHALL NOT be reconciled.
 
 #### Scenario: Stale owned process identity matches
 
@@ -149,3 +149,22 @@ WHEN the xagent service starts with metadata for a non-terminal run that it cann
 - **THEN** the second instance exits on `EADDRINUSE` before running reconciliation
 - **AND** does not signal, terminate, or abandon any run owned by the running instance
 - **AND** leaves every live owned worker process running
+
+#### Scenario: Health gate holds controller work until reconciliation resolves
+
+- **WHEN** the xagent service has bound its listener but startup reconciliation has not yet resolved
+- **THEN** `GET /health` responds 200 with `healthy: false` and a `reason` indicating reconciliation in progress
+- **AND** `POST /mcp` (controller work) is rejected with 503 until reconciliation resolves
+- **AND** `POST /exit` remains available so a wedged startup can still be stopped
+
+#### Scenario: Reconciliation skips runs owned by the live instance
+
+- **WHEN** a run is created through the live `XagentRunManager` after the listener binds but before reconciliation resolves
+- **THEN** reconciliation skips that run (it is in the live manager's `listRunIds()`)
+- **AND** does not mark it `abandoned`, signal its owned process, or append `stale_run_abandoned` attention events to its log
+
+#### Scenario: Legacy completed run is not reconciled as stale
+
+- **WHEN** startup discovers a run whose `exit_status` is `completed` or `failed` and whose `supervision.phase` was advanced to a terminal value by the legacy `xagent run` exit-status update
+- **THEN** reconciliation does not enumerate the run as stale
+- **AND** leaves its phase, exit status, and normalized log unchanged

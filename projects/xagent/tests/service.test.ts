@@ -98,6 +98,53 @@ test("GET /health includes a warning only when supervision is degraded", async (
   });
 });
 
+// I-1: while service_main is running startup reconciliation, `/health`
+// must report `healthy: false` (with a `reason`) and `/mcp` must reject
+// with 503, so Conductor's "verify healthy, then `xagent_start`"
+// sequence waits for reconciliation to finish instead of landing a
+// brand-new run in the reconciliation scan window. The server defaults
+// to `ready: true` for the existing test helpers; service_main passes
+// `ready: false` and flips it after reconciliation resolves.
+//
+test("GET /health reports healthy:false and /mcp rejects 503 while the server is not ready", async () => {
+  await withServiceServer({ ready: false }, async ({ port, server }) => {
+    const healthBefore = await fetchJson(port, "GET", "/health");
+    assert.equal(healthBefore.status, 200);
+    const healthBodyBefore = healthBefore.body as {
+      healthy: boolean;
+      reason?: string;
+    };
+    assert.equal(healthBodyBefore.healthy, false);
+    assert.equal(healthBodyBefore.reason, "reconciling");
+
+    const mcpBefore = await fetchJson(port, "POST", "/mcp");
+    assert.equal(mcpBefore.status, 503);
+    const mcpBodyBefore = mcpBefore.body as { error: string; reason: string };
+    assert.equal(mcpBodyBefore.error, "not_ready");
+    assert.equal(mcpBodyBefore.reason, "reconciling");
+
+    server.setReady(true);
+
+    const healthAfter = await fetchJson(port, "GET", "/health");
+    assert.equal(healthAfter.status, 200);
+    const healthBodyAfter = healthAfter.body as {
+      healthy: boolean;
+      reason?: string;
+    };
+    assert.equal(healthBodyAfter.healthy, true);
+    assert.equal("reason" in healthBodyAfter, false);
+  });
+});
+
+test("GET /health reports healthy:true by default for test helpers that do not gate readiness", async () => {
+  await withServiceServer({}, async ({ port }) => {
+    const response = await fetchJson(port, "GET", "/health");
+    assert.equal(response.status, 200);
+    const body = response.body as { healthy: boolean };
+    assert.equal(body.healthy, true);
+  });
+});
+
 test("unknown routes return a bounded JSON 404 and do not change supervised runs", async () => {
   await withServiceServer({}, async ({ port, runManager }) => {
     const before = runManager.listRunIds();
@@ -521,6 +568,12 @@ test("spawned service_main captures Conductor-style stdout/stderr logs and exits
   child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
 
   const port = await waitForPort(stderrChunks, 10_000);
+  // service_main holds `/health` at `healthy: false` until startup
+  // reconciliation resolves (I-1 gate). With an empty log root
+  // reconciliation is fast, but the ready flip races this fetch, so
+  // poll until `/health` reports `healthy: true` before asserting.
+  //
+  await waitForHealthy(port, 10_000);
 
   const health = await fetchJson(port, "GET", "/health");
   assert.equal(health.status, 200);
@@ -542,7 +595,17 @@ test("spawned service_main captures Conductor-style stdout/stderr logs and exits
   assert.match(capturedStderr, /xagent service listening on 127\.0\.0\.1:\d+/);
 });
 
-test("service_main reconciles stale active runs before accepting work", async () => {
+// C1 + I-1: service_main binds the listener BEFORE reconciling stale
+// runs (so a duplicate start exits on EADDRINUSE without touching any
+// run), and reconciliation runs AFTER the bind but BEFORE the service
+// accepts work (the `/health` gate and `/mcp` 503 gate hold off
+// controller work until reconciliation resolves). The title's
+// invariant is "reconciles stale active runs after binding the
+// listener, before accepting work" — the bind happens first, the
+// stale run is abandoned, and only then does `/health` flip to
+// `healthy: true`.
+//
+test("service_main reconciles stale active runs after binding the listener and before accepting work", async () => {
   const sheafRoot = await mkdtemp(path.join(tmpdir(), "xagent-svc-reconcile-"));
   await mkdir(path.join(sheafRoot, "config"), { recursive: true });
   await mkdir(path.join(sheafRoot, "structure"), { recursive: true });
@@ -1110,6 +1173,30 @@ async function waitForPort(stderrChunks: Buffer[], timeoutMs: number): Promise<n
   );
 }
 
+// Polls `/health` until service_main flips the ready gate to `true`
+// after startup reconciliation resolves (I-1). The listening line
+// arrives before the ready flip, so tests that assert `healthy: true`
+// must wait for the flip rather than assuming it has happened by the
+// time `waitForPort` returns.
+//
+async function waitForHealthy(port: number, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const response = await fetchJson(port, "GET", "/health").catch(() => null);
+    if (
+      response !== null
+      && response.status === 200
+      && (response.body as { healthy?: boolean }).healthy === true
+    ) {
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(
+    `service did not report healthy within ${timeoutMs} ms`,
+  );
+}
+
 // Reconciliation runs AFTER the listener binds (C1 fix), so the
 // reconciliation log line for a given run_id arrives on stderr some time
 // after the listening line. Tests that assert on reconciliation outcomes
@@ -1183,6 +1270,7 @@ async function startServiceServer(): Promise<{
 async function withServiceServer(
   options: {
     warning?: string;
+    ready?: boolean;
     runManager?: XagentRunManager;
     closeRuns?: (runManager: XagentRunManager) => Promise<void>;
     closeServer?: (server: XagentServer) => Promise<void>;
@@ -1211,6 +1299,7 @@ async function withServiceServer(
     runManager,
     shutdownController,
     warning: options.warning,
+    ready: options.ready,
   });
   const port = await server.listen();
   try {

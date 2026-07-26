@@ -79,6 +79,18 @@ async function main(): Promise<void> {
     bindPort: config.bindPort,
     runManager,
     shutdownController,
+    // Hold `/health` (`healthy: false`) and reject `/mcp` with 503 until
+    // startup reconciliation resolves. Without this gate, the skill's
+    // "verify Conductor reports the xagent service healthy … then
+    // `xagent_start`" sequence aims at the listen→reconcile window in
+    // which a brand-new run can be enumerated by the in-flight
+    // reconciliation scan, marked `abandoned`, and have its (matching)
+    // owned provider process group SIGTERMed. Conductor polls `/health`
+    // and only proceeds once `healthy: true`, so this gate converts the
+    // race into a wait. The liveRunIds skip in reconcileStaleRuns is
+    // the backstop for any caller that races the gate.
+    //
+    ready: false,
   });
 
   // Bind the listener BEFORE reconciling stale runs. A duplicate
@@ -94,9 +106,15 @@ async function main(): Promise<void> {
   const port = await server.listen();
   console.error(`xagent service listening on ${config.bindHost}:${port}`);
 
+  // Pass the live manager's run ids so reconciliation skips runs this
+  // instance already owns. Even with the `/health` gate, this is the
+  // authoritative guard against a run created in the listen→reconcile
+  // window being enumerated from the log root and abandoned.
+  //
   const reconciliationResults = await reconcileStaleRuns(
     config.logRoot,
     platformProcessInspector,
+    new Set(runManager.listRunIds()),
   );
   // Surface reconciliation outcomes to the operator: log each result to
   // stderr for Conductor capture, and derive the `/health` warning from
@@ -106,6 +124,11 @@ async function main(): Promise<void> {
   //
   logReconciliationResults(reconciliationResults);
   server.setWarning(reconciliationWarning(reconciliationResults));
+  // Reconciliation has finished (or there was nothing to reconcile): flip
+  // the ready gate so `/health` reports `healthy: true` and `/mcp` starts
+  // accepting controller work.
+  //
+  server.setReady(true);
 }
 
 main().catch((error: unknown) => {
