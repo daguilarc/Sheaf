@@ -56,6 +56,7 @@ export const XagentStartInputSchema = z
     model: z.string().min(1).optional(),
     thinking_level: z.enum(thinkingLevels).optional(),
     permission_mode: z.string().min(1).optional(),
+    provider_thread_id: z.string().min(1).optional(),
     policy: SupervisionPolicySchema.optional(),
   })
   .strict();

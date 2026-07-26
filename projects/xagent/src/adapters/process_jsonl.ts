@@ -48,6 +48,7 @@ export type ProcessJsonlSessionOptions = {
   readonly parseEvent: ProviderEventParser;
   readonly spawnProcess?: SpawnProcess;
   readonly terminationGraceMs?: number;
+  readonly initialProviderThreadId?: string;
   readonly captureProcessIdentity?: (
     pid: number,
   ) => OwnedProcessIdentity | undefined;
@@ -56,7 +57,7 @@ export type ProcessJsonlSessionOptions = {
 const DEFAULT_TERMINATION_GRACE_MS = 5_000;
 
 export class ProcessJsonlSession implements HarnessSession {
-  readonly #state: ProcessHarnessState = { providerSequence: 0 };
+  readonly #state: ProcessHarnessState;
   readonly #spawnProcess: SpawnProcess;
   readonly #captureProcessIdentity: NonNullable<
     ProcessJsonlSessionOptions["captureProcessIdentity"]
@@ -67,6 +68,12 @@ export class ProcessJsonlSession implements HarnessSession {
   #closePromise?: Promise<void>;
 
   constructor(private readonly options: ProcessJsonlSessionOptions) {
+    this.#state = {
+      providerSequence: 0,
+      ...(options.initialProviderThreadId === undefined
+        ? {}
+        : { providerThreadId: options.initialProviderThreadId }),
+    };
     this.#spawnProcess = options.spawnProcess ?? ((command, args, childOptions) => spawn(command, args, childOptions));
     this.#captureProcessIdentity = options.captureProcessIdentity
       ?? captureOwnedProcessIdentity;

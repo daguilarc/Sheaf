@@ -16,6 +16,9 @@ export class ClaudeCodeAdapter implements HarnessAdapter {
       cwd: options.cwd,
       buildCommand: (context, state) => buildClaudeCommand(context, state, options),
       parseEvent: parseClaudeProviderEvent,
+      ...(options.providerThreadId === undefined
+        ? {}
+        : { initialProviderThreadId: options.providerThreadId }),
     });
   }
 }

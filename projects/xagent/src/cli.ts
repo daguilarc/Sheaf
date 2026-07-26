@@ -49,6 +49,7 @@ export type CliCommand =
       model?: string;
       thinkingLevel?: ThinkingLevel;
       permissionMode?: string;
+      providerThreadId?: string;
       cwd?: string;
       policy?: SupervisionPolicy;
       deadlineSeconds?: number;
@@ -203,6 +204,9 @@ async function runQuietServiceCommand(
         ...(command.model === undefined ? {} : { model: command.model }),
         ...(command.thinkingLevel === undefined ? {} : { thinking_level: command.thinkingLevel }),
         ...(command.permissionMode === undefined ? {} : { permission_mode: command.permissionMode }),
+        ...(command.providerThreadId === undefined
+          ? {}
+          : { provider_thread_id: command.providerThreadId }),
         ...(command.policy === undefined
           ? {}
           : { policy: command.policy as XagentStartInput["policy"] }),
@@ -488,6 +492,7 @@ function parseSuperviseArgs(argv: string[]): CliCommand {
   let model: string | undefined;
   let thinkingLevel: ThinkingLevel | undefined;
   let permissionMode: string | undefined;
+  let providerThreadId: string | undefined;
   let cwd: string | undefined;
   let policy: SupervisionPolicy | undefined;
   let deadlineSeconds: number | undefined;
@@ -540,6 +545,15 @@ function parseSuperviseArgs(argv: string[]): CliCommand {
         throw new Error("xagent supervise accepts --permission-mode at most once.");
       }
       permissionMode = readFlagValue(argv, index, flag);
+      index += 1;
+      continue;
+    }
+
+    if (flag === "--resume") {
+      if (providerThreadId !== undefined) {
+        throw new Error("xagent supervise accepts --resume at most once.");
+      }
+      providerThreadId = readFlagValue(argv, index, flag);
       index += 1;
       continue;
     }
@@ -599,6 +613,7 @@ function parseSuperviseArgs(argv: string[]): CliCommand {
     ...(model === undefined ? {} : { model }),
     ...(thinkingLevel === undefined ? {} : { thinkingLevel }),
     ...(permissionMode === undefined ? {} : { permissionMode }),
+    ...(providerThreadId === undefined ? {} : { providerThreadId }),
     ...(cwd === undefined ? {} : { cwd }),
     ...(policy === undefined ? {} : { policy }),
     ...(deadlineSeconds === undefined ? {} : { deadlineSeconds }),
@@ -785,7 +800,7 @@ function usage(topic?: "run" | "supervise"): string {
   if (topic === "supervise") {
     return [
       "Usage:",
-      "  xagent supervise --harness <codex|pi|cursor|claude_code> [--model <model>] [--thinking-level <low|medium|high|xhigh>] [--permission-mode <mode>] [--cwd <abs-path>] [--policy <json>] [--deadline-seconds <n>] <prompt>",
+      "  xagent supervise --harness <codex|pi|cursor|claude_code> [--model <model>] [--thinking-level <low|medium|high|xhigh>] [--permission-mode <mode>] [--resume <provider-thread-id>] [--cwd <abs-path>] [--policy <json>] [--deadline-seconds <n>] <prompt>",
       "  xagent await <run_id> --after-sequence <n> [--deadline-seconds <n>]",
       "  xagent inspect <run_id>",
       "  xagent message <run_id> <text>",

@@ -23,6 +23,7 @@ export type HarnessStartOptions = {
   readonly model?: string;
   readonly thinkingLevel?: ThinkingLevel;
   readonly permissionMode?: string;
+  readonly providerThreadId?: string;
 };
 
 export type AdapterTurnContext = {

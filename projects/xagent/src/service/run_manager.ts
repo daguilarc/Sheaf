@@ -45,6 +45,7 @@ export type CreateRunOptions = {
   readonly model?: string;
   readonly thinkingLevel?: ThinkingLevel;
   readonly permissionMode?: string;
+  readonly providerThreadId?: string;
   readonly policy?: SupervisionPolicy;
 };
 
@@ -152,6 +153,9 @@ export class XagentRunManager {
         ...(options.model === undefined ? {} : { model: options.model }),
         ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
         ...(options.permissionMode === undefined ? {} : { permissionMode: options.permissionMode }),
+        ...(options.providerThreadId === undefined
+          ? {}
+          : { providerThreadId: options.providerThreadId }),
       },
       policy,
       clock: this.#clock,
@@ -234,6 +238,9 @@ export class XagentRunManager {
       ...(input.model === undefined ? {} : { model: input.model }),
       ...(input.thinking_level === undefined ? {} : { thinkingLevel: input.thinking_level }),
       ...(input.permission_mode === undefined ? {} : { permissionMode: input.permission_mode }),
+      ...(input.provider_thread_id === undefined
+        ? {}
+        : { providerThreadId: input.provider_thread_id }),
       ...(input.policy === undefined ? {} : { policy: input.policy }),
     });
     try {
