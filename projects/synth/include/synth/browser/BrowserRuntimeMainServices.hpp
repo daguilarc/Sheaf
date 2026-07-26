@@ -49,12 +49,14 @@ public:
             return midiBridge_.ConnectionState();
         };
         callbacks.enumerateDevices = [this] {
-            return midiBridge_.LatestDeviceList();
+            return cachedDevices_;
         };
         callbacks.commitInstrument = [this](synth::MidiInstrumentConfig instrument) {
             engine_.EditInstrument([&instrument](synth::MidiInstrumentConfig& current) {
                 current = std::move(instrument);
             });
+            cachedInstrument_ = engine_.InstrumentSnapshot();
+            RecomputeDiscovery();
             controllersDirty_ = true;
         };
         callbacks.setStatus = [](std::string) {};
@@ -113,12 +115,23 @@ public:
 
     void RefreshControllers(synth::runtime_ui::ControllersPageSurface& surface)
     {
-        surface.SetEnumerateDevices(midiBridge_.LatestDeviceList());
+        const std::uint64_t deviceListRevision = midiBridge_.DeviceListRevision();
+        if (!hasCachedDevices_ || deviceListRevision != cachedDeviceListRevision_)
+        {
+            cachedDevices_ = midiBridge_.LatestDeviceList();
+            hasCachedDevices_ = true;
+            cachedDeviceListRevision_ = deviceListRevision;
+            RecomputeDiscovery();
+        }
+        surface.SetEnumerateDevices(cachedDevices_);
         if (controllersDirty_)
         {
+            cachedInstrument_ = engine_.InstrumentSnapshot();
+            RecomputeDiscovery();
             surface.MarkDirty();
             controllersDirty_ = false;
         }
+        surface.SetDiscovery(cachedDiscovery_);
         surface.RefreshOnTick();
     }
 
@@ -159,6 +172,12 @@ public:
     }
 
 private:
+    void RecomputeDiscovery()
+    {
+        cachedDiscovery_ = synth::DiscoverControllerWizards(
+            cachedDevices_, cachedInstrument_, synth::ControllerWizardRegistry());
+    }
+
     synth::runtime_ui::RuntimeFileCallbacks MakeFileCallbacks()
     {
         synth::runtime_ui::RuntimeFileCallbacks callbacks;
@@ -190,6 +209,11 @@ private:
     std::optional<double> negotiatedSampleRate_;
     std::optional<int> negotiatedBlockSize_;
     std::optional<std::string> audioStatus_;
+    synth::MidiDeviceList cachedDevices_;
+    synth::MidiInstrumentConfig cachedInstrument_;
+    synth::WizardDiscovery cachedDiscovery_;
+    bool hasCachedDevices_ = false;
+    std::uint64_t cachedDeviceListRevision_ = 0;
     bool controllersDirty_ = true;
     bool persistenceDirty_ = false;
 };

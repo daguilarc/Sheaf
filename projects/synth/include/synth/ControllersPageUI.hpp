@@ -7,6 +7,7 @@
 // engine.EditInstrument).
 
 #include "synth/MidiConfigViewModel.hpp"
+#include "synth/ControllerWizard.hpp"
 #include "synth/MidiReconcile.hpp"
 #include "synth/PortableUI.hpp"
 
@@ -37,6 +38,25 @@ inline constexpr const char* kAddRow = "runtime.controllers.add_row";
 inline constexpr const char* kAddName = "runtime.controllers.add_name";
 inline constexpr const char* kAddKind = "runtime.controllers.add_kind";
 inline constexpr const char* kAddButton = "runtime.controllers.add_button";
+inline constexpr const char* kAvailable = "runtime.controllers.available";
+inline constexpr const char* kAvailableEmpty = "runtime.controllers.available.empty";
+inline constexpr const char* kAvailableUnmatchedInputs = "runtime.controllers.available.unmatched_inputs";
+inline constexpr const char* kAvailableUnmatchedOutputs = "runtime.controllers.available.unmatched_outputs";
+
+inline std::string AvailableRow(std::size_t candidateIx)
+{
+    return "runtime.controllers.available." + std::to_string(candidateIx);
+}
+
+inline std::string AvailableConfigure(std::size_t candidateIx)
+{
+    return AvailableRow(candidateIx) + ".configure";
+}
+
+inline std::string AvailableIgnore(std::size_t candidateIx)
+{
+    return AvailableRow(candidateIx) + ".ignore";
+}
 
 inline std::string ControllerRow(std::size_t controllerIx)
 {
@@ -144,6 +164,8 @@ inline constexpr const char* kAddBlock = "runtime.controllers.add_block";
 inline constexpr const char* kAddNameDraft = "runtime.controllers.add_name_draft";
 inline constexpr const char* kAddKindDraft = "runtime.controllers.add_kind_draft";
 inline constexpr const char* kAddController = "runtime.controllers.add_controller";
+inline constexpr const char* kAvailableConfigure = "runtime.controllers.available.configure";
+inline constexpr const char* kAvailableIgnore = "runtime.controllers.available.ignore";
 
 }  // namespace Actions
 
@@ -498,6 +520,7 @@ public:
     {
         return BuildControllersPageTree(m_vm,
                                         m_devices,
+                                        m_discovery,
                                         m_contentBounds,
                                         m_statusText,
                                         m_addControllerName,
@@ -539,6 +562,17 @@ public:
         }
         m_devices = std::move(devices);
         ++m_treeRevision;
+    }
+
+    void SetDiscovery(WizardDiscovery discovery)
+    {
+        m_discovery = std::move(discovery);
+        ++m_treeRevision;
+    }
+
+    const WizardDiscovery& Discovery() const
+    {
+        return m_discovery;
     }
 
     void MarkDirty()
@@ -1016,6 +1050,7 @@ private:
 
     static ui::NodeTree BuildControllersPageTree(const MidiConfigViewModel& vm,
                                                    const MidiDeviceList& devices,
+                                                   const WizardDiscovery& discovery,
                                                    ui::Bounds area,
                                                    const std::string& statusText,
                                                    const std::string& addControllerName,
@@ -1064,6 +1099,110 @@ private:
             tree.nodes[scrollAreaIndex].children.push_back(node.id);
             tree.nodes.push_back(std::move(node));
         };
+
+        ui::Node available;
+        available.id = NodeIds::kAvailable;
+        available.kind = ui::NodeKind::Section;
+        available.label = "Available controllers";
+        available.bounds = {0.0f, scrollY, scrollWidth, 0.0f};
+        tree.nodes[scrollAreaIndex].children.push_back(available.id);
+        const std::size_t availableNodeIndex = tree.nodes.size();
+        tree.nodes.push_back(std::move(available));
+        auto appendAvailableChild = [&](ui::Node node) {
+            tree.nodes[availableNodeIndex].children.push_back(node.id);
+            tree.nodes.push_back(std::move(node));
+        };
+
+        if (discovery.available.empty())
+        {
+            ui::Node empty;
+            empty.id = NodeIds::kAvailableEmpty;
+            empty.kind = ui::NodeKind::StatusText;
+            empty.text = "No recognized unconfigured controller pair is present";
+            empty.bounds = {0.0f, 0.0f, scrollWidth, ControllersLayout::kStatusRowHeight};
+            appendAvailableChild(std::move(empty));
+            scrollY += ControllersLayout::kStatusRowHeight;
+        }
+        else
+        {
+            for (std::size_t candidateIx = 0; candidateIx < discovery.available.size(); ++candidateIx)
+            {
+                const WizardCandidate& candidate = discovery.available[candidateIx];
+                ui::Node row;
+                row.id = ui::NodeId(NodeIds::AvailableRow(candidateIx));
+                row.kind = ui::NodeKind::Row;
+                row.label = candidate.displayName;
+                row.bounds = {0.0f, scrollY, scrollWidth, ControllersLayout::kControllerHeaderHeight};
+                const std::size_t rowNodeIndex = tree.nodes.size();
+                tree.nodes.push_back(std::move(row));
+                tree.nodes[availableNodeIndex].children.push_back(tree.nodes[rowNodeIndex].id);
+                auto appendRowChild = [&](ui::Node node) {
+                    tree.nodes[rowNodeIndex].children.push_back(node.id);
+                    tree.nodes.push_back(std::move(node));
+                };
+
+                ui::Node endpoints;
+                endpoints.id = ui::NodeId(NodeIds::AvailableRow(candidateIx) + ".endpoints");
+                endpoints.kind = ui::NodeKind::Label;
+                endpoints.text = candidate.input.name + " / " + candidate.output.name;
+                endpoints.bounds = {0.0f, 0.0f, 260.0f, ControllersLayout::kControllerHeaderHeight};
+                appendRowChild(std::move(endpoints));
+
+                ui::Node configure;
+                configure.id = ui::NodeId(NodeIds::AvailableConfigure(candidateIx));
+                configure.kind = ui::NodeKind::Button;
+                configure.label = "Configure";
+                configure.bounds = {268.0f, 0.0f, 92.0f, ControllersLayout::kControllerHeaderHeight};
+                configure.action = ui::Action::WithValue(Actions::kAvailableConfigure,
+                                                         std::to_string(candidateIx));
+                appendRowChild(std::move(configure));
+
+                ui::Node ignore;
+                ignore.id = ui::NodeId(NodeIds::AvailableIgnore(candidateIx));
+                ignore.kind = ui::NodeKind::Button;
+                ignore.label = "Ignore";
+                ignore.bounds = {368.0f, 0.0f, 72.0f, ControllersLayout::kControllerHeaderHeight};
+                ignore.action = ui::Action::WithValue(Actions::kAvailableIgnore,
+                                                      std::to_string(candidateIx));
+                appendRowChild(std::move(ignore));
+                scrollY += ControllersLayout::kControllerHeaderHeight;
+            }
+        }
+
+        const auto diagnosticText = [](const char* label, const std::vector<MidiDeviceInfoRef>& devices) {
+            std::string text = label;
+            for (const MidiDeviceInfoRef& device : devices)
+            {
+                if (text.size() > std::string_view(label).size())
+                {
+                    text += ", ";
+                }
+                text += device.name;
+            }
+            return text;
+        };
+        if (!discovery.unmatchedInputs.empty())
+        {
+            ui::Node diagnostics;
+            diagnostics.id = NodeIds::kAvailableUnmatchedInputs;
+            diagnostics.kind = ui::NodeKind::StatusText;
+            diagnostics.text = diagnosticText("Unmatched input: ", discovery.unmatchedInputs);
+            diagnostics.bounds = {0.0f, scrollY, scrollWidth, ControllersLayout::kStatusRowHeight};
+            appendAvailableChild(std::move(diagnostics));
+            scrollY += ControllersLayout::kStatusRowHeight;
+        }
+        if (!discovery.unmatchedOutputs.empty())
+        {
+            ui::Node diagnostics;
+            diagnostics.id = NodeIds::kAvailableUnmatchedOutputs;
+            diagnostics.kind = ui::NodeKind::StatusText;
+            diagnostics.text = diagnosticText("Unmatched output: ", discovery.unmatchedOutputs);
+            diagnostics.bounds = {0.0f, scrollY, scrollWidth, ControllersLayout::kStatusRowHeight};
+            appendAvailableChild(std::move(diagnostics));
+            scrollY += ControllersLayout::kStatusRowHeight;
+        }
+        tree.nodes[availableNodeIndex].bounds.height = scrollY - tree.nodes[availableNodeIndex].bounds.y;
+        scrollY += ControllersLayout::kRowGap;
 
         const auto& controllers = vm.Controllers();
         for (std::size_t controllerIx = 0; controllerIx < controllers.size(); ++controllerIx)
@@ -1500,6 +1639,7 @@ private:
     ControllersPageCallbacks m_callbacks;
     MidiConfigViewModel m_vm;
     MidiDeviceList m_devices;
+    WizardDiscovery m_discovery;
     ui::Bounds m_contentBounds{0.0f, 0.0f, 640.0f, 480.0f};
     std::string m_statusText = "Ready";
     std::string m_addControllerName;

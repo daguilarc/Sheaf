@@ -358,6 +358,20 @@ public:
 
     synth::MidiDeviceList EnumerateNow() const { return detail::EnumerateDevices(); }
 
+    // Message-thread snapshot signal for UI consumers. Reconciliation remains
+    // owned by OnTimerTick()/OnInstrumentRebuilt(); consumers only observe the
+    // list already used by that path and never force another enumeration.
+    const synth::MidiDeviceList& DeviceListSnapshot() const { return lastEnumerated_; }
+
+    bool ConsumeDeviceListChange(synth::MidiDeviceList& latest) {
+        if (!deviceListChanged_) {
+            return false;
+        }
+        latest = lastEnumerated_;
+        deviceListChanged_ = false;
+        return true;
+    }
+
 private:
     // Grows/shrinks inputHandlers_/outputHandlers_/state_.controllers to
     // engine_.MidiControllerCount(), preserving existing entries by index
@@ -498,6 +512,9 @@ private:
                  plan.actions.size(), opens, closes, offline, unconfigured, resyncs);
         }
 
+        if (!listUnchanged) {
+            deviceListChanged_ = true;
+        }
         lastEnumerated_ = present;
         hasLastEnumerated_ = true;
     }
@@ -623,6 +640,7 @@ private:
     // call.
     bool hasLastEnumerated_ = false;
     synth::MidiDeviceList lastEnumerated_;
+    bool deviceListChanged_ = false;
 
     // True once StartupReconcile() has run its one synchronous startup
     // reconcile pass (Task 2 review, Important). Before that,

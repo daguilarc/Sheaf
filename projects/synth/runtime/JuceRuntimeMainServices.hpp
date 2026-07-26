@@ -53,13 +53,15 @@ public:
             return runtime_.MidiConnections().State();
         };
         callbacks.enumerateDevices = [this] {
-            return runtime_.MidiConnections().EnumerateNow();
+            return cachedDevices_;
         };
         callbacks.commitInstrument = [this](synth::MidiInstrumentConfig instrument) {
             runtime_.GetEngine().EditInstrument(
                 [&](synth::MidiInstrumentConfig& current) {
                     current = std::move(instrument);
                 });
+            cachedInstrument_ = runtime_.GetEngine().InstrumentSnapshot();
+            RecomputeDiscovery();
             controllersDirty_ = true;
         };
         callbacks.setStatus = [](std::string) {};
@@ -152,12 +154,27 @@ public:
     void RefreshControllers(synth::runtime_ui::ControllersPageSurface& surface)
     {
         surface.SetFocusGuard(focusGuard_);
-        surface.SetEnumerateDevices(runtime_.MidiConnections().EnumerateNow());
+        if (!hasCachedDevices_)
+        {
+            cachedDevices_ = runtime_.MidiConnections().DeviceListSnapshot();
+            hasCachedDevices_ = true;
+            RecomputeDiscovery();
+        }
+        synth::MidiDeviceList changedDevices;
+        if (runtime_.MidiConnections().ConsumeDeviceListChange(changedDevices))
+        {
+            cachedDevices_ = std::move(changedDevices);
+            RecomputeDiscovery();
+        }
+        surface.SetEnumerateDevices(cachedDevices_);
         if (controllersDirty_)
         {
+            cachedInstrument_ = runtime_.GetEngine().InstrumentSnapshot();
+            RecomputeDiscovery();
             surface.MarkDirty();
             controllersDirty_ = false;
         }
+        surface.SetDiscovery(cachedDiscovery_);
         surface.RefreshOnTick();
     }
 
@@ -194,6 +211,12 @@ public:
     }
 
 private:
+    void RecomputeDiscovery()
+    {
+        cachedDiscovery_ = synth::DiscoverControllerWizards(
+            cachedDevices_, cachedInstrument_, synth::ControllerWizardRegistry());
+    }
+
     synth::runtime_ui::RuntimeFileCallbacks MakeFileCallbacks()
     {
         synth::runtime_ui::RuntimeFileCallbacks callbacks;
@@ -222,6 +245,10 @@ private:
     synth::runtime_ui::RuntimeFileService fileService_;
     std::function<bool()> focusGuard_;
     std::optional<std::string> audioStatus_;
+    synth::MidiDeviceList cachedDevices_;
+    synth::MidiInstrumentConfig cachedInstrument_;
+    synth::WizardDiscovery cachedDiscovery_;
+    bool hasCachedDevices_ = false;
     bool audioSyncPending_ = true;
     bool controllersDirty_ = true;
 };

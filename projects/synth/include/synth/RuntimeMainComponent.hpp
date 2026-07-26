@@ -186,6 +186,7 @@ public:
         services_.RefreshAudio(audioSurface_.Snapshot());
         services_.RefreshFile(fileSurface_.Snapshot());
         services_.RefreshControllers(controllersSurface_);
+        sidebarSurface_.SetControllersWarning(!controllersSurface_.Discovery().available.empty());
         SyncPageStatus syncStatus;
         services_.RefreshSyncStatus(syncStatus);
         syncSurface_.RefreshStatus(syncStatus);
@@ -288,7 +289,9 @@ private:
                         Actions::kAddBlock,
                         Actions::kAddNameDraft,
                         Actions::kAddKindDraft,
-                        Actions::kAddController});
+                        Actions::kAddController,
+                        Actions::kAvailableConfigure,
+                        Actions::kAvailableIgnore});
     }
 
     static ui::NodeTree MoveRootFirst(ui::NodeTree tree, std::size_t rootIndex)

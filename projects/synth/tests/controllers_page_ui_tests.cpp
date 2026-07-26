@@ -1,4 +1,5 @@
 #include "synth/ControllersPageUI.hpp"
+#include "synth/ControllerWizard.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
 #error "controllers page UI tests must not see JUCE"
@@ -165,6 +166,33 @@ void SeedGridPresentation(TestHarness& harness)
     harness.instrument.controllers[1].config.pressureInput->mappings.push_back(orphan);
 }
 
+void TestDiscoveryRendersPortableAvailableRowsAndDiagnostics()
+{
+    TestHarness harness;
+    auto surface = harness.MakeSurface();
+    synth::WizardDiscovery discovery;
+    discovery.available.push_back({.wizardId = "com.sheaf.midi-fighter-twister",
+                                   .displayName = "MIDI Fighter Twister",
+                                   .kind = synth::MidiProfileKind::MfTwister,
+                                   .input = {"twister-in", "Midi Fighter Twister"},
+                                   .output = {"twister-out", "Midi Fighter Twister"}});
+    discovery.unmatchedInputs.push_back({"unknown-in", "Unknown Input"});
+    discovery.unmatchedOutputs.push_back({"unknown-out", "Unknown Output"});
+
+    surface.SetDiscovery(std::move(discovery));
+    const synth::ui::NodeTree tree = surface.BuildTree();
+    const synth::ui::Node* row = FindNodeById(tree, "runtime.controllers.available.0");
+    Require(row != nullptr, "available controller row exists");
+    Require(FindNodeById(tree, "runtime.controllers.available.0.configure") != nullptr,
+            "available controller row exposes portable Configure action");
+    Require(FindNodeById(tree, "runtime.controllers.available.0.ignore") != nullptr,
+            "available controller row exposes portable Ignore action");
+    Require(FindNodeById(tree, "runtime.controllers.available.unmatched_inputs") != nullptr,
+            "unmatched input diagnostics are portable data");
+    Require(FindNodeById(tree, "runtime.controllers.available.unmatched_outputs") != nullptr,
+            "unmatched output diagnostics are portable data");
+}
+
 std::string VisibleTextLower(const synth::ui::NodeTree& tree)
 {
     std::string text;
@@ -189,6 +217,8 @@ std::string VisibleTextLower(const synth::ui::NodeTree& tree)
 
 int main()
 {
+    TestDiscoveryRendersPortableAvailableRowsAndDiagnostics();
+
     TestHarness harness;
     synth::runtime_ui::ControllersPageSurface surface = harness.MakeSurface();
     surface.SetEnumerateDevices(harness.devices);

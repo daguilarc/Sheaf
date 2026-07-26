@@ -30,6 +30,7 @@ namespace NodeIds {
 inline constexpr const char* kSidebarRoot = "runtime.sidebar.root";
 inline constexpr const char* kSidebarAudio = "runtime.sidebar.audio";
 inline constexpr const char* kSidebarControllers = "runtime.sidebar.controllers";
+inline constexpr const char* kSidebarControllersWarning = "runtime.sidebar.controllers.warning";
 inline constexpr const char* kSidebarSync = "runtime.sidebar.sync";
 inline constexpr const char* kSidebarFile = "runtime.sidebar.file";
 inline constexpr const char* kSidebarDeadline = "runtime.sidebar.deadline";
@@ -140,6 +141,7 @@ inline constexpr const char* kFileConfirmedLoad = "runtime.file.confirmed.load";
 struct SidebarSnapshot
 {
     float deadlinePercent = 0.0f;
+    bool controllersWarning = false;
 };
 
 struct AudioDeviceOption
@@ -359,6 +361,19 @@ inline ui::NodeTree BuildSidebarTree(const SidebarSnapshot& snapshot)
                                 Layout::kSidebarButtonHeight};
     controllersButton.action = ui::Action::Named(Actions::kSidebarControllers);
     appendChild(std::move(controllersButton));
+
+    if (snapshot.controllersWarning)
+    {
+        ui::Node controllersWarning;
+        controllersWarning.id = NodeIds::kSidebarControllersWarning;
+        controllersWarning.kind = ui::NodeKind::StatusText;
+        controllersWarning.text = "!";
+        controllersWarning.bounds = {Layout::kSidebarWidth - 22.0f,
+                                     Layout::kSidebarButtonHeight,
+                                     18.0f,
+                                     Layout::kSidebarButtonHeight};
+        appendChild(std::move(controllersWarning));
+    }
 
     ui::Node syncButton;
     syncButton.id = NodeIds::kSidebarSync;
@@ -1223,6 +1238,11 @@ public:
     void SetDeadlinePercent(float percent)
     {
         snapshot_.deadlinePercent = percent;
+    }
+
+    void SetControllersWarning(bool warning)
+    {
+        snapshot_.controllersWarning = warning;
     }
 
 private:
