@@ -93,6 +93,12 @@ private:
     TimestampProvider timestampProvider_;
 };
 
+class DropMidiInProcessor final : public MidiInProcessor {
+public:
+    using MidiInProcessor::MidiInProcessor;
+    void Process(const BasicMidi&) override {}
+};
+
 // Terminal processor installed at the end of every controller input chain.
 // It translates only exact one-byte MIDI realtime messages and deliberately
 // uses BasicMidi::timestamp rather than the timestamp provider used by mapped
@@ -879,6 +885,8 @@ struct MidiControllerProfileResult {
     std::vector<std::unique_ptr<MidiInProcessor>> inputThru;
     std::vector<std::unique_ptr<MidiOutputProcessor>> outputs;
 };
+
+MidiControllerProfileResult CreateBlacklistedMidiControllerProfile();
 
 enum class MidiProfileKind { WrldBldr, MfTwister, Launchpad, Generic };
 

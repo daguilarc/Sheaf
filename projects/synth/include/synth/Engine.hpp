@@ -566,9 +566,9 @@ public:
     std::size_t MidiControllerCount() const { return midiProcessors_.size(); }
 
     // Input processor chain head for controller slot controllerIx, or nullptr
-    // when controllerIx is out of range (>= MidiControllerCount()). Every
-    // existing slot has at least the terminal realtime MIDI processor, even
-    // when its profile contains no mappings.
+    // when controllerIx is out of range (>= MidiControllerCount()). Active
+    // slots always include the terminal realtime MIDI processor; Blacklisted
+    // slots contain only an explicit drop processor.
     MidiInProcessor* MidiInputProcessor(std::size_t controllerIx) {
         if (controllerIx >= midiProcessors_.size()) {
             return nullptr;
@@ -770,6 +770,10 @@ public:
         std::vector<MidiControllerProfileResult> rebuilt;
         rebuilt.reserve(controllers.size());
         for (std::size_t ix = 0; ix < controllers.size(); ++ix) {
+            if (controllers[ix].disposition == MidiControllerDisposition::Blacklisted) {
+                rebuilt.push_back(CreateBlacklistedMidiControllerProfile());
+                continue;
+            }
             // Instrument controller slots are stable route identities, and
             // MidiSender uses the same slot ordinal as its sink index. Keep
             // both arguments explicit even while their values are equal.

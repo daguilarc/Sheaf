@@ -2574,6 +2574,125 @@ TEST_CASE(engine_rebuild_midi_processors_observes_fully_applied_edit_snapshot) {
     EngineTestApp::wantEncoderMidiInput = false;  // restore default for subsequent tests
 }
 
+TEST_CASE(blacklisted_midi_controller_profile_is_drop_only_and_emits_nothing) {
+    synth::MessageInBus bus(nullptr, 16);
+    synth::MidiControllerProfileResult profile =
+        synth::CreateBlacklistedMidiControllerProfile();
+
+    REQUIRE_TRUE(profile.input != nullptr);
+    REQUIRE_TRUE(dynamic_cast<synth::DropMidiInProcessor*>(profile.input.get()) != nullptr);
+    REQUIRE_TRUE(profile.input->Thru() == nullptr);
+    REQUIRE_TRUE(profile.inputThru.empty());
+    REQUIRE_TRUE(profile.outputs.empty());
+
+    profile.input->SetMessageInBus(&bus);
+    profile.input->Process(synth::BasicMidi::CC(1, 2, 3, 127));
+    profile.input->Process(
+        synth::BasicMidi::SysEx(2, std::vector<std::uint8_t>{0xF0, 0x7D, 0x01, 0xF7}));
+    profile.input->Process(synth::BasicMidi::Clock(3));
+    profile.input->Process(synth::BasicMidi::TransportStart(4));
+    profile.input->Process(synth::BasicMidi::TransportContinue(5));
+    profile.input->Process(synth::BasicMidi::TransportStop(6));
+    REQUIRE_TRUE(bus.Size() == 0);
+}
+
+TEST_CASE(engine_rebuild_switches_active_and_blacklisted_processors_without_reading_blacklisted_config) {
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = false;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{123}; });
+    engine.Initialize();
+
+    synth::MidiControllerSlot slot;
+    slot.name = "switchable";
+    slot.kind = synth::MidiProfileKind::Generic;
+    slot.config.encoderInput = synth::EncoderMidiInConfig{
+        .turns = {{.control = {.channel = 2, .cc = 3}, .slotIx = 0, .position = 0}},
+    };
+    engine.LiveInstrument().controllers = {slot};
+    engine.RebuildMidiProcessorsForTest();
+
+    synth::MidiInProcessor* active = engine.MidiInputProcessor(0);
+    REQUIRE_TRUE(active != nullptr);
+    REQUIRE_TRUE(dynamic_cast<synth::DropMidiInProcessor*>(active) == nullptr);
+    REQUIRE_TRUE(active->Thru() != nullptr);
+    active->Process(synth::BasicMidi::CC(1, 2, 3, 127));
+    active->Process(synth::BasicMidi::Clock(2));
+    REQUIRE_TRUE(engine.MidiBus().Size() == 2);
+
+    synth::MessageIn drained;
+    while (engine.MidiBus().Pop(drained, std::numeric_limits<std::uint64_t>::max())) {
+    }
+
+    engine.LiveInstrument().controllers.front().disposition =
+        synth::MidiControllerDisposition::Blacklisted;
+    engine.RebuildMidiProcessorsForTest();
+
+    synth::MidiInProcessor* blacklisted = engine.MidiInputProcessor(0);
+    REQUIRE_TRUE(blacklisted != nullptr);
+    REQUIRE_TRUE(blacklisted != active);
+    REQUIRE_TRUE(dynamic_cast<synth::DropMidiInProcessor*>(blacklisted) != nullptr);
+    REQUIRE_TRUE(blacklisted->Thru() == nullptr);
+    blacklisted->Process(synth::BasicMidi::CC(3, 2, 3, 127));
+    blacklisted->Process(synth::BasicMidi::Clock(4));
+    REQUIRE_TRUE(engine.MidiBus().Size() == 0);
+
+    engine.LiveInstrument().controllers.front().disposition =
+        synth::MidiControllerDisposition::Active;
+    engine.RebuildMidiProcessorsForTest();
+
+    synth::MidiInProcessor* reactivated = engine.MidiInputProcessor(0);
+    REQUIRE_TRUE(reactivated != nullptr);
+    REQUIRE_TRUE(dynamic_cast<synth::DropMidiInProcessor*>(reactivated) == nullptr);
+    REQUIRE_TRUE(reactivated->Thru() != nullptr);
+    reactivated->Process(synth::BasicMidi::CC(5, 2, 3, 127));
+    reactivated->Process(synth::BasicMidi::Clock(6));
+    REQUIRE_TRUE(engine.MidiBus().Size() == 2);
+}
+
+TEST_CASE(engine_rebuild_preserves_ordered_slots_when_blacklisted_middle_slot_is_deleted) {
+    EngineTestApp::processLiteAlpha = 1.0f;
+    EngineTestApp::wantEncoderMidiInput = false;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+
+    synth::MidiControllerSlot first;
+    first.name = "first";
+    synth::MidiControllerSlot middle;
+    middle.name = "middle";
+    middle.disposition = synth::MidiControllerDisposition::Blacklisted;
+    synth::MidiControllerSlot last;
+    last.name = "last";
+    engine.LiveInstrument().controllers = {first, middle, last};
+    engine.RebuildMidiProcessorsForTest();
+
+    REQUIRE_TRUE(engine.MidiControllerCount() == 3);
+    REQUIRE_TRUE(dynamic_cast<synth::RealtimeMidiInProcessor*>(
+                     engine.MidiInputProcessor(0)) != nullptr);
+    REQUIRE_TRUE(dynamic_cast<synth::DropMidiInProcessor*>(
+                     engine.MidiInputProcessor(1)) != nullptr);
+    REQUIRE_TRUE(dynamic_cast<synth::RealtimeMidiInProcessor*>(
+                     engine.MidiInputProcessor(2)) != nullptr);
+
+    engine.LiveInstrument().RemoveController(1);
+    engine.RebuildMidiProcessorsForTest();
+
+    REQUIRE_TRUE(engine.MidiControllerCount() == 2);
+    REQUIRE_TRUE(dynamic_cast<synth::RealtimeMidiInProcessor*>(
+                     engine.MidiInputProcessor(0)) != nullptr);
+    synth::MidiInProcessor* shifted = engine.MidiInputProcessor(1);
+    REQUIRE_TRUE(dynamic_cast<synth::RealtimeMidiInProcessor*>(shifted) != nullptr);
+    REQUIRE_TRUE(engine.MidiInputProcessor(2) == nullptr);
+
+    shifted->Process(synth::BasicMidi::Clock(99));
+    synth::MessageIn clock;
+    REQUIRE_TRUE(engine.MidiBus().Pop(
+        clock, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(clock.type == synth::MessageIn::Type::Clock);
+    REQUIRE_TRUE(clock.origin == synth::MessageIn::Origin::ExternalMidi);
+    REQUIRE_TRUE(clock.externalControllerSlot == 1);
+    REQUIRE_TRUE(engine.MidiBus().Size() == 0);
+}
+
 TEST_CASE(engine_rebuild_retains_pending_absolute_feedback_across_bank_route_change) {
     EngineTestApp::processLiteAlpha = 1.0f;
     EngineTestApp::wantEncoderMidiInput = false;

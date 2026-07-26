@@ -1,4 +1,5 @@
 #include "synth/AppContext.hpp"
+#include "synth/Engine.hpp"
 #include "synth/browser/BrowserMidiBridge.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
@@ -8,6 +9,7 @@
 #include <chrono>
 #include <atomic>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -73,6 +75,21 @@ private:
 using Bridge = synth_browser::BrowserMidiBridge<FakeEngine>;
 static_assert(Bridge::kSchedulingLeadMicros == 25'000);
 
+struct RealBridgeTestApp {
+    static synth::RuntimeConfig Config()
+    {
+        synth::RuntimeConfig config;
+        config.appName = "BrowserMidiBridgeTest";
+        return config;
+    }
+
+    void Init(synth::AppContext*) {}
+    void ProcessBlock(synth::AudioBlock&) {}
+};
+
+using RealEngine = synth::Engine<RealBridgeTestApp>;
+using RealBridge = synth_browser::BrowserMidiBridge<RealEngine>;
+
 synth::ScheduledMidiEvent Scheduled(
     synth::ScheduledMidiEventKind kind,
     std::uint64_t dueTimeMicros,
@@ -103,6 +120,16 @@ std::vector<Bridge::Endpoint> Endpoints()
         {.identifier = "out-a", .name = "Output A", .kind = Bridge::EndpointKind::Output},
         {.identifier = "in-b", .name = "Input B", .kind = Bridge::EndpointKind::Input},
         {.identifier = "out-b", .name = "Output B", .kind = Bridge::EndpointKind::Output},
+    };
+}
+
+std::vector<RealBridge::Endpoint> RealEndpoints()
+{
+    return {
+        {.identifier = "in-a", .name = "Input A", .kind = RealBridge::EndpointKind::Input},
+        {.identifier = "out-a", .name = "Output A", .kind = RealBridge::EndpointKind::Output},
+        {.identifier = "in-b", .name = "Input B", .kind = RealBridge::EndpointKind::Input},
+        {.identifier = "out-b", .name = "Output B", .kind = RealBridge::EndpointKind::Output},
     };
 }
 
@@ -436,6 +463,94 @@ void TestLatestDeviceListMatchesSubmittedEndpoints()
     Require(devices.outputs[1].name == "Output B", "second output name retained");
 }
 
+void TestActiveToBlacklistedTearsDownEndpointsAndDropsStaleBrowserCallback()
+{
+    RealEngine engine([] { return std::uint64_t{10'000}; });
+    engine.Initialize();
+    engine.EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        instrument.controllers = {
+            Slot("A", Ref("in-a", "Input A"), Ref("out-a", "Output A")),
+        };
+    });
+    RealBridge bridge(engine);
+    bridge.Start();
+    bridge.SubmitEndpoints(RealEndpoints());
+    while (bridge.DequeueAction()) {
+    }
+
+    auto staleInputCallback = [&bridge](const std::vector<std::uint8_t>& bytes) {
+        return bridge.DeliverIncoming(0, bytes, 55);
+    };
+    Require(staleInputCallback({0xF8}),
+            "active browser callback reaches selected slot");
+    Require(engine.MidiBus().Size() == 1,
+            "active selected slot routes browser realtime MIDI");
+    synth::MessageIn activeClock;
+    Require(engine.MidiBus().Pop(
+                activeClock, std::numeric_limits<std::uint64_t>::max()),
+            "active browser realtime MIDI can be drained");
+
+    engine.EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        instrument.controllers[0].disposition =
+            synth::MidiControllerDisposition::Blacklisted;
+    });
+    bridge.SubmitEndpoints(RealEndpoints());
+    std::vector<RealBridge::Action> teardown;
+    while (const auto action = bridge.DequeueAction()) {
+        teardown.push_back(*action);
+    }
+    Require(teardown.size() == 2, "blacklisting closes both active endpoints");
+    Require(teardown[0].type == RealBridge::ActionType::CloseInput &&
+                teardown[0].controllerIx == 0,
+            "blacklisting closes the active input");
+    Require(teardown[1].type == RealBridge::ActionType::CloseOutput &&
+                teardown[1].controllerIx == 0,
+            "blacklisting closes the active output");
+    Require(bridge.ConnectionState().controllers[0].input.status ==
+                synth::MidiEndpointStatus::Unconfigured,
+            "blacklisted input becomes deliberately unconfigured");
+    Require(bridge.ConnectionState().controllers[0].output.status ==
+                synth::MidiEndpointStatus::Unconfigured,
+            "blacklisted output becomes deliberately unconfigured");
+
+    Require(staleInputCallback({0xF8}),
+            "stale browser realtime callback still resolves the preserved slot");
+    Require(engine.MidiBus().Size() == 0,
+            "drop processor discards stale browser realtime callbacks");
+
+    Require(engine.Context().midiSender->Enqueue(
+                0, synth::BasicMidi::SysEx(
+                       0, std::vector<std::uint8_t>{0xF0, 0x7D, 0x02, 0xF7})),
+            "blacklisted output enqueue is accepted by the sender queue");
+    Require(engine.Context().midiSender->FlushForTests(std::chrono::milliseconds(500)),
+            "blacklisted output enqueue drains");
+    Require(!bridge.DequeueOutput().has_value(),
+            "blacklisted controller has no sender sink route");
+
+    engine.EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        instrument.controllers[0].disposition =
+            synth::MidiControllerDisposition::Active;
+    });
+    bridge.SubmitEndpoints(RealEndpoints());
+    std::vector<RealBridge::Action> activation;
+    while (const auto action = bridge.DequeueAction()) {
+        activation.push_back(*action);
+    }
+    Require(activation.size() == 3, "reactivation opens both endpoints and resyncs");
+    Require(activation[0].type == RealBridge::ActionType::OpenInput,
+            "reactivation opens the input");
+    Require(activation[1].type == RealBridge::ActionType::OpenOutput,
+            "reactivation opens the output");
+    Require(activation[2].type == RealBridge::ActionType::Resync,
+            "reactivation resyncs controller feedback");
+    Require(staleInputCallback({0xF8}),
+            "reactivated browser callback resolves the active processor");
+    Require(engine.MidiBus().Size() == 1,
+            "reactivated selected slot routes browser realtime MIDI again");
+
+    bridge.Stop();
+}
+
 }  // namespace
 
 int main()
@@ -449,5 +564,6 @@ int main()
     TestOfflineSlotDoesNotRemapAnotherSelectedSlot();
     TestNameFallbackUpdatesStoredReferencesThroughTheBridge();
     TestLatestDeviceListMatchesSubmittedEndpoints();
+    TestActiveToBlacklistedTearsDownEndpointsAndDropsStaleBrowserCallback();
     return 0;
 }

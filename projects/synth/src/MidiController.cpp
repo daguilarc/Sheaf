@@ -2926,6 +2926,12 @@ MidiControllerProfileResult CreateMidiControllerProfileImpl(
 
 }  // namespace
 
+MidiControllerProfileResult CreateBlacklistedMidiControllerProfile() {
+    MidiControllerProfileResult result;
+    result.input = std::make_unique<DropMidiInProcessor>();
+    return result;
+}
+
 MidiControllerProfileResult CreateMidiControllerProfile(
     const MidiControllerProfileConfig& config, MessageInBus* bus, MidiSender* sender,
     RuntimeUIState* uiState, MidiInProcessor::TimestampProvider timestampProvider,
