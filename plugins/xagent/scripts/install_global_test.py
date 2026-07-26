@@ -254,6 +254,80 @@ await client.close();
         raise RuntimeError(f"cleanup probe did not close owned child: {payload!r}")
 
 
+def run_packaged_await_probe(service_url: str, cwd: Path) -> None:
+    # I2: exercise xagent_await over the plugin MCP path. The fake adapter
+    # (XAGENT_TEST_ADAPTER=fake + XAGENT_TEST_DELAY_MS) emits a delta, a tool
+    # started/completed pair, then a final assistant message and turn
+    # completion after the configured delay. The await must stay pending
+    # through the intermediate progress and return once with the complete
+    # final report. This is the only packaged coverage of the primary Codex
+    # MCP await transport path.
+    #
+    probe = f"""
+import {{ Client }} from "@modelcontextprotocol/sdk/client/index.js";
+import {{ StreamableHTTPClientTransport }} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+const transport = new StreamableHTTPClientTransport(new URL({service_url!r}));
+const client = new Client({{ name: "xagent-plugin-await-test", version: "0.0.0" }});
+await client.connect(transport);
+
+const started = await client.callTool({{
+  name: "xagent_start",
+  arguments: {{ cwd: {str(cwd)!r}, prompt: "packaged await smoke", harness: "codex" }},
+}});
+const startBody = started.structuredContent ?? started.content?.[0]?.text;
+const startParsed = typeof startBody === "string" ? JSON.parse(startBody) : startBody;
+const runId = startParsed.run_id;
+if (typeof runId !== "string" || runId.length === 0) {{
+  throw new Error(`xagent_start did not return a run_id: ${{JSON.stringify(startParsed)}}`);
+}}
+
+const inspected = await client.callTool({{
+  name: "xagent_inspect",
+  arguments: {{ run_id: runId }},
+}});
+const inspectBody = inspected.structuredContent ?? inspected.content?.[0]?.text;
+const inspectParsed = typeof inspectBody === "string" ? JSON.parse(inspectBody) : inspectBody;
+const cursor = inspectParsed.sequence;
+if (typeof cursor !== "number" || cursor < 0) {{
+  throw new Error(`xagent_inspect did not return a sequence: ${{JSON.stringify(inspectParsed)}}`);
+}}
+
+const awaited = await client.callTool({{
+  name: "xagent_await",
+  arguments: {{ run_id: runId, after_sequence: cursor, deadline_seconds: 15 }},
+}});
+const awaitBody = awaited.structuredContent ?? awaited.content?.[0]?.text;
+const awaitParsed = typeof awaitBody === "string" ? JSON.parse(awaitBody) : awaitBody;
+
+if (awaitParsed.event !== "turn.completed") {{
+  throw new Error(`xagent_await did not settle on turn.completed: ${{JSON.stringify(awaitParsed)}}`);
+}}
+const reportText = awaitParsed.report?.text;
+if (reportText !== "complete final assistant message") {{
+  throw new Error(`xagent_await delivered an unexpected final report: ${{JSON.stringify(reportText)}}`);
+}}
+if (typeof awaitParsed.sequence !== "number" || awaitParsed.sequence <= cursor) {{
+  throw new Error(`xagent_await returned a non-advancing sequence: ${{JSON.stringify(awaitParsed)}}`);
+}}
+
+await client.close();
+console.log(JSON.stringify({{ event: awaitParsed.event, run_id: runId, sequence: awaitParsed.sequence }}));
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", probe],
+        cwd=REPO_ROOT / "projects" / "xagent",
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+        timeout=60,
+    )
+    payload = json.loads(result.stdout.strip())
+    if payload.get("event") != "turn.completed":
+        raise RuntimeError(f"await probe did not deliver turn.completed: {payload!r}")
+
+
 class PackageXagentOutputTests(unittest.TestCase):
     def test_built_package_excludes_python_bytecode_and_cache_directories(self) -> None:
         with tempfile.TemporaryDirectory(prefix="xagent-package-output-test-") as tempdir:
@@ -576,6 +650,50 @@ class PackageXagentOutputTests(unittest.TestCase):
                 run_packaged_cleanup_probe(
                     f"http://127.0.0.1:{port}/mcp",
                     log_root,
+                    cwd,
+                )
+            finally:
+                if service_process.poll() is None:
+                    if port is not None:
+                        shutdown_xagent_service(service_process, port)
+                    else:
+                        service_process.terminate()
+                        try:
+                            service_process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            service_process.kill()
+                            service_process.wait(timeout=5)
+                if service_process.stderr is not None:
+                    service_process.stderr.close()
+
+    def test_packaged_mcp_await_smoke_delivers_final_report(self) -> None:
+        # xa-18 / I2: exercise xagent_await over the plugin MCP path. The
+        # fake adapter emits a delta and a tool started/completed pair before
+        # the final assistant message and turn completion, so the await must
+        # stay pending through that progress and return once with the
+        # complete final report. This is the only packaged coverage of the
+        # primary Codex MCP await transport path; the blocking-wait/final
+        # report smoke previously ran through the quiet CLI only.
+        #
+        with tempfile.TemporaryDirectory(prefix="xagent-package-await-test-") as tempdir:
+            destination = Path(tempdir) / "package"
+            package_xagent.build_package(destination)
+
+            sheaf_root = create_isolated_sheaf_root(Path(tempdir))
+            cwd = Path(tempdir) / "work"
+            cwd.mkdir()
+            service_process = spawn_isolated_xagent_service(
+                sheaf_root,
+                extra_env={
+                    "XAGENT_TEST_ADAPTER": "fake",
+                    "XAGENT_TEST_DELAY_MS": "800",
+                },
+            )
+            port: int | None = None
+            try:
+                port = wait_for_service_port(service_process)
+                run_packaged_await_probe(
+                    f"http://127.0.0.1:{port}/mcp",
                     cwd,
                 )
             finally:

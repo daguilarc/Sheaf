@@ -148,20 +148,21 @@ export class ClaudeWatchdogClassifier {
                 return withOutput(uncertain("classifier_budget_exceeded"), stdoutBytes);
             }
             const candidate = structuredOutput(envelope);
-            // The verdict output bound is applied to the extracted structured
-            // output (the schema-valid classifier verdict), not the full Claude
-            // Code stdout envelope. The envelope's `result` field duplicates the
-            // structured output as a string and adds transport metadata
-            // (`session_id`, `usage`, `duration_ms`, ...) that the classifier did
-            // not author; counting those against the verdict bound would force
-            // every schema-valid maximal verdict into `classifier_output_too_large`
+            // The verdict output bound is applied to the normalized structured
+            // output (the schema-valid classifier verdict with evidence truncated
+            // to the per-item UTF-8 byte bound), not the raw Claude Code stdout
+            // envelope. The envelope's `result` field duplicates the structured
+            // output as a string and adds transport metadata (`session_id`,
+            // `usage`, `duration_ms`, ...) that the classifier did not author;
+            // counting those against the verdict bound would force every
+            // schema-valid maximal verdict into `classifier_output_too_large`
             // and wake the controller once per checkpoint. See OpenSpec xas-6.
             //
-            const verdictBytes = Buffer.byteLength(JSON.stringify(candidate ?? ""), "utf8");
+            const verdict = normalizeWatchdogVerdict(candidate, this.#confidenceFloor);
+            const verdictBytes = Buffer.byteLength(JSON.stringify(verdict), "utf8");
             if (verdictBytes > this.#outputLimitBytes) {
                 return withOutput(uncertain("classifier_output_too_large"), stdoutBytes);
             }
-            const verdict = normalizeWatchdogVerdict(candidate, this.#confidenceFloor);
             const usage = watchdogUsage(envelope.usage);
             const estimatedCost = finiteNonNegative(envelope.total_cost_usd);
             return {

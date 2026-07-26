@@ -38,6 +38,8 @@ Returns `{ "exiting": true }`, stops accepting new connections, closes every own
 | `/exit` | `POST` | Orderly shutdown |
 | `/mcp` | `POST` | Streamable HTTP MCP |
 
+The control plane is unauthenticated: `/mcp` has no token, no peer-credential check, and no unix-socket option. The bind host and DNS-rebinding guards mitigate the LAN and browser vectors, but loopback is not the same as same-user trust — any local account on the host can POST to `127.0.0.1:9005/mcp` and start a fully unsandboxed agent (`xagent_start` accepts any absolute existing `cwd`, and the Codex adapter passes `--dangerously-bypass-approvals-and-sandbox`) running as the service's user. This is an acceptable posture on a single-user dev machine and is the explicit trust assumption of the current design; a shared-token or unix-socket transport is the cheap hardening if that assumption ever breaks (review I3).
+
 The six MCP tools exposed by the service:
 
 1. `xagent_start` — create a run from an absolute existing `cwd`, a `prompt`, a `harness`, and an optional `mode`/`policy`.

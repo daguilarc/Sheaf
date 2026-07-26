@@ -1,3 +1,4 @@
+import { truncateUtf8 } from "../sanitize.js";
 const DEFAULT_CADENCE_MS = [10 * 60_000, 20 * 60_000, 40 * 60_000];
 const DEFAULT_MINIMUM_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_MAXIMUM_CALLS = 8;
@@ -7,16 +8,22 @@ const MAX_INPUT_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 2 * 1024;
 const MAX_REASON_CODE_LENGTH = 128;
 const MAX_EVIDENCE_ITEMS = 8;
-// Sized so a maximal schema-valid verdict (8 evidence items plus the
-// verdict/confidence/reason_code envelope) fits inside MAX_OUTPUT_BYTES
-// when the bound is applied to the extracted structured output rather
-// than the full Claude Code JSON envelope. The previous 512-byte limit
-// allowed 4096 bytes of evidence alone, which exceeded the 2 KiB output
-// cap and forced every maximal healthy verdict into
-// `classifier_output_too_large` -> `uncertain` -> one attention wake per
-// checkpoint. See OpenSpec xas-6 and design §4.
+// JSON Schema `maxLength` is character-based, so the schema sent to Claude
+// Code bounds each evidence item at this many characters. The model can
+// therefore produce up to MAX_EVIDENCE_ITEM_LENGTH characters per item.
 //
 const MAX_EVIDENCE_ITEM_LENGTH = 192;
+// The classifier verdict output cap (MAX_OUTPUT_BYTES) is measured in UTF-8
+// bytes. A schema-valid item at the character bound can still exceed the
+// byte cap when it is non-ASCII (e.g. 192 CJK characters serialize to 576
+// bytes, so 8 such items alone exceed the 2 KiB cap and force a healthy
+// verdict into `classifier_output_too_large`). To keep the byte cap
+// reachable for genuinely oversized output while accepting every
+// schema-valid verdict, each evidence item is truncated to this byte limit
+// after normalization. 8 items at this byte bound plus the verdict envelope
+// fit comfortably under the 2 KiB output cap regardless of encoding.
+//
+const MAX_EVIDENCE_ITEM_BYTES = 192;
 export class WatchdogScheduler {
     #classifier;
     #clock;
@@ -188,7 +195,7 @@ export function normalizeWatchdogVerdict(value, confidenceFloor = DEFAULT_CONFID
         verdict: value.verdict,
         confidence: value.confidence,
         reason_code: value.reason_code,
-        evidence: value.evidence,
+        evidence: value.evidence.map((item) => truncateUtf8(item, MAX_EVIDENCE_ITEM_BYTES)),
     };
     if (normalized.verdict === "healthy" && normalized.confidence < confidenceFloor) {
         return {

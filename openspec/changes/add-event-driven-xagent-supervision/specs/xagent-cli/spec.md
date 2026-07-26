@@ -122,7 +122,7 @@ WHILE a supervised provider session remains owned by the xagent service, THE ser
 
 ### Requirement: xa-18 — Distribution: supervision validation
 
-WHEN the xagent Codex package is built or installed, THE package validation SHALL verify HTTP MCP discovery against a test xagent service, the quiet service-client CLI path, blocking await behavior, final-report delivery, controller-disconnect survival, attention delivery, cursor deduplication, and process cleanup using packaged assets from a temporary non-Sheaf repository.
+WHEN the xagent Codex package is built or installed, THE package validation SHALL verify HTTP MCP discovery against a test xagent service, the quiet service-client CLI path, blocking await behavior over the plugin MCP `xagent_await` path, final-report delivery, and process cleanup using packaged assets from a temporary non-Sheaf repository. Controller-disconnect survival, attention delivery, and cursor deduplication are covered by in-tree TS tests (`mcp_await.test.ts`, `service_client.test.ts`) rather than packaged validation.
 
 #### Scenario: Packaged quiet CLI smoke
 
