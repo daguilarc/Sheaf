@@ -86,6 +86,10 @@ test("90-minute healthy run: MCP await wakes once; polling and quiet client coun
     settledDuringRun = true;
   });
   scheduler.advance(x_RunDurationMs);
+  // The await's .then() runs on a microtask; let it drain before asserting
+  // so the check can actually fail if the await settled during the run.
+  //
+  await Promise.resolve();
   assert.equal(
     settledDuringRun,
     false,

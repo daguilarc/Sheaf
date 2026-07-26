@@ -120,6 +120,7 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
 
       try {
         let lastAssistantText: string | undefined;
+        let processExitError: { code?: string; message?: string; details?: unknown } | undefined;
         for await (const adapterEvent of session.submit({
           text: command.text,
           turnId,
@@ -127,6 +128,22 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
         })) {
           const { rawProvider, ...rawBody } = adapterEvent;
           let body = withRuntimeTurnContext(rawBody, turnId);
+          // The legacy runtime contract emits turn.failed when a provider
+          // process crashes mid-turn. process_jsonl.ts now yields a
+          // structured { type: "error", code: "process_exit" } event instead
+          // of throwing, so capture it here and emit a matching turn.failed
+          // after the iterator ends. The supervised path consumes the same
+          // event directly via the supervisor's process.exited
+          // classification, so this remap is legacy-only.
+          //
+          if (body.type === "error" && (body as { code?: string }).code === "process_exit") {
+            const errorBody = body as { code: string; message: string; details?: unknown };
+            processExitError = {
+              code: "harness_process_failed",
+              message: errorBody.message,
+              details: errorBody.details,
+            };
+          }
           if (body.type === "message.completed" && body.role === "assistant") {
             lastAssistantText = body.text;
           }
@@ -146,6 +163,16 @@ export async function runSession(options: RunSessionOptions): Promise<RunSession
             await appendRawProviderEvent(runRecord, sanitizeValue(body.payload, options.repoRoot));
           }
           await emitBody(options, runRecord, outputFilter, sequencer, body);
+        }
+        if (processExitError !== undefined) {
+          await emitBody(options, runRecord, outputFilter, sequencer, {
+            type: "turn.failed",
+            turn_id: turnId,
+            code: processExitError.code ?? "harness_process_failed",
+            message: processExitError.message ?? "provider process exited",
+            ...(processExitError.details === undefined ? {} : { details: processExitError.details }),
+            provider_thread_id: session.providerThreadId,
+          });
         }
       } catch (error) {
         await emitBody(options, runRecord, outputFilter, sequencer, {

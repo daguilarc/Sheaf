@@ -407,6 +407,10 @@ test("ninety-minute healthy run completes without an intermediate deadline wake"
       settledDuringRun = true;
     });
     scheduler.advance(x_RunDurationMs);
+    // The await's .then() runs on a microtask; let it drain before asserting
+    // so the check can actually fail if the await settled during the run.
+    //
+    await Promise.resolve();
     assert.equal(
       settledDuringRun,
       false,

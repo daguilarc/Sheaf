@@ -422,6 +422,68 @@ test("runtime emits warnings when selected adapter ignores requested model or th
   );
 });
 
+test("runtime maps a structured process_exit error event to turn.failed for legacy controllers", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-runtime-"));
+  const stdout = new MemoryWritable();
+
+  const result = await runSession({
+    harness: "codex",
+    mode: "subagent",
+    repoRoot,
+    cwd: repoRoot,
+    stdin: Readable.from([
+      JSON.stringify({ type: "user.message", text: "crash" }),
+      "\n",
+      JSON.stringify({ type: "control.exit" }),
+      "\n",
+    ]),
+    stdout,
+    adapter: new ProcessExitAdapter(),
+    runId: "xrun_process_exit",
+    clock: fixedClock(),
+  });
+
+  assert.deepEqual(result, { exitCode: 0 });
+  const events = parseJsonl(stdout.text);
+  const turnFailed = events.find((event) => event.type === "turn.failed");
+  assert.ok(turnFailed, "runtime must emit turn.failed when the provider process exits non-zero");
+  assert.equal(turnFailed?.type === "turn.failed" ? turnFailed.code : undefined, "harness_process_failed");
+  assert.equal(turnFailed?.type === "turn.failed" ? turnFailed.turn_id : undefined, "turn_1");
+  assert.deepEqual(
+    turnFailed?.type === "turn.failed" ? turnFailed.details : undefined,
+    { exit_code: 137, signal: null },
+  );
+  const ended = events.find((event) => event.type === "session.ended");
+  assert.deepEqual(ended !== undefined && ended.type === "session.ended" ? [ended.reason, ended.exit_code] : undefined, [
+    "input_closed",
+    0,
+  ]);
+});
+
+class ProcessExitAdapter implements HarnessAdapter {
+  readonly harness = "codex";
+  readonly capabilities = {
+    forwardsModel: false,
+    forwardsThinkingLevel: false,
+    streamsDeltas: false,
+  };
+
+  async start(): Promise<HarnessSession> {
+    return {
+      async *submit(): AsyncIterable<AdapterEvent> {
+        yield {
+          type: "error",
+          code: "process_exit",
+          message: "codex process exited with code 137.",
+          details: { exit_code: 137, signal: null },
+          recoverable: false,
+        };
+      },
+      async close(): Promise<void> {},
+    };
+  }
+}
+
 test("runtime forwards an explicit permission mode to the adapter", async () => {
   const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-runtime-"));
   const stdout = new MemoryWritable();
