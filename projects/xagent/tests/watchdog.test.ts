@@ -723,6 +723,143 @@ test("close settles the eighth classifier before coverage persistence can be los
   await submission;
 });
 
+test("watchdog telemetry failure cannot poison close or its idempotent result", async () => {
+  const clock = new FakeClock();
+  const classifierStarted = deferred<void>();
+  const releaseClassifier = deferred<void>();
+  const releaseTurn = deferred<void>();
+  const adapter = new FakeHarnessAdapter({
+    scriptedEvents: [activeCheckpointThenWait(clock, releaseTurn.promise)],
+  });
+  const classifier: WatchdogClassifier = {
+    async classify() {
+      classifierStarted.resolve(undefined);
+      await releaseClassifier.promise;
+      return {
+        verdict: "healthy",
+        confidence: 0.94,
+        reason_code: "steady_progress",
+        evidence: [],
+      };
+    },
+  };
+  const supervisor = new Supervisor({
+    runId: "xrun_watchdog_close_telemetry_failure",
+    adapter,
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    clock: clock.now,
+    scheduler: clock,
+    watchdogClassifier: classifier,
+    watchdogTelemetrySink: async () => {
+      throw new Error("secondary watchdog telemetry failure");
+    },
+  });
+  await supervisor.start();
+  const submissionOutcome = supervisor.submit("implement").then(
+    () => ({ status: "resolved" as const }),
+    (error: unknown) => ({ status: "rejected" as const, error }),
+  );
+  await classifierStarted.promise;
+
+  const firstClose = supervisor.close();
+  const concurrentClose = supervisor.close();
+  releaseClassifier.resolve(undefined);
+  await assert.doesNotReject(Promise.all([firstClose, concurrentClose]));
+  await assert.doesNotReject(supervisor.close());
+
+  releaseTurn.resolve(undefined);
+  assert.deepEqual(await submissionOutcome, { status: "resolved" });
+  assert.equal(adapter.closeCount, 1);
+  assert.equal(supervisor.inspect().phase, "completed");
+});
+
+test("watchdog telemetry failure alone cannot reject a successful submit", async () => {
+  const clock = new FakeClock();
+  const releaseClassifier = deferred<void>();
+  const classifier: WatchdogClassifier = {
+    async classify() {
+      await releaseClassifier.promise;
+      return {
+        verdict: "healthy",
+        confidence: 0.94,
+        reason_code: "steady_progress",
+        evidence: [],
+      };
+    },
+  };
+  const supervisor = new Supervisor({
+    runId: "xrun_watchdog_submit_telemetry_failure",
+    adapter: new FakeHarnessAdapter({
+      scriptedEvents: [semanticCheckpointTurn(clock)],
+    }),
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    clock: clock.now,
+    scheduler: clock,
+    watchdogClassifier: classifier,
+    watchdogTelemetrySink: async () => {
+      throw new Error("secondary watchdog telemetry failure");
+    },
+    eventSink: async (event) => {
+      if (event.reason === "turn_completed") {
+        setImmediate(() => {
+          releaseClassifier.resolve(undefined);
+        });
+      }
+    },
+  });
+  await supervisor.start();
+
+  await assert.doesNotReject(supervisor.submit("implement"));
+  assert.equal(supervisor.inspect().phase, "ready");
+});
+
+test("submit reports primary event persistence failure over watchdog telemetry failure", async () => {
+  const clock = new FakeClock();
+  const classifierStarted = deferred<void>();
+  const releaseClassifier = deferred<void>();
+  const primaryFailure = new Error("primary turn event persistence failure");
+  const secondaryFailure = new Error("secondary watchdog telemetry failure");
+  const classifier: WatchdogClassifier = {
+    async classify() {
+      classifierStarted.resolve(undefined);
+      await releaseClassifier.promise;
+      return {
+        verdict: "healthy",
+        confidence: 0.94,
+        reason_code: "steady_progress",
+        evidence: [],
+      };
+    },
+  };
+  const supervisor = new Supervisor({
+    runId: "xrun_watchdog_primary_error_precedence",
+    adapter: new FakeHarnessAdapter({
+      scriptedEvents: [semanticCheckpointTurn(clock)],
+    }),
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    clock: clock.now,
+    scheduler: clock,
+    watchdogClassifier: classifier,
+    watchdogTelemetrySink: async () => {
+      throw secondaryFailure;
+    },
+    eventSink: async (event) => {
+      if (event.reason === "turn_completed") {
+        releaseClassifier.resolve(undefined);
+        throw primaryFailure;
+      }
+    },
+  });
+  await supervisor.start();
+  const submission = supervisor.submit("implement");
+  await classifierStarted.promise;
+
+  await assert.rejects(submission, (error: unknown) => error === primaryFailure);
+});
+
 test("an in-flight classifier does not delay deterministic transport failure", async () => {
   const clock = new FakeClock();
   const classifierStarted = deferred<void>();
@@ -1198,6 +1335,32 @@ async function* semanticCheckpointTurn(
     role: "assistant" as const,
     delta: "semantic checkpoint",
   };
+  yield {
+    type: "turn.completed" as const,
+    final_text: "finished",
+  };
+}
+
+async function* activeCheckpointThenWait(
+  clock: FakeClock,
+  release: Promise<void>,
+) {
+  for (const minute of [4, 8]) {
+    clock.advance(4 * 60_000);
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { bytes: minute },
+    };
+  }
+  clock.advance(2 * 60_000);
+  yield {
+    type: "message.delta" as const,
+    message_id: "message_waiting_checkpoint",
+    role: "assistant" as const,
+    delta: "semantic checkpoint",
+  };
+  await release;
   yield {
     type: "turn.completed" as const,
     final_text: "finished",

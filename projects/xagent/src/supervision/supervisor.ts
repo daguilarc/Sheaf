@@ -358,7 +358,7 @@ export class Supervisor {
         }, true);
       });
     } finally {
-      await this.#watchdogScheduler.settle();
+      await this.#settleWatchdog();
     }
   }
 
@@ -419,7 +419,7 @@ export class Supervisor {
         await this.#closeSessionOnce();
         await this.#publishState("completed", "session_closed", true);
       });
-      this.#closePromise = closeSession.then(() => this.#watchdogScheduler.settle());
+      this.#closePromise = closeSession.then(() => this.#settleWatchdog());
     }
     return this.#closePromise;
   }
@@ -622,6 +622,14 @@ export class Supervisor {
       () => {},
     );
     return result;
+  }
+
+  async #settleWatchdog(): Promise<void> {
+    try {
+      await this.#watchdogScheduler.settle();
+    } catch (error) {
+      this.#watchdogCallbackFailure = asError(error);
+    }
   }
 
   #closeSessionOnce(): Promise<void> {
