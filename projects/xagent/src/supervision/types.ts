@@ -32,7 +32,12 @@ export type AwaitDeadline = {
 
 export type AwaitResult = SupervisionEvent | AwaitDeadline;
 
-export type WatchdogPolicy = Record<string, never>;
+export type WatchdogPolicy = {
+  inputLimitBytes?: number;
+  suspicionWindowMs?: number;
+  repeatedToolThreshold?: number;
+  repeatedFailureThreshold?: number;
+};
 
 export type SupervisionPolicy = {
   silenceTimeoutMs: number;

@@ -4,7 +4,15 @@ import type {
   HarnessSession,
   HarnessStartOptions,
 } from "../adapters/types.js";
+import {
+  SemanticEvidenceWindow,
+  type SemanticEvidenceSnapshot,
+} from "./evidence.js";
 import { SequencedEventQueue } from "./event_queue.js";
+import {
+  DeterministicHealthMonitor,
+  type DeterministicHealthClassification,
+} from "./health.js";
 import type {
   AwaitResult,
   SupervisionEvent,
@@ -44,6 +52,7 @@ export class Supervisor {
   readonly #clock: () => Date;
   readonly #metadataSink: SupervisionMetadataSink;
   readonly #events: SequencedEventQueue;
+  readonly #health: DeterministicHealthMonitor;
   readonly #watchdog: WatchdogAggregate = {
     invocation_count: 0,
     controller_wake_count: 0,
@@ -61,6 +70,8 @@ export class Supervisor {
   #startRequested = false;
   #lastTransportProgressAt: string;
   #lastSemanticProgressAt: string;
+  #evidence?: SemanticEvidenceWindow;
+  #healthCallbackFailure?: Error;
 
   constructor(options: SupervisorOptions) {
     this.#runId = options.runId;
@@ -78,6 +89,19 @@ export class Supervisor {
       this.#clock,
       options.scheduler,
     );
+    this.#health = new DeterministicHealthMonitor({
+      silenceTimeoutMs: this.#policy.silenceTimeoutMs,
+      ...(this.#policy.hardDeadlineMs === undefined
+        ? {}
+        : { hardDeadlineMs: this.#policy.hardDeadlineMs }),
+      clock: this.#clock,
+      ...(options.scheduler === undefined ? {} : { scheduler: options.scheduler }),
+      onClassification: (classification) => {
+        void this.#applyHealthClassification(classification).catch((error: unknown) => {
+          this.#healthCallbackFailure = asError(error);
+        });
+      },
+    });
     this.#initialPersistence = this.#publishState("starting", "supervisor_created", false);
   }
 
@@ -88,6 +112,10 @@ export class Supervisor {
       sequence: Math.max(1, this.#events.sequence),
       provider_thread_id: this.#providerThreadId,
     };
+  }
+
+  evidenceSnapshot(): SemanticEvidenceSnapshot | undefined {
+    return this.#evidence?.snapshot();
   }
 
   start(): Promise<void> {
@@ -131,6 +159,24 @@ export class Supervisor {
       const inputSequence = this.#inputSequence;
       const turnId = `turn_${inputSequence}`;
       await this.#publishState("running", "turn_started", false);
+      this.#evidence = new SemanticEvidenceWindow({
+        repoRoot: this.#startOptions.cwd,
+        originalPrompt: text,
+        clock: this.#clock,
+        ...(this.#policy.watchdog.inputLimitBytes === undefined
+          ? {}
+          : { maxInputBytes: this.#policy.watchdog.inputLimitBytes }),
+        ...(this.#policy.watchdog.suspicionWindowMs === undefined
+          ? {}
+          : { suspicionWindowMs: this.#policy.watchdog.suspicionWindowMs }),
+        ...(this.#policy.watchdog.repeatedToolThreshold === undefined
+          ? {}
+          : { repeatedToolThreshold: this.#policy.watchdog.repeatedToolThreshold }),
+        ...(this.#policy.watchdog.repeatedFailureThreshold === undefined
+          ? {}
+          : { repeatedFailureThreshold: this.#policy.watchdog.repeatedFailureThreshold }),
+      });
+      this.#health.recordMechanicalEvent({ type: "provider.started" });
       return { inputSequence, turnId, session: this.#session };
     });
 
@@ -146,6 +192,19 @@ export class Supervisor {
           return;
         }
         this.#recordProgress(event);
+        const mechanical = mechanicalEventClassification(this.#health, event);
+        if (mechanical?.kind === "attention") {
+          await this.#applyHealthClassification(mechanical);
+        }
+        if (mechanical?.kind === "failure" && event.type !== "turn.failed") {
+          await this.#withLifecycleMutation(async () => {
+            if (terminalPhases.has(this.#phase)) {
+              return;
+            }
+            await this.#publishState("failed", mechanical.reason, true, mechanical.payload);
+          });
+          return;
+        }
         if (event.type === "message.completed" && event.role === "assistant") {
           lastAssistantText = event.text;
         }
@@ -169,11 +228,15 @@ export class Supervisor {
       if (terminalPhases.has(this.#phase)) {
         return;
       }
+      const transportFailure = this.#health.recordMechanicalEvent({
+        type: "transport.lost",
+        message: error instanceof Error ? error.message : String(error),
+      });
       await this.#withLifecycleMutation(async () => {
         if (terminalPhases.has(this.#phase)) {
           return;
         }
-        await this.#publishState("failed", errorCode(error), true, {
+        await this.#publishState("failed", transportFailure?.reason ?? errorCode(error), true, {
           message: error instanceof Error ? error.message : String(error),
           turn_id: turn.turnId,
         });
@@ -258,6 +321,7 @@ export class Supervisor {
         throw new Error("Harness session does not support interrupt.");
       }
       await this.#session.interrupt();
+      this.#health.recordMechanicalEvent({ type: "cancelled" });
     });
   }
 
@@ -268,6 +332,7 @@ export class Supervisor {
         if (terminalPhases.has(this.#phase)) {
           return;
         }
+        this.#health.recordMechanicalEvent({ type: "cancelled" });
         await this.#closeSessionOnce();
         await this.#publishState("completed", "session_closed", true);
       });
@@ -333,18 +398,19 @@ export class Supervisor {
   }
 
   #recordProgress(event: AdapterEvent): void {
-    const timestamp = this.#clock().toISOString();
-    this.#lastTransportProgressAt = timestamp;
-    if (
-      event.type === "message.delta"
-      || event.type === "message.completed"
-      || event.type === "tool.started"
-      || event.type === "tool.completed"
-      || event.type === "turn.completed"
-      || event.type === "turn.failed"
-    ) {
-      this.#lastSemanticProgressAt = timestamp;
+    this.#health.recordProviderActivity(isSemanticProgress(event) ? "semantic" : "transport");
+    this.#lastTransportProgressAt = this.#health.lastTransportActivityAt;
+    this.#lastSemanticProgressAt = this.#health.lastSemanticActivityAt;
+    this.#evidence?.record(event);
+  }
+
+  #applyHealthClassification(
+    classification: DeterministicHealthClassification,
+  ): Promise<void> {
+    if (classification.kind !== "attention") {
+      return Promise.resolve();
     }
+    return this.publishAttention(classification.reason, classification.payload).then(() => {});
   }
 
   #persistenceState(
@@ -399,4 +465,67 @@ function errorCode(error: unknown): string {
     return error.code;
   }
   return "supervisor_failed";
+}
+
+function mechanicalEventClassification(
+  monitor: DeterministicHealthMonitor,
+  event: AdapterEvent,
+): DeterministicHealthClassification | undefined {
+  if (event.type === "turn.completed") {
+    return monitor.recordMechanicalEvent({ type: "provider.completed" });
+  }
+  if (event.type === "turn.failed") {
+    return monitor.recordMechanicalEvent({
+      type: "provider.failed",
+      code: event.code,
+      message: event.message,
+    });
+  }
+  if (event.type !== "status" && event.type !== "error") {
+    return undefined;
+  }
+  if (event.code === "input_required") {
+    return monitor.recordMechanicalEvent({
+      type: "input.required",
+      prompt: event.message,
+    });
+  }
+  if (event.code === "permission_required") {
+    return monitor.recordMechanicalEvent({
+      type: "permission.required",
+      permission: permissionFromDetails(event.details),
+    });
+  }
+  if (event.code === "transport_lost" || event.code === "transport_loss") {
+    return monitor.recordMechanicalEvent({
+      type: "transport.lost",
+      message: event.message,
+    });
+  }
+  return undefined;
+}
+
+function isSemanticProgress(event: AdapterEvent): boolean {
+  return event.type === "message.delta"
+    || event.type === "message.completed"
+    || event.type === "tool.started"
+    || event.type === "tool.completed"
+    || event.type === "turn.completed"
+    || event.type === "turn.failed";
+}
+
+function permissionFromDetails(details: unknown): string | undefined {
+  if (
+    typeof details === "object"
+    && details !== null
+    && "permission" in details
+    && typeof details.permission === "string"
+  ) {
+    return details.permission;
+  }
+  return undefined;
+}
+
+function asError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }

@@ -54,12 +54,38 @@ export function sanitizeString(value: string, repoRoot: string): string {
   return sanitized;
 }
 
+export function canonicalJson(value: unknown): string {
+  return JSON.stringify(canonicalValue(value));
+}
+
+export function truncateUtf8(value: string, maxBytes: number): string {
+  const byteLimit = Math.max(0, Math.floor(maxBytes));
+  if (Buffer.byteLength(value, "utf8") <= byteLimit) {
+    return value;
+  }
+
+  let bytes = 0;
+  let result = "";
+  for (const character of value) {
+    const characterBytes = Buffer.byteLength(character, "utf8");
+    if (bytes + characterBytes > byteLimit) {
+      break;
+    }
+    result += character;
+    bytes += characterBytes;
+  }
+  return result;
+}
+
 function relativizeRepoPath(value: string, repoRoot: string): string {
   const normalizedRoot = path.resolve(repoRoot);
   return value.replaceAll(normalizedRoot, (match, offset: number, full: string) => {
     const before = offset === 0 ? "" : full[offset - 1];
     const after = full[offset + match.length] ?? "";
-    if ((before === "" || isPathBoundaryBefore(before)) && (after === "" || after === path.sep)) {
+    if (
+      (before === "" || isPathBoundaryBefore(before))
+      && (after === "" || after === path.sep || isPathBoundaryAfter(after))
+    ) {
       return ".";
     }
     return match;
@@ -80,4 +106,28 @@ function isSensitiveKey(key: string): boolean {
 
 function isPathBoundaryBefore(value: string): boolean {
   return /\s|["'([{:=]/.test(value);
+}
+
+function isPathBoundaryAfter(value: string): boolean {
+  return /\s|["'\])},;:]/.test(value);
+}
+
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalValue(item));
+  }
+  if (isRecord(value)) {
+    const result: Record<string, unknown> = {};
+    for (const key of Object.keys(value).sort()) {
+      const item = value[key];
+      if (item !== undefined && typeof item !== "function" && typeof item !== "symbol") {
+        result[key] = canonicalValue(item);
+      }
+    }
+    return result;
+  }
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    return null;
+  }
+  return value;
 }
