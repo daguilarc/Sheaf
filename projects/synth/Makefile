@@ -63,7 +63,7 @@ $(BUILD_DIR)/ButtonGrid.o: src/ButtonGrid.cpp include/synth/ButtonGrid.hpp inclu
 $(BUILD_DIR)/MidiController.o: src/MidiController.cpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/RuntimeUIState.hpp include/synth/ButtonGrid.hpp | $(BUILD_SENTINEL)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/ControllerWizard.o: src/ControllerWizard.cpp include/synth/ControllerWizard.hpp include/synth/MidiController.hpp include/synth/PortableUI.hpp | $(BUILD_SENTINEL)
+$(BUILD_DIR)/ControllerWizard.o: src/ControllerWizard.cpp include/synth/ControllerWizard.hpp include/synth/MidiController.hpp include/synth/PortableUI.hpp include/synth/MidiReconcile.hpp | $(BUILD_SENTINEL)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/PatchPersistence.o: src/PatchPersistence.cpp include/synth/PatchPersistence.hpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/MasterClock.hpp include/synth/Json.hpp | $(BUILD_SENTINEL)
@@ -193,7 +193,7 @@ $(BROWSER_AUDIO_DEVICE_TEST_BIN): tests/browser_audio_device_tests.cpp include/s
 $(BROWSER_MIDI_BRIDGE_TEST_BIN): tests/browser_midi_bridge_tests.cpp include/synth/browser/BrowserMidiBridge.hpp include/synth/Engine.hpp include/synth/MidiReconcile.hpp include/synth/MidiController.hpp $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(CONTROLLER_WIZARD_TEST_BIN): tests/controller_wizard_tests.cpp include/synth/ControllerWizard.hpp $(LIB)
+$(CONTROLLER_WIZARD_TEST_BIN): tests/controller_wizard_tests.cpp include/synth/ControllerWizard.hpp include/synth/MidiController.hpp include/synth/PortableUI.hpp include/synth/MidiReconcile.hpp $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -DNDEBUG $< $(LIB) -o $@
 
 controller_wizard_tests: $(CONTROLLER_WIZARD_TEST_BIN)
