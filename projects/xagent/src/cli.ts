@@ -21,11 +21,17 @@ import {
   XagentServiceUnavailableError,
   type XagentServiceClient,
 } from "./service/client.js";
-import type { SupervisionPolicy } from "./supervision/types.js";
+import type { SupervisionPolicy, SupervisionPhase } from "./supervision/types.js";
 import {
   x_DefaultAwaitDeadlineSeconds,
   type XagentStartInput,
 } from "./service/tool_schemas.js";
+
+const nonTerminalSupervisionPhases = new Set<SupervisionPhase>([
+  "starting",
+  "running",
+  "ready",
+]);
 
 export type CliCommand =
   | {
@@ -271,7 +277,10 @@ async function awaitControllerEvent(
       after_sequence: cursor,
       deadline_seconds: Math.min(remainingSeconds, deadlineSeconds),
     });
-    if (awaited.event === "supervision.state") {
+    if (
+      awaited.event === "supervision.state"
+      && nonTerminalSupervisionPhases.has(awaited.phase as SupervisionPhase)
+    ) {
       cursor = awaited.sequence;
       if (Date.now() >= deadlineMs) {
         return {
@@ -290,7 +299,11 @@ async function awaitControllerEvent(
   }
 }
 
-function exitCodeForAwait(awaited: { readonly event: string; readonly reason?: string }): number {
+function exitCodeForAwait(awaited: {
+  readonly event: string;
+  readonly reason?: string;
+  readonly phase?: string;
+}): number {
   if (awaited.event === "turn.completed" || awaited.event === "supervision.attention") {
     return 0;
   }
@@ -300,7 +313,10 @@ function exitCodeForAwait(awaited: { readonly event: string; readonly reason?: s
   if (awaited.reason === "missing_final_report") {
     return 1;
   }
-  return awaited.event === "supervision.state" ? 0 : 1;
+  if (awaited.event === "supervision.state") {
+    return awaited.phase === "failed" || awaited.phase === "abandoned" ? 1 : 0;
+  }
+  return 1;
 }
 
 async function resolveLogRoot(cwd: string): Promise<string> {

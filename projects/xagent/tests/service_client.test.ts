@@ -494,6 +494,57 @@ test("reattachment uses the same run_id across CLI invocations", async () => {
   });
 });
 
+test("quiet supervise surfaces a terminal provider failure immediately instead of spinning to the await deadline", async () => {
+  await withFakeService(async ({ baseUrl, adapterFactory }) => {
+    async function* scriptedTurn(): AsyncIterable<AdapterEvent> {
+      yield {
+        type: "message.delta",
+        message_id: "message_1",
+        role: "assistant",
+        delta: "partial before crash",
+      };
+      yield {
+        type: "turn.failed",
+        code: "provider_failed",
+        message: "provider reported failure",
+      };
+    }
+    adapterFactory.queueScripts([scriptedTurn()]);
+
+    const cwd = await mkdtemp(path.join(tmpdir(), "xagent-supervise-fail-"));
+    const stdout = new MemoryWritable();
+    const stderr = new MemoryWritable();
+    const start = Date.now();
+    const result = await main(
+      [
+        "supervise",
+        "--harness",
+        "codex",
+        "--cwd",
+        cwd,
+        "--deadline-seconds",
+        "30",
+        "do work that crashes",
+      ],
+      Readable.from([]),
+      stdout,
+      stderr,
+      cwd,
+      { serviceBaseUrl: baseUrl },
+    );
+
+    assert.equal(result.exitCode, 1);
+    assert.equal(stderr.text, "");
+    const body = JSON.parse(stdout.text.trim()) as Record<string, unknown>;
+    assert.equal(body.event, "supervision.state");
+    assert.equal(body.phase, "failed");
+    assert.equal(body.reason, "provider_failed");
+    assert.equal(typeof body.run_id, "string");
+    // Must return well before the 30s deadline; a quiet spin would take ~30s.
+    assert.ok(Date.now() - start < 5_000, "supervise did not return the failure promptly");
+  });
+});
+
 test("unavailable service emits structured failure and never constructs a Supervisor", async () => {
   const baseUrl = `http://127.0.0.1:${await findFreePort()}`;
   const cwd = await mkdtemp(path.join(tmpdir(), "xagent-unavailable-"));
