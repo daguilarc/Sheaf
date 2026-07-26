@@ -1,14 +1,17 @@
 #pragma once
 
 #include "synth/MidiController.hpp"
+#include "synth/MidiReconcile.hpp"
 #include "synth/PortableUI.hpp"
 
 #include <cassert>
 #include <concepts>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace synth {
 
@@ -70,5 +73,34 @@ protected:
     virtual WizardGenerationResult GenerateTypedProfile(
         const Form&, const WizardGenerationContext&) const = 0;
 };
+
+struct WizardCandidate {
+    std::string wizardId;
+    std::string displayName;
+    MidiProfileKind kind;
+    MidiDeviceInfoRef input;
+    MidiDeviceInfoRef output;
+};
+
+struct WizardDiscovery {
+    std::vector<WizardCandidate> available;
+    std::vector<MidiDeviceInfoRef> unmatchedInputs;
+    std::vector<MidiDeviceInfoRef> unmatchedOutputs;
+};
+
+struct ControllerWizardDescriptor {
+    std::string id;
+    std::string displayName;
+    MidiProfileKind kind;
+    std::vector<std::string> inputAliases;
+    std::vector<std::string> outputAliases;
+    std::function<std::unique_ptr<ControllerWizard>()> factory;
+};
+
+const std::vector<ControllerWizardDescriptor>& ControllerWizardRegistry();
+WizardDiscovery DiscoverControllerWizards(
+    const MidiDeviceList&, const MidiInstrumentConfig&,
+    const std::vector<ControllerWizardDescriptor>&);
+std::unique_ptr<ControllerWizard> MakeControllerWizard(std::string_view id);
 
 }  // namespace synth
