@@ -414,7 +414,6 @@ test("runtime emits warnings when selected adapter ignores requested model or th
     cwd: repoRoot,
     model: undefined,
     thinkingLevel: undefined,
-    permissionMode: undefined,
   });
   const warnings = parseJsonl(stdout.text).filter((event) => event.type === "status" && event.level === "warning");
   assert.deepEqual(

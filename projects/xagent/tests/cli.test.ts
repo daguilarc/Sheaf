@@ -28,7 +28,6 @@ test("parses a valid run command", () => {
     mode: "subagent",
     model: undefined,
     thinkingLevel: undefined,
-    permissionMode: undefined,
     initialMessage: undefined,
   });
 });
@@ -47,7 +46,6 @@ test("parses a valid run command with an initial message", () => {
     mode: "subagent",
     model: undefined,
     thinkingLevel: undefined,
-    permissionMode: undefined,
     initialMessage: "hello there",
   });
 });
@@ -70,7 +68,6 @@ test("parses a valid full run command with options", () => {
       mode: "full",
       model: "sonnet",
       thinkingLevel: "high",
-      permissionMode: undefined,
       initialMessage: undefined,
     },
   );
