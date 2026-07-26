@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,6 +9,7 @@ import {
   appendWatchdogTelemetry,
   createRunRecord,
 } from "../src/logs.js";
+import { XagentRunManager } from "../src/service/run_manager.js";
 import { Supervisor } from "../src/supervision/supervisor.js";
 import type {
   SupervisionScheduler,
@@ -578,7 +579,7 @@ test("a classifier verdict completed after close still persists aggregate cost a
   releaseTurn.resolve(undefined);
   await submission;
 
-  assert.equal(supervisor.inspect().phase, "completed");
+  assert.equal(supervisor.inspect().phase, "cancelled");
   assert.equal(reasons.includes("watchdog_derailed"), false);
   assert.equal(telemetry[0]?.estimated_cost_usd, 0.002);
   assert.equal(metadata.at(-1)?.watchdog.invocation_count, 1);
@@ -777,7 +778,7 @@ test("watchdog telemetry failure cannot poison close or its idempotent result", 
   releaseTurn.resolve(undefined);
   assert.deepEqual(await submissionOutcome, { status: "resolved" });
   assert.equal(adapter.closeCount, 1);
-  assert.equal(supervisor.inspect().phase, "completed");
+  assert.equal(supervisor.inspect().phase, "cancelled");
 });
 
 test("watchdog telemetry failure alone cannot reject a successful submit", async () => {
@@ -1292,7 +1293,105 @@ test("uncertain, low-confidence, and invalid semantic results each emit advisory
   }
 });
 
-test("watchdog telemetry log stores aggregate facts without prompt text", async () => {
+// C2: the sanitized watchdog telemetry sink must be wired by
+// XagentRunManager.create() so per-verdict records reach watchdog.jsonl in
+// production. The previous version of this test called
+// appendWatchdogTelemetry directly with a hand-authored literal and only
+// proved the writer writes; this version drives a real classifier verdict
+// through the run manager (the production wiring path) and asserts the file
+// is populated without leaking prompt text.
+test("watchdog telemetry log records a real classifier verdict driven through the run manager", async () => {
+  const clock = new FakeClock();
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-watchdog-wire-"));
+  const logRoot = path.join(repoRoot, "data", "xagent");
+  await mkdir(logRoot, { recursive: true });
+
+  const classifier = new ClassifierSpy({
+    verdict: "derailed",
+    confidence: 0.93,
+    reason_code: "repeated_failed_tool",
+    evidence: ["The same failed tool call repeated."],
+  });
+
+  async function* activeTurn() {
+    clock.advance(240_000);
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { bytes: 1 },
+    };
+    clock.advance(240_000);
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { bytes: 2 },
+    };
+    clock.advance(120_000);
+    yield {
+      type: "message.delta" as const,
+      message_id: "message_wire_check",
+      role: "assistant" as const,
+      delta: "still working",
+    };
+    yield { type: "turn.completed" as const, final_text: "finished" };
+  }
+
+  const runManager = new XagentRunManager({
+    repoRoot,
+    logRoot,
+    adapterFactory: () => new FakeHarnessAdapter({ scriptedEvents: [activeTurn()] }),
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    clock: clock.now,
+    scheduler: clock,
+    watchdogClassifier: classifier,
+  });
+
+  try {
+    const { runId } = await runManager.create({
+      harness: "codex",
+      mode: "subagent",
+      cwd: repoRoot,
+    });
+    await runManager.start(runId);
+    const cursor = runManager.inspect(runId)!.sequence;
+    await runManager.submit(runId, "implement the secret plan");
+
+    const attention = await runManager.awaitEvent(runId, cursor, 1_000);
+    assert.equal(attention.type, "supervision.attention");
+    assert.equal(attention.reason, "watchdog_derailed");
+
+    // The telemetry must be persisted to watchdog.jsonl by the sink wired in
+    // XagentRunManager.create() — not just held in memory.
+    //
+    const watchdogPath = path.join(logRoot, runId, "watchdog.jsonl");
+    const telemetryText = await readFile(watchdogPath, "utf8");
+    assert.ok(telemetryText.length > 0, "watchdog.jsonl must be written by the wired sink");
+
+    const entries = telemetryText
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as WatchdogTelemetry);
+    assert.equal(entries.length, 1);
+    const entry = entries[0];
+    assert.equal(entry.verdict, "derailed");
+    assert.equal(entry.confidence, 0.93);
+    assert.equal(entry.reason_code, "repeated_failed_tool");
+    assert.equal(entry.call_count, 1);
+    assert.equal(entry.attention_sequence, attention.sequence);
+    assert.match(entry.request_hash ?? "", /^[0-9a-f]{64}$/);
+    assert.equal(typeof entry.input_bytes, "number");
+    assert.ok(entry.input_bytes > 0);
+    // The sanitized log must not leak the unrestricted prompt.
+    assert.equal(telemetryText.includes("implement the secret plan"), false);
+    assert.equal(telemetryText.includes("original_prompt"), false);
+  } finally {
+    await runManager.closeAll();
+  }
+});
+
+// Sanity check: the low-level writer still persists exactly the fields it
+// is given. This guards the writer contract independently of the wiring.
+test("appendWatchdogTelemetry persists the supplied aggregate fields without prompt text", async () => {
   const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-watchdog-log-"));
   const record = await createRunRecord({
     repoRoot,

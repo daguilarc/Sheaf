@@ -1,12 +1,13 @@
-import { realpath, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { generateRunId, createRunRecord, appendNormalizedEvent, updateRunSupervision, openRunRecord, type RunRecord } from "../logs.js";
+import { generateRunId, createRunRecord, appendNormalizedEvent, appendWatchdogTelemetry, updateRunSupervision, openRunRecord, type RunRecord } from "../logs.js";
 import { Supervisor } from "../supervision/supervisor.js";
 import type {
   AwaitResult,
   SupervisionEvent,
   SupervisionPersistenceState,
+  SupervisionPhase,
   SupervisionPolicy,
   SupervisionScheduler,
   SupervisorInspection,
@@ -26,6 +27,13 @@ import {
   type XagentStartInput,
 } from "./tool_schemas.js";
 import { ToolValidationError } from "./tool_schemas.js";
+
+const terminalPersistedPhases = new Set<SupervisionPhase>([
+  "completed",
+  "failed",
+  "cancelled",
+  "abandoned",
+]);
 
 export type XagentRunManagerOptions = {
   readonly repoRoot: string;
@@ -167,6 +175,17 @@ export class XagentRunManager {
       metadataSink: async (state) => {
         await updateRunSupervision(record, toRunSupervisionUpdate(state));
       },
+      // Wire the sanitized watchdog telemetry sink so per-verdict records
+      // (request hash, input/output bytes, verdict, confidence, reason
+      // code, call count, truncation, attention sequence, usage, estimated
+      // cost) are persisted to watchdog.jsonl for every supervised run —
+      // service, MCP, and quiet CLI alike. Without this wire the file stays
+      // empty in production because the supervisor falls back to a no-op
+      // sink.
+      //
+      watchdogTelemetrySink: async (telemetry) => {
+        await appendWatchdogTelemetry(record, telemetry);
+      },
     });
     this.#runs.set(runId, { supervisor, record });
     return { runId };
@@ -273,7 +292,14 @@ export class XagentRunManager {
   }
 
   async awaitRun(input: XagentAwaitInput, signal?: AbortSignal): Promise<AwaitRunResult> {
-    this.#require(input.run_id);
+    const live = this.#runs.get(input.run_id);
+    if (live === undefined) {
+      const persisted = await this.#awaitPersistedRun(input, signal);
+      if (persisted === undefined) {
+        throw unknownRunError(input.run_id);
+      }
+      return persisted;
+    }
     const deadlineSeconds = input.deadline_seconds ?? x_DefaultAwaitDeadlineSeconds;
     const startedAtMs = this.#clock().getTime();
     const result = await this.awaitEvent(
@@ -329,6 +355,42 @@ export class XagentRunManager {
         ? {}
         : { provider_thread_id: record.supervision.provider_thread_id }),
     };
+  }
+
+  async #awaitPersistedRun(
+    input: XagentAwaitInput,
+    signal?: AbortSignal,
+  ): Promise<AwaitRunResult | undefined> {
+    if (signal?.aborted === true) {
+      throw abortError();
+    }
+    let record: RunRecord;
+    try {
+      record = await openRunRecord(this.#logRoot, input.run_id);
+    } catch {
+      return undefined;
+    }
+    if (!terminalPersistedPhases.has(record.supervision.phase)) {
+      // Active phases without a live supervisor cannot be awaited; the
+      // controller must treat the run as unknown until restart reconciliation
+      // (or a live owner) makes a durable wake available.
+      return undefined;
+    }
+    const startedAtMs = this.#clock().getTime();
+    const wake = await findPersistedAwaitWake(record, input.after_sequence);
+    const elapsedMs = Math.max(0, this.#clock().getTime() - startedAtMs);
+    if (wake !== undefined) {
+      return shapeAwaitEnvelope(wake, elapsedMs);
+    }
+    return shapeAwaitEnvelope({
+      schema_version: 1,
+      type: "supervision.deadline",
+      run_id: record.run_id,
+      sequence: record.supervision.sequence,
+      timestamp: this.#clock().toISOString(),
+      phase: record.supervision.phase,
+      reason: "await_deadline",
+    }, elapsedMs);
   }
 
   async messageRun(input: XagentMessageInput): Promise<MessageRunResult> {
@@ -469,6 +531,70 @@ function shapeAwaitEnvelope(result: AwaitResult, elapsedMs: number): AwaitRunRes
     ...(reason === undefined ? {} : { reason }),
     ...(payload === undefined ? {} : { payload }),
   };
+}
+
+async function findPersistedAwaitWake(
+  record: RunRecord,
+  afterSequence: number,
+): Promise<SupervisionEvent | undefined> {
+  let raw: string;
+  try {
+    raw = await readFile(record.normalizedLogPath, "utf8");
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+  for (const line of raw.split("\n")) {
+    if (line.trim().length === 0) {
+      continue;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!isPersistedAwaitWake(parsed) || parsed.sequence <= afterSequence) {
+      continue;
+    }
+    return parsed;
+  }
+  return undefined;
+}
+
+function isPersistedAwaitWake(value: unknown): value is SupervisionEvent {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    value.schema_version !== 1
+    || typeof value.run_id !== "string"
+    || !Number.isSafeInteger(value.sequence)
+    || typeof value.timestamp !== "string"
+    || typeof value.phase !== "string"
+    || typeof value.reason !== "string"
+  ) {
+    return false;
+  }
+  if (value.type === "supervision.attention" || value.type === "turn.completed") {
+    return true;
+  }
+  return value.type === "supervision.state"
+    && terminalPersistedPhases.has(value.phase as SupervisionPhase);
+}
+
+function abortError(): Error {
+  return new DOMException("The operation was aborted.", "AbortError");
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function waitForTurnRunning(
