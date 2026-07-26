@@ -1,6 +1,6 @@
 ## ADDED Requirements
 
-### Requirement: xa-14 — CLI: quiet supervision command
+### Requirement: xa-16 — CLI: quiet supervision command
 
 WHEN a controller starts `xagent supervise`, THE xagent CLI SHALL accept the supported harness, model, thinking-level, permission-mode, supervision-policy, working-directory, and initial-prompt options; SHALL create and await the run through the Conductor-managed xagent service; and SHALL keep routine provider output off stdout while the service preserves it in run logs.
 
@@ -40,7 +40,7 @@ WHEN a controller starts `xagent supervise`, THE xagent CLI SHALL accept the sup
 - **THEN** xagent preserves the existing persistent stdin protocol and output filtering
 - **AND** does not silently apply quiet supervision semantics
 
-### Requirement: xa-15 — Plugin: HTTP MCP service discovery
+### Requirement: xa-17 — Plugin: HTTP MCP service discovery
 
 WHERE xagent is installed as a Codex plugin, THE packaged plugin SHALL declare an HTTP MCP server in `.mcp.json` at `http://127.0.0.1:9005/mcp` with `tool_timeout_sec` set to `7200`, reference that declaration from `.codex-plugin/plugin.json`, and SHALL NOT launch a plugin-local stdio supervisor or own provider processes.
 
@@ -64,7 +64,7 @@ WHERE xagent is installed as a Codex plugin, THE packaged plugin SHALL declare a
 - **AND** the xagent skill does not silently claim that event-driven supervision is active
 - **AND** does not launch a second supervisor process
 
-### Requirement: xa-16 — MCP: blocking cursor await
+### Requirement: xa-18 — MCP: blocking cursor await
 
 WHEN Codex calls the xagent await tool with a valid `run_id` and event cursor, THE xagent service SHALL keep the MCP tool call pending through healthy routine progress and return only for a newer completion, failure, attention, cancellation, abandonment, explicit await deadline, or user cancellation.
 
@@ -92,7 +92,7 @@ WHEN Codex calls the xagent await tool with a valid `run_id` and event cursor, T
 - **AND** await defaults to a 7000-second deadline and rejects values above 7000 seconds
 - **AND** the skill requests one default long wait instead of repeated short waits
 
-### Requirement: xa-17 — MCP: persistent session control
+### Requirement: xa-19 — MCP: persistent session control
 
 WHILE a supervised provider session remains owned by the xagent service, THE service SHALL accept a follow-up only when the session is ready, SHALL allow explicit interruption of an active turn, SHALL preserve the run across controller and MCP disconnects, and SHALL close the session and owned processes only on explicit close, terminal failure, cancellation, or service shutdown.
 
@@ -120,7 +120,7 @@ WHILE a supervised provider session remains owned by the xagent service, THE ser
 - **THEN** the xagent service keeps the provider turn, watchdog timers, and durable events active
 - **AND** permits a later controller to inspect and await the same `run_id`
 
-### Requirement: xa-18 — Distribution: supervision validation
+### Requirement: xa-20 — Distribution: supervision validation
 
 WHEN the xagent Codex package is built or installed, THE package validation SHALL verify HTTP MCP discovery against a test xagent service, the quiet service-client CLI path, blocking await behavior over the plugin MCP `xagent_await` path, final-report delivery, and process cleanup using packaged assets from a temporary non-Sheaf repository. Controller-disconnect survival, attention delivery, and cursor deduplication are covered by in-tree TS tests (`mcp_await.test.ts`, `service_client.test.ts`) rather than packaged validation.
 

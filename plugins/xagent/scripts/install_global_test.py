@@ -667,7 +667,7 @@ class PackageXagentOutputTests(unittest.TestCase):
                     service_process.stderr.close()
 
     def test_packaged_mcp_await_smoke_delivers_final_report(self) -> None:
-        # xa-18 / I2: exercise xagent_await over the plugin MCP path. The
+        # xa-20 / I2: exercise xagent_await over the plugin MCP path. The
         # fake adapter emits a delta and a tool started/completed pair before
         # the final assistant message and turn completion, so the await must
         # stay pending through that progress and return once with the
