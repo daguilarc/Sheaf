@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { writeFile, mkdtemp } from "node:fs/promises";
+import { writeFile, mkdtemp, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -258,6 +258,36 @@ test("service shutdown closes owned provider process groups orderly", async () =
   stopChild(sentinel);
 });
 
+test("create rejects a duplicate runId and leaves the original run owned", async () => {
+  await withServiceServer({}, async ({ runManager }) => {
+    const runId = "xrun_duplicate_owner_test";
+    const first = await runManager.create({
+      runId,
+      harness: "codex",
+      mode: "subagent",
+      cwd: process.cwd(),
+    });
+    assert.equal(first.runId, runId);
+    await runManager.start(runId);
+    assert.equal(runManager.inspect(runId)?.phase, "ready");
+
+    await assert.rejects(
+      () =>
+        runManager.create({
+          runId,
+          harness: "codex",
+          mode: "subagent",
+          cwd: process.cwd(),
+        }),
+      /already exists|in use|duplicate/i,
+    );
+
+    assert.equal(runManager.has(runId), true);
+    assert.equal(runManager.inspect(runId)?.phase, "ready");
+    await runManager.close(runId);
+  });
+});
+
 test("Conductor-style start, health, stop, restart lifecycle is consistent", async () => {
   const first = await startServiceServer();
   try {
@@ -279,6 +309,93 @@ test("Conductor-style start, health, stop, restart lifecycle is consistent", asy
     await restarted.shutdownController.shutdownComplete();
   }
 });
+
+test("spawned service_main captures Conductor-style stdout/stderr logs and exits 0 on /exit", async () => {
+  const sheafRoot = await mkdtemp(path.join(tmpdir(), "xagent-svc-spawn-"));
+  await mkdir(path.join(sheafRoot, "config"), { recursive: true });
+  await mkdir(path.join(sheafRoot, "structure"), { recursive: true });
+  const servicesJsonPath = path.join(sheafRoot, "config", "services.json");
+  await writeFile(
+    path.join(sheafRoot, "structure", ".gitkeep"),
+    "",
+    "utf8",
+  );
+  await writeFile(
+    servicesJsonPath,
+    `${JSON.stringify([
+      {
+        name: "xagent",
+        host: "127.0.0.1",
+        port: 0,
+        command: "make xagent-service-run",
+      },
+    ])}\n`,
+    "utf8",
+  );
+
+  const serviceMain = path.join(process.cwd(), "dist", "src", "service_main.js");
+  await mkdir(path.join(sheafRoot, "xagent"), { recursive: true });
+
+  const child = trackChild(
+    spawn(process.execPath, [serviceMain], {
+      cwd: sheafRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+  );
+
+  const stdoutChunks: Buffer[] = [];
+  const stderrChunks: Buffer[] = [];
+  child.stdout?.on("data", (chunk: Buffer) => stdoutChunks.push(chunk));
+  child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+  const port = await waitForPort(stderrChunks, 10_000);
+
+  const health = await fetchJson(port, "GET", "/health");
+  assert.equal(health.status, 200);
+  assert.equal((health.body as { healthy: boolean }).healthy, true);
+
+  const exitResponse = await fetchJson(port, "POST", "/exit");
+  assert.equal(exitResponse.status, 200);
+  assert.deepEqual(exitResponse.body, { exiting: true });
+
+  const exitCode = await waitForExit(child, 10_000);
+  assert.equal(exitCode, 0);
+
+  const capturedStderr = Buffer.concat(stderrChunks).toString("utf8");
+  const capturedStdout = Buffer.concat(stdoutChunks).toString("utf8");
+  assert.ok(
+    capturedStderr.length > 0 || capturedStdout.length > 0,
+    "service must emit capturable process output for Conductor log capture",
+  );
+  assert.match(capturedStderr, /xagent service listening on 127\.0\.0\.1:\d+/);
+});
+
+async function waitForPort(stderrChunks: Buffer[], timeoutMs: number): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const text = Buffer.concat(stderrChunks).toString("utf8");
+    const match = text.match(/xagent service listening on 127\.0\.0\.1:(\d+)/);
+    if (match) {
+      return Number(match[1]);
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(
+    `service did not announce a port within ${timeoutMs} ms; stderr=${Buffer.concat(stderrChunks).toString("utf8")}`,
+  );
+}
+
+async function waitForExit(child: ChildProcess, timeoutMs: number): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`service child did not exit within ${timeoutMs} ms`));
+    }, timeoutMs);
+    child.once("exit", (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+  });
+}
 
 async function startServiceServer(): Promise<{
   port: number;

@@ -59,6 +59,9 @@ export class XagentRunManager {
       throw new Error("XagentRunManager is closed.");
     }
     const runId = options.runId ?? generateRunId(this.#clock());
+    if (this.#runs.has(runId)) {
+      throw new Error(`xagent run id already in use: ${runId}`);
+    }
     const record = await createRunRecord({
       repoRoot: this.#repoRoot,
       logRoot: this.#logRoot,
