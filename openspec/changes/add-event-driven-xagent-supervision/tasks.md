@@ -30,8 +30,8 @@
 
 ## 5. Streamable HTTP MCP and Final Report Delivery
 
-- [ ] 5.1 Add Streamable HTTP MCP contract tests for `xagent_start`, `xagent_await`, `xagent_inspect`, `xagent_message`, `xagent_interrupt`, and `xagent_close` at `/mcp`.
-- [ ] 5.2 Implement all MCP tools as handlers over service-owned supervisors and the configured central log root; validate and canonicalize the requested absolute working directory before creating run state.
+- [x] 5.1 Add Streamable HTTP MCP contract tests for `xagent_start`, `xagent_await`, `xagent_inspect`, `xagent_message`, `xagent_interrupt`, and `xagent_close` at `/mcp`.
+- [x] 5.2 Implement all MCP tools as handlers over service-owned supervisors and the configured central log root; validate and canonicalize the requested absolute working directory before creating run state.
 - [ ] 5.3 Define the versioned completion envelope and add tests proving it contains the complete sanitized final assistant report and compact metadata but no intermediate transcript, tool events, raw provider events, or watchdog evidence.
 - [ ] 5.4 Add deterministic `missing_final_report` tests for a successful provider turn without a final assistant message.
 - [ ] 5.5 Add blocking-await tests proving routine progress does not complete the request, completion/attention does, `after_sequence` prevents duplicate delivery, and a replacement controller can inspect and await the same `run_id`.
