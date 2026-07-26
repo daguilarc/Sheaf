@@ -95,7 +95,14 @@ struct TestHarness
     synth::MidiConnectionState connection = MakeConnectionState();
     synth::MidiDeviceList devices;
     std::string status;
+    std::vector<std::string> persistenceEvents;
+    bool commitSucceeds = true;
+    bool saveSucceeds = true;
+    int instrumentSnapshots = 0;
+    int deviceSnapshots = 0;
+    int commitAttempts = 0;
     int commits = 0;
+    int saves = 0;
 
     TestHarness()
     {
@@ -107,18 +114,65 @@ struct TestHarness
     synth::runtime_ui::ControllersPageSurface MakeSurface()
     {
         synth::runtime_ui::ControllersPageCallbacks callbacks;
-        callbacks.instrumentSnapshot = [this] { return instrument; };
+        callbacks.instrumentSnapshot = [this] {
+            ++instrumentSnapshots;
+            return instrument;
+        };
         callbacks.connectionState = [this] { return connection; };
-        callbacks.enumerateDevices = [this] { return devices; };
+        callbacks.enumerateDevices = [this] {
+            ++deviceSnapshots;
+            return devices;
+        };
         callbacks.commitInstrument = [this](synth::MidiInstrumentConfig out) {
+            ++commitAttempts;
+            persistenceEvents.push_back("commit");
+            if (!commitSucceeds)
+            {
+                return false;
+            }
             instrument = std::move(out);
             connection.controllers.resize(instrument.controllers.size());
             ++commits;
+            return true;
+        };
+        callbacks.saveRuntimeConfiguration = [this] {
+            ++saves;
+            persistenceEvents.push_back("save");
+            return saveSucceeds;
         };
         callbacks.setStatus = [this](std::string text) { status = std::move(text); };
         return synth::runtime_ui::ControllersPageSurface(std::move(callbacks));
     }
 };
+
+synth::WizardCandidate MakeTwisterCandidate(const char* suffix = "")
+{
+    return {.wizardId = "com.sheaf.midi-fighter-twister",
+            .displayName = "MIDI Fighter Twister",
+            .kind = synth::MidiProfileKind::MfTwister,
+            .input = {std::string("twister-in") + suffix, "Midi Fighter Twister"},
+            .output = {std::string("twister-out") + suffix, "Midi Fighter Twister"}};
+}
+
+void AttachCandidate(TestHarness& harness, const synth::WizardCandidate& candidate)
+{
+    harness.devices.outputs.erase(
+        std::remove_if(
+            harness.devices.outputs.begin(), harness.devices.outputs.end(),
+            [](const synth::MidiDeviceInfoRef& device) {
+                return device.name == "Midi Fighter Twister";
+            }),
+        harness.devices.outputs.end());
+    harness.devices.inputs.push_back(candidate.input);
+    harness.devices.outputs.push_back(candidate.output);
+}
+
+void RefreshWizardDiscovery(synth::runtime_ui::ControllersPageSurface& surface,
+                            const TestHarness& harness)
+{
+    surface.SetDiscovery(synth::DiscoverControllerWizards(
+        harness.devices, harness.instrument, synth::ControllerWizardRegistry()));
+}
 
 void SeedGridPresentation(TestHarness& harness)
 {
@@ -355,6 +409,298 @@ void TestWizardSessionRoutesPortableChooserAndForm()
             "Back closes an existing-record session without changing the instrument");
 }
 
+void TestWizardSubmitCommitsCompleteProfileThenSaves()
+{
+    TestHarness harness;
+    Require(harness.instrument.AddController(MakeGenericSlot("MIDI Fighter Twister")),
+            "occupy base Twister display name");
+    Require(harness.instrument.AddController(MakeGenericSlot("MIDI Fighter Twister 3")),
+            "leave the smallest suffix gap at 2");
+    harness.connection.controllers.resize(harness.instrument.controllers.size());
+    const synth::WizardCandidate candidate = MakeTwisterCandidate();
+    AttachCandidate(harness, candidate);
+
+    auto surface = harness.MakeSurface();
+    RefreshWizardDiscovery(surface, harness);
+    surface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        "controller-wizard.twister.encoder-slot", "5"));
+    surface.DispatchAction(synth::ui::Action::Named(
+        synth::runtime_ui::Actions::kWizardSubmit));
+
+    Require(harness.commitAttempts == 1 && harness.commits == 1,
+            "Submit requests exactly one accepted instrument commit");
+    Require(harness.saves == 1 &&
+                harness.persistenceEvents == std::vector<std::string>({"commit", "save"}),
+            "Submit requests save exactly once after the accepted commit");
+    Require(harness.instrument.controllers.size() == 6,
+            "Submit appends exactly one controller record");
+    const synth::MidiControllerSlot& installed = harness.instrument.controllers.back();
+    Require(installed.name == "MIDI Fighter Twister 2",
+            "Submit chooses the smallest unused numeric display-name suffix");
+    Require(installed.kind == synth::MidiProfileKind::MfTwister &&
+                installed.disposition == synth::MidiControllerDisposition::Active,
+            "Submit installs one complete Active Twister record");
+    Require(installed.wizardId == candidate.wizardId,
+            "Submit persists the descriptor's stable opaque wizard id");
+    Require(installed.input.identifier == candidate.input.identifier &&
+                installed.input.name == candidate.input.name &&
+                installed.output.identifier == candidate.output.identifier &&
+                installed.output.name == candidate.output.name,
+            "Submit persists both concrete endpoint identities");
+    Require(installed.config.encoderInput.has_value() &&
+                installed.config.encoderInput->turns.size() == 16 &&
+                installed.config.encoderInput->pushes.size() == 16 &&
+                installed.config.encoderOutput.has_value() &&
+                installed.config.encoderOutput->mappings.size() == 16 &&
+                installed.config.systemMessages.size() == 6,
+            "Submit commits the complete generated Twister profile");
+    for (const synth::EncoderMidiMapping& turn : installed.config.encoderInput->turns)
+    {
+        Require(turn.slotIx == 5, "submitted encoder turns retain the entered form slot");
+    }
+    Require(surface.Discovery().available.empty(),
+            "successful Submit refreshes candidate classification immediately");
+    Require(surface.ActiveWizardSession() == nullptr,
+            "successful commit and save close the new-candidate form");
+}
+
+void TestWizardSubmitRefusalsRetainFormAndPersistence()
+{
+    const synth::WizardCandidate candidate = MakeTwisterCandidate();
+
+    TestHarness disconnectedHarness;
+    AttachCandidate(disconnectedHarness, candidate);
+    auto disconnectedSurface = disconnectedHarness.MakeSurface();
+    RefreshWizardDiscovery(disconnectedSurface, disconnectedHarness);
+    disconnectedSurface.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
+    disconnectedSurface.DispatchAction(synth::ui::Action::WithValue(
+        "controller-wizard.twister.encoder-slot", "7"));
+    disconnectedHarness.devices.outputs.clear();
+    disconnectedSurface.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardSubmit));
+    const synth::ui::NodeTree disconnectedTree = disconnectedSurface.BuildTree();
+    Require(disconnectedHarness.commitAttempts == 0 && disconnectedHarness.saves == 0,
+            "disappeared candidate refuses without commit or save");
+    Require(FindNodeById(disconnectedTree, "controller-wizard.twister.encoder-slot")->text == "7",
+            "disappeared candidate retains every entered form value");
+    Require(FindNodeById(disconnectedTree, synth::runtime_ui::NodeIds::kWizardStatus) != nullptr &&
+                VisibleTextLower(disconnectedTree).find("reconnect") != std::string::npos,
+            "disappeared candidate keeps the form open with an inline reconnect status");
+
+    TestHarness contendedHarness;
+    AttachCandidate(contendedHarness, candidate);
+    auto contendedSurface = contendedHarness.MakeSurface();
+    RefreshWizardDiscovery(contendedSurface, contendedHarness);
+    contendedSurface.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
+    synth::MidiControllerSlot claimant = MakeGenericSlot("out-of-band claimant");
+    claimant.input = {.identifier = candidate.input.identifier, .name = candidate.input.name};
+    Require(contendedHarness.instrument.AddController(std::move(claimant)),
+            "out-of-band record claims one candidate endpoint");
+    contendedHarness.connection.controllers.resize(contendedHarness.instrument.controllers.size());
+    contendedSurface.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardSubmit));
+    Require(contendedHarness.commitAttempts == 0 && contendedHarness.saves == 0,
+            "contended candidate refuses without commit or save");
+    Require(contendedSurface.ActiveWizardSession() != nullptr &&
+                VisibleTextLower(contendedSurface.BuildTree()).find("no longer available") !=
+                    std::string::npos,
+            "contention retains the open form with an inline stale-candidate status");
+
+    TestHarness invalidHarness;
+    AttachCandidate(invalidHarness, candidate);
+    auto invalidSurface = invalidHarness.MakeSurface();
+    RefreshWizardDiscovery(invalidSurface, invalidHarness);
+    invalidSurface.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
+    invalidSurface.DispatchAction(synth::ui::Action::WithValue(
+        "controller-wizard.twister.encoder-slot", "-1"));
+    invalidSurface.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardSubmit));
+    const synth::ui::NodeTree invalidTree = invalidSurface.BuildTree();
+    Require(invalidHarness.commitAttempts == 0 && invalidHarness.saves == 0,
+            "invalid form refuses without commit or save");
+    Require(FindNodeById(invalidTree, "controller-wizard.twister.encoder-slot")->text == "-1" &&
+                VisibleTextLower(invalidTree).find("encoder slot") != std::string::npos,
+            "validation refusal retains the invalid value and reports its field inline");
+
+    TestHarness rejectedHarness;
+    AttachCandidate(rejectedHarness, candidate);
+    rejectedHarness.commitSucceeds = false;
+    const synth::MidiInstrumentConfig beforeRejectedCommit = rejectedHarness.instrument;
+    auto rejectedSurface = rejectedHarness.MakeSurface();
+    RefreshWizardDiscovery(rejectedSurface, rejectedHarness);
+    rejectedSurface.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
+    rejectedSurface.DispatchAction(synth::ui::Action::WithValue(
+        "controller-wizard.twister.encoder-slot", "9"));
+    rejectedSurface.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardSubmit));
+    Require(rejectedHarness.commitAttempts == 1 && rejectedHarness.commits == 0 &&
+                rejectedHarness.saves == 0,
+            "host commit refusal never requests persistence save");
+    Require(rejectedHarness.instrument.controllers.size() ==
+                beforeRejectedCommit.controllers.size() &&
+                rejectedSurface.ActiveWizardSession() != nullptr,
+            "host commit refusal changes no instrument state and keeps the session");
+    Require(FindNodeById(rejectedSurface.BuildTree(),
+                         "controller-wizard.twister.encoder-slot")->text == "9",
+            "host commit refusal retains entered form values");
+}
+
+void TestWizardSaveFailureDoesNotRollbackCommittedInstrument()
+{
+    TestHarness harness;
+    const synth::WizardCandidate candidate = MakeTwisterCandidate();
+    AttachCandidate(harness, candidate);
+    harness.saveSucceeds = false;
+    auto surface = harness.MakeSurface();
+    RefreshWizardDiscovery(surface, harness);
+    surface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
+    surface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardSubmit));
+
+    Require(harness.commits == 1 && harness.saves == 1 &&
+                harness.instrument.FindController("MIDI Fighter Twister") != nullptr,
+            "save failure leaves the accepted instrument commit installed");
+    Require(surface.Discovery().available.empty(),
+            "save failure still refreshes discovery from committed state");
+    Require(surface.ActiveWizardSession() != nullptr &&
+                VisibleTextLower(surface.BuildTree()).find("save") != std::string::npos,
+            "save failure remains visible on the still-open workflow");
+}
+
+void TestWizardIgnoreCommitsOneInertBlacklistedRecord()
+{
+    TestHarness harness;
+    Require(harness.instrument.AddController(MakeGenericSlot("MIDI Fighter Twister")),
+            "occupy ignored candidate base name");
+    Require(harness.instrument.AddController(MakeGenericSlot("MIDI Fighter Twister 2")),
+            "occupy ignored candidate first suffix");
+    harness.connection.controllers.resize(harness.instrument.controllers.size());
+    const synth::WizardCandidate candidate = MakeTwisterCandidate("-ignored");
+    AttachCandidate(harness, candidate);
+    auto surface = harness.MakeSurface();
+    RefreshWizardDiscovery(surface, harness);
+    surface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
+    surface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardIgnore));
+
+    Require(harness.commitAttempts == 1 && harness.commits == 1 && harness.saves == 1 &&
+                harness.persistenceEvents == std::vector<std::string>({"commit", "save"}),
+            "Ignore performs one commit followed by one save");
+    const synth::MidiControllerSlot& ignored = harness.instrument.controllers.back();
+    Require(ignored.name == "MIDI Fighter Twister 3" &&
+                ignored.kind == synth::MidiProfileKind::MfTwister &&
+                ignored.disposition == synth::MidiControllerDisposition::Blacklisted,
+            "Ignore uses deterministic naming and persists a Blacklisted Twister record");
+    Require(ignored.wizardId == candidate.wizardId &&
+                ignored.input.identifier == candidate.input.identifier &&
+                ignored.input.name == candidate.input.name &&
+                ignored.output.identifier == candidate.output.identifier &&
+                ignored.output.name == candidate.output.name,
+            "Ignore retains the stable opaque id and exact endpoint references");
+    Require(!ignored.dormantConfig.has_value() &&
+                !ignored.config.encoderInput.has_value() &&
+                !ignored.config.encoderOutput.has_value() &&
+                !ignored.config.analogInput.has_value() &&
+                !ignored.config.pressureInput.has_value() &&
+                ignored.config.systemMessages.empty(),
+            "newly ignored candidate carries neither active nor dormant profile data");
+    Require(surface.Discovery().available.empty(),
+            "Ignore immediately refreshes classification so the pair is no longer available");
+
+    TestHarness rowHarness;
+    const synth::WizardCandidate rowCandidate = MakeTwisterCandidate("-row");
+    AttachCandidate(rowHarness, rowCandidate);
+    auto rowSurface = rowHarness.MakeSurface();
+    RefreshWizardDiscovery(rowSurface, rowHarness);
+    const synth::ui::NodeTree rowTree = rowSurface.BuildTree();
+    const synth::ui::Node* rowIgnore = FindNodeById(
+        rowTree, synth::runtime_ui::NodeIds::AvailableIgnore(0));
+    Require(rowIgnore != nullptr && rowIgnore->action.has_value(),
+            "available row exposes a dispatchable Ignore action");
+    rowSurface.DispatchAction(*rowIgnore->action);
+    Require(rowHarness.commits == 1 && rowHarness.saves == 1 &&
+                rowHarness.instrument.controllers.back().disposition ==
+                    synth::MidiControllerDisposition::Blacklisted,
+            "available-row Ignore uses the same atomic blacklist commit path");
+
+    TestHarness staleHarness;
+    staleHarness.devices.outputs.erase(
+        std::remove_if(
+            staleHarness.devices.outputs.begin(),
+            staleHarness.devices.outputs.end(),
+            [](const synth::MidiDeviceInfoRef& device) {
+                return device.name == "Midi Fighter Twister";
+            }),
+        staleHarness.devices.outputs.end());
+    const synth::WizardCandidate first = MakeTwisterCandidate("-first");
+    const synth::WizardCandidate second = MakeTwisterCandidate("-second");
+    staleHarness.devices.inputs.push_back(first.input);
+    staleHarness.devices.inputs.push_back(second.input);
+    staleHarness.devices.outputs.push_back(first.output);
+    staleHarness.devices.outputs.push_back(second.output);
+    auto staleSurface = staleHarness.MakeSurface();
+    staleSurface.RefreshOnTick();
+    RefreshWizardDiscovery(staleSurface, staleHarness);
+    const synth::ui::NodeTree staleTree = staleSurface.BuildTree();
+    const synth::ui::Node* firstIgnore = FindNodeById(
+        staleTree, synth::runtime_ui::NodeIds::AvailableIgnore(0));
+    Require(firstIgnore != nullptr && firstIgnore->action.has_value(),
+            "first available Ignore action can be retained across a refresh");
+    const synth::ui::Action staleFirstIgnore = *firstIgnore->action;
+    staleHarness.devices.inputs.erase(
+        std::remove(staleHarness.devices.inputs.begin(),
+                    staleHarness.devices.inputs.end(), first.input),
+        staleHarness.devices.inputs.end());
+    staleHarness.devices.outputs.erase(
+        std::remove(staleHarness.devices.outputs.begin(),
+                    staleHarness.devices.outputs.end(), first.output),
+        staleHarness.devices.outputs.end());
+    RefreshWizardDiscovery(staleSurface, staleHarness);
+    const int instrumentSnapshotsBeforeStaleIgnore =
+        staleHarness.instrumentSnapshots;
+    const int snapshotsBeforeStaleIgnore = staleHarness.deviceSnapshots;
+    staleSurface.DispatchAction(staleFirstIgnore);
+    Require(staleHarness.commitAttempts == 0 && staleHarness.saves == 0,
+            "stale available-row Ignore cannot retarget a different candidate");
+    Require(staleHarness.deviceSnapshots == snapshotsBeforeStaleIgnore + 1,
+            "stale available-row Ignore still takes a current device snapshot before refusal");
+    Require(staleHarness.instrumentSnapshots ==
+                instrumentSnapshotsBeforeStaleIgnore + 1,
+            "stale available-row Ignore still takes a current instrument snapshot before refusal");
+    Require(staleSurface.Discovery().available.size() == 1 &&
+                staleSurface.Discovery().available.front().input.identifier ==
+                    second.input.identifier &&
+                VisibleTextLower(staleSurface.BuildTree()).find("reconnect") !=
+                    std::string::npos,
+            "stale available-row Ignore preserves the remaining candidate and reports refusal");
+
+    TestHarness changedIdentityHarness;
+    const synth::WizardCandidate originalIdentity =
+        MakeTwisterCandidate("-same-identifiers");
+    AttachCandidate(changedIdentityHarness, originalIdentity);
+    auto changedIdentitySurface = changedIdentityHarness.MakeSurface();
+    RefreshWizardDiscovery(changedIdentitySurface, changedIdentityHarness);
+    const synth::ui::NodeTree originalIdentityTree =
+        changedIdentitySurface.BuildTree();
+    const synth::ui::Action originalIdentityIgnore =
+        *FindNodeById(originalIdentityTree,
+                      synth::runtime_ui::NodeIds::AvailableIgnore(0))->action;
+    changedIdentityHarness.devices.inputs.back().name =
+        "MIDI FIGHTER TWISTER";
+    changedIdentityHarness.devices.outputs.back().name =
+        "MIDI FIGHTER TWISTER";
+    RefreshWizardDiscovery(changedIdentitySurface, changedIdentityHarness);
+    changedIdentitySurface.DispatchAction(originalIdentityIgnore);
+    Require(changedIdentityHarness.commitAttempts == 0 &&
+                changedIdentityHarness.saves == 0,
+            "Ignore refuses changed endpoint content even when identifiers are unchanged");
+    Require(changedIdentitySurface.Discovery().available.size() == 1,
+            "exact-identity refusal leaves the changed candidate available for a fresh action");
+}
+
 std::string VisibleTextLower(const synth::ui::NodeTree& tree)
 {
     std::string text;
@@ -381,6 +727,10 @@ int main()
 {
     TestDiscoveryRendersPortableAvailableRowsAndDiagnostics();
     TestWizardSessionRoutesPortableChooserAndForm();
+    TestWizardSubmitCommitsCompleteProfileThenSaves();
+    TestWizardSubmitRefusalsRetainFormAndPersistence();
+    TestWizardSaveFailureDoesNotRollbackCommittedInstrument();
+    TestWizardIgnoreCommitsOneInertBlacklistedRecord();
 
     TestHarness harness;
     synth::runtime_ui::ControllersPageSurface surface = harness.MakeSurface();

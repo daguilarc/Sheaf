@@ -59,6 +59,16 @@ public:
             wizardDiscoveryCache_.UpdateInstrumentSnapshot(engine_.InstrumentSnapshot());
             controllersDirty_ = true;
             instrumentSnapshotDirty_ = false;
+            return true;
+        };
+        callbacks.saveRuntimeConfiguration = [this] {
+            if (engine_.SaveRuntimeConfiguration() !=
+                synth::RuntimeConfigFileStatus::Ok)
+            {
+                return false;
+            }
+            persistenceDirty_ = true;
+            return true;
         };
         callbacks.setStatus = [](std::string) {};
         callbacks.onBack = std::move(onBack);

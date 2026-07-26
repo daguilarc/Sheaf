@@ -80,7 +80,9 @@ public:
             state.instrument = std::move(out);
             SyncConnectionSize();
             ++state.commits;
+            return true;
         };
+        callbacks.saveRuntimeConfiguration = [] { return true; };
         callbacks.setStatus = [this](std::string text) { state.status = std::move(text); };
         return synth::runtime_ui::ControllersPageSurface(std::move(callbacks));
     }

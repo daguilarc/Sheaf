@@ -66,6 +66,11 @@ public:
                 runtime_.GetEngine().InstrumentSnapshot());
             controllersDirty_ = true;
             instrumentSnapshotDirty_ = false;
+            return true;
+        };
+        callbacks.saveRuntimeConfiguration = [this] {
+            return runtime_.SaveRuntimeConfiguration() ==
+                   synth::RuntimeConfigFileStatus::Ok;
         };
         callbacks.setStatus = [](std::string) {};
         callbacks.onBack = std::move(onBack);

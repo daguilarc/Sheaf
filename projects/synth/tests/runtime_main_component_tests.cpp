@@ -8,6 +8,7 @@
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #ifdef JUCE_MAJOR_VERSION
 #error "runtime main component tests must not see JUCE"
@@ -111,10 +112,14 @@ struct FakeServices
     int fileRefreshCount = 0;
     int fileDispatchCount = 0;
     int controllersRefreshCount = 0;
+    int controllerCommitCount = 0;
     int syncSnapshotCount = 0;
     int syncRefreshCount = 0;
     int syncCommitCount = 0;
     int saveCount = 0;
+    bool controllerCommitSucceeds = true;
+    bool controllerSaveSucceeds = true;
+    std::vector<std::string> controllerPersistenceEvents;
     std::string lastAudioAction;
     std::string lastFileAction;
     float deadlinePercent = 12.5f;
@@ -132,7 +137,19 @@ struct FakeServices
         callbacks.connectionState = [] { return synth::MidiConnectionState{}; };
         callbacks.enumerateDevices = [this] { return controllerDevices; };
         callbacks.commitInstrument = [this](synth::MidiInstrumentConfig next) {
+            ++controllerCommitCount;
+            controllerPersistenceEvents.push_back("commit");
+            if (!controllerCommitSucceeds)
+            {
+                return false;
+            }
             instrument = std::move(next);
+            return true;
+        };
+        callbacks.saveRuntimeConfiguration = [this] {
+            ++saveCount;
+            controllerPersistenceEvents.push_back("save");
+            return controllerSaveSucceeds;
         };
         callbacks.setStatus = [](std::string) {};
         callbacks.onBack = std::move(onBack);
@@ -362,6 +379,49 @@ void TestControllerDraftActionsReachControllerSurface()
         fixture.component.BuildTree(), "controller-wizard.twister.encoder-slot");
     Require(encoderSlot != nullptr && encoderSlot->text == "5",
             "wizard form field actions route through runtime component to the session-owned form");
+}
+
+void TestThreeClickWizardSubmitCommitsThenSaves()
+{
+    Fixture fixture;
+    fixture.services.controllerDevices.inputs.push_back(
+        {.identifier = "twister-in", .name = "Midi Fighter Twister"});
+    fixture.services.controllerDevices.outputs.push_back(
+        {.identifier = "twister-out", .name = "Midi Fighter Twister"});
+    fixture.component.Refresh();
+
+    fixture.component.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kSidebarControllers));
+    fixture.component.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
+    fixture.component.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardSubmit));
+
+    Require(fixture.services.controllerCommitCount == 1,
+            "three-click Submit performs exactly one instrument commit");
+    Require(fixture.services.saveCount == 1 &&
+                fixture.services.controllerPersistenceEvents ==
+                    std::vector<std::string>({"commit", "save"}),
+            "three-click Submit requests one runtime save after the commit");
+    Require(fixture.services.instrument.controllers.size() == 1,
+            "three-click Submit installs exactly one controller");
+    const synth::MidiControllerSlot& installed =
+        fixture.services.instrument.controllers.front();
+    Require(installed.disposition == synth::MidiControllerDisposition::Active &&
+                installed.wizardId ==
+                    std::optional<std::string>("com.sheaf.midi-fighter-twister") &&
+                installed.input.identifier == "twister-in" &&
+                installed.output.identifier == "twister-out",
+            "three-click Submit installs the generated Active record with exact identity");
+    Require(installed.config.encoderInput.has_value() &&
+                installed.config.encoderInput->turns.size() == 16 &&
+                installed.config.systemMessages.size() == 6,
+            "three-click Submit installs the complete default Twister profile");
+
+    fixture.component.Refresh();
+    Require(FindNodeById(fixture.component.BuildTree(),
+                         "runtime.sidebar.controllers.warning") == nullptr,
+            "successful Submit immediately removes the claimed candidate warning");
 }
 
 void TestBackFromConfigurationPageSavesRuntimeConfiguration()
@@ -656,6 +716,8 @@ int main()
         TestRuntimeActionsRouteOnlyToOwningPageOrServices);
     Run("TestControllerDraftActionsReachControllerSurface",
         TestControllerDraftActionsReachControllerSurface);
+    Run("TestThreeClickWizardSubmitCommitsThenSaves",
+        TestThreeClickWizardSubmitCommitsThenSaves);
     Run("TestBackFromConfigurationPageSavesRuntimeConfiguration",
         TestBackFromConfigurationPageSavesRuntimeConfiguration);
     Run("TestSyncStagesRefreshesCommitsAndReopensFromEngineSnapshot",

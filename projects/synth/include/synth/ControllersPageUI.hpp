@@ -69,8 +69,105 @@ inline std::string WizardCandidateToken(const WizardCandidate& candidate)
         }
         return encoded;
     };
-    return hex(candidate.wizardId) + "_" + hex(candidate.input.identifier) + "_" +
-           hex(candidate.output.identifier);
+    return hex(candidate.wizardId) + "_" + hex(candidate.displayName) + "_" +
+           std::to_string(static_cast<int>(candidate.kind)) + "_" +
+           hex(candidate.input.identifier) + "_" + hex(candidate.input.name) +
+           "_" + hex(candidate.output.identifier) + "_" +
+           hex(candidate.output.name);
+}
+
+inline std::optional<WizardCandidate> WizardCandidateFromToken(
+    std::string_view token)
+{
+    std::vector<std::string_view> parts;
+    while (true)
+    {
+        const std::size_t delimiter = token.find('_');
+        parts.push_back(token.substr(0, delimiter));
+        if (delimiter == std::string_view::npos)
+        {
+            break;
+        }
+        token.remove_prefix(delimiter + 1);
+    }
+    if (parts.size() != 7)
+    {
+        return std::nullopt;
+    }
+
+    const auto unhex = [](std::string_view value)
+        -> std::optional<std::string> {
+        if (value.size() % 2 != 0)
+        {
+            return std::nullopt;
+        }
+        const auto nibble = [](char character) -> std::optional<unsigned char> {
+            if (character >= '0' && character <= '9')
+            {
+                return static_cast<unsigned char>(character - '0');
+            }
+            if (character >= 'a' && character <= 'f')
+            {
+                return static_cast<unsigned char>(character - 'a' + 10);
+            }
+            return std::nullopt;
+        };
+        std::string decoded;
+        decoded.reserve(value.size() / 2);
+        for (std::size_t ix = 0; ix < value.size(); ix += 2)
+        {
+            const std::optional<unsigned char> high = nibble(value[ix]);
+            const std::optional<unsigned char> low = nibble(value[ix + 1]);
+            if (!high.has_value() || !low.has_value())
+            {
+                return std::nullopt;
+            }
+            decoded.push_back(static_cast<char>((*high << 4U) | *low));
+        }
+        return decoded;
+    };
+
+    MidiProfileKind kind;
+    if (parts[2] == "0")
+    {
+        kind = MidiProfileKind::WrldBldr;
+    }
+    else if (parts[2] == "1")
+    {
+        kind = MidiProfileKind::MfTwister;
+    }
+    else if (parts[2] == "2")
+    {
+        kind = MidiProfileKind::Launchpad;
+    }
+    else if (parts[2] == "3")
+    {
+        kind = MidiProfileKind::Generic;
+    }
+    else
+    {
+        return std::nullopt;
+    }
+
+    const std::optional<std::string> wizardId = unhex(parts[0]);
+    const std::optional<std::string> displayName = unhex(parts[1]);
+    const std::optional<std::string> inputIdentifier = unhex(parts[3]);
+    const std::optional<std::string> inputName = unhex(parts[4]);
+    const std::optional<std::string> outputIdentifier = unhex(parts[5]);
+    const std::optional<std::string> outputName = unhex(parts[6]);
+    if (!wizardId.has_value() || !displayName.has_value() ||
+        !inputIdentifier.has_value() || !inputName.has_value() ||
+        !outputIdentifier.has_value() || !outputName.has_value())
+    {
+        return std::nullopt;
+    }
+    return WizardCandidate{.wizardId = *wizardId,
+                           .displayName = *displayName,
+                           .kind = kind,
+                           .input = {.identifier = *inputIdentifier,
+                                     .name = *inputName},
+                           .output = {.identifier = *outputIdentifier,
+                                      .name = *outputName}};
 }
 
 inline std::string WizardChooserCandidate(const WizardCandidate& candidate)
@@ -543,7 +640,8 @@ struct ControllersPageCallbacks
     std::function<MidiInstrumentConfig()> instrumentSnapshot;
     std::function<MidiConnectionState()> connectionState;
     std::function<MidiDeviceList()> enumerateDevices;
-    std::function<void(MidiInstrumentConfig)> commitInstrument;
+    std::function<bool(MidiInstrumentConfig)> commitInstrument;
+    std::function<bool()> saveRuntimeConfiguration;
     std::function<void(std::string)> setStatus;
     std::function<void()> onBack;
 };
@@ -808,9 +906,13 @@ public:
                action.name == Actions::kAddBlock || action.name == Actions::kEndpointSelect ||
                action.name == Actions::kVariantSelect || action.name == Actions::kMappingFieldCommit ||
                action.name == Actions::kAddController || action.name == Actions::kWizardOpen ||
-               action.name == Actions::kAvailableConfigure || action.name == Actions::kWizardChoose ||
+               action.name == Actions::kAvailableConfigure ||
+               action.name == Actions::kAvailableIgnore ||
+               action.name == Actions::kWizardChoose ||
                action.name == Actions::kWizardBack ||
-               action.name == Actions::kWizardCancel;
+               action.name == Actions::kWizardCancel ||
+               action.name == Actions::kWizardSubmit ||
+               action.name == Actions::kWizardIgnore;
     }
 
 private:
@@ -829,13 +931,15 @@ private:
         return fp;
     }
 
-    void Commit(MidiInstrumentConfig out)
+    bool Commit(MidiInstrumentConfig out)
     {
-        if (m_callbacks.commitInstrument)
+        if (!m_callbacks.commitInstrument ||
+            !m_callbacks.commitInstrument(std::move(out)))
         {
-            m_callbacks.commitInstrument(std::move(out));
+            return false;
         }
         m_dirty = true;
+        return true;
     }
 
     void SetStatus(std::string text)
@@ -862,10 +966,14 @@ private:
                 return;
             }
 
-            // Task 12 owns new-candidate Submit/Ignore revalidation and commits.
-            // Keep the session open until that policy is installed.
-            if (action.name == Actions::kWizardSubmit || action.name == Actions::kWizardIgnore)
+            if (action.name == Actions::kWizardSubmit)
             {
+                HandleWizardSubmit();
+                return;
+            }
+            if (action.name == Actions::kWizardIgnore)
+            {
+                HandleWizardIgnore();
                 return;
             }
 
@@ -991,7 +1099,289 @@ private:
         if (action.name == Actions::kAvailableConfigure)
         {
             OpenCandidate(ParseIndex(action.value));
+            return;
         }
+
+        if (action.name == Actions::kAvailableIgnore)
+        {
+            const std::optional<WizardCandidate> candidate =
+                NodeIds::WizardCandidateFromToken(action.value);
+            if (!candidate.has_value())
+            {
+                SetStatus("Refused: invalid controller identity");
+                return;
+            }
+            HandleIgnoreCandidate(*candidate, /*sessionStatus=*/false);
+        }
+    }
+
+    static bool CandidateIdentityEqual(const WizardCandidate& lhs,
+                                       const WizardCandidate& rhs)
+    {
+        return lhs.wizardId == rhs.wizardId &&
+               lhs.displayName == rhs.displayName &&
+               lhs.kind == rhs.kind &&
+               lhs.input == rhs.input &&
+               lhs.output == rhs.output;
+    }
+
+    static bool ExactEndpointPresent(const std::vector<MidiDeviceInfoRef>& devices,
+                                     const MidiDeviceInfoRef& endpoint)
+    {
+        return std::find(devices.begin(), devices.end(), endpoint) != devices.end();
+    }
+
+    static std::string AvailableControllerName(const MidiInstrumentConfig& instrument,
+                                               const std::string& displayName)
+    {
+        if (instrument.FindController(displayName) == nullptr)
+        {
+            return displayName;
+        }
+        for (std::size_t suffix = 2;; ++suffix)
+        {
+            const std::string candidate =
+                displayName + " " + std::to_string(suffix);
+            if (instrument.FindController(candidate) == nullptr)
+            {
+                return candidate;
+            }
+        }
+    }
+
+    void SetWizardStatus(std::string text)
+    {
+        if (!m_wizardSession.has_value() ||
+            m_wizardSession->status == text)
+        {
+            return;
+        }
+        m_wizardSession->status = std::move(text);
+        ++m_treeRevision;
+        if (m_callbacks.setStatus)
+        {
+            m_callbacks.setStatus(m_wizardSession->status);
+        }
+    }
+
+    bool RevalidateCandidate(const WizardCandidate& expected,
+                             MidiInstrumentConfig& instrument,
+                             MidiDeviceList& devices,
+                             bool sessionStatus)
+    {
+        const auto report = [&](std::string text) {
+            if (sessionStatus)
+            {
+                SetWizardStatus(std::move(text));
+            }
+            else
+            {
+                SetStatus(std::move(text));
+            }
+        };
+        if (!m_callbacks.instrumentSnapshot || !m_callbacks.enumerateDevices)
+        {
+            report("Refused: current controller state is unavailable");
+            return false;
+        }
+
+        devices = m_callbacks.enumerateDevices();
+        instrument = m_callbacks.instrumentSnapshot();
+        const WizardDiscovery current = DiscoverControllerWizards(
+            devices, instrument, ControllerWizardRegistry());
+        const auto match = std::find_if(
+            current.available.begin(), current.available.end(),
+            [&](const WizardCandidate& candidate) {
+                return CandidateIdentityEqual(candidate, expected);
+            });
+        if (match != current.available.end())
+        {
+            return true;
+        }
+
+        const bool endpointsPresent =
+            ExactEndpointPresent(devices.inputs, expected.input) &&
+            ExactEndpointPresent(devices.outputs, expected.output);
+        report(
+            endpointsPresent
+                ? "Refused: this controller is no longer available or its endpoints are claimed"
+                : "Refused: reconnect both controller endpoints and try again");
+        return false;
+    }
+
+    void RefreshDiscoveryFromCallbacks()
+    {
+        if (!m_callbacks.instrumentSnapshot || !m_callbacks.enumerateDevices)
+        {
+            return;
+        }
+        MidiDeviceList devices = m_callbacks.enumerateDevices();
+        MidiInstrumentConfig instrument = m_callbacks.instrumentSnapshot();
+        SetEnumerateDevices(devices);
+        SetDiscovery(DiscoverControllerWizards(
+            devices, instrument, ControllerWizardRegistry()));
+    }
+
+    bool SaveCommittedWizardAction(bool sessionStatus)
+    {
+        if (!m_callbacks.saveRuntimeConfiguration ||
+            !m_callbacks.saveRuntimeConfiguration())
+        {
+            if (sessionStatus)
+            {
+                SetWizardStatus(
+                    "The controller was committed, but runtime configuration save failed");
+            }
+            else
+            {
+                SetStatus(
+                    "The controller was committed, but runtime configuration save failed");
+            }
+            return false;
+        }
+        return true;
+    }
+
+    bool CommitNewCandidate(MidiInstrumentConfig instrument,
+                            MidiControllerSlot controller,
+                            bool sessionStatus)
+    {
+        if (!instrument.AddController(std::move(controller)))
+        {
+            if (sessionStatus)
+            {
+                SetWizardStatus("Refused: generated controller record is invalid");
+            }
+            else
+            {
+                SetStatus("Refused: generated controller record is invalid");
+            }
+            return false;
+        }
+        if (!Commit(std::move(instrument)))
+        {
+            if (sessionStatus)
+            {
+                SetWizardStatus("Refused: host rejected the instrument commit");
+            }
+            else
+            {
+                SetStatus("Refused: host rejected the instrument commit");
+            }
+            return false;
+        }
+
+        RefreshDiscoveryFromCallbacks();
+        return SaveCommittedWizardAction(sessionStatus);
+    }
+
+    void HandleWizardSubmit()
+    {
+        if (!m_wizardSession.has_value() ||
+            !std::holds_alternative<WizardCandidate>(
+                m_wizardSession->target))
+        {
+            return;
+        }
+
+        const WizardCandidate candidate =
+            std::get<WizardCandidate>(m_wizardSession->target);
+        MidiInstrumentConfig instrument;
+        MidiDeviceList devices;
+        if (!RevalidateCandidate(candidate, instrument, devices,
+                                 /*sessionStatus=*/true))
+        {
+            return;
+        }
+
+        const std::string name =
+            AvailableControllerName(instrument, candidate.displayName);
+        WizardGenerationResult generated =
+            m_wizardSession->wizard->GenerateProfile(
+                *m_wizardSession->form,
+                {.name = name,
+                 .input = {.identifier = candidate.input.identifier,
+                           .name = candidate.input.name},
+                 .output = {.identifier = candidate.output.identifier,
+                            .name = candidate.output.name}});
+        if (!generated)
+        {
+            SetWizardStatus(
+                "Refused: " +
+                (generated.error.empty()
+                     ? std::string("controller profile generation failed")
+                     : generated.error));
+            return;
+        }
+
+        MidiControllerSlot controller = std::move(*generated.controller);
+        controller.name = name;
+        controller.kind = candidate.kind;
+        controller.disposition = MidiControllerDisposition::Active;
+        controller.wizardId = candidate.wizardId;
+        controller.input = {.identifier = candidate.input.identifier,
+                            .name = candidate.input.name};
+        controller.output = {.identifier = candidate.output.identifier,
+                             .name = candidate.output.name};
+        controller.dormantConfig.reset();
+
+        if (!CommitNewCandidate(std::move(instrument),
+                                std::move(controller),
+                                /*sessionStatus=*/true))
+        {
+            return;
+        }
+        CloseWizardSession();
+        SetStatus("Configured " + name);
+    }
+
+    void HandleWizardIgnore()
+    {
+        if (!m_wizardSession.has_value() ||
+            !std::holds_alternative<WizardCandidate>(
+                m_wizardSession->target))
+        {
+            return;
+        }
+        HandleIgnoreCandidate(
+            std::get<WizardCandidate>(m_wizardSession->target),
+            /*sessionStatus=*/true);
+    }
+
+    void HandleIgnoreCandidate(const WizardCandidate& candidate,
+                               bool sessionStatus)
+    {
+        MidiInstrumentConfig instrument;
+        MidiDeviceList devices;
+        if (!RevalidateCandidate(candidate, instrument, devices,
+                                 sessionStatus))
+        {
+            return;
+        }
+
+        const std::string name =
+            AvailableControllerName(instrument, candidate.displayName);
+        MidiControllerSlot controller;
+        controller.name = name;
+        controller.kind = candidate.kind;
+        controller.disposition = MidiControllerDisposition::Blacklisted;
+        controller.wizardId = candidate.wizardId;
+        controller.input = {.identifier = candidate.input.identifier,
+                            .name = candidate.input.name};
+        controller.output = {.identifier = candidate.output.identifier,
+                             .name = candidate.output.name};
+
+        if (!CommitNewCandidate(std::move(instrument),
+                                std::move(controller),
+                                sessionStatus))
+        {
+            return;
+        }
+        if (sessionStatus)
+        {
+            CloseWizardSession();
+        }
+        SetStatus("Ignored " + name);
     }
 
     static std::size_t ParseIndex(const std::string& text)
@@ -1525,7 +1915,7 @@ private:
                 ignore.label = "Ignore";
                 ignore.bounds = {368.0f, 0.0f, 72.0f, ControllersLayout::kControllerHeaderHeight};
                 ignore.action = ui::Action::WithValue(Actions::kAvailableIgnore,
-                                                      std::to_string(candidateIx));
+                                                      NodeIds::WizardCandidateToken(candidate));
                 appendRowChild(std::move(ignore));
                 scrollY += ControllersLayout::kControllerHeaderHeight;
             }
