@@ -40,12 +40,33 @@ export function sanitizeString(value, repoRoot) {
     });
     return sanitized;
 }
+export function canonicalJson(value) {
+    return JSON.stringify(canonicalValue(value));
+}
+export function truncateUtf8(value, maxBytes) {
+    const byteLimit = Math.max(0, Math.floor(maxBytes));
+    if (Buffer.byteLength(value, "utf8") <= byteLimit) {
+        return value;
+    }
+    let bytes = 0;
+    let result = "";
+    for (const character of value) {
+        const characterBytes = Buffer.byteLength(character, "utf8");
+        if (bytes + characterBytes > byteLimit) {
+            break;
+        }
+        result += character;
+        bytes += characterBytes;
+    }
+    return result;
+}
 function relativizeRepoPath(value, repoRoot) {
     const normalizedRoot = path.resolve(repoRoot);
     return value.replaceAll(normalizedRoot, (match, offset, full) => {
         const before = offset === 0 ? "" : full[offset - 1];
         const after = full[offset + match.length] ?? "";
-        if ((before === "" || isPathBoundaryBefore(before)) && (after === "" || after === path.sep)) {
+        if ((before === "" || isPathBoundaryBefore(before))
+            && (after === "" || after === path.sep || isPathBoundaryAfter(after))) {
             return ".";
         }
         return match;
@@ -63,5 +84,27 @@ function isSensitiveKey(key) {
 }
 function isPathBoundaryBefore(value) {
     return /\s|["'([{:=]/.test(value);
+}
+function isPathBoundaryAfter(value) {
+    return /\s|["'\])},;:]/.test(value);
+}
+function canonicalValue(value) {
+    if (Array.isArray(value)) {
+        return value.map((item) => canonicalValue(item));
+    }
+    if (isRecord(value)) {
+        const result = {};
+        for (const key of Object.keys(value).sort()) {
+            const item = value[key];
+            if (item !== undefined && typeof item !== "function" && typeof item !== "symbol") {
+                result[key] = canonicalValue(item);
+            }
+        }
+        return result;
+    }
+    if (typeof value === "number" && !Number.isFinite(value)) {
+        return null;
+    }
+    return value;
 }
 //# sourceMappingURL=sanitize.js.map

@@ -196,7 +196,7 @@ function parseRunArgs(argv) {
         mode,
         model,
         thinkingLevel,
-        permissionMode,
+        ...(permissionMode === undefined ? {} : { permissionMode }),
         initialMessage: initialMessageParts.length > 0 ? initialMessageParts.join(" ") : undefined,
     };
 }

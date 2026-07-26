@@ -209,12 +209,13 @@ function getCapabilityWarnings(options) {
     return warnings;
 }
 async function startSession(options, _runRecord, _clock) {
-    return options.adapter.start({
+    const startOptions = {
         cwd: options.cwd,
         model: options.adapter.capabilities.forwardsModel ? options.model : undefined,
         thinkingLevel: options.adapter.capabilities.forwardsThinkingLevel ? options.thinkingLevel : undefined,
-        permissionMode: options.permissionMode,
-    });
+        ...(options.permissionMode === undefined ? {} : { permissionMode: options.permissionMode }),
+    };
+    return options.adapter.start(startOptions);
 }
 function withRuntimeTurnContext(event, turnId) {
     const turnScopedEvent = event;

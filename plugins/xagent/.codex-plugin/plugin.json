@@ -8,6 +8,7 @@
   "license": "MIT",
   "keywords": ["xagent", "codex", "subagents", "review"],
   "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "xagent",
     "shortDescription": "Cross-harness subagents for Codex.",

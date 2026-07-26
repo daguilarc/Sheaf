@@ -10,6 +10,7 @@ export class FakeHarnessAdapter {
     submittedContexts = [];
     startCount = 0;
     closeCount = 0;
+    interruptCount = 0;
     constructor(options = {}) {
         this.options = options;
     }
@@ -21,12 +22,31 @@ export class FakeHarnessAdapter {
 class FakeHarnessSession {
     adapter;
     providerThreadId = "fake-thread-1";
+    processIdentity;
+    interrupt;
+    #closed = false;
     constructor(adapter) {
         this.adapter = adapter;
+        this.processIdentity = adapter.options.processIdentity;
+        if (adapter.options.supportsInterrupt === true) {
+            this.interrupt = async () => {
+                this.adapter.interruptCount += 1;
+            };
+        }
     }
     async *submit(context) {
+        if (this.#closed) {
+            throw new Error("Harness session is closed.");
+        }
         this.adapter.submittedTexts.push(context.text);
         this.adapter.submittedContexts.push(context);
+        const scriptedEvents = this.adapter.options.scriptedEvents?.[context.inputSequence - 1];
+        if (scriptedEvents !== undefined) {
+            for await (const event of scriptedEvents) {
+                yield event;
+            }
+            return;
+        }
         const turnId = context.turnId;
         const messageId = `message_${context.inputSequence}`;
         const toolCallId = `tool_${context.inputSequence}`;
@@ -79,6 +99,10 @@ class FakeHarnessSession {
         };
     }
     async close() {
+        if (this.#closed) {
+            return;
+        }
+        this.#closed = true;
         this.adapter.closeCount += 1;
     }
 }

@@ -15,6 +15,12 @@ REPO_ROOT = PLUGIN_ROOT.parents[1]
 XAGENT_ROOT = REPO_ROOT / "projects" / "xagent"
 ASSET_ROOT = PLUGIN_ROOT / "assets" / "xagent"
 PACKAGE_DIRECTORIES = (".codex-plugin", "skills", "scripts")
+PACKAGE_COMPANION_FILES = (".mcp.json",)
+LEGACY_RUNTIME_IGNORE = shutil.ignore_patterns(
+    "service_main.*",
+    "service",
+    "service/*",
+)
 
 
 def run(
@@ -43,7 +49,11 @@ def copy_runtime(asset_root: Path) -> None:
         shutil.rmtree(asset_root)
     (asset_root / "dist").mkdir(parents=True)
     shutil.copy2(XAGENT_ROOT / "package.json", asset_root / "package.json")
-    shutil.copytree(XAGENT_ROOT / "dist" / "src", asset_root / "dist" / "src")
+    shutil.copytree(
+        XAGENT_ROOT / "dist" / "src",
+        asset_root / "dist" / "src",
+        ignore=LEGACY_RUNTIME_IGNORE,
+    )
 
 
 def build_package(destination: Path) -> None:
@@ -64,6 +74,11 @@ def build_package(destination: Path) -> None:
             copy_function=shutil.copy2,
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
+    for companion in PACKAGE_COMPANION_FILES:
+        source = PLUGIN_ROOT / companion
+        if not source.is_file():
+            raise RuntimeError(f"missing plugin companion file: {source}")
+        shutil.copy2(source, destination / companion)
     copy_runtime(destination / "assets" / "xagent")
 
 

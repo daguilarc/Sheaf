@@ -6,8 +6,11 @@ import io
 import json
 import os
 import shutil
+import socket
 import stat
+import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -26,6 +29,34 @@ HELPER_NAMES = (
     "validate_plugin.py",
 )
 FIXED_CACHEBUSTER = "test-20260725"
+XAGENT_MCP_URL = "http://127.0.0.1:9005/mcp"
+XAGENT_MCP_TIMEOUT_SEC = 7200
+EXPECTED_MCP_TOOL_NAMES = (
+    "xagent_await",
+    "xagent_close",
+    "xagent_inspect",
+    "xagent_interrupt",
+    "xagent_message",
+    "xagent_start",
+)
+
+
+def write_stub_mcp_json(plugin_root: Path) -> None:
+    (plugin_root / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "xagent": {
+                        "type": "http",
+                        "url": XAGENT_MCP_URL,
+                        "tool_timeout_sec": XAGENT_MCP_TIMEOUT_SEC,
+                    }
+                }
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def write_executable(path: Path, content: str) -> None:
@@ -44,6 +75,44 @@ def tree_snapshot(root: Path) -> dict[str, tuple[int, str]]:
     return snapshot
 
 
+def is_loopback_port_open(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as handle:
+        handle.settimeout(0.2)
+        return handle.connect_ex(("127.0.0.1", port)) == 0
+
+
+def wait_for_loopback_port(port: int, *, timeout_sec: float = 10.0) -> None:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        if is_loopback_port_open(port):
+            return
+        time.sleep(0.05)
+    raise RuntimeError(f"timed out waiting for 127.0.0.1:{port}")
+
+
+def discover_mcp_tools(url: str) -> list[str]:
+    probe = f"""
+import {{ Client }} from "@modelcontextprotocol/sdk/client/index.js";
+import {{ StreamableHTTPClientTransport }} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+const transport = new StreamableHTTPClientTransport(new URL({url!r}));
+const client = new Client({{ name: "xagent-plugin-package-test", version: "0.0.0" }});
+await client.connect(transport);
+const listed = await client.listTools();
+console.log(JSON.stringify(listed.tools.map((tool) => tool.name).sort()));
+await client.close();
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", probe],
+        cwd=REPO_ROOT / "projects" / "xagent",
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+    return json.loads(result.stdout.strip())
+
+
 class PackageXagentOutputTests(unittest.TestCase):
     def test_built_package_excludes_python_bytecode_and_cache_directories(self) -> None:
         with tempfile.TemporaryDirectory(prefix="xagent-package-output-test-") as tempdir:
@@ -52,6 +121,7 @@ class PackageXagentOutputTests(unittest.TestCase):
             destination = root / "package"
             for directory in (".codex-plugin", "skills", "scripts"):
                 (plugin_root / directory).mkdir(parents=True)
+            write_stub_mcp_json(plugin_root)
             launcher = plugin_root / "scripts" / "xagent"
             write_executable(launcher, "#!/bin/sh\n")
             (plugin_root / "scripts" / "package_xagent.py").write_text(
@@ -104,6 +174,7 @@ class PackageXagentOutputTests(unittest.TestCase):
             asset_root = plugin_root / "assets" / "xagent"
             for directory in (".codex-plugin", "skills", "scripts"):
                 (plugin_root / directory).mkdir(parents=True)
+            write_stub_mcp_json(plugin_root)
             asset_root.mkdir(parents=True)
             (asset_root / "package.json").write_text('{"name":"xagent"}\n', encoding="utf-8")
 
@@ -125,6 +196,7 @@ class PackageXagentOutputTests(unittest.TestCase):
             asset_root = plugin_root / "assets" / "xagent"
             for directory in (".codex-plugin", "skills", "scripts"):
                 (plugin_root / directory).mkdir(parents=True)
+            write_stub_mcp_json(plugin_root)
             asset_root.mkdir(parents=True)
             tracked = asset_root / "package.json"
             tracked.write_text('{"name":"stale"}\n', encoding="utf-8")
@@ -211,6 +283,52 @@ class PackageXagentOutputTests(unittest.TestCase):
 
             self.assertEqual([True], calls)
 
+    def test_packaged_plugin_declares_http_mcp_without_local_supervisor(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="xagent-package-mcp-test-") as tempdir:
+            destination = Path(tempdir) / "package"
+            package_xagent.build_package(destination)
+
+            manifest = json.loads(
+                (destination / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual("./.mcp.json", manifest.get("mcpServers"))
+
+            mcp_path = destination / ".mcp.json"
+            self.assertTrue(mcp_path.is_file(), ".mcp.json must be packaged")
+            mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
+            xagent = mcp["mcpServers"]["xagent"]
+            self.assertEqual("http", xagent["type"])
+            self.assertEqual(XAGENT_MCP_URL, xagent["url"])
+            self.assertEqual(XAGENT_MCP_TIMEOUT_SEC, xagent["tool_timeout_sec"])
+            self.assertNotIn("command", xagent)
+
+            runtime_root = destination / "assets" / "xagent" / "dist" / "src"
+            self.assertFalse((runtime_root / "service_main.js").exists())
+            self.assertFalse((runtime_root / "service").exists())
+
+            if is_loopback_port_open(9005):
+                tool_names = discover_mcp_tools(XAGENT_MCP_URL)
+                self.assertEqual(list(EXPECTED_MCP_TOOL_NAMES), tool_names)
+            else:
+                service_process = subprocess.Popen(
+                    ["node", "dist/src/service_main.js"],
+                    cwd=REPO_ROOT / "projects" / "xagent",
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                try:
+                    wait_for_loopback_port(9005)
+                    tool_names = discover_mcp_tools(XAGENT_MCP_URL)
+                    self.assertEqual(list(EXPECTED_MCP_TOOL_NAMES), tool_names)
+                finally:
+                    service_process.terminate()
+                    try:
+                        service_process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        service_process.kill()
+                        service_process.wait(timeout=5)
+
 
 class GlobalPluginInstallTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -227,6 +345,7 @@ class GlobalPluginInstallTests(unittest.TestCase):
         plugin_root = self.repo_root / "plugins" / "xagent"
         for directory in (".codex-plugin", "skills", "scripts"):
             shutil.copytree(REPO_ROOT / "plugins" / "xagent" / directory, plugin_root / directory)
+        shutil.copy2(REPO_ROOT / "plugins" / "xagent" / ".mcp.json", plugin_root / ".mcp.json")
 
         xagent_root = self.repo_root / "projects" / "xagent"
         (xagent_root / "dist" / "src").mkdir(parents=True)
