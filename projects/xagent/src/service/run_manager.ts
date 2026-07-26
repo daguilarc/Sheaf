@@ -1,7 +1,7 @@
 import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { generateRunId, createRunRecord, appendNormalizedEvent, updateRunSupervision, type RunRecord } from "../logs.js";
+import { generateRunId, createRunRecord, appendNormalizedEvent, updateRunSupervision, openRunRecord, type RunRecord } from "../logs.js";
 import { Supervisor } from "../supervision/supervisor.js";
 import type {
   AwaitResult,
@@ -59,6 +59,10 @@ export type InspectRunResult = {
   readonly phase: string;
   readonly sequence: number;
   readonly provider_thread_id?: string;
+  readonly callback_failure?: {
+    source: "health_callback" | "watchdog_callback";
+    message: string;
+  };
 };
 
 export type AwaitRunResult = {
@@ -234,15 +238,26 @@ export class XagentRunManager {
     });
     try {
       await this.start(runId);
-      // Own the turn on the service without blocking the controller on completion.
-      //
+      // Snapshot the cursor from the ready state before the turn starts so a
+      // controller awaiting from the returned sequence always observes the
+      // turn's running, attention, and completion events even if the turn
+      // finishes before the first poll.
+      const startCursor = this.inspect(runId);
+      if (startCursor === undefined) {
+        throw new Error(`Run disappeared after start: ${runId}`);
+      }
+      const startSequence = startCursor.sequence;
       const submitPromise = this.submit(runId, input.prompt);
+      // The supervisor surfaces submit failures through durable failed events
+      // (or via inspect when the sink itself is broken); swallow the
+      // unhandled-rejection warning without losing visibility of the failure.
       void submitPromise.catch(() => {});
-      const inspection = await waitForStartInspection(this, runId, submitPromise);
+      await waitForTurnRunning(this, runId, submitPromise);
+      const phase = this.inspect(runId)?.phase ?? "running";
       return {
         run_id: runId,
-        sequence: inspection.sequence,
-        phase: inspection.phase,
+        sequence: startSequence,
+        phase,
       };
     } catch (error) {
       await this.close(runId).catch(() => {});
@@ -268,29 +283,64 @@ export class XagentRunManager {
     return this.#require(runId).supervisor.publishAttention(reason, payload);
   }
 
-  inspectRun(input: XagentInspectInput): InspectRunResult {
-    const inspection = this.inspect(input.run_id);
-    if (inspection === undefined) {
+  async inspectRun(input: XagentInspectInput): Promise<InspectRunResult> {
+    const live = this.inspect(input.run_id);
+    if (live !== undefined) {
+      return {
+        run_id: live.run_id,
+        phase: live.phase,
+        sequence: live.sequence,
+        ...(live.provider_thread_id === undefined
+          ? {}
+          : { provider_thread_id: live.provider_thread_id }),
+        ...(live.callback_failure === undefined
+          ? {}
+          : { callback_failure: live.callback_failure }),
+      };
+    }
+    // Fall back to persisted metadata so abandoned/terminal runs from a prior
+    // service incarnation remain distinguishable from never-existed runs.
+    const persisted = await this.#inspectPersistedRun(input.run_id);
+    if (persisted === undefined) {
       throw unknownRunError(input.run_id);
     }
+    return persisted;
+  }
+
+  async #inspectPersistedRun(runId: string): Promise<InspectRunResult | undefined> {
+    let record: RunRecord;
+    try {
+      record = await openRunRecord(this.#logRoot, runId);
+    } catch {
+      return undefined;
+    }
     return {
-      run_id: inspection.run_id,
-      phase: inspection.phase,
-      sequence: inspection.sequence,
-      ...(inspection.provider_thread_id === undefined
+      run_id: record.run_id,
+      phase: record.supervision.phase,
+      sequence: record.supervision.sequence,
+      ...(record.supervision.provider_thread_id === undefined
         ? {}
-        : { provider_thread_id: inspection.provider_thread_id }),
+        : { provider_thread_id: record.supervision.provider_thread_id }),
     };
   }
 
   async messageRun(input: XagentMessageInput): Promise<MessageRunResult> {
+    // Snapshot the cursor before the new turn starts so a controller awaiting
+    // from the returned sequence observes the turn's events even when it
+    // completes before the first poll.
+    const before = this.inspect(input.run_id);
+    if (before === undefined) {
+      throw unknownRunError(input.run_id);
+    }
+    const startSequence = before.sequence;
     const submitPromise = this.submit(input.run_id, input.text);
     void submitPromise.catch(() => {});
-    const inspection = await waitForStartInspection(this, input.run_id, submitPromise);
+    await waitForTurnRunning(this, input.run_id, submitPromise);
+    const phase = this.inspect(input.run_id)?.phase ?? before.phase;
     return {
-      run_id: inspection.run_id,
-      phase: inspection.phase,
-      sequence: inspection.sequence,
+      run_id: input.run_id,
+      phase,
+      sequence: startSequence,
     };
   }
 
@@ -414,11 +464,11 @@ function shapeAwaitEnvelope(result: AwaitResult, elapsedMs: number): AwaitRunRes
   };
 }
 
-async function waitForStartInspection(
+async function waitForTurnRunning(
   manager: XagentRunManager,
   runId: string,
   submitPromise: Promise<void>,
-): Promise<SupervisorInspection> {
+): Promise<void> {
   let settleError: unknown;
   const settled = submitPromise.then(
     () => "done" as const,
@@ -443,13 +493,7 @@ async function waitForStartInspection(
       throw settleError;
     }
     if (outcome === "done" || inspection.phase === "running") {
-      return inspection;
+      return;
     }
   }
-
-  const fallback = manager.inspect(runId);
-  if (fallback === undefined) {
-    throw new Error(`Run disappeared after start: ${runId}`);
-  }
-  return fallback;
 }
