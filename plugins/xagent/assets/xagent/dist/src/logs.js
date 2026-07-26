@@ -27,6 +27,7 @@ export async function createRunRecord(options) {
         created_at: timestamp,
         updated_at: timestamp,
         exit_status: "running",
+        ...(options.supervised === undefined ? {} : { supervised: options.supervised }),
         supervision: {
             phase: "starting",
             sequence: 0,
@@ -269,6 +270,7 @@ function normalizeListedRunMetadata(value) {
         created_at: value.created_at,
         updated_at: value.updated_at,
         exit_status: value.exit_status,
+        ...(value.supervised === undefined ? {} : { supervised: value.supervised }),
         supervision,
         watchdog,
         ...(value.owned_process === undefined ? {} : { owned_process: value.owned_process }),
@@ -302,6 +304,8 @@ function isLegacyListableRunMetadata(value) {
         && (value.exit_status === "running"
             || value.exit_status === "completed"
             || value.exit_status === "failed")
+        && (value.supervised === undefined
+            || typeof value.supervised === "boolean")
         && (value.supervision === undefined
             || (isRecord(value.supervision) && isSupervisionBlock(value.supervision)))
         && (value.watchdog === undefined

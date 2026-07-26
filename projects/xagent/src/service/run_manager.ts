@@ -150,6 +150,12 @@ export class XagentRunManager {
       model: options.model,
       thinkingLevel: options.thinkingLevel,
       clock: this.#clock,
+      // Stamp service-owned runs so startup reconciliation can distinguish
+      // them from in-flight legacy `xagent run` records that share the log
+      // root. Reconciliation only enumerates supervised records; a legacy
+      // interactive run stays untouched across service restarts (review I2).
+      //
+      supervised: true,
     });
     const adapter = this.#adapterFactory(options.harness);
     const policy = options.policy ?? this.#defaultPolicy;

@@ -668,7 +668,7 @@ test("reconciliation does not abandon a completed legacy run (I-2 regression)", 
   // so list/reconcile stay consistent for both supervised and legacy
   // paths.
   //
-  const fixture = await createActiveRunFixture("legacy_completed");
+  const fixture = await createActiveRunFixture("legacy_completed", { supervised: false });
   // Simulate the legacy runtime's terminal update: a successful
   // interactive run that calls only `updateRunExitStatus("completed")`.
   //
@@ -709,6 +709,66 @@ test("reconciliation does not abandon a completed legacy run (I-2 regression)", 
     events.some((event) => event.reason === "stale_run_abandoned"),
     false,
     "a completed legacy run must not be abandoned on reconcile",
+  );
+});
+
+test("reconciliation does not abandon an in-flight legacy run with no ownership marker (I2 regression)", async () => {
+  // Reproduces the I2 bug: a legacy `xagent run` interactive process
+  // stamps `supervision.phase: "starting"` and never enters the
+  // service's `liveRunIds` (it is a different process entirely), but
+  // shares the same log root. Before the ownership-marker fix,
+  // `reconcileStaleRuns` enumerated any active-phase record and rewrote
+  // the live legacy run's `metadata.json` to `phase: abandoned` /
+  // `exit_status: failed`, appending fabricated `stale_run_abandoned`
+  // state + attention events to its `normalized.jsonl`. The legacy
+  // process later clobbers the metadata back from its in-memory record,
+  // but `xagent list` briefly reports a healthy live run as abandoned
+  // and the operator gets no `/health` signal (the outcome is
+  // classified clean because legacy records carry no `owned_process`).
+  // The fix adds a `supervised: true` marker written only by the
+  // service's `XagentRunManager.create`; reconciliation skips records
+  // without that marker, so an in-flight legacy run is never touched.
+  //
+  const fixture = await createActiveRunFixture("legacy_inflight", { supervised: false });
+  // A legacy in-flight run carries no owned_process (the legacy runtime
+  // never captures one) and stays in `starting` until the session ends.
+  //
+  await updateRunSupervision(fixture.record, {
+    phase: "starting",
+    sequence: 0,
+    provider_thread_id: undefined,
+    last_transport_progress_at: "2026-07-25T12:00:00.000Z",
+    last_semantic_progress_at: "2026-07-25T12:00:00.000Z",
+    owned_process: undefined,
+  });
+  const metadataBefore = await readFile(fixture.record.metadataPath, "utf8");
+  const logBefore = await readFile(fixture.record.normalizedLogPath, "utf8");
+
+  const signalledGroups: number[] = [];
+  const result = await reconcileStaleRuns(
+    fixture.logRoot,
+    fakeInspector(
+      {
+        pid: 4101,
+        process_group_id: 5101,
+        start_identity: "process-start-a",
+      },
+      signalledGroups,
+    ),
+  );
+
+  assert.deepEqual(result, []);
+  assert.deepEqual(signalledGroups, []);
+  assert.equal(await readFile(fixture.record.metadataPath, "utf8"), metadataBefore);
+  assert.equal(await readFile(fixture.record.normalizedLogPath, "utf8"), logBefore);
+  const metadataAfter = JSON.parse(await readFile(fixture.record.metadataPath, "utf8"));
+  assert.equal(metadataAfter.supervision.phase, "starting");
+  assert.equal(metadataAfter.exit_status, "running");
+  const events = await readJsonLines(fixture.record.normalizedLogPath);
+  assert.equal(
+    events.some((event) => event.reason === "stale_run_abandoned"),
+    false,
+    "an in-flight legacy run without the supervised marker must not be abandoned on reconcile",
   );
 });
 
@@ -1138,7 +1198,10 @@ function trackChild<T extends ChildProcess>(child: T): T {
   return child;
 }
 
-async function createActiveRunFixture(suffix: string) {
+async function createActiveRunFixture(
+  suffix: string,
+  options?: { readonly supervised?: boolean },
+) {
   const repoRoot = await mkdtemp(path.join(tmpdir(), `xagent-reconcile-${suffix}-`));
   const logRoot = path.join(repoRoot, "xagent");
   return createActiveRunIn(
@@ -1147,6 +1210,7 @@ async function createActiveRunFixture(suffix: string) {
     suffix,
     "2026-07-25T12:00:00.000Z",
     { pid: 4101, processGroupId: 5101, startIdentity: "process-start-a" },
+    options,
   );
 }
 
@@ -1160,6 +1224,7 @@ async function createActiveRunIn(
     readonly processGroupId: number;
     readonly startIdentity: string;
   },
+  options?: { readonly supervised?: boolean },
 ) {
   const runId = `xrun_reconcile_${suffix}`;
   const record = await createRunRecord({
@@ -1169,6 +1234,13 @@ async function createActiveRunIn(
     harness: "codex",
     mode: "subagent",
     clock: () => new Date(createdAt),
+    // Default to `supervised: true` so fixtures simulate a stale run
+    // left behind by a previous service incarnation — the only kind
+    // reconciliation enumerates after the I2 ownership-marker fix.
+    // Tests that need a legacy-shaped (non-supervised) record pass
+    // `{ supervised: false }` explicitly.
+    //
+    supervised: options?.supervised ?? true,
   });
   await updateRunSupervision(record, {
     phase: "running",

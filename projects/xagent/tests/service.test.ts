@@ -634,6 +634,10 @@ test("service_main reconciles stale active runs after binding the listener and b
     harness: "codex",
     mode: "subagent",
     clock: () => new Date("2026-07-25T12:00:00.000Z"),
+    // Stamp the record as service-owned so reconciliation enumerates it
+    // after the I2 ownership-marker fix.
+    //
+    supervised: true,
   });
   await updateRunSupervision(record, {
     phase: "running",
@@ -738,6 +742,7 @@ test("service_main surfaces a /health warning and stderr log when reconciliation
     harness: "codex",
     mode: "subagent",
     clock: () => new Date("2026-07-25T12:00:00.000Z"),
+    supervised: true,
   });
   await updateRunSupervision(record, {
     phase: "running",
@@ -844,6 +849,7 @@ test("service_main reports no /health warning and no stderr log when reconciliat
     harness: "codex",
     mode: "subagent",
     clock: () => new Date("2026-07-25T12:00:00.000Z"),
+    supervised: true,
   });
   await updateRunSupervision(record, {
     phase: "running",
@@ -980,6 +986,11 @@ test("a duplicate service_main with the port occupied exits on EADDRINUSE withou
     harness: "codex",
     mode: "subagent",
     clock: () => new Date("2026-07-25T12:00:00.000Z"),
+    // Stamp the record as service-owned so it would be reconciled if
+    // reconciliation ever ran; the test asserts reconciliation never
+    // runs because the duplicate start exits on EADDRINUSE first.
+    //
+    supervised: true,
   });
   await updateRunSupervision(record, {
     phase: "running",

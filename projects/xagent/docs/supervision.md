@@ -110,6 +110,8 @@ In all cases the worker is never auto-interrupted, auto-killed, or auto-restarte
 
 The watchdog argv has never been executed against the real `claude` binary by default `npm test` — every `claude_watchdog.test.ts` assertion injects a fake `WatchdogSpawn`. The argv flags are validated against `claude --help` by hand, but no in-tree test or packaged smoke actually invokes `claude`.
 
+Execution evidence for the gate below is recorded in `.superpowers/sdd/2026-07-25-xagent-event-driven-supervision/watchdog-live-smoke-evidence.md` (command, date, `claude` version, captured verdict, and pass/fail summary). That artifact is the human-readable record that the documented pre-production gate was exercised; re-run the smoke and append a new entry whenever the argv or the installed `claude` CLI changes.
+
 To close that gap without flaking default CI, an **optional** live smoke is provided:
 
 - `tests/claude_watchdog_live.test.ts` invokes the real `claude` binary through `ClaudeWatchdogClassifier.classify()` (the production spawn + envelope-extraction + normalization path, using the production `DEFAULT_STDOUT_LIMIT_BYTES` stdout cap) only when `XAGENT_RUN_LIVE_WATCHDOG_SMOKE=1` is set **and** `claude` is on `PATH`. Otherwise it skips with a clear message.

@@ -118,16 +118,11 @@ agent instead of Composer.
 
 ## Legacy Terminal Protocol
 
-`xagent run --subagent` remains available for harness compatibility, but the
-default supervised path above is Conductor service MCP or the quiet
+`xagent run --subagent` remains available for harness compatibility, but the default supervised path above is Conductor service MCP or the quiet
 service-client fallback. Do not combine legacy terminal stdin polling with
 service MCP for the same run.
 
-When xagent launches the Codex harness through the legacy path, it passes
-Codex's explicit `--dangerously-bypass-approvals-and-sandbox` flag so the
-xagent-spawned Codex child does not stop for command approvals or inherit a
-restrictive sandbox. Use this only through xagent; do not copy that flag into
-unrelated workflows.
+When xagent launches the Codex harness through either the supervised MCP path or the legacy terminal path, it passes Codex's explicit `--dangerously-bypass-approvals-and-sandbox` flag so the xagent-spawned Codex child does not stop for command approvals or inherit a restrictive sandbox. Use this only through xagent; do not copy that flag into unrelated workflows.
 
 ## Failure Handling
 

@@ -1,5 +1,30 @@
 ## ADDED Requirements
 
+### Requirement: xas-11 — Recovery: supervised-run ownership marker
+
+WHEN the xagent service creates a run, THE xagent supervisor SHALL persist a `supervised: true` ownership marker on the run metadata; WHEN a run is created through the legacy `xagent run` interactive runtime, THE supervisor SHALL NOT set that marker; AND WHEN startup reconciliation enumerates persisted metadata, THE supervisor SHALL skip any active-phase record that does not carry the `supervised: true` marker so in-flight legacy interactive runs that share the log root are never rewritten or abandoned by a service incarnation that does not own them.
+
+#### Scenario: Service-owned run carries the supervised marker
+
+- **WHEN** the xagent service creates a supervised run through `XagentRunManager.create`
+- **THEN** the persisted `metadata.json` carries `supervised: true`
+- **AND** startup reconciliation enumerates the record as a candidate for stale-run abandonment
+
+#### Scenario: Legacy interactive run omits the supervised marker
+
+- **WHEN** a legacy `xagent run --subagent|--full` session creates a run record
+- **THEN** the persisted `metadata.json` omits `supervised` (or carries a non-`true` value)
+- **AND** startup reconciliation skips the record even when its phase is `starting`, `running`, or `ready`
+- **AND** the legacy process retains sole ownership of its metadata and `normalized.jsonl`
+
+#### Scenario: In-flight legacy run survives service restart
+
+- **WHEN** a legacy `xagent run` session is in flight with `supervision.phase: "starting"`
+- **AND** the xagent service starts or restarts against the same log root
+- **THEN** reconciliation does not rewrite the legacy run's `metadata.json` to `abandoned`/`failed`
+- **AND** no fabricated `stale_run_abandoned` state or attention events are appended to the legacy run's `normalized.jsonl`
+- **AND** the legacy process later advances its own metadata to a terminal value when its session ends
+
 ### Requirement: xas-1 — Lifecycle: supervised run state
 
 WHEN xagent starts a supervised run, THE xagent supervisor SHALL assign a stable run identifier, track the lifecycle phase as `starting`, `running`, `ready`, `completed`, `failed`, `cancelled`, or `abandoned`, maintain attention as an orthogonal durable event queue, and append each externally visible transition or attention event as a sequenced `supervision.*` event.
@@ -222,7 +247,7 @@ WHEN a controller awaits a supervised run after an event sequence, THE xagent su
 
 ### Requirement: xas-9 — Recovery: owned process and abandoned-run reconciliation
 
-WHEN the xagent service shuts down orderly, THE xagent supervisor SHALL close its owned provider processes; WHEN persisted metadata claims an active run but a restarted service cannot prove ownership or safely reattach, THE supervisor SHALL reconcile the run to `abandoned` rather than reporting it as running.
+WHEN the xagent service shuts down orderly, THE xagent supervisor SHALL close its owned provider processes; WHEN persisted metadata claims an active run but a restarted service cannot prove ownership or safely reattach, THE supervisor SHALL reconcile the run to `abandoned` rather than reporting it as running; AND reconciliation SHALL enumerate only runs that carry the service-owned `supervised: true` marker (see xas-11) so an in-flight legacy `xagent run` session that shares the log root is never rewritten or abandoned by a service incarnation that does not own it.
 
 #### Scenario: Orderly close cleans up child
 
@@ -233,9 +258,19 @@ WHEN the xagent service shuts down orderly, THE xagent supervisor SHALL close it
 #### Scenario: Service restarts with stale active metadata
 
 - **WHEN** startup discovers metadata marked `starting`, `running`, or `ready`
+- **AND** the metadata carries the service-owned `supervised: true` marker
 - **AND** no live in-process supervisor can prove ownership and reattachment support
 - **THEN** xagent records `abandoned`
 - **AND** inspection exposes deterministic attention instead of a healthy status
+
+#### Scenario: Service restart leaves in-flight legacy runs untouched
+
+- **WHEN** startup discovers metadata marked `starting`, `running`, or `ready`
+- **AND** the metadata does not carry the `supervised: true` marker (a legacy `xagent run` interactive session)
+- **THEN** xagent reconciliation skips the record
+- **AND** does not rewrite its `metadata.json` to `abandoned`/`failed`
+- **AND** does not append fabricated `stale_run_abandoned` events to its `normalized.jsonl`
+- **AND** the legacy process retains sole ownership until its session ends
 
 ### Requirement: xas-10 — Telemetry: supervision cost and wake accounting
 

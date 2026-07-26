@@ -23,6 +23,12 @@ export type RunMetadata = {
   created_at: string;
   updated_at: string;
   exit_status: "running" | "completed" | "failed";
+  // Ownership marker: `true` for runs created by the long-lived xagent
+  // service (the supervised path). Legacy `xagent run` interactive runs
+  // leave this absent so startup reconciliation cannot enumerate and
+  // rewrite in-flight legacy records it does not own (review I2).
+  //
+  supervised?: boolean;
   supervision: {
     phase: SupervisionPhase;
     sequence: number;
@@ -58,6 +64,12 @@ export type CreateRunRecordOptions = {
   readonly thinkingLevel?: ThinkingLevel;
   readonly runId?: string;
   readonly clock?: () => Date;
+  // Set to `true` for service-owned (supervised) runs so startup
+  // reconciliation can distinguish them from in-flight legacy
+  // `xagent run` records that share the same log root. Legacy runs
+  // leave this absent (review I2).
+  //
+  readonly supervised?: boolean;
 };
 
 export async function createRunRecord(options: CreateRunRecordOptions): Promise<RunRecord> {
@@ -86,6 +98,7 @@ export async function createRunRecord(options: CreateRunRecordOptions): Promise<
     created_at: timestamp,
     updated_at: timestamp,
     exit_status: "running",
+    ...(options.supervised === undefined ? {} : { supervised: options.supervised }),
     supervision: {
       phase: "starting",
       sequence: 0,
@@ -381,6 +394,7 @@ function normalizeListedRunMetadata(value: unknown): RunMetadata | undefined {
     created_at: value.created_at,
     updated_at: value.updated_at,
     exit_status: value.exit_status,
+    ...(value.supervised === undefined ? {} : { supervised: value.supervised }),
     supervision,
     watchdog,
     ...(value.owned_process === undefined ? {} : { owned_process: value.owned_process }),
@@ -403,6 +417,7 @@ function isLegacyListableRunMetadata(value: unknown): value is {
   readonly created_at: string;
   readonly updated_at: string;
   readonly exit_status: RunMetadata["exit_status"];
+  readonly supervised?: boolean;
   readonly supervision?: unknown;
   readonly watchdog?: unknown;
   readonly owned_process?: OwnedProcessIdentity;
@@ -440,6 +455,10 @@ function isLegacyListableRunMetadata(value: unknown): value is {
       value.exit_status === "running"
       || value.exit_status === "completed"
       || value.exit_status === "failed"
+    )
+    && (
+      value.supervised === undefined
+      || typeof value.supervised === "boolean"
     )
     && (
       value.supervision === undefined

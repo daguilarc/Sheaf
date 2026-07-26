@@ -43,6 +43,26 @@ export async function reconcileStaleRuns(
     if (!activePhases.has(metadata.supervision.phase)) {
       continue;
     }
+    // Reconciliation only touches service-owned (supervised) runs. A
+    // legacy `xagent run` interactive process shares the same log root
+    // and stamps `supervision.phase: "starting"` until the session ends,
+    // but it is a different process entirely and is never in this
+    // service's `liveRunIds`. Without the supervised-marker guard,
+    // reconciliation would rewrite a live legacy run's `metadata.json`
+    // to `phase: abandoned` / `exit_status: failed` and append fabricated
+    // `stale_run_abandoned` state + attention events to its
+    // `normalized.jsonl` — corrupting a healthy in-flight run. The legacy
+    // process later clobbers the metadata back from its in-memory
+    // record, but `xagent list` would briefly report it as abandoned and
+    // the operator gets no `/health` signal (the outcome is classified
+    // clean because legacy records carry no `owned_process`). The
+    // `supervised: true` marker is written only by the service's
+    // `XagentRunManager.create`; legacy `runtime.ts` leaves it absent
+    // (review I2).
+    //
+    if (metadata.supervised !== true) {
+      continue;
+    }
     // Skip runs owned by the live XagentRunManager of this same service
     // instance. After C1 moved reconciliation to run after `listen()`
     // resolved, a run created in the listen→reconcile window would

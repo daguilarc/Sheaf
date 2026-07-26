@@ -10,6 +10,7 @@ export type RunMetadata = {
     created_at: string;
     updated_at: string;
     exit_status: "running" | "completed" | "failed";
+    supervised?: boolean;
     supervision: {
         phase: SupervisionPhase;
         sequence: number;
@@ -43,6 +44,7 @@ export type CreateRunRecordOptions = {
     readonly thinkingLevel?: ThinkingLevel;
     readonly runId?: string;
     readonly clock?: () => Date;
+    readonly supervised?: boolean;
 };
 export declare function createRunRecord(options: CreateRunRecordOptions): Promise<RunRecord>;
 export declare function appendNormalizedEvent(record: RunRecord, event: OutputEvent | SupervisionEvent): Promise<void>;
