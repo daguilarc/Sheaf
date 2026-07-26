@@ -7,10 +7,10 @@
 
 ## 2. Deterministic Health and Evidence
 
-- [ ] 2.1 Add adapter/runtime tests for process exit, provider completion/failure, transport loss, exposed input/permission waits, explicit cancellation, hard deadline, and live-process silence.
-- [ ] 2.2 Implement deterministic health classification so every mechanical state produces completion, failure, or attention without calling the semantic classifier.
-- [ ] 2.3 Add tests for transport-liveness timestamps, semantic-event selection, repeated tool/error fingerprints, evidence truncation, path relativization, and secret redaction.
-- [ ] 2.4 Implement the bounded semantic evidence window and configurable silence, deadline, suspicion, and input-size policies.
+- [x] 2.1 Add adapter/runtime tests for process exit, provider completion/failure, transport loss, exposed input/permission waits, explicit cancellation, hard deadline, and live-process silence.
+- [x] 2.2 Implement deterministic health classification so every mechanical state produces completion, failure, or attention without calling the semantic classifier.
+- [x] 2.3 Add tests for transport-liveness timestamps, semantic-event selection, repeated tool/error fingerprints, evidence truncation, path relativization, and secret redaction.
+- [x] 2.4 Implement the bounded semantic evidence window and configurable silence, deadline, suspicion, and input-size policies.
 
 ## 3. Haiku Semantic Watchdog
 
