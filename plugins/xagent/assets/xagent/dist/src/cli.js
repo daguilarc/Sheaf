@@ -218,7 +218,11 @@ function exitCodeForAwait(awaited) {
         return 1;
     }
     if (awaited.event === "supervision.state") {
-        return awaited.phase === "failed" || awaited.phase === "abandoned" ? 1 : 0;
+        return awaited.phase === "failed"
+            || awaited.phase === "abandoned"
+            || awaited.phase === "cancelled"
+            ? 1
+            : 0;
     }
     return 1;
 }
