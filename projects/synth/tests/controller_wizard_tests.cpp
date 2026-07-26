@@ -429,6 +429,113 @@ TEST_CASE(TypedWizardRejectsDifferentConcreteFormWithoutGeneration) {
     REQUIRE_TRUE(second.generationCount == 0);
 }
 
+TEST_CASE(MfTwisterWizardGeneratesCompleteActiveProfileFromItsForm) {
+    std::unique_ptr<synth::ControllerWizard> wizard =
+        synth::MakeControllerWizard("com.sheaf.midi-fighter-twister");
+    REQUIRE_TRUE(wizard != nullptr);
+    REQUIRE_TRUE(wizard->Id() == "com.sheaf.midi-fighter-twister");
+
+    std::unique_ptr<synth::ControllerConfigForm> baseForm = wizard->ConfigForm(std::nullopt);
+    auto* form = dynamic_cast<synth::MfTwisterConfigForm*>(baseForm.get());
+    REQUIRE_TRUE(form != nullptr);
+    form->encoderSlotText = "4";
+    form->buttons[0] = {.message = synth::UISystemMessage::HoldReset,
+                        .argumentText = "disabled-reset-argument"};
+    form->buttons[1] = {.message = synth::UISystemMessage::HoldRandom,
+                        .argumentText = "disabled-random-argument"};
+    form->buttons[2] = {.message = synth::UISystemMessage::HoldRandomMod,
+                        .argumentText = "disabled-random-mod-argument"};
+    form->buttons[3] = {.message = synth::UISystemMessage::SelectParamBank, .argumentText = "7"};
+    form->buttons[4] = {.message = synth::UISystemMessage::NextParamBank,
+                        .argumentText = "disabled-next-argument"};
+    form->buttons[5] = {.message = synth::UISystemMessage::PrevParamBank,
+                        .argumentText = "disabled-previous-argument"};
+
+    const synth::WizardGenerationResult result = wizard->GenerateProfile(*form, Context());
+
+    REQUIRE_TRUE(result);
+    REQUIRE_TRUE(result.controller->name == "ignored-by-form");
+    REQUIRE_TRUE(result.controller->kind == synth::MidiProfileKind::MfTwister);
+    REQUIRE_TRUE(result.controller->disposition == synth::MidiControllerDisposition::Active);
+    REQUIRE_TRUE(result.controller->wizardId == "com.sheaf.midi-fighter-twister");
+    REQUIRE_TRUE(result.controller->input.identifier == "in-id");
+    REQUIRE_TRUE(result.controller->input.name == "Input");
+    REQUIRE_TRUE(result.controller->output.identifier == "out-id");
+    REQUIRE_TRUE(result.controller->output.name == "Output");
+
+    const synth::MidiControllerProfileConfig& profile = result.controller->config;
+    REQUIRE_TRUE(profile.encoderInput.has_value());
+    REQUIRE_TRUE(profile.encoderInput->turns.size() == 16);
+    REQUIRE_TRUE(profile.encoderInput->pushes.size() == 16);
+    for (std::size_t position = 0; position < profile.encoderInput->turns.size(); ++position) {
+        const synth::EncoderMidiMapping& mapping = profile.encoderInput->turns[position];
+        REQUIRE_TRUE(mapping.slotIx == 4);
+        REQUIRE_TRUE(mapping.position == position);
+    }
+    for (std::size_t position = 0; position < profile.encoderInput->pushes.size(); ++position) {
+        const synth::EncoderMidiMapping& mapping = profile.encoderInput->pushes[position];
+        REQUIRE_TRUE(mapping.slotIx == 4);
+        REQUIRE_TRUE(mapping.position == position);
+    }
+    REQUIRE_TRUE(profile.encoderOutput.has_value());
+    REQUIRE_TRUE(profile.encoderOutput->mappings.size() == 16);
+    for (std::size_t position = 0; position < profile.encoderOutput->mappings.size(); ++position) {
+        const synth::EncoderMidiOutMapping& mapping = profile.encoderOutput->mappings[position];
+        REQUIRE_TRUE(mapping.slotIx == 4);
+        REQUIRE_TRUE(mapping.position == position);
+    }
+
+    REQUIRE_TRUE(profile.systemMessages.size() == synth::MfTwisterConfigForm::kButtonCount);
+    for (std::size_t buttonIx = 0; buttonIx < profile.systemMessages.size(); ++buttonIx) {
+        const synth::MidiControllerSystemMessageAssociation& association =
+            profile.systemMessages[buttonIx];
+        REQUIRE_TRUE(association.control.has_value());
+        REQUIRE_TRUE(association.control->channel == 3);
+        REQUIRE_TRUE(association.control->cc == 8 + buttonIx);
+        REQUIRE_TRUE(!association.outputFeedback);
+    }
+    REQUIRE_TRUE(profile.systemMessages[0].press.type == synth::MessageIn::Type::ToggleReset);
+    REQUIRE_TRUE(profile.systemMessages[0].press.hasBoolValue);
+    REQUIRE_TRUE(profile.systemMessages[0].press.boolValue);
+    REQUIRE_TRUE(profile.systemMessages[0].release.has_value());
+    REQUIRE_TRUE(profile.systemMessages[0].release->type == synth::MessageIn::Type::ToggleReset);
+    REQUIRE_TRUE(profile.systemMessages[0].release->hasBoolValue);
+    REQUIRE_TRUE(!profile.systemMessages[0].release->boolValue);
+    for (std::size_t buttonIx = 1; buttonIx <= 2; ++buttonIx) {
+        REQUIRE_TRUE(profile.systemMessages[buttonIx].press.hasBoolValue);
+        REQUIRE_TRUE(profile.systemMessages[buttonIx].press.boolValue);
+        REQUIRE_TRUE(profile.systemMessages[buttonIx].release.has_value());
+        REQUIRE_TRUE(profile.systemMessages[buttonIx].release->hasBoolValue);
+        REQUIRE_TRUE(!profile.systemMessages[buttonIx].release->boolValue);
+    }
+    REQUIRE_TRUE(profile.systemMessages[1].press.type == synth::MessageIn::Type::ToggleRandom);
+    REQUIRE_TRUE(profile.systemMessages[2].press.type == synth::MessageIn::Type::ToggleRandomMod);
+    REQUIRE_TRUE(profile.systemMessages[3].press.type == synth::MessageIn::Type::SelectParamBank);
+    REQUIRE_TRUE(profile.systemMessages[3].press.slotIx == 4);
+    REQUIRE_TRUE(profile.systemMessages[3].press.bankIx == 7);
+    REQUIRE_TRUE(profile.systemMessages[4].press.type == synth::MessageIn::Type::NextParamBank);
+    REQUIRE_TRUE(profile.systemMessages[4].press.slotIx == 4);
+    REQUIRE_TRUE(profile.systemMessages[5].press.type == synth::MessageIn::Type::PrevParamBank);
+    REQUIRE_TRUE(profile.systemMessages[5].press.slotIx == 4);
+}
+
+TEST_CASE(MfTwisterWizardRefusesInvalidFormsAtomically) {
+    std::unique_ptr<synth::ControllerWizard> wizard =
+        synth::MakeControllerWizard("com.sheaf.midi-fighter-twister");
+    REQUIRE_TRUE(wizard != nullptr);
+    std::unique_ptr<synth::ControllerConfigForm> baseForm = wizard->ConfigForm(std::nullopt);
+    auto* form = dynamic_cast<synth::MfTwisterConfigForm*>(baseForm.get());
+    REQUIRE_TRUE(form != nullptr);
+    form->encoderSlotText = "not-a-slot";
+
+    const synth::WizardGenerationResult result = wizard->GenerateProfile(*form, Context());
+
+    REQUIRE_TRUE(!result);
+    REQUIRE_TRUE(!result.controller.has_value());
+    REQUIRE_TRUE(!result.error.empty());
+    REQUIRE_TRUE(form->encoderSlotText == "not-a-slot");
+}
+
 TEST_CASE(ControllerWizardRegistryExposesStableMfTwisterDescriptor) {
     const std::vector<synth::ControllerWizardDescriptor>& registry =
         synth::ControllerWizardRegistry();
@@ -442,7 +549,7 @@ TEST_CASE(ControllerWizardRegistryExposesStableMfTwisterDescriptor) {
     REQUIRE_TRUE(registry.front().outputAliases.size() == 1);
     REQUIRE_TRUE(registry.front().outputAliases[0] == "Midi Fighter Twister");
     REQUIRE_TRUE(synth::MakeControllerWizard("missing.wizard") == nullptr);
-    REQUIRE_TRUE(synth::MakeControllerWizard("com.sheaf.midi-fighter-twister") == nullptr);
+    REQUIRE_TRUE(synth::MakeControllerWizard("com.sheaf.midi-fighter-twister") != nullptr);
 }
 
 TEST_CASE(DiscoveryMatchesMidiFighterTwisterByCaseInsensitiveExactAlias) {

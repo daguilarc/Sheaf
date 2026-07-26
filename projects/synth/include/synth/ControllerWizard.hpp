@@ -100,6 +100,17 @@ protected:
         const Form&, const WizardGenerationContext&) const = 0;
 };
 
+class MfTwisterControllerWizard final : public TypedControllerWizard<MfTwisterConfigForm> {
+public:
+    std::string_view Id() const override;
+    std::unique_ptr<ControllerConfigForm>
+    ConfigForm(const std::optional<MidiControllerSlot>& seed) const override;
+
+protected:
+    WizardGenerationResult GenerateTypedProfile(
+        const MfTwisterConfigForm&, const WizardGenerationContext&) const override;
+};
+
 struct WizardCandidate {
     std::string wizardId;
     std::string displayName;

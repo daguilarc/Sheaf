@@ -119,6 +119,13 @@ bool FieldHasError(std::string_view text) {
     return !ParseSizeT(text, ignored);
 }
 
+std::size_t ParseSizeTOrAssert(std::string_view text) {
+    std::size_t result = 0;
+    const bool parsed = ParseSizeT(text, result);
+    assert(parsed);
+    return result;
+}
+
 std::size_t AppendNode(ui::NodeTree& tree, std::size_t parentIx, ui::Node node) {
     tree.nodes[parentIx].children.push_back(node.id);
     tree.nodes.push_back(std::move(node));
@@ -362,6 +369,51 @@ bool MfTwisterConfigForm::Validate(std::string& error) const {
     return true;
 }
 
+std::string_view MfTwisterControllerWizard::Id() const {
+    return kMfTwisterWizardId;
+}
+
+std::unique_ptr<ControllerConfigForm>
+MfTwisterControllerWizard::ConfigForm(const std::optional<MidiControllerSlot>&) const {
+    return std::make_unique<MfTwisterConfigForm>();
+}
+
+WizardGenerationResult MfTwisterControllerWizard::GenerateTypedProfile(
+    const MfTwisterConfigForm& form, const WizardGenerationContext& context) const {
+    const std::size_t encoderSlot = ParseSizeTOrAssert(form.encoderSlotText);
+    MfTwisterDefaultProfileOptions options;
+    options.slotIx = encoderSlot;
+
+    for (std::size_t buttonIx = 0; buttonIx < form.buttons.size(); ++buttonIx) {
+        const MfTwisterButtonConfig& button = form.buttons[buttonIx];
+        const std::size_t argument =
+            TwisterArgumentEnabled(button.message) ? ParseSizeTOrAssert(button.argumentText) : 0;
+        MidiControllerSystemMessageAssociation association =
+            MakeUISystemMessageAssociation(button.message, argument);
+
+        if (button.message == UISystemMessage::SelectParamBank ||
+            button.message == UISystemMessage::NextParamBank ||
+            button.message == UISystemMessage::PrevParamBank) {
+            association.press.slotIx = encoderSlot;
+            association.feedback.slotIx = encoderSlot;
+            if (association.release.has_value()) {
+                association.release->slotIx = encoderSlot;
+            }
+        }
+        options.sideButtons[buttonIx] = std::move(association);
+    }
+
+    MidiControllerSlot controller;
+    controller.name = context.name;
+    controller.kind = MidiProfileKind::MfTwister;
+    controller.disposition = MidiControllerDisposition::Active;
+    controller.wizardId = std::string(Id());
+    controller.config = MfTwisterDefaultProfileConfig(std::move(options));
+    controller.input = context.input;
+    controller.output = context.output;
+    return {.controller = std::move(controller)};
+}
+
 const std::vector<ControllerWizardDescriptor>& ControllerWizardRegistry() {
     static const std::vector<ControllerWizardDescriptor> registry = {
         ControllerWizardDescriptor{
@@ -370,7 +422,7 @@ const std::vector<ControllerWizardDescriptor>& ControllerWizardRegistry() {
             .kind = MidiProfileKind::MfTwister,
             .inputAliases = {std::string(kMfTwisterAlias)},
             .outputAliases = {std::string(kMfTwisterAlias)},
-            .factory = {}}};
+            .factory = [] { return std::make_unique<MfTwisterControllerWizard>(); }}};
     return registry;
 }
 

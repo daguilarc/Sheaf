@@ -1,3 +1,4 @@
+#include "synth/ControllerWizard.hpp"
 #include "synth/MidiController.hpp"
 #include "synth/RuntimeUIState.hpp"
 
@@ -988,6 +989,27 @@ TEST_CASE(SlotValidForKindAcceptsMfTwisterDefaultProfile) {
 
     std::string reason;
     REQUIRE_TRUE(synth::SlotValidForKind(slot, &reason));
+}
+
+TEST_CASE(MfTwisterWizardGeneratesAnActiveKindValidInstrumentSlot) {
+    std::unique_ptr<synth::ControllerWizard> wizard =
+        synth::MakeControllerWizard("com.sheaf.midi-fighter-twister");
+    REQUIRE_TRUE(wizard != nullptr);
+    std::unique_ptr<synth::ControllerConfigForm> baseForm = wizard->ConfigForm(std::nullopt);
+    auto* form = dynamic_cast<synth::MfTwisterConfigForm*>(baseForm.get());
+    REQUIRE_TRUE(form != nullptr);
+    form->encoderSlotText = "4";
+
+    const synth::WizardGenerationResult result = wizard->GenerateProfile(
+        *form, {.name = "wizard twister",
+                .input = {.identifier = "twister-in", .name = "MIDI Fighter Twister"},
+                .output = {.identifier = "twister-out", .name = "MIDI Fighter Twister"}});
+
+    REQUIRE_TRUE(result);
+    REQUIRE_TRUE(result.controller->disposition == MidiControllerDisposition::Active);
+    REQUIRE_TRUE(result.controller->wizardId == "com.sheaf.midi-fighter-twister");
+    std::string reason;
+    REQUIRE_TRUE(synth::SlotValidForKind(*result.controller, &reason));
 }
 
 TEST_CASE(SlotValidForKindAcceptsLaunchpadDefaultProfile) {
