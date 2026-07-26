@@ -56,7 +56,7 @@ type WithOptionalTurnId<T extends { turn_id: string }> = Omit<T, "turn_id"> & {
 
 export type HarnessSession = {
   readonly providerThreadId?: string;
-  readonly ownedProcess?: OwnedProcessIdentity;
+  readonly processIdentity?: OwnedProcessIdentity;
   submit(context: AdapterTurnContext): AsyncIterable<AdapterEvent>;
   interrupt?(): Promise<void>;
   close(): Promise<void>;

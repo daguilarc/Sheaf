@@ -81,6 +81,7 @@ export class Supervisor {
   #session?: HarnessSession;
   #sessionClosePromise?: Promise<void>;
   #closePromise?: Promise<void>;
+  #interruptedTurnId?: string;
   #inputSequence = 0;
   #startRequested = false;
   #lastTransportProgressAt: string;
@@ -249,11 +250,13 @@ export class Supervisor {
       let lastAssistantText: string | undefined;
       let completed: Extract<AdapterEvent, { type: "turn.completed" }> | undefined;
       try {
-        for await (const event of turn.session.submit({
+        const providerEvents = turn.session.submit({
           text,
           turnId: turn.turnId,
           inputSequence: turn.inputSequence,
-        })) {
+        });
+        await this.#persistActiveProcessIdentity(turn.session);
+        for await (const event of providerEvents) {
           if (terminalPhases.has(this.#phase)) {
             return;
           }
@@ -297,6 +300,21 @@ export class Supervisor {
         }
       } catch (error) {
         if (terminalPhases.has(this.#phase)) {
+          return;
+        }
+        if (
+          errorCode(error) === "harness_process_interrupted"
+          && this.#interruptedTurnId === turn.turnId
+        ) {
+          await this.#withLifecycleMutation(async () => {
+            if (terminalPhases.has(this.#phase)) {
+              return;
+            }
+            await this.#publishState("ready", "turn_interrupted", true, {
+              turn_id: turn.turnId,
+            });
+            this.#interruptedTurnId = undefined;
+          });
           return;
         }
         const transportFailure = this.#health.recordMechanicalEvent({
@@ -404,7 +422,13 @@ export class Supervisor {
       if (this.#session.interrupt === undefined) {
         throw new Error("Harness session does not support interrupt.");
       }
-      await this.#session.interrupt();
+      this.#interruptedTurnId = `turn_${this.#inputSequence}`;
+      try {
+        await this.#session.interrupt();
+      } catch (error) {
+        this.#interruptedTurnId = undefined;
+        throw error;
+      }
     });
   }
 
@@ -610,9 +634,26 @@ export class Supervisor {
       provider_thread_id: providerThreadId,
       last_transport_progress_at: this.#lastTransportProgressAt,
       last_semantic_progress_at: this.#lastSemanticProgressAt,
-      owned_process: this.#session?.ownedProcess,
+      owned_process: this.#session?.processIdentity,
       watchdog: { ...watchdog },
     };
+  }
+
+  #persistActiveProcessIdentity(session: HarnessSession): Promise<void> {
+    if (session.processIdentity === undefined) {
+      return Promise.resolve();
+    }
+    return this.#withLifecycleMutation(async () => {
+      if (this.#phase !== "running" || this.#session !== session) {
+        return;
+      }
+      await this.#metadataSink(this.#persistenceState(
+        this.#phase,
+        this.#events.sequence,
+        session.providerThreadId,
+        this.#watchdog,
+      ));
+    });
   }
 
   #withLifecycleMutation<T>(operation: () => Promise<T>): Promise<T> {

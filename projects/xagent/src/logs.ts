@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import type { HarnessName, OutputEvent, OutputMode, ThinkingLevel } from "./events.js";
 import type { OwnedProcessIdentity } from "./adapters/types.js";
 import type {
+  SupervisionEvent,
   SupervisionPhase,
   WatchdogAggregate,
   WatchdogTelemetry,
@@ -117,8 +118,33 @@ export async function createRunRecord(options: CreateRunRecordOptions): Promise<
   return metadata;
 }
 
-export async function appendNormalizedEvent(record: RunRecord, event: OutputEvent): Promise<void> {
+export async function appendNormalizedEvent(
+  record: RunRecord,
+  event: OutputEvent | SupervisionEvent,
+): Promise<void> {
   await appendJsonLine(record.normalizedLogPath, event);
+}
+
+export async function openRunRecord(
+  logRoot: string,
+  runId: string,
+): Promise<RunRecord> {
+  validateRunIdForCreate(runId);
+  const runDir = getRunDir(logRoot, runId);
+  const metadataPath = path.join(runDir, "metadata.json");
+  assertPathInside(logRoot, metadataPath);
+  const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as RunMetadata;
+  if (metadata.run_id !== runId) {
+    throw new Error(`Run metadata id ${metadata.run_id} does not match directory ${runId}.`);
+  }
+  return {
+    ...metadata,
+    runDir,
+    metadataPath,
+    normalizedLogPath: path.join(runDir, "normalized.jsonl"),
+    rawProviderLogPath: path.join(runDir, "raw-provider.jsonl"),
+    watchdogLogPath: path.join(runDir, "watchdog.jsonl"),
+  };
 }
 
 export async function appendRawProviderEvent(record: RunRecord, event: unknown): Promise<void> {

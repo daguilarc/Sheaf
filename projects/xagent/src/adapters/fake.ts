@@ -5,6 +5,7 @@ import type {
   HarnessCapabilities,
   HarnessSession,
   HarnessStartOptions,
+  OwnedProcessIdentity,
 } from "./types.js";
 
 export type FakeHarnessAdapterOptions = {
@@ -13,6 +14,7 @@ export type FakeHarnessAdapterOptions = {
   readonly includeDeltas?: boolean;
   readonly scriptedEvents?: readonly (readonly AdapterEvent[] | AsyncIterable<AdapterEvent>)[];
   readonly supportsInterrupt?: boolean;
+  readonly processIdentity?: OwnedProcessIdentity;
 };
 
 export class FakeHarnessAdapter implements HarnessAdapter {
@@ -39,9 +41,12 @@ export class FakeHarnessAdapter implements HarnessAdapter {
 
 class FakeHarnessSession implements HarnessSession {
   readonly providerThreadId = "fake-thread-1";
+  readonly processIdentity?: OwnedProcessIdentity;
   readonly interrupt?: () => Promise<void>;
+  #closed = false;
 
   constructor(private readonly adapter: FakeHarnessAdapter) {
+    this.processIdentity = adapter.options.processIdentity;
     if (adapter.options.supportsInterrupt === true) {
       this.interrupt = async () => {
         this.adapter.interruptCount += 1;
@@ -50,6 +55,9 @@ class FakeHarnessSession implements HarnessSession {
   }
 
   async *submit(context: AdapterTurnContext): AsyncIterable<AdapterEvent> {
+    if (this.#closed) {
+      throw new Error("Harness session is closed.");
+    }
     this.adapter.submittedTexts.push(context.text);
     this.adapter.submittedContexts.push(context);
     const scriptedEvents = this.adapter.options.scriptedEvents?.[context.inputSequence - 1];
@@ -116,6 +124,10 @@ class FakeHarnessSession implements HarnessSession {
   }
 
   async close(): Promise<void> {
+    if (this.#closed) {
+      return;
+    }
+    this.#closed = true;
     this.adapter.closeCount += 1;
   }
 }
