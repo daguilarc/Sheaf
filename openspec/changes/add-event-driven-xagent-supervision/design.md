@@ -188,6 +188,15 @@ Skill guidance for both native and xagent workers will require:
 - child-to-parent messages only for blockers, required input, and completion;
 - progress commentary through UI/log surfaces rather than leader model turns.
 
+The `asd-23` MODIFIED block retires the prior *Skill explains invocation and
+harness permission failures* scenario deliberately. Sandboxed Codex agents can
+still invoke xagent, but real runs that lack write, network, auth, or process
+permissions now surface through the general "broken agentic infrastructure"
+escalation guidance rather than a dedicated `log_root_unavailable` paragraph.
+The runtime still emits `log_root_unavailable` (`xa-13` is unchanged); only the
+skill-level paragraph and its spec scenario were retired, so the skill and the
+live spec remain aligned after archiving.
+
 ## Risks / Trade-offs
 
 - **[Long HTTP MCP calls may hit client, server, or intermediary timeouts]** → Bind directly on loopback without a reverse proxy, configure a 7200-second client and server request timeout, cap await at 7000 seconds, test a synthetic 90-minute wait, and document the quiet service-client CLI fallback.

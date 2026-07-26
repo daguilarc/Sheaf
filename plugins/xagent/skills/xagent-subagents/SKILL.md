@@ -89,7 +89,8 @@ interrupts, kills, restarts, edits for, or otherwise steers the worker.
 
 ## Review Routing
 
-For review tasks, prefer a Claude-backed reviewer through `xagent_start`:
+For review tasks, prefer a Claude-backed reviewer through `xagent_start`
+with the `claude_code` harness:
 
 - `opus`: strongest reviewer for subtle architecture, security, correctness,
   or release-risk reviews.
@@ -106,6 +107,9 @@ Write the review prompt with the scope and output shape:
 
 Do not use stale dotted model names such as `claude-opus-4.8`; local Claude
 Code accepts aliases such as `opus` or full names such as `claude-opus-4-8`.
+If an unfamiliar model alias is needed, verify it with local Claude Code
+before retrying. Do not silently downgrade to a weaker model after a model
+rejection.
 
 ## Worker Routing
 

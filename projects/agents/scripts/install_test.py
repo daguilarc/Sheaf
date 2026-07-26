@@ -516,6 +516,9 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
                 "write_stdin",
                 "xagent list",
                 "xagent logs",
+                "claude_code",
+                "verify it with local Claude Code",
+                "do not silently downgrade",
             ),
         )
         assert_none_present(
