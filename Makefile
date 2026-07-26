@@ -16,6 +16,7 @@ PLUGIN_CREATOR_VALIDATOR := $(CODEX_HOME)/skills/.system/plugin-creator/scripts/
 .PHONY: agents-install-repo agents-check-repo agents-clean-repo
 .PHONY: agents-install-global agents-check-global agents-clean-global
 .PHONY: xagent-build xagent-test xagent-clean
+.PHONY: xagent-service-run
 .PHONY: xagent-plugin-build xagent-plugin-test xagent-plugin-install-global
 .PHONY: synth-build synth-test synth-clean synth-browser-build synth-browser-test
 
@@ -166,6 +167,9 @@ xagent-plugin-test:
 
 xagent-plugin-install-global:
 	python3 plugins/xagent/scripts/install_global.py install
+
+xagent-service-run:
+	$(MAKE) -C projects/xagent service-run
 
 synth-build:
 	$(MAKE) -C projects/synth build

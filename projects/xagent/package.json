@@ -10,6 +10,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/src/main.js",
+    "service-run": "node dist/src/service_main.js",
     "test": "npm run build && node --test dist/tests/*.test.js",
     "prepack": "npm run build"
   },
