@@ -1,8 +1,10 @@
-import { mkdir, readFile, readdir, writeFile, appendFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 
 import type { HarnessName, OutputEvent, OutputMode, ThinkingLevel } from "./events.js";
+import type { OwnedProcessIdentity } from "./adapters/types.js";
+import type { SupervisionPhase, WatchdogAggregate } from "./supervision/types.js";
 
 const GENERATED_RUN_ID_PATTERN = /^xrun_[0-9]{17}_[0-9a-f]{8}$/;
 const TEST_RUN_ID_PATTERN = /^xrun_[A-Za-z0-9_]+$/;
@@ -16,6 +18,15 @@ export type RunMetadata = {
   created_at: string;
   updated_at: string;
   exit_status: "running" | "completed" | "failed";
+  supervision: {
+    phase: SupervisionPhase;
+    sequence: number;
+    last_transport_progress_at: string;
+    last_semantic_progress_at: string;
+    provider_thread_id?: string;
+  };
+  watchdog: WatchdogAggregate;
+  owned_process?: OwnedProcessIdentity;
   paths: {
     run_dir: string;
     metadata: string;
@@ -66,6 +77,20 @@ export async function createRunRecord(options: CreateRunRecordOptions): Promise<
     created_at: timestamp,
     updated_at: timestamp,
     exit_status: "running",
+    supervision: {
+      phase: "starting",
+      sequence: 0,
+      last_transport_progress_at: timestamp,
+      last_semantic_progress_at: timestamp,
+      provider_thread_id: undefined,
+    },
+    watchdog: {
+      invocation_count: 0,
+      controller_wake_count: 0,
+      deterministic_alert_count: 0,
+      evidence_truncation_count: 0,
+    },
+    owned_process: undefined,
     paths: {
       run_dir: path.relative(logRoot, runDir),
       metadata: path.relative(logRoot, metadataPath),
@@ -96,6 +121,26 @@ export async function updateRunExitStatus(
   clock: () => Date = () => new Date(),
 ): Promise<void> {
   record.exit_status = exitStatus;
+  record.updated_at = clock().toISOString();
+  await writeMetadata(record);
+}
+
+export type RunSupervisionUpdate = RunMetadata["supervision"] & {
+  readonly watchdog?: WatchdogAggregate;
+  readonly owned_process?: OwnedProcessIdentity;
+};
+
+export async function updateRunSupervision(
+  record: RunRecord,
+  update: RunSupervisionUpdate,
+  clock: () => Date = () => new Date(),
+): Promise<void> {
+  const { watchdog, owned_process, ...supervision } = update;
+  record.supervision = supervision;
+  if (watchdog !== undefined) {
+    record.watchdog = watchdog;
+  }
+  record.owned_process = owned_process;
   record.updated_at = clock().toISOString();
   await writeMetadata(record);
 }
@@ -175,7 +220,22 @@ async function appendJsonLine(filePath: string, value: unknown): Promise<void> {
 
 async function writeMetadata(record: RunRecord): Promise<void> {
   const { runDir: _runDir, metadataPath: _metadataPath, normalizedLogPath: _normalized, rawProviderLogPath: _raw, ...metadata } = record;
-  await writeFile(record.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+  const temporaryPath = path.join(
+    path.dirname(record.metadataPath),
+    `.${path.basename(record.metadataPath)}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`,
+  );
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(metadata, null, 2)}\n`);
+    await rename(temporaryPath, record.metadataPath);
+  } finally {
+    try {
+      await unlink(temporaryPath);
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

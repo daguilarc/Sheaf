@@ -11,6 +11,8 @@ export type FakeHarnessAdapterOptions = {
   readonly includeToolEvents?: boolean;
   readonly includeRawProvider?: boolean;
   readonly includeDeltas?: boolean;
+  readonly scriptedEvents?: readonly (readonly AdapterEvent[] | AsyncIterable<AdapterEvent>)[];
+  readonly supportsInterrupt?: boolean;
 };
 
 export class FakeHarnessAdapter implements HarnessAdapter {
@@ -25,6 +27,7 @@ export class FakeHarnessAdapter implements HarnessAdapter {
   readonly submittedContexts: AdapterTurnContext[] = [];
   startCount = 0;
   closeCount = 0;
+  interruptCount = 0;
 
   constructor(readonly options: FakeHarnessAdapterOptions = {}) {}
 
@@ -36,12 +39,26 @@ export class FakeHarnessAdapter implements HarnessAdapter {
 
 class FakeHarnessSession implements HarnessSession {
   readonly providerThreadId = "fake-thread-1";
+  readonly interrupt?: () => Promise<void>;
 
-  constructor(private readonly adapter: FakeHarnessAdapter) {}
+  constructor(private readonly adapter: FakeHarnessAdapter) {
+    if (adapter.options.supportsInterrupt === true) {
+      this.interrupt = async () => {
+        this.adapter.interruptCount += 1;
+      };
+    }
+  }
 
   async *submit(context: AdapterTurnContext): AsyncIterable<AdapterEvent> {
     this.adapter.submittedTexts.push(context.text);
     this.adapter.submittedContexts.push(context);
+    const scriptedEvents = this.adapter.options.scriptedEvents?.[context.inputSequence - 1];
+    if (scriptedEvents !== undefined) {
+      for await (const event of scriptedEvents) {
+        yield event;
+      }
+      return;
+    }
     const turnId = context.turnId;
     const messageId = `message_${context.inputSequence}`;
     const toolCallId = `tool_${context.inputSequence}`;

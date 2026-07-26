@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -11,6 +11,7 @@ import {
   getDefaultLogRoot,
   listRuns,
   readNormalizedLog,
+  updateRunSupervision,
 } from "../src/logs.js";
 
 test("creates run records under the configured log root and appends normalized/raw logs", async () => {
@@ -86,4 +87,80 @@ test("readNormalizedLog rejects path traversal run ids", async () => {
 
   await assert.rejects(() => readNormalizedLog(logRoot, "../metadata"), /Invalid run id/);
   await assert.rejects(() => readNormalizedLog(logRoot, "xrun_20260621000000000_00000001/../other"), /Invalid run id/);
+});
+
+test("run metadata includes durable supervision, process ownership, and watchdog aggregates", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-metadata-"));
+  const record = await createRunRecord({
+    repoRoot,
+    runId: "xrun_metadata",
+    harness: "codex",
+    mode: "subagent",
+    clock: () => new Date("2026-07-25T12:00:00.000Z"),
+  });
+
+  assert.deepEqual(record.supervision, {
+    phase: "starting",
+    sequence: 0,
+    last_transport_progress_at: "2026-07-25T12:00:00.000Z",
+    last_semantic_progress_at: "2026-07-25T12:00:00.000Z",
+    provider_thread_id: undefined,
+  });
+  assert.deepEqual(record.watchdog, {
+    invocation_count: 0,
+    controller_wake_count: 0,
+    deterministic_alert_count: 0,
+    evidence_truncation_count: 0,
+  });
+  assert.equal(record.owned_process, undefined);
+  assert.equal(record.exit_status, "running");
+
+  await updateRunSupervision(
+    record,
+    {
+      phase: "running",
+      sequence: 3,
+      last_transport_progress_at: "2026-07-25T12:01:00.000Z",
+      last_semantic_progress_at: "2026-07-25T12:00:30.000Z",
+      provider_thread_id: "provider-thread",
+      owned_process: {
+        pid: 1234,
+        process_group_id: 1234,
+        started_at: "2026-07-25T11:59:59.000Z",
+        start_identity: "pid:1234:start:2026-07-25T11:59:59.000Z",
+      },
+      watchdog: {
+        invocation_count: 2,
+        controller_wake_count: 1,
+        deterministic_alert_count: 1,
+        evidence_truncation_count: 0,
+        input_tokens: 100,
+        output_tokens: 20,
+        estimated_cost_usd: 0.001,
+        last_verdict: "healthy",
+      },
+    },
+    () => new Date("2026-07-25T12:01:00.000Z"),
+  );
+
+  const persisted = JSON.parse(await readFile(record.metadataPath, "utf8"));
+  assert.equal(persisted.exit_status, "running");
+  assert.deepEqual(persisted.supervision, {
+    phase: "running",
+    sequence: 3,
+    last_transport_progress_at: "2026-07-25T12:01:00.000Z",
+    last_semantic_progress_at: "2026-07-25T12:00:30.000Z",
+    provider_thread_id: "provider-thread",
+  });
+  assert.deepEqual(persisted.owned_process, {
+    pid: 1234,
+    process_group_id: 1234,
+    started_at: "2026-07-25T11:59:59.000Z",
+    start_identity: "pid:1234:start:2026-07-25T11:59:59.000Z",
+  });
+  assert.equal(persisted.watchdog.last_verdict, "healthy");
+  assert.deepEqual(
+    (await readdir(record.runDir)).filter((entry) => entry.includes("metadata.json.")),
+    [],
+  );
 });

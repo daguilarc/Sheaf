@@ -31,6 +31,13 @@ export type AdapterTurnContext = {
   readonly inputSequence: number;
 };
 
+export type OwnedProcessIdentity = {
+  readonly pid: number;
+  readonly process_group_id?: number;
+  readonly started_at: string;
+  readonly start_identity: string;
+};
+
 type AdapterTurnScopedEvent =
   | WithOptionalTurnId<MessageDeltaEvent>
   | WithOptionalTurnId<MessageCompletedEvent>
@@ -49,7 +56,9 @@ type WithOptionalTurnId<T extends { turn_id: string }> = Omit<T, "turn_id"> & {
 
 export type HarnessSession = {
   readonly providerThreadId?: string;
+  readonly ownedProcess?: OwnedProcessIdentity;
   submit(context: AdapterTurnContext): AsyncIterable<AdapterEvent>;
+  interrupt?(): Promise<void>;
   close(): Promise<void>;
 };
 
