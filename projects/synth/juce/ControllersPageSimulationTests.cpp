@@ -3,13 +3,14 @@
 
 #include "synth/ControllersPageUI.hpp"
 
+#include <algorithm>
+#include <array>
 #include <iostream>
 #include <random>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <algorithm>
 
 namespace {
 
@@ -472,6 +473,621 @@ void RunGridSimulation()
               << " operations=" << kOperations << " accepted=" << accepted << "\n";
 }
 
+// ---------------------------------------------------------------------------
+// Controller wizard parity (plan Task 16 / sru-33)
+//
+// These cases drive the same stable node ids the Playwright acceptance suite
+// drives, but through JUCE components, and compare the rendered ids, labels,
+// option ids/labels, selected values, enabled states, and declared bounds
+// against the portable tree. All controller-specific ids live here, in the
+// simulation that drives the portable surface -- never in the generic renderer
+// tests.
+// ---------------------------------------------------------------------------
+
+constexpr const char* kTwisterWizardId = "com.sheaf.midi-fighter-twister";
+constexpr const char* kTwisterDisplayName = "MIDI Fighter Twister";
+constexpr const char* kTwisterFormPrefix = "controller-wizard.twister.";
+
+// scw-3: the closed set of supported choices, in the order the form offers
+// them. Indexes into this array are what SelectOption() below selects.
+const std::array<const char*, 16> kTwisterChoiceLabels = {"Toggle Reset",
+                                                          "Hold Reset",
+                                                          "Toggle Random",
+                                                          "Hold Random",
+                                                          "Toggle Random Mod",
+                                                          "Hold Random Mod",
+                                                          "Toggle Gesture Select",
+                                                          "Hold Gesture Select",
+                                                          "Bank Select",
+                                                          "Next Bank",
+                                                          "Previous Bank",
+                                                          "Start",
+                                                          "Continue",
+                                                          "Stop",
+                                                          "Clock",
+                                                          "Scene Select"};
+
+const std::array<const char*, 6> kTwisterDefaultLabels = {
+    "Hold Reset", "Hold Random", "Hold Random Mod", "Next Bank", "Start", "Previous Bank"};
+
+constexpr const char* kEncoderSlotId = "controller-wizard.twister.encoder-slot";
+
+std::string TwisterButtonField(std::size_t buttonIx, const char* field)
+{
+    return std::string(kTwisterFormPrefix) + "button." + std::to_string(buttonIx) + "." + field;
+}
+
+juce::Rectangle<int> SurfaceBoundsOf(const juce::Component& surface, const juce::Component& child)
+{
+    return surface.getLocalArea(&child, child.getLocalBounds());
+}
+
+std::string RenderedLabelText(const juce::Component& component)
+{
+    const auto* label = dynamic_cast<const juce::Label*>(&component);
+    return label != nullptr ? label->getText().toStdString() : std::string();
+}
+
+// Generic portable/JUCE comparison run after every wizard step: every semantic
+// node is rendered, and its label, text, options, selected option, checked
+// state, enabled state, and declared size survive into JUCE unchanged.
+void VerifyRendererParity(const synth::ui::NodeTree& tree,
+                          synth_juce::PortableComponent& renderer,
+                          const std::string& step)
+{
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        if (node.kind == synth::ui::NodeKind::Root)
+        {
+            continue;
+        }
+        const std::string where = step + ": " + node.id.value;
+        juce::Component* component = renderer.FindByNodeId(node.id.value);
+        Require(component != nullptr, where + " is not rendered");
+        Require(component->isEnabled() == node.enabled, where + " enabled-state mismatch");
+
+        switch (node.kind)
+        {
+            case synth::ui::NodeKind::Button:
+            {
+                auto* button = dynamic_cast<juce::TextButton*>(component);
+                Require(button != nullptr, where + " is not a TextButton");
+                Require(button->getButtonText().toStdString() == node.label,
+                        where + " button label mismatch");
+                break;
+            }
+            case synth::ui::NodeKind::Label:
+            case synth::ui::NodeKind::StatusText:
+            {
+                auto* label = dynamic_cast<juce::Label*>(component);
+                Require(label != nullptr, where + " is not a Label");
+                Require(label->getText().toStdString() == (node.text.empty() ? node.label : node.text),
+                        where + " label text mismatch");
+                break;
+            }
+            case synth::ui::NodeKind::ComboBox:
+            {
+                auto* combo = dynamic_cast<juce::ComboBox*>(component);
+                Require(combo != nullptr, where + " is not a ComboBox");
+                Require(combo->getNumItems() == static_cast<int>(node.options.size()),
+                        where + " option count mismatch");
+                int expectedSelected = -1;
+                for (int ix = 0; ix < static_cast<int>(node.options.size()); ++ix)
+                {
+                    const synth::ui::ControlOption& option = node.options[static_cast<std::size_t>(ix)];
+                    Require(combo->getItemText(ix).toStdString() == option.label,
+                            where + " option label mismatch at " + std::to_string(ix));
+                    if (option.id == node.selectedOption)
+                    {
+                        expectedSelected = ix;
+                    }
+                }
+                Require(combo->getSelectedItemIndex() == expectedSelected,
+                        where + " selected option mismatch");
+                break;
+            }
+            case synth::ui::NodeKind::TextField:
+            {
+                auto* editor = dynamic_cast<juce::TextEditor*>(component);
+                Require(editor != nullptr, where + " is not a TextEditor");
+                Require(editor->getText().toStdString() == node.text,
+                        where + " text value mismatch");
+                break;
+            }
+            case synth::ui::NodeKind::Toggle:
+            {
+                auto* toggle = dynamic_cast<juce::ToggleButton*>(component);
+                Require(toggle != nullptr, where + " is not a ToggleButton");
+                Require(toggle->getToggleState() == node.checked, where + " checked-state mismatch");
+                break;
+            }
+            default:
+                break;
+        }
+
+        if (synth_juce::HasExplicitBounds(node.bounds))
+        {
+            const juce::Rectangle<int> declared = synth_juce::UiToJuceRect(node.bounds);
+            const juce::Rectangle<int> rendered = SurfaceBoundsOf(renderer, *component);
+            Require(rendered.getWidth() == declared.getWidth() &&
+                        rendered.getHeight() == declared.getHeight(),
+                    where + " declared size was reflowed by the renderer");
+            Require(rendered == renderer.SurfaceBoundsForNode(node.id.value),
+                    where + " resolved bounds did not survive its semantic host");
+        }
+    }
+}
+
+std::size_t CountNodes(const synth::ui::NodeTree& tree, const std::string& suffix)
+{
+    std::size_t count = 0;
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        if (node.id.value.rfind(kTwisterFormPrefix, 0) == 0 &&
+            node.id.value.size() >= suffix.size() &&
+            node.id.value.compare(node.id.value.size() - suffix.size(), suffix.size(), suffix) == 0)
+        {
+            ++count;
+        }
+    }
+    return count;
+}
+
+juce::TextButton& RequireButton(synth_juce::PortableComponent& renderer,
+                                const std::string& id,
+                                const std::string& step)
+{
+    auto* button = dynamic_cast<juce::TextButton*>(renderer.FindByNodeId(id));
+    Require(button != nullptr, step + ": " + id + " is not a rendered button");
+    return *button;
+}
+
+juce::TextEditor& RequireEditor(synth_juce::PortableComponent& renderer,
+                                const std::string& id,
+                                const std::string& step)
+{
+    auto* editor = dynamic_cast<juce::TextEditor*>(renderer.FindByNodeId(id));
+    Require(editor != nullptr, step + ": " + id + " is not a rendered text editor");
+    return *editor;
+}
+
+juce::ComboBox& RequireCombo(synth_juce::PortableComponent& renderer,
+                             const std::string& id,
+                             const std::string& step)
+{
+    auto* combo = dynamic_cast<juce::ComboBox*>(renderer.FindByNodeId(id));
+    Require(combo != nullptr, step + ": " + id + " is not a rendered combo box");
+    return *combo;
+}
+
+class WizardParityFixture
+{
+public:
+    WizardParityFixture()
+        : renderer_(harness_.Surface())
+    {
+        harness_.Surface().SetContentBounds({0.0f, 0.0f, 980.0f, 720.0f});
+        renderer_.setSize(980, 720);
+        Tick("initial");
+    }
+
+    synth_runtime::test::TwisterWizardHarness& Harness() { return harness_; }
+    synth_juce::PortableComponent& Renderer() { return renderer_; }
+
+    // One host UI frame followed by the full portable/JUCE comparison.
+    void Tick(const std::string& step)
+    {
+        harness_.RefreshHost();
+        renderer_.RefreshFromSurface();
+        VerifyRendererParity(harness_.Surface().BuildTree(), renderer_, step);
+    }
+
+    void Click(const std::string& id, const std::string& step)
+    {
+        RequireButton(renderer_, id, step).onClick();
+        Tick(step);
+    }
+
+    void TypeInto(const std::string& id, const std::string& text, const std::string& step)
+    {
+        juce::TextEditor& editor = RequireEditor(renderer_, id, step);
+        editor.setText(text, true);
+        editor.onReturnKey();
+        Tick(step);
+    }
+
+    void SelectOption(const std::string& id, int optionIndex, const std::string& step)
+    {
+        RequireCombo(renderer_, id, step).setSelectedItemIndex(optionIndex, juce::sendNotificationSync);
+        Tick(step);
+    }
+
+    bool Exists(const std::string& id) { return renderer_.FindByNodeId(id) != nullptr; }
+
+private:
+    synth_runtime::test::TwisterWizardHarness harness_;
+    synth_juce::PortableComponent renderer_;
+};
+
+void VerifyTwisterFormDefaults(WizardParityFixture& fixture, const std::string& expectedSlot,
+                               const std::string& step)
+{
+    const synth::ui::NodeTree tree = fixture.Harness().Surface().BuildTree();
+    Require(CountNodes(tree, "encoder-slot") == 1, step + ": expected exactly one Encoder Slot");
+    Require(CountNodes(tree, ".message") == 6, step + ": expected exactly six message controls");
+    Require(CountNodes(tree, ".argument") == 6, step + ": expected exactly six argument controls");
+    Require(RequireEditor(fixture.Renderer(), kEncoderSlotId, step).getText().toStdString() ==
+                expectedSlot,
+            step + ": Encoder Slot value mismatch");
+
+    for (std::size_t buttonIx = 0; buttonIx < 6; ++buttonIx)
+    {
+        juce::ComboBox& message =
+            RequireCombo(fixture.Renderer(), TwisterButtonField(buttonIx, "message"), step);
+        Require(message.getNumItems() == static_cast<int>(kTwisterChoiceLabels.size()),
+                step + ": message choice count mismatch");
+        for (int optionIx = 0; optionIx < static_cast<int>(kTwisterChoiceLabels.size()); ++optionIx)
+        {
+            Require(message.getItemText(optionIx).toStdString() ==
+                        kTwisterChoiceLabels[static_cast<std::size_t>(optionIx)],
+                    step + ": message choice label mismatch");
+        }
+        Require(message.getText().toStdString() == kTwisterDefaultLabels[buttonIx],
+                step + ": default message mismatch for button " + std::to_string(buttonIx));
+        Require(!RequireEditor(fixture.Renderer(), TwisterButtonField(buttonIx, "argument"), step)
+                     .isEnabled(),
+                step + ": default argument should be disabled for button " + std::to_string(buttonIx));
+    }
+}
+
+// scw-3 / sru-32: buttons 0-2 render in the first column and 3-5 in the second,
+// mirroring the browser acceptance suite's bounding-box assertions.
+void VerifyTwisterColumnGeometry(WizardParityFixture& fixture, const std::string& step)
+{
+    std::array<juce::Rectangle<int>, 6> boxes{};
+    for (std::size_t buttonIx = 0; buttonIx < boxes.size(); ++buttonIx)
+    {
+        juce::ComboBox& message =
+            RequireCombo(fixture.Renderer(), TwisterButtonField(buttonIx, "message"), step);
+        boxes[buttonIx] = SurfaceBoundsOf(fixture.Renderer(), message);
+    }
+    for (std::size_t row = 1; row < 3; ++row)
+    {
+        Require(boxes[row].getX() == boxes[0].getX(), step + ": left column is not x-aligned");
+        Require(boxes[3 + row].getX() == boxes[3].getX(), step + ": right column is not x-aligned");
+        Require(boxes[row].getY() > boxes[row - 1].getY(), step + ": left column rows do not stack");
+        Require(boxes[3 + row].getY() > boxes[2 + row].getY(),
+                step + ": right column rows do not stack");
+    }
+    for (std::size_t row = 0; row < 3; ++row)
+    {
+        Require(boxes[3 + row].getX() >= boxes[row].getRight(),
+                step + ": right column overlaps the left column");
+        Require(boxes[3 + row].getY() == boxes[row].getY(),
+                step + ": paired column rows are not aligned");
+    }
+}
+
+const synth::MidiControllerSlot& RequireController(
+    const synth_runtime::test::TwisterWizardHarness& harness,
+    std::size_t index,
+    const std::string& step)
+{
+    Require(index < harness.Instrument().controllers.size(),
+            step + ": expected controller record " + std::to_string(index));
+    return harness.Instrument().controllers[index];
+}
+
+void RunControllerWizardParitySimulation()
+{
+    namespace NodeIds = synth::runtime_ui::NodeIds;
+
+    WizardParityFixture fixture;
+    auto& harness = fixture.Harness();
+
+    // sru-32: no candidate leaves Configuration Wizard visible but disabled and
+    // explains why, and the disabled action dispatches nothing.
+    Require(!RequireButton(fixture.Renderer(), NodeIds::kWizardLaunch, "no candidate").isEnabled(),
+            "no candidate leaves Configuration Wizard disabled");
+    Require(RenderedLabelText(*fixture.Renderer().FindByNodeId(NodeIds::kAvailableEmpty)) ==
+                "No recognized unconfigured controller pair is present",
+            "no candidate explains the disabled action");
+    fixture.Click(NodeIds::kWizardLaunch, "disabled launch");
+    Require(fixture.Exists(NodeIds::kWizardLaunch) && !fixture.Exists(kEncoderSlotId),
+            "a disabled Configuration Wizard opens no session");
+
+    // scw-2 / sru-32: one recognized unclaimed pair is available and opens its
+    // form directly.
+    harness.AddTwisterPair(1);
+    fixture.Tick("one candidate");
+    Require(RequireButton(fixture.Renderer(), NodeIds::kWizardLaunch, "one candidate").isEnabled(),
+            "one candidate enables Configuration Wizard");
+    Require(RenderedLabelText(
+                *fixture.Renderer().FindByNodeId(NodeIds::AvailableRow(0) + ".endpoints"))
+                .find(synth_runtime::test::kTwisterDeviceName) != std::string::npos,
+            "the available row names the recognized pair's endpoints");
+
+    fixture.Click(NodeIds::kWizardLaunch, "unique candidate opens");
+    Require(!fixture.Exists(NodeIds::kWizardChooser), "a unique candidate skips the chooser");
+    Require(!fixture.Exists(NodeIds::kWizardLaunch), "an open form exposes no second launch action");
+    VerifyTwisterFormDefaults(fixture, "0", "unique candidate form");
+    VerifyTwisterColumnGeometry(fixture, "unique candidate form");
+    Require(fixture.Exists(NodeIds::kWizardIgnore), "the fast path still exposes Ignore");
+
+    // sru-34: a disabled argument control mutates no form state.
+    juce::TextEditor& disabledArgument =
+        RequireEditor(fixture.Renderer(), TwisterButtonField(0, "argument"), "disabled argument");
+    disabledArgument.setText("42", true);
+    disabledArgument.onReturnKey();
+    fixture.Tick("disabled argument");
+    Require(RequireEditor(fixture.Renderer(), TwisterButtonField(0, "argument"), "disabled argument")
+                    .getText() == juce::String("0"),
+            "a disabled argument control does not mutate form state");
+
+    // Retained JUCE controls must follow the portable tree, not their own last
+    // user input: cancelling and relaunching opens a fresh form whose selected
+    // options and text come back to the defaults on the same components.
+    fixture.TypeInto(kEncoderSlotId, "9", "cancelled form edits slot");
+    fixture.SelectOption(TwisterButtonField(0, "message"), 8, "cancelled form edits message");
+    fixture.Click(NodeIds::kWizardCancel, "cancel form");
+    Require(harness.Commits() == 0, "Cancel commits nothing");
+    fixture.Click(NodeIds::kWizardLaunch, "relaunch after cancel");
+    VerifyTwisterFormDefaults(fixture, "0", "relaunched form");
+
+    fixture.Click(NodeIds::kWizardSubmit, "unique candidate submit");
+    Require(harness.Commits() == 1 && harness.Saves() == 1,
+            "an accepted Submit commits once and requests one save");
+    {
+        const synth::MidiControllerSlot& installed = RequireController(harness, 0, "submitted record");
+        Require(installed.disposition == synth::MidiControllerDisposition::Active,
+                "Submit installs an Active record");
+        Require(installed.name == kTwisterDisplayName, "Submit uses the descriptor display name");
+        Require(installed.wizardId.has_value() && *installed.wizardId == kTwisterWizardId,
+                "Submit persists the descriptor wizard id");
+        Require(installed.input.identifier == "twister-in-1" &&
+                    installed.output.identifier == "twister-out-1",
+                "Submit assigns both discovered endpoints");
+    }
+    Require(harness.Status() == std::string("Configured ") + kTwisterDisplayName,
+            "an accepted Submit reports the configured controller through the host status callback");
+    Require(harness.Cache().Discovery().available.empty(),
+            "the configured pair is no longer an available candidate");
+    Require(fixture.Exists(NodeIds::ControllerReconfigure(0)) &&
+                fixture.Exists(NodeIds::ControllerBlacklist(0)),
+            "a resolved wizard id offers Reconfigure and Blacklist");
+
+    // scw-4: Reconfigure preserves record identity and offers no Ignore.
+    fixture.Click(NodeIds::ControllerReconfigure(0), "reconfigure opens");
+    VerifyTwisterFormDefaults(fixture, "0", "reconfigure seeds exact shape");
+    Require(!fixture.Exists(NodeIds::kWizardIgnore), "reconfiguration offers no Ignore");
+    fixture.TypeInto(kEncoderSlotId, "4", "reconfigure edits slot");
+    fixture.Click(NodeIds::kWizardSubmit, "reconfigure submit");
+    {
+        const synth::MidiControllerSlot& reconfigured =
+            RequireController(harness, 0, "reconfigured record");
+        Require(harness.Instrument().controllers.size() == 1,
+                "reconfiguration keeps one record in the same position");
+        Require(reconfigured.name == kTwisterDisplayName &&
+                    reconfigured.wizardId.has_value() &&
+                    reconfigured.input.identifier == "twister-in-1" &&
+                    reconfigured.output.identifier == "twister-out-1",
+                "reconfiguration preserves name, endpoints, and wizard id");
+    }
+
+    // sru-4 / D6: blacklisting retains the profile as dormant seed data and the
+    // row loses its live endpoint and mapping controls.
+    fixture.Click(NodeIds::ControllerBlacklist(0), "blacklist");
+    {
+        const synth::MidiControllerSlot& blacklisted =
+            RequireController(harness, 0, "blacklisted record");
+        Require(blacklisted.disposition == synth::MidiControllerDisposition::Blacklisted,
+                "Blacklist changes the disposition");
+        Require(blacklisted.dormantConfig.has_value(),
+                "Blacklist retains the prior profile as dormant seed data");
+    }
+    Require(!fixture.Exists(NodeIds::ControllerInput(0)) &&
+                !fixture.Exists(NodeIds::ControllerOutput(0)) &&
+                !fixture.Exists(NodeIds::ControllerDisclosure(0)),
+            "a blacklisted row exposes no live endpoint selectors or mapping disclosure");
+    Require(RenderedLabelText(*fixture.Renderer().FindByNodeId(NodeIds::ControllerBadge(0)))
+                .find("Blacklisted") != std::string::npos,
+            "a blacklisted row shows its badge");
+
+    // The dormant profile is observable through Configure seeding slot 4.
+    fixture.Click(NodeIds::ControllerConfigure(0), "blacklisted configure");
+    VerifyTwisterFormDefaults(fixture, "4", "blacklisted configure seeds dormant slot");
+    fixture.Click(NodeIds::kWizardSubmit, "blacklisted configure submit");
+    Require(RequireController(harness, 0, "reactivated record").disposition ==
+                synth::MidiControllerDisposition::Active,
+            "Configure returns a blacklisted record to Active");
+
+    // D8: rename is an inline draft plus a commit action; delete is immediate.
+    fixture.TypeInto(NodeIds::ControllerRenameDraft(0), "Studio Twister", "rename draft");
+    fixture.Click(NodeIds::ControllerRename(0), "rename commit");
+    Require(RequireController(harness, 0, "renamed record").name == "Studio Twister",
+            "rename commits the inline draft");
+    fixture.Click(NodeIds::ControllerDelete(0), "delete");
+    Require(harness.Instrument().controllers.empty(), "delete removes the record immediately");
+    Require(harness.Cache().Discovery().available.size() == 1,
+            "deleting the record restores the available candidate");
+
+    // sru-4: Ignore persists an inert record without an active profile, and
+    // removing it returns the pair to Available controllers.
+    fixture.Click(NodeIds::AvailableIgnore(0), "ignore available row");
+    {
+        const synth::MidiControllerSlot& ignored = RequireController(harness, 0, "ignored record");
+        Require(ignored.disposition == synth::MidiControllerDisposition::Blacklisted,
+                "Ignore persists a Blacklisted record");
+        Require(!ignored.dormantConfig.has_value(),
+                "Ignore stores no dormant profile");
+        Require(ignored.input.identifier == "twister-in-1" &&
+                    ignored.output.identifier == "twister-out-1",
+                "Ignore records the concrete endpoint identities");
+    }
+    Require(harness.Cache().Discovery().available.empty(), "an ignored pair stops warning");
+    fixture.Click(NodeIds::ControllerRemoveBlacklist(0), "remove from blacklist");
+    Require(harness.Instrument().controllers.empty(), "Remove from blacklist deletes the record");
+    Require(harness.Cache().Discovery().available.size() == 1,
+            "Remove from blacklist restores the available candidate");
+
+    // scw-2 / sru-32: two candidates open a chooser that identifies both pairs.
+    harness.AddTwisterPair(2);
+    fixture.Tick("two candidates");
+    Require(harness.Cache().Discovery().available.size() == 2,
+            "two present pairs classify as two candidates");
+    fixture.Click(NodeIds::kWizardLaunch, "chooser opens");
+    Require(!fixture.Exists(kEncoderSlotId), "multiple candidates require a selection first");
+    const std::string secondChoiceId =
+        NodeIds::WizardChooserCandidate(harness.Cache().Discovery().available[1]);
+    Require(RequireButton(fixture.Renderer(), secondChoiceId, "chooser")
+                    .getButtonText()
+                    .toStdString()
+                    .find("twister-in-2") != std::string::npos,
+            "chooser rows expose their paired endpoint identifiers");
+    fixture.Click(secondChoiceId, "chooser selects second candidate");
+    VerifyTwisterFormDefaults(fixture, "0", "chosen candidate form");
+    fixture.Click(NodeIds::kWizardSubmit, "chosen candidate submit");
+    Require(RequireController(harness, 0, "chosen record").input.identifier == "twister-in-2",
+            "the chooser opens only the selected candidate");
+
+    // scw-4: the second record takes the smallest free numeric suffix.
+    fixture.Click(NodeIds::kWizardLaunch, "remaining candidate opens");
+    fixture.Click(NodeIds::kWizardSubmit, "remaining candidate submit");
+    Require(RequireController(harness, 1, "suffixed record").name ==
+                std::string(kTwisterDisplayName) + " 2",
+            "a duplicate display name takes the smallest free suffix");
+
+    std::cout << "ControllerWizardParitySimulation passed\n";
+}
+
+// sru-4: a manually added record carries no persisted wizard id, so the
+// registry-gated lifecycle actions are not offered even though its kind is the
+// same hardware kind the wizard installs. This is the negative control for
+// observing an installed wizard id through Reconfigure/Blacklist.
+void RunManualRecordSimulation()
+{
+    namespace NodeIds = synth::runtime_ui::NodeIds;
+
+    WizardParityFixture fixture;
+    fixture.TypeInto(NodeIds::kAddName, "Hand Wired", "manual add name");
+    fixture.SelectOption(NodeIds::kAddKind, 1, "manual add kind");
+    Require(RequireCombo(fixture.Renderer(), NodeIds::kAddKind, "manual add kind")
+                    .getText() == juce::String("MF Twister"),
+            "the add-controller kind selector offers the Twister hardware kind");
+    fixture.Click(NodeIds::kAddButton, "manual add commit");
+
+    const synth::MidiControllerSlot& manual =
+        RequireController(fixture.Harness(), 0, "manual record");
+    Require(manual.name == "Hand Wired" && manual.kind == synth::MidiProfileKind::MfTwister,
+            "the manual record keeps its name and chosen kind");
+    Require(!manual.wizardId.has_value(), "a manual record carries no wizard id");
+    Require(fixture.Exists(NodeIds::ControllerRename(0)) &&
+                fixture.Exists(NodeIds::ControllerDelete(0)),
+            "a manual record keeps Rename and Delete");
+    Require(!fixture.Exists(NodeIds::ControllerReconfigure(0)) &&
+                !fixture.Exists(NodeIds::ControllerBlacklist(0)) &&
+                !fixture.Exists(NodeIds::ControllerConfigure(0)),
+            "a manual record is offered no registry-gated wizard action");
+
+    std::cout << "ControllerWizardManualRecordSimulation passed\n";
+}
+
+// scw-4: a stored profile the form cannot represent opens the wizard defaults
+// with a destructive-replacement warning, and Submit replaces the whole profile
+// instead of merging the hand-edited shape.
+void RunIncompatibleReconfigureSimulation()
+{
+    namespace NodeIds = synth::runtime_ui::NodeIds;
+    constexpr synth::MidiConfigSection kSystemMessages = synth::MidiConfigSection::SystemMessages;
+
+    WizardParityFixture fixture;
+    auto& harness = fixture.Harness();
+    harness.AddTwisterPair(1);
+    fixture.Tick("incompatible fixture");
+    fixture.Click(NodeIds::kWizardLaunch, "incompatible base form");
+    fixture.Click(NodeIds::kWizardSubmit, "incompatible base submit");
+    Require(RequireController(harness, 0, "generated record").config.systemMessages.size() == 6,
+            "the generated profile carries exactly six side associations");
+
+    // The Twister's six side buttons are a closed set, so dropping one through
+    // the low-level editor is how this page produces a shape the form cannot
+    // represent.
+    fixture.Click(NodeIds::ControllerDisclosure(0), "open low-level editor");
+    fixture.Click(NodeIds::SectionToggle(0, kSystemMessages), "open system messages");
+    fixture.Click(NodeIds::MappingDelete(0, kSystemMessages, 0), "drop one side association");
+    Require(RequireController(harness, 0, "hand-edited record").config.systemMessages.size() == 5,
+            "the hand edit leaves five side associations");
+
+    fixture.Click(NodeIds::ControllerReconfigure(0), "incompatible reconfigure opens");
+    Require(RenderedLabelText(*fixture.Renderer().FindByNodeId(NodeIds::kWizardWarning))
+                .find("replaces the whole profile") != std::string::npos,
+            "an unrepresentable profile warns that Submit replaces the whole profile");
+    VerifyTwisterFormDefaults(fixture, "0", "incompatible reconfigure opens defaults");
+    fixture.Click(NodeIds::kWizardSubmit, "incompatible reconfigure submit");
+    Require(RequireController(harness, 0, "replaced record").config.systemMessages.size() == 6,
+            "Submit replaces the hand-edited profile with the complete generated shape");
+
+    std::cout << "ControllerWizardIncompatibleReconfigureSimulation passed\n";
+}
+
+// sru-32 / D5: a refused Submit keeps every entered value, commits nothing, and
+// saves nothing -- both for an invalid form and for a candidate whose endpoints
+// disappeared while the form was open.
+void RunControllerWizardRefusalSimulation()
+{
+    namespace NodeIds = synth::runtime_ui::NodeIds;
+    constexpr const char* kOverflowArgument = "999999999999999999999999999999999999999";
+
+    WizardParityFixture fixture;
+    auto& harness = fixture.Harness();
+    harness.AddTwisterPair(1);
+    fixture.Tick("refusal fixture");
+    Require(!harness.NoteDeviceListChanged(),
+            "an unchanged device list never recomputes the cached classification");
+
+    fixture.Click(NodeIds::kWizardLaunch, "refusal form opens");
+    fixture.TypeInto(kEncoderSlotId, "4", "refusal edits slot");
+    fixture.SelectOption(TwisterButtonField(0, "message"), 8, "refusal selects Bank Select");
+    Require(RequireEditor(fixture.Renderer(), TwisterButtonField(0, "argument"), "refusal")
+                .isEnabled(),
+            "Bank Select enables its per-button argument");
+    fixture.TypeInto(TwisterButtonField(0, "argument"), "7", "refusal sets bank argument");
+    fixture.SelectOption(TwisterButtonField(1, "message"), 15, "refusal selects Scene Select");
+    fixture.TypeInto(TwisterButtonField(1, "argument"), kOverflowArgument, "refusal overflows");
+
+    fixture.Click(NodeIds::kWizardSubmit, "invalid submit");
+    Require(RenderedLabelText(*fixture.Renderer().FindByNodeId(NodeIds::kWizardStatus))
+                .find("Button 2") != std::string::npos,
+            "an invalid form refusal names the offending button");
+    Require(harness.Commits() == 0 && harness.Saves() == 0,
+            "a refused Submit commits and saves nothing");
+    Require(RequireEditor(fixture.Renderer(), kEncoderSlotId, "invalid submit").getText() ==
+                    juce::String("4") &&
+                RequireEditor(fixture.Renderer(), TwisterButtonField(0, "argument"), "invalid submit")
+                        .getText() == juce::String("7") &&
+                RequireEditor(fixture.Renderer(), TwisterButtonField(1, "argument"), "invalid submit")
+                        .getText() == juce::String(kOverflowArgument),
+            "a refused Submit retains every entered value");
+
+    fixture.TypeInto(TwisterButtonField(1, "argument"), "5", "refusal fixes argument");
+    harness.RemoveTwisterPair(1);
+    fixture.Tick("candidate disappears");
+    fixture.Click(NodeIds::kWizardSubmit, "stale submit");
+    Require(RenderedLabelText(*fixture.Renderer().FindByNodeId(NodeIds::kWizardStatus))
+                .find("reconnect") != std::string::npos,
+            "a disappeared candidate refuses Submit with a reconnect message");
+    Require(harness.Commits() == 0 && harness.Saves() == 0,
+            "a stale Submit commits and saves nothing");
+    Require(harness.Instrument().controllers.empty(), "a stale Submit installs no record");
+    Require(RequireEditor(fixture.Renderer(), kEncoderSlotId, "stale submit").getText() ==
+                    juce::String("4") &&
+                RequireEditor(fixture.Renderer(), TwisterButtonField(0, "argument"), "stale submit")
+                        .getText() == juce::String("7"),
+            "a stale Submit retains every entered value");
+
+    std::cout << "ControllerWizardRefusalSimulation passed\n";
+}
+
 }  // namespace
 
 int main()
@@ -543,6 +1159,10 @@ int main()
     }
 
     RunGridSimulation();
+    RunControllerWizardParitySimulation();
+    RunManualRecordSimulation();
+    RunIncompatibleReconfigureSimulation();
+    RunControllerWizardRefusalSimulation();
 
     std::cout << "ControllersPageSimulationTests passed seed=0x" << std::hex << kSeed << "\n";
     return 0;

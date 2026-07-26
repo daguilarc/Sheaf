@@ -81,6 +81,24 @@ int main()
     Require(FindNodeById(refreshedSidebar, synth::runtime_ui::NodeIds::kSidebarDeadline)->text == "9.0%",
             "sidebar deadline refresh updates semantic node");
 
+    // sru-2 / sru-33: the Controllers warning marker is a portable node the
+    // JUCE backend renders and drops exactly as Chrome does. The sidebar knows
+    // only the boolean the host hands it.
+    Require(sidebarRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSidebarControllersWarning) == nullptr,
+            "sidebar renders no Controllers warning marker without an available candidate");
+    sidebarSurface.SetControllersWarning(true);
+    sidebarRenderer.RefreshFromSurface();
+    auto* controllersWarning = dynamic_cast<juce::Label*>(
+        sidebarRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSidebarControllersWarning));
+    Require(controllersWarning != nullptr && controllersWarning->getText() == juce::String("!"),
+            "sidebar renders the Controllers warning marker while a candidate is available");
+    Require(sidebarRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSidebarControllers) != nullptr,
+            "the warning marker does not replace the Controllers entry");
+    sidebarSurface.SetControllersWarning(false);
+    sidebarRenderer.RefreshFromSurface();
+    Require(sidebarRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSidebarControllersWarning) == nullptr,
+            "sidebar drops the Controllers warning marker when the last candidate clears");
+
     synth::runtime_ui::AudioPageSurface audioSurface;
     synth::runtime_ui::AudioPageSnapshot& audioSnapshot = audioSurface.Snapshot();
     audioSnapshot.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Speakers"});
