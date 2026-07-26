@@ -19,10 +19,13 @@ const testPolicy: SupervisionPolicy = {
   watchdog: {},
 };
 
-const ninetyMinuteTestPolicy: SupervisionPolicy = {
-  silenceTimeoutMs: 120 * 60_000,
+const x_DefaultSupervisionPolicy: SupervisionPolicy = {
+  silenceTimeoutMs: 300_000,
   watchdog: {},
 };
+
+const x_RunDurationMs = 90 * 60_000;
+const x_ProgressIntervalMs = 60_000;
 
 test("await deadline defaults to 7000 seconds and rejects larger values", async () => {
   const defaultParsed = XagentAwaitInputSchema.parse({
@@ -357,28 +360,35 @@ test("successful completion with empty final text returns missing_final_report",
 });
 
 test("ninety-minute healthy run completes without an intermediate deadline wake", async () => {
-  const x_RunDurationMs = 90 * 60_000;
   const clock = new FakeClock(0);
   const scheduler = new FakeScheduler(clock);
   const harness = new TestHarness({
     clock,
     scheduler,
-    policy: ninetyMinuteTestPolicy,
+    policy: x_DefaultSupervisionPolicy,
   });
   await harness.run(async ({ runManager, runId, adapter }) => {
     await runManager.start(runId);
     const cursor = runManager.inspect(runId)!.sequence;
 
-    const afterFirstDelta = deferred<void>();
+    const afterSustainedProgress = deferred<void>();
     const releaseTurn = deferred<void>();
     async function* scriptedTurn(): AsyncIterable<AdapterEvent> {
-      yield {
-        type: "message.delta",
-        message_id: "message_delta_1",
-        role: "assistant",
-        delta: "working",
-      };
-      afterFirstDelta.resolve(undefined);
+      for (let minute = 1; minute <= x_RunDurationMs / x_ProgressIntervalMs; minute += 1) {
+        clock.advance(x_ProgressIntervalMs);
+        yield {
+          type: "message.delta",
+          message_id: "message_delta_1",
+          role: "assistant",
+          delta: `healthy progress minute ${minute}`,
+        };
+        await new Promise<void>((resolve) => {
+          setImmediate(resolve);
+        });
+        if (minute === x_RunDurationMs / x_ProgressIntervalMs) {
+          afterSustainedProgress.resolve(undefined);
+        }
+      }
       await releaseTurn.promise;
       yield {
         type: "message.completed",
@@ -400,16 +410,12 @@ test("ninety-minute healthy run completes without an intermediate deadline wake"
       deadline_seconds: x_DefaultAwaitDeadlineSeconds,
     });
     const turn = runManager.submit(runId, "long work");
-    await afterFirstDelta.promise;
+    await afterSustainedProgress.promise;
 
     let settledDuringRun = false;
     void awaiting.then(() => {
       settledDuringRun = true;
     });
-    scheduler.advance(x_RunDurationMs);
-    // The await's .then() runs on a microtask; let it drain before asserting
-    // so the check can actually fail if the await settled during the run.
-    //
     await Promise.resolve();
     assert.equal(
       settledDuringRun,

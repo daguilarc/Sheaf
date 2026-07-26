@@ -6,6 +6,7 @@ import io
 import json
 import os
 import re
+import select
 import shutil
 import stat
 import subprocess
@@ -99,18 +100,26 @@ def create_isolated_sheaf_root(parent: Path) -> Path:
     return sheaf_root
 
 
-def spawn_isolated_xagent_service(sheaf_root: Path) -> subprocess.Popen[str]:
+def spawn_isolated_xagent_service(
+    sheaf_root: Path,
+    *,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.Popen[str]:
     service_main = REPO_ROOT / "projects" / "xagent" / "dist" / "src" / "service_main.js"
     if not service_main.is_file():
         raise unittest.SkipTest(
             f"{service_main} is missing; build projects/xagent before running MCP probe"
         )
+    env = os.environ.copy()
+    if extra_env is not None:
+        env.update(extra_env)
     return subprocess.Popen(
         ["node", str(service_main)],
         cwd=sheaf_root,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
+        env=env,
     )
 
 
@@ -184,6 +193,65 @@ await client.close();
         check=True,
     )
     return json.loads(result.stdout.strip())
+
+
+def is_process_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def run_packaged_cleanup_probe(service_url: str, log_root: Path, cwd: Path) -> None:
+    probe = f"""
+import {{ readFile }} from "node:fs/promises";
+import {{ join }} from "node:path";
+import {{ Client }} from "@modelcontextprotocol/sdk/client/index.js";
+import {{ StreamableHTTPClientTransport }} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+const transport = new StreamableHTTPClientTransport(new URL({service_url!r}));
+const client = new Client({{ name: "xagent-plugin-cleanup-test", version: "0.0.0" }});
+await client.connect(transport);
+const started = await client.callTool({{
+  name: "xagent_start",
+  arguments: {{ cwd: {str(cwd)!r}, prompt: "owned child cleanup", harness: "codex" }},
+}});
+const body = started.structuredContent ?? started.content?.[0]?.text;
+const parsed = typeof body === "string" ? JSON.parse(body) : body;
+const runId = parsed.run_id;
+const metadata = JSON.parse(
+  await readFile(join({str(log_root)!r}, runId, "metadata.json"), "utf8"),
+);
+const pid = metadata.owned_process?.pid;
+if (typeof pid !== "number") {{
+  throw new Error("expected owned_process.pid in metadata");
+}}
+await client.callTool({{ name: "xagent_close", arguments: {{ run_id: runId }} }});
+try {{
+  process.kill(pid, 0);
+  throw new Error(`owned child ${{pid}} still alive after close`);
+}} catch (error) {{
+  if (error && typeof error === "object" && "code" in error && error.code === "ESRCH") {{
+    console.log(JSON.stringify({{ closed: true, pid }}));
+  }} else {{
+    throw error;
+  }}
+}}
+await client.close();
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", probe],
+        cwd=REPO_ROOT / "projects" / "xagent",
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+        timeout=30,
+    )
+    payload = json.loads(result.stdout.strip())
+    if payload.get("closed") is not True:
+        raise RuntimeError(f"cleanup probe did not close owned child: {payload!r}")
 
 
 class PackageXagentOutputTests(unittest.TestCase):
@@ -392,6 +460,124 @@ class PackageXagentOutputTests(unittest.TestCase):
                 port = wait_for_service_port(service_process)
                 tool_names = discover_mcp_tools(f"http://127.0.0.1:{port}/mcp")
                 self.assertEqual(list(EXPECTED_MCP_TOOL_NAMES), tool_names)
+            finally:
+                if service_process.poll() is None:
+                    if port is not None:
+                        shutdown_xagent_service(service_process, port)
+                    else:
+                        service_process.terminate()
+                        try:
+                            service_process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            service_process.kill()
+                            service_process.wait(timeout=5)
+                if service_process.stderr is not None:
+                    service_process.stderr.close()
+
+    def test_packaged_quiet_cli_supervise_stays_silent_until_completion(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="xagent-package-quiet-test-") as tempdir:
+            destination = Path(tempdir) / "package"
+            package_xagent.build_package(destination)
+
+            sheaf_root = create_isolated_sheaf_root(Path(tempdir))
+            log_root = sheaf_root / "data" / "xagent"
+            cwd = Path(tempdir) / "work"
+            cwd.mkdir()
+            service_process = spawn_isolated_xagent_service(
+                sheaf_root,
+                extra_env={
+                    "XAGENT_TEST_ADAPTER": "fake",
+                    "XAGENT_TEST_DELAY_MS": "1500",
+                },
+            )
+            port: int | None = None
+            proc: subprocess.Popen[str] | None = None
+            try:
+                port = wait_for_service_port(service_process)
+                service_url = f"http://127.0.0.1:{port}"
+                launcher = destination / "scripts" / "xagent"
+                env = os.environ.copy()
+                env["XAGENT_SERVICE_URL"] = service_url
+                env["XAGENT_LOG_ROOT"] = str(log_root)
+                proc = subprocess.Popen(
+                    [
+                        str(launcher),
+                        "supervise",
+                        "--harness",
+                        "codex",
+                        "--cwd",
+                        str(cwd),
+                        "--deadline-seconds",
+                        "30",
+                        "packaged quiet smoke",
+                    ],
+                    cwd=cwd,
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                time.sleep(0.5)
+                self.assertIsNone(proc.poll(), "supervise finished before quiet-progress check")
+                if proc.stdout is not None:
+                    ready, _, _ = select.select([proc.stdout], [], [], 0)
+                    if ready:
+                        partial = proc.stdout.read()
+                        if partial:
+                            self.fail(f"quiet supervise emitted stdout during progress: {partial!r}")
+                completed = proc.wait(timeout=30)
+                stdout = proc.stdout.read() if proc.stdout is not None else ""
+                stderr = proc.stderr.read() if proc.stderr is not None else ""
+                self.assertEqual(completed, 0, stderr)
+                lines = [line for line in stdout.strip().splitlines() if line.strip()]
+                self.assertEqual(1, len(lines))
+                body = json.loads(lines[0])
+                self.assertEqual("turn.completed", body.get("event"))
+                self.assertEqual(
+                    "complete final assistant message",
+                    body.get("report", {}).get("text"),
+                )
+            finally:
+                if proc is not None and proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                if service_process.poll() is None:
+                    if port is not None:
+                        shutdown_xagent_service(service_process, port)
+                    else:
+                        service_process.terminate()
+                        try:
+                            service_process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            service_process.kill()
+                            service_process.wait(timeout=5)
+                if service_process.stderr is not None:
+                    service_process.stderr.close()
+
+    def test_packaged_cleanup_smoke_closes_owned_child(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="xagent-package-cleanup-test-") as tempdir:
+            destination = Path(tempdir) / "package"
+            package_xagent.build_package(destination)
+
+            sheaf_root = create_isolated_sheaf_root(Path(tempdir))
+            log_root = sheaf_root / "data" / "xagent"
+            cwd = Path(tempdir) / "work"
+            cwd.mkdir()
+            service_process = spawn_isolated_xagent_service(
+                sheaf_root,
+                extra_env={
+                    "XAGENT_TEST_ADAPTER": "fake",
+                    "XAGENT_TEST_OWNED_CHILD": "1",
+                },
+            )
+            port: int | None = None
+            try:
+                port = wait_for_service_port(service_process)
+                run_packaged_cleanup_probe(
+                    f"http://127.0.0.1:{port}/mcp",
+                    log_root,
+                    cwd,
+                )
             finally:
                 if service_process.poll() is None:
                     if port is not None:

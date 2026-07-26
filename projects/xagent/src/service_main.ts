@@ -2,6 +2,7 @@
 
 import { loadXagentServiceConfig } from "./service/config.js";
 import { XagentRunManager } from "./service/run_manager.js";
+import { createTestAdapterFactory, isTestAdapterEnabled } from "./service/test_hooks.js";
 import {
   createShutdownController,
   createXagentServer,
@@ -23,6 +24,9 @@ async function main(): Promise<void> {
       silenceTimeoutMs: 300_000,
       watchdog: {},
     },
+    ...(isTestAdapterEnabled()
+      ? { adapterFactory: createTestAdapterFactory() }
+      : {}),
   });
 
   let server: XagentServer | undefined;

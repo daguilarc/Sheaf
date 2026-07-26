@@ -2,10 +2,17 @@ import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Readable, Writable } from "node:stream";
 import test from "node:test";
 
 import { FakeHarnessAdapter } from "../src/adapters/fake.js";
 import type { AdapterEvent } from "../src/adapters/types.js";
+import { main } from "../src/cli.js";
+import {
+  createShutdownController,
+  createXagentServer,
+  type XagentServer,
+} from "../src/service/server.js";
 import { x_DefaultAwaitDeadlineSeconds } from "../src/service/tool_schemas.js";
 import { XagentRunManager } from "../src/service/run_manager.js";
 import type {
@@ -17,28 +24,38 @@ import type {
 } from "../src/supervision/types.js";
 
 const x_RunDurationMs = 90 * 60_000;
+const x_ProgressIntervalMs = 60_000;
 const x_PollIntervalMs = 30_000;
-const ninetyMinuteTestPolicy: SupervisionPolicy = {
-  silenceTimeoutMs: 120 * 60_000,
+const x_ExpectedWatchdogCalls = 3;
+const x_DefaultSupervisionPolicy: SupervisionPolicy = {
+  silenceTimeoutMs: 300_000,
   watchdog: {},
 };
 
-test("90-minute healthy run: MCP await wakes once; polling and quiet client counts are analytic", async () => {
+test("90-minute healthy run: MCP await wakes once; quiet client measured; polling analytic", async () => {
   const clock = new FakeClock(0);
   const scheduler = new FakeScheduler(clock);
   const classifier = new NoCallClassifier();
   const logRoot = await mkdtemp(path.join(tmpdir(), "xagent-cost-"));
 
-  const afterFirstDelta = deferred<void>();
+  const afterSustainedProgress = deferred<void>();
   const releaseTurn = deferred<void>();
-  async function* longRun(): AsyncIterable<AdapterEvent> {
-    yield {
-      type: "message.delta",
-      message_id: "m1",
-      role: "assistant",
-      delta: "working",
-    };
-    afterFirstDelta.resolve(undefined);
+  async function* sustainedHealthyTurn(): AsyncIterable<AdapterEvent> {
+    for (let minute = 1; minute <= x_RunDurationMs / x_ProgressIntervalMs; minute += 1) {
+      clock.advance(x_ProgressIntervalMs);
+      yield {
+        type: "message.delta",
+        message_id: "m1",
+        role: "assistant",
+        delta: `healthy progress minute ${minute}`,
+      };
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+      if (minute === x_RunDurationMs / x_ProgressIntervalMs) {
+        afterSustainedProgress.resolve(undefined);
+      }
+    }
     await releaseTurn.promise;
     yield {
       type: "message.completed",
@@ -56,8 +73,8 @@ test("90-minute healthy run: MCP await wakes once; polling and quiet client coun
   const runManager = new XagentRunManager({
     repoRoot: process.cwd(),
     logRoot,
-    adapterFactory: () => new FakeHarnessAdapter({ scriptedEvents: [longRun()] }),
-    policy: ninetyMinuteTestPolicy,
+    adapterFactory: () => new FakeHarnessAdapter({ scriptedEvents: [sustainedHealthyTurn()] }),
+    policy: x_DefaultSupervisionPolicy,
     clock: () => clock.toDate(),
     scheduler: scheduler as SupervisionScheduler,
     watchdogClassifier: classifier,
@@ -74,21 +91,12 @@ test("90-minute healthy run: MCP await wakes once; polling and quiet client coun
     deadline_seconds: x_DefaultAwaitDeadlineSeconds,
   });
   const turn = runManager.submit(runId, "long healthy work");
-  await afterFirstDelta.promise;
-
-  let mcpAwaitWakes = 0;
-  void awaiting.then(() => {
-    mcpAwaitWakes += 1;
-  });
+  await afterSustainedProgress.promise;
 
   let settledDuringRun = false;
   void awaiting.then(() => {
     settledDuringRun = true;
   });
-  scheduler.advance(x_RunDurationMs);
-  // The await's .then() runs on a microtask; let it drain before asserting
-  // so the check can actually fail if the await settled during the run.
-  //
   await Promise.resolve();
   assert.equal(
     settledDuringRun,
@@ -97,15 +105,14 @@ test("90-minute healthy run: MCP await wakes once; polling and quiet client coun
   );
   assert.equal(
     classifier.calls.length,
-    0,
-    "watchdog must not run during the simulated 90-minute healthy runtime",
+    x_ExpectedWatchdogCalls,
+    "watchdog must run at default cadence checkpoints during sustained healthy progress",
   );
 
   releaseTurn.resolve(undefined);
   const result = await awaiting;
   await turn;
 
-  assert.equal(mcpAwaitWakes, 1, "MCP await must wake exactly once for turn completion");
   assert.equal(result.event, "turn.completed");
   assert.equal((result as unknown as { elapsed_ms: number }).elapsed_ms, x_RunDurationMs);
 
@@ -118,8 +125,12 @@ test("90-minute healthy run: MCP await wakes once; polling and quiet client coun
   const pollingWakes = simulatePollingWakes(x_RunDurationMs, x_PollIntervalMs);
   assert.equal(pollingWakes, 180, "30-second polling is expected to wake 180 times over 90 minutes");
 
-  const quietClientWakes = simulateQuietClientWakes();
-  assert.equal(quietClientWakes, 1, "quiet CLI fallback is expected to wake once for completion");
+  const quietClientWakes = await measureQuietSuperviseStdoutLines();
+  assert.equal(
+    quietClientWakes,
+    1,
+    "quiet CLI fallback must emit exactly one stdout line for terminal completion",
+  );
 
   await runManager.closeAll();
 });
@@ -132,8 +143,117 @@ function simulatePollingWakes(runDurationMs: number, pollIntervalMs: number): nu
   return wakes;
 }
 
-function simulateQuietClientWakes(): number {
-  return 1;
+async function measureQuietSuperviseStdoutLines(): Promise<number> {
+  const clock = new FakeClock(0);
+  const scheduler = new FakeScheduler(clock);
+  const classifier = new NoCallClassifier();
+  const logRoot = await mkdtemp(path.join(tmpdir(), "xagent-cost-quiet-"));
+  const afterSustainedProgress = deferred<void>();
+  const releaseTurn = deferred<void>();
+  async function* sustainedHealthyTurn(): AsyncIterable<AdapterEvent> {
+    for (let minute = 1; minute <= x_RunDurationMs / x_ProgressIntervalMs; minute += 1) {
+      clock.advance(x_ProgressIntervalMs);
+      yield {
+        type: "message.delta",
+        message_id: "m1",
+        role: "assistant",
+        delta: `healthy progress minute ${minute}`,
+      };
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+      if (minute === x_RunDurationMs / x_ProgressIntervalMs) {
+        afterSustainedProgress.resolve(undefined);
+      }
+    }
+    await releaseTurn.promise;
+    yield {
+      type: "message.completed",
+      message_id: "m_final",
+      role: "assistant",
+      text: "complete final assistant message",
+    };
+    yield {
+      type: "turn.completed",
+      final_text: "complete final assistant message",
+      provider_thread_id: "fake-thread-1",
+    };
+  }
+
+  const runManager = new XagentRunManager({
+    repoRoot: process.cwd(),
+    logRoot,
+    adapterFactory: () => new FakeHarnessAdapter({ scriptedEvents: [sustainedHealthyTurn()] }),
+    policy: x_DefaultSupervisionPolicy,
+    clock: () => clock.toDate(),
+    scheduler: scheduler as SupervisionScheduler,
+    watchdogClassifier: classifier,
+  });
+
+  let server: XagentServer | undefined;
+  const shutdownController = createShutdownController({
+    closeRuns: async () => {
+      await runManager.closeAll();
+    },
+    closeServer: async () => {
+      await server?.close();
+    },
+  });
+  server = createXagentServer({
+    bindHost: "127.0.0.1",
+    bindPort: 0,
+    runManager,
+    shutdownController,
+  });
+  const port = await server.listen();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const cwd = await mkdtemp(path.join(tmpdir(), "xagent-cost-quiet-cwd-"));
+
+  try {
+    const stdout = new MemoryWritable();
+    const stderr = new MemoryWritable();
+    const supervisePromise = main(
+      [
+        "supervise",
+        "--harness",
+        "codex",
+        "--cwd",
+        cwd,
+        "--deadline-seconds",
+        String(x_DefaultAwaitDeadlineSeconds),
+        "long healthy work",
+      ],
+      Readable.from([]),
+      stdout,
+      stderr,
+      cwd,
+      { serviceBaseUrl: baseUrl },
+    );
+
+    await afterSustainedProgress.promise;
+    assert.equal(stdout.text, "", "quiet supervise must not emit stdout during healthy progress");
+    assert.equal(stderr.text, "");
+
+    releaseTurn.resolve(undefined);
+    const result = await supervisePromise;
+    assert.deepEqual(result, { exitCode: 0 });
+    assert.equal(stderr.text, "");
+
+    const lines = stdout.text.trim().split("\n").filter(Boolean);
+    assert.equal(lines.length, 1);
+    const body = JSON.parse(lines[0]!) as Record<string, unknown>;
+    assert.equal(body.event, "turn.completed");
+    assert.equal(
+      (body.report as { text: string }).text,
+      "complete final assistant message",
+    );
+    return lines.length;
+  } finally {
+    if (!shutdownController.wasShutdownRequested()) {
+      await server.close();
+    }
+    await runManager.closeAll();
+  }
 }
 
 class NoCallClassifier implements WatchdogClassifier {
@@ -141,6 +261,19 @@ class NoCallClassifier implements WatchdogClassifier {
   async classify(request: WatchdogRequest): Promise<WatchdogVerdict> {
     this.calls.push(request);
     return { verdict: "healthy", confidence: 0.95, reason_code: "steady_progress", evidence: [] };
+  }
+}
+
+class MemoryWritable extends Writable {
+  text = "";
+
+  override _write(
+    chunk: Buffer | string,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
+    this.text += chunk.toString();
+    callback();
   }
 }
 
