@@ -40,11 +40,11 @@
 
 ## 6. Quiet Service-Client CLI
 
-- [ ] 6.1 Add CLI parser and help tests for service-backed `xagent supervise` start/await plus inspect, follow-up, interrupt, and close operations against an existing `run_id`.
-- [ ] 6.2 Implement the quiet CLI as a client of the registered xagent service while leaving `xagent run --subagent|--full` parsing, embedded runtime, and output behavior unchanged.
-- [ ] 6.3 Add long-running fake-service tests proving quiet stdout contains no healthy deltas, tools, raw events, or unchanged status and emits only infrastructure failure, attention, terminal result, deadline, or explicit inspection output.
-- [ ] 6.4 Add CLI integration tests for attention followed by continued await, explicit interrupt, same-session follow-up when ready, state-invalid follow-up rejection, controller restart/reattachment, cancellation, and close.
-- [ ] 6.5 Add an unavailable-service test proving the CLI emits structured infrastructure failure and never launches an unmanaged embedded supervisor.
+- [x] 6.1 Add CLI parser and help tests for service-backed `xagent supervise` start/await plus inspect, follow-up, interrupt, and close operations against an existing `run_id`.
+- [x] 6.2 Implement the quiet CLI as a client of the registered xagent service while leaving `xagent run --subagent|--full` parsing, embedded runtime, and output behavior unchanged.
+- [x] 6.3 Add long-running fake-service tests proving quiet stdout contains no healthy deltas, tools, raw events, or unchanged status and emits only infrastructure failure, attention, terminal result, deadline, or explicit inspection output.
+- [x] 6.4 Add CLI integration tests for attention followed by continued await, explicit interrupt, same-session follow-up when ready, state-invalid follow-up rejection, controller restart/reattachment, cancellation, and close.
+- [x] 6.5 Add an unavailable-service test proving the CLI emits structured infrastructure failure and never launches an unmanaged embedded supervisor.
 
 ## 7. Workflow Guidance
 
