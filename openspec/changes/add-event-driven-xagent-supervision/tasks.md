@@ -48,9 +48,9 @@
 
 ## 7. Workflow Guidance
 
-- [ ] 7.1 Update the canonical and plugin-packaged `xagent-subagents` skill to verify the Conductor-managed service, use HTTP MCP supervision, consume the final report directly, document the quiet service-client fallback, explain the deterministic/semantic boundary, and prohibit routine polling.
-- [ ] 7.2 Update the canonical `openspec-superpowers-workflow` skill to require long native mailbox waits, blocker-or-final child messages, and reason-gated status inspection for both native and xagent subagents.
-- [ ] 7.3 Add installer/package assertions that distributed skills contain the required service-health, event-wait, direct-report, no-polling, sparse-message, fallback, and agentic-infrastructure escalation guidance.
+- [x] 7.1 Update the canonical and plugin-packaged `xagent-subagents` skill to verify the Conductor-managed service, use HTTP MCP supervision, consume the final report directly, document the quiet service-client fallback, explain the deterministic/semantic boundary, and prohibit routine polling.
+- [x] 7.2 Update the canonical `openspec-superpowers-workflow` skill to require long native mailbox waits, blocker-or-final child messages, and reason-gated status inspection for both native and xagent subagents.
+- [x] 7.3 Add installer/package assertions that distributed skills contain the required service-health, event-wait, direct-report, no-polling, sparse-message, fallback, and agentic-infrastructure escalation guidance.
 
 ## 8. Validation and Cost Regression
 
