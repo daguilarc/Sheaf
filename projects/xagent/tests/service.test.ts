@@ -73,12 +73,15 @@ test("loadXagentServiceConfig rejects a non-loopback shipped bind host", async (
 });
 
 test("GET /health returns the standard health shape without a warning when healthy", async () => {
-  await withServiceServer({}, async ({ port }) => {
+  await withServiceServer({}, async ({ port, server }) => {
     const response = await fetchJson(port, "GET", "/health");
     assert.equal(response.status, 200);
     assert.equal((response.body as { healthy: boolean }).healthy, true);
     assert.equal(typeof (response.body as { uptime: number }).uptime, "number");
     assert.equal("warning" in (response.body as object), false);
+    assert.equal(server.httpServer.requestTimeout, 7_200_000);
+    assert.equal(server.httpServer.timeout, 7_200_000);
+    assert.ok((server.httpServer.headersTimeout ?? 0) >= 7_200_000);
   });
 });
 

@@ -25,6 +25,9 @@ export type XagentServer = {
   close(): Promise<void>;
 };
 
+export const x_ServiceRequestTimeoutMs = 7_200_000;
+export const x_ServiceHeadersTimeoutMs = 7_270_000;
+
 export function createXagentServer(options: XagentServerOptions): XagentServer {
   const serverStartTime = options.serverStartTime ?? Date.now();
   let acceptingConnections = true;
@@ -37,6 +40,10 @@ export function createXagentServer(options: XagentServerOptions): XagentServer {
     }
     void handleRequest(request, response);
   });
+  httpServer.requestTimeout = x_ServiceRequestTimeoutMs;
+  httpServer.timeout = x_ServiceRequestTimeoutMs;
+  httpServer.headersTimeout = x_ServiceHeadersTimeoutMs;
+  httpServer.keepAliveTimeout = x_ServiceRequestTimeoutMs;
 
   async function handleRequest(
     request: IncomingMessage,

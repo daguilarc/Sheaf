@@ -12,7 +12,7 @@ export type FakeHarnessAdapterOptions = {
   readonly includeToolEvents?: boolean;
   readonly includeRawProvider?: boolean;
   readonly includeDeltas?: boolean;
-  readonly scriptedEvents?: readonly (readonly AdapterEvent[] | AsyncIterable<AdapterEvent>)[];
+  scriptedEvents?: readonly (readonly AdapterEvent[] | AsyncIterable<AdapterEvent>)[];
   readonly supportsInterrupt?: boolean;
   readonly processIdentity?: OwnedProcessIdentity;
 };
@@ -31,7 +31,7 @@ export class FakeHarnessAdapter implements HarnessAdapter {
   closeCount = 0;
   interruptCount = 0;
 
-  constructor(readonly options: FakeHarnessAdapterOptions = {}) {}
+  constructor(public options: FakeHarnessAdapterOptions = {}) {}
 
   async start(_options: HarnessStartOptions): Promise<HarnessSession> {
     this.startCount += 1;

@@ -5,21 +5,24 @@ import { generateRunId, createRunRecord, appendNormalizedEvent, updateRunSupervi
 import { Supervisor } from "../supervision/supervisor.js";
 import type {
   AwaitResult,
+  SupervisionEvent,
   SupervisionPersistenceState,
   SupervisionPolicy,
+  SupervisionScheduler,
   SupervisorInspection,
 } from "../supervision/types.js";
 import { createAdapter } from "../adapters/index.js";
 import type { HarnessAdapter } from "../adapters/types.js";
 import type { HarnessName, OutputMode, ThinkingLevel } from "../events.js";
-import type {
-  StructuredToolError,
-  XagentAwaitInput,
-  XagentCloseInput,
-  XagentInspectInput,
-  XagentInterruptInput,
-  XagentMessageInput,
-  XagentStartInput,
+import {
+  x_DefaultAwaitDeadlineSeconds,
+  type StructuredToolError,
+  type XagentAwaitInput,
+  type XagentCloseInput,
+  type XagentInspectInput,
+  type XagentInterruptInput,
+  type XagentMessageInput,
+  type XagentStartInput,
 } from "./tool_schemas.js";
 import { ToolValidationError } from "./tool_schemas.js";
 
@@ -28,6 +31,7 @@ export type XagentRunManagerOptions = {
   readonly logRoot: string;
   readonly adapterFactory?: (harness: HarnessName) => HarnessAdapter;
   readonly clock?: () => Date;
+  readonly scheduler?: SupervisionScheduler;
   readonly policy?: SupervisionPolicy;
 };
 
@@ -56,11 +60,14 @@ export type InspectRunResult = {
 };
 
 export type AwaitRunResult = {
+  readonly schema_version: 1;
+  readonly event: string;
   readonly run_id: string;
   readonly sequence: number;
   readonly phase: string;
-  readonly event: string;
+  readonly elapsed_ms: number;
   readonly reason?: string;
+  readonly report?: { readonly text: string };
   readonly payload?: unknown;
 };
 
@@ -91,6 +98,7 @@ export class XagentRunManager {
   readonly #logRoot: string;
   readonly #adapterFactory: (harness: HarnessName) => HarnessAdapter;
   readonly #clock: () => Date;
+  readonly #scheduler: SupervisionScheduler | undefined;
   readonly #defaultPolicy: SupervisionPolicy;
   readonly #runs = new Map<string, OwnedRun>();
   #closed = false;
@@ -100,6 +108,7 @@ export class XagentRunManager {
     this.#logRoot = options.logRoot;
     this.#adapterFactory = options.adapterFactory ?? ((harness) => createAdapter(harness));
     this.#clock = options.clock ?? (() => new Date());
+    this.#scheduler = options.scheduler;
     this.#defaultPolicy = options.policy ?? {
       silenceTimeoutMs: 300_000,
       watchdog: {},
@@ -137,6 +146,7 @@ export class XagentRunManager {
       },
       policy,
       clock: this.#clock,
+      ...(this.#scheduler === undefined ? {} : { scheduler: this.#scheduler }),
       eventSink: async (event) => {
         await appendNormalizedEvent(record, event);
       },
@@ -236,20 +246,20 @@ export class XagentRunManager {
 
   async awaitRun(input: XagentAwaitInput, signal?: AbortSignal): Promise<AwaitRunResult> {
     this.#require(input.run_id);
+    const deadlineSeconds = input.deadline_seconds ?? x_DefaultAwaitDeadlineSeconds;
+    const startedAtMs = this.#clock().getTime();
     const result = await this.awaitEvent(
       input.run_id,
       input.after_sequence,
-      input.deadline_seconds * 1000,
+      deadlineSeconds * 1000,
       signal,
     );
-    return {
-      run_id: result.run_id,
-      sequence: result.sequence,
-      phase: result.phase,
-      event: result.type,
-      ...(result.reason === undefined ? {} : { reason: result.reason }),
-      ...("payload" in result && result.payload !== undefined ? { payload: result.payload } : {}),
-    };
+    const elapsedMs = Math.max(0, this.#clock().getTime() - startedAtMs);
+    return shapeAwaitEnvelope(result, elapsedMs);
+  }
+
+  publishAttention(runId: string, reason: string, payload?: unknown): Promise<SupervisionEvent> {
+    return this.#require(runId).supervisor.publishAttention(reason, payload);
   }
 
   inspectRun(input: XagentInspectInput): InspectRunResult {
@@ -352,5 +362,45 @@ function toRunSupervisionUpdate(state: SupervisionPersistenceState) {
     last_semantic_progress_at: state.last_semantic_progress_at,
     owned_process: state.owned_process,
     watchdog: state.watchdog,
+  };
+}
+
+function shapeAwaitEnvelope(result: AwaitResult, elapsedMs: number): AwaitRunResult {
+  const base = {
+    schema_version: 1 as const,
+    event: result.type,
+    run_id: result.run_id,
+    sequence: result.sequence,
+    phase: result.phase,
+    elapsed_ms: elapsedMs,
+  };
+  if (result.type === "turn.completed") {
+    const payload = ("payload" in result ? result.payload : undefined) as
+      | { readonly report?: { readonly text?: string } }
+      | undefined;
+    const report = payload?.report;
+    if (report === undefined || report.text === undefined) {
+      return {
+        ...base,
+        reason: "missing_final_report",
+      };
+    }
+    return {
+      ...base,
+      report: { text: report.text },
+    };
+  }
+  if (result.type === "supervision.deadline") {
+    return {
+      ...base,
+      reason: result.reason,
+    };
+  }
+  const reason = result.reason;
+  const payload = "payload" in result ? result.payload : undefined;
+  return {
+    ...base,
+    ...(reason === undefined ? {} : { reason }),
+    ...(payload === undefined ? {} : { payload }),
   };
 }

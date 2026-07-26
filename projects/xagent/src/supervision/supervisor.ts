@@ -374,6 +374,9 @@ export class Supervisor {
         return;
       }
 
+      const sanitizedReport = sanitizeValue({ text: reportText }, this.#startOptions.cwd) as {
+        readonly text: string;
+      };
       await this.#withLifecycleMutation(async () => {
         if (terminalPhases.has(this.#phase)) {
           return;
@@ -383,7 +386,7 @@ export class Supervisor {
           phase: "ready",
           reason: "turn_completed",
           payload: {
-            report: { text: reportText },
+            report: sanitizedReport,
             turn_id: turn.turnId,
             provider_thread_id: completed.provider_thread_id ?? turn.session.providerThreadId,
             ...(completed.usage === undefined ? {} : { usage: completed.usage }),
