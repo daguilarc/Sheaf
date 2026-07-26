@@ -161,7 +161,7 @@ bool FieldHasError(std::string_view text) {
 
 std::size_t ParseSizeTOrAssert(std::string_view text) {
     std::size_t result = 0;
-    const bool parsed = ParseSizeT(text, result);
+    [[maybe_unused]] const bool parsed = ParseSizeT(text, result);
     assert(parsed);
     return result;
 }
