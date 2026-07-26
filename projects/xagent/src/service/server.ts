@@ -5,6 +5,7 @@ import { createXagentMcpHandler, type XagentMcpHandler } from "./mcp.js";
 import {
   x_ServiceHeadersTimeoutMs,
   x_ServiceRequestTimeoutMs,
+  XAGENT_DEFAULT_BIND_PORT,
 } from "./config.js";
 import type { XagentRunManager } from "./run_manager.js";
 
@@ -67,7 +68,21 @@ export type XagentServer = {
 export function createXagentServer(options: XagentServerOptions): XagentServer {
   const serverStartTime = options.serverStartTime ?? Date.now();
   let acceptingConnections = true;
-  const mcpHandler = options.mcpHandler ?? createXagentMcpHandler(options.runManager);
+  // DNS rebinding protection allow lists. The shipped production port
+  // (9005) is always allowed so a service that rebinds to that port
+  // before `listen()` resolves is still reachable; the actual ephemeral
+  // listen port is added once `listen()` returns. Both the MCP handler
+  // and the `/health` and `/exit` routes consult these lists.
+  //
+  const allowedHosts = new Set<string>(buildAllowedHosts(options.bindHost, XAGENT_DEFAULT_BIND_PORT));
+  const allowedOrigins = new Set<string>(buildAllowedOrigins(options.bindHost, XAGENT_DEFAULT_BIND_PORT));
+  const mcpHandler =
+    options.mcpHandler
+    ?? createXagentMcpHandler({
+      runManager: options.runManager,
+      getAllowedHosts: () => [...allowedHosts],
+      getAllowedOrigins: () => [...allowedOrigins],
+    });
 
   const httpServer = createServer((request: IncomingMessage, response: ServerResponse) => {
     if (!acceptingConnections) {
@@ -85,7 +100,18 @@ export function createXagentServer(options: XagentServerOptions): XagentServer {
     request: IncomingMessage,
     response: ServerResponse,
   ): Promise<void> {
-    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+    const hostHeader = request.headers.host;
+    if (typeof hostHeader === "string" && !allowedHosts.has(hostHeader)) {
+      sendJson(response, 403, { error: "invalid_host" });
+      return;
+    }
+    const originHeader = request.headers.origin;
+    if (typeof originHeader === "string" && !allowedOrigins.has(originHeader)) {
+      sendJson(response, 403, { error: "invalid_origin" });
+      return;
+    }
+
+    const url = new URL(request.url ?? "/", `http://${hostHeader ?? "localhost"}`);
     const method = request.method ?? "GET";
 
     if (method === "GET" && url.pathname === "/health") {
@@ -128,6 +154,16 @@ export function createXagentServer(options: XagentServerOptions): XagentServer {
             reject(new Error("server address unavailable"));
             return;
           }
+          // Populate the allow lists with the actual listen port so requests
+          // to the ephemeral bind port (port 0) are accepted alongside the
+          // shipped production port.
+          //
+          for (const host of buildAllowedHosts(options.bindHost, address.port)) {
+            allowedHosts.add(host);
+          }
+          for (const origin of buildAllowedOrigins(options.bindHost, address.port)) {
+            allowedOrigins.add(origin);
+          }
           resolve(address.port);
         });
       });
@@ -165,6 +201,36 @@ export function createXagentServer(options: XagentServerOptions): XagentServer {
 
 function computeUptimeSeconds(serverStartTime: number): number {
   return Math.max(0, (Date.now() - serverStartTime) / 1000);
+}
+
+// The loopback host names that may legitimately appear in the Host or Origin
+// header of a request to this service. The shipped bind host is always
+// included so a service bound to `::1` accepts `[::1]:port` as well.
+//
+function loopbackHostNames(bindHost: string): readonly string[] {
+  const hosts = new Set<string>(["127.0.0.1", "localhost"]);
+  hosts.add(bindHost);
+  return [...hosts];
+}
+
+function formatHostHeader(host: string, port: number): string {
+  // IPv6 literal addresses require brackets in the Host header.
+  if (host.includes(":")) {
+    return `[${host}]:${port}`;
+  }
+  return `${host}:${port}`;
+}
+
+function buildAllowedHosts(bindHost: string, port: number): string[] {
+  const result = new Set<string>();
+  for (const host of loopbackHostNames(bindHost)) {
+    result.add(formatHostHeader(host, port));
+  }
+  return [...result];
+}
+
+function buildAllowedOrigins(bindHost: string, port: number): string[] {
+  return buildAllowedHosts(bindHost, port).map((host) => `http://${host}`);
 }
 
 function sendJson(

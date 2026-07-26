@@ -28,7 +28,21 @@ export type XagentMcpHandler = {
   close(): Promise<void>;
 };
 
-export function createXagentMcpHandler(runManager: XagentRunManager): XagentMcpHandler {
+export type XagentMcpHandlerOptions = {
+  readonly runManager: XagentRunManager;
+  // DNS rebinding protection: the transport rejects any request whose Host
+  // or Origin header is not in the allow list. The lists are provided as
+  // getters because the actual listen port is unknown until `listen()`
+  // resolves when the service binds to port 0; the handler constructs a
+  // fresh transport per session, so by the time a client initializes a
+  // session the getters return the populated values.
+  //
+  readonly getAllowedHosts: () => string[];
+  readonly getAllowedOrigins: () => string[];
+};
+
+export function createXagentMcpHandler(options: XagentMcpHandlerOptions): XagentMcpHandler {
+  const { runManager, getAllowedHosts, getAllowedOrigins } = options;
   const sessions = new Map<string, SessionEntry>();
 
   async function handleRequest(
@@ -67,6 +81,16 @@ export function createXagentMcpHandler(runManager: XagentRunManager): XagentMcpH
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         enableJsonResponse: true,
+        // The MCP Streamable HTTP specification requires local servers to
+        // validate Host and Origin to prevent DNS rebinding, which would
+        // otherwise let a browser page reach the loopback endpoint and
+        // launch privileged local agent processes. The SDK ships this guard
+        // as a constructor option; we enable it and supply the loopback
+        // allow lists derived from the actual listen address.
+        //
+        enableDnsRebindingProtection: true,
+        allowedHosts: getAllowedHosts(),
+        allowedOrigins: getAllowedOrigins(),
         onsessioninitialized: (initializedSessionId) => {
           sessions.set(initializedSessionId, { server, transport });
         },

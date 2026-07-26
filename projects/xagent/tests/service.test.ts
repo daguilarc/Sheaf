@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { readFile, writeFile, mkdtemp, mkdir } from "node:fs/promises";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -107,6 +107,92 @@ test("unknown routes return a bounded JSON 404 and do not change supervised runs
   });
 });
 
+// C1: DNS rebinding protection — bad Host header must be rejected on every
+// route, including the cheap deterministic /health and /exit endpoints,
+// so a browser that rebinds a public hostname to 127.0.0.1 cannot drive
+// the local agent-launching service.
+test("GET /health rejects a rebinding Host header with a bounded JSON 403", async () => {
+  await withServiceServer({}, async ({ port }) => {
+    const response = await rawHttpRequest(port, "GET", "/health", { Host: "evil.com:9005" });
+    assert.equal(response.status, 403);
+    assert.equal((response.body as { error: string }).error, "invalid_host");
+  });
+});
+
+test("GET /health rejects a Host header that omits the port", async () => {
+  await withServiceServer({}, async ({ port }) => {
+    const response = await rawHttpRequest(port, "GET", "/health", { Host: "127.0.0.1" });
+    assert.equal(response.status, 403);
+    assert.equal((response.body as { error: string }).error, "invalid_host");
+  });
+});
+
+test("GET /health accepts an explicit loopback Origin alongside the actual port", async () => {
+  await withServiceServer({}, async ({ port }) => {
+    const response = await rawHttpRequest(port, "GET", "/health", {
+      Origin: `http://127.0.0.1:${port}`,
+    });
+    assert.equal(response.status, 200);
+    assert.equal((response.body as { healthy: boolean }).healthy, true);
+  });
+});
+
+test("GET /health rejects a cross-origin Origin header with a bounded JSON 403", async () => {
+  await withServiceServer({}, async ({ port }) => {
+    const response = await rawHttpRequest(port, "GET", "/health", {
+      Origin: "http://evil.com",
+    });
+    assert.equal(response.status, 403);
+    assert.equal((response.body as { error: string }).error, "invalid_origin");
+  });
+});
+
+test("POST /exit rejects a rebinding Host header and does not trigger shutdown", async () => {
+  await withServiceServer({}, async ({ port, shutdownController }) => {
+    const response = await rawHttpRequest(port, "POST", "/exit", { Host: "evil.com:9005" });
+    assert.equal(response.status, 403);
+    assert.equal((response.body as { error: string }).error, "invalid_host");
+    // The shutdown sequence must not start when the Host is rejected.
+    assert.equal(shutdownController.wasShutdownRequested(), false);
+  });
+});
+
+test("POST /mcp rejects a rebinding Host header before the MCP transport accepts the session", async () => {
+  await withServiceServer({}, async ({ port }) => {
+    const response = await rawHttpRequest(
+      port,
+      "POST",
+      "/mcp",
+      {
+        Host: "evil.com:9005",
+        "Content-Type": "application/json",
+      },
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "rebinding-attacker", version: "0.0.0" },
+        },
+      }),
+    );
+    assert.equal(response.status, 403);
+    const body = response.body as { error?: unknown };
+    assert.ok(typeof body === "object" && body !== null);
+    // The SDK's DNS-rebinding guard returns a JSON-RPC error envelope
+    // mentioning the Host header; either that envelope or the server's own
+    // 403 is acceptable as long as the status is 403 and the body is bounded
+    // JSON.
+    assert.ok(
+      textContains(response.rawText, "Invalid Host header") || body.error === "invalid_host",
+      `expected host-rejection body, got ${response.rawText}`,
+    );
+  });
+});
+
+
 test("POST /exit closes the listener before owned runs so the bind port is free during cleanup", async () => {
   const events: string[] = [];
   let bindPort = 0;
@@ -182,7 +268,7 @@ test("POST /exit with an in-flight HTTP connection still closes owned runs (drai
       const hungSocket = net.createConnection({ host: "127.0.0.1", port });
       await new Promise<void>((resolve) => hungSocket.once("connect", resolve));
       hungSocket.write(
-        "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 100\r\nMCP-Session-Id: hung-session\r\n\r\n",
+        `POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Length: 100\r\nMCP-Session-Id: hung-session\r\n\r\n`,
       );
 
       try {
@@ -701,6 +787,58 @@ async function fetchJson(
   }
   assert.ok(text.length <= 4096, "response body must be bounded");
   return { status: response.status, body };
+}
+
+// Sends a raw HTTP/1.1 request with arbitrary headers (including a
+// caller-controlled Host header, which the global `fetch` implementation
+// may refuse to override). Used to exercise DNS-rebinding protection on
+// the loopback service.
+async function rawHttpRequest(
+  port: number,
+  method: string,
+  requestPath: string,
+  headers: Record<string, string>,
+  body?: string,
+): Promise<{ status: number; body: unknown; rawText: string }> {
+  const response = await new Promise<{ status: number; rawText: string }>((resolve, reject) => {
+    const req = httpRequest(
+      {
+        host: "127.0.0.1",
+        port,
+        method,
+        path: requestPath,
+        headers,
+      },
+      (res: IncomingMessage) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("end", () => {
+          const rawText = Buffer.concat(chunks).toString("utf8");
+          resolve({ status: res.statusCode ?? 0, rawText });
+        });
+      },
+    );
+    req.on("error", reject);
+    if (body !== undefined) {
+      req.end(body);
+    } else {
+      req.end();
+    }
+  });
+  assert.ok(response.rawText.length <= 4096, "response body must be bounded");
+  let parsed: unknown = response.rawText;
+  if (response.rawText.length > 0) {
+    try {
+      parsed = JSON.parse(response.rawText);
+    } catch {
+      // Keep raw text for diagnostics.
+    }
+  }
+  return { status: response.status, body: parsed, rawText: response.rawText };
+}
+
+function textContains(haystack: string, needle: string): boolean {
+  return haystack.includes(needle);
 }
 
 function trackChild<T extends ChildProcess>(child: T): T {
