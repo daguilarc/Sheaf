@@ -7,7 +7,7 @@ import { createAdapter } from "./adapters/index.js";
 import { getDefaultLogRoot, listRuns, readNormalizedLog } from "./logs.js";
 import { runSession } from "./runtime.js";
 import { createXagentServiceClient, resolveXagentServiceBaseUrl, XagentServiceToolError, XagentServiceUnavailableError, } from "./service/client.js";
-import { x_DefaultAwaitDeadlineSeconds, } from "./service/tool_schemas.js";
+import { x_DefaultAwaitDeadlineSeconds, x_MaxAwaitDeadlineSeconds, } from "./service/tool_schemas.js";
 const nonTerminalSupervisionPhases = new Set([
     "starting",
     "running",
@@ -97,6 +97,7 @@ async function runQuietServiceCommand(command, stdout, cwd, dependencies) {
     const baseUrl = resolveXagentServiceBaseUrl(dependencies.serviceBaseUrl);
     const createClient = dependencies.createServiceClient ?? createXagentServiceClient;
     const client = createClient({ baseUrl });
+    let startedRunId;
     try {
         if (command.command === "supervise") {
             const workingDirectory = path.resolve(command.cwd ?? cwd);
@@ -116,6 +117,7 @@ async function runQuietServiceCommand(command, stdout, cwd, dependencies) {
                     : { policy: command.policy }),
             };
             const started = await client.start(startInput);
+            startedRunId = started.run_id;
             const deadlineSeconds = command.deadlineSeconds ?? x_DefaultAwaitDeadlineSeconds;
             const awaited = await awaitControllerEvent(client, started.run_id, 0, deadlineSeconds);
             writeCompactJson(stdout, awaited);
@@ -148,7 +150,7 @@ async function runQuietServiceCommand(command, stdout, cwd, dependencies) {
     catch (error) {
         if (error instanceof XagentServiceUnavailableError
             || error instanceof XagentServiceToolError) {
-            writeCompactJson(stdout, error.structured);
+            writeCompactJson(stdout, withOptionalRunId(error.structured, startedRunId));
             return { exitCode: 1 };
         }
         throw error;
@@ -156,6 +158,22 @@ async function runQuietServiceCommand(command, stdout, cwd, dependencies) {
     finally {
         await client.close().catch(() => { });
     }
+}
+function withOptionalRunId(structured, runId) {
+    if (runId === undefined) {
+        return structured;
+    }
+    const details = structured.details !== undefined
+        && structured.details !== null
+        && typeof structured.details === "object"
+        && !Array.isArray(structured.details)
+        ? { ...structured.details, run_id: runId }
+        : { run_id: runId };
+    return {
+        error: structured.error,
+        message: structured.message,
+        details,
+    };
 }
 function writeCompactJson(stdout, body) {
     stdout.write(`${JSON.stringify(body)}\n`);
@@ -434,7 +452,7 @@ function parseSuperviseArgs(argv) {
             if (deadlineSeconds !== undefined) {
                 throw new Error("xagent supervise accepts --deadline-seconds at most once.");
             }
-            deadlineSeconds = parsePositiveIntFlag(readFlagValue(argv, index, flag), flag);
+            deadlineSeconds = parseDeadlineSecondsFlag(readFlagValue(argv, index, flag), flag);
             index += 1;
             continue;
         }
@@ -483,7 +501,7 @@ function parseAwaitArgs(argv) {
             if (deadlineSeconds !== undefined) {
                 throw new Error("xagent await accepts --deadline-seconds at most once.");
             }
-            deadlineSeconds = parsePositiveIntFlag(readFlagValue(argv, index, flag), flag);
+            deadlineSeconds = parseDeadlineSecondsFlag(readFlagValue(argv, index, flag), flag);
             index += 1;
             continue;
         }
@@ -553,6 +571,13 @@ function parsePositiveIntFlag(value, flag) {
     const parsed = Number(value);
     if (!Number.isInteger(parsed) || parsed <= 0) {
         throw new Error(`Expected a positive integer after ${flag}.`);
+    }
+    return parsed;
+}
+function parseDeadlineSecondsFlag(value, flag) {
+    const parsed = parsePositiveIntFlag(value, flag);
+    if (parsed > x_MaxAwaitDeadlineSeconds) {
+        throw new Error(`${flag} cannot exceed ${x_MaxAwaitDeadlineSeconds}.`);
     }
     return parsed;
 }
