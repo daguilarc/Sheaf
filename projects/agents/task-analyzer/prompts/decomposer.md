@@ -69,9 +69,10 @@ step:
    <candidate-file> --db <main-branch db path> --seed <seed> --mc-draws
    <mc-draws> [--estimator-id <id>] --json`. This is deterministic (given a
    fixed seed and draw count) and read-only. Use its per-task `selected` arm
-   (the lowest Thompson total among all scorable arms by default) as that
-   task's actual `(model, effort)`, unless a guardrail below overrides it,
-   and its `decomposition_totals` for the candidate-level comparison.
+   (Thompson sampling: lowest `thompson_total_usd` among all scorable arms by
+   default) as that task's actual `(model, effort)`, unless a guardrail below
+   overrides it, and its `decomposition_totals` for the candidate-level
+   comparison.
 4. **Apply guardrails** before comparing totals:
    - **No task above composite 3.5.** If a candidate has one, split that
      task into two (or more) and re-score/re-estimate the split — generate

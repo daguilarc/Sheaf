@@ -9,11 +9,12 @@ The system SHALL provide a decomposition subagent prompt
 OpenSpec change's proposal/design/specs and a database path, instructs the
 agent to: generate 3–5 candidate decompositions varying granularity and
 grouping axis; score each task's C1–C7 against the pinned complexity rubric;
-run `estimate.py` on every candidate; and select the candidate minimizing
-total Thompson cost subject to guardrails (no task above composite 3.5 —
-split instead; prefer briefs at prescriptiveness C7 ≤ 2; dependency order
-respected). These guardrails are the decomposer's own candidate-shape checks,
-independent of `estimate.py`'s selection statistic.
+run `estimate.py` on every candidate (default Thompson sampling); and select
+the candidate with the lowest `thompson_total_usd` subject to guardrails (no
+task above composite 3.5 — split instead; prefer briefs at prescriptiveness
+C7 ≤ 2; dependency order respected). These guardrails are the decomposer's
+own candidate-shape checks, independent of `estimate.py`'s selection
+statistic.
 
 #### Scenario: Candidate search produces a comparison
 - **WHEN** the decomposition subagent runs on an OpenSpec change

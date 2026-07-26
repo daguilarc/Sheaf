@@ -87,9 +87,10 @@ These rules apply to every subagent dispatched anywhere in this workflow:
      change's artifacts and the main-branch estimator database path
      (`data/agents/task-analyzer.sqlite` on `main` — never a worktree copy).
    - It proposes and complexity-scores candidate decompositions, runs
-     `estimate.py` on each, and selects the candidate minimizing Thompson total
-     cost, emitting the `.assignments.yaml` sibling (per-task model, effort,
-     complexity, predicted cost) plus its candidate comparison.
+     `estimate.py` on each (default Thompson sampling), and selects the
+     candidate with the lowest `thompson_total_usd`, emitting the
+     `.assignments.yaml` sibling (per-task model, effort, complexity,
+     predicted cost) plus its candidate comparison.
    - The Superpowers plan's task boundaries follow the selected candidate;
      per-task implementer models and efforts come from `.assignments.yaml`.
    - Validate the annotation file with
