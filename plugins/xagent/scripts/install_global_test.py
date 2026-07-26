@@ -5,13 +5,15 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
-import socket
 import stat
 import subprocess
 import tempfile
 import time
 import unittest
+import urllib.error
+import urllib.request
 from pathlib import Path
 from unittest import mock
 
@@ -75,19 +77,90 @@ def tree_snapshot(root: Path) -> dict[str, tuple[int, str]]:
     return snapshot
 
 
-def is_loopback_port_open(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as handle:
-        handle.settimeout(0.2)
-        return handle.connect_ex(("127.0.0.1", port)) == 0
+def create_isolated_sheaf_root(parent: Path) -> Path:
+    sheaf_root = parent / "sheaf-root"
+    (sheaf_root / "config").mkdir(parents=True)
+    (sheaf_root / "structure").mkdir(parents=True)
+    (sheaf_root / "structure" / ".gitkeep").write_text("", encoding="utf-8")
+    (sheaf_root / "config" / "services.json").write_text(
+        json.dumps(
+            [
+                {
+                    "name": "xagent",
+                    "host": "127.0.0.1",
+                    "port": 0,
+                    "command": "make xagent-service-run",
+                }
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return sheaf_root
 
 
-def wait_for_loopback_port(port: int, *, timeout_sec: float = 10.0) -> None:
+def spawn_isolated_xagent_service(sheaf_root: Path) -> subprocess.Popen[str]:
+    service_main = REPO_ROOT / "projects" / "xagent" / "dist" / "src" / "service_main.js"
+    if not service_main.is_file():
+        raise unittest.SkipTest(
+            f"{service_main} is missing; build projects/xagent before running MCP probe"
+        )
+    return subprocess.Popen(
+        ["node", str(service_main)],
+        cwd=sheaf_root,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def wait_for_service_port(
+    process: subprocess.Popen[str],
+    *,
+    timeout_sec: float = 10.0,
+) -> int:
+    pattern = re.compile(r"xagent service listening on 127\.0\.0\.1:(\d+)")
     deadline = time.monotonic() + timeout_sec
+    captured: list[str] = []
     while time.monotonic() < deadline:
-        if is_loopback_port_open(port):
-            return
-        time.sleep(0.05)
-    raise RuntimeError(f"timed out waiting for 127.0.0.1:{port}")
+        if process.poll() is not None:
+            stderr = process.stderr.read() if process.stderr is not None else ""
+            raise RuntimeError(f"xagent service exited before announcing a port: {stderr}")
+        if process.stderr is None:
+            raise RuntimeError("xagent service stderr pipe is unavailable")
+        line = process.stderr.readline()
+        if line:
+            captured.append(line)
+            match = pattern.search(line)
+            if match:
+                return int(match.group(1))
+        time.sleep(0.02)
+    stderr = "".join(captured)
+    if process.stderr is not None:
+        stderr += process.stderr.read()
+    raise RuntimeError(f"timed out waiting for xagent service port; stderr={stderr}")
+
+
+def shutdown_xagent_service(process: subprocess.Popen[str], port: int) -> None:
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{port}/exit",
+        method="POST",
+        data=b"",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5):
+            pass
+    except urllib.error.URLError:
+        process.terminate()
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
 
 
 def discover_mcp_tools(url: str) -> list[str]:
@@ -312,28 +385,26 @@ class PackageXagentOutputTests(unittest.TestCase):
             self.assertFalse((service_root / "run_manager.js").exists())
             self.assertFalse((service_root / "server.js").exists())
 
-            if is_loopback_port_open(9005):
-                tool_names = discover_mcp_tools(XAGENT_MCP_URL)
+            sheaf_root = create_isolated_sheaf_root(Path(tempdir))
+            service_process = spawn_isolated_xagent_service(sheaf_root)
+            port: int | None = None
+            try:
+                port = wait_for_service_port(service_process)
+                tool_names = discover_mcp_tools(f"http://127.0.0.1:{port}/mcp")
                 self.assertEqual(list(EXPECTED_MCP_TOOL_NAMES), tool_names)
-            else:
-                service_process = subprocess.Popen(
-                    ["node", "dist/src/service_main.js"],
-                    cwd=REPO_ROOT / "projects" / "xagent",
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-                try:
-                    wait_for_loopback_port(9005)
-                    tool_names = discover_mcp_tools(XAGENT_MCP_URL)
-                    self.assertEqual(list(EXPECTED_MCP_TOOL_NAMES), tool_names)
-                finally:
-                    service_process.terminate()
-                    try:
-                        service_process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        service_process.kill()
-                        service_process.wait(timeout=5)
+            finally:
+                if service_process.poll() is None:
+                    if port is not None:
+                        shutdown_xagent_service(service_process, port)
+                    else:
+                        service_process.terminate()
+                        try:
+                            service_process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            service_process.kill()
+                            service_process.wait(timeout=5)
+                if service_process.stderr is not None:
+                    service_process.stderr.close()
 
 
 class GlobalPluginInstallTests(unittest.TestCase):
