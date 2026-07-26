@@ -36,7 +36,7 @@
 - [x] 5.4 Add deterministic `missing_final_report` tests for a successful provider turn without a final assistant message.
 - [x] 5.5 Add blocking-await tests proving routine progress does not complete the request, completion/attention does, `after_sequence` prevents duplicate delivery, and a replacement controller can inspect and await the same `run_id`.
 - [x] 5.6 Configure 7200-second server and plugin MCP request timeouts with a 7000-second default/maximum await; test cancellation cleanup and a synthetic 90-minute healthy run that produces no intermediate boss wake.
-- [ ] 5.7 Add plugin `.mcp.json` HTTP discovery for `http://127.0.0.1:9005/mcp`, reference it from the plugin manifest, remove any plugin-local supervisor packaging, and test discovery from a temporary non-Sheaf repository.
+- [x] 5.7 Add plugin `.mcp.json` HTTP discovery for `http://127.0.0.1:9005/mcp`, reference it from the plugin manifest, remove any plugin-local supervisor packaging, and test discovery from a temporary non-Sheaf repository.
 
 ## 6. Quiet Service-Client CLI
 
