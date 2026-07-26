@@ -7,6 +7,7 @@
 
 #include <iostream>
 #include <limits>
+#include <cstring>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -110,6 +111,20 @@ MidiEndpointRef MakeEndpointRef(const char* identifier, const char* name) {
     ref.identifier = identifier;
     ref.name = name;
     return ref;
+}
+
+bool JsonObjectHasKey(synth::JSON json, const char* key) {
+    if (json.m_node == nullptr || json.m_node->m_type != synth::JsonType::Object) {
+        return false;
+    }
+    const synth::JsonContainer& container = json.m_node->m_container;
+    const auto* members = static_cast<const synth::JsonMember*>(container.m_entries);
+    for (std::uint32_t ix = 0; ix < container.m_size; ++ix) {
+        if (members[ix].m_key != nullptr && std::strcmp(members[ix].m_key, key) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 MidiControllerSlot MakeBlacklistedSlot(const char* name) {
@@ -1325,7 +1340,7 @@ TEST_CASE(InstrumentJsonKeepsEnvelopeSchemaAndDelegatesPressureProfileVersion) {
 
     synth::JsonArena arena(1024 * 1024);
     const synth::JSON json = synth::ToJSON(arena, source);
-    REQUIRE_TRUE(json.Get("schemaVersion").IntegerValue() == synth::kMidiInstrumentSchemaVersion);
+    REQUIRE_TRUE(json.Get("schemaVersion").IntegerValue() == 2);
     const synth::JSON nestedProfile = json.Get("controllers").GetAt(0).Get("profile");
     REQUIRE_TRUE(nestedProfile.Get("schemaVersion").IntegerValue() == synth::kMidiControllerProfileSchemaVersion);
 
@@ -1334,6 +1349,100 @@ TEST_CASE(InstrumentJsonKeepsEnvelopeSchemaAndDelegatesPressureProfileVersion) {
     REQUIRE_TRUE(loaded.controllers.size() == 1);
     REQUIRE_TRUE(loaded.controllers[0].config.pressureInput.has_value());
     REQUIRE_TRUE(loaded.controllers[0].config.pressureInput->mappings == slot.config.pressureInput->mappings);
+}
+
+TEST_CASE(InstrumentJsonWritesActiveDispositionAndOmitsManualWizardId) {
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot manual = MakeTwisterSlot("manual twist");
+    REQUIRE_TRUE(instrument.AddController(manual));
+
+    synth::JsonArena arena(1024 * 1024);
+    const synth::JSON json = synth::ToJSON(arena, instrument);
+    const synth::JSON controller = json.Get("controllers").GetAt(0);
+
+    REQUIRE_TRUE(!controller.Get("disposition").IsNull());
+    REQUIRE_TRUE(controller.Get("disposition").StringValue() == std::string_view("active"));
+    REQUIRE_TRUE(!JsonObjectHasKey(controller, "wizardId"));
+    REQUIRE_TRUE(JsonObjectHasKey(controller, "profile"));
+
+    MidiInstrumentConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(loaded.controllers.size() == 1);
+    REQUIRE_TRUE(synth::IsActive(loaded.controllers[0]));
+    REQUIRE_TRUE(!loaded.controllers[0].wizardId.has_value());
+    REQUIRE_TRUE(loaded.controllers[0].config.encoderInput.has_value());
+}
+
+TEST_CASE(InstrumentJsonRoundTripsWizardActiveWithOpaqueUnknownId) {
+    MidiControllerSlot slot = MakeTwisterSlot("future wizard");
+    slot.wizardId = "future.vendor/controller-wizard:alpha_01";
+    MidiInstrumentConfig instrument;
+    REQUIRE_TRUE(instrument.AddController(slot));
+
+    synth::JsonArena arena(1024 * 1024);
+    const synth::JSON json = synth::ToJSON(arena, instrument);
+    const synth::JSON controller = json.Get("controllers").GetAt(0);
+    REQUIRE_TRUE(!controller.Get("disposition").IsNull());
+    REQUIRE_TRUE(controller.Get("disposition").StringValue() == std::string_view("active"));
+    REQUIRE_TRUE(!controller.Get("wizardId").IsNull());
+    REQUIRE_TRUE(controller.Get("wizardId").StringValue() == std::string_view(*slot.wizardId));
+
+    MidiInstrumentConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(loaded.controllers.size() == 1);
+    REQUIRE_TRUE(synth::IsActive(loaded.controllers[0]));
+    REQUIRE_TRUE(loaded.controllers[0].wizardId == slot.wizardId);
+    REQUIRE_TRUE(loaded.controllers[0].input.identifier == slot.input.identifier);
+    REQUIRE_TRUE(loaded.controllers[0].output.identifier == slot.output.identifier);
+}
+
+TEST_CASE(InstrumentJsonRoundTripsBlacklistedIgnoredWithoutProfile) {
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot ignored = MakeBlacklistedSlot("ignored twister");
+    REQUIRE_TRUE(instrument.AddController(ignored));
+
+    synth::JsonArena arena(1024 * 1024);
+    const synth::JSON json = synth::ToJSON(arena, instrument);
+    const synth::JSON controller = json.Get("controllers").GetAt(0);
+    REQUIRE_TRUE(!controller.Get("disposition").IsNull());
+    REQUIRE_TRUE(controller.Get("disposition").StringValue() == std::string_view("blacklisted"));
+    REQUIRE_TRUE(!controller.Get("wizardId").IsNull());
+    REQUIRE_TRUE(controller.Get("wizardId").StringValue() == std::string_view(*ignored.wizardId));
+    REQUIRE_TRUE(!JsonObjectHasKey(controller, "profile"));
+
+    MidiInstrumentConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(loaded.controllers.size() == 1);
+    REQUIRE_TRUE(!synth::IsActive(loaded.controllers[0]));
+    REQUIRE_TRUE(loaded.controllers[0].wizardId == ignored.wizardId);
+    REQUIRE_TRUE(loaded.controllers[0].input.identifier == ignored.input.identifier);
+    REQUIRE_TRUE(loaded.controllers[0].output.identifier == ignored.output.identifier);
+    REQUIRE_TRUE(!loaded.controllers[0].dormantConfig.has_value());
+    REQUIRE_TRUE(!loaded.controllers[0].config.encoderInput.has_value());
+}
+
+TEST_CASE(InstrumentJsonRoundTripsBlacklistedDormantProfile) {
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot blacklisted = MakeBlacklistedSlot("dormant twister");
+    blacklisted.dormantConfig = synth::MfTwisterDefaultProfileConfig();
+    REQUIRE_TRUE(instrument.AddController(blacklisted));
+
+    synth::JsonArena arena(1024 * 1024);
+    const synth::JSON json = synth::ToJSON(arena, instrument);
+    const synth::JSON controller = json.Get("controllers").GetAt(0);
+    REQUIRE_TRUE(!controller.Get("disposition").IsNull());
+    REQUIRE_TRUE(controller.Get("disposition").StringValue() == std::string_view("blacklisted"));
+    REQUIRE_TRUE(JsonObjectHasKey(controller, "profile"));
+    REQUIRE_TRUE(controller.Get("profile").Get("encoderInput").Get("turns").Size() == 16);
+
+    MidiInstrumentConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(loaded.controllers.size() == 1);
+    REQUIRE_TRUE(!synth::IsActive(loaded.controllers[0]));
+    REQUIRE_TRUE(loaded.controllers[0].dormantConfig.has_value());
+    REQUIRE_TRUE(loaded.controllers[0].dormantConfig->encoderInput.has_value());
+    REQUIRE_TRUE(loaded.controllers[0].dormantConfig->encoderInput->turns.size() == 16);
+    REQUIRE_TRUE(!loaded.controllers[0].config.encoderInput.has_value());
 }
 
 TEST_CASE(InstrumentJsonRoundTripsControllersInOrder) {
@@ -1346,6 +1455,7 @@ TEST_CASE(InstrumentJsonRoundTripsControllersInOrder) {
     synth::JsonArena arena(1024 * 1024);
     const synth::JSON json = synth::ToJSON(arena, instrument);
     REQUIRE_TRUE(!json.IsNull());
+    REQUIRE_TRUE(json.Get("schemaVersion").IntegerValue() == 2);
 
     MidiInstrumentConfig loaded;
     REQUIRE_TRUE(synth::FromJSON(json, loaded));
@@ -1357,6 +1467,8 @@ TEST_CASE(InstrumentJsonRoundTripsControllersInOrder) {
     REQUIRE_TRUE(loaded.controllers[0].input.name == "WRLD.Bldr In");
     REQUIRE_TRUE(loaded.controllers[0].output.identifier == "wrldbldr-out-id");
     REQUIRE_TRUE(loaded.controllers[0].output.name == "WRLD.Bldr Out");
+    REQUIRE_TRUE(synth::IsActive(loaded.controllers[0]));
+    REQUIRE_TRUE(!loaded.controllers[0].wizardId.has_value());
     REQUIRE_TRUE(loaded.controllers[0].config.encoderInput.has_value());
     REQUIRE_TRUE(loaded.controllers[0].config.encoderInput->turns.size() ==
                  instrument.controllers[0].config.encoderInput->turns.size());
@@ -1365,15 +1477,19 @@ TEST_CASE(InstrumentJsonRoundTripsControllersInOrder) {
     REQUIRE_TRUE(loaded.controllers[1].kind == MidiProfileKind::MfTwister);
     REQUIRE_TRUE(loaded.controllers[1].input.identifier == "twister-in-id");
     REQUIRE_TRUE(loaded.controllers[1].output.name == "MF Twister Out");
+    REQUIRE_TRUE(synth::IsActive(loaded.controllers[1]));
+    REQUIRE_TRUE(!loaded.controllers[1].wizardId.has_value());
 
     REQUIRE_TRUE(loaded.controllers[2].name == "left pad");
     REQUIRE_TRUE(loaded.controllers[2].kind == MidiProfileKind::Launchpad);
+    REQUIRE_TRUE(synth::IsActive(loaded.controllers[2]));
     // Unconfigured endpoint refs (empty identifier + name) round-trip as unconfigured.
     REQUIRE_TRUE(!loaded.controllers[2].input.IsConfigured());
     REQUIRE_TRUE(!loaded.controllers[2].output.IsConfigured());
 
     REQUIRE_TRUE(loaded.controllers[3].name == "right pad");
     REQUIRE_TRUE(loaded.controllers[3].kind == MidiProfileKind::Launchpad);
+    REQUIRE_TRUE(synth::IsActive(loaded.controllers[3]));
 }
 
 TEST_CASE(InstrumentJsonEmptyControllersRoundTrips) {
@@ -1467,6 +1583,18 @@ synth::JSON MakeInstrumentControllerJson(synth::JsonArena& arena, const char* na
     return controller;
 }
 
+synth::JSON MakeInstrumentControllerJsonV2(synth::JsonArena& arena, const char* name, const char* kind,
+                                           const char* disposition, MidiEndpointRef input,
+                                           MidiEndpointRef output) {
+    synth::JSON controller = arena.Object();
+    controller.SetNew("name", arena.String(name));
+    controller.SetNew("kind", arena.String(kind));
+    controller.SetNew("disposition", arena.String(disposition));
+    controller.SetNew("input", synth::ToJSON(arena, input));
+    controller.SetNew("output", synth::ToJSON(arena, output));
+    return controller;
+}
+
 synth::JSON MakeInstrumentJson(synth::JsonArena& arena, synth::JSON controllers) {
     synth::JSON json = arena.Object();
     json.SetNew("schema", arena.String(synth::kMidiInstrumentSchema));
@@ -1475,12 +1603,163 @@ synth::JSON MakeInstrumentJson(synth::JsonArena& arena, synth::JSON controllers)
     return json;
 }
 
+void RequireInstrumentLoadRejectedAtomically(synth::JSON json) {
+    MidiInstrumentConfig target;
+    REQUIRE_TRUE(target.AddController(MakeGenericSlot("existing")));
+    REQUIRE_TRUE(!synth::FromJSON(json, target));
+    REQUIRE_TRUE(target.controllers.size() == 1);
+    REQUIRE_TRUE(target.controllers[0].name == "existing");
+    REQUIRE_TRUE(target.controllers[0].kind == MidiProfileKind::Generic);
+    REQUIRE_TRUE(synth::IsActive(target.controllers[0]));
+}
+
+TEST_CASE(InstrumentJsonLoadsPreviousSchemaControllersAsActiveWithoutWizardId) {
+    synth::JsonArena arena(1024 * 1024);
+    synth::JSON controllers = arena.Array();
+    controllers.AppendNew(MakeInstrumentControllerJson(
+        arena, "legacy wrld", "wrldbldr", synth::ToJSON(arena, synth::WrldBldrDefaultProfileConfig())));
+    controllers.AppendNew(MakeInstrumentControllerJson(
+        arena, "legacy twist", "twister", synth::ToJSON(arena, synth::MfTwisterDefaultProfileConfig())));
+
+    synth::JSON json = arena.Object();
+    json.SetNew("schema", arena.String(synth::kMidiInstrumentSchema));
+    json.SetNew("schemaVersion", arena.Integer(1));
+    json.SetNew("controllers", controllers);
+
+    MidiInstrumentConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(loaded.controllers.size() == 2);
+    REQUIRE_TRUE(loaded.controllers[0].name == "legacy wrld");
+    REQUIRE_TRUE(loaded.controllers[0].kind == MidiProfileKind::WrldBldr);
+    REQUIRE_TRUE(synth::IsActive(loaded.controllers[0]));
+    REQUIRE_TRUE(!loaded.controllers[0].wizardId.has_value());
+    REQUIRE_TRUE(loaded.controllers[0].config.encoderInput.has_value());
+    REQUIRE_TRUE(loaded.controllers[1].name == "legacy twist");
+    REQUIRE_TRUE(loaded.controllers[1].kind == MidiProfileKind::MfTwister);
+    REQUIRE_TRUE(synth::IsActive(loaded.controllers[1]));
+    REQUIRE_TRUE(!loaded.controllers[1].wizardId.has_value());
+    REQUIRE_TRUE(loaded.controllers[1].config.encoderInput.has_value());
+}
+
+TEST_CASE(InstrumentJsonRejectsUnknownDispositionAtomically) {
+    synth::JsonArena arena(1024 * 1024);
+    synth::JSON controller = MakeInstrumentControllerJsonV2(
+        arena, "paused", "twister", "paused",
+        MakeEndpointRef("in-id", "Twister In"), MakeEndpointRef("out-id", "Twister Out"));
+    controller.SetNew("profile", synth::ToJSON(arena, synth::MfTwisterDefaultProfileConfig()));
+
+    synth::JSON controllers = arena.Array();
+    controllers.AppendNew(controller);
+    RequireInstrumentLoadRejectedAtomically(MakeInstrumentJson(arena, controllers));
+}
+
+TEST_CASE(InstrumentJsonRejectsMalformedWizardIdsAtomically) {
+    {
+        synth::JsonArena arena(1024 * 1024);
+        synth::JSON controller = MakeInstrumentControllerJsonV2(
+            arena, "empty active wizard", "twister", "active",
+            MakeEndpointRef("in-id", "Twister In"), MakeEndpointRef("out-id", "Twister Out"));
+        controller.SetNew("wizardId", arena.String(""));
+        controller.SetNew("profile", synth::ToJSON(arena, synth::MfTwisterDefaultProfileConfig()));
+
+        synth::JSON controllers = arena.Array();
+        controllers.AppendNew(controller);
+        RequireInstrumentLoadRejectedAtomically(MakeInstrumentJson(arena, controllers));
+    }
+    {
+        synth::JsonArena arena(1024 * 1024);
+        synth::JSON controller = MakeInstrumentControllerJsonV2(
+            arena, "non-string active wizard", "twister", "active",
+            MakeEndpointRef("in-id", "Twister In"), MakeEndpointRef("out-id", "Twister Out"));
+        controller.SetNew("wizardId", arena.Integer(7));
+        controller.SetNew("profile", synth::ToJSON(arena, synth::MfTwisterDefaultProfileConfig()));
+
+        synth::JSON controllers = arena.Array();
+        controllers.AppendNew(controller);
+        RequireInstrumentLoadRejectedAtomically(MakeInstrumentJson(arena, controllers));
+    }
+}
+
+TEST_CASE(InstrumentJsonRejectsActiveWithoutProfileAtomically) {
+    synth::JsonArena arena(1024 * 1024);
+    synth::JSON controller = MakeInstrumentControllerJsonV2(
+        arena, "missing active profile", "twister", "active",
+        MakeEndpointRef("in-id", "Twister In"), MakeEndpointRef("out-id", "Twister Out"));
+
+    synth::JSON controllers = arena.Array();
+    controllers.AppendNew(controller);
+    RequireInstrumentLoadRejectedAtomically(MakeInstrumentJson(arena, controllers));
+}
+
+TEST_CASE(InstrumentJsonRejectsIncompleteBlacklistedRecordsAtomically) {
+    {
+        synth::JsonArena arena(1024 * 1024);
+        synth::JSON controller = MakeInstrumentControllerJsonV2(
+            arena, "missing blacklisted wizard", "twister", "blacklisted",
+            MakeEndpointRef("in-id", "Twister In"), MakeEndpointRef("out-id", "Twister Out"));
+
+        synth::JSON controllers = arena.Array();
+        controllers.AppendNew(controller);
+        RequireInstrumentLoadRejectedAtomically(MakeInstrumentJson(arena, controllers));
+    }
+    {
+        synth::JsonArena arena(1024 * 1024);
+        synth::JSON controller = MakeInstrumentControllerJsonV2(
+            arena, "empty blacklisted wizard", "twister", "blacklisted",
+            MakeEndpointRef("in-id", "Twister In"), MakeEndpointRef("out-id", "Twister Out"));
+        controller.SetNew("wizardId", arena.String(""));
+
+        synth::JSON controllers = arena.Array();
+        controllers.AppendNew(controller);
+        RequireInstrumentLoadRejectedAtomically(MakeInstrumentJson(arena, controllers));
+    }
+    {
+        synth::JsonArena arena(1024 * 1024);
+        synth::JSON controller = MakeInstrumentControllerJsonV2(
+            arena, "missing blacklisted input", "twister", "blacklisted",
+            MidiEndpointRef{}, MakeEndpointRef("out-id", "Twister Out"));
+        controller.SetNew("wizardId", arena.String("com.sheaf.midi-fighter-twister"));
+
+        synth::JSON controllers = arena.Array();
+        controllers.AppendNew(controller);
+        RequireInstrumentLoadRejectedAtomically(MakeInstrumentJson(arena, controllers));
+    }
+    {
+        synth::JsonArena arena(1024 * 1024);
+        synth::JSON controller = MakeInstrumentControllerJsonV2(
+            arena, "missing blacklisted output", "twister", "blacklisted",
+            MakeEndpointRef("in-id", "Twister In"), MidiEndpointRef{});
+        controller.SetNew("wizardId", arena.String("com.sheaf.midi-fighter-twister"));
+
+        synth::JSON controllers = arena.Array();
+        controllers.AppendNew(controller);
+        RequireInstrumentLoadRejectedAtomically(MakeInstrumentJson(arena, controllers));
+    }
+}
+
+TEST_CASE(InstrumentJsonRejectsKindInvalidDormantProfileAtomically) {
+    synth::JsonArena arena(1024 * 1024);
+    synth::JSON invalidDormantProfile =
+        MakeProfileJson(arena, synth::ToJSON(arena, synth::EncoderMidiInConfig{}), arena.Array());
+    synth::JSON controller = MakeInstrumentControllerJsonV2(
+        arena, "bad dormant pad", "launchpad", "blacklisted",
+        MakeEndpointRef("pad-in-id", "Launchpad In"), MakeEndpointRef("pad-out-id", "Launchpad Out"));
+    controller.SetNew("wizardId", arena.String("future.launchpad.wizard"));
+    controller.SetNew("profile", invalidDormantProfile);
+
+    synth::JSON controllers = arena.Array();
+    controllers.AppendNew(controller);
+    RequireInstrumentLoadRejectedAtomically(MakeInstrumentJson(arena, controllers));
+}
+
 TEST_CASE(InstrumentJsonRejectsLaunchpadWithEncoderMappings) {
     synth::JsonArena arena(1024 * 1024);
     // Launchpad profile with an illegal encoderInput — launchpad supports no encoders.
     synth::JSON profile =
         MakeProfileJson(arena, synth::ToJSON(arena, synth::EncoderMidiInConfig{}), arena.Array());
-    synth::JSON controller = MakeInstrumentControllerJson(arena, "pad", "launchpad", profile);
+    synth::JSON controller = MakeInstrumentControllerJsonV2(
+        arena, "pad", "launchpad", "active", MidiEndpointRef{}, MidiEndpointRef{});
+    controller.SetNew("profile", profile);
 
     synth::JSON controllers = arena.Array();
     controllers.AppendNew(controller);
@@ -1514,7 +1793,9 @@ TEST_CASE(InstrumentJsonRejectsLaunchpadWithWrldBldrPosition) {
     synth::JSON systemMessages = arena.Array();
     systemMessages.AppendNew(association);
     synth::JSON profile = MakeProfileJsonWithSystemMessages(arena, systemMessages);
-    synth::JSON controller = MakeInstrumentControllerJson(arena, "pad", "launchpad", profile);
+    synth::JSON controller = MakeInstrumentControllerJsonV2(
+        arena, "pad", "launchpad", "active", MidiEndpointRef{}, MidiEndpointRef{});
+    controller.SetNew("profile", profile);
 
     synth::JSON controllers = arena.Array();
     controllers.AppendNew(controller);

@@ -2623,17 +2623,47 @@ bool FromJSON(JSON json, MidiEndpointRef& value) {
     return true;
 }
 
+const char* MidiControllerDispositionName(MidiControllerDisposition value) {
+    switch (value) {
+    case MidiControllerDisposition::Active:
+        return "active";
+    case MidiControllerDisposition::Blacklisted:
+        return "blacklisted";
+    }
+    return "active";
+}
+
+bool MidiControllerDispositionFromName(std::string_view value, MidiControllerDisposition& out) {
+    if (value == "active") {
+        out = MidiControllerDisposition::Active;
+        return true;
+    }
+    if (value == "blacklisted") {
+        out = MidiControllerDisposition::Blacklisted;
+        return true;
+    }
+    return false;
+}
+
 JSON ToJSON(JsonArena& arena, const MidiControllerSlot& value) {
     JSON json = arena.Object();
     json.SetNew("name", arena.String(value.name.c_str()));
     json.SetNew("kind", arena.String(MidiProfileKindName(value.kind)));
+    json.SetNew("disposition", arena.String(MidiControllerDispositionName(value.disposition)));
+    if (value.wizardId.has_value()) {
+        json.SetNew("wizardId", arena.String(value.wizardId->c_str()));
+    }
     json.SetNew("input", ToJSON(arena, value.input));
     json.SetNew("output", ToJSON(arena, value.output));
-    json.SetNew("profile", ToJSON(arena, value.config));
+    if (IsActive(value)) {
+        json.SetNew("profile", ToJSON(arena, value.config));
+    } else if (value.dormantConfig.has_value()) {
+        json.SetNew("profile", ToJSON(arena, *value.dormantConfig));
+    }
     return json;
 }
 
-bool FromJSON(JSON json, MidiControllerSlot& value) {
+bool MidiControllerSlotFromJSON(JSON json, MidiControllerSlot& value, int instrumentSchemaVersion) {
     if (!IsObject(json)) {
         return false;
     }
@@ -2650,14 +2680,47 @@ bool FromJSON(JSON json, MidiControllerSlot& value) {
     if (!MidiProfileKindFromName(kind.StringValue(), parsed.kind)) {
         return false;
     }
+    if (instrumentSchemaVersion == 1) {
+        parsed.disposition = MidiControllerDisposition::Active;
+    } else if (instrumentSchemaVersion == kMidiInstrumentSchemaVersion) {
+        const JSON disposition = json.Get("disposition");
+        if (!IsString(disposition) ||
+            !MidiControllerDispositionFromName(disposition.StringValue(), parsed.disposition)) {
+            return false;
+        }
+    } else {
+        return false;
+    }
+    if (ObjectHasKey(json, "wizardId")) {
+        const JSON wizardId = json.Get("wizardId");
+        if (!IsString(wizardId) || std::string_view(wizardId.StringValue()).empty()) {
+            return false;
+        }
+        parsed.wizardId = wizardId.StringValue();
+    }
     if (!FromJSON(json.Get("input"), parsed.input) || !FromJSON(json.Get("output"), parsed.output)) {
         return false;
     }
-    if (!FromJSON(json.Get("profile"), parsed.config)) {
+    if (IsActive(parsed)) {
+        if (!FromJSON(json.Get("profile"), parsed.config)) {
+            return false;
+        }
+    } else if (ObjectHasKey(json, "profile")) {
+        MidiControllerProfileConfig dormantConfig;
+        if (!FromJSON(json.Get("profile"), dormantConfig)) {
+            return false;
+        }
+        parsed.dormantConfig = std::move(dormantConfig);
+    }
+    if (!SlotValidForKind(parsed)) {
         return false;
     }
     value = std::move(parsed);
     return true;
+}
+
+bool FromJSON(JSON json, MidiControllerSlot& value) {
+    return MidiControllerSlotFromJSON(json, value, kMidiInstrumentSchemaVersion);
 }
 
 JSON ToJSON(JsonArena& arena, const MidiInstrumentConfig& instrument) {
@@ -2677,7 +2740,8 @@ bool FromJSON(JSON json, MidiInstrumentConfig& out) {
         return false;
     }
     const JSON version = json.Get("schemaVersion");
-    if (!IsInteger(version) || version.IntegerValue() != kMidiInstrumentSchemaVersion) {
+    if (!IsInteger(version) ||
+        (version.IntegerValue() != 1 && version.IntegerValue() != kMidiInstrumentSchemaVersion)) {
         return false;
     }
     const JSON controllers = json.Get("controllers");
@@ -2688,7 +2752,7 @@ bool FromJSON(JSON json, MidiInstrumentConfig& out) {
     MidiInstrumentConfig scratch;
     for (std::size_t ix = 0; ix < controllers.Size(); ++ix) {
         MidiControllerSlot slot;
-        if (!FromJSON(controllers.GetAt(ix), slot)) {
+        if (!MidiControllerSlotFromJSON(controllers.GetAt(ix), slot, static_cast<int>(version.IntegerValue()))) {
             return false;
         }
         if (!scratch.AddController(std::move(slot))) {

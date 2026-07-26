@@ -1038,7 +1038,7 @@ JSON ToJSON(JsonArena& arena, const MidiControllerProfileConfig& value);
 bool FromJSON(JSON json, MidiControllerProfileConfig& value);
 
 inline constexpr const char* kMidiInstrumentSchema = "synth.midiInstrument";
-inline constexpr int kMidiInstrumentSchemaVersion = 1;
+inline constexpr int kMidiInstrumentSchemaVersion = 2;
 JSON ToJSON(JsonArena& arena, const MidiEndpointRef& value);
 bool FromJSON(JSON json, MidiEndpointRef& value);
 JSON ToJSON(JsonArena& arena, const MidiControllerSlot& value);
