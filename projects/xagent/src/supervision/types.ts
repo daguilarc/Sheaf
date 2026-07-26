@@ -1,4 +1,8 @@
 import type { OwnedProcessIdentity } from "../adapters/types.js";
+import type {
+  EvidenceSuspicionSignal,
+  SemanticEvidenceSnapshot,
+} from "./evidence.js";
 
 export type SupervisionPhase =
   | "starting"
@@ -34,9 +38,16 @@ export type AwaitResult = SupervisionEvent | AwaitDeadline;
 
 export type WatchdogPolicy = {
   inputLimitBytes?: number;
+  outputLimitBytes?: number;
   suspicionWindowMs?: number;
   repeatedToolThreshold?: number;
   repeatedFailureThreshold?: number;
+  cadenceMs?: readonly number[];
+  minimumIntervalMs?: number;
+  maximumCalls?: number;
+  confidenceFloor?: number;
+  timeoutMs?: number;
+  maxBudgetUsd?: number;
 };
 
 export type SupervisionPolicy = {
@@ -61,6 +72,46 @@ export type WatchdogAggregate = {
   output_tokens?: number;
   estimated_cost_usd?: number;
   last_verdict?: "healthy" | "derailed" | "uncertain";
+  coverage_exhausted?: boolean;
+};
+
+export type WatchdogRequest = SemanticEvidenceSnapshot & {
+  readonly suspicion_signals: readonly EvidenceSuspicionSignal[];
+};
+
+export type WatchdogUsage = {
+  readonly input_tokens?: number;
+  readonly output_tokens?: number;
+};
+
+export type WatchdogVerdict = {
+  readonly verdict: "healthy" | "derailed" | "uncertain";
+  readonly confidence: number;
+  readonly reason_code: string;
+  readonly evidence: readonly string[];
+  readonly usage?: WatchdogUsage;
+  readonly estimated_cost_usd?: number;
+  readonly output_bytes?: number;
+};
+
+export type WatchdogClassifier = {
+  classify(request: WatchdogRequest, signal: AbortSignal): Promise<WatchdogVerdict>;
+};
+
+export type WatchdogTelemetry = {
+  readonly schema_version: 1;
+  readonly timestamp: string;
+  readonly request_hash: string;
+  readonly input_bytes: number;
+  readonly output_bytes: number;
+  readonly verdict: WatchdogVerdict["verdict"];
+  readonly confidence: number;
+  readonly reason_code: string;
+  readonly call_count: number;
+  readonly truncated: boolean;
+  readonly attention_sequence?: number;
+  readonly usage?: WatchdogUsage;
+  readonly estimated_cost_usd?: number;
 };
 
 export type SupervisionPersistenceState = SupervisorInspection & {
@@ -72,6 +123,7 @@ export type SupervisionPersistenceState = SupervisorInspection & {
 
 export type SupervisionEventSink = (event: SupervisionEvent) => Promise<void>;
 export type SupervisionMetadataSink = (state: SupervisionPersistenceState) => Promise<void>;
+export type WatchdogTelemetrySink = (telemetry: WatchdogTelemetry) => Promise<void>;
 
 export type SupervisionScheduler = {
   setTimeout(callback: () => void, delayMs: number): unknown;

@@ -4,7 +4,11 @@ import { randomBytes } from "node:crypto";
 
 import type { HarnessName, OutputEvent, OutputMode, ThinkingLevel } from "./events.js";
 import type { OwnedProcessIdentity } from "./adapters/types.js";
-import type { SupervisionPhase, WatchdogAggregate } from "./supervision/types.js";
+import type {
+  SupervisionPhase,
+  WatchdogAggregate,
+  WatchdogTelemetry,
+} from "./supervision/types.js";
 
 const GENERATED_RUN_ID_PATTERN = /^xrun_[0-9]{17}_[0-9a-f]{8}$/;
 const TEST_RUN_ID_PATTERN = /^xrun_[A-Za-z0-9_]+$/;
@@ -32,6 +36,7 @@ export type RunMetadata = {
     metadata: string;
     normalized: string;
     raw_provider: string;
+    watchdog: string;
   };
 };
 
@@ -40,6 +45,7 @@ export type RunRecord = RunMetadata & {
   metadataPath: string;
   normalizedLogPath: string;
   rawProviderLogPath: string;
+  watchdogLogPath: string;
 };
 
 export type CreateRunRecordOptions = {
@@ -62,11 +68,13 @@ export async function createRunRecord(options: CreateRunRecordOptions): Promise<
   const metadataPath = path.join(runDir, "metadata.json");
   const normalizedLogPath = path.join(runDir, "normalized.jsonl");
   const rawProviderLogPath = path.join(runDir, "raw-provider.jsonl");
+  const watchdogLogPath = path.join(runDir, "watchdog.jsonl");
   const timestamp = clock().toISOString();
 
   await mkdir(runDir, { recursive: true });
   await writeFile(normalizedLogPath, "", { flag: "a" });
   await writeFile(rawProviderLogPath, "", { flag: "a" });
+  await writeFile(watchdogLogPath, "", { flag: "a" });
 
   const metadata: RunRecord = {
     run_id: runId,
@@ -96,11 +104,13 @@ export async function createRunRecord(options: CreateRunRecordOptions): Promise<
       metadata: path.relative(logRoot, metadataPath),
       normalized: path.relative(logRoot, normalizedLogPath),
       raw_provider: path.relative(logRoot, rawProviderLogPath),
+      watchdog: path.relative(logRoot, watchdogLogPath),
     },
     runDir,
     metadataPath,
     normalizedLogPath,
     rawProviderLogPath,
+    watchdogLogPath,
   };
 
   await writeMetadata(metadata);
@@ -113,6 +123,13 @@ export async function appendNormalizedEvent(record: RunRecord, event: OutputEven
 
 export async function appendRawProviderEvent(record: RunRecord, event: unknown): Promise<void> {
   await appendJsonLine(record.rawProviderLogPath, event);
+}
+
+export async function appendWatchdogTelemetry(
+  record: RunRecord,
+  telemetry: WatchdogTelemetry,
+): Promise<void> {
+  await appendJsonLine(record.watchdogLogPath, telemetry);
 }
 
 export async function updateRunExitStatus(
@@ -219,7 +236,14 @@ async function appendJsonLine(filePath: string, value: unknown): Promise<void> {
 }
 
 async function writeMetadata(record: RunRecord): Promise<void> {
-  const { runDir: _runDir, metadataPath: _metadataPath, normalizedLogPath: _normalized, rawProviderLogPath: _raw, ...metadata } = record;
+  const {
+    runDir: _runDir,
+    metadataPath: _metadataPath,
+    normalizedLogPath: _normalized,
+    rawProviderLogPath: _raw,
+    watchdogLogPath: _watchdog,
+    ...metadata
+  } = record;
   const temporaryPath = path.join(
     path.dirname(record.metadataPath),
     `.${path.basename(record.metadataPath)}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`,

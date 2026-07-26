@@ -70,7 +70,7 @@ export class SemanticEvidenceWindow {
   readonly #repoRoot: string;
   readonly #clock: () => Date;
   readonly #createdAt: number;
-  readonly #previousVerdict?: PriorWatchdogVerdict;
+  #previousVerdict?: PriorWatchdogVerdict;
   readonly #maxInputBytes: number;
   readonly #suspicionWindowMs: number;
   readonly #repeatedToolThreshold: number;
@@ -137,6 +137,10 @@ export class SemanticEvidenceWindow {
       this.#failureFingerprints.push({ recordedAt: now, fingerprint: fingerprint(failure) });
       trimStart(this.#failureFingerprints, MAX_RETAINED_FINGERPRINTS);
     }
+  }
+
+  recordPreviousVerdict(verdict: PriorWatchdogVerdict): void {
+    this.#previousVerdict = verdict;
   }
 
   snapshot(): SemanticEvidenceSnapshot {

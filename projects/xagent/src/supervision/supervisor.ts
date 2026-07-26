@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type {
   AdapterEvent,
   HarnessAdapter,
@@ -5,6 +7,7 @@ import type {
   HarnessStartOptions,
 } from "../adapters/types.js";
 import { sanitizeValue } from "../sanitize.js";
+import { ClaudeWatchdogClassifier } from "./claude_watchdog.js";
 import {
   SemanticEvidenceWindow,
   type SemanticEvidenceSnapshot,
@@ -15,6 +18,7 @@ import {
   DeterministicHealthMonitor,
   type DeterministicHealthClassification,
 } from "./health.js";
+import { WatchdogScheduler } from "./watchdog.js";
 import type {
   AwaitResult,
   SupervisionEvent,
@@ -26,6 +30,11 @@ import type {
   SupervisionScheduler,
   SupervisorInspection,
   WatchdogAggregate,
+  WatchdogClassifier,
+  WatchdogRequest,
+  WatchdogTelemetry,
+  WatchdogTelemetrySink,
+  WatchdogVerdict,
 } from "./types.js";
 
 export type SupervisorOptions = {
@@ -37,6 +46,8 @@ export type SupervisorOptions = {
   readonly scheduler?: SupervisionScheduler;
   readonly eventSink?: SupervisionEventSink;
   readonly metadataSink?: SupervisionMetadataSink;
+  readonly watchdogClassifier?: WatchdogClassifier;
+  readonly watchdogTelemetrySink?: WatchdogTelemetrySink;
 };
 
 const terminalPhases = new Set<SupervisionPhase>([
@@ -55,6 +66,8 @@ export class Supervisor {
   readonly #metadataSink: SupervisionMetadataSink;
   readonly #events: SequencedEventQueue;
   readonly #health: DeterministicHealthMonitor;
+  readonly #watchdogScheduler: WatchdogScheduler;
+  readonly #watchdogTelemetrySink: WatchdogTelemetrySink;
   readonly #watchdog: WatchdogAggregate = {
     invocation_count: 0,
     controller_wake_count: 0,
@@ -73,6 +86,11 @@ export class Supervisor {
   #lastTransportProgressAt: string;
   #lastSemanticProgressAt: string;
   #evidence?: SemanticEvidenceWindow;
+  #previousWatchdogVerdict?: {
+    readonly verdict: WatchdogVerdict["verdict"];
+    readonly confidence: number;
+    readonly reason_code: string;
+  };
   #healthCallbackFailure?: Error;
 
   constructor(options: SupervisorOptions) {
@@ -96,6 +114,7 @@ export class Supervisor {
     });
     this.#clock = options.clock ?? (() => new Date());
     this.#metadataSink = options.metadataSink ?? (async () => {});
+    this.#watchdogTelemetrySink = options.watchdogTelemetrySink ?? (async () => {});
     const timestamp = this.#clock().toISOString();
     this.#lastTransportProgressAt = timestamp;
     this.#lastSemanticProgressAt = timestamp;
@@ -117,6 +136,30 @@ export class Supervisor {
           this.#healthCallbackFailure = asError(error);
         });
       },
+    });
+    const classifier = options.watchdogClassifier ?? new ClaudeWatchdogClassifier({
+      ...(this.#policy.watchdog.inputLimitBytes === undefined
+        ? {}
+        : { inputLimitBytes: this.#policy.watchdog.inputLimitBytes }),
+      ...(this.#policy.watchdog.outputLimitBytes === undefined
+        ? {}
+        : { outputLimitBytes: this.#policy.watchdog.outputLimitBytes }),
+      ...(this.#policy.watchdog.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: this.#policy.watchdog.timeoutMs }),
+      ...(this.#policy.watchdog.maxBudgetUsd === undefined
+        ? {}
+        : { maxBudgetUsd: this.#policy.watchdog.maxBudgetUsd }),
+      ...(this.#policy.watchdog.confidenceFloor === undefined
+        ? {}
+        : { confidenceFloor: this.#policy.watchdog.confidenceFloor }),
+    });
+    this.#watchdogScheduler = new WatchdogScheduler({
+      classifier,
+      policy: this.#policy.watchdog,
+      clock: this.#clock,
+      onVerdict: (request, verdict, callCount) =>
+        this.#recordWatchdogVerdict(request, verdict, callCount),
     });
     this.#initialPersistence = this.#publishState("starting", "supervisor_created", false);
   }
@@ -179,6 +222,9 @@ export class Supervisor {
         repoRoot: this.#startOptions.cwd,
         originalPrompt: text,
         clock: this.#clock,
+        ...(this.#previousWatchdogVerdict === undefined
+          ? {}
+          : { previousVerdict: this.#previousWatchdogVerdict }),
         ...(this.#policy.watchdog.inputLimitBytes === undefined
           ? {}
           : { maxInputBytes: this.#policy.watchdog.inputLimitBytes }),
@@ -192,6 +238,7 @@ export class Supervisor {
           ? {}
           : { repeatedFailureThreshold: this.#policy.watchdog.repeatedFailureThreshold }),
       });
+      this.#watchdogScheduler.resetTurn();
       this.#health.recordMechanicalEvent({ type: "provider.started" });
       return { inputSequence, turnId, session: this.#session };
     });
@@ -207,7 +254,7 @@ export class Supervisor {
         if (terminalPhases.has(this.#phase)) {
           return;
         }
-        this.#recordProgress(event);
+        await this.#recordProgress(event);
         const mechanical = mechanicalEventClassification(this.#health, event);
         if (mechanical?.kind === "attention") {
           await this.#applyHealthClassification(mechanical);
@@ -387,13 +434,24 @@ export class Supervisor {
   async #publishEvent(
     body: Omit<SupervisionEvent, "schema_version" | "run_id" | "sequence" | "timestamp">,
     deliverable: boolean,
+    options: {
+      readonly watchdog?: WatchdogAggregate;
+      readonly semanticAttention?: boolean;
+      readonly commit?: (event: SupervisionEvent) => Promise<void>;
+    } = {},
   ): Promise<SupervisionEvent> {
     this.#assertTransition(body.phase);
+    const baseWatchdog = options.watchdog ?? this.#watchdog;
     const nextWatchdog = {
-      ...this.#watchdog,
-      controller_wake_count: this.#watchdog.controller_wake_count + (deliverable ? 1 : 0),
-      deterministic_alert_count: this.#watchdog.deterministic_alert_count
-        + (body.type === "supervision.attention" ? 1 : 0),
+      ...baseWatchdog,
+      controller_wake_count: baseWatchdog.controller_wake_count + (deliverable ? 1 : 0),
+      deterministic_alert_count: baseWatchdog.deterministic_alert_count
+        + (
+          body.type === "supervision.attention"
+          && options.semanticAttention !== true
+            ? 1
+            : 0
+        ),
     };
     return this.#events.publish(body, deliverable, async (event) => {
       const providerThreadId = this.#session?.providerThreadId;
@@ -403,6 +461,7 @@ export class Supervisor {
         providerThreadId,
         nextWatchdog,
       ));
+      await options.commit?.(event);
       this.#phase = body.phase;
       this.#providerThreadId = providerThreadId;
       Object.assign(this.#watchdog, nextWatchdog);
@@ -427,11 +486,90 @@ export class Supervisor {
     }
   }
 
-  #recordProgress(event: AdapterEvent): void {
-    this.#health.recordProviderActivity(isSemanticProgress(event) ? "semantic" : "transport");
+  async #recordProgress(event: AdapterEvent): Promise<void> {
+    const activeSemanticEvidence = isActiveSemanticEvidence(event);
+    this.#health.recordProviderActivity(activeSemanticEvidence ? "semantic" : "transport");
     this.#lastTransportProgressAt = this.#health.lastTransportActivityAt;
     this.#lastSemanticProgressAt = this.#health.lastSemanticActivityAt;
     this.#evidence?.record(event);
+    if (activeSemanticEvidence && this.#evidence !== undefined) {
+      await this.#watchdogScheduler.onActiveEvidence(this.#evidence.snapshot());
+    }
+  }
+
+  #recordWatchdogVerdict(
+    request: WatchdogRequest,
+    verdict: WatchdogVerdict,
+    callCount: number,
+  ): Promise<void> {
+    return this.#withLifecycleMutation(async () => {
+      if (this.#phase !== "running") {
+        return;
+      }
+      this.#previousWatchdogVerdict = {
+        verdict: verdict.verdict,
+        confidence: verdict.confidence,
+        reason_code: verdict.reason_code,
+      };
+      this.#evidence?.recordPreviousVerdict(this.#previousWatchdogVerdict);
+      const nextWatchdog = aggregateWatchdog(
+        this.#watchdog,
+        request,
+        verdict,
+        this.#watchdogScheduler.coverageExhausted,
+      );
+      const telemetryBase: Omit<WatchdogTelemetry, "attention_sequence"> = {
+        schema_version: 1,
+        timestamp: this.#clock().toISOString(),
+        request_hash: createHash("sha256")
+          .update(JSON.stringify(request), "utf8")
+          .digest("hex"),
+        input_bytes: request.input_bytes,
+        output_bytes: verdict.output_bytes ?? 0,
+        verdict: verdict.verdict,
+        confidence: verdict.confidence,
+        reason_code: verdict.reason_code,
+        call_count: callCount,
+        truncated: request.truncated,
+        ...(verdict.usage === undefined ? {} : { usage: verdict.usage }),
+        ...(verdict.estimated_cost_usd === undefined
+          ? {}
+          : { estimated_cost_usd: verdict.estimated_cost_usd }),
+      };
+
+      if (verdict.verdict === "healthy") {
+        await this.#metadataSink(this.#persistenceState(
+          this.#phase,
+          this.#events.sequence,
+          this.#session?.providerThreadId,
+          nextWatchdog,
+        ));
+        await this.#watchdogTelemetrySink(telemetryBase);
+        Object.assign(this.#watchdog, nextWatchdog);
+        return;
+      }
+
+      await this.#publishEvent({
+        type: "supervision.attention",
+        phase: this.#phase,
+        reason: `watchdog_${verdict.verdict}`,
+        payload: {
+          verdict: verdict.verdict,
+          confidence: verdict.confidence,
+          reason_code: verdict.reason_code,
+          evidence: verdict.evidence,
+        },
+      }, true, {
+        watchdog: nextWatchdog,
+        semanticAttention: true,
+        commit: async (event) => {
+          await this.#watchdogTelemetrySink({
+            ...telemetryBase,
+            attention_sequence: event.sequence,
+          });
+        },
+      });
+    });
   }
 
   #applyHealthClassification(
@@ -538,13 +676,40 @@ function mechanicalEventClassification(
   return undefined;
 }
 
-function isSemanticProgress(event: AdapterEvent): boolean {
+function isActiveSemanticEvidence(event: AdapterEvent): boolean {
   return event.type === "message.delta"
     || event.type === "message.completed"
     || event.type === "tool.started"
-    || event.type === "tool.completed"
-    || event.type === "turn.completed"
-    || event.type === "turn.failed";
+    || event.type === "tool.completed";
+}
+
+function aggregateWatchdog(
+  current: WatchdogAggregate,
+  request: WatchdogRequest,
+  verdict: WatchdogVerdict,
+  coverageExhausted: boolean,
+): WatchdogAggregate {
+  const inputTokens = sumOptional(current.input_tokens, verdict.usage?.input_tokens);
+  const outputTokens = sumOptional(current.output_tokens, verdict.usage?.output_tokens);
+  const estimatedCost = sumOptional(
+    current.estimated_cost_usd,
+    verdict.estimated_cost_usd,
+  );
+  return {
+    ...current,
+    invocation_count: current.invocation_count + 1,
+    evidence_truncation_count: current.evidence_truncation_count
+      + (request.truncated ? 1 : 0),
+    last_verdict: verdict.verdict,
+    ...(coverageExhausted ? { coverage_exhausted: true } : {}),
+    ...(inputTokens === undefined ? {} : { input_tokens: inputTokens }),
+    ...(outputTokens === undefined ? {} : { output_tokens: outputTokens }),
+    ...(estimatedCost === undefined ? {} : { estimated_cost_usd: estimatedCost }),
+  };
+}
+
+function sumOptional(left: number | undefined, right: number | undefined): number | undefined {
+  return left === undefined && right === undefined ? undefined : (left ?? 0) + (right ?? 0);
 }
 
 function permissionFromDetails(details: unknown): string | undefined {
