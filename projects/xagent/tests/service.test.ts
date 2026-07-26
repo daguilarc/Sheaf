@@ -619,6 +619,212 @@ test("service_main reconciles stale active runs before accepting work", async ()
   assert.equal(exitCode, 0);
 });
 
+// I2: reconciliation outcomes must not be silently discarded. The
+// production service_main path logs each ReconciliationResult to stderr
+// for Conductor capture and derives the `/health` warning from any
+// non-`terminated`/`process_not_found` outcome. A stale run whose owned
+// PID is alive but has a mismatched start identity produces
+// `identity_mismatch` (the supervisor correctly refuses to kill an
+// unproven process), which must surface as a `/health` warning rather
+// than a silent clean bill of health.
+//
+test("service_main surfaces a /health warning and stderr log when reconciliation cannot cleanly terminate a stale run", async () => {
+  const sheafRoot = await mkdtemp(path.join(tmpdir(), "xagent-svc-reconcile-degraded-"));
+  await mkdir(path.join(sheafRoot, "config"), { recursive: true });
+  await mkdir(path.join(sheafRoot, "structure"), { recursive: true });
+  await writeFile(path.join(sheafRoot, "structure", ".gitkeep"), "", "utf8");
+  const servicesJsonPath = path.join(sheafRoot, "config", "services.json");
+  await writeFile(
+    servicesJsonPath,
+    `${JSON.stringify([
+      {
+        name: "xagent",
+        host: "127.0.0.1",
+        port: 0,
+        command: "make xagent-service-run",
+      },
+    ])}\n`,
+    "utf8",
+  );
+
+  const logRoot = path.join(sheafRoot, "data", "xagent");
+  await mkdir(logRoot, { recursive: true });
+
+  // Spawn a sentinel child that stays alive so reconciliation can inspect
+  // its PID. The recorded start_identity deliberately does not match the
+  // sentinel's real `ps -o lstart` identity, so reconciliation returns
+  // `identity_mismatch` (a degraded outcome) and does not kill the
+  // sentinel.
+  //
+  const sentinel = trackChild(
+    spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+    }),
+  );
+  assert.ok(sentinel.pid);
+
+  const staleRunId = "xrun_stale_degraded_at_boot";
+  const record = await createRunRecord({
+    repoRoot: sheafRoot,
+    logRoot,
+    runId: staleRunId,
+    harness: "codex",
+    mode: "subagent",
+    clock: () => new Date("2026-07-25T12:00:00.000Z"),
+  });
+  await updateRunSupervision(record, {
+    phase: "running",
+    sequence: 3,
+    provider_thread_id: "provider-thread-stale-degraded",
+    last_transport_progress_at: "2026-07-25T12:01:00.000Z",
+    last_semantic_progress_at: "2026-07-25T12:00:30.000Z",
+    owned_process: {
+      pid: sentinel.pid!,
+      process_group_id: sentinel.pid!,
+      started_at: "2026-07-25T11:59:59.000Z",
+      start_identity: "ps-lstart:DELIBERATE-MISMATCH",
+    },
+  });
+
+  const serviceMain = path.join(process.cwd(), "dist", "src", "service_main.js");
+  const child = trackChild(
+    spawn(process.execPath, [serviceMain], {
+      cwd: sheafRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+  );
+
+  const stderrChunks: Buffer[] = [];
+  child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+  const port = await waitForPort(stderrChunks, 10_000);
+
+  // The degraded reconciliation outcome must be logged to stderr for
+  // Conductor capture.
+  //
+  const capturedStderr = Buffer.concat(stderrChunks).toString("utf8");
+  assert.match(
+    capturedStderr,
+    new RegExp(`xagent service reconciliation: run_id=${staleRunId} cleanup=identity_mismatch`),
+  );
+
+  // The same degraded outcome must surface as a `/health` warning through
+  // the production service_main -> createXagentServer wiring, not just a
+  // constructor-only option.
+  //
+  const health = await fetchJson(port, "GET", "/health");
+  assert.equal(health.status, 200);
+  const healthBody = health.body as { healthy: boolean; warning?: string };
+  assert.equal(healthBody.healthy, true);
+  assert.ok(
+    typeof healthBody.warning === "string" && healthBody.warning.length > 0,
+    `expected a non-empty /health warning, got ${JSON.stringify(healthBody)}`,
+  );
+  assert.match(healthBody.warning!, /supervision_degraded/);
+
+  const exitResponse = await fetchJson(port, "POST", "/exit");
+  assert.equal(exitResponse.status, 200);
+  assert.deepEqual(exitResponse.body, { exiting: true });
+
+  const exitCode = await waitForExit(child, 10_000);
+  assert.equal(exitCode, 0);
+
+  // The sentinel must survive because reconciliation correctly refused to
+  // kill an unproven (identity-mismatched) process.
+  //
+  assert.equal(isProcessAlive(sentinel.pid), true);
+  stopChild(sentinel);
+});
+
+test("service_main reports no /health warning and no stderr log when reconciliation is clean", async () => {
+  const sheafRoot = await mkdtemp(path.join(tmpdir(), "xagent-svc-reconcile-clean-"));
+  await mkdir(path.join(sheafRoot, "config"), { recursive: true });
+  await mkdir(path.join(sheafRoot, "structure"), { recursive: true });
+  await writeFile(path.join(sheafRoot, "structure", ".gitkeep"), "", "utf8");
+  const servicesJsonPath = path.join(sheafRoot, "config", "services.json");
+  await writeFile(
+    servicesJsonPath,
+    `${JSON.stringify([
+      {
+        name: "xagent",
+        host: "127.0.0.1",
+        port: 0,
+        command: "make xagent-service-run",
+      },
+    ])}\n`,
+    "utf8",
+  );
+
+  const logRoot = path.join(sheafRoot, "data", "xagent");
+  await mkdir(logRoot, { recursive: true });
+
+  // A stale run whose owned PID no longer exists produces
+  // `process_not_found`, which is a clean outcome (nothing to terminate).
+  // `/health` must remain warning-free. The clean outcome is still logged
+  // to stderr so the operator sees the full reconciliation picture, but
+  // it must not raise a degradation warning.
+  //
+  const staleRunId = "xrun_stale_clean_at_boot";
+  const record = await createRunRecord({
+    repoRoot: sheafRoot,
+    logRoot,
+    runId: staleRunId,
+    harness: "codex",
+    mode: "subagent",
+    clock: () => new Date("2026-07-25T12:00:00.000Z"),
+  });
+  await updateRunSupervision(record, {
+    phase: "running",
+    sequence: 3,
+    provider_thread_id: "provider-thread-stale-clean",
+    last_transport_progress_at: "2026-07-25T12:01:00.000Z",
+    last_semantic_progress_at: "2026-07-25T12:00:30.000Z",
+    owned_process: {
+      pid: 4_999_998,
+      process_group_id: 4_999_998,
+      started_at: "2026-07-25T11:59:59.000Z",
+      start_identity: "ps-lstart:GONE",
+    },
+  });
+
+  const serviceMain = path.join(process.cwd(), "dist", "src", "service_main.js");
+  const child = trackChild(
+    spawn(process.execPath, [serviceMain], {
+      cwd: sheafRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+  );
+
+  const stderrChunks: Buffer[] = [];
+  child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+  const port = await waitForPort(stderrChunks, 10_000);
+
+  // The clean `process_not_found` outcome is logged to stderr for
+  // operator visibility but must not raise a degradation warning.
+  //
+  const capturedStderr = Buffer.concat(stderrChunks).toString("utf8");
+  assert.match(
+    capturedStderr,
+    new RegExp(`xagent service reconciliation: run_id=${staleRunId} cleanup=process_not_found`),
+  );
+
+  // `process_not_found` is a clean outcome: no degradation warning.
+  //
+  const health = await fetchJson(port, "GET", "/health");
+  assert.equal(health.status, 200);
+  const healthBody = health.body as { healthy: boolean; warning?: string };
+  assert.equal(healthBody.healthy, true);
+  assert.equal("warning" in healthBody, false);
+
+  const exitResponse = await fetchJson(port, "POST", "/exit");
+  assert.equal(exitResponse.status, 200);
+  assert.deepEqual(exitResponse.body, { exiting: true });
+
+  const exitCode = await waitForExit(child, 10_000);
+  assert.equal(exitCode, 0);
+});
+
 async function waitForPort(stderrChunks: Buffer[], timeoutMs: number): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

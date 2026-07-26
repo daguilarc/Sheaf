@@ -2,6 +2,10 @@
 
 import { loadXagentServiceConfig } from "./service/config.js";
 import { createUncaughtExceptionHandler } from "./service/crash_handler.js";
+import {
+  logReconciliationResults,
+  reconciliationWarning,
+} from "./service/reconciliation.js";
 import { XagentRunManager } from "./service/run_manager.js";
 import { createTestAdapterFactory, isTestAdapterEnabled } from "./service/test_hooks.js";
 import {
@@ -16,7 +20,18 @@ import { reconcileStaleRuns } from "./supervision/reconcile.js";
 async function main(): Promise<void> {
   const config = await loadXagentServiceConfig();
 
-  await reconcileStaleRuns(config.logRoot, platformProcessInspector);
+  const reconciliationResults = await reconcileStaleRuns(
+    config.logRoot,
+    platformProcessInspector,
+  );
+  // Surface reconciliation outcomes to the operator: log each result to
+  // stderr for Conductor capture, and derive the `/health` warning from
+  // any non-clean outcome so a sandbox-bypassed child that could not be
+  // terminated is visible rather than silent. Previously the return value
+  // was discarded and `/health` could never report degradation.
+  //
+  logReconciliationResults(reconciliationResults);
+  const warning = reconciliationWarning(reconciliationResults);
 
   const runManager = new XagentRunManager({
     repoRoot: config.repoRoot,
@@ -56,6 +71,7 @@ async function main(): Promise<void> {
     bindPort: config.bindPort,
     runManager,
     shutdownController,
+    ...(warning !== undefined ? { warning } : {}),
   });
 
   const port = await server.listen();

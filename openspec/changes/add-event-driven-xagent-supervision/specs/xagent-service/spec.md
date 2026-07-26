@@ -25,6 +25,13 @@ WHEN the xagent service is running, THE service SHALL expose cheap deterministic
 - **THEN** the service responds 200 with `healthy: true` and numeric `uptime`
 - **AND** includes a warning only when supervision is degraded
 
+#### Scenario: Reconciliation degrades health
+
+- **WHEN** startup reconciliation cannot cleanly terminate or account for every stale owned process (e.g. identity mismatch, unproven process group, inspection failure, termination failure, or persistence failure)
+- **THEN** the service logs each reconciliation outcome to stderr for operator capture
+- **AND** `GET /health` includes a bounded `warning` describing the degraded supervision state
+- **AND** omits the warning when every stale run was cleaned up cleanly (`terminated` or `process_not_found`)
+
 #### Scenario: Orderly service exit
 
 - **WHEN** a client requests `POST /exit`
