@@ -118,6 +118,7 @@ The MCP await path wakes exactly once for the terminal `turn.completed` event. R
 | --- | --- |
 | `xagent_await` default deadline | 7000 seconds |
 | `xagent_await` maximum deadline | 7000 seconds |
+| Quiet-client MCP await HTTP chunk | 240 seconds (reissued until the application deadline; avoids ~300s fetch/undici body idle drops) |
 | Plugin MCP `tool_timeout_sec` | 7200 seconds |
 | Service request timeout | 7,200,000 ms |
 | Service headers timeout | 7,270,000 ms |
