@@ -38,6 +38,7 @@ export function createXagentServiceClient(options = {}) {
     let transport;
     let connectPromise;
     let closed = false;
+    let lastAwaitChunksIssued = 0;
     async function ensureConnected() {
         if (closed) {
             throw new XagentServiceUnavailableError("xagent service client is closed");
@@ -115,12 +116,14 @@ export function createXagentServiceClient(options = {}) {
         let lastDeadline;
         let consecutiveTransportFailures = 0;
         let completedChunk = false;
+        let chunksIssued = 0;
         for (;;) {
             if (signal?.aborted) {
                 throw abortedError();
             }
             const remainingSeconds = Math.max(0, Math.ceil((applicationDeadlineMs - Date.now()) / 1000));
             if (remainingSeconds <= 0) {
+                lastAwaitChunksIssued = chunksIssued;
                 return lastDeadline ?? {
                     schema_version: 1,
                     event: "supervision.deadline",
@@ -145,6 +148,7 @@ export function createXagentServiceClient(options = {}) {
                 }, signal);
                 consecutiveTransportFailures = 0;
                 completedChunk = true;
+                chunksIssued += 1;
             }
             catch (error) {
                 if (signal?.aborted) {
@@ -176,6 +180,7 @@ export function createXagentServiceClient(options = {}) {
                 };
                 continue;
             }
+            lastAwaitChunksIssued = chunksIssued;
             return result;
         }
     }
@@ -201,6 +206,9 @@ export function createXagentServiceClient(options = {}) {
         async close() {
             closed = true;
             await resetConnection();
+        },
+        get awaitChunksIssued() {
+            return lastAwaitChunksIssued;
         },
     };
 }

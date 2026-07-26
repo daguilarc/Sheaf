@@ -6,6 +6,16 @@ import { truncateUtf8 } from "../sanitize.js";
 import { normalizeWatchdogVerdict } from "./watchdog.js";
 const DEFAULT_INPUT_LIMIT_BYTES = 64 * 1024;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 2 * 1024;
+// The stdout byte-level cap used to truncate runaway Claude Code output.
+// This is deliberately larger than the verdict output bound: Claude Code's
+// `--output-format json` envelope wraps the structured verdict in
+// `structured_output` and duplicates it as a string in `result`, plus
+// `session_id`, `usage`, `modelUsage`, `total_cost_usd`, `duration_ms`, and
+// `permission_denials`. The 2 KiB verdict bound is applied to the extracted
+// structured output below; this stdout cap only guards against a
+// runaway process filling the pipe.
+//
+const DEFAULT_STDOUT_LIMIT_BYTES = 16 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const HAIKU_INPUT_USD_PER_MILLION_TOKENS = 1;
 const HAIKU_OUTPUT_USD_PER_MILLION_TOKENS = 5;
@@ -34,7 +44,7 @@ const WATCHDOG_SCHEMA = {
             maxItems: 8,
             items: {
                 type: "string",
-                maxLength: 512,
+                maxLength: 192,
             },
         },
     },
@@ -101,50 +111,62 @@ export class ClaudeWatchdogClassifier {
                     cwd,
                     input,
                     timeoutMs: this.#timeoutMs,
-                    outputLimitBytes: this.#outputLimitBytes,
+                    outputLimitBytes: DEFAULT_STDOUT_LIMIT_BYTES,
                     signal,
                 });
             }
             catch {
                 return uncertain("classifier_invocation_failed");
             }
-            const outputBytes = Buffer.byteLength(result.stdout, "utf8");
+            const stdoutBytes = Buffer.byteLength(result.stdout, "utf8");
             if (result.aborted === true) {
-                return withOutput(uncertain("classifier_aborted"), outputBytes);
+                return withOutput(uncertain("classifier_aborted"), stdoutBytes);
             }
             if (result.timedOut === true) {
-                return withOutput(uncertain("classifier_timeout"), outputBytes);
+                return withOutput(uncertain("classifier_timeout"), stdoutBytes);
             }
-            if (result.outputTooLarge === true
-                || outputBytes > this.#outputLimitBytes) {
-                return withOutput(uncertain("classifier_output_too_large"), outputBytes);
+            if (result.outputTooLarge === true) {
+                return withOutput(uncertain("classifier_output_too_large"), stdoutBytes);
             }
             if (result.budgetExceeded === true) {
-                return withOutput(uncertain("classifier_budget_exceeded"), outputBytes);
+                return withOutput(uncertain("classifier_budget_exceeded"), stdoutBytes);
             }
             if (result.exitCode !== 0) {
-                return withOutput(uncertain("classifier_invocation_failed"), outputBytes);
+                return withOutput(uncertain("classifier_invocation_failed"), stdoutBytes);
             }
             let envelope;
             try {
                 envelope = JSON.parse(result.stdout);
             }
             catch {
-                return withOutput(uncertain("invalid_classifier_output"), outputBytes);
+                return withOutput(uncertain("invalid_classifier_output"), stdoutBytes);
             }
             if (!isRecord(envelope)) {
-                return withOutput(uncertain("invalid_classifier_output"), outputBytes);
+                return withOutput(uncertain("invalid_classifier_output"), stdoutBytes);
             }
             if (envelope.subtype === "error_max_budget_usd") {
-                return withOutput(uncertain("classifier_budget_exceeded"), outputBytes);
+                return withOutput(uncertain("classifier_budget_exceeded"), stdoutBytes);
             }
             const candidate = structuredOutput(envelope);
+            // The verdict output bound is applied to the extracted structured
+            // output (the schema-valid classifier verdict), not the full Claude
+            // Code stdout envelope. The envelope's `result` field duplicates the
+            // structured output as a string and adds transport metadata
+            // (`session_id`, `usage`, `duration_ms`, ...) that the classifier did
+            // not author; counting those against the verdict bound would force
+            // every schema-valid maximal verdict into `classifier_output_too_large`
+            // and wake the controller once per checkpoint. See OpenSpec xas-6.
+            //
+            const verdictBytes = Buffer.byteLength(JSON.stringify(candidate ?? ""), "utf8");
+            if (verdictBytes > this.#outputLimitBytes) {
+                return withOutput(uncertain("classifier_output_too_large"), stdoutBytes);
+            }
             const verdict = normalizeWatchdogVerdict(candidate, this.#confidenceFloor);
             const usage = watchdogUsage(envelope.usage);
             const estimatedCost = finiteNonNegative(envelope.total_cost_usd);
             return {
                 ...verdict,
-                output_bytes: outputBytes,
+                output_bytes: verdictBytes,
                 ...(usage === undefined ? {} : { usage }),
                 ...(estimatedCost === undefined
                     ? {}
@@ -246,6 +268,19 @@ export const spawnWatchdogProcess = async (request) => new Promise((resolve, rej
             outputTooLarge,
             aborted,
         });
+    });
+    // The child can be SIGKILLed while a large stdin write is still buffered
+    // (timeout, abort, or outputTooLarge all call terminate() mid-write). When
+    // that happens Node emits `error` on the Socket — not on the ChildProcess
+    // — so the `child.once("error", …)` handler above does not cover it. An
+    // unhandled stream error would crash the entire xagent service (the
+    // supervisor runs in-process with every other run), so swallow stdin
+    // errors here; the spawn result already reflects the kill via
+    // `timedOut`/`aborted`/`outputTooLarge`.
+    //
+    child.stdin.on("error", () => {
+        // Intentionally empty: see comment above.
+        //
     });
     child.stdin.end(request.input);
 });

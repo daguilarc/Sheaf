@@ -13,6 +13,13 @@ export type XagentServiceClient = {
     interrupt(input: XagentInterruptInput): Promise<InterruptRunResult>;
     closeRun(input: XagentCloseInput): Promise<CloseRunResult>;
     close(): Promise<void>;
+    /**
+     * Number of HTTP POST chunks issued by the last `await(...)` call. The quiet
+     * client chunks each request at `x_McpAwaitHttpChunkSeconds` and reissues
+     * until the application deadline; tests use this to prove multi-chunk
+     * reissue against a real transport rather than a single long POST.
+     */
+    readonly awaitChunksIssued: number;
 };
 export declare class XagentServiceUnavailableError extends Error {
     readonly structured: StructuredToolError;

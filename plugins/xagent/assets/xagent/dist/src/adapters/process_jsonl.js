@@ -62,9 +62,11 @@ export class ProcessJsonlSession {
             crlfDelay: Infinity,
         });
         if (command.input !== undefined) {
+            attachStdinErrorHandler(child.stdin);
             child.stdin.end(command.input);
         }
         else {
+            attachStdinErrorHandler(child.stdin);
             child.stdin.end();
         }
         let identity;
@@ -357,6 +359,18 @@ function terminateUnownedSpawn(child) {
             throw error;
         }
     }
+}
+// The provider can be interrupted (SIGTERM/SIGKILL) while a stdin write is
+// still buffered. When that happens Node emits `error` on the Socket — not
+// on the ChildProcess — and an unhandled stream error would crash the
+// entire xagent service. Swallow stdin errors here; the active turn's
+// interrupt path already records the failure outcome.
+//
+function attachStdinErrorHandler(stdin) {
+    stdin.on("error", () => {
+        // Intentionally empty: see comment above.
+        //
+    });
 }
 function interruptedError() {
     const error = new Error("Harness process was interrupted.");
