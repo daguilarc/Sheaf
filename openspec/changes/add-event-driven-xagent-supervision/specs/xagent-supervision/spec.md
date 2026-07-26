@@ -127,7 +127,7 @@ IF a worker is mechanically failed, complete, blocked, silent, cancelled, or pas
 
 ### Requirement: xas-6 — Watchdog: bounded cadence and budget
 
-WHILE semantic watchdog checks remain enabled for a run, THE xagent supervisor SHALL schedule them with configurable exponential backoff, enforce a default five-minute minimum interval, cap watchdog input at 64 KiB and the classifier verdict output at 2 KiB (applied to the extracted structured output, not the surrounding Claude Code JSON envelope), bound evidence to a count and per-item length that fit within that output cap, and stop invoking the watchdog after the default maximum of eight calls per run.
+WHILE semantic watchdog checks remain enabled for a run, THE xagent supervisor SHALL schedule them with configurable exponential backoff, enforce a default five-minute minimum interval, cap watchdog input at 64 KiB and the classifier verdict output at 2 KiB (applied to the normalized structured output, not the surrounding Claude Code JSON envelope), bound evidence to a count and per-item character length enforced by the JSON Schema and additionally truncate each evidence item to a per-item UTF-8 byte bound so a maximal schema-valid verdict fits within the 2 KiB output cap regardless of encoding, and stop invoking the watchdog after the default maximum of eight calls per run.
 
 #### Scenario: Default cadence backs off
 
@@ -157,6 +157,13 @@ WHILE semantic watchdog checks remain enabled for a run, THE xagent supervisor S
 - **WHEN** Haiku returns a healthy verdict whose evidence uses the maximum permitted item count and per-item length
 - **THEN** the supervisor accepts the verdict as healthy
 - **AND** does not normalize it to `uncertain` with `classifier_output_too_large`
+- **AND** emits no advisory attention for the bounded output alone
+
+#### Scenario: Maximal schema-valid non-ASCII verdict is accepted
+
+- **WHEN** Haiku returns a healthy verdict whose evidence uses the maximum permitted item count and per-item character length and the evidence is non-ASCII (e.g. CJK, which serializes to multiple UTF-8 bytes per character)
+- **THEN** the supervisor truncates each evidence item to the per-item UTF-8 byte bound
+- **AND** accepts the verdict as healthy
 - **AND** emits no advisory attention for the bounded output alone
 
 ### Requirement: xas-7 — Attention: advisory semantic verdicts

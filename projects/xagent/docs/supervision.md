@@ -12,6 +12,8 @@ make xagent-service-run
 
 This runs `node dist/src/service_main.js` from `projects/xagent`. The service reads `config/services.json`, binds to `127.0.0.1:9005`, and serves MCP at `http://127.0.0.1:9005/mcp`.
 
+The listener binds BEFORE startup reconciliation runs, so a duplicate `make xagent-service-run` while Conductor's copy is already up exits on `EADDRINUSE` without reconciling, signalling, or abandoning any run owned by the running instance. Reconciliation then runs against the log root only this instance can reach, and its degradation outcome is wired into `/health`.
+
 ### Health check
 
 ```bash
@@ -84,7 +86,7 @@ Haiku is eligible only while a live worker is actively producing tokens, message
 | Repeated failure fingerprint threshold | 2 identical in 10 minutes |
 | Healthy confidence floor | `0.8` |
 | Input bound | 64 KiB UTF-8 |
-| Output bound | 2 KiB (applied to the extracted structured verdict, not the Claude Code JSON envelope) |
+| Output bound | 2 KiB (applied to the normalized structured verdict with evidence truncated to a per-item UTF-8 byte bound, not the Claude Code JSON envelope) |
 | Maximum calls per run | 8 |
 
 Watchdog results are advisory only. `derailed`, `uncertain`, invalid, failed, over-budget, and low-confidence output emit one sequenced attention event but never message, interrupt, kill, restart, edit for, or otherwise steer the worker.
