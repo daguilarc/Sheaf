@@ -16,6 +16,13 @@ export class CodexAdapter implements HarnessAdapter {
       cwd: options.cwd,
       buildCommand: (context, state) => buildCodexCommand(context, state, options),
       parseEvent: parseCodexProviderEvent,
+      // Seed the resumed thread id so buildCodexCommand emits `exec resume <id>`
+      // on the first turn. Without this, `--resume <id>` would silently start a
+      // fresh provider thread.
+      //
+      ...(options.providerThreadId === undefined
+        ? {}
+        : { initialProviderThreadId: options.providerThreadId }),
     });
   }
 }

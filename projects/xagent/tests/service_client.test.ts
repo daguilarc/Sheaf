@@ -101,6 +101,14 @@ test("client await chunks HTTP MCP deadlines until the application deadline", as
       const result = await awaiting;
       assert.equal(result.event, "turn.completed");
       assert.equal(result.report?.text, "done after chunks");
+      // The quiet client must chunk-and-reissue against the real HTTP
+      // transport rather than relying on a single long POST. With 1s chunks
+      // and a 2.5s wait before release, at least two chunks were issued.
+      //
+      assert.ok(
+        client.awaitChunksIssued >= 2,
+        `expected at least 2 HTTP await chunks, got ${client.awaitChunksIssued}`,
+      );
     } finally {
       await client.close();
     }
@@ -662,6 +670,7 @@ test("quiet supervise includes run_id on infrastructure failure after start", as
           throw new Error("unused");
         },
         async close() {},
+        awaitChunksIssued: 0,
       }),
     },
   );

@@ -44,6 +44,13 @@ export type XagentServiceClient = {
   interrupt(input: XagentInterruptInput): Promise<InterruptRunResult>;
   closeRun(input: XagentCloseInput): Promise<CloseRunResult>;
   close(): Promise<void>;
+  /**
+   * Number of HTTP POST chunks issued by the last `await(...)` call. The quiet
+   * client chunks each request at `x_McpAwaitHttpChunkSeconds` and reissues
+   * until the application deadline; tests use this to prove multi-chunk
+   * reissue against a real transport rather than a single long POST.
+   */
+  readonly awaitChunksIssued: number;
 };
 
 export class XagentServiceUnavailableError extends Error {
@@ -93,6 +100,7 @@ export function createXagentServiceClient(
   let transport: StreamableHTTPClientTransport | undefined;
   let connectPromise: Promise<Client> | undefined;
   let closed = false;
+  let lastAwaitChunksIssued = 0;
 
   async function ensureConnected(): Promise<Client> {
     if (closed) {
@@ -188,6 +196,7 @@ export function createXagentServiceClient(
     let lastDeadline: AwaitRunResult | undefined;
     let consecutiveTransportFailures = 0;
     let completedChunk = false;
+    let chunksIssued = 0;
 
     for (;;) {
       if (signal?.aborted) {
@@ -198,6 +207,7 @@ export function createXagentServiceClient(
         Math.ceil((applicationDeadlineMs - Date.now()) / 1000),
       );
       if (remainingSeconds <= 0) {
+        lastAwaitChunksIssued = chunksIssued;
         return lastDeadline ?? {
           schema_version: 1,
           event: "supervision.deadline",
@@ -223,6 +233,7 @@ export function createXagentServiceClient(
         }, signal);
         consecutiveTransportFailures = 0;
         completedChunk = true;
+        chunksIssued += 1;
       } catch (error) {
         if (signal?.aborted) {
           throw abortedError();
@@ -256,6 +267,7 @@ export function createXagentServiceClient(
         };
         continue;
       }
+      lastAwaitChunksIssued = chunksIssued;
       return result;
     }
   }
@@ -282,6 +294,9 @@ export function createXagentServiceClient(
     async close(): Promise<void> {
       closed = true;
       await resetConnection();
+    },
+    get awaitChunksIssued(): number {
+      return lastAwaitChunksIssued;
     },
   };
 }

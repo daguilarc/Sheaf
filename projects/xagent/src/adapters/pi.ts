@@ -16,6 +16,13 @@ export class PiAdapter implements HarnessAdapter {
       cwd: options.cwd,
       buildCommand: (context, state) => buildPiCommand(context, state, options),
       parseEvent: parsePiProviderEvent,
+      // Seed the resumed session id so buildPiCommand emits `--session <id>`
+      // on the first turn. Without this, `--resume <id>` would silently start a
+      // fresh provider session.
+      //
+      ...(options.providerThreadId === undefined
+        ? {}
+        : { initialProviderThreadId: options.providerThreadId }),
     });
   }
 }

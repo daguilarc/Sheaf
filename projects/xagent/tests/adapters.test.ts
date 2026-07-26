@@ -11,6 +11,7 @@ import { buildCodexCommand, parseCodexProviderEvent } from "../src/adapters/code
 import { parseCursorProviderEvent } from "../src/adapters/cursor.js";
 import { createAdapter } from "../src/adapters/index.js";
 import { parsePiProviderEvent } from "../src/adapters/pi.js";
+import type { HarnessName } from "../src/events.js";
 
 const context: AdapterTurnContext = {
   text: "run tests",
@@ -116,6 +117,119 @@ test("adapter factory reports capabilities for all supported harnesses", () => {
   });
   assert.equal(createAdapter("pi").harness, "pi");
   assert.equal(createAdapter("claude_code").harness, "claude_code");
+});
+
+test("all four adapters emit a resume argv on the first turn when provider_thread_id is supplied", async () => {
+  const cases: Array<{
+    readonly name: HarnessName;
+    readonly command: string;
+    readonly script: string;
+    readonly assertResumed: (argv: string[], threadId: string) => void;
+  }> = [
+    {
+      name: "codex",
+      command: "codex",
+      script: [
+        "#!/usr/bin/env node",
+        "console.log(JSON.stringify({ type: 'argv', argv: process.argv.slice(2) }))",
+        "console.log(JSON.stringify({ type: 'thread.started', thread_id: 'codex-thread-1' }))",
+        "console.log(JSON.stringify({ type: 'turn.completed', final_text: 'done' }))",
+        "",
+      ].join("\n"),
+      assertResumed: (argv, threadId) => {
+        assert.deepEqual(argv.slice(0, 5), [
+          "exec",
+          "resume",
+          "--json",
+          "--skip-git-repo-check",
+          "--dangerously-bypass-approvals-and-sandbox",
+        ]);
+        assert.equal(argv.at(-2), threadId);
+      },
+    },
+    {
+      name: "cursor",
+      command: "cursor-agent",
+      script: [
+        "#!/usr/bin/env node",
+        "console.log(JSON.stringify({ type: 'argv', argv: process.argv.slice(2), thread_id: 'cursor-thread-1' }))",
+        "console.log(JSON.stringify({ event: 'result', text: 'done' }))",
+        "",
+      ].join("\n"),
+      assertResumed: (argv, threadId) => {
+        const resumeIndex = argv.indexOf("--resume");
+        assert.ok(resumeIndex >= 0, "cursor argv must include --resume");
+        assert.equal(argv[resumeIndex + 1], threadId);
+      },
+    },
+    {
+      name: "pi",
+      command: "pi",
+      script: [
+        "#!/usr/bin/env node",
+        "console.log(JSON.stringify({ type: 'argv', argv: process.argv.slice(2) }))",
+        "console.log(JSON.stringify({ type: 'session', id: 'pi-session-1' }))",
+        "console.log(JSON.stringify({ type: 'agent_end', final_text: 'done' }))",
+        "",
+      ].join("\n"),
+      assertResumed: (argv, threadId) => {
+        const sessionIndex = argv.indexOf("--session");
+        assert.ok(sessionIndex >= 0, "pi argv must include --session");
+        assert.equal(argv[sessionIndex + 1], threadId);
+      },
+    },
+    {
+      name: "claude_code",
+      command: "claude",
+      script: [
+        "#!/usr/bin/env node",
+        "console.log(JSON.stringify({ type: 'argv', argv: process.argv.slice(2), session_id: 'claude-thread-1' }))",
+        "console.log(JSON.stringify({ type: 'result', result: 'done' }))",
+        "",
+      ].join("\n"),
+      assertResumed: (argv, threadId) => {
+        const resumeIndex = argv.indexOf("--resume");
+        assert.ok(resumeIndex >= 0, "claude argv must include --resume");
+        assert.equal(argv[resumeIndex + 1], threadId);
+      },
+    },
+  ];
+
+  for (const item of cases) {
+    const binDir = await mkdtemp(path.join(tmpdir(), `xagent-resume-${item.name}-`));
+    const fake_bin = path.join(binDir, item.command);
+    await writeFile(fake_bin, item.script);
+    await chmod(fake_bin, 0o755);
+
+    const previousPath = process.env.PATH;
+    process.env.PATH = [binDir, previousPath].filter(Boolean).join(path.delimiter);
+    try {
+      const adapter = createAdapter(item.name);
+      const threadId = `resume-${item.name}-thread`;
+      const session = await adapter.start({
+        cwd: process.cwd(),
+        providerThreadId: threadId,
+      });
+      try {
+        const events: AdapterEvent[] = [];
+        for await (const event of session.submit(context)) {
+          events.push(event);
+        }
+        const argvEvent = events.find(
+          (event) => event.type === "raw.provider"
+            && isRecord(event.payload)
+            && event.payload.type === "argv",
+        );
+        assert.ok(argvEvent?.type === "raw.provider" && isRecord(argvEvent.payload), item.name);
+        const argv = (argvEvent.payload as { argv: string[] }).argv;
+        item.assertResumed(argv, threadId);
+      } finally {
+        await session.close();
+      }
+    } finally {
+      process.env.PATH = previousPath;
+    }
+  }
 });
 
 test("codex adapter launches child sessions without approval or sandbox prompts", () => {
