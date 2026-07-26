@@ -63,13 +63,23 @@ $(RUNTIME_PAGES_TEST): $(RUNTIME_PAGES_TEST_SRC) $(SYNTH_SRC) $(SYNTH_RUNTIME_SR
 $(RUNTIME_SHELL_SESSION_TEST): $(RUNTIME_SHELL_SESSION_TEST_SRC) $(APP_HEADERS) $(SYNTH_SRC) $(SYNTH_RUNTIME_SRC) $(SYNTH_HEADERS) $(SYNTH_JUCE_HEADERS) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(RUNTIME_SHELL_SESSION_TEST_SRC) $(SYNTH_SRC) $(SYNTH_RUNTIME_SRC) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) -o $@ $(LDFLAGS_DARWIN)
 
-build/runtime_shell_session_tests: $(RUNTIME_SHELL_SESSION_TEST)
-
 $(FILE_PAGE_SIM_TEST): $(FILE_PAGE_SIM_TEST_SRC) $(SYNTH_SRC) $(SYNTH_RUNTIME_SRC) $(SYNTH_HEADERS) $(SYNTH_JUCE_HEADERS) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(FILE_PAGE_SIM_TEST_SRC) $(SYNTH_SRC) $(SYNTH_RUNTIME_SRC) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) -o $@ $(LDFLAGS_DARWIN)
 
 $(CONTROLLERS_PAGE_SIM_TEST): $(CONTROLLERS_PAGE_SIM_TEST_SRC) $(SYNTH_SRC) $(SYNTH_RUNTIME_SRC) $(SYNTH_HEADERS) $(SYNTH_JUCE_HEADERS) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) | $(BUILD_DIR)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(CONTROLLERS_PAGE_SIM_TEST_SRC) $(SYNTH_SRC) $(SYNTH_RUNTIME_SRC) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) -o $@ $(LDFLAGS_DARWIN)
+
+# BUILD_DIR is absolute, so `make -C projects/synth/apps/miniapp build/<name>`
+# names a different target than the rules above and would otherwise fail with
+# "No rule to make target". These aliases let every test binary be requested by
+# its short build/ path from any working directory.
+build/portable_draw_geometry_tests: $(GEOMETRY_TEST)
+build/portable_juce_backend_tests: $(PORTABLE_BACKEND_TEST)
+build/miniapp_juce_backend_parity_tests: $(MINIAPP_PARITY_TEST)
+build/runtime_pages_juce_tests: $(RUNTIME_PAGES_TEST)
+build/runtime_shell_session_tests: $(RUNTIME_SHELL_SESSION_TEST)
+build/file_page_simulation_tests: $(FILE_PAGE_SIM_TEST)
+build/controllers_page_simulation_tests: $(CONTROLLERS_PAGE_SIM_TEST)
 
 test: check-juce $(GEOMETRY_TEST) $(PORTABLE_BACKEND_TEST) $(MINIAPP_PARITY_TEST) $(RUNTIME_PAGES_TEST) $(FILE_PAGE_SIM_TEST) $(RUNTIME_SHELL_SESSION_TEST) $(CONTROLLERS_PAGE_SIM_TEST)
 	$(GEOMETRY_TEST)
