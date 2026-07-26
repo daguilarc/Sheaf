@@ -50,6 +50,8 @@ std::unordered_set<std::size_t> PlanEndpointPass(const MidiInstrumentConfig& ins
     const Type openType = isInput ? Type::OpenInput : Type::OpenOutput;
     const Type closeType = isInput ? Type::CloseInput : Type::CloseOutput;
     const Type offlineType = isInput ? Type::MarkInputOffline : Type::MarkOutputOffline;
+    const Type unconfiguredType =
+        isInput ? Type::MarkInputUnconfigured : Type::MarkOutputUnconfigured;
     const Type updateType = isInput ? Type::UpdateInputRef : Type::UpdateOutputRef;
 
     std::unordered_set<std::string> claimed;
@@ -58,6 +60,27 @@ std::unordered_set<std::size_t> PlanEndpointPass(const MidiInstrumentConfig& ins
     for (std::size_t ix = 0; ix < instrument.controllers.size(); ++ix) {
         const MidiEndpointRef& ref = isInput ? instrument.controllers[ix].input : instrument.controllers[ix].output;
         const MidiEndpointConnection connection = ConnectionFor(current, ix, isInput);
+
+        // A Blacklisted slot must be checked before its ref/status matching
+        // rules: its populated refs are retained configuration data, but it
+        // neither claims a device nor changes them. A live handler is closed
+        // first, then its generic connection state becomes Unconfigured.
+        if (!IsActive(instrument.controllers[ix])) {
+            if (connection.status == MidiEndpointStatus::Online) {
+                ReconcileAction close;
+                close.type = closeType;
+                close.controllerIx = ix;
+                close.identifier = connection.openIdentifier;
+                plan.actions.push_back(close);
+            }
+            if (connection.status != MidiEndpointStatus::Unconfigured) {
+                ReconcileAction unconfigured;
+                unconfigured.type = unconfiguredType;
+                unconfigured.controllerIx = ix;
+                plan.actions.push_back(unconfigured);
+            }
+            continue;
+        }
 
         if (!ref.IsConfigured()) {
             // An unconfigured ref is inert with respect to OPENING anything -- no
@@ -248,6 +271,14 @@ MidiConnectionState ExecuteReconcilePlan(const ReconcilePlan& plan, const MidiCo
                 break;
             case Type::MarkOutputOffline:
                 controller.output.status = MidiEndpointStatus::Offline;
+                controller.output.openIdentifier.clear();
+                break;
+            case Type::MarkInputUnconfigured:
+                controller.input.status = MidiEndpointStatus::Unconfigured;
+                controller.input.openIdentifier.clear();
+                break;
+            case Type::MarkOutputUnconfigured:
+                controller.output.status = MidiEndpointStatus::Unconfigured;
                 controller.output.openIdentifier.clear();
                 break;
             case Type::UpdateInputRef:

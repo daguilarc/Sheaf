@@ -450,6 +450,7 @@ private:
         std::size_t opens = 0;
         std::size_t closes = 0;
         std::size_t offline = 0;
+        std::size_t unconfigured = 0;
         std::size_t resyncs = 0;
         for (const auto& action : plan.actions) {
             switch (action.type) {
@@ -464,6 +465,10 @@ private:
                 case synth::ReconcileAction::Type::MarkInputOffline:
                 case synth::ReconcileAction::Type::MarkOutputOffline:
                     ++offline;
+                    break;
+                case synth::ReconcileAction::Type::MarkInputUnconfigured:
+                case synth::ReconcileAction::Type::MarkOutputUnconfigured:
+                    ++unconfigured;
                     break;
                 case synth::ReconcileAction::Type::Resync:
                     ++resyncs;
@@ -489,8 +494,8 @@ private:
         // appearing/disappearing is never silently dropped from the log.
         const bool listUnchanged = hasLastEnumerated_ && present == lastEnumerated_;
         if (!plan.actions.empty() || !listUnchanged) {
-            INFO("MIDI reconcile: plan=%zu opens=%zu closes=%zu offline=%zu resyncs=%zu", plan.actions.size(),
-                 opens, closes, offline, resyncs);
+            INFO("MIDI reconcile: plan=%zu opens=%zu closes=%zu offline=%zu unconfigured=%zu resyncs=%zu",
+                 plan.actions.size(), opens, closes, offline, unconfigured, resyncs);
         }
 
         lastEnumerated_ = present;

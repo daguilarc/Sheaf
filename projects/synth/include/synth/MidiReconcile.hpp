@@ -41,6 +41,7 @@ struct ReconcileAction {
         OpenInput, OpenOutput,          // identifier = device to open
         CloseInput, CloseOutput,
         MarkInputOffline, MarkOutputOffline,
+        MarkInputUnconfigured, MarkOutputUnconfigured,
         UpdateInputRef, UpdateOutputRef, // identifier+name = new stored ref
         Resync                           // clear output caches + force resend
     };
@@ -61,7 +62,14 @@ struct ReconcilePlan { std::vector<ReconcileAction> actions; };
 // mismatch, entries missing from `current` are treated as all-Unconfigured;
 // this never crashes.
 //
-// Matching (smi-3): for each slot's ref, try an exact identifier match
+// Disposition (Task 4): Blacklisted slots are considered before all endpoint
+// matching/status rules. They never claim, open, update, resync, or become
+// Offline for a present/absent ref; Online endpoints close and then become
+// Unconfigured, Offline endpoints become Unconfigured, and already-
+// Unconfigured endpoints are inert. Their stored refs are retained. Active
+// slots then use the matching rules below.
+//
+// Matching (smi-3): for each Active slot's ref, try an exact identifier match
 // against present devices first; if that misses, fall back to a stored-name
 // match, skipping devices already claimed by an earlier slot in this pass (so
 // two identically-named present devices can still serve two distinct slots,
@@ -136,6 +144,9 @@ struct MidiEndpointOps {
 //   MarkInputOffline/MarkOutputOffline: sets the endpoint's status to
 //     Offline and clears openIdentifier, without calling any op (the
 //     preceding Close* action already performed the actual device close).
+//   MarkInputUnconfigured/MarkOutputUnconfigured: sets the endpoint's status
+//     to Unconfigured and clears openIdentifier, without calling any op or
+//     modifying the slot's stored endpoint ref.
 //   UpdateInputRef/UpdateOutputRef: calls ops.updateInputRef/updateOutputRef
 //     with the new identifier+name. Stored-ref rewriting is the runtime's
 //     concern (via engine.EditInstrument); this executor does not track

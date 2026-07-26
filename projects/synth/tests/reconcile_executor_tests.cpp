@@ -363,6 +363,50 @@ TEST_CASE(null_op_is_skipped_without_crashing) {
     ExecuteReconcilePlan(plan, current, ops);
 }
 
+// The generic Unconfigured actions only alter the ephemeral connection state:
+// endpoint refs already stored by preceding Update*Ref actions stay intact,
+// and Close -> Update -> Mark ordering is preserved through execution.
+TEST_CASE(mark_unconfigured_preserves_stored_refs_and_plan_order) {
+    FakeOpsLog log;
+    MidiEndpointOps ops = MakeOps(log);
+    std::string storedInputId = "old-in";
+    std::string storedOutputId = "old-out";
+    ops.updateInputRef = [&](std::size_t, const std::string& id, const std::string&) {
+        log.Record("updateInputRef", 0, id);
+        storedInputId = id;
+    };
+    ops.updateOutputRef = [&](std::size_t, const std::string& id, const std::string&) {
+        log.Record("updateOutputRef", 0, id);
+        storedOutputId = id;
+    };
+
+    ReconcilePlan plan;
+    plan.actions.push_back(Action(ReconcileAction::Type::CloseInput, 0, "open-in"));
+    plan.actions.push_back(Action(ReconcileAction::Type::UpdateInputRef, 0, "stored-in", "Input"));
+    plan.actions.push_back(Action(ReconcileAction::Type::MarkInputUnconfigured, 0));
+    plan.actions.push_back(Action(ReconcileAction::Type::CloseOutput, 0, "open-out"));
+    plan.actions.push_back(Action(ReconcileAction::Type::UpdateOutputRef, 0, "stored-out", "Output"));
+    plan.actions.push_back(Action(ReconcileAction::Type::MarkOutputUnconfigured, 0));
+
+    MidiConnectionState current;
+    current.controllers.push_back({Conn(MidiEndpointStatus::Online, "open-in"),
+                                   Conn(MidiEndpointStatus::Online, "open-out")});
+
+    const MidiConnectionState result = ExecuteReconcilePlan(plan, current, ops);
+
+    REQUIRE_TRUE(log.calls.size() == 4);
+    REQUIRE_TRUE(log.calls[0].op == "closeInput");
+    REQUIRE_TRUE(log.calls[1].op == "updateInputRef");
+    REQUIRE_TRUE(log.calls[2].op == "closeOutput");
+    REQUIRE_TRUE(log.calls[3].op == "updateOutputRef");
+    REQUIRE_TRUE(storedInputId == "stored-in");
+    REQUIRE_TRUE(storedOutputId == "stored-out");
+    REQUIRE_TRUE(result.controllers[0].input.status == MidiEndpointStatus::Unconfigured);
+    REQUIRE_TRUE(result.controllers[0].output.status == MidiEndpointStatus::Unconfigured);
+    REQUIRE_TRUE(result.controllers[0].input.openIdentifier.empty());
+    REQUIRE_TRUE(result.controllers[0].output.openIdentifier.empty());
+}
+
 // PlanMidiConnectionResize (Task 2 review, Minor): the pure resize-decision
 // helper MidiConnectionManager::ResizeToControllerCount delegates to. These
 // cases pin down its contract independent of any JUCE handler vector.

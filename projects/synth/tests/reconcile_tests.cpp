@@ -676,6 +676,98 @@ TEST_CASE(startup_shaped_reconcile_one_of_two_controllers_present_no_failure) {
     REQUIRE_TRUE(result.controllers[1].input.status != MidiEndpointStatus::Online);
 }
 
+// A Blacklisted slot is not a reconciliation candidate: its populated refs
+// remain configured data, while its connection state is explicitly made
+// Unconfigured. The immediately following Active slot must still be able to
+// claim the same physical devices in slot order.
+TEST_CASE(blacklisted_slot_is_inert_and_does_not_claim_devices_needed_by_active_slot) {
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot blacklisted = Slot("ignored", Ref("in-1", "Twister In"), Ref("out-1", "Twister Out"));
+    blacklisted.disposition = synth::MidiControllerDisposition::Blacklisted;
+    instrument.controllers.push_back(blacklisted);
+    instrument.controllers.push_back(Slot("active", Ref("in-1", "Twister In"), Ref("out-1", "Twister Out")));
+
+    MidiDeviceList present;
+    present.inputs.push_back({"in-1", "Twister In"});
+    present.outputs.push_back({"out-1", "Twister Out"});
+
+    MidiConnectionState current;
+    current.controllers.push_back({Conn(MidiEndpointStatus::Offline), Conn(MidiEndpointStatus::Offline)});
+    current.controllers.push_back({Conn(MidiEndpointStatus::Offline), Conn(MidiEndpointStatus::Offline)});
+
+    const ReconcilePlan plan = PlanMidiReconciliation(instrument, present, current);
+
+    REQUIRE_TRUE(plan.actions.size() == 5);
+    REQUIRE_TRUE(plan.actions[0].type == ReconcileAction::Type::MarkInputUnconfigured);
+    REQUIRE_TRUE(plan.actions[0].controllerIx == 0);
+    REQUIRE_TRUE(plan.actions[1].type == ReconcileAction::Type::OpenInput);
+    REQUIRE_TRUE(plan.actions[1].controllerIx == 1);
+    REQUIRE_TRUE(plan.actions[2].type == ReconcileAction::Type::MarkOutputUnconfigured);
+    REQUIRE_TRUE(plan.actions[2].controllerIx == 0);
+    REQUIRE_TRUE(plan.actions[3].type == ReconcileAction::Type::OpenOutput);
+    REQUIRE_TRUE(plan.actions[3].controllerIx == 1);
+    REQUIRE_TRUE(plan.actions[4].type == ReconcileAction::Type::Resync);
+    REQUIRE_TRUE(plan.actions[4].controllerIx == 1);
+    REQUIRE_TRUE(CountActions(plan, ReconcileAction::Type::MarkOutputUnconfigured) == 1);
+    REQUIRE_TRUE(CountActions(plan, ReconcileAction::Type::MarkInputOffline) == 0);
+    REQUIRE_TRUE(CountActions(plan, ReconcileAction::Type::MarkOutputOffline) == 0);
+    REQUIRE_TRUE(CountActions(plan, ReconcileAction::Type::UpdateInputRef) == 0);
+    REQUIRE_TRUE(CountActions(plan, ReconcileAction::Type::UpdateOutputRef) == 0);
+    REQUIRE_TRUE(CountActions(plan, ReconcileAction::Type::Resync) == 1);
+}
+
+// Even when no matching endpoint is present, Blacklisted populated refs do
+// not take the configured-but-absent Offline path; they converge to the
+// connection-only Unconfigured state instead.
+TEST_CASE(blacklisted_slot_with_absent_populated_refs_marks_unconfigured_not_offline) {
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot blacklisted = Slot("ignored", Ref("gone-in", "Gone In"), Ref("gone-out", "Gone Out"));
+    blacklisted.disposition = synth::MidiControllerDisposition::Blacklisted;
+    instrument.controllers.push_back(blacklisted);
+
+    MidiConnectionState current;
+    current.controllers.push_back({Conn(MidiEndpointStatus::Offline), Conn(MidiEndpointStatus::Offline)});
+
+    const ReconcilePlan plan = PlanMidiReconciliation(instrument, MidiDeviceList{}, current);
+
+    REQUIRE_TRUE(plan.actions.size() == 2);
+    REQUIRE_TRUE(plan.actions[0].type == ReconcileAction::Type::MarkInputUnconfigured);
+    REQUIRE_TRUE(plan.actions[1].type == ReconcileAction::Type::MarkOutputUnconfigured);
+    REQUIRE_TRUE(CountActions(plan, ReconcileAction::Type::MarkInputOffline) == 0);
+    REQUIRE_TRUE(CountActions(plan, ReconcileAction::Type::MarkOutputOffline) == 0);
+    REQUIRE_TRUE(CountActions(plan, ReconcileAction::Type::OpenInput) == 0);
+    REQUIRE_TRUE(CountActions(plan, ReconcileAction::Type::OpenOutput) == 0);
+    REQUIRE_TRUE(CountActions(plan, ReconcileAction::Type::Resync) == 0);
+}
+
+// A disposition transition closes any live endpoint before its generic
+// Unconfigured state transition; executing the plan leaves a converged state
+// whose next plan is empty.
+TEST_CASE(active_to_blacklisted_closes_online_endpoints_then_converges_unconfigured) {
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot blacklisted = Slot("ignored", Ref("in-1", "Twister In"), Ref("out-1", "Twister Out"));
+    blacklisted.disposition = synth::MidiControllerDisposition::Blacklisted;
+    instrument.controllers.push_back(blacklisted);
+
+    MidiConnectionState current;
+    current.controllers.push_back({Conn(MidiEndpointStatus::Online, "in-1"),
+                                   Conn(MidiEndpointStatus::Online, "out-1")});
+
+    const ReconcilePlan plan = PlanMidiReconciliation(instrument, MidiDeviceList{}, current);
+
+    REQUIRE_TRUE(plan.actions.size() == 4);
+    REQUIRE_TRUE(plan.actions[0].type == ReconcileAction::Type::CloseInput);
+    REQUIRE_TRUE(plan.actions[1].type == ReconcileAction::Type::MarkInputUnconfigured);
+    REQUIRE_TRUE(plan.actions[2].type == ReconcileAction::Type::CloseOutput);
+    REQUIRE_TRUE(plan.actions[3].type == ReconcileAction::Type::MarkOutputUnconfigured);
+
+    synth::MidiEndpointOps ops;
+    MidiConnectionState converged = synth::ExecuteReconcilePlan(plan, current, ops);
+    REQUIRE_TRUE(converged.controllers[0].input.status == MidiEndpointStatus::Unconfigured);
+    REQUIRE_TRUE(converged.controllers[0].output.status == MidiEndpointStatus::Unconfigured);
+    REQUIRE_TRUE(PlanMidiReconciliation(instrument, MidiDeviceList{}, converged).actions.empty());
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {
