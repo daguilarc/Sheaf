@@ -62,6 +62,7 @@ def build_package(destination: Path) -> None:
             PLUGIN_ROOT / directory,
             destination / directory,
             copy_function=shutil.copy2,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
     copy_runtime(destination / "assets" / "xagent")
 

@@ -45,6 +45,42 @@ def tree_snapshot(root: Path) -> dict[str, tuple[int, str]]:
 
 
 class PackageXagentOutputTests(unittest.TestCase):
+    def test_built_package_excludes_python_bytecode_and_cache_directories(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="xagent-package-output-test-") as tempdir:
+            root = Path(tempdir)
+            plugin_root = root / "plugin"
+            destination = root / "package"
+            for directory in (".codex-plugin", "skills", "scripts"):
+                (plugin_root / directory).mkdir(parents=True)
+            launcher = plugin_root / "scripts" / "xagent"
+            write_executable(launcher, "#!/bin/sh\n")
+            (plugin_root / "scripts" / "package_xagent.py").write_text(
+                "# package builder\n",
+                encoding="utf-8",
+            )
+            (plugin_root / "scripts" / "package_xagent.pyc").write_bytes(b"bytecode")
+            cache_file = plugin_root / "scripts" / "__pycache__" / "package_xagent.cpython.pyc"
+            cache_file.parent.mkdir()
+            cache_file.write_bytes(b"cached bytecode")
+
+            def copy_runtime(asset_root: Path) -> None:
+                asset_root.mkdir(parents=True)
+                (asset_root / "package.json").write_text(
+                    '{"name":"xagent"}\n',
+                    encoding="utf-8",
+                )
+
+            with (
+                mock.patch.object(package_xagent, "PLUGIN_ROOT", plugin_root),
+                mock.patch.object(package_xagent, "copy_runtime", copy_runtime),
+            ):
+                package_xagent.build_package(destination)
+
+            self.assertTrue((destination / "scripts" / "xagent").is_file())
+            self.assertTrue(os.access(destination / "scripts" / "xagent", os.X_OK))
+            self.assertEqual([], list(destination.rglob("__pycache__")))
+            self.assertEqual([], list(destination.rglob("*.pyc")))
+
     def test_non_empty_output_is_rejected_without_deleting_contents(self) -> None:
         with tempfile.TemporaryDirectory(prefix="xagent-package-output-test-") as tempdir:
             destination = Path(tempdir) / "existing-output"

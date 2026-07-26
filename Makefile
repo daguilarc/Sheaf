@@ -1,6 +1,8 @@
 MAKEFLAGS += --warn-undefined-variables
 
 PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat agents xagent synth
+CODEX_HOME ?= $(HOME)/.codex
+PLUGIN_CREATOR_VALIDATOR := $(CODEX_HOME)/skills/.system/plugin-creator/scripts/validate_plugin.py
 
 .PHONY: all clean test help openspec-check
 .PHONY: $(PROJECTS)
@@ -29,7 +31,7 @@ clean:
 		$(MAKE) -C projects/$$project clean; \
 	done
 
-test:
+test: xagent-plugin-test
 	@status=0; \
 	for project in $(PROJECTS); do \
 		$(MAKE) -C projects/$$project test || status=$$?; \
@@ -160,7 +162,7 @@ xagent-plugin-build:
 xagent-plugin-test:
 	python3 -m unittest plugins/xagent/scripts/install_global_test.py
 	python3 plugins/xagent/scripts/package_xagent.py --check
-	python3 /Users/joyo/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py plugins/xagent
+	python3 $(PLUGIN_CREATOR_VALIDATOR) plugins/xagent
 
 xagent-plugin-install-global:
 	python3 plugins/xagent/scripts/install_global.py install

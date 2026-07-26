@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
 import shutil
 import sys
@@ -180,7 +182,7 @@ class SkillScopeOutputTests(unittest.TestCase):
             self.assertNotIn(Path(".cursor/skills/codex-only/SKILL.md"), paths)
             self.assertNotIn(Path(".pi/skills/codex-only/SKILL.md"), paths)
 
-    def test_global_outputs_include_only_non_plugin_global_skills(self) -> None:
+    def test_global_outputs_include_all_non_plugin_global_skills(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             home = (Path(tempdir) / "home").resolve()
             codex_home = (Path(tempdir) / "codex-home").resolve()
@@ -191,35 +193,80 @@ class SkillScopeOutputTests(unittest.TestCase):
             )
             paths = {output.path for output in outputs}
             _global_source, global_skills, _sheaf_skills = install.read_sources(REPO_ROOT)
-            plugin_owned_global_ids = {"xagent-subagents"}
 
             for skill in global_skills:
-                expected_paths = []
                 if "claude" in skill.targets:
-                    expected_paths.append(
-                        home / ".claude" / "skills" / skill.skill_id / "SKILL.md"
+                    self.assertIn(
+                        home / ".claude" / "skills" / skill.skill_id / "SKILL.md",
+                        paths,
                     )
                 if "cursor" in skill.targets:
-                    expected_paths.append(
-                        home / ".cursor" / "skills" / skill.skill_id / "SKILL.md"
+                    self.assertIn(
+                        home / ".cursor" / "skills" / skill.skill_id / "SKILL.md",
+                        paths,
                     )
                 if "pi" in skill.targets:
-                    expected_paths.append(
-                        home / ".pi" / "skills" / skill.skill_id / "SKILL.md"
+                    self.assertIn(
+                        home / ".pi" / "skills" / skill.skill_id / "SKILL.md",
+                        paths,
                     )
                 if "codex" in skill.targets:
-                    expected_paths.extend(
-                        [
-                            home / ".agents" / "skills" / skill.skill_id / "SKILL.md",
-                            codex_home / "skills" / skill.skill_id / "SKILL.md",
-                        ]
+                    self.assertIn(
+                        home / ".agents" / "skills" / skill.skill_id / "SKILL.md",
+                        paths,
+                    )
+                    self.assertIn(
+                        codex_home / "skills" / skill.skill_id / "SKILL.md",
+                        paths,
                     )
 
-                for path in expected_paths:
-                    if skill.skill_id in plugin_owned_global_ids:
-                        self.assertNotIn(path, paths)
-                    else:
-                        self.assertIn(path, paths)
+    def test_global_outputs_exclude_synthetic_plugin_owned_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo_root = copied_repo_fixture(tempdir)
+            skill_root = (
+                repo_root
+                / "projects"
+                / "agents"
+                / "global"
+                / "skills"
+                / "xagent-subagents"
+            )
+            skill_root.mkdir(parents=True)
+            (skill_root / "skill.yaml").write_text(
+                "\n".join(
+                    [
+                        "id: xagent-subagents",
+                        "name: xagent-subagents",
+                        "description: Synthetic plugin-owned skill.",
+                        "targets:",
+                        "  - claude",
+                        "  - cursor",
+                        "  - pi",
+                        "  - codex",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (skill_root / "SKILL.md").write_text(
+                "# Synthetic Plugin Skill\n",
+                encoding="utf-8",
+            )
+            home = (Path(tempdir) / "home").resolve()
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            outputs = install.build_global_outputs(
+                repo_root,
+                home=home,
+                codex_home=codex_home,
+            )
+            paths = {output.path for output in outputs}
+
+            self.assertFalse(
+                any(
+                    path.parts[-2:] == ("xagent-subagents", "SKILL.md")
+                    for path in paths
+                )
+            )
 
 
 class ObsoleteRepoOutputTests(unittest.TestCase):
@@ -239,7 +286,58 @@ class ObsoleteRepoOutputTests(unittest.TestCase):
             paths,
         )
 
-    def test_repo_install_check_clean_handle_only_managed_obsolete_outputs(self) -> None:
+    def test_repo_check_reports_managed_obsolete_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo_root = copied_repo_fixture(tempdir)
+            managed_obsolete = repo_root / ".claude" / "skills" / "about-me" / "SKILL.md"
+            self.assertEqual(
+                0,
+                run_main("install", "--scope", "repo", "--repo-root", str(repo_root)),
+            )
+            managed_obsolete.parent.mkdir(parents=True)
+            managed_obsolete.write_text(
+                "<!-- sheaf-agents-managed: DO NOT EDIT; source=old -->\n",
+                encoding="utf-8",
+            )
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                result = run_main(
+                    "check",
+                    "--scope",
+                    "repo",
+                    "--repo-root",
+                    str(repo_root),
+                )
+
+            self.assertEqual(1, result)
+            self.assertIn(
+                f"obsolete managed {managed_obsolete.resolve()}",
+                stderr.getvalue(),
+            )
+            self.assertTrue(managed_obsolete.exists())
+
+    def test_repo_clean_removes_managed_and_preserves_unmanaged_obsolete_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo_root = copied_repo_fixture(tempdir)
+            managed_obsolete = repo_root / ".claude" / "skills" / "about-me" / "SKILL.md"
+            unmanaged_obsolete = repo_root / ".cursor" / "skills" / "about-me" / "SKILL.md"
+            managed_obsolete.parent.mkdir(parents=True)
+            unmanaged_obsolete.parent.mkdir(parents=True)
+            managed_obsolete.write_text(
+                "<!-- sheaf-agents-managed: DO NOT EDIT; source=old -->\n",
+                encoding="utf-8",
+            )
+            unmanaged_obsolete.write_text("personal skill\n", encoding="utf-8")
+
+            self.assertEqual(
+                0,
+                run_main("clean", "--scope", "repo", "--repo-root", str(repo_root)),
+            )
+            self.assertFalse(managed_obsolete.exists())
+            self.assertTrue(unmanaged_obsolete.exists())
+
+    def test_repo_install_prunes_managed_and_preserves_unmanaged_obsolete_output(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             repo_root = copied_repo_fixture(tempdir)
             managed_obsolete = repo_root / ".claude" / "skills" / "about-me" / "SKILL.md"
@@ -259,14 +357,91 @@ class ObsoleteRepoOutputTests(unittest.TestCase):
             self.assertFalse(managed_obsolete.exists())
             self.assertTrue(unmanaged_obsolete.exists())
 
+    def test_global_install_prunes_plugin_owned_managed_and_preserves_unmanaged_output(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo_root = copied_repo_fixture(tempdir)
+            home = (Path(tempdir) / "home").resolve()
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            managed_obsolete = (
+                home / ".agents" / "skills" / "xagent-subagents" / "SKILL.md"
+            )
+            unmanaged_obsolete = (
+                codex_home / "skills" / "xagent-subagents" / "SKILL.md"
+            )
+            managed_obsolete.parent.mkdir(parents=True)
+            unmanaged_obsolete.parent.mkdir(parents=True)
+            managed_obsolete.write_text(
+                "<!-- sheaf-agents-managed: DO NOT EDIT; source=old -->\n",
+                encoding="utf-8",
+            )
+            unmanaged_obsolete.write_text("personal plugin skill\n", encoding="utf-8")
+
             self.assertEqual(
                 0,
-                run_main("check", "--scope", "repo", "--repo-root", str(repo_root)),
+                run_main(
+                    "install",
+                    "--scope",
+                    "global",
+                    "--repo-root",
+                    str(repo_root),
+                    "--home",
+                    str(home),
+                    "--codex-home",
+                    str(codex_home),
+                ),
+            )
+
+            self.assertFalse(managed_obsolete.exists())
+            self.assertEqual(
+                "personal plugin skill\n",
+                unmanaged_obsolete.read_text(encoding="utf-8"),
+            )
+
+    def test_global_check_and_clean_handle_plugin_owned_obsolete_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo_root = copied_repo_fixture(tempdir)
+            home = (Path(tempdir) / "home").resolve()
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            common_args = (
+                "--scope",
+                "global",
+                "--repo-root",
+                str(repo_root),
+                "--home",
+                str(home),
+                "--codex-home",
+                str(codex_home),
             )
             self.assertEqual(
                 0,
-                run_main("clean", "--scope", "repo", "--repo-root", str(repo_root)),
+                run_main("install", *common_args),
             )
+            managed_obsolete = (
+                home / ".agents" / "skills" / "xagent-subagents" / "SKILL.md"
+            )
+            unmanaged_obsolete = (
+                codex_home / "skills" / "xagent-subagents" / "SKILL.md"
+            )
+            managed_obsolete.parent.mkdir(parents=True)
+            unmanaged_obsolete.parent.mkdir(parents=True)
+            managed_obsolete.write_text(
+                "<!-- sheaf-agents-managed: DO NOT EDIT; source=old -->\n",
+                encoding="utf-8",
+            )
+            unmanaged_obsolete.write_text("personal plugin skill\n", encoding="utf-8")
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                result = run_main("check", *common_args)
+            self.assertEqual(1, result)
+            self.assertIn(f"obsolete managed {managed_obsolete}", stderr.getvalue())
+            self.assertTrue(managed_obsolete.exists())
+            self.assertTrue(unmanaged_obsolete.exists())
+
+            self.assertEqual(0, run_main("clean", *common_args))
+            self.assertFalse(managed_obsolete.exists())
             self.assertTrue(unmanaged_obsolete.exists())
 
 

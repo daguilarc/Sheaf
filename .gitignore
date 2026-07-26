@@ -4,6 +4,10 @@
 config/api_keys.json
 config/dictator.json
 
+# Python bytecode
+__pycache__/
+*.pyc
+
 # Node packages and build/test output
 node_modules/
 projects/conductor/node_modules/
