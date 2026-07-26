@@ -19,6 +19,7 @@ const CORE_SOURCES = [
   "MidiConfigViewModel.cpp",
   "MidiConfigBlocks.cpp",
   "MasterClock.cpp",
+  "ControllerWizard.cpp",
 ];
 
 const EXPORTED_FUNCTIONS = [

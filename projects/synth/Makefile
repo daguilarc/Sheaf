@@ -31,8 +31,9 @@ BROWSER_CONTRACT_TEST_BIN := $(BUILD_DIR)/browser_runtime_contract_tests
 BROWSER_COMMAND_BUFFER_TEST_BIN := $(BUILD_DIR)/browser_command_buffer_tests
 BROWSER_AUDIO_DEVICE_TEST_BIN := $(BUILD_DIR)/browser_audio_device_tests
 BROWSER_MIDI_BRIDGE_TEST_BIN := $(BUILD_DIR)/browser_midi_bridge_tests
-SRC := src/ParameterModulation.cpp src/ButtonGrid.cpp src/MidiController.cpp src/PatchPersistence.cpp src/DspWavetable.cpp src/Modules.cpp src/MidiReconcile.cpp src/MidiDevicePoller.cpp src/MidiConfigViewModel.cpp src/MidiConfigBlocks.cpp src/MasterClock.cpp
-OBJ := $(BUILD_DIR)/ParameterModulation.o $(BUILD_DIR)/ButtonGrid.o $(BUILD_DIR)/MidiController.o $(BUILD_DIR)/PatchPersistence.o $(BUILD_DIR)/DspWavetable.o $(BUILD_DIR)/Modules.o $(BUILD_DIR)/MidiReconcile.o $(BUILD_DIR)/MidiDevicePoller.o $(BUILD_DIR)/MidiConfigViewModel.o $(BUILD_DIR)/MidiConfigBlocks.o $(BUILD_DIR)/MasterClock.o
+CONTROLLER_WIZARD_TEST_BIN := $(BUILD_DIR)/controller_wizard_tests
+SRC := src/ParameterModulation.cpp src/ButtonGrid.cpp src/MidiController.cpp src/PatchPersistence.cpp src/DspWavetable.cpp src/Modules.cpp src/MidiReconcile.cpp src/MidiDevicePoller.cpp src/MidiConfigViewModel.cpp src/MidiConfigBlocks.cpp src/MasterClock.cpp src/ControllerWizard.cpp
+OBJ := $(BUILD_DIR)/ParameterModulation.o $(BUILD_DIR)/ButtonGrid.o $(BUILD_DIR)/MidiController.o $(BUILD_DIR)/PatchPersistence.o $(BUILD_DIR)/DspWavetable.o $(BUILD_DIR)/Modules.o $(BUILD_DIR)/MidiReconcile.o $(BUILD_DIR)/MidiDevicePoller.o $(BUILD_DIR)/MidiConfigViewModel.o $(BUILD_DIR)/MidiConfigBlocks.o $(BUILD_DIR)/MasterClock.o $(BUILD_DIR)/ControllerWizard.o
 DSP_HEADERS := include/synth/DspMath.hpp include/synth/DspNumbers.hpp include/synth/DspTransferFunction.hpp include/synth/DspFilters.hpp include/synth/DspScope.hpp include/synth/DspWavetable.hpp include/synth/DspOscillators.hpp include/synth/DspBuffers.hpp include/synth/DspAdsr.hpp include/synth/DspConstant.hpp include/synth/DspDegrade.hpp include/synth/DspMetering.hpp include/synth/DspNoise.hpp include/synth/DspOla.hpp include/synth/DspResynthesis.hpp include/synth/DspSpectral.hpp include/synth/DspPhasor2Tick.hpp
 RANDOM_LFO_HEADERS := include/synth/DspRandomLfo.hpp include/synth/GangedRandomLfoVisualizer.hpp
 STANDARD_MODULATOR_HEADERS := include/synth/StandardModulators.hpp include/synth/ParameterModulation.hpp include/synth/ConstantBarVisualizer.hpp include/synth/NoiseWaveformVisualizer.hpp include/synth/DspConstant.hpp include/synth/DspNoise.hpp $(RANDOM_LFO_HEADERS)
@@ -40,7 +41,7 @@ APPS_DIR := apps
 MINIAPP_DIR := $(APPS_DIR)/miniapp
 SHEAF_PATCH_DIR := $(APPS_DIR)/sheaf-patch
 
-.PHONY: all build test dsp_tests master_clock_tests contract_tests engine_tests check-ui-boundary miniapp sheaf-patch apps browser browser-apps browser-fixture-app browser-apps-run browser-apps-smoke browser-unit-test browser-command-buffer-test browser-audio-device-test browser-midi-bridge-test clean
+.PHONY: all build test dsp_tests master_clock_tests contract_tests engine_tests controller_wizard_tests check-ui-boundary miniapp sheaf-patch apps browser browser-apps browser-fixture-app browser-apps-run browser-apps-smoke browser-unit-test browser-command-buffer-test browser-audio-device-test browser-midi-bridge-test clean
 
 all: build test
 
@@ -60,6 +61,9 @@ $(BUILD_DIR)/ButtonGrid.o: src/ButtonGrid.cpp include/synth/ButtonGrid.hpp inclu
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/MidiController.o: src/MidiController.cpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/RuntimeUIState.hpp include/synth/ButtonGrid.hpp | $(BUILD_SENTINEL)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/ControllerWizard.o: src/ControllerWizard.cpp include/synth/ControllerWizard.hpp include/synth/MidiController.hpp include/synth/PortableUI.hpp | $(BUILD_SENTINEL)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/PatchPersistence.o: src/PatchPersistence.cpp include/synth/PatchPersistence.hpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/MasterClock.hpp include/synth/Json.hpp | $(BUILD_SENTINEL)
@@ -189,6 +193,12 @@ $(BROWSER_AUDIO_DEVICE_TEST_BIN): tests/browser_audio_device_tests.cpp include/s
 $(BROWSER_MIDI_BRIDGE_TEST_BIN): tests/browser_midi_bridge_tests.cpp include/synth/browser/BrowserMidiBridge.hpp include/synth/Engine.hpp include/synth/MidiReconcile.hpp include/synth/MidiController.hpp $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
+$(CONTROLLER_WIZARD_TEST_BIN): tests/controller_wizard_tests.cpp include/synth/ControllerWizard.hpp $(LIB)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -DNDEBUG $< $(LIB) -o $@
+
+controller_wizard_tests: $(CONTROLLER_WIZARD_TEST_BIN)
+	$(CONTROLLER_WIZARD_TEST_BIN)
+
 browser-unit-test: $(BROWSER_CONTRACT_TEST_BIN)
 	$(BROWSER_CONTRACT_TEST_BIN)
 
@@ -201,7 +211,7 @@ browser-audio-device-test: $(BROWSER_AUDIO_DEVICE_TEST_BIN)
 browser-midi-bridge-test: $(BROWSER_MIDI_BRIDGE_TEST_BIN)
 	$(BROWSER_MIDI_BRIDGE_TEST_BIN)
 
-test: check-ui-boundary $(TEST_BIN) $(BUTTON_GRID_TEST_BIN) $(DSP_TEST_BIN) $(MASTER_CLOCK_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(BRAID4_SYSTEM_TEST_BIN) $(BRAID4_DEADLINE_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN) $(MIDI_SENDER_TEST_BIN) $(VIEWMODEL_TEST_BIN) $(BLOCKS_TEST_BIN) $(PORTABLE_UI_TEST_BIN) $(RUNTIME_MAIN_COMPONENT_TEST_BIN) $(RUNTIME_FILE_SERVICE_TEST_BIN) $(CONTROLLERS_PAGE_UI_TEST_BIN) $(BROWSER_COMMAND_BUFFER_TEST_BIN) $(BROWSER_AUDIO_DEVICE_TEST_BIN)
+test: check-ui-boundary $(TEST_BIN) $(BUTTON_GRID_TEST_BIN) $(DSP_TEST_BIN) $(MASTER_CLOCK_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(BRAID4_SYSTEM_TEST_BIN) $(BRAID4_DEADLINE_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN) $(MIDI_SENDER_TEST_BIN) $(VIEWMODEL_TEST_BIN) $(BLOCKS_TEST_BIN) $(PORTABLE_UI_TEST_BIN) $(RUNTIME_MAIN_COMPONENT_TEST_BIN) $(RUNTIME_FILE_SERVICE_TEST_BIN) $(CONTROLLERS_PAGE_UI_TEST_BIN) $(BROWSER_COMMAND_BUFFER_TEST_BIN) $(BROWSER_AUDIO_DEVICE_TEST_BIN) $(CONTROLLER_WIZARD_TEST_BIN)
 	$(TEST_BIN)
 	$(BUTTON_GRID_TEST_BIN)
 	$(DSP_TEST_BIN)
@@ -227,6 +237,7 @@ test: check-ui-boundary $(TEST_BIN) $(BUTTON_GRID_TEST_BIN) $(DSP_TEST_BIN) $(MA
 	$(CONTROLLERS_PAGE_UI_TEST_BIN)
 	$(BROWSER_COMMAND_BUFFER_TEST_BIN)
 	$(BROWSER_AUDIO_DEVICE_TEST_BIN)
+	$(CONTROLLER_WIZARD_TEST_BIN)
 
 miniapp:
 	$(MAKE) -C $(MINIAPP_DIR)
