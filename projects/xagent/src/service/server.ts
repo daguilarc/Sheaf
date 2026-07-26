@@ -63,11 +63,22 @@ export type XagentServer = {
   readonly httpServer: Server;
   listen(): Promise<number>;
   close(): Promise<void>;
+  // Updates the `/health` warning after construction. Reconciliation runs
+  // after `listen()` succeeds (so a duplicate start exits on EADDRINUSE
+  // before touching any run), so the warning it produces must be wired in
+  // post-listen rather than passed at construction time.
+  //
+  setWarning(warning: string | undefined): void;
 };
 
 export function createXagentServer(options: XagentServerOptions): XagentServer {
   const serverStartTime = options.serverStartTime ?? Date.now();
   let acceptingConnections = true;
+  // The `/health` warning is mutable so reconciliation can run after
+  // `listen()` succeeds and still surface its degradation outcome through
+  // the same wiring. See setWarning below.
+  //
+  let healthWarning: string | undefined = options.warning;
   // DNS rebinding protection allow lists. The shipped production port
   // (9005) is always allowed so a service that rebinds to that port
   // before `listen()` resolves is still reachable; the actual ephemeral
@@ -119,8 +130,8 @@ export function createXagentServer(options: XagentServerOptions): XagentServer {
         healthy: true,
         uptime: computeUptimeSeconds(serverStartTime),
       };
-      if (options.warning !== undefined) {
-        body.warning = options.warning;
+      if (healthWarning !== undefined) {
+        body.warning = healthWarning;
       }
       sendJson(response, 200, body);
       return;
@@ -167,6 +178,9 @@ export function createXagentServer(options: XagentServerOptions): XagentServer {
           resolve(address.port);
         });
       });
+    },
+    setWarning(warning: string | undefined): void {
+      healthWarning = warning;
     },
     close(): Promise<void> {
       acceptingConnections = false;

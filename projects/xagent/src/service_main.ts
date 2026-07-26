@@ -20,19 +20,6 @@ import { reconcileStaleRuns } from "./supervision/reconcile.js";
 async function main(): Promise<void> {
   const config = await loadXagentServiceConfig();
 
-  const reconciliationResults = await reconcileStaleRuns(
-    config.logRoot,
-    platformProcessInspector,
-  );
-  // Surface reconciliation outcomes to the operator: log each result to
-  // stderr for Conductor capture, and derive the `/health` warning from
-  // any non-clean outcome so a sandbox-bypassed child that could not be
-  // terminated is visible rather than silent. Previously the return value
-  // was discarded and `/health` could never report degradation.
-  //
-  logReconciliationResults(reconciliationResults);
-  const warning = reconciliationWarning(reconciliationResults);
-
   const runManager = new XagentRunManager({
     repoRoot: config.repoRoot,
     logRoot: config.logRoot,
@@ -92,11 +79,33 @@ async function main(): Promise<void> {
     bindPort: config.bindPort,
     runManager,
     shutdownController,
-    ...(warning !== undefined ? { warning } : {}),
   });
 
+  // Bind the listener BEFORE reconciling stale runs. A duplicate
+  // `make xagent-service-run` while Conductor's copy is already up would
+  // otherwise scan the shared log root, SIGTERM every live worker owned by
+  // the running service, mark those runs `abandoned`, and only then fail
+  // with EADDRINUSE — silently destroying in-flight user work on a
+  // plausible operator action. Binding first makes the second instance
+  // exit on EADDRINUSE without touching any run. Reconciliation then runs
+  // against the log root only this instance can reach, and its degradation
+  // outcome is wired into `/health` via setWarning.
+  //
   const port = await server.listen();
   console.error(`xagent service listening on ${config.bindHost}:${port}`);
+
+  const reconciliationResults = await reconcileStaleRuns(
+    config.logRoot,
+    platformProcessInspector,
+  );
+  // Surface reconciliation outcomes to the operator: log each result to
+  // stderr for Conductor capture, and derive the `/health` warning from
+  // any non-clean outcome so a sandbox-bypassed child that could not be
+  // terminated is visible rather than silent. Previously the return value
+  // was discarded and `/health` could never report degradation.
+  //
+  logReconciliationResults(reconciliationResults);
+  server.setWarning(reconciliationWarning(reconciliationResults));
 }
 
 main().catch((error: unknown) => {

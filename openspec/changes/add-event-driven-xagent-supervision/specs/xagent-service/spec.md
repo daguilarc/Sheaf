@@ -129,7 +129,7 @@ WHEN `xagent_start` receives a working directory, THE xagent service SHALL requi
 
 ### Requirement: xsvc-7 — Recovery: stale ownership reconciliation
 
-WHEN the xagent service starts with metadata for a non-terminal run that it cannot safely reattach, THE service SHALL mark the run `abandoned`, emit deterministic attention, and clean up a stale provider process only when persisted PID and process-start identity prove that the process is the one xagent owned.
+WHEN the xagent service starts with metadata for a non-terminal run that it cannot safely reattach, THE service SHALL mark the run `abandoned`, emit deterministic attention, and clean up a stale provider process only when persisted PID and process-start identity prove that the process is the one xagent owned. THE service SHALL bind its listener (or otherwise acquire exclusive ownership of the bind port) BEFORE running reconciliation, so a duplicate start against an already-occupied port exits on `EADDRINUSE` without reconciling, signalling, or abandoning runs owned by the running instance.
 
 #### Scenario: Stale owned process identity matches
 
@@ -142,3 +142,10 @@ WHEN the xagent service starts with metadata for a non-terminal run that it cann
 - **WHEN** startup finds active metadata but no live process has the persisted identity
 - **THEN** the service records the run as `abandoned`
 - **AND** does not signal or terminate an unproven process
+
+#### Scenario: Duplicate start against an occupied port does not reconcile live runs
+
+- **WHEN** a second xagent service start is attempted while the bind port is already occupied by the running service
+- **THEN** the second instance exits on `EADDRINUSE` before running reconciliation
+- **AND** does not signal, terminate, or abandon any run owned by the running instance
+- **AND** leaves every live owned worker process running

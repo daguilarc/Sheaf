@@ -20,6 +20,7 @@ import {
   resolveXagentLogRoot,
 } from "../src/service/config.js";
 import { createRunRecord, updateRunSupervision } from "../src/logs.js";
+import { captureOwnedProcessIdentity } from "../src/supervision/process_identity.js";
 import { XagentRunManager } from "../src/service/run_manager.js";
 import {
   createShutdownController,
@@ -602,8 +603,11 @@ test("service_main reconciles stale active runs before accepting work", async ()
 
   const port = await waitForPort(stderrChunks, 10_000);
 
-  // Reconciliation runs before the listener accepts work; by the time the
-  // listening line is printed the stale run must already be abandoned.
+  // Reconciliation runs AFTER the listener binds (so a duplicate start
+  // exits on EADDRINUSE without touching any run). Wait for the
+  // reconciliation log line before asserting the stale run was abandoned.
+  //
+  await waitForReconciliationLog(stderrChunks, staleRunId, 10_000);
   const metadataAfter = JSON.parse(await readFile(record.metadataPath, "utf8")) as {
     supervision: { phase: string };
     exit_status: string;
@@ -698,6 +702,11 @@ test("service_main surfaces a /health warning and stderr log when reconciliation
   child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
 
   const port = await waitForPort(stderrChunks, 10_000);
+
+  // Reconciliation runs after the listener binds, so wait for its stderr
+  // log line before asserting the degraded outcome was surfaced.
+  //
+  await waitForReconciliationLog(stderrChunks, staleRunId, 10_000);
 
   // The degraded reconciliation outcome must be logged to stderr for
   // Conductor capture.
@@ -800,6 +809,11 @@ test("service_main reports no /health warning and no stderr log when reconciliat
 
   const port = await waitForPort(stderrChunks, 10_000);
 
+  // Reconciliation runs after the listener binds, so wait for its stderr
+  // log line before asserting the clean outcome was surfaced.
+  //
+  await waitForReconciliationLog(stderrChunks, staleRunId, 10_000);
+
   // The clean `process_not_found` outcome is logged to stderr for
   // operator visibility but must not raise a degradation warning.
   //
@@ -825,7 +839,167 @@ test("service_main reports no /health warning and no stderr log when reconciliat
   assert.equal(exitCode, 0);
 });
 
-// I3: SIGTERM (Conductor's stop fallback when POST /exit fails or is
+// C1 regression: a duplicate `make xagent-service-run` while Conductor's
+// copy is already up must NOT reconcile (and SIGTERM) every live worker
+// owned by the running service before failing on EADDRINUSE. The listener
+// must bind (or fail) BEFORE reconciliation runs, so a second instance
+// exits on EADDRINUSE without touching any run. This test reproduces the
+// failure mode Opus described: a live owned child registered as a
+// `running` run in the shared log root must survive a second start
+// attempt against an occupied port, and the run must NOT be marked
+// `abandoned`.
+//
+test("a duplicate service_main with the port occupied exits on EADDRINUSE without reconciling live runs", async () => {
+  const sheafRoot = await mkdtemp(path.join(tmpdir(), "xagent-svc-dup-start-"));
+  await mkdir(path.join(sheafRoot, "config"), { recursive: true });
+  await mkdir(path.join(sheafRoot, "structure"), { recursive: true });
+  await writeFile(path.join(sheafRoot, "structure", ".gitkeep"), "", "utf8");
+
+  // Occupy the bind port with a dummy listener that simulates the
+  // already-running Conductor-managed service. service_main must fail to
+  // bind against this port.
+  //
+  const portHolder = createServer();
+  await new Promise<void>((resolve, reject) => {
+    portHolder.once("error", reject);
+    portHolder.listen(0, "127.0.0.1", () => {
+      portHolder.removeListener("error", reject);
+      resolve();
+    });
+  });
+  const occupiedPort = (portHolder.address() as { port: number }).port;
+
+  await writeFile(
+    path.join(sheafRoot, "config", "services.json"),
+    `${JSON.stringify([
+      {
+        name: "xagent",
+        host: "127.0.0.1",
+        port: occupiedPort,
+        command: "make xagent-service-run",
+      },
+    ])}\n`,
+    "utf8",
+  );
+
+  const logRoot = path.join(sheafRoot, "data", "xagent");
+  await mkdir(logRoot, { recursive: true });
+
+  // Spawn a sentinel child whose real pid + ps-lstart identity will match
+  // the run's persisted owned_process. Before the C1 fix, reconciliation
+  // would SIGTERM this sentinel (because identity matches) and mark the
+  // run `abandoned` before service_main even attempted to bind. After the
+  // fix, service_main fails on EADDRINUSE first and never reconciles, so
+  // the sentinel survives and the run stays `running`.
+  //
+  const sentinel = trackChild(
+    spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+      detached: true,
+    }),
+  );
+  assert.ok(sentinel.pid);
+  // Give the sentinel a moment to be visible to `ps`, then capture its
+  // real owned-process identity (pid + pgid + ps-lstart).
+  //
+  let owned = captureOwnedProcessIdentity(sentinel.pid);
+  for (let attempt = 0; attempt < 10 && owned === undefined; attempt += 1) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    owned = captureOwnedProcessIdentity(sentinel.pid);
+  }
+  assert.ok(owned, `could not capture owned-process identity for sentinel pid ${sentinel.pid}`);
+
+  const liveRunId = "xrun_live_owned_by_running_service";
+  const record = await createRunRecord({
+    repoRoot: sheafRoot,
+    logRoot,
+    runId: liveRunId,
+    harness: "codex",
+    mode: "subagent",
+    clock: () => new Date("2026-07-25T12:00:00.000Z"),
+  });
+  await updateRunSupervision(record, {
+    phase: "running",
+    sequence: 3,
+    provider_thread_id: "provider-thread-live",
+    last_transport_progress_at: "2026-07-25T12:01:00.000Z",
+    last_semantic_progress_at: "2026-07-25T12:00:30.000Z",
+    owned_process: {
+      pid: owned.pid,
+      process_group_id: owned.process_group_id,
+      started_at: owned.started_at,
+      start_identity: owned.start_identity,
+    },
+  });
+
+  const serviceMain = path.join(process.cwd(), "dist", "src", "service_main.js");
+  const child = trackChild(
+    spawn(process.execPath, [serviceMain], {
+      cwd: sheafRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+  );
+
+  const stderrChunks: Buffer[] = [];
+  child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+  // service_main must exit non-zero because the port is occupied. It must
+  // NOT print the listening line, and it must NOT print any
+  // reconciliation log line.
+  //
+  const exitCode = await waitForExit(child, 10_000);
+  assert.notEqual(exitCode, 0, "duplicate service_main must exit non-zero on EADDRINUSE");
+  const capturedStderr = Buffer.concat(stderrChunks).toString("utf8");
+  assert.match(capturedStderr, /EADDRINUSE/);
+  assert.doesNotMatch(
+    capturedStderr,
+    /xagent service listening on/,
+    "duplicate service_main must not announce a port when the bind fails",
+  );
+  assert.doesNotMatch(
+    capturedStderr,
+    new RegExp(`xagent service reconciliation: run_id=${liveRunId}`),
+    "duplicate service_main must NOT reconcile live runs before failing on EADDRINUSE",
+  );
+
+  // The live owned child must survive: no SIGTERM was issued against its
+  // process group because reconciliation never ran.
+  //
+  assert.equal(
+    isProcessAlive(sentinel.pid),
+    true,
+    "live owned child must survive a duplicate service_main start",
+  );
+
+  // The run must remain `running` — not `abandoned` — because
+  // reconciliation never touched it.
+  //
+  const metadataAfter = JSON.parse(await readFile(record.metadataPath, "utf8")) as {
+    supervision: { phase: string };
+    exit_status: string;
+  };
+  assert.equal(metadataAfter.supervision.phase, "running");
+  assert.equal(metadataAfter.exit_status, "running");
+
+  // Clean up: kill the sentinel's process group (it was spawned detached)
+  // and close the port-holder listener.
+  //
+  try {
+    if (owned.process_group_id !== undefined) {
+      process.kill(-owned.process_group_id, "SIGTERM");
+    } else {
+      sentinel.kill("SIGTERM");
+    }
+  } catch {
+    // Process may already be gone.
+    //
+  }
+  await new Promise<void>((resolve) => {
+    portHolder.close(() => resolve());
+  });
+});
+
+
 // unresponsive) and SIGINT (a human Ctrl-C) must trigger the same orderly
 // shutdown as POST /exit rather than terminating the process and orphaning
 // detached provider process groups. Without the signal handlers, SIGTERM
@@ -933,6 +1107,33 @@ async function waitForPort(stderrChunks: Buffer[], timeoutMs: number): Promise<n
   }
   throw new Error(
     `service did not announce a port within ${timeoutMs} ms; stderr=${Buffer.concat(stderrChunks).toString("utf8")}`,
+  );
+}
+
+// Reconciliation runs AFTER the listener binds (C1 fix), so the
+// reconciliation log line for a given run_id arrives on stderr some time
+// after the listening line. Tests that assert on reconciliation outcomes
+// must wait for this line rather than assuming it has already been
+// emitted by the time `waitForPort` returns.
+//
+async function waitForReconciliationLog(
+  stderrChunks: Buffer[],
+  runId: string,
+  timeoutMs: number,
+): Promise<void> {
+  const pattern = new RegExp(
+    `xagent service reconciliation: run_id=${runId} cleanup=`,
+  );
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const text = Buffer.concat(stderrChunks).toString("utf8");
+    if (pattern.test(text)) {
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(
+    `service did not log reconciliation for ${runId} within ${timeoutMs} ms; stderr=${Buffer.concat(stderrChunks).toString("utf8")}`,
   );
 }
 
