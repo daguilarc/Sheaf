@@ -4,9 +4,11 @@ import type {
   HarnessSession,
   HarnessStartOptions,
 } from "../adapters/types.js";
+import { sanitizeValue } from "../sanitize.js";
 import {
   SemanticEvidenceWindow,
   type SemanticEvidenceSnapshot,
+  validateSemanticEvidencePolicy,
 } from "./evidence.js";
 import { SequencedEventQueue } from "./event_queue.js";
 import {
@@ -78,6 +80,20 @@ export class Supervisor {
     this.#adapter = options.adapter;
     this.#startOptions = options.startOptions;
     this.#policy = options.policy;
+    validateSemanticEvidencePolicy({
+      ...(this.#policy.watchdog.inputLimitBytes === undefined
+        ? {}
+        : { maxInputBytes: this.#policy.watchdog.inputLimitBytes }),
+      ...(this.#policy.watchdog.suspicionWindowMs === undefined
+        ? {}
+        : { suspicionWindowMs: this.#policy.watchdog.suspicionWindowMs }),
+      ...(this.#policy.watchdog.repeatedToolThreshold === undefined
+        ? {}
+        : { repeatedToolThreshold: this.#policy.watchdog.repeatedToolThreshold }),
+      ...(this.#policy.watchdog.repeatedFailureThreshold === undefined
+        ? {}
+        : { repeatedFailureThreshold: this.#policy.watchdog.repeatedFailureThreshold }),
+    });
     this.#clock = options.clock ?? (() => new Date());
     this.#metadataSink = options.metadataSink ?? (async () => {});
     const timestamp = this.#clock().toISOString();
@@ -201,7 +217,12 @@ export class Supervisor {
             if (terminalPhases.has(this.#phase)) {
               return;
             }
-            await this.#publishState("failed", mechanical.reason, true, mechanical.payload);
+            await this.#publishState(
+              "failed",
+              mechanical.reason,
+              true,
+              sanitizeValue(mechanical.payload, this.#startOptions.cwd),
+            );
           });
           return;
         }
@@ -236,10 +257,15 @@ export class Supervisor {
         if (terminalPhases.has(this.#phase)) {
           return;
         }
-        await this.#publishState("failed", transportFailure?.reason ?? errorCode(error), true, {
-          message: error instanceof Error ? error.message : String(error),
-          turn_id: turn.turnId,
-        });
+        await this.#publishState(
+          "failed",
+          transportFailure?.reason ?? errorCode(error),
+          true,
+          sanitizeValue({
+            message: error instanceof Error ? error.message : String(error),
+            turn_id: turn.turnId,
+          }, this.#startOptions.cwd),
+        );
       });
       return;
     }
@@ -321,7 +347,6 @@ export class Supervisor {
         throw new Error("Harness session does not support interrupt.");
       }
       await this.#session.interrupt();
-      this.#health.recordMechanicalEvent({ type: "cancelled" });
     });
   }
 
@@ -410,7 +435,10 @@ export class Supervisor {
     if (classification.kind !== "attention") {
       return Promise.resolve();
     }
-    return this.publishAttention(classification.reason, classification.payload).then(() => {});
+    return this.publishAttention(
+      classification.reason,
+      sanitizeValue(classification.payload, this.#startOptions.cwd),
+    ).then(() => {});
   }
 
   #persistenceState(

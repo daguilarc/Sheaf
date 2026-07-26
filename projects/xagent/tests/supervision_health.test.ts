@@ -272,6 +272,107 @@ test("supervisor turns an exposed transport loss into durable deterministic fail
   assert.equal(classifier.calls.length, 0);
 });
 
+test("supervisor sanitizes provider strings before durable mechanical delivery", async () => {
+  const repoRoot = "/private/tmp/sheaf-xagent-supervision";
+  const supervisor = new Supervisor({
+    runId: "xrun_sanitized_mechanical",
+    adapter: new FakeHarnessAdapter({
+      scriptedEvents: [[
+        {
+          type: "status",
+          level: "warning",
+          code: "input_required",
+          message: `Approve ${repoRoot}/.env api_key=input-secret`,
+        },
+        {
+          type: "status",
+          level: "warning",
+          code: "permission_required",
+          message: "Permission required",
+          details: {
+            permission: `write ${repoRoot}/.env token=permission-secret`,
+          },
+        },
+        {
+          type: "error",
+          code: "transport_lost",
+          message: `stdout closed in ${repoRoot} api_key=transport-secret`,
+          recoverable: false,
+        },
+      ]],
+    }),
+    startOptions: { cwd: repoRoot },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+  });
+  await supervisor.start();
+  const cursor = supervisor.inspect().sequence;
+  await supervisor.submit("Implement the task.");
+
+  const input = await supervisor.awaitEvent(cursor, 1_000);
+  const permission = await supervisor.awaitEvent(input.sequence, 1_000);
+  const transport = await supervisor.awaitEvent(permission.sequence, 1_000);
+  if (
+    input.type === "supervision.deadline"
+    || permission.type === "supervision.deadline"
+    || transport.type === "supervision.deadline"
+  ) {
+    assert.fail("expected durable mechanical events");
+  }
+
+  assert.deepEqual(input.payload, {
+    prompt: "Approve ./.env api_key=[REDACTED]",
+  });
+  assert.deepEqual(permission.payload, {
+    permission: "write ./.env token=[REDACTED]",
+  });
+  assert.deepEqual(transport.payload, {
+    message: "stdout closed in . api_key=[REDACTED]",
+  });
+  assert.equal(JSON.stringify([input, permission, transport]).includes(repoRoot), false);
+  assert.equal(JSON.stringify([input, permission, transport]).includes("-secret"), false);
+});
+
+test("interrupt keeps deterministic monitoring active until the provider turn settles", async () => {
+  const clock = new FakeClock();
+  const turnStarted = deferred<void>();
+  const releaseTurn = deferred<void>();
+  const reasons: string[] = [];
+  async function* blockedTurn() {
+    turnStarted.resolve(undefined);
+    await releaseTurn.promise;
+    yield {
+      type: "turn.completed" as const,
+      final_text: "interrupted turn settled",
+    };
+  }
+  const supervisor = new Supervisor({
+    runId: "xrun_interrupt_monitoring",
+    adapter: new FakeHarnessAdapter({
+      supportsInterrupt: true,
+      scriptedEvents: [blockedTurn()],
+    }),
+    startOptions: { cwd: "/private/tmp/sheaf-xagent-supervision" },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    clock: clock.now,
+    scheduler: clock,
+    eventSink: async (event) => {
+      reasons.push(event.reason);
+    },
+  });
+  await supervisor.start();
+  const turn = supervisor.submit("Implement the task.");
+  await turnStarted.promise;
+
+  await supervisor.interrupt();
+  clock.advance(300_000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  assert.equal(reasons.includes("silence_timeout"), true);
+
+  releaseTurn.resolve(undefined);
+  await turn;
+});
+
 class ClassifierSpy {
   readonly calls: unknown[] = [];
 }

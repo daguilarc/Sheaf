@@ -100,8 +100,26 @@ test("snapshot is capped at 64 KiB of valid UTF-8 and reports deterministic trun
   const snapshot = evidence.snapshot();
   assert.equal(snapshot.truncated, true);
   assert.ok(snapshot.input_bytes <= 64 * 1024);
-  assert.equal(Buffer.byteLength(JSON.stringify(snapshot.input), "utf8"), snapshot.input_bytes);
-  assert.equal(JSON.stringify(snapshot.input).includes("\uFFFD"), false);
+  assert.equal(Buffer.byteLength(JSON.stringify(snapshot), "utf8"), snapshot.input_bytes);
+  assert.equal(JSON.stringify(snapshot).includes("\uFFFD"), false);
+});
+
+test("snapshot has one bounded serializable evidence shape", () => {
+  const evidence = new SemanticEvidenceWindow({
+    repoRoot,
+    originalPrompt: "Implement the task.",
+  });
+  evidence.record({
+    type: "message.delta",
+    role: "assistant",
+    message_id: "message-one",
+    delta: "working",
+  });
+
+  const snapshot = evidence.snapshot();
+  assert.equal("input" in snapshot, false);
+  assert.equal(Buffer.byteLength(JSON.stringify(snapshot), "utf8"), snapshot.input_bytes);
+  assert.ok(snapshot.input_bytes <= 64 * 1024);
 });
 
 test("compact fingerprint counters cannot push the evidence snapshot over its byte cap", () => {
@@ -128,6 +146,68 @@ test("compact fingerprint counters cannot push the evidence snapshot over its by
   const snapshot = evidence.snapshot();
   assert.ok(snapshot.input_bytes <= 64 * 1024);
   assert.equal(snapshot.truncated, true);
+});
+
+test("a 1 KiB configured cap shrinks distinct fingerprint counters to fit", () => {
+  const evidence = new SemanticEvidenceWindow({
+    repoRoot,
+    originalPrompt: "Diagnose the failures.",
+    maxInputBytes: 1_024,
+  });
+  for (let index = 0; index < 20; index += 1) {
+    evidence.record({
+      type: "tool.started",
+      name: "shell",
+      tool_call_id: `tool-small-cap-${index}`,
+      input: { cmd: `command-${index}` },
+    });
+    evidence.record({
+      type: "tool.completed",
+      name: "shell",
+      tool_call_id: `tool-small-cap-${index}`,
+      status: "failed",
+      error: `failure-${index}`,
+    });
+  }
+
+  const snapshot = evidence.snapshot();
+  assert.ok(snapshot.input_bytes <= 1_024);
+  assert.equal(snapshot.truncated, true);
+});
+
+test("snapshot considers each retained event within a linear serialization budget", () => {
+  const evidence = new SemanticEvidenceWindow({
+    repoRoot,
+    originalPrompt: "Retain only the newest bounded progress.",
+  });
+  for (let index = 0; index < 64; index += 1) {
+    evidence.record({
+      type: "message.completed",
+      role: "assistant",
+      message_id: `message-${index}`,
+      text: `${index}:${"progress".repeat(800)}`,
+    });
+  }
+
+  const originalStringify = JSON.stringify;
+  let serializedBytes = 0;
+  JSON.stringify = ((...args: Parameters<typeof JSON.stringify>) => {
+    const encoded = originalStringify(...args);
+    if (encoded !== undefined) {
+      serializedBytes += Buffer.byteLength(encoded, "utf8");
+    }
+    return encoded;
+  }) as typeof JSON.stringify;
+  try {
+    evidence.snapshot();
+  } finally {
+    JSON.stringify = originalStringify;
+  }
+
+  assert.ok(
+    serializedBytes < 2 * 1024 * 1024,
+    `snapshot serialized ${serializedBytes} bytes while trimming`,
+  );
 });
 
 test("only normalized semantic events enter evidence while all provider activity remains external", () => {
@@ -222,6 +302,26 @@ test("supervisor exposes bounded evidence using per-run policy and provider even
   assert.equal(JSON.stringify(snapshot).includes("prompt-secret"), false);
   assert.equal(JSON.stringify(snapshot).includes("not evidence"), false);
   assert.equal(snapshot.recent_events.length, 2);
+});
+
+test("supervisor rejects invalid evidence policy before persisting lifecycle state", async () => {
+  const persistedPhases: string[] = [];
+
+  assert.throws(() => new Supervisor({
+    runId: "xrun_invalid_evidence_policy",
+    adapter: new FakeHarnessAdapter(),
+    startOptions: { cwd: repoRoot },
+    policy: {
+      silenceTimeoutMs: 300_000,
+      watchdog: { inputLimitBytes: 0 },
+    },
+    metadataSink: async (state) => {
+      persistedPhases.push(state.phase);
+    },
+  }), /inputLimitBytes/);
+  await Promise.resolve();
+
+  assert.deepEqual(persistedPhases, []);
 });
 
 class MutableClock {

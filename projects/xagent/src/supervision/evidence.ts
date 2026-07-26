@@ -34,7 +34,6 @@ export type SemanticEvidenceInput = {
 };
 
 export type SemanticEvidenceSnapshot = SemanticEvidenceInput & {
-  readonly input: SemanticEvidenceInput;
   readonly input_bytes: number;
 };
 
@@ -60,6 +59,7 @@ type TimedFingerprint = {
 };
 
 const DEFAULT_MAX_INPUT_BYTES = 64 * 1024;
+const MIN_INPUT_BYTES = 512;
 const DEFAULT_SUSPICION_WINDOW_MS = 10 * 60_000;
 const MAX_RETAINED_EVENTS = 256;
 const MAX_RETAINED_FINGERPRINTS = 512;
@@ -82,14 +82,12 @@ export class SemanticEvidenceWindow {
   #wasTruncated = false;
 
   constructor(options: SemanticEvidenceWindowOptions) {
+    validateSemanticEvidencePolicy(options);
     this.#repoRoot = options.repoRoot;
     this.#clock = options.clock ?? (() => new Date());
     this.#createdAt = this.#clock().getTime();
     this.#previousVerdict = options.previousVerdict;
-    this.#maxInputBytes = positiveInteger(
-      options.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES,
-      "maxInputBytes",
-    );
+    this.#maxInputBytes = options.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
     this.#suspicionWindowMs = positiveInteger(
       options.suspicionWindowMs ?? DEFAULT_SUSPICION_WINDOW_MS,
       "suspicionWindowMs",
@@ -146,11 +144,11 @@ export class SemanticEvidenceWindow {
     this.#pruneFingerprints(now);
     const toolFingerprintCount = distinctFingerprintCount(this.#toolFingerprints);
     const failureFingerprintCount = distinctFingerprintCount(this.#failureFingerprints);
-    const toolFingerprints = aggregateFingerprints(
+    let toolFingerprints = aggregateFingerprints(
       this.#toolFingerprints,
       MAX_SNAPSHOT_FINGERPRINTS_PER_KIND,
     );
-    const failureFingerprints = aggregateFingerprints(
+    let failureFingerprints = aggregateFingerprints(
       this.#failureFingerprints,
       MAX_SNAPSHOT_FINGERPRINTS_PER_KIND,
     );
@@ -163,7 +161,7 @@ export class SemanticEvidenceWindow {
     }
 
     let originalPrompt = this.#originalPrompt;
-    let recentEvents = this.#events.map(({ event }) => event);
+    let recentEvents: Record<string, unknown>[] = [];
     let truncated = this.#wasTruncated
       || toolFingerprintCount > toolFingerprints.length
       || failureFingerprintCount > failureFingerprints.length;
@@ -177,8 +175,15 @@ export class SemanticEvidenceWindow {
       now,
     );
 
-    while (byteLength(input) > this.#maxInputBytes && recentEvents.length > 0) {
-      recentEvents = recentEvents.slice(1);
+    while (
+      byteLength(input) > this.#maxInputBytes
+      && (toolFingerprints.length > 0 || failureFingerprints.length > 0)
+    ) {
+      if (toolFingerprints.length >= failureFingerprints.length) {
+        toolFingerprints = toolFingerprints.slice(0, -1);
+      } else {
+        failureFingerprints = failureFingerprints.slice(0, -1);
+      }
       truncated = true;
       input = this.#createInput(
         originalPrompt,
@@ -217,11 +222,49 @@ export class SemanticEvidenceWindow {
       );
     }
 
-    const inputBytes = byteLength(input);
+    const allEvents = this.#events.map(({ event }) => event);
+    recentEvents = newestEventsWithinBudget(
+      allEvents,
+      this.#maxInputBytes,
+      this.#createInput(
+        originalPrompt,
+        [],
+        toolFingerprints,
+        failureFingerprints,
+        suspicionSignals,
+        truncated,
+        now,
+      ),
+    );
+    if (recentEvents.length < allEvents.length && !truncated) {
+      truncated = true;
+      recentEvents = newestEventsWithinBudget(
+        allEvents,
+        this.#maxInputBytes,
+        this.#createInput(
+          originalPrompt,
+          [],
+          toolFingerprints,
+          failureFingerprints,
+          suspicionSignals,
+          truncated,
+          now,
+        ),
+      );
+    }
+    input = this.#createInput(
+      originalPrompt,
+      recentEvents,
+      toolFingerprints,
+      failureFingerprints,
+      suspicionSignals,
+      truncated,
+      now,
+    );
+
     return {
       ...input,
-      input,
-      input_bytes: inputBytes,
+      input_bytes: byteLength(input),
     };
   }
 
@@ -263,6 +306,33 @@ export class SemanticEvidenceWindow {
       this.#failureFingerprints.shift();
     }
   }
+}
+
+export function validateSemanticEvidencePolicy(options: {
+  readonly maxInputBytes?: number;
+  readonly suspicionWindowMs?: number;
+  readonly repeatedToolThreshold?: number;
+  readonly repeatedFailureThreshold?: number;
+}): void {
+  const maxInputBytes = positiveInteger(
+    options.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES,
+    "inputLimitBytes",
+  );
+  if (maxInputBytes < MIN_INPUT_BYTES) {
+    throw new Error(`inputLimitBytes must be at least ${MIN_INPUT_BYTES} bytes.`);
+  }
+  positiveInteger(
+    options.suspicionWindowMs ?? DEFAULT_SUSPICION_WINDOW_MS,
+    "suspicionWindowMs",
+  );
+  positiveInteger(
+    options.repeatedToolThreshold ?? 3,
+    "repeatedToolThreshold",
+  );
+  positiveInteger(
+    options.repeatedFailureThreshold ?? 2,
+    "repeatedFailureThreshold",
+  );
 }
 
 function normalizeSemanticEvent(
@@ -400,7 +470,46 @@ function fitPrompt(
 }
 
 function byteLength(value: SemanticEvidenceInput): number {
-  return Buffer.byteLength(JSON.stringify(value), "utf8");
+  return snapshotByteLengthFromInputBytes(
+    Buffer.byteLength(JSON.stringify(value), "utf8"),
+  );
+}
+
+function newestEventsWithinBudget(
+  events: readonly Record<string, unknown>[],
+  maxBytes: number,
+  emptyInput: SemanticEvidenceInput,
+): Record<string, unknown>[] {
+  const emptyInputBytes = Buffer.byteLength(JSON.stringify(emptyInput), "utf8");
+  const selectedNewestFirst: Record<string, unknown>[] = [];
+  let eventListBytes = 0;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event === undefined) {
+      continue;
+    }
+    const eventBytes = Buffer.byteLength(JSON.stringify(event), "utf8");
+    const separatorBytes = selectedNewestFirst.length === 0 ? 0 : 1;
+    const candidateInputBytes = emptyInputBytes + eventListBytes + separatorBytes + eventBytes;
+    if (snapshotByteLengthFromInputBytes(candidateInputBytes) > maxBytes) {
+      break;
+    }
+    selectedNewestFirst.push(event);
+    eventListBytes += separatorBytes + eventBytes;
+  }
+  return selectedNewestFirst.reverse();
+}
+
+function snapshotByteLengthFromInputBytes(inputBytes: number): number {
+  const propertyBytes = Buffer.byteLength(',"input_bytes":', "utf8");
+  let totalBytes = inputBytes + propertyBytes + 1;
+  while (true) {
+    const next = inputBytes + propertyBytes + String(totalBytes).length;
+    if (next === totalBytes) {
+      return totalBytes;
+    }
+    totalBytes = next;
+  }
 }
 
 function trimStart<T>(items: T[], maximum: number): void {
