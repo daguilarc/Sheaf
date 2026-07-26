@@ -21,6 +21,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 #include <variant>
@@ -55,9 +56,26 @@ inline constexpr const char* kWizardIgnore = "runtime.controllers.wizard.ignore"
 inline constexpr const char* kWizardWarning = "runtime.controllers.wizard.warning";
 inline constexpr const char* kWizardStatus = "runtime.controllers.wizard.status";
 
-inline std::string WizardChooserCandidate(std::size_t candidateIx)
+inline std::string WizardCandidateToken(const WizardCandidate& candidate)
 {
-    return std::string(kWizardChooser) + ".candidate." + std::to_string(candidateIx);
+    const auto hex = [](std::string_view value) {
+        static constexpr char kHex[] = "0123456789abcdef";
+        std::string encoded;
+        encoded.reserve(value.size() * 2);
+        for (unsigned char byte : value)
+        {
+            encoded += kHex[byte >> 4U];
+            encoded += kHex[byte & 0x0fU];
+        }
+        return encoded;
+    };
+    return hex(candidate.wizardId) + "_" + hex(candidate.input.identifier) + "_" +
+           hex(candidate.output.identifier);
+}
+
+inline std::string WizardChooserCandidate(const WizardCandidate& candidate)
+{
+    return std::string(kWizardChooser) + ".candidate." + WizardCandidateToken(candidate);
 }
 
 inline std::string AvailableRow(std::size_t candidateIx)
@@ -788,7 +806,9 @@ public:
                action.name == Actions::kDeleteRow || action.name == Actions::kAddSingle ||
                action.name == Actions::kAddBlock || action.name == Actions::kEndpointSelect ||
                action.name == Actions::kVariantSelect || action.name == Actions::kMappingFieldCommit ||
-               action.name == Actions::kAddController;
+               action.name == Actions::kAddController || action.name == Actions::kWizardOpen ||
+               action.name == Actions::kWizardChoose || action.name == Actions::kWizardBack ||
+               action.name == Actions::kWizardCancel;
     }
 
 private:
@@ -860,7 +880,7 @@ private:
             }
             else if (action.name == Actions::kWizardChoose)
             {
-                OpenCandidate(ParseIndex(action.value));
+                OpenChooserCandidate(action.value);
             }
             return;
         }
@@ -1239,6 +1259,21 @@ private:
         ++m_treeRevision;
     }
 
+    void OpenChooserCandidate(const std::string& token)
+    {
+        for (std::size_t candidateIx = 0; candidateIx < m_discovery.available.size(); ++candidateIx)
+        {
+            if (NodeIds::WizardCandidateToken(m_discovery.available[candidateIx]) == token)
+            {
+                m_wizardChooserStatus.clear();
+                OpenCandidate(candidateIx);
+                return;
+            }
+        }
+        m_wizardChooserStatus = "That controller is no longer available. Refresh and choose another controller.";
+        ++m_treeRevision;
+    }
+
     ui::NodeTree BuildWizardChooserTree() const
     {
         ui::NodeTree tree;
@@ -1275,16 +1310,26 @@ private:
             return tree;
         }
 
+        if (!m_wizardChooserStatus.empty())
+        {
+            ui::Node status;
+            status.id = ui::NodeId(std::string(NodeIds::kWizardChooser) + ".status");
+            status.kind = ui::NodeKind::StatusText;
+            status.text = m_wizardChooserStatus;
+            append(std::move(status));
+        }
+
         for (std::size_t candidateIx = 0; candidateIx < m_discovery.available.size(); ++candidateIx)
         {
             const WizardCandidate& candidate = m_discovery.available[candidateIx];
             ui::Node choice;
-            choice.id = ui::NodeId(NodeIds::WizardChooserCandidate(candidateIx));
+            choice.id = ui::NodeId(NodeIds::WizardChooserCandidate(candidate));
             choice.kind = ui::NodeKind::Button;
             choice.label = candidate.displayName + " — " + candidate.input.name + " (" +
                            candidate.input.identifier + ") / " + candidate.output.name + " (" +
                            candidate.output.identifier + ")";
-            choice.action = ui::Action::WithValue(Actions::kWizardChoose, std::to_string(candidateIx));
+            choice.action = ui::Action::WithValue(Actions::kWizardChoose,
+                                                   NodeIds::WizardCandidateToken(candidate));
             append(std::move(choice));
         }
         return tree;
@@ -1957,6 +2002,7 @@ private:
     WizardDiscovery m_discovery;
     std::optional<WizardSession> m_wizardSession;
     bool m_wizardChooserOpen = false;
+    std::string m_wizardChooserStatus;
     ui::Bounds m_contentBounds{0.0f, 0.0f, 640.0f, 480.0f};
     std::string m_statusText = "Ready";
     std::string m_addControllerName;

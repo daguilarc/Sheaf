@@ -284,25 +284,53 @@ void TestWizardSessionRoutesPortableChooserAndForm()
     chooserSurface.DispatchAction(
         synth::ui::Action::Named("runtime.controllers.wizard.open"));
     const synth::ui::NodeTree chooserTree = chooserSurface.BuildTree();
-    Require(FindNodeById(chooserTree, "runtime.controllers.wizard.chooser.candidate.0") != nullptr &&
-                FindNodeById(chooserTree, "runtime.controllers.wizard.chooser.candidate.1") != nullptr,
+    Require(FindNodeById(chooserTree,
+                         synth::runtime_ui::NodeIds::WizardChooserCandidate(first)) != nullptr &&
+                FindNodeById(chooserTree,
+                             synth::runtime_ui::NodeIds::WizardChooserCandidate(second)) != nullptr,
             "multiple candidates open a deterministic portable chooser");
     Require(VisibleTextLower(chooserTree).find("twister-in-a") != std::string::npos &&
                 VisibleTextLower(chooserTree).find("twister-out-b") != std::string::npos,
             "chooser labels expose paired endpoint identifiers");
+    const synth::ui::Action staleFirstChoice =
+        *FindNodeById(chooserTree, synth::runtime_ui::NodeIds::WizardChooserCandidate(first))->action;
+    const synth::ui::Action staleSecondChoice =
+        *FindNodeById(chooserTree, synth::runtime_ui::NodeIds::WizardChooserCandidate(second))->action;
     chooserSurface.SetDiscovery({.available = {second}});
     const synth::ui::NodeTree refreshedChooser = chooserSurface.BuildTree();
-    Require(FindNodeById(refreshedChooser, "runtime.controllers.wizard.chooser.candidate.0") != nullptr &&
-                FindNodeById(refreshedChooser, "runtime.controllers.wizard.chooser.candidate.1") == nullptr,
+    Require(FindNodeById(refreshedChooser,
+                         synth::runtime_ui::NodeIds::WizardChooserCandidate(second)) != nullptr &&
+                FindNodeById(refreshedChooser,
+                             synth::runtime_ui::NodeIds::WizardChooserCandidate(first)) == nullptr,
             "chooser refresh drops disappeared candidates");
-    chooserSurface.SetDiscovery({});
-    Require(FindNodeById(chooserSurface.BuildTree(), "runtime.controllers.wizard.chooser.empty") != nullptr,
-            "empty refreshed chooser explains that no candidates remain");
-    chooserSurface.SetDiscovery({.available = {second}});
-    chooserSurface.DispatchAction(
-        synth::ui::Action::WithValue("runtime.controllers.wizard.choose", "0"));
+    chooserSurface.DispatchAction(staleFirstChoice);
+    const synth::ui::NodeTree staleFirstTree = chooserSurface.BuildTree();
+    Require(FindNodeById(staleFirstTree, "runtime.controllers.wizard.form") == nullptr &&
+                FindNodeById(staleFirstTree, "runtime.controllers.wizard.chooser.status") != nullptr,
+            "stale chooser action does not silently open a different candidate");
+    chooserSurface.DispatchAction(staleSecondChoice);
     Require(FindNodeById(chooserSurface.BuildTree(), "runtime.controllers.wizard.form") != nullptr,
-            "chooser selection opens the selected form");
+            "stable chooser action opens its original candidate after refresh");
+
+    TestHarness emptyChooserHarness;
+    auto emptyChooserSurface = emptyChooserHarness.MakeSurface();
+    emptyChooserSurface.SetDiscovery({.available = {first, second}});
+    emptyChooserSurface.DispatchAction(
+        synth::ui::Action::Named("runtime.controllers.wizard.open"));
+    emptyChooserSurface.SetDiscovery({});
+    Require(FindNodeById(emptyChooserSurface.BuildTree(), "runtime.controllers.wizard.chooser.empty") != nullptr,
+            "empty refreshed chooser explains that no candidates remain");
+
+    TestHarness deferredHarness;
+    auto deferredSurface = deferredHarness.MakeSurface();
+    for (const char* actionName : {synth::runtime_ui::Actions::kWizardOpen,
+                                   synth::runtime_ui::Actions::kWizardChoose,
+                                   synth::runtime_ui::Actions::kWizardBack,
+                                   synth::runtime_ui::Actions::kWizardCancel})
+    {
+        Require(deferredSurface.NeedsDeferredDispatch(synth::ui::Action::Named(actionName)),
+                "wizard navigation action requires deferred dispatch");
+    }
 
     TestHarness existingHarness;
     synth::MidiControllerSlot existing;
