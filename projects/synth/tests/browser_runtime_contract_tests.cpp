@@ -49,6 +49,18 @@ const synth_browser::DecodedNode* FindNode(
     return nullptr;
 }
 
+const synth::ui::Node* FindPortableNode(const synth::ui::NodeTree& tree, const char* id)
+{
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        if (node.id == synth::ui::NodeId(id))
+        {
+            return &node;
+        }
+    }
+    return nullptr;
+}
+
 bool HasOption(const synth_browser::DecodedNode& node, const char* id, const char* label)
 {
     for (const synth_browser::DecodedOption& option : node.options)
@@ -299,9 +311,13 @@ void TestBrowserControllerDiscoveryCacheUsesSignalsAndSuccessfulCommits()
     synth_browser::BrowserMidiBridge<synth::Engine<ValidApp>> bridge(engine);
     bridge.Start();
     synth_browser::BrowserRuntimeMainServices<ValidApp> services(engine, bridge);
+    synth::runtime_ui::RuntimeMainComponent<ValidApp,
+                                            synth_browser::BrowserRuntimeMainServices<ValidApp>>
+        mainComponent(engine.Application(), services);
     synth::runtime_ui::ControllersPageSurface surface(
         services.MakeControllersCallbacks([] {}));
 
+    mainComponent.Refresh();
     services.RefreshControllers(surface);
     const std::uint64_t initialRevision = surface.TreeRevision();
     bridge.SubmitEndpoints({
@@ -312,12 +328,16 @@ void TestBrowserControllerDiscoveryCacheUsesSignalsAndSuccessfulCommits()
          .name = "Midi Fighter Twister",
          .kind = synth_browser::BrowserMidiBridge<synth::Engine<ValidApp>>::EndpointKind::Output},
     });
+    mainComponent.Refresh();
     services.RefreshControllers(surface);
     Require(surface.Discovery().available.size() == 1,
             "real browser service classifies one changed device-list signal");
+    Require(FindPortableNode(mainComponent.BuildTree(), "runtime.sidebar.controllers.warning") != nullptr,
+            "unclaimed candidate warns through the production runtime sidebar");
     const std::uint64_t deviceRevision = surface.TreeRevision();
     Require(deviceRevision > initialRevision, "changed device signal revises the Controllers surface");
 
+    mainComponent.Refresh();
     services.RefreshControllers(surface);
     Require(surface.TreeRevision() == deviceRevision,
             "unchanged browser source does not reclassify or revise the Controllers surface");
@@ -333,11 +353,51 @@ void TestBrowserControllerDiscoveryCacheUsesSignalsAndSuccessfulCommits()
     committed.controllers.push_back(*generated.controller);
     auto callbacks = services.MakeControllersCallbacks([] {});
     callbacks.commitInstrument(std::move(committed));
+    mainComponent.Refresh();
     services.RefreshControllers(surface);
     Require(surface.Discovery().available.empty(),
             "successful real-browser instrument commit reclassifies cached devices");
+    Require(FindPortableNode(mainComponent.BuildTree(), "runtime.sidebar.controllers.warning") == nullptr,
+            "successful claimed Active commit clears the production sidebar warning");
     Require(surface.TreeRevision() > deviceRevision,
             "successful instrument commit revises the Controllers surface");
+
+    synth::MidiControllerSlot ignored = *generated.controller;
+    ignored.disposition = synth::MidiControllerDisposition::Blacklisted;
+    ignored.dormantConfig = ignored.config;
+    ignored.config = {};
+    synth::MidiInstrumentConfig blacklisted;
+    blacklisted.controllers.push_back(std::move(ignored));
+    callbacks.commitInstrument(std::move(blacklisted));
+    mainComponent.Refresh();
+    services.RefreshControllers(surface);
+    Require(surface.Discovery().available.empty(),
+            "Blacklisted endpoint claim suppresses cached discovery");
+    Require(FindPortableNode(mainComponent.BuildTree(), "runtime.sidebar.controllers.warning") == nullptr,
+            "Blacklisted endpoint claim suppresses the production sidebar warning");
+
+    callbacks.commitInstrument({});
+    mainComponent.Refresh();
+    services.RefreshControllers(surface);
+    Require(surface.Discovery().available.size() == 1,
+            "removing Blacklisted claim restores cached availability without a device signal");
+    Require(FindPortableNode(mainComponent.BuildTree(), "runtime.sidebar.controllers.warning") != nullptr,
+            "remove from blacklist restores the production sidebar warning immediately");
+
+    synth::MidiInstrumentConfig activeAgain;
+    activeAgain.controllers.push_back(*generated.controller);
+    callbacks.commitInstrument(std::move(activeAgain));
+    mainComponent.Refresh();
+    services.RefreshControllers(surface);
+    Require(FindPortableNode(mainComponent.BuildTree(), "runtime.sidebar.controllers.warning") == nullptr,
+            "reclaimed active pair clears the warning before delete");
+    callbacks.commitInstrument({});
+    mainComponent.Refresh();
+    services.RefreshControllers(surface);
+    Require(surface.Discovery().available.size() == 1,
+            "deleting active claim restores cached availability without a device signal");
+    Require(FindPortableNode(mainComponent.BuildTree(), "runtime.sidebar.controllers.warning") != nullptr,
+            "delete restores the production sidebar warning immediately");
     bridge.Stop();
 }
 
