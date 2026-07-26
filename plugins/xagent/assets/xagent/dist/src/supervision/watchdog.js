@@ -81,21 +81,45 @@ export class WatchdogScheduler {
         }
     }
     onActiveEvidence(request) {
+        // Backwards-compatible eager overload: tests drive a pre-built request
+        // through this seam. The supervisor uses `onActiveEvidenceThunk` so the
+        // snapshot is only constructed when an invocation is actually eligible,
+        // avoiding tens of `snapshot()` calls per second on the `message.delta`
+        // hot path (review I2).
+        //
+        return this.onActiveEvidenceThunk(() => request);
+    }
+    onActiveEvidenceThunk(getRequest) {
         if (this.coverageExhausted || this.#inFlight !== undefined) {
             return this.#inFlight ?? Promise.resolve();
         }
         const now = this.#clock().getTime();
         const lastRelevantCheck = this.#lastInvocationAt ?? this.#turnStartedAt;
         const minimumElapsed = now - lastRelevantCheck >= this.#minimumIntervalMs;
-        const suspicionEligible = request.suspicion_signals.length > 0 && minimumElapsed;
-        const periodicEligible = now >= this.#nextPeriodicAt && minimumElapsed;
-        if (!suspicionEligible && !periodicEligible) {
+        if (!minimumElapsed) {
             return Promise.resolve();
         }
+        const periodicEligible = now >= this.#nextPeriodicAt;
+        // Periodic eligibility takes precedence over suspicion when both hold.
+        // Only construct the evidence snapshot when periodic is not already
+        // eligible — otherwise the snapshot's `suspicion_signals` is irrelevant.
+        // This skips the snapshot entirely on the hot `message.delta` path once
+        // the periodic cadence has fired, which is the case the review flagged.
+        //
+        if (!periodicEligible) {
+            const request = getRequest();
+            if (request.suspicion_signals.length === 0) {
+                return Promise.resolve();
+            }
+            return this.#invokeWatchdog(request, now, "suspicion");
+        }
+        const request = getRequest();
+        return this.#invokeWatchdog(request, now, "periodic");
+    }
+    #invokeWatchdog(request, now, trigger) {
         this.#callsUsed += 1;
         const callCount = this.#callsUsed;
         this.#lastInvocationAt = now;
-        const trigger = periodicEligible ? "periodic" : "suspicion";
         const turnGeneration = this.#turnGeneration;
         if (trigger === "periodic") {
             this.#nextPeriodicAt = now + this.#cadenceMs[this.#cadenceIndex];

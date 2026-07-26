@@ -14,6 +14,7 @@ export declare class WatchdogScheduler {
     resetTurn(): void;
     settle(): Promise<void>;
     onActiveEvidence(request: WatchdogRequest): Promise<void>;
+    onActiveEvidenceThunk(getRequest: () => WatchdogRequest): Promise<void>;
 }
 export declare function normalizeWatchdogVerdict(value: unknown, confidenceFloor?: number): WatchdogVerdict;
 //# sourceMappingURL=watchdog.d.ts.map

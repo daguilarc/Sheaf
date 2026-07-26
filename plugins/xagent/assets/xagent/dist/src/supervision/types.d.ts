@@ -90,6 +90,7 @@ export type WatchdogTelemetry = {
     readonly reason_code: string;
     readonly call_count: number;
     readonly truncated: boolean;
+    readonly elapsed_ms: number;
     readonly attention_sequence?: number;
     readonly usage?: WatchdogUsage;
     readonly estimated_cost_usd?: number;

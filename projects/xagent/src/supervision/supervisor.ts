@@ -426,6 +426,31 @@ export class Supervisor {
     deadlineMs: number,
     signal?: AbortSignal,
   ): Promise<AwaitResult> {
+    // A live run in a terminal phase (failed/cancelled/completed/abandoned)
+    // retains its in-memory supervisor until `close()` removes it from the
+    // run manager. Without this short-circuit, a controller that already
+    // consumed the terminal event and re-awaits from that cursor would block
+    // in the event queue for the full deadline — the same asymmetry the
+    // persisted path fixed in r6. Mirror that fix: when the phase is terminal
+    // and no deliverable event exists after the cursor, return a
+    // distinguishable `run_terminal` deadline so the quiet client stops
+    // promptly instead of looping on a synthetic `await_deadline`.
+    //
+    if (terminalPhases.has(this.#phase)) {
+      const peeked = await this.#events.peekDeliverable(afterSequence);
+      if (peeked !== undefined) {
+        return peeked;
+      }
+      return {
+        schema_version: 1,
+        type: "supervision.deadline",
+        run_id: this.#runId,
+        sequence: afterSequence,
+        timestamp: this.#clock().toISOString(),
+        phase: this.#phase,
+        reason: "run_terminal",
+      };
+    }
     const event = await this.#events.awaitEvent(afterSequence, deadlineMs, signal);
     if (event !== undefined) {
       return event;
@@ -571,8 +596,16 @@ export class Supervisor {
     this.#lastSemanticProgressAt = this.#health.lastSemanticActivityAt;
     this.#evidence?.record(event);
     if (activeSemanticEvidence && this.#evidence !== undefined) {
+      // Pass a thunk so the evidence snapshot is only constructed when the
+      // scheduler is actually eligible to invoke the classifier. The Claude
+      // Code adapter emits a `message.delta` per `content_block_delta`, so
+      // this runs tens of times per second per run; building the snapshot
+      // eagerly on every semantic event dominated the event loop (review I2).
+      // The thunk defers `snapshot()` until after the cheap eligibility
+      // checks (coverage, in-flight, minimum interval, periodic cadence).
+      //
       void this.#watchdogScheduler
-        .onActiveEvidence(this.#evidence.snapshot())
+        .onActiveEvidenceThunk(() => this.#evidence!.snapshot())
         .catch((error: unknown) => {
           this.#watchdogCallbackFailure = asError(error);
         });
@@ -611,6 +644,7 @@ export class Supervisor {
         reason_code: verdict.reason_code,
         call_count: callCount,
         truncated: request.truncated,
+        elapsed_ms: request.elapsed_ms,
         ...(verdict.usage === undefined ? {} : { usage: verdict.usage }),
         ...(verdict.estimated_cost_usd === undefined
           ? {}

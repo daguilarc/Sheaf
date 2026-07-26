@@ -38,6 +38,16 @@ export class SequencedEventQueue {
     return this.#sequence;
   }
 
+  // Returns the next deliverable event after `afterSequence` without registering
+  // a waiter or arming a deadline timer. Used by the supervisor's terminal
+  // short-circuit to decide between returning a buffered terminal event and a
+  // `run_terminal` deadline without blocking for the full await deadline.
+  //
+  async peekDeliverable(afterSequence: number): Promise<SupervisionEvent | undefined> {
+    await this.#publishTail;
+    return this.#deliverableEvents.find((event) => event.sequence > afterSequence);
+  }
+
   publish(
     body: PublishableSupervisionEvent,
     deliverable = true,

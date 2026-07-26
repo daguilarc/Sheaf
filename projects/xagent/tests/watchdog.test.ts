@@ -1410,6 +1410,7 @@ test("appendWatchdogTelemetry persists the supplied aggregate fields without pro
     reason_code: "healthy_below_confidence_floor",
     call_count: 2,
     truncated: true,
+    elapsed_ms: 600_000,
     attention_sequence: 7,
     usage: { input_tokens: 100, output_tokens: 20 },
     estimated_cost_usd: 0.0004,
@@ -1420,6 +1421,81 @@ test("appendWatchdogTelemetry persists the supplied aggregate fields without pro
   assert.equal(persisted.attention_sequence, 7);
   assert.equal(JSON.stringify(persisted).includes("original_prompt"), false);
   assert.equal(JSON.stringify(persisted).includes("recent_events"), false);
+});
+
+// Review I2 (r7): `onActiveEvidenceThunk` must not construct the evidence
+// snapshot when the scheduler is ineligible to invoke the classifier. The
+// Claude Code adapter emits a `message.delta` per `content_block_delta`
+// (tens per second per run), and `SemanticEvidenceWindow.snapshot()` is
+// expensive; building it eagerly on every semantic event dominated the
+// event loop. The thunk defers `snapshot()` until after the cheap
+// eligibility checks (coverage, in-flight, minimum interval). This test
+// pins that contract: the snapshot thunk is not called while the minimum
+// interval since the last invocation has not elapsed.
+//
+test("onActiveEvidenceThunk skips the evidence snapshot while the minimum interval has not elapsed (I2)", async () => {
+  const clock = new FakeClock();
+  let snapshotCalls = 0;
+  let classifyCalls = 0;
+  const classifier: WatchdogClassifier = {
+    async classify() {
+      classifyCalls += 1;
+      return {
+        verdict: "healthy",
+        confidence: 0.95,
+        reason_code: "steady_progress",
+        evidence: [],
+      };
+    },
+  };
+  const scheduler = new WatchdogScheduler({
+    classifier,
+    clock: clock.now,
+  });
+
+  // At turn start (t=0), the minimum interval (5 min) has not elapsed, so
+  // the thunk must not be called even when suspicion signals would be
+  // present. (The suspicion check itself requires the snapshot, so the
+  // scheduler cannot evaluate it without the thunk — but it short-circuits
+  // on the cheaper minimum-interval gate first.)
+  const suspiciousRequest = request(["repeated_failure_fingerprint"]);
+  await scheduler.onActiveEvidenceThunk(() => {
+    snapshotCalls += 1;
+    return suspiciousRequest;
+  });
+  assert.equal(snapshotCalls, 0);
+  assert.equal(classifyCalls, 0);
+
+  // Drive one periodic invocation at t=10min so `lastInvocationAt` is set.
+  clock.advance(10 * 60_000);
+  await scheduler.onActiveEvidenceThunk(() => {
+    snapshotCalls += 1;
+    return suspiciousRequest;
+  });
+  assert.equal(snapshotCalls, 1);
+  assert.equal(classifyCalls, 1);
+
+  // Immediately after the invocation, the minimum interval gate again blocks
+  // the snapshot for the next 5 minutes — the hot `message.delta` path the
+  // review flagged. The thunk is not called.
+  for (let i = 0; i < 50; i += 1) {
+    await scheduler.onActiveEvidenceThunk(() => {
+      snapshotCalls += 1;
+      return suspiciousRequest;
+    });
+  }
+  assert.equal(snapshotCalls, 1);
+  assert.equal(classifyCalls, 1);
+
+  // Once the minimum interval elapses again, the thunk is called once more
+  // (periodic is eligible at the 20-minute cadence mark).
+  clock.advance(5 * 60_000);
+  await scheduler.onActiveEvidenceThunk(() => {
+    snapshotCalls += 1;
+    return suspiciousRequest;
+  });
+  assert.equal(snapshotCalls, 2);
+  assert.equal(classifyCalls, 2);
 });
 
 async function* semanticCheckpointTurn(

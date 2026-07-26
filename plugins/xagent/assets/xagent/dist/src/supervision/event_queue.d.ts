@@ -9,6 +9,7 @@ export declare class SequencedEventQueue {
     private readonly scheduler;
     constructor(runId: string, sink?: SupervisionEventSink, clock?: () => Date, scheduler?: SupervisionScheduler);
     get sequence(): number;
+    peekDeliverable(afterSequence: number): Promise<SupervisionEvent | undefined>;
     publish(body: PublishableSupervisionEvent, deliverable?: boolean, commit?: PersistedEventCommit): Promise<SupervisionEvent>;
     awaitEvent(afterSequence: number, deadlineMs: number, signal?: AbortSignal): Promise<SupervisionEvent | undefined>;
 }

@@ -119,6 +119,14 @@ export type WatchdogTelemetry = {
   readonly reason_code: string;
   readonly call_count: number;
   readonly truncated: boolean;
+  // Elapsed milliseconds from turn start to the watchdog invocation that
+  // produced this verdict. xas-10 requires telemetry sufficient to compute
+  // detection latency ("time since the triggering evidence"); `elapsed_ms`
+  // is the value embedded in the `WatchdogRequest` (and folded into
+  // `request_hash`), surfaced here so analysts can recover it from
+  // `watchdog.jsonl` without re-deriving the request.
+  //
+  readonly elapsed_ms: number;
   readonly attention_sequence?: number;
   readonly usage?: WatchdogUsage;
   readonly estimated_cost_usd?: number;

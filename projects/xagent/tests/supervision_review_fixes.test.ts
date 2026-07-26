@@ -13,6 +13,9 @@ import type {
   SupervisionEvent,
   SupervisionScheduler,
   SupervisionPolicy,
+  WatchdogClassifier,
+  WatchdogTelemetry,
+  WatchdogVerdict,
 } from "../src/supervision/types.js";
 
 const testPolicy: SupervisionPolicy = {
@@ -352,6 +355,134 @@ test("xagent_inspect surfaces a live supervisor callback_failure", async () => {
   } finally {
     await runManager.closeAll();
   }
+});
+
+// Review I1 (r7): a live run in a terminal phase must not block `awaitEvent`
+// for the full deadline. The persisted path was fixed in r6; this test pins
+// the matching short-circuit for a run that is still in `#runs` after a
+// `failed` transition (only `close()` removes it). The controller consumes
+// the failure event, then re-awaits from that cursor; the supervisor must
+// return a distinguishable `run_terminal` deadline promptly rather than
+// arming a 60 s timer.
+//
+test("live terminal supervisor returns run_terminal promptly when re-awaited past its last event", async () => {
+  const clock = new FakeClock();
+  const adapter = new FakeHarnessAdapter({
+    scriptedEvents: [[
+      {
+        type: "turn.failed",
+        turn_id: "turn_1",
+        code: "harness_unavailable",
+        message: "provider exited",
+      } as AdapterEvent,
+    ]],
+  });
+  const supervisor = new Supervisor({
+    runId: "xrun_live_terminal_short_circuit",
+    adapter,
+    startOptions: { cwd: "/private/tmp/sheaf-xagent-supervision" },
+    policy: testPolicy,
+    clock: clock.now,
+    scheduler: clock,
+  });
+  await supervisor.start();
+  const cursor = supervisor.inspect().sequence;
+  const turn = supervisor.submit("fail fast");
+  await turn.catch(() => {});
+
+  assert.equal(supervisor.inspect().phase, "failed");
+
+  // First await consumes the durable failed state event.
+  const failure = await supervisor.awaitEvent(cursor, 1_000);
+  assert.equal(failure.phase, "failed");
+  assert.equal(failure.type, "supervision.state");
+
+  // Re-awaiting from the failure cursor must short-circuit with `run_terminal`
+  // rather than blocking for the 60s deadline.
+  const start = Date.now();
+  const result = await supervisor.awaitEvent(failure.sequence, 60_000);
+  const elapsedMs = Date.now() - start;
+  assert.equal(result.type, "supervision.deadline");
+  assert.equal((result as { reason: string }).reason, "run_terminal");
+  assert.equal((result as { phase: string }).phase, "failed");
+  assert.ok(
+    elapsedMs < 1_000,
+    `expected prompt run_terminal, got ${elapsedMs}ms`,
+  );
+});
+
+// Review I3 (r7): xas-10 requires telemetry sufficient to compute detection
+// latency ("time since the triggering evidence"). `WatchdogTelemetry` must
+// carry `elapsed_ms` so analysts can recover it from `watchdog.jsonl` without
+// re-deriving the request. This test drives a real classifier verdict
+// through the supervisor and asserts the telemetry record carries the
+// field with a value matching the fake-clock elapsed time.
+//
+test("watchdog telemetry record carries elapsed_ms for detection latency (xas-10)", async () => {
+  const clock = new FakeClock();
+  const telemetry: WatchdogTelemetry[] = [];
+  const classifier: WatchdogClassifier = {
+    async classify() {
+      return {
+        verdict: "derailed",
+        confidence: 0.93,
+        reason_code: "repeated_failed_tool",
+        evidence: ["The same failed tool call repeated."],
+      } satisfies WatchdogVerdict;
+    },
+  };
+  async function* activeTurn(): AsyncIterable<AdapterEvent> {
+    clock.advance(240_000);
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { bytes: 1 },
+    };
+    clock.advance(240_000);
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { bytes: 2 },
+    };
+    clock.advance(120_000);
+    yield {
+      type: "message.delta" as const,
+      message_id: "message_elapsed",
+      role: "assistant" as const,
+      delta: "still working",
+    };
+    yield { type: "turn.completed" as const, final_text: "finished" };
+  }
+  const supervisor = new Supervisor({
+    runId: "xrun_watchdog_telemetry_elapsed",
+    adapter: new FakeHarnessAdapter({ scriptedEvents: [activeTurn()] }),
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    clock: clock.now,
+    scheduler: clock,
+    watchdogClassifier: classifier,
+    watchdogTelemetrySink: async (entry) => {
+      telemetry.push(entry);
+    },
+  });
+  await supervisor.start();
+  const cursor = supervisor.inspect().sequence;
+  await supervisor.submit("implement");
+
+  const attention = await supervisor.awaitEvent(cursor, 1_000);
+  assert.equal(attention.type, "supervision.attention");
+  assert.equal(attention.reason, "watchdog_derailed");
+
+  assert.equal(telemetry.length, 1);
+  const entry = telemetry[0];
+  assert.equal(entry.verdict, "derailed");
+  assert.equal(entry.reason_code, "repeated_failed_tool");
+  assert.equal(typeof entry.elapsed_ms, "number");
+  // The watchdog fires at the message.delta emitted after 240_000 + 240_000 +
+  // 120_000 = 600_000 ms of fake-clock progress; elapsed_ms is measured from
+  // turn start, so it must be 600_000.
+  assert.equal(entry.elapsed_ms, 600_000);
+  assert.equal(entry.attention_sequence, attention.sequence);
 });
 
 function deferred<T = void>(): { promise: Promise<T>; resolve(value: T): void } {
