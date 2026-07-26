@@ -600,6 +600,335 @@ int main()
                 "interactive draw drag replaces colon-free action value with delta");
     }
 
+    {
+        // sru-34: a disabled semantic control renders disabled, keeps its
+        // current option/value/text, and never dispatches its user action.
+        RecordingSurface disabledSurface;
+        disabledSurface.tree.nodes = {
+            {.id = synth::ui::NodeId("root"),
+             .kind = synth::ui::NodeKind::Root,
+             .bounds = {0.0f, 0.0f, 480.0f, 320.0f},
+             .children = {synth::ui::NodeId("button"),
+                          synth::ui::NodeId("combo"),
+                          synth::ui::NodeId("field"),
+                          synth::ui::NodeId("toggle"),
+                          synth::ui::NodeId("slider"),
+                          synth::ui::NodeId("draw")}},
+            {.id = synth::ui::NodeId("button"),
+             .kind = synth::ui::NodeKind::Button,
+             .bounds = {8.0f, 8.0f, 96.0f, 28.0f},
+             .label = "Submit",
+             .enabled = false,
+             .action = synth::ui::Action::Named("submit"),
+             .doubleClickAction = synth::ui::Action::Named("submit.double")},
+            {.id = synth::ui::NodeId("combo"),
+             .kind = synth::ui::NodeKind::ComboBox,
+             .bounds = {8.0f, 44.0f, 160.0f, 28.0f},
+             .label = "Message",
+             .enabled = false,
+             .options = {{"first", "First"}, {"second", "Second"}},
+             .selectedOption = "second",
+             .action = synth::ui::Action::WithValue("message", "0")},
+            {.id = synth::ui::NodeId("field"),
+             .kind = synth::ui::NodeKind::TextField,
+             .bounds = {8.0f, 80.0f, 120.0f, 28.0f},
+             .label = "Argument",
+             .text = "7",
+             .enabled = false,
+             .action = synth::ui::Action::WithValue("argument", "0")},
+            {.id = synth::ui::NodeId("toggle"),
+             .kind = synth::ui::NodeKind::Toggle,
+             .bounds = {8.0f, 116.0f, 120.0f, 28.0f},
+             .label = "Enabled",
+             .checked = true,
+             .enabled = false,
+             .action = synth::ui::Action::WithValue("toggle", "0")},
+            {.id = synth::ui::NodeId("slider"),
+             .kind = synth::ui::NodeKind::Slider,
+             .bounds = {8.0f, 152.0f, 140.0f, 28.0f},
+             .label = "Depth",
+             .enabled = false,
+             .value = 0.25f,
+             .action = synth::ui::Action::WithValue("depth", "0")},
+            {.id = synth::ui::NodeId("draw"),
+             .kind = synth::ui::NodeKind::Draw,
+             .bounds = {8.0f, 188.0f, 80.0f, 40.0f},
+             .enabled = false,
+             .pointerDragAction = synth::ui::Action::WithValue("draw.drag", "0"),
+             .doubleClickAction = synth::ui::Action::Named("draw.double")},
+        };
+
+        synth_juce::PortableComponent disabledComponent(disabledSurface);
+        disabledComponent.setSize(480, 320);
+        disabledComponent.RefreshFromSurface();
+
+        auto* disabledButton =
+            dynamic_cast<juce::TextButton*>(disabledComponent.FindByNodeId("button"));
+        auto* disabledCombo =
+            dynamic_cast<juce::ComboBox*>(disabledComponent.FindByNodeId("combo"));
+        auto* disabledField =
+            dynamic_cast<juce::TextEditor*>(disabledComponent.FindByNodeId("field"));
+        auto* disabledToggle =
+            dynamic_cast<juce::ToggleButton*>(disabledComponent.FindByNodeId("toggle"));
+        auto* disabledSlider =
+            dynamic_cast<juce::Slider*>(disabledComponent.FindByNodeId("slider"));
+        juce::Component* disabledDraw = disabledComponent.FindByNodeId("draw");
+        Require(disabledButton != nullptr && disabledCombo != nullptr && disabledField != nullptr
+                    && disabledToggle != nullptr && disabledSlider != nullptr
+                    && disabledDraw != nullptr,
+                "disabled fixture nodes are all rendered");
+        Require(!disabledButton->isEnabled() && !disabledCombo->isEnabled()
+                    && !disabledField->isEnabled() && !disabledToggle->isEnabled()
+                    && !disabledSlider->isEnabled() && !disabledDraw->isEnabled(),
+                "disabled portable nodes render as disabled JUCE controls");
+
+        Require(disabledButton->getButtonText() == juce::String("Submit"),
+                "disabled button keeps its portable label");
+        Require(disabledCombo->getNumItems() == 2
+                    && disabledCombo->getItemText(0) == juce::String("First")
+                    && disabledCombo->getItemText(1) == juce::String("Second")
+                    && disabledCombo->getSelectedItemIndex() == 1,
+                "disabled combo keeps its options and selected option");
+        Require(disabledField->getText() == juce::String("7"),
+                "disabled text field keeps its portable value");
+        Require(disabledToggle->getToggleState(), "disabled toggle keeps its checked state");
+        Require(std::abs(disabledSlider->getValue() - 0.25) < 1e-6,
+                "disabled slider keeps its portable value");
+
+        disabledButton->onClick();
+        disabledCombo->setSelectedId(1, juce::dontSendNotification);
+        disabledCombo->onChange();
+        disabledField->setText("9", false);
+        disabledField->onReturnKey();
+        disabledField->onFocusLost();
+        disabledToggle->setToggleState(false, juce::dontSendNotification);
+        disabledToggle->onClick();
+        disabledSlider->setValue(0.75, juce::sendNotificationSync);
+        Require(disabledSurface.dispatchCount == 0,
+                "disabled semantic controls dispatch no portable action");
+
+        const juce::MouseInputSource disabledSource =
+            juce::Desktop::getInstance().getMainMouseSource();
+        const juce::Point<float> disabledDown(10.0f, 10.0f);
+        const juce::Point<float> disabledMove(40.0f, 4.0f);
+        const auto makeEvent = [&](juce::Component* target, juce::Point<float> position) {
+            return juce::MouseEvent(disabledSource,
+                                    position,
+                                    juce::ModifierKeys::leftButtonModifier,
+                                    1.0f,
+                                    1.0f,
+                                    1.0f,
+                                    1.0f,
+                                    1.0f,
+                                    target,
+                                    target,
+                                    juce::Time::getCurrentTime(),
+                                    disabledDown,
+                                    juce::Time::getCurrentTime(),
+                                    1,
+                                    false);
+        };
+        disabledButton->mouseDoubleClick(makeEvent(disabledButton, disabledDown));
+        disabledDraw->mouseDown(makeEvent(disabledDraw, disabledDown));
+        disabledDraw->mouseDrag(makeEvent(disabledDraw, disabledMove));
+        disabledDraw->mouseDoubleClick(makeEvent(disabledDraw, disabledDown));
+        Require(disabledSurface.dispatchCount == 0,
+                "disabled button and draw nodes dispatch neither drag nor double click");
+
+        disabledSurface.tree.nodes[1].enabled = true;
+        disabledSurface.tree.nodes[6].enabled = true;
+        disabledComponent.RefreshFromSurface();
+        Require(disabledComponent.FindByNodeId("button")->isEnabled(),
+                "re-enabled portable node renders as an enabled JUCE control");
+        dynamic_cast<juce::TextButton*>(disabledComponent.FindByNodeId("button"))->onClick();
+        Require(disabledSurface.dispatchCount == 1 && disabledSurface.lastAction.name == "submit",
+                "re-enabled control dispatches its portable action again");
+        disabledDraw = disabledComponent.FindByNodeId("draw");
+        disabledDraw->mouseDown(makeEvent(disabledDraw, disabledDown));
+        disabledDraw->mouseDrag(makeEvent(disabledDraw, disabledMove));
+        Require(disabledSurface.dispatchCount == 2
+                    && disabledSurface.lastAction.name == "draw.drag",
+                "re-enabled draw node dispatches its drag action again");
+    }
+
+    {
+        // sru-33: a retained control follows the portable tree, not its own
+        // last user input, when the surface changes a selection or value
+        // out-of-band (a refused edit reverting, or reconciliation choosing a
+        // different device).
+        RecordingSurface retainedSurface;
+        retainedSurface.tree.nodes = {
+            {.id = synth::ui::NodeId("root"),
+             .kind = synth::ui::NodeKind::Root,
+             .bounds = {0.0f, 0.0f, 320.0f, 160.0f},
+             .children = {synth::ui::NodeId("combo"),
+                          synth::ui::NodeId("field"),
+                          synth::ui::NodeId("toggle")}},
+            {.id = synth::ui::NodeId("combo"),
+             .kind = synth::ui::NodeKind::ComboBox,
+             .bounds = {8.0f, 8.0f, 160.0f, 28.0f},
+             .options = {{"first", "First"}, {"second", "Second"}},
+             .selectedOption = "first",
+             .action = synth::ui::Action::Named("combo")},
+            {.id = synth::ui::NodeId("field"),
+             .kind = synth::ui::NodeKind::TextField,
+             .bounds = {8.0f, 44.0f, 120.0f, 28.0f},
+             .text = "0",
+             .action = synth::ui::Action::Named("field")},
+            {.id = synth::ui::NodeId("toggle"),
+             .kind = synth::ui::NodeKind::Toggle,
+             .bounds = {8.0f, 80.0f, 120.0f, 28.0f},
+             .label = "On",
+             .action = synth::ui::Action::Named("toggle")},
+        };
+
+        synth_juce::PortableComponent retainedComponent(retainedSurface);
+        retainedComponent.setSize(320, 160);
+        retainedComponent.RefreshFromSurface();
+        auto* retainedCombo = dynamic_cast<juce::ComboBox*>(retainedComponent.FindByNodeId("combo"));
+        auto* retainedField = dynamic_cast<juce::TextEditor*>(retainedComponent.FindByNodeId("field"));
+        auto* retainedToggle =
+            dynamic_cast<juce::ToggleButton*>(retainedComponent.FindByNodeId("toggle"));
+        Require(retainedCombo != nullptr && retainedField != nullptr && retainedToggle != nullptr,
+                "retained fixture nodes are rendered");
+
+        retainedCombo->setSelectedId(2, juce::dontSendNotification);
+        retainedField->setText("draft", false);
+        retainedToggle->setToggleState(true, juce::dontSendNotification);
+        retainedSurface.tree.nodes[1].selectedOption = "second";
+        retainedSurface.tree.nodes[2].text = "9";
+        retainedSurface.tree.nodes[3].checked = true;
+        retainedComponent.RefreshFromSurface();
+        retainedSurface.tree.nodes[1].selectedOption = "first";
+        retainedSurface.tree.nodes[2].text = "0";
+        retainedSurface.tree.nodes[3].checked = false;
+        retainedComponent.RefreshFromSurface();
+        Require(retainedComponent.FindByNodeId("combo") == retainedCombo
+                    && retainedComponent.FindByNodeId("field") == retainedField
+                    && retainedComponent.FindByNodeId("toggle") == retainedToggle,
+                "controls are retained across refreshes by stable node id");
+        Require(retainedCombo->getSelectedItemIndex() == 0,
+                "a retained combo follows the portable selected option");
+        Require(retainedField->getText() == juce::String("0"),
+                "an unfocused retained text field follows the portable value");
+        Require(!retainedToggle->getToggleState(),
+                "a retained toggle follows the portable checked state");
+        Require(retainedSurface.dispatchCount == 0,
+                "following the portable tree dispatches no action");
+    }
+
+    {
+        // sru-33: neither backend renders a Row's or Section's own label, so a
+        // container label is semantic metadata rather than displayed text. The
+        // browser backend only writes textContent for Button/Label/StatusText;
+        // this pins the same contract for JUCE.
+        RecordingSurface containerSurface;
+        containerSurface.tree.nodes = {
+            {.id = synth::ui::NodeId("root"),
+             .kind = synth::ui::NodeKind::Root,
+             .bounds = {0.0f, 0.0f, 240.0f, 120.0f},
+             .children = {synth::ui::NodeId("section")}},
+            {.id = synth::ui::NodeId("section"),
+             .kind = synth::ui::NodeKind::Section,
+             .bounds = {0.0f, 0.0f, 240.0f, 120.0f},
+             .label = "Section Label",
+             .children = {synth::ui::NodeId("row")}},
+            {.id = synth::ui::NodeId("row"),
+             .kind = synth::ui::NodeKind::Row,
+             .bounds = {0.0f, 0.0f, 240.0f, 60.0f},
+             .label = "Row Label",
+             .children = {synth::ui::NodeId("child")}},
+            {.id = synth::ui::NodeId("child"),
+             .kind = synth::ui::NodeKind::Label,
+             .bounds = {0.0f, 0.0f, 240.0f, 22.0f},
+             .text = "Child"},
+        };
+
+        synth_juce::PortableComponent containerComponent(containerSurface);
+        containerComponent.setSize(240, 120);
+        containerComponent.RefreshFromSurface();
+        juce::Component* section = containerComponent.FindByNodeId("section");
+        juce::Component* row = containerComponent.FindByNodeId("row");
+        Require(section != nullptr && row != nullptr, "container fixture nodes are rendered");
+        Require(dynamic_cast<juce::Label*>(section) == nullptr
+                    && dynamic_cast<juce::Label*>(row) == nullptr
+                    && dynamic_cast<juce::Button*>(section) == nullptr
+                    && dynamic_cast<juce::Button*>(row) == nullptr,
+                "container nodes render as panels rather than text controls");
+        const juce::Image labelledContainers = RenderComponent(containerComponent);
+
+        containerSurface.tree.nodes[1].label.clear();
+        containerSurface.tree.nodes[2].label.clear();
+        containerComponent.RefreshFromSurface();
+        const juce::Image unlabelledContainers = RenderComponent(containerComponent);
+        bool containerPixelsMatch = true;
+        for (int y = 0; y < labelledContainers.getHeight(); ++y)
+        {
+            for (int x = 0; x < labelledContainers.getWidth(); ++x)
+            {
+                containerPixelsMatch = containerPixelsMatch
+                                       && labelledContainers.getPixelAt(x, y)
+                                              == unlabelledContainers.getPixelAt(x, y);
+            }
+        }
+        Require(containerPixelsMatch, "a container node's own label paints nothing");
+    }
+
+    {
+        // scw-3 / sru-33: a form that declares explicit parent-local column
+        // bounds keeps them in JUCE instead of being reflowed into the
+        // renderer's own wrapping cursor.
+        RecordingSurface columnSurface;
+        columnSurface.tree.nodes = {
+            {.id = synth::ui::NodeId("root"),
+             .kind = synth::ui::NodeKind::Root,
+             .bounds = {0.0f, 0.0f, 200.0f, 200.0f},
+             .children = {synth::ui::NodeId("column.0"), synth::ui::NodeId("column.1")}},
+            {.id = synth::ui::NodeId("column.0"),
+             .kind = synth::ui::NodeKind::Section,
+             .bounds = {8.0f, 40.0f, 80.0f, 120.0f},
+             .children = {synth::ui::NodeId("column.0.row.0"), synth::ui::NodeId("column.0.row.1")}},
+            {.id = synth::ui::NodeId("column.1"),
+             .kind = synth::ui::NodeKind::Section,
+             .bounds = {104.0f, 40.0f, 80.0f, 120.0f},
+             .children = {synth::ui::NodeId("column.1.row.0"), synth::ui::NodeId("column.1.row.1")}},
+            {.id = synth::ui::NodeId("column.0.row.0"),
+             .kind = synth::ui::NodeKind::ComboBox,
+             .bounds = {0.0f, 20.0f, 80.0f, 28.0f},
+             .options = {{"a", "A"}},
+             .selectedOption = "a"},
+            {.id = synth::ui::NodeId("column.0.row.1"),
+             .kind = synth::ui::NodeKind::ComboBox,
+             .bounds = {0.0f, 60.0f, 80.0f, 28.0f},
+             .options = {{"a", "A"}},
+             .selectedOption = "a"},
+            {.id = synth::ui::NodeId("column.1.row.0"),
+             .kind = synth::ui::NodeKind::ComboBox,
+             .bounds = {0.0f, 20.0f, 80.0f, 28.0f},
+             .options = {{"a", "A"}},
+             .selectedOption = "a"},
+            {.id = synth::ui::NodeId("column.1.row.1"),
+             .kind = synth::ui::NodeKind::ComboBox,
+             .bounds = {0.0f, 60.0f, 80.0f, 28.0f},
+             .options = {{"a", "A"}},
+             .selectedOption = "a"},
+        };
+
+        synth_juce::PortableComponent columnComponent(columnSurface);
+        columnComponent.setSize(200, 200);
+        columnComponent.RefreshFromSurface();
+        const auto columnBounds = [&](const char* id) {
+            juce::Component* control = columnComponent.FindByNodeId(id);
+            Require(control != nullptr, "declared column control is rendered");
+            return SurfaceBoundsOf(columnComponent, *control);
+        };
+        Require(columnBounds("column.0.row.0") == juce::Rectangle<int>(8, 60, 80, 28)
+                    && columnBounds("column.0.row.1") == juce::Rectangle<int>(8, 100, 80, 28)
+                    && columnBounds("column.1.row.0") == juce::Rectangle<int>(104, 60, 80, 28)
+                    && columnBounds("column.1.row.1") == juce::Rectangle<int>(104, 100, 80, 28),
+                "declared two-column bounds resolve exactly, without renderer reflow");
+    }
+
     std::cout << "PortableJuceBackendTests passed\n";
     return 0;
 }

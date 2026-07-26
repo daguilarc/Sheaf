@@ -902,9 +902,19 @@ private:
         m_surface.DispatchAction(action);
     }
 
+    // sru-34: a disabled semantic node never dispatches its user action. Every
+    // backend-originated dispatch resolves its node through this gate, so
+    // click, change, double-click, and pointer drag are all covered by one
+    // rule instead of relying on each JUCE control's own disabled handling.
+    const synth::ui::Node* EnabledNode(const synth::ui::NodeId& id) const
+    {
+        const synth::ui::Node* node = FindNode(id);
+        return node != nullptr && node->enabled ? node : nullptr;
+    }
+
     void DispatchCurrentNodeAction(const synth::ui::NodeId& id)
     {
-        if (const synth::ui::Node* node = FindNode(id); node != nullptr && node->action.has_value())
+        if (const synth::ui::Node* node = EnabledNode(id); node != nullptr && node->action.has_value())
         {
             DispatchBackendAction(*node->action);
         }
@@ -913,7 +923,7 @@ private:
     void DispatchCurrentNodeActionWithAppendedValue(const synth::ui::NodeId& id,
                                                     std::string value)
     {
-        if (const synth::ui::Node* node = FindNode(id); node != nullptr && node->action.has_value())
+        if (const synth::ui::Node* node = EnabledNode(id); node != nullptr && node->action.has_value())
         {
             synth::ui::Action dispatched = *node->action;
             if (!dispatched.value.empty())
@@ -927,7 +937,7 @@ private:
 
     void DispatchCurrentNodePointerDragAction(const synth::ui::NodeId& id, float delta)
     {
-        const synth::ui::Node* node = FindNode(id);
+        const synth::ui::Node* node = EnabledNode(id);
         if (node == nullptr || !node->pointerDragAction.has_value())
         {
             return;
@@ -955,7 +965,7 @@ private:
 
     void DispatchCurrentNodeDoubleClickAction(const synth::ui::NodeId& id)
     {
-        if (const synth::ui::Node* node = FindNode(id); node != nullptr && node->doubleClickAction.has_value())
+        if (const synth::ui::Node* node = EnabledNode(id); node != nullptr && node->doubleClickAction.has_value())
         {
             DispatchBackendAction(*node->doubleClickAction);
         }
