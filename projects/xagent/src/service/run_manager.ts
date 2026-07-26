@@ -1,3 +1,6 @@
+import { realpath, stat } from "node:fs/promises";
+import path from "node:path";
+
 import { generateRunId, createRunRecord, appendNormalizedEvent, updateRunSupervision, type RunRecord } from "../logs.js";
 import { Supervisor } from "../supervision/supervisor.js";
 import type {
@@ -9,6 +12,16 @@ import type {
 import { createAdapter } from "../adapters/index.js";
 import type { HarnessAdapter } from "../adapters/types.js";
 import type { HarnessName, OutputMode, ThinkingLevel } from "../events.js";
+import type {
+  StructuredToolError,
+  XagentAwaitInput,
+  XagentCloseInput,
+  XagentInspectInput,
+  XagentInterruptInput,
+  XagentMessageInput,
+  XagentStartInput,
+} from "./tool_schemas.js";
+import { ToolValidationError } from "./tool_schemas.js";
 
 export type XagentRunManagerOptions = {
   readonly repoRoot: string;
@@ -27,6 +40,45 @@ export type CreateRunOptions = {
   readonly thinkingLevel?: ThinkingLevel;
   readonly permissionMode?: string;
   readonly policy?: SupervisionPolicy;
+};
+
+export type StartRunResult = {
+  readonly run_id: string;
+  readonly sequence: number;
+  readonly phase: string;
+};
+
+export type InspectRunResult = {
+  readonly run_id: string;
+  readonly phase: string;
+  readonly sequence: number;
+  readonly provider_thread_id?: string;
+};
+
+export type AwaitRunResult = {
+  readonly run_id: string;
+  readonly sequence: number;
+  readonly phase: string;
+  readonly event: string;
+  readonly reason?: string;
+  readonly payload?: unknown;
+};
+
+export type MessageRunResult = {
+  readonly run_id: string;
+  readonly phase: string;
+  readonly sequence: number;
+};
+
+export type InterruptRunResult = {
+  readonly run_id: string;
+  readonly phase: string;
+  readonly sequence: number;
+};
+
+export type CloseRunResult = {
+  readonly run_id: string;
+  readonly closed: true;
 };
 
 type OwnedRun = {
@@ -153,13 +205,142 @@ export class XagentRunManager {
     await Promise.allSettled(runs.map((run) => run.supervisor.close()));
   }
 
+  async startRun(input: XagentStartInput): Promise<StartRunResult> {
+    const cwd = await canonicalizeWorkingDirectory(input.cwd);
+    const { runId } = await this.create({
+      harness: input.harness,
+      mode: input.mode,
+      cwd,
+      ...(input.model === undefined ? {} : { model: input.model }),
+      ...(input.thinking_level === undefined ? {} : { thinkingLevel: input.thinking_level }),
+      ...(input.permission_mode === undefined ? {} : { permissionMode: input.permission_mode }),
+      ...(input.policy === undefined ? {} : { policy: input.policy }),
+    });
+    try {
+      await this.start(runId);
+      await this.submit(runId, input.prompt);
+      const inspection = this.inspect(runId);
+      if (inspection === undefined) {
+        throw new Error(`Run disappeared after start: ${runId}`);
+      }
+      return {
+        run_id: runId,
+        sequence: inspection.sequence,
+        phase: inspection.phase,
+      };
+    } catch (error) {
+      await this.close(runId).catch(() => {});
+      throw error;
+    }
+  }
+
+  async awaitRun(input: XagentAwaitInput, signal?: AbortSignal): Promise<AwaitRunResult> {
+    this.#require(input.run_id);
+    const result = await this.awaitEvent(
+      input.run_id,
+      input.after_sequence,
+      input.deadline_seconds * 1000,
+      signal,
+    );
+    return {
+      run_id: result.run_id,
+      sequence: result.sequence,
+      phase: result.phase,
+      event: result.type,
+      ...(result.reason === undefined ? {} : { reason: result.reason }),
+      ...("payload" in result && result.payload !== undefined ? { payload: result.payload } : {}),
+    };
+  }
+
+  inspectRun(input: XagentInspectInput): InspectRunResult {
+    const inspection = this.inspect(input.run_id);
+    if (inspection === undefined) {
+      throw unknownRunError(input.run_id);
+    }
+    return {
+      run_id: inspection.run_id,
+      phase: inspection.phase,
+      sequence: inspection.sequence,
+      ...(inspection.provider_thread_id === undefined
+        ? {}
+        : { provider_thread_id: inspection.provider_thread_id }),
+    };
+  }
+
+  async messageRun(input: XagentMessageInput): Promise<MessageRunResult> {
+    await this.submit(input.run_id, input.text);
+    const inspection = this.inspect(input.run_id);
+    if (inspection === undefined) {
+      throw unknownRunError(input.run_id);
+    }
+    return {
+      run_id: inspection.run_id,
+      phase: inspection.phase,
+      sequence: inspection.sequence,
+    };
+  }
+
+  async interruptRun(input: XagentInterruptInput): Promise<InterruptRunResult> {
+    await this.interrupt(input.run_id);
+    const inspection = this.inspect(input.run_id);
+    if (inspection === undefined) {
+      throw unknownRunError(input.run_id);
+    }
+    return {
+      run_id: inspection.run_id,
+      phase: inspection.phase,
+      sequence: inspection.sequence,
+    };
+  }
+
+  async closeRun(input: XagentCloseInput): Promise<CloseRunResult> {
+    await this.close(input.run_id);
+    return {
+      run_id: input.run_id,
+      closed: true,
+    };
+  }
+
   #require(runId: string): OwnedRun {
     const run = this.#runs.get(runId);
     if (run === undefined) {
-      throw new Error(`Unknown xagent run: ${runId}`);
+      throw unknownRunError(runId);
     }
     return run;
   }
+}
+
+export async function canonicalizeWorkingDirectory(cwd: string): Promise<string> {
+  if (!path.isAbsolute(cwd)) {
+    throw invalidWorkingDirectoryError(cwd, "working directory must be an absolute path");
+  }
+  let info;
+  try {
+    info = await stat(cwd);
+  } catch {
+    throw invalidWorkingDirectoryError(cwd, "working directory does not exist");
+  }
+  if (!info.isDirectory()) {
+    throw invalidWorkingDirectoryError(cwd, "working directory path is not a directory");
+  }
+  return realpath(cwd);
+}
+
+function invalidWorkingDirectoryError(cwd: string, message: string): ToolValidationError {
+  const structured: StructuredToolError = {
+    error: "invalid_working_directory",
+    message,
+    details: { cwd },
+  };
+  return new ToolValidationError(structured);
+}
+
+function unknownRunError(runId: string): ToolValidationError {
+  return new ToolValidationError({
+    error: "unknown_run",
+    message: `Unknown xagent run: ${runId}`,
+    details: { run_id: runId },
+  });
 }
 
 function toRunSupervisionUpdate(state: SupervisionPersistenceState) {

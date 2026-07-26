@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+import { createXagentMcpHandler, type XagentMcpHandler } from "./mcp.js";
 import type { XagentRunManager } from "./run_manager.js";
 
 export type XagentShutdownController = {
@@ -15,6 +16,7 @@ export type XagentServerOptions = {
   readonly shutdownController: XagentShutdownController;
   readonly serverStartTime?: number;
   readonly warning?: string;
+  readonly mcpHandler?: XagentMcpHandler;
 };
 
 export type XagentServer = {
@@ -26,6 +28,7 @@ export type XagentServer = {
 export function createXagentServer(options: XagentServerOptions): XagentServer {
   const serverStartTime = options.serverStartTime ?? Date.now();
   let acceptingConnections = true;
+  const mcpHandler = options.mcpHandler ?? createXagentMcpHandler(options.runManager);
 
   const httpServer = createServer((request: IncomingMessage, response: ServerResponse) => {
     if (!acceptingConnections) {
@@ -62,6 +65,11 @@ export function createXagentServer(options: XagentServerOptions): XagentServer {
       return;
     }
 
+    if (url.pathname === "/mcp") {
+      await mcpHandler.handleRequest(request, response);
+      return;
+    }
+
     sendJson(response, 404, { error: "not found" });
   }
 
@@ -84,16 +92,18 @@ export function createXagentServer(options: XagentServerOptions): XagentServer {
     close(): Promise<void> {
       acceptingConnections = false;
       return new Promise((resolve, reject) => {
-        httpServer.close((error) => {
-          if (error && (error as NodeJS.ErrnoException).code === "ERR_SERVER_NOT_RUNNING") {
+        void mcpHandler.close().finally(() => {
+          httpServer.close((error) => {
+            if (error && (error as NodeJS.ErrnoException).code === "ERR_SERVER_NOT_RUNNING") {
+              resolve();
+              return;
+            }
+            if (error) {
+              reject(error);
+              return;
+            }
             resolve();
-            return;
-          }
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
+          });
         });
       });
     },
