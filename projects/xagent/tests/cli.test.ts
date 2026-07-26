@@ -97,6 +97,17 @@ test("parses existing-run quiet service operations", () => {
   });
 });
 
+test("rejects --deadline-seconds above the service maximum before starting a run", () => {
+  assert.throws(
+    () => parseArgs(["supervise", "--harness", "codex", "--deadline-seconds", "7001", "prompt"]),
+    /--deadline-seconds cannot exceed 7000/,
+  );
+  assert.throws(
+    () => parseArgs(["await", "xrun_1", "--after-sequence", "0", "--deadline-seconds", "7001"]),
+    /--deadline-seconds cannot exceed 7000/,
+  );
+});
+
 test("supervise help explains service dependency without changing legacy run help", async () => {
   const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-cli-"));
   const stdout = new MemoryWritable();

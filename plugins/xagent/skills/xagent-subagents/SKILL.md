@@ -70,9 +70,11 @@ XAGENT_PLUGIN_ROOT="${HOME}/.agents/plugins/plugins/xagent"
 "${XAGENT_PLUGIN_ROOT}/scripts/xagent" await <run_id> --after-sequence <n> --deadline-seconds 7000
 ```
 
-Issue one service-side blocking await per wait cycle. Surface the MCP discovery
-failure rather than hiding it. Use this fallback only when the Conductor-managed
-service is healthy.
+Issue one application-level blocking await per wait cycle. The quiet client may
+reissue shorter HTTP MCP request chunks under the hood (≤240 seconds) until that
+deadline; treat those as an implementation detail, not a polling loop. Surface
+the MCP discovery failure rather than hiding it. Use this fallback only when the
+Conductor-managed service is healthy.
 
 ## Watchdog Boundary
 

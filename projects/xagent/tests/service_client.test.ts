@@ -14,6 +14,7 @@ import {
   createXagentServiceClient,
   mcpToolRequestOptions,
   x_McpAwaitTimeoutSlackSeconds,
+  XagentServiceUnavailableError,
 } from "../src/service/client.js";
 import { XagentRunManager } from "../src/service/run_manager.js";
 import {
@@ -625,6 +626,54 @@ test("quiet supervise surfaces a terminal provider failure immediately instead o
     // Must return well before the 30s deadline; a quiet spin would take ~30s.
     assert.ok(Date.now() - start < 5_000, "supervise did not return the failure promptly");
   });
+});
+
+test("quiet supervise includes run_id on infrastructure failure after start", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "xagent-runid-fail-"));
+  const stdout = new MemoryWritable();
+  const stderr = new MemoryWritable();
+  const result = await main(
+    ["supervise", "--harness", "codex", "--cwd", cwd, "hello"],
+    Readable.from([]),
+    stdout,
+    stderr,
+    cwd,
+    {
+      createServiceClient: () => ({
+        async start() {
+          return { run_id: "xrun_started_1", sequence: 2, phase: "running" };
+        },
+        async await() {
+          throw new XagentServiceUnavailableError(
+            "xagent service unavailable at http://127.0.0.1:9: fetch failed",
+            { cause: "fetch failed" },
+          );
+        },
+        async inspect() {
+          throw new Error("unused");
+        },
+        async message() {
+          throw new Error("unused");
+        },
+        async interrupt() {
+          throw new Error("unused");
+        },
+        async closeRun() {
+          throw new Error("unused");
+        },
+        async close() {},
+      }),
+    },
+  );
+
+  assert.equal(result.exitCode, 1);
+  assert.equal(stderr.text, "");
+  const body = JSON.parse(stdout.text.trim()) as {
+    error: string;
+    details?: { run_id?: string };
+  };
+  assert.equal(body.error, "xagent_service_unavailable");
+  assert.equal(body.details?.run_id, "xrun_started_1");
 });
 
 test("unavailable service emits structured failure and never constructs a Supervisor", async () => {
