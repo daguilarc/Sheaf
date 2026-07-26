@@ -186,7 +186,7 @@ $(BROWSER_COMMAND_BUFFER_TEST_BIN): tests/browser_command_buffer_tests.cpp apps/
 $(BROWSER_AUDIO_DEVICE_TEST_BIN): tests/browser_audio_device_tests.cpp include/synth/browser/BrowserAudioDevices.hpp include/synth/browser/BrowserRuntimeMainServices.hpp include/synth/browser/BrowserMidiBridge.hpp include/synth/ControllersPageUI.hpp include/synth/Engine.hpp include/synth/RuntimeFileService.hpp include/synth/RuntimePages.hpp include/synth/PatchPersistence.hpp $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(BROWSER_MIDI_BRIDGE_TEST_BIN): tests/browser_midi_bridge_tests.cpp include/synth/browser/BrowserMidiBridge.hpp include/synth/MidiReconcile.hpp include/synth/MidiController.hpp $(LIB)
+$(BROWSER_MIDI_BRIDGE_TEST_BIN): tests/browser_midi_bridge_tests.cpp include/synth/browser/BrowserMidiBridge.hpp include/synth/Engine.hpp include/synth/MidiReconcile.hpp include/synth/MidiController.hpp $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 browser-unit-test: $(BROWSER_CONTRACT_TEST_BIN)
