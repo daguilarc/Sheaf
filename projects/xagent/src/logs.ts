@@ -202,17 +202,31 @@ export async function listRuns(logRoot: string): Promise<RunMetadata[]> {
 
   const runs: RunMetadata[] = [];
   for (const entry of entries) {
+    const metadataPath = path.join(root, entry, "metadata.json");
+    let raw: string;
     try {
-      const metadata = JSON.parse(
-        await readFile(path.join(root, entry, "metadata.json"), "utf8"),
-      ) as unknown;
-      if (!isRunMetadata(metadata)) {
+      raw = await readFile(metadataPath, "utf8");
+    } catch (error) {
+      // Skip missing or non-directory stray entries; surface other I/O failures.
+      if (
+        isNodeError(error)
+        && (error.code === "ENOENT" || error.code === "ENOTDIR")
+      ) {
         continue;
       }
-      runs.push(metadata);
+      throw error;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
     } catch {
       continue;
     }
+    const metadata = normalizeListedRunMetadata(parsed);
+    if (metadata === undefined) {
+      continue;
+    }
+    runs.push(metadata);
   }
 
   return runs.sort((left, right) => right.created_at.localeCompare(left.created_at));
@@ -294,13 +308,81 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
 }
 
-function isRunMetadata(value: unknown): value is RunMetadata {
-  if (
-    !isRecord(value)
-    || !isRecord(value.supervision)
-    || !isRecord(value.watchdog)
-    || !isRecord(value.paths)
-  ) {
+function normalizeListedRunMetadata(value: unknown): RunMetadata | undefined {
+  if (!isLegacyListableRunMetadata(value)) {
+    return undefined;
+  }
+  const createdAt = value.created_at;
+  const supervision = isRecord(value.supervision) && isSupervisionBlock(value.supervision)
+    ? {
+        phase: value.supervision.phase,
+        sequence: value.supervision.sequence,
+        last_transport_progress_at: value.supervision.last_transport_progress_at,
+        last_semantic_progress_at: value.supervision.last_semantic_progress_at,
+        provider_thread_id: value.supervision.provider_thread_id,
+      }
+    : {
+        phase: phaseFromLegacyExitStatus(value.exit_status),
+        sequence: 0,
+        last_transport_progress_at: createdAt,
+        last_semantic_progress_at: createdAt,
+        provider_thread_id: undefined,
+      };
+  const watchdog = isRecord(value.watchdog) && isWatchdogAggregate(value.watchdog)
+    ? value.watchdog
+    : {
+        invocation_count: 0,
+        controller_wake_count: 0,
+        deterministic_alert_count: 0,
+        evidence_truncation_count: 0,
+      };
+  const paths = value.paths;
+  const watchdogPath = typeof paths.watchdog === "string"
+    ? paths.watchdog
+    : path.join(paths.run_dir, "watchdog.jsonl");
+  return {
+    run_id: value.run_id,
+    harness: value.harness,
+    mode: value.mode,
+    ...(value.model === undefined ? {} : { model: value.model }),
+    ...(value.thinking_level === undefined ? {} : { thinking_level: value.thinking_level }),
+    created_at: value.created_at,
+    updated_at: value.updated_at,
+    exit_status: value.exit_status,
+    supervision,
+    watchdog,
+    ...(value.owned_process === undefined ? {} : { owned_process: value.owned_process }),
+    paths: {
+      run_dir: paths.run_dir,
+      metadata: paths.metadata,
+      normalized: paths.normalized,
+      raw_provider: paths.raw_provider,
+      watchdog: watchdogPath,
+    },
+  };
+}
+
+function isLegacyListableRunMetadata(value: unknown): value is {
+  readonly run_id: string;
+  readonly harness: RunMetadata["harness"];
+  readonly mode: RunMetadata["mode"];
+  readonly model?: string;
+  readonly thinking_level?: ThinkingLevel;
+  readonly created_at: string;
+  readonly updated_at: string;
+  readonly exit_status: RunMetadata["exit_status"];
+  readonly supervision?: unknown;
+  readonly watchdog?: unknown;
+  readonly owned_process?: OwnedProcessIdentity;
+  readonly paths: {
+    readonly run_dir: string;
+    readonly metadata: string;
+    readonly normalized: string;
+    readonly raw_provider: string;
+    readonly watchdog?: string;
+  };
+} {
+  if (!isRecord(value) || !isRecord(value.paths)) {
     return false;
   }
   return (
@@ -328,25 +410,13 @@ function isRunMetadata(value: unknown): value is RunMetadata {
       || value.exit_status === "failed"
     )
     && (
-      value.supervision.phase === "starting"
-      || value.supervision.phase === "running"
-      || value.supervision.phase === "ready"
-      || value.supervision.phase === "completed"
-      || value.supervision.phase === "failed"
-      || value.supervision.phase === "cancelled"
-      || value.supervision.phase === "abandoned"
+      value.supervision === undefined
+      || (isRecord(value.supervision) && isSupervisionBlock(value.supervision))
     )
-    && Number.isSafeInteger(value.supervision.sequence)
-    && typeof value.supervision.last_transport_progress_at === "string"
-    && typeof value.supervision.last_semantic_progress_at === "string"
     && (
-      value.supervision.provider_thread_id === undefined
-      || typeof value.supervision.provider_thread_id === "string"
+      value.watchdog === undefined
+      || (isRecord(value.watchdog) && isWatchdogAggregate(value.watchdog))
     )
-    && isNonNegativeInteger(value.watchdog.invocation_count)
-    && isNonNegativeInteger(value.watchdog.controller_wake_count)
-    && isNonNegativeInteger(value.watchdog.deterministic_alert_count)
-    && isNonNegativeInteger(value.watchdog.evidence_truncation_count)
     && (
       value.owned_process === undefined
       || isOwnedProcessIdentity(value.owned_process)
@@ -355,8 +425,51 @@ function isRunMetadata(value: unknown): value is RunMetadata {
     && typeof value.paths.metadata === "string"
     && typeof value.paths.normalized === "string"
     && typeof value.paths.raw_provider === "string"
-    && typeof value.paths.watchdog === "string"
+    && (value.paths.watchdog === undefined || typeof value.paths.watchdog === "string")
   );
+}
+
+function isSupervisionBlock(value: Record<string, unknown>): value is RunMetadata["supervision"] {
+  return (
+    (
+      value.phase === "starting"
+      || value.phase === "running"
+      || value.phase === "ready"
+      || value.phase === "completed"
+      || value.phase === "failed"
+      || value.phase === "cancelled"
+      || value.phase === "abandoned"
+    )
+    && Number.isSafeInteger(value.sequence)
+    && typeof value.last_transport_progress_at === "string"
+    && typeof value.last_semantic_progress_at === "string"
+    && (
+      value.provider_thread_id === undefined
+      || typeof value.provider_thread_id === "string"
+    )
+  );
+}
+
+function isWatchdogAggregate(value: Record<string, unknown>): value is WatchdogAggregate {
+  return isNonNegativeInteger(value.invocation_count)
+    && isNonNegativeInteger(value.controller_wake_count)
+    && isNonNegativeInteger(value.deterministic_alert_count)
+    && isNonNegativeInteger(value.evidence_truncation_count);
+}
+
+function phaseFromLegacyExitStatus(
+  exitStatus: RunMetadata["exit_status"],
+): SupervisionPhase {
+  if (exitStatus === "failed") {
+    return "failed";
+  }
+  if (exitStatus === "completed") {
+    return "completed";
+  }
+  // Pre-supervision runs with exit_status "running" are historical artifacts,
+  // not live supervised workers — treat them as completed so list remains
+  // useful without feeding them into restart reconciliation.
+  return "completed";
 }
 
 function isOwnedProcessIdentity(value: unknown): value is OwnedProcessIdentity {

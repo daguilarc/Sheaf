@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -79,6 +79,55 @@ test("listRuns and readNormalizedLog inspect persisted files without live state"
 
   const logText = await readNormalizedLog(logRoot, runId);
   assert.equal(JSON.parse(logText).message, "persisted");
+});
+
+test("listRuns still surfaces pre-supervision legacy metadata", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-legacy-list-"));
+  const logRoot = getDefaultLogRoot(repoRoot);
+  const runId = "xrun_20260621000000000_legacy01";
+  const runDir = path.join(logRoot, runId);
+  await mkdir(runDir, { recursive: true });
+  await writeFile(
+    path.join(runDir, "metadata.json"),
+    `${JSON.stringify({
+      run_id: runId,
+      harness: "codex",
+      mode: "subagent",
+      created_at: "2026-06-21T00:00:00.000Z",
+      updated_at: "2026-06-21T00:01:00.000Z",
+      exit_status: "completed",
+      paths: {
+        run_dir: runId,
+        metadata: `${runId}/metadata.json`,
+        normalized: `${runId}/normalized.jsonl`,
+        raw_provider: `${runId}/raw-provider.jsonl`,
+      },
+    }, null, 2)}\n`,
+  );
+
+  const runs = await listRuns(logRoot);
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0]?.run_id, runId);
+  assert.equal(runs[0]?.harness, "codex");
+  assert.equal(runs[0]?.exit_status, "completed");
+  assert.equal(runs[0]?.supervision.phase, "completed");
+  assert.equal(runs[0]?.watchdog.invocation_count, 0);
+  assert.equal(runs[0]?.paths.watchdog, path.join(runId, "watchdog.jsonl"));
+});
+
+test("listRuns surfaces non-ENOENT I/O errors instead of swallowing them", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-list-io-"));
+  const logRoot = getDefaultLogRoot(repoRoot);
+  const runId = "xrun_20260621000000000_ioerr01";
+  const runDir = path.join(logRoot, runId);
+  await mkdir(runDir, { recursive: true });
+  // A directory where metadata.json should be makes readFile fail with EISDIR.
+  await mkdir(path.join(runDir, "metadata.json"));
+
+  await assert.rejects(() => listRuns(logRoot), (error: NodeJS.ErrnoException) => {
+    assert.equal(error.code, "EISDIR");
+    return true;
+  });
 });
 
 test("readNormalizedLog rejects path traversal run ids", async () => {
