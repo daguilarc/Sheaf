@@ -188,7 +188,8 @@ async function* replayFixture(fixture: Fixture, clock: FakeClock): AsyncIterable
   };
 }
 
-test("complete fake-provider service lifecycle through packaged MCP declaration", async () => {  const mcp = JSON.parse(await readFile(x_PackagedMcpPath, "utf8")) as {
+test("complete fake-provider service lifecycle through packaged MCP declaration", async () => {
+  const mcp = JSON.parse(await readFile(x_PackagedMcpPath, "utf8")) as {
     mcpServers: { xagent: { url: string } };
   };
   const packagedUrl = new URL(mcp.mcpServers.xagent.url);
@@ -390,14 +391,8 @@ test("silence attention is delivered to a controller through xagent_await", asyn
       arguments: { run_id: runId, after_sequence: cursor, deadline_seconds: 30 },
     }));
     assert.equal(attentionResult.isError ?? false, false);
-    const attentionEvent = attentionResult.body.event as string;
-    assert.ok(
-      attentionEvent === "supervision.attention" || attentionEvent === "supervision.deadline",
-      `expected attention or deadline event, got ${attentionEvent}`,
-    );
-    if (attentionEvent === "supervision.attention") {
-      assert.equal(attentionResult.body.reason, "silence_timeout");
-    }
+    assert.equal(attentionResult.body.event, "supervision.attention");
+    assert.equal(attentionResult.body.reason, "silence_timeout");
 
     releaseTurn.resolve(undefined);
     const completionResult = asBody(await client.callTool({
@@ -421,7 +416,7 @@ test("silence attention is delivered to a controller through xagent_await", asyn
   }
 });
 
-test("cursor deduplication: a second await with the same cursor does not redeliver the prior event", async () => {
+test("cursor deduplication: a second await after the completion sequence does not redeliver it", async () => {
   const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-e2e-dedup-repo-"));
   const logRoot = path.join(tmpdir(), `xagent-e2e-dedup-logs-${Math.random().toString(36).slice(2)}`);
   const releaseTurn = deferred<void>();
@@ -460,27 +455,26 @@ test("cursor deduplication: a second await with the same cursor does not redeliv
       arguments: { cwd, prompt: "produce a final report", harness: "codex" },
     }));
     const runId = startResult.body.run_id as string;
-    const cursor = startResult.body.sequence as number;
+    const startCursor = startResult.body.sequence as number;
 
     releaseTurn.resolve(undefined);
 
     const firstAwait = asBody(await client.callTool({
       name: "xagent_await",
-      arguments: { run_id: runId, after_sequence: cursor, deadline_seconds: 30 },
+      arguments: { run_id: runId, after_sequence: startCursor, deadline_seconds: 30 },
     }));
     assert.equal(firstAwait.body.event, "turn.completed");
-    const firstSequence = firstAwait.body.sequence as number;
+    const completionSequence = firstAwait.body.sequence as number;
 
     const secondAwait = asBody(await client.callTool({
       name: "xagent_await",
-      arguments: { run_id: runId, after_sequence: cursor, deadline_seconds: 5 },
+      arguments: { run_id: runId, after_sequence: completionSequence, deadline_seconds: 2 },
     }));
-    assert.equal(
-      secondAwait.body.sequence as number,
-      firstSequence,
-      "second await with same cursor replays the same event (cursor dedup)",
+    assert.ok(
+      (secondAwait.body.sequence as number) > completionSequence || secondAwait.body.event === "supervision.deadline",
+      "second await after the completion sequence must not redeliver that completion",
     );
-    assert.equal(secondAwait.body.event, "turn.completed");
+    assert.notEqual(secondAwait.body.event, "turn.completed");
 
     const closeResult = asBody(await client.callTool({
       name: "xagent_close",

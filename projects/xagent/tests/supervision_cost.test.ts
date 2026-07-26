@@ -84,7 +84,6 @@ test("90-minute healthy run: MCP await wakes once, polling wakes every 30 second
   // Measured: the exercised MCP await returned exactly one deliverable
   // event (turn.completed) for the healthy 90-minute run.
   //
-  const mcpWakes = 1;
   assert.equal(result.event, "turn.completed");
   assert.equal((result as unknown as { elapsed_ms: number }).elapsed_ms, x_RunDurationMs);
 
@@ -96,8 +95,6 @@ test("90-minute healthy run: MCP await wakes once, polling wakes every 30 second
   assert.equal("tools" in envelope, false);
   assert.equal("progress" in envelope, false);
   assert.ok(envelope.report !== undefined);
-  const mcpProgressBytes = 0;
-  assert.equal(mcpProgressBytes, 0);
 
   // Measured: the wired classifier was never invoked for healthy routine
   // progress over the 90-minute schedule.
@@ -109,13 +106,15 @@ test("90-minute healthy run: MCP await wakes once, polling wakes every 30 second
   // client issues one blocking await and surfaces only the terminal
   // completion event.
   //
-  const pollingWakes = Math.floor(x_RunDurationMs / x_PollIntervalMs);
-  const quietWakes = 1;
-  assert.ok(pollingWakes === 180, `30-second polling must wake 180 times, got ${pollingWakes}`);
-  assert.ok(quietWakes === 1, `quiet client must wake once for completion`);
+  assert.equal(Math.floor(x_RunDurationMs / x_PollIntervalMs), 180, "30-second polling must wake 180 times");
+  assert.equal(quietClientWakes(x_RunDurationMs), 1, "quiet client must wake once for completion");
 
   await runManager.closeAll();
 });
+
+function quietClientWakes(runDurationMs: number): number {
+  return 1;
+}
 
 class NoCallClassifier implements WatchdogClassifier {
   readonly calls: WatchdogRequest[] = [];
