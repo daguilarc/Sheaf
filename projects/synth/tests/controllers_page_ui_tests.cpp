@@ -674,6 +674,46 @@ void TestReconfigureSeedsExactProfilesAndReplacesOnlyTheValidatedRecord()
                 VisibleTextLower(blacklistedTree).find("replaces") != std::string::npos,
             "blacklisted records without dormant data open destructive defaults without Ignore");
 
+    TestHarness dormantCompatibleHarness;
+    dormantCompatibleHarness.instrument.controllers.clear();
+    synth::MidiControllerSlot dormantCompatible = *generated.controller;
+    dormantCompatible.disposition = synth::MidiControllerDisposition::Blacklisted;
+    dormantCompatible.dormantConfig = dormantCompatible.config;
+    dormantCompatible.config = {};
+    Require(dormantCompatibleHarness.instrument.AddController(std::move(dormantCompatible)),
+            "add blacklisted record with compatible dormant Twister profile");
+    dormantCompatibleHarness.connection.controllers.resize(1);
+    auto dormantCompatibleSurface = dormantCompatibleHarness.MakeSurface();
+    dormantCompatibleSurface.MarkDirty();
+    dormantCompatibleSurface.RefreshOnTick();
+    dormantCompatibleSurface.DispatchAction(*FindNodeById(
+        dormantCompatibleSurface.BuildTree(), synth::runtime_ui::NodeIds::ControllerConfigure(0))->action);
+    const synth::ui::NodeTree dormantCompatibleTree = dormantCompatibleSurface.BuildTree();
+    Require(FindNodeById(dormantCompatibleTree, "controller-wizard.twister.encoder-slot")->text == "4" &&
+                FindNodeById(dormantCompatibleTree, synth::runtime_ui::NodeIds::kWizardWarning) == nullptr,
+            "compatible dormant Twister data seeds Configure without a destructive warning");
+
+    TestHarness dormantIncompatibleHarness;
+    dormantIncompatibleHarness.instrument.controllers.clear();
+    synth::MidiControllerSlot dormantIncompatible = *generated.controller;
+    dormantIncompatible.disposition = synth::MidiControllerDisposition::Blacklisted;
+    dormantIncompatible.dormantConfig = dormantIncompatible.config;
+    dormantIncompatible.dormantConfig->systemMessages.push_back(
+        dormantIncompatible.dormantConfig->systemMessages.front());
+    dormantIncompatible.config = {};
+    Require(dormantIncompatibleHarness.instrument.AddController(std::move(dormantIncompatible)),
+            "add blacklisted record with incompatible dormant Twister profile");
+    dormantIncompatibleHarness.connection.controllers.resize(1);
+    auto dormantIncompatibleSurface = dormantIncompatibleHarness.MakeSurface();
+    dormantIncompatibleSurface.MarkDirty();
+    dormantIncompatibleSurface.RefreshOnTick();
+    dormantIncompatibleSurface.DispatchAction(*FindNodeById(
+        dormantIncompatibleSurface.BuildTree(), synth::runtime_ui::NodeIds::ControllerConfigure(0))->action);
+    const synth::ui::NodeTree dormantIncompatibleTree = dormantIncompatibleSurface.BuildTree();
+    Require(FindNodeById(dormantIncompatibleTree, "controller-wizard.twister.encoder-slot")->text == "0" &&
+                VisibleTextLower(dormantIncompatibleTree).find("replaces") != std::string::npos,
+            "incompatible dormant Twister data opens destructive defaults");
+
     TestHarness staleHarness;
     staleHarness.instrument.controllers.clear();
     Require(staleHarness.instrument.AddController(*generated.controller), "add stale target");
