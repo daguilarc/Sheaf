@@ -571,6 +571,169 @@ void TestWizardSaveFailureDoesNotRollbackCommittedInstrument()
             "save failure remains visible on the still-open workflow");
 }
 
+void TestReconfigureSeedsExactProfilesAndReplacesOnlyTheValidatedRecord()
+{
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    Require(harness.instrument.AddController(MakeGenericSlot("before")), "add leading record");
+    synth::MfTwisterControllerWizard wizard;
+    synth::MfTwisterConfigForm form;
+    form.encoderSlotText = "4";
+    const synth::WizardGenerationResult generated = wizard.GenerateProfile(
+        form, {.name = "twister", .input = {"offline-in", "Offline In"},
+               .output = {"offline-out", "Offline Out"}});
+    Require(static_cast<bool>(generated), "generate compatible offline Twister record");
+    Require(harness.instrument.AddController(*generated.controller), "add Twister record");
+    Require(harness.instrument.AddController(MakeGenericSlot("after")), "add trailing record");
+    harness.connection.controllers.resize(harness.instrument.controllers.size());
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    const synth::ui::Action reconfigure = *FindNodeById(
+        surface.BuildTree(), synth::runtime_ui::NodeIds::ControllerReconfigure(1))->action;
+    surface.DispatchAction(reconfigure);
+    const synth::ui::NodeTree compatibleTree = surface.BuildTree();
+    Require(FindNodeById(compatibleTree, "controller-wizard.twister.encoder-slot")->text == "4",
+            "a complete compatible offline profile seeds its shared Encoder Slot");
+    Require(FindNodeById(compatibleTree, synth::runtime_ui::NodeIds::kWizardIgnore) == nullptr,
+            "existing reconfiguration never exposes Ignore");
+
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        "controller-wizard.twister.encoder-slot", "6"));
+    surface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardSubmit));
+    Require(harness.commits == 1 && harness.saves == 1,
+            "accepted reconfiguration performs one commit then one save");
+    Require(harness.instrument.controllers.size() == 3 &&
+                harness.instrument.controllers[0].name == "before" &&
+                harness.instrument.controllers[2].name == "after",
+            "reconfiguration preserves the stored record's ordered position");
+    const synth::MidiControllerSlot& replaced = harness.instrument.controllers[1];
+    Require(replaced.name == "twister" && replaced.input.identifier == "offline-in" &&
+                replaced.output.identifier == "offline-out" &&
+                replaced.wizardId == "com.sheaf.midi-fighter-twister" &&
+                replaced.disposition == synth::MidiControllerDisposition::Active,
+            "reconfiguration preserves identity while activating the complete generated profile");
+    Require(replaced.config.encoderInput->turns.size() == 16 &&
+                replaced.config.systemMessages.size() == 6 &&
+                replaced.config.encoderInput->turns[0].slotIx == 6,
+            "reconfiguration replaces rather than merges the profile");
+
+    TestHarness kindHarness;
+    kindHarness.instrument.controllers.clear();
+    synth::MidiControllerSlot mismatchedKind = *generated.controller;
+    mismatchedKind.kind = synth::MidiProfileKind::Launchpad;
+    mismatchedKind.config = synth::LaunchpadDefaultProfileConfig();
+    Require(kindHarness.instrument.AddController(std::move(mismatchedKind)),
+            "add valid legacy-shaped record with a resolved Twister id");
+    kindHarness.connection.controllers.resize(1);
+    auto kindSurface = kindHarness.MakeSurface();
+    kindSurface.MarkDirty();
+    kindSurface.RefreshOnTick();
+    kindSurface.DispatchAction(*FindNodeById(
+        kindSurface.BuildTree(), synth::runtime_ui::NodeIds::ControllerReconfigure(0))->action);
+    kindSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardSubmit));
+    Require(kindHarness.commits == 1 && kindHarness.saves == 1 &&
+                kindHarness.instrument.controllers[0].kind == synth::MidiProfileKind::MfTwister,
+            "reconfiguration takes the resolved wizard's generated kind while preserving record identity");
+
+    TestHarness incompatibleHarness;
+    incompatibleHarness.instrument.controllers.clear();
+    synth::MidiControllerSlot incompatible = *generated.controller;
+    incompatible.config.systemMessages.push_back(incompatible.config.systemMessages.front());
+    Require(incompatibleHarness.instrument.AddController(std::move(incompatible)),
+            "add deliberately extra-mapped record");
+    incompatibleHarness.connection.controllers.resize(1);
+    auto incompatibleSurface = incompatibleHarness.MakeSurface();
+    incompatibleSurface.MarkDirty();
+    incompatibleSurface.RefreshOnTick();
+    incompatibleSurface.DispatchAction(*FindNodeById(
+        incompatibleSurface.BuildTree(), synth::runtime_ui::NodeIds::ControllerReconfigure(0))->action);
+    const synth::ui::NodeTree incompatibleTree = incompatibleSurface.BuildTree();
+    Require(FindNodeById(incompatibleTree, "controller-wizard.twister.encoder-slot")->text == "0" &&
+                VisibleTextLower(incompatibleTree).find("replaces") != std::string::npos,
+            "incompatible stored mappings open defaults with a destructive replacement warning");
+
+    TestHarness blacklistedHarness;
+    blacklistedHarness.instrument.controllers.clear();
+    synth::MidiControllerSlot ignored = *generated.controller;
+    ignored.disposition = synth::MidiControllerDisposition::Blacklisted;
+    ignored.config = {};
+    ignored.dormantConfig.reset();
+    Require(blacklistedHarness.instrument.AddController(std::move(ignored)),
+            "add ignored record with absent dormant seed data");
+    blacklistedHarness.connection.controllers.resize(1);
+    auto blacklistedSurface = blacklistedHarness.MakeSurface();
+    blacklistedSurface.MarkDirty();
+    blacklistedSurface.RefreshOnTick();
+    blacklistedSurface.DispatchAction(*FindNodeById(
+        blacklistedSurface.BuildTree(), synth::runtime_ui::NodeIds::ControllerConfigure(0))->action);
+    const synth::ui::NodeTree blacklistedTree = blacklistedSurface.BuildTree();
+    Require(FindNodeById(blacklistedTree, "controller-wizard.twister.encoder-slot")->text == "0" &&
+                FindNodeById(blacklistedTree, synth::runtime_ui::NodeIds::kWizardIgnore) == nullptr &&
+                VisibleTextLower(blacklistedTree).find("replaces") != std::string::npos,
+            "blacklisted records without dormant data open destructive defaults without Ignore");
+
+    TestHarness staleHarness;
+    staleHarness.instrument.controllers.clear();
+    Require(staleHarness.instrument.AddController(*generated.controller), "add stale target");
+    staleHarness.connection.controllers.resize(1);
+    auto staleSurface = staleHarness.MakeSurface();
+    staleSurface.MarkDirty();
+    staleSurface.RefreshOnTick();
+    staleSurface.DispatchAction(*FindNodeById(
+        staleSurface.BuildTree(), synth::runtime_ui::NodeIds::ControllerReconfigure(0))->action);
+    staleSurface.DispatchAction(synth::ui::Action::WithValue(
+        "controller-wizard.twister.encoder-slot", "9"));
+    staleHarness.instrument.controllers[0].output.identifier = "retargeted-output";
+    staleSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardSubmit));
+    Require(staleHarness.commitAttempts == 0 && staleHarness.saves == 0 &&
+                staleSurface.ActiveWizardSession() != nullptr &&
+                FindNodeById(staleSurface.BuildTree(), "controller-wizard.twister.encoder-slot")->text == "9" &&
+                VisibleTextLower(staleSurface.BuildTree()).find("changed") != std::string::npos,
+            "stale existing record identity refuses without save and preserves form state");
+}
+
+void TestReconfigureRefusesEveryChangedExistingRecordIdentity()
+{
+    const auto refuse = [](const auto& mutate, const char* label) {
+        TestHarness harness;
+        harness.instrument.controllers.clear();
+        synth::MfTwisterControllerWizard wizard;
+        synth::MfTwisterConfigForm form;
+        const synth::WizardGenerationResult generated = wizard.GenerateProfile(
+            form, {.name = "target", .input = {"in", "Input"}, .output = {"out", "Output"}});
+        Require(static_cast<bool>(generated), "generate stale identity target");
+        Require(harness.instrument.AddController(*generated.controller), "add stale identity target");
+        harness.connection.controllers.resize(1);
+        auto surface = harness.MakeSurface();
+        surface.MarkDirty();
+        surface.RefreshOnTick();
+        surface.DispatchAction(*FindNodeById(
+            surface.BuildTree(), synth::runtime_ui::NodeIds::ControllerReconfigure(0))->action);
+        surface.DispatchAction(synth::ui::Action::WithValue(
+            "controller-wizard.twister.encoder-slot", "9"));
+        mutate(harness.instrument);
+        surface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardSubmit));
+        Require(harness.commitAttempts == 0 && harness.saves == 0 &&
+                    surface.ActiveWizardSession() != nullptr &&
+                    FindNodeById(surface.BuildTree(), "controller-wizard.twister.encoder-slot")->text == "9" &&
+                    VisibleTextLower(surface.BuildTree()).find("changed") != std::string::npos,
+                label);
+    };
+    refuse([](synth::MidiInstrumentConfig& instrument) { instrument.controllers.erase(instrument.controllers.begin()); },
+           "removed stored index refuses without commit or save");
+    refuse([](synth::MidiInstrumentConfig& instrument) { instrument.controllers[0].name = "renamed"; },
+           "changed stored name refuses without commit or save");
+    refuse([](synth::MidiInstrumentConfig& instrument) { instrument.controllers[0].input.identifier = "retargeted"; },
+           "changed stored endpoint refuses without commit or save");
+    refuse([](synth::MidiInstrumentConfig& instrument) {
+        instrument.controllers[0].disposition = synth::MidiControllerDisposition::Blacklisted;
+        instrument.controllers[0].dormantConfig = instrument.controllers[0].config;
+        instrument.controllers[0].config = {};
+    }, "changed stored disposition refuses without commit or save");
+}
+
 void TestWizardIgnoreCommitsOneInertBlacklistedRecord()
 {
     TestHarness harness;
@@ -906,6 +1069,8 @@ int main()
     TestWizardSubmitCommitsCompleteProfileThenSaves();
     TestWizardSubmitRefusalsRetainFormAndPersistence();
     TestWizardSaveFailureDoesNotRollbackCommittedInstrument();
+    TestReconfigureSeedsExactProfilesAndReplacesOnlyTheValidatedRecord();
+    TestReconfigureRefusesEveryChangedExistingRecordIdentity();
     TestWizardIgnoreCommitsOneInertBlacklistedRecord();
     TestControllerLifecycleActionsUseTheNormalCommitAndSavePath();
 

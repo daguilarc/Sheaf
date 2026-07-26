@@ -799,8 +799,18 @@ struct ControllersPageCallbacks
     std::function<void()> onBack;
 };
 
+struct ExistingWizardTarget {
+    std::size_t index = 0;
+    std::string name;
+    MidiProfileKind kind = MidiProfileKind::Generic;
+    MidiEndpointRef input;
+    MidiEndpointRef output;
+    std::optional<std::string> wizardId;
+    MidiControllerDisposition disposition = MidiControllerDisposition::Active;
+};
+
 struct WizardSession {
-    std::variant<WizardCandidate, std::size_t> target;
+    std::variant<WizardCandidate, ExistingWizardTarget> target;
     std::unique_ptr<ControllerWizard> wizard;
     std::unique_ptr<ControllerConfigForm> form;
     std::string warning;
@@ -1079,9 +1089,18 @@ private:
             return false;
         }
 
-        m_wizardSession.emplace(WizardSession{.target = controllerIx,
+        const std::string warning(form->ReconfigureWarning());
+        ExistingWizardTarget target{.index = controllerIx,
+                                    .name = controller.name,
+                                    .kind = controller.kind,
+                                    .input = controller.input,
+                                    .output = controller.output,
+                                    .wizardId = controller.wizardId,
+                                    .disposition = controller.disposition};
+        m_wizardSession.emplace(WizardSession{.target = std::move(target),
                                               .wizard = std::move(wizard),
-                                              .form = std::move(form)});
+                                              .form = std::move(form),
+                                              .warning = warning});
         m_wizardChooserOpen = false;
         ++m_treeRevision;
         return true;
@@ -1615,10 +1634,13 @@ private:
 
     void HandleWizardSubmit()
     {
-        if (!m_wizardSession.has_value() ||
-            !std::holds_alternative<WizardCandidate>(
-                m_wizardSession->target))
+        if (!m_wizardSession.has_value())
         {
+            return;
+        }
+        if (!std::holds_alternative<WizardCandidate>(m_wizardSession->target))
+        {
+            HandleExistingWizardSubmit();
             return;
         }
 
@@ -1671,6 +1693,88 @@ private:
         }
         CloseWizardSession();
         SetStatus("Configured " + name);
+    }
+
+    bool RevalidateExistingWizardTarget(const ExistingWizardTarget& expected,
+                                        MidiInstrumentConfig& instrument)
+    {
+        if (!m_callbacks.instrumentSnapshot)
+        {
+            SetWizardStatus("Refused: current controller state is unavailable");
+            return false;
+        }
+        instrument = m_callbacks.instrumentSnapshot();
+        if (expected.index >= instrument.controllers.size())
+        {
+            SetWizardStatus("Refused: controller record changed; refresh and try again");
+            return false;
+        }
+        const MidiControllerSlot& current = instrument.controllers[expected.index];
+        if (current.name != expected.name || current.kind != expected.kind ||
+            current.input.identifier != expected.input.identifier ||
+            current.input.name != expected.input.name ||
+            current.output.identifier != expected.output.identifier ||
+            current.output.name != expected.output.name ||
+            current.wizardId != expected.wizardId || current.disposition != expected.disposition)
+        {
+            SetWizardStatus("Refused: controller record changed; refresh and try again");
+            return false;
+        }
+        return true;
+    }
+
+    void HandleExistingWizardSubmit()
+    {
+        if (!m_wizardSession.has_value() ||
+            !std::holds_alternative<ExistingWizardTarget>(m_wizardSession->target))
+        {
+            return;
+        }
+        const ExistingWizardTarget expected =
+            std::get<ExistingWizardTarget>(m_wizardSession->target);
+        MidiInstrumentConfig instrument;
+        if (!RevalidateExistingWizardTarget(expected, instrument))
+        {
+            return;
+        }
+
+        const MidiControllerSlot& current = instrument.controllers[expected.index];
+        WizardGenerationResult generated = m_wizardSession->wizard->GenerateProfile(
+            *m_wizardSession->form,
+            {.name = current.name, .input = current.input, .output = current.output});
+        if (!generated)
+        {
+            SetWizardStatus(
+                "Refused: " +
+                (generated.error.empty()
+                     ? std::string("controller profile generation failed")
+                     : generated.error));
+            return;
+        }
+
+        MidiControllerSlot replacement = current;
+        replacement.kind = generated.controller->kind;
+        replacement.config = std::move(generated.controller->config);
+        replacement.dormantConfig.reset();
+        replacement.disposition = MidiControllerDisposition::Active;
+        if (!instrument.ReplaceController(expected.index, std::move(replacement)))
+        {
+            SetWizardStatus("Refused: generated controller record is invalid");
+            return;
+        }
+        if (!Commit(std::move(instrument)))
+        {
+            SetWizardStatus("Refused: host rejected the instrument commit");
+            return;
+        }
+        RefreshDiscoveryFromCallbacks();
+        if (!SaveCommittedWizardAction(/*sessionStatus=*/true))
+        {
+            return;
+        }
+        const std::string name = expected.name;
+        CloseWizardSession();
+        SetStatus("Reconfigured " + name);
     }
 
     void HandleWizardIgnore()

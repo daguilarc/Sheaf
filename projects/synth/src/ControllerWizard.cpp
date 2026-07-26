@@ -244,6 +244,99 @@ std::vector<MidiDeviceInfoRef> UnmatchedEndpoints(
     return unmatched;
 }
 
+bool SameEncoderMapping(const EncoderMidiMapping& lhs, const EncoderMidiMapping& rhs) {
+    return lhs.control == rhs.control && lhs.slotIx == rhs.slotIx && lhs.position == rhs.position;
+}
+
+bool SameEncoderInput(const EncoderMidiInConfig& lhs, const EncoderMidiInConfig& rhs) {
+    if (lhs.mode != rhs.mode || lhs.turnStep != rhs.turnStep ||
+        lhs.turns.size() != rhs.turns.size() || lhs.pushes.size() != rhs.pushes.size()) {
+        return false;
+    }
+    for (std::size_t ix = 0; ix < lhs.turns.size(); ++ix) {
+        if (!SameEncoderMapping(lhs.turns[ix], rhs.turns[ix])) {
+            return false;
+        }
+    }
+    for (std::size_t ix = 0; ix < lhs.pushes.size(); ++ix) {
+        if (!SameEncoderMapping(lhs.pushes[ix], rhs.pushes[ix])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool SameEncoderOutput(const EncoderMidiOutConfig& lhs, const EncoderMidiOutConfig& rhs) {
+    if (lhs.protocol != rhs.protocol ||
+        lhs.wrldBldrColorBudgetPerProcess != rhs.wrldBldrColorBudgetPerProcess ||
+        lhs.mappings.size() != rhs.mappings.size()) {
+        return false;
+    }
+    for (std::size_t ix = 0; ix < lhs.mappings.size(); ++ix) {
+        if (lhs.mappings[ix].slotIx != rhs.mappings[ix].slotIx ||
+            lhs.mappings[ix].position != rhs.mappings[ix].position ||
+            lhs.mappings[ix].cc != rhs.mappings[ix].cc) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::size_t TwisterArgument(const MidiControllerSystemMessageAssociation& association,
+                            UISystemMessage message) {
+    switch (message) {
+        case UISystemMessage::ToggleGestureSelect:
+        case UISystemMessage::HoldGestureSelect:
+            return association.press.gestureIx;
+        case UISystemMessage::SelectParamBank:
+            return association.press.bankIx;
+        case UISystemMessage::SceneSelect:
+            return association.press.sceneIx;
+        default:
+            return 0;
+    }
+}
+
+bool SameAssociation(const MidiControllerSystemMessageAssociation& lhs,
+                     const MidiControllerSystemMessageAssociation& rhs) {
+    return lhs.control == rhs.control && lhs.press == rhs.press &&
+           lhs.release == rhs.release && lhs.feedback == rhs.feedback &&
+           lhs.outputFeedback == rhs.outputFeedback;
+}
+
+UISystemMessage TwisterMessageForAssociation(const MidiControllerSystemMessageAssociation& association) {
+    const MessageIn& press = association.press;
+    switch (press.type) {
+        case MessageIn::Type::ToggleReset:
+            return press.hasBoolValue ? UISystemMessage::HoldReset : UISystemMessage::ToggleReset;
+        case MessageIn::Type::ToggleRandom:
+            return press.hasBoolValue ? UISystemMessage::HoldRandom : UISystemMessage::ToggleRandom;
+        case MessageIn::Type::ToggleRandomMod:
+            return press.hasBoolValue ? UISystemMessage::HoldRandomMod : UISystemMessage::ToggleRandomMod;
+        case MessageIn::Type::ToggleGestureSelect: return UISystemMessage::ToggleGestureSelect;
+        case MessageIn::Type::SetGestureSelect: return UISystemMessage::HoldGestureSelect;
+        case MessageIn::Type::SelectParamBank: return UISystemMessage::SelectParamBank;
+        case MessageIn::Type::NextParamBank: return UISystemMessage::NextParamBank;
+        case MessageIn::Type::PrevParamBank: return UISystemMessage::PrevParamBank;
+        case MessageIn::Type::Start: return UISystemMessage::Start;
+        case MessageIn::Type::Continue: return UISystemMessage::Continue;
+        case MessageIn::Type::Stop: return UISystemMessage::Stop;
+        case MessageIn::Type::Clock: return UISystemMessage::Clock;
+        case MessageIn::Type::SceneSelect: return UISystemMessage::SceneSelect;
+        case MessageIn::Type::ParamIncDec:
+        case MessageIn::Type::ParamSetAbsolute:
+        case MessageIn::Type::ParamPush:
+        case MessageIn::Type::SetGestureValue:
+        case MessageIn::Type::SetSceneBlend:
+        case MessageIn::Type::GridPress:
+        case MessageIn::Type::GridRelease:
+        case MessageIn::Type::GridPressureChange:
+        case MessageIn::Type::SelectGrid:
+            return UISystemMessage::ParamIncDec;
+    }
+    return UISystemMessage::ParamIncDec;
+}
+
 }  // namespace
 
 MfTwisterConfigForm::MfTwisterConfigForm() {
@@ -369,13 +462,98 @@ bool MfTwisterConfigForm::Validate(std::string& error) const {
     return true;
 }
 
+std::string_view MfTwisterConfigForm::ReconfigureWarning() const {
+    return reconfigureWarning;
+}
+
 std::string_view MfTwisterControllerWizard::Id() const {
     return kMfTwisterWizardId;
 }
 
 std::unique_ptr<ControllerConfigForm>
-MfTwisterControllerWizard::ConfigForm(const std::optional<MidiControllerSlot>&) const {
-    return std::make_unique<MfTwisterConfigForm>();
+MfTwisterControllerWizard::ConfigForm(const std::optional<MidiControllerSlot>& seed) const {
+    if (!seed.has_value()) {
+        return std::make_unique<MfTwisterConfigForm>();
+    }
+
+    const MidiControllerProfileConfig* profile =
+        seed->disposition == MidiControllerDisposition::Active
+            ? &seed->config
+            : (seed->dormantConfig ? &*seed->dormantConfig : nullptr);
+    if (profile != nullptr) {
+        if (std::optional<MfTwisterConfigForm> extracted = ExtractMfTwisterWizardSeed(*profile)) {
+            return std::make_unique<MfTwisterConfigForm>(std::move(*extracted));
+        }
+    }
+
+    auto form = std::make_unique<MfTwisterConfigForm>();
+    form->reconfigureWarning =
+        "This stored profile cannot be represented by the wizard. Submit replaces the whole profile.";
+    return form;
+}
+
+std::optional<MfTwisterConfigForm>
+ExtractMfTwisterWizardSeed(const MidiControllerProfileConfig& profile) {
+    if (profile.analogInput.has_value() || profile.pressureInput.has_value() ||
+        !profile.encoderInput.has_value() || !profile.encoderOutput.has_value() ||
+        profile.encoderInput->turns.empty()) {
+        return std::nullopt;
+    }
+
+    const std::size_t slotIx = profile.encoderInput->turns.front().slotIx;
+    const MidiControllerProfileConfig expected = MfTwisterDefaultProfileConfig(
+        MfTwisterDefaultProfileOptions{.slotIx = slotIx});
+    if (!SameEncoderInput(*profile.encoderInput, *expected.encoderInput) ||
+        !SameEncoderOutput(*profile.encoderOutput, *expected.encoderOutput) ||
+        profile.systemMessages.size() != MfTwisterConfigForm::kButtonCount) {
+        return std::nullopt;
+    }
+
+    MfTwisterConfigForm form;
+    form.encoderSlotText = std::to_string(slotIx);
+    std::array<bool, MfTwisterConfigForm::kButtonCount> found{};
+    for (const MidiControllerSystemMessageAssociation& association : profile.systemMessages) {
+        if (!association.control.has_value() || association.control->type != MidiControlType::Cc ||
+            association.control->channel != 3 || association.control->cc < 8 ||
+            association.control->cc >= 8 + MfTwisterConfigForm::kButtonCount ||
+            association.wrldBldrPosition.has_value() || association.launchpadPosition.has_value() ||
+            association.outputFeedback) {
+            return std::nullopt;
+        }
+        const std::size_t buttonIx = association.control->cc - 8;
+        if (found[buttonIx]) {
+            return std::nullopt;
+        }
+
+        const UISystemMessage message = TwisterMessageForAssociation(association);
+        if (!TwisterMessageAllowed(message)) {
+            return std::nullopt;
+        }
+        const std::size_t argument = TwisterArgument(association, message);
+        MidiControllerSystemMessageAssociation expectedAssociation =
+            MakeUISystemMessageAssociation(message, argument);
+        if (message == UISystemMessage::SelectParamBank ||
+            message == UISystemMessage::NextParamBank ||
+            message == UISystemMessage::PrevParamBank) {
+            expectedAssociation.press.slotIx = slotIx;
+            expectedAssociation.feedback.slotIx = slotIx;
+            if (expectedAssociation.release.has_value()) {
+                expectedAssociation.release->slotIx = slotIx;
+            }
+        }
+        expectedAssociation.control = MidiControlAddress{
+            .channel = 3, .cc = static_cast<std::uint8_t>(8 + buttonIx)};
+        expectedAssociation.outputFeedback = false;
+        if (!SameAssociation(association, expectedAssociation)) {
+            return std::nullopt;
+        }
+        form.buttons[buttonIx] = {.message = message, .argumentText = std::to_string(argument)};
+        found[buttonIx] = true;
+    }
+    if (!std::all_of(found.begin(), found.end(), [](bool value) { return value; })) {
+        return std::nullopt;
+    }
+    return form;
 }
 
 WizardGenerationResult MfTwisterControllerWizard::GenerateTypedProfile(

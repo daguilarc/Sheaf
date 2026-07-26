@@ -303,7 +303,8 @@ private:
                         Actions::kWizardCancel,
                         Actions::kWizardSubmit,
                         Actions::kWizardIgnore}) ||
-               action.starts_with("controller-wizard.");
+               action.starts_with("controller-wizard.") ||
+               action.starts_with("runtime.controllers.controller.");
     }
 
     static ui::NodeTree MoveRootFirst(ui::NodeTree tree, std::size_t rootIndex)

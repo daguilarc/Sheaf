@@ -24,6 +24,7 @@ public:
     ~ControllerConfigForm() override = default;
     virtual std::string_view WizardId() const = 0;
     virtual bool Validate(std::string& error) const = 0;
+    virtual std::string_view ReconfigureWarning() const { return {}; }
 };
 
 struct MfTwisterButtonConfig {
@@ -45,10 +46,20 @@ public:
     void SetActionHandler(ActionHandler handler) override;
     void DispatchAction(const ui::Action&) override;
     bool Validate(std::string& error) const override;
+    std::string_view ReconfigureWarning() const override;
+
+    // A non-empty warning is displayed only for an existing profile that
+    // cannot be losslessly represented by this form.
+    std::string reconfigureWarning;
 
 private:
     ActionHandler actionHandler_;
 };
+
+// Returns a complete form seed only for an exactly representable Twister
+// profile. A missing result deliberately prevents partial extraction.
+std::optional<MfTwisterConfigForm>
+ExtractMfTwisterWizardSeed(const MidiControllerProfileConfig& profile);
 
 struct WizardGenerationContext {
     std::string name;

@@ -607,6 +607,124 @@ void TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack()
                 "in-b",
             "controller edit commits through the browser services callback");
 
+    fixture.runtime.SubmitMidiEndpoints({
+        {.identifier = "in-a", .name = "Input A", .kind = Bridge::EndpointKind::Input},
+        {.identifier = "out-a", .name = "Output A", .kind = Bridge::EndpointKind::Output},
+        {.identifier = "in-b", .name = "Input B", .kind = Bridge::EndpointKind::Input},
+        {.identifier = "out-b", .name = "Output B", .kind = Bridge::EndpointKind::Output},
+        {.identifier = "twister-in", .name = "Midi Fighter Twister", .kind = Bridge::EndpointKind::Input},
+        {.identifier = "twister-out", .name = "Midi Fighter Twister", .kind = Bridge::EndpointKind::Output},
+    });
+    fixture.runtime.MessageTick(4);
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardOpen, "");
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardSubmit, "");
+    Require(fixture.runtime.ConsumePersistenceDirty(),
+            "successful browser wizard Submit immediately marks persisted runtime configuration dirty");
+    synth::MidiInstrumentConfig wizardSavedInstrument;
+    synth::AudioDeviceState wizardSavedAudio;
+    synth::SyncConfig wizardSavedSync;
+    Require(synth::LoadRuntimeConfigFile(
+                fixture.Paths().configFile, wizardSavedInstrument, wizardSavedAudio, wizardSavedSync) ==
+                synth::RuntimeConfigFileStatus::Ok &&
+                wizardSavedInstrument.FindController("MIDI Fighter Twister") != nullptr,
+            "browser wizard Submit saves the committed Twister profile through the real runtime path");
+
+    std::string lastLifecycleAction;
+    const auto dispatchNode = [&](const std::string& id, std::string suffix = {}) {
+        const synth_browser::DecodedCommandBuffer frame = fixture.Frame();
+        const synth_browser::DecodedNode* node = FindNode(frame, id.c_str());
+        Require(node != nullptr && node->action.has_value(), "browser lifecycle node has a portable action");
+        if (!node->enabled)
+        {
+            throw std::runtime_error("browser lifecycle node is disabled: " + id);
+        }
+        lastLifecycleAction = node->action->name + "=" + node->action->value + suffix;
+        fixture.runtime.DispatchAction(node->action->name, node->action->value + suffix);
+    };
+    const auto requirePersisted = [&](std::size_t expectedCount, const char* label) {
+        synth::MidiInstrumentConfig persisted;
+        synth::AudioDeviceState audio;
+        synth::SyncConfig sync;
+        Require(synth::LoadRuntimeConfigFile(fixture.Paths().configFile, persisted, audio, sync) ==
+                    synth::RuntimeConfigFileStatus::Ok &&
+                    persisted.controllers.size() == expectedCount,
+                label);
+    };
+
+    dispatchNode(synth::runtime_ui::NodeIds::ControllerRenameDraft(2), ":Browser Twister");
+    const synth_browser::DecodedCommandBuffer renamedDraftFrame = fixture.Frame();
+    if (FindNode(renamedDraftFrame, synth::runtime_ui::NodeIds::ControllerRenameDraft(2).c_str())->text !=
+        "Browser Twister")
+    {
+        throw std::runtime_error("browser Rename draft does not retain text: " + lastLifecycleAction);
+    }
+    dispatchNode(synth::runtime_ui::NodeIds::ControllerRename(2));
+    if (fixture.runtime.Engine().InstrumentSnapshot().controllers[2].name != "Browser Twister")
+    {
+        throw std::runtime_error("browser Rename reaches the production controller commit callback: " +
+                                 lastLifecycleAction);
+    }
+    Require(fixture.runtime.ConsumePersistenceDirty(),
+            "browser Rename immediately reports a real runtime-configuration save");
+    requirePersisted(3, "browser Rename persists the renamed controller record");
+
+    dispatchNode(synth::runtime_ui::NodeIds::ControllerReconfigure(2));
+    fixture.runtime.DispatchAction("controller-wizard.twister.encoder-slot", "7");
+    fixture.runtime.Engine().EditInstrument([](synth::MidiInstrumentConfig& instrument) {
+        instrument.controllers[2].output.identifier = "stale-output";
+    });
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardSubmit, "");
+    Require(!fixture.runtime.ConsumePersistenceDirty(),
+            "refused browser reconfigure does not report a runtime-configuration save");
+    synth::MidiInstrumentConfig refusedPersisted;
+    synth::AudioDeviceState refusedAudio;
+    synth::SyncConfig refusedSync;
+    Require(synth::LoadRuntimeConfigFile(
+                fixture.Paths().configFile, refusedPersisted, refusedAudio, refusedSync) ==
+                synth::RuntimeConfigFileStatus::Ok &&
+                refusedPersisted.controllers[2].output.identifier == "twister-out",
+            "refused browser reconfigure leaves the previously persisted configuration authoritative");
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardCancel, "");
+
+    dispatchNode(synth::runtime_ui::NodeIds::ControllerReconfigure(2));
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardSubmit, "");
+    Require(fixture.runtime.ConsumePersistenceDirty(),
+            "browser Reconfigure immediately reports a real runtime-configuration save");
+    requirePersisted(3, "browser Reconfigure persists the replacement profile");
+
+    dispatchNode(synth::runtime_ui::NodeIds::ControllerBlacklist(2));
+    Require(fixture.runtime.ConsumePersistenceDirty(),
+            "browser Blacklist immediately reports a real runtime-configuration save");
+    requirePersisted(3, "browser Blacklist persists the inert record");
+
+    dispatchNode(synth::runtime_ui::NodeIds::ControllerConfigure(2));
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardSubmit, "");
+    Require(fixture.runtime.ConsumePersistenceDirty(),
+            "browser blacklisted Configure immediately reports a real runtime-configuration save");
+    requirePersisted(3, "browser blacklisted Configure persists its active replacement");
+
+    dispatchNode(synth::runtime_ui::NodeIds::ControllerBlacklist(2));
+    Require(fixture.runtime.ConsumePersistenceDirty(),
+            "second browser Blacklist saves before removal");
+    dispatchNode(synth::runtime_ui::NodeIds::ControllerRemoveBlacklist(2));
+    Require(fixture.runtime.ConsumePersistenceDirty(),
+            "browser Remove from blacklist immediately reports a real runtime-configuration save");
+    requirePersisted(2, "browser Remove from blacklist persists record deletion");
+
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardOpen, "");
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardSubmit, "");
+    Require(fixture.runtime.ConsumePersistenceDirty(), "second browser wizard Submit saves before Delete");
+    dispatchNode(synth::runtime_ui::NodeIds::ControllerDelete(2));
+    Require(fixture.runtime.ConsumePersistenceDirty(),
+            "browser Delete immediately reports a real runtime-configuration save");
+    requirePersisted(2, "browser Delete persists record deletion");
+
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardOpen, "");
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardIgnore, "");
+    Require(fixture.runtime.ConsumePersistenceDirty(),
+            "browser Ignore immediately reports a real runtime-configuration save");
+    requirePersisted(3, "browser Ignore persists the blacklisted record");
+
     fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kBack, "");
     Require(fixture.runtime.ConsumePersistenceDirty(),
             "controllers Back marks browser persistence dirty after saving runtime configuration");
@@ -617,7 +735,7 @@ void TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack()
                 fixture.Paths().configFile, loadedInstrument, loadedAudio, loadedSync) ==
                 synth::RuntimeConfigFileStatus::Ok,
             "controllers Back persists runtime configuration");
-    Require(loadedInstrument.controllers.size() == 2,
+    Require(loadedInstrument.controllers.size() == 3,
             "saved browser configuration retains every controller");
     Require(loadedInstrument.controllers[0].input.identifier == "in-b",
             "saved browser configuration contains the committed endpoint edit");

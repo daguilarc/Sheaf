@@ -519,6 +519,103 @@ TEST_CASE(MfTwisterWizardGeneratesCompleteActiveProfileFromItsForm) {
     REQUIRE_TRUE(profile.systemMessages[5].press.slotIx == 4);
 }
 
+TEST_CASE(MfTwisterSeedExtractionRequiresOneExactRepresentableProfileShape) {
+    synth::MfTwisterControllerWizard wizard;
+    synth::MfTwisterConfigForm source;
+    source.encoderSlotText = "4";
+    source.buttons[0] = {.message = synth::UISystemMessage::ToggleGestureSelect, .argumentText = "1"};
+    source.buttons[1] = {.message = synth::UISystemMessage::HoldGestureSelect, .argumentText = "2"};
+    source.buttons[2] = {.message = synth::UISystemMessage::SelectParamBank, .argumentText = "3"};
+    source.buttons[3] = {.message = synth::UISystemMessage::SelectParamBank, .argumentText = "7"};
+    source.buttons[4] = {.message = synth::UISystemMessage::SceneSelect, .argumentText = "5"};
+    source.buttons[5] = {.message = synth::UISystemMessage::PrevParamBank, .argumentText = "ignored"};
+    const synth::WizardGenerationResult generated = wizard.GenerateProfile(source, Context());
+    REQUIRE_TRUE(generated);
+
+    const auto seeded = synth::ExtractMfTwisterWizardSeed(generated.controller->config);
+    REQUIRE_TRUE(seeded.has_value());
+    REQUIRE_TRUE(seeded->encoderSlotText == "4");
+    REQUIRE_TRUE(seeded->buttons[0].message == synth::UISystemMessage::ToggleGestureSelect &&
+                 seeded->buttons[0].argumentText == "1");
+    REQUIRE_TRUE(seeded->buttons[1].message == synth::UISystemMessage::HoldGestureSelect &&
+                 seeded->buttons[1].argumentText == "2");
+    REQUIRE_TRUE(seeded->buttons[2].message == synth::UISystemMessage::SelectParamBank &&
+                 seeded->buttons[2].argumentText == "3");
+    REQUIRE_TRUE(seeded->buttons[3].message == synth::UISystemMessage::SelectParamBank &&
+                 seeded->buttons[3].argumentText == "7");
+    REQUIRE_TRUE(seeded->buttons[4].message == synth::UISystemMessage::SceneSelect &&
+                 seeded->buttons[4].argumentText == "5");
+    REQUIRE_TRUE(seeded->buttons[5].message == synth::UISystemMessage::PrevParamBank &&
+                 seeded->buttons[5].argumentText == "0");
+
+    const auto rejects = [&](auto mutate) {
+        synth::MidiControllerProfileConfig incompatible = generated.controller->config;
+        mutate(incompatible);
+        REQUIRE_TRUE(!synth::ExtractMfTwisterWizardSeed(incompatible).has_value());
+    };
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.analogInput = synth::AnalogMidiInConfig{};
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.pressureInput = synth::PolyphonicPressureMidiInConfig{};
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.encoderInput->turns.pop_back();
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.encoderInput->turns.push_back(config.encoderInput->turns.front());
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.encoderInput->pushes[0].control.cc += 1;
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.encoderInput->pushes.pop_back();
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.encoderInput->turns[0].slotIx = 8;
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.encoderInput->pushes[0].slotIx = 8;
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.encoderOutput->mappings[0].position = 15;
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.encoderOutput->mappings.pop_back();
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.encoderOutput->mappings.push_back(config.encoderOutput->mappings.front());
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.encoderOutput->mappings[0].slotIx = 8;
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.systemMessages.pop_back();
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.systemMessages.push_back(config.systemMessages.front());
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.systemMessages[0].control->cc = 99;
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.systemMessages[1].control->cc = config.systemMessages[0].control->cc;
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.systemMessages[0].outputFeedback = true;
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.systemMessages[1].release.reset();
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.systemMessages[0].feedback = synth::MessageIn::Clock(0);
+    });
+    rejects([](synth::MidiControllerProfileConfig& config) {
+        config.systemMessages[3].press.slotIx = 2;
+        config.systemMessages[3].feedback.slotIx = 2;
+    });
+}
+
 TEST_CASE(MfTwisterWizardRefusesInvalidFormsAtomically) {
     std::unique_ptr<synth::ControllerWizard> wizard =
         synth::MakeControllerWizard("com.sheaf.midi-fighter-twister");
