@@ -32,6 +32,122 @@ test("parses a valid run command", () => {
   });
 });
 
+test("parses a valid supervise start command with options", () => {
+  assert.deepEqual(
+    parseArgs([
+      "supervise",
+      "--harness",
+      "claude_code",
+      "--model",
+      "sonnet",
+      "--thinking-level",
+      "high",
+      "--permission-mode",
+      "acceptEdits",
+      "--cwd",
+      "/tmp/worktree",
+      "--policy",
+      "{\"silenceTimeoutMs\":60000}",
+      "--deadline-seconds",
+      "120",
+      "implement the task",
+    ]),
+    {
+      command: "supervise",
+      harness: "claude_code",
+      model: "sonnet",
+      thinkingLevel: "high",
+      permissionMode: "acceptEdits",
+      cwd: "/tmp/worktree",
+      policy: { silenceTimeoutMs: 60_000, watchdog: {} },
+      deadlineSeconds: 120,
+      prompt: "implement the task",
+    },
+  );
+});
+
+test("parses existing-run quiet service operations", () => {
+  assert.deepEqual(parseArgs(["await", "xrun_1", "--after-sequence", "4"]), {
+    command: "await",
+    runId: "xrun_1",
+    afterSequence: 4,
+  });
+  assert.deepEqual(parseArgs(["await", "xrun_1", "--after-sequence", "0", "--deadline-seconds", "30"]), {
+    command: "await",
+    runId: "xrun_1",
+    afterSequence: 0,
+    deadlineSeconds: 30,
+  });
+  assert.deepEqual(parseArgs(["inspect", "xrun_2"]), {
+    command: "inspect",
+    runId: "xrun_2",
+  });
+  assert.deepEqual(parseArgs(["message", "xrun_3", "follow", "up", "please"]), {
+    command: "message",
+    runId: "xrun_3",
+    text: "follow up please",
+  });
+  assert.deepEqual(parseArgs(["interrupt", "xrun_4"]), {
+    command: "interrupt",
+    runId: "xrun_4",
+  });
+  assert.deepEqual(parseArgs(["close", "xrun_5"]), {
+    command: "close",
+    runId: "xrun_5",
+  });
+});
+
+test("supervise help explains service dependency without changing legacy run help", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-cli-"));
+  const stdout = new MemoryWritable();
+  const stderr = new MemoryWritable();
+
+  const top = await main(["--help"], Readable.from([]), stdout, stderr, repoRoot);
+  assert.deepEqual(top, { exitCode: 0 });
+  assert.match(stdout.text, /xagent supervise/);
+  assert.match(stdout.text, /Conductor-managed xagent service|xagent service/);
+  assert.match(stdout.text, /run_id/);
+  assert.match(stdout.text, /quiet|no healthy|routine/i);
+  assert.match(stdout.text, /final report|final assistant report/i);
+  assert.match(stdout.text, /xagent run/);
+  assert.equal(stderr.text, "");
+
+  const runHelpStdout = new MemoryWritable();
+  const runHelp = await main(["run", "--help"], Readable.from([]), runHelpStdout, stderr, repoRoot);
+  assert.deepEqual(runHelp, { exitCode: 0 });
+  assert.match(runHelpStdout.text, /control\.exit/);
+  assert.equal(runHelpStdout.text.includes("xagent supervise"), false);
+  assert.equal(runHelpStdout.text.includes("quiet"), false);
+
+  const superviseHelpStdout = new MemoryWritable();
+  const superviseHelp = await main(
+    ["supervise", "--help"],
+    Readable.from([]),
+    superviseHelpStdout,
+    stderr,
+    repoRoot,
+  );
+  assert.deepEqual(superviseHelp, { exitCode: 0 });
+  assert.match(superviseHelpStdout.text, /xagent supervise/);
+  assert.match(superviseHelpStdout.text, /127\.0\.0\.1:9005|xagent service/);
+  assert.match(superviseHelpStdout.text, /run_id/);
+  assert.match(superviseHelpStdout.text, /quiet/i);
+  assert.match(superviseHelpStdout.text, /final report|final assistant report/i);
+});
+
+test("rejects supervise without harness or prompt", () => {
+  assert.throws(() => parseArgs(["supervise", "do work"]), /--harness/);
+  assert.throws(
+    () => parseArgs(["supervise", "--harness", "codex"]),
+    /prompt|initial/,
+  );
+});
+
+test("rejects await without run id or after-sequence", () => {
+  assert.throws(() => parseArgs(["await"]), /await/);
+  assert.throws(() => parseArgs(["await", "xrun_1"]), /after-sequence/);
+});
+
 test("parses and forwards an explicit permission mode", async () => {
   const parsed = parseArgs([
     "run", "--harness", "claude_code", "--permission-mode", "acceptEdits", "--subagent",

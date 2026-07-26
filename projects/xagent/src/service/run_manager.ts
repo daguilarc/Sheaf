@@ -229,11 +229,11 @@ export class XagentRunManager {
     });
     try {
       await this.start(runId);
-      await this.submit(runId, input.prompt);
-      const inspection = this.inspect(runId);
-      if (inspection === undefined) {
-        throw new Error(`Run disappeared after start: ${runId}`);
-      }
+      // Own the turn on the service without blocking the controller on completion.
+      //
+      const submitPromise = this.submit(runId, input.prompt);
+      void submitPromise.catch(() => {});
+      const inspection = await waitForStartInspection(this, runId, submitPromise);
       return {
         run_id: runId,
         sequence: inspection.sequence,
@@ -279,11 +279,9 @@ export class XagentRunManager {
   }
 
   async messageRun(input: XagentMessageInput): Promise<MessageRunResult> {
-    await this.submit(input.run_id, input.text);
-    const inspection = this.inspect(input.run_id);
-    if (inspection === undefined) {
-      throw unknownRunError(input.run_id);
-    }
+    const submitPromise = this.submit(input.run_id, input.text);
+    void submitPromise.catch(() => {});
+    const inspection = await waitForStartInspection(this, input.run_id, submitPromise);
     return {
       run_id: inspection.run_id,
       phase: inspection.phase,
@@ -409,4 +407,44 @@ function shapeAwaitEnvelope(result: AwaitResult, elapsedMs: number): AwaitRunRes
     ...(reason === undefined ? {} : { reason }),
     ...(payload === undefined ? {} : { payload }),
   };
+}
+
+async function waitForStartInspection(
+  manager: XagentRunManager,
+  runId: string,
+  submitPromise: Promise<void>,
+): Promise<SupervisorInspection> {
+  let settleError: unknown;
+  const settled = submitPromise.then(
+    () => "done" as const,
+    (error: unknown) => {
+      settleError = error;
+      return "error" as const;
+    },
+  );
+
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const outcome = await Promise.race([
+      settled,
+      new Promise<"poll">((resolve) => {
+        setTimeout(() => resolve("poll"), 5);
+      }),
+    ]);
+    const inspection = manager.inspect(runId);
+    if (inspection === undefined) {
+      throw new Error(`Run disappeared after start: ${runId}`);
+    }
+    if (outcome === "error") {
+      throw settleError;
+    }
+    if (outcome === "done" || inspection.phase === "running") {
+      return inspection;
+    }
+  }
+
+  const fallback = manager.inspect(runId);
+  if (fallback === undefined) {
+    throw new Error(`Run disappeared after start: ${runId}`);
+  }
+  return fallback;
 }
