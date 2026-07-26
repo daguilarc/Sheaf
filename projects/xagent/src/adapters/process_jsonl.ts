@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { access } from "node:fs/promises";
 import path from "node:path";
-import { createInterface } from "node:readline/promises";
+import { createInterface, type Interface } from "node:readline/promises";
 
 import type { HarnessName } from "../events.js";
 import { captureOwnedProcessIdentity } from "../supervision/process_identity.js";
@@ -94,12 +94,27 @@ export class ProcessJsonlSession implements HarnessSession {
       throw harnessUnavailable(this.options.harness, error);
     }
     const exitPromise = waitForExit(child);
+    const stderrChunks: string[] = [];
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderrChunks.push(chunk);
+    });
+    const lines = createInterface({
+      input: child.stdout,
+      crlfDelay: Infinity,
+    });
+    if (command.input !== undefined) {
+      child.stdin.end(command.input);
+    } else {
+      child.stdin.end();
+    }
     let identity: OwnedProcessIdentity | undefined;
     try {
       identity = child.pid === undefined
         ? undefined
         : this.#captureProcessIdentity(child.pid);
     } catch (error) {
+      lines.close();
       terminateUnownedSpawn(child);
       throw error;
     }
@@ -111,6 +126,7 @@ export class ProcessJsonlSession implements HarnessSession {
         && identity.process_group_id !== child.pid
       )
     ) {
+      lines.close();
       terminateUnownedSpawn(child);
       throw harnessUnavailable(
         this.options.harness,
@@ -121,35 +137,24 @@ export class ProcessJsonlSession implements HarnessSession {
       child,
       exitPromise,
       identity,
+      lines,
+      stderrChunks,
       interrupted: false,
     };
     this.#activeTurn = activeTurn;
-    return this.#runTurn(context, command, activeTurn);
+    const iterator = this.#runTurn(context, activeTurn)[Symbol.asyncIterator]();
+    const firstResult = iterator.next();
+    void firstResult.catch(() => {});
+    return consumePrimedIterator(iterator, firstResult);
   }
 
   async *#runTurn(
     context: AdapterTurnContext,
-    command: ProcessCommand,
     activeTurn: ActiveProcessTurn,
   ): AsyncIterable<AdapterEvent> {
-    const stderrChunks: string[] = [];
-    activeTurn.child.stderr.setEncoding("utf8");
-    activeTurn.child.stderr.on("data", (chunk: string) => {
-      stderrChunks.push(chunk);
-    });
-
-    if (command.input !== undefined) {
-      activeTurn.child.stdin.end(command.input);
-    } else {
-      activeTurn.child.stdin.end();
-    }
-
+    let processExitObserved = false;
     try {
-      const lines = createInterface({
-        input: activeTurn.child.stdout,
-        crlfDelay: Infinity,
-      });
-      for await (const line of lines) {
+      for await (const line of activeTurn.lines) {
         if (line.trim() === "") {
           continue;
         }
@@ -175,6 +180,7 @@ export class ProcessJsonlSession implements HarnessSession {
       }
 
       const exit = await activeTurn.exitPromise;
+      processExitObserved = true;
       if (activeTurn.interrupted) {
         throw interruptedError();
       }
@@ -182,14 +188,20 @@ export class ProcessJsonlSession implements HarnessSession {
         throw harnessUnavailable(this.options.harness, exit.error);
       }
       if (exit.code !== 0) {
-        const message = stderrChunks.join("").trim() || `${this.options.harness} process exited ${exit.code ?? "without a code"}.`;
+        const message = activeTurn.stderrChunks.join("").trim() || `${this.options.harness} process exited ${exit.code ?? "without a code"}.`;
         const error = new Error(message);
         Object.assign(error, { code: exit.code === undefined ? "harness_failed" : "harness_process_failed" });
         throw error;
       }
     } finally {
-      if (this.#activeTurn === activeTurn) {
-        this.#activeTurn = undefined;
+      try {
+        if (!processExitObserved) {
+          await interruptActiveTurn(activeTurn);
+        }
+      } finally {
+        if (this.#activeTurn === activeTurn) {
+          this.#activeTurn = undefined;
+        }
       }
     }
   }
@@ -222,8 +234,43 @@ type ActiveProcessTurn = {
     error?: Error;
   }>;
   readonly identity?: OwnedProcessIdentity;
+  readonly lines: Interface;
+  readonly stderrChunks: string[];
   interrupted: boolean;
 };
+
+function consumePrimedIterator<T>(
+  iterator: AsyncIterator<T>,
+  firstResult: Promise<IteratorResult<T>>,
+): AsyncIterableIterator<T> {
+  let initialResult: Promise<IteratorResult<T>> | undefined = firstResult;
+  let closed = false;
+  return {
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+    async next(): Promise<IteratorResult<T>> {
+      if (closed) {
+        return { done: true, value: undefined };
+      }
+      const result = initialResult === undefined
+        ? await iterator.next()
+        : await initialResult;
+      initialResult = undefined;
+      if (result.done) {
+        closed = true;
+      }
+      return result;
+    },
+    async return(): Promise<IteratorResult<T>> {
+      if (!closed) {
+        closed = true;
+        await iterator.return?.();
+      }
+      return { done: true, value: undefined };
+    },
+  };
+}
 
 export async function assertCommandAvailable(command: string, harness: HarnessName): Promise<void> {
   if (command.includes(path.sep)) {

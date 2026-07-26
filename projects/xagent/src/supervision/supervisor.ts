@@ -249,13 +249,22 @@ export class Supervisor {
     try {
       let lastAssistantText: string | undefined;
       let completed: Extract<AdapterEvent, { type: "turn.completed" }> | undefined;
+      let terminalFailure: {
+        readonly reason: string;
+        readonly payload: unknown;
+      } | undefined;
       try {
         const providerEvents = turn.session.submit({
           text,
           turnId: turn.turnId,
           inputSequence: turn.inputSequence,
         });
-        await this.#persistActiveProcessIdentity(turn.session);
+        try {
+          await this.#persistActiveProcessIdentity(turn.session);
+        } catch (error) {
+          await closeUnconsumedProviderTurn(providerEvents, turn.session);
+          throw error;
+        }
         for await (const event of providerEvents) {
           if (terminalPhases.has(this.#phase)) {
             return;
@@ -266,33 +275,24 @@ export class Supervisor {
             await this.#applyHealthClassification(mechanical);
           }
           if (mechanical?.kind === "failure" && event.type !== "turn.failed") {
-            await this.#withLifecycleMutation(async () => {
-              if (terminalPhases.has(this.#phase)) {
-                return;
-              }
-              await this.#publishState(
-                "failed",
-                mechanical.reason,
-                true,
-                sanitizeValue(mechanical.payload, this.#startOptions.cwd),
-              );
-            });
-            return;
+            terminalFailure = {
+              reason: mechanical.reason,
+              payload: sanitizeValue(mechanical.payload, this.#startOptions.cwd),
+            };
+            break;
           }
           if (event.type === "message.completed" && event.role === "assistant") {
             lastAssistantText = event.text;
           }
           if (event.type === "turn.failed") {
-            await this.#withLifecycleMutation(async () => {
-              if (terminalPhases.has(this.#phase)) {
-                return;
-              }
-              await this.#publishState("failed", event.code, true, {
+            terminalFailure = {
+              reason: event.code,
+              payload: {
                 message: event.message,
                 turn_id: turn.turnId,
-              });
-            });
-            return;
+              },
+            };
+            break;
           }
           if (event.type === "turn.completed") {
             completed = event;
@@ -333,6 +333,21 @@ export class Supervisor {
               message: error instanceof Error ? error.message : String(error),
               turn_id: turn.turnId,
             }, this.#startOptions.cwd),
+          );
+        });
+        return;
+      }
+
+      if (terminalFailure !== undefined) {
+        await this.#withLifecycleMutation(async () => {
+          if (terminalPhases.has(this.#phase)) {
+            return;
+          }
+          await this.#publishState(
+            "failed",
+            terminalFailure.reason,
+            true,
+            terminalFailure.payload,
           );
         });
         return;
@@ -437,6 +452,7 @@ export class Supervisor {
       const closeSession = this.#withLifecycleMutation(async () => {
         await this.#initialPersistence;
         if (terminalPhases.has(this.#phase)) {
+          await this.#closeSessionOnce();
           return;
         }
         this.#health.recordMechanicalEvent({ type: "cancelled" });
@@ -686,6 +702,21 @@ export class Supervisor {
 
 function invalidPhase(operation: string, phase: SupervisionPhase): Error {
   return new Error(`Cannot ${operation} while supervision phase is ${phase}.`);
+}
+
+async function closeUnconsumedProviderTurn(
+  events: AsyncIterable<AdapterEvent>,
+  session: HarnessSession,
+): Promise<void> {
+  const iterator = events[Symbol.asyncIterator]();
+  const cleanup: Promise<unknown>[] = [];
+  if (session.processIdentity !== undefined && session.interrupt !== undefined) {
+    cleanup.push(session.interrupt());
+  }
+  if (iterator.return !== undefined) {
+    cleanup.push(iterator.return());
+  }
+  await Promise.allSettled(cleanup);
 }
 
 function errorCode(error: unknown): string {

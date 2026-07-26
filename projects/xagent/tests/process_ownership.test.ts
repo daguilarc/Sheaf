@@ -4,7 +4,7 @@ import {
   type ChildProcess,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -94,6 +94,28 @@ test("process session close is idempotent, terminates the active group, and prev
   );
 });
 
+test("ending provider iteration early terminates only that turn's owned process group", async () => {
+  const sentinel = spawnLongLivedChild();
+  const session = createLongLivedSession();
+  const events = session.submit(turnContext);
+  const identity = session.processIdentity;
+  assert.ok(identity);
+
+  try {
+    for await (const _event of events) {
+      break;
+    }
+    await waitUntil(() => !isProcessAlive(identity.pid), 1_000);
+
+    assert.equal(session.processIdentity, undefined);
+    assert.equal(isProcessAlive(sentinel.pid), true);
+    await Promise.all([session.close(), session.close()]);
+  } finally {
+    await session.close();
+    stopChild(sentinel);
+  }
+});
+
 test("process session cleans up a spawned child when ownership inspection fails", async () => {
   let spawned: ChildProcessWithoutNullStreams | undefined;
   const session = new ProcessJsonlSession({
@@ -116,6 +138,20 @@ test("process session cleans up a spawned child when ownership inspection fails"
   assert.throws(() => session.submit(turnContext), /inspection denied/);
   assert.ok(spawned?.pid);
   await waitUntil(() => !isProcessAlive(spawned?.pid));
+});
+
+test("platform process inspection reports an exited PID as not found", async () => {
+  const child = trackChild(spawn(process.execPath, ["-e", ""], {
+    stdio: "ignore",
+  }));
+  const pid = child.pid;
+  assert.ok(pid);
+  await new Promise<void>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", () => resolve());
+  });
+
+  assert.equal(await platformProcessInspector.inspect(pid), undefined);
 });
 
 test("supervisor persists the active process identity before silent provider output", async () => {
@@ -159,6 +195,58 @@ test("supervisor persists the active process identity before silent provider out
   }
 });
 
+test("supervisor observes child exit while active ownership persistence is delayed", async () => {
+  const session = new ProcessJsonlSession({
+    harness: "codex",
+    cwd: process.cwd(),
+    buildCommand: () => ({
+      command: process.execPath,
+      args: ["-e", "process.exit(2)"],
+    }),
+    parseEvent: (): AdapterEvent[] => [],
+    spawnProcess: (command, args, childOptions) =>
+      trackChild(spawn(command, [...args], childOptions)),
+  });
+  const adapter: HarnessAdapter = {
+    harness: "codex",
+    capabilities: {
+      forwardsModel: true,
+      forwardsThinkingLevel: true,
+      streamsDeltas: true,
+    },
+    async start(): Promise<HarnessSession> {
+      return session;
+    },
+  };
+  const persisted: SupervisionPersistenceState[] = [];
+  const supervisor = new Supervisor({
+    runId: "xrun_fast_exit",
+    adapter,
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 60_000, watchdog: {} },
+    metadataSink: async (state) => {
+      if (state.phase === "running" && state.owned_process !== undefined) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 60));
+      }
+      persisted.push(structuredClone(state));
+    },
+  });
+
+  await supervisor.start();
+  const turn = supervisor.submit("exit immediately");
+  try {
+    await within(turn, 1_000, "provider exit was not observed");
+    assert.equal(supervisor.inspect().phase, "failed");
+    assert.equal(
+      persisted.find((state) => state.phase === "failed")?.owned_process,
+      undefined,
+    );
+  } finally {
+    await supervisor.close();
+    void turn.catch(() => {});
+  }
+});
+
 test("supervisor interruption ends only the active turn and keeps the session ready", async () => {
   const session = createLongLivedSession();
   const adapter: HarnessAdapter = {
@@ -196,6 +284,145 @@ test("supervisor interruption ends only the active turn and keeps the session re
     && session.processIdentity.pid !== firstPid);
   await supervisor.close();
   await secondTurn;
+});
+
+test("terminal provider failure reaps ownership before persistence and terminal close closes the session", async () => {
+  const sentinel = spawnLongLivedChild();
+  let providerChild: ChildProcessWithoutNullStreams | undefined;
+  const session = new ProcessJsonlSession({
+    harness: "codex",
+    cwd: process.cwd(),
+    buildCommand: () => ({
+      command: process.execPath,
+      args: [
+        "-e",
+        [
+          "console.log(JSON.stringify({ type: 'failed' }))",
+          "setInterval(() => {}, 1000)",
+        ].join(";"),
+      ],
+    }),
+    parseEvent: (raw): AdapterEvent[] =>
+      isRecord(raw) && raw.type === "failed"
+        ? [{
+            type: "turn.failed",
+            code: "provider_failed",
+            message: "provider reported failure",
+          }]
+        : [],
+    spawnProcess: (command, args, childOptions) => {
+      providerChild = trackChild(spawn(command, [...args], childOptions));
+      return providerChild;
+    },
+  });
+  const adapter: HarnessAdapter = {
+    harness: "codex",
+    capabilities: {
+      forwardsModel: true,
+      forwardsThinkingLevel: true,
+      streamsDeltas: true,
+    },
+    async start(): Promise<HarnessSession> {
+      return session;
+    },
+  };
+  const persisted: SupervisionPersistenceState[] = [];
+  const supervisor = new Supervisor({
+    runId: "xrun_terminal_provider_failure",
+    adapter,
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 60_000, watchdog: {} },
+    metadataSink: async (state) => {
+      persisted.push(structuredClone(state));
+    },
+  });
+
+  await supervisor.start();
+  try {
+    await supervisor.submit("fail");
+    assert.equal(supervisor.inspect().phase, "failed");
+    assert.equal(
+      persisted.find((state) => state.phase === "failed")?.owned_process,
+      undefined,
+    );
+    assert.ok(providerChild?.pid);
+    await waitUntil(() => !isProcessAlive(providerChild?.pid), 1_000);
+    assert.equal(isProcessAlive(sentinel.pid), true);
+
+    await Promise.all([supervisor.close(), supervisor.close(), supervisor.close()]);
+    let acceptedPostCloseTurn = false;
+    try {
+      session.submit({ ...turnContext, turnId: "turn_2", inputSequence: 2 });
+      acceptedPostCloseTurn = true;
+    } catch (error) {
+      assert.match(String(error), /closed/i);
+    }
+    if (acceptedPostCloseTurn) {
+      await session.close();
+    }
+    assert.equal(acceptedPostCloseTurn, false);
+  } finally {
+    await supervisor.close();
+    await session.close();
+    stopChild(sentinel);
+  }
+});
+
+test("ownership persistence failure closes a primed provider turn before terminal state", async () => {
+  const ownershipFailure = new Error("ownership metadata failed");
+  let providerChild: ChildProcessWithoutNullStreams | undefined;
+  const session = new ProcessJsonlSession({
+    harness: "codex",
+    cwd: process.cwd(),
+    buildCommand: () => ({
+      command: process.execPath,
+      args: ["-e", "setInterval(() => {}, 1000)"],
+    }),
+    parseEvent: (): AdapterEvent[] => [],
+    spawnProcess: (command, args, childOptions) => {
+      providerChild = trackChild(spawn(command, [...args], childOptions));
+      return providerChild;
+    },
+  });
+  const adapter: HarnessAdapter = {
+    harness: "codex",
+    capabilities: {
+      forwardsModel: true,
+      forwardsThinkingLevel: true,
+      streamsDeltas: true,
+    },
+    async start(): Promise<HarnessSession> {
+      return session;
+    },
+  };
+  const persisted: SupervisionPersistenceState[] = [];
+  const supervisor = new Supervisor({
+    runId: "xrun_ownership_persistence_failure",
+    adapter,
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 60_000, watchdog: {} },
+    metadataSink: async (state) => {
+      if (state.phase === "running" && state.owned_process !== undefined) {
+        throw ownershipFailure;
+      }
+      persisted.push(structuredClone(state));
+    },
+  });
+
+  await supervisor.start();
+  try {
+    await supervisor.submit("stay alive");
+    assert.equal(supervisor.inspect().phase, "failed");
+    assert.equal(
+      persisted.find((state) => state.phase === "failed")?.owned_process,
+      undefined,
+    );
+    assert.ok(providerChild?.pid);
+    await waitUntil(() => !isProcessAlive(providerChild?.pid), 1_000);
+  } finally {
+    await supervisor.close();
+    await session.close();
+  }
 });
 
 test("reconciliation terminates only a matching owned process group and records abandonment first", async () => {
@@ -288,6 +515,38 @@ test("reconciliation leaves terminal runs and their logs unchanged", async () =>
   assert.equal(await readFile(fixture.record.normalizedLogPath, "utf8"), logBefore);
 });
 
+test("reconciliation skips stray and corrupt entries while cleaning valid stale runs", async () => {
+  const fixture = await createActiveRunFixture("with_strays");
+  await writeFile(path.join(fixture.logRoot, ".DS_Store"), "finder metadata");
+  const corruptDir = path.join(fixture.logRoot, "xrun_corrupt");
+  await mkdir(corruptDir);
+  await writeFile(path.join(corruptDir, "metadata.json"), "{not json");
+  const malformedDir = path.join(fixture.logRoot, "xrun_malformed");
+  await mkdir(malformedDir);
+  await writeFile(
+    path.join(malformedDir, "metadata.json"),
+    `${JSON.stringify({ run_id: "xrun_malformed" })}\n`,
+  );
+  const signalledGroups: number[] = [];
+
+  const result = await reconcileStaleRuns(
+    fixture.logRoot,
+    fakeInspector({
+      pid: 4101,
+      process_group_id: 5101,
+      start_identity: "process-start-a",
+    }, signalledGroups),
+  );
+
+  assert.deepEqual(result, [{
+    run_id: fixture.runId,
+    cleanup: "terminated",
+  }]);
+  assert.deepEqual(signalledGroups, [5101]);
+  const metadata = JSON.parse(await readFile(fixture.record.metadataPath, "utf8"));
+  assert.equal(metadata.supervision.phase, "abandoned");
+});
+
 function createLongLivedSession(
   options: { readonly emitReady?: boolean } = {},
 ): ProcessJsonlSession {
@@ -345,6 +604,24 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 5_000): Promise<v
   }
 }
 
+async function within<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let handle: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    handle = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (handle !== undefined) {
+      clearTimeout(handle);
+    }
+  }
+}
+
 function isProcessAlive(pid: number | undefined): boolean {
   if (pid === undefined) {
     return false;
@@ -357,6 +634,10 @@ function isProcessAlive(pid: number | undefined): boolean {
       && "code" in error
       && error.code === "EPERM";
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function stopChild(child: ChildProcess): void {

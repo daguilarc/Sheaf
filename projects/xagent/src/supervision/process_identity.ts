@@ -116,6 +116,7 @@ function isMissingProcess(error: unknown): boolean {
   return isNodeError(error)
     && (
       error.code === "ESRCH"
+      || error.code === 1
       || (
         error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
         ? false
@@ -126,6 +127,9 @@ function isMissingProcess(error: unknown): boolean {
 
 function isNodeError(
   error: unknown,
-): error is NodeJS.ErrnoException & { readonly status?: number } {
+): error is Error & {
+  readonly code?: string | number;
+  readonly status?: number;
+} {
   return error instanceof Error;
 }

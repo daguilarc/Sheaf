@@ -203,13 +203,15 @@ export async function listRuns(logRoot: string): Promise<RunMetadata[]> {
   const runs: RunMetadata[] = [];
   for (const entry of entries) {
     try {
-      const metadata = JSON.parse(await readFile(path.join(root, entry, "metadata.json"), "utf8")) as RunMetadata;
-      runs.push(metadata);
-    } catch (error) {
-      if (isNodeError(error) && error.code === "ENOENT") {
+      const metadata = JSON.parse(
+        await readFile(path.join(root, entry, "metadata.json"), "utf8"),
+      ) as unknown;
+      if (!isRunMetadata(metadata)) {
         continue;
       }
-      throw error;
+      runs.push(metadata);
+    } catch {
+      continue;
     }
   }
 
@@ -290,4 +292,96 @@ async function writeMetadata(record: RunRecord): Promise<void> {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
+}
+
+function isRunMetadata(value: unknown): value is RunMetadata {
+  if (
+    !isRecord(value)
+    || !isRecord(value.supervision)
+    || !isRecord(value.watchdog)
+    || !isRecord(value.paths)
+  ) {
+    return false;
+  }
+  return (
+    typeof value.run_id === "string"
+    && (
+      value.harness === "codex"
+      || value.harness === "pi"
+      || value.harness === "cursor"
+      || value.harness === "claude_code"
+    )
+    && (value.mode === "subagent" || value.mode === "full")
+    && (value.model === undefined || typeof value.model === "string")
+    && (
+      value.thinking_level === undefined
+      || value.thinking_level === "low"
+      || value.thinking_level === "medium"
+      || value.thinking_level === "high"
+      || value.thinking_level === "xhigh"
+    )
+    && typeof value.created_at === "string"
+    && typeof value.updated_at === "string"
+    && (
+      value.exit_status === "running"
+      || value.exit_status === "completed"
+      || value.exit_status === "failed"
+    )
+    && (
+      value.supervision.phase === "starting"
+      || value.supervision.phase === "running"
+      || value.supervision.phase === "ready"
+      || value.supervision.phase === "completed"
+      || value.supervision.phase === "failed"
+      || value.supervision.phase === "cancelled"
+      || value.supervision.phase === "abandoned"
+    )
+    && Number.isSafeInteger(value.supervision.sequence)
+    && typeof value.supervision.last_transport_progress_at === "string"
+    && typeof value.supervision.last_semantic_progress_at === "string"
+    && (
+      value.supervision.provider_thread_id === undefined
+      || typeof value.supervision.provider_thread_id === "string"
+    )
+    && isNonNegativeInteger(value.watchdog.invocation_count)
+    && isNonNegativeInteger(value.watchdog.controller_wake_count)
+    && isNonNegativeInteger(value.watchdog.deterministic_alert_count)
+    && isNonNegativeInteger(value.watchdog.evidence_truncation_count)
+    && (
+      value.owned_process === undefined
+      || isOwnedProcessIdentity(value.owned_process)
+    )
+    && typeof value.paths.run_dir === "string"
+    && typeof value.paths.metadata === "string"
+    && typeof value.paths.normalized === "string"
+    && typeof value.paths.raw_provider === "string"
+    && typeof value.paths.watchdog === "string"
+  );
+}
+
+function isOwnedProcessIdentity(value: unknown): value is OwnedProcessIdentity {
+  return isRecord(value)
+    && isPositiveInteger(value.pid)
+    && (
+      value.process_group_id === undefined
+      || isPositiveInteger(value.process_group_id)
+    )
+    && typeof value.started_at === "string"
+    && typeof value.start_identity === "string";
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number"
+    && Number.isSafeInteger(value)
+    && value >= 0;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number"
+    && Number.isSafeInteger(value)
+    && value > 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
