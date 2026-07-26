@@ -445,5 +445,131 @@ class ObsoleteRepoOutputTests(unittest.TestCase):
             self.assertTrue(unmanaged_obsolete.exists())
 
 
+def skill_output_content(
+    outputs: list[install.Output],
+    skill_id: str,
+    *,
+    parent: Path | None = None,
+) -> str:
+    matches = [
+        output
+        for output in outputs
+        if output.path.parts[-2:] == (skill_id, "SKILL.md")
+    ]
+    if parent is not None:
+        parent = parent.resolve()
+        matches = [output for output in matches if output.path.is_relative_to(parent)]
+    if len(matches) != 1:
+        paths = [str(output.path) for output in matches]
+        raise AssertionError(
+            f"expected exactly one rendered output for {skill_id}, found {len(matches)}: {paths}"
+        )
+    return matches[0].content
+
+
+def assert_all_present(test_case: unittest.TestCase, content: str, phrases: tuple[str, ...]) -> None:
+    lowered = content.lower()
+    for phrase in phrases:
+        test_case.assertIn(
+            phrase.lower(),
+            lowered,
+            f"missing required guidance phrase: {phrase!r}",
+        )
+
+
+def assert_none_present(
+    test_case: unittest.TestCase, content: str, phrases: tuple[str, ...]
+) -> None:
+    lowered = content.lower()
+    for phrase in phrases:
+        test_case.assertNotIn(
+            phrase.lower(),
+            lowered,
+            f"forbidden routine-polling guidance phrase: {phrase!r}",
+        )
+
+
+class DistributedSkillSemanticsTests(unittest.TestCase):
+    def test_xagent_subagents_skill_event_driven_supervision_guidance(self) -> None:
+        skill_path = REPO_ROOT / "plugins" / "xagent" / "skills" / "xagent-subagents" / "SKILL.md"
+        self.assertTrue(skill_path.is_file(), f"missing packaged skill: {skill_path}")
+        content = skill_path.read_text(encoding="utf-8")
+
+        assert_all_present(
+            self,
+            content,
+            (
+                "Conductor",
+                "xagent",
+                "healthy",
+                "127.0.0.1:9005",
+                "xagent_start",
+                "xagent_await",
+                "report.text",
+                "after_sequence",
+                "deterministic",
+                "Haiku",
+                "watchdog attention never",
+                "broken agentic infrastructure",
+                "xagent supervise",
+                "do not poll",
+                "write_stdin",
+                "xagent list",
+                "xagent logs",
+            ),
+        )
+        assert_none_present(
+            self,
+            content,
+            (
+                "poll every",
+                "short timeout loop",
+            ),
+        )
+
+    def test_openspec_superpowers_workflow_event_driven_coordination_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            home = (Path(tempdir) / "home").resolve()
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            outputs = install.build_global_outputs(
+                REPO_ROOT,
+                home=home,
+                codex_home=codex_home,
+            )
+            content = skill_output_content(
+                outputs,
+                "openspec-superpowers-workflow",
+                parent=codex_home / "skills",
+            )
+
+        assert_all_present(
+            self,
+            content,
+            (
+                "long native mailbox wait",
+                "blocker",
+                "final completion",
+                "required input",
+                "reason-gated",
+                "list_agents",
+                "do not poll",
+                "xagent_start",
+                "xagent_await",
+                "report.text",
+                "native subagent",
+                "not the default transport",
+                "broken agentic infrastructure",
+            ),
+        )
+        assert_none_present(
+            self,
+            content,
+            (
+                "poll every",
+                "short timeout loop",
+            ),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

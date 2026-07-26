@@ -42,6 +42,40 @@ These rules apply to every subagent dispatched anywhere in this workflow:
   acceptance criteria live in the brief file; the dispatch prompt adds only
   scene-setting, cross-task interfaces, and the report contract.
 
+## Controller wait discipline
+
+These rules apply to every subagent the workflow coordinates, native or xagent:
+
+- **Prefer native harness subagents when the assigned model is available.**
+  Native subagents are not the default transport for cross-provider work, and
+  xagent is not the default transport for same-provider work when the harness
+  already offers the assigned model.
+- **Perform independent controller work first.** After dispatching a subagent,
+  do controller-only work until it is exhausted, then enter one long wait.
+- **Native subagents use one long native mailbox wait.** Do not repeat the
+  harness default short timeout merely to observe unchanged state.
+- **Xagent subagents use service MCP, not terminal polling.** Verify Conductor
+  reports xagent healthy at `127.0.0.1:9005`, call `xagent_start`, do
+  independent work, then one long `xagent_await` with the returned
+  `after_sequence` cursor. Consume the sanitized final assistant report from
+  `report.text`. Do not poll `write_stdin`, `xagent list`, xagent logs, or
+  unchanged status at a short fixed interval.
+- **Status inspection is reason-gated.** Direct `list_agents`, log, transcript,
+  or MCP inspect checks happen only after attention, a long wait deadline, or
+  an explicit user status request — never as a fixed-frequency polling loop.
+- **Native child messaging stays sparse.** Dispatch instructs native children to
+  message the controller only for required input, an unresolved blocker, or
+  final completion. Routine tool progress stays in the child thread or activity
+  UI.
+- **Multiple agents complete independently.** When one running subagent
+  completes or needs attention, handle that event and enter another long event
+  wait for the remaining agents without inserting unchanged `list_agents`
+  snapshots.
+- **Broken infrastructure escalates.** If native subagent transport, xagent MCP,
+  the Conductor-managed xagent service, OpenSpec, or Superpowers tooling is
+  broken, stop and surface broken agentic infrastructure instead of working
+  around it.
+
 ## Workflow
 
 1. Select the OpenSpec change.
@@ -125,8 +159,14 @@ These rules apply to every subagent dispatched anywhere in this workflow:
    - Dispatch one fresh implementer subagent per plan task, on the model and
      effort assigned in `.assignments.yaml` (provider rules above govern
      native-vs-xagent transport).
+   - After dispatch, do independent controller work, then one long native
+     mailbox wait or xagent `xagent_await` as appropriate — not short polling
+     loops.
+   - Instruct each native child to message the controller only for required
+     input, an unresolved blocker, or final completion.
    - Run spec compliance review before code quality review for each task,
-     on the opposite provider via xagent.
+     on the opposite provider via xagent service MCP when native review is
+     unavailable on that provider.
    - Require fix and re-review loops until both reviews pass, reusing the
      task's open implementer for fixes and its open reviewer for re-reviews.
    - Do not dispatch implementation subagents in parallel when tasks may touch
