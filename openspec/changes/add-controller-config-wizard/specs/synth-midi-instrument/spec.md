@@ -90,9 +90,10 @@ WHEN an instrument configuration is serialized, THE synth system SHALL write a J
 - **WHEN** instrument JSON contains an Active or dormant `launchpad` profile whose system-message association carries a WRLD.Bldr position
 - **THEN** the load fails and the target configuration is unchanged
 
-#### Scenario: Legacy single-profile document is invalid
+#### Scenario: Legacy single-profile document loads with the section ignored
 - **WHEN** a patch document contains the old single `midiProfile` section and no `midiInstrument` section
-- **THEN** the patch load fails validation (spp-2) rather than silently loading without an instrument
+- **THEN** the patch load succeeds (spp-2) with the legacy section tolerated and not applied as patch state
+- **AND** the current instrument configuration is unchanged
 
 ### Requirement: smi-3 — Reconciliation: pure planning function
 WHEN controller connections must be reconciled with the present device list, THE synth system SHALL provide a JUCE-free planning function that takes the instrument configuration, present input/output device lists (identifier and name pairs), and current per-slot endpoint connection state (status `online`, `offline`, or `unconfigured`, plus the open identifier when online), and returns a deterministic action plan (open input, open output, close input, close output, mark endpoint offline/online/unconfigured, update a slot's stored endpoint reference, resync) such that: disposition is checked before every Active matching and status rule; Active slots retain identifier-first/name-fallback matching, deterministic exclusive claiming by slot order, unconfigured handling for empty refs, offline marking for absent referenced devices, stored-ref update after name fallback, and one resync whenever an output is newly opened; Blacklisted slots never claim, open, update, resync, or mark Offline a present or absent endpoint, never rewrite their deliberately stale stored references, and cause any endpoint still online from an earlier Active disposition to close and become `Unconfigured`. For a Blacklisted slot, `Unconfigured` SHALL mean deliberately inert even though both stored endpoint references remain populated.

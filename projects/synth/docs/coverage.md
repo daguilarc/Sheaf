@@ -1255,17 +1255,17 @@ Last audit: controller configuration wizard (baked registry, candidate discovery
   `InstrumentJsonRejectsLaunchpadWithEncoderMappings`,
   `InstrumentJsonRejectsLaunchpadWithWrldBldrPosition`, and
   `InstrumentJsonRejectsBadSchema`.
-- **Gap (pre-existing, not introduced by this change):** the `smi-2` scenario
-  "Legacy single-profile document is invalid" says a patch carrying the old
-  single `midiProfile` section and no `midiInstrument` section fails patch
-  validation. Since instrument configuration moved out of patch documents into
-  runtime configuration, `patch_json_ignores_legacy_midi_and_audio_sections_even_when_invalid`
+- Legacy patch documents (`smi-2` scenario "Legacy single-profile document loads
+  with the section ignored"): `patch_json_ignores_legacy_midi_and_audio_sections_even_when_invalid`
   in [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp)
-  pins the shipped behavior: legacy `midiInstrument`/`audioDevice` sections in a
-  patch are ignored and `ValidatePatchJSON` still succeeds. The same scenario
-  text is present in the already-archived `smi-2`, so this is drift that predates
-  the controller wizard rather than a regression it introduced. No test claims
-  the scenario as written.
+  builds a patch root carrying malformed legacy `midiInstrument` and
+  `audioDevice` sections and proves `ValidatePatchJSON` still succeeds,
+  `LoadPatchJSON` applies the patch's parameter values, and the caller's
+  instrument configuration and audio device state are left untouched. The test
+  exercises those two legacy section names rather than the older `midiProfile`
+  key; `ValidatePatchJSON` inspects only `schema`, `schemaVersion`, `patchName`,
+  and `parameterValues`, so `midiProfile` is tolerated by the same
+  unrecognized-key path.
 
 ### `smi-3` (modified) - Disposition-Aware Reconciliation
 
