@@ -180,6 +180,188 @@ test("native spawn stops and retains only a bounded prefix after oversized stdou
   assert.ok(Buffer.byteLength(result.stdout, "utf8") <= 65);
 });
 
+// I1: a schema-valid maximal healthy verdict (8 evidence items at the
+// per-item length bound) plus the Claude Code JSON envelope must not be
+// rejected as `classifier_output_too_large`. The 2 KiB output bound is
+// applied to the extracted structured output, and the evidence bounds are
+// sized so a maximal verdict fits within it. Without this, every healthy
+// checkpoint would wake the controller once with an `uncertain` attention.
+//
+test("accepts a maximal schema-valid healthy verdict wrapped in a Claude Code envelope", async () => {
+  const maximalStructuredOutput = {
+    verdict: "healthy",
+    confidence: 0.91,
+    reason_code: "steady_progress",
+    evidence: Array.from({ length: 8 }, () => "x".repeat(192)),
+  };
+  const envelope = {
+    type: "result",
+    subtype: "success",
+    structured_output: maximalStructuredOutput,
+    // Claude Code duplicates the structured output as a string in `result`,
+    // so the full stdout is well above 2 KiB even though the verdict itself
+    // fits. The bound must apply to the verdict, not the envelope.
+    //
+    result: JSON.stringify(maximalStructuredOutput),
+    session_id: "session-" + "s".repeat(40),
+    usage: { input_tokens: 120, output_tokens: 30 },
+    total_cost_usd: 0.0005,
+    duration_ms: 12345,
+    permission_denials: 0,
+  };
+  const stdout = JSON.stringify(envelope);
+  assert.ok(
+    Buffer.byteLength(stdout, "utf8") > 2 * 1024,
+    "envelope must exceed the 2 KiB verdict bound to prove the bound is not applied to stdout",
+  );
+
+  const spawn: WatchdogSpawn = async () => ({
+    exitCode: 0,
+    stdout,
+    stderr: "",
+  });
+  const classifier = new ClaudeWatchdogClassifier({ spawn });
+  const result = await classifier.classify(request(), new AbortController().signal);
+
+  assert.equal(result.verdict, "healthy");
+  assert.equal(result.reason_code, "steady_progress");
+  assert.equal(
+    (result as { output_bytes?: number }).output_bytes,
+    Buffer.byteLength(JSON.stringify(maximalStructuredOutput), "utf8"),
+  );
+  assert.ok(
+    (result as { output_bytes?: number }).output_bytes! <= 2 * 1024,
+    "verdict bytes must fit within the 2 KiB output bound",
+  );
+});
+
+test("rejects an oversized structured verdict even when stdout is under the truncation cap", async () => {
+  // A classifier that returns a verdict exceeding the 2 KiB bound (e.g. by
+  // ignoring the schema's evidence length limit) must still be normalized to
+  // `classifier_output_too_large`, applied to the extracted structured output.
+  //
+  const oversizedStructuredOutput = {
+    verdict: "healthy",
+    confidence: 0.91,
+    reason_code: "steady_progress",
+    evidence: Array.from({ length: 8 }, () => "x".repeat(512)),
+  };
+  const envelope = {
+    type: "result",
+    subtype: "success",
+    structured_output: oversizedStructuredOutput,
+    result: JSON.stringify(oversizedStructuredOutput),
+  };
+  const stdout = JSON.stringify(envelope);
+  // The envelope is under the 16 KiB stdout truncation cap, so the spawn
+  // itself does not flag outputTooLarge; the bound is enforced at the
+  // structured-output layer.
+  //
+  assert.ok(Buffer.byteLength(stdout, "utf8") <= 16 * 1024);
+
+  const spawn: WatchdogSpawn = async () => ({
+    exitCode: 0,
+    stdout,
+    stderr: "",
+  });
+  const classifier = new ClaudeWatchdogClassifier({ spawn });
+  const result = await classifier.classify(request(), new AbortController().signal);
+
+  assert.equal(result.verdict, "uncertain");
+  assert.equal(result.reason_code, "classifier_output_too_large");
+});
+
+// C1 regression: spawnWatchdogProcess deliberately SIGKILLs the child from
+// three paths (timeout, abort, outputTooLarge) while a stdin write may
+// still be buffered. When the child dies mid-write, Node emits `error` on
+// the Socket — not on the ChildProcess — so the `child.once("error", …)`
+// handler does not cover it. Without a stdin error listener the unhandled
+// stream error crashes the entire xagent service. These tests prove the
+// stdin error guard swallows the EPIPE and the spawn still resolves with a
+// proper failure/uncertain outcome.
+//
+test("outputTooLarge SIGKILL during a buffered stdin write does not crash the spawn", async () => {
+  // Child writes a large stdout burst (triggering outputTooLarge →
+  // SIGKILL) while never reading stdin (keeping the 64 KiB stdin write
+  // buffered). This is the exact window the review flagged.
+  //
+  const result = await spawnWatchdogProcess({
+    command: process.execPath,
+    args: ["-e", "process.stdout.write('x'.repeat(64 * 1024))"],
+    cwd: process.cwd(),
+    input: "x".repeat(64 * 1024),
+    timeoutMs: 5_000,
+    outputLimitBytes: 64,
+    signal: new AbortController().signal,
+  });
+
+  assert.equal(result.outputTooLarge, true);
+  assert.ok(Buffer.byteLength(result.stdout, "utf8") <= 65);
+});
+
+test("abort SIGKILL during a buffered stdin write does not crash the spawn", async () => {
+  // Child never reads stdin and never exits on its own, so the 64 KiB
+  // stdin write stays buffered. Aborting the request SIGKILLs the child
+  // mid-write; the spawn must still resolve with `aborted: true` rather
+  // than throwing an unhandled EPIPE.
+  //
+  const abort = new AbortController();
+  const resultPromise = spawnWatchdogProcess({
+    command: process.execPath,
+    args: ["-e", "setInterval(() => {}, 1000)"],
+    cwd: process.cwd(),
+    input: "x".repeat(64 * 1024),
+    timeoutMs: 30_000,
+    outputLimitBytes: 4 * 1024,
+    signal: abort.signal,
+  });
+  // Let the spawn start and queue the buffered stdin write before aborting.
+  await new Promise<void>((resolve) => setTimeout(resolve, 20));
+  abort.abort();
+
+  const result = await resultPromise;
+  assert.equal(result.aborted, true);
+});
+
+test("timeout SIGKILL during a buffered stdin write does not crash the spawn", async () => {
+  // Child never reads stdin and never exits; the tiny timeout fires
+  // SIGKILL while the 64 KiB stdin write is still buffered.
+  //
+  const result = await spawnWatchdogProcess({
+    command: process.execPath,
+    args: ["-e", "setInterval(() => {}, 1000)"],
+    cwd: process.cwd(),
+    input: "x".repeat(64 * 1024),
+    timeoutMs: 50,
+    outputLimitBytes: 4 * 1024,
+    signal: new AbortController().signal,
+  });
+
+  assert.equal(result.timedOut, true);
+});
+
+test("classifier swallows a stdin EPIPE mid-write and returns an uncertain verdict", async () => {
+  // End-to-end proof at the classifier layer: a real spawn that is
+  // SIGKILLed mid-write must not throw and must normalize to `uncertain`.
+  //
+  const classifier = new ClaudeWatchdogClassifier({
+    spawn: spawnWatchdogProcess,
+    timeoutMs: 50,
+  });
+  const verdict = await classifier.classify(
+    {
+      ...request(),
+      // Force a large input so the stdin write is still buffered when the
+      // timeout fires.
+      //
+    },
+    new AbortController().signal,
+  );
+
+  assert.equal(verdict.verdict, "uncertain");
+  assert.equal(verdict.reason_code, "classifier_timeout");
+});
+
 function request(): WatchdogRequest {
   const value = {
     original_prompt: "Implement the bounded watchdog.",

@@ -127,7 +127,7 @@ IF a worker is mechanically failed, complete, blocked, silent, cancelled, or pas
 
 ### Requirement: xas-6 — Watchdog: bounded cadence and budget
 
-WHILE semantic watchdog checks remain enabled for a run, THE xagent supervisor SHALL schedule them with configurable exponential backoff, enforce a default five-minute minimum interval, cap watchdog input at 64 KiB and output at 2 KiB, and stop invoking the watchdog after the default maximum of eight calls per run.
+WHILE semantic watchdog checks remain enabled for a run, THE xagent supervisor SHALL schedule them with configurable exponential backoff, enforce a default five-minute minimum interval, cap watchdog input at 64 KiB and the classifier verdict output at 2 KiB (applied to the extracted structured output, not the surrounding Claude Code JSON envelope), bound evidence to a count and per-item length that fit within that output cap, and stop invoking the watchdog after the default maximum of eight calls per run.
 
 #### Scenario: Default cadence backs off
 
@@ -151,6 +151,13 @@ WHILE semantic watchdog checks remain enabled for a run, THE xagent supervisor S
 - **WHEN** the configured maximum number of watchdog invocations has been consumed
 - **THEN** the supervisor performs no additional Haiku calls
 - **AND** continues deterministic supervision and records that semantic coverage is exhausted
+
+#### Scenario: Maximal schema-valid verdict is accepted
+
+- **WHEN** Haiku returns a healthy verdict whose evidence uses the maximum permitted item count and per-item length
+- **THEN** the supervisor accepts the verdict as healthy
+- **AND** does not normalize it to `uncertain` with `classifier_output_too_large`
+- **AND** emits no advisory attention for the bounded output alone
 
 ### Requirement: xas-7 — Attention: advisory semantic verdicts
 

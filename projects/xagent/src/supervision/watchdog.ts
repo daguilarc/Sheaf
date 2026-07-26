@@ -16,7 +16,16 @@ const MAX_INPUT_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 2 * 1024;
 const MAX_REASON_CODE_LENGTH = 128;
 const MAX_EVIDENCE_ITEMS = 8;
-const MAX_EVIDENCE_ITEM_LENGTH = 512;
+// Sized so a maximal schema-valid verdict (8 evidence items plus the
+// verdict/confidence/reason_code envelope) fits inside MAX_OUTPUT_BYTES
+// when the bound is applied to the extracted structured output rather
+// than the full Claude Code JSON envelope. The previous 512-byte limit
+// allowed 4096 bytes of evidence alone, which exceeded the 2 KiB output
+// cap and forced every maximal healthy verdict into
+// `classifier_output_too_large` -> `uncertain` -> one attention wake per
+// checkpoint. See OpenSpec xas-6 and design §4.
+//
+const MAX_EVIDENCE_ITEM_LENGTH = 192;
 
 export type WatchdogSchedulerOptions = {
   readonly classifier: WatchdogClassifier;

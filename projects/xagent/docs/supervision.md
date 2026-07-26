@@ -84,14 +84,16 @@ Haiku is eligible only while a live worker is actively producing tokens, message
 | Repeated failure fingerprint threshold | 2 identical in 10 minutes |
 | Healthy confidence floor | `0.8` |
 | Input bound | 64 KiB UTF-8 |
-| Output bound | 2 KiB |
+| Output bound | 2 KiB (applied to the extracted structured verdict, not the Claude Code JSON envelope) |
 | Maximum calls per run | 8 |
 
 Watchdog results are advisory only. `derailed`, `uncertain`, invalid, failed, over-budget, and low-confidence output emit one sequenced attention event but never message, interrupt, kill, restart, edit for, or otherwise steer the worker.
 
 ### False-alert posture
 
-The watchdog fixtures document the false-alert boundary for each scenario:
+The "false-alert posture" documented here describes the **supervisor's response boundary to fixture verdicts**, not Haiku's classifier accuracy. The fixtures in `tests/fixtures/watchdog/` carry pre-set `scripted_verdict` fields; the tests measure how the supervisor reacts to a given verdict (silent for healthy, one advisory attention for `uncertain`/`derailed`), not how often Haiku is wrong in production. Classifier accuracy against a live `claude` binary has not been measured in this branch — see "Live watchdog smoke" below for the optional gate that exercises the spawn path.
+
+The watchdog fixtures document the supervisor response boundary for each scenario:
 
 - **Healthy exploration**: a high-confidence healthy verdict (`confidence >= 0.8`) stays controller-silent. No attention is emitted. This is the primary false-alert guard: routine diverse work never wakes the controller.
 - **Repeated tool / failure loops**: deterministic suspicion signals (`repeated_failure_fingerprint` at 2 occurrences, `repeated_tool_fingerprint` at 3) make the watchdog eligible early, but the classifier must still confirm `derailed`. A single suspicion signal alone never declares the worker derailed.
@@ -100,11 +102,41 @@ The watchdog fixtures document the false-alert boundary for each scenario:
 
 In all cases the worker is never auto-interrupted, auto-killed, or auto-restarted by the watchdog.
 
+### Live watchdog smoke
+
+The watchdog argv has never been executed against the real `claude` binary by default `npm test` — every `claude_watchdog.test.ts` assertion injects a fake `WatchdogSpawn`. The argv flags are validated against `claude --help` by hand, but no in-tree test or packaged smoke actually invokes `claude`.
+
+To close that gap without flaking default CI, an **optional** live smoke is provided:
+
+- `tests/claude_watchdog_live.test.ts` invokes the real `claude` binary through `spawnWatchdogProcess` only when `XAGENT_RUN_LIVE_WATCHDOG_SMOKE=1` is set **and** `claude` is on `PATH`. Otherwise it skips with a clear message.
+- It is **not** run by `npm test`. Run it explicitly:
+
+```bash
+XAGENT_RUN_LIVE_WATCHDOG_SMOKE=1 node --test dist/tests/claude_watchdog_live.test.js
+```
+
+- It does not assert classifier accuracy (Haiku may legitimately return `uncertain` for the tiny synthetic input). It asserts the spawn path survives: exit code 0, parseable structured output, and that a non-zero exit or non-JSON output is normalized to `uncertain` rather than crashing the service. This is the same shape C1 and I1 would have been caught by.
+- Network/API failure is tolerated: a `classifier_invocation_failed` or `classifier_budget_exceeded` verdict is a pass for this smoke, since the goal is to prove the spawn/parse plumbing, not Haiku's correctness.
+
 ## Wake comparison
 
-A 90-minute healthy run with sustained semantic progress (one delta per minute under the default 5-minute silence timeout) compares controller-visible wake counts as follows. The MCP await and quiet CLI rows are measured by `supervision_cost.test.ts`; the 30-second polling row is an analytic expectation for an alternative wait strategy.
+A 90-minute healthy run with sustained semantic progress (one delta per minute under the default 5-minute silence timeout) compares controller-visible wake counts as follows. The 90-minute rows in this table are **run-manager-layer** measurements: `supervision_cost.test.ts` and `mcp_await.test.ts` drive `XagentRunManager.awaitRun(...)` directly with a fake clock, so they prove the supervisor wakes the leader exactly once for the terminal `turn.completed` event. They do **not** exercise the HTTP transport that a real controller sits behind.
 
 | Wait mode | Wake count | Leader-visible progress in completion envelope |
+| --- | --- | --- |
+| 30-second terminal polling (`xagent_inspect` every 30 s) | 180 (analytic) | none — inspect snapshots are not completion envelopes |
+| Quiet CLI fallback (one blocking await) | 1 (measured at run-manager layer) | final report only — no deltas, tools, or progress fields |
+| MCP await (`xagent_await`) | 1 (measured at run-manager layer) | final report only — envelope shape asserts absence of deltas/tools/progress |
+
+The MCP await and quiet CLI paths wake exactly once for the terminal `turn.completed` event. Routine deltas, tools, raw events, status, and healthy watchdog verdicts never complete an await. Parent-side token or byte totals are not measured here; the tests instead assert that completion envelopes omit non-terminal progress fields.
+
+### Transport provenance — what is and is not verified
+
+The long-await claim is load-bearing for the whole design, so the test boundary is documented here explicitly:
+
+- **Quiet CLI fallback (`xagent supervise`)** — the service client in `src/service/client.ts` chunks each `xagent_await` HTTP POST at `x_McpAwaitHttpChunkSeconds = 240` and reissues until the application deadline. This exists because Node's fetch/undici stack idles out a response body around ~300 s and aborts a single long POST with "fetch failed" while the service-owned worker keeps running. The chunk-and-reissue loop is exercised over real HTTP by `tests/service_client.test.ts` ("client await chunks HTTP MCP deadlines until the application deadline") with `awaitHttpChunkSeconds: 1` and a 10 s application deadline, so multiple chunks are issued and reissued against a real `http.Server`. That is a real-transport multi-chunk test, just shortened so CI stays fast.
+- **Primary Codex MCP path** — the packaged `.mcp.json` connects Codex directly to `http://127.0.0.1:9005/mcp` with `tool_timeout_sec: 7200` and **no chunking**. Whether Codex's HTTP client holds a single 90-minute idle response body is **not verified by this branch's tests**. The 90-minute rows above are fake-clock run-manager tests, not transport tests against the Codex client. If Codex's HTTP stack has an undici-like idle ceiling, the plugin path will need the same chunking the quiet client already has; that work is tracked as a follow-up rather than asserted here.
+- **90-minute healthy-run tests** — `mcp_await.test.ts` ("ninety-minute healthy run completes without an intermediate deadline wake") and `supervision_cost.test.ts` ("90-minute healthy run: MCP await wakes once; quiet client measured; polling analytic") both advance a `FakeClock` and call `runManager.awaitRun(...)` directly. They prove the supervisor does not wake the leader for routine progress; they do **not** prove a real HTTP body survives 90 minutes.| Wait mode | Wake count | Leader-visible progress in completion envelope |
 | --- | --- | --- |
 | 30-second terminal polling (`xagent_inspect` every 30 s) | 180 (analytic) | none — inspect snapshots are not completion envelopes |
 | Quiet CLI fallback (one blocking await) | 1 (measured) | final report only — no deltas, tools, or progress fields |
@@ -118,8 +150,8 @@ The MCP await and quiet CLI paths wake exactly once for the terminal `turn.compl
 | --- | --- |
 | `xagent_await` default deadline | 7000 seconds |
 | `xagent_await` maximum deadline | 7000 seconds |
-| Quiet-client MCP await HTTP chunk | 240 seconds (reissued until the application deadline; avoids ~300s fetch/undici body idle drops) |
-| Plugin MCP `tool_timeout_sec` | 7200 seconds |
+| Quiet-client MCP await HTTP chunk | 240 seconds (reissued until the application deadline; avoids ~300s fetch/undici body idle drops). Real-HTTP multi-chunk reissue is exercised by `tests/service_client.test.ts`. |
+| Plugin MCP `tool_timeout_sec` | 7200 seconds (no chunking on the primary Codex path — see "Transport provenance" above; the 90-minute single-POST assumption is unverified at the transport layer) |
 | Service request timeout | 7,200,000 ms |
 | Service headers timeout | 7,270,000 ms |
 
