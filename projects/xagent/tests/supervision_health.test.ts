@@ -272,6 +272,34 @@ test("supervisor turns an exposed transport loss into durable deterministic fail
   assert.equal(classifier.calls.length, 0);
 });
 
+test("supervisor turns a structured process exit into durable process_exit failure", async () => {
+  const classifier = new ClassifierSpy();
+  const supervisor = new Supervisor({
+    runId: "xrun_process_exit",
+    adapter: new FakeHarnessAdapter({
+      scriptedEvents: [[{
+        type: "error",
+        code: "process_exit",
+        message: "child process exited with code 137",
+        details: { exit_code: 137, signal: null },
+        recoverable: false,
+      }]],
+    }),
+    startOptions: { cwd: "/private/tmp/sheaf-xagent-supervision" },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+  });
+  await supervisor.start();
+  const cursor = supervisor.inspect().sequence;
+
+  await supervisor.submit("Implement the task.");
+  const failure = await supervisor.awaitEvent(cursor, 1_000);
+
+  assert.equal(failure.phase, "failed");
+  assert.equal(failure.reason, "process_exit");
+  assert.deepEqual(failure.payload, { exit_code: 137, signal: null });
+  assert.equal(classifier.calls.length, 0);
+});
+
 test("supervisor sanitizes provider strings before durable mechanical delivery", async () => {
   const repoRoot = "/private/tmp/sheaf-xagent-supervision";
   const supervisor = new Supervisor({

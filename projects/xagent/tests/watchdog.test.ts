@@ -384,8 +384,9 @@ test("supervisor classifier seam is bypassed by mechanical completion, input, cr
     adapter: new FakeHarnessAdapter({
       scriptedEvents: [[{
         type: "error",
-        code: "transport_lost",
+        code: "process_exit",
         message: "child process exited with code 17",
+        details: { exit_code: 17, signal: null },
         recoverable: false,
       }]],
     }),
@@ -394,8 +395,13 @@ test("supervisor classifier seam is bypassed by mechanical completion, input, cr
     watchdogClassifier: crashClassifier,
   });
   await crash.start();
+  const crashCursor = crash.inspect().sequence;
   await crash.submit("crash");
+  const crashFailure = await crash.awaitEvent(crashCursor, 1_000);
   assert.equal(crashClassifier.calls.length, 0);
+  assert.equal(crash.inspect().phase, "failed");
+  assert.equal(crashFailure.reason, "process_exit");
+  assert.deepEqual(crashFailure.payload, { exit_code: 17, signal: null });
 
   const clock = new FakeClock();
   const deadlineClassifier = new ClassifierSpy();

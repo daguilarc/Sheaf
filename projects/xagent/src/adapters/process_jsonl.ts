@@ -201,10 +201,18 @@ export class ProcessJsonlSession implements HarnessSession {
         throw harnessUnavailable(this.options.harness, exit.error);
       }
       if (exit.code !== 0) {
-        const message = activeTurn.stderrChunks.join("").trim() || `${this.options.harness} process exited ${exit.code ?? "without a code"}.`;
-        const error = new Error(message);
-        Object.assign(error, { code: exit.code === undefined ? "harness_failed" : "harness_process_failed" });
-        throw error;
+        const exitCode = exit.code ?? null;
+        const signal = exit.signal ?? null;
+        const message = activeTurn.stderrChunks.join("").trim()
+          || processExitMessage(this.options.harness, exitCode, signal);
+        yield {
+          type: "error",
+          code: "process_exit",
+          message,
+          details: { exit_code: exitCode, signal },
+          recoverable: false,
+        };
+        return;
       }
     } finally {
       try {
@@ -477,6 +485,20 @@ function interruptedError(): Error {
   const error = new Error("Harness process was interrupted.");
   Object.assign(error, { code: "harness_process_interrupted" });
   return error;
+}
+
+function processExitMessage(
+  harness: HarnessName,
+  exitCode: number | null,
+  signal: string | null,
+): string {
+  if (exitCode !== null) {
+    return `${harness} process exited with code ${exitCode}.`;
+  }
+  if (signal !== null) {
+    return `${harness} process exited from signal ${signal}.`;
+  }
+  return `${harness} process exited without a code.`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

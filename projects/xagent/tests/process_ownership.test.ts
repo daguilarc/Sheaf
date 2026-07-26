@@ -370,10 +370,18 @@ test("supervisor observes child exit while active ownership persistence is delay
   });
 
   await supervisor.start();
+  const cursor = supervisor.inspect().sequence;
   const turn = supervisor.submit("exit immediately");
   try {
-    await within(turn, 1_000, "provider exit was not observed");
+    const failure = await within(
+      supervisor.awaitEvent(cursor, 1_000),
+      1_000,
+      "provider exit was not observed",
+    );
+    await within(turn, 1_000, "provider turn did not settle after exit");
     assert.equal(supervisor.inspect().phase, "failed");
+    assert.equal(failure.reason, "process_exit");
+    assert.deepEqual(failure.payload, { exit_code: 2, signal: null });
     assert.equal(
       persisted.find((state) => state.phase === "failed")?.owned_process,
       undefined,

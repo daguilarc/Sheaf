@@ -179,6 +179,38 @@ test("process JSONL session preserves non-JSON stdout as raw provider and status
   assert.equal(events.some((event) => event.type === "message.completed" && event.text === "finished"), true);
 });
 
+test("process JSONL session reports unexpected child exit as structured process_exit", async () => {
+  const session = new ProcessJsonlSession({
+    harness: "codex",
+    cwd: process.cwd(),
+    buildCommand: () => ({
+      command: process.execPath,
+      args: ["-e", "process.exit(137)"],
+    }),
+    parseEvent: () => [],
+    captureProcessIdentity: (pid) => ({
+      pid,
+      process_group_id: pid,
+      started_at: "2026-07-25T12:00:00.000Z",
+      start_identity: "test-start-identity",
+    }),
+  });
+
+  const events: AdapterEvent[] = [];
+  for await (const event of session.submit(context)) {
+    events.push(event);
+  }
+
+  const exitEvent = events.find((event) => event.type === "error");
+  assert.equal(exitEvent?.type, "error");
+  assert.equal(exitEvent?.type === "error" ? exitEvent.code : undefined, "process_exit");
+  assert.deepEqual(
+    exitEvent?.type === "error" ? exitEvent.details : undefined,
+    { exit_code: 137, signal: null },
+  );
+  assert.equal(exitEvent?.type === "error" ? exitEvent.recoverable : undefined, false);
+});
+
 test("process command availability failures are reported as harness unavailable", async () => {
   await assert.rejects(
     () => assertCommandAvailable("definitely-not-a-real-xagent-command", "codex"),

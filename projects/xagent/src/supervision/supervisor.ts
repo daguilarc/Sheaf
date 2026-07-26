@@ -769,6 +769,14 @@ function mechanicalEventClassification(
       message: event.message,
     });
   }
+  if (event.code === "process_exit") {
+    const exitStatus = processExitFromDetails(event.details);
+    return monitor.recordMechanicalEvent({
+      type: "process.exited",
+      exitCode: exitStatus.exitCode,
+      signal: exitStatus.signal,
+    });
+  }
   return undefined;
 }
 
@@ -818,6 +826,24 @@ function permissionFromDetails(details: unknown): string | undefined {
     return details.permission;
   }
   return undefined;
+}
+
+function processExitFromDetails(details: unknown): {
+  readonly exitCode: number | null;
+  readonly signal: string | null;
+} {
+  if (typeof details !== "object" || details === null) {
+    return { exitCode: null, signal: null };
+  }
+  const exitCode = "exit_code" in details
+    && (typeof details.exit_code === "number" || details.exit_code === null)
+    ? details.exit_code
+    : null;
+  const signal = "signal" in details
+    && (typeof details.signal === "string" || details.signal === null)
+    ? details.signal
+    : null;
+  return { exitCode, signal };
 }
 
 function asError(error: unknown): Error {

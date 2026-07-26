@@ -175,8 +175,12 @@ async function* replayFixture(fixture: Fixture, clock: FakeClock): AsyncIterable
   if (fixture.process_exit) {
     yield {
       type: "error",
-      code: "transport_lost",
+      code: "process_exit",
       message: `child process exited with code ${fixture.process_exit.exit_code}`,
+      details: {
+        exit_code: fixture.process_exit.exit_code,
+        signal: fixture.process_exit.signal,
+      },
       recoverable: false,
     };
     return;
