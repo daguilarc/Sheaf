@@ -26,6 +26,8 @@ export declare function resolveXagentServiceBaseUrl(explicit?: string, env?: Nod
 export declare function createXagentServiceClient(options?: XagentServiceClientOptions): XagentServiceClient;
 export declare const x_McpAwaitTimeoutSlackSeconds = 30;
 export declare const x_McpAwaitHttpChunkSeconds = 240;
+export declare const x_McpAwaitReconnectAttempts = 3;
+export declare const x_McpAwaitReconnectBackoffMs = 250;
 export type McpToolRequestOptions = {
     readonly timeout?: number;
     readonly maxTotalTimeout?: number;

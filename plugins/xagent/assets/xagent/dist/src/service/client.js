@@ -109,12 +109,15 @@ export function createXagentServiceClient(options = {}) {
         }
     }
     async function awaitRun(input, signal) {
-        const applicationDeadlineSeconds = awaitDeadlineSeconds(input.deadline_seconds);
-        const applicationDeadlineMs = Date.now() + applicationDeadlineSeconds * 1000;
+        const applicationDeadlineSeconds = resolveApplicationDeadlineSeconds(input.deadline_seconds);
+        const startedAtMs = Date.now();
+        const applicationDeadlineMs = startedAtMs + applicationDeadlineSeconds * 1000;
         let lastDeadline;
+        let consecutiveTransportFailures = 0;
+        let completedChunk = false;
         for (;;) {
-            if (signal?.aborted === true) {
-                throw new XagentServiceUnavailableError(`xagent service unavailable at ${baseUrl}: aborted`, { cause: "aborted" });
+            if (signal?.aborted) {
+                throw abortedError();
             }
             const remainingSeconds = Math.max(0, Math.ceil((applicationDeadlineMs - Date.now()) / 1000));
             if (remainingSeconds <= 0) {
@@ -140,12 +143,25 @@ export function createXagentServiceClient(options = {}) {
                     after_sequence: input.after_sequence,
                     deadline_seconds: chunkSeconds,
                 }, signal);
+                consecutiveTransportFailures = 0;
+                completedChunk = true;
             }
             catch (error) {
+                if (signal?.aborted) {
+                    throw abortedError();
+                }
                 if (!(error instanceof XagentServiceUnavailableError) || closed) {
                     throw error;
                 }
+                // Fail fast when the service was never reached. Only retry after a
+                // successful chunk (stream drop mid-wait), and bound those retries.
+                //
+                if (!completedChunk || consecutiveTransportFailures >= x_McpAwaitReconnectAttempts) {
+                    throw error;
+                }
+                consecutiveTransportFailures += 1;
                 await resetConnection();
+                await delay(x_McpAwaitReconnectBackoffMs * consecutiveTransportFailures);
                 if (Date.now() >= applicationDeadlineMs) {
                     throw error;
                 }
@@ -154,7 +170,10 @@ export function createXagentServiceClient(options = {}) {
             if (result.event === "supervision.deadline"
                 && result.reason === "await_deadline"
                 && Date.now() < applicationDeadlineMs) {
-                lastDeadline = result;
+                lastDeadline = {
+                    ...result,
+                    elapsed_ms: Math.max(0, Date.now() - startedAtMs),
+                };
                 continue;
             }
             return result;
@@ -229,6 +248,8 @@ function toUnavailableError(error, baseUrl) {
 //
 export const x_McpAwaitTimeoutSlackSeconds = 30;
 export const x_McpAwaitHttpChunkSeconds = 240;
+export const x_McpAwaitReconnectAttempts = 3;
+export const x_McpAwaitReconnectBackoffMs = 250;
 export function mcpToolRequestOptions(toolName, args, signal) {
     if (toolName !== "xagent_await") {
         return signal === undefined ? {} : { signal };
@@ -250,10 +271,43 @@ function awaitDeadlineSeconds(value) {
     }
     return x_DefaultAwaitDeadlineSeconds;
 }
+function resolveApplicationDeadlineSeconds(value) {
+    if (value === undefined) {
+        return x_DefaultAwaitDeadlineSeconds;
+    }
+    if (typeof value !== "number"
+        || !Number.isFinite(value)
+        || !Number.isInteger(value)
+        || value <= 0) {
+        throw new XagentServiceToolError({
+            error: "invalid_deadline",
+            message: `deadline_seconds must be a positive integer <= ${x_MaxAwaitDeadlineSeconds}`,
+            details: { deadline_seconds: value },
+        });
+    }
+    if (value > x_MaxAwaitDeadlineSeconds) {
+        throw new XagentServiceToolError({
+            error: "invalid_deadline",
+            message: `deadline_seconds cannot exceed ${x_MaxAwaitDeadlineSeconds}`,
+            details: { deadline_seconds: value },
+        });
+    }
+    return value;
+}
 function positiveChunkSeconds(value) {
     if (!Number.isFinite(value) || value <= 0) {
         return x_McpAwaitHttpChunkSeconds;
     }
     return Math.min(x_MaxAwaitDeadlineSeconds, Math.floor(value));
+}
+function abortedError() {
+    const error = new Error("xagent await aborted");
+    error.name = "AbortError";
+    return error;
+}
+function delay(ms) {
+    return new Promise((resolve) => {
+        setTimeout(resolve, ms);
+    });
 }
 //# sourceMappingURL=client.js.map
