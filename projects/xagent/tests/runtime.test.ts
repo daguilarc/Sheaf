@@ -423,6 +423,27 @@ test("runtime emits warnings when selected adapter ignores requested model or th
   );
 });
 
+test("runtime forwards an explicit permission mode to the adapter", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-runtime-"));
+  const stdout = new MemoryWritable();
+  const adapter = new UnsupportedOptionsAdapter();
+
+  await runSession({
+    harness: "codex",
+    mode: "subagent",
+    permissionMode: "acceptEdits",
+    repoRoot,
+    cwd: repoRoot,
+    stdin: Readable.from([JSON.stringify({ type: "control.exit" }), "\n"]),
+    stdout,
+    adapter,
+    runId: "xrun_permission_mode",
+    clock: fixedClock(),
+  });
+
+  assert.equal(adapter.startOptions?.permissionMode, "acceptEdits");
+});
+
 class SideChannelRawAdapter implements HarnessAdapter {
   readonly harness = "codex";
   readonly capabilities = {

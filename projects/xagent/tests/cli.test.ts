@@ -33,6 +33,13 @@ test("parses a valid run command", () => {
   });
 });
 
+test("parses and forwards an explicit permission mode", async () => {
+  const parsed = parseArgs([
+    "run", "--harness", "claude_code", "--permission-mode", "acceptEdits", "--subagent",
+  ]);
+  assert.equal(parsed.command === "run" ? parsed.permissionMode : undefined, "acceptEdits");
+});
+
 test("parses a valid run command with an initial message", () => {
   assert.deepEqual(parseArgs(["run", "--harness", "codex", "--subagent", "hello", "there"]), {
     command: "run",

@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
 
-import type { AdapterEvent, HarnessAdapter } from "./adapters/types.js";
+import type { AdapterEvent, HarnessAdapter, HarnessStartOptions } from "./adapters/types.js";
 import {
   EventSequencer,
   type HarnessName,
@@ -253,12 +253,13 @@ async function startSession(
   _runRecord: RunRecord,
   _clock: () => Date,
 ) {
-  return options.adapter.start({
+  const startOptions: HarnessStartOptions = {
     cwd: options.cwd,
     model: options.adapter.capabilities.forwardsModel ? options.model : undefined,
     thinkingLevel: options.adapter.capabilities.forwardsThinkingLevel ? options.thinkingLevel : undefined,
-    permissionMode: options.permissionMode,
-  });
+    ...(options.permissionMode === undefined ? {} : { permissionMode: options.permissionMode }),
+  };
+  return options.adapter.start(startOptions);
 }
 
 function withRuntimeTurnContext(event: Omit<AdapterEvent, "rawProvider">, turnId: string): OutputEventBody {
