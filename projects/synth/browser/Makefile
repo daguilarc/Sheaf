@@ -41,7 +41,10 @@ browser-fixture-app: build | $(EM_CACHE)
 	$(EMSDK_ENV) EMXX="$(EMXX)" node dist/src/build-browser-apps.mjs --manifest tests/fixtures/fake-browser-apps.json --allowed-source-root tests/fixtures/cpp --output-root dist/wasm/fixture-apps
 
 browser-apps-run: browser-apps
-	node dist/src/static-server.mjs
+	# Run from src/, not dist/src/: the server roots its static mounts at
+	# <its own directory>/.., so the dist copy serves browser/dist and every
+	# request 404s. playwright.config.ts starts it the same way.
+	node src/static-server.mjs
 
 browser-apps-smoke: browser-fixture-app
 	$(MAKE) browser-apps
