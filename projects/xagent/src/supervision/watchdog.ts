@@ -1,4 +1,5 @@
 import type {
+  SupervisionScheduler,
   WatchdogClassifier,
   WatchdogPolicy,
   WatchdogRequest,
@@ -10,6 +11,7 @@ const DEFAULT_CADENCE_MS = [10 * 60_000, 20 * 60_000, 40 * 60_000] as const;
 const DEFAULT_MINIMUM_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_MAXIMUM_CALLS = 8;
 const DEFAULT_CONFIDENCE_FLOOR = 0.8;
+const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_INPUT_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 2 * 1024;
 const MAX_REASON_CODE_LENGTH = 128;
@@ -20,6 +22,7 @@ export type WatchdogSchedulerOptions = {
   readonly classifier: WatchdogClassifier;
   readonly policy?: WatchdogPolicy;
   readonly clock?: () => Date;
+  readonly scheduler?: SupervisionScheduler;
   readonly onVerdict?: (
     request: WatchdogRequest,
     verdict: WatchdogVerdict,
@@ -31,11 +34,13 @@ export type WatchdogSchedulerOptions = {
 export class WatchdogScheduler {
   readonly #classifier: WatchdogClassifier;
   readonly #clock: () => Date;
+  readonly #scheduler: SupervisionScheduler;
   readonly #cadenceMs: readonly number[];
   readonly #minimumIntervalMs: number;
   readonly #maximumCalls: number;
   readonly #confidenceFloor: number;
   readonly #outputLimitBytes: number;
+  readonly #timeoutMs: number;
   readonly #onVerdict: NonNullable<WatchdogSchedulerOptions["onVerdict"]>;
   #turnStartedAt = 0;
   #nextPeriodicAt = 0;
@@ -48,6 +53,7 @@ export class WatchdogScheduler {
   constructor(options: WatchdogSchedulerOptions) {
     this.#classifier = options.classifier;
     this.#clock = options.clock ?? (() => new Date());
+    this.#scheduler = options.scheduler ?? defaultScheduler;
     validateInvocationBounds(options.policy);
     this.#cadenceMs = validatedCadence(options.policy?.cadenceMs);
     this.#minimumIntervalMs = validatedPositiveInteger(
@@ -70,6 +76,7 @@ export class WatchdogScheduler {
       options.policy?.confidenceFloor ?? DEFAULT_CONFIDENCE_FLOOR,
     );
     this.#outputLimitBytes = options.policy?.outputLimitBytes ?? MAX_OUTPUT_BYTES;
+    this.#timeoutMs = options.policy?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.#onVerdict = options.onVerdict ?? (() => {});
     this.resetTurn();
   }
@@ -87,6 +94,13 @@ export class WatchdogScheduler {
     this.#turnStartedAt = this.#clock().getTime();
     this.#cadenceIndex = 0;
     this.#nextPeriodicAt = this.#turnStartedAt + this.#cadenceMs[0]!;
+  }
+
+  async settle(): Promise<void> {
+    const pending = this.#inFlight;
+    if (pending !== undefined) {
+      await pending;
+    }
   }
 
   onActiveEvidence(request: WatchdogRequest): Promise<void> {
@@ -114,7 +128,7 @@ export class WatchdogScheduler {
     const pending = (async () => {
       let verdict: WatchdogVerdict;
       try {
-        const raw = await this.#classifier.classify(request, controller.signal);
+        const raw = await this.#classifyWithinDeadline(request, controller);
         verdict = withClassifierTelemetry(
           normalizeWatchdogVerdict(raw, this.#confidenceFloor),
           raw,
@@ -137,7 +151,51 @@ export class WatchdogScheduler {
     });
     return this.#inFlight;
   }
+
+  #classifyWithinDeadline(
+    request: WatchdogRequest,
+    controller: AbortController,
+  ): Promise<WatchdogVerdict> {
+    return new Promise<WatchdogVerdict>((resolve, reject) => {
+      let settled = false;
+      const timer = this.#scheduler.setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        controller.abort();
+        resolve(uncertain("classifier_timeout"));
+      }, this.#timeoutMs);
+      void this.#classifier.classify(request, controller.signal).then(
+        (verdict) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          this.#scheduler.clearTimeout(timer);
+          resolve(verdict);
+        },
+        (error: unknown) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          this.#scheduler.clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
+  }
 }
+
+const defaultScheduler: SupervisionScheduler = {
+  setTimeout(callback, delayMs) {
+    return globalThis.setTimeout(callback, delayMs);
+  },
+  clearTimeout(handle) {
+    globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>);
+  },
+};
 
 export function normalizeWatchdogVerdict(
   value: unknown,

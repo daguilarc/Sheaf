@@ -159,6 +159,7 @@ export class Supervisor {
       classifier,
       policy: this.#policy.watchdog,
       clock: this.#clock,
+      ...(options.scheduler === undefined ? {} : { scheduler: options.scheduler }),
       onVerdict: (request, verdict, callCount, currentTurn) =>
         this.#recordWatchdogVerdict(request, verdict, callCount, currentTurn),
     });
@@ -244,117 +245,121 @@ export class Supervisor {
       return { inputSequence, turnId, session: this.#session };
     });
 
-    let lastAssistantText: string | undefined;
-    let completed: Extract<AdapterEvent, { type: "turn.completed" }> | undefined;
     try {
-      for await (const event of turn.session.submit({
-        text,
-        turnId: turn.turnId,
-        inputSequence: turn.inputSequence,
-      })) {
-        if (terminalPhases.has(this.#phase)) {
-          return;
-        }
-        this.#recordProgress(event);
-        const mechanical = mechanicalEventClassification(this.#health, event);
-        if (mechanical?.kind === "attention") {
-          await this.#applyHealthClassification(mechanical);
-        }
-        if (mechanical?.kind === "failure" && event.type !== "turn.failed") {
-          await this.#withLifecycleMutation(async () => {
-            if (terminalPhases.has(this.#phase)) {
-              return;
-            }
-            await this.#publishState(
-              "failed",
-              mechanical.reason,
-              true,
-              sanitizeValue(mechanical.payload, this.#startOptions.cwd),
-            );
-          });
-          return;
-        }
-        if (event.type === "message.completed" && event.role === "assistant") {
-          lastAssistantText = event.text;
-        }
-        if (event.type === "turn.failed") {
-          await this.#withLifecycleMutation(async () => {
-            if (terminalPhases.has(this.#phase)) {
-              return;
-            }
-            await this.#publishState("failed", event.code, true, {
-              message: event.message,
-              turn_id: turn.turnId,
+      let lastAssistantText: string | undefined;
+      let completed: Extract<AdapterEvent, { type: "turn.completed" }> | undefined;
+      try {
+        for await (const event of turn.session.submit({
+          text,
+          turnId: turn.turnId,
+          inputSequence: turn.inputSequence,
+        })) {
+          if (terminalPhases.has(this.#phase)) {
+            return;
+          }
+          this.#recordProgress(event);
+          const mechanical = mechanicalEventClassification(this.#health, event);
+          if (mechanical?.kind === "attention") {
+            await this.#applyHealthClassification(mechanical);
+          }
+          if (mechanical?.kind === "failure" && event.type !== "turn.failed") {
+            await this.#withLifecycleMutation(async () => {
+              if (terminalPhases.has(this.#phase)) {
+                return;
+              }
+              await this.#publishState(
+                "failed",
+                mechanical.reason,
+                true,
+                sanitizeValue(mechanical.payload, this.#startOptions.cwd),
+              );
             });
+            return;
+          }
+          if (event.type === "message.completed" && event.role === "assistant") {
+            lastAssistantText = event.text;
+          }
+          if (event.type === "turn.failed") {
+            await this.#withLifecycleMutation(async () => {
+              if (terminalPhases.has(this.#phase)) {
+                return;
+              }
+              await this.#publishState("failed", event.code, true, {
+                message: event.message,
+                turn_id: turn.turnId,
+              });
+            });
+            return;
+          }
+          if (event.type === "turn.completed") {
+            completed = event;
+          }
+        }
+      } catch (error) {
+        if (terminalPhases.has(this.#phase)) {
+          return;
+        }
+        const transportFailure = this.#health.recordMechanicalEvent({
+          type: "transport.lost",
+          message: error instanceof Error ? error.message : String(error),
+        });
+        await this.#withLifecycleMutation(async () => {
+          if (terminalPhases.has(this.#phase)) {
+            return;
+          }
+          await this.#publishState(
+            "failed",
+            transportFailure?.reason ?? errorCode(error),
+            true,
+            sanitizeValue({
+              message: error instanceof Error ? error.message : String(error),
+              turn_id: turn.turnId,
+            }, this.#startOptions.cwd),
+          );
+        });
+        return;
+      }
+
+      if (terminalPhases.has(this.#phase)) {
+        return;
+      }
+      const reportText = completed?.final_text || lastAssistantText;
+      if (completed === undefined || reportText === undefined) {
+        await this.#withLifecycleMutation(async () => {
+          if (terminalPhases.has(this.#phase)) {
+            return;
+          }
+          this.#health.recordMechanicalEvent({
+            type: "provider.failed",
+            code: "missing_final_report",
+            message: "Provider turn ended without a final report.",
           });
-          return;
-        }
-        if (event.type === "turn.completed") {
-          completed = event;
-        }
-      }
-    } catch (error) {
-      if (terminalPhases.has(this.#phase)) {
-        return;
-      }
-      const transportFailure = this.#health.recordMechanicalEvent({
-        type: "transport.lost",
-        message: error instanceof Error ? error.message : String(error),
-      });
-      await this.#withLifecycleMutation(async () => {
-        if (terminalPhases.has(this.#phase)) {
-          return;
-        }
-        await this.#publishState(
-          "failed",
-          transportFailure?.reason ?? errorCode(error),
-          true,
-          sanitizeValue({
-            message: error instanceof Error ? error.message : String(error),
+          await this.#publishState("failed", "missing_final_report", true, {
             turn_id: turn.turnId,
-          }, this.#startOptions.cwd),
-        );
-      });
-      return;
-    }
+          });
+        });
+        return;
+      }
 
-    if (terminalPhases.has(this.#phase)) {
-      return;
-    }
-    const reportText = completed?.final_text || lastAssistantText;
-    if (completed === undefined || reportText === undefined) {
       await this.#withLifecycleMutation(async () => {
         if (terminalPhases.has(this.#phase)) {
           return;
         }
-        this.#health.recordMechanicalEvent({
-          type: "provider.failed",
-          code: "missing_final_report",
-          message: "Provider turn ended without a final report.",
-        });
-        await this.#publishState("failed", "missing_final_report", true, {
-          turn_id: turn.turnId,
-        });
+        await this.#publishEvent({
+          type: "turn.completed",
+          phase: "ready",
+          reason: "turn_completed",
+          payload: {
+            report: { text: reportText },
+            turn_id: turn.turnId,
+            provider_thread_id: completed.provider_thread_id ?? turn.session.providerThreadId,
+            ...(completed.usage === undefined ? {} : { usage: completed.usage }),
+          },
+        }, true);
       });
-      return;
+    } finally {
+      await this.#watchdogScheduler.settle();
     }
-
-    await this.#withLifecycleMutation(async () => {
-      if (terminalPhases.has(this.#phase)) {
-        return;
-      }
-      await this.#publishEvent({
-        type: "turn.completed",
-        phase: "ready",
-        reason: "turn_completed",
-        payload: {
-          report: { text: reportText },
-          turn_id: turn.turnId,
-          provider_thread_id: completed.provider_thread_id ?? turn.session.providerThreadId,
-          ...(completed.usage === undefined ? {} : { usage: completed.usage }),
-        },
-      }, true);
-    });
   }
 
   async awaitEvent(
@@ -405,7 +410,7 @@ export class Supervisor {
 
   close(): Promise<void> {
     if (this.#closePromise === undefined) {
-      this.#closePromise = this.#withLifecycleMutation(async () => {
+      const closeSession = this.#withLifecycleMutation(async () => {
         await this.#initialPersistence;
         if (terminalPhases.has(this.#phase)) {
           return;
@@ -414,6 +419,7 @@ export class Supervisor {
         await this.#closeSessionOnce();
         await this.#publishState("completed", "session_closed", true);
       });
+      this.#closePromise = closeSession.then(() => this.#watchdogScheduler.settle());
     }
     return this.#closePromise;
   }
@@ -541,7 +547,7 @@ export class Supervisor {
       };
 
       if (
-        this.#phase !== "running"
+        terminalPhases.has(this.#phase)
         || !currentTurn
         || verdict.verdict === "healthy"
       ) {

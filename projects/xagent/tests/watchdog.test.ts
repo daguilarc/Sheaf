@@ -142,6 +142,48 @@ test("scheduler caps oversized output telemetry at the bounded overflow marker",
   assert.equal(observed?.output_bytes, 2 * 1024 + 1);
 });
 
+test("scheduler settle bounds a hung classifier and persists an uncertain verdict", async () => {
+  const clock = new FakeClock();
+  const classifierStarted = deferred<void>();
+  let classifierSignal: AbortSignal | undefined;
+  let observed: WatchdogVerdict | undefined;
+  const classifier: WatchdogClassifier = {
+    async classify(_request, signal) {
+      classifierSignal = signal;
+      classifierStarted.resolve(undefined);
+      return new Promise<WatchdogVerdict>(() => {});
+    },
+  };
+  const scheduler = new WatchdogScheduler({
+    classifier,
+    clock: clock.now,
+    scheduler: clock,
+    policy: { timeoutMs: 25 },
+    onVerdict: (_request, verdict) => {
+      observed = verdict;
+    },
+  });
+
+  clock.advance(10 * 60_000);
+  void scheduler.onActiveEvidence(request());
+  await classifierStarted.promise;
+  const settling = scheduler.settle();
+
+  clock.advance(24);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(observed, undefined);
+  clock.advance(1);
+  await settling;
+
+  assert.equal(classifierSignal?.aborted, true);
+  assert.deepEqual(observed, {
+    verdict: "uncertain",
+    confidence: 0,
+    reason_code: "classifier_timeout",
+    evidence: [],
+  });
+});
+
 test("default active cadence is 10, 20, then repeated 40 minute intervals", async () => {
   const clock = new FakeClock();
   const classifier = new ClassifierSpy();
@@ -523,10 +565,10 @@ test("a classifier verdict completed after close still persists aggregate cost a
   await supervisor.start();
   const submission = supervisor.submit("implement");
   await classifierStarted.promise;
-  await supervisor.close();
 
+  const closing = supervisor.close();
   releaseClassifier.resolve(undefined);
-  await waitForCondition(() => telemetry.length === 1);
+  await closing;
   releaseTurn.resolve(undefined);
   await submission;
 
@@ -536,6 +578,149 @@ test("a classifier verdict completed after close still persists aggregate cost a
   assert.equal(metadata.at(-1)?.watchdog.invocation_count, 1);
   assert.equal(metadata.at(-1)?.watchdog.coverage_exhausted, true);
   assert.equal(metadata.at(-1)?.watchdog.estimated_cost_usd, 0.002);
+});
+
+test("a current-turn advisory verdict landing at ready still wakes the controller", async () => {
+  const clock = new FakeClock();
+  const classifierStarted = deferred<void>();
+  const releaseClassifier = deferred<void>();
+  const turnCompleted = deferred<void>();
+  const telemetry: WatchdogTelemetry[] = [];
+  const reasons: string[] = [];
+  const classifier: WatchdogClassifier = {
+    async classify() {
+      classifierStarted.resolve(undefined);
+      await releaseClassifier.promise;
+      return {
+        verdict: "derailed",
+        confidence: 0.91,
+        reason_code: "late_turn_loop",
+        evidence: ["The completed turn repeated the same failed approach."],
+      };
+    },
+  };
+  const supervisor = new Supervisor({
+    runId: "xrun_watchdog_ready_attention",
+    adapter: new FakeHarnessAdapter({
+      scriptedEvents: [semanticCheckpointTurn(clock)],
+    }),
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    clock: clock.now,
+    scheduler: clock,
+    watchdogClassifier: classifier,
+    watchdogTelemetrySink: async (entry) => {
+      telemetry.push(entry);
+    },
+    eventSink: async (event) => {
+      reasons.push(event.reason);
+      if (event.reason === "turn_completed") {
+        turnCompleted.resolve(undefined);
+      }
+    },
+  });
+  await supervisor.start();
+  let submissionResolved = false;
+  const submission = supervisor.submit("implement").then(() => {
+    submissionResolved = true;
+  });
+  await classifierStarted.promise;
+  await turnCompleted.promise;
+  await waitForCondition(() => supervisor.inspect().phase === "ready");
+  assert.equal(supervisor.inspect().phase, "ready");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(submissionResolved, false);
+
+  releaseClassifier.resolve(undefined);
+  await waitForCondition(() => telemetry.length === 1);
+  await submission;
+
+  assert.equal(reasons.includes("watchdog_derailed"), true);
+  assert.equal(telemetry[0]?.attention_sequence, 5);
+  assert.equal(supervisor.inspect().phase, "ready");
+});
+
+test("close settles the eighth classifier before coverage persistence can be lost", async () => {
+  const clock = new FakeClock();
+  const eighthClassifierStarted = deferred<void>();
+  const releaseEighthClassifier = deferred<void>();
+  const releaseTurn = deferred<void>();
+  const telemetry: WatchdogTelemetry[] = [];
+  const metadata: Array<{
+    watchdog: {
+      invocation_count: number;
+      coverage_exhausted?: boolean;
+      estimated_cost_usd?: number;
+    };
+  }> = [];
+  let classifierCalls = 0;
+  const classifier: WatchdogClassifier = {
+    async classify() {
+      classifierCalls += 1;
+      if (classifierCalls === 8) {
+        eighthClassifierStarted.resolve(undefined);
+        await releaseEighthClassifier.promise;
+      }
+      return {
+        verdict: "healthy",
+        confidence: 0.94,
+        reason_code: "steady_progress",
+        evidence: [],
+        estimated_cost_usd: 0.001,
+      };
+    },
+  };
+  async function* eightCheckpoints() {
+    for (let call = 1; call <= 8; call += 1) {
+      clock.advance(40 * 60_000);
+      yield {
+        type: "message.delta" as const,
+        message_id: `message_checkpoint_${call}`,
+        role: "assistant" as const,
+        delta: `semantic checkpoint ${call}`,
+      };
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    await releaseTurn.promise;
+    yield { type: "turn.completed" as const, final_text: "late completion" };
+  }
+  const supervisor = new Supervisor({
+    runId: "xrun_watchdog_close_eighth_call",
+    adapter: new FakeHarnessAdapter({ scriptedEvents: [eightCheckpoints()] }),
+    startOptions: { cwd: process.cwd() },
+    policy: {
+      silenceTimeoutMs: 300_000,
+      watchdog: { maximumCalls: 8 },
+    },
+    clock: clock.now,
+    scheduler: clock,
+    watchdogClassifier: classifier,
+    watchdogTelemetrySink: async (entry) => {
+      telemetry.push(entry);
+    },
+    metadataSink: async (state) => {
+      metadata.push(state);
+    },
+  });
+  await supervisor.start();
+  const submission = supervisor.submit("implement");
+  await eighthClassifierStarted.promise;
+  assert.equal(telemetry.length, 7);
+
+  const closing = supervisor.close();
+  setImmediate(() => {
+    releaseEighthClassifier.resolve(undefined);
+  });
+  await closing;
+
+  assert.equal(telemetry.length, 8);
+  assert.equal(telemetry.at(-1)?.call_count, 8);
+  assert.equal(metadata.at(-1)?.watchdog.invocation_count, 8);
+  assert.equal(metadata.at(-1)?.watchdog.coverage_exhausted, true);
+  assert.equal(metadata.at(-1)?.watchdog.estimated_cost_usd, 0.008);
+
+  releaseTurn.resolve(undefined);
+  await submission;
 });
 
 test("an in-flight classifier does not delay deterministic transport failure", async () => {
@@ -656,8 +841,9 @@ test("a prior-turn verdict cannot publish attention into a later running turn", 
     },
   });
   await supervisor.start();
-  await supervisor.submit("first");
+  const firstSubmission = supervisor.submit("first");
   await classifierStarted.promise;
+  await waitForCondition(() => supervisor.inspect().phase === "ready");
   const secondSubmission = supervisor.submit("second");
   await waitForCondition(() => supervisor.inspect().phase === "running");
 
@@ -667,6 +853,7 @@ test("a prior-turn verdict cannot publish attention into a later running turn", 
   assert.equal(reasons.includes("watchdog_derailed"), false);
   assert.equal(supervisor.inspect().phase, "running");
 
+  await firstSubmission;
   releaseSecondTurn.resolve(undefined);
   await secondSubmission;
 });
@@ -862,6 +1049,7 @@ test("later checks receive the prior watchdog verdict in the bounded evidence en
           role: "assistant" as const,
           delta: "first checkpoint",
         };
+        await new Promise<void>((resolve) => setImmediate(resolve));
       }
     }
     clock.advance(4 * 60_000);
