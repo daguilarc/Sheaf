@@ -22,10 +22,10 @@
 
 ## 4. Conductor-Managed Xagent Service
 
-- [ ] 4.1 Add failing service tests for registry-derived loopback bind, `GET /health`, idempotent `POST /exit`, unknown routes, and graceful listener shutdown.
-- [ ] 4.2 Add `xagent` at `127.0.0.1:9005` to `config/services.json` plus tracked root/project `xagent-service-run` Make targets, and implement the HTTP service entry point.
-- [ ] 4.3 Move supervised-run ownership into the long-lived service so MCP/HTTP request cancellation and controller disconnect leave the provider, timers, event queue, and logs active.
-- [ ] 4.4 Add service lifecycle tests proving Conductor-style start, health, log capture, stop, and restart behavior, including orderly closure of owned provider process groups.
+- [x] 4.1 Add failing service tests for registry-derived loopback bind, `GET /health`, idempotent `POST /exit`, unknown routes, and graceful listener shutdown.
+- [x] 4.2 Add `xagent` at `127.0.0.1:9005` to `config/services.json` plus tracked root/project `xagent-service-run` Make targets, and implement the HTTP service entry point.
+- [x] 4.3 Move supervised-run ownership into the long-lived service so MCP/HTTP request cancellation and controller disconnect leave the provider, timers, event queue, and logs active.
+- [x] 4.4 Add service lifecycle tests proving Conductor-style start, health, log capture, stop, and restart behavior, including orderly closure of owned provider process groups.
 - [x] 4.5 Persist PID plus process-start identity and test startup reconciliation that marks stale runs `abandoned`, cleans up only proven owned processes, and never signals a PID with mismatched identity.
 
 ## 5. Streamable HTTP MCP and Final Report Delivery
