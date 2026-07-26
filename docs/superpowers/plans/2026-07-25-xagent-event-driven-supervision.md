@@ -39,7 +39,7 @@ Tasks 1–5 completed under Codex on `codex/add-event-driven-xagent-supervision`
 - **Bucket B (less complex):** `composer-2.5-fast` implementer, `cursor-grok-4.5-high` reviewer.
 - Transport: native Cursor subagents only (no xagent, no kimi).
 
-**Progress:** Task 6 (Conductor-managed HTTP service / OpenSpec 4.1–4.4) is complete at `86fa3825`. Resume SDD at Task 7.
+**Progress:** Task 6 (Conductor-managed HTTP service / OpenSpec 4.1–4.4) is complete after a recovered native review gate: impl `a04f58ef`, Important fixes `df818b39`, reviewer `cursor-grok-4.5-high` approved. Resume SDD at Task 7.
 
 Sibling assignments: `docs/superpowers/plans/2026-07-25-xagent-event-driven-supervision.assignments.yaml`.
 
