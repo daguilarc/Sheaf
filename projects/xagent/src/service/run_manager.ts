@@ -388,6 +388,11 @@ export class XagentRunManager {
     if (wake !== undefined) {
       return shapeAwaitEnvelope(wake, elapsedMs);
     }
+    // The run is terminal and no durable wake exists after the cursor. The
+    // requested deadline was never reached; surface a distinguishable reason so
+    // the quiet client stops promptly instead of looping on a synthetic
+    // await_deadline that returned in ~0 ms.
+    //
     return shapeAwaitEnvelope({
       schema_version: 1,
       type: "supervision.deadline",
@@ -395,7 +400,7 @@ export class XagentRunManager {
       sequence: record.supervision.sequence,
       timestamp: this.#clock().toISOString(),
       phase: record.supervision.phase,
-      reason: "await_deadline",
+      reason: "run_terminal",
     }, elapsedMs);
   }
 

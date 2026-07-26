@@ -31,7 +31,13 @@ export type AwaitDeadline = {
   sequence: number;
   timestamp: string;
   phase: SupervisionPhase;
-  reason: "await_deadline";
+  // `await_deadline` is the normal chunk-expired outcome: the server held the
+  // connection for the requested chunk and no wake arrived. `run_terminal` is
+  // returned by the persisted path when the run is already in a terminal phase
+  // and no wake exists after the cursor — the deadline was never reached, so
+  // the caller must treat it as a terminal stop rather than a reason to loop.
+  //
+  reason: "await_deadline" | "run_terminal";
 };
 
 export type AwaitResult = SupervisionEvent | AwaitDeadline;

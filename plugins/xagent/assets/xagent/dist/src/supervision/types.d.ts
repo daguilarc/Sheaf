@@ -18,7 +18,7 @@ export type AwaitDeadline = {
     sequence: number;
     timestamp: string;
     phase: SupervisionPhase;
-    reason: "await_deadline";
+    reason: "await_deadline" | "run_terminal";
 };
 export type AwaitResult = SupervisionEvent | AwaitDeadline;
 export type WatchdogPolicy = {

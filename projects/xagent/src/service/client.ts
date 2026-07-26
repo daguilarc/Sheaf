@@ -224,6 +224,7 @@ export function createXagentServiceClient(
       // chunk; the client continues until the application deadline.
       //
       const chunkSeconds = Math.min(remainingSeconds, awaitHttpChunkSeconds);
+      const chunkStartMs = Date.now();
       let result: AwaitRunResult;
       try {
         result = await callToolOnce<AwaitRunResult>("xagent_await", {
@@ -256,6 +257,22 @@ export function createXagentServiceClient(
         continue;
       }
 
+      // A terminal persisted run with no wake after the cursor returns
+      // `run_terminal` to signal the deadline was never reached. Return it
+      // promptly — looping would busy-spin the MCP transport until the
+      // application deadline (review I1).
+      //
+      if (
+        result.event === "supervision.deadline"
+        && result.reason === "run_terminal"
+      ) {
+        lastAwaitChunksIssued = chunksIssued;
+        return {
+          ...result,
+          elapsed_ms: Math.max(0, Date.now() - startedAtMs),
+        };
+      }
+
       if (
         result.event === "supervision.deadline"
         && result.reason === "await_deadline"
@@ -265,6 +282,21 @@ export function createXagentServiceClient(
           ...result,
           elapsed_ms: Math.max(0, Date.now() - startedAtMs),
         };
+        // The loop assumes each chunk consumed wall-clock server-side. That
+        // holds for a live run, but a synthetic await_deadline (or any future
+        // path that returns faster than requested) would otherwise busy-loop.
+        // Floor the interval between chunks at the requested chunk duration
+        // so the MCP transport is not hammered faster than the chunk budget
+        // (review I1).
+        //
+        const chunkElapsedMs = Math.max(0, Date.now() - chunkStartMs);
+        const targetChunkMs = chunkSeconds * 1000;
+        const sleepMs = Math.max(0, targetChunkMs - chunkElapsedMs);
+        const remainingApplicationMs = Math.max(0, applicationDeadlineMs - Date.now());
+        const cappedSleepMs = Math.min(sleepMs, remainingApplicationMs);
+        if (cappedSleepMs > 0) {
+          await delay(cappedSleepMs);
+        }
         continue;
       }
       lastAwaitChunksIssued = chunksIssued;

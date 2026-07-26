@@ -11,6 +11,11 @@ import { FakeHarnessAdapter } from "../src/adapters/fake.js";
 import type { AdapterEvent } from "../src/adapters/types.js";
 import { main } from "../src/cli.js";
 import {
+  appendNormalizedEvent,
+  createRunRecord,
+  updateRunSupervision,
+} from "../src/logs.js";
+import {
   createXagentServiceClient,
   mcpToolRequestOptions,
   x_McpAwaitTimeoutSlackSeconds,
@@ -775,6 +780,178 @@ test("createXagentServiceClient maps connection failure to xagent_service_unavai
     },
   );
   await client.close().catch(() => {});
+});
+
+// Review I1: awaiting a terminal persisted run past its last event must not
+// busy-loop the MCP transport. The server returns a distinguishable
+// `run_terminal` reason (the deadline was never reached) and the quiet client
+// returns it promptly instead of looping until the application deadline.
+//
+test("quiet await returns promptly with run_terminal for a terminal persisted run past its last event", async () => {
+  const sheafRoot = await mkdtemp(path.join(tmpdir(), "xagent-terminal-persist-"));
+  const logRoot = path.join(sheafRoot, "data", "xagent");
+
+  const terminalRunId = "xrun_terminal_persisted";
+  const record = await createRunRecord({
+    repoRoot: sheafRoot,
+    logRoot,
+    runId: terminalRunId,
+    harness: "codex",
+    mode: "subagent",
+    clock: () => new Date("2026-07-25T12:00:00.000Z"),
+  });
+  await appendNormalizedEvent(record, {
+    schema_version: 1,
+    type: "supervision.state",
+    run_id: terminalRunId,
+    sequence: 4,
+    timestamp: "2026-07-25T12:02:00.000Z",
+    phase: "completed",
+    reason: "turn_completed",
+  });
+  await appendNormalizedEvent(record, {
+    schema_version: 1,
+    type: "turn.completed",
+    run_id: terminalRunId,
+    sequence: 5,
+    timestamp: "2026-07-25T12:02:01.000Z",
+    phase: "completed",
+    reason: "turn_completed",
+  });
+  await updateRunSupervision(record, {
+    phase: "completed",
+    sequence: 5,
+    last_transport_progress_at: "2026-07-25T12:02:01.000Z",
+    last_semantic_progress_at: "2026-07-25T12:02:01.000Z",
+    watchdog: {
+      invocation_count: 0,
+      controller_wake_count: 0,
+      deterministic_alert_count: 0,
+      evidence_truncation_count: 0,
+    },
+  });
+
+  const runManager = new XagentRunManager({
+    repoRoot: sheafRoot,
+    logRoot,
+    adapterFactory: () => new FakeHarnessAdapter(),
+    policy: testPolicy,
+  });
+  let server: XagentServer | undefined;
+  const shutdownController = createShutdownController({
+    closeRuns: async () => {
+      await runManager.closeAll();
+    },
+    closeServer: async () => {
+      await server?.close();
+    },
+  });
+  server = createXagentServer({
+    bindHost: "127.0.0.1",
+    bindPort: 0,
+    runManager,
+    shutdownController,
+  });
+  const port = await server.listen();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  try {
+    const client = createXagentServiceClient({ baseUrl, awaitHttpChunkSeconds: 1 });
+    try {
+      const start = Date.now();
+      const result = await client.await({
+        run_id: terminalRunId,
+        after_sequence: 5,
+        deadline_seconds: 10,
+      });
+      const elapsedMs = Date.now() - start;
+      assert.equal(result.event, "supervision.deadline");
+      assert.equal(result.reason, "run_terminal");
+      assert.equal(result.phase, "completed");
+      assert.equal(result.run_id, terminalRunId);
+      // A busy loop against the 10s application deadline with 1s chunks would
+      // issue ~10 chunks and take ~10s; the fix returns after one chunk in
+      // well under 2s.
+      //
+      assert.equal(client.awaitChunksIssued, 1);
+      assert.ok(
+        elapsedMs < 2_000,
+        `expected prompt return, got ${elapsedMs}ms`,
+      );
+    } finally {
+      await client.close();
+    }
+  } finally {
+    if (!shutdownController.wasShutdownRequested()) {
+      await server.close();
+    }
+    await runManager.closeAll();
+  }
+});
+
+test("quiet await run_terminal floor keeps the chunk loop from busy-spinning on a fast synthetic deadline", async () => {
+  // Drive the run manager directly with a persisted completed run and assert
+  // the server-side await returns `run_terminal` in ~0 ms (no synthetic
+  // await_deadline). This complements the transport test by pinning the
+  // run-manager contract the quiet client depends on.
+  //
+  const sheafRoot = await mkdtemp(path.join(tmpdir(), "xagent-terminal-floor-"));
+  const logRoot = path.join(sheafRoot, "data", "xagent");
+
+  const terminalRunId = "xrun_terminal_floor";
+  const record = await createRunRecord({
+    repoRoot: sheafRoot,
+    logRoot,
+    runId: terminalRunId,
+    harness: "codex",
+    mode: "subagent",
+    clock: () => new Date("2026-07-25T12:00:00.000Z"),
+  });
+  await appendNormalizedEvent(record, {
+    schema_version: 1,
+    type: "supervision.state",
+    run_id: terminalRunId,
+    sequence: 3,
+    timestamp: "2026-07-25T12:01:00.000Z",
+    phase: "completed",
+    reason: "turn_completed",
+  });
+  await updateRunSupervision(record, {
+    phase: "completed",
+    sequence: 3,
+    last_transport_progress_at: "2026-07-25T12:01:00.000Z",
+    last_semantic_progress_at: "2026-07-25T12:01:00.000Z",
+    watchdog: {
+      invocation_count: 0,
+      controller_wake_count: 0,
+      deterministic_alert_count: 0,
+      evidence_truncation_count: 0,
+    },
+  });
+
+  const runManager = new XagentRunManager({
+    repoRoot: sheafRoot,
+    logRoot,
+    adapterFactory: () => new FakeHarnessAdapter(),
+    policy: testPolicy,
+  });
+  try {
+    const start = Date.now();
+    const result = await runManager.awaitRun({
+      run_id: terminalRunId,
+      after_sequence: 3,
+      deadline_seconds: 5,
+    });
+    const elapsedMs = Date.now() - start;
+    assert.equal(result.event, "supervision.deadline");
+    assert.equal(result.reason, "run_terminal");
+    assert.equal(result.phase, "completed");
+    assert.ok(
+      elapsedMs < 1_000,
+      `expected ~0 ms synthetic return, got ${elapsedMs}ms`,
+    );
+  } finally {
+    await runManager.closeAll();
+  }
 });
 
 class MemoryWritable extends Writable {
