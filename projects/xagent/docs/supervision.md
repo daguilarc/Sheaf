@@ -112,15 +112,14 @@ The watchdog argv has never been executed against the real `claude` binary by de
 
 To close that gap without flaking default CI, an **optional** live smoke is provided:
 
-- `tests/claude_watchdog_live.test.ts` invokes the real `claude` binary through `spawnWatchdogProcess` only when `XAGENT_RUN_LIVE_WATCHDOG_SMOKE=1` is set **and** `claude` is on `PATH`. Otherwise it skips with a clear message.
+- `tests/claude_watchdog_live.test.ts` invokes the real `claude` binary through `ClaudeWatchdogClassifier.classify()` (the production spawn + envelope-extraction + normalization path, using the production `DEFAULT_STDOUT_LIMIT_BYTES` stdout cap) only when `XAGENT_RUN_LIVE_WATCHDOG_SMOKE=1` is set **and** `claude` is on `PATH`. Otherwise it skips with a clear message.
 - It is **not** run by `npm test`. Run it explicitly:
 
 ```bash
 XAGENT_RUN_LIVE_WATCHDOG_SMOKE=1 node --test dist/tests/claude_watchdog_live.test.js
 ```
 
-- It does not assert classifier accuracy (Haiku may legitimately return `uncertain` for the tiny synthetic input). It asserts the spawn path survives: exit code 0, parseable structured output, and that a non-zero exit or non-JSON output is normalized to `uncertain` rather than crashing the service. This is the same shape C1 and I1 would have been caught by.
-- Network/API failure is tolerated: a `classifier_invocation_failed` or `classifier_budget_exceeded` verdict is a pass for this smoke, since the goal is to prove the spawn/parse plumbing, not Haiku's correctness.
+- It does not assert classifier accuracy (Haiku may legitimately return `uncertain` for the tiny synthetic input). It asserts the production `classify()` path returns a real verdict shape — `verdict` is one of `healthy`/`derailed`/`uncertain`, `reason_code` is non-empty, `evidence` is an array, and the normalized verdict fits within the 2 KiB verdict byte bound — so envelope extraction, usage/cost extraction, and the `--tools ""` (Commander variadic → `[""]`) semantics are exercised against the installed binary. A network/API/budget/timeout failure is tolerated: the classifier's `*_failed`/`*_timeout`/`*_exceeded`/`invalid_classifier_output` uncertain verdicts are a pass, since the goal is to prove the spawn/parse/classify plumbing rather than Haiku's correctness.
 
 ## Wake comparison
 

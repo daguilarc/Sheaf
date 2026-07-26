@@ -1,4 +1,5 @@
 import type { WatchdogClassifier, WatchdogRequest, WatchdogVerdict } from "./types.js";
+export declare const DEFAULT_STDOUT_LIMIT_BYTES: number;
 export declare const WATCHDOG_SCHEMA_JSON: string;
 export type WatchdogSpawnRequest = {
     readonly command: string;

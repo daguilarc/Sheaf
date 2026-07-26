@@ -23,7 +23,7 @@ const DEFAULT_OUTPUT_LIMIT_BYTES = 2 * 1024;
 // structured output below; this stdout cap only guards against a
 // runaway process filling the pipe.
 //
-const DEFAULT_STDOUT_LIMIT_BYTES = 16 * 1024;
+export const DEFAULT_STDOUT_LIMIT_BYTES = 16 * 1024;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const HAIKU_INPUT_USD_PER_MILLION_TOKENS = 1;
 const HAIKU_OUTPUT_USD_PER_MILLION_TOKENS = 5;
