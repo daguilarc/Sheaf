@@ -825,6 +825,102 @@ test("service_main reports no /health warning and no stderr log when reconciliat
   assert.equal(exitCode, 0);
 });
 
+// I3: SIGTERM (Conductor's stop fallback when POST /exit fails or is
+// unresponsive) and SIGINT (a human Ctrl-C) must trigger the same orderly
+// shutdown as POST /exit rather than terminating the process and orphaning
+// detached provider process groups. Without the signal handlers, SIGTERM
+// would exit with code 143 (128 + 15) or a null signal-terminated exit;
+// with the handlers, the service closes owned runs and exits 0.
+//
+test("SIGTERM triggers orderly service_main shutdown and exits 0", async () => {
+  const sheafRoot = await mkdtemp(path.join(tmpdir(), "xagent-svc-sigterm-"));
+  await mkdir(path.join(sheafRoot, "config"), { recursive: true });
+  await mkdir(path.join(sheafRoot, "structure"), { recursive: true });
+  await writeFile(path.join(sheafRoot, "structure", ".gitkeep"), "", "utf8");
+  const servicesJsonPath = path.join(sheafRoot, "config", "services.json");
+  await writeFile(
+    servicesJsonPath,
+    `${JSON.stringify([
+      {
+        name: "xagent",
+        host: "127.0.0.1",
+        port: 0,
+        command: "make xagent-service-run",
+      },
+    ])}\n`,
+    "utf8",
+  );
+
+  const serviceMain = path.join(process.cwd(), "dist", "src", "service_main.js");
+  const child = trackChild(
+    spawn(process.execPath, [serviceMain], {
+      cwd: sheafRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+  );
+
+  const stderrChunks: Buffer[] = [];
+  child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+  const port = await waitForPort(stderrChunks, 10_000);
+  // Confirm the service is actually up and serving before signalling.
+  const health = await fetchJson(port, "GET", "/health");
+  assert.equal(health.status, 200);
+
+  child.kill("SIGTERM");
+
+  const exitCode = await waitForExit(child, 10_000);
+  assert.equal(
+    exitCode,
+    0,
+    `SIGTERM must drive orderly shutdown (exit 0), not signal-terminate the process; got ${exitCode}`,
+  );
+});
+
+test("SIGINT triggers orderly service_main shutdown and exits 0", async () => {
+  const sheafRoot = await mkdtemp(path.join(tmpdir(), "xagent-svc-sigint-"));
+  await mkdir(path.join(sheafRoot, "config"), { recursive: true });
+  await mkdir(path.join(sheafRoot, "structure"), { recursive: true });
+  await writeFile(path.join(sheafRoot, "structure", ".gitkeep"), "", "utf8");
+  const servicesJsonPath = path.join(sheafRoot, "config", "services.json");
+  await writeFile(
+    servicesJsonPath,
+    `${JSON.stringify([
+      {
+        name: "xagent",
+        host: "127.0.0.1",
+        port: 0,
+        command: "make xagent-service-run",
+      },
+    ])}\n`,
+    "utf8",
+  );
+
+  const serviceMain = path.join(process.cwd(), "dist", "src", "service_main.js");
+  const child = trackChild(
+    spawn(process.execPath, [serviceMain], {
+      cwd: sheafRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+  );
+
+  const stderrChunks: Buffer[] = [];
+  child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+  const port = await waitForPort(stderrChunks, 10_000);
+  const health = await fetchJson(port, "GET", "/health");
+  assert.equal(health.status, 200);
+
+  child.kill("SIGINT");
+
+  const exitCode = await waitForExit(child, 10_000);
+  assert.equal(
+    exitCode,
+    0,
+    `SIGINT must drive orderly shutdown (exit 0), not signal-terminate the process; got ${exitCode}`,
+  );
+});
+
 async function waitForPort(stderrChunks: Buffer[], timeoutMs: number): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

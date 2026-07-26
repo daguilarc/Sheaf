@@ -64,6 +64,12 @@ WHILE a supervised run is active, THE xagent service SHALL own its supervisor, p
 - **WHEN** Conductor explicitly stops or restarts the xagent service
 - **THEN** orderly service shutdown closes the provider sessions and process groups owned by active runs
 
+#### Scenario: SIGTERM or SIGINT triggers orderly shutdown
+
+- **WHEN** the xagent service receives `SIGTERM` (e.g. Conductor's stop fallback when `POST /exit` fails or is unresponsive) or `SIGINT` (a human Ctrl-C)
+- **THEN** the service drives the same orderly shutdown as `POST /exit` (close owned provider sessions and process groups, then exit `0`)
+- **AND** a repeated signal forces a non-zero exit so a wedged orderly shutdown cannot block escalation to `SIGKILL`
+
 ### Requirement: xsvc-4 — MCP: Streamable HTTP controller endpoint
 
 WHEN the xagent service is running, THE service SHALL expose Streamable HTTP MCP at `/mcp` with tools `xagent_start`, `xagent_await`, `xagent_inspect`, `xagent_message`, `xagent_interrupt`, and `xagent_close`, all backed by service-owned supervisors.

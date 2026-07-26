@@ -26,7 +26,7 @@ Returns `200` with `{ "healthy": true, "uptime": <seconds> }` while the service 
 curl -s -XPOST http://127.0.0.1:9005/exit
 ```
 
-Returns `{ "exiting": true }`, stops accepting new connections, closes every owned session/process group, and exits `0`. Conductor stops the service primarily via `POST /exit`; a direct `SIGINT`/`SIGTERM` to the process is not currently trapped and will terminate it without the orderly close path, so prefer `/exit` for clean shutdown.
+Returns `{ "exiting": true }`, stops accepting new connections, closes every owned session/process group, and exits `0`. Conductor stops the service primarily via `POST /exit`; a direct `SIGTERM` or `SIGINT` to the process is also trapped and drives the same orderly shutdown (close owned provider sessions and process groups, then exit `0`), so Conductor's stop fallback (which sends `SIGTERM` when `POST /exit` fails or is unresponsive) and a human Ctrl-C no longer orphan detached provider process groups. A repeated signal forces a non-zero exit so a wedged orderly shutdown cannot block escalation to `SIGKILL`.
 
 ## Endpoint and tools
 

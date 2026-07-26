@@ -66,6 +66,27 @@ async function main(): Promise<void> {
     },
   });
 
+  // Trap SIGTERM and SIGINT so Conductor's stop fallback (which sends
+  // SIGTERM to the service pid when POST /exit fails or is unresponsive)
+  // and a human Ctrl-C both drive the same orderly shutdown as POST /exit:
+  // close owned provider sessions and process groups before exiting 0.
+  // Without these handlers, the signal would terminate the process
+  // directly and orphan every detached provider process group until the
+  // next restart + reconciliation. A repeated signal forces a non-zero
+  // exit so a wedged orderly shutdown cannot block a human's second
+  // Ctrl-C or Conductor's escalation to SIGKILL.
+  //
+  let signalShutdownStarted = false;
+  const triggerSignalShutdown = (): void => {
+    if (signalShutdownStarted) {
+      process.exit(1);
+    }
+    signalShutdownStarted = true;
+    void shutdownController.requestShutdown();
+  };
+  process.on("SIGTERM", triggerSignalShutdown);
+  process.on("SIGINT", triggerSignalShutdown);
+
   server = createXagentServer({
     bindHost: config.bindHost,
     bindPort: config.bindPort,
