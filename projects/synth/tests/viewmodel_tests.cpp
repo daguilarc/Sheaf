@@ -5065,6 +5065,86 @@ TEST_CASE(GridAddSkipsPhysicalAddressesOwnedByHiddenOrphans) {
     }
 }
 
+TEST_CASE(ControllerLifecycleMutationsPreserveIdentityAndGateRegistryActions) {
+    MidiControllerSlot known = MakeTwisterSlot("known");
+    known.output = {.identifier = "twister-out-id", .name = "MF Twister Out"};
+    known.wizardId = "com.sheaf.midi-fighter-twister";
+
+    MidiControllerSlot unknown = MakeGenericSlot("unknown");
+    unknown.wizardId = "com.example.removed-wizard";
+
+    MidiControllerSlot blacklisted = known;
+    blacklisted.name = "blacklisted";
+    blacklisted.disposition = synth::MidiControllerDisposition::Blacklisted;
+    blacklisted.dormantConfig = blacklisted.config;
+    blacklisted.config = {};
+
+    MidiInstrumentConfig instrument;
+    REQUIRE_TRUE(instrument.AddController(MakeGenericSlot("manual")));
+    REQUIRE_TRUE(instrument.AddController(known));
+    REQUIRE_TRUE(instrument.AddController(unknown));
+    REQUIRE_TRUE(instrument.AddController(blacklisted));
+    MidiConnectionState connection;
+    connection.controllers.resize(instrument.controllers.size());
+
+    MidiConfigViewModel vm;
+    vm.Rebuild(instrument, connection);
+    MidiInstrumentConfig out;
+    std::string reason;
+
+    REQUIRE_TRUE(vm.RenameController(0, "manual renamed", out, &reason));
+    REQUIRE_TRUE(out.controllers.size() == 4 &&
+                 out.controllers[0].name == "manual renamed" &&
+                 out.controllers[0].kind == MidiProfileKind::Generic);
+    const std::string beforeRefusedRename = DumpInstrument(instrument);
+    out = MidiInstrumentConfig{};
+    REQUIRE_TRUE(!vm.RenameController(0, "", out, &reason));
+    REQUIRE_TRUE(out.controllers.empty() && DumpInstrument(instrument) == beforeRefusedRename);
+    REQUIRE_TRUE(!vm.RenameController(0, "known", out, &reason));
+
+    REQUIRE_TRUE(vm.BlacklistController(1, out, &reason));
+    const MidiControllerSlot& blacklistedKnown = out.controllers[1];
+    REQUIRE_TRUE(blacklistedKnown.disposition == synth::MidiControllerDisposition::Blacklisted &&
+                 blacklistedKnown.dormantConfig.has_value() &&
+                 blacklistedKnown.dormantConfig->encoderInput.has_value() &&
+                 blacklistedKnown.dormantConfig->encoderOutput.has_value() &&
+                 blacklistedKnown.dormantConfig->encoderInput->turns.size() ==
+                     known.config.encoderInput->turns.size() &&
+                 blacklistedKnown.dormantConfig->encoderInput->pushes.size() ==
+                     known.config.encoderInput->pushes.size() &&
+                 blacklistedKnown.dormantConfig->encoderOutput->mappings.size() ==
+                     known.config.encoderOutput->mappings.size() &&
+                 blacklistedKnown.dormantConfig->systemMessages.size() ==
+                     known.config.systemMessages.size() &&
+                 !blacklistedKnown.config.encoderInput.has_value() &&
+                 blacklistedKnown.name == known.name &&
+                 blacklistedKnown.kind == known.kind &&
+                 blacklistedKnown.wizardId == known.wizardId &&
+                 blacklistedKnown.input.identifier == known.input.identifier &&
+                 blacklistedKnown.input.name == known.input.name &&
+                 blacklistedKnown.output.identifier == known.output.identifier &&
+                 blacklistedKnown.output.name == known.output.name);
+
+    out = MidiInstrumentConfig{};
+    REQUIRE_TRUE(!vm.BlacklistController(0, out, &reason));
+    REQUIRE_TRUE(!vm.BlacklistController(2, out, &reason));
+    REQUIRE_TRUE(out.controllers.empty());
+
+    REQUIRE_TRUE(vm.DeleteController(0, out, &reason));
+    REQUIRE_TRUE(out.controllers.size() == 3 && out.controllers[0].name == "known");
+    REQUIRE_TRUE(vm.DeleteController(2, out, &reason));
+    REQUIRE_TRUE(out.controllers.size() == 3 && out.controllers[2].name == "blacklisted");
+
+    REQUIRE_TRUE(vm.RenameController(3, "blacklisted renamed", out, &reason));
+    REQUIRE_TRUE(out.controllers[3].name == "blacklisted renamed");
+    REQUIRE_TRUE(vm.RemoveFromBlacklist(3, out, &reason));
+    REQUIRE_TRUE(out.controllers.size() == 3 && out.controllers.back().name == "unknown");
+    REQUIRE_TRUE(vm.RenameController(2, "unknown renamed", out, &reason));
+    REQUIRE_TRUE(out.controllers[2].name == "unknown renamed");
+    REQUIRE_TRUE(vm.DeleteController(2, out, &reason));
+    REQUIRE_TRUE(out.controllers.size() == 3 && out.controllers.back().name == "blacklisted");
+}
+
 int Main() {
     int failed = 0;
     for (const auto& test : Registry()) {

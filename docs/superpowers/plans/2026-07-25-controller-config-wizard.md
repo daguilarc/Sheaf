@@ -455,15 +455,23 @@ struct WizardSession {
 **Produces:**
 
 ```cpp
-bool RenameController(std::size_t, std::string, std::string* reason);
-bool DeleteController(std::size_t, std::string* reason);
-bool BlacklistController(std::size_t, std::string* reason);
-bool RemoveFromBlacklist(std::size_t, std::string* reason);
+bool RenameController(std::size_t, std::string, MidiInstrumentConfig& out,
+                      std::string* reason);
+bool DeleteController(std::size_t, MidiInstrumentConfig& out,
+                      std::string* reason);
+bool BlacklistController(std::size_t, MidiInstrumentConfig& out,
+                         std::string* reason);
+bool RemoveFromBlacklist(std::size_t, MidiInstrumentConfig& out,
+                         std::string* reason);
 ```
 
 - [ ] Add tests for unique rename across dispositions; Delete for every Active record; Blacklist only when an Active record’s opaque id resolves; mandatory `config`→`dormantConfig`; Blacklisted Rename/Remove; unknown-id recovery actions; hidden Blacklisted mapping/endpoint controls; and endpoint teardown through normal commit/reconcile.
 - [ ] Run `viewmodel_tests` and `controllers_page_ui_tests`; expect missing actions.
-- [ ] Implement mutation on scratch `MidiInstrumentConfig` then use the Task 12 commit/save callback. Never open/close handlers directly.
+- [ ] Implement mutation on scratch `MidiInstrumentConfig`, return it explicitly
+      through each method's `out` parameter following the existing view-model
+      mutation contract, then use the Task 12 commit/save callback. Never stage
+      a pending mutation inside the view model and never open/close handlers
+      directly.
 - [ ] Render Active generic controls unchanged; add Reconfigure/Blacklist only for resolved ids. Render Blacklisted labels/badge, Rename/Remove, and Configure only for resolved ids.
 - [ ] Run focused tests plus `reconcile_tests`; expect pass.
 - [ ] Commit `feat(synth-ui): add controller profile lifecycle actions`.

@@ -269,6 +269,10 @@ const std::vector<std::string>& LaunchpadVariantCatalog();
 struct MidiControllerRowVM {
     std::string name;
     MidiProfileKind kind = MidiProfileKind::Generic;
+    MidiControllerDisposition disposition = MidiControllerDisposition::Active;
+    // Registry resolution gates only portable lifecycle affordances. The
+    // persisted opaque id remains valid even when this is false.
+    bool hasResolvedWizard = false;
     MidiEndpointStatus inputStatus = MidiEndpointStatus::Unconfigured;
     MidiEndpointStatus outputStatus = MidiEndpointStatus::Unconfigured;
     std::string inputDeviceLabel;   // present device name; stored ref + " (offline)"; or "(none)"
@@ -407,6 +411,15 @@ public:
 
     bool AddController(std::string name, MidiProfileKind kind, MidiInstrumentConfig& out,
                        std::string* reason = nullptr) const;
+
+    bool RenameController(std::size_t controllerIx, std::string name,
+                          MidiInstrumentConfig& out, std::string* reason = nullptr) const;
+    bool DeleteController(std::size_t controllerIx, MidiInstrumentConfig& out,
+                          std::string* reason = nullptr) const;
+    bool BlacklistController(std::size_t controllerIx, MidiInstrumentConfig& out,
+                             std::string* reason = nullptr) const;
+    bool RemoveFromBlacklist(std::size_t controllerIx, MidiInstrumentConfig& out,
+                             std::string* reason = nullptr) const;
 
     bool SetEndpointRef(std::size_t controllerIx, bool output, MidiEndpointRef ref,
                         MidiInstrumentConfig& out) const;

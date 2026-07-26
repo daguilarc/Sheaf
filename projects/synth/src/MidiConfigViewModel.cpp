@@ -1,5 +1,7 @@
 #include "synth/MidiConfigViewModel.hpp"
 
+#include "synth/ControllerWizard.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -697,6 +699,12 @@ void MidiConfigViewModel::Rebuild(const MidiInstrumentConfig& instrument, const 
         MidiControllerRowVM row;
         row.name = slot.name;
         row.kind = slot.kind;
+        row.disposition = slot.disposition;
+        row.hasResolvedWizard = slot.wizardId.has_value() &&
+            std::any_of(ControllerWizardRegistry().begin(), ControllerWizardRegistry().end(),
+                        [&](const ControllerWizardDescriptor& descriptor) {
+                            return descriptor.id == *slot.wizardId;
+                        });
         row.inputStatus = inputConnection.status;
         row.outputStatus = outputConnection.status;
         row.inputDeviceLabel = DeviceLabel(slot.input, inputConnection.status);
@@ -2479,6 +2487,110 @@ bool MidiConfigViewModel::AddController(std::string name, MidiProfileKind kind, 
         return false;
     }
 
+    out = std::move(scratch);
+    return true;
+}
+
+bool MidiConfigViewModel::RenameController(std::size_t controllerIx, std::string name,
+                                           MidiInstrumentConfig& out, std::string* reason) const {
+    if (name.empty()) {
+        if (reason != nullptr) {
+            *reason = "name must not be empty";
+        }
+        return false;
+    }
+    if (controllerIx >= instrument_.controllers.size()) {
+        if (reason != nullptr) {
+            *reason = "controller does not exist";
+        }
+        return false;
+    }
+
+    MidiInstrumentConfig scratch = instrument_;
+    if (!scratch.RenameController(controllerIx, std::move(name))) {
+        if (reason != nullptr) {
+            *reason = "a controller with this name already exists";
+        }
+        return false;
+    }
+    out = std::move(scratch);
+    return true;
+}
+
+bool MidiConfigViewModel::DeleteController(std::size_t controllerIx, MidiInstrumentConfig& out,
+                                           std::string* reason) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        if (reason != nullptr) {
+            *reason = "controller does not exist";
+        }
+        return false;
+    }
+    if (instrument_.controllers[controllerIx].disposition != MidiControllerDisposition::Active) {
+        if (reason != nullptr) {
+            *reason = "only active controllers can be deleted";
+        }
+        return false;
+    }
+
+    MidiInstrumentConfig scratch = instrument_;
+    scratch.RemoveController(controllerIx);
+    out = std::move(scratch);
+    return true;
+}
+
+bool MidiConfigViewModel::BlacklistController(std::size_t controllerIx, MidiInstrumentConfig& out,
+                                              std::string* reason) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        if (reason != nullptr) {
+            *reason = "controller does not exist";
+        }
+        return false;
+    }
+    const MidiControllerSlot& existing = instrument_.controllers[controllerIx];
+    const bool resolved = existing.wizardId.has_value() &&
+        std::any_of(ControllerWizardRegistry().begin(), ControllerWizardRegistry().end(),
+                    [&](const ControllerWizardDescriptor& descriptor) {
+                        return descriptor.id == *existing.wizardId;
+                    });
+    if (existing.disposition != MidiControllerDisposition::Active || !resolved) {
+        if (reason != nullptr) {
+            *reason = "only registry-supported active controllers can be blacklisted";
+        }
+        return false;
+    }
+
+    MidiInstrumentConfig scratch = instrument_;
+    MidiControllerSlot blacklisted = scratch.controllers[controllerIx];
+    blacklisted.disposition = MidiControllerDisposition::Blacklisted;
+    blacklisted.dormantConfig = std::move(blacklisted.config);
+    blacklisted.config = {};
+    if (!scratch.ReplaceController(controllerIx, std::move(blacklisted))) {
+        if (reason != nullptr) {
+            *reason = "controller could not be blacklisted";
+        }
+        return false;
+    }
+    out = std::move(scratch);
+    return true;
+}
+
+bool MidiConfigViewModel::RemoveFromBlacklist(std::size_t controllerIx, MidiInstrumentConfig& out,
+                                              std::string* reason) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        if (reason != nullptr) {
+            *reason = "controller does not exist";
+        }
+        return false;
+    }
+    if (instrument_.controllers[controllerIx].disposition != MidiControllerDisposition::Blacklisted) {
+        if (reason != nullptr) {
+            *reason = "only blacklisted controllers can be removed from blacklist";
+        }
+        return false;
+    }
+
+    MidiInstrumentConfig scratch = instrument_;
+    scratch.RemoveController(controllerIx);
     out = std::move(scratch);
     return true;
 }

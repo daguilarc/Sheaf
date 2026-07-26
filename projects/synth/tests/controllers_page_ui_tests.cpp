@@ -701,6 +701,134 @@ void TestWizardIgnoreCommitsOneInertBlacklistedRecord()
             "exact-identity refusal leaves the changed candidate available for a fresh action");
 }
 
+void TestControllerLifecycleActionsUseTheNormalCommitAndSavePath()
+{
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    synth::MidiControllerSlot known;
+    known.name = "known";
+    known.kind = synth::MidiProfileKind::MfTwister;
+    known.config = synth::MfTwisterDefaultProfileConfig();
+    known.wizardId = "com.sheaf.midi-fighter-twister";
+    known.input = {.identifier = "known-in", .name = "Known Input"};
+    known.output = {.identifier = "known-out", .name = "Known Output"};
+    synth::MidiControllerSlot unknown = MakeGenericSlot("unknown");
+    unknown.wizardId = "com.example.missing-wizard";
+    synth::MidiControllerSlot blacklistedKnown = known;
+    blacklistedKnown.name = "blacklisted known";
+    blacklistedKnown.disposition = synth::MidiControllerDisposition::Blacklisted;
+    blacklistedKnown.dormantConfig = blacklistedKnown.config;
+    blacklistedKnown.config = {};
+    synth::MidiControllerSlot blacklistedUnknown = blacklistedKnown;
+    blacklistedUnknown.name = "blacklisted unknown";
+    blacklistedUnknown.wizardId = "com.example.missing-wizard";
+    Require(harness.instrument.AddController(MakeGenericSlot("manual")), "add manual controller");
+    Require(harness.instrument.AddController(known), "add resolved controller");
+    Require(harness.instrument.AddController(unknown), "add unknown active controller");
+    Require(harness.instrument.AddController(blacklistedKnown), "add resolved blacklisted controller");
+    Require(harness.instrument.AddController(blacklistedUnknown), "add unknown blacklisted controller");
+    harness.connection.controllers.resize(harness.instrument.controllers.size());
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    const synth::ui::NodeTree initialTree = surface.BuildTree();
+    Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerRename(0)) != nullptr,
+            "every active row exposes Rename");
+    Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerDelete(0)) != nullptr,
+            "manual active row exposes Delete");
+    Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerBlacklist(1)) != nullptr &&
+                FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerReconfigure(1)) != nullptr,
+            "resolved active row exposes Blacklist and Reconfigure");
+    Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerBlacklist(2)) == nullptr &&
+                FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerReconfigure(2)) == nullptr &&
+                FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerDelete(2)) != nullptr,
+            "unknown active id gates wizard actions but preserves recovery Delete");
+    Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerBadge(3)) != nullptr &&
+                FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerRemoveBlacklist(3)) != nullptr &&
+                FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerConfigure(3)) != nullptr &&
+                FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerDisclosure(3)) == nullptr &&
+                FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerInput(3)) == nullptr &&
+                FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerOutput(3)) == nullptr,
+            "resolved blacklisted row has its lifecycle controls but no live editor controls");
+    Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerConfigure(4)) == nullptr &&
+                FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerRemoveBlacklist(4)) != nullptr,
+            "unknown blacklisted id preserves Remove but gates Configure");
+
+    TestHarness staleHarness;
+    staleHarness.instrument = harness.instrument;
+    staleHarness.connection = harness.connection;
+    auto staleSurface = staleHarness.MakeSurface();
+    staleSurface.MarkDirty();
+    staleSurface.RefreshOnTick();
+    const synth::ui::Action staleDelete = *FindNodeById(
+        staleSurface.BuildTree(), synth::runtime_ui::NodeIds::ControllerDelete(2))->action;
+    staleHarness.instrument.RemoveController(1);
+    staleHarness.connection.controllers.resize(staleHarness.instrument.controllers.size());
+    staleSurface.DispatchAction(staleDelete);
+    Require(staleHarness.commits == 0 && staleHarness.saves == 0 &&
+                staleHarness.instrument.controllers[2].name == "blacklisted known",
+            "stale row action cannot retarget the record now occupying its old index");
+
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kControllerDelete,
+        synth::runtime_ui::NodeIds::ControllerActionToken(3, "blacklisted known")));
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kControllerBlacklist,
+        synth::runtime_ui::NodeIds::ControllerActionToken(0, "manual")));
+    Require(harness.commits == 0 && harness.saves == 0,
+            "refused stale lifecycle actions perform neither a commit nor a save");
+
+    synth::ui::Action rename = *FindNodeById(
+        initialTree, synth::runtime_ui::NodeIds::ControllerRename(0))->action;
+    rename.value += "manual:renamed";
+    surface.DispatchAction(rename);
+    Require(harness.commits == 1 && harness.saves == 1 &&
+                harness.instrument.controllers[0].name == "manual:renamed",
+            "Rename preserves a colon-containing valid name through the lifecycle callback path");
+    harness.connection.controllers[1].input = {
+        .status = synth::MidiEndpointStatus::Online, .openIdentifier = "known-in"};
+    harness.connection.controllers[1].output = {
+        .status = synth::MidiEndpointStatus::Online, .openIdentifier = "known-out"};
+    surface.DispatchAction(*FindNodeById(
+        initialTree, synth::runtime_ui::NodeIds::ControllerBlacklist(1))->action);
+    const synth::MidiControllerSlot& transitioned = harness.instrument.controllers[1];
+    Require(harness.commits == 2 && harness.saves == 2 &&
+                transitioned.disposition == synth::MidiControllerDisposition::Blacklisted &&
+                transitioned.dormantConfig.has_value() && !transitioned.config.encoderInput.has_value(),
+            "Blacklist commits through normal reconciliation and retains dormant profile data");
+    synth::MidiDeviceList knownDevices;
+    knownDevices.inputs.push_back({"known-in", "Known Input"});
+    knownDevices.outputs.push_back({"known-out", "Known Output"});
+    const synth::ReconcilePlan teardown = synth::PlanMidiReconciliation(
+        harness.instrument, knownDevices, harness.connection);
+    int closedInputs = 0;
+    int closedOutputs = 0;
+    synth::MidiEndpointOps endpointOps;
+    endpointOps.closeInput = [&](std::size_t controllerIx) {
+        closedInputs += controllerIx == 1 ? 1 : 0;
+    };
+    endpointOps.closeOutput = [&](std::size_t controllerIx) {
+        closedOutputs += controllerIx == 1 ? 1 : 0;
+    };
+    const synth::MidiConnectionState reconciled = synth::ExecuteReconcilePlan(
+        teardown, harness.connection, endpointOps);
+    Require(closedInputs == 1 && closedOutputs == 1 &&
+                reconciled.controllers[1].input.status == synth::MidiEndpointStatus::Unconfigured &&
+                reconciled.controllers[1].output.status == synth::MidiEndpointStatus::Unconfigured,
+            "the committed blacklist transition reaches normal reconcile execution and closes both endpoints");
+    surface.DispatchAction(*FindNodeById(
+        initialTree, synth::runtime_ui::NodeIds::ControllerDelete(2))->action);
+    Require(harness.commits == 3 && harness.saves == 3 &&
+                harness.instrument.FindController("unknown") == nullptr,
+            "Delete remains available for an unknown persisted id and commits through the normal path");
+    surface.DispatchAction(*FindNodeById(
+        surface.BuildTree(), synth::runtime_ui::NodeIds::ControllerRemoveBlacklist(3))->action);
+    Require(harness.commits == 4 && harness.saves == 4 &&
+                harness.instrument.FindController("blacklisted unknown") == nullptr,
+            "Remove from blacklist deletes unknown-id inert records through one commit and save");
+}
+
 std::string VisibleTextLower(const synth::ui::NodeTree& tree)
 {
     std::string text;
@@ -731,6 +859,7 @@ int main()
     TestWizardSubmitRefusalsRetainFormAndPersistence();
     TestWizardSaveFailureDoesNotRollbackCommittedInstrument();
     TestWizardIgnoreCommitsOneInertBlacklistedRecord();
+    TestControllerLifecycleActionsUseTheNormalCommitAndSavePath();
 
     TestHarness harness;
     synth::runtime_ui::ControllersPageSurface surface = harness.MakeSurface();
