@@ -1,7 +1,10 @@
 EMSDK ?= $(HOME)/.local/emsdk
 EMSDK_EMXX := $(EMSDK)/upstream/emscripten/em++
 EMSDK_PYTHON_BIN := $(firstword $(wildcard $(EMSDK)/python/*/bin))
-EMSDK_ENV = $(if $(EMSDK_PYTHON_BIN),PATH=$(EMSDK_PYTHON_BIN):$(PATH)) EM_CACHE=$(EM_CACHE)
+# Quote both assignments: an inherited PATH routinely contains directories with
+# spaces (for example "~/Library/Application Support/..."), and unquoted the
+# shell splits the recipe there and fails with exit 127 before reaching node.
+EMSDK_ENV = $(if $(EMSDK_PYTHON_BIN),PATH="$(EMSDK_PYTHON_BIN):$(PATH)") EM_CACHE="$(EM_CACHE)"
 EMXX ?= $(if $(shell command -v em++ 2>/dev/null),em++,$(if $(wildcard $(EMSDK_EMXX)),$(EMSDK_EMXX),em++))
 BROWSER_BUILD_DIR := dist/wasm
 EM_CACHE ?= $(abspath $(BROWSER_BUILD_DIR)/emscripten-cache)
