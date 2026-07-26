@@ -1,6 +1,6 @@
 # Spec Coverage
 
-Last audit: master-clock/MIDI-sync acceptance traces, host scheduling contracts, Sync runtime UI, standard modulators, fifteen-source application adoption, sparse modulation processing, absolute encoder mode, exact parameter projection, causal absolute encoder feedback synchronization, generic JUCE hierarchy/scrolling/production Controllers migration, runtime button grids, and Braid 4 oscillator-owned parameter-cache filtering, 2026-07-20
+Last audit: controller configuration wizard (baked registry, candidate discovery, MF Twister form/generation, Active/Blacklisted disposition, and browser/JUCE parity), 2026-07-26. Prior audit: master-clock/MIDI-sync acceptance traces, host scheduling contracts, Sync runtime UI, standard modulators, fifteen-source application adoption, sparse modulation processing, absolute encoder mode, exact parameter projection, causal absolute encoder feedback synchronization, generic JUCE hierarchy/scrolling/production Controllers migration, runtime button grids, and Braid 4 oscillator-owned parameter-cache filtering, 2026-07-20
 
 | Requirement | Status | Primary exact coverage |
 |---|---|---|
@@ -101,9 +101,24 @@ Last audit: master-clock/MIDI-sync acceptance traces, host scheduling contracts,
 | `sar-6` (modified) | covered | Engine timestamp-order/commit/delegation cases, allocation-free block path, internal-timeline trace, and Braid fractional 4x query case |
 | `sar-11` (modified) | covered | MiniApp clocked ADSR topology, exact nondivisor-block gate boundaries, current-frame voice publication, tempo authority, and Rig clock surface cases |
 | `sar-18` (modified) | covered | Engine load-before-rebuild/default/save cases; runtime-config migration/atomic-save/patch-exclusion cases; JUCE/browser Sync Back persistence |
-| `sru-2` (modified) | covered | `TestSidebarOpensEachPageAndBackRestoresApp`, `TestRefreshUpdatesRuntimePageModelsAndRollingDeadline`, portable sidebar assertions, JUCE runtime-page/session tests, browser navigation |
+| `sru-2` (modified) | covered | `TestSidebarOpensEachPageAndBackRestoresApp`, `TestRefreshUpdatesRuntimePageModelsAndRollingDeadline`, `TestSidebarWarningReflectsControllersDiscoverySnapshot`, `TestWizardDiscoveryCacheRecomputesOnlyForCachedSnapshotChanges`, `TestBrowserControllerDiscoveryCacheUsesSignalsAndSuccessfulCommits`, JUCE sidebar warning marker, browser navigation |
 | `sru-12` (modified) | covered | `TestBackFromConfigurationPageSavesRuntimeConfiguration`, `TestSyncStagesRefreshesCommitsAndReopensFromEngineSnapshot`, JUCE runtime-shell Sync save/reopen, browser Sync Back persistence |
 | `sru-31` | covered | portable Sync surface assertions, `TestSyncStagesRefreshesCommitsAndReopensFromEngineSnapshot`, `TestBrowserSyncUsesSharedStagingPersistsAndResolvesSourceNames`, JUCE runtime-page/session and fake-app Playwright Sync cases |
+| `scw-1` | covered | `controller_wizard_tests` typed wizard/form ownership, validation refusal, and wrong-form mismatch cases plus `check-ui-boundary` |
+| `scw-2` | covered | `controller_wizard_tests` registry-order, case-insensitive exact alias, fuzzy-rejection, unmatched-diagnostic, exclusivity, and Active/Blacklisted claim cases |
+| `scw-3` | covered | `controller_wizard_tests` Twister form geometry/choice/enablement/numeric cases and generation cases; `instrument_tests` kind-valid generated slot |
+| `scw-4` | covered | `controllers_page_ui_tests` submit/ignore/reconfigure/refusal cases, `MfTwisterSeedExtractionRequiresOneExactRepresentableProfileShape`, host save tests, and JUCE reconfigure/refusal simulations |
+| `smi-1` (modified) | covered | `instrument_tests` Active/Blacklisted validity, opaque wizard identity, dormant-profile, and cross-disposition uniqueness cases |
+| `smi-2` (modified) | covered | `instrument_tests` schema-2 round trips for both dispositions, previous-schema migration, and atomic rejection cases |
+| `smi-3` (modified) | covered | `reconcile_tests` four blacklist-disposition cases and `mark_unconfigured_preserves_stored_refs_and_plan_order` |
+| `smi-6` (modified) | covered | `blacklisted_slot_with_present_populated_refs_stays_unconfigured_and_inert` plus retained `startup_shaped_reconcile_one_of_two_controllers_present_no_failure` |
+| `smi-8` (modified) | covered | `engine_tests` drop-only profile, Active/Blacklisted rebuild switch, and middle-slot resize cases; `TestActiveToBlacklistedTearsDownEndpointsAndDropsStaleBrowserCallback` |
+| `smi-10` (modified) | covered | retained terminal-realtime cases plus the blacklisted drop-only and rebuild-switch `engine_tests` cases |
+| `sru-4` (modified) | covered | `TestDiscoveryRendersPortableAvailableRowsAndDiagnostics`, `TestControllerLifecycleActionsUseTheNormalCommitAndSavePath`, `ControllerLifecycleMutationsPreserveIdentityAndGateRegistryActions`, JUCE manual-record simulation, fake-app lifecycle Playwright |
+| `sru-30` (modified) | covered | retained low-level relative-bank view-model/blocks cases plus the wizard-owned argument table in `controller_wizard_tests` |
+| `sru-32` | covered | `controllers_page_ui_tests` session/chooser/submit/ignore cases, `TestThreeClickWizardSubmitCommitsThenSaves`, JUCE wizard parity simulation, fake-app three-click Playwright |
+| `sru-33` | covered | `portable_ui_tests` wizard-session composition, `ControllersPageSimulationTests` parity simulations, fake-app Playwright, `check-ui-boundary` and `check:generic-runtime` |
+| `sru-34` | covered | `TestDisabledSemanticNodesCarryEnabledState`, `ui-backend.spec.ts` disabled-control cases, `PortableJuceBackendTests` disabled semantic controls |
 
 ## Requirement Mappings
 
@@ -1093,6 +1108,376 @@ Last audit: master-clock/MIDI-sync acceptance traces, host scheduling contracts,
   same portable model and next-block Engine handoff. The fake-app Playwright
   case `real fake-app WASM stages, validates, saves, and reopens Sync` verifies
   the real browser/WASM surface.
+
+## Controller Configuration Wizard Requirement Mappings
+
+### `scw-1` - Typed Controller Wizard And Portable Config Form
+
+- [`controller_wizard_tests.cpp`](../tests/controller_wizard_tests.cpp):
+  `ConfigFormOwnsStateAndDispatchActionMutatesIt` proves a form's state changes
+  only through `DispatchAction` and that the caller owns it through the abstract
+  `ControllerConfigForm` contract;
+  `TypedWizardGeneratesProfileFromItsConcreteForm` proves the checked typed
+  generation path; `TypedWizardRejectsInvalidFormBeforeGeneration` proves
+  validation refusal precedes generation; and
+  `TypedWizardRejectsDifferentConcreteFormWithoutGeneration` proves a form
+  created by another wizard returns a type-mismatch error and produces no
+  controller. That case is compiled in an `-DNDEBUG` test target so the
+  production error path, not the debug assertion, is exercised.
+- `make -C projects/synth check-ui-boundary` keeps `ControllerWizard.hpp`,
+  `ControllerWizard.cpp`, and the forms free of JUCE/DOM headers; the form
+  performs no device enumeration, engine edit, or save because those callbacks
+  live on `ControllersPageCallbacks`, not on the form.
+
+### `scw-2` - Baked Pair Registry And Candidate Classification
+
+- [`controller_wizard_tests.cpp`](../tests/controller_wizard_tests.cpp):
+  `ControllerWizardRegistryExposesStableMfTwisterDescriptor` pins the descriptor
+  id `com.sheaf.midi-fighter-twister`, display name, kind, and alias lists.
+  `DiscoveryMatchesMidiFighterTwisterByCaseInsensitiveExactAlias` and
+  `DiscoveryRejectsPrefixSuffixAndImplicitNumberVariants` pin exact
+  case-insensitive alias matching and the explicit rejection of prefix, suffix,
+  and implicit-number names. `DiscoveryReportsUnmatchedNamesAndHalfPairs` covers
+  the unmatched-endpoint diagnostics and half pairs.
+  `DiscoveryReturnsCandidatesInRegistryOrderAndUsesEndpointOnce` and
+  `DiscoveryPairsDuplicateDevicesByEnumerationOrder` cover registry order,
+  endpoint exclusivity, and deterministic duplicate pairing.
+  `DiscoveryClaimsStoredEndpointsByExactIdBeforeNameFallback`,
+  `DiscoveryDoesNotFallbackByNameWhenExactIdLostContention`,
+  `DiscoveryTreatsHalfConfiguredStoredRefsAsEndpointClaims`, and
+  `DiscoverySuppressesPairsClaimedByActiveAndBlacklistedRecords` cover claim
+  semantics across both dispositions and half-configured records.
+  `DiscoveryResultsAreStableAndInputsRemainUnchanged` covers repeated identical
+  results and non-mutation of the device list and instrument.
+- [`runtime_main_component_tests.cpp`](../tests/runtime_main_component_tests.cpp):
+  `TestSidebarWarningReflectsControllersDiscoverySnapshot` proves the derived
+  available-candidate warning state.
+
+### `scw-3` - MF Twister: One Encoder Slot And Exactly Six Buttons
+
+- [`controller_wizard_tests.cpp`](../tests/controller_wizard_tests.cpp):
+  `MfTwisterConfigFormPlacesSixButtonsInTwoColumnsOfThree` pins the two-column
+  3+3 geometry and the left CC 8-10 / right CC 11-13 column bounds.
+  `MfTwisterConfigFormBuildsClosedSixButtonSurfaceAndRoutesPortableActions` pins
+  one `controller-wizard.twister.encoder-slot` defaulting to `0`, exactly six
+  `...button.{N}.message` / `...button.{N}.argument` pairs, the six defaults
+  (Hold Reset, Hold Random, Hold Random Mod, Next Bank, Start, Previous Bank),
+  the closed sixteen-choice option set with no None/unassigned entry, the
+  wizard-owned argument-enablement table, and edits through portable actions.
+  `MfTwisterConfigFormValidatesExactSizeTIntegerTextAndIgnoresDisabledArguments`
+  covers `0`, `std::numeric_limits<std::size_t>::max()`, and rejection of empty,
+  negative, non-base-10, whitespace, and overflowing text, plus the rule that
+  disabled argument text cannot affect validation.
+  `UISystemMessageHelpersExposeCatalogLabelsAndPreserveBankSlotArguments`
+  pins the shared catalog helpers the form reuses.
+- `MfTwisterWizardGeneratesCompleteActiveProfileFromItsForm` proves all sixteen
+  encoder positions' turn, push, and output mappings target the selected slot,
+  six side associations occupy channel 3 CCs 8-13 with feedback disabled, hold
+  choices emit matching `false` releases, Bank Select carries `slotIx` plus its
+  `bankIx`, and Next/Previous Bank carry the form slot while ignoring disabled
+  argument text. `MfTwisterWizardRefusesInvalidFormsAtomically` proves an invalid
+  form installs nothing and retains its entered state.
+- [`instrument_tests.cpp`](../tests/instrument_tests.cpp):
+  `MfTwisterWizardGeneratesAnActiveKindValidInstrumentSlot` proves the generated
+  slot is Active and valid under the `twister` kind rules.
+- The narrower wizard argument table (`TwisterArgumentEnabled`) is deliberately
+  not `UISystemMessageHasArg`; the low-level editor's Next/Previous Bank `Arg`
+  behavior is covered separately under `sru-30`.
+
+### `scw-4` - Lifecycle: Submit, Ignore, And Reconfigure
+
+- [`controllers_page_ui_tests.cpp`](../tests/controllers_page_ui_tests.cpp):
+  `TestWizardSubmitCommitsCompleteProfileThenSaves` proves one instrument commit
+  with both endpoint references, the descriptor wizard id, and the generated
+  profile, followed by a save request.
+  `TestWizardSubmitRefusalsRetainFormAndPersistence` covers disconnected
+  candidates, contended endpoints, and invalid fields refusing without commit or
+  save while retaining form state.
+  `TestWizardSaveFailureDoesNotRollbackCommittedInstrument` pins the documented
+  save-after-commit behavior.
+  `TestWizardIgnoreCommitsOneInertBlacklistedRecord` proves Ignore commits one
+  Blacklisted record with the opaque wizard id, both endpoint identities, and no
+  profile, then saves.
+  `TestReconfigureSeedsExactProfilesAndReplacesOnlyTheValidatedRecord` covers
+  compatible seeding, defaults-plus-destructive-warning for incompatible shapes,
+  dormant-profile seeding on blacklisted rows, and preservation of name,
+  endpoints, wizard id, and ordered position.
+  `TestReconfigureRefusesEveryChangedExistingRecordIdentity` covers stale index,
+  name, endpoint, and disposition refusal. Deterministic ` 2`/` 3` suffix naming
+  is asserted inside the submit and ignore cases.
+- `MfTwisterSeedExtractionRequiresOneExactRepresentableProfileShape` in
+  [`controller_wizard_tests.cpp`](../tests/controller_wizard_tests.cpp) tests
+  each shape mismatch independently: analog config, extra mappings, missing or
+  altered default turn/push/output mappings, non-CC-8-13 or inexpressible
+  associations, and a slot that is not common across encoders and bank messages.
+- [`runtime_main_component_tests.cpp`](../tests/runtime_main_component_tests.cpp)
+  `TestThreeClickWizardSubmitCommitsThenSaves` and
+  [`browser_runtime_contract_tests.cpp`](../tests/browser_runtime_contract_tests.cpp)
+  `TestWizardSubmitRefusesACandidateRemovedSinceTheLastFrame` and
+  `TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack` prove the
+  same commit/save contract through both host service implementations.
+- [`ControllersPageSimulationTests.cpp`](../juce/ControllersPageSimulationTests.cpp)
+  `RunIncompatibleReconfigureSimulation` and
+  `RunControllerWizardRefusalSimulation` drive the destructive-replacement and
+  refusal paths through rendered JUCE controls.
+- Playwright [`fake-app.e2e.spec.ts`](../browser/tests/fake-app.e2e.spec.ts):
+  `controller wizard uses deterministic names for duplicate submitted Twisters`,
+  `controller wizard stale and invalid submit preserve entered values`,
+  `controller wizard reconfigure seeds exact-shape profiles`, and
+  `controller wizard reconfigure warns and replaces incompatible profiles`.
+
+### `smi-1` And `smi-2` (modified) - Disposition Model And Instrument JSON
+
+- [`instrument_tests.cpp`](../tests/instrument_tests.cpp) model cases:
+  `ActiveSlotsAcceptManualAndOpaqueWizardIdentity` (optional wizard id, opaque
+  unknown ids, registry-independent validity);
+  `BlacklistedIgnoredSlotsRequireIdentityButNoDormantProfile`;
+  `BlacklistedSlotsRejectMissingWizardOrEndpointRefs`;
+  `BlacklistedSlotsRetainDormantProfileWithoutRuntimeActiveConfig`;
+  `BlacklistedDormantProfilesAreValidatedForKind`; and
+  `AddControllerRejectsDuplicateNameAcrossDispositions`. The retained
+  per-kind section/address-variant cases still cover the `smi-1` kind rules.
+- JSON cases: `InstrumentJsonWritesActiveDispositionAndOmitsManualWizardId`,
+  `InstrumentJsonRoundTripsWizardActiveWithOpaqueUnknownId`,
+  `InstrumentJsonRoundTripsBlacklistedIgnoredWithoutProfile`,
+  `InstrumentJsonRoundTripsBlacklistedDormantProfile`,
+  `InstrumentJsonRoundTripsMixedDispositionsInOrder`,
+  `InstrumentJsonRoundTripsControllersInOrder` (retained multi-kind ordered round
+  trip), `InstrumentJsonLoadsPreviousSchemaControllersAsActiveWithoutWizardId`,
+  and `InstrumentJsonIgnoresPreviousSchemaDispositionAndWizardIdExtensions`.
+- Atomic rejection: `InstrumentJsonRejectsUnknownKind`,
+  `InstrumentJsonRejectsUnknownDispositionAtomically`,
+  `InstrumentJsonRejectsMalformedWizardIdsAtomically`,
+  `InstrumentJsonRejectsDuplicateNames`,
+  `InstrumentJsonRejectsActiveWithoutProfileAtomically`,
+  `InstrumentJsonRejectsIncompleteBlacklistedRecordsAtomically`,
+  `InstrumentJsonRejectsKindInvalidDormantProfileAtomically`,
+  `InstrumentJsonRejectsLaunchpadWithEncoderMappings`,
+  `InstrumentJsonRejectsLaunchpadWithWrldBldrPosition`, and
+  `InstrumentJsonRejectsBadSchema`.
+- **Gap (pre-existing, not introduced by this change):** the `smi-2` scenario
+  "Legacy single-profile document is invalid" says a patch carrying the old
+  single `midiProfile` section and no `midiInstrument` section fails patch
+  validation. Since instrument configuration moved out of patch documents into
+  runtime configuration, `patch_json_ignores_legacy_midi_and_audio_sections_even_when_invalid`
+  in [`parameter_modulation_tests.cpp`](../tests/parameter_modulation_tests.cpp)
+  pins the shipped behavior: legacy `midiInstrument`/`audioDevice` sections in a
+  patch are ignored and `ValidatePatchJSON` still succeeds. The same scenario
+  text is present in the already-archived `smi-2`, so this is drift that predates
+  the controller wizard rather than a regression it introduced. No test claims
+  the scenario as written.
+
+### `smi-3` (modified) - Disposition-Aware Reconciliation
+
+- [`reconcile_tests.cpp`](../tests/reconcile_tests.cpp):
+  `blacklisted_slot_is_inert_and_does_not_claim_devices_needed_by_active_slot`
+  proves disposition is checked before Active claiming and that a Blacklisted
+  slot's deliberately stale references never contend;
+  `blacklisted_slot_with_absent_populated_refs_marks_unconfigured_not_offline`
+  proves disposition handling precedes configured-reference absence handling and
+  emits no `MarkOffline`;
+  `blacklisted_slot_with_present_populated_refs_stays_unconfigured_and_inert`
+  proves no claim, open, reference-update, or resync action; and
+  `active_to_blacklisted_closes_online_endpoints_then_converges_unconfigured`
+  proves the close-then-unconfigure ordering and that the next plan is empty.
+  Every retained Active matching, contention, offline, resync, and convergence
+  case still passes unchanged.
+- [`reconcile_executor_tests.cpp`](../tests/reconcile_executor_tests.cpp):
+  `mark_unconfigured_preserves_stored_refs_and_plan_order` proves the two new
+  generic actions update connection state without clearing stored references and
+  preserve plan order.
+
+### `smi-6` (modified) - Startup Connects Active And Skips Blacklisted
+
+- Startup uses the same planner, entered with `Unconfigured` connection state.
+  [`reconcile_tests.cpp`](../tests/reconcile_tests.cpp)
+  `blacklisted_slot_with_present_populated_refs_stays_unconfigured_and_inert`
+  is exactly that startup state for a Blacklisted slot whose devices are present
+  and proves neither endpoint is opened, while
+  `startup_shaped_reconcile_one_of_two_controllers_present_no_failure` retains
+  the Active present/absent startup contract and
+  `identifier_match_closed_input_opens_input_only` /
+  `identifier_match_closed_output_opens_output_and_resyncs` retain later
+  self-healing attach.
+
+### `smi-8` And `smi-10` (modified) - Blacklisted Processor Construction
+
+- [`engine_tests.cpp`](../tests/engine_tests.cpp):
+  `blacklisted_midi_controller_profile_is_drop_only_and_emits_nothing` proves the
+  slot holds a `DropMidiInProcessor`, an empty `inputThru`, empty `outputs`, no
+  thru, and no terminal realtime processor, and that CC, SysEx, `F8`, `FA`, `FB`,
+  and `FC` all emit nothing on the bus.
+  `engine_rebuild_switches_active_and_blacklisted_processors_without_reading_blacklisted_config`
+  proves Active-to-Blacklisted teardown and Blacklisted-to-Active rebuild both
+  install the right chain, and that the Active chain keeps its terminal realtime
+  routing (`smi-10`).
+  `engine_rebuild_preserves_ordered_slots_when_blacklisted_middle_slot_is_deleted`
+  proves slot resize and stable controller-slot identity after a middle removal.
+  The retained `EveryControllerProfileEndsInRealtimeMidiIncludingEmptyProfiles`
+  and realtime translation cases still cover the Active `smi-10` scenarios.
+- [`browser_midi_bridge_tests.cpp`](../tests/browser_midi_bridge_tests.cpp)
+  `TestActiveToBlacklistedTearsDownEndpointsAndDropsStaleBrowserCallback` proves
+  the endpoints close and a stale host callback reaching the slot during the
+  rebuild window is dropped.
+
+### `sru-2` (modified) - Cached Classification And The Controllers Warning
+
+- [`runtime_main_component_tests.cpp`](../tests/runtime_main_component_tests.cpp):
+  `TestSidebarWarningReflectsControllersDiscoverySnapshot` proves the marker
+  appears for an unclaimed recognized cached pair while the application view,
+  not the Controllers page, is open;
+  `TestWizardDiscoveryCacheRecomputesOnlyForCachedSnapshotChanges` proves an
+  unchanged device source neither updates the cache nor recomputes discovery,
+  that a device-list change recomputes it exactly once, and that a successful
+  instrument commit recomputes against the cached devices and clears the now
+  claimed candidate; and `TestThreeClickWizardSubmitCommitsThenSaves` proves the
+  marker is gone on the refresh after a successful commit. The
+  claimed/blacklisted suppression itself is proven by
+  `DiscoverySuppressesPairsClaimedByActiveAndBlacklistedRecords`.
+- [`browser_runtime_contract_tests.cpp`](../tests/browser_runtime_contract_tests.cpp)
+  `TestBrowserControllerDiscoveryCacheUsesSignalsAndSuccessfulCommits` pins the
+  same contract on the browser services.
+- [`RuntimePagesJuceTests.cpp`](../juce/RuntimePagesJuceTests.cpp) renders and
+  clears `runtime.sidebar.controllers.warning` as a JUCE label without replacing
+  the Controllers entry. Playwright
+  `controller wizard ignores an available row and restores warning after
+  blacklist removal` covers clearance and return in the real browser.
+
+### `sru-4` (modified) - Controllers List, Blacklisted Rows, And Lifecycle Actions
+
+- [`controllers_page_ui_tests.cpp`](../tests/controllers_page_ui_tests.cpp):
+  `TestDiscoveryRendersPortableAvailableRowsAndDiagnostics` covers the separate
+  Available controllers area, its Configure/Ignore actions, and the
+  unmatched-endpoint diagnostics.
+  `TestControllerLifecycleActionsUseTheNormalCommitAndSavePath` covers Rename,
+  Delete, Blacklist, Remove-from-blacklist, registry-gated action visibility,
+  unknown-opaque-id recovery, the `Blacklisted` badge with stored endpoint labels
+  and no mapping/endpoint controls, and commit-then-save routing.
+  `TestEndpointSelectorsPreferTheExactStoredIdentifier` covers the Active
+  endpoint choice list including an absent stored reference.
+- [`viewmodel_tests.cpp`](../tests/viewmodel_tests.cpp)
+  `ControllerLifecycleMutationsPreserveIdentityAndGateRegistryActions` covers
+  `RenameController`, `DeleteController`, `BlacklistController`, and
+  `RemoveFromBlacklist` on scratch instrument state: rename refused for an
+  empty, unchanged, or already-used name and applied to Active, Blacklisted, and
+  unknown-id rows; mandatory `config` to `dormantConfig` retention with name,
+  kind, wizard id, and both endpoints preserved; Blacklist refused for a manual
+  record, an unknown id, and an incomplete endpoint pair; and Delete/Remove
+  preserving list order. Uniqueness spans both dispositions because rename
+  delegates to `MidiInstrumentConfig::RenameController`, whose cross-disposition
+  rule is covered by `AddControllerRejectsDuplicateNameAcrossDispositions`.
+  The retained `AddControllerDuplicateNameFails`,
+  `AddControllerLaunchpadSeedsDefaultProfile`, and
+  `AddControllerGenericSeedsEmptyConfig` cases keep the manual "+" add contract.
+- [`ControllersPageSimulationTests.cpp`](../juce/ControllersPageSimulationTests.cpp)
+  `RunManualRecordSimulation` proves a manually added record keeps Rename and
+  Delete and is offered no Reconfigure, Blacklist, or Configure.
+- Playwright [`fake-app.e2e.spec.ts`](../browser/tests/fake-app.e2e.spec.ts):
+  `controller wizard supports rename and delete on active records`,
+  `controller wizard actions are absent on a manually added record`,
+  `controller wizard retains dormant profile when an active record is
+  blacklisted`, `controller wizard configures a blacklisted record through its
+  wizard`, and `controller wizard ignores an available row and restores warning
+  after blacklist removal`.
+
+### `sru-30` (modified) - Relative Bank Editing Versus The Wizard Table
+
+- The low-level editor is unchanged and retains its coverage:
+  [`viewmodel_tests.cpp`](../tests/viewmodel_tests.cpp)
+  `RelativeBankSystemMessagesExposeCatalogAndKeepSlotsAcrossEdits` covers the
+  single `Arg` interpreted as `slotIx`, argument preservation across Next/
+  Previous Bank conversion, and rebuild stability;
+  [`blocks_tests.cpp`](../tests/blocks_tests.cpp)
+  `RelativeBankMessagesSortBySlotAndReconstructAsIndividualCanonicalRows` keeps
+  them individual press-only rows through reconstruction and commit; the
+  randomized controller view-model simulation still exercises them.
+- The added sentence deferring wizard behavior to `scw-3` is covered by
+  `MfTwisterConfigFormBuildsClosedSixButtonSurfaceAndRoutesPortableActions`
+  (Next/Previous Bank arguments disabled) and
+  `MfTwisterWizardGeneratesCompleteActiveProfileFromItsForm` (their `slotIx`
+  comes from the form-wide Encoder Slot).
+
+### `sru-32` - Three-Click Configuration Wizard Flow
+
+- [`controllers_page_ui_tests.cpp`](../tests/controllers_page_ui_tests.cpp)
+  `TestWizardSessionRoutesPortableChooserAndForm` covers the visible-but-disabled
+  zero-candidate action with its explanation, the unique candidate opening its
+  form directly, the multi-candidate chooser with controller and endpoint labels,
+  one open session at a time, chooser entries disappearing with their candidates,
+  the one Encoder Slot plus exactly six rows in two columns, dispatch into the
+  form, Back/Cancel leaving the instrument untouched, `Ignore this controller` on
+  new-candidate sessions, and its absence on existing-record sessions.
+  `TestWizardSubmitRefusalsRetainFormAndPersistence` covers refusal retaining
+  every entered choice with an inline status.
+- [`runtime_main_component_tests.cpp`](../tests/runtime_main_component_tests.cpp)
+  `TestThreeClickWizardSubmitCommitsThenSaves` proves the whole path from the
+  runtime shell requires only the Controllers, Configuration Wizard, and Submit
+  activations, performs exactly one commit followed by one save, installs one
+  Active record with the descriptor wizard id, both endpoint identifiers,
+  sixteen turn mappings and six system associations, and clears the sidebar
+  warning. The per-mapping slot-0 targeting is asserted by the Playwright case
+  below and by `MfTwisterWizardGeneratesCompleteActiveProfileFromItsForm`.
+- Playwright [`fake-app.e2e.spec.ts`](../browser/tests/fake-app.e2e.spec.ts)
+  `controller wizard unique candidate configures a default Twister profile in
+  exactly three clicks` performs literally three `.click()` calls on
+  `runtime.sidebar.controllers`, `runtime.controllers.wizard.launch`, and
+  `runtime.controllers.wizard.submit`, checks the form's six defaults and 3+3
+  column geometry before Submit, and then checks the installed record's kind,
+  both reconciled endpoints, all sixteen encoder mappings on slot `0`, exactly
+  six side associations, the cleared warning, and survival of a real runtime
+  restart;
+  `controller wizard disables configuration when no candidate exists`,
+  `controller wizard presents a chooser for duplicate available Twisters`, and
+  `controller wizard ignores from a new-candidate form` cover the remaining
+  scenarios.
+- [`ControllersPageSimulationTests.cpp`](../juce/ControllersPageSimulationTests.cpp)
+  `RunControllerWizardParitySimulation` drives the same sequence through JUCE.
+
+### `sru-33` - Portable Wizard Backend Parity
+
+- [`portable_ui_tests.cpp`](../tests/portable_ui_tests.cpp) proves the portable
+  Controllers page exposes the enabled `runtime.controllers.wizard.launch` action
+  and that dispatching it composes the form's own
+  `controller-wizard.twister.encoder-slot` node together with
+  `runtime.controllers.wizard.submit` and `runtime.controllers.wizard.ignore`
+  into one tree.
+- [`ControllersPageSimulationTests.cpp`](../juce/ControllersPageSimulationTests.cpp)
+  `RunControllerWizardParitySimulation`, `RunManualRecordSimulation`,
+  `RunIncompatibleReconfigureSimulation`, and
+  `RunControllerWizardRefusalSimulation` drive the production portable actions
+  through rendered JUCE controls and compare node ids, labels, option ids and
+  labels, selected values, enabled states, two-column bounds, dispatched actions,
+  and resulting portable state against the JUCE-free expectations.
+- Playwright [`fake-app.e2e.spec.ts`](../browser/tests/fake-app.e2e.spec.ts)
+  covers the same ids and actions in real Chromium against real WASM, with
+  test-controlled Web MIDI ports from
+  [`helpers/fake-midi.ts`](../browser/tests/helpers/fake-midi.ts); persistence is
+  verified by reloading the runtime, not by mutating C++ state.
+- `make -C projects/synth check-ui-boundary` and
+  `npm --prefix projects/synth/browser run check:generic-runtime` are the gates
+  that keep wizard, Twister, blacklist, generation, and validation policy out of
+  both backends.
+
+### `sru-34` - Portable Semantic Enabled State
+
+- [`browser_command_buffer_tests.cpp`](../tests/browser_command_buffer_tests.cpp)
+  `TestDisabledSemanticNodesCarryEnabledState` proves the enabled flag crosses
+  the command buffer for semantic control nodes.
+- Playwright [`ui-backend.spec.ts`](../browser/tests/ui-backend.spec.ts):
+  `renders disabled native controls and keeps their portable values`,
+  `suppresses actions from disabled native controls`,
+  `suppresses double-click and drag actions from disabled semantic nodes`,
+  `stops an in-flight drag when its node becomes disabled`, and
+  `keeps dispatching once a previously disabled node becomes enabled`.
+- [`PortableJuceBackendTests.cpp`](../juce/PortableJuceBackendTests.cpp) renders
+  disabled Button, ComboBox, TextField, Toggle, Slider, and Draw nodes as
+  disabled JUCE components, preserves their values and selected options, and
+  dispatches no action while disabled.
+- The wizard-specific instance — a Next Bank, Previous Bank, or Start button
+  disabling its paired argument — is covered by
+  `MfTwisterConfigFormBuildsClosedSixButtonSurfaceAndRoutesPortableActions` in
+  the portable tree, `RunControllerWizardRefusalSimulation` in JUCE, and the
+  Playwright three-click case in Chrome.
 
 ## Known Gaps
 
