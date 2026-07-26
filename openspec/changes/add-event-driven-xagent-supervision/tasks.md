@@ -14,11 +14,11 @@
 
 ## 3. Haiku Semantic Watchdog
 
-- [ ] 3.1 Define and test the watchdog request and verdict schemas, including normalization of invalid, low-confidence, failed, and over-budget classifier results to `uncertain`.
-- [ ] 3.2 Implement an injected Haiku classifier launcher that uses a fresh safe-mode Claude Code invocation with tools, MCP, repository access, and session persistence disabled.
-- [ ] 3.3 Add fake-clock tests proving Haiku is never used for silence/crash/completion/input/deadline states and is eligible only for active semantic checkpoints or suspicion signals.
-- [ ] 3.4 Implement the 10/20/40-minute default backoff, minimum interval, per-turn reset, per-invocation bounds, and eight-call run cap.
-- [ ] 3.5 Add verdict tests proving healthy high-confidence checks remain controller-silent while `derailed`, `uncertain`, low-confidence, and invalid results emit one advisory attention event without acting on the worker.
+- [x] 3.1 Define and test the watchdog request and verdict schemas, including normalization of invalid, low-confidence, failed, and over-budget classifier results to `uncertain`.
+- [x] 3.2 Implement an injected Haiku classifier launcher that uses a fresh safe-mode Claude Code invocation with tools, MCP, repository access, and session persistence disabled.
+- [x] 3.3 Add fake-clock tests proving Haiku is never used for silence/crash/completion/input/deadline states and is eligible only for active semantic checkpoints or suspicion signals.
+- [x] 3.4 Implement the 10/20/40-minute default backoff, minimum interval, per-turn reset, per-invocation bounds, and eight-call run cap.
+- [x] 3.5 Add verdict tests proving healthy high-confidence checks remain controller-silent while `derailed`, `uncertain`, low-confidence, and invalid results emit one advisory attention event without acting on the worker.
 
 ## 4. Conductor-Managed Xagent Service
 
