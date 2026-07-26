@@ -672,6 +672,30 @@ test("unavailable service emits structured failure and never constructs a Superv
   assert.equal(clientSource.includes("createXagentServer"), false);
 });
 
+test("await against a downed service fails fast instead of spinning until the deadline", async () => {
+  const baseUrl = `http://127.0.0.1:${await findFreePort()}`;
+  const client = createXagentServiceClient({ baseUrl, awaitHttpChunkSeconds: 1 });
+  const start = Date.now();
+  try {
+    await assert.rejects(
+      () => client.await({
+        run_id: "xrun_missing",
+        after_sequence: 0,
+        deadline_seconds: 60,
+      }),
+      (error: unknown) => {
+        assert.ok(error !== null && typeof error === "object");
+        const structured = (error as { structured?: { error?: string } }).structured;
+        assert.equal(structured?.error, "xagent_service_unavailable");
+        return true;
+      },
+    );
+    assert.ok(Date.now() - start < 5_000, "await spun instead of failing fast");
+  } finally {
+    await client.close();
+  }
+});
+
 test("createXagentServiceClient maps connection failure to xagent_service_unavailable", async () => {
   const missingCwd = await mkdtemp(path.join(tmpdir(), "xagent-client-"));
   const client = createXagentServiceClient({
