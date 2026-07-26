@@ -235,10 +235,13 @@ test("accepts a maximal schema-valid healthy verdict wrapped in a Claude Code en
   );
 });
 
-test("rejects an oversized structured verdict even when stdout is under the truncation cap", async () => {
-  // A classifier that returns a verdict exceeding the 2 KiB bound (e.g. by
-  // ignoring the schema's evidence length limit) must still be normalized to
-  // `classifier_output_too_large`, applied to the extracted structured output.
+test("rejects a schema-invalid structured verdict even when stdout is under the truncation cap", async () => {
+  // A classifier that ignores the schema's evidence character limit returns
+  // items longer than MAX_EVIDENCE_ITEM_LENGTH. Normalization rejects this
+  // as `invalid_classifier_output` (the per-item character guard fires before
+  // the byte bound is applied); the byte cap remains a defensive guard for
+  // verdicts that are schema-valid in character count but still oversized
+  // after per-item byte truncation.
   //
   const oversizedStructuredOutput = {
     verdict: "healthy",
@@ -254,7 +257,7 @@ test("rejects an oversized structured verdict even when stdout is under the trun
   };
   const stdout = JSON.stringify(envelope);
   // The envelope is under the 16 KiB stdout truncation cap, so the spawn
-  // itself does not flag outputTooLarge; the bound is enforced at the
+  // itself does not flag outputTooLarge; the rejection is enforced at the
   // structured-output layer.
   //
   assert.ok(Buffer.byteLength(stdout, "utf8") <= 16 * 1024);
@@ -268,7 +271,71 @@ test("rejects an oversized structured verdict even when stdout is under the trun
   const result = await classifier.classify(request(), new AbortController().signal);
 
   assert.equal(result.verdict, "uncertain");
-  assert.equal(result.reason_code, "classifier_output_too_large");
+  assert.equal(result.reason_code, "invalid_classifier_output");
+});
+
+// I1: a schema-valid maximal healthy verdict whose evidence is non-ASCII
+// (CJK, 3 bytes per character) must still be accepted as healthy. The
+// per-item character bound (192) is enforced by the JSON Schema sent to
+// Claude Code, but 192 CJK characters serialize to 576 bytes per item, so
+// 8 such items alone exceed the 2 KiB verdict byte cap. Normalization
+// truncates each evidence item to a UTF-8 byte bound so the serialized
+// verdict always fits, and a healthy verdict stays healthy rather than
+// being normalized to `uncertain` with `classifier_output_too_large` (which
+// would wake the controller once per checkpoint for every non-English run).
+//
+test("accepts a maximal schema-valid healthy verdict with non-ASCII (CJK) evidence", async () => {
+  // 192 CJK characters per item — schema-valid (maxLength: 192 characters)
+  // but 576 bytes per item before truncation.
+  //
+  const cjkCharacter = "\u4e2d"; // "中" — 3 bytes in UTF-8
+  const maximalStructuredOutput = {
+    verdict: "healthy",
+    confidence: 0.91,
+    reason_code: "steady_progress",
+    evidence: Array.from({ length: 8 }, () => cjkCharacter.repeat(192)),
+  };
+  const envelope = {
+    type: "result",
+    subtype: "success",
+    structured_output: maximalStructuredOutput,
+    result: JSON.stringify(maximalStructuredOutput),
+    session_id: "session-" + "s".repeat(40),
+    usage: { input_tokens: 120, output_tokens: 30 },
+    total_cost_usd: 0.0005,
+  };
+  const stdout = JSON.stringify(envelope);
+  // The raw structured output alone (8 × 576 bytes + envelope) exceeds the
+  // 2 KiB verdict byte cap before per-item byte truncation is applied.
+  //
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(maximalStructuredOutput), "utf8") > 2 * 1024,
+    "raw CJK maximal structured output must exceed the 2 KiB byte cap before truncation",
+  );
+
+  const spawn: WatchdogSpawn = async () => ({
+    exitCode: 0,
+    stdout,
+    stderr: "",
+  });
+  const classifier = new ClaudeWatchdogClassifier({ spawn });
+  const result = await classifier.classify(request(), new AbortController().signal);
+
+  assert.equal(result.verdict, "healthy");
+  assert.equal(result.reason_code, "steady_progress");
+  assert.equal(result.evidence.length, 8);
+  // Each evidence item is truncated to the per-item UTF-8 byte bound.
+  //
+  for (const item of result.evidence) {
+    assert.ok(
+      Buffer.byteLength(item, "utf8") <= 192,
+      `evidence item must be truncated to 192 bytes, found ${Buffer.byteLength(item, "utf8")} bytes`,
+    );
+  }
+  assert.ok(
+    (result as { output_bytes?: number }).output_bytes! <= 2 * 1024,
+    "normalized verdict bytes must fit within the 2 KiB output bound",
+  );
 });
 
 // C1 regression: spawnWatchdogProcess deliberately SIGKILLs the child from
