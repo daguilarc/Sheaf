@@ -279,13 +279,26 @@ TEST_CASE(MfTwisterConfigFormPlacesSixButtonsInTwoColumnsOfThree) {
 
     std::vector<synth::ui::Bounds> message;
     for (std::size_t buttonIx = 0; buttonIx < synth::MfTwisterConfigForm::kButtonCount; ++buttonIx) {
+        const synth::ui::Bounds labelBounds = FormBounds(tree, TwisterButtonField(buttonIx, "label"));
         const synth::ui::Bounds messageBounds = FormBounds(tree, TwisterButtonField(buttonIx, "message"));
         const synth::ui::Bounds argumentBounds = FormBounds(tree, TwisterButtonField(buttonIx, "argument"));
+        REQUIRE_TRUE(labelBounds.width > 0.0f && labelBounds.height > 0.0f);
         REQUIRE_TRUE(messageBounds.width > 0.0f && messageBounds.height > 0.0f);
         REQUIRE_TRUE(argumentBounds.width > 0.0f && argumentBounds.height > 0.0f);
+        REQUIRE_TRUE(messageBounds.x >= labelBounds.x + labelBounds.width);
         REQUIRE_TRUE(argumentBounds.x >= messageBounds.x + messageBounds.width);
         REQUIRE_TRUE(argumentBounds.y == messageBounds.y);
+        REQUIRE_TRUE(labelBounds.y == messageBounds.y);
         message.push_back(messageBounds);
+    }
+
+    // Each column names itself above its first button row.
+    for (std::size_t column = 0; column < 2; ++column) {
+        const synth::ui::Bounds heading = FormBounds(
+            tree, "controller-wizard.twister.column." + std::to_string(column) + ".heading");
+        REQUIRE_TRUE(heading.width > 0.0f && heading.height > 0.0f);
+        REQUIRE_TRUE(heading.y + heading.height <= message[column * 3].y);
+        REQUIRE_TRUE(heading.x == FormBounds(tree, TwisterButtonField(column * 3, "label")).x);
     }
 
     // Buttons 0-2 are the first column, buttons 3-5 the second, in CC order.
@@ -324,19 +337,41 @@ TEST_CASE(MfTwisterConfigFormBuildsClosedSixButtonSurfaceAndRoutesPortableAction
     REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.button.5.message") != nullptr);
     REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.button.0.argument") != nullptr);
     REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.button.5.argument") != nullptr);
-    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.0")->label ==
-                 "Left (CC 8-10)");
-    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.1")->label ==
-                 "Right (CC 11-13)");
-    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.0")->children.size() == 3);
-    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.1")->children.size() == 3);
+    // No backend paints a container node's own label, so the column names and
+    // the side-button names are rendered Label children, not Section/Row labels.
+    for (const char* columnId : {"controller-wizard.twister.column.0",
+                                 "controller-wizard.twister.column.1"}) {
+        REQUIRE_TRUE(FindNodeById(initialTree, columnId)->label.empty());
+    }
+    const synth::ui::Node* leftHeading =
+        FindNodeById(initialTree, "controller-wizard.twister.column.0.heading");
+    const synth::ui::Node* rightHeading =
+        FindNodeById(initialTree, "controller-wizard.twister.column.1.heading");
+    REQUIRE_TRUE(leftHeading != nullptr && leftHeading->kind == synth::ui::NodeKind::Label &&
+                 leftHeading->text == "Left (CC 8-10)");
+    REQUIRE_TRUE(rightHeading != nullptr && rightHeading->kind == synth::ui::NodeKind::Label &&
+                 rightHeading->text == "Right (CC 11-13)");
+    for (std::size_t buttonIx = 0; buttonIx < synth::MfTwisterConfigForm::kButtonCount; ++buttonIx) {
+        const synth::ui::Node* buttonRow =
+            FindNodeById(initialTree, "controller-wizard.twister.button." + std::to_string(buttonIx));
+        REQUIRE_TRUE(buttonRow != nullptr && buttonRow->label.empty());
+        const synth::ui::Node* buttonLabel =
+            FindNodeById(initialTree, TwisterButtonField(buttonIx, "label"));
+        // One-based, so a "Button N" refusal names a row the user can see.
+        REQUIRE_TRUE(buttonLabel != nullptr && buttonLabel->kind == synth::ui::NodeKind::Label &&
+                     buttonLabel->text == "Button " + std::to_string(buttonIx + 1));
+    }
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.0")->children.size() == 4);
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.1")->children.size() == 4);
     REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.0")->children[0].value ==
+                 "controller-wizard.twister.column.0.heading");
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.0")->children[1].value ==
                  "controller-wizard.twister.button.0");
-    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.0")->children[2].value ==
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.0")->children[3].value ==
                  "controller-wizard.twister.button.2");
-    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.1")->children[0].value ==
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.1")->children[1].value ==
                  "controller-wizard.twister.button.3");
-    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.1")->children[2].value ==
+    REQUIRE_TRUE(FindNodeById(initialTree, "controller-wizard.twister.column.1")->children[3].value ==
                  "controller-wizard.twister.button.5");
 
     const std::vector<std::string> expectedLabels = {

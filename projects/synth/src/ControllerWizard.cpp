@@ -64,6 +64,7 @@ inline constexpr float kFieldGap = 8.0f;
 inline constexpr float kRowGap = 6.0f;
 inline constexpr float kSlotWidth = 160.0f;
 inline constexpr float kSlotErrorWidth = 320.0f;
+inline constexpr float kButtonLabelWidth = 70.0f;
 inline constexpr float kMessageWidth = 150.0f;
 inline constexpr float kArgumentWidth = 80.0f;
 inline constexpr float kColumnHeaderHeight = 22.0f;
@@ -71,7 +72,12 @@ inline constexpr float kColumnGap = 16.0f;
 inline constexpr std::size_t kColumnCount = 2;
 inline constexpr std::size_t kRowsPerColumn = 3;
 
-inline constexpr float kColumnWidth = kMessageWidth + kFieldGap + kArgumentWidth;
+// Each button row is: side-button name, message dropdown, argument field. No
+// backend paints a container node's own label, so the row and column names are
+// rendered nodes rather than Row/Section labels.
+inline constexpr float kMessageX = kButtonLabelWidth + kFieldGap;
+inline constexpr float kArgumentX = kMessageX + kMessageWidth + kFieldGap;
+inline constexpr float kColumnWidth = kArgumentX + kArgumentWidth;
 inline constexpr float kButtonRowHeight = kControlHeight + kErrorGap + kErrorHeight;
 inline constexpr float kColumnsTop = kMargin + kControlHeight + kErrorGap + kErrorHeight + kRowGap;
 inline constexpr float kColumnHeight =
@@ -182,6 +188,15 @@ ui::Node TextFieldNode(std::string id, std::string label, std::string text, ui::
     node.enabled = enabled;
     node.bounds = bounds;
     node.action = ui::Action::Named(std::move(id));
+    return node;
+}
+
+ui::Node LabelNode(std::string id, std::string text, ui::Bounds bounds) {
+    ui::Node node;
+    node.id = ui::NodeId(std::move(id));
+    node.kind = ui::NodeKind::Label;
+    node.text = std::move(text);
+    node.bounds = bounds;
     return node;
 }
 
@@ -424,10 +439,17 @@ ui::NodeTree MfTwisterConfigForm::BuildTree() {
         columnNode.id = ui::NodeId(std::string(kMfTwisterFormRootId) + ".column." +
                                    std::to_string(column));
         columnNode.kind = ui::NodeKind::Section;
-        columnNode.label = column == 0 ? "Left (CC 8-10)" : "Right (CC 11-13)";
         columnNode.bounds = {Layout::ColumnX(column), Layout::kColumnsTop, Layout::kColumnWidth,
                              Layout::kColumnHeight};
         const std::size_t columnIx = AppendNode(tree, 0, std::move(columnNode));
+
+        // The column heading occupies the header band kColumnHeight already
+        // reserves above the first button row.
+        AppendNode(tree, columnIx,
+                   LabelNode(std::string(kMfTwisterFormRootId) + ".column." +
+                                 std::to_string(column) + ".heading",
+                             column == 0 ? "Left (CC 8-10)" : "Right (CC 11-13)",
+                             {0.0f, 0.0f, Layout::kColumnWidth, Layout::kColumnHeaderHeight}));
 
         for (std::size_t row = 0; row < Layout::kRowsPerColumn; ++row) {
             const std::size_t buttonIx = column * Layout::kRowsPerColumn + row;
@@ -436,10 +458,16 @@ ui::NodeTree MfTwisterConfigForm::BuildTree() {
             buttonNode.id = ui::NodeId(std::string(kMfTwisterFormRootId) + ".button." +
                                        std::to_string(buttonIx));
             buttonNode.kind = ui::NodeKind::Row;
-            buttonNode.label = "Button " + std::to_string(buttonIx + 1);
             buttonNode.bounds = {0.0f, Layout::ButtonRowY(row), Layout::kColumnWidth,
                                  Layout::kButtonRowHeight};
             const std::size_t buttonNodeIx = AppendNode(tree, columnIx, std::move(buttonNode));
+
+            // One-based, matching the "Button N" wording Validate() uses when it
+            // refuses a field, so the refusal names a row the user can see.
+            AppendNode(tree, buttonNodeIx,
+                       LabelNode(ButtonFieldId(buttonIx, "label"),
+                                 "Button " + std::to_string(buttonIx + 1),
+                                 {0.0f, 0.0f, Layout::kButtonLabelWidth, Layout::kControlHeight}));
 
             const std::string messageId = ButtonFieldId(buttonIx, "message");
             ui::Node messageNode;
@@ -447,7 +475,8 @@ ui::NodeTree MfTwisterConfigForm::BuildTree() {
             messageNode.kind = ui::NodeKind::ComboBox;
             messageNode.label = "Message";
             messageNode.selectedOption = MessageOptionId(button.message);
-            messageNode.bounds = {0.0f, 0.0f, Layout::kMessageWidth, Layout::kControlHeight};
+            messageNode.bounds = {Layout::kMessageX, 0.0f, Layout::kMessageWidth,
+                                  Layout::kControlHeight};
             messageNode.action = ui::Action::Named(messageId);
             for (const TwisterMessageChoice& choice : kTwisterMessageChoices) {
                 const UISystemMessageChoice* catalogChoice = FindUISystemMessageChoice(choice.message);
@@ -462,8 +491,8 @@ ui::NodeTree MfTwisterConfigForm::BuildTree() {
             const bool argumentEnabled = TwisterArgumentEnabled(button.message);
             AppendNode(tree, buttonNodeIx,
                        TextFieldNode(argumentId, "Argument", button.argumentText,
-                                     {Layout::kMessageWidth + Layout::kFieldGap, 0.0f,
-                                      Layout::kArgumentWidth, Layout::kControlHeight},
+                                     {Layout::kArgumentX, 0.0f, Layout::kArgumentWidth,
+                                      Layout::kControlHeight},
                                      argumentEnabled));
             if (argumentEnabled && FieldHasError(button.argumentText)) {
                 AppendNode(tree, buttonNodeIx,

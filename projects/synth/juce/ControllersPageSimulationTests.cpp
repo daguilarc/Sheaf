@@ -528,6 +528,17 @@ std::string RenderedLabelText(const juce::Component& component)
     return label != nullptr ? label->getText().toStdString() : std::string();
 }
 
+std::string RequireLabelText(synth_juce::PortableComponent& renderer,
+                             const std::string& id,
+                             const std::string& step)
+{
+    juce::Component* component = renderer.FindByNodeId(id);
+    Require(component != nullptr, step + ": " + id + " is not a rendered label");
+    Require(dynamic_cast<juce::Label*>(component) != nullptr,
+            step + ": " + id + " is not rendered as a Label");
+    return RenderedLabelText(*component);
+}
+
 // Generic portable/JUCE comparison run after every wizard step: every semantic
 // node is rendered, and its label, text, options, selected option, checked
 // state, enabled state, and declared size survive into JUCE unchanged.
@@ -720,8 +731,23 @@ void VerifyTwisterFormDefaults(WizardParityFixture& fixture, const std::string& 
                 expectedSlot,
             step + ": Encoder Slot value mismatch");
 
+    // scw-3 / D8: the form names its own controls. The column headings state the
+    // physical CC range and each row names its side button with the same
+    // one-based wording Validate() uses when it refuses a field.
+    Require(RequireLabelText(fixture.Renderer(),
+                             std::string(kTwisterFormPrefix) + "column.0.heading", step) ==
+                "Left (CC 8-10)",
+            step + ": left column heading mismatch");
+    Require(RequireLabelText(fixture.Renderer(),
+                             std::string(kTwisterFormPrefix) + "column.1.heading", step) ==
+                "Right (CC 11-13)",
+            step + ": right column heading mismatch");
+
     for (std::size_t buttonIx = 0; buttonIx < 6; ++buttonIx)
     {
+        Require(RequireLabelText(fixture.Renderer(), TwisterButtonField(buttonIx, "label"), step) ==
+                    "Button " + std::to_string(buttonIx + 1),
+                step + ": button label mismatch for button " + std::to_string(buttonIx));
         juce::ComboBox& message =
             RequireCombo(fixture.Renderer(), TwisterButtonField(buttonIx, "message"), step);
         Require(message.getNumItems() == static_cast<int>(kTwisterChoiceLabels.size()),
@@ -766,6 +792,27 @@ void VerifyTwisterColumnGeometry(WizardParityFixture& fixture, const std::string
         Require(boxes[3 + row].getY() == boxes[row].getY(),
                 step + ": paired column rows are not aligned");
     }
+
+    // sru-33: BuildWizardFormTree() places the page's own chrome below the
+    // height the form reports, so the form's columns must not overlap it.
+    int columnsBottom = 0;
+    for (std::size_t column = 0; column < 2; ++column)
+    {
+        const std::string columnId =
+            std::string(kTwisterFormPrefix) + "column." + std::to_string(column);
+        juce::Component* section = fixture.Renderer().FindByNodeId(columnId);
+        Require(section != nullptr, step + ": " + columnId + " is not rendered");
+        columnsBottom = std::max(columnsBottom, SurfaceBoundsOf(fixture.Renderer(), *section).getBottom());
+    }
+    for (const char* chromeId : {synth::runtime_ui::NodeIds::kWizardBack,
+                                 synth::runtime_ui::NodeIds::kWizardCancel,
+                                 synth::runtime_ui::NodeIds::kWizardSubmit})
+    {
+        Require(SurfaceBoundsOf(fixture.Renderer(),
+                                RequireButton(fixture.Renderer(), chromeId, step))
+                        .getY() >= columnsBottom,
+                step + ": page chrome overlaps the form");
+    }
 }
 
 const synth::MidiControllerSlot& RequireController(
@@ -789,10 +836,10 @@ void RunControllerWizardParitySimulation()
     // explains why, and the disabled action dispatches nothing.
     Require(!RequireButton(fixture.Renderer(), NodeIds::kWizardLaunch, "no candidate").isEnabled(),
             "no candidate leaves Configuration Wizard disabled");
-    Require(RenderedLabelText(*fixture.Renderer().FindByNodeId(NodeIds::kAvailableEmpty)) ==
+    Require(RequireLabelText(fixture.Renderer(), NodeIds::kAvailableEmpty, "no candidate") ==
                 "No recognized unconfigured controller pair is present",
             "no candidate explains the disabled action");
-    Require(RenderedLabelText(*fixture.Renderer().FindByNodeId(NodeIds::kAvailableHeading)) ==
+    Require(RequireLabelText(fixture.Renderer(), NodeIds::kAvailableHeading, "no candidate") ==
                 "Available controllers",
             "the available controllers area renders its heading");
     fixture.Click(NodeIds::kWizardLaunch, "disabled launch");
@@ -808,11 +855,11 @@ void RunControllerWizardParitySimulation()
     // D8: the row names the recognized controller by its registry descriptor and
     // its paired endpoints by their device names, in two separate rendered
     // nodes. Both hosts are pinned to the same two strings.
-    Require(RenderedLabelText(*fixture.Renderer().FindByNodeId(NodeIds::AvailableName(0))) ==
+    Require(RequireLabelText(fixture.Renderer(), NodeIds::AvailableName(0), "one candidate") ==
                 kTwisterDisplayName,
             "the available row names the recognized controller");
-    Require(RenderedLabelText(
-                *fixture.Renderer().FindByNodeId(NodeIds::AvailableRow(0) + ".endpoints"))
+    Require(RequireLabelText(fixture.Renderer(), NodeIds::AvailableRow(0) + ".endpoints",
+                             "one candidate")
                 .find(synth_runtime::test::kTwisterDeviceName) != std::string::npos,
             "the available row names the recognized pair's endpoints");
 
@@ -898,7 +945,7 @@ void RunControllerWizardParitySimulation()
                 !fixture.Exists(NodeIds::ControllerOutput(0)) &&
                 !fixture.Exists(NodeIds::ControllerDisclosure(0)),
             "a blacklisted row exposes no live endpoint selectors or mapping disclosure");
-    Require(RenderedLabelText(*fixture.Renderer().FindByNodeId(NodeIds::ControllerBadge(0)))
+    Require(RequireLabelText(fixture.Renderer(), NodeIds::ControllerBadge(0), "blacklist")
                 .find("Blacklisted") != std::string::npos,
             "a blacklisted row shows its badge");
 
@@ -1028,7 +1075,7 @@ void RunIncompatibleReconfigureSimulation()
             "the hand edit leaves five side associations");
 
     fixture.Click(NodeIds::ControllerReconfigure(0), "incompatible reconfigure opens");
-    Require(RenderedLabelText(*fixture.Renderer().FindByNodeId(NodeIds::kWizardWarning))
+    Require(RequireLabelText(fixture.Renderer(), NodeIds::kWizardWarning, "incompatible reconfigure")
                 .find("replaces the whole profile") != std::string::npos,
             "an unrepresentable profile warns that Submit replaces the whole profile");
     VerifyTwisterFormDefaults(fixture, "0", "incompatible reconfigure opens defaults");
@@ -1065,7 +1112,7 @@ void RunControllerWizardRefusalSimulation()
     fixture.TypeInto(TwisterButtonField(1, "argument"), kOverflowArgument, "refusal overflows");
 
     fixture.Click(NodeIds::kWizardSubmit, "invalid submit");
-    Require(RenderedLabelText(*fixture.Renderer().FindByNodeId(NodeIds::kWizardStatus))
+    Require(RequireLabelText(fixture.Renderer(), NodeIds::kWizardStatus, "invalid submit")
                 .find("Button 2") != std::string::npos,
             "an invalid form refusal names the offending button");
     Require(harness.Commits() == 0 && harness.Saves() == 0,
@@ -1082,7 +1129,7 @@ void RunControllerWizardRefusalSimulation()
     harness.RemoveTwisterPair(1);
     fixture.Tick("candidate disappears");
     fixture.Click(NodeIds::kWizardSubmit, "stale submit");
-    Require(RenderedLabelText(*fixture.Renderer().FindByNodeId(NodeIds::kWizardStatus))
+    Require(RequireLabelText(fixture.Renderer(), NodeIds::kWizardStatus, "stale submit")
                 .find("reconnect") != std::string::npos,
             "a disappeared candidate refuses Submit with a reconnect message");
     Require(harness.Commits() == 0 && harness.Saves() == 0,

@@ -423,6 +423,13 @@ async function assertTwisterWizardDefaults(page: Page): Promise<void> {
   await expect(wizardSlot(page).locator("input")).toHaveValue("0");
   await expect(page.locator(WIZARD_MESSAGES)).toHaveCount(6);
   await expect(page.locator(WIZARD_ARGUMENTS)).toHaveCount(6);
+  // The form names its own controls: each column states its physical CC range
+  // and each row names its side button with the same one-based wording the
+  // refusal status uses ("Button 2" for index 1).
+  await expect(page.locator(synthNode("controller-wizard.twister.column.0.heading"))).toHaveText("Left (CC 8-10)");
+  await expect(page.locator(synthNode("controller-wizard.twister.column.1.heading"))).toHaveText("Right (CC 11-13)");
+  for (let index = 0; index < 6; index += 1)
+    await expect(page.locator(synthNode(`controller-wizard.twister.button.${index}.label`))).toHaveText(`Button ${index + 1}`);
   expect(await selectedWizardMessageLabels(page)).toEqual([...TWISTER_WIZARD_DEFAULTS]);
   expect(await wizardMessageChoices(page, 0)).toEqual([...TWISTER_WIZARD_CHOICES]);
   for (let index = 0; index < 6; index += 1)
