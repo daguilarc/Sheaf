@@ -304,7 +304,13 @@ class PackageXagentOutputTests(unittest.TestCase):
 
             runtime_root = destination / "assets" / "xagent" / "dist" / "src"
             self.assertFalse((runtime_root / "service_main.js").exists())
-            self.assertFalse((runtime_root / "service").exists())
+            service_root = runtime_root / "service"
+            self.assertTrue((service_root / "client.js").is_file())
+            self.assertTrue((service_root / "config.js").is_file())
+            self.assertTrue((service_root / "tool_schemas.js").is_file())
+            self.assertFalse((service_root / "mcp.js").exists())
+            self.assertFalse((service_root / "run_manager.js").exists())
+            self.assertFalse((service_root / "server.js").exists())
 
             if is_loopback_port_open(9005):
                 tool_names = discover_mcp_tools(XAGENT_MCP_URL)
@@ -348,15 +354,23 @@ class GlobalPluginInstallTests(unittest.TestCase):
         shutil.copy2(REPO_ROOT / "plugins" / "xagent" / ".mcp.json", plugin_root / ".mcp.json")
 
         xagent_root = self.repo_root / "projects" / "xagent"
-        (xagent_root / "dist" / "src").mkdir(parents=True)
-        (xagent_root / "package.json").write_text(
-            '{"name":"xagent","version":"0.1.0","type":"module"}\n',
-            encoding="utf-8",
+        real_xagent = REPO_ROOT / "projects" / "xagent"
+        xagent_root.mkdir(parents=True)
+        shutil.copy2(real_xagent / "package.json", xagent_root / "package.json")
+        if (real_xagent / "package-lock.json").is_file():
+            shutil.copy2(real_xagent / "package-lock.json", xagent_root / "package-lock.json")
+        shutil.copytree(
+            real_xagent / "dist" / "src",
+            xagent_root / "dist" / "src",
+            dirs_exist_ok=True,
         )
-        (xagent_root / "dist" / "src" / "main.js").write_text(
-            "// test runtime copied by package_xagent.py\n",
-            encoding="utf-8",
-        )
+        if (real_xagent / "node_modules").is_dir():
+            node_modules_link = xagent_root / "node_modules"
+            if not node_modules_link.exists():
+                node_modules_link.symlink_to(
+                    real_xagent / "node_modules",
+                    target_is_directory=True,
+                )
 
         helper_root = (
             self.codex_home / "skills" / ".system" / "plugin-creator" / "scripts"

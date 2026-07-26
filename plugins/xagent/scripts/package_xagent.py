@@ -16,11 +16,34 @@ XAGENT_ROOT = REPO_ROOT / "projects" / "xagent"
 ASSET_ROOT = PLUGIN_ROOT / "assets" / "xagent"
 PACKAGE_DIRECTORIES = (".codex-plugin", "skills", "scripts")
 PACKAGE_COMPANION_FILES = (".mcp.json",)
-LEGACY_RUNTIME_IGNORE = shutil.ignore_patterns(
-    "service_main.*",
-    "service",
-    "service/*",
+CLIENT_SERVICE_FILES = frozenset(
+    {
+        "client.d.ts",
+        "client.d.ts.map",
+        "client.js",
+        "client.js.map",
+        "config.d.ts",
+        "config.d.ts.map",
+        "config.js",
+        "config.js.map",
+        "tool_schemas.d.ts",
+        "tool_schemas.d.ts.map",
+        "tool_schemas.js",
+        "tool_schemas.js.map",
+    }
 )
+
+
+def packaged_runtime_ignore(directory: str, names: list[str]) -> set[str]:
+    ignored: set[str] = set()
+    dir_path = Path(directory)
+    for name in names:
+        if name.startswith("service_main."):
+            ignored.add(name)
+            continue
+        if dir_path.name == "service" and name not in CLIENT_SERVICE_FILES:
+            ignored.add(name)
+    return ignored
 
 
 def run(
@@ -52,7 +75,25 @@ def copy_runtime(asset_root: Path) -> None:
     shutil.copytree(
         XAGENT_ROOT / "dist" / "src",
         asset_root / "dist" / "src",
-        ignore=LEGACY_RUNTIME_IGNORE,
+        ignore=packaged_runtime_ignore,
+    )
+    copy_packaged_dependencies(asset_root)
+
+
+def copy_packaged_dependencies(asset_root: Path) -> None:
+    source_modules = XAGENT_ROOT / "node_modules"
+    if not source_modules.is_dir():
+        raise RuntimeError(
+            f"missing xagent node_modules: {source_modules}; "
+            "run `npm install` in projects/xagent before packaging"
+        )
+    destination = asset_root / "node_modules"
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(
+        source_modules,
+        destination,
+        ignore=shutil.ignore_patterns(".cache"),
     )
 
 
@@ -82,12 +123,22 @@ def build_package(destination: Path) -> None:
     copy_runtime(destination / "assets" / "xagent")
 
 
-def file_snapshot(root: Path) -> dict[str, tuple[int, str]]:
+def file_snapshot(
+    root: Path,
+    *,
+    exclude_prefixes: tuple[str, ...] = (),
+) -> dict[str, tuple[int, str]]:
     snapshot: dict[str, tuple[int, str]] = {}
     if not root.exists():
         return snapshot
     for path in sorted(item for item in root.rglob("*") if item.is_file()):
-        snapshot[str(path.relative_to(root))] = (
+        relative = str(path.relative_to(root))
+        if any(
+            relative == prefix or relative.startswith(f"{prefix}/")
+            for prefix in exclude_prefixes
+        ):
+            continue
+        snapshot[relative] = (
             path.stat().st_mode & 0o777,
             hashlib.sha256(path.read_bytes()).hexdigest(),
         )
@@ -117,8 +168,11 @@ def check_tracked_assets_current(*, validate: bool = False) -> None:
         build_package(package_root)
         if validate:
             validate_launcher(package_root)
-        expected = file_snapshot(package_root / "assets" / "xagent")
-    actual = file_snapshot(ASSET_ROOT)
+        expected = file_snapshot(
+            package_root / "assets" / "xagent",
+            exclude_prefixes=("node_modules",),
+        )
+    actual = file_snapshot(ASSET_ROOT, exclude_prefixes=("node_modules",))
     if expected != actual:
         drift = "\n".join(describe_snapshot_drift(expected, actual))
         raise RuntimeError(
