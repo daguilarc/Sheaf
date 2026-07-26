@@ -1492,6 +1492,73 @@ TEST_CASE(InstrumentJsonRoundTripsControllersInOrder) {
     REQUIRE_TRUE(synth::IsActive(loaded.controllers[3]));
 }
 
+TEST_CASE(InstrumentJsonRoundTripsMixedDispositionsInOrder) {
+    MidiInstrumentConfig instrument;
+    REQUIRE_TRUE(instrument.AddController(MakeWrldBldrSlot("active wrld")));
+
+    MidiControllerSlot ignored = MakeBlacklistedSlot("ignored twister");
+    REQUIRE_TRUE(instrument.AddController(ignored));
+
+    REQUIRE_TRUE(instrument.AddController(MakeLaunchpadSlot("active pad")));
+
+    MidiControllerSlot dormant = MakeBlacklistedSlot("dormant twister");
+    dormant.wizardId = "future.vendor/dormant-twister";
+    dormant.dormantConfig = synth::MfTwisterDefaultProfileConfig();
+    REQUIRE_TRUE(instrument.AddController(dormant));
+
+    synth::JsonArena arena(1024 * 1024);
+    const synth::JSON json = synth::ToJSON(arena, instrument);
+    const synth::JSON controllers = json.Get("controllers");
+    REQUIRE_TRUE(controllers.Size() == 4);
+    REQUIRE_TRUE(controllers.GetAt(0).Get("disposition").StringValue() == std::string_view("active"));
+    REQUIRE_TRUE(JsonObjectHasKey(controllers.GetAt(0), "profile"));
+    REQUIRE_TRUE(controllers.GetAt(1).Get("disposition").StringValue() == std::string_view("blacklisted"));
+    REQUIRE_TRUE(!JsonObjectHasKey(controllers.GetAt(1), "profile"));
+    REQUIRE_TRUE(controllers.GetAt(2).Get("disposition").StringValue() == std::string_view("active"));
+    REQUIRE_TRUE(JsonObjectHasKey(controllers.GetAt(2), "profile"));
+    REQUIRE_TRUE(controllers.GetAt(3).Get("disposition").StringValue() == std::string_view("blacklisted"));
+    REQUIRE_TRUE(JsonObjectHasKey(controllers.GetAt(3), "profile"));
+
+    MidiInstrumentConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+
+    REQUIRE_TRUE(loaded.controllers.size() == 4);
+    REQUIRE_TRUE(loaded.controllers[0].name == "active wrld");
+    REQUIRE_TRUE(loaded.controllers[0].kind == MidiProfileKind::WrldBldr);
+    REQUIRE_TRUE(synth::IsActive(loaded.controllers[0]));
+    REQUIRE_TRUE(!loaded.controllers[0].wizardId.has_value());
+    REQUIRE_TRUE(loaded.controllers[0].config.encoderInput.has_value());
+    REQUIRE_TRUE(!loaded.controllers[0].dormantConfig.has_value());
+
+    REQUIRE_TRUE(loaded.controllers[1].name == "ignored twister");
+    REQUIRE_TRUE(loaded.controllers[1].kind == MidiProfileKind::MfTwister);
+    REQUIRE_TRUE(!synth::IsActive(loaded.controllers[1]));
+    REQUIRE_TRUE(loaded.controllers[1].wizardId == ignored.wizardId);
+    REQUIRE_TRUE(loaded.controllers[1].input.identifier == ignored.input.identifier);
+    REQUIRE_TRUE(loaded.controllers[1].output.identifier == ignored.output.identifier);
+    REQUIRE_TRUE(!loaded.controllers[1].config.encoderInput.has_value());
+    REQUIRE_TRUE(!loaded.controllers[1].dormantConfig.has_value());
+
+    REQUIRE_TRUE(loaded.controllers[2].name == "active pad");
+    REQUIRE_TRUE(loaded.controllers[2].kind == MidiProfileKind::Launchpad);
+    REQUIRE_TRUE(synth::IsActive(loaded.controllers[2]));
+    REQUIRE_TRUE(!loaded.controllers[2].wizardId.has_value());
+    REQUIRE_TRUE(!loaded.controllers[2].config.systemMessages.empty());
+    REQUIRE_TRUE(!loaded.controllers[2].dormantConfig.has_value());
+
+    REQUIRE_TRUE(loaded.controllers[3].name == "dormant twister");
+    REQUIRE_TRUE(loaded.controllers[3].kind == MidiProfileKind::MfTwister);
+    REQUIRE_TRUE(!synth::IsActive(loaded.controllers[3]));
+    REQUIRE_TRUE(loaded.controllers[3].wizardId == dormant.wizardId);
+    REQUIRE_TRUE(loaded.controllers[3].input.identifier == dormant.input.identifier);
+    REQUIRE_TRUE(loaded.controllers[3].output.identifier == dormant.output.identifier);
+    REQUIRE_TRUE(!loaded.controllers[3].config.encoderInput.has_value());
+    REQUIRE_TRUE(loaded.controllers[3].dormantConfig.has_value());
+    REQUIRE_TRUE(loaded.controllers[3].dormantConfig->encoderInput.has_value());
+    REQUIRE_TRUE(loaded.controllers[3].dormantConfig->encoderInput->turns.size() ==
+                 dormant.dormantConfig->encoderInput->turns.size());
+}
+
 TEST_CASE(InstrumentJsonEmptyControllersRoundTrips) {
     MidiInstrumentConfig instrument;
 
@@ -1509,6 +1576,7 @@ TEST_CASE(InstrumentJsonRejectsUnknownKind) {
     synth::JSON controller = arena.Object();
     controller.SetNew("name", arena.String("pad"));
     controller.SetNew("kind", arena.String("theremin"));
+    controller.SetNew("disposition", arena.String("active"));
     controller.SetNew("input", synth::ToJSON(arena, MidiEndpointRef{}));
     controller.SetNew("output", synth::ToJSON(arena, MidiEndpointRef{}));
     controller.SetNew("profile", synth::ToJSON(arena, MidiControllerProfileConfig{}));
@@ -1639,6 +1707,32 @@ TEST_CASE(InstrumentJsonLoadsPreviousSchemaControllersAsActiveWithoutWizardId) {
     REQUIRE_TRUE(synth::IsActive(loaded.controllers[1]));
     REQUIRE_TRUE(!loaded.controllers[1].wizardId.has_value());
     REQUIRE_TRUE(loaded.controllers[1].config.encoderInput.has_value());
+}
+
+TEST_CASE(InstrumentJsonIgnoresPreviousSchemaDispositionAndWizardIdExtensions) {
+    synth::JsonArena arena(1024 * 1024);
+    synth::JSON controller = MakeInstrumentControllerJson(
+        arena, "legacy extension", "twister", synth::ToJSON(arena, synth::MfTwisterDefaultProfileConfig()));
+    controller.SetNew("disposition", arena.String("blacklisted"));
+    controller.SetNew("wizardId", arena.String("future.vendor/legacy-extension"));
+
+    synth::JSON controllers = arena.Array();
+    controllers.AppendNew(controller);
+
+    synth::JSON json = arena.Object();
+    json.SetNew("schema", arena.String(synth::kMidiInstrumentSchema));
+    json.SetNew("schemaVersion", arena.Integer(1));
+    json.SetNew("controllers", controllers);
+
+    MidiInstrumentConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(loaded.controllers.size() == 1);
+    REQUIRE_TRUE(loaded.controllers[0].name == "legacy extension");
+    REQUIRE_TRUE(loaded.controllers[0].kind == MidiProfileKind::MfTwister);
+    REQUIRE_TRUE(synth::IsActive(loaded.controllers[0]));
+    REQUIRE_TRUE(!loaded.controllers[0].wizardId.has_value());
+    REQUIRE_TRUE(loaded.controllers[0].config.encoderInput.has_value());
+    REQUIRE_TRUE(!loaded.controllers[0].dormantConfig.has_value());
 }
 
 TEST_CASE(InstrumentJsonRejectsUnknownDispositionAtomically) {

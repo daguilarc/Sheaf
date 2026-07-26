@@ -44,6 +44,7 @@ constexpr std::uint8_t kPrimaryPositionChannel = 0;
 constexpr std::uint8_t kTwisterRgbColorChannel = 1;
 constexpr std::uint8_t kTwisterRgbBrightnessChannel = 2;
 constexpr std::uint8_t kTwisterRingBrightnessChannel = 5;
+constexpr int kMidiInstrumentPreviousSchemaVersion = 1;
 
 EncoderMidiInConfig RowMajorInputDefault(std::size_t slotIx) {
     EncoderMidiInConfig config;
@@ -2680,7 +2681,7 @@ bool MidiControllerSlotFromJSON(JSON json, MidiControllerSlot& value, int instru
     if (!MidiProfileKindFromName(kind.StringValue(), parsed.kind)) {
         return false;
     }
-    if (instrumentSchemaVersion == 1) {
+    if (instrumentSchemaVersion == kMidiInstrumentPreviousSchemaVersion) {
         parsed.disposition = MidiControllerDisposition::Active;
     } else if (instrumentSchemaVersion == kMidiInstrumentSchemaVersion) {
         const JSON disposition = json.Get("disposition");
@@ -2691,7 +2692,7 @@ bool MidiControllerSlotFromJSON(JSON json, MidiControllerSlot& value, int instru
     } else {
         return false;
     }
-    if (ObjectHasKey(json, "wizardId")) {
+    if (instrumentSchemaVersion == kMidiInstrumentSchemaVersion && ObjectHasKey(json, "wizardId")) {
         const JSON wizardId = json.Get("wizardId");
         if (!IsString(wizardId) || std::string_view(wizardId.StringValue()).empty()) {
             return false;
@@ -2741,7 +2742,8 @@ bool FromJSON(JSON json, MidiInstrumentConfig& out) {
     }
     const JSON version = json.Get("schemaVersion");
     if (!IsInteger(version) ||
-        (version.IntegerValue() != 1 && version.IntegerValue() != kMidiInstrumentSchemaVersion)) {
+        (version.IntegerValue() != kMidiInstrumentPreviousSchemaVersion &&
+         version.IntegerValue() != kMidiInstrumentSchemaVersion)) {
         return false;
     }
     const JSON controllers = json.Get("controllers");
