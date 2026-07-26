@@ -51,17 +51,6 @@ bool IsRenderedNode(const synth::ui::Node& node)
     return node.kind != synth::ui::NodeKind::Root && node.kind != synth::ui::NodeKind::ScrollArea;
 }
 
-bool IsDeferredCommitAction(const synth::ui::Action& action)
-{
-    return action.name == synth::runtime_ui::Actions::kAddSingle ||
-           action.name == synth::runtime_ui::Actions::kAddBlock ||
-           action.name == synth::runtime_ui::Actions::kDeleteRow ||
-           action.name == synth::runtime_ui::Actions::kEndpointSelect ||
-           action.name == synth::runtime_ui::Actions::kVariantSelect ||
-           action.name == synth::runtime_ui::Actions::kMappingFieldCommit ||
-           action.name == synth::runtime_ui::Actions::kAddController;
-}
-
 std::string Describe(const synth::ui::Action& action)
 {
     return action.name + "(" + action.value + ")";
@@ -544,7 +533,7 @@ int main()
 
         lastAction = Describe(action);
         surface.DispatchAction(action);
-        if (IsDeferredCommitAction(action))
+        if (surface.NeedsDeferredDispatch(action))
         {
             surface.RefreshOnTick();
         }

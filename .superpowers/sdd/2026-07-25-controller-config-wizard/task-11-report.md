@@ -133,3 +133,84 @@ the existing unrelated `ControllerWizard.cpp` unused-variable warning.
 ### Fix commit
 
 `fix(synth-ui): stabilize wizard chooser routing`
+
+## Fix round 2 — defer production JUCE structural refreshes
+
+### Root cause and red evidence
+
+`ControllersPageSurface::NeedsDeferredDispatch` was only consulted by a JUCE
+simulation. The actual JUCE path was synchronous:
+
+`SemanticTextButton::onClick` → `PortableComponent::DispatchCurrentNodeAction`
+→ `RuntimeMainComponent::DispatchAction` → MainPane action handler
+→ `PortableComponent::RefreshFromSurface` → `RebuildControls`.
+
+That last step can delete the clicked control before its `onClick` callback
+returns. Added a real `RuntimeShellSession` JUCE regression that checks the
+shared deferred classification for existing structural actions plus Wizard
+Open/Choose/Back/Cancel, clicks the production Controllers Back button, then
+requires the clicked node to remain rendered until the queued refresh flushes.
+
+```sh
+make -C projects/synth/apps/miniapp \
+  /Users/joyo/Sheaf/.claude/worktrees/add-controller-config-wizard/projects/synth/apps/miniapp/build/runtime_shell_session_tests && \
+  /Users/joyo/Sheaf/.claude/worktrees/add-controller-config-wizard/projects/synth/apps/miniapp/build/runtime_shell_session_tests
+```
+
+Exit: `2` (expected red): the regression first failed to compile because the
+production `MainPane` exposed neither the shared deferred-refresh classifier
+nor queued-refresh state/flush seam. Before the fix, its existing synchronous
+handler would have removed the Controllers Back node immediately after click.
+
+### Change
+
+- `RuntimeMainComponent::NeedsDeferredDispatch` now delegates to the portable
+  Controllers surface classification; `MainPane` consumes it in the real JUCE
+  action handler.
+- Structural actions still dispatch exactly once immediately, but their
+  renderer rebuild is coalesced and posted through `juce::MessageManager::callAsync`.
+  A `juce::Component::SafePointer<MainPane>` makes the callback harmless after
+  host teardown; a rejected queue post never falls back to destructive
+  synchronous rebuilding.
+- The shared classification covers the pre-existing structural actions,
+  Controllers Back, Available Configure, and Wizard Open/Choose/Back/Cancel.
+  Submit/Ignore remain Task 12 behavior.
+- Replaced `ControllersPageSimulationTests`' hand-maintained deferred action
+  list with `surface.NeedsDeferredDispatch(action)` to prevent drift.
+
+### Green verification
+
+```sh
+make -C projects/synth build/controllers_page_ui_tests build/portable_ui_tests \
+  build/runtime_main_component_tests && \
+  projects/synth/build/controllers_page_ui_tests && \
+  projects/synth/build/portable_ui_tests && \
+  projects/synth/build/runtime_main_component_tests && \
+  make -C projects/synth check-ui-boundary && \
+  git diff --check
+```
+
+Exit: `0`; portable Controllers tests passed, all 17 runtime-main cases
+passed, and static checks passed.
+
+```sh
+make -C projects/synth/apps/miniapp \
+  /Users/joyo/Sheaf/.claude/worktrees/add-controller-config-wizard/projects/synth/apps/miniapp/build/runtime_shell_session_tests \
+  /Users/joyo/Sheaf/.claude/worktrees/add-controller-config-wizard/projects/synth/apps/miniapp/build/controllers_page_simulation_tests && \
+  /Users/joyo/Sheaf/.claude/worktrees/add-controller-config-wizard/projects/synth/apps/miniapp/build/runtime_shell_session_tests && \
+  /Users/joyo/Sheaf/.claude/worktrees/add-controller-config-wizard/projects/synth/apps/miniapp/build/controllers_page_simulation_tests
+```
+
+Exit: `0`; the runtime-shell regression and both deterministic Controllers
+simulations passed. Their release compiles retain the pre-existing unrelated
+`ControllerWizard.cpp` unused-variable warning.
+
+### Deferred minor
+
+`m_wizardChooserStatus` still persists across chooser close/reopen. This does
+not overlap the production deferral mechanism and remains deferred for a
+later targeted chooser-state cleanup.
+
+### Fix commit
+
+`fix(synth-ui): defer structural controller refreshes`

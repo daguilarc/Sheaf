@@ -286,10 +286,16 @@ int main() {
         renderer.FindByNodeId(synth::runtime_ui::NodeIds::ControllerDisclosure(0)));
     Require(disclosure != nullptr, "first controller disclosure renders");
     disclosure->onClick();
+    Require(shell->GetMainPane().HasDeferredRendererRefresh(),
+            "disclosure click queues its structural renderer refresh");
+    shell->GetMainPane().FlushDeferredRendererRefresh();
     auto* systemSection = dynamic_cast<juce::TextButton*>(renderer.FindByNodeId(
         synth::runtime_ui::NodeIds::SectionToggle(0, synth::MidiConfigSection::SystemMessages)));
     Require(systemSection != nullptr, "system messages section renders after disclosure");
     systemSection->onClick();
+    Require(shell->GetMainPane().HasDeferredRendererRefresh(),
+            "section click queues its structural renderer refresh");
+    shell->GetMainPane().FlushDeferredRendererRefresh();
 
     controllersScroll = renderer.FindByNodeId(synth::runtime_ui::NodeIds::kScroll);
     Require(controllersScroll != nullptr, "controllers scroll survives section expansion");
@@ -324,9 +330,23 @@ int main() {
     auto* controllersBackButton = dynamic_cast<juce::TextButton*>(
         renderer.FindByNodeId(synth::runtime_ui::NodeIds::kBack));
     Require(controllersBackButton != nullptr, "controllers back control remains available");
+    for (const char* actionName : {synth::runtime_ui::Actions::kBack,
+                                   synth::runtime_ui::Actions::kWizardOpen,
+                                   synth::runtime_ui::Actions::kWizardChoose,
+                                   synth::runtime_ui::Actions::kWizardBack,
+                                   synth::runtime_ui::Actions::kWizardCancel}) {
+        Require(shell->GetMainPane().NeedsDeferredRendererRefresh(
+                    synth::ui::Action::Named(actionName)),
+                "structural Controllers action uses the deferred renderer path");
+    }
     controllersBackButton->onClick();
+    Require(renderer.FindByNodeId(synth::runtime_ui::NodeIds::kBack) != nullptr,
+            "deferred Controllers navigation does not destroy the clicked button during onClick");
+    Require(shell->GetMainPane().HasDeferredRendererRefresh(),
+            "structural Controllers click queues one deferred renderer refresh");
+    shell->GetMainPane().FlushDeferredRendererRefresh();
     Require(renderer.FindByNodeId(synth_miniapp::MiniAppNodeIds::Encoder(0)) != nullptr,
-            "controllers back restores the app before later session checks");
+            "deferred Controllers navigation refreshes after the click callback returns");
 
     const std::filesystem::path wideRoot = root / "wide";
     synth_runtime::RuntimeShellSession<WideDrawApp> wideSession(

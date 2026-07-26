@@ -146,6 +146,11 @@ public:
         actionHandler_ = std::move(handler);
     }
 
+    bool NeedsDeferredDispatch(const ui::Action& action) const
+    {
+        return IsControllersAction(action.name) && controllersSurface_.NeedsDeferredDispatch(action);
+    }
+
     void DispatchAction(const ui::Action& action) override
     {
         if (IsSidebarAction(action.name))

@@ -802,12 +802,14 @@ public:
 
     bool NeedsDeferredDispatch(const ui::Action& action) const
     {
-        return action.name == Actions::kToggleConfig || action.name == Actions::kToggleSection ||
+        return action.name == Actions::kBack || action.name == Actions::kToggleConfig ||
+               action.name == Actions::kToggleSection ||
                action.name == Actions::kDeleteRow || action.name == Actions::kAddSingle ||
                action.name == Actions::kAddBlock || action.name == Actions::kEndpointSelect ||
                action.name == Actions::kVariantSelect || action.name == Actions::kMappingFieldCommit ||
                action.name == Actions::kAddController || action.name == Actions::kWizardOpen ||
-               action.name == Actions::kWizardChoose || action.name == Actions::kWizardBack ||
+               action.name == Actions::kAvailableConfigure || action.name == Actions::kWizardChoose ||
+               action.name == Actions::kWizardBack ||
                action.name == Actions::kWizardCancel;
     }
 

@@ -323,7 +323,9 @@ void TestWizardSessionRoutesPortableChooserAndForm()
 
     TestHarness deferredHarness;
     auto deferredSurface = deferredHarness.MakeSurface();
-    for (const char* actionName : {synth::runtime_ui::Actions::kWizardOpen,
+    for (const char* actionName : {synth::runtime_ui::Actions::kBack,
+                                   synth::runtime_ui::Actions::kAvailableConfigure,
+                                   synth::runtime_ui::Actions::kWizardOpen,
                                    synth::runtime_ui::Actions::kWizardChoose,
                                    synth::runtime_ui::Actions::kWizardBack,
                                    synth::runtime_ui::Actions::kWizardCancel})
