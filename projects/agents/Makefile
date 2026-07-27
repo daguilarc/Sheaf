@@ -10,6 +10,7 @@ build: check
 
 test:
 	python3 -m unittest discover -s scripts -p '*_test.py'
+	python3 -m unittest discover -s utils -p '*_test.py'
 	python3 scripts/install.py check --scope repo
 
 install:

@@ -1,0 +1,452 @@
+#!/usr/bin/env python3
+"""Render a Superpowers subagent prompt template to a file and print its path.
+
+The Superpowers templates (implementer, task-reviewer, re-review, code-reviewer)
+document a prompt a controller is expected to fill in and emit as a message.
+Controllers under context pressure compress that prose, dropping the review
+rubric while keeping the scaffolding. This renders the template to a file
+instead, so the controller dispatches by path and never retypes the body.
+
+Usage:
+  dispatch-prompt <template> --plan PLAN [options]
+
+See --help for the per-template option set.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+
+PLUGIN_ROOT = Path.home() / ".claude/plugins/cache/claude-plugins-official/superpowers"
+TEMPLATES_ROOT_ENV = "SUPERPOWERS_TEMPLATES_ROOT"
+
+# Substitution kinds:
+#   path     - value is a filesystem path; must exist and be non-empty; the
+#              PATH is substituted
+#   path_out - value is a filesystem path the subagent will WRITE; only its
+#              parent must exist; the PATH is substituted
+#   filetext - value is a filesystem path; must exist; its CONTENTS are
+#              substituted
+#   text     - value is inline text, or @FILE to read the text from a file
+#   literal  - value is a plain string substituted as-is
+#
+# Every declared slot must end up substituted. `required` means the caller must
+# supply it; a non-required slot must still be satisfied by a derivation or by
+# `fallback`, because a surviving "[TOKEN]" in a delivered prompt is noise the
+# subagent has to interpret.
+@dataclass(frozen=True)
+class Slot:
+    token: str
+    option: str
+    kind: str
+    required: bool = False
+    fallback: str | None = None
+
+
+@dataclass(frozen=True)
+class Template:
+    skill: str
+    filename: str
+    slots: tuple[Slot, ...]
+    task_scoped: bool = True
+    rounds: bool = False
+    # Body carries the literal "Task N" in prose rather than a bracket token.
+    task_token: bool = False
+    # Template takes --base/--head, so the review package path can be derived.
+    wants_shas: bool = False
+
+
+TEMPLATES: dict[str, Template] = {
+    "implementer": Template(
+        skill="subagent-driven-development",
+        filename="implementer-prompt.md",
+        slots=(
+            Slot("[task name]", "--name", "literal", required=True),
+            Slot("[BRIEF_FILE]", "--brief", "path", required=True),
+            Slot(
+                "[Scene-setting: where this fits, dependencies, architectural context]",
+                "--context",
+                "text",
+                fallback="No additional context beyond the task brief.",
+            ),
+            Slot("[directory]", "--dir", "literal"),
+            # The implementer WRITES its report, so this path need not exist yet.
+            Slot("[REPORT_FILE]", "--report", "path_out"),
+        ),
+        task_token=True,
+    ),
+    "task-reviewer": Template(
+        skill="subagent-driven-development",
+        filename="task-reviewer-prompt.md",
+        slots=(
+            Slot("[BRIEF_FILE]", "--brief", "path", required=True),
+            Slot(
+                "[GLOBAL_CONSTRAINTS]",
+                "--constraints",
+                "filetext",
+                fallback="None beyond the task brief.",
+            ),
+            Slot("[REPORT_FILE]", "--report", "path"),
+            Slot("[BASE_SHA]", "--base", "literal", required=True),
+            Slot("[HEAD_SHA]", "--head", "literal", required=True),
+            Slot("[DIFF_FILE]", "--diff", "path"),
+        ),
+        wants_shas=True,
+    ),
+    "re-review": Template(
+        skill="subagent-driven-development",
+        filename="re-review-prompt.md",
+        slots=(
+            Slot("[BRIEF_FILE]", "--brief", "path", required=True),
+            Slot("[FINDINGS]", "--findings", "filetext", required=True),
+            Slot("[REPORT_FILE]", "--report", "path"),
+            Slot("[FIX_BASE_SHA]", "--base", "literal", required=True),
+            Slot("[HEAD_SHA]", "--head", "literal", required=True),
+            Slot("[DIFF_FILE]", "--diff", "path"),
+        ),
+        rounds=True,
+        wants_shas=True,
+    ),
+    "code-reviewer": Template(
+        skill="requesting-code-review",
+        filename="code-reviewer.md",
+        slots=(
+            Slot("[DESCRIPTION]", "--description", "text", required=True),
+            Slot("[PLAN_OR_REQUIREMENTS]", "--requirements", "text", required=True),
+            Slot("[BASE_SHA]", "--base", "literal", required=True),
+            Slot("[HEAD_SHA]", "--head", "literal", required=True),
+        ),
+        task_scoped=False,
+    ),
+}
+
+# Templates whose body carries "Task N" in prose rather than a bracket token.
+TASK_NUMBER_TOKEN = "Task N"
+
+
+class Fail(Exception):
+    """A user-facing failure. Nothing is written when this is raised."""
+
+
+# ---------------------------------------------------------------- resolution
+
+
+def parse_version(name: str) -> tuple[int, ...] | None:
+    if not re.fullmatch(r"\d+(\.\d+)*", name):
+        return None
+    return tuple(int(part) for part in name.split("."))
+
+
+def resolve_templates_root(explicit: str | None) -> tuple[Path, list[Path]]:
+    """Return (root, searched) where root contains the skill directories."""
+    searched: list[Path] = []
+
+    for candidate in (explicit, os.environ.get(TEMPLATES_ROOT_ENV)):
+        if candidate:
+            root = Path(candidate).expanduser()
+            searched.append(root)
+            if root.is_dir():
+                return root, searched
+            raise Fail(f"templates root does not exist: {root}")
+
+    searched.append(PLUGIN_ROOT)
+    if PLUGIN_ROOT.is_dir():
+        versions = sorted(
+            (
+                (version, entry)
+                for entry in PLUGIN_ROOT.iterdir()
+                if entry.is_dir() and (version := parse_version(entry.name)) is not None
+            ),
+            reverse=True,
+        )
+        for _, entry in versions:
+            root = entry / "skills"
+            searched.append(root)
+            if root.is_dir():
+                return root, searched
+
+    raise Fail(
+        "could not resolve a Superpowers templates root. Searched:\n  "
+        + "\n  ".join(str(path) for path in searched)
+        + f"\nPass --templates-root or set {TEMPLATES_ROOT_ENV}."
+    )
+
+
+def repo_root() -> Path:
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        raise Fail("not inside a git repository; cannot resolve the plan workspace") from exc
+    return Path(out.stdout.strip())
+
+
+def plan_workspace(plan: Path) -> Path:
+    """Mirror sdd-workspace: <repo-root>/.superpowers/sdd/<plan-basename>/."""
+    if not plan.is_file():
+        raise Fail(f"no such plan file: {plan}")
+    slug = plan.name[:-3] if plan.name.endswith(".md") else plan.name
+    if not slug or slug in {".", ".."}:
+        raise Fail(f"cannot derive a workspace name from: {plan}")
+    base = repo_root() / ".superpowers" / "sdd"
+    workspace = base / slug
+    workspace.mkdir(parents=True, exist_ok=True)
+    (base / ".gitignore").write_text("*\n", encoding="utf-8")
+    return workspace
+
+
+def short_sha(rev: str) -> str:
+    out = subprocess.run(
+        ["git", "rev-parse", "--short", rev], capture_output=True, text=True
+    )
+    return out.stdout.strip() if out.returncode == 0 else rev[:7]
+
+
+# ---------------------------------------------------------------- extraction
+
+
+def extract_prompt_body(text: str, source: Path) -> str:
+    """Return the dedented `prompt: |` body of the template's dispatch block.
+
+    The outer fence opens at column 0; fences inside the prompt body are
+    indented with the body (code-reviewer.md carries an indented ```bash
+    block), so a column-0 fence is an unambiguous delimiter.
+    """
+    lines = text.splitlines()
+    fences = [i for i, line in enumerate(lines) if line.startswith("```")]
+    if len(fences) < 2:
+        raise Fail(f"no column-0 fenced dispatch block in template: {source}")
+    start, end = fences[0], fences[1]
+
+    body_start = None
+    for i in range(start + 1, end):
+        if re.fullmatch(r"\s*prompt:\s*\|\s*", lines[i]):
+            body_start = i + 1
+            break
+    if body_start is None:
+        raise Fail(f"no `prompt: |` line in the dispatch block of: {source}")
+
+    body = lines[body_start:end]
+    while body and not body[0].strip():
+        body.pop(0)
+    while body and not body[-1].strip():
+        body.pop()
+    if not body:
+        raise Fail(f"empty prompt body in template: {source}")
+
+    indents = [
+        len(line) - len(line.lstrip()) for line in body if line.strip()
+    ]
+    margin = min(indents) if indents else 0
+    return "\n".join(line[margin:] if line.strip() else "" for line in body) + "\n"
+
+
+# ---------------------------------------------------------------- rendering
+
+
+def read_file(path_str: str, option: str) -> tuple[Path, str]:
+    path = Path(path_str).expanduser()
+    if not path.is_file():
+        raise Fail(f"{option}: no such file: {path}")
+    content = path.read_text(encoding="utf-8")
+    if not content.strip():
+        raise Fail(f"{option}: file is empty: {path}")
+    return path, content
+
+
+def slot_value(slot: Slot, raw: str) -> str:
+    if slot.kind == "path":
+        path, _ = read_file(raw, slot.option)
+        return str(path.resolve())
+    if slot.kind == "path_out":
+        path = Path(raw).expanduser()
+        if not path.parent.is_dir():
+            raise Fail(f"{slot.option}: parent directory does not exist: {path.parent}")
+        return str(path.resolve())
+    if slot.kind == "filetext":
+        _, content = read_file(raw, slot.option)
+        return content.rstrip("\n")
+    if slot.kind == "text":
+        if raw.startswith("@"):
+            _, content = read_file(raw[1:], slot.option)
+            return content.rstrip("\n")
+        return raw
+    return raw
+
+
+def render(template: Template, name: str, args: argparse.Namespace) -> tuple[str, Path]:
+    root, _ = resolve_templates_root(args.templates_root)
+    source = root / template.skill / template.filename
+    if not source.is_file():
+        raise Fail(f"template file not found: {source}")
+
+    body = extract_prompt_body(source.read_text(encoding="utf-8"), source)
+
+    # Drift check before substituting: a renamed or removed upstream token must
+    # fail loudly, not silently drop the content it was carrying.
+    missing = [slot.token for slot in template.slots if slot.token not in body]
+    if template.task_token and TASK_NUMBER_TOKEN not in body:
+        missing.append(TASK_NUMBER_TOKEN)
+    if missing:
+        raise Fail(
+            f"template drift: {name} ({source}) no longer contains "
+            + ", ".join(repr(token) for token in missing)
+            + "\nUpdate the manifest in this script, or pin with --templates-root."
+        )
+
+    plan = Path(args.plan).expanduser()
+    workspace = plan_workspace(plan)
+
+    supplied = _supplied(template, args, workspace)
+
+    for slot in template.slots:
+        raw = supplied.get(slot.option)
+        if raw is None:
+            if slot.fallback is None:
+                raise Fail(
+                    f"{slot.option} is required for the {name} template "
+                    "(no value supplied and none could be derived)"
+                )
+            body = body.replace(slot.token, slot.fallback)
+            continue
+        body = body.replace(slot.token, slot_value(slot, raw))
+
+    if template.task_token:
+        body = body.replace(TASK_NUMBER_TOKEN, f"Task {args.task}")
+
+    residual = [slot.token for slot in template.slots if slot.token in body]
+    if residual:
+        raise Fail(
+            "internal error: placeholders survived substitution: " + ", ".join(residual)
+        )
+
+    return body, workspace / output_name(template, name, args)
+
+
+def _supplied(
+    template: Template, args: argparse.Namespace, workspace: Path
+) -> dict[str, str]:
+    """Explicit options, plus conventional derivations. --brief is never derived."""
+    supplied: dict[str, str] = {}
+    options = {slot.option for slot in template.slots}
+
+    for slot in template.slots:
+        attr = slot.option.lstrip("-").replace("-", "_")
+        value = getattr(args, attr, None)
+        if value is not None:
+            supplied[slot.option] = value
+
+    kinds = {slot.option: slot.kind for slot in template.slots}
+
+    if template.task_scoped and "--report" in options and "--report" not in supplied:
+        candidate = workspace / f"task-{args.task}-report.md"
+        # An implementer writes its report, so derive the path unconditionally;
+        # a reviewer reads one, so only derive a report that actually exists —
+        # otherwise fail and make the caller say which report to review.
+        if kinds["--report"] == "path_out" or candidate.is_file():
+            supplied["--report"] = str(candidate)
+
+    if template.task_scoped and "--constraints" in options and "--constraints" not in supplied:
+        candidate = workspace / "global-constraints.md"
+        if candidate.is_file():
+            supplied["--constraints"] = str(candidate)
+
+    if template.wants_shas and "--diff" in options and "--diff" not in supplied:
+        candidate = workspace / f"review-{short_sha(args.base)}..{short_sha(args.head)}.diff"
+        if candidate.is_file():
+            supplied["--diff"] = str(candidate)
+
+    if "--dir" in options and "--dir" not in supplied:
+        supplied["--dir"] = str(repo_root())
+
+    return supplied
+
+
+def output_name(template: Template, name: str, args: argparse.Namespace) -> str:
+    if not template.task_scoped:
+        return f"dispatch-{name}.md"
+    if template.rounds:
+        return f"dispatch-{name}-task-{args.task}-round-{args.round}.md"
+    return f"dispatch-{name}-task-{args.task}.md"
+
+
+def write_atomic(path: Path, content: str) -> None:
+    handle, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".dispatch-", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(content)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+# ---------------------------------------------------------------------- main
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="dispatch-prompt",
+        description="Render a Superpowers subagent prompt template to a file.",
+    )
+    parser.add_argument("template", choices=sorted(TEMPLATES), help="template role name")
+    parser.add_argument("--plan", required=True, help="implementation plan file")
+    parser.add_argument("--task", help="task number (task-scoped templates)")
+    parser.add_argument("--round", help="fix round number (re-review)")
+    parser.add_argument("--name", help="task name (implementer)")
+    parser.add_argument("--brief", help="task brief FILE — required, substituted as a path")
+    parser.add_argument("--report", help="implementer report file")
+    parser.add_argument("--constraints", help="global constraints file (contents inlined)")
+    parser.add_argument("--findings", help="findings file (contents inlined)")
+    parser.add_argument("--context", help="scene-setting text, or @FILE")
+    parser.add_argument("--description", help="what was built, or @FILE")
+    parser.add_argument("--requirements", help="plan or requirements text, or @FILE")
+    parser.add_argument("--dir", help="working directory for the subagent")
+    parser.add_argument("--base", help="base commit")
+    parser.add_argument("--head", help="head commit")
+    parser.add_argument("--diff", help="review package diff file")
+    parser.add_argument("--out", help="explicit output path")
+    parser.add_argument("--templates-root", help="override the Superpowers skills root")
+    return parser
+
+
+def main(argv: list[str]) -> int:
+    args = build_parser().parse_args(argv)
+    template = TEMPLATES[args.template]
+
+    try:
+        if template.task_scoped and args.task is None:
+            raise Fail(f"--task is required for the {args.template} template")
+        if template.rounds and args.round is None:
+            raise Fail(f"--round is required for the {args.template} template")
+        if args.constraints is not None and not any(
+            slot.option == "--constraints" for slot in template.slots
+        ):
+            raise Fail(f"--constraints is not accepted by the {args.template} template")
+
+        body, default_out = render(template, args.template, args)
+        out = Path(args.out).expanduser() if args.out else default_out
+        out.parent.mkdir(parents=True, exist_ok=True)
+        write_atomic(out, body)
+    except Fail as exc:
+        print(f"dispatch-prompt: {exc}", file=sys.stderr)
+        return 2
+
+    print(out.resolve())
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
