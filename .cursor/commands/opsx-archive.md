@@ -1,10 +1,11 @@
-<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 ---
 name: /opsx-archive
 id: opsx-archive
 category: Workflow
 description: Archive a completed change in the experimental workflow
 ---
+
+<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 
 Archive a completed change in the experimental workflow.
 

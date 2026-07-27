@@ -759,11 +759,30 @@ def list_openspec_harness_outputs(repo_root: Path) -> list[Output]:
 
 def wrap_openspec_managed_content(content: str) -> str:
     marker = marker_for(OPENSPEC_PACKAGE_REL)
-    if content.startswith(marker):
-        return content
     if not content.endswith("\n"):
         content = content + "\n"
-    return f"{marker}\n{content}"
+    lines = content.splitlines(keepends=True)
+    if not lines or lines[0].strip() != "---":
+        raise ValueError("OpenSpec harness content missing YAML frontmatter")
+    close_idx = None
+    for index in range(1, len(lines)):
+        if lines[index].strip() == "---":
+            close_idx = index
+            break
+    if close_idx is None:
+        raise ValueError(
+            "OpenSpec harness content missing closing YAML frontmatter delimiter"
+        )
+
+    # Idempotent if marker already sits immediately after frontmatter.
+    #
+    trailing = "".join(lines[close_idx + 1 :])
+    if trailing.lstrip().startswith(marker):
+        return content
+
+    frontmatter = "".join(lines[: close_idx + 1])
+    body = trailing.lstrip("\n")
+    return f"{frontmatter}\n{marker}\n\n{body}"
 
 
 def generate_openspec_harness_tree(repo_root: Path, staging_root: Path) -> None:

@@ -1,10 +1,11 @@
-<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 ---
 name: "OPSX: Explore"
 description: "Enter explore mode - think through ideas, investigate problems, clarify requirements"
 category: Workflow
 tags: [workflow, explore, experimental, thinking]
 ---
+
+<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 
 Enter explore mode. Think deeply. Visualize freely. Follow the conversation wherever it goes.
 

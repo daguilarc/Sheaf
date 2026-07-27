@@ -1,10 +1,11 @@
-<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 ---
 name: /opsx-sync
 id: opsx-sync
 category: Workflow
 description: Sync delta specs from a change to main specs
 ---
+
+<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 
 Sync delta specs from a change to main specs.
 

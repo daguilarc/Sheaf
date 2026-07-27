@@ -1,4 +1,3 @@
-<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 ---
 name: openspec-apply-change
 description: Implement tasks from an OpenSpec change. Use when the user wants to start implementing, continue implementation, or work through tasks.
@@ -9,6 +8,8 @@ metadata:
   version: "1.0"
   generatedBy: "1.4.1"
 ---
+
+<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 
 Implement tasks from an OpenSpec change.
 

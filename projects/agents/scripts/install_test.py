@@ -1039,10 +1039,26 @@ class OpenSpecHarnessInstallTests(unittest.TestCase):
                 rel = f".{harness}/skills/{skill_id}/SKILL.md"
                 self.assertIn(rel, by_rel)
                 content = by_rel[rel].content
-                self.assertIn(install.MANAGED_MARKER, content)
-                self.assertIn("projects/agents/vendor/openspec/package", content)
-                self.assertTrue(content.lstrip().startswith("<!--"))
+                self.assertTrue(
+                    content.startswith("---\n"),
+                    f"{rel} must start with YAML frontmatter",
+                )
                 self.assertIn(f"name: {skill_id}", content)
+                self.assertIn("description:", content)
+                lines = content.splitlines()
+                close_idx = next(
+                    i for i in range(1, len(lines)) if lines[i].strip() == "---"
+                )
+                after_frontmatter = lines[close_idx + 1 : close_idx + 5]
+                self.assertTrue(
+                    any(
+                        line.startswith("<!--") and install.MANAGED_MARKER in line
+                        for line in after_frontmatter
+                    ),
+                    f"{rel}: managed marker must appear after frontmatter",
+                )
+                self.assertIn("projects/agents/vendor/openspec/package", content)
+                self.assertFalse(content.lstrip().startswith("<!--"))
 
         for name in ("propose", "apply", "archive", "explore", "sync"):
             claude_rel = f".claude/commands/opsx/{name}.md"
@@ -1050,7 +1066,14 @@ class OpenSpecHarnessInstallTests(unittest.TestCase):
             pi_rel = f".pi/prompts/opsx-{name}.md"
             for rel in (claude_rel, cursor_rel, pi_rel):
                 self.assertIn(rel, by_rel)
-                self.assertIn(install.MANAGED_MARKER, by_rel[rel].content)
+                content = by_rel[rel].content
+                self.assertTrue(
+                    content.startswith("---\n"),
+                    f"{rel} must start with YAML frontmatter",
+                )
+                self.assertIn("description:", content)
+                self.assertIn(install.MANAGED_MARKER, content)
+                self.assertFalse(content.lstrip().startswith("<!--"))
 
         self.assertFalse(any("AGENTS.md" in rel for rel in by_rel))
         self.assertFalse(any("CLAUDE.md" in rel for rel in by_rel))
@@ -1102,7 +1125,10 @@ class OpenSpecHarnessInstallTests(unittest.TestCase):
                         ):
                             path = project_root / rel
                             path.parent.mkdir(parents=True, exist_ok=True)
-                            path.write_text(f"# {name}\n", encoding="utf-8")
+                            path.write_text(
+                                f"---\nname: opsx-{name}\ndescription: stub {name}\n---\n\n# {name}\n",
+                                encoding="utf-8",
+                            )
                     return subprocess.CompletedProcess(command, 0, "", "")
             return real_run(*args, **kwargs)
 

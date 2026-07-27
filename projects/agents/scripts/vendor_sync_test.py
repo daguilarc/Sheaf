@@ -284,5 +284,61 @@ class OpenspecLockfileReuseTests(unittest.TestCase):
             self.assertTrue((staged / "package-lock.json").is_file())
 
 
+class OpenSpecGenerationExtrasTests(unittest.TestCase):
+    def test_write_vendor_toml_preserves_tools_and_workflows_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            path = Path(tempdir) / "VENDOR.toml"
+            tools = ["claude", "cursor"]
+            workflows = ["propose", "explore"]
+            vendor_sync.write_vendor_toml(
+                path,
+                {
+                    "url": "https://example.com/openspec.git",
+                    "revision": "abc123",
+                    "version": "1.4.1",
+                    "retrieved_at": "2026-07-27T00:00:00Z",
+                },
+                tools=tools,
+                workflows=workflows,
+            )
+
+            read_tools, read_workflows = vendor_sync.read_openspec_generation_extras(path)
+            self.assertEqual(tools, read_tools)
+            self.assertEqual(workflows, read_workflows)
+
+            pin = vendor_sync.parse_vendor_toml(path)
+            vendor_sync.write_vendor_toml(
+                path,
+                pin,
+                tools=read_tools,
+                workflows=read_workflows,
+            )
+            again_tools, again_workflows = vendor_sync.read_openspec_generation_extras(
+                path
+            )
+            self.assertEqual(tools, again_tools)
+            self.assertEqual(workflows, again_workflows)
+            raw = path.read_text(encoding="utf-8")
+            self.assertIn('tools = ["claude", "cursor"]', raw)
+            self.assertIn('workflows = ["propose", "explore"]', raw)
+
+    def test_read_openspec_generation_extras_errors_when_missing_or_invalid(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            missing = Path(tempdir) / "missing.toml"
+            with self.assertRaises(ValueError):
+                vendor_sync.read_openspec_generation_extras(missing)
+
+            path = Path(tempdir) / "VENDOR.toml"
+            path.write_text(
+                'url = "https://example.com/openspec.git"\n'
+                'revision = "abc123"\n'
+                'version = "1.4.1"\n'
+                'retrieved_at = "2026-07-27T00:00:00Z"\n',
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError):
+                vendor_sync.read_openspec_generation_extras(path)
+
+
 if __name__ == "__main__":
     unittest.main()

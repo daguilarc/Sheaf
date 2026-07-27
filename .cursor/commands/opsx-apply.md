@@ -1,10 +1,11 @@
-<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 ---
 name: /opsx-apply
 id: opsx-apply
 category: Workflow
 description: Implement tasks from an OpenSpec change (Experimental)
 ---
+
+<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 
 Implement tasks from an OpenSpec change.
 

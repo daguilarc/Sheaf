@@ -1,4 +1,3 @@
-<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 ---
 name: openspec-explore
 description: Enter explore mode - a thinking partner for exploring ideas, investigating problems, and clarifying requirements. Use when the user wants to think through something before or during a change.
@@ -9,6 +8,8 @@ metadata:
   version: "1.0"
   generatedBy: "1.4.1"
 ---
+
+<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 
 Enter explore mode. Think deeply. Visualize freely. Follow the conversation wherever it goes.
 

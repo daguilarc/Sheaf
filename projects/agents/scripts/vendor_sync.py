@@ -74,37 +74,24 @@ def write_vendor_toml(
 
 def read_openspec_generation_extras(path: Path) -> tuple[list[str], list[str]]:
     if not path.is_file():
-        return (
-            ["claude", "cursor", "pi", "codex"],
-            [
-                "propose",
-                "apply-change",
-                "archive-change",
-                "explore",
-                "sync-specs",
-            ],
-        )
+        raise ValueError(f"missing OpenSpec VENDOR.toml: {path}")
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
     tools = raw.get("tools")
     workflows = raw.get("workflows")
-    if isinstance(tools, list) and tools and all(isinstance(item, str) for item in tools):
-        tools_list = [str(item) for item in tools]
-    else:
-        tools_list = ["claude", "cursor", "pi", "codex"]
-    if (
-        isinstance(workflows, list)
-        and workflows
-        and all(isinstance(item, str) for item in workflows)
-    ):
-        workflows_list = [str(item) for item in workflows]
-    else:
-        workflows_list = [
-            "propose",
-            "apply-change",
-            "archive-change",
-            "explore",
-            "sync-specs",
-        ]
+    if not isinstance(tools, list) or not tools:
+        raise ValueError(f"{path}: tools must be a non-empty list of strings")
+    if not isinstance(workflows, list) or not workflows:
+        raise ValueError(f"{path}: workflows must be a non-empty list of strings")
+    tools_list: list[str] = []
+    for item in tools:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{path}: tools entries must be non-empty strings")
+        tools_list.append(item.strip())
+    workflows_list: list[str] = []
+    for item in workflows:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{path}: workflows entries must be non-empty strings")
+        workflows_list.append(item.strip())
     return tools_list, workflows_list
 
 

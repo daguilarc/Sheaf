@@ -1,4 +1,3 @@
-<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 ---
 name: openspec-archive-change
 description: Archive a completed change in the experimental workflow. Use when the user wants to finalize and archive a change after implementation is complete.
@@ -9,6 +8,8 @@ metadata:
   version: "1.0"
   generatedBy: "1.4.1"
 ---
+
+<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 
 Archive a completed change in the experimental workflow.
 

@@ -1,7 +1,8 @@
-<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 ---
 description: Archive a completed change in the experimental workflow
 ---
+
+<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 
 Archive a completed change in the experimental workflow.
 
