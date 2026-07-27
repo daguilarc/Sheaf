@@ -34,8 +34,17 @@ enabled.
 harness locations. `sheaf/skills/` contains Sheaf-only skills that render into
 this repository's harness directories only.
 
-`vendor/` holds pinned offline-capable OpenSpec and Superpowers trees. Sync
-them with `make vendor-sync` (or `make agents-vendor-sync` from the repo root).
+`vendor/` holds pinned offline-capable OpenSpec and Superpowers trees. Those
+trees are the source of truth for Sheaf agent work. Sync them with
+`make vendor-sync` (or `make agents-vendor-sync` from the repo root), then
+install with `make install` / `make agents-install`. Do not rely on
+`npm install -g @fission-ai/openspec`, Claude/Cursor/Codex marketplace
+Superpowers plugins, or `pi install git:github.com/obra/superpowers` for
+Sheaf work.
+
+Approximate vendor tree sizes at the current pins: OpenSpec `package/`
+(including production `node_modules`) is about 21M; Superpowers `tree/` is
+about 2M.
 
 Each skill directory contains:
 
@@ -113,7 +122,31 @@ Default `install`, `check`, and `clean` operate on both repo-local and
 user-global outputs. The `*-repo` and `*-global` targets limit the scope.
 Repo-local outputs contain repository instructions and Sheaf-only skills.
 Shared skills install only through agents-install-global.
-Plugin-owned skills such as xagent-subagents are excluded from the agents installer.
+Plugin-owned skills such as xagent-subagents are excluded from the agents
+filesystem skill renderer (`install.py`).
+
+## Node.js
+
+Repo install, repo check, and `make test` / `make agents-test` require
+Node.js ≥20.19 (OpenSpec's engine floor). Generation and byte-reproducible
+check of vendored OpenSpec harness skills/commands both invoke the vendored
+CLI entry point. Global OpenSpec CLI install skips with an explicit warning
+when Node is missing or too old, and still installs other global agents
+outputs; it never falls back to `npm install -g`.
+
+## Installer ownership (asd-23)
+
+asd-23 keeps Sheaf plugin-owned skills such as `xagent-subagents` out of
+`install.py`'s filesystem skill renderer. Superpowers is different: it is
+third-party vendored tooling under `projects/agents/vendor/superpowers/`,
+distributed as managed local plugins/packages. That is a deliberate
+agents-project responsibility and an explicit exception to “do not install
+plugin packages through `install.py`.”
+
+`install.py` remains unaware of Superpowers. Make (and root `agents-*`
+targets) run `scripts/install.py` and `scripts/install_superpowers.py` as
+sibling steps whenever the scope includes global. Running
+`install.py install --scope global` alone does not install Superpowers.
 
 ## Skill Ownership
 
@@ -156,8 +189,52 @@ prefix and writes a shim:
 - package: `~/.local/share/sheaf/vendor/openspec/`
 - shim: `~/.local/share/sheaf/bin/openspec`
 
-Put `~/.local/share/sheaf/bin` on your `PATH` so `openspec` resolves to the
-managed shim. The installer does not edit shell rc files.
+Put `~/.local/share/sheaf/bin` on your `PATH` ahead of any Homebrew or
+`npm install -g` `openspec` so the managed shim wins. The installer does
+not edit shell rc files. If an older global npm package remains, prefer
+PATH order over deleting it; agents install never auto-removes foreign
+CLIs.
+
+Global install also installs Superpowers as managed local plugins from
+`vendor/superpowers/tree/`:
+
+| Harness | Managed package path | Discovery |
+| --- | --- | --- |
+| Claude | `~/.claude/plugins/cache/sheaf-managed/superpowers/<version>/` | `superpowers@sheaf-managed` in `installed_plugins.json` plus a sheaf-managed marketplace record |
+| Cursor | `~/.cursor/plugins/local/superpowers/` | Cursor has no sheaf-managed JSON registry entry; presence under `plugins/local/` is the install. Expect skills as `superpowers:<id>` once Cursor loads local plugins (may need a new Agent session). |
+| Codex | `~/.agents/plugins/plugins/superpowers/` | Local-source entry for `superpowers` in `~/.agents/plugins/marketplace.json`. Staging alone may leave `codex plugin list` showing `superpowers@personal` as available but not installed; run `codex plugin add superpowers@personal` once, then open a new conversation. |
+| Pi | `~/.pi/packages/sheaf-managed/superpowers/` | Absolute path in `~/.pi/agent/settings.json` `packages` |
+
+Each managed package carries a `.sheaf-managed` marker with the vendor
+`revision` and `version`. Superpowers Codex hooks stay inside that managed
+Codex plugin; they are not merged into Sheaf-owned `$CODEX_HOME/hooks.json`.
+
+### Marketplace Superpowers coexistence
+
+Marketplace or `pi install` Superpowers copies may still exist on the
+machine. For Sheaf work, disable or remove them so skill ids resolve from
+the managed package only:
+
+- Claude: uninstall or disable `superpowers@claude-plugins-official` (or
+  `superpowers@superpowers-marketplace`) via `/plugin` / plugin UI, or
+  remove that key from `~/.claude/plugins/installed_plugins.json` after
+  confirming you no longer need the marketplace copy.
+- Cursor: remove any marketplace Superpowers install from Cursor's plugin
+  UI so it does not compete with `~/.cursor/plugins/local/superpowers/`.
+- Codex: disable or remove non-Sheaf `superpowers` marketplace entries;
+  keep only the sheaf-managed local path entry.
+- Pi: remove any `git:github.com/obra/superpowers` (or similar) package
+  entry from `~/.pi/agent/settings.json` `packages`.
+
+`install_superpowers.py` (and therefore `make install` /
+`make agents-install` when global scope runs) refuses without `--force`
+when a foreign Claude key such as `superpowers@claude-plugins-official`
+is present, or when an unmanaged same-key / same-destination conflict
+exists. That avoids dual `superpowers:<id>` registration. Pass
+`AGENTS_INSTALL_FLAGS=--force` only when you intentionally keep the
+foreign copy alongside the managed package. Clean removes only
+sheaf-managed Superpowers packages and registry keys; it never deletes
+foreign marketplace copies.
 
 The Codex hook is a user-global `SessionStart` hook for the `compact` source.
 After Codex compacts a session, it injects a short developer-context reminder:
