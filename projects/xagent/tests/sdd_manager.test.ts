@@ -318,6 +318,18 @@ function CreateFakeStore(recorder: ReturnType<typeof CreateOrderRecorder>): SddS
     {
       return openTurns.get(agentId);
     },
+    GetTurnByCompletedSequence(
+      agentId: string,
+      completedSequence: number,
+    ): SddTurnRecord | undefined
+    {
+      const turns = turnsByAgent.get(agentId) ?? [];
+      return turns.find(
+        (turn) =>
+          turn.status === "completed"
+          && turn.completed_sequence === completedSequence,
+      );
+    },
     IsSddAgent(agentId: string): boolean
     {
       return sessions.has(agentId);
@@ -1219,6 +1231,119 @@ test("Await deadline and attention do not complete the open turn", async () =>
   assert.equal(attention.event, "attention");
   assert.equal(harness.store.completed.length, 0);
   assert.equal(harness.store.openTurns.get(x_AgentId)?.status, "running");
+});
+
+test("Await refuses to bind a stale replayed completion onto a newer running turn", async () =>
+{
+  const harness = CreateManagerHarness();
+  await harness.manager.Start(ImplementerStartInput());
+  harness.runManager.awaitResult = CompletionResult({ sequence: 42 });
+  await harness.manager.Await({
+    agent_id: x_AgentId,
+    after_sequence: 7,
+    deadline_seconds: 7000,
+  });
+  assert.deepEqual(harness.store.completed, [
+    {
+      agentId: x_AgentId,
+      turnNumber: 1,
+      reportText: x_SanitizedReport,
+      completedSequence: 42,
+    },
+  ]);
+
+  harness.runManager.sequence = 50;
+  await harness.manager.Followup({
+    kind: "fix",
+    agent_id: x_AgentId,
+    round: 1,
+    findings: x_FindingsPath,
+    findings_text: x_FindingsText,
+    tests: ["dist/tests/sdd_manager.test.js"],
+  });
+  assert.equal(harness.store.openTurns.get(x_AgentId)?.status, "running");
+  assert.equal(harness.store.openTurns.get(x_AgentId)?.resume_sequence, 50);
+  assert.equal(harness.store.openTurns.get(x_AgentId)?.turn_number, 2);
+
+  harness.recorder.calls.length = 0;
+  harness.runManager.awaitResult = CompletionResult({
+    sequence: 42,
+    report: { text: x_SanitizedReport },
+  });
+
+  const replayed = await harness.manager.Await({
+    agent_id: x_AgentId,
+    after_sequence: 7,
+    deadline_seconds: 7000,
+  });
+
+  assert.equal(replayed.sequence, 42);
+  assert.equal(replayed.report?.text, x_SanitizedReport);
+  assert.equal(harness.recorder.Names().includes("MarkCompleted"), false);
+  assert.equal(harness.store.completed.length, 1);
+  assert.equal(harness.store.openTurns.get(x_AgentId)?.status, "running");
+  assert.equal(harness.store.openTurns.get(x_AgentId)?.turn_number, 2);
+  assert.equal(harness.store.openTurns.get(x_AgentId)?.resume_sequence, 50);
+  const turn1 = harness.store.turnsByAgent.get(x_AgentId)?.find((turn) => turn.turn_number === 1);
+  assert.equal(turn1?.status, "completed");
+  assert.equal(turn1?.report_text, x_SanitizedReport);
+  assert.equal(turn1?.completed_sequence, 42);
+});
+
+test("Await does not MarkCompleted while the open turn is still prepared", async () =>
+{
+  const harness = CreateManagerHarness();
+  await StartAndClearOpenTurn(harness);
+  harness.store.PrepareFollowup({
+    agentId: x_AgentId,
+    kind: "fix",
+    round: 1,
+    briefPath: x_BriefPath,
+    briefText: x_BriefText,
+    reportPath: x_ReportPath,
+    findingsPath: x_FindingsPath,
+    findingsText: x_FindingsText,
+  });
+  assert.equal(harness.store.openTurns.get(x_AgentId)?.status, "prepared");
+
+  harness.recorder.calls.length = 0;
+  harness.runManager.awaitResult = CompletionResult({ sequence: 42 });
+
+  const result = await harness.manager.Await({
+    agent_id: x_AgentId,
+    after_sequence: 7,
+    deadline_seconds: 7000,
+  });
+
+  assert.equal(result.report?.text, x_SanitizedReport);
+  assert.equal(harness.recorder.Names().includes("MarkCompleted"), false);
+  assert.equal(harness.store.completed.length, 0);
+  assert.equal(harness.store.openTurns.get(x_AgentId)?.status, "prepared");
+});
+
+test("Await treats an already-recorded identical completed_sequence as success", async () =>
+{
+  const harness = CreateManagerHarness();
+  await harness.manager.Start(ImplementerStartInput());
+  harness.runManager.awaitResult = CompletionResult({ sequence: 42 });
+  await harness.manager.Await({
+    agent_id: x_AgentId,
+    after_sequence: 7,
+    deadline_seconds: 7000,
+  });
+
+  harness.recorder.calls.length = 0;
+  harness.runManager.awaitResult = CompletionResult({ sequence: 42 });
+  const again = await harness.manager.Await({
+    agent_id: x_AgentId,
+    after_sequence: 7,
+    deadline_seconds: 7000,
+  });
+
+  assert.equal(again.report?.text, x_SanitizedReport);
+  assert.equal(again.sequence, 42);
+  assert.equal(harness.recorder.Names().includes("MarkCompleted"), false);
+  assert.equal(harness.store.completed.length, 1);
 });
 
 test("AwaitGeneric persists report for SDD-owned runs and leaves non-SDD await unchanged", async () =>

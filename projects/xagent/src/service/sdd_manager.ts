@@ -260,17 +260,41 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     {
       return result;
     }
-    const openTurn = store.GetOpenTurn(agentId);
-    if (openTurn === undefined)
+    const reportText = result.report.text;
+
+    function AlreadyRecorded(): boolean
+    {
+      const recorded = store.GetTurnByCompletedSequence(agentId, result.sequence);
+      return recorded !== undefined
+        && recorded.report_text === reportText;
+    }
+
+    if (AlreadyRecorded())
     {
       return result;
     }
+
+    const openTurn = store.GetOpenTurn(agentId);
+    if (
+      openTurn === undefined
+      || openTurn.status !== "running"
+      || openTurn.resume_sequence === null
+      || result.sequence <= openTurn.resume_sequence
+    )
+    {
+      return result;
+    }
+
     try
     {
-      store.MarkCompleted(agentId, openTurn.turn_number, result.report.text, result.sequence);
+      store.MarkCompleted(agentId, openTurn.turn_number, reportText, result.sequence);
     }
     catch (error)
     {
+      if (AlreadyRecorded())
+      {
+        return result;
+      }
       if (error instanceof ToolValidationError)
       {
         throw error;

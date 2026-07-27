@@ -75,6 +75,7 @@ export type SddStore = {
   MarkClosed(agentId: string, closedAt: string): void;
   GetSession(agentId: string): SddSessionRecord | undefined;
   GetOpenTurn(agentId: string): SddTurnRecord | undefined;
+  GetTurnByCompletedSequence(agentId: string, completedSequence: number): SddTurnRecord | undefined;
   IsSddAgent(agentId: string): boolean;
   ReconcileTerminalRuns(phases: ReadonlyMap<string, string>): void;
   Close(): void;
@@ -361,6 +362,32 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
     LIMIT 1
   `);
 
+  const selectTurnByCompletedSequence = database.prepare(`
+    SELECT
+      id,
+      agent_id,
+      turn_number,
+      kind,
+      round,
+      brief_path,
+      brief_text,
+      report_path,
+      findings_path,
+      findings_text,
+      report_text,
+      resume_sequence,
+      completed_sequence,
+      status,
+      created_at,
+      completed_at
+    FROM sdd_turns
+    WHERE agent_id = ?
+      AND completed_sequence = ?
+      AND status = 'completed'
+    ORDER BY turn_number DESC
+    LIMIT 1
+  `);
+
   const markRunning = database.prepare(`
     UPDATE sdd_turns
     SET status = 'running',
@@ -579,6 +606,20 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
       }
       const turn = MapTurnRow(row);
       return turn;
+    },
+
+    GetTurnByCompletedSequence(
+      agentId: string,
+      completedSequence: number,
+    ): SddTurnRecord | undefined {
+      AssertOpen();
+      const row = selectTurnByCompletedSequence.get(agentId, completedSequence) as
+        | Record<string, unknown>
+        | undefined;
+      if (!row) {
+        return undefined;
+      }
+      return MapTurnRow(row);
     },
 
     IsSddAgent(agentId: string): boolean {
