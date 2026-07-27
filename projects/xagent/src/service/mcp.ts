@@ -6,6 +6,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
 import type { XagentRunManager } from "./run_manager.js";
+import type { SddManager } from "./sdd_manager.js";
 import {
   parseToolInput,
   structuredErrorFromUnknown,
@@ -14,6 +15,10 @@ import {
   XagentInspectInputSchema,
   XagentInterruptInputSchema,
   XagentMessageInputSchema,
+  XagentSddAwaitInputSchema,
+  XagentSddCloseInputSchema,
+  XagentSddFollowupInputSchema,
+  XagentSddStartInputSchema,
   XagentStartInputSchema,
   type StructuredToolError,
 } from "./tool_schemas.js";
@@ -30,6 +35,7 @@ export type XagentMcpHandler = {
 
 export type XagentMcpHandlerOptions = {
   readonly runManager: XagentRunManager;
+  readonly sddManager?: SddManager;
   // DNS rebinding protection: the transport rejects any request whose Host
   // or Origin header is not in the allow list. The lists are provided as
   // getters because the actual listen port is unknown until `listen()`
@@ -42,7 +48,7 @@ export type XagentMcpHandlerOptions = {
 };
 
 export function createXagentMcpHandler(options: XagentMcpHandlerOptions): XagentMcpHandler {
-  const { runManager, getAllowedHosts, getAllowedOrigins } = options;
+  const { runManager, sddManager, getAllowedHosts, getAllowedOrigins } = options;
   const sessions = new Map<string, SessionEntry>();
 
   async function handleRequest(
@@ -76,7 +82,7 @@ export function createXagentMcpHandler(options: XagentMcpHandlerOptions): Xagent
         return;
       }
 
-      const server = createConfiguredMcpServer(runManager);
+      const server = createConfiguredMcpServer(runManager, sddManager);
       let transport!: StreamableHTTPServerTransport;
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
@@ -130,7 +136,10 @@ export function createXagentMcpHandler(options: XagentMcpHandlerOptions): Xagent
   };
 }
 
-function createConfiguredMcpServer(runManager: XagentRunManager): McpServer {
+function createConfiguredMcpServer(
+  runManager: XagentRunManager,
+  sddManager: SddManager | undefined,
+): McpServer {
   const server = new McpServer({
     name: "xagent",
     version: "0.1.0",
@@ -163,6 +172,9 @@ function createConfiguredMcpServer(runManager: XagentRunManager): McpServer {
     async (args, extra) => {
       return runTool(async () => {
         const input = parseToolInput(XagentAwaitInputSchema, args);
+        if (sddManager !== undefined) {
+          return sddManager.AwaitGeneric(input, extra.signal);
+        }
         return runManager.awaitRun(input, extra.signal);
       });
     },
@@ -193,6 +205,9 @@ function createConfiguredMcpServer(runManager: XagentRunManager): McpServer {
     async (args) => {
       return runTool(async () => {
         const input = parseToolInput(XagentMessageInputSchema, args);
+        if (sddManager !== undefined) {
+          return sddManager.MessageGeneric(input);
+        }
         return runManager.messageRun(input);
       });
     },
@@ -223,10 +238,78 @@ function createConfiguredMcpServer(runManager: XagentRunManager): McpServer {
     async (args) => {
       return runTool(async () => {
         const input = parseToolInput(XagentCloseInputSchema, args);
+        if (sddManager !== undefined) {
+          return sddManager.CloseGeneric(input);
+        }
         return runManager.closeRun(input);
       });
     },
   );
+
+  if (sddManager !== undefined) {
+    server.registerTool(
+      "xagent_sdd_start",
+      {
+        title: "Start SDD supervised turn",
+        description:
+          "Render a Superpowers SDD role prompt, reserve the ledger row, and start the owned provider session.",
+        inputSchema: XagentSddStartInputSchema,
+      },
+      async (args) => {
+        return runTool(async () => {
+          const input = parseToolInput(XagentSddStartInputSchema, args);
+          return sddManager.Start(input);
+        });
+      },
+    );
+
+    server.registerTool(
+      "xagent_sdd_followup",
+      {
+        title: "Follow up on SDD supervised turn",
+        description:
+          "Submit a same-session SDD fix or re-review turn without restating stored assignment metadata.",
+        inputSchema: XagentSddFollowupInputSchema,
+      },
+      async (args) => {
+        return runTool(async () => {
+          const input = parseToolInput(XagentSddFollowupInputSchema, args);
+          return sddManager.Followup(input);
+        });
+      },
+    );
+
+    server.registerTool(
+      "xagent_sdd_await",
+      {
+        title: "Await SDD supervised event",
+        description:
+          "Await the next durable SDD event and persist a successful report before returning it.",
+        inputSchema: XagentSddAwaitInputSchema,
+      },
+      async (args, extra) => {
+        return runTool(async () => {
+          const input = parseToolInput(XagentSddAwaitInputSchema, args);
+          return sddManager.Await(input, extra.signal);
+        });
+      },
+    );
+
+    server.registerTool(
+      "xagent_sdd_close",
+      {
+        title: "Close SDD supervised session",
+        description: "Close the SDD provider session and record ledger closure afterward.",
+        inputSchema: XagentSddCloseInputSchema,
+      },
+      async (args) => {
+        return runTool(async () => {
+          const input = parseToolInput(XagentSddCloseInputSchema, args);
+          return sddManager.Close(input);
+        });
+      },
+    );
+  }
 
   return server;
 }

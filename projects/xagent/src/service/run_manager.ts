@@ -133,11 +133,15 @@ export class XagentRunManager {
     this.#watchdogClassifier = options.watchdogClassifier;
   }
 
+  allocateRunId(): string {
+    return generateRunId(this.#clock());
+  }
+
   async create(options: CreateRunOptions): Promise<{ readonly runId: string }> {
     if (this.#closed) {
       throw new Error("XagentRunManager is closed.");
     }
-    const runId = options.runId ?? generateRunId(this.#clock());
+    const runId = options.runId ?? this.allocateRunId();
     if (this.#runs.has(runId)) {
       throw new Error(`xagent run id already in use: ${runId}`);
     }

@@ -8,7 +8,9 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import { FakeHarnessAdapter } from "../src/adapters/fake.js";
+import { createXagentMcpHandler } from "../src/service/mcp.js";
 import { XagentRunManager } from "../src/service/run_manager.js";
+import type { SddManager } from "../src/service/sdd_manager.js";
 import {
   createShutdownController,
   createXagentServer,
@@ -23,6 +25,10 @@ const x_ExpectedToolNames = [
   "xagent_message",
   "xagent_interrupt",
   "xagent_close",
+  "xagent_sdd_start",
+  "xagent_sdd_followup",
+  "xagent_sdd_await",
+  "xagent_sdd_close",
 ] as const;
 
 const testPolicy: SupervisionPolicy = {
@@ -30,12 +36,46 @@ const testPolicy: SupervisionPolicy = {
   watchdog: {},
 };
 
-test("Streamable HTTP MCP initializes and discovers exactly the six controller tools", async () => {
+function CreateDiscoverySddManager(runManager: XagentRunManager): SddManager
+{
+  return {
+    async Start()
+    {
+      throw new Error("not used in discovery tests");
+    },
+    async Followup()
+    {
+      throw new Error("not used in discovery tests");
+    },
+    async Await()
+    {
+      throw new Error("SDD await is not implemented yet.");
+    },
+    async Close()
+    {
+      throw new Error("SDD close is not implemented yet.");
+    },
+    async MessageGeneric(input)
+    {
+      return runManager.messageRun(input);
+    },
+    async AwaitGeneric(input, signal)
+    {
+      return runManager.awaitRun(input, signal);
+    },
+    async CloseGeneric(input)
+    {
+      return runManager.closeRun(input);
+    },
+  };
+}
+
+test("Streamable HTTP MCP initializes and discovers exactly the ten controller tools", async () => {
   await withMcpService(async ({ port, client }) => {
     const listed = await client.listTools();
     const names = listed.tools.map((tool) => tool.name).sort();
     assert.deepEqual(names, [...x_ExpectedToolNames].sort());
-    assert.equal(listed.tools.length, 6);
+    assert.equal(listed.tools.length, 10);
 
     const health = await fetch(`http://127.0.0.1:${port}/health`);
     assert.equal(health.status, 200);
@@ -173,6 +213,7 @@ async function withMcpService(
     adapterFactory: () => new FakeHarnessAdapter(),
     policy: testPolicy,
   });
+  const sddManager = CreateDiscoverySddManager(runManager);
   let server: XagentServer | undefined;
   const shutdownController = createShutdownController({
     closeRuns: async () => {
@@ -182,13 +223,32 @@ async function withMcpService(
       await server?.close();
     },
   });
+  const allowedHosts = new Set<string>(["127.0.0.1", "localhost", "[::1]", "127.0.0.1:9005", "localhost:9005"]);
+  const allowedOrigins = new Set<string>([
+    "http://127.0.0.1",
+    "http://localhost",
+    "http://[::1]",
+    "http://127.0.0.1:9005",
+    "http://localhost:9005",
+  ]);
+  const mcpHandler = createXagentMcpHandler({
+    runManager,
+    sddManager,
+    getAllowedHosts: () => [...allowedHosts],
+    getAllowedOrigins: () => [...allowedOrigins],
+  });
   server = createXagentServer({
     bindHost: "127.0.0.1",
     bindPort: 0,
     runManager,
     shutdownController,
+    mcpHandler,
   });
   const port = await server.listen();
+  allowedHosts.add(`127.0.0.1:${port}`);
+  allowedHosts.add(`localhost:${port}`);
+  allowedOrigins.add(`http://127.0.0.1:${port}`);
+  allowedOrigins.add(`http://localhost:${port}`);
   const client = new Client({ name: "xagent-mcp-test", version: "0.0.0" });
   const transport = new StreamableHTTPClientTransport(
     new URL(`http://127.0.0.1:${port}/mcp`),
