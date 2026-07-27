@@ -137,7 +137,7 @@ def resolve_openspec_pin(ref: str) -> dict[str, str]:
     }
 
 
-def resolve_superpowers_pin(ref: str, tree_dir: Path) -> dict[str, str]:
+def resolve_superpowers_pin(tree_dir: Path) -> dict[str, str]:
     package_json = tree_dir / "package.json"
     if not package_json.is_file():
         raise RuntimeError(f"missing package.json in Superpowers tree: {tree_dir}")
@@ -164,10 +164,37 @@ def replace_directory(destination: Path, source: Path) -> None:
     shutil.copytree(source, destination)
 
 
+def checkout_git_ref(*, url: str, dest: Path, ref: str) -> None:
+    """Fetch an explicit git revision (tag, branch, or commit SHA) into dest."""
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
+    run_checked(["git", "init"], cwd=dest)
+    run_checked(["git", "remote", "add", "origin", url], cwd=dest)
+    run_checked(["git", "fetch", "--depth", "1", "origin", ref], cwd=dest)
+    run_checked(["git", "checkout", "--force", "FETCH_HEAD"], cwd=dest)
+
+
+def install_openspec_production_deps(
+    staged_package: Path,
+    *,
+    existing_lockfile: Path | None,
+) -> None:
+    # npm pack omits package-lock.json. First sync uses npm install to generate a
+    # lockfile that is committed under vendor/; later syncs copy that lockfile
+    # into staging and run npm ci so the pin's lockfile determines node_modules.
+    if existing_lockfile is not None and existing_lockfile.is_file():
+        shutil.copy2(existing_lockfile, staged_package / "package-lock.json")
+        run_checked(["npm", "ci", "--omit=dev"], cwd=staged_package)
+        return
+    run_checked(["npm", "install", "--omit=dev"], cwd=staged_package)
+
+
 def sync_openspec(repo_root: Path, ref: str) -> dict[str, str]:
     pin = resolve_openspec_pin(ref)
     vendor_dir = vendor_tool_dir(repo_root, "openspec")
     package_dir = vendor_dir / "package"
+    existing_lockfile = package_dir / "package-lock.json"
 
     with tempfile.TemporaryDirectory(prefix="sheaf-openspec-vendor-") as tempdir:
         staging_root = Path(tempdir)
@@ -188,9 +215,9 @@ def sync_openspec(repo_root: Path, ref: str) -> dict[str, str]:
         staged_package = extract_dir / "package"
         if not staged_package.is_dir():
             raise RuntimeError(f"npm pack extract missing package/: {extract_dir}")
-        run_checked(
-            ["npm", "install", "--omit=dev"],
-            cwd=staged_package,
+        install_openspec_production_deps(
+            staged_package,
+            existing_lockfile=existing_lockfile if existing_lockfile.is_file() else None,
         )
         replace_directory(package_dir, staged_package)
 
@@ -204,20 +231,12 @@ def sync_superpowers(repo_root: Path, ref: str) -> dict[str, str]:
 
     with tempfile.TemporaryDirectory(prefix="sheaf-superpowers-vendor-") as tempdir:
         staging_tree = Path(tempdir) / "tree"
-        run_checked(
-            [
-                "git",
-                "clone",
-                "--depth",
-                "1",
-                "--branch",
-                ref,
-                SUPERPOWERS_URL,
-                str(staging_tree),
-            ]
-        )
-        pin = resolve_superpowers_pin(ref, staging_tree)
+        checkout_git_ref(url=SUPERPOWERS_URL, dest=staging_tree, ref=ref)
+        pin = resolve_superpowers_pin(staging_tree)
         shutil.rmtree(staging_tree / ".git")
+        nested_gitignore = staging_tree / ".gitignore"
+        if nested_gitignore.exists():
+            nested_gitignore.unlink()
         replace_directory(tree_dir, staging_tree)
 
     write_vendor_toml(vendor_dir / "VENDOR.toml", pin)
@@ -256,7 +275,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--ref",
         required=True,
-        help="Upstream tag, version, or branch to sync",
+        help=(
+            "Upstream pin: npm version/dist-tag for openspec, or git "
+            "tag/branch/commit SHA for superpowers"
+        ),
     )
     parser.add_argument(
         "--force",
