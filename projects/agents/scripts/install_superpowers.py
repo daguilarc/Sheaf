@@ -8,25 +8,28 @@ import json
 import os
 import shutil
 import sys
-import tempfile
 import tomllib
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
+
+from managed_package import (
+    MANAGED_MARKER,
+    MANAGED_MARKER_NAME,
+    install_package_tree as install_managed_package_tree,
+    managed_marker_content,
+    package_is_managed,
+)
 
 
 PLUGIN_NAME = "superpowers"
 MARKETPLACE_NAME = "sheaf-managed"
 CLAUDE_PLUGIN_KEY = f"{PLUGIN_NAME}@{MARKETPLACE_NAME}"
-MANAGED_MARKER_NAME = ".sheaf-managed"
-MANAGED_MARKER = "sheaf-agents-managed: DO NOT EDIT"
 VENDOR_REL = Path("projects") / "agents" / "vendor" / "superpowers"
 VENDOR_TREE_REL = VENDOR_REL / "tree"
 REQUIRED_PIN_FIELDS = ("url", "revision", "version", "retrieved_at")
 COPY_IGNORE = shutil.ignore_patterns(
     ".git",
-    ".git/*",
     "__pycache__",
     "*.pyc",
     ".DS_Store",
@@ -63,24 +66,12 @@ def read_vendor_pin(repo_root: Path) -> dict[str, str]:
     return pin
 
 
-def managed_marker_content(pin: dict[str, str]) -> str:
-    return (
-        f"{MANAGED_MARKER}\n"
-        f"source={VENDOR_TREE_REL.as_posix()}\n"
-        f"revision={pin['revision']}\n"
-        f"version={pin['version']}\n"
+def pin_marker_text(pin: dict[str, str]) -> str:
+    return managed_marker_content(
+        source=VENDOR_TREE_REL.as_posix(),
+        revision=pin["revision"],
+        version=pin["version"],
     )
-
-
-def package_is_managed(package_root: Path) -> bool:
-    marker = package_root / MANAGED_MARKER_NAME
-    if not marker.is_file():
-        return False
-    try:
-        content = marker.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return False
-    return MANAGED_MARKER in content
 
 
 def marker_matches_pin(package_root: Path, pin: dict[str, str]) -> bool:
@@ -138,6 +129,10 @@ def claude_marketplace_root(home: Path) -> Path:
     return home / ".claude" / "plugins" / "marketplaces" / MARKETPLACE_NAME
 
 
+def claude_marketplace_plugin_path(home: Path) -> Path:
+    return claude_marketplace_root(home) / PLUGIN_NAME
+
+
 def codex_marketplace_path(home: Path) -> Path:
     return home / ".agents" / "plugins" / "marketplace.json"
 
@@ -155,64 +150,6 @@ def require_managed_or_absent(destination: Path, *, force: bool) -> int:
         return 0
     print(f"conflict unmanaged {destination}", file=sys.stderr)
     return 1
-
-
-def replace_managed_destination(staged: Path, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    backup = destination.with_name(f".{destination.name}-backup-{uuid.uuid4().hex}")
-    had_destination = destination.exists()
-    if had_destination:
-        os.replace(destination, backup)
-    try:
-        os.replace(staged, destination)
-    except OSError:
-        if had_destination and backup.exists() and not destination.exists():
-            os.replace(backup, destination)
-        raise
-    if had_destination and backup.exists():
-        shutil.rmtree(backup)
-
-
-def stage_package(source: Path, destination: Path, pin: dict[str, str]) -> Path:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    staged = Path(
-        tempfile.mkdtemp(prefix=f".{destination.name}-stage-", dir=destination.parent)
-    )
-    try:
-        shutil.copytree(
-            source,
-            staged,
-            symlinks=False,
-            dirs_exist_ok=True,
-            copy_function=shutil.copy2,
-            ignore=COPY_IGNORE,
-        )
-        (staged / MANAGED_MARKER_NAME).write_text(
-            managed_marker_content(pin),
-            encoding="utf-8",
-        )
-    except Exception:
-        shutil.rmtree(staged, ignore_errors=True)
-        raise
-    return staged
-
-
-def install_package_tree(
-    source: Path,
-    destination: Path,
-    pin: dict[str, str],
-    *,
-    force: bool,
-) -> int:
-    if require_managed_or_absent(destination, force=force) != 0:
-        return 1
-    staged = stage_package(source, destination, pin)
-    try:
-        replace_managed_destination(staged, destination)
-    finally:
-        shutil.rmtree(staged, ignore_errors=True)
-    print(f"wrote {destination}")
-    return 0
 
 
 def utc_now_iso() -> str:
@@ -233,7 +170,115 @@ def write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def ensure_claude_marketplace(home: Path, pin: dict[str, str]) -> None:
+def registry_entry_install_path(entry: object) -> Path | None:
+    if not isinstance(entry, list) or not entry:
+        return None
+    first = entry[0]
+    if not isinstance(first, dict):
+        return None
+    install_path = first.get("installPath")
+    if not isinstance(install_path, str) or not install_path:
+        return None
+    return Path(install_path)
+
+
+def foreign_superpowers_keys(plugins: dict[str, object]) -> list[str]:
+    return sorted(
+        key
+        for key in plugins
+        if isinstance(key, str)
+        and key.startswith(f"{PLUGIN_NAME}@")
+        and key != CLAUDE_PLUGIN_KEY
+    )
+
+
+def codex_entry_path(home: Path, entry: dict[str, object]) -> Path | None:
+    source = entry.get("source")
+    if not isinstance(source, dict):
+        return None
+    raw_path = source.get("path")
+    if not isinstance(raw_path, str):
+        return None
+    candidate = Path(raw_path)
+    if not candidate.is_absolute():
+        candidate = home / candidate
+    return candidate
+
+
+def preflight_conflicts(home: Path, pin: dict[str, str], *, force: bool) -> int:
+    destinations = (
+        claude_package_path(home, pin["version"]),
+        claude_marketplace_plugin_path(home),
+        cursor_package_path(home),
+        codex_package_path(home),
+        pi_package_path(home),
+    )
+    for destination in destinations:
+        if require_managed_or_absent(destination, force=force) != 0:
+            return 1
+
+    claude_path = claude_installed_plugins_path(home)
+    payload = load_json_object(claude_path, {"version": 2, "plugins": {}})
+    plugins = payload.get("plugins", {})
+    if isinstance(plugins, dict):
+        foreign = foreign_superpowers_keys(plugins)
+        if foreign and not force:
+            print(
+                "conflict foreign Superpowers marketplace install: "
+                f"{', '.join(foreign)} (refusing dual superpowers:<id> "
+                "registration without --force)",
+                file=sys.stderr,
+            )
+            return 1
+
+        existing = plugins.get(CLAUDE_PLUGIN_KEY)
+        existing_path = registry_entry_install_path(existing)
+        if (
+            existing_path is not None
+            and existing_path.exists()
+            and not package_is_managed(existing_path)
+            and not force
+        ):
+            print(
+                f"conflict unmanaged registry key {CLAUDE_PLUGIN_KEY}",
+                file=sys.stderr,
+            )
+            return 1
+
+    marketplace_path = codex_marketplace_path(home)
+    marketplace = load_json_object(
+        marketplace_path,
+        {
+            "name": "personal",
+            "interface": {"displayName": "Personal"},
+            "plugins": [],
+        },
+    )
+    marketplace_plugins = marketplace.get("plugins", [])
+    if isinstance(marketplace_plugins, list):
+        for entry in marketplace_plugins:
+            if not isinstance(entry, dict) or entry.get("name") != PLUGIN_NAME:
+                continue
+            existing_path = codex_entry_path(home, entry)
+            if (
+                existing_path is not None
+                and existing_path.exists()
+                and not package_is_managed(existing_path)
+                and not force
+            ):
+                print(
+                    f"conflict unmanaged marketplace entry {PLUGIN_NAME}",
+                    file=sys.stderr,
+                )
+                return 1
+    return 0
+
+
+def ensure_claude_marketplace(
+    home: Path,
+    source: Path,
+    pin: dict[str, str],
+) -> None:
     marketplace_root = claude_marketplace_root(home)
     plugin_dir = marketplace_root / ".claude-plugin"
     plugin_dir.mkdir(parents=True, exist_ok=True)
@@ -246,16 +291,27 @@ def ensure_claude_marketplace(home: Path, pin: dict[str, str]) -> None:
                 "name": PLUGIN_NAME,
                 "description": "Vendored Superpowers skills library",
                 "version": pin["version"],
-                "source": "./",
+                "source": f"./{PLUGIN_NAME}",
             }
         ],
     }
     write_json(plugin_dir / "marketplace.json", marketplace)
 
+    install_managed_package_tree(
+        source,
+        claude_marketplace_plugin_path(home),
+        marker_text=pin_marker_text(pin),
+        copy_ignore=COPY_IGNORE,
+    )
+    print(f"wrote {claude_marketplace_plugin_path(home)}")
+
     known_path = claude_known_marketplaces_path(home)
     known = load_json_object(known_path, {})
     known[MARKETPLACE_NAME] = {
-        "source": {"source": "sheaf-managed", "path": str(marketplace_root)},
+        "source": {
+            "source": "directory",
+            "path": str(marketplace_root.resolve()),
+        },
         "installLocation": str(marketplace_root.resolve()),
         "lastUpdated": utc_now_iso(),
     }
@@ -266,9 +322,7 @@ def merge_claude_installed_plugins(
     home: Path,
     destination: Path,
     pin: dict[str, str],
-    *,
-    force: bool,
-) -> int:
+) -> None:
     path = claude_installed_plugins_path(home)
     payload = load_json_object(path, {"version": 2, "plugins": {}})
     plugins = payload.setdefault("plugins", {})
@@ -276,21 +330,6 @@ def merge_claude_installed_plugins(
         raise RuntimeError(f"{path} field 'plugins' must be an object")
 
     existing = plugins.get(CLAUDE_PLUGIN_KEY)
-    if existing is not None and not force:
-        install_path = None
-        if isinstance(existing, list) and existing:
-            first = existing[0]
-            if isinstance(first, dict):
-                install_path = first.get("installPath")
-        if install_path is not None:
-            existing_path = Path(str(install_path))
-            if existing_path.exists() and not package_is_managed(existing_path):
-                print(
-                    f"conflict unmanaged registry key {CLAUDE_PLUGIN_KEY}",
-                    file=sys.stderr,
-                )
-                return 1
-
     now = utc_now_iso()
     installed_at = now
     if isinstance(existing, list) and existing and isinstance(existing[0], dict):
@@ -311,7 +350,6 @@ def merge_claude_installed_plugins(
     payload["version"] = payload.get("version", 2)
     write_json(path, payload)
     print(f"wrote {path}")
-    return 0
 
 
 def marketplace_source_path(*, home: Path, destination: Path) -> str:
@@ -322,7 +360,7 @@ def marketplace_source_path(*, home: Path, destination: Path) -> str:
     return f"./{relative.as_posix()}"
 
 
-def upsert_codex_marketplace(home: Path, destination: Path, *, force: bool) -> int:
+def upsert_codex_marketplace(home: Path, destination: Path) -> None:
     path = codex_marketplace_path(home)
     payload = load_json_object(
         path,
@@ -340,26 +378,6 @@ def upsert_codex_marketplace(home: Path, destination: Path, *, force: bool) -> i
     for index, entry in enumerate(plugins):
         if not isinstance(entry, dict) or entry.get("name") != PLUGIN_NAME:
             continue
-        existing_source = entry.get("source")
-        existing_path = None
-        if isinstance(existing_source, dict):
-            raw_path = existing_source.get("path")
-            if isinstance(raw_path, str):
-                candidate = Path(raw_path)
-                if not candidate.is_absolute():
-                    candidate = home / candidate
-                existing_path = candidate
-        if (
-            existing_path is not None
-            and existing_path.exists()
-            and not package_is_managed(existing_path)
-            and not force
-        ):
-            print(
-                f"conflict unmanaged marketplace entry {PLUGIN_NAME}",
-                file=sys.stderr,
-            )
-            return 1
         entry = dict(entry)
         source = entry.get("source")
         if not isinstance(source, dict):
@@ -376,7 +394,7 @@ def upsert_codex_marketplace(home: Path, destination: Path, *, force: bool) -> i
         plugins[index] = entry
         write_json(path, payload)
         print(f"wrote {path}")
-        return 0
+        return
 
     plugins.append(
         {
@@ -391,7 +409,6 @@ def upsert_codex_marketplace(home: Path, destination: Path, *, force: bool) -> i
     )
     write_json(path, payload)
     print(f"wrote {path}")
-    return 0
 
 
 def upsert_pi_settings(home: Path, destination: Path) -> None:
@@ -401,26 +418,38 @@ def upsert_pi_settings(home: Path, destination: Path) -> None:
     if not isinstance(packages, list):
         raise RuntimeError(f"{path} field 'packages' must be an array")
     target = str(destination.resolve())
-    resolved_existing = []
+    kept: list[object] = []
     for item in packages:
         if not isinstance(item, str):
-            resolved_existing.append(item)
+            kept.append(item)
             continue
         if item == target:
             continue
         candidate = Path(item)
         if not candidate.is_absolute():
-            # Keep relative foreign entries as-is.
-            #
-            resolved_existing.append(item)
+            kept.append(item)
             continue
         if candidate.resolve() == destination.resolve():
             continue
-        resolved_existing.append(item)
-    resolved_existing.append(target)
-    payload["packages"] = resolved_existing
+        kept.append(item)
+    kept.append(target)
+    payload["packages"] = kept
     write_json(path, payload)
     print(f"wrote {path}")
+
+
+def install_package_destination(
+    source: Path,
+    destination: Path,
+    pin: dict[str, str],
+) -> None:
+    install_managed_package_tree(
+        source,
+        destination,
+        marker_text=pin_marker_text(pin),
+        copy_ignore=COPY_IGNORE,
+    )
+    print(f"wrote {destination}")
 
 
 def install_superpowers(
@@ -437,6 +466,9 @@ def install_superpowers(
     source = vendor_tree(repo_root)
     version = pin["version"]
 
+    if preflight_conflicts(home, pin, force=force) != 0:
+        return 1
+
     destinations = (
         claude_package_path(home, version),
         cursor_package_path(home),
@@ -444,24 +476,15 @@ def install_superpowers(
         pi_package_path(home),
     )
     for destination in destinations:
-        status = install_package_tree(source, destination, pin, force=force)
-        if status != 0:
-            return status
+        install_package_destination(source, destination, pin)
 
-    ensure_claude_marketplace(home, pin)
-    status = merge_claude_installed_plugins(
+    ensure_claude_marketplace(home, source, pin)
+    merge_claude_installed_plugins(
         home,
         claude_package_path(home, version),
         pin,
-        force=force,
     )
-    if status != 0:
-        return status
-
-    status = upsert_codex_marketplace(home, codex_package_path(home), force=force)
-    if status != 0:
-        return status
-
+    upsert_codex_marketplace(home, codex_package_path(home))
     upsert_pi_settings(home, pi_package_path(home))
     return 0
 
@@ -494,6 +517,12 @@ def check_claude_registry(home: Path, destination: Path) -> int:
         print(f"invalid registry key {CLAUDE_PLUGIN_KEY}", file=sys.stderr)
         return 1
     install_path = entries[0].get("installPath") if isinstance(entries[0], dict) else None
+    if install_path is None:
+        print(
+            f"registry {CLAUDE_PLUGIN_KEY} missing installPath, expected {destination}",
+            file=sys.stderr,
+        )
+        return 1
     if str(destination.resolve()) != str(Path(str(install_path)).resolve()):
         print(
             f"registry {CLAUDE_PLUGIN_KEY} points at {install_path}, expected {destination}",
@@ -501,6 +530,48 @@ def check_claude_registry(home: Path, destination: Path) -> int:
         )
         return 1
     return 0
+
+
+def check_claude_marketplace(home: Path, pin: dict[str, str]) -> int:
+    marketplace_root = claude_marketplace_root(home)
+    marketplace_json = marketplace_root / ".claude-plugin" / "marketplace.json"
+    if not marketplace_json.is_file():
+        print(f"missing {marketplace_json}", file=sys.stderr)
+        return 1
+    payload = json.loads(marketplace_json.read_text(encoding="utf-8"))
+    plugins = payload.get("plugins")
+    if not isinstance(plugins, list) or not plugins:
+        print(f"invalid marketplace catalog {marketplace_json}", file=sys.stderr)
+        return 1
+    source = plugins[0].get("source") if isinstance(plugins[0], dict) else None
+    if source != f"./{PLUGIN_NAME}":
+        print(
+            f"marketplace plugin source {source!r}, expected './{PLUGIN_NAME}'",
+            file=sys.stderr,
+        )
+        return 1
+    status = check_package(
+        claude_marketplace_plugin_path(home),
+        pin,
+        "claude-marketplace",
+    )
+    known_path = claude_known_marketplaces_path(home)
+    if not known_path.is_file():
+        print(f"missing {known_path}", file=sys.stderr)
+        return 1
+    known = json.loads(known_path.read_text(encoding="utf-8"))
+    record = known.get(MARKETPLACE_NAME) if isinstance(known, dict) else None
+    if not isinstance(record, dict):
+        print(f"missing known marketplace {MARKETPLACE_NAME}", file=sys.stderr)
+        return 1
+    source_obj = record.get("source")
+    if not isinstance(source_obj, dict) or source_obj.get("source") != "directory":
+        print(
+            f"known marketplace {MARKETPLACE_NAME} source is not directory",
+            file=sys.stderr,
+        )
+        return 1
+    return status
 
 
 def check_codex_marketplace(home: Path, destination: Path) -> int:
@@ -513,7 +584,11 @@ def check_codex_marketplace(home: Path, destination: Path) -> int:
     if not isinstance(plugins, list):
         print(f"{path} field 'plugins' must be an array", file=sys.stderr)
         return 1
-    matches = [entry for entry in plugins if isinstance(entry, dict) and entry.get("name") == PLUGIN_NAME]
+    matches = [
+        entry
+        for entry in plugins
+        if isinstance(entry, dict) and entry.get("name") == PLUGIN_NAME
+    ]
     if len(matches) != 1:
         print(f"missing marketplace entry {PLUGIN_NAME}", file=sys.stderr)
         return 1
@@ -575,6 +650,7 @@ def check_superpowers(
     for destination, label in checks:
         status |= check_package(destination, pin, label)
     status |= check_claude_registry(home, claude_package_path(home, version))
+    status |= check_claude_marketplace(home, pin)
     status |= check_codex_marketplace(home, codex_package_path(home))
     status |= check_pi_settings(home, pi_package_path(home))
     return status
@@ -656,8 +732,6 @@ def clean_pi_settings(home: Path) -> None:
 def clean_superpowers(*, home: Path, codex_home: Path) -> int:
     del codex_home
     home = home.expanduser().resolve()
-    # Discover managed Claude versioned packages under sheaf-managed cache.
-    #
     claude_root = home / ".claude" / "plugins" / "cache" / MARKETPLACE_NAME / PLUGIN_NAME
     if claude_root.is_dir():
         for child in sorted(claude_root.iterdir()):
@@ -665,6 +739,7 @@ def clean_superpowers(*, home: Path, codex_home: Path) -> int:
         if claude_root.is_dir() and not any(claude_root.iterdir()):
             claude_root.rmdir()
 
+    remove_managed_package(claude_marketplace_plugin_path(home))
     remove_managed_package(cursor_package_path(home))
     remove_managed_package(codex_package_path(home))
     remove_managed_package(pi_package_path(home))
@@ -689,9 +764,11 @@ def clean_superpowers(*, home: Path, codex_home: Path) -> int:
         known = json.loads(known_path.read_text(encoding="utf-8"))
         if isinstance(known, dict) and MARKETPLACE_NAME in known:
             record = known[MARKETPLACE_NAME]
-            if isinstance(record, dict) and record.get("source", {}).get("source") in (
-                "sheaf-managed",
+            source = record.get("source", {}) if isinstance(record, dict) else {}
+            if isinstance(source, dict) and source.get("source") in (
                 "local",
+                "directory",
+                "sheaf-managed",
             ):
                 del known[MARKETPLACE_NAME]
                 write_json(known_path, known)
@@ -723,7 +800,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Overwrite unmanaged same-key Superpowers destinations/registry entries.",
+        help=(
+            "Overwrite unmanaged same-key Superpowers destinations/registry "
+            "entries, and allow dual registration beside foreign "
+            "superpowers@* marketplace installs."
+        ),
     )
     return parser.parse_args(argv)
 
@@ -747,7 +828,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if args.mode == "clean":
             return clean_superpowers(home=args.home, codex_home=codex_home)
-    except (OSError, RuntimeError, ValueError, FileNotFoundError, json.JSONDecodeError) as error:
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as error:
         print(str(error), file=sys.stderr)
         return 1
     raise AssertionError(args.mode)

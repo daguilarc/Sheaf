@@ -202,6 +202,167 @@ class InstallSuperpowersTests(unittest.TestCase):
         self.assertEqual(str(destination.resolve()), entry["installPath"])
         self.assertEqual(VERSION, entry["version"])
 
+        marketplace_root = (
+            self.home / ".claude" / "plugins" / "marketplaces" / "sheaf-managed"
+        )
+        marketplace = json.loads(
+            (marketplace_root / ".claude-plugin" / "marketplace.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual("./superpowers", marketplace["plugins"][0]["source"])
+        marketplace_plugin = marketplace_root / "superpowers"
+        self.assertTrue(
+            (marketplace_plugin / "skills" / "writing-plans" / "SKILL.md").is_file()
+        )
+        known = json.loads(
+            (
+                self.home / ".claude" / "plugins" / "known_marketplaces.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            "directory",
+            known["sheaf-managed"]["source"]["source"],
+        )
+        self.assertEqual(
+            str(marketplace_root.resolve()),
+            known["sheaf-managed"]["source"]["path"],
+        )
+        self.assertEqual(
+            str(marketplace_root.resolve()),
+            known["sheaf-managed"]["installLocation"],
+        )
+
+    def test_registry_conflict_preflight_before_any_mutation(self) -> None:
+        foreign_path = self.home / "foreign-superpowers"
+        foreign_path.mkdir()
+        (foreign_path / "foreign.txt").write_text("keep\n", encoding="utf-8")
+        registry = self.home / ".claude" / "plugins" / "installed_plugins.json"
+        registry.parent.mkdir(parents=True)
+        registry.write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "plugins": {
+                        "superpowers@sheaf-managed": [
+                            {
+                                "scope": "user",
+                                "installPath": str(foreign_path),
+                                "version": "9.9.9",
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
+            stderr
+        ):
+            status = install_superpowers.install_superpowers(
+                repo_root=self.repo_root,
+                home=self.home,
+                codex_home=self.codex_home,
+                force=False,
+            )
+        self.assertEqual(1, status)
+        self.assertIn("conflict unmanaged registry key", stderr.getvalue())
+
+        claude_dest = (
+            self.home
+            / ".claude"
+            / "plugins"
+            / "cache"
+            / "sheaf-managed"
+            / "superpowers"
+            / VERSION
+        )
+        self.assertFalse(claude_dest.exists())
+        self.assertFalse(
+            (self.home / ".cursor" / "plugins" / "local" / "superpowers").exists()
+        )
+        self.assertFalse(
+            (self.home / ".agents" / "plugins" / "plugins" / "superpowers").exists()
+        )
+        self.assertFalse(
+            (
+                self.home / ".pi" / "packages" / "sheaf-managed" / "superpowers"
+            ).exists()
+        )
+        self.assertEqual(
+            "keep\n",
+            (foreign_path / "foreign.txt").read_text(encoding="utf-8"),
+        )
+
+    def test_foreign_superpowers_marketplace_refused_without_force(self) -> None:
+        foreign = (
+            self.home
+            / ".claude"
+            / "plugins"
+            / "cache"
+            / "claude-plugins-official"
+            / "superpowers"
+            / VERSION
+        )
+        foreign.mkdir(parents=True)
+        (foreign / "keep.txt").write_text("official\n", encoding="utf-8")
+        registry = self.home / ".claude" / "plugins" / "installed_plugins.json"
+        registry.parent.mkdir(parents=True, exist_ok=True)
+        registry.write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "plugins": {
+                        "superpowers@claude-plugins-official": [
+                            {
+                                "scope": "user",
+                                "installPath": str(foreign),
+                                "version": VERSION,
+                            }
+                        ]
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
+            stderr
+        ):
+            status = install_superpowers.install_superpowers(
+                repo_root=self.repo_root,
+                home=self.home,
+                codex_home=self.codex_home,
+                force=False,
+            )
+        self.assertEqual(1, status)
+        self.assertIn("superpowers@claude-plugins-official", stderr.getvalue())
+        self.assertFalse(
+            (
+                self.home
+                / ".claude"
+                / "plugins"
+                / "cache"
+                / "sheaf-managed"
+                / "superpowers"
+                / VERSION
+            ).exists()
+        )
+
+        self.assertEqual(0, self.install(force=True))
+        payload = json.loads(registry.read_text(encoding="utf-8"))
+        self.assertIn("superpowers@claude-plugins-official", payload["plugins"])
+        self.assertIn("superpowers@sheaf-managed", payload["plugins"])
+        self.assertEqual(
+            "official\n",
+            (foreign / "keep.txt").read_text(encoding="utf-8"),
+        )
+
     def test_codex_path_parallel_to_xagent_and_marketplace_upsert(self) -> None:
         marketplace_path = self.home / ".agents" / "plugins" / "marketplace.json"
         marketplace_path.parent.mkdir(parents=True)

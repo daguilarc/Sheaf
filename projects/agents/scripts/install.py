@@ -15,6 +15,14 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+from managed_package import (
+    MANAGED_MARKER,
+    MANAGED_MARKER_NAME as OPENSPEC_MANAGED_MARKER_NAME,
+    install_package_tree as install_managed_package_tree,
+    managed_marker_content,
+    package_is_managed,
+)
+
 
 SUPPORTED_TARGETS = ("claude", "cursor", "pi", "codex")
 SCOPES = ("repo", "global", "all")
@@ -26,10 +34,8 @@ REPO_TARGET_DIRS = {
     "pi": Path(".pi/skills"),
     "codex": Path(".codex/skills"),
 }
-MANAGED_MARKER = "sheaf-agents-managed: DO NOT EDIT"
 CODEX_HOOK_COMMAND_PLACEHOLDER = "__SHEAF_CODEX_POST_COMPACT_HOOK_COMMAND__"
 OPENSPEC_MIN_NODE = (20, 19, 0)
-OPENSPEC_MANAGED_MARKER_NAME = ".sheaf-managed"
 OPENSPEC_VENDOR_REL = Path("projects") / "agents" / "vendor" / "openspec"
 OPENSPEC_PACKAGE_REL = OPENSPEC_VENDOR_REL / "package"
 OPENSPEC_PINNED_TOOLS = ("claude", "cursor", "pi", "codex")
@@ -507,20 +513,15 @@ def format_node_version(version: tuple[int, ...]) -> str:
 
 
 def openspec_managed_marker_content(pin: dict[str, object]) -> str:
-    source = OPENSPEC_PACKAGE_REL.as_posix()
-    return (
-        f"{MANAGED_MARKER}\n"
-        f"source={source}\n"
-        f"revision={openspec_pin_field(pin, 'revision')}\n"
-        f"version={openspec_pin_field(pin, 'version')}\n"
+    return managed_marker_content(
+        source=OPENSPEC_PACKAGE_REL.as_posix(),
+        revision=openspec_pin_field(pin, "revision"),
+        version=openspec_pin_field(pin, "version"),
     )
 
 
 def package_is_openspec_managed(package_root: Path) -> bool:
-    marker = package_root / OPENSPEC_MANAGED_MARKER_NAME
-    if not marker.is_file():
-        return False
-    return MANAGED_MARKER in marker.read_text(encoding="utf-8")
+    return package_is_managed(package_root)
 
 
 def shim_is_openspec_managed(shim: Path) -> bool:
@@ -581,31 +582,13 @@ def install_openspec_cli(repo_root: Path, *, home: Path, force: bool) -> int:
             print(f"conflict unmanaged {shim}", file=sys.stderr)
             return 1
 
-    package_root.parent.mkdir(parents=True, exist_ok=True)
-    staging = package_root.parent / f".openspec-staging-{os.getpid()}"
-    backup = package_root.parent / f".openspec-backup-{os.getpid()}"
-    for leftover in (staging, backup):
-        if leftover.exists():
-            shutil.rmtree(leftover)
-
     try:
-        shutil.copytree(source, staging, symlinks=False)
-        marker = staging / OPENSPEC_MANAGED_MARKER_NAME
-        marker.write_text(openspec_managed_marker_content(pin), encoding="utf-8")
-
-        if package_root.exists():
-            os.replace(package_root, backup)
-        try:
-            os.replace(staging, package_root)
-        except OSError:
-            if backup.exists() and not package_root.exists():
-                os.replace(backup, package_root)
-            raise
-        if backup.exists():
-            shutil.rmtree(backup)
+        install_managed_package_tree(
+            source,
+            package_root,
+            marker_text=openspec_managed_marker_content(pin),
+        )
     except OSError as exc:
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
         print(f"failed openspec CLI install: {exc}", file=sys.stderr)
         return 1
 
