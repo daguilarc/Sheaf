@@ -73,27 +73,62 @@ function CreateFakeStore(recorder: ReturnType<typeof CreateOrderRecorder>): SddS
   readonly prepared: PrepareFollowupInput[];
   readonly running: Array<{ agentId: string; turnNumber: number; resumeSequence: number }>;
   readonly failed: Array<{ agentId: string; turnNumber: number }>;
+  readonly completed: Array<{
+    agentId: string;
+    turnNumber: number;
+    reportText: string;
+    completedSequence: number;
+  }>;
+  readonly closed: Array<{ agentId: string; closedAt: string }>;
+  readonly abandoned: Array<{ agentId: string; turnNumber: number }>;
+  readonly reconciled: Array<ReadonlyMap<string, string>>;
   sessions: Map<string, SddSessionRecord>;
   openTurns: Map<string, SddTurnRecord>;
+  turnsByAgent: Map<string, SddTurnRecord[]>;
   reserveError?: Error;
   prepareError?: Error;
+  markCompletedError?: Error;
+  markClosedError?: Error;
 }
 {
   const reserved: ReserveInitialInput[] = [];
   const prepared: PrepareFollowupInput[] = [];
   const running: Array<{ agentId: string; turnNumber: number; resumeSequence: number }> = [];
   const failed: Array<{ agentId: string; turnNumber: number }> = [];
+  const completed: Array<{
+    agentId: string;
+    turnNumber: number;
+    reportText: string;
+    completedSequence: number;
+  }> = [];
+  const closed: Array<{ agentId: string; closedAt: string }> = [];
+  const abandoned: Array<{ agentId: string; turnNumber: number }> = [];
+  const reconciled: Array<ReadonlyMap<string, string>> = [];
   const sessions = new Map<string, SddSessionRecord>();
   const openTurns = new Map<string, SddTurnRecord>();
+  const turnsByAgent = new Map<string, SddTurnRecord[]>();
   let nextTurnId = 1;
+
+  function RememberTurn(turn: SddTurnRecord): void
+  {
+    const existing = turnsByAgent.get(turn.agent_id) ?? [];
+    const without = existing.filter((entry) => entry.turn_number !== turn.turn_number);
+    without.push(turn);
+    turnsByAgent.set(turn.agent_id, without);
+  }
 
   return {
     reserved,
     prepared,
     running,
     failed,
+    completed,
+    closed,
+    abandoned,
+    reconciled,
     sessions,
     openTurns,
+    turnsByAgent,
     ReserveInitial(input: ReserveInitialInput): void
     {
       recorder.Record("ReserveInitial", input);
@@ -115,7 +150,7 @@ function CreateFakeStore(recorder: ReturnType<typeof CreateOrderRecorder>): SddS
         started_at: "2026-07-27T00:00:00.000Z",
         closed_at: null,
       });
-      openTurns.set(input.agentId, {
+      const turn: SddTurnRecord = {
         id: nextTurnId,
         agent_id: input.agentId,
         turn_number: 1,
@@ -132,7 +167,9 @@ function CreateFakeStore(recorder: ReturnType<typeof CreateOrderRecorder>): SddS
         status: "prepared",
         created_at: "2026-07-27T00:00:00.000Z",
         completed_at: null,
-      });
+      };
+      openTurns.set(input.agentId, turn);
+      RememberTurn(turn);
       nextTurnId += 1;
     },
     PrepareFollowup(input: PrepareFollowupInput): number
@@ -153,7 +190,7 @@ function CreateFakeStore(recorder: ReturnType<typeof CreateOrderRecorder>): SddS
       }
       prepared.push(input);
       const turnNumber = prepared.length + 1;
-      openTurns.set(input.agentId, {
+      const turn: SddTurnRecord = {
         id: nextTurnId,
         agent_id: input.agentId,
         turn_number: turnNumber,
@@ -170,7 +207,9 @@ function CreateFakeStore(recorder: ReturnType<typeof CreateOrderRecorder>): SddS
         status: "prepared",
         created_at: "2026-07-27T00:00:00.000Z",
         completed_at: null,
-      });
+      };
+      openTurns.set(input.agentId, turn);
+      RememberTurn(turn);
       nextTurnId += 1;
       return turnNumber;
     },
@@ -183,29 +222,93 @@ function CreateFakeStore(recorder: ReturnType<typeof CreateOrderRecorder>): SddS
       {
         throw new Error(`no open turn for ${agentId}`);
       }
-      openTurns.set(agentId, {
+      const updated = {
         ...turn,
-        status: "running",
+        status: "running" as const,
         resume_sequence: resumeSequence,
-      });
+      };
+      openTurns.set(agentId, updated);
+      RememberTurn(updated);
     },
-    MarkCompleted(): void
+    MarkCompleted(
+      agentId: string,
+      turnNumber: number,
+      reportText: string,
+      completedSequence: number,
+    ): void
     {
-      throw new Error("MarkCompleted not used in Task 3 tests");
+      recorder.Record("MarkCompleted", {
+        agentId,
+        turnNumber,
+        reportText,
+        completedSequence,
+      });
+      if (this.markCompletedError !== undefined)
+      {
+        throw this.markCompletedError;
+      }
+      const turn = openTurns.get(agentId);
+      if (turn === undefined || turn.turn_number !== turnNumber || turn.status !== "running")
+      {
+        throw new SddStoreError(
+          `Cannot mark turn ${turnNumber} completed for ${agentId}: expected running turn.`,
+        );
+      }
+      completed.push({ agentId, turnNumber, reportText, completedSequence });
+      const updated = {
+        ...turn,
+        status: "completed" as const,
+        report_text: reportText,
+        completed_sequence: completedSequence,
+        completed_at: "2026-07-27T00:30:00.000Z",
+      };
+      openTurns.delete(agentId);
+      RememberTurn(updated);
     },
     MarkFailed(agentId: string, turnNumber: number): void
     {
       recorder.Record("MarkFailed", { agentId, turnNumber });
       failed.push({ agentId, turnNumber });
+      const turn = openTurns.get(agentId);
+      if (turn !== undefined)
+      {
+        RememberTurn({
+          ...turn,
+          status: "failed",
+          completed_at: "2026-07-27T00:30:00.000Z",
+        });
+      }
       openTurns.delete(agentId);
     },
-    MarkAbandoned(): void
+    MarkAbandoned(agentId: string, turnNumber: number): void
     {
-      throw new Error("MarkAbandoned not used in Task 3 tests");
+      recorder.Record("MarkAbandoned", { agentId, turnNumber });
+      abandoned.push({ agentId, turnNumber });
+      const turn = openTurns.get(agentId);
+      if (turn !== undefined)
+      {
+        RememberTurn({
+          ...turn,
+          status: "abandoned",
+          completed_at: "2026-07-27T00:30:00.000Z",
+        });
+      }
+      openTurns.delete(agentId);
     },
-    MarkClosed(): void
+    MarkClosed(agentId: string, closedAt: string): void
     {
-      throw new Error("MarkClosed not used in Task 3 tests");
+      recorder.Record("MarkClosed", { agentId, closedAt });
+      if (this.markClosedError !== undefined)
+      {
+        throw this.markClosedError;
+      }
+      const session = sessions.get(agentId);
+      if (session === undefined || session.closed_at !== null)
+      {
+        throw new SddStoreError(`Cannot close SDD session ${agentId}: session missing or already closed.`);
+      }
+      closed.push({ agentId, closedAt });
+      sessions.set(agentId, { ...session, closed_at: closedAt });
     },
     GetSession(agentId: string): SddSessionRecord | undefined
     {
@@ -219,12 +322,34 @@ function CreateFakeStore(recorder: ReturnType<typeof CreateOrderRecorder>): SddS
     {
       return sessions.has(agentId);
     },
-    ReconcileTerminalRuns(): void
+    ReconcileTerminalRuns(phases: ReadonlyMap<string, string>): void
     {
-      throw new Error("ReconcileTerminalRuns not used in Task 3 tests");
+      recorder.Record("ReconcileTerminalRuns", [...phases.entries()]);
+      reconciled.push(phases);
+      const terminal = new Set(["completed", "failed", "cancelled", "abandoned"]);
+      for (const [agentId, phase] of phases)
+      {
+        if (!terminal.has(phase))
+        {
+          continue;
+        }
+        const turn = openTurns.get(agentId);
+        if (turn === undefined)
+        {
+          continue;
+        }
+        abandoned.push({ agentId, turnNumber: turn.turn_number });
+        RememberTurn({
+          ...turn,
+          status: "abandoned",
+          completed_at: "2026-07-27T00:30:00.000Z",
+        });
+        openTurns.delete(agentId);
+      }
     },
     Close(): void
     {
+      recorder.Record("Close");
     },
   };
 }
@@ -233,17 +358,23 @@ function CreateFakeRunManager(recorder: ReturnType<typeof CreateOrderRecorder>):
   createError?: Error;
   startError?: Error;
   submitError?: Error;
+  closeRunError?: Error;
   created: CreateRunOptions[];
   submitted: Array<{ runId: string; text: string }>;
   closed: string[];
+  closeRunCalls: XagentCloseInput[];
+  awaitCalls: XagentAwaitInput[];
   sequence: number;
   phase: string;
   messageCalls: XagentMessageInput[];
+  awaitResult?: AwaitRunResult | ((input: XagentAwaitInput) => AwaitRunResult | Promise<AwaitRunResult>);
 }
 {
   const created: CreateRunOptions[] = [];
   const submitted: Array<{ runId: string; text: string }> = [];
   const closed: string[] = [];
+  const closeRunCalls: XagentCloseInput[] = [];
+  const awaitCalls: XagentAwaitInput[] = [];
   const messageCalls: XagentMessageInput[] = [];
   const runs = new Set<string>();
 
@@ -251,6 +382,8 @@ function CreateFakeRunManager(recorder: ReturnType<typeof CreateOrderRecorder>):
     created,
     submitted,
     closed,
+    closeRunCalls,
+    awaitCalls,
     messageCalls,
     sequence: 7,
     phase: "ready",
@@ -325,6 +458,16 @@ function CreateFakeRunManager(recorder: ReturnType<typeof CreateOrderRecorder>):
     },
     async awaitRun(input: XagentAwaitInput): Promise<AwaitRunResult>
     {
+      recorder.Record("awaitRun", input);
+      awaitCalls.push(input);
+      if (typeof this.awaitResult === "function")
+      {
+        return this.awaitResult(input);
+      }
+      if (this.awaitResult !== undefined)
+      {
+        return this.awaitResult;
+      }
       return {
         schema_version: 1,
         event: "deadline",
@@ -336,6 +479,14 @@ function CreateFakeRunManager(recorder: ReturnType<typeof CreateOrderRecorder>):
     },
     async closeRun(input: XagentCloseInput): Promise<CloseRunResult>
     {
+      recorder.Record("closeRun", input);
+      closeRunCalls.push(input);
+      if (this.closeRunError !== undefined)
+      {
+        throw this.closeRunError;
+      }
+      closed.push(input.run_id);
+      runs.delete(input.run_id);
       return {
         run_id: input.run_id,
         closed: true,
@@ -934,4 +1085,308 @@ test("MessageGeneric rejects SDD runs and leaves non-SDD messaging unchanged", a
   assert.equal(nonSdd.run_id, "xrun_20260727000000000_00nonssd");
   assert.equal(harness.runManager.messageCalls.length, 1);
   assert.equal(harness.runManager.messageCalls[0]?.text, "ordinary follow-up");
+});
+
+const x_SanitizedReport = "sanitized report";
+
+function CompletionResult(overrides: Partial<AwaitRunResult> = {}): AwaitRunResult
+{
+  return {
+    schema_version: 1,
+    event: "turn.completed",
+    run_id: x_AgentId,
+    sequence: 42,
+    phase: "ready",
+    elapsed_ms: 12,
+    report: { text: x_SanitizedReport },
+    ...overrides,
+  };
+}
+
+test("Await persists report before returning completion", async () =>
+{
+  const harness = CreateManagerHarness();
+  await harness.manager.Start(ImplementerStartInput());
+  harness.recorder.calls.length = 0;
+  harness.runManager.awaitResult = CompletionResult();
+
+  const result = await harness.manager.Await({
+    agent_id: x_AgentId,
+    after_sequence: 7,
+    deadline_seconds: 7000,
+  });
+
+  assert.deepEqual(harness.recorder.Names(), ["awaitRun", "MarkCompleted"]);
+  assert.deepEqual(harness.store.completed, [
+    {
+      agentId: x_AgentId,
+      turnNumber: 1,
+      reportText: x_SanitizedReport,
+      completedSequence: 42,
+    },
+  ]);
+  assert.equal(result.report?.text, x_SanitizedReport);
+  assert.equal(result.sequence, 42);
+  assert.equal(harness.store.openTurns.has(x_AgentId), false);
+  assert.equal(harness.runManager.awaitCalls[0]?.run_id, x_AgentId);
+  assert.equal(harness.runManager.awaitCalls[0]?.after_sequence, 7);
+});
+
+test("Await MarkCompleted failure returns sdd_persistence_failed without completion and retry records it", async () =>
+{
+  const harness = CreateManagerHarness();
+  await harness.manager.Start(ImplementerStartInput());
+  harness.recorder.calls.length = 0;
+  harness.runManager.awaitResult = CompletionResult();
+  harness.store.markCompletedError = new SddStoreError("disk full");
+
+  await assert.rejects(
+    () => harness.manager.Await({
+      agent_id: x_AgentId,
+      after_sequence: 7,
+      deadline_seconds: 7000,
+    }),
+    (error: unknown) =>
+    {
+      assert.ok(error instanceof ToolValidationError);
+      assert.equal(error.structured.error, "sdd_persistence_failed");
+      return true;
+    },
+  );
+  assert.equal(harness.store.completed.length, 0);
+  assert.equal(harness.store.openTurns.get(x_AgentId)?.status, "running");
+  assert.deepEqual(harness.recorder.Names(), ["awaitRun", "MarkCompleted"]);
+
+  harness.store.markCompletedError = undefined;
+  harness.recorder.calls.length = 0;
+
+  const retried = await harness.manager.Await({
+    agent_id: x_AgentId,
+    after_sequence: 7,
+    deadline_seconds: 7000,
+  });
+
+  assert.equal(retried.report?.text, x_SanitizedReport);
+  assert.equal(retried.sequence, 42);
+  assert.deepEqual(harness.store.completed, [
+    {
+      agentId: x_AgentId,
+      turnNumber: 1,
+      reportText: x_SanitizedReport,
+      completedSequence: 42,
+    },
+  ]);
+});
+
+test("Await deadline and attention do not complete the open turn", async () =>
+{
+  const harness = CreateManagerHarness();
+  await harness.manager.Start(ImplementerStartInput());
+  harness.recorder.calls.length = 0;
+  harness.runManager.awaitResult = {
+    schema_version: 1,
+    event: "deadline",
+    run_id: x_AgentId,
+    sequence: 7,
+    phase: "running",
+    elapsed_ms: 5,
+    reason: "await_deadline",
+  };
+
+  const deadline = await harness.manager.Await({
+    agent_id: x_AgentId,
+    after_sequence: 7,
+    deadline_seconds: 7000,
+  });
+  assert.equal(deadline.event, "deadline");
+  assert.equal(harness.store.completed.length, 0);
+  assert.equal(harness.store.openTurns.get(x_AgentId)?.status, "running");
+  assert.equal(harness.recorder.Names().includes("MarkCompleted"), false);
+
+  harness.runManager.awaitResult = {
+    schema_version: 1,
+    event: "attention",
+    run_id: x_AgentId,
+    sequence: 9,
+    phase: "running",
+    elapsed_ms: 1,
+  };
+  const attention = await harness.manager.Await({
+    agent_id: x_AgentId,
+    after_sequence: 7,
+    deadline_seconds: 7000,
+  });
+  assert.equal(attention.event, "attention");
+  assert.equal(harness.store.completed.length, 0);
+  assert.equal(harness.store.openTurns.get(x_AgentId)?.status, "running");
+});
+
+test("AwaitGeneric persists report for SDD-owned runs and leaves non-SDD await unchanged", async () =>
+{
+  const harness = CreateManagerHarness();
+  await harness.manager.Start(ImplementerStartInput());
+  harness.recorder.calls.length = 0;
+  harness.runManager.awaitResult = CompletionResult();
+
+  const sddResult = await harness.manager.AwaitGeneric({
+    run_id: x_AgentId,
+    after_sequence: 7,
+    deadline_seconds: 7000,
+  });
+  assert.equal(sddResult.report?.text, x_SanitizedReport);
+  assert.deepEqual(harness.store.completed, [
+    {
+      agentId: x_AgentId,
+      turnNumber: 1,
+      reportText: x_SanitizedReport,
+      completedSequence: 42,
+    },
+  ]);
+
+  harness.recorder.calls.length = 0;
+  harness.runManager.awaitResult = {
+    schema_version: 1,
+    event: "turn.completed",
+    run_id: "xrun_20260727000000000_00nonssd",
+    sequence: 3,
+    phase: "ready",
+    elapsed_ms: 1,
+    report: { text: "generic report" },
+  };
+  const nonSdd = await harness.manager.AwaitGeneric({
+    run_id: "xrun_20260727000000000_00nonssd",
+    after_sequence: 1,
+    deadline_seconds: 7000,
+  });
+  assert.equal(nonSdd.report?.text, "generic report");
+  assert.equal(harness.recorder.Names().includes("MarkCompleted"), false);
+  assert.equal(harness.store.completed.length, 1);
+});
+
+test("Close closes provider first then MarkClosed; provider failure leaves closed_at unset", async () =>
+{
+  const harness = CreateManagerHarness();
+  await harness.manager.Start(ImplementerStartInput());
+  harness.store.openTurns.delete(x_AgentId);
+  harness.recorder.calls.length = 0;
+
+  const closed = await harness.manager.Close({ agent_id: x_AgentId });
+  assert.deepEqual(closed, { agent_id: x_AgentId, closed: true });
+  assert.deepEqual(harness.recorder.Names(), ["closeRun", "MarkClosed"]);
+  assert.notEqual(harness.store.sessions.get(x_AgentId)?.closed_at, null);
+  assert.equal(harness.store.closed.length, 1);
+  assert.equal(harness.runManager.closeRunCalls[0]?.run_id, x_AgentId);
+
+  const failHarness = CreateManagerHarness();
+  await failHarness.manager.Start(ImplementerStartInput());
+  failHarness.store.openTurns.delete(x_AgentId);
+  failHarness.runManager.closeRunError = new Error("provider close failed");
+  failHarness.recorder.calls.length = 0;
+
+  await assert.rejects(
+    () => failHarness.manager.Close({ agent_id: x_AgentId }),
+    /provider close failed/,
+  );
+  assert.deepEqual(failHarness.recorder.Names(), ["closeRun"]);
+  assert.equal(failHarness.store.sessions.get(x_AgentId)?.closed_at, null);
+  assert.equal(failHarness.store.closed.length, 0);
+});
+
+test("CloseGeneric records ledger close for SDD runs and leaves non-SDD close unchanged", async () =>
+{
+  const harness = CreateManagerHarness();
+  await harness.manager.Start(ImplementerStartInput());
+  harness.store.openTurns.delete(x_AgentId);
+  harness.recorder.calls.length = 0;
+
+  const sddClosed = await harness.manager.CloseGeneric({ run_id: x_AgentId });
+  assert.deepEqual(sddClosed, { run_id: x_AgentId, closed: true });
+  assert.deepEqual(harness.recorder.Names(), ["closeRun", "MarkClosed"]);
+  assert.ok(harness.store.sessions.get(x_AgentId)?.closed_at);
+
+  harness.recorder.calls.length = 0;
+  const nonSdd = await harness.manager.CloseGeneric({
+    run_id: "xrun_20260727000000000_00nonssd",
+  });
+  assert.deepEqual(nonSdd, { run_id: "xrun_20260727000000000_00nonssd", closed: true });
+  assert.deepEqual(harness.recorder.Names(), ["closeRun"]);
+  assert.equal(harness.store.closed.length, 1);
+});
+
+test("ReconcileTerminalRuns abandons only unresolved reportless terminal turns", async () =>
+{
+  const harness = CreateManagerHarness();
+  const abandonedId = x_AgentId;
+  const failedId = "xrun_20260727000000000_failed01";
+  const liveId = "xrun_20260727000000000_live0001";
+  const completedId = "xrun_20260727000000000_done0001";
+
+  await harness.manager.Start(ImplementerStartInput());
+
+  harness.store.ReserveInitial({
+    agentId: failedId,
+    planName: "2026-07-26-xagent-sdd-mode",
+    planPath: x_PlanPath,
+    cwd: x_CanonicalCwd,
+    taskNumber: 4,
+    agent: "grok-4.5",
+    harness: "cursor",
+    effort: "high",
+    role: "implementer",
+    briefPath: x_BriefPath,
+    briefText: x_BriefText,
+  });
+  harness.store.MarkRunning(failedId, 1, 3);
+
+  harness.store.ReserveInitial({
+    agentId: liveId,
+    planName: "2026-07-26-xagent-sdd-mode",
+    planPath: x_PlanPath,
+    cwd: x_CanonicalCwd,
+    taskNumber: 4,
+    agent: "grok-4.5",
+    harness: "cursor",
+    effort: "high",
+    role: "implementer",
+    briefPath: x_BriefPath,
+    briefText: x_BriefText,
+  });
+  harness.store.MarkRunning(liveId, 1, 4);
+
+  harness.store.ReserveInitial({
+    agentId: completedId,
+    planName: "2026-07-26-xagent-sdd-mode",
+    planPath: x_PlanPath,
+    cwd: x_CanonicalCwd,
+    taskNumber: 4,
+    agent: "grok-4.5",
+    harness: "cursor",
+    effort: "high",
+    role: "implementer",
+    briefPath: x_BriefPath,
+    briefText: x_BriefText,
+    reportPath: x_ReportPath,
+  });
+  harness.store.MarkRunning(completedId, 1, 5);
+  harness.store.MarkCompleted(completedId, 1, x_SanitizedReport, 99);
+
+  harness.store.ReconcileTerminalRuns(new Map([
+    [abandonedId, "abandoned"],
+    [failedId, "failed"],
+    [liveId, "running"],
+    [completedId, "completed"],
+  ]));
+
+  assert.equal(harness.store.openTurns.has(abandonedId), false);
+  assert.equal(harness.store.openTurns.has(failedId), false);
+  assert.equal(harness.store.openTurns.get(liveId)?.status, "running");
+  assert.equal(harness.store.openTurns.has(completedId), false);
+
+  const abandonedTurn = harness.store.turnsByAgent.get(abandonedId)?.at(-1);
+  const failedTurn = harness.store.turnsByAgent.get(failedId)?.at(-1);
+  const completedTurn = harness.store.turnsByAgent.get(completedId)?.at(-1);
+  assert.equal(abandonedTurn?.status, "abandoned");
+  assert.equal(failedTurn?.status, "abandoned");
+  assert.equal(completedTurn?.status, "completed");
+  assert.equal(completedTurn?.report_text, x_SanitizedReport);
 });

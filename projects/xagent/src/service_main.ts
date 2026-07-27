@@ -2,11 +2,17 @@
 
 import { loadXagentServiceConfig } from "./service/config.js";
 import { createUncaughtExceptionHandler } from "./service/crash_handler.js";
+import { listRuns } from "./logs.js";
 import {
   logReconciliationResults,
   reconciliationWarning,
 } from "./service/reconciliation.js";
 import { XagentRunManager } from "./service/run_manager.js";
+import {
+  AsSddRunManagerPort,
+  CreateSddManager,
+} from "./service/sdd_manager.js";
+import { CreateSddStore } from "./service/sdd_store.js";
 import { createTestAdapterFactory, isTestAdapterEnabled } from "./service/test_hooks.js";
 import {
   createShutdownController,
@@ -32,6 +38,13 @@ async function main(): Promise<void> {
       : {}),
   });
 
+  const sddStore = CreateSddStore(config.logRoot);
+  const sddManager = CreateSddManager({
+    store: sddStore,
+    runManager: AsSddRunManagerPort(runManager),
+    repoRoot: config.repoRoot,
+  });
+
   // Last-resort guard against an unhandled error taking down the whole
   // service before owned provider process groups are cleaned up. The
   // supervisor runs in-process with every active run, so an uncaught
@@ -44,7 +57,13 @@ async function main(): Promise<void> {
 
   let server: XagentServer | undefined;
   const shutdownController: XagentShutdownController = createShutdownController({
-    closeRuns: () => runManager.closeAll(),
+    closeRuns: async () => {
+      await runManager.closeAll();
+      // Close the SDD ledger only after owned provider sessions finish
+      // closing so close-time MarkClosed writes can still commit.
+      //
+      sddStore.Close();
+    },
     closeServer: async () => {
       await server?.close();
     },
@@ -78,6 +97,7 @@ async function main(): Promise<void> {
     bindHost: config.bindHost,
     bindPort: config.bindPort,
     runManager,
+    sddManager,
     shutdownController,
     // Hold `/health` (`healthy: false`) and reject `/mcp` with 503 until
     // startup reconciliation resolves. Without this gate, the skill's
@@ -124,6 +144,16 @@ async function main(): Promise<void> {
   //
   logReconciliationResults(reconciliationResults);
   server.setWarning(reconciliationWarning(reconciliationResults));
+
+  // After xagent run-phase reconciliation, abandon any SDD ledger turns
+  // whose corresponding runs are terminal without a delivered report.
+  //
+  const persistedPhases = new Map<string, string>();
+  for (const metadata of await listRuns(config.logRoot)) {
+    persistedPhases.set(metadata.run_id, metadata.supervision.phase);
+  }
+  sddStore.ReconcileTerminalRuns(persistedPhases);
+
   // Reconciliation has finished (or there was nothing to reconcile): flip
   // the ready gate so `/health` reports `healthy: true` and `/mcp` starts
   // accepting controller work.

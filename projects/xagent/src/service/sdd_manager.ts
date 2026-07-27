@@ -87,6 +87,7 @@ export type SddManagerDeps = {
   readonly readFile?: (filePath: string) => Promise<string>;
   readonly renderPrompt?: (input: RenderSddPromptInput) => Promise<RenderedSddPrompt>;
   readonly formatFix?: (input: FormatFixFollowupInput) => string;
+  readonly clock?: () => Date;
 };
 
 type SessionArtifacts = {
@@ -126,12 +127,12 @@ function FollowupRequired(runId: string): ToolValidationError
   });
 }
 
-function UnimplementedSddOperation(operation: "await" | "close"): ToolValidationError
+function HasDeliveredReport(
+  result: AwaitRunResult,
+): result is AwaitRunResult & { readonly report: { readonly text: string } }
 {
-  return StructuredFailure({
-    error: "sdd_operation_unimplemented",
-    message: `SDD ${operation} is not implemented yet.`,
-  });
+  return result.report !== undefined
+    && typeof result.report.text === "string";
 }
 
 async function ReadRequiredText(
@@ -247,7 +248,62 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
   const read = deps.readFile ?? ((filePath: string) => readFile(filePath, "utf8"));
   const renderPrompt = deps.renderPrompt ?? ((input: RenderSddPromptInput) => RenderSddPrompt(input));
   const formatFix = deps.formatFix ?? FormatFixFollowup;
+  const clock = deps.clock ?? (() => new Date());
   const artifactsByAgent = new Map<string, SessionArtifacts>();
+
+  async function PersistReportBeforeReturn(
+    agentId: string,
+    result: AwaitRunResult,
+  ): Promise<AwaitRunResult>
+  {
+    if (!HasDeliveredReport(result))
+    {
+      return result;
+    }
+    const openTurn = store.GetOpenTurn(agentId);
+    if (openTurn === undefined)
+    {
+      return result;
+    }
+    try
+    {
+      store.MarkCompleted(agentId, openTurn.turn_number, result.report.text, result.sequence);
+    }
+    catch (error)
+    {
+      if (error instanceof ToolValidationError)
+      {
+        throw error;
+      }
+      throw PersistenceFailed("Unable to persist SDD turn report before return.", {
+        cause: error instanceof Error ? error.message : String(error),
+        agent_id: agentId,
+        sequence: result.sequence,
+      });
+    }
+    return result;
+  }
+
+  async function CloseAfterProvider(agentId: string): Promise<CloseRunResult>
+  {
+    const closed = await runManager.closeRun({ run_id: agentId });
+    try
+    {
+      store.MarkClosed(agentId, clock().toISOString());
+    }
+    catch (error)
+    {
+      if (error instanceof ToolValidationError)
+      {
+        throw error;
+      }
+      throw PersistenceFailed("Unable to record SDD session close after provider close.", {
+        cause: error instanceof Error ? error.message : String(error),
+        agent_id: agentId,
+      });
+    }
+    return closed;
+  }
 
   async function Start(input: XagentSddStartInput): Promise<XagentSddStartResult>
   {
@@ -548,17 +604,44 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     }
   }
 
+  async function Await(
+    input: XagentSddAwaitInput,
+    signal?: AbortSignal,
+  ): Promise<XagentSddAwaitResult>
+  {
+    const result = await runManager.awaitRun(
+      {
+        run_id: input.agent_id,
+        after_sequence: input.after_sequence,
+        deadline_seconds: input.deadline_seconds,
+      },
+      signal,
+    );
+    return PersistReportBeforeReturn(input.agent_id, result);
+  }
+
+  async function Close(input: XagentSddCloseInput): Promise<XagentSddCloseResult>
+  {
+    if (!store.IsSddAgent(input.agent_id))
+    {
+      throw StructuredFailure({
+        error: "unknown_sdd_agent",
+        message: `Unknown SDD agent: ${input.agent_id}`,
+        details: { agent_id: input.agent_id },
+      });
+    }
+    await CloseAfterProvider(input.agent_id);
+    return {
+      agent_id: input.agent_id,
+      closed: true,
+    };
+  }
+
   return {
     Start,
     Followup,
-    async Await(_input: XagentSddAwaitInput, _signal?: AbortSignal): Promise<XagentSddAwaitResult>
-    {
-      throw UnimplementedSddOperation("await");
-    },
-    async Close(_input: XagentSddCloseInput): Promise<XagentSddCloseResult>
-    {
-      throw UnimplementedSddOperation("close");
-    },
+    Await,
+    Close,
     async MessageGeneric(input: XagentMessageInput): Promise<MessageRunResult>
     {
       if (store.IsSddAgent(input.run_id))
@@ -569,11 +652,20 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     },
     async AwaitGeneric(input: XagentAwaitInput, signal?: AbortSignal): Promise<AwaitRunResult>
     {
-      return runManager.awaitRun(input, signal);
+      const result = await runManager.awaitRun(input, signal);
+      if (!store.IsSddAgent(input.run_id))
+      {
+        return result;
+      }
+      return PersistReportBeforeReturn(input.run_id, result);
     },
     async CloseGeneric(input: XagentCloseInput): Promise<CloseRunResult>
     {
-      return runManager.closeRun(input);
+      if (!store.IsSddAgent(input.run_id))
+      {
+        return runManager.closeRun(input);
+      }
+      return CloseAfterProvider(input.run_id);
     },
   };
 }

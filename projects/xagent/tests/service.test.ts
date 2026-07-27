@@ -23,12 +23,17 @@ import { createRunRecord, updateRunSupervision } from "../src/logs.js";
 import { captureOwnedProcessIdentity } from "../src/supervision/process_identity.js";
 import { XagentRunManager } from "../src/service/run_manager.js";
 import {
+  CreateSddStore,
+  GetSddDatabasePath,
+} from "../src/service/sdd_store.js";
+import {
   createShutdownController,
   createXagentServer,
   type XagentServer,
   type XagentShutdownController,
 } from "../src/service/server.js";
 import type { SupervisionPolicy } from "../src/supervision/types.js";
+import Database from "better-sqlite3";
 
 const testPolicy: SupervisionPolicy = {
   silenceTimeoutMs: 60_000,
@@ -686,6 +691,140 @@ test("service_main reconciles stale active runs after binding the listener and b
   assert.equal(exitResponse.status, 200);
   assert.deepEqual(exitResponse.body, { exiting: true });
 
+  const exitCode = await waitForExit(child, 10_000);
+  assert.equal(exitCode, 0);
+});
+
+test("service_main reconciles unresolved SDD turns after stale-run reconciliation and closes the ledger on shutdown", async () => {
+  const sheafRoot = await mkdtemp(path.join(tmpdir(), "xagent-svc-sdd-reconcile-"));
+  await mkdir(path.join(sheafRoot, "config"), { recursive: true });
+  await mkdir(path.join(sheafRoot, "structure"), { recursive: true });
+  await writeFile(path.join(sheafRoot, "structure", ".gitkeep"), "", "utf8");
+  const servicesJsonPath = path.join(sheafRoot, "config", "services.json");
+  await writeFile(
+    servicesJsonPath,
+    `${JSON.stringify([
+      {
+        name: "xagent",
+        host: "127.0.0.1",
+        port: 0,
+        command: "make xagent-service-run",
+      },
+    ])}\n`,
+    "utf8",
+  );
+
+  const logRoot = path.join(sheafRoot, "data", "xagent");
+  await mkdir(logRoot, { recursive: true });
+  const staleRunId = "xrun_20260727000000000_sddstale";
+  const livePreparedId = "xrun_20260727000000000_sddlive1";
+  const completedId = "xrun_20260727000000000_sdddone1";
+
+  const record = await createRunRecord({
+    repoRoot: sheafRoot,
+    logRoot,
+    runId: staleRunId,
+    harness: "codex",
+    mode: "subagent",
+    clock: () => new Date("2026-07-25T12:00:00.000Z"),
+    supervised: true,
+  });
+  await updateRunSupervision(record, {
+    phase: "running",
+    sequence: 3,
+    provider_thread_id: "provider-thread-sdd-stale",
+    last_transport_progress_at: "2026-07-25T12:01:00.000Z",
+    last_semantic_progress_at: "2026-07-25T12:00:30.000Z",
+    owned_process: {
+      pid: 4_999_991,
+      process_group_id: 4_999_991,
+      started_at: "2026-07-25T11:59:59.000Z",
+      start_identity: "stale-sdd-boot-start",
+    },
+  });
+
+  const seedStore = CreateSddStore(logRoot);
+  seedStore.ReserveInitial({
+    agentId: staleRunId,
+    planName: "2026-07-26-xagent-sdd-mode",
+    planPath: path.join(sheafRoot, "plan.md"),
+    cwd: sheafRoot,
+    taskNumber: 4,
+    agent: "grok-4.5",
+    harness: "cursor",
+    effort: "high",
+    role: "implementer",
+    briefPath: path.join(sheafRoot, "brief.md"),
+    briefText: "Seeded unresolved SDD turn.\n",
+  });
+  seedStore.MarkRunning(staleRunId, 1, 3);
+
+  seedStore.ReserveInitial({
+    agentId: livePreparedId,
+    planName: "2026-07-26-xagent-sdd-mode",
+    planPath: path.join(sheafRoot, "plan.md"),
+    cwd: sheafRoot,
+    taskNumber: 4,
+    agent: "grok-4.5",
+    harness: "cursor",
+    effort: "high",
+    role: "implementer",
+    briefPath: path.join(sheafRoot, "brief.md"),
+    briefText: "Live prepared turn without a run record.\n",
+  });
+
+  seedStore.ReserveInitial({
+    agentId: completedId,
+    planName: "2026-07-26-xagent-sdd-mode",
+    planPath: path.join(sheafRoot, "plan.md"),
+    cwd: sheafRoot,
+    taskNumber: 4,
+    agent: "grok-4.5",
+    harness: "cursor",
+    effort: "high",
+    role: "implementer",
+    briefPath: path.join(sheafRoot, "brief.md"),
+    briefText: "Completed turn with report.\n",
+    reportPath: path.join(sheafRoot, "report.md"),
+  });
+  seedStore.MarkRunning(completedId, 1, 8);
+  seedStore.MarkCompleted(completedId, 1, "sanitized report", 42);
+  seedStore.Close();
+
+  const serviceMain = path.join(process.cwd(), "dist", "src", "service_main.js");
+  const child = trackChild(
+    spawn(process.execPath, [serviceMain], {
+      cwd: sheafRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+  );
+
+  const stderrChunks: Buffer[] = [];
+  child.stderr?.on("data", (chunk: Buffer) => stderrChunks.push(chunk));
+
+  const port = await waitForPort(stderrChunks, 10_000);
+  await waitForReconciliationLog(stderrChunks, staleRunId, 10_000);
+  await waitForHealthy(port, 10_000);
+
+  const database = new Database(GetSddDatabasePath(logRoot), { readonly: true });
+  const abandoned = database
+    .prepare("SELECT status FROM sdd_turns WHERE agent_id = ? AND turn_number = 1")
+    .get(staleRunId) as { status: string };
+  const livePrepared = database
+    .prepare("SELECT status FROM sdd_turns WHERE agent_id = ? AND turn_number = 1")
+    .get(livePreparedId) as { status: string };
+  const completed = database
+    .prepare("SELECT status, report_text FROM sdd_turns WHERE agent_id = ? AND turn_number = 1")
+    .get(completedId) as { status: string; report_text: string };
+  database.close();
+
+  assert.equal(abandoned.status, "abandoned");
+  assert.equal(livePrepared.status, "prepared");
+  assert.equal(completed.status, "completed");
+  assert.equal(completed.report_text, "sanitized report");
+
+  const exitResponse = await fetchJson(port, "POST", "/exit");
+  assert.equal(exitResponse.status, 200);
   const exitCode = await waitForExit(child, 10_000);
   assert.equal(exitCode, 0);
 });

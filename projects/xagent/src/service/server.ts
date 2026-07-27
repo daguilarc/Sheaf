@@ -8,6 +8,7 @@ import {
   XAGENT_DEFAULT_BIND_PORT,
 } from "./config.js";
 import type { XagentRunManager } from "./run_manager.js";
+import type { SddManager } from "./sdd_manager.js";
 
 export type XagentShutdownController = {
   requestShutdown(): Promise<void>;
@@ -58,6 +59,7 @@ export type XagentServerOptions = {
   readonly warning?: string;
   readonly ready?: boolean;
   readonly mcpHandler?: XagentMcpHandler;
+  readonly sddManager?: SddManager;
 };
 
 export type XagentServer = {
@@ -108,6 +110,7 @@ export function createXagentServer(options: XagentServerOptions): XagentServer {
     options.mcpHandler
     ?? createXagentMcpHandler({
       runManager: options.runManager,
+      ...(options.sddManager === undefined ? {} : { sddManager: options.sddManager }),
       getAllowedHosts: () => [...allowedHosts],
       getAllowedOrigins: () => [...allowedOrigins],
     });

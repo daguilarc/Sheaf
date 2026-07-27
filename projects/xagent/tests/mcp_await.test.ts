@@ -8,12 +8,22 @@ import { FakeHarnessAdapter } from "../src/adapters/fake.js";
 import type { AdapterEvent } from "../src/adapters/types.js";
 import { XagentRunManager } from "../src/service/run_manager.js";
 import {
+  AsSddRunManagerPort,
+  CreateSddManager,
+} from "../src/service/sdd_manager.js";
+import {
+  CreateSddStore,
+  GetSddDatabasePath,
+} from "../src/service/sdd_store.js";
+import {
   x_DefaultAwaitDeadlineSeconds,
   x_MaxAwaitDeadlineSeconds,
   XagentAwaitInputSchema,
   XagentSddAwaitInputSchema,
 } from "../src/service/tool_schemas.js";
 import type { SupervisionPolicy, SupervisionScheduler } from "../src/supervision/types.js";
+import Database from "better-sqlite3";
+import { writeFile } from "node:fs/promises";
 
 const testPolicy: SupervisionPolicy = {
   silenceTimeoutMs: 600_000,
@@ -76,6 +86,111 @@ test("SDD await requires after_sequence and a generated agent_id", () => {
     }).success,
     false,
   );
+});
+
+test("SDD await and generic await persist sanitized report before returning", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-sdd-await-"));
+  const logRoot = path.join(repoRoot, "xagent");
+  const briefPath = path.join(repoRoot, "brief.md");
+  const reportPath = path.join(repoRoot, "report.md");
+  const planPath = path.join(repoRoot, "plan.md");
+  await writeFile(briefPath, "Implement await persistence.\n", "utf8");
+  await writeFile(reportPath, "", "utf8");
+  await writeFile(planPath, "# plan\n", "utf8");
+
+  const adapter = new FakeHarnessAdapter();
+  async function* scriptedTurn(): AsyncIterable<AdapterEvent> {
+    yield {
+      type: "message.completed",
+      message_id: "message_1",
+      role: "assistant",
+      text: "sanitized report",
+    };
+    yield {
+      type: "turn.completed",
+      final_text: "sanitized report",
+      provider_thread_id: "fake-thread-sdd",
+    };
+  }
+  adapter.options.scriptedEvents = [scriptedTurn()];
+
+  const runManager = new XagentRunManager({
+    repoRoot,
+    logRoot,
+    adapterFactory: () => adapter,
+    policy: testPolicy,
+  });
+  const store = CreateSddStore(logRoot);
+  const manager = CreateSddManager({
+    store,
+    runManager: AsSddRunManagerPort(runManager),
+    repoRoot,
+    async canonicalizeCwd(cwd: string): Promise<string>
+    {
+      return cwd;
+    },
+    async renderPrompt()
+    {
+      return {
+        prompt: {
+          path: path.join(repoRoot, "dispatch.md"),
+          text: "Rendered SDD prompt.\n",
+        },
+        metadata: {
+          promptPath: path.join(repoRoot, "dispatch.md"),
+          briefPath,
+          reportPath,
+        },
+      };
+    },
+  });
+
+  try
+  {
+    const started = await manager.Start({
+      role: "implementer",
+      cwd: repoRoot,
+      plan: planPath,
+      agent: "fake-model",
+      harness: "codex",
+      effort: "high",
+      task: 4,
+      name: "await-persist",
+      brief: briefPath,
+      report: reportPath,
+    });
+
+    const awaited = await manager.Await({
+      agent_id: started.agent_id,
+      after_sequence: started.sequence,
+      deadline_seconds: 5,
+    });
+    assert.equal(awaited.event, "turn.completed");
+    assert.equal(awaited.report?.text, "sanitized report");
+    assert.equal(store.GetOpenTurn(started.agent_id), undefined);
+
+    const database = new Database(GetSddDatabasePath(logRoot), { readonly: true });
+    const row = database
+      .prepare(
+        "SELECT status, report_text, completed_sequence, resume_sequence FROM sdd_turns WHERE agent_id = ? AND turn_number = 1",
+      )
+      .get(started.agent_id) as {
+        status: string;
+        report_text: string;
+        completed_sequence: number;
+        resume_sequence: number;
+      };
+    database.close();
+    assert.equal(row.status, "completed");
+    assert.equal(row.report_text, "sanitized report");
+    assert.equal(row.completed_sequence, awaited.sequence);
+    assert.equal(row.resume_sequence, started.sequence);
+  }
+  finally
+  {
+    store.Close();
+    await runManager.closeAll();
+  }
 });
 
 test("routine deltas and tool events do not settle an await; completion does", async () => {
