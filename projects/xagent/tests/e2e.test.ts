@@ -1,20 +1,16 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import Database from "better-sqlite3";
 
 import { FakeHarnessAdapter } from "../src/adapters/fake.js";
 import type { AdapterEvent } from "../src/adapters/types.js";
 import { parseArgs } from "../src/cli.js";
 import type { OutputEvent } from "../src/events.js";
-import { createXagentMcpHandler } from "../src/service/mcp.js";
-import { XagentRunManager } from "../src/service/run_manager.js";
 import {
   AsSddRunManagerPort,
   CreateSddManager,
@@ -24,16 +20,11 @@ import {
   GetSddDatabasePath,
 } from "../src/service/sdd_store.js";
 import {
-  createShutdownController,
-  createXagentServer,
-  type XagentServer,
-} from "../src/service/server.js";
-import type { SupervisionPolicy } from "../src/supervision/types.js";
-
-const x_TestPolicy: SupervisionPolicy = {
-  silenceTimeoutMs: 60_000,
-  watchdog: {},
-};
+  asToolCallResult,
+  assertToolSucceeded,
+  structuredToolBody,
+  withMcpService,
+} from "./support/mcp_service.js";
 
 const x_ImplementerBrief = "Implementer task brief for full-flow SDD.\n";
 const x_ReviewerBrief = "Task reviewer brief for full-flow SDD.\n";
@@ -69,9 +60,13 @@ type DispatchLogRow = {
 test("MCP fake adapter drives the full SDD lifecycle and records dispatch log rows", async () =>
 {
   const fixture = await CreateSddFlowFixture();
-  await withSddMcpService(fixture, async ({ client, logRoot }) =>
+  const adapterQueue = [
+    CreateScriptedReports([x_ImplementerReport, x_FixReport]),
+    CreateScriptedReports([x_ReviewerReport, x_ReReviewReport]),
+  ];
+  await withMcpService(async ({ client, logRoot }) =>
   {
-    const implementerStarted = structuredToolBody(asToolCallResult(
+    const implementerStartedResult = asToolCallResult(
       await client.callTool({
         name: "xagent_sdd_start",
         arguments: {
@@ -87,12 +82,14 @@ test("MCP fake adapter drives the full SDD lifecycle and records dispatch log ro
           report: fixture.implementerReportPath,
         },
       }),
-    ));
-    assert.equal(implementerStarted.isError ?? false, false);
+    );
+    assertToolSucceeded(implementerStartedResult);
+    const implementerStarted = structuredToolBody(implementerStartedResult);
+    assert.equal(JSON.stringify(implementerStarted).includes(x_ImplementerBrief), false);
     const implementerId = implementerStarted.agent_id as string;
     assert.equal(typeof implementerId, "string");
 
-    const implementerInitial = structuredToolBody(asToolCallResult(
+    const implementerInitialResult = asToolCallResult(
       await client.callTool({
         name: "xagent_sdd_await",
         arguments: {
@@ -101,12 +98,14 @@ test("MCP fake adapter drives the full SDD lifecycle and records dispatch log ro
           deadline_seconds: 30,
         },
       }),
-    ));
+    );
+    assertToolSucceeded(implementerInitialResult);
+    const implementerInitial = structuredToolBody(implementerInitialResult);
     assert.equal(implementerInitial.event, "turn.completed");
     assert.equal((implementerInitial.report as { text?: string } | undefined)?.text, x_ImplementerReport);
     assert.equal(JSON.stringify(implementerInitial).includes(x_ImplementerBrief), false);
 
-    const implementerFollowup = structuredToolBody(asToolCallResult(
+    const implementerFollowupResult = asToolCallResult(
       await client.callTool({
         name: "xagent_sdd_followup",
         arguments: {
@@ -118,10 +117,13 @@ test("MCP fake adapter drives the full SDD lifecycle and records dispatch log ro
           tests: ["dist/tests/e2e.test.js"],
         },
       }),
-    ));
+    );
+    assertToolSucceeded(implementerFollowupResult);
+    const implementerFollowup = structuredToolBody(implementerFollowupResult);
+    assert.equal(JSON.stringify(implementerFollowup).includes(x_FindingsText), false);
     assert.equal(implementerFollowup.turn_number, 2);
 
-    const implementerFix = structuredToolBody(asToolCallResult(
+    const implementerFixResult = asToolCallResult(
       await client.callTool({
         name: "xagent_sdd_await",
         arguments: {
@@ -130,10 +132,12 @@ test("MCP fake adapter drives the full SDD lifecycle and records dispatch log ro
           deadline_seconds: 30,
         },
       }),
-    ));
+    );
+    assertToolSucceeded(implementerFixResult);
+    const implementerFix = structuredToolBody(implementerFixResult);
     assert.equal((implementerFix.report as { text?: string } | undefined)?.text, x_FixReport);
 
-    const reviewerStarted = structuredToolBody(asToolCallResult(
+    const reviewerStartedResult = asToolCallResult(
       await client.callTool({
         name: "xagent_sdd_start",
         arguments: {
@@ -150,11 +154,14 @@ test("MCP fake adapter drives the full SDD lifecycle and records dispatch log ro
           head: "def456",
         },
       }),
-    ));
+    );
+    assertToolSucceeded(reviewerStartedResult);
+    const reviewerStarted = structuredToolBody(reviewerStartedResult);
+    assert.equal(JSON.stringify(reviewerStarted).includes(x_ReviewerBrief), false);
     const reviewerId = reviewerStarted.agent_id as string;
     assert.notEqual(reviewerId, implementerId);
 
-    const reviewerInitial = structuredToolBody(asToolCallResult(
+    const reviewerInitialResult = asToolCallResult(
       await client.callTool({
         name: "xagent_sdd_await",
         arguments: {
@@ -163,10 +170,12 @@ test("MCP fake adapter drives the full SDD lifecycle and records dispatch log ro
           deadline_seconds: 30,
         },
       }),
-    ));
+    );
+    assertToolSucceeded(reviewerInitialResult);
+    const reviewerInitial = structuredToolBody(reviewerInitialResult);
     assert.equal((reviewerInitial.report as { text?: string } | undefined)?.text, x_ReviewerReport);
 
-    const reviewerFollowup = structuredToolBody(asToolCallResult(
+    const reviewerFollowupResult = asToolCallResult(
       await client.callTool({
         name: "xagent_sdd_followup",
         arguments: {
@@ -178,10 +187,13 @@ test("MCP fake adapter drives the full SDD lifecycle and records dispatch log ro
           head: "bbb222",
         },
       }),
-    ));
+    );
+    assertToolSucceeded(reviewerFollowupResult);
+    const reviewerFollowup = structuredToolBody(reviewerFollowupResult);
+    assert.equal(JSON.stringify(reviewerFollowup).includes(x_FindingsText), false);
     assert.equal(reviewerFollowup.turn_number, 2);
 
-    const reviewerReReview = structuredToolBody(asToolCallResult(
+    const reviewerReReviewResult = asToolCallResult(
       await client.callTool({
         name: "xagent_sdd_await",
         arguments: {
@@ -190,24 +202,28 @@ test("MCP fake adapter drives the full SDD lifecycle and records dispatch log ro
           deadline_seconds: 30,
         },
       }),
-    ));
+    );
+    assertToolSucceeded(reviewerReReviewResult);
+    const reviewerReReview = structuredToolBody(reviewerReReviewResult);
     assert.equal((reviewerReReview.report as { text?: string } | undefined)?.text, x_ReReviewReport);
 
-    const implementerClosed = structuredToolBody(asToolCallResult(
+    const implementerClosedResult = asToolCallResult(
       await client.callTool({
         name: "xagent_sdd_close",
         arguments: { agent_id: implementerId },
       }),
-    ));
-    assert.deepEqual(implementerClosed, { agent_id: implementerId, closed: true });
+    );
+    assertToolSucceeded(implementerClosedResult);
+    assert.deepEqual(structuredToolBody(implementerClosedResult), { agent_id: implementerId, closed: true });
 
-    const reviewerClosed = structuredToolBody(asToolCallResult(
+    const reviewerClosedResult = asToolCallResult(
       await client.callTool({
         name: "xagent_sdd_close",
         arguments: { agent_id: reviewerId },
       }),
-    ));
-    assert.deepEqual(reviewerClosed, { agent_id: reviewerId, closed: true });
+    );
+    assertToolSucceeded(reviewerClosedResult);
+    assert.deepEqual(structuredToolBody(reviewerClosedResult), { agent_id: reviewerId, closed: true });
 
     const database = new Database(GetSddDatabasePath(logRoot), { readonly: true });
     try
@@ -269,6 +285,46 @@ test("MCP fake adapter drives the full SDD lifecycle and records dispatch log ro
     {
       database.close();
     }
+  }, {
+    repoRoot: fixture.repoRoot,
+    logRoot: path.join(fixture.repoRoot, "data", "xagent"),
+    clientName: "xagent-sdd-e2e",
+    adapterFactory: () =>
+    {
+      const scriptedEvents = adapterQueue.shift();
+      assert.ok(scriptedEvents, "unexpected extra SDD session adapter construction");
+      return new FakeHarnessAdapter({ scriptedEvents });
+    },
+    createSddManager: ({ runManager, repoRoot, logRoot }) =>
+    {
+      const store = CreateSddStore(logRoot);
+      const manager = CreateSddManager({
+        store,
+        runManager: AsSddRunManagerPort(runManager),
+        repoRoot,
+        async canonicalizeCwd(cwd: string): Promise<string>
+        {
+          return cwd;
+        },
+        async renderPrompt(input)
+        {
+          const promptPath = path.join(fixture.cwd, `.superpowers/sdd/dispatch-${input.role}.md`);
+          return {
+            prompt: {
+              path: promptPath,
+              text: `Rendered ${input.role} prompt.\n`,
+            },
+            metadata: {
+              promptPath,
+              ...("brief" in input ? { briefPath: input.brief } : {}),
+              ...("report" in input ? { reportPath: input.report } : {}),
+              ...("findings" in input ? { findingsPath: input.findings } : {}),
+            },
+          };
+        },
+      });
+      return { manager, store };
+    },
   });
 });
 
@@ -467,35 +523,6 @@ function CreateScriptedReports(reports: readonly string[]): readonly AsyncIterab
   });
 }
 
-type ToolCallResult = {
-  readonly isError?: boolean;
-  readonly content?: unknown;
-  readonly structuredContent?: unknown;
-};
-
-function asToolCallResult(result: unknown): ToolCallResult
-{
-  return result as ToolCallResult;
-}
-
-function structuredToolBody(result: ToolCallResult): Record<string, unknown>
-{
-  if (
-    result.structuredContent !== undefined
-    && result.structuredContent !== null
-    && typeof result.structuredContent === "object"
-  )
-  {
-    return result.structuredContent as Record<string, unknown>;
-  }
-  assert.ok(Array.isArray(result.content));
-  const textPart = (result.content as Array<{ type?: string; text?: string }>).find(
-    (part) => part.type === "text" && typeof part.text === "string",
-  );
-  assert.ok(textPart?.text);
-  return JSON.parse(textPart.text) as Record<string, unknown>;
-}
-
 function AssertLedgerSchemaExcludesPromptAndOffsetColumns(database: Database.Database): void
 {
   const sessionColumns = database
@@ -509,106 +536,5 @@ function AssertLedgerSchemaExcludesPromptAndOffsetColumns(database: Database.Dat
   {
     assert.equal(sessionColumns.some((column) => column.name === columnName), false);
     assert.equal(turnColumns.some((column) => column.name === columnName), false);
-  }
-}
-
-async function withSddMcpService(
-  fixture: SddFlowFixture,
-  run: (context: { client: Client; logRoot: string }) => Promise<void>,
-): Promise<void>
-{
-  const logRoot = path.join(fixture.repoRoot, "data", "xagent");
-  let adapterQueue = [
-    CreateScriptedReports([x_ImplementerReport, x_FixReport]),
-    CreateScriptedReports([x_ReviewerReport, x_ReReviewReport]),
-  ];
-  const runManager = new XagentRunManager({
-    repoRoot: fixture.repoRoot,
-    logRoot,
-    adapterFactory: () =>
-    {
-      const scriptedEvents = adapterQueue.shift() ?? CreateScriptedReports([x_ImplementerReport]);
-      return new FakeHarnessAdapter({ scriptedEvents });
-    },
-    policy: x_TestPolicy,
-  });
-  const store = CreateSddStore(logRoot);
-  const sddManager = CreateSddManager({
-    store,
-    runManager: AsSddRunManagerPort(runManager),
-    repoRoot: fixture.repoRoot,
-    async canonicalizeCwd(cwd: string): Promise<string>
-    {
-      return cwd;
-    },
-    async renderPrompt(input)
-    {
-      const promptPath = path.join(fixture.cwd, `.superpowers/sdd/dispatch-${input.role}.md`);
-      return {
-        prompt: {
-          path: promptPath,
-          text: `Rendered ${input.role} prompt.\n`,
-        },
-        metadata: {
-          promptPath,
-          ...("brief" in input ? { briefPath: input.brief } : {}),
-          ...("report" in input ? { reportPath: input.report } : {}),
-          ...("findings" in input ? { findingsPath: input.findings } : {}),
-        },
-      };
-    },
-  });
-
-  let server: XagentServer | undefined;
-  const shutdownController = createShutdownController({
-    closeRuns: async () =>
-    {
-      await runManager.closeAll();
-      store.Close();
-    },
-    closeServer: async () =>
-    {
-      await server?.close();
-    },
-  });
-  const allowedHosts = new Set<string>(["127.0.0.1", "localhost", "[::1]"]);
-  const allowedOrigins = new Set<string>(["http://127.0.0.1", "http://localhost", "http://[::1]"]);
-  const mcpHandler = createXagentMcpHandler({
-    runManager,
-    sddManager,
-    getAllowedHosts: () => [...allowedHosts],
-    getAllowedOrigins: () => [...allowedOrigins],
-  });
-  server = createXagentServer({
-    bindHost: "127.0.0.1",
-    bindPort: 0,
-    runManager,
-    shutdownController,
-    mcpHandler,
-  });
-  const port = await server.listen();
-  allowedHosts.add(`127.0.0.1:${port}`);
-  allowedHosts.add(`localhost:${port}`);
-  allowedOrigins.add(`http://127.0.0.1:${port}`);
-  allowedOrigins.add(`http://localhost:${port}`);
-  const client = new Client({ name: "xagent-sdd-e2e", version: "0.0.0" });
-  const transport = new StreamableHTTPClientTransport(
-    new URL(`http://127.0.0.1:${port}/mcp`),
-  );
-  try
-  {
-    await client.connect(transport);
-    await run({ client, logRoot });
-  }
-  finally
-  {
-    await client.close().catch(() => {});
-    await transport.close().catch(() => {});
-    if (!shutdownController.wasShutdownRequested())
-    {
-      await server.close();
-    }
-    await runManager.closeAll();
-    store.Close();
   }
 }

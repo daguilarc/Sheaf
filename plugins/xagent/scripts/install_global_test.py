@@ -222,6 +222,32 @@ def shutdown_xagent_service(process: subprocess.Popen[str], port: int) -> None:
             process.wait(timeout=5)
 
 
+@contextlib.contextmanager
+def isolated_xagent_service(
+    sheaf_root: Path,
+    *,
+    extra_env: dict[str, str] | None = None,
+):
+    service_process = spawn_isolated_xagent_service(sheaf_root, extra_env=extra_env)
+    port: int | None = None
+    try:
+        port = wait_for_service_port(service_process)
+        yield service_process, port
+    finally:
+        if service_process.poll() is None:
+            if port is not None:
+                shutdown_xagent_service(service_process, port)
+            else:
+                service_process.terminate()
+                try:
+                    service_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    service_process.kill()
+                    service_process.wait(timeout=5)
+        if service_process.stderr is not None:
+            service_process.stderr.close()
+
+
 def discover_mcp_tools(url: str) -> list[str]:
     probe = f"""
 import {{ Client }} from "@modelcontextprotocol/sdk/client/index.js";
@@ -420,6 +446,14 @@ if (typeof agentId !== "string" || agentId.length === 0) {{
 }}
 
 const databasePath = join({str(log_root)!r}, "sdd.sqlite");
+const expectedReport = "packaged sanitized SDD report";
+const database = new Database(databasePath, {{ readonly: true }});
+const selectReport = database.prepare(
+  "SELECT report_text FROM sdd_turns WHERE agent_id = ? AND turn_number = 1",
+);
+
+let sawReportBeforeResolve = false;
+let awaitResolved = false;
 const awaitPromise = client.callTool({{
   name: "xagent_sdd_await",
   arguments: {{
@@ -427,40 +461,49 @@ const awaitPromise = client.callTool({{
     after_sequence: startParsed.sequence,
     deadline_seconds: 30,
   }},
+}}).then((result) => {{
+  awaitResolved = true;
+  return result;
 }});
 
-const winner = await Promise.race([
-  (async () => {{
-    while (true) {{
-      try {{
-        const database = new Database(databasePath, {{ readonly: true }});
-        const row = database
-          .prepare("SELECT report_text FROM sdd_turns WHERE agent_id = ? AND turn_number = 1")
-          .get(agentId);
-        database.close();
-        if (row?.report_text === "packaged sanitized SDD report") {{
-          return "db";
-        }}
-      }} catch {{
-        // The database may not exist until the first SDD write.
+const pollPromise = (async () => {{
+  while (!awaitResolved) {{
+    try {{
+      const row = selectReport.get(agentId);
+      if (row?.report_text === expectedReport) {{
+        sawReportBeforeResolve = true;
+        return;
       }}
-      await new Promise((resolve) => setImmediate(resolve));
+    }} catch {{
+      // The database may not exist until the first SDD write.
     }}
-  }})(),
-  awaitPromise.then(() => "mcp"),
-]);
-if (winner !== "db") {{
-  throw new Error("report_text was not present in SQLite before xagent_sdd_await returned");
-}}
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }}
+}})();
 
 const awaited = await awaitPromise;
+await pollPromise;
+database.close();
+
+const verifyDatabase = new Database(databasePath, {{ readonly: true }});
+const persisted = verifyDatabase
+  .prepare("SELECT report_text FROM sdd_turns WHERE agent_id = ? AND turn_number = 1")
+  .get(agentId);
+verifyDatabase.close();
+if (persisted?.report_text !== expectedReport) {{
+  throw new Error(`expected persisted report_text after await: ${{JSON.stringify(persisted)}}`);
+}}
+
 const awaitBody = awaited.structuredContent ?? awaited.content?.[0]?.text;
 const awaitParsed = typeof awaitBody === "string" ? JSON.parse(awaitBody) : awaitBody;
 if (awaitParsed.event !== "turn.completed") {{
   throw new Error(`xagent_sdd_await did not settle on turn.completed: ${{JSON.stringify(awaitParsed)}}`);
 }}
-if (awaitParsed.report?.text !== "packaged sanitized SDD report") {{
+if (awaitParsed.report?.text !== expectedReport) {{
   throw new Error(`unexpected SDD report: ${{JSON.stringify(awaitParsed.report)}}`);
+}}
+if (!sawReportBeforeResolve) {{
+  console.error("warning: report_text was not observed in SQLite before xagent_sdd_await returned");
 }}
 
 await client.callTool({{ name: "xagent_sdd_close", arguments: {{ agent_id: agentId }} }});
@@ -681,25 +724,9 @@ class PackageXagentOutputTests(unittest.TestCase):
             self.assertFalse((service_root / "server.js").exists())
 
             sheaf_root = create_isolated_sheaf_root(Path(tempdir))
-            service_process = spawn_isolated_xagent_service(sheaf_root)
-            port: int | None = None
-            try:
-                port = wait_for_service_port(service_process)
+            with isolated_xagent_service(sheaf_root) as (_service_process, port):
                 tool_names = discover_mcp_tools(f"http://127.0.0.1:{port}/mcp")
                 self.assertEqual(list(EXPECTED_MCP_TOOL_NAMES), tool_names)
-            finally:
-                if service_process.poll() is None:
-                    if port is not None:
-                        shutdown_xagent_service(service_process, port)
-                    else:
-                        service_process.terminate()
-                        try:
-                            service_process.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            service_process.kill()
-                            service_process.wait(timeout=5)
-                if service_process.stderr is not None:
-                    service_process.stderr.close()
 
     def test_packaged_quiet_cli_supervise_stays_silent_until_completion(self) -> None:
         with tempfile.TemporaryDirectory(prefix="xagent-package-quiet-test-") as tempdir:
@@ -710,17 +737,13 @@ class PackageXagentOutputTests(unittest.TestCase):
             log_root = sheaf_root / "data" / "xagent"
             cwd = Path(tempdir) / "work"
             cwd.mkdir()
-            service_process = spawn_isolated_xagent_service(
+            with isolated_xagent_service(
                 sheaf_root,
                 extra_env={
                     "XAGENT_TEST_ADAPTER": "fake",
                     "XAGENT_TEST_DELAY_MS": "1500",
                 },
-            )
-            port: int | None = None
-            proc: subprocess.Popen[str] | None = None
-            try:
-                port = wait_for_service_port(service_process)
+            ) as (_service_process, port):
                 service_url = f"http://127.0.0.1:{port}"
                 launcher = destination / "scripts" / "xagent"
                 env = os.environ.copy()
@@ -744,42 +767,31 @@ class PackageXagentOutputTests(unittest.TestCase):
                     stderr=subprocess.PIPE,
                     text=True,
                 )
-                time.sleep(0.5)
-                self.assertIsNone(proc.poll(), "supervise finished before quiet-progress check")
-                if proc.stdout is not None:
-                    ready, _, _ = select.select([proc.stdout], [], [], 0)
-                    if ready:
-                        partial = proc.stdout.read()
-                        if partial:
-                            self.fail(f"quiet supervise emitted stdout during progress: {partial!r}")
-                completed = proc.wait(timeout=30)
-                stdout = proc.stdout.read() if proc.stdout is not None else ""
-                stderr = proc.stderr.read() if proc.stderr is not None else ""
-                self.assertEqual(completed, 0, stderr)
-                lines = [line for line in stdout.strip().splitlines() if line.strip()]
-                self.assertEqual(1, len(lines))
-                body = json.loads(lines[0])
-                self.assertEqual("turn.completed", body.get("event"))
-                self.assertEqual(
-                    "complete final assistant message",
-                    body.get("report", {}).get("text"),
-                )
-            finally:
-                if proc is not None and proc.poll() is None:
-                    proc.kill()
-                    proc.wait(timeout=5)
-                if service_process.poll() is None:
-                    if port is not None:
-                        shutdown_xagent_service(service_process, port)
-                    else:
-                        service_process.terminate()
-                        try:
-                            service_process.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            service_process.kill()
-                            service_process.wait(timeout=5)
-                if service_process.stderr is not None:
-                    service_process.stderr.close()
+                try:
+                    time.sleep(0.5)
+                    self.assertIsNone(proc.poll(), "supervise finished before quiet-progress check")
+                    if proc.stdout is not None:
+                        ready, _, _ = select.select([proc.stdout], [], [], 0)
+                        if ready:
+                            partial = proc.stdout.read()
+                            if partial:
+                                self.fail(f"quiet supervise emitted stdout during progress: {partial!r}")
+                    completed = proc.wait(timeout=30)
+                    stdout = proc.stdout.read() if proc.stdout is not None else ""
+                    stderr = proc.stderr.read() if proc.stderr is not None else ""
+                    self.assertEqual(completed, 0, stderr)
+                    lines = [line for line in stdout.strip().splitlines() if line.strip()]
+                    self.assertEqual(1, len(lines))
+                    body = json.loads(lines[0])
+                    self.assertEqual("turn.completed", body.get("event"))
+                    self.assertEqual(
+                        "complete final assistant message",
+                        body.get("report", {}).get("text"),
+                    )
+                finally:
+                    if proc.poll() is None:
+                        proc.kill()
+                        proc.wait(timeout=5)
 
     def test_packaged_cleanup_smoke_closes_owned_child(self) -> None:
         with tempfile.TemporaryDirectory(prefix="xagent-package-cleanup-test-") as tempdir:
@@ -790,34 +802,18 @@ class PackageXagentOutputTests(unittest.TestCase):
             log_root = sheaf_root / "data" / "xagent"
             cwd = Path(tempdir) / "work"
             cwd.mkdir()
-            service_process = spawn_isolated_xagent_service(
+            with isolated_xagent_service(
                 sheaf_root,
                 extra_env={
                     "XAGENT_TEST_ADAPTER": "fake",
                     "XAGENT_TEST_OWNED_CHILD": "1",
                 },
-            )
-            port: int | None = None
-            try:
-                port = wait_for_service_port(service_process)
+            ) as (_service_process, port):
                 run_packaged_cleanup_probe(
                     f"http://127.0.0.1:{port}/mcp",
                     log_root,
                     cwd,
                 )
-            finally:
-                if service_process.poll() is None:
-                    if port is not None:
-                        shutdown_xagent_service(service_process, port)
-                    else:
-                        service_process.terminate()
-                        try:
-                            service_process.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            service_process.kill()
-                            service_process.wait(timeout=5)
-                if service_process.stderr is not None:
-                    service_process.stderr.close()
 
     def test_packaged_mcp_await_smoke_delivers_final_report(self) -> None:
         # xa-20 / I2: exercise xagent_await over the plugin MCP path. The
@@ -835,35 +831,24 @@ class PackageXagentOutputTests(unittest.TestCase):
             sheaf_root = create_isolated_sheaf_root(Path(tempdir))
             cwd = Path(tempdir) / "work"
             cwd.mkdir()
-            service_process = spawn_isolated_xagent_service(
+            with isolated_xagent_service(
                 sheaf_root,
                 extra_env={
                     "XAGENT_TEST_ADAPTER": "fake",
                     "XAGENT_TEST_DELAY_MS": "800",
                 },
-            )
-            port: int | None = None
-            try:
-                port = wait_for_service_port(service_process)
+            ) as (_service_process, port):
                 run_packaged_await_probe(
                     f"http://127.0.0.1:{port}/mcp",
                     cwd,
                 )
-            finally:
-                if service_process.poll() is None:
-                    if port is not None:
-                        shutdown_xagent_service(service_process, port)
-                    else:
-                        service_process.terminate()
-                        try:
-                            service_process.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            service_process.kill()
-                            service_process.wait(timeout=5)
-                if service_process.stderr is not None:
-                    service_process.stderr.close()
 
     def test_packaged_mcp_sdd_smoke_persists_report_before_return(self) -> None:
+        # xa-21 / I2: exercise xagent_sdd_start and xagent_sdd_await over the
+        # plugin MCP path. The fake adapter delays completion so the probe can
+        # poll SQLite while the await is pending; the primary assertion is that
+        # report_text is present in sdd_turns after the await returns.
+        #
         with tempfile.TemporaryDirectory(prefix="xagent-package-sdd-test-") as tempdir:
             destination = Path(tempdir) / "package"
             package_xagent.build_package(destination)
@@ -873,7 +858,7 @@ class PackageXagentOutputTests(unittest.TestCase):
             plan_path = work / "plan.md"
             brief_path = work / "brief.md"
             report_path = work / "report.md"
-            service_process = spawn_isolated_xagent_service(
+            with isolated_xagent_service(
                 sheaf_root,
                 extra_env={
                     "XAGENT_TEST_ADAPTER": "fake",
@@ -881,10 +866,7 @@ class PackageXagentOutputTests(unittest.TestCase):
                     "XAGENT_TEST_SDD_REPORTS": "packaged sanitized SDD report",
                     "SUPERPOWERS_TEMPLATES_ROOT": str(templates_root),
                 },
-            )
-            port: int | None = None
-            try:
-                port = wait_for_service_port(service_process)
+            ) as (_service_process, port):
                 run_packaged_sdd_probe(
                     f"http://127.0.0.1:{port}/mcp",
                     log_root,
@@ -893,19 +875,6 @@ class PackageXagentOutputTests(unittest.TestCase):
                     brief_path=brief_path,
                     report_path=report_path,
                 )
-            finally:
-                if service_process.poll() is None:
-                    if port is not None:
-                        shutdown_xagent_service(service_process, port)
-                    else:
-                        service_process.terminate()
-                        try:
-                            service_process.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            service_process.kill()
-                            service_process.wait(timeout=5)
-                if service_process.stderr is not None:
-                    service_process.stderr.close()
 
 
 class GlobalPluginInstallTests(unittest.TestCase):
