@@ -3,6 +3,9 @@ MAKEFLAGS += --warn-undefined-variables
 PROJECTS := conductor web quest-runner dictator realtime-agent sheaf-chat agents xagent synth
 CODEX_HOME ?= $(HOME)/.codex
 PLUGIN_CREATOR_VALIDATOR := $(CODEX_HOME)/skills/.system/plugin-creator/scripts/validate_plugin.py
+TOOL ?=
+REF ?=
+FORCE ?=
 
 .PHONY: all clean test help openspec-check
 .PHONY: $(PROJECTS)
@@ -15,6 +18,7 @@ PLUGIN_CREATOR_VALIDATOR := $(CODEX_HOME)/skills/.system/plugin-creator/scripts/
 .PHONY: agents-build agents-test agents-install agents-check agents-clean
 .PHONY: agents-install-repo agents-check-repo agents-clean-repo
 .PHONY: agents-install-global agents-check-global agents-clean-global
+.PHONY: agents-vendor-sync
 .PHONY: xagent-build xagent-test xagent-clean
 .PHONY: xagent-service-run
 .PHONY: xagent-plugin-build xagent-plugin-test xagent-plugin-install-global
@@ -148,6 +152,9 @@ agents-check-global:
 agents-clean-global:
 	$(MAKE) -C projects/agents clean-global
 
+agents-vendor-sync:
+	$(MAKE) -C projects/agents vendor-sync TOOL="$(TOOL)" REF="$(REF)" FORCE="$(FORCE)"
+
 xagent-build:
 	$(MAKE) -C projects/xagent build
 
@@ -204,6 +211,7 @@ help:
 	@echo "  make agents-check     Verify local and global agent guidance"
 	@echo "  make agents-install-global  Install user-global agent guidance"
 	@echo "  make agents-check-global    Verify user-global agent guidance"
+	@echo "  make agents-vendor-sync TOOL=openspec|superpowers REF=<tag>  Refresh vendored tooling pins"
 	@echo "  Repo-local outputs contain repository instructions and Sheaf-only skills."
 	@echo "  Shared skills install only through agents-install-global."
 	@echo "  Plugin-owned skills such as xagent-subagents are excluded from the agents installer."

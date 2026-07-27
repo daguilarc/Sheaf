@@ -17,6 +17,13 @@ sheaf/
     <skill-id>/
       skill.yaml
       SKILL.md
+vendor/
+  openspec/
+    VENDOR.toml
+    package/          # offline OpenSpec CLI + production node_modules
+  superpowers/
+    VENDOR.toml
+    tree/             # pinned Superpowers upstream checkout
 ```
 
 `global/AGENTS.md` is rendered to the repository root as both `AGENTS.md` and
@@ -26,6 +33,9 @@ enabled.
 `global/skills/` contains skills that are safe to install into user-global
 harness locations. `sheaf/skills/` contains Sheaf-only skills that render into
 this repository's harness directories only.
+
+`vendor/` holds pinned offline-capable OpenSpec and Superpowers trees. Sync
+them with `make vendor-sync` (or `make agents-vendor-sync` from the repo root).
 
 Each skill directory contains:
 
@@ -74,6 +84,8 @@ make clean-repo
 make install-global
 make check-global
 make clean-global
+make vendor-sync TOOL=openspec REF=1.4.1
+make vendor-sync TOOL=superpowers REF=v6.2.0
 ```
 
 Run these from `projects/agents`, or use the root shortcuts:
@@ -88,7 +100,13 @@ make agents-clean-repo
 make agents-install-global
 make agents-check-global
 make agents-clean-global
+make agents-vendor-sync TOOL=openspec REF=1.4.1
+make agents-vendor-sync TOOL=superpowers REF=v6.2.0
 ```
+
+`vendor-sync` refreshes the offline vendor trees under `vendor/openspec` and
+`vendor/superpowers`. Pass `FORCE=1` to clobber local vendor modifications.
+Install still runs separately via `make agents-install`.
 
 Default `install`, `check`, and `clean` operate on both repo-local and
 user-global outputs. The `*-repo` and `*-global` targets limit the scope.

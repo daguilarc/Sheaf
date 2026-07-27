@@ -1,8 +1,12 @@
 .PHONY: all build test install check clean
 .PHONY: install-repo check-repo clean-repo
 .PHONY: install-global check-global clean-global
+.PHONY: vendor-sync
 
 AGENTS_INSTALL_FLAGS ?=
+TOOL ?=
+REF ?=
+FORCE ?=
 
 all: check
 
@@ -39,3 +43,10 @@ check-global:
 
 clean-global:
 	python3 scripts/install.py clean --scope global
+
+vendor-sync:
+	@if [ -z "$(TOOL)" ] || [ -z "$(REF)" ]; then \
+		echo "usage: make vendor-sync TOOL=openspec|superpowers REF=<tag-or-version>"; \
+		exit 2; \
+	fi
+	python3 scripts/vendor_sync.py --tool "$(TOOL)" --ref "$(REF)" $(if $(FORCE),--force,)
