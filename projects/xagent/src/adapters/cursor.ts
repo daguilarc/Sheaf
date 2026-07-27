@@ -32,7 +32,7 @@ function buildCursorCommand(
   state: ProcessHarnessState,
   options: HarnessStartOptions,
 ) {
-  const args = ["--print", "--output-format", "stream-json", "--stream-partial-output", "--trust"];
+  const args = ["--print", "--output-format", "stream-json", "--stream-partial-output", "--trust", "--force"];
   if (state.providerThreadId !== undefined) {
     args.push("--resume", state.providerThreadId);
   }
