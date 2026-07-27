@@ -75,12 +75,19 @@ export type RenderSddPromptInput =
       readonly templatesRoot?: string;
     };
 
-export type RenderedSddPrompt = {
+export type RenderedSddPromptMetadata = {
   readonly promptPath: string;
-  readonly promptText: string;
   readonly briefPath?: string;
   readonly reportPath?: string;
   readonly findingsPath?: string;
+};
+
+export type RenderedSddPrompt = {
+  readonly prompt: {
+    readonly path: string;
+    readonly text: string;
+  };
+  readonly metadata: RenderedSddPromptMetadata;
 };
 
 export type FormatFixFollowupInput = {
@@ -234,20 +241,16 @@ export async function RenderSddPrompt(
 
   const args = BuildDispatchArgs(input);
   let stdout = "";
-  let stderr = "";
   try {
     const result = await exec(pythonExecutable, [rendererPath, ...args], {
       cwd: input.cwd,
       maxBuffer: 1024 * 1024,
     });
     stdout = result.stdout;
-    stderr = result.stderr;
   }
   catch (error) {
     const execError = error as NodeJS.ErrnoException & {
       code?: string | number;
-      stdout?: string | Buffer;
-      stderr?: string | Buffer;
     };
     if (execError.code === "ENOENT") {
       throw new SddPromptError({
@@ -255,22 +258,11 @@ export async function RenderSddPrompt(
         message: "Python 3 is unavailable for SDD prompt rendering.",
       });
     }
-    stdout = typeof execError.stdout === "string"
-      ? execError.stdout
-      : execError.stdout === undefined
-        ? ""
-        : String(execError.stdout);
-    stderr = typeof execError.stderr === "string"
-      ? execError.stderr
-      : execError.stderr === undefined
-        ? ""
-        : String(execError.stderr);
     throw new SddPromptError({
       error: "sdd_renderer_failed",
       message: "dispatch-prompt exited with a non-zero status.",
       details: {
         exitCode: execError.code,
-        stderr: truncateForError(stderr),
       },
     });
   }
@@ -283,7 +275,6 @@ export async function RenderSddPrompt(
     throw new SddPromptError({
       error: "sdd_renderer_output_invalid",
       message: "dispatch-prompt produced no output path on stdout.",
-      details: { stderr: truncateForError(stderr) },
     });
   }
   if (lines.length > 1) {
@@ -312,19 +303,20 @@ export async function RenderSddPrompt(
     });
   }
 
-  return {
-    promptPath,
-    promptText,
-    ...(ResolveBriefPath(input) === undefined ? {} : { briefPath: ResolveBriefPath(input) }),
-    ...(ResolveReportPath(input) === undefined ? {} : { reportPath: ResolveReportPath(input) }),
-    ...(ResolveFindingsPath(input) === undefined ? {} : { findingsPath: ResolveFindingsPath(input) }),
-  };
-}
+  const briefPath = ResolveBriefPath(input);
+  const reportPath = ResolveReportPath(input);
+  const findingsPath = ResolveFindingsPath(input);
 
-function truncateForError(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length <= 200) {
-    return trimmed;
-  }
-  return `${trimmed.slice(0, 200)}…`;
+  return {
+    prompt: {
+      path: promptPath,
+      text: promptText,
+    },
+    metadata: {
+      promptPath,
+      ...(briefPath === undefined ? {} : { briefPath }),
+      ...(reportPath === undefined ? {} : { reportPath }),
+      ...(findingsPath === undefined ? {} : { findingsPath }),
+    },
+  };
 }

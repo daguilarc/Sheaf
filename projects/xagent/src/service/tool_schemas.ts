@@ -1,4 +1,5 @@
 import { z } from "zod";
+import path from "node:path";
 
 import { harnessNames, outputModes, thinkingLevels } from "../events.js";
 
@@ -54,16 +55,35 @@ export const SupervisionPolicySchema = z
   })
   .strict();
 
+const SddArtifactPathSchema = z
+  .string()
+  .min(1)
+  .superRefine((value, ctx) => {
+    if (!path.isAbsolute(value)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "path must be absolute",
+      });
+      return;
+    }
+    if (value.split(/[\\/]/).includes("..")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "path must not contain traversal segments",
+      });
+    }
+  });
+
+export const SddAbsolutePathSchema = SddArtifactPathSchema;
+
 const SddAssignmentFields = {
   cwd: CwdSchema,
-  plan: z.string().min(1),
+  plan: SddArtifactPathSchema,
   agent: z.string().min(1),
   harness: z.enum(harnessNames),
   effort: z.enum(thinkingLevels),
   policy: SupervisionPolicySchema.optional(),
 };
-
-const SddPathSchema = z.string().min(1);
 
 export const ImplementerStartSchema = z
   .object({
@@ -71,8 +91,8 @@ export const ImplementerStartSchema = z
     ...SddAssignmentFields,
     task: z.number().int().positive(),
     name: z.string().min(1),
-    brief: SddPathSchema,
-    report: SddPathSchema.optional(),
+    brief: SddArtifactPathSchema,
+    report: SddArtifactPathSchema.optional(),
     context: z.string().min(1).optional(),
   })
   .strict();
@@ -82,12 +102,12 @@ export const TaskReviewerStartSchema = z
     role: z.literal("task-reviewer"),
     ...SddAssignmentFields,
     task: z.number().int().positive(),
-    brief: SddPathSchema,
-    report: SddPathSchema,
+    brief: SddArtifactPathSchema,
+    report: SddArtifactPathSchema,
     base: z.string().min(1),
     head: z.string().min(1),
-    constraints: SddPathSchema.optional(),
-    diff: SddPathSchema.optional(),
+    constraints: SddArtifactPathSchema.optional(),
+    diff: SddArtifactPathSchema.optional(),
   })
   .strict();
 
@@ -95,8 +115,8 @@ export const CodeReviewerStartSchema = z
   .object({
     role: z.literal("code-reviewer"),
     ...SddAssignmentFields,
-    review_brief: SddPathSchema,
-    description: z.string().min(1).optional(),
+    review_brief: SddArtifactPathSchema,
+    description: z.string().min(1),
     base: z.string().min(1),
     head: z.string().min(1),
   })
@@ -113,7 +133,7 @@ export const FixFollowupSchema = z
     kind: z.literal("fix"),
     agent_id: AgentIdSchema,
     round: z.number().int().positive(),
-    findings: SddPathSchema,
+    findings: SddArtifactPathSchema,
     findings_text: z.string().min(1),
     tests: z.array(z.string().min(1)).min(1),
   })
@@ -124,10 +144,10 @@ export const ReReviewFollowupSchema = z
     kind: z.literal("re-review"),
     agent_id: AgentIdSchema,
     round: z.number().int().positive(),
-    findings: SddPathSchema,
+    findings: SddArtifactPathSchema,
     base: z.string().min(1),
     head: z.string().min(1),
-    diff: SddPathSchema.optional(),
+    diff: SddArtifactPathSchema.optional(),
   })
   .strict();
 

@@ -12,6 +12,7 @@ import {
   RenderSddPrompt,
   SddPromptError,
 } from "../src/service/sdd_prompt.js";
+import { generateRunId } from "../src/logs.js";
 import {
   AgentIdSchema,
   CodeReviewerStartSchema,
@@ -40,6 +41,39 @@ function assertSerializedContainsPath(serialized: string, filePath: string): voi
     `expected serialized result to include ${filePath}`,
   );
 }
+
+const x_ImplementerPlaceholders = [
+  "[task name]",
+  "[BRIEF_FILE]",
+  "[Scene-setting: where this fits, dependencies, architectural context]",
+  "[directory]",
+  "[REPORT_FILE]",
+];
+
+const x_TaskReviewerPlaceholders = [
+  "[BRIEF_FILE]",
+  "[GLOBAL_CONSTRAINTS]",
+  "[REPORT_FILE]",
+  "[BASE_SHA]",
+  "[HEAD_SHA]",
+  "[DIFF_FILE]",
+];
+
+const x_ReReviewPlaceholders = [
+  "[BRIEF_FILE]",
+  "[FINDINGS]",
+  "[REPORT_FILE]",
+  "[FIX_BASE_SHA]",
+  "[HEAD_SHA]",
+  "[DIFF_FILE]",
+];
+
+const x_CodeReviewerPlaceholders = [
+  "[DESCRIPTION]",
+  "[PLAN_OR_REQUIREMENTS]",
+  "[BASE_SHA]",
+  "[HEAD_SHA]",
+];
 
 const sampleAgentId = "xrun_20260726000000000_00000001";
 
@@ -172,6 +206,7 @@ async function createFixture(): Promise<{
   report: string;
   reviewBrief: string;
   findings: string;
+  constraints: string;
   templatesRoot: string;
   trustedScript: string;
   sentinelScript: string;
@@ -193,6 +228,7 @@ async function createFixture(): Promise<{
   const report = path.join(callerCwd, ".superpowers", "sdd", "my-plan", "task-1-report.md");
   const reviewBrief = path.join(callerCwd, "spec-review-brief.md");
   const findings = path.join(callerCwd, "task-1-findings.md");
+  const constraints = path.join(callerCwd, ".superpowers", "sdd", "my-plan", "global-constraints.md");
   await mkdir(path.dirname(plan), { recursive: true });
   await mkdir(path.dirname(report), { recursive: true });
   await writeFile(plan, "# Plan\n\n## Task 1: Thing\n\nDo it.\n", "utf8");
@@ -200,6 +236,7 @@ async function createFixture(): Promise<{
   await writeFile(report, "Implementer report.\n", "utf8");
   await writeFile(reviewBrief, "REVIEW-BRIEF-SENTINEL\n", "utf8");
   await writeFile(findings, "- Finding one\n- Finding two\n", "utf8");
+  await writeFile(constraints, "CONSTRAINTS-SENTINEL\n", "utf8");
   await writeFile(path.join(callerCwd, ".superpowers", "sdd", ".gitignore"), "*\n", "utf8");
   await execFileAsync("git", ["init", "-q"], { cwd: callerCwd });
   await execFileAsync("git", ["config", "user.email", "t@example.com"], { cwd: callerCwd });
@@ -251,6 +288,7 @@ sys.exit(0)
     report,
     reviewBrief,
     findings,
+    constraints,
     templatesRoot,
     trustedScript,
     sentinelScript,
@@ -339,12 +377,13 @@ test("XagentSddStartInputSchema rejects unknown fields and invalid task shapes",
   assert.equal(XagentSddStartInputSchema.safeParse(validImplementerStart({ task: "1" })).success, false);
 });
 
-test("code-reviewer permits no task and requires review_brief", () => {
+test("code-reviewer permits no task and requires review_brief and description", () => {
   const parsed = CodeReviewerStartSchema.parse({
     role: "code-reviewer",
     cwd: "/tmp/worktree",
     plan: "/tmp/plan.md",
     review_brief: "/tmp/spec-review-brief.md",
+    description: "Whole-branch review scope",
     base: "HEAD~1",
     head: "HEAD",
     agent: "opus",
@@ -353,6 +392,7 @@ test("code-reviewer permits no task and requires review_brief", () => {
   });
   assert.equal("task" in parsed, false);
   assert.equal(parsed.review_brief, "/tmp/spec-review-brief.md");
+  assert.equal(parsed.description, "Whole-branch review scope");
   assert.equal(
     CodeReviewerStartSchema.safeParse({
       role: "code-reviewer",
@@ -363,6 +403,52 @@ test("code-reviewer permits no task and requires review_brief", () => {
       agent: "opus",
       harness: "claude_code",
       effort: "high",
+    }).success,
+    false,
+  );
+  assert.equal(
+    CodeReviewerStartSchema.safeParse({
+      role: "code-reviewer",
+      cwd: "/tmp/worktree",
+      plan: "/tmp/plan.md",
+      review_brief: "/tmp/spec-review-brief.md",
+      description: "",
+      base: "HEAD~1",
+      head: "HEAD",
+      agent: "opus",
+      harness: "claude_code",
+      effort: "high",
+    }).success,
+    false,
+  );
+});
+
+test("SDD schemas reject relative and traversal artifact paths", () => {
+  assert.equal(XagentSddStartInputSchema.safeParse(validImplementerStart({ brief: "task-1-brief.md" })).success, false);
+  assert.equal(XagentSddStartInputSchema.safeParse(validImplementerStart({ plan: "plan.md" })).success, false);
+  assert.equal(
+    XagentSddStartInputSchema.safeParse(validImplementerStart({ report: "/tmp/../secret/report.md" })).success,
+    false,
+  );
+  assert.equal(
+    FixFollowupSchema.safeParse({
+      kind: "fix",
+      agent_id: sampleAgentId,
+      round: 1,
+      findings: "findings.md",
+      findings_text: "Important finding\n",
+      tests: ["projects/xagent/tests/sdd_store.test.ts"],
+    }).success,
+    false,
+  );
+  assert.equal(
+    ReReviewFollowupSchema.safeParse({
+      kind: "re-review",
+      agent_id: sampleAgentId,
+      round: 1,
+      findings: "../findings.md",
+      base: "HEAD~1",
+      head: "HEAD",
     }).success,
     false,
   );
@@ -390,10 +476,14 @@ test("XagentSddFollowupInputSchema validates fix and re-review payloads", () => 
   assert.equal(rereview.kind, "re-review");
 });
 
-test("AgentIdSchema and SDD await/close schemas enforce generated agent ids and deadline bounds", () => {
+test("AgentIdSchema accepts generateRunId output and rejects invalid ids", () => {
+  const generated = generateRunId(new Date("2026-07-26T00:00:00.000Z"));
+  assert.equal(AgentIdSchema.safeParse(generated).success, true);
   assert.equal(AgentIdSchema.safeParse("not-a-run").success, false);
   assert.equal(AgentIdSchema.safeParse(sampleAgentId).success, true);
+});
 
+test("SDD await and close schemas enforce deadline bounds and after_sequence", () => {
   const defaultParsed = XagentSddAwaitInputSchema.parse({
     agent_id: sampleAgentId,
     after_sequence: 0,
@@ -474,10 +564,10 @@ test("RenderSddPrompt invokes only the trusted script through python3 with calle
   assert.ok(invocations[0]!.args.includes(fixture.plan));
   assert.ok(invocations[0]!.args.includes("--name"));
   assert.ok(invocations[0]!.args.includes("Versioned SQLite SDD Ledger"));
-  assertSamePath(rendered.promptPath, outputPath);
-  assert.equal(rendered.promptText, "rendered implementer prompt\n");
-  assertSamePath(rendered.briefPath!, fixture.brief);
-  assertSamePath(rendered.reportPath!, fixture.report);
+  assertSamePath(rendered.prompt.path, outputPath);
+  assert.equal(rendered.prompt.text, "rendered implementer prompt\n");
+  assertSamePath(rendered.metadata.briefPath!, fixture.brief);
+  assertSamePath(rendered.metadata.reportPath!, fixture.report);
 });
 
 test("RenderSddPrompt maps code-reviewer requirements through @brief path", async () => {
@@ -573,6 +663,8 @@ test("RenderSddPrompt surfaces renderer failures without leaking bulk text", asy
       assert.ok(error instanceof SddPromptError);
       assert.equal(error.structured.error, "sdd_renderer_failed");
       assert.doesNotMatch(error.message, /SECRET_BODY/);
+      assert.doesNotMatch(JSON.stringify(error.structured), /SECRET_BODY/);
+      assert.doesNotMatch(JSON.stringify(error.structured), /template drift/);
       return true;
     },
   );
@@ -646,12 +738,13 @@ test("RenderSddPrompt surfaces renderer failures without leaking bulk text", asy
   );
 });
 
-test("RenderSddPrompt renders all roles without residual placeholders and returns paths not bodies", async () => {
+test("RenderSddPrompt renders all roles without residual placeholders and returns MCP-safe metadata", async () => {
   const fixture = await createFixture();
 
   const roles = [
     {
       name: "implementer",
+      placeholders: x_ImplementerPlaceholders,
       input: {
         role: "implementer" as const,
         repoRoot: serviceRepoRoot,
@@ -661,13 +754,14 @@ test("RenderSddPrompt renders all roles without residual placeholders and return
         name: "Versioned SQLite SDD Ledger",
         brief: fixture.brief,
         report: fixture.report,
+        context: "Scene-setting for the implementer task.",
         templatesRoot: fixture.templatesRoot,
       },
-      forbidden: ["[BRIEF_FILE]", "[REPORT_FILE]", "[task name]", "BRIEF-BODY-SENTINEL"],
       requiredPath: fixture.brief,
     },
     {
       name: "task-reviewer",
+      placeholders: x_TaskReviewerPlaceholders,
       input: {
         role: "task-reviewer" as const,
         repoRoot: serviceRepoRoot,
@@ -676,16 +770,16 @@ test("RenderSddPrompt renders all roles without residual placeholders and return
         task: 1,
         brief: fixture.brief,
         report: fixture.report,
+        constraints: fixture.constraints,
         base: "HEAD",
         head: "HEAD",
-        diff: fixture.brief,
         templatesRoot: fixture.templatesRoot,
       },
-      forbidden: ["[BRIEF_FILE]", "[REPORT_FILE]", "BRIEF-BODY-SENTINEL"],
       requiredPath: fixture.report,
     },
     {
       name: "re-review",
+      placeholders: x_ReReviewPlaceholders,
       input: {
         role: "re-review" as const,
         repoRoot: serviceRepoRoot,
@@ -701,11 +795,11 @@ test("RenderSddPrompt renders all roles without residual placeholders and return
         diff: fixture.brief,
         templatesRoot: fixture.templatesRoot,
       },
-      forbidden: ["[BRIEF_FILE]", "[FINDINGS]", "[REPORT_FILE]"],
       requiredPath: fixture.findings,
     },
     {
       name: "code-reviewer",
+      placeholders: x_CodeReviewerPlaceholders,
       input: {
         role: "code-reviewer" as const,
         repoRoot: serviceRepoRoot,
@@ -717,23 +811,21 @@ test("RenderSddPrompt renders all roles without residual placeholders and return
         head: "HEAD",
         templatesRoot: fixture.templatesRoot,
       },
-      forbidden: ["[PLAN_OR_REQUIREMENTS]"],
       requiredPath: fixture.reviewBrief,
     },
   ];
 
   for (const role of roles) {
     const rendered = await RenderSddPrompt(role.input);
-    for (const token of role.forbidden) {
-      assert.doesNotMatch(rendered.promptText, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    for (const token of role.placeholders) {
+      assert.doesNotMatch(
+        rendered.prompt.text,
+        new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+      );
     }
-    assertSerializedContainsPath(JSON.stringify(rendered), role.requiredPath);
-    const pathOnlyPayload = {
-      promptPath: rendered.promptPath,
-      briefPath: rendered.briefPath,
-      reportPath: rendered.reportPath,
-      findingsPath: rendered.findingsPath,
-    };
-    assert.doesNotMatch(JSON.stringify(pathOnlyPayload), /BRIEF-BODY-SENTINEL|REVIEW-BRIEF-SENTINEL/);
+    assertSerializedContainsPath(JSON.stringify(rendered.metadata), role.requiredPath);
+    assert.doesNotMatch(JSON.stringify(rendered.metadata), /BRIEF-BODY-SENTINEL|REVIEW-BRIEF-SENTINEL/);
+    assert.equal("text" in rendered.metadata, false);
+    assert.equal("promptText" in rendered.metadata, false);
   }
 });
