@@ -774,6 +774,9 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
 
 class OpenSpecCliInstallTests(unittest.TestCase):
     def test_global_install_creates_shim_matching_vendor_version(self) -> None:
+        if not install.node_supports_openspec(install.probe_node_version()):
+            self.skipTest("requires Node >= 20.19")
+
         with tempfile.TemporaryDirectory() as tempdir:
             home = (Path(tempdir) / "home").resolve()
             codex_home = (Path(tempdir) / "codex-home").resolve()
@@ -788,27 +791,7 @@ class OpenSpecCliInstallTests(unittest.TestCase):
                 str(codex_home),
             )
 
-            real_run = subprocess.run
-            recorded: list[list[str]] = []
-
-            def tracking_run(*args: object, **kwargs: object) -> object:
-                if args and isinstance(args[0], (list, tuple)):
-                    recorded.append([str(part) for part in args[0]])
-                return real_run(*args, **kwargs)
-
-            with mock.patch.object(subprocess, "run", side_effect=tracking_run):
-                self.assertEqual(0, run_main("install", *common_args))
-
-            self.assertFalse(
-                any("postinstall" in part for command in recorded for part in command)
-            )
-            self.assertFalse(
-                any(
-                    "npm" == Path(part).name and "install" in command
-                    for command in recorded
-                    for part in command
-                )
-            )
+            self.assertEqual(0, run_main("install", *common_args))
 
             shim = install.openspec_shim_path(home)
             package_root = install.openspec_package_path(home)
@@ -828,6 +811,47 @@ class OpenSpecCliInstallTests(unittest.TestCase):
 
             self.assertEqual(0, run_main("check", *common_args))
 
+    def test_install_preserves_managed_tree_when_staging_copy_fails(self) -> None:
+        if not install.node_supports_openspec(install.probe_node_version()):
+            self.skipTest("requires Node >= 20.19")
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            home = (Path(tempdir) / "home").resolve()
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            common_args = (
+                "--scope",
+                "global",
+                "--repo-root",
+                str(REPO_ROOT),
+                "--home",
+                str(home),
+                "--codex-home",
+                str(codex_home),
+            )
+            self.assertEqual(0, run_main("install", *common_args))
+
+            package_root = install.openspec_package_path(home)
+            marker_path = package_root / install.OPENSPEC_MANAGED_MARKER_NAME
+            marker_before = marker_path.read_text(encoding="utf-8")
+            entry = package_root / "bin" / "openspec.js"
+            self.assertTrue(entry.is_file())
+
+            with mock.patch.object(
+                install.shutil,
+                "copytree",
+                side_effect=OSError("disk full"),
+            ):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        result = run_main("install", *common_args)
+
+            self.assertEqual(1, result)
+            self.assertTrue(package_root.is_dir())
+            self.assertTrue(marker_path.is_file())
+            self.assertEqual(marker_before, marker_path.read_text(encoding="utf-8"))
+            self.assertTrue(entry.is_file())
+            self.assertEqual(0, run_main("check", *common_args))
+
     def test_global_install_skips_cli_with_warning_when_node_too_old(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             home = (Path(tempdir) / "home").resolve()
@@ -842,14 +866,23 @@ class OpenSpecCliInstallTests(unittest.TestCase):
                 "--codex-home",
                 str(codex_home),
             )
+            real_run = subprocess.run
+            recorded: list[list[str]] = []
+
+            def tracking_run(*args: object, **kwargs: object) -> object:
+                if args and isinstance(args[0], (list, tuple)):
+                    recorded.append([str(part) for part in args[0]])
+                return real_run(*args, **kwargs)
+
             stderr = io.StringIO()
             with mock.patch.object(
                 install,
                 "probe_node_version",
                 return_value=(18, 20, 0),
             ):
-                with contextlib.redirect_stderr(stderr):
-                    result = run_main("install", *common_args)
+                with mock.patch.object(subprocess, "run", side_effect=tracking_run):
+                    with contextlib.redirect_stderr(stderr):
+                        result = run_main("install", *common_args)
 
             self.assertEqual(0, result)
             self.assertIn("OpenSpec CLI", stderr.getvalue())
@@ -858,6 +891,16 @@ class OpenSpecCliInstallTests(unittest.TestCase):
             self.assertFalse(install.openspec_package_path(home).exists())
             self.assertTrue((home / ".claude" / "CLAUDE.md").is_file())
             self.assertTrue((codex_home / "hooks.json").is_file())
+            self.assertFalse(
+                any(Path(part).name == "npm" for command in recorded for part in command)
+            )
+            self.assertFalse(
+                any(
+                    "npm" in Path(part).name and "install" in command
+                    for command in recorded
+                    for part in command
+                )
+            )
 
     def test_global_install_skips_cli_with_warning_when_node_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
@@ -873,15 +916,32 @@ class OpenSpecCliInstallTests(unittest.TestCase):
                 "--codex-home",
                 str(codex_home),
             )
+            real_run = subprocess.run
+            recorded: list[list[str]] = []
+
+            def tracking_run(*args: object, **kwargs: object) -> object:
+                if args and isinstance(args[0], (list, tuple)):
+                    recorded.append([str(part) for part in args[0]])
+                return real_run(*args, **kwargs)
+
             stderr = io.StringIO()
             with mock.patch.object(install, "probe_node_version", return_value=None):
-                with contextlib.redirect_stderr(stderr):
-                    result = run_main("install", *common_args)
+                with mock.patch.object(subprocess, "run", side_effect=tracking_run):
+                    with contextlib.redirect_stderr(stderr):
+                        result = run_main("install", *common_args)
 
             self.assertEqual(0, result)
             self.assertIn("OpenSpec CLI", stderr.getvalue())
             self.assertFalse(install.openspec_shim_path(home).exists())
             self.assertTrue((home / ".cursor" / "AGENTS.md").is_file())
+            self.assertFalse(
+                any(Path(part).name == "npm" for command in recorded for part in command)
+            )
+            self.assertFalse(
+                any("install" in command and any(
+                    Path(part).name == "npm" for part in command
+                ) for command in recorded)
+            )
 
     def test_global_check_reports_missing_openspec_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:

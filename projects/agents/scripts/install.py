@@ -522,12 +522,34 @@ def install_openspec_cli(repo_root: Path, *, home: Path, force: bool) -> int:
             print(f"conflict unmanaged {shim}", file=sys.stderr)
             return 1
 
-    if package_root.exists():
-        shutil.rmtree(package_root)
     package_root.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source, package_root, symlinks=False)
-    marker = package_root / OPENSPEC_MANAGED_MARKER_NAME
-    marker.write_text(openspec_managed_marker_content(pin), encoding="utf-8")
+    staging = package_root.parent / f".openspec-staging-{os.getpid()}"
+    backup = package_root.parent / f".openspec-backup-{os.getpid()}"
+    for leftover in (staging, backup):
+        if leftover.exists():
+            shutil.rmtree(leftover)
+
+    try:
+        shutil.copytree(source, staging, symlinks=False)
+        marker = staging / OPENSPEC_MANAGED_MARKER_NAME
+        marker.write_text(openspec_managed_marker_content(pin), encoding="utf-8")
+
+        if package_root.exists():
+            os.replace(package_root, backup)
+        try:
+            os.replace(staging, package_root)
+        except OSError:
+            if backup.exists() and not package_root.exists():
+                os.replace(backup, package_root)
+            raise
+        if backup.exists():
+            shutil.rmtree(backup)
+    except OSError as exc:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+        print(f"failed openspec CLI install: {exc}", file=sys.stderr)
+        return 1
+
     write_openspec_shim(shim, package_root)
     print(f"wrote {package_root}")
     print(f"wrote {shim}")
