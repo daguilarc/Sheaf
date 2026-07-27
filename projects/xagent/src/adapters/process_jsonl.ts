@@ -16,6 +16,12 @@ import type {
 export type ProcessHarnessState = {
   providerThreadId?: string;
   providerSequence: number;
+  // Cursor streams per-token assistant events, then flushes the same
+  // segment again before tool calls / at turn end. Track the open
+  // segment (and last emitted delta) so flushes can be dropped.
+  //
+  cursorSegmentText?: string;
+  cursorLastDelta?: string;
 };
 
 export type ProviderEventParser = (

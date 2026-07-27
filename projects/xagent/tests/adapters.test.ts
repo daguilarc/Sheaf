@@ -30,9 +30,140 @@ test("codex fixture maps provider events into normalized adapter events", async 
 test("cursor fixture maps provider events into normalized adapter events", async () => {
   const events = await parseFixture("cursor.jsonl", parseCursorProviderEvent);
 
-  assertEventTypes(events, ["message.delta", "tool.started", "message.completed", "turn.completed"]);
-  assert.equal(events.find((event) => event.type === "message.completed")?.text, "Cursor final");
+  assertEventTypes(events, [
+    "message.delta",
+    "message.delta",
+    "tool.started",
+    "tool.completed",
+    "message.delta",
+    "message.delta",
+    "message.delta",
+    "message.completed",
+    "turn.completed",
+  ]);
+  const deltas = events
+    .filter((event) => event.type === "message.delta")
+    .map((event) => event.type === "message.delta" ? event.delta : "");
+  assert.deepEqual(deltas, ["Starting", " now.", "| ", "| ", "Done."]);
+  assert.equal(
+    deltas.join(""),
+    events.find((event) => event.type === "turn.completed")?.final_text,
+  );
+  const started = events.find((event) => event.type === "tool.started");
+  assert.equal(started?.type === "tool.started" ? started.tool_call_id : undefined, "tool-1");
+  assert.equal(started?.type === "tool.started" ? started.name : undefined, "read");
+  assert.deepEqual(
+    started?.type === "tool.started" ? started.input : undefined,
+    { path: "sample.txt" },
+  );
+  const completed = events.find((event) => event.type === "tool.completed");
+  assert.equal(completed?.type === "tool.completed" ? completed.tool_call_id : undefined, "tool-1");
+  assert.equal(completed?.type === "tool.completed" ? completed.name : undefined, "read");
+  assert.equal(completed?.type === "tool.completed" ? completed.status : undefined, "completed");
+  assert.deepEqual(
+    completed?.type === "tool.completed" ? completed.output : undefined,
+    { success: { content: "ok", path: "sample.txt" } },
+  );
+  assert.equal(events.find((event) => event.type === "message.completed")?.text, "Starting now.| | Done.");
   assert.equal(events.find((event) => event.type === "turn.completed")?.provider_thread_id, "cursor-thread-1");
+});
+
+test("cursor adapter maps failed shell tool_call completions", () => {
+  const state: ProcessHarnessState = { providerSequence: 1 };
+  const events = parseCursorProviderEvent({
+    type: "tool_call",
+    subtype: "completed",
+    call_id: "tool-fail",
+    tool_call: {
+      shellToolCall: {
+        args: { command: "false" },
+        result: {
+          failure: { command: "false", exitCode: 1, stdout: "", stderr: "" },
+          isBackground: false,
+        },
+      },
+      toolCallId: "tool-fail",
+    },
+  }, context, state);
+
+  assert.deepEqual(events, [{
+    type: "tool.completed",
+    tool_call_id: "tool-fail",
+    name: "shell",
+    status: "failed",
+    output: {
+      failure: { command: "false", exitCode: 1, stdout: "", stderr: "" },
+      isBackground: false,
+    },
+    error: "command failed (exit 1): false",
+  }]);
+});
+
+test("cursor adapter drops flushes via model_call_id and keeps repeated chunks", () => {
+  const state: ProcessHarnessState = { providerSequence: 0 };
+  const events: AdapterEvent[] = [];
+  const rawEvents = [
+    {
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "Starting" }] },
+      session_id: "cursor-thread-2",
+      timestamp_ms: 1,
+    },
+    {
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: " now." }] },
+      session_id: "cursor-thread-2",
+      timestamp_ms: 2,
+    },
+    {
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "Starting now." }] },
+      session_id: "cursor-thread-2",
+      timestamp_ms: 3,
+      model_call_id: "call-1",
+    },
+    {
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "| " }] },
+      session_id: "cursor-thread-2",
+      timestamp_ms: 4,
+    },
+    {
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "| " }] },
+      session_id: "cursor-thread-2",
+      timestamp_ms: 5,
+    },
+    {
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "Done." }] },
+      session_id: "cursor-thread-2",
+      timestamp_ms: 6,
+    },
+    {
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "| | Done." }] },
+      session_id: "cursor-thread-2",
+    },
+    {
+      type: "result",
+      subtype: "success",
+      session_id: "cursor-thread-2",
+      result: "Starting now.| | Done.",
+    },
+  ];
+
+  for (const raw of rawEvents) {
+    events.push(...parseCursorProviderEvent(raw, context, state));
+  }
+
+  const deltas = events
+    .filter((event) => event.type === "message.delta")
+    .map((event) => event.type === "message.delta" ? event.delta : "");
+  assert.deepEqual(deltas, ["Starting", " now.", "| ", "| ", "Done."]);
+  assert.equal(deltas.join(""), "Starting now.| | Done.");
+  assert.equal(events.find((event) => event.type === "turn.completed")?.final_text, "Starting now.| | Done.");
+  assert.equal(state.providerThreadId, "cursor-thread-2");
 });
 
 test("claude code fixture maps provider events into normalized adapter events", async () => {
@@ -160,6 +291,9 @@ test("all four adapters emit a resume argv on the first turn when provider_threa
         const resumeIndex = argv.indexOf("--resume");
         assert.ok(resumeIndex >= 0, "cursor argv must include --resume");
         assert.equal(argv[resumeIndex + 1], threadId);
+        const separatorIndex = argv.lastIndexOf("--");
+        assert.ok(separatorIndex >= 0, "cursor argv must include -- before the prompt");
+        assert.equal(argv[separatorIndex + 1], context.text);
       },
     },
     {
