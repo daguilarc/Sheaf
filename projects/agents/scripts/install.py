@@ -7,7 +7,10 @@ import argparse
 import json
 import os
 import shlex
+import shutil
+import subprocess
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,6 +27,10 @@ REPO_TARGET_DIRS = {
 }
 MANAGED_MARKER = "sheaf-agents-managed: DO NOT EDIT"
 CODEX_HOOK_COMMAND_PLACEHOLDER = "__SHEAF_CODEX_POST_COMPACT_HOOK_COMMAND__"
+OPENSPEC_MIN_NODE = (20, 19, 0)
+OPENSPEC_MANAGED_MARKER_NAME = ".sheaf-managed"
+OPENSPEC_VENDOR_REL = Path("projects") / "agents" / "vendor" / "openspec"
+OPENSPEC_PACKAGE_REL = OPENSPEC_VENDOR_REL / "package"
 
 
 @dataclass(frozen=True)
@@ -365,6 +372,253 @@ def build_obsolete_global_outputs(*, home: Path, codex_home: Path | None) -> lis
     return outputs
 
 
+def sheaf_prefix(home: Path) -> Path:
+    return home.expanduser().resolve() / ".local" / "share" / "sheaf"
+
+
+def openspec_package_path(home: Path) -> Path:
+    return sheaf_prefix(home) / "vendor" / "openspec"
+
+
+def openspec_shim_path(home: Path) -> Path:
+    return sheaf_prefix(home) / "bin" / "openspec"
+
+
+def openspec_vendor_dir(repo_root: Path) -> Path:
+    return repo_root / OPENSPEC_VENDOR_REL
+
+
+def openspec_vendor_package(repo_root: Path) -> Path:
+    return repo_root / OPENSPEC_PACKAGE_REL
+
+
+def read_openspec_vendor_pin(repo_root: Path) -> dict[str, str]:
+    path = openspec_vendor_dir(repo_root) / "VENDOR.toml"
+    if not path.exists():
+        raise ValueError(f"missing OpenSpec vendor pin: {path}")
+    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    required = ("url", "revision", "version", "retrieved_at")
+    missing = [field for field in required if field not in raw]
+    if missing:
+        raise ValueError(
+            f"{path}: missing required pin fields: {', '.join(missing)}"
+        )
+    pin: dict[str, str] = {}
+    for field in required:
+        value = raw[field]
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{path}: {field} must be a non-empty string")
+        pin[field] = value
+    return pin
+
+
+def probe_node_version() -> tuple[int, ...] | None:
+    try:
+        completed = subprocess.run(
+            ["node", "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+    text = completed.stdout.strip()
+    if text.startswith("v") or text.startswith("V"):
+        text = text[1:]
+    parts = text.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        numbers = [int(part) for part in parts[:3]]
+    except ValueError:
+        return None
+    while len(numbers) < 3:
+        numbers.append(0)
+    return (numbers[0], numbers[1], numbers[2])
+
+
+def node_supports_openspec(version: tuple[int, ...] | None) -> bool:
+    if version is None:
+        return False
+    return version >= OPENSPEC_MIN_NODE
+
+
+def format_node_version(version: tuple[int, ...]) -> str:
+    return ".".join(str(part) for part in version)
+
+
+def openspec_managed_marker_content(pin: dict[str, str]) -> str:
+    source = OPENSPEC_PACKAGE_REL.as_posix()
+    return (
+        f"{MANAGED_MARKER}\n"
+        f"source={source}\n"
+        f"revision={pin['revision']}\n"
+        f"version={pin['version']}\n"
+    )
+
+
+def package_is_openspec_managed(package_root: Path) -> bool:
+    marker = package_root / OPENSPEC_MANAGED_MARKER_NAME
+    if not marker.is_file():
+        return False
+    return MANAGED_MARKER in marker.read_text(encoding="utf-8")
+
+
+def shim_is_openspec_managed(shim: Path) -> bool:
+    if not shim.is_file():
+        return False
+    try:
+        content = shim.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return False
+    return MANAGED_MARKER in content
+
+
+def write_openspec_shim(shim: Path, package_root: Path) -> None:
+    entry = package_root / "bin" / "openspec.js"
+    content = (
+        "#!/bin/sh\n"
+        f"# {MANAGED_MARKER}; source={OPENSPEC_PACKAGE_REL.as_posix()}\n"
+        f"exec node {shlex.quote(str(entry))} \"$@\"\n"
+    )
+    shim.parent.mkdir(parents=True, exist_ok=True)
+    shim.write_text(content, encoding="utf-8")
+    shim.chmod(shim.stat().st_mode | 0o111)
+
+
+def install_openspec_cli(repo_root: Path, *, home: Path, force: bool) -> int:
+    home = home.expanduser().resolve()
+    node_version = probe_node_version()
+    if not node_supports_openspec(node_version):
+        if node_version is None:
+            detail = "Node.js was not found"
+        else:
+            detail = (
+                f"Node.js {format_node_version(node_version)} is older than "
+                f"{format_node_version(OPENSPEC_MIN_NODE)}"
+            )
+        print(
+            f"warning: skipping OpenSpec CLI install: {detail} "
+            f"(requires >={format_node_version(OPENSPEC_MIN_NODE)}); "
+            "continuing with other global outputs",
+            file=sys.stderr,
+        )
+        return 0
+
+    pin = read_openspec_vendor_pin(repo_root)
+    source = openspec_vendor_package(repo_root)
+    if not (source / "bin" / "openspec.js").is_file():
+        print(f"missing vendored OpenSpec package entry: {source}", file=sys.stderr)
+        return 1
+
+    package_root = openspec_package_path(home)
+    shim = openspec_shim_path(home)
+    if package_root.exists() and not package_is_openspec_managed(package_root):
+        if not force:
+            print(f"conflict unmanaged {package_root}", file=sys.stderr)
+            return 1
+    if shim.exists() and not shim_is_openspec_managed(shim):
+        if not force:
+            print(f"conflict unmanaged {shim}", file=sys.stderr)
+            return 1
+
+    if package_root.exists():
+        shutil.rmtree(package_root)
+    package_root.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(source, package_root, symlinks=False)
+    marker = package_root / OPENSPEC_MANAGED_MARKER_NAME
+    marker.write_text(openspec_managed_marker_content(pin), encoding="utf-8")
+    write_openspec_shim(shim, package_root)
+    print(f"wrote {package_root}")
+    print(f"wrote {shim}")
+    return 0
+
+
+def read_openspec_shim_version(shim: Path) -> str | None:
+    if not shim.is_file():
+        return None
+    try:
+        completed = subprocess.run(
+            [str(shim), "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return completed.stdout.strip() or None
+
+
+def check_openspec_cli(repo_root: Path, *, home: Path) -> int:
+    home = home.expanduser().resolve()
+    pin = read_openspec_vendor_pin(repo_root)
+    expected = pin["version"]
+    shim = openspec_shim_path(home)
+    package_root = openspec_package_path(home)
+    status = 0
+
+    if not shim.is_file():
+        print(f"missing openspec shim {shim}", file=sys.stderr)
+        status = 1
+    elif not shim_is_openspec_managed(shim):
+        print(f"conflict unmanaged {shim}", file=sys.stderr)
+        status = 1
+
+    if not package_root.is_dir():
+        print(f"missing openspec package {package_root}", file=sys.stderr)
+        status = 1
+    elif not package_is_openspec_managed(package_root):
+        print(f"conflict unmanaged {package_root}", file=sys.stderr)
+        status = 1
+
+    if status != 0:
+        return status
+
+    actual = read_openspec_shim_version(shim)
+    if actual != expected:
+        print(
+            f"stale openspec CLI: expected version {expected}, got {actual!r} "
+            f"from {shim}",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"ok openspec CLI {shim} ({actual})")
+    return 0
+
+
+def clean_openspec_cli(*, home: Path) -> int:
+    home = home.expanduser().resolve()
+    package_root = openspec_package_path(home)
+    shim = openspec_shim_path(home)
+
+    if package_root.exists():
+        if package_is_openspec_managed(package_root):
+            shutil.rmtree(package_root)
+            print(f"removed {package_root}")
+            parent = package_root.parent
+            try:
+                parent.rmdir()
+            except OSError:
+                pass
+        else:
+            print(f"skip unmanaged {package_root}")
+
+    if shim.exists():
+        if shim_is_openspec_managed(shim):
+            shim.unlink()
+            print(f"removed {shim}")
+            parent = shim.parent
+            try:
+                parent.rmdir()
+            except OSError:
+                pass
+        else:
+            print(f"skip unmanaged {shim}")
+
+    return 0
+
+
 def build_outputs(
     repo_root: Path, *, scope: str, home: Path, codex_home: Path | None
 ) -> list[Output]:
@@ -514,15 +768,29 @@ def main() -> int:
         install_status = install_outputs(outputs, force=args.force)
         if install_status != 0:
             return install_status
-        return clean_outputs(obsolete_outputs)
+        obsolete_status = clean_outputs(obsolete_outputs)
+        cli_status = 0
+        if args.scope in ("global", "all"):
+            cli_status = install_openspec_cli(
+                repo_root,
+                home=args.home,
+                force=args.force,
+            )
+        return obsolete_status or cli_status
     if args.mode == "check":
         check_status = check_outputs(outputs)
         obsolete_status = check_obsolete_outputs(obsolete_outputs)
-        return check_status or obsolete_status
+        cli_status = 0
+        if args.scope in ("global", "all"):
+            cli_status = check_openspec_cli(repo_root, home=args.home)
+        return check_status or obsolete_status or cli_status
     if args.mode == "clean":
         clean_status = clean_outputs(outputs)
         obsolete_status = clean_outputs(obsolete_outputs)
-        return clean_status or obsolete_status
+        cli_status = 0
+        if args.scope in ("global", "all"):
+            cli_status = clean_openspec_cli(home=args.home)
+        return clean_status or obsolete_status or cli_status
     raise AssertionError(args.mode)
 
 

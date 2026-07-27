@@ -150,6 +150,15 @@ User-global outputs are written to:
 
 `CODEX_HOME` defaults to `~/.codex`.
 
+Global install also copies the vendored OpenSpec CLI into a Sheaf-managed
+prefix and writes a shim:
+
+- package: `~/.local/share/sheaf/vendor/openspec/`
+- shim: `~/.local/share/sheaf/bin/openspec`
+
+Put `~/.local/share/sheaf/bin` on your `PATH` so `openspec` resolves to the
+managed shim. The installer does not edit shell rc files.
+
 The Codex hook is a user-global `SessionStart` hook for the `compact` source.
 After Codex compacts a session, it injects a short developer-context reminder:
 if the agent was working from a plan, checklist, or task list, it should review

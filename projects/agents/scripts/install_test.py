@@ -6,8 +6,10 @@ import io
 import json
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -16,6 +18,9 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[2]
 MODULE_PATH = SCRIPT_DIR / "install.py"
+OPENSPEC_VENDOR_TOML = (
+    REPO_ROOT / "projects" / "agents" / "vendor" / "openspec" / "VENDOR.toml"
+)
 
 spec = importlib.util.spec_from_file_location("agents_install", MODULE_PATH)
 assert spec is not None
@@ -23,6 +28,11 @@ install = importlib.util.module_from_spec(spec)
 sys.modules["agents_install"] = install
 assert spec.loader is not None
 spec.loader.exec_module(install)
+
+
+def openspec_vendor_version() -> str:
+    raw = tomllib.loads(OPENSPEC_VENDOR_TOML.read_text(encoding="utf-8"))
+    return str(raw["version"])
 
 
 def hook_outputs(outputs: list[object], codex_home: Path) -> list[object]:
@@ -761,6 +771,173 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
                 "short timeout loop",
             ),
         )
+
+class OpenSpecCliInstallTests(unittest.TestCase):
+    def test_global_install_creates_shim_matching_vendor_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            home = (Path(tempdir) / "home").resolve()
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            common_args = (
+                "--scope",
+                "global",
+                "--repo-root",
+                str(REPO_ROOT),
+                "--home",
+                str(home),
+                "--codex-home",
+                str(codex_home),
+            )
+
+            real_run = subprocess.run
+            recorded: list[list[str]] = []
+
+            def tracking_run(*args: object, **kwargs: object) -> object:
+                if args and isinstance(args[0], (list, tuple)):
+                    recorded.append([str(part) for part in args[0]])
+                return real_run(*args, **kwargs)
+
+            with mock.patch.object(subprocess, "run", side_effect=tracking_run):
+                self.assertEqual(0, run_main("install", *common_args))
+
+            self.assertFalse(
+                any("postinstall" in part for command in recorded for part in command)
+            )
+            self.assertFalse(
+                any(
+                    "npm" == Path(part).name and "install" in command
+                    for command in recorded
+                    for part in command
+                )
+            )
+
+            shim = install.openspec_shim_path(home)
+            package_root = install.openspec_package_path(home)
+            self.assertTrue(shim.is_file())
+            self.assertTrue((package_root / "bin" / "openspec.js").is_file())
+            self.assertTrue(
+                (package_root / install.OPENSPEC_MANAGED_MARKER_NAME).is_file()
+            )
+
+            completed = subprocess.run(
+                [str(shim), "--version"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(openspec_vendor_version(), completed.stdout.strip())
+
+            self.assertEqual(0, run_main("check", *common_args))
+
+    def test_global_install_skips_cli_with_warning_when_node_too_old(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            home = (Path(tempdir) / "home").resolve()
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            common_args = (
+                "--scope",
+                "global",
+                "--repo-root",
+                str(REPO_ROOT),
+                "--home",
+                str(home),
+                "--codex-home",
+                str(codex_home),
+            )
+            stderr = io.StringIO()
+            with mock.patch.object(
+                install,
+                "probe_node_version",
+                return_value=(18, 20, 0),
+            ):
+                with contextlib.redirect_stderr(stderr):
+                    result = run_main("install", *common_args)
+
+            self.assertEqual(0, result)
+            self.assertIn("OpenSpec CLI", stderr.getvalue())
+            self.assertIn("Node", stderr.getvalue())
+            self.assertFalse(install.openspec_shim_path(home).exists())
+            self.assertFalse(install.openspec_package_path(home).exists())
+            self.assertTrue((home / ".claude" / "CLAUDE.md").is_file())
+            self.assertTrue((codex_home / "hooks.json").is_file())
+
+    def test_global_install_skips_cli_with_warning_when_node_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            home = (Path(tempdir) / "home").resolve()
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            common_args = (
+                "--scope",
+                "global",
+                "--repo-root",
+                str(REPO_ROOT),
+                "--home",
+                str(home),
+                "--codex-home",
+                str(codex_home),
+            )
+            stderr = io.StringIO()
+            with mock.patch.object(install, "probe_node_version", return_value=None):
+                with contextlib.redirect_stderr(stderr):
+                    result = run_main("install", *common_args)
+
+            self.assertEqual(0, result)
+            self.assertIn("OpenSpec CLI", stderr.getvalue())
+            self.assertFalse(install.openspec_shim_path(home).exists())
+            self.assertTrue((home / ".cursor" / "AGENTS.md").is_file())
+
+    def test_global_check_reports_missing_openspec_cli(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            home = (Path(tempdir) / "home").resolve()
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            common_args = (
+                "--scope",
+                "global",
+                "--repo-root",
+                str(REPO_ROOT),
+                "--home",
+                str(home),
+                "--codex-home",
+                str(codex_home),
+            )
+            with mock.patch.object(install, "probe_node_version", return_value=None):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(0, run_main("install", *common_args))
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                result = run_main("check", *common_args)
+
+            self.assertEqual(1, result)
+            self.assertIn("openspec", stderr.getvalue().lower())
+
+    def test_global_clean_removes_managed_openspec_prefix_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            home = (Path(tempdir) / "home").resolve()
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            common_args = (
+                "--scope",
+                "global",
+                "--repo-root",
+                str(REPO_ROOT),
+                "--home",
+                str(home),
+                "--codex-home",
+                str(codex_home),
+            )
+            self.assertEqual(0, run_main("install", *common_args))
+
+            sheaf_bin = install.sheaf_prefix(home) / "bin"
+            unmanaged = sheaf_bin / "keep-me"
+            unmanaged.write_text("stay\n", encoding="utf-8")
+            foreign = install.sheaf_prefix(home) / "vendor" / "other" / "file.txt"
+            foreign.parent.mkdir(parents=True)
+            foreign.write_text("foreign\n", encoding="utf-8")
+
+            self.assertEqual(0, run_main("clean", *common_args))
+
+            self.assertFalse(install.openspec_shim_path(home).exists())
+            self.assertFalse(install.openspec_package_path(home).exists())
+            self.assertTrue(unmanaged.is_file())
+            self.assertEqual("stay\n", unmanaged.read_text(encoding="utf-8"))
+            self.assertTrue(foreign.is_file())
 
 
 if __name__ == "__main__":
