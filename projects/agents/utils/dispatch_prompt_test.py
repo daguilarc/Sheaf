@@ -279,6 +279,26 @@ class DispatchPromptTestCase(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("nope", result.stderr)
 
+    def test_falls_through_to_older_version_that_has_the_template(self) -> None:
+        """A newer version missing this template must not mask an older one."""
+        self.seed_report()
+        home = self.tmp / "fallthrough"
+        cache = home / ".claude/plugins/cache/claude-plugins-official/superpowers"
+        self.write_templates(cache / "6.2.0" / "skills")
+        marker = "OLDER-VERSION-MARKER"
+        (cache / "6.2.0/skills/subagent-driven-development/task-reviewer-prompt.md").write_text(
+            make_template(REVIEWER_BODY + f"\n{marker}\n"), encoding="utf-8"
+        )
+        # 6.10.0 exists and has a skills/ tree, but not this template.
+        newer = cache / "6.10.0" / "skills" / "requesting-code-review"
+        newer.mkdir(parents=True)
+        newer.joinpath("code-reviewer.md").write_text(
+            make_template(CODE_REVIEWER_BODY), encoding="utf-8"
+        )
+        result = self.reviewer(root=None, env={"HOME": str(home)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(marker, Path(result.stdout.strip()).read_text(encoding="utf-8"))
+
     # ------------------------------------------------------------ extraction
 
     def test_emits_body_only(self) -> None:
@@ -374,6 +394,43 @@ class DispatchPromptTestCase(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--diff", result.stderr)
 
+    def test_substituted_value_containing_a_token_is_not_rescanned(self) -> None:
+        """A findings file quoting [DIFF_FILE] must survive verbatim."""
+        report = self.seed_report()
+        findings = self.repo / "findings.md"
+        findings.write_text(
+            "- The prompt still shows a literal [DIFF_FILE] token.\n", encoding="utf-8"
+        )
+        result = self.run_util(
+            "re-review", "--plan", str(self.plan), "--task", "1", "--round", "1",
+            "--brief", str(self.brief), "--findings", str(findings),
+            "--report", str(report), "--base", "HEAD", "--head", "HEAD",
+            "--diff", str(self.brief),
+            root=str(self.roots / "6.2.0" / "skills"),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rendered = Path(result.stdout.strip()).read_text(encoding="utf-8")
+        self.assertIn("a literal [DIFF_FILE] token", rendered)
+
+    def test_task_n_replacement_is_word_anchored(self) -> None:
+        """"Task Name" in body prose must not be mangled into "Task 1ame"."""
+        anchored = self.write_templates(
+            self.tmp / "anchored" / "skills",
+            {
+                ("subagent-driven-development", "implementer-prompt.md"):
+                    IMPLEMENTER_BODY + "\nRecord the Task Name in your report.\n"
+            },
+        )
+        result = self.run_util(
+            "implementer", "--plan", str(self.plan), "--task", "1",
+            "--name", "Thing", "--brief", str(self.brief),
+            root=str(anchored),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rendered = Path(result.stdout.strip()).read_text(encoding="utf-8")
+        self.assertIn("Record the Task Name in your report.", rendered)
+        self.assertIn("You are implementing Task 1: Thing", rendered)
+
     def test_derived_report_and_diff_are_used(self) -> None:
         report = self.seed_report()
         sha = self.short()
@@ -385,7 +442,7 @@ class DispatchPromptTestCase(unittest.TestCase):
 
     # ----------------------------------------------------------------- brief
 
-    def test_brief_is_required(self) -> None:
+    def test_brief_is_required_and_error_says_file_path(self) -> None:
         self.seed_report()
         result = self.run_util(
             "task-reviewer",
@@ -401,6 +458,7 @@ class DispatchPromptTestCase(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("--brief", result.stderr)
+        self.assertIn("file path", result.stderr)
 
     def test_missing_brief_file_is_rejected(self) -> None:
         self.seed_report()
@@ -459,8 +517,8 @@ class DispatchPromptTestCase(unittest.TestCase):
         self.assertIn("EXPLICIT-SENTINEL", rendered)
         self.assertNotIn("CONSTRAINTS-SENTINEL", rendered)
 
-    def test_constraints_rejected_for_template_without_slot(self) -> None:
-        result = self.run_util(
+    def code_reviewer(self, *extra: str):
+        return self.run_util(
             "code-reviewer",
             "--plan",
             str(self.plan),
@@ -472,13 +530,24 @@ class DispatchPromptTestCase(unittest.TestCase):
             "HEAD",
             "--head",
             "HEAD",
-            "--constraints",
-            str(self.brief),
+            *extra,
             root=str(self.roots / "6.2.0" / "skills"),
         )
+
+    def test_constraints_rejected_for_template_without_slot(self) -> None:
+        result = self.code_reviewer("--constraints", str(self.brief))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("code-reviewer", result.stderr)
         self.assertIn("--constraints", result.stderr)
+
+    def test_irrelevant_options_are_rejected_not_ignored(self) -> None:
+        """Silently ignoring --brief would let a caller think it was included."""
+        for option, value in (("--brief", str(self.brief)), ("--findings", str(self.brief)),
+                              ("--name", "Thing"), ("--task", "1")):
+            with self.subTest(option=option):
+                result = self.code_reviewer(option, value)
+                self.assertNotEqual(result.returncode, 0, f"{option} was accepted")
+                self.assertIn(option, result.stderr)
 
     def test_implementer_report_path_need_not_exist(self) -> None:
         result = self.run_util(
@@ -610,9 +679,28 @@ class RealTemplatesTestCase(unittest.TestCase):
                     self.assertNotIn("Subagent (general-purpose)", rendered)
                     self.assertNotIn("**Placeholders:**", rendered)
 
+    @staticmethod
+    def _version(name: str) -> tuple[int, ...] | None:
+        import re as _re
+
+        if not _re.fullmatch(r"\d+(\.\d+)*", name):
+            return None
+        return tuple(int(part) for part in name.split("."))
+
     def test_installed_task_reviewer_keeps_its_rubric(self) -> None:
+        # Order numerically, matching the utility — lexicographic sorting would
+        # inspect 6.2.0 while renders used 6.10.0.
+        entries = sorted(
+            (
+                (version, entry)
+                for entry in self.PLUGIN_ROOT.iterdir()
+                if entry.is_dir() and (version := self._version(entry.name)) is not None
+            ),
+            key=lambda pair: pair[0],
+            reverse=True,
+        )
         source = None
-        for entry in sorted(self.PLUGIN_ROOT.iterdir(), reverse=True):
+        for _, entry in entries:
             candidate = entry / "skills/subagent-driven-development/task-reviewer-prompt.md"
             if candidate.is_file():
                 source = candidate

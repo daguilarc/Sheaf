@@ -131,6 +131,12 @@ TEMPLATES: dict[str, Template] = {
 # Templates whose body carries "Task N" in prose rather than a bracket token.
 TASK_NUMBER_TOKEN = "Task N"
 
+# Options that are never template slots.
+GLOBAL_OPTIONS = {"--plan", "--out", "--templates-root"}
+
+# Every option that is a slot on at least one template.
+SLOT_OPTIONS = {slot.option for template in TEMPLATES.values() for slot in template.slots}
+
 
 class Fail(Exception):
     """A user-facing failure. Nothing is written when this is raised."""
@@ -145,36 +151,45 @@ def parse_version(name: str) -> tuple[int, ...] | None:
     return tuple(int(part) for part in name.split("."))
 
 
-def resolve_templates_root(explicit: str | None) -> tuple[Path, list[Path]]:
-    """Return (root, searched) where root contains the skill directories."""
+def installed_versions(root: Path) -> list[Path]:
+    """Version directories under `root`, highest first, ordered numerically."""
+    if not root.is_dir():
+        return []
+    found = [
+        (version, entry)
+        for entry in root.iterdir()
+        if entry.is_dir() and (version := parse_version(entry.name)) is not None
+    ]
+    return [entry for _, entry in sorted(found, key=lambda pair: pair[0], reverse=True)]
+
+
+def resolve_template_file(template: Template, explicit: str | None) -> Path:
+    """Locate the template file, preferring the highest version that HAS it."""
+    relative = Path(template.skill) / template.filename
     searched: list[Path] = []
 
     for candidate in (explicit, os.environ.get(TEMPLATES_ROOT_ENV)):
         if candidate:
             root = Path(candidate).expanduser()
-            searched.append(root)
-            if root.is_dir():
-                return root, searched
-            raise Fail(f"templates root does not exist: {root}")
+            if not root.is_dir():
+                raise Fail(f"templates root does not exist: {root}")
+            source = root / relative
+            if source.is_file():
+                return source
+            raise Fail(f"template file not found: {source}")
 
-    searched.append(PLUGIN_ROOT)
-    if PLUGIN_ROOT.is_dir():
-        versions = sorted(
-            (
-                (version, entry)
-                for entry in PLUGIN_ROOT.iterdir()
-                if entry.is_dir() and (version := parse_version(entry.name)) is not None
-            ),
-            reverse=True,
-        )
-        for _, entry in versions:
-            root = entry / "skills"
-            searched.append(root)
-            if root.is_dir():
-                return root, searched
+    # Fall through versions rather than stopping at the highest: a version that
+    # ships a skills/ tree without this template must not mask an older one
+    # that has it.
+    for entry in installed_versions(PLUGIN_ROOT):
+        source = entry / "skills" / relative
+        searched.append(source)
+        if source.is_file():
+            return source
 
+    searched.append(PLUGIN_ROOT / "<version>" / "skills" / relative)
     raise Fail(
-        "could not resolve a Superpowers templates root. Searched:\n  "
+        "could not resolve a Superpowers template. Searched:\n  "
         + "\n  ".join(str(path) for path in searched)
         + f"\nPass --templates-root or set {TEMPLATES_ROOT_ENV}."
     )
@@ -286,12 +301,30 @@ def slot_value(slot: Slot, raw: str) -> str:
     return raw
 
 
-def render(template: Template, name: str, args: argparse.Namespace) -> tuple[str, Path]:
-    root, _ = resolve_templates_root(args.templates_root)
-    source = root / template.skill / template.filename
-    if not source.is_file():
-        raise Fail(f"template file not found: {source}")
+def token_pattern(token: str) -> str:
+    # "Task N" is prose, not a bracketed token, so anchor it on word boundaries
+    # to leave text like "Task Name" alone.
+    return r"\bTask N\b" if token == TASK_NUMBER_TOKEN else re.escape(token)
 
+
+def substitute_once(body: str, values: dict[str, str]) -> tuple[str, int]:
+    """Replace every token in one pass; return (result, replacement count).
+
+    Sequential str.replace would rescan already-substituted text, so a value
+    that happens to contain another token — a findings file quoting
+    "[DIFF_FILE]", say — would be corrupted by a later replacement.
+    """
+    if not values:
+        return body, 0
+    tokens = sorted(values, key=len, reverse=True)
+    pattern = "|".join(token_pattern(token) for token in tokens)
+    # Every alternative matches its key exactly, including the anchored
+    # "Task N", so the matched text is always a valid lookup.
+    return re.subn(pattern, lambda match: values[match.group(0)], body)
+
+
+def render(template: Template, name: str, args: argparse.Namespace) -> tuple[str, Path]:
+    source = resolve_template_file(template, args.templates_root)
     body = extract_prompt_body(source.read_text(encoding="utf-8"), source)
 
     # Drift check before substituting: a renamed or removed upstream token must
@@ -311,25 +344,36 @@ def render(template: Template, name: str, args: argparse.Namespace) -> tuple[str
 
     supplied = _supplied(template, args, workspace)
 
+    values: dict[str, str] = {}
     for slot in template.slots:
         raw = supplied.get(slot.option)
         if raw is None:
             if slot.fallback is None:
+                detail = (
+                    " — supply an existing, non-empty file path"
+                    if slot.kind in {"path", "filetext"}
+                    else ""
+                )
                 raise Fail(
-                    f"{slot.option} is required for the {name} template "
+                    f"{slot.option} is required for the {name} template{detail} "
                     "(no value supplied and none could be derived)"
                 )
-            body = body.replace(slot.token, slot.fallback)
+            values[slot.token] = slot.fallback
             continue
-        body = body.replace(slot.token, slot_value(slot, raw))
+        values[slot.token] = slot_value(slot, raw)
 
     if template.task_token:
-        body = body.replace(TASK_NUMBER_TOKEN, f"Task {args.task}")
+        values[TASK_NUMBER_TOKEN] = f"Task {args.task}"
 
-    residual = [slot.token for slot in template.slots if slot.token in body]
-    if residual:
+    # Count what should be replaced before touching the body. Checking for
+    # surviving tokens afterwards would false-positive on a substituted value
+    # that legitimately quotes a token.
+    expected = sum(len(re.findall(token_pattern(token), body)) for token in values)
+    body, replaced = substitute_once(body, values)
+    if replaced != expected:
         raise Fail(
-            "internal error: placeholders survived substitution: " + ", ".join(residual)
+            f"internal error: substituted {replaced} of {expected} expected "
+            "placeholder occurrences"
         )
 
     return body, workspace / output_name(template, name, args)
@@ -431,10 +475,22 @@ def main(argv: list[str]) -> int:
             raise Fail(f"--task is required for the {args.template} template")
         if template.rounds and args.round is None:
             raise Fail(f"--round is required for the {args.template} template")
-        if args.constraints is not None and not any(
-            slot.option == "--constraints" for slot in template.slots
-        ):
-            raise Fail(f"--constraints is not accepted by the {args.template} template")
+
+        # Reject options this template has no slot for. Silently ignoring them
+        # would let a caller believe it passed a brief or findings that never
+        # reached the rendered prompt.
+        allowed = {slot.option for slot in template.slots} | GLOBAL_OPTIONS
+        if template.task_scoped:
+            allowed.add("--task")
+        if template.rounds:
+            allowed.add("--round")
+        for option in sorted(SLOT_OPTIONS | {"--task", "--round"}):
+            attr = option.lstrip("-").replace("-", "_")
+            if getattr(args, attr, None) is not None and option not in allowed:
+                raise Fail(
+                    f"{option} is not accepted by the {args.template} template "
+                    "(it has no matching placeholder)"
+                )
 
         body, default_out = render(template, args.template, args)
         out = Path(args.out).expanduser() if args.out else default_out
