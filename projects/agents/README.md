@@ -106,6 +106,7 @@ make agents-vendor-sync TOOL=superpowers REF=v6.2.0
 
 `vendor-sync` refreshes the offline vendor trees under `vendor/openspec` and
 `vendor/superpowers`. Pass `FORCE=1` to clobber local vendor modifications.
+Superpowers sync deletes `tree/.gitignore` so the repo-root vendor un-ignore wins.
 Install still runs separately via `make agents-install`.
 
 Default `install`, `check`, and `clean` operate on both repo-local and

@@ -200,5 +200,89 @@ class CheckoutGitRefTests(unittest.TestCase):
             self.assertTrue((dest / "package.json").is_file())
 
 
+class OpenspecLockfileReuseTests(unittest.TestCase):
+    def test_openspec_lockfile_matches_package_when_versions_equal(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            staged = Path(tempdir) / "package"
+            staged.mkdir()
+            (staged / "package.json").write_text(
+                '{"name":"@fission-ai/openspec","version":"1.4.1"}\n',
+                encoding="utf-8",
+            )
+            lockfile = Path(tempdir) / "package-lock.json"
+            lockfile.write_text(
+                '{"name":"@fission-ai/openspec","version":"1.4.1","lockfileVersion":3}\n',
+                encoding="utf-8",
+            )
+            self.assertTrue(
+                vendor_sync.openspec_lockfile_matches_package(staged, lockfile)
+            )
+
+    def test_openspec_lockfile_does_not_match_when_versions_differ(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            staged = Path(tempdir) / "package"
+            staged.mkdir()
+            (staged / "package.json").write_text(
+                '{"name":"@fission-ai/openspec","version":"1.5.0"}\n',
+                encoding="utf-8",
+            )
+            lockfile = Path(tempdir) / "package-lock.json"
+            lockfile.write_text(
+                '{"name":"@fission-ai/openspec","version":"1.4.1","lockfileVersion":3}\n',
+                encoding="utf-8",
+            )
+            self.assertFalse(
+                vendor_sync.openspec_lockfile_matches_package(staged, lockfile)
+            )
+
+    def test_install_uses_npm_install_when_lockfile_version_mismatches(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            staged = Path(tempdir) / "package"
+            staged.mkdir()
+            (staged / "package.json").write_text(
+                '{"name":"@fission-ai/openspec","version":"1.5.0"}\n',
+                encoding="utf-8",
+            )
+            lockfile = Path(tempdir) / "package-lock.json"
+            lockfile.write_text(
+                '{"name":"@fission-ai/openspec","version":"1.4.1","lockfileVersion":3}\n',
+                encoding="utf-8",
+            )
+            with mock.patch.object(vendor_sync, "run_checked") as run_checked:
+                vendor_sync.install_openspec_production_deps(
+                    staged,
+                    existing_lockfile=lockfile,
+                )
+            run_checked.assert_called_once_with(
+                ["npm", "install", "--omit=dev"],
+                cwd=staged,
+            )
+            self.assertFalse((staged / "package-lock.json").exists())
+
+    def test_install_uses_npm_ci_when_lockfile_version_matches(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            staged = Path(tempdir) / "package"
+            staged.mkdir()
+            (staged / "package.json").write_text(
+                '{"name":"@fission-ai/openspec","version":"1.4.1"}\n',
+                encoding="utf-8",
+            )
+            lockfile = Path(tempdir) / "package-lock.json"
+            lockfile.write_text(
+                '{"name":"@fission-ai/openspec","version":"1.4.1","lockfileVersion":3}\n',
+                encoding="utf-8",
+            )
+            with mock.patch.object(vendor_sync, "run_checked") as run_checked:
+                vendor_sync.install_openspec_production_deps(
+                    staged,
+                    existing_lockfile=lockfile,
+                )
+            run_checked.assert_called_once_with(
+                ["npm", "ci", "--omit=dev"],
+                cwd=staged,
+            )
+            self.assertTrue((staged / "package-lock.json").is_file())
+
+
 if __name__ == "__main__":
     unittest.main()

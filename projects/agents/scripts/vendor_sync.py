@@ -175,15 +175,42 @@ def checkout_git_ref(*, url: str, dest: Path, ref: str) -> None:
     run_checked(["git", "checkout", "--force", "FETCH_HEAD"], cwd=dest)
 
 
+def package_json_version(path: Path) -> str:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    version = str(data.get("version", "")).strip()
+    if not version:
+        raise RuntimeError(f"missing version in {path}")
+    return version
+
+
+def openspec_lockfile_matches_package(
+    staged_package: Path,
+    lockfile: Path,
+) -> bool:
+    """True when lockfile root version equals staged package.json version."""
+    if not lockfile.is_file():
+        return False
+    package_json = staged_package / "package.json"
+    if not package_json.is_file():
+        return False
+    lock_data = json.loads(lockfile.read_text(encoding="utf-8"))
+    lock_version = str(lock_data.get("version", "")).strip()
+    return lock_version == package_json_version(package_json)
+
+
 def install_openspec_production_deps(
     staged_package: Path,
     *,
     existing_lockfile: Path | None,
 ) -> None:
-    # npm pack omits package-lock.json. First sync uses npm install to generate a
-    # lockfile that is committed under vendor/; later syncs copy that lockfile
-    # into staging and run npm ci so the pin's lockfile determines node_modules.
-    if existing_lockfile is not None and existing_lockfile.is_file():
+    # npm pack omits package-lock.json. First sync (or a pin bump whose version
+    # no longer matches the committed lockfile) uses npm install to generate a
+    # fresh lockfile committed under vendor/. Re-sync of the same pin copies that
+    # lockfile into staging and runs npm ci so the lockfile determines node_modules.
+    if (
+        existing_lockfile is not None
+        and openspec_lockfile_matches_package(staged_package, existing_lockfile)
+    ):
         shutil.copy2(existing_lockfile, staged_package / "package-lock.json")
         run_checked(["npm", "ci", "--omit=dev"], cwd=staged_package)
         return
