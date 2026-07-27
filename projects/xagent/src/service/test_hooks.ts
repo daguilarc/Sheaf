@@ -9,10 +9,75 @@ export function isTestAdapterEnabled(): boolean {
   return process.env.XAGENT_TEST_ADAPTER === "fake";
 }
 
+function ParseSddReportTexts(): readonly string[]
+{
+  const raw = process.env.XAGENT_TEST_SDD_REPORTS;
+  if (raw === undefined || raw.trim().length === 0)
+  {
+    return ["complete final assistant message"];
+  }
+  const reports = raw.split("|").map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  if (reports.length === 0)
+  {
+    return ["complete final assistant message"];
+  }
+  return reports;
+}
+
+function CreateScriptedTurn(
+  reportText: string,
+  delayMs: number | undefined,
+  inputSequence: number,
+): AsyncIterable<AdapterEvent>
+{
+  async function* scriptedTurn(): AsyncIterable<AdapterEvent>
+  {
+    if (delayMs !== undefined)
+    {
+      await new Promise<void>((resolve) =>
+      {
+        setTimeout(resolve, delayMs);
+      });
+    }
+    yield {
+      type: "message.delta",
+      message_id: `message_test_hook_${inputSequence}`,
+      role: "assistant",
+      delta: "packaged test progress",
+    };
+    yield {
+      type: "tool.started",
+      tool_call_id: `tool_test_hook_${inputSequence}`,
+      name: "fake_tool",
+      input: {},
+    };
+    yield {
+      type: "tool.completed",
+      tool_call_id: `tool_test_hook_${inputSequence}`,
+      name: "fake_tool",
+      status: "completed",
+      output: { ok: true },
+    };
+    yield {
+      type: "message.completed",
+      message_id: `message_test_hook_${inputSequence}`,
+      role: "assistant",
+      text: reportText,
+    };
+    yield {
+      type: "turn.completed",
+      final_text: reportText,
+      provider_thread_id: "fake-thread-1",
+    };
+  }
+  return scriptedTurn();
+}
+
 export function createTestAdapterFactory(): (harness: HarnessName) => HarnessAdapter {
   return () => {
     const delayMs = parsePositiveInteger(process.env.XAGENT_TEST_DELAY_MS);
     const spawnOwnedChild = process.env.XAGENT_TEST_OWNED_CHILD === "1";
+    const reportTexts = ParseSddReportTexts();
     let ownedChild: ChildProcess | undefined;
     let processIdentity = undefined as ReturnType<typeof captureOwnedProcessIdentity>;
 
@@ -27,46 +92,12 @@ export function createTestAdapterFactory(): (harness: HarnessName) => HarnessAda
       }
     }
 
-    async function* scriptedTurn(): AsyncIterable<AdapterEvent> {
-      if (delayMs !== undefined) {
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, delayMs);
-        });
-      }
-      yield {
-        type: "message.delta",
-        message_id: "message_test_hook",
-        role: "assistant",
-        delta: "packaged test progress",
-      };
-      yield {
-        type: "tool.started",
-        tool_call_id: "tool_test_hook",
-        name: "fake_tool",
-        input: {},
-      };
-      yield {
-        type: "tool.completed",
-        tool_call_id: "tool_test_hook",
-        name: "fake_tool",
-        status: "completed",
-        output: { ok: true },
-      };
-      yield {
-        type: "message.completed",
-        message_id: "message_test_hook",
-        role: "assistant",
-        text: "complete final assistant message",
-      };
-      yield {
-        type: "turn.completed",
-        final_text: "complete final assistant message",
-        provider_thread_id: "fake-thread-1",
-      };
-    }
+    const scriptedEvents = reportTexts.map((reportText, index) =>
+      CreateScriptedTurn(reportText, delayMs, index + 1),
+    );
 
     const adapter = new FakeHarnessAdapter({
-      scriptedEvents: [scriptedTurn()],
+      scriptedEvents,
       includeDeltas: true,
       includeToolEvents: true,
       ...(processIdentity === undefined ? {} : { processIdentity }),

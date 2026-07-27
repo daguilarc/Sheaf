@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,9 +8,15 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import { FakeHarnessAdapter } from "../src/adapters/fake.js";
+import type { AdapterEvent } from "../src/adapters/types.js";
 import { createXagentMcpHandler } from "../src/service/mcp.js";
 import { XagentRunManager } from "../src/service/run_manager.js";
-import type { SddManager } from "../src/service/sdd_manager.js";
+import {
+  AsSddRunManagerPort,
+  CreateSddManager,
+  type SddManager,
+} from "../src/service/sdd_manager.js";
+import { CreateSddStore } from "../src/service/sdd_store.js";
 import {
   createShutdownController,
   createXagentServer,
@@ -40,39 +46,113 @@ const testPolicy: SupervisionPolicy = {
   watchdog: {},
 };
 
-function CreateDiscoverySddManager(runManager: XagentRunManager): SddManager
+function CreateTestSddManager(
+  runManager: XagentRunManager,
+  repoRoot: string,
+  logRoot: string,
+  renderPrompt?: (input: { role: string }) => Promise<{ prompt: { path: string; text: string }; metadata: { promptPath: string } }>,
+): { manager: SddManager; store: ReturnType<typeof CreateSddStore> }
 {
-  return {
-    async Start()
+  const store = CreateSddStore(logRoot);
+  const manager = CreateSddManager({
+    store,
+    runManager: AsSddRunManagerPort(runManager),
+    repoRoot,
+    async canonicalizeCwd(cwd: string): Promise<string>
     {
-      throw new Error("not used in discovery tests");
+      return cwd;
     },
-    async Followup()
+    renderPrompt: renderPrompt ?? (async (input) =>
     {
-      throw new Error("not used in discovery tests");
-    },
-    async Await()
-    {
-      throw new Error("SDD await is not implemented yet.");
-    },
-    async Close()
-    {
-      throw new Error("SDD close is not implemented yet.");
-    },
-    async MessageGeneric(input)
-    {
-      return runManager.messageRun(input);
-    },
-    async AwaitGeneric(input, signal)
-    {
-      return runManager.awaitRun(input, signal);
-    },
-    async CloseGeneric(input)
-    {
-      return runManager.closeRun(input);
-    },
-  };
+      const promptPath = path.join(repoRoot, `dispatch-${input.role}.md`);
+      return {
+        prompt: {
+          path: promptPath,
+          text: `Rendered ${input.role} prompt.\n`,
+        },
+        metadata: {
+          promptPath,
+        },
+      };
+    }),
+  });
+  return { manager, store };
 }
+
+test("xagent_sdd_start and xagent_sdd_await persist the sanitized report before returning", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-mcp-sdd-"));
+  const logRoot = path.join(repoRoot, "data", "xagent");
+  const cwd = path.join(repoRoot, "work");
+  await mkdir(cwd, { recursive: true });
+  const planPath = path.join(cwd, "plan.md");
+  const briefPath = path.join(cwd, "brief.md");
+  const reportPath = path.join(cwd, "report.md");
+  await writeFile(planPath, "# plan\n", "utf8");
+  await writeFile(briefPath, "Brief for MCP SDD smoke.\n", "utf8");
+  await writeFile(reportPath, "mutable artifact text\n", "utf8");
+
+  async function* scriptedTurn(): AsyncIterable<AdapterEvent> {
+    yield {
+      type: "message.completed",
+      message_id: "message_mcp_sdd",
+      role: "assistant",
+      text: "sanitized MCP SDD report",
+    };
+    yield {
+      type: "turn.completed",
+      final_text: "sanitized MCP SDD report",
+      provider_thread_id: "fake-thread-mcp-sdd",
+    };
+  }
+
+  await withMcpService(async ({ client }) => {
+    const started = structuredToolBody(asToolCallResult(
+      await client.callTool({
+        name: "xagent_sdd_start",
+        arguments: {
+          role: "implementer",
+          cwd,
+          plan: planPath,
+          agent: "fake-model",
+          harness: "codex",
+          effort: "high",
+          task: 5,
+          name: "mcp-sdd-smoke",
+          brief: briefPath,
+          report: reportPath,
+        },
+      }),
+    ));
+    assert.equal(started.isError ?? false, false);
+    const agentId = started.agent_id as string;
+
+    const awaited = structuredToolBody(asToolCallResult(
+      await client.callTool({
+        name: "xagent_sdd_await",
+        arguments: {
+          agent_id: agentId,
+          after_sequence: started.sequence as number,
+          deadline_seconds: 30,
+        },
+      }),
+    ));
+    assert.equal(awaited.event, "turn.completed");
+    assert.equal((awaited.report as { text?: string } | undefined)?.text, "sanitized MCP SDD report");
+    assert.equal(JSON.stringify(awaited).includes("Brief for MCP SDD smoke"), false);
+
+    const closed = structuredToolBody(asToolCallResult(
+      await client.callTool({
+        name: "xagent_sdd_close",
+        arguments: { agent_id: agentId },
+      }),
+    ));
+    assert.deepEqual(closed, { agent_id: agentId, closed: true });
+  }, {
+    repoRoot,
+    logRoot,
+    adapterFactory: () => new FakeHarnessAdapter({ scriptedEvents: [scriptedTurn()] }),
+  });
+});
 
 test("Streamable HTTP MCP initializes and discovers exactly the six generic tools without sddManager", async () => {
   await withMcpService(async ({ port, client }) => {
@@ -222,16 +302,30 @@ async function withMcpService(
     runManager: XagentRunManager;
     client: Client;
   }) => Promise<void>,
-  options: { readonly includeSddManager?: boolean } = {},
+  options: {
+    readonly includeSddManager?: boolean;
+    readonly repoRoot?: string;
+    readonly logRoot?: string;
+    readonly adapterFactory?: () => FakeHarnessAdapter;
+  } = {},
 ): Promise<void> {
   const includeSddManager = options.includeSddManager ?? true;
+  const repoRoot = options.repoRoot ?? process.cwd();
+  const logRoot = options.logRoot ?? path.join(tmpdir(), `xagent-mcp-${Math.random().toString(36).slice(2)}`);
   const runManager = new XagentRunManager({
-    repoRoot: process.cwd(),
-    logRoot: path.join(tmpdir(), `xagent-mcp-${Math.random().toString(36).slice(2)}`),
-    adapterFactory: () => new FakeHarnessAdapter(),
+    repoRoot,
+    logRoot,
+    adapterFactory: options.adapterFactory ?? (() => new FakeHarnessAdapter()),
     policy: testPolicy,
   });
-  const sddManager = includeSddManager ? CreateDiscoverySddManager(runManager) : undefined;
+  let sddStore: ReturnType<typeof CreateSddStore> | undefined;
+  let sddManager: SddManager | undefined;
+  if (includeSddManager)
+  {
+    const created = CreateTestSddManager(runManager, repoRoot, logRoot);
+    sddManager = created.manager;
+    sddStore = created.store;
+  }
   let server: XagentServer | undefined;
   const shutdownController = createShutdownController({
     closeRuns: async () => {
@@ -281,5 +375,6 @@ async function withMcpService(
       await server.close();
     }
     await runManager.closeAll();
+    sddStore?.Close();
   }
 }

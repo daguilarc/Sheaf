@@ -24,7 +24,7 @@ export class CursorAdapter {
     }
 }
 function buildCursorCommand(context, state, options) {
-    const args = ["--print", "--output-format", "stream-json", "--stream-partial-output", "--trust"];
+    const args = ["--print", "--output-format", "stream-json", "--stream-partial-output", "--trust", "--force"];
     if (state.providerThreadId !== undefined) {
         args.push("--resume", state.providerThreadId);
     }

@@ -40,6 +40,10 @@ EXPECTED_MCP_TOOL_NAMES = (
     "xagent_inspect",
     "xagent_interrupt",
     "xagent_message",
+    "xagent_sdd_await",
+    "xagent_sdd_close",
+    "xagent_sdd_followup",
+    "xagent_sdd_start",
     "xagent_start",
 )
 
@@ -98,6 +102,52 @@ def create_isolated_sheaf_root(parent: Path) -> Path:
         encoding="utf-8",
     )
     return sheaf_root
+
+
+def create_sdd_capable_sheaf_root(parent: Path) -> tuple[Path, Path, Path]:
+    sheaf_root = create_isolated_sheaf_root(parent)
+    projects_link = sheaf_root / "projects"
+    if not projects_link.exists():
+        projects_link.symlink_to(REPO_ROOT / "projects", target_is_directory=True)
+    templates_root = parent / "superpowers-templates" / "6.2.0" / "skills"
+    implementer_template = templates_root / "subagent-driven-development" / "implementer-prompt.md"
+    implementer_template.parent.mkdir(parents=True, exist_ok=True)
+    implementer_template.write_text(
+        "\n".join(
+            [
+                "# Implementer",
+                "",
+                "```",
+                "Subagent (general-purpose):",
+                '  description: "Do the thing"',
+                "  model: [MODEL — REQUIRED: choose per SKILL.md]",
+                "  prompt: |",
+                "    You are implementing Task N: [task name]",
+                "    Read your task brief first: [BRIEF_FILE]",
+                "    [Scene-setting: where this fits, dependencies, architectural context]",
+                "    Work from: [directory]",
+                "    Write your full report to [REPORT_FILE]",
+                "```",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    work = parent / "work"
+    work.mkdir()
+    plan = work / "plan.md"
+    brief = work / "brief.md"
+    report = work / "report.md"
+    plan.write_text("# Plan\n\n## Task 1: Smoke\n\nDo it.\n", encoding="utf-8")
+    brief.write_text("Packaged SDD brief for smoke.\n", encoding="utf-8")
+    report.write_text("mutable artifact must not be stored\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=work, check=True)
+    subprocess.run(["git", "config", "user.email", "xagent@test"], cwd=work, check=True)
+    subprocess.run(["git", "config", "user.name", "xagent"], cwd=work, check=True)
+    (work / "seed.txt").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=work, check=True)
+    subprocess.run(["git", "commit", "-qm", "seed"], cwd=work, check=True)
+    return sheaf_root, work, templates_root
 
 
 def spawn_isolated_xagent_service(
@@ -326,6 +376,109 @@ console.log(JSON.stringify({{ event: awaitParsed.event, run_id: runId, sequence:
     payload = json.loads(result.stdout.strip())
     if payload.get("event") != "turn.completed":
         raise RuntimeError(f"await probe did not deliver turn.completed: {payload!r}")
+
+
+def run_packaged_sdd_probe(
+    service_url: str,
+    log_root: Path,
+    cwd: Path,
+    *,
+    plan_path: Path,
+    brief_path: Path,
+    report_path: Path,
+) -> None:
+    probe = f"""
+import {{ join }} from "node:path";
+import Database from "better-sqlite3";
+import {{ Client }} from "@modelcontextprotocol/sdk/client/index.js";
+import {{ StreamableHTTPClientTransport }} from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+
+const transport = new StreamableHTTPClientTransport(new URL({service_url!r}));
+const client = new Client({{ name: "xagent-plugin-sdd-test", version: "0.0.0" }});
+await client.connect(transport);
+
+const started = await client.callTool({{
+  name: "xagent_sdd_start",
+  arguments: {{
+    role: "implementer",
+    cwd: {str(cwd)!r},
+    plan: {str(plan_path)!r},
+    agent: "fake-model",
+    harness: "codex",
+    effort: "high",
+    task: 1,
+    name: "packaged-sdd-smoke",
+    brief: {str(brief_path)!r},
+    report: {str(report_path)!r},
+  }},
+}});
+const startBody = started.structuredContent ?? started.content?.[0]?.text;
+const startParsed = typeof startBody === "string" ? JSON.parse(startBody) : startBody;
+const agentId = startParsed.agent_id;
+if (typeof agentId !== "string" || agentId.length === 0) {{
+  throw new Error(`xagent_sdd_start did not return an agent_id: ${{JSON.stringify(startParsed)}}`);
+}}
+
+const databasePath = join({str(log_root)!r}, "sdd.sqlite");
+const awaitPromise = client.callTool({{
+  name: "xagent_sdd_await",
+  arguments: {{
+    agent_id: agentId,
+    after_sequence: startParsed.sequence,
+    deadline_seconds: 30,
+  }},
+}});
+
+const winner = await Promise.race([
+  (async () => {{
+    while (true) {{
+      try {{
+        const database = new Database(databasePath, {{ readonly: true }});
+        const row = database
+          .prepare("SELECT report_text FROM sdd_turns WHERE agent_id = ? AND turn_number = 1")
+          .get(agentId);
+        database.close();
+        if (row?.report_text === "packaged sanitized SDD report") {{
+          return "db";
+        }}
+      }} catch {{
+        // The database may not exist until the first SDD write.
+      }}
+      await new Promise((resolve) => setImmediate(resolve));
+    }}
+  }})(),
+  awaitPromise.then(() => "mcp"),
+]);
+if (winner !== "db") {{
+  throw new Error("report_text was not present in SQLite before xagent_sdd_await returned");
+}}
+
+const awaited = await awaitPromise;
+const awaitBody = awaited.structuredContent ?? awaited.content?.[0]?.text;
+const awaitParsed = typeof awaitBody === "string" ? JSON.parse(awaitBody) : awaitBody;
+if (awaitParsed.event !== "turn.completed") {{
+  throw new Error(`xagent_sdd_await did not settle on turn.completed: ${{JSON.stringify(awaitParsed)}}`);
+}}
+if (awaitParsed.report?.text !== "packaged sanitized SDD report") {{
+  throw new Error(`unexpected SDD report: ${{JSON.stringify(awaitParsed.report)}}`);
+}}
+
+await client.callTool({{ name: "xagent_sdd_close", arguments: {{ agent_id: agentId }} }});
+await client.close();
+console.log(JSON.stringify({{ event: awaitParsed.event, agent_id: agentId }}));
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", probe],
+        cwd=REPO_ROOT / "projects" / "xagent",
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+        timeout=60,
+    )
+    payload = json.loads(result.stdout.strip())
+    if payload.get("event") != "turn.completed":
+        raise RuntimeError(f"sdd probe did not deliver turn.completed: {payload!r}")
 
 
 class PackageXagentOutputTests(unittest.TestCase):
@@ -695,6 +848,50 @@ class PackageXagentOutputTests(unittest.TestCase):
                 run_packaged_await_probe(
                     f"http://127.0.0.1:{port}/mcp",
                     cwd,
+                )
+            finally:
+                if service_process.poll() is None:
+                    if port is not None:
+                        shutdown_xagent_service(service_process, port)
+                    else:
+                        service_process.terminate()
+                        try:
+                            service_process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            service_process.kill()
+                            service_process.wait(timeout=5)
+                if service_process.stderr is not None:
+                    service_process.stderr.close()
+
+    def test_packaged_mcp_sdd_smoke_persists_report_before_return(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="xagent-package-sdd-test-") as tempdir:
+            destination = Path(tempdir) / "package"
+            package_xagent.build_package(destination)
+
+            sheaf_root, work, templates_root = create_sdd_capable_sheaf_root(Path(tempdir))
+            log_root = sheaf_root / "data" / "xagent"
+            plan_path = work / "plan.md"
+            brief_path = work / "brief.md"
+            report_path = work / "report.md"
+            service_process = spawn_isolated_xagent_service(
+                sheaf_root,
+                extra_env={
+                    "XAGENT_TEST_ADAPTER": "fake",
+                    "XAGENT_TEST_DELAY_MS": "800",
+                    "XAGENT_TEST_SDD_REPORTS": "packaged sanitized SDD report",
+                    "SUPERPOWERS_TEMPLATES_ROOT": str(templates_root),
+                },
+            )
+            port: int | None = None
+            try:
+                port = wait_for_service_port(service_process)
+                run_packaged_sdd_probe(
+                    f"http://127.0.0.1:{port}/mcp",
+                    log_root,
+                    work,
+                    plan_path=plan_path,
+                    brief_path=brief_path,
+                    report_path=report_path,
                 )
             finally:
                 if service_process.poll() is None:

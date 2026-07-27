@@ -40,7 +40,7 @@ Returns `{ "exiting": true }`, stops accepting new connections, closes every own
 
 The control plane is unauthenticated: `/mcp` has no token, no peer-credential check, and no unix-socket option. The bind host and DNS-rebinding guards mitigate the LAN and browser vectors, but loopback is not the same as same-user trust — any local account on the host can POST to `127.0.0.1:9005/mcp` and start a fully unsandboxed agent (`xagent_start` accepts any absolute existing `cwd`, and the Codex adapter passes `--dangerously-bypass-approvals-and-sandbox`) running as the service's user. This is an acceptable posture on a single-user dev machine and is the explicit trust assumption of the current design; a shared-token or unix-socket transport is the cheap hardening if that assumption ever breaks (review I3).
 
-The six MCP tools exposed by the service:
+The ten MCP tools exposed by the service:
 
 1. `xagent_start` — create a run from an absolute existing `cwd`, a `prompt`, a `harness`, and an optional `mode`/`policy`.
 2. `xagent_message` — send a new user message to a running worker.
@@ -48,6 +48,117 @@ The six MCP tools exposed by the service:
 4. `xagent_inspect` — return the compact phase/sequence snapshot for a run without blocking.
 5. `xagent_interrupt` — request a cooperative interrupt of the active turn.
 6. `xagent_close` — close the run and release owned process resources.
+7. `xagent_sdd_start` — render a Superpowers SDD role prompt, reserve the ledger row, and start the owned provider session.
+8. `xagent_sdd_followup` — submit a fix or re-review follow-up on an existing SDD session.
+9. `xagent_sdd_await` — block until the next deliverable SDD turn completion after `after_sequence`.
+10. `xagent_sdd_close` — close the SDD provider session and record `closed_at` in the ledger.
+
+## Superpowers SDD facade
+
+Superpowers subagent-driven development (SDD) uses four facade tools on top of the generic supervision stack. Controllers MUST use these tools for implementer, task-reviewer, fix, and re-review turns instead of assembling raw prompts or calling `xagent_message` on SDD-owned runs.
+
+### Tool contracts
+
+#### `xagent_sdd_start`
+
+Input (discriminated by `role`):
+
+- Common fields: absolute existing `cwd`, absolute `plan`, `agent`, `harness`, `effort`, optional `policy`.
+- `implementer`: `task`, `name`, absolute `brief`, optional absolute `report`, optional `context`.
+- `task-reviewer`: `task`, absolute `brief`, absolute `report`, `base`, `head`, optional absolute `constraints`, optional absolute `diff`.
+- `code-reviewer`: absolute `review_brief`, `description`, `base`, `head`.
+
+Success output:
+
+```json
+{
+  "agent_id": "<stable xagent run id>",
+  "sequence": <pre-turn cursor>,
+  "prompt_path": "<absolute rendered prompt path>",
+  "brief_path": "<absolute brief path>",
+  "report_path": "<absolute report path when the role uses one>"
+}
+```
+
+The result never includes copied brief text, findings text, or rendered prompt bodies.
+
+#### `xagent_sdd_followup`
+
+Input (discriminated by `kind`):
+
+- `fix` (implementer sessions only): `agent_id`, `round`, absolute `findings`, `findings_text`, non-empty `tests` array.
+- `re-review` (task-reviewer sessions only): `agent_id`, `round`, absolute `findings`, `base`, `head`, optional absolute `diff`.
+
+Success output:
+
+```json
+{
+  "agent_id": "<same run id>",
+  "sequence": <pre-turn cursor>,
+  "turn_number": <ledger turn number>
+}
+```
+
+#### `xagent_sdd_await`
+
+Input:
+
+```json
+{
+  "agent_id": "<stable xagent run id>",
+  "after_sequence": <int>,
+  "deadline_seconds": <optional, default 7000, max 7000>
+}
+```
+
+Success output matches the generic await completion envelope:
+
+```json
+{
+  "run_id": "<agent_id>",
+  "event": "turn.completed",
+  "sequence": <completed cursor>,
+  "report": { "text": "<sanitized final assistant report>" }
+}
+```
+
+Deadline and attention events return the same compact shapes as `xagent_await` and do not complete the open SDD turn.
+
+#### `xagent_sdd_close`
+
+Input: `{ "agent_id": "<stable xagent run id>" }`
+
+Success output: `{ "agent_id": "<id>", "closed": true }`
+
+### Prompt rendering prerequisites
+
+SDD start and re-review follow-ups render prompts through the trusted Python executable at `<service repoRoot>/projects/agents/utils/dispatch-prompt`. The renderer subprocess uses the canonicalized `cwd` from the start request as its working directory; the controller's own cwd is not consulted.
+
+Rendering also requires an installed Superpowers template tree. By default `dispatch-prompt` reads templates from the installed Superpowers plugin cache; operators may pin templates with `SUPERPOWERS_TEMPLATES_ROOT` or the renderer's `--templates-root` flag (surfaced through the SDD prompt layer for tests). Missing Python 3, a missing trusted renderer, or missing templates fail before any ledger row or provider process is created.
+
+### SDD ledger database
+
+- Path: `<service logRoot>/sdd.sqlite` where `logRoot` is `resolveXagentLogRoot(repoRoot)` (typically `<sheafRoot>/data/xagent`).
+- Schema version: `user_version = 1` with `sdd_sessions`, `sdd_turns`, `sdd_turns_agent_status`, and the `sdd_dispatch_log` view.
+- Permissions: the log root directory and `sdd.sqlite` (+ WAL sidecars) are owner-only (`0700` directory, `0600` files).
+- Status transitions:
+  - turns: `prepared` → `running` → `completed` | `failed` | `abandoned`
+  - sessions: `closed_at` set only after the provider session closes successfully
+- `resume_sequence` records the supervision cursor immediately before the turn is submitted. It is not a provider JSONL position; the ledger stores no JSONL offsets or byte positions.
+- `report_text` stores the sanitized final assistant report delivered through xagent for that turn. It is not the mutable Superpowers report artifact on disk; implementer fix rounds may append to the report file, but each completed turn keeps its own immutable delivered report in SQLite.
+
+### Report-before-return and retry
+
+On `xagent_sdd_await` (and on `xagent_await` for SDD-owned `run_id`s), the service writes `report_text`, `completed_sequence`, `completed_at`, and `completed` status in one transaction before the MCP tool returns `report.text`. If that transaction fails, the tool returns `sdd_persistence_failed` without advancing the caller's cursor; the same durable completion can be retried safely once persistence succeeds.
+
+### Startup abandonment reconciliation
+
+After xagent run-phase reconciliation on service start, the SDD store marks any `prepared` or `running` turn `abandoned` when its corresponding run was reconciled to a terminal phase without a delivered report. Completed turns with stored reports are preserved.
+
+### Generic-tool safety hooks
+
+- `xagent_message` on an SDD-owned `run_id` returns `sdd_followup_required` and names `xagent_sdd_followup`.
+- `xagent_await` and `xagent_close` on SDD-owned `run_id`s route through the same report-before-return and close-after-provider hooks as the SDD facade tools.
 
 ## Final envelope
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import path from "node:path";
 import { harnessNames, outputModes, thinkingLevels } from "../events.js";
 export const x_DefaultAwaitDeadlineSeconds = 7000;
 export const x_MaxAwaitDeadlineSeconds = 7000;
@@ -10,7 +11,12 @@ export class ToolValidationError extends Error {
         this.structured = structured;
     }
 }
-const CwdSchema = z.string().min(1).describe("Absolute path to an existing working directory");
+export const CwdSchema = z.string().min(1).describe("Absolute path to an existing working directory");
+const x_GeneratedAgentIdPattern = /^xrun_[0-9]{17}_[0-9a-f]{8}$/;
+export const AgentIdSchema = z
+    .string()
+    .min(1)
+    .regex(x_GeneratedAgentIdPattern, "agent_id must be a generated xagent run id");
 const WatchdogPolicySchema = z
     .object({
     inputLimitBytes: z.number().int().positive().optional(),
@@ -26,11 +32,119 @@ const WatchdogPolicySchema = z
     maxBudgetUsd: z.number().positive().optional(),
 })
     .strict();
-const SupervisionPolicySchema = z
+export const SupervisionPolicySchema = z
     .object({
     silenceTimeoutMs: z.number().int().positive(),
     hardDeadlineMs: z.number().int().positive().optional(),
     watchdog: WatchdogPolicySchema.default({}),
+})
+    .strict();
+const SddArtifactPathSchema = z
+    .string()
+    .min(1)
+    .superRefine((value, ctx) => {
+    if (!path.isAbsolute(value)) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "path must be absolute",
+        });
+        return;
+    }
+    if (value.split(/[\\/]/).includes("..")) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "path must not contain traversal segments",
+        });
+    }
+});
+export const SddAbsolutePathSchema = SddArtifactPathSchema;
+const SddAssignmentFields = {
+    cwd: CwdSchema,
+    plan: SddArtifactPathSchema,
+    agent: z.string().min(1),
+    harness: z.enum(harnessNames),
+    effort: z.enum(thinkingLevels),
+    policy: SupervisionPolicySchema.optional(),
+};
+export const ImplementerStartSchema = z
+    .object({
+    role: z.literal("implementer"),
+    ...SddAssignmentFields,
+    task: z.number().int().positive(),
+    name: z.string().min(1),
+    brief: SddArtifactPathSchema,
+    report: SddArtifactPathSchema.optional(),
+    context: z.string().min(1).optional(),
+})
+    .strict();
+export const TaskReviewerStartSchema = z
+    .object({
+    role: z.literal("task-reviewer"),
+    ...SddAssignmentFields,
+    task: z.number().int().positive(),
+    brief: SddArtifactPathSchema,
+    report: SddArtifactPathSchema,
+    base: z.string().min(1),
+    head: z.string().min(1),
+    constraints: SddArtifactPathSchema.optional(),
+    diff: SddArtifactPathSchema.optional(),
+})
+    .strict();
+export const CodeReviewerStartSchema = z
+    .object({
+    role: z.literal("code-reviewer"),
+    ...SddAssignmentFields,
+    review_brief: SddArtifactPathSchema,
+    description: z.string().min(1),
+    base: z.string().min(1),
+    head: z.string().min(1),
+})
+    .strict();
+export const XagentSddStartInputSchema = z.discriminatedUnion("role", [
+    ImplementerStartSchema,
+    TaskReviewerStartSchema,
+    CodeReviewerStartSchema,
+]);
+export const FixFollowupSchema = z
+    .object({
+    kind: z.literal("fix"),
+    agent_id: AgentIdSchema,
+    round: z.number().int().positive(),
+    findings: SddArtifactPathSchema,
+    findings_text: z.string().min(1),
+    tests: z.array(z.string().min(1)).min(1),
+})
+    .strict();
+export const ReReviewFollowupSchema = z
+    .object({
+    kind: z.literal("re-review"),
+    agent_id: AgentIdSchema,
+    round: z.number().int().positive(),
+    findings: SddArtifactPathSchema,
+    base: z.string().min(1),
+    head: z.string().min(1),
+    diff: SddArtifactPathSchema.optional(),
+})
+    .strict();
+export const XagentSddFollowupInputSchema = z.discriminatedUnion("kind", [
+    FixFollowupSchema,
+    ReReviewFollowupSchema,
+]);
+export const XagentSddAwaitInputSchema = z
+    .object({
+    agent_id: AgentIdSchema,
+    after_sequence: z.number().int().min(0),
+    deadline_seconds: z
+        .number()
+        .int()
+        .positive()
+        .max(x_MaxAwaitDeadlineSeconds)
+        .default(x_DefaultAwaitDeadlineSeconds),
+})
+    .strict();
+export const XagentSddCloseInputSchema = z
+    .object({
+    agent_id: AgentIdSchema,
 })
     .strict();
 export const XagentStartInputSchema = z
