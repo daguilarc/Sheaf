@@ -31,9 +31,9 @@ These rules apply to every subagent dispatched anywhere in this workflow:
   Do not discard an implementer after its first report or a reviewer after
   its first verdict: send small fixes back to the same implementer session
   and re-reviews back to the same reviewer session (native subagents are
-  resumable; xagent sessions stay open via their persistent stdin). Start
-  fresh agents per task, not per fix round. Close nothing until the task
-  passes both verdicts.
+  resumable; xagent SDD sessions stay open via `agent_id` and
+  `xagent_sdd_followup`). Start fresh agents per task, not per fix round.
+  Close nothing until the task passes both verdicts.
 - **Dispatch the full brief, never a summary.** When dispatching an
   implementer or reviewer, hand it the complete task brief / review brief as
   a file and point at it verbatim. Do not paraphrase, condense, or summarize
@@ -42,9 +42,12 @@ These rules apply to every subagent dispatched anywhere in this workflow:
   acceptance criteria live in the brief file; the dispatch prompt adds only
   scene-setting, cross-task interfaces, and the report contract.
 
-## Controller wait discipline
+## Pre-plan coordination
 
-These rules apply to every subagent the workflow coordinates, native or xagent:
+These rules apply to pre-plan OpenSpec review, decomposition, plan generation,
+and other helpers that run before a written Superpowers SDD plan task exists.
+They do not fabricate an SDD plan or task identity solely to enter the SDD
+ledger.
 
 - **Prefer native harness subagents when the assigned model is available.**
   Native subagents are not the default transport for cross-provider work, and
@@ -54,12 +57,15 @@ These rules apply to every subagent the workflow coordinates, native or xagent:
   do controller-only work until it is exhausted, then enter one long wait.
 - **Native subagents use one long native mailbox wait.** Do not repeat the
   harness default short timeout merely to observe unchanged state.
-- **Xagent subagents use service MCP, not terminal polling.** Verify Conductor
-  reports xagent healthy at `127.0.0.1:9005`, call `xagent_start`, do
-  independent work, then one long `xagent_await` with the returned
+- **Cross-provider pre-plan review uses generic xagent service MCP.** Verify
+  Conductor reports xagent healthy at `127.0.0.1:9005`, call `xagent_start`,
+  do independent work, then one long `xagent_await` with the returned
   `after_sequence` cursor. Consume the sanitized final assistant report from
-  `report.text`. Do not poll `write_stdin`, `xagent list`, xagent logs, or
-  unchanged status at a short fixed interval.
+  `report.text`. Use `xagent_message` only for unstructured non-SDD follow-up
+  messages on generic runs. The quiet `xagent supervise` service-client path is
+  a generic transport fallback when plugin MCP discovery is unavailable; it is
+  not for Superpowers SDD. Do not poll `write_stdin`, `xagent list`, xagent
+  logs, or unchanged status at a short fixed interval.
 - **Status inspection is reason-gated.** Direct `list_agents`, log, transcript,
   or MCP inspect checks happen only after attention, a long wait deadline, or
   an explicit user status request — never as a fixed-frequency polling loop.
@@ -75,6 +81,50 @@ These rules apply to every subagent the workflow coordinates, native or xagent:
   the Conductor-managed xagent service, OpenSpec, or Superpowers tooling is
   broken, stop and surface broken agentic infrastructure instead of working
   around it.
+
+## Superpowers SDD task execution
+
+Once a written Superpowers plan exists, every implementer, task reviewer, fix,
+re-review, and final whole-branch reviewer turn MUST use the xagent SDD MCP
+facade. The facade renders each turn through the trusted
+`dispatch-prompt` executable in the service checkout; controllers pass brief,
+report, and assignment metadata — never the rendered prompt body.
+
+Required SDD flow per turn:
+
+```text
+xagent_sdd_start
+→ independent controller work
+→ one long xagent_sdd_await
+→ consume report.text after report-before-return
+→ xagent_sdd_followup for fix or re-review on the same agent_id
+→ one long xagent_sdd_await
+→ xagent_sdd_close when the session is finished
+```
+
+- **Initial task agents use `xagent_sdd_start`.** Pass the complete brief,
+  plan path, assignment metadata, and report path for implementer and
+  task-reviewer roles. Record the returned `agent_id` and `resume_sequence`.
+- **Fix and re-review preserve sessions.** Call `xagent_sdd_followup` with the
+  existing implementer or reviewer `agent_id`. Do not start a fresh agent
+  merely to send that follow-up.
+- **One long SDD await per wait cycle.** After dispatching an SDD agent, do
+  independent controller work, then one long `xagent_sdd_await` with the
+  latest `resume_sequence`. Do not use native mailbox waits or short status
+  loops for SDD turns.
+- **Consume persisted reports only.** Read `report.text` from the await
+  result after xagent records the sanitized assistant report in the SDD ledger
+  (report-before-return). Do not read the mutable Superpowers report file on
+  disk or poll for completion.
+- **Close sessions deliberately.** Call `xagent_sdd_close` only after the task
+  passes both verdicts.
+- **No SDD fallbacks.** If the xagent SDD MCP facade or Conductor-managed
+  xagent service is unavailable, surface broken agentic infrastructure.
+  Superpowers SDD turns have no transport fallback.
+
+While an SDD agent is healthy and the controller has no independent work,
+do not poll at a short fixed interval. Inspect supervision state only after
+attention, a long await deadline, or an explicit user status request.
 
 ## Workflow
 
@@ -96,11 +146,10 @@ These rules apply to every subagent the workflow coordinates, native or xagent:
    - Do not invent behavior outside those artifacts.
 
 4. Review the spec with the opposite provider before planning.
-   - Dispatch an xagent reviewer on the opposite provider (per the provider
-     rules above) to read the change's proposal, specs, design, and tasks
-     and report ambiguities, gaps, internal inconsistencies, missing
-     acceptance criteria, and unstated assumptions — findings only, no
-     edits.
+   - Dispatch an xagent reviewer on the opposite provider (per the pre-plan
+     coordination rules above) to read the change's proposal, specs, design,
+     and tasks and report ambiguities, gaps, internal inconsistencies, missing
+     acceptance criteria, and unstated assumptions — findings only, no edits.
    - Resolve Critical/Important findings before planning: fix the OpenSpec
      artifacts (or escalate to the user where the finding requires a human
      decision). Minor findings may be carried into planning notes.
@@ -156,19 +205,16 @@ These rules apply to every subagent the workflow coordinates, native or xagent:
 
 9. Execute with subagent-driven development.
    - Invoke `superpowers:subagent-driven-development`.
-   - Dispatch one fresh implementer subagent per plan task, on the model and
-     effort assigned in `.assignments.yaml` (provider rules above govern
-     native-vs-xagent transport).
-   - After dispatch, do independent controller work, then one long native
-     mailbox wait or xagent `xagent_await` as appropriate — not short polling
-     loops.
-   - Instruct each native child to message the controller only for required
-     input, an unresolved blocker, or final completion.
-   - Run spec compliance review before code quality review for each task,
-     on the opposite provider via xagent service MCP when native review is
-     unavailable on that provider.
+   - Dispatch one fresh implementer per plan task through `xagent_sdd_start`
+     on the model and effort assigned in `.assignments.yaml`.
+   - After dispatch, do independent controller work, then one long
+     `xagent_sdd_await` — not short polling loops.
+   - Run spec compliance review before code quality review for each task
+     through `xagent_sdd_start` with the task-reviewer role on the opposite
+     provider.
    - Require fix and re-review loops until both reviews pass, reusing the
-     task's open implementer for fixes and its open reviewer for re-reviews.
+     task's open implementer via `xagent_sdd_followup` for fixes and its open
+     reviewer via `xagent_sdd_followup` for re-reviews.
    - Do not dispatch implementation subagents in parallel when tasks may touch
      overlapping files.
 

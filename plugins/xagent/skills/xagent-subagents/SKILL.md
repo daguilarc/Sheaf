@@ -18,7 +18,71 @@ plugin (`http://127.0.0.1:9005/mcp`). Before invocation, `codex plugin list`
 must report the xagent plugin installed and enabled at
 `$HOME/.agents/plugins/plugins/xagent`.
 
-## Supervision Flow
+Use the active repository as an absolute existing working directory for every
+dispatch. Child harnesses run in that worktree. The executable runtime is
+supplied by the installed Codex plugin rather than by the active repository.
+Packaged xagent defaults persisted logs to the Sheaf central log root;
+set `XAGENT_LOG_ROOT` only when intentionally validating or isolating logs
+somewhere else.
+
+## Superpowers SDD
+
+Superpowers subagent-driven development (SDD) uses the xagent SDD MCP facade
+exclusively. For every implementer, task-reviewer, fix, re-review, and final
+whole-branch reviewer turn, use only these four tools:
+
+```text
+xagent_sdd_start
+→ independent controller work
+→ one long xagent_sdd_await
+→ consume report.text
+→ xagent_sdd_followup for fix or re-review on the same agent_id
+→ one long xagent_sdd_await
+→ xagent_sdd_close when the session is finished
+```
+
+`xagent_sdd_start` renders the role prompt through the trusted
+`dispatch-prompt` executable in the service checkout, reserves the SDD ledger
+row, and returns `agent_id`, `resume_sequence`, and artifact paths. Record the
+returned `agent_id` and `resume_sequence` cursor for every turn. The
+`resume_sequence` is the pre-turn supervision cursor; it is not a provider
+JSONL position.
+
+After `xagent_sdd_start` or `xagent_sdd_followup`, do independent controller
+work until it is exhausted, then enter one long `xagent_sdd_await` with the
+latest `resume_sequence`. Healthy provider deltas, tools, raw events, status,
+and healthy watchdog verdicts never complete an await and never enter the
+leader context.
+
+On successful completion, consume the sanitized final assistant report from
+`report.text` in the await result only after xagent persists it in the SDD
+ledger (report-before-return). Do not read the intermediate transcript, tail
+logs, summarize progress for the leader, or read the mutable Superpowers report
+file on disk. If the service completes without final text, treat that as
+`missing_final_report` and escalate.
+
+Fix and re-review rounds MUST call `xagent_sdd_followup` on the existing
+implementer or reviewer `agent_id`. Do not start a fresh agent merely to send
+that follow-up. Close each SDD session with `xagent_sdd_close` only after its
+task passes both verdicts.
+
+While a Superpowers SDD agent is healthy and the controller has no independent
+work, do not poll at a short fixed interval. Specifically, do not poll
+`write_stdin`, `xagent list`, xagent logs, terminal status, or unchanged MCP
+inspect output merely to observe progress. Inspect supervision state only after
+attention, a long await deadline, or an explicit user status request.
+
+If the xagent SDD MCP facade, Conductor-managed xagent service, trusted
+`dispatch-prompt` renderer, or required Superpowers templates are unavailable,
+surface broken agentic infrastructure. Superpowers SDD turns have no transport
+fallback.
+
+## Generic Delegation
+
+Use the sections below for review, worker, and other delegation outside
+Superpowers SDD.
+
+### Supervision Flow
 
 The controller flow is:
 
@@ -31,8 +95,7 @@ verify Conductor reports xagent healthy
 → xagent_await again with the returned after_sequence only when continuing
 ```
 
-Use the active repository as an absolute existing working directory for
-`xagent_start`. Record the returned `run_id` and `after_sequence` cursor.
+Record the returned `run_id` and `after_sequence` cursor.
 
 After `xagent_start`, do independent controller work until it is exhausted.
 Then enter one long `xagent_await` with the latest cursor. Healthy provider
@@ -48,7 +111,11 @@ When await returns compact attention instead of completion, read the attention
 payload, act only at the controller layer, and call `xagent_await` again with
 the returned cursor only when continuing supervision.
 
-## No Routine Polling
+`xagent_message` sends unstructured user input to a generic run. Do not use it
+for Superpowers SDD follow-ups; the SDD facade uses `xagent_sdd_followup`
+instead.
+
+### No Routine Polling
 
 While a worker is healthy and the controller has no independent work, do not
 poll at a short fixed interval. Specifically, do not poll `write_stdin`,
@@ -61,7 +128,7 @@ phase, attention events, and watchdog telemetry — not a provider transcript; t
 service does not persist routine provider output to the run logs. One long
 blocking await is the default wait mechanism.
 
-## Quiet Service-Client Fallback
+### Quiet Service-Client Fallback
 
 When plugin MCP discovery is unavailable but Conductor reports the xagent
 service healthy and the packaged xagent CLI remains functional, use the quiet
@@ -77,9 +144,9 @@ Issue one application-level blocking await per wait cycle. The quiet client may
 reissue shorter HTTP MCP request chunks under the hood (≤240 seconds) until that
 deadline; treat those as an implementation detail, not a polling loop. Surface
 the MCP discovery failure rather than hiding it. Use this fallback only when the
-Conductor-managed service is healthy.
+Conductor-managed service is healthy and the work is outside Superpowers SDD.
 
-## Watchdog Boundary
+### Watchdog Boundary
 
 Mechanical supervision is deterministic and never invokes Haiku: process
 exit/spawn failure, turn completion/failure, transport failure, exposed
@@ -90,7 +157,7 @@ tokens/messages/tools. It detects active semantic derailment or uncertainty.
 Watchdog results are advisory only. Watchdog attention never messages,
 interrupts, kills, restarts, edits for, or otherwise steers the worker.
 
-## Review Routing
+### Review Routing
 
 For review tasks, prefer a Claude-backed reviewer through `xagent_start`
 with the `claude_code` harness:
@@ -114,7 +181,7 @@ If an unfamiliar model alias is needed, verify it with local Claude Code
 before retrying. Do not silently downgrade to a weaker model after a model
 rejection.
 
-## Worker Routing
+### Worker Routing
 
 Use Cursor through xagent when a competent worker pass is useful. Treat
 Composer 2.5 as a solid worker for straightforward implementation, cleanup,
@@ -123,7 +190,7 @@ alternate drafts, or exploratory passes.
 For the trickiest implementation tasks, prefer a GPT or Codex-backed worker
 agent instead of Composer.
 
-## Legacy Terminal Protocol
+### Legacy Terminal Protocol
 
 `xagent run --subagent` remains available for harness compatibility, but the default supervised path above is Conductor service MCP or the quiet
 service-client fallback. Do not combine legacy terminal stdin polling with
@@ -131,14 +198,12 @@ service MCP for the same run.
 
 When xagent launches the Codex harness through either the supervised MCP path or the legacy terminal path, it passes Codex's explicit `--dangerously-bypass-approvals-and-sandbox` flag so the xagent-spawned Codex child does not stop for command approvals or inherit a restrictive sandbox. Use this only through xagent; do not copy that flag into unrelated workflows.
 
-## Failure Handling
+### Failure Handling
 
 If the packaged launcher, MCP tools, Conductor service, Claude Code, Cursor
 Agent, or a requested model cannot be used as instructed, surface broken
 agentic infrastructure. Do not silently switch tools, rebuild xagent ad hoc from
 a guessed Sheaf checkout, or work around broken agentic infrastructure.
 
-Packaged xagent logs default to the Sheaf central log root; set
-`XAGENT_LOG_ROOT` only when intentionally validating or isolating logs
-somewhere else. Log inspection is reason-gated like other status checks, not a
+Log inspection is reason-gated like other status checks, not a
 polling loop.

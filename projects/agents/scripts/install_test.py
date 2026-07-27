@@ -4,6 +4,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -489,20 +490,96 @@ def assert_none_present(
         )
 
 
+def extract_markdown_section(content: str, heading: str) -> str:
+    pattern = re.compile(rf"^## {re.escape(heading)}\s*$", re.MULTILINE)
+    match = pattern.search(content)
+    if match is None:
+        raise AssertionError(f"missing section heading: {heading!r}")
+    start = match.end()
+    next_heading = re.search(r"^## ", content[start:], re.MULTILINE)
+    if next_heading is None:
+        return content[start:]
+    return content[start : start + next_heading.start()]
+
+
+def assert_forbidden_only_outside_sections(
+    test_case: unittest.TestCase,
+    content: str,
+    *,
+    protected_headings: tuple[str, ...],
+    forbidden_phrases: tuple[str, ...],
+    required_outside_phrases: tuple[str, ...] | None = None,
+) -> None:
+    protected_parts = [
+        extract_markdown_section(content, heading).lower() for heading in protected_headings
+    ]
+    for phrase in forbidden_phrases:
+        lowered_phrase = phrase.lower()
+        for heading, section in zip(protected_headings, protected_parts, strict=True):
+            test_case.assertNotIn(
+                lowered_phrase,
+                section,
+                (
+                    f"forbidden SDD/pre-plan scoping phrase {phrase!r} "
+                    f"appeared in protected section {heading!r}"
+                ),
+            )
+        if required_outside_phrases is None or phrase in required_outside_phrases:
+            remainder = content.lower()
+            for section in protected_parts:
+                remainder = remainder.replace(section, "")
+            test_case.assertIn(
+                lowered_phrase,
+                remainder,
+                (
+                    f"expected non-SDD guidance phrase {phrase!r} outside protected "
+                    f"sections {protected_headings!r}"
+                ),
+            )
+
+
 class DistributedSkillSemanticsTests(unittest.TestCase):
     def test_xagent_subagents_skill_event_driven_supervision_guidance(self) -> None:
         skill_path = REPO_ROOT / "plugins" / "xagent" / "skills" / "xagent-subagents" / "SKILL.md"
         self.assertTrue(skill_path.is_file(), f"missing packaged skill: {skill_path}")
         content = skill_path.read_text(encoding="utf-8")
+        sdd_section = extract_markdown_section(content, "Superpowers SDD")
+        generic_section = extract_markdown_section(content, "Generic Delegation")
 
         assert_all_present(
             self,
-            content,
+            sdd_section,
             (
-                "Conductor",
-                "xagent",
-                "healthy",
-                "127.0.0.1:9005",
+                "xagent_sdd_start",
+                "xagent_sdd_followup",
+                "xagent_sdd_await",
+                "xagent_sdd_close",
+                "agent_id",
+                "resume_sequence",
+                "report-before-return",
+                "broken agentic infrastructure",
+                "do not poll",
+            ),
+        )
+        assert_forbidden_only_outside_sections(
+            self,
+            content,
+            protected_headings=("Superpowers SDD",),
+            forbidden_phrases=(
+                "xagent_start",
+                "xagent_message",
+                "xagent supervise",
+            ),
+            required_outside_phrases=(
+                "xagent_start",
+                "xagent_message",
+                "xagent supervise",
+            ),
+        )
+        assert_all_present(
+            self,
+            generic_section,
+            (
                 "xagent_start",
                 "xagent_await",
                 "report.text",
@@ -519,6 +596,17 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
                 "claude_code",
                 "verify it with local Claude Code",
                 "do not silently downgrade",
+                "xagent_message",
+            ),
+        )
+        assert_all_present(
+            self,
+            content,
+            (
+                "Conductor",
+                "xagent",
+                "healthy",
+                "127.0.0.1:9005",
             ),
         )
         assert_none_present(
@@ -545,9 +633,12 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
                 parent=codex_home / "skills",
             )
 
+        pre_plan_section = extract_markdown_section(content, "Pre-plan coordination")
+        sdd_section = extract_markdown_section(content, "Superpowers SDD task execution")
+
         assert_all_present(
             self,
-            content,
+            pre_plan_section,
             (
                 "long native mailbox wait",
                 "blocker",
@@ -562,6 +653,33 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
                 "native subagent",
                 "not the default transport",
                 "broken agentic infrastructure",
+            ),
+        )
+        assert_all_present(
+            self,
+            sdd_section,
+            (
+                "xagent_sdd_start",
+                "xagent_sdd_followup",
+                "xagent_sdd_await",
+                "xagent_sdd_close",
+                "agent_id",
+                "resume_sequence",
+                "report-before-return",
+                "dispatch-prompt",
+                "broken agentic infrastructure",
+                "do not poll",
+            ),
+        )
+        assert_forbidden_only_outside_sections(
+            self,
+            content,
+            protected_headings=("Superpowers SDD task execution",),
+            forbidden_phrases=(
+                "native subagent",
+                "xagent_start",
+                "xagent_message",
+                "xagent supervise",
             ),
         )
         assert_none_present(
