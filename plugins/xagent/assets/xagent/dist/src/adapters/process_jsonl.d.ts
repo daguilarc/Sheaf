@@ -4,6 +4,8 @@ import type { AdapterEvent, AdapterTurnContext, HarnessSession, OwnedProcessIden
 export type ProcessHarnessState = {
     providerThreadId?: string;
     providerSequence: number;
+    cursorSegmentText?: string;
+    cursorLastDelta?: string;
 };
 export type ProviderEventParser = (raw: unknown, context: AdapterTurnContext, state: ProcessHarnessState) => AdapterEvent[];
 export type ProcessCommand = {
