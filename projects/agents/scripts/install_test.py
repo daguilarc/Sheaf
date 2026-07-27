@@ -968,6 +968,37 @@ class OpenSpecCliInstallTests(unittest.TestCase):
             self.assertEqual(1, result)
             self.assertIn("openspec", stderr.getvalue().lower())
 
+    def test_check_openspec_cli_reports_stale_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            home = (Path(tempdir) / "home").resolve()
+            pin = install.read_openspec_vendor_pin(REPO_ROOT)
+            expected = install.openspec_pin_field(pin, "version")
+            package_root = install.openspec_package_path(home)
+            package_root.mkdir(parents=True)
+            (package_root / install.OPENSPEC_MANAGED_MARKER_NAME).write_text(
+                install.openspec_managed_marker_content(pin),
+                encoding="utf-8",
+            )
+            shim = install.openspec_shim_path(home)
+            shim.parent.mkdir(parents=True)
+            shim.write_text(
+                "#!/bin/sh\n"
+                f"# {install.MANAGED_MARKER}; "
+                f"source={install.OPENSPEC_PACKAGE_REL.as_posix()}\n"
+                "echo 0.0.0-stale\n",
+                encoding="utf-8",
+            )
+            shim.chmod(shim.stat().st_mode | 0o111)
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                status = install.check_openspec_cli(REPO_ROOT, home=home)
+
+            self.assertEqual(1, status)
+            self.assertIn("stale openspec CLI", stderr.getvalue())
+            self.assertIn(expected, stderr.getvalue())
+            self.assertIn("0.0.0-stale", stderr.getvalue())
+
     def test_global_clean_removes_managed_openspec_prefix_only(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             home = (Path(tempdir) / "home").resolve()

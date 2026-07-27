@@ -93,16 +93,12 @@ def vendor_tree(repo_root: Path) -> Path:
     return path
 
 
+def claude_version_root(home: Path) -> Path:
+    return home / ".claude" / "plugins" / "cache" / MARKETPLACE_NAME / PLUGIN_NAME
+
+
 def claude_package_path(home: Path, version: str) -> Path:
-    return (
-        home
-        / ".claude"
-        / "plugins"
-        / "cache"
-        / MARKETPLACE_NAME
-        / PLUGIN_NAME
-        / version
-    )
+    return claude_version_root(home) / version
 
 
 def cursor_package_path(home: Path) -> Path:
@@ -486,6 +482,7 @@ def install_superpowers(
     )
     upsert_codex_marketplace(home, codex_package_path(home))
     upsert_pi_settings(home, pi_package_path(home))
+    prune_obsolete_claude_versions(home, keep_version=version)
     return 0
 
 
@@ -653,6 +650,8 @@ def check_superpowers(
     status |= check_claude_marketplace(home, pin)
     status |= check_codex_marketplace(home, codex_package_path(home))
     status |= check_pi_settings(home, pi_package_path(home))
+    status |= check_obsolete_claude_versions(home, version)
+    status |= check_foreign_superpowers(home)
     return status
 
 
@@ -660,6 +659,54 @@ def remove_managed_package(destination: Path) -> None:
     if destination.is_dir() and package_is_managed(destination):
         shutil.rmtree(destination)
         print(f"removed {destination}")
+
+
+def prune_obsolete_claude_versions(home: Path, *, keep_version: str | None) -> None:
+    claude_root = claude_version_root(home)
+    if not claude_root.is_dir():
+        return
+    for child in sorted(claude_root.iterdir()):
+        if keep_version is not None and child.name == keep_version:
+            continue
+        remove_managed_package(child)
+    if claude_root.is_dir() and not any(claude_root.iterdir()):
+        claude_root.rmdir()
+
+
+def check_obsolete_claude_versions(home: Path, current_version: str) -> int:
+    claude_root = claude_version_root(home)
+    if not claude_root.is_dir():
+        return 0
+    status = 0
+    for child in sorted(claude_root.iterdir()):
+        if not child.is_dir() or child.name == current_version:
+            continue
+        if package_is_managed(child):
+            print(f"obsolete managed {child}", file=sys.stderr)
+            status = 1
+        else:
+            print(f"skip unmanaged obsolete {child}")
+    return status
+
+
+def check_foreign_superpowers(home: Path) -> int:
+    path = claude_installed_plugins_path(home)
+    if not path.is_file():
+        return 0
+    payload = load_json_object(path, {"version": 2, "plugins": {}})
+    plugins = payload.get("plugins", {})
+    if not isinstance(plugins, dict):
+        return 0
+    foreign = foreign_superpowers_keys(plugins)
+    if not foreign:
+        return 0
+    print(
+        "conflict foreign Superpowers marketplace install: "
+        f"{', '.join(foreign)} (refusing dual superpowers:<id> "
+        "registration)",
+        file=sys.stderr,
+    )
+    return 1
 
 
 def clean_claude_registry(home: Path) -> None:
@@ -732,12 +779,7 @@ def clean_pi_settings(home: Path) -> None:
 def clean_superpowers(*, home: Path, codex_home: Path) -> int:
     del codex_home
     home = home.expanduser().resolve()
-    claude_root = home / ".claude" / "plugins" / "cache" / MARKETPLACE_NAME / PLUGIN_NAME
-    if claude_root.is_dir():
-        for child in sorted(claude_root.iterdir()):
-            remove_managed_package(child)
-        if claude_root.is_dir() and not any(claude_root.iterdir()):
-            claude_root.rmdir()
+    prune_obsolete_claude_versions(home, keep_version=None)
 
     remove_managed_package(claude_marketplace_plugin_path(home))
     remove_managed_package(cursor_package_path(home))

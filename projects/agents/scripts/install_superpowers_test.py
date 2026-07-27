@@ -632,6 +632,145 @@ class InstallSuperpowersTests(unittest.TestCase):
             (self.codex_home / "hooks.json").read_text(encoding="utf-8"),
         )
 
+    def test_install_prunes_obsolete_managed_claude_versions(self) -> None:
+        self.assertEqual(0, self.install())
+
+        obsolete = (
+            self.home
+            / ".claude"
+            / "plugins"
+            / "cache"
+            / "sheaf-managed"
+            / "superpowers"
+            / "6.1.0"
+        )
+        obsolete.mkdir(parents=True)
+        (obsolete / ".sheaf-managed").write_text(
+            "sheaf-agents-managed: DO NOT EDIT\n"
+            "source=projects/agents/vendor/superpowers/tree\n"
+            "revision=old-rev\n"
+            "version=6.1.0\n",
+            encoding="utf-8",
+        )
+        (obsolete / "skills").mkdir()
+        unmanaged = (
+            self.home
+            / ".claude"
+            / "plugins"
+            / "cache"
+            / "sheaf-managed"
+            / "superpowers"
+            / "hand-edited"
+        )
+        unmanaged.mkdir(parents=True)
+        (unmanaged / "keep.txt").write_text("mine\n", encoding="utf-8")
+
+        self.assertEqual(0, self.install())
+        self.assertFalse(obsolete.exists())
+        self.assertEqual("mine\n", (unmanaged / "keep.txt").read_text(encoding="utf-8"))
+        self.assertTrue(
+            (
+                self.home
+                / ".claude"
+                / "plugins"
+                / "cache"
+                / "sheaf-managed"
+                / "superpowers"
+                / VERSION
+            ).is_dir()
+        )
+
+    def test_check_reports_obsolete_managed_claude_versions(self) -> None:
+        self.assertEqual(0, self.install())
+
+        obsolete = (
+            self.home
+            / ".claude"
+            / "plugins"
+            / "cache"
+            / "sheaf-managed"
+            / "superpowers"
+            / "6.1.0"
+        )
+        obsolete.mkdir(parents=True)
+        (obsolete / ".sheaf-managed").write_text(
+            "sheaf-agents-managed: DO NOT EDIT\n"
+            "source=projects/agents/vendor/superpowers/tree\n"
+            "revision=old-rev\n"
+            "version=6.1.0\n",
+            encoding="utf-8",
+        )
+        unmanaged = (
+            self.home
+            / ".claude"
+            / "plugins"
+            / "cache"
+            / "sheaf-managed"
+            / "superpowers"
+            / "hand-edited"
+        )
+        unmanaged.mkdir(parents=True)
+        (unmanaged / "keep.txt").write_text("mine\n", encoding="utf-8")
+
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            status = install_superpowers.check_superpowers(
+                repo_root=self.repo_root,
+                home=self.home,
+                codex_home=self.codex_home,
+            )
+
+        self.assertEqual(1, status)
+        self.assertIn(f"obsolete managed {obsolete.resolve()}", stderr.getvalue())
+        self.assertIn(
+            f"skip unmanaged obsolete {unmanaged.resolve()}",
+            stdout.getvalue(),
+        )
+        self.assertTrue(obsolete.exists())
+        self.assertTrue(unmanaged.exists())
+
+    def test_check_fails_on_foreign_superpowers_marketplace_keys(self) -> None:
+        self.assertEqual(0, self.install())
+        self.assertEqual(0, self.check())
+
+        foreign = (
+            self.home
+            / ".claude"
+            / "plugins"
+            / "cache"
+            / "claude-plugins-official"
+            / "superpowers"
+            / VERSION
+        )
+        foreign.mkdir(parents=True)
+        claude_registry = self.home / ".claude" / "plugins" / "installed_plugins.json"
+        payload = json.loads(claude_registry.read_text(encoding="utf-8"))
+        payload["plugins"]["superpowers@claude-plugins-official"] = [
+            {
+                "scope": "user",
+                "installPath": str(foreign),
+                "version": VERSION,
+            }
+        ]
+        claude_registry.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
+            stderr
+        ):
+            status = install_superpowers.check_superpowers(
+                repo_root=self.repo_root,
+                home=self.home,
+                codex_home=self.codex_home,
+            )
+
+        self.assertEqual(1, status)
+        self.assertIn(
+            "superpowers@claude-plugins-official",
+            stderr.getvalue(),
+        )
+
     def test_install_py_module_stays_unaware_of_superpowers(self) -> None:
         import install as agents_install
 
