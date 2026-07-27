@@ -11,6 +11,7 @@ import {
   x_DefaultAwaitDeadlineSeconds,
   x_MaxAwaitDeadlineSeconds,
   XagentAwaitInputSchema,
+  XagentSddAwaitInputSchema,
 } from "../src/service/tool_schemas.js";
 import type { SupervisionPolicy, SupervisionScheduler } from "../src/supervision/types.js";
 
@@ -42,6 +43,39 @@ test("await deadline defaults to 7000 seconds and rejects larger values", async 
     deadline_seconds: 7001,
   });
   assert.equal(rejected.success, false);
+});
+
+test("SDD await deadline defaults to 7000 seconds and rejects larger values", () => {
+  const defaultParsed = XagentSddAwaitInputSchema.parse({
+    agent_id: "xrun_20260726000000000_00000001",
+    after_sequence: 0,
+  });
+  assert.equal(defaultParsed.deadline_seconds, x_DefaultAwaitDeadlineSeconds);
+  assert.equal(x_MaxAwaitDeadlineSeconds, 7000);
+  assert.equal(x_DefaultAwaitDeadlineSeconds, 7000);
+
+  const rejected = XagentSddAwaitInputSchema.safeParse({
+    agent_id: "xrun_20260726000000000_00000001",
+    after_sequence: 0,
+    deadline_seconds: 7001,
+  });
+  assert.equal(rejected.success, false);
+});
+
+test("SDD await requires after_sequence and a generated agent_id", () => {
+  assert.equal(
+    XagentSddAwaitInputSchema.safeParse({
+      agent_id: "xrun_20260726000000000_00000001",
+    }).success,
+    false,
+  );
+  assert.equal(
+    XagentSddAwaitInputSchema.safeParse({
+      agent_id: "not-valid",
+      after_sequence: 0,
+    }).success,
+    false,
+  );
 });
 
 test("routine deltas and tool events do not settle an await; completion does", async () => {

@@ -21,7 +21,14 @@ export class ToolValidationError extends Error {
   }
 }
 
-const CwdSchema = z.string().min(1).describe("Absolute path to an existing working directory");
+export const CwdSchema = z.string().min(1).describe("Absolute path to an existing working directory");
+
+const x_GeneratedAgentIdPattern = /^xrun_[0-9]{17}_[0-9a-f]{8}$/;
+
+export const AgentIdSchema = z
+  .string()
+  .min(1)
+  .regex(x_GeneratedAgentIdPattern, "agent_id must be a generated xagent run id");
 
 const WatchdogPolicySchema = z
   .object({
@@ -39,11 +46,112 @@ const WatchdogPolicySchema = z
   })
   .strict();
 
-const SupervisionPolicySchema = z
+export const SupervisionPolicySchema = z
   .object({
     silenceTimeoutMs: z.number().int().positive(),
     hardDeadlineMs: z.number().int().positive().optional(),
     watchdog: WatchdogPolicySchema.default({}),
+  })
+  .strict();
+
+const SddAssignmentFields = {
+  cwd: CwdSchema,
+  plan: z.string().min(1),
+  agent: z.string().min(1),
+  harness: z.enum(harnessNames),
+  effort: z.enum(thinkingLevels),
+  policy: SupervisionPolicySchema.optional(),
+};
+
+const SddPathSchema = z.string().min(1);
+
+export const ImplementerStartSchema = z
+  .object({
+    role: z.literal("implementer"),
+    ...SddAssignmentFields,
+    task: z.number().int().positive(),
+    name: z.string().min(1),
+    brief: SddPathSchema,
+    report: SddPathSchema.optional(),
+    context: z.string().min(1).optional(),
+  })
+  .strict();
+
+export const TaskReviewerStartSchema = z
+  .object({
+    role: z.literal("task-reviewer"),
+    ...SddAssignmentFields,
+    task: z.number().int().positive(),
+    brief: SddPathSchema,
+    report: SddPathSchema,
+    base: z.string().min(1),
+    head: z.string().min(1),
+    constraints: SddPathSchema.optional(),
+    diff: SddPathSchema.optional(),
+  })
+  .strict();
+
+export const CodeReviewerStartSchema = z
+  .object({
+    role: z.literal("code-reviewer"),
+    ...SddAssignmentFields,
+    review_brief: SddPathSchema,
+    description: z.string().min(1).optional(),
+    base: z.string().min(1),
+    head: z.string().min(1),
+  })
+  .strict();
+
+export const XagentSddStartInputSchema = z.discriminatedUnion("role", [
+  ImplementerStartSchema,
+  TaskReviewerStartSchema,
+  CodeReviewerStartSchema,
+]);
+
+export const FixFollowupSchema = z
+  .object({
+    kind: z.literal("fix"),
+    agent_id: AgentIdSchema,
+    round: z.number().int().positive(),
+    findings: SddPathSchema,
+    findings_text: z.string().min(1),
+    tests: z.array(z.string().min(1)).min(1),
+  })
+  .strict();
+
+export const ReReviewFollowupSchema = z
+  .object({
+    kind: z.literal("re-review"),
+    agent_id: AgentIdSchema,
+    round: z.number().int().positive(),
+    findings: SddPathSchema,
+    base: z.string().min(1),
+    head: z.string().min(1),
+    diff: SddPathSchema.optional(),
+  })
+  .strict();
+
+export const XagentSddFollowupInputSchema = z.discriminatedUnion("kind", [
+  FixFollowupSchema,
+  ReReviewFollowupSchema,
+]);
+
+export const XagentSddAwaitInputSchema = z
+  .object({
+    agent_id: AgentIdSchema,
+    after_sequence: z.number().int().min(0),
+    deadline_seconds: z
+      .number()
+      .int()
+      .positive()
+      .max(x_MaxAwaitDeadlineSeconds)
+      .default(x_DefaultAwaitDeadlineSeconds),
+  })
+  .strict();
+
+export const XagentSddCloseInputSchema = z
+  .object({
+    agent_id: AgentIdSchema,
   })
   .strict();
 
@@ -105,6 +213,10 @@ export type XagentInspectInput = z.infer<typeof XagentInspectInputSchema>;
 export type XagentMessageInput = z.infer<typeof XagentMessageInputSchema>;
 export type XagentInterruptInput = z.infer<typeof XagentInterruptInputSchema>;
 export type XagentCloseInput = z.infer<typeof XagentCloseInputSchema>;
+export type XagentSddStartInput = z.infer<typeof XagentSddStartInputSchema>;
+export type XagentSddFollowupInput = z.infer<typeof XagentSddFollowupInputSchema>;
+export type XagentSddAwaitInput = z.infer<typeof XagentSddAwaitInputSchema>;
+export type XagentSddCloseInput = z.infer<typeof XagentSddCloseInputSchema>;
 
 export function parseToolInput<S extends z.ZodTypeAny>(
   schema: S,
