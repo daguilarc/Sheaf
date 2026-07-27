@@ -141,7 +141,7 @@ asd-23 keeps Sheaf plugin-owned skills such as `xagent-subagents` out of
 third-party vendored tooling under `projects/agents/vendor/superpowers/`,
 distributed as managed local plugins/packages. That is a deliberate
 agents-project responsibility and an explicit exception to “do not install
-plugin packages through `install.py`.”
+plugin packages through `install.py`'s filesystem skill renderer.”
 
 `install.py` remains unaware of Superpowers. Make (and root `agents-*`
 targets) run `scripts/install.py` and `scripts/install_superpowers.py` as
@@ -183,6 +183,8 @@ User-global outputs are written to:
 
 `CODEX_HOME` defaults to `~/.codex`.
 
+## Vendored tooling install
+
 Global install also copies the vendored OpenSpec CLI into a Sheaf-managed
 prefix and writes a shim:
 
@@ -202,7 +204,7 @@ Global install also installs Superpowers as managed local plugins from
 | --- | --- | --- |
 | Claude | `~/.claude/plugins/cache/sheaf-managed/superpowers/<version>/` | `superpowers@sheaf-managed` in `installed_plugins.json` plus a sheaf-managed marketplace record |
 | Cursor | `~/.cursor/plugins/local/superpowers/` | Cursor has no sheaf-managed JSON registry entry; presence under `plugins/local/` is the install. Expect skills as `superpowers:<id>` once Cursor loads local plugins (may need a new Agent session). |
-| Codex | `~/.agents/plugins/plugins/superpowers/` | Local-source entry for `superpowers` in `~/.agents/plugins/marketplace.json`. Staging alone may leave `codex plugin list` showing `superpowers@personal` as available but not installed; run `codex plugin add superpowers@personal` once, then open a new conversation. |
+| Codex | `~/.agents/plugins/plugins/superpowers/` | Local-source entry for `superpowers` in `~/.agents/plugins/marketplace.json`. Staging alone may leave `codex plugin list` showing the plugin as available but not installed; run `codex plugin add superpowers@<marketplace-name>` once (suffix is the `name` field of that marketplace file; fresh installs default to `personal`), then open a new conversation. |
 | Pi | `~/.pi/packages/sheaf-managed/superpowers/` | Absolute path in `~/.pi/agent/settings.json` `packages` |
 
 Each managed package carries a `.sheaf-managed` marker with the vendor
