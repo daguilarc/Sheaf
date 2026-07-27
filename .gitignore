@@ -18,6 +18,7 @@ projects/synth/browser/dist/
 projects/synth/browser/test-results/
 projects/synth/browser/wasm-build/
 projects/synth/apps/*/build/
+projects/synth/miniapp/build/
 projects/sheaf-chat/dist/
 projects/realtime-agent/node_modules/
 projects/realtime-agent/src/agent/dist/
