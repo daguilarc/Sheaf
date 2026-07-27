@@ -48,6 +48,7 @@ const x_ImplementerPlaceholders = [
   "[Scene-setting: where this fits, dependencies, architectural context]",
   "[directory]",
   "[REPORT_FILE]",
+  "BRIEF-BODY-SENTINEL",
 ];
 
 const x_TaskReviewerPlaceholders = [
@@ -57,6 +58,7 @@ const x_TaskReviewerPlaceholders = [
   "[BASE_SHA]",
   "[HEAD_SHA]",
   "[DIFF_FILE]",
+  "BRIEF-BODY-SENTINEL",
 ];
 
 const x_ReReviewPlaceholders = [
