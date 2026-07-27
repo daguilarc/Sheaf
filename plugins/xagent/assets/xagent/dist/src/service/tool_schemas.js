@@ -73,7 +73,7 @@ export const ImplementerStartSchema = z
     task: z.number().int().positive(),
     name: z.string().min(1),
     brief: SddArtifactPathSchema,
-    report: SddArtifactPathSchema.optional(),
+    report: SddArtifactPathSchema,
     context: z.string().min(1).optional(),
 })
     .strict();

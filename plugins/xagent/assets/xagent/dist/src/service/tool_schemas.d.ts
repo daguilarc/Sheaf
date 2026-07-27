@@ -90,7 +90,7 @@ export declare const ImplementerStartSchema: z.ZodObject<{
     task: z.ZodNumber;
     name: z.ZodString;
     brief: z.ZodEffects<z.ZodString, string, string>;
-    report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    report: z.ZodEffects<z.ZodString, string, string>;
     context: z.ZodOptional<z.ZodString>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
@@ -178,10 +178,10 @@ export declare const ImplementerStartSchema: z.ZodObject<{
     cwd: string;
     task: number;
     brief: string;
+    report: string;
     plan: string;
     agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
-    report?: string | undefined;
     context?: string | undefined;
     policy?: {
         watchdog: {
@@ -207,10 +207,10 @@ export declare const ImplementerStartSchema: z.ZodObject<{
     cwd: string;
     task: number;
     brief: string;
+    report: string;
     plan: string;
     agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
-    report?: string | undefined;
     context?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
@@ -525,7 +525,7 @@ export declare const XagentSddStartInputSchema: z.ZodDiscriminatedUnion<"role", 
     task: z.ZodNumber;
     name: z.ZodString;
     brief: z.ZodEffects<z.ZodString, string, string>;
-    report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    report: z.ZodEffects<z.ZodString, string, string>;
     context: z.ZodOptional<z.ZodString>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
@@ -613,10 +613,10 @@ export declare const XagentSddStartInputSchema: z.ZodDiscriminatedUnion<"role", 
     cwd: string;
     task: number;
     brief: string;
+    report: string;
     plan: string;
     agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
-    report?: string | undefined;
     context?: string | undefined;
     policy?: {
         watchdog: {
@@ -642,10 +642,10 @@ export declare const XagentSddStartInputSchema: z.ZodDiscriminatedUnion<"role", 
     cwd: string;
     task: number;
     brief: string;
+    report: string;
     plan: string;
     agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
-    report?: string | undefined;
     context?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
