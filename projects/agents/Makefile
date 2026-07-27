@@ -19,12 +19,15 @@ test:
 
 install:
 	python3 scripts/install.py install --scope all $(AGENTS_INSTALL_FLAGS)
+	python3 scripts/install_superpowers.py install $(AGENTS_INSTALL_FLAGS)
 
 check:
 	python3 scripts/install.py check --scope all
+	python3 scripts/install_superpowers.py check
 
 clean:
 	python3 scripts/install.py clean --scope all
+	python3 scripts/install_superpowers.py clean
 
 install-repo:
 	python3 scripts/install.py install --scope repo $(AGENTS_INSTALL_FLAGS)
@@ -37,12 +40,15 @@ clean-repo:
 
 install-global:
 	python3 scripts/install.py install --scope global $(AGENTS_INSTALL_FLAGS)
+	python3 scripts/install_superpowers.py install $(AGENTS_INSTALL_FLAGS)
 
 check-global:
 	python3 scripts/install.py check --scope global
+	python3 scripts/install_superpowers.py check
 
 clean-global:
 	python3 scripts/install.py clean --scope global
+	python3 scripts/install_superpowers.py clean
 
 vendor-sync:
 	@if [ -z "$(TOOL)" ] || [ -z "$(REF)" ]; then \
