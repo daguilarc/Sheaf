@@ -255,7 +255,12 @@ test("rejects illegal transitions and follow-ups while a turn is open", async ()
         briefPath: sampleInitialInput.briefPath,
         briefText: sampleInitialInput.briefText,
       }),
-      SddStoreError,
+      (error: unknown) =>
+      {
+        assert.ok(error instanceof SddStoreError);
+        assert.equal(error.code, "open_turn");
+        return true;
+      },
     );
 
     assert.throws(() => store.MarkCompleted(sampleAgentId, 1, "done", 2), SddStoreError);

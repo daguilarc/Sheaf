@@ -18,13 +18,17 @@ import {
 } from "../src/service/server.js";
 import type { SupervisionPolicy } from "../src/supervision/types.js";
 
-const x_ExpectedToolNames = [
+const x_GenericToolNames = [
   "xagent_start",
   "xagent_await",
   "xagent_inspect",
   "xagent_message",
   "xagent_interrupt",
   "xagent_close",
+] as const;
+
+const x_ExpectedToolNames = [
+  ...x_GenericToolNames,
   "xagent_sdd_start",
   "xagent_sdd_followup",
   "xagent_sdd_await",
@@ -69,6 +73,18 @@ function CreateDiscoverySddManager(runManager: XagentRunManager): SddManager
     },
   };
 }
+
+test("Streamable HTTP MCP initializes and discovers exactly the six generic tools without sddManager", async () => {
+  await withMcpService(async ({ port, client }) => {
+    const listed = await client.listTools();
+    const names = listed.tools.map((tool) => tool.name).sort();
+    assert.deepEqual(names, [...x_GenericToolNames].sort());
+    assert.equal(listed.tools.length, 6);
+
+    const health = await fetch(`http://127.0.0.1:${port}/health`);
+    assert.equal(health.status, 200);
+  }, { includeSddManager: false });
+});
 
 test("Streamable HTTP MCP initializes and discovers exactly the ten controller tools", async () => {
   await withMcpService(async ({ port, client }) => {
@@ -206,14 +222,16 @@ async function withMcpService(
     runManager: XagentRunManager;
     client: Client;
   }) => Promise<void>,
+  options: { readonly includeSddManager?: boolean } = {},
 ): Promise<void> {
+  const includeSddManager = options.includeSddManager ?? true;
   const runManager = new XagentRunManager({
     repoRoot: process.cwd(),
     logRoot: path.join(tmpdir(), `xagent-mcp-${Math.random().toString(36).slice(2)}`),
     adapterFactory: () => new FakeHarnessAdapter(),
     policy: testPolicy,
   });
-  const sddManager = CreateDiscoverySddManager(runManager);
+  const sddManager = includeSddManager ? CreateDiscoverySddManager(runManager) : undefined;
   let server: XagentServer | undefined;
   const shutdownController = createShutdownController({
     closeRuns: async () => {
@@ -233,7 +251,7 @@ async function withMcpService(
   ]);
   const mcpHandler = createXagentMcpHandler({
     runManager,
-    sddManager,
+    ...(sddManager === undefined ? {} : { sddManager }),
     getAllowedHosts: () => [...allowedHosts],
     getAllowedOrigins: () => [...allowedOrigins],
   });

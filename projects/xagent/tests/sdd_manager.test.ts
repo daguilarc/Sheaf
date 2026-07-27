@@ -6,12 +6,13 @@ import {
   type SddManagerDeps,
   type SddRunManagerPort,
 } from "../src/service/sdd_manager.js";
-import type {
-  PrepareFollowupInput,
-  ReserveInitialInput,
-  SddSessionRecord,
-  SddStore,
-  SddTurnRecord,
+import {
+  SddStoreError,
+  type PrepareFollowupInput,
+  type ReserveInitialInput,
+  type SddSessionRecord,
+  type SddStore,
+  type SddTurnRecord,
 } from "../src/service/sdd_store.js";
 import type {
   FormatFixFollowupInput,
@@ -610,6 +611,66 @@ async function StartAndClearOpenTurn(
   harness.runManager.submitted.length = 0;
   harness.rendered.length = 0;
 }
+
+test("Followup fix rejects when implementer started without a report path", async () =>
+{
+  const harness = CreateManagerHarness();
+  const input = ImplementerStartInput();
+  delete (input as { report?: string }).report;
+  await StartAndClearOpenTurn(harness, input);
+
+  await assert.rejects(
+    () => harness.manager.Followup({
+      kind: "fix",
+      agent_id: x_AgentId,
+      round: 1,
+      findings: x_FindingsPath,
+      findings_text: x_FindingsText,
+      tests: ["dist/tests/sdd_manager.test.js"],
+    }),
+    (error: unknown) =>
+    {
+      assert.ok(error instanceof ToolValidationError);
+      assert.equal(error.structured.error, "sdd_report_path_required");
+      assert.equal(JSON.stringify(error.structured).includes(x_BriefPath), true);
+      assert.equal(
+        harness.runManager.submitted.some((entry) => entry.text.includes(x_BriefPath)),
+        false,
+      );
+      return true;
+    },
+  );
+  assert.equal(harness.recorder.Names().includes("submit"), false);
+  assert.equal(harness.recorder.Names().includes("formatFix"), false);
+});
+
+test("Followup maps store open_turn code to sdd_turn_unresolved without prose matching", async () =>
+{
+  const harness = CreateManagerHarness();
+  await StartAndClearOpenTurn(harness);
+  harness.store.prepareError = new SddStoreError(
+    "ledger turn still unresolved for agent",
+    "open_turn",
+  );
+
+  await assert.rejects(
+    () => harness.manager.Followup({
+      kind: "fix",
+      agent_id: x_AgentId,
+      round: 1,
+      findings: x_FindingsPath,
+      findings_text: x_FindingsText,
+      tests: ["t"],
+    }),
+    (error: unknown) =>
+    {
+      assert.ok(error instanceof ToolValidationError);
+      assert.equal(error.structured.error, "sdd_turn_unresolved");
+      return true;
+    },
+  );
+  assert.equal(harness.recorder.Names().includes("submit"), false);
+});
 
 test("Followup fix reuses the same run id and stored brief/report paths", async () =>
 {

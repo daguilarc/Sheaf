@@ -166,9 +166,12 @@ JOIN sdd_sessions AS s ON s.agent_id = t.agent_id;
 `;
 
 export class SddStoreError extends Error {
-  constructor(message: string) {
+  readonly code: string;
+
+  constructor(message: string, code = "sdd_store_error") {
     super(message);
     this.name = "SddStoreError";
+    this.code = code;
   }
 }
 
@@ -468,7 +471,7 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
         throw new SddStoreError(`SDD session is closed: ${input.agentId}`);
       }
       if (selectOpenTurn.get(input.agentId)) {
-        throw new SddStoreError(`SDD session has an open turn: ${input.agentId}`);
+        throw new SddStoreError(`SDD session has an open turn: ${input.agentId}`, "open_turn");
       }
 
       const createdAt = clock().toISOString();

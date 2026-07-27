@@ -14,6 +14,7 @@ import type {
   SddRole,
   SddStore,
 } from "./sdd_store.js";
+import { SddStoreError } from "./sdd_store.js";
 import {
   canonicalizeWorkingDirectory,
   type AwaitRunResult,
@@ -404,7 +405,18 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
 
     if (input.kind === "fix")
     {
-      const reportPath = artifacts.reportPath ?? artifacts.briefPath;
+      if (artifacts.reportPath === undefined)
+      {
+        throw StructuredFailure({
+          error: "sdd_report_path_required",
+          message: "Fix follow-up requires a stored report path from the initial implementer turn.",
+          details: {
+            agent_id: input.agent_id,
+            brief_path: artifacts.briefPath,
+          },
+        });
+      }
+      const reportPath = artifacts.reportPath;
       promptText = formatFix({
         round: input.round,
         briefPath: artifacts.briefPath,
@@ -419,7 +431,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         round: input.round,
         briefPath: artifacts.briefPath,
         briefText: artifacts.briefText,
-        ...(artifacts.reportPath === undefined ? {} : { reportPath: artifacts.reportPath }),
+        reportPath: artifacts.reportPath,
         findingsPath: input.findings,
         findingsText: input.findings_text,
       };
@@ -434,7 +446,18 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
           details: { agent_id: input.agent_id, role: session.role },
         });
       }
-      const reportPath = artifacts.reportPath ?? artifacts.briefPath;
+      if (artifacts.reportPath === undefined)
+      {
+        throw StructuredFailure({
+          error: "sdd_report_path_required",
+          message: "Re-review requires a stored report path from the initial reviewer turn.",
+          details: {
+            agent_id: input.agent_id,
+            brief_path: artifacts.briefPath,
+          },
+        });
+      }
+      const reportPath = artifacts.reportPath;
       const findingsText = await ReadRequiredText(read, input.findings, "SDD findings");
       const rendered = await renderPrompt({
         role: "re-review",
@@ -457,7 +480,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         round: input.round,
         briefPath: artifacts.briefPath,
         briefText: artifacts.briefText,
-        ...(artifacts.reportPath === undefined ? {} : { reportPath: artifacts.reportPath }),
+        reportPath: artifacts.reportPath,
         findingsPath: input.findings,
         findingsText,
       };
@@ -474,8 +497,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       {
         throw error;
       }
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("open turn"))
+      if (error instanceof SddStoreError && error.code === "open_turn")
       {
         throw StructuredFailure({
           error: "sdd_turn_unresolved",
@@ -483,6 +505,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
           details: { agent_id: input.agent_id },
         });
       }
+      const message = error instanceof Error ? error.message : String(error);
       throw PersistenceFailed("Unable to prepare SDD follow-up turn.", {
         cause: message,
       });
