@@ -1,3 +1,4 @@
+<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 ---
 name: /opsx-apply
 id: opsx-apply

@@ -1,3 +1,4 @@
+<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 ---
 name: "OPSX: Sync"
 description: Sync delta specs from a change to main specs

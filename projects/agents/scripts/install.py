@@ -10,6 +10,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,29 @@ OPENSPEC_MIN_NODE = (20, 19, 0)
 OPENSPEC_MANAGED_MARKER_NAME = ".sheaf-managed"
 OPENSPEC_VENDOR_REL = Path("projects") / "agents" / "vendor" / "openspec"
 OPENSPEC_PACKAGE_REL = OPENSPEC_VENDOR_REL / "package"
+OPENSPEC_PINNED_TOOLS = ("claude", "cursor", "pi", "codex")
+OPENSPEC_PINNED_WORKFLOWS = (
+    "propose",
+    "apply-change",
+    "archive-change",
+    "explore",
+    "sync-specs",
+)
+OPENSPEC_WORKFLOW_TO_SKILL_ID = {
+    "propose": "openspec-propose",
+    "apply-change": "openspec-apply-change",
+    "archive-change": "openspec-archive-change",
+    "explore": "openspec-explore",
+    "sync-specs": "openspec-sync-specs",
+}
+OPENSPEC_WORKFLOW_TO_COMMAND_NAME = {
+    "propose": "propose",
+    "apply-change": "apply",
+    "archive-change": "archive",
+    "explore": "explore",
+    "sync-specs": "sync",
+}
+OPENSPEC_COMMAND_TOOLS = ("claude", "cursor", "pi")
 
 
 @dataclass(frozen=True)
@@ -392,7 +416,21 @@ def openspec_vendor_package(repo_root: Path) -> Path:
     return repo_root / OPENSPEC_PACKAGE_REL
 
 
-def read_openspec_vendor_pin(repo_root: Path) -> dict[str, str]:
+def _parse_openspec_string_list(
+    path: Path, raw: dict[str, object], field: str
+) -> list[str]:
+    value = raw.get(field)
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{path}: {field} must be a non-empty list of strings")
+    items: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{path}: {field} entries must be non-empty strings")
+        items.append(item.strip())
+    return items
+
+
+def read_openspec_vendor_pin(repo_root: Path) -> dict[str, object]:
     path = openspec_vendor_dir(repo_root) / "VENDOR.toml"
     if not path.exists():
         raise ValueError(f"missing OpenSpec vendor pin: {path}")
@@ -403,13 +441,34 @@ def read_openspec_vendor_pin(repo_root: Path) -> dict[str, str]:
         raise ValueError(
             f"{path}: missing required pin fields: {', '.join(missing)}"
         )
-    pin: dict[str, str] = {}
+    pin: dict[str, object] = {}
     for field in required:
         value = raw[field]
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{path}: {field} must be a non-empty string")
         pin[field] = value
+
+    tools = _parse_openspec_string_list(path, raw, "tools")
+    workflows = _parse_openspec_string_list(path, raw, "workflows")
+    if tuple(tools) != OPENSPEC_PINNED_TOOLS:
+        raise ValueError(
+            f"{path}: tools must be exactly {list(OPENSPEC_PINNED_TOOLS)}, got {tools}"
+        )
+    if tuple(workflows) != OPENSPEC_PINNED_WORKFLOWS:
+        raise ValueError(
+            f"{path}: workflows must be exactly {list(OPENSPEC_PINNED_WORKFLOWS)}, "
+            f"got {workflows}"
+        )
+    pin["tools"] = tools
+    pin["workflows"] = workflows
     return pin
+
+
+def openspec_pin_field(pin: dict[str, object], field: str) -> str:
+    value = pin[field]
+    if not isinstance(value, str):
+        raise ValueError(f"OpenSpec pin field {field} must be a string")
+    return value
 
 
 def probe_node_version() -> tuple[int, ...] | None:
@@ -447,13 +506,13 @@ def format_node_version(version: tuple[int, ...]) -> str:
     return ".".join(str(part) for part in version)
 
 
-def openspec_managed_marker_content(pin: dict[str, str]) -> str:
+def openspec_managed_marker_content(pin: dict[str, object]) -> str:
     source = OPENSPEC_PACKAGE_REL.as_posix()
     return (
         f"{MANAGED_MARKER}\n"
         f"source={source}\n"
-        f"revision={pin['revision']}\n"
-        f"version={pin['version']}\n"
+        f"revision={openspec_pin_field(pin, 'revision')}\n"
+        f"version={openspec_pin_field(pin, 'version')}\n"
     )
 
 
@@ -574,7 +633,7 @@ def read_openspec_shim_version(shim: Path) -> str | None:
 def check_openspec_cli(repo_root: Path, *, home: Path) -> int:
     home = home.expanduser().resolve()
     pin = read_openspec_vendor_pin(repo_root)
-    expected = pin["version"]
+    expected = openspec_pin_field(pin, "version")
     shim = openspec_shim_path(home)
     package_root = openspec_package_path(home)
     status = 0
@@ -639,6 +698,153 @@ def clean_openspec_cli(*, home: Path) -> int:
             print(f"skip unmanaged {shim}")
 
     return 0
+
+
+def require_node_for_openspec_repo() -> None:
+    node_version = probe_node_version()
+    if node_supports_openspec(node_version):
+        return
+    if node_version is None:
+        detail = "Node.js was not found"
+    else:
+        detail = (
+            f"Node.js {format_node_version(node_version)} is older than "
+            f"{format_node_version(OPENSPEC_MIN_NODE)}"
+        )
+    raise RuntimeError(
+        f"OpenSpec repo harness generation requires Node.js "
+        f">={format_node_version(OPENSPEC_MIN_NODE)}: {detail}"
+    )
+
+
+def openspec_harness_rel_paths(pin: dict[str, object]) -> list[Path]:
+    tools = pin["tools"]
+    workflows = pin["workflows"]
+    if not isinstance(tools, list) or not isinstance(workflows, list):
+        raise ValueError("OpenSpec pin tools/workflows must be lists")
+
+    paths: list[Path] = []
+    for tool in tools:
+        if not isinstance(tool, str):
+            raise ValueError("OpenSpec pin tools entries must be strings")
+        for workflow in workflows:
+            if not isinstance(workflow, str):
+                raise ValueError("OpenSpec pin workflows entries must be strings")
+            skill_id = OPENSPEC_WORKFLOW_TO_SKILL_ID[workflow]
+            paths.append(Path(f".{tool}") / "skills" / skill_id / "SKILL.md")
+
+    for tool in OPENSPEC_COMMAND_TOOLS:
+        if tool not in tools:
+            continue
+        for workflow in workflows:
+            if not isinstance(workflow, str):
+                raise ValueError("OpenSpec pin workflows entries must be strings")
+            command_name = OPENSPEC_WORKFLOW_TO_COMMAND_NAME[workflow]
+            if tool == "claude":
+                paths.append(Path(".claude") / "commands" / "opsx" / f"{command_name}.md")
+            elif tool == "cursor":
+                paths.append(Path(".cursor") / "commands" / f"opsx-{command_name}.md")
+            elif tool == "pi":
+                paths.append(Path(".pi") / "prompts" / f"opsx-{command_name}.md")
+    return paths
+
+
+def list_openspec_harness_outputs(repo_root: Path) -> list[Output]:
+    pin = read_openspec_vendor_pin(repo_root)
+    return [
+        Output(repo_root / rel, "")
+        for rel in openspec_harness_rel_paths(pin)
+    ]
+
+
+def wrap_openspec_managed_content(content: str) -> str:
+    marker = marker_for(OPENSPEC_PACKAGE_REL)
+    if content.startswith(marker):
+        return content
+    if not content.endswith("\n"):
+        content = content + "\n"
+    return f"{marker}\n{content}"
+
+
+def generate_openspec_harness_tree(repo_root: Path, staging_root: Path) -> None:
+    pin = read_openspec_vendor_pin(repo_root)
+    tools = pin["tools"]
+    if not isinstance(tools, list):
+        raise ValueError("OpenSpec pin tools must be a list")
+    tools_csv = ",".join(str(tool) for tool in tools)
+    entry = openspec_vendor_package(repo_root) / "bin" / "openspec.js"
+    if not entry.is_file():
+        raise FileNotFoundError(f"missing vendored OpenSpec package entry: {entry}")
+
+    isolated_home = staging_root / "home"
+    isolated_config = staging_root / "xdg-config"
+    project_root = staging_root / "project"
+    isolated_home.mkdir(parents=True, exist_ok=True)
+    isolated_config.mkdir(parents=True, exist_ok=True)
+    project_root.mkdir(parents=True, exist_ok=True)
+
+    env = os.environ.copy()
+    env["HOME"] = str(isolated_home)
+    env["XDG_CONFIG_HOME"] = str(isolated_config)
+    env.pop("APPDATA", None)
+    env.pop("LOCALAPPDATA", None)
+    env.pop("XDG_DATA_HOME", None)
+
+    command = [
+        "node",
+        str(entry.resolve()),
+        "init",
+        "--tools",
+        tools_csv,
+        "--profile",
+        "core",
+        "--force",
+        str(project_root),
+    ]
+    completed = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(staging_root),
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise RuntimeError(
+            f"OpenSpec harness generation failed (exit {completed.returncode}): {detail}"
+        )
+
+
+def build_openspec_harness_outputs(repo_root: Path) -> list[Output]:
+    require_node_for_openspec_repo()
+    pin = read_openspec_vendor_pin(repo_root)
+    expected_rels = openspec_harness_rel_paths(pin)
+
+    with tempfile.TemporaryDirectory(prefix="sheaf-openspec-harness-") as tempdir:
+        staging_root = Path(tempdir)
+        generate_openspec_harness_tree(repo_root, staging_root)
+        project_root = staging_root / "project"
+        outputs: list[Output] = []
+        for rel in expected_rels:
+            source = project_root / rel
+            if not source.is_file():
+                raise FileNotFoundError(
+                    f"OpenSpec generation missing expected harness file: {rel}"
+                )
+            raw = source.read_text(encoding="utf-8")
+            outputs.append(
+                Output(repo_root / rel, wrap_openspec_managed_content(raw))
+            )
+
+        # Guard: generation must never invent root instruction files we would copy.
+        for forbidden in ("AGENTS.md", "CLAUDE.md"):
+            candidate = project_root / forbidden
+            if candidate.exists():
+                raise RuntimeError(
+                    f"OpenSpec generation produced unexpected {forbidden} in staging"
+                )
+        return outputs
 
 
 def build_outputs(
@@ -775,6 +981,16 @@ def main() -> int:
         home=args.home,
         codex_home=args.codex_home,
     )
+    if args.scope in ("repo", "all"):
+        try:
+            if args.mode in ("install", "check"):
+                outputs.extend(build_openspec_harness_outputs(repo_root))
+            else:
+                outputs.extend(list_openspec_harness_outputs(repo_root))
+        except (RuntimeError, FileNotFoundError, ValueError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
     obsolete_outputs: list[Output] = []
     if args.scope in ("repo", "all"):
         obsolete_outputs.extend(build_obsolete_repo_outputs(repo_root))

@@ -2,3 +2,5 @@ url = "https://github.com/Fission-AI/OpenSpec.git"
 revision = "1b06fddd59d8e592d5b5794a1970b22867e85b1f"
 version = "1.4.1"
 retrieved_at = "2026-07-27T17:25:20Z"
+tools = ["claude", "cursor", "pi", "codex"]
+workflows = ["propose", "apply-change", "archive-change", "explore", "sync-specs"]

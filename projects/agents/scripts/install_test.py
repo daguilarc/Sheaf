@@ -1000,5 +1000,234 @@ class OpenSpecCliInstallTests(unittest.TestCase):
             self.assertTrue(foreign.is_file())
 
 
+class OpenSpecHarnessInstallTests(unittest.TestCase):
+    def test_vendor_pin_includes_tools_and_workflows(self) -> None:
+        pin = install.read_openspec_vendor_pin(REPO_ROOT)
+        self.assertEqual(
+            ["claude", "cursor", "pi", "codex"],
+            pin["tools"],
+        )
+        self.assertEqual(
+            [
+                "propose",
+                "apply-change",
+                "archive-change",
+                "explore",
+                "sync-specs",
+            ],
+            pin["workflows"],
+        )
+
+    def test_build_openspec_harness_outputs_marks_skills_and_commands(self) -> None:
+        if not install.node_supports_openspec(install.probe_node_version()):
+            self.skipTest("requires Node >= 20.19")
+
+        outputs = install.build_openspec_harness_outputs(REPO_ROOT)
+        by_rel = {
+            output.path.relative_to(REPO_ROOT).as_posix(): output for output in outputs
+        }
+
+        skill_ids = [
+            "openspec-propose",
+            "openspec-apply-change",
+            "openspec-archive-change",
+            "openspec-explore",
+            "openspec-sync-specs",
+        ]
+        for harness in ("claude", "cursor", "pi", "codex"):
+            for skill_id in skill_ids:
+                rel = f".{harness}/skills/{skill_id}/SKILL.md"
+                self.assertIn(rel, by_rel)
+                content = by_rel[rel].content
+                self.assertIn(install.MANAGED_MARKER, content)
+                self.assertIn("projects/agents/vendor/openspec/package", content)
+                self.assertTrue(content.lstrip().startswith("<!--"))
+                self.assertIn(f"name: {skill_id}", content)
+
+        for name in ("propose", "apply", "archive", "explore", "sync"):
+            claude_rel = f".claude/commands/opsx/{name}.md"
+            cursor_rel = f".cursor/commands/opsx-{name}.md"
+            pi_rel = f".pi/prompts/opsx-{name}.md"
+            for rel in (claude_rel, cursor_rel, pi_rel):
+                self.assertIn(rel, by_rel)
+                self.assertIn(install.MANAGED_MARKER, by_rel[rel].content)
+
+        self.assertFalse(any("AGENTS.md" in rel for rel in by_rel))
+        self.assertFalse(any("CLAUDE.md" in rel for rel in by_rel))
+        self.assertFalse(any(rel.startswith(".codex/commands") for rel in by_rel))
+        self.assertFalse(any("/opsx" in rel and rel.startswith(".codex/") for rel in by_rel))
+
+    def test_openspec_harness_generation_invokes_vendored_openspec_js(self) -> None:
+        if not install.node_supports_openspec(install.probe_node_version()):
+            self.skipTest("requires Node >= 20.19")
+
+        recorded: list[list[str]] = []
+        real_run = subprocess.run
+
+        def tracking_run(*args: object, **kwargs: object) -> object:
+            if args and isinstance(args[0], (list, tuple)):
+                command = [str(part) for part in args[0]]
+                recorded.append(command)
+                if (
+                    len(command) >= 2
+                    and command[0] == "node"
+                    and command[1].endswith("openspec.js")
+                ):
+                    project_root = Path(command[-1])
+                    for harness in ("claude", "cursor", "pi", "codex"):
+                        for skill_id in (
+                            "openspec-propose",
+                            "openspec-apply-change",
+                            "openspec-archive-change",
+                            "openspec-explore",
+                            "openspec-sync-specs",
+                        ):
+                            path = (
+                                project_root
+                                / f".{harness}"
+                                / "skills"
+                                / skill_id
+                                / "SKILL.md"
+                            )
+                            path.parent.mkdir(parents=True, exist_ok=True)
+                            path.write_text(
+                                f"---\nname: {skill_id}\ndescription: stub\n---\n",
+                                encoding="utf-8",
+                            )
+                    for name in ("propose", "apply", "archive", "explore", "sync"):
+                        for rel in (
+                            f".claude/commands/opsx/{name}.md",
+                            f".cursor/commands/opsx-{name}.md",
+                            f".pi/prompts/opsx-{name}.md",
+                        ):
+                            path = project_root / rel
+                            path.parent.mkdir(parents=True, exist_ok=True)
+                            path.write_text(f"# {name}\n", encoding="utf-8")
+                    return subprocess.CompletedProcess(command, 0, "", "")
+            return real_run(*args, **kwargs)
+
+        with mock.patch.object(subprocess, "run", side_effect=tracking_run):
+            outputs = install.build_openspec_harness_outputs(REPO_ROOT)
+
+        self.assertTrue(outputs)
+        entry = str(
+            (REPO_ROOT / "projects/agents/vendor/openspec/package/bin/openspec.js").resolve()
+        )
+        matching = [command for command in recorded if entry in command]
+        self.assertTrue(matching)
+        for command in matching:
+            self.assertEqual("node", command[0])
+            self.assertNotIn("openspec", Path(command[0]).name)
+            self.assertTrue(any(part == "init" for part in command))
+            joined = " ".join(command)
+            self.assertIn("--tools", joined)
+            self.assertNotIn(str(install.openspec_shim_path(Path.home())), joined)
+
+    def test_repo_install_leaves_root_agents_and_claude_without_openspec_blocks(
+        self,
+    ) -> None:
+        if not install.node_supports_openspec(install.probe_node_version()):
+            self.skipTest("requires Node >= 20.19")
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo_root = copied_repo_fixture(tempdir)
+            agents_before = (
+                REPO_ROOT / "projects" / "agents" / "global" / "AGENTS.md"
+            ).read_text(encoding="utf-8")
+            # Seed root files as the installer would, then reinstall
+            self.assertEqual(
+                0,
+                run_main("install", "--scope", "repo", "--repo-root", str(repo_root)),
+            )
+            agents = (repo_root / "AGENTS.md").read_text(encoding="utf-8")
+            claude = (repo_root / "CLAUDE.md").read_text(encoding="utf-8")
+            self.assertIn(install.MANAGED_MARKER, agents)
+            self.assertIn("projects/agents/global/AGENTS.md", agents)
+            self.assertNotIn("OPENSPEC:START", agents)
+            self.assertNotIn("OPENSPEC:START", claude)
+            self.assertEqual(agents, claude)
+            self.assertIn(agents_before.strip(), agents)
+
+            propose = (
+                repo_root / ".claude" / "skills" / "openspec-propose" / "SKILL.md"
+            )
+            self.assertTrue(propose.is_file())
+            self.assertIn(install.MANAGED_MARKER, propose.read_text(encoding="utf-8"))
+            self.assertFalse((repo_root / ".codex" / "commands").exists())
+
+    def test_repo_install_and_check_hard_fail_when_node_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo_root = copied_repo_fixture(tempdir)
+            stderr = io.StringIO()
+            with mock.patch.object(install, "probe_node_version", return_value=None):
+                with contextlib.redirect_stderr(stderr):
+                    result = run_main(
+                        "install",
+                        "--scope",
+                        "repo",
+                        "--repo-root",
+                        str(repo_root),
+                    )
+            self.assertEqual(1, result)
+            self.assertIn("Node", stderr.getvalue())
+
+            stderr_check = io.StringIO()
+            with mock.patch.object(install, "probe_node_version", return_value=None):
+                with contextlib.redirect_stderr(stderr_check):
+                    check_result = run_main(
+                        "check",
+                        "--scope",
+                        "repo",
+                        "--repo-root",
+                        str(repo_root),
+                    )
+            self.assertEqual(1, check_result)
+            self.assertIn("Node", stderr_check.getvalue())
+
+    def test_repo_install_check_clean_openspec_harness_round_trip(self) -> None:
+        if not install.node_supports_openspec(install.probe_node_version()):
+            self.skipTest("requires Node >= 20.19")
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            repo_root = copied_repo_fixture(tempdir)
+            common = ("--scope", "repo", "--repo-root", str(repo_root))
+
+            unmanaged = (
+                repo_root / ".claude" / "skills" / "openspec-propose" / "SKILL.md"
+            )
+            unmanaged.parent.mkdir(parents=True)
+            unmanaged.write_text("unmanaged personal copy\n", encoding="utf-8")
+            foreign = repo_root / ".claude" / "skills" / "keep-me" / "SKILL.md"
+            foreign.parent.mkdir(parents=True)
+            foreign.write_text("leave me\n", encoding="utf-8")
+
+            with contextlib.redirect_stderr(io.StringIO()):
+                conflict = run_main("install", *common)
+            self.assertEqual(1, conflict)
+
+            self.assertEqual(0, run_main("install", *common, "--force"))
+            self.assertEqual(0, run_main("check", *common))
+
+            propose = unmanaged.read_text(encoding="utf-8")
+            self.assertIn(install.MANAGED_MARKER, propose)
+            self.assertNotEqual("unmanaged personal copy\n", propose)
+
+            # Drift detection
+            unmanaged.write_text(
+                propose + "\n# drifted\n",
+                encoding="utf-8",
+            )
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                self.assertEqual(1, run_main("check", *common))
+            self.assertIn("stale", stderr.getvalue())
+
+            self.assertEqual(0, run_main("install", *common))
+            self.assertEqual(0, run_main("clean", *common))
+            self.assertFalse(unmanaged.exists())
+            self.assertTrue(foreign.is_file())
+            self.assertEqual("leave me\n", foreign.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()

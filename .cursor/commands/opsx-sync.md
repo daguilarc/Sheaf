@@ -1,3 +1,4 @@
+<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 ---
 name: /opsx-sync
 id: opsx-sync

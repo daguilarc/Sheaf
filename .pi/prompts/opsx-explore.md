@@ -1,3 +1,4 @@
+<!-- sheaf-agents-managed: DO NOT EDIT; source=projects/agents/vendor/openspec/package -->
 ---
 description: "Enter explore mode - think through ideas, investigate problems, clarify requirements"
 ---

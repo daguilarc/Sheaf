@@ -51,13 +51,61 @@ def parse_vendor_toml(path: Path) -> dict[str, str]:
     return pin
 
 
-def write_vendor_toml(path: Path, pin: dict[str, str]) -> None:
+def write_vendor_toml(
+    path: Path,
+    pin: dict[str, str],
+    *,
+    tools: list[str] | None = None,
+    workflows: list[str] | None = None,
+) -> None:
     missing = [field for field in REQUIRED_PIN_FIELDS if field not in pin]
     if missing:
         raise ValueError(f"missing required pin fields: {', '.join(missing)}")
     lines = [f'{field} = "{pin[field]}"' for field in REQUIRED_PIN_FIELDS]
+    if tools is not None:
+        rendered = ", ".join(f'"{item}"' for item in tools)
+        lines.append(f"tools = [{rendered}]")
+    if workflows is not None:
+        rendered = ", ".join(f'"{item}"' for item in workflows)
+        lines.append(f"workflows = [{rendered}]")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def read_openspec_generation_extras(path: Path) -> tuple[list[str], list[str]]:
+    if not path.is_file():
+        return (
+            ["claude", "cursor", "pi", "codex"],
+            [
+                "propose",
+                "apply-change",
+                "archive-change",
+                "explore",
+                "sync-specs",
+            ],
+        )
+    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    tools = raw.get("tools")
+    workflows = raw.get("workflows")
+    if isinstance(tools, list) and tools and all(isinstance(item, str) for item in tools):
+        tools_list = [str(item) for item in tools]
+    else:
+        tools_list = ["claude", "cursor", "pi", "codex"]
+    if (
+        isinstance(workflows, list)
+        and workflows
+        and all(isinstance(item, str) for item in workflows)
+    ):
+        workflows_list = [str(item) for item in workflows]
+    else:
+        workflows_list = [
+            "propose",
+            "apply-change",
+            "archive-change",
+            "explore",
+            "sync-specs",
+        ]
+    return tools_list, workflows_list
 
 
 def vendor_tree_is_dirty(repo_root: Path, tool: str) -> bool:
@@ -248,7 +296,9 @@ def sync_openspec(repo_root: Path, ref: str) -> dict[str, str]:
         )
         replace_directory(package_dir, staged_package)
 
-    write_vendor_toml(vendor_dir / "VENDOR.toml", pin)
+    pin_path = vendor_dir / "VENDOR.toml"
+    tools, workflows = read_openspec_generation_extras(pin_path)
+    write_vendor_toml(pin_path, pin, tools=tools, workflows=workflows)
     return pin
 
 
