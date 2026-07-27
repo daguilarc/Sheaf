@@ -182,6 +182,18 @@ function EnsureOwnerOnlyDatabaseFile(databasePath: string): void {
   chmodSync(databasePath, 0o600);
 }
 
+function EnsureOwnerOnlyLedgerFiles(databasePath: string): void {
+  EnsureOwnerOnlyDatabaseFile(databasePath);
+  const walPath = `${databasePath}-wal`;
+  const shmPath = `${databasePath}-shm`;
+  if (existsSync(walPath)) {
+    chmodSync(walPath, 0o600);
+  }
+  if (existsSync(shmPath)) {
+    chmodSync(shmPath, 0o600);
+  }
+}
+
 export function OpenSddLedgerDatabase(databasePath: string): Database.Database {
   const database = new Database(databasePath);
   database.pragma(`busy_timeout = ${x_BusyTimeoutMs}`);
@@ -266,8 +278,11 @@ function MapTurnRow(row: Record<string, unknown>): SddTurnRecord {
 export function CreateSddStore(logRoot: string, clock: () => Date = () => new Date()): SddStore {
   EnsureOwnerOnlyDirectory(logRoot);
   const databasePath = path.join(logRoot, x_DatabaseFileName);
+  if (existsSync(databasePath)) {
+    EnsureOwnerOnlyLedgerFiles(databasePath);
+  }
   const database = OpenSddLedgerDatabase(databasePath);
-  EnsureOwnerOnlyDatabaseFile(databasePath);
+  EnsureOwnerOnlyLedgerFiles(databasePath);
   MigrateSchema(database);
 
   const insertSession = database.prepare(`

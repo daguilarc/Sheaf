@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmodSync, statSync } from "node:fs";
+import { chmodSync, existsSync, statSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -77,20 +77,36 @@ test("creates version-1 schema with WAL and owner-only permissions for a new log
   }
 });
 
-test("re-secures permissions on an existing sdd.sqlite file", async () => {
+function AssertOwnerOnlyFileMode(filePath: string): void {
+  const stat = statSync(filePath);
+  assert.equal(Number(stat.mode) & 0o777, 0o600);
+}
+
+test("re-secures permissions on an existing sdd.sqlite file and WAL sidecars after writes", async () => {
   const logRoot = await mkdtemp(path.join(tmpdir(), "xagent-sdd-resecure-"));
 
   try {
     const initial = CreateSddStore(logRoot);
+    initial.ReserveInitial(sampleInitialInput);
     initial.Close();
 
-    chmodSync(GetSddDatabasePath(logRoot), 0o644);
+    chmodSync(logRoot, 0o755);
+    const databasePath = GetSddDatabasePath(logRoot);
+    chmodSync(databasePath, 0o644);
 
     const reopened = CreateSddStore(logRoot);
-    reopened.Close();
+    reopened.ReserveInitial({
+      ...sampleInitialInput,
+      agentId: "xrun_20260726000000000_00000002",
+      briefText: "Second session brief.\n",
+    });
 
-    const stat = statSync(GetSddDatabasePath(logRoot));
-    assert.equal(Number(stat.mode) & 0o777, 0o600);
+    AssertOwnerOnlyFileMode(databasePath);
+    AssertOwnerOnlyFileMode(`${databasePath}-wal`);
+    assert.equal(existsSync(`${databasePath}-shm`), true);
+    AssertOwnerOnlyFileMode(`${databasePath}-shm`);
+
+    reopened.Close();
   }
   finally {
     await rm(logRoot, { recursive: true, force: true });
