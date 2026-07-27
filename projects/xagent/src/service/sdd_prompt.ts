@@ -13,11 +13,17 @@ export type SddPromptFailure = {
 
 export class SddPromptError extends Error {
   readonly structured: SddPromptFailure;
+  readonly error: string;
+  readonly details?: unknown;
 
   constructor(structured: SddPromptFailure) {
     super(structured.message);
     this.name = "SddPromptError";
     this.structured = structured;
+    this.error = structured.error;
+    if (structured.details !== undefined) {
+      this.details = structured.details;
+    }
   }
 }
 

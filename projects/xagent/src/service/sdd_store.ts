@@ -86,7 +86,6 @@ const x_BusyTimeoutMs = 5000;
 const x_DatabaseFileName = "sdd.sqlite";
 
 const x_TerminalPhases = new Set([
-  "completed",
   "failed",
   "cancelled",
   "abandoned",

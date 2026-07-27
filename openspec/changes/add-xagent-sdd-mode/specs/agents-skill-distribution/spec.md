@@ -134,7 +134,7 @@ WHEN the distributed `openspec-superpowers-workflow` skill coordinates pre-plan 
 
 ### Requirement: asd-27 — Shared skill: mandatory xagent SDD routing
 
-WHEN the `openspec-superpowers-workflow` skill executes a written Superpowers plan task, THE skill SHALL require every implementer, task reviewer, fix, re-review, and final whole-branch reviewer turn to use the xagent SDD MCP facade with the assigned agent/model, harness, and effort; SHALL require follow-ups to reuse their recorded SDD agent IDs while the workflow permits reuse; and SHALL prohibit native subagent transport, raw xagent prompt/message composition, and terminal xagent fallback for those SDD turns.
+WHEN the `openspec-superpowers-workflow` skill executes a written Superpowers plan task, THE skill SHALL require every implementer, task reviewer, fix, re-review, and final whole-branch reviewer turn to use the xagent SDD MCP facade with the assigned agent/model, harness, and effort; SHALL require fix and re-review follow-ups to reuse their recorded implementer or task-reviewer SDD agent IDs while the workflow permits reuse; SHALL treat the final whole-branch `code-reviewer` as a single-turn `xagent_sdd_start` → await → `xagent_sdd_close` session with no follow-up; and SHALL prohibit native subagent transport, raw xagent prompt/message composition, and terminal xagent fallback for those SDD turns.
 
 #### Scenario: Initial task agents use SDD start
 
@@ -146,8 +146,15 @@ WHEN the `openspec-superpowers-workflow` skill executes a written Superpowers pl
 #### Scenario: Fix and re-review preserve sessions
 
 - **WHEN** a task enters a fix round that permits agent reuse
-- **THEN** the skill directs the controller to call `xagent_sdd_followup` with the existing implementer or reviewer agent ID
+- **THEN** the skill directs the controller to call `xagent_sdd_followup` with the existing implementer or task-reviewer agent ID
 - **AND** prohibits starting a fresh agent merely to send that follow-up
+
+#### Scenario: Whole-branch reviewer is single-turn
+
+- **WHEN** the workflow dispatches the final whole-branch `code-reviewer`
+- **THEN** the skill directs the controller to use `xagent_sdd_start`, one long await, and `xagent_sdd_close`
+- **AND** does not offer `xagent_sdd_followup` for that session
+- **AND** treats a later whole-branch review round as a new `xagent_sdd_start`
 
 #### Scenario: SDD reports use persisted await
 

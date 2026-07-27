@@ -89,15 +89,18 @@ The API requires the assignment fields instead of guessing them. The resulting
 `agent_id` is the xagent `run_id`; the API uses the SDD name externally while
 retaining `run_id` compatibility in generic supervision internals. A successful
 start also returns the pre-turn resume sequence plus the resolved prompt, brief,
-and optional report paths so the controller does not re-derive workspace
-conventions.
+and report paths so the controller does not re-derive workspace
+conventions. Implementer and task-reviewer starts require a report path;
+code-reviewer starts do not use one.
 
 `xagent_sdd_followup` takes `agent_id`, `kind`, `round`, and only the new
 role-specific inputs. It reuses the plan, task, assignment, brief, and report
 path recorded by the initial turn. A `fix` is valid only for an implementer
 session and adds open findings plus covering-test guidance. A `re-review` is
-valid only for a reviewer session and adds findings, a base/head range, and a
-scoped diff. The service rejects a follow-up unless the session is ready and no
+valid only for a `task-reviewer` session and adds findings, a base/head range,
+and a scoped diff. A whole-branch `code-reviewer` session is single-turn:
+start, await, and close — it has no follow-up kind. The service rejects a
+follow-up unless the session is ready and no
 prior SDD turn is awaiting a final report.
 
 `xagent_sdd_await` accepts `agent_id`, `after_sequence`, and the same optional
@@ -291,10 +294,12 @@ The write points are:
 4. `xagent_sdd_close` records `closed_at` after the underlying provider session
    closes.
 5. After xagent startup reconciliation, the SDD store marks any `prepared` or
-   `running` turn `abandoned` when its run was reconciled to an abandoned or
-   other terminal state without a report. Awaiting that run returns the normal
-   terminal supervision result after the ledger transition; no follow-up is
-   accepted for the terminal session.
+   `running` turn `abandoned` when its run was reconciled to an abandoned,
+   failed, or cancelled reportless terminal state. Phase `completed` is not
+   treated as reportless: the turn stays open so a later await can persist the
+   delivered report. Awaiting an abandoned run returns the normal terminal
+   supervision result after the ledger transition; no follow-up is accepted for
+   the terminal session.
 
 If the report transaction fails, the facade returns a structured persistence
 error without advancing the caller's cursor. The durable completion can

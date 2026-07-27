@@ -17,7 +17,7 @@ WHEN the xagent service exposes its MCP endpoint, THE service SHALL provide `xag
 
 ### Requirement: xsdd-2 — Start: structured assignment and role prompt
 
-WHEN `xagent_sdd_start` receives an absolute existing `cwd`, a plan file, a supported role, a non-empty brief file, task identity where required, a non-empty agent/model, an existing xagent harness, an effort in `low`, `medium`, `high`, or `xhigh`, and role-specific dispatch arguments, THE service SHALL execute `<service repoRoot>/projects/agents/utils/dispatch-prompt` with Python 3 and the canonical `cwd` as its working directory, preserve the renderer's template resolution and validation, start one supervised persistent session, and return its xagent run ID as `agent_id`, the pre-turn resume sequence, and resolved prompt, brief, and optional report paths.
+WHEN `xagent_sdd_start` receives an absolute existing `cwd`, a plan file, a supported role, a non-empty brief file, task identity where required, a non-empty agent/model, an existing xagent harness, an effort in `low`, `medium`, `high`, or `xhigh`, and role-specific dispatch arguments, THE service SHALL execute `<service repoRoot>/projects/agents/utils/dispatch-prompt` with Python 3 and the canonical `cwd` as its working directory, preserve the renderer's template resolution and validation, start one supervised persistent session, and return its xagent run ID as `agent_id`, the pre-turn supervision `sequence`, and resolved prompt, brief, and report paths when the role requires a report.
 
 #### Scenario: Implementer starts from a brief
 
@@ -78,7 +78,7 @@ WHEN `xagent_sdd_followup` receives a valid SDD `agent_id`, follow-up kind, roun
 
 #### Scenario: Incompatible follow-up is rejected
 
-- **WHEN** a caller requests a fix from a reviewer, a re-review from an implementer, or a follow-up while another SDD turn is unresolved
+- **WHEN** a caller requests a fix from a reviewer, a re-review from an implementer, a follow-up against a whole-branch `code-reviewer`, or a follow-up while another SDD turn is unresolved
 - **THEN** the service rejects the request before submitting provider input
 
 ### Requirement: xsdd-4 — Ledger: session and turn schema
@@ -167,10 +167,16 @@ WHEN an SDD turn crosses a provider or controller boundary, THE service SHALL pr
 
 #### Scenario: Restart reconciliation abandons an unresolved turn
 
-- **WHEN** service startup reconciliation leaves an SDD run abandoned or otherwise terminal without a report
+- **WHEN** service startup reconciliation leaves an SDD run abandoned, failed, or cancelled without a report
 - **THEN** the matching `prepared` or `running` turn becomes `abandoned`
 - **AND** later await returns the terminal supervision result
 - **AND** follow-up remains prohibited for that terminal session
+
+#### Scenario: Restart reconciliation preserves completed-phase turns
+
+- **WHEN** service startup reconciliation leaves an SDD run at phase `completed` while a ledger turn is still `running` or `prepared`
+- **THEN** the turn remains open so a later await can persist the delivered report
+- **AND** the turn is not marked `abandoned`
 
 ### Requirement: xsdd-6 — Cursor: supervision sequence only
 

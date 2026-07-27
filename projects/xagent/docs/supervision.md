@@ -64,9 +64,9 @@ Superpowers subagent-driven development (SDD) uses four facade tools on top of t
 Input (discriminated by `role`):
 
 - Common fields: absolute existing `cwd`, absolute `plan`, `agent`, `harness`, `effort`, optional `policy`.
-- `implementer`: `task`, `name`, absolute `brief`, optional absolute `report`, optional `context`.
+- `implementer`: `task`, `name`, absolute `brief`, absolute `report`, optional `context`.
 - `task-reviewer`: `task`, absolute `brief`, absolute `report`, `base`, `head`, optional absolute `constraints`, optional absolute `diff`.
-- `code-reviewer`: absolute `review_brief`, `description`, `base`, `head`.
+- `code-reviewer`: absolute `review_brief`, `description`, `base`, `head`. Whole-branch reviewer sessions are single-turn (`start` → await → `close`) with no follow-up.
 
 Success output:
 
@@ -134,7 +134,7 @@ Success output: `{ "agent_id": "<id>", "closed": true }`
 
 SDD start and re-review follow-ups render prompts through the trusted Python executable at `<service repoRoot>/projects/agents/utils/dispatch-prompt`. The renderer subprocess uses the canonicalized `cwd` from the start request as its working directory; the controller's own cwd is not consulted.
 
-Rendering also requires an installed Superpowers template tree. By default `dispatch-prompt` reads templates from the installed Superpowers plugin cache; operators may pin templates with `SUPERPOWERS_TEMPLATES_ROOT` or the renderer's `--templates-root` flag (surfaced through the SDD prompt layer for tests). Missing Python 3, a missing trusted renderer, or missing templates fail before any ledger row or provider process is created.
+Rendering also requires an installed Superpowers template tree. By default `dispatch-prompt` reads templates from the installed Superpowers plugin cache; operators may pin templates with `SUPERPOWERS_TEMPLATES_ROOT` or the renderer's `--templates-root` flag (surfaced through the SDD prompt layer for tests). Missing Python 3, a missing trusted renderer, or missing templates fail before any ledger row or provider process is created, with structured MCP codes `sdd_python_missing`, `sdd_renderer_missing`, `sdd_renderer_failed`, `sdd_renderer_output_invalid`, or `sdd_prompt_unreadable` rather than a generic `tool_failed`.
 
 ### SDD ledger database
 
@@ -153,7 +153,9 @@ On `xagent_sdd_await` (and on `xagent_await` for SDD-owned `run_id`s), the servi
 
 ### Startup abandonment reconciliation
 
-After xagent run-phase reconciliation on service start, the SDD store marks any `prepared` or `running` turn `abandoned` when its corresponding run was reconciled to a terminal phase without a delivered report. Completed turns with stored reports are preserved.
+After xagent run-phase reconciliation on service start, the SDD store marks any `prepared` or `running` turn `abandoned` when its corresponding run was reconciled to a reportless terminal phase (`failed`, `cancelled`, or `abandoned`). Phase `completed` is left alone so a later await can persist a delivered report. Completed turns with stored reports are preserved.
+
+When `xagent_sdd_await` would return a delivered report but no matching open turn remains to record it, the tool returns `sdd_report_unbound` rather than silently handing the report back.
 
 ### Generic-tool safety hooks
 

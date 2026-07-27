@@ -275,7 +275,7 @@ test("rejects illegal transitions and follow-ups while a turn is open", async ()
   }
 });
 
-test("marks prepared or running turns abandoned during terminal reconciliation", async () => {
+test("marks prepared or running turns abandoned during reportless terminal reconciliation", async () => {
   const logRoot = await mkdtemp(path.join(tmpdir(), "xagent-sdd-reconcile-"));
   const clock = () => new Date("2026-07-26T12:00:00.000Z");
 
@@ -291,13 +291,23 @@ test("marks prepared or running turns abandoned during terminal reconciliation",
       briefText: "Second session brief.\n",
     });
 
+    const completedPhaseAgentId = "xrun_20260726000000000_00000003";
+    store.ReserveInitial({
+      ...sampleInitialInput,
+      agentId: completedPhaseAgentId,
+      briefText: "Completed-phase session brief.\n",
+    });
+    store.MarkRunning(completedPhaseAgentId, 1, 9);
+
     store.ReconcileTerminalRuns(new Map([
       [sampleAgentId, "abandoned"],
       [otherAgentId, "running"],
+      [completedPhaseAgentId, "completed"],
     ]));
 
     const abandonedTurn = store.GetOpenTurn(sampleAgentId);
     assert.equal(abandonedTurn, undefined);
+    assert.equal(store.GetOpenTurn(completedPhaseAgentId)?.status, "running");
 
     const database = new Database(GetSddDatabasePath(logRoot), { readonly: true });
     const abandonedRow = database
@@ -306,10 +316,14 @@ test("marks prepared or running turns abandoned during terminal reconciliation",
     const preparedRow = database
       .prepare("SELECT status FROM sdd_turns WHERE agent_id = ? AND turn_number = 1")
       .get(otherAgentId) as { status: string };
+    const completedPhaseRow = database
+      .prepare("SELECT status FROM sdd_turns WHERE agent_id = ? AND turn_number = 1")
+      .get(completedPhaseAgentId) as { status: string };
     database.close();
 
     assert.equal(abandonedRow.status, "abandoned");
     assert.equal(preparedRow.status, "prepared");
+    assert.equal(completedPhaseRow.status, "running");
     store.Close();
   }
   finally {

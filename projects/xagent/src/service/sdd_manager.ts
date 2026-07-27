@@ -275,9 +275,19 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     }
 
     const openTurn = store.GetOpenTurn(agentId);
+    if (openTurn === undefined)
+    {
+      throw StructuredFailure({
+        error: "sdd_report_unbound",
+        message: "Delivered SDD report has no matching open turn to record.",
+        details: {
+          agent_id: agentId,
+          sequence: result.sequence,
+        },
+      });
+    }
     if (
-      openTurn === undefined
-      || openTurn.status !== "running"
+      openTurn.status !== "running"
       || openTurn.resume_sequence === null
       || result.sequence <= openTurn.resume_sequence
     )
@@ -496,6 +506,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
           },
         });
       }
+      await ReadRequiredText(read, input.findings, "SDD findings");
       const reportPath = artifacts.reportPath;
       promptText = formatFix({
         round: input.round,

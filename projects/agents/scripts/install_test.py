@@ -573,7 +573,7 @@ XAGENT_SDD_GUIDANCE_PHRASES = (
     "xagent_sdd_await",
     "xagent_sdd_close",
     "agent_id",
-    "resume_sequence",
+    "sequence",
     "report-before-return",
     "do not start a fresh agent",
     "jsonl position",
@@ -583,6 +583,7 @@ XAGENT_SDD_GUIDANCE_PHRASES = (
     "xagent supervise",
     "broken agentic infrastructure",
     "do not poll",
+    "single-turn",
 )
 
 
@@ -727,7 +728,7 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
                 "xagent_sdd_await",
                 "xagent_sdd_close",
                 "agent_id",
-                "resume_sequence",
+                "sequence",
                 "report-before-return",
                 "dispatch-prompt",
                 "do not start a fresh agent",
@@ -738,6 +739,7 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
                 "xagent supervise",
                 "broken agentic infrastructure",
                 "do not poll",
+                "single-turn",
             ),
         )
         assert_transport_guidance_scoped(

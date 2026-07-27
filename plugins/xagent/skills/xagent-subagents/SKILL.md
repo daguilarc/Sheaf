@@ -43,14 +43,14 @@ xagent_sdd_start
 
 `xagent_sdd_start` renders the role prompt through the trusted
 `dispatch-prompt` executable in the service checkout, reserves the SDD ledger
-row, and returns `agent_id`, `resume_sequence`, and artifact paths. Record the
-returned `agent_id` and `resume_sequence` cursor for every turn. The
-`resume_sequence` is the pre-turn supervision cursor; it is not a provider
-JSONL position.
+row, and returns `agent_id`, `sequence`, and artifact paths. Record the
+returned `agent_id` and `sequence` cursor for every turn. The returned
+`sequence` is the pre-turn supervision cursor; it is not a provider JSONL position.
+Pass it to `xagent_sdd_await` as `after_sequence`.
 
 After `xagent_sdd_start` or `xagent_sdd_followup`, do independent controller
 work until it is exhausted, then enter one long `xagent_sdd_await` with the
-latest `resume_sequence`. Healthy provider deltas, tools, raw events, status,
+latest `sequence`. Healthy provider deltas, tools, raw events, status,
 and healthy watchdog verdicts never complete an await and never enter the
 leader context.
 
@@ -61,9 +61,13 @@ logs, summarize progress for the leader, or read the mutable Superpowers report
 file on disk. If the service completes without final text, treat that as
 `missing_final_report` and escalate.
 
-Fix and re-review rounds MUST call `xagent_sdd_followup` on the existing
-implementer or reviewer `agent_id`. Do not start a fresh agent merely to send
-that follow-up. Close each SDD session with `xagent_sdd_close` only after its
+Fix rounds MUST call `xagent_sdd_followup` on the existing implementer
+`agent_id`. Re-review rounds MUST call `xagent_sdd_followup` on the existing
+task-reviewer `agent_id`. Do not start a fresh agent merely to send that
+follow-up. The final whole-branch `code-reviewer` is a single-turn session:
+`xagent_sdd_start` → await → `xagent_sdd_close`. It has no fix or re-review
+follow-up; a new whole-branch review round means a new `xagent_sdd_start`.
+Close each task-scoped SDD session with `xagent_sdd_close` only after its
 task passes both verdicts.
 
 While a Superpowers SDD agent is healthy and the controller has no independent

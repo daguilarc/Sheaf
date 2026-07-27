@@ -107,15 +107,18 @@ xagent_sdd_start
 
 - **Initial task agents use `xagent_sdd_start`.** Pass the complete brief,
   plan path, assignment metadata, and report path for implementer and
-  task-reviewer roles. Record the returned `agent_id` and `resume_sequence`.
-  The `resume_sequence` is the pre-turn supervision cursor; it is not a provider
-  JSONL position.
+  task-reviewer roles. Record the returned `agent_id` and `sequence`.
+  The returned `sequence` is the pre-turn supervision cursor; it is not a
+  provider JSONL position. Pass it to `xagent_sdd_await` as `after_sequence`.
 - **Fix and re-review preserve sessions.** Call `xagent_sdd_followup` with the
-  existing implementer or reviewer `agent_id`. Do not start a fresh agent
-  merely to send that follow-up.
+  existing implementer `agent_id` for fixes and the existing task-reviewer
+  `agent_id` for re-reviews. Do not start a fresh agent merely to send that
+  follow-up. The final whole-branch `code-reviewer` is single-turn
+  (`xagent_sdd_start` → await → `xagent_sdd_close`) with no follow-up; a new
+  whole-branch review round means a new `xagent_sdd_start`.
 - **One long SDD await per wait cycle.** After dispatching an SDD agent, do
   independent controller work, then one long `xagent_sdd_await` with the
-  latest `resume_sequence`. Do not use native mailbox waits or short status
+  latest `sequence`. Do not use native mailbox waits or short status
   loops for SDD turns.
 - **Consume persisted reports only.** Read `report.text` from the await
   result after xagent records the sanitized assistant report in the SDD ledger

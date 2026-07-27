@@ -19,6 +19,7 @@ import type {
   RenderedSddPrompt,
   RenderSddPromptInput,
 } from "../src/service/sdd_prompt.js";
+import { SddPromptError } from "../src/service/sdd_prompt.js";
 import type {
   AwaitRunResult,
   CloseRunResult,
@@ -31,7 +32,10 @@ import type {
   XagentMessageInput,
   XagentSddStartInput,
 } from "../src/service/tool_schemas.js";
-import { ToolValidationError } from "../src/service/tool_schemas.js";
+import {
+  ToolValidationError,
+  structuredErrorFromUnknown,
+} from "../src/service/tool_schemas.js";
 
 const x_AgentId = "xrun_20260727000000000_abcdef12";
 const x_PlanPath = "/tmp/plans/2026-07-26-xagent-sdd-mode.md";
@@ -338,7 +342,7 @@ function CreateFakeStore(recorder: ReturnType<typeof CreateOrderRecorder>): SddS
     {
       recorder.Record("ReconcileTerminalRuns", [...phases.entries()]);
       reconciled.push(phases);
-      const terminal = new Set(["completed", "failed", "cancelled", "abandoned"]);
+      const terminal = new Set(["failed", "cancelled", "abandoned"]);
       for (const [agentId, phase] of phases)
       {
         if (!terminal.has(phase))
@@ -704,6 +708,36 @@ test("Start reservation failure creates no provider run", async () =>
   assert.equal(recorder.Names().includes("create"), false);
 });
 
+test("Start surfaces SddPromptError structured codes through structuredErrorFromUnknown", async () =>
+{
+  const { manager, store, runManager } = CreateManagerHarness({
+    render: async () =>
+    {
+      throw new SddPromptError({
+        error: "sdd_renderer_missing",
+        message: "Trusted dispatch-prompt renderer is unavailable.",
+      });
+    },
+  });
+
+  await assert.rejects(
+    () => manager.Start(ImplementerStartInput()),
+    (error: unknown) =>
+    {
+      const structured = structuredErrorFromUnknown(error);
+      assert.equal(structured.error, "sdd_renderer_missing");
+      assert.equal(
+        structured.message,
+        "Trusted dispatch-prompt renderer is unavailable.",
+      );
+      return true;
+    },
+  );
+
+  assert.equal(store.reserved.length, 0);
+  assert.equal(runManager.created.length, 0);
+});
+
 test("Start create failure marks the prepared turn failed and closes no live run", async () =>
 {
   const { manager, store, runManager } = CreateManagerHarness({
@@ -774,6 +808,70 @@ async function StartAndClearOpenTurn(
   harness.runManager.submitted.length = 0;
   harness.rendered.length = 0;
 }
+
+test("Followup fix rejects when findings file is missing or empty", async () =>
+{
+  const missingHarness = CreateManagerHarness({
+    readFile: async (filePath: string) =>
+    {
+      if (filePath === x_FindingsPath)
+      {
+        throw new Error("ENOENT");
+      }
+      return x_BriefText;
+    },
+  });
+  await StartAndClearOpenTurn(missingHarness);
+
+  await assert.rejects(
+    () => missingHarness.manager.Followup({
+      kind: "fix",
+      agent_id: x_AgentId,
+      round: 1,
+      findings: x_FindingsPath,
+      findings_text: x_FindingsText,
+      tests: ["dist/tests/sdd_manager.test.js"],
+    }),
+    (error: unknown) =>
+    {
+      assert.ok(error instanceof ToolValidationError);
+      assert.equal(error.structured.error, "sdd_artifact_unreadable");
+      return true;
+    },
+  );
+  assert.equal(missingHarness.recorder.Names().includes("submit"), false);
+  assert.equal(missingHarness.recorder.Names().includes("formatFix"), false);
+
+  const emptyHarness = CreateManagerHarness({
+    readFile: async (filePath: string) =>
+    {
+      if (filePath === x_FindingsPath)
+      {
+        return "  \n";
+      }
+      return x_BriefText;
+    },
+  });
+  await StartAndClearOpenTurn(emptyHarness);
+
+  await assert.rejects(
+    () => emptyHarness.manager.Followup({
+      kind: "fix",
+      agent_id: x_AgentId,
+      round: 1,
+      findings: x_FindingsPath,
+      findings_text: x_FindingsText,
+      tests: ["dist/tests/sdd_manager.test.js"],
+    }),
+    (error: unknown) =>
+    {
+      assert.ok(error instanceof ToolValidationError);
+      assert.equal(error.structured.error, "sdd_artifact_empty");
+      return true;
+    },
+  );
+  assert.equal(emptyHarness.recorder.Names().includes("submit"), false);
+});
 
 test("Followup fix rejects when implementer started without a report path", async () =>
 {
@@ -1444,7 +1542,7 @@ test("ReconcileTerminalRuns abandons only unresolved reportless terminal turns",
   const abandonedId = x_AgentId;
   const failedId = "xrun_20260727000000000_failed01";
   const liveId = "xrun_20260727000000000_live0001";
-  const completedId = "xrun_20260727000000000_done0001";
+  const completedPhaseId = "xrun_20260727000000000_done0001";
 
   await harness.manager.Start(ImplementerStartInput());
 
@@ -1478,8 +1576,11 @@ test("ReconcileTerminalRuns abandons only unresolved reportless terminal turns",
   });
   harness.store.MarkRunning(liveId, 1, 4);
 
+  // A closed-but-completed provider phase must leave a still-running ledger
+  // turn open so the normal await path can persist the delivered report.
+  //
   harness.store.ReserveInitial({
-    agentId: completedId,
+    agentId: completedPhaseId,
     planName: "2026-07-26-xagent-sdd-mode",
     planPath: x_PlanPath,
     cwd: x_CanonicalCwd,
@@ -1492,26 +1593,50 @@ test("ReconcileTerminalRuns abandons only unresolved reportless terminal turns",
     briefText: x_BriefText,
     reportPath: x_ReportPath,
   });
-  harness.store.MarkRunning(completedId, 1, 5);
-  harness.store.MarkCompleted(completedId, 1, x_SanitizedReport, 99);
+  harness.store.MarkRunning(completedPhaseId, 1, 5);
 
   harness.store.ReconcileTerminalRuns(new Map([
     [abandonedId, "abandoned"],
     [failedId, "failed"],
     [liveId, "running"],
-    [completedId, "completed"],
+    [completedPhaseId, "completed"],
   ]));
 
   assert.equal(harness.store.openTurns.has(abandonedId), false);
   assert.equal(harness.store.openTurns.has(failedId), false);
   assert.equal(harness.store.openTurns.get(liveId)?.status, "running");
-  assert.equal(harness.store.openTurns.has(completedId), false);
+  assert.equal(harness.store.openTurns.get(completedPhaseId)?.status, "running");
 
   const abandonedTurn = harness.store.turnsByAgent.get(abandonedId)?.at(-1);
   const failedTurn = harness.store.turnsByAgent.get(failedId)?.at(-1);
-  const completedTurn = harness.store.turnsByAgent.get(completedId)?.at(-1);
+  const completedPhaseTurn = harness.store.turnsByAgent.get(completedPhaseId)?.at(-1);
   assert.equal(abandonedTurn?.status, "abandoned");
   assert.equal(failedTurn?.status, "abandoned");
-  assert.equal(completedTurn?.status, "completed");
-  assert.equal(completedTurn?.report_text, x_SanitizedReport);
+  assert.equal(completedPhaseTurn?.status, "running");
+  assert.equal(completedPhaseTurn?.report_text, null);
+});
+
+test("Await rejects a delivered report when no open turn can record it", async () =>
+{
+  const harness = CreateManagerHarness();
+  await harness.manager.Start(ImplementerStartInput());
+  harness.store.openTurns.delete(x_AgentId);
+  harness.recorder.calls.length = 0;
+  harness.runManager.awaitResult = CompletionResult({ sequence: 42 });
+
+  await assert.rejects(
+    () => harness.manager.Await({
+      agent_id: x_AgentId,
+      after_sequence: 7,
+      deadline_seconds: 7000,
+    }),
+    (error: unknown) =>
+    {
+      assert.ok(error instanceof ToolValidationError);
+      assert.equal(error.structured.error, "sdd_report_unbound");
+      return true;
+    },
+  );
+  assert.equal(harness.recorder.Names().includes("MarkCompleted"), false);
+  assert.equal(harness.store.completed.length, 0);
 });

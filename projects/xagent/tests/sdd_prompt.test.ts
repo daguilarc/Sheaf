@@ -379,6 +379,16 @@ test("XagentSddStartInputSchema rejects unknown fields and invalid task shapes",
   assert.equal(XagentSddStartInputSchema.safeParse(validImplementerStart({ task: "1" })).success, false);
 });
 
+test("ImplementerStartSchema requires an absolute report path", () => {
+  const missingReport = { ...validImplementerStart() };
+  delete (missingReport as { report?: string }).report;
+  assert.equal(ImplementerStartSchema.safeParse(missingReport).success, false);
+  assert.equal(
+    ImplementerStartSchema.safeParse(validImplementerStart({ report: "relative/report.md" })).success,
+    false,
+  );
+});
+
 test("code-reviewer permits no task and requires review_brief and description", () => {
   const parsed = CodeReviewerStartSchema.parse({
     role: "code-reviewer",
