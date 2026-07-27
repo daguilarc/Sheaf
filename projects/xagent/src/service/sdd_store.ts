@@ -176,14 +176,13 @@ function EnsureOwnerOnlyDirectory(directoryPath: string): void {
   if (!existsSync(directoryPath)) {
     mkdirSync(directoryPath, { recursive: true, mode: 0o700 });
   }
-  chmodSync(directoryPath, 0o700);
 }
 
 function EnsureOwnerOnlyDatabaseFile(databasePath: string): void {
   chmodSync(databasePath, 0o600);
 }
 
-function OpenDatabase(databasePath: string): Database.Database {
+export function OpenSddLedgerDatabase(databasePath: string): Database.Database {
   const database = new Database(databasePath);
   database.pragma(`busy_timeout = ${x_BusyTimeoutMs}`);
   database.pragma("journal_mode = WAL");
@@ -264,22 +263,11 @@ function MapTurnRow(row: Record<string, unknown>): SddTurnRecord {
   };
 }
 
-function AssertNoPromptOrOffsetFields(record: Record<string, unknown>): void {
-  for (const field of ["rendered_prompt", "renderedPrompt", "jsonl_offset", "jsonlOffset"]) {
-    if (Object.prototype.hasOwnProperty.call(record, field)) {
-      throw new SddStoreError(`Unexpected SDD ledger field: ${field}`);
-    }
-  }
-}
-
 export function CreateSddStore(logRoot: string, clock: () => Date = () => new Date()): SddStore {
   EnsureOwnerOnlyDirectory(logRoot);
   const databasePath = path.join(logRoot, x_DatabaseFileName);
-  const databaseExists = existsSync(databasePath);
-  const database = OpenDatabase(databasePath);
-  if (!databaseExists) {
-    EnsureOwnerOnlyDatabaseFile(databasePath);
-  }
+  const database = OpenSddLedgerDatabase(databasePath);
+  EnsureOwnerOnlyDatabaseFile(databasePath);
   MigrateSchema(database);
 
   const insertSession = database.prepare(`
@@ -562,7 +550,6 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
         return undefined;
       }
       const session = MapSessionRow(row);
-      AssertNoPromptOrOffsetFields(session as unknown as Record<string, unknown>);
       return session;
     },
 
@@ -573,7 +560,6 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
         return undefined;
       }
       const turn = MapTurnRow(row);
-      AssertNoPromptOrOffsetFields(turn as unknown as Record<string, unknown>);
       return turn;
     },
 

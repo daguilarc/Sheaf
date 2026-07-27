@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { statSync } from "node:fs";
+import { chmodSync, statSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -10,9 +10,8 @@ import Database from "better-sqlite3";
 import {
   CreateSddStore,
   GetSddDatabasePath,
+  OpenSddLedgerDatabase,
   SddStoreError,
-  type SddSessionRecord,
-  type SddTurnRecord,
 } from "../src/service/sdd_store.js";
 
 const sampleAgentId = "xrun_20260726000000000_00000001";
@@ -32,16 +31,31 @@ const sampleInitialInput = {
   reportPath: "/tmp/task-1-report.md",
 };
 
-function AssertNoPromptOrOffsetFields(record: SddSessionRecord | SddTurnRecord): void {
-  const keys = Object.keys(record);
-  assert.equal(keys.includes("rendered_prompt"), false);
-  assert.equal(keys.includes("renderedPrompt"), false);
-  assert.equal(keys.includes("jsonl_offset"), false);
-  assert.equal(keys.includes("jsonlOffset"), false);
+const x_ForbiddenLedgerColumns = [
+  "rendered_prompt",
+  "renderedPrompt",
+  "jsonl_offset",
+  "jsonlOffset",
+];
+
+function AssertLedgerSchemaExcludesPromptAndOffsetColumns(database: Database.Database): void {
+  const sessionColumns = database
+    .prepare("PRAGMA table_info(sdd_sessions)")
+    .all() as Array<{ name: string }>;
+  const turnColumns = database
+    .prepare("PRAGMA table_info(sdd_turns)")
+    .all() as Array<{ name: string }>;
+
+  for (const columnName of x_ForbiddenLedgerColumns) {
+    assert.equal(sessionColumns.some((column) => column.name === columnName), false);
+    assert.equal(turnColumns.some((column) => column.name === columnName), false);
+  }
 }
 
-test("creates version-1 schema with WAL, foreign keys, and owner-only permissions", async () => {
-  const logRoot = await mkdtemp(path.join(tmpdir(), "xagent-sdd-schema-"));
+test("creates version-1 schema with WAL and owner-only permissions for a new log root", async () => {
+  const parentRoot = await mkdtemp(path.join(tmpdir(), "xagent-sdd-schema-"));
+  const logRoot = path.join(parentRoot, "sdd-log");
+
   try {
     const store = CreateSddStore(logRoot, () => new Date("2026-07-26T00:00:00.000Z"));
     store.Close();
@@ -50,13 +64,63 @@ test("creates version-1 schema with WAL, foreign keys, and owner-only permission
     const database = new Database(databasePath, { readonly: true });
     assert.equal(database.pragma("user_version", { simple: true }), 1);
     assert.equal(database.pragma("journal_mode", { simple: true }), "wal");
-    assert.equal(database.pragma("foreign_keys", { simple: true }), 1);
+    AssertLedgerSchemaExcludesPromptAndOffsetColumns(database);
     database.close();
 
     const stat = statSync(GetSddDatabasePath(logRoot));
-    const parentStat = statSync(logRoot);
+    const createdLogRootStat = statSync(logRoot);
     assert.equal(Number(stat.mode) & 0o777, 0o600);
-    assert.equal(Number(parentStat.mode) & 0o077, 0);
+    assert.equal(Number(createdLogRootStat.mode) & 0o077, 0);
+  }
+  finally {
+    await rm(parentRoot, { recursive: true, force: true });
+  }
+});
+
+test("re-secures permissions on an existing sdd.sqlite file", async () => {
+  const logRoot = await mkdtemp(path.join(tmpdir(), "xagent-sdd-resecure-"));
+
+  try {
+    const initial = CreateSddStore(logRoot);
+    initial.Close();
+
+    chmodSync(GetSddDatabasePath(logRoot), 0o644);
+
+    const reopened = CreateSddStore(logRoot);
+    reopened.Close();
+
+    const stat = statSync(GetSddDatabasePath(logRoot));
+    assert.equal(Number(stat.mode) & 0o777, 0o600);
+  }
+  finally {
+    await rm(logRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects orphan turn inserts when the ledger connection enables foreign keys", async () => {
+  const logRoot = await mkdtemp(path.join(tmpdir(), "xagent-sdd-fk-"));
+
+  try {
+    const store = CreateSddStore(logRoot);
+    store.ReserveInitial(sampleInitialInput);
+    store.Close();
+
+    const database = OpenSddLedgerDatabase(GetSddDatabasePath(logRoot));
+    assert.throws(
+      () => database.prepare(`
+        INSERT INTO sdd_turns (
+          agent_id,
+          turn_number,
+          kind,
+          brief_path,
+          brief_text,
+          status,
+          created_at
+        ) VALUES (?, 99, 'fix', '/b', 'brief', 'prepared', '2026-01-01')
+      `).run("missing-session-id"),
+      /FOREIGN KEY constraint failed/,
+    );
+    database.close();
   }
   finally {
     await rm(logRoot, { recursive: true, force: true });
@@ -99,13 +163,11 @@ test("reserves initial turns, follow-ups, lifecycle transitions, and restart rea
 
     let session = store.GetSession(sampleAgentId);
     assert.ok(session);
-    AssertNoPromptOrOffsetFields(session);
     assert.equal(session.plan_name, "xagent-sdd-mode");
     assert.equal(session.closed_at, null);
 
     let openTurn = store.GetOpenTurn(sampleAgentId);
     assert.ok(openTurn);
-    AssertNoPromptOrOffsetFields(openTurn);
     assert.equal(openTurn.turn_number, 1);
     assert.equal(openTurn.kind, "initial");
     assert.equal(openTurn.brief_text, "Implement the versioned SDD ledger.\n");
