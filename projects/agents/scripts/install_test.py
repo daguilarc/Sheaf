@@ -502,40 +502,111 @@ def extract_markdown_section(content: str, heading: str) -> str:
     return content[start : start + next_heading.start()]
 
 
-def assert_forbidden_only_outside_sections(
+PROHIBITION_LINE_MARKERS = (
+    "do not",
+    "never",
+    "prohibit",
+    "must not",
+    "no transport fallback",
+    "no sdd fallback",
+    "prohibited",
+)
+
+
+def line_looks_prohibitive(line: str) -> bool:
+    lowered = line.lower()
+    return any(marker in lowered for marker in PROHIBITION_LINE_MARKERS)
+
+
+def phrase_occurs_only_in_prohibition_context(section: str, phrase: str) -> bool:
+    lowered_phrase = phrase.lower()
+    lines = section.splitlines()
+    for index, line in enumerate(lines):
+        if lowered_phrase not in line.lower():
+            continue
+        context = "\n".join(lines[max(0, index - 2) : index + 2])
+        if line_looks_prohibitive(context):
+            continue
+        return False
+    return True
+
+
+def assert_transport_guidance_scoped(
     test_case: unittest.TestCase,
     content: str,
     *,
     protected_headings: tuple[str, ...],
     forbidden_phrases: tuple[str, ...],
-    required_outside_phrases: tuple[str, ...] | None = None,
+    required_outside_phrases: tuple[str, ...] = (),
 ) -> None:
     protected_parts = [
-        extract_markdown_section(content, heading).lower() for heading in protected_headings
+        extract_markdown_section(content, heading) for heading in protected_headings
     ]
     for phrase in forbidden_phrases:
         lowered_phrase = phrase.lower()
         for heading, section in zip(protected_headings, protected_parts, strict=True):
-            test_case.assertNotIn(
-                lowered_phrase,
-                section,
+            test_case.assertTrue(
+                phrase_occurs_only_in_prohibition_context(section, phrase),
                 (
-                    f"forbidden SDD/pre-plan scoping phrase {phrase!r} "
-                    f"appeared in protected section {heading!r}"
+                    f"forbidden transport phrase {phrase!r} appeared in "
+                    f"{heading!r} outside a prohibition context"
                 ),
             )
-        if required_outside_phrases is None or phrase in required_outside_phrases:
-            remainder = content.lower()
-            for section in protected_parts:
-                remainder = remainder.replace(section, "")
-            test_case.assertIn(
-                lowered_phrase,
-                remainder,
-                (
-                    f"expected non-SDD guidance phrase {phrase!r} outside protected "
-                    f"sections {protected_headings!r}"
-                ),
-            )
+        if phrase not in required_outside_phrases:
+            continue
+        remainder = content.lower()
+        for section in protected_parts:
+            remainder = remainder.replace(section.lower(), "")
+        test_case.assertIn(
+            lowered_phrase,
+            remainder,
+            (
+                f"expected non-SDD guidance phrase {phrase!r} outside protected "
+                f"sections {protected_headings!r}"
+            ),
+        )
+
+
+XAGENT_SDD_GUIDANCE_PHRASES = (
+    "xagent_sdd_start",
+    "xagent_sdd_followup",
+    "xagent_sdd_await",
+    "xagent_sdd_close",
+    "agent_id",
+    "resume_sequence",
+    "report-before-return",
+    "do not start a fresh agent",
+    "jsonl position",
+    "native subagent",
+    "xagent_start",
+    "xagent_message",
+    "xagent supervise",
+    "broken agentic infrastructure",
+    "do not poll",
+)
+
+
+def assert_xagent_subagents_sdd_guidance(
+    test_case: unittest.TestCase, content: str
+) -> None:
+    sdd_section = extract_markdown_section(content, "Superpowers SDD")
+    assert_all_present(test_case, sdd_section, XAGENT_SDD_GUIDANCE_PHRASES)
+    assert_transport_guidance_scoped(
+        test_case,
+        content,
+        protected_headings=("Superpowers SDD",),
+        forbidden_phrases=(
+            "native subagent",
+            "xagent_start",
+            "xagent_message",
+            "xagent supervise",
+        ),
+        required_outside_phrases=(
+            "xagent_start",
+            "xagent_message",
+            "xagent supervise",
+        ),
+    )
 
 
 class DistributedSkillSemanticsTests(unittest.TestCase):
@@ -543,39 +614,9 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
         skill_path = REPO_ROOT / "plugins" / "xagent" / "skills" / "xagent-subagents" / "SKILL.md"
         self.assertTrue(skill_path.is_file(), f"missing packaged skill: {skill_path}")
         content = skill_path.read_text(encoding="utf-8")
-        sdd_section = extract_markdown_section(content, "Superpowers SDD")
         generic_section = extract_markdown_section(content, "Generic Delegation")
 
-        assert_all_present(
-            self,
-            sdd_section,
-            (
-                "xagent_sdd_start",
-                "xagent_sdd_followup",
-                "xagent_sdd_await",
-                "xagent_sdd_close",
-                "agent_id",
-                "resume_sequence",
-                "report-before-return",
-                "broken agentic infrastructure",
-                "do not poll",
-            ),
-        )
-        assert_forbidden_only_outside_sections(
-            self,
-            content,
-            protected_headings=("Superpowers SDD",),
-            forbidden_phrases=(
-                "xagent_start",
-                "xagent_message",
-                "xagent supervise",
-            ),
-            required_outside_phrases=(
-                "xagent_start",
-                "xagent_message",
-                "xagent supervise",
-            ),
-        )
+        assert_xagent_subagents_sdd_guidance(self, content)
         assert_all_present(
             self,
             generic_section,
@@ -633,8 +674,28 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
                 parent=codex_home / "skills",
             )
 
+        provider_section = extract_markdown_section(content, "Provider and model rules")
         pre_plan_section = extract_markdown_section(content, "Pre-plan coordination")
         sdd_section = extract_markdown_section(content, "Superpowers SDD task execution")
+
+        self.assertNotIn(
+            "native subagent mechanism",
+            provider_section.lower(),
+            "provider rules must not authorize native transport for SDD task turns",
+        )
+        self.assertNotIn(
+            "availability only decides the transport",
+            provider_section.lower(),
+            "provider rules must not treat transport as availability-driven for SDD",
+        )
+        assert_all_present(
+            self,
+            provider_section,
+            (
+                "xagent sdd mcp facade",
+                "prohibited",
+            ),
+        )
 
         assert_all_present(
             self,
@@ -653,6 +714,8 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
                 "native subagent",
                 "not the default transport",
                 "broken agentic infrastructure",
+                "xagent_message",
+                "xagent supervise",
             ),
         )
         assert_all_present(
@@ -667,11 +730,17 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
                 "resume_sequence",
                 "report-before-return",
                 "dispatch-prompt",
+                "do not start a fresh agent",
+                "jsonl position",
+                "native subagent",
+                "xagent_start",
+                "xagent_message",
+                "xagent supervise",
                 "broken agentic infrastructure",
                 "do not poll",
             ),
         )
-        assert_forbidden_only_outside_sections(
+        assert_transport_guidance_scoped(
             self,
             content,
             protected_headings=("Superpowers SDD task execution",),

@@ -74,8 +74,9 @@ attention, a long await deadline, or an explicit user status request.
 
 If the xagent SDD MCP facade, Conductor-managed xagent service, trusted
 `dispatch-prompt` renderer, or required Superpowers templates are unavailable,
-surface broken agentic infrastructure. Superpowers SDD turns have no transport
-fallback.
+surface broken agentic infrastructure. Do not fall back to native subagents,
+generic `xagent_start`, raw `xagent_message`, quiet `xagent supervise`, or
+terminal polling for Superpowers SDD turns.
 
 ## Generic Delegation
 

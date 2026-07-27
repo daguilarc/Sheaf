@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest import mock
 
 from plugins.xagent.scripts import install_global, package_xagent
+from projects.agents.scripts.install_test import assert_xagent_subagents_sdd_guidance
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -1112,6 +1113,10 @@ if args == ["plugin", "list"]:
         self.assertEqual("0.1.0+codex.test-20260725", manifest["version"])
         self.assertTrue(os.access(self.destination / "scripts" / "xagent", os.X_OK))
         self.assertTrue((self.destination / "skills" / "xagent-subagents" / "SKILL.md").is_file())
+        packaged_skill = (
+            self.destination / "skills" / "xagent-subagents" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        assert_xagent_subagents_sdd_guidance(self, packaged_skill)
         self.assertTrue((self.destination / "assets" / "xagent" / "dist" / "src" / "main.js").is_file())
         with self.assertRaisesRegex(RuntimeError, "installed and enabled"):
             install_global.require_installed_plugin(

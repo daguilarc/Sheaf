@@ -10,7 +10,8 @@ instructions.
 
 ## Provider and model rules
 
-These rules apply to every subagent dispatched anywhere in this workflow:
+These rules govern assignment, model selection, and session retention across
+pre-plan coordination and Superpowers SDD task execution:
 
 - If the user specifically tells you to use the OpenSpec Superpowers workflow,
   you are authorized to use xagent for the current change's SDD.
@@ -20,17 +21,19 @@ These rules apply to every subagent dispatched anywhere in this workflow:
   (`projects/xagent`) on the provider opposite to the one that produced the
   work under review: Claude-produced work is reviewed by a Codex model, and
   Codex-produced work is reviewed by a Claude model.
-- **All other subagents (planning, decomposition, implementation, fixes) run
-  on the same provider as their assigned model.** Use the harness's native
-  subagent mechanism when it offers the assigned model; when the assigned
-  model is not available natively (e.g. a Codex implementer arm assigned
-  while running in a Claude harness, or vice versa), dispatch that subagent
-  through xagent on its own provider instead. The assignment decides the
-  model; availability only decides the transport.
+- **Pre-plan helpers may use native transport when the model is available.**
+  See Pre-plan coordination for native-vs-xagent transport rules. This does not
+  apply to written-plan SDD task turns.
+- **SDD task turns always use the xagent SDD MCP facade.** Once a written
+  Superpowers plan exists, every implementer, task reviewer, fix, re-review, and
+  final whole-branch reviewer turn uses `xagent_sdd_start` and
+  `xagent_sdd_followup` regardless of native model availability. Native
+  subagents, generic `xagent_start`, raw `xagent_message`, quiet
+  `xagent supervise`, and terminal polling are prohibited for those turns.
 - **Keep each task's implementer and reviewer open until the task finishes.**
   Do not discard an implementer after its first report or a reviewer after
   its first verdict: send small fixes back to the same implementer session
-  and re-reviews back to the same reviewer session (native subagents are
+  and re-reviews back to the same reviewer session (native pre-plan helpers are
   resumable; xagent SDD sessions stay open via `agent_id` and
   `xagent_sdd_followup`). Start fresh agents per task, not per fix round.
   Close nothing until the task passes both verdicts.
@@ -105,6 +108,8 @@ xagent_sdd_start
 - **Initial task agents use `xagent_sdd_start`.** Pass the complete brief,
   plan path, assignment metadata, and report path for implementer and
   task-reviewer roles. Record the returned `agent_id` and `resume_sequence`.
+  The `resume_sequence` is the pre-turn supervision cursor; it is not a provider
+  JSONL position.
 - **Fix and re-review preserve sessions.** Call `xagent_sdd_followup` with the
   existing implementer or reviewer `agent_id`. Do not start a fresh agent
   merely to send that follow-up.
@@ -119,8 +124,9 @@ xagent_sdd_start
 - **Close sessions deliberately.** Call `xagent_sdd_close` only after the task
   passes both verdicts.
 - **No SDD fallbacks.** If the xagent SDD MCP facade or Conductor-managed
-  xagent service is unavailable, surface broken agentic infrastructure.
-  Superpowers SDD turns have no transport fallback.
+  xagent service is unavailable, surface broken agentic infrastructure. Do not
+  fall back to native subagents, generic `xagent_start`, raw `xagent_message`,
+  quiet `xagent supervise`, or terminal polling for Superpowers SDD turns.
 
 While an SDD agent is healthy and the controller has no independent work,
 do not poll at a short fixed interval. Inspect supervision state only after
