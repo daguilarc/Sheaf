@@ -841,3 +841,59 @@ test("RenderSddPrompt renders all roles without residual placeholders and return
     assert.equal("promptText" in rendered.metadata, false);
   }
 });
+
+test("RenderSddPrompt never executes a dispatch-prompt found in the run cwd", async () => {
+  const serviceRenderer = "/service/checkout/projects/agents/utils/dispatch-prompt";
+  const cwdRenderer = "/tmp/worktree/projects/agents/utils/dispatch-prompt";
+  const invoked: string[] = [];
+
+  const rendered = await RenderSddPrompt({
+    role: "implementer",
+    repoRoot: "/service/checkout",
+    cwd: "/tmp/worktree",
+    plan: "/tmp/worktree/plan.md",
+    task: 4,
+    name: "Superpowers managed plugins",
+    brief: "/tmp/worktree/brief.md",
+  }, {
+    // Both exist; the worktree copy must be ignored because a worker can write it.
+    async access(): Promise<void> {},
+    async execFile(_file: string, args: readonly string[]) {
+      invoked.push(args[0]!);
+      return { stdout: "/tmp/worktree/dispatch.md\n", stderr: "" };
+    },
+    async readFile(): Promise<string> {
+      return "rendered prompt body";
+    },
+  });
+
+  assert.equal(invoked[0], serviceRenderer);
+  assert.notEqual(invoked[0], cwdRenderer);
+  assert.equal(rendered.metadata.rendererPath, serviceRenderer);
+});
+
+test("RenderSddPrompt reports the searched renderer path when it is missing", async () => {
+  await assert.rejects(
+    () => RenderSddPrompt({
+      role: "implementer",
+      repoRoot: "/service/checkout",
+      cwd: "/tmp/worktree",
+      plan: "/tmp/worktree/plan.md",
+      task: 4,
+      name: "Superpowers managed plugins",
+      brief: "/tmp/worktree/brief.md",
+    }, {
+      async access(): Promise<void> {
+        throw new Error("ENOENT");
+      },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof SddPromptError);
+      assert.equal(error.structured.error, "sdd_renderer_missing");
+      assert.deepEqual(error.structured.details, {
+        searched: ["/service/checkout/projects/agents/utils/dispatch-prompt"],
+      });
+      return true;
+    },
+  );
+});

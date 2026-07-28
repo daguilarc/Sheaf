@@ -83,6 +83,7 @@ export type RenderSddPromptInput =
 
 export type RenderedSddPromptMetadata = {
   readonly promptPath: string;
+  readonly rendererPath: string;
   readonly briefPath?: string;
   readonly reportPath?: string;
   readonly findingsPath?: string;
@@ -120,6 +121,32 @@ const x_TrustedRendererRelativePath = path.join("projects", "agents", "utils", "
 
 function TrustedRendererPath(repoRoot: string): string {
   return path.join(repoRoot, x_TrustedRendererRelativePath);
+}
+
+// The renderer is resolved from the service checkout ONLY. The run cwd is a
+// worker-writable worktree, so a `projects/agents/utils/dispatch-prompt` found
+// there is attacker-controlled code, not a newer renderer — see the sentinel
+// script in tests/sdd_prompt.test.ts. Working in a worktree therefore renders
+// with the service checkout's renderer and templates even when the branch
+// carries its own; that mismatch is reported rather than fixed here, because
+// closing it means deciding how a worktree renderer could ever be trusted.
+//
+async function ResolveRendererPath(
+  input: RenderSddPromptInput,
+  checkAccess: (filePath: string) => Promise<void>,
+): Promise<string> {
+  const rendererPath = TrustedRendererPath(input.repoRoot);
+  try {
+    await checkAccess(rendererPath);
+  }
+  catch {
+    throw new SddPromptError({
+      error: "sdd_renderer_missing",
+      message: "Trusted dispatch-prompt renderer is unavailable.",
+      details: { searched: [rendererPath] },
+    });
+  }
+  return rendererPath;
 }
 
 function BuildDispatchArgs(input: RenderSddPromptInput): string[] {
@@ -234,16 +261,7 @@ export async function RenderSddPrompt(
   const read = runtime.readFile ?? ((filePath: string) => readFile(filePath, "utf8"));
   const checkAccess = runtime.access ?? ((filePath: string) => access(filePath));
 
-  const rendererPath = TrustedRendererPath(input.repoRoot);
-  try {
-    await checkAccess(rendererPath);
-  }
-  catch {
-    throw new SddPromptError({
-      error: "sdd_renderer_missing",
-      message: "Trusted dispatch-prompt renderer is unavailable.",
-    });
-  }
+  const rendererPath = await ResolveRendererPath(input, checkAccess);
 
   const args = BuildDispatchArgs(input);
   let stdout = "";
@@ -320,6 +338,7 @@ export async function RenderSddPrompt(
     },
     metadata: {
       promptPath,
+      rendererPath,
       ...(briefPath === undefined ? {} : { briefPath }),
       ...(reportPath === undefined ? {} : { reportPath }),
       ...(findingsPath === undefined ? {} : { findingsPath }),

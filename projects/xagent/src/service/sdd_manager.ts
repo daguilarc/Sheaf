@@ -39,6 +39,7 @@ export type XagentSddStartResult = {
   readonly agent_id: string;
   readonly sequence: number;
   readonly prompt_path: string;
+  readonly renderer_path: string;
   readonly brief_path: string;
   readonly report_path?: string;
 };
@@ -409,6 +410,11 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         agent_id: agentId,
         sequence: resumeSequence,
         prompt_path: rendered.metadata.promptPath,
+        // Surfaced so a controller working in a worktree can see that the
+        // prompt was rendered by the service checkout's renderer, not the
+        // branch's.
+        //
+        renderer_path: rendered.metadata.rendererPath,
         brief_path: briefPath,
         ...(reportPath === undefined ? {} : { report_path: reportPath }),
       };

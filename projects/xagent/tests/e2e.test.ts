@@ -26,6 +26,11 @@ import {
   withMcpService,
 } from "./support/mcp_service.js";
 
+function TrustedRendererPathForTests(repoRoot: string): string {
+  return path.join(repoRoot, "projects", "agents", "utils", "dispatch-prompt");
+}
+
+
 const x_ImplementerBrief = "Implementer task brief for full-flow SDD.\n";
 const x_ReviewerBrief = "Task reviewer brief for full-flow SDD.\n";
 const x_FindingsText = "Reviewer findings requiring a fix round.\n";
@@ -316,6 +321,7 @@ test("MCP fake adapter drives the full SDD lifecycle and records dispatch log ro
             },
             metadata: {
               promptPath,
+              rendererPath: TrustedRendererPathForTests(input.repoRoot),
               ...("brief" in input ? { briefPath: input.brief } : {}),
               ...("report" in input ? { reportPath: input.report } : {}),
               ...("findings" in input ? { findingsPath: input.findings } : {}),

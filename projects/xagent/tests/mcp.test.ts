@@ -24,6 +24,11 @@ import {
   withMcpService,
 } from "./support/mcp_service.js";
 
+function TrustedRendererPathForTests(repoRoot: string): string {
+  return path.join(repoRoot, "projects", "agents", "utils", "dispatch-prompt");
+}
+
+
 const x_GenericToolNames = [
   "xagent_start",
   "xagent_await",
@@ -67,6 +72,7 @@ function CreateTestSddManager(
         },
         metadata: {
           promptPath,
+          rendererPath: TrustedRendererPathForTests(input.repoRoot),
         },
       };
     },

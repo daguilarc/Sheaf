@@ -140,6 +140,7 @@ test("SDD await and generic await persist sanitized report before returning", as
         },
         metadata: {
           promptPath: path.join(repoRoot, "dispatch.md"),
+          rendererPath: "/service/checkout/projects/agents/utils/dispatch-prompt",
           briefPath,
           reportPath,
         },

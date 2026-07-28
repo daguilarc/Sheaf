@@ -619,6 +619,7 @@ function CreateManagerHarness(options?: {
         },
         metadata: {
           promptPath: x_PromptPath,
+          rendererPath: "/service/checkout/projects/agents/utils/dispatch-prompt",
           briefPath: "brief" in input ? input.brief : undefined,
           reportPath: "report" in input ? input.report : undefined,
         },
@@ -688,6 +689,7 @@ test("Start follows prepared-before-provider order and returns resolved paths", 
     agent_id: x_AgentId,
     sequence: 7,
     prompt_path: x_PromptPath,
+    renderer_path: "/service/checkout/projects/agents/utils/dispatch-prompt",
     brief_path: x_BriefPath,
     report_path: x_ReportPath,
   });
@@ -993,6 +995,7 @@ test("Followup re-review uses the same run id and upstream renderer", async () =
           prompt: { path: "/tmp/sdd/re-review.md", text: x_ReReviewPromptText },
           metadata: {
             promptPath: "/tmp/sdd/re-review.md",
+            rendererPath: "/service/checkout/projects/agents/utils/dispatch-prompt",
             briefPath: input.brief,
             reportPath: input.report,
             findingsPath: input.findings,
@@ -1003,6 +1006,7 @@ test("Followup re-review uses the same run id and upstream renderer", async () =
         prompt: { path: x_PromptPath, text: x_PromptText },
         metadata: {
           promptPath: x_PromptPath,
+          rendererPath: "/service/checkout/projects/agents/utils/dispatch-prompt",
           briefPath: "brief" in input ? input.brief : undefined,
           reportPath: "report" in input ? input.report : undefined,
         },
