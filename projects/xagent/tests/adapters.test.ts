@@ -562,3 +562,46 @@ test("cursor falls back to the result field when no final flush was observed", (
   );
   assert.equal(events.find((event) => event.type === "turn.completed")?.final_text, "only text");
 });
+
+test("claude code result with is_error becomes a turn failure carrying the cause", () => {
+  const state: ProcessHarnessState = { providerSequence: 0 };
+  const events = parseClaudeProviderEvent(
+    {
+      type: "result",
+      subtype: "success",
+      is_error: true,
+      terminal_reason: "api_error",
+      result: "There's an issue with the selected model (claude-opus-4.8-does-not-exist)."
+        + " It may not exist or you may not have access to it.",
+      session_id: "claude-thread-err",
+    },
+    context,
+    state,
+  );
+
+  const failed = events.find((event) => event.type === "turn.failed");
+  assert.ok(failed, "an is_error result must fail the turn");
+  assert.equal(failed?.type === "turn.failed" ? failed.code : undefined, "provider_error");
+  assert.match(
+    failed?.type === "turn.failed" ? failed.message : "",
+    /issue with the selected model/,
+  );
+  assert.equal(
+    failed?.type === "turn.failed"
+      ? (failed.details as { terminal_reason?: string }).terminal_reason
+      : undefined,
+    "api_error",
+  );
+  assert.equal(events.find((event) => event.type === "turn.completed"), undefined);
+});
+
+test("claude code result without is_error still completes the turn", () => {
+  const state: ProcessHarnessState = { providerSequence: 0 };
+  const events = parseClaudeProviderEvent(
+    { type: "result", subtype: "success", result: "all good", session_id: "claude-thread-ok" },
+    context,
+    state,
+  );
+  assert.equal(events.find((event) => event.type === "turn.completed")?.final_text, "all good");
+  assert.equal(events.find((event) => event.type === "turn.failed"), undefined);
+});

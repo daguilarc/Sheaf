@@ -223,7 +223,15 @@ export class Supervisor {
                         return;
                     }
                     this.#recordProgress(event);
-                    if (event.rawProvider !== undefined) {
+                    // ProcessJsonlSession yields one `raw.provider` event per provider
+                    // line and only attaches the `rawProvider` side-channel to a couple
+                    // of fallback events, so keying off `rawProvider` alone captured
+                    // nothing in production. Mirror the legacy runtime and take both.
+                    //
+                    if (event.type === "raw.provider") {
+                        await this.#providerTranscriptSink(sanitizeValue(event.payload, this.#startOptions.cwd));
+                    }
+                    else if (event.rawProvider !== undefined) {
                         await this.#providerTranscriptSink(sanitizeValue(event.rawProvider, this.#startOptions.cwd));
                     }
                     const mechanical = mechanicalEventClassification(this.#health, event);

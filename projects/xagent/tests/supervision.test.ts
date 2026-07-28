@@ -622,6 +622,14 @@ test("the supervisor forwards sanitized raw provider events to the transcript si
     adapter: new FakeHarnessAdapter({
       scriptedEvents: [[
         {
+          // The shape ProcessJsonlSession actually emits for every provider
+          // line; the rawProvider side-channel below is the rarer fallback.
+          type: "raw.provider",
+          harness: "codex",
+          payload: { type: "system", subtype: "init", note: `cwd is ${cwd}` },
+          provider_sequence: 1,
+        },
+        {
           type: "message.completed",
           message_id: "m1",
           role: "assistant",
@@ -646,8 +654,11 @@ test("the supervisor forwards sanitized raw provider events to the transcript si
   await supervisor.submit("go");
   await supervisor.awaitEvent(cursor, 1_000);
 
-  assert.equal(transcript.length, 1);
-  const entry = transcript[0] as { type: string; note: string };
+  assert.equal(transcript.length, 2);
+  const line = transcript[0] as { type: string; note: string };
+  assert.equal(line.type, "system");
+  assert.ok(!line.note.includes(cwd), `expected the cwd to be redacted, got ${line.note}`);
+  const entry = transcript[1] as { type: string; note: string };
   assert.equal(entry.type, "assistant");
   assert.ok(!entry.note.includes(cwd), `expected the cwd to be redacted, got ${entry.note}`);
 });

@@ -68,6 +68,30 @@ export function parseClaudeProviderEvent(
   }
   if (type === "result") {
     const text = stringValue(raw.result ?? raw.text, "");
+    // Claude Code reports usage limits, model rejections, and API errors on
+    // STDOUT as `result` with `is_error: true`, then exits 1 with an empty
+    // stderr. Treated as a normal completion, the controller only ever saw a
+    // bare `exit_code: 1` and had to guess the cause (see the 2026-07-27
+    // controller-usability findings). Fail the turn with the provider's own
+    // wording instead.
+    //
+    if (raw.is_error === true) {
+      return [{
+        type: "turn.failed",
+        turn_id: context.turnId,
+        code: "provider_error",
+        message: text === "" ? "Claude Code reported an error result." : text,
+        details: {
+          ...(typeof raw.terminal_reason === "string"
+            ? { terminal_reason: raw.terminal_reason }
+            : {}),
+          ...(typeof raw.subtype === "string" ? { subtype: raw.subtype } : {}),
+        },
+        ...(state.providerThreadId === undefined
+          ? {}
+          : { provider_thread_id: state.providerThreadId }),
+      }];
+    }
     return [{
       type: "message.completed",
       message_id: stringValue(raw.message_id, `message_${context.inputSequence}`),
