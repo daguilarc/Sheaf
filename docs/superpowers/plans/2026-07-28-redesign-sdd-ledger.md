@@ -1731,6 +1731,18 @@ git commit -m "refactor(xagent): demote xagent_sdd_followup to render-and-submit
 
 **Restart boundary:** the union swap and the manager rewrite are in this one task on purpose. Do not split them, and do not restart the live service in the middle of this task.
 
+**Hard no-restart window, Task 6 → Task 8a.** Once `Start` calls
+`store.Insert`, but before Task 8a swaps `service_main.ts` to
+`CreateSddAgentStore`, the live service would route every dispatch through
+the *v1* transitional adapter. That adapter writes a `sdd_turns` row with
+`status = "prepared"` and the `SddAgentStore` port has no method that can
+resolve it — so every dispatch in that window permanently leaks an
+unresolved turn, and the next `xagent_sdd_followup` against it fails with
+`sdd_turn_unresolved`. The controller hit that error by hand twice while
+executing this plan; here it would be unrecoverable without a restart.
+Found in the Task 2 review. Do not restart the service between Task 6 and
+Task 8a for any reason.
+
 - [ ] **Step 1: Write the failing tests**
 
 Add to `projects/xagent/tests/sdd_manager.test.ts`:
