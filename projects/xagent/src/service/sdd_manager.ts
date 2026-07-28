@@ -19,6 +19,7 @@ import {
   canonicalizeWorkingDirectory,
   type CreateRunOptions,
   type ListRunsResult,
+  type XagentListEntry,
   type XagentRunManager,
   type XagentSddListFields,
 } from "./run_manager.js";
@@ -85,6 +86,11 @@ function SddListFields(agent: SddAgentRecord): XagentSddListFields
     brief_path: agent.brief_path,
     dispatched_at: agent.dispatched_at,
   };
+}
+
+function EntryOrderKey(entry: XagentListEntry): string
+{
+  return "run_missing" in entry ? entry.sdd.dispatched_at : entry.created_at;
 }
 
 const x_ControllerNoteHeading = "## Controller Note";
@@ -495,8 +501,10 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     async ListGeneric(input: XagentListInput): Promise<ListRunsResult>
     {
       const listed = await runManager.listOwnedRuns(input);
-      const runs = listed.runs.map((run) =>
+      const seen = new Set<string>();
+      const rows: XagentListEntry[] = listed.runs.map((run) =>
       {
+        seen.add(run.run_id);
         const agent = store.Get(run.run_id);
         if (agent === undefined)
         {
@@ -504,7 +512,24 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         }
         return { ...run, sdd: SddListFields(agent) };
       });
-      return { runs };
+      // A ledger row with no run record is a dispatch that never became a run.
+      // It is a parallel shape, not an XagentListRow with fabricated phase,
+      // sequence, or liveness fields — there is no run record to read them from.
+      //
+      for (const agent of store.ListAll())
+      {
+        if (seen.has(agent.agent_id))
+        {
+          continue;
+        }
+        rows.push({
+          run_id: agent.agent_id,
+          run_missing: true,
+          sdd: SddListFields(agent),
+        });
+      }
+      rows.sort((left, right) => EntryOrderKey(right).localeCompare(EntryOrderKey(left)));
+      return { runs: rows.slice(0, input.limit) };
     },
   };
 }

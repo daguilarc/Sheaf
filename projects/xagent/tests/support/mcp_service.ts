@@ -71,6 +71,7 @@ export type McpServiceContext = {
   readonly runManager: XagentRunManager;
   readonly client: Client;
   readonly logRoot: string;
+  readonly ledger: () => ReturnType<typeof CreateSddAgentStore>;
 };
 
 export type WithMcpServiceOptions = {
@@ -102,6 +103,7 @@ export type StartedMcpService = {
   ): Promise<{ event: string }>;
   submit(runId: string, text: string): Promise<void>;
   close(): Promise<void>;
+  ledger(): ReturnType<typeof CreateSddAgentStore>;
   readonly runManager: XagentRunManager;
   readonly logRoot: string;
 };
@@ -223,6 +225,12 @@ export async function startMcpService(
     {
       return runManager.submit(runId, text);
     },
+    ledger()
+    {
+      EnsureSddManager();
+      assert.ok(sddStore !== undefined, "SDD ledger was not constructed");
+      return sddStore;
+    },
     async close()
     {
       await runManager.closeAll();
@@ -323,7 +331,18 @@ export async function withMcpService(
   try
   {
     await client.connect(transport);
-    await run({ port, server, runManager, client, logRoot });
+    await run({
+      port,
+      server,
+      runManager,
+      client,
+      logRoot,
+      ledger()
+      {
+        assert.ok(sddStore !== undefined, "SDD ledger was not constructed");
+        return sddStore;
+      },
+    });
   }
   finally
   {

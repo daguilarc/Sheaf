@@ -98,8 +98,16 @@ export type XagentListRow = {
   readonly sdd?: XagentSddListFields;
 };
 
+export type XagentSddTombstoneRow = {
+  readonly run_id: string;
+  readonly run_missing: true;
+  readonly sdd: XagentSddListFields;
+};
+
+export type XagentListEntry = XagentListRow | XagentSddTombstoneRow;
+
 export type ListRunsResult = {
-  readonly runs: readonly XagentListRow[];
+  readonly runs: readonly XagentListEntry[];
 };
 
 export type AwaitRunResult = {

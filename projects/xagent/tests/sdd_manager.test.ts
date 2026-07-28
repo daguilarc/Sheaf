@@ -1048,3 +1048,108 @@ test("a controller note cannot smuggle a run id to the worker", () =>
   });
   assert.equal(rejected.success, false);
 });
+
+// Task 8b: tombstones interleave with real rows by dispatched_at/created_at,
+// and limit is applied after the merge so a newer tombstone is not dropped
+// behind an older real row.
+//
+test("ListGeneric interleaves tombstones with real rows and limits after the merge", async () =>
+{
+  const olderRealId = "xrun_20260728000000000_olderreal";
+  const newerTombstoneId = "xrun_20260728000000000_newertomb";
+  const agents = new Map<string, SddAgentRecord>([
+    [olderRealId, {
+      agent_id: olderRealId,
+      plan_path: "/tmp/plans/2026-07-28-redesign-sdd-ledger.md",
+      task: 4,
+      role: "implementer",
+      brief_path: "/tmp/sdd/task-4-brief.md",
+      brief_text: "brief\n",
+      cwd: "/private/tmp/worktree",
+      dispatched_at: "2026-07-28T10:00:00.000Z",
+    }],
+    [newerTombstoneId, {
+      agent_id: newerTombstoneId,
+      plan_path: "/tmp/plans/2026-07-28-redesign-sdd-ledger.md",
+      task: 4,
+      role: "fixer",
+      brief_path: "/tmp/sdd/task-4-brief.md",
+      brief_text: "brief\n",
+      cwd: "/private/tmp/worktree",
+      dispatched_at: "2026-07-28T12:00:00.000Z",
+    }],
+  ]);
+  const store: SddAgentStore = {
+    Insert(): void
+    {
+      throw new Error("Insert is not used by ListGeneric");
+    },
+    Get(agentId: string)
+    {
+      return agents.get(agentId);
+    },
+    ListAll()
+    {
+      return [...agents.values()];
+    },
+    IsSddAgent(agentId: string)
+    {
+      return agents.has(agentId);
+    },
+    Close(): void {},
+  };
+  const runManager: SddRunManagerPort = {
+    allocateRunId()
+    {
+      return olderRealId;
+    },
+    async create()
+    {
+      return { runId: olderRealId };
+    },
+    async start() {},
+    async submit() {},
+    inspect()
+    {
+      return undefined;
+    },
+    async close() {},
+    has()
+    {
+      return false;
+    },
+    async listOwnedRuns()
+    {
+      return {
+        runs: [{
+          run_id: olderRealId,
+          harness: "cursor",
+          phase: "ready",
+          sequence: 1,
+          exit_status: "running",
+          live: true,
+          supervised: true,
+          created_at: "2026-07-28T11:00:00.000Z",
+          updated_at: "2026-07-28T11:00:00.000Z",
+        }],
+      };
+    },
+  };
+  const manager = CreateSddManager({
+    store,
+    runManager,
+    ...CreateDeps(),
+  });
+
+  const listed = await manager.ListGeneric({ live_only: false, limit: 1 });
+  assert.equal(listed.runs.length, 1);
+  const only = listed.runs[0]!;
+  assert.equal(only.run_id, newerTombstoneId);
+  assert.equal("run_missing" in only && only.run_missing, true);
+
+  const both = await manager.ListGeneric({ live_only: false, limit: 2 });
+  assert.deepEqual(
+    both.runs.map((entry) => entry.run_id),
+    [newerTombstoneId, olderRealId],
+  );
+});

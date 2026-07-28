@@ -670,7 +670,6 @@ test("v2 followup shapes require report and keep round render-only", () => {
 
 // Task 8a: v2 sdd identity block on xagent_list. Uses withMcpService rather
 // than the plan's startMcpService().client (that harness has no MCP client).
-// Tombstone / run_missing coverage is Task 8b.
 //
 test("xagent_list carries the v2 sdd identity block", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "xagent-mcp-sdd-list-"));
@@ -738,6 +737,35 @@ test("a generic run carries no sdd block and no run_missing flag", async () => {
     const row = runs.find((entry) => entry.run_id === started.run_id)!;
     assert.equal(row.sdd, undefined);
     assert.equal(row.run_missing, undefined);
+  }, {
+    createSddManager: ({ runManager, repoRoot, logRoot }) =>
+      CreateTestSddManager(runManager, repoRoot, logRoot),
+  });
+});
+
+// Task 8b: ledger rows with no run record surface as parallel tombstone
+// entries. Uses withMcpService + ledger() rather than the plan's
+// startMcpService().client (that harness still has no MCP client).
+//
+test("a ledger row with no run record is a tombstone entry", async () => {
+  await withMcpService(async ({ client, ledger }) => {
+    ledger().Insert({
+      agentId: "xrun_20260728000000000_0000dead",
+      planPath: "/tmp/plans/2026-07-28-redesign-sdd-ledger.md",
+      task: 4,
+      role: "fixer",
+      briefPath: "/tmp/sdd/task-4-brief.md",
+      briefText: "brief\n",
+      cwd: "/private/tmp/worktree",
+    });
+    const body = structuredToolBody(asToolCallResult(
+      await client.callTool({ name: "xagent_list", arguments: {} }),
+    ));
+    const runs = body.runs as Array<Record<string, unknown>>;
+    const tombstone = runs.find((entry) => entry.run_id === "xrun_20260728000000000_0000dead")!;
+    assert.deepEqual(Object.keys(tombstone).sort(), ["run_id", "run_missing", "sdd"]);
+    assert.equal(tombstone.run_missing, true);
+    assert.equal((tombstone.sdd as { role: string }).role, "fixer");
   }, {
     createSddManager: ({ runManager, repoRoot, logRoot }) =>
       CreateTestSddManager(runManager, repoRoot, logRoot),
