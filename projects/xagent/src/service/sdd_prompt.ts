@@ -246,6 +246,25 @@ export function FormatFixFollowup(input: FormatFixFollowupInput): string {
   ].join("\n");
 }
 
+export type FormatFixDispatchInput = FormatFixFollowupInput & {
+  readonly planPath: string;
+  readonly task: number;
+};
+
+// A fresh fixer gets the same instructions as a same-agent fix continuation,
+// preceded by the identity a continuation gets from provider context. Pinning
+// the shared tail keeps the two prompts from drifting apart.
+//
+export function FormatFixDispatch(input: FormatFixDispatchInput): string {
+  const { planPath, task, ...continuation } = input;
+  return [
+    `You are a fixer for task ${task} of plan ${planPath}.`,
+    "You are a fresh agent: read the brief and the findings before changing anything.",
+    "",
+    FormatFixFollowup(continuation),
+  ].join("\n");
+}
+
 export async function RenderSddPrompt(
   input: RenderSddPromptInput,
   runtime: SddPromptRuntime = {},

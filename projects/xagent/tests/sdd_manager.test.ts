@@ -883,6 +883,7 @@ test("Followup fix rejects when findings file is missing or empty", async () =>
       findings: x_FindingsPath,
       findings_text: x_FindingsText,
       tests: ["dist/tests/sdd_manager.test.js"],
+      report: x_ReportPath,
     }),
     (error: unknown) =>
     {
@@ -914,6 +915,7 @@ test("Followup fix rejects when findings file is missing or empty", async () =>
       findings: x_FindingsPath,
       findings_text: x_FindingsText,
       tests: ["dist/tests/sdd_manager.test.js"],
+      report: x_ReportPath,
     }),
     (error: unknown) =>
     {
@@ -940,6 +942,7 @@ test("Followup fix rejects when implementer started without a report path", asyn
       findings: x_FindingsPath,
       findings_text: x_FindingsText,
       tests: ["dist/tests/sdd_manager.test.js"],
+      report: x_ReportPath,
     }),
     (error: unknown) =>
     {
@@ -974,6 +977,7 @@ test("Followup maps store open_turn code to sdd_turn_unresolved without prose ma
       findings: x_FindingsPath,
       findings_text: x_FindingsText,
       tests: ["t"],
+      report: x_ReportPath,
     }),
     (error: unknown) =>
     {
@@ -997,6 +1001,7 @@ test("Followup fix reuses the same run id and stored brief/report paths", async 
     findings: x_FindingsPath,
     findings_text: x_FindingsText,
     tests: ["dist/tests/sdd_manager.test.js"],
+    report: x_ReportPath,
   });
 
   assert.equal(result.agent_id, x_AgentId);
@@ -1066,6 +1071,7 @@ test("Followup re-review uses the same run id and upstream renderer", async () =
     agent_id: x_AgentId,
     round: 2,
     findings: x_FindingsPath,
+    report: x_ReportPath,
     base: "aaa",
     head: "bbb",
     diff: "/tmp/sdd/scoped.diff",
@@ -1095,6 +1101,7 @@ test("Followup rejects when another turn is unresolved", async () =>
       findings: x_FindingsPath,
       findings_text: x_FindingsText,
       tests: ["t"],
+      report: x_ReportPath,
     }),
     (error: unknown) =>
     {
@@ -1121,6 +1128,7 @@ test("Followup rejects wrong role/kind and unknown/terminal agents before provid
       findings: x_FindingsPath,
       findings_text: x_FindingsText,
       tests: ["t"],
+      report: x_ReportPath,
     }),
     (error: unknown) =>
     {
@@ -1136,6 +1144,7 @@ test("Followup rejects wrong role/kind and unknown/terminal agents before provid
       agent_id: "xrun_20260727000000000_deadbeef",
       round: 1,
       findings: x_FindingsPath,
+      report: x_ReportPath,
       base: "a",
       head: "b",
     }),
@@ -1159,6 +1168,7 @@ test("Followup rejects wrong role/kind and unknown/terminal agents before provid
       findings: x_FindingsPath,
       findings_text: x_FindingsText,
       tests: ["t"],
+      report: x_ReportPath,
     }),
     (error: unknown) =>
     {
@@ -1180,6 +1190,7 @@ test("Followup rejects wrong role/kind and unknown/terminal agents before provid
       findings: x_FindingsPath,
       findings_text: x_FindingsText,
       tests: ["t"],
+      report: x_ReportPath,
     }),
     (error: unknown) =>
     {
@@ -1205,6 +1216,7 @@ test("Followup keeps a prepared row before submit and marks failed on submit err
       findings: x_FindingsPath,
       findings_text: x_FindingsText,
       tests: ["t"],
+      report: x_ReportPath,
     }),
     /follow-up submit failed/,
   );
@@ -1405,6 +1417,7 @@ test("Await refuses to bind a stale replayed completion onto a newer running tur
     findings: x_FindingsPath,
     findings_text: x_FindingsText,
     tests: ["dist/tests/sdd_manager.test.js"],
+    report: x_ReportPath,
   });
   assert.equal(harness.store.openTurns.get(x_AgentId)?.status, "running");
   assert.equal(harness.store.openTurns.get(x_AgentId)?.resume_sequence, 50);
@@ -1717,6 +1730,7 @@ test("Followup recovers brief and report paths from the ledger after a service r
     findings: x_FindingsPath,
     findings_text: x_FindingsText,
     tests: ["dist/tests/sdd_manager.test.js"],
+    report: x_ReportPath,
   });
 
   assert.equal(result.agent_id, x_AgentId);
@@ -1818,6 +1832,7 @@ test("a controller note is appended to a fix follow-up", async () =>
     findings: x_FindingsPath,
     findings_text: x_FindingsText,
     tests: ["dist/tests/sdd_manager.test.js"],
+    report: x_ReportPath,
     note,
   });
 

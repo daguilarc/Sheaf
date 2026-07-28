@@ -774,6 +774,7 @@ test("fix follow-up findings text rejects embedded controller run ids", () => {
     findings: "/tmp/findings.md",
     findings_text: "Resume against xrun_20260727192847117_b30af348 when done.",
     tests: ["npm test"],
+    report: "/tmp/report.md",
   });
   assert.equal(leaked.success, false);
 
@@ -784,6 +785,7 @@ test("fix follow-up findings text rejects embedded controller run ids", () => {
     findings: "/tmp/findings.md",
     findings_text: "Important #1: the marker must follow the frontmatter.",
     tests: ["npm test"],
+    report: "/tmp/report.md",
   });
   assert.equal(clean.success, true);
 });

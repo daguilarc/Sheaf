@@ -120,6 +120,7 @@ test("MCP fake adapter drives the full SDD lifecycle and records dispatch log ro
           findings: fixture.findingsPath,
           findings_text: x_FindingsText,
           tests: ["dist/tests/e2e.test.js"],
+          report: fixture.implementerReportPath,
         },
       }),
     );
@@ -188,6 +189,7 @@ test("MCP fake adapter drives the full SDD lifecycle and records dispatch log ro
           agent_id: reviewerId,
           round: 2,
           findings: fixture.findingsPath,
+          report: fixture.reviewerReportPath,
           base: "aaa111",
           head: "bbb222",
         },

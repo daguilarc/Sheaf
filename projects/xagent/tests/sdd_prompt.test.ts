@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 
 import {
+  FormatFixDispatch,
   FormatFixFollowup,
   RenderSddPrompt,
   SddPromptError,
@@ -450,6 +451,7 @@ test("SDD schemas reject relative and traversal artifact paths", () => {
       findings: "findings.md",
       findings_text: "Important finding\n",
       tests: ["projects/xagent/tests/sdd_store.test.ts"],
+      report: "/tmp/report.md",
     }).success,
     false,
   );
@@ -459,6 +461,7 @@ test("SDD schemas reject relative and traversal artifact paths", () => {
       agent_id: sampleAgentId,
       round: 1,
       findings: "../findings.md",
+      report: "/tmp/report.md",
       base: "HEAD~1",
       head: "HEAD",
     }).success,
@@ -474,6 +477,7 @@ test("XagentSddFollowupInputSchema validates fix and re-review payloads", () => 
     findings: "/tmp/findings.md",
     findings_text: "Important finding\n",
     tests: ["projects/xagent/tests/sdd_store.test.ts"],
+    report: "/tmp/report.md",
   });
   assert.equal(fix.kind, "fix");
 
@@ -482,6 +486,7 @@ test("XagentSddFollowupInputSchema validates fix and re-review payloads", () => 
     agent_id: sampleAgentId,
     round: 2,
     findings: "/tmp/findings.md",
+    report: "/tmp/report.md",
     base: "HEAD~1",
     head: "HEAD",
   });
@@ -928,4 +933,29 @@ test("a missing Superpowers template is classified without echoing renderer outp
       return true;
     },
   );
+});
+
+test("FormatFixDispatch is the same-agent fix text plus a plan/task/role header", () => {
+  const shared = {
+    round: 2,
+    briefPath: "/tmp/sdd/task-4-brief.md",
+    findingsPath: "/tmp/sdd/task-4-findings.md",
+    findingsText: "Finding 1: the gate is missing.",
+    tests: ["npm test", "node --test dist/tests/sdd_store.test.js"],
+    reportPath: "/tmp/sdd/task-4-report.md",
+  };
+  const continuation = FormatFixFollowup(shared);
+  const dispatch = FormatFixDispatch({
+    ...shared,
+    planPath: "/tmp/plans/2026-07-28-redesign-sdd-ledger.md",
+    task: 4,
+  });
+  assert.equal(
+    dispatch,
+    "You are a fixer for task 4 of plan "
+    + "/tmp/plans/2026-07-28-redesign-sdd-ledger.md.\n"
+    + "You are a fresh agent: read the brief and the findings before changing anything.\n\n"
+    + continuation,
+  );
+  assert.ok(dispatch.endsWith(continuation));
 });

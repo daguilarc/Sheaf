@@ -163,11 +163,114 @@ export const CodeReviewerStartSchema = z
   })
   .strict();
 
+// v2 start roles. Added beside the v1 shapes so the tool surface can be cut
+// over in the same task that rewrites the manager — never before it.
+//
+function ReviewerRefinement(
+  value: {
+    readonly task?: number;
+    readonly report?: string;
+    readonly constraints?: string;
+    readonly diff?: string;
+    readonly description?: string;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.task === undefined) {
+    if (value.description === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "reviewer without a task requires description (whole-branch review)",
+      });
+    }
+    for (const field of ["report", "constraints", "diff"] as const) {
+      if (value[field] !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `reviewer without a task must not set ${field}`,
+        });
+      }
+    }
+    return;
+  }
+  if (value.report === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "reviewer with a task requires report",
+    });
+  }
+  if (value.description !== undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "reviewer with a task must not set description",
+    });
+  }
+}
+
+const ReviewerStartObject = z
+  .object({
+    role: z.literal("reviewer"),
+    ...SddAssignmentFields,
+    task: z.number().int().positive().optional(),
+    brief: SddArtifactPathSchema,
+    base: z.string().min(1),
+    head: z.string().min(1),
+    report: SddArtifactPathSchema.optional(),
+    constraints: SddArtifactPathSchema.optional(),
+    diff: SddArtifactPathSchema.optional(),
+    description: WorkerFacingText("description").optional(),
+  })
+  .strict();
+
+export const ReviewerStartSchema = ReviewerStartObject.superRefine(ReviewerRefinement);
+
+export const FixerStartSchema = z
+  .object({
+    role: z.literal("fixer"),
+    ...SddAssignmentFields,
+    task: z.number().int().positive(),
+    brief: SddArtifactPathSchema,
+    findings: SddArtifactPathSchema,
+    findings_text: WorkerFacingText("findings_text"),
+    tests: z.array(z.string().min(1)).min(1),
+    report: SddArtifactPathSchema,
+    round: z.number().int().positive().default(1),
+  })
+  .strict();
+
+export const ReReviewerStartSchema = z
+  .object({
+    role: z.literal("re-reviewer"),
+    ...SddAssignmentFields,
+    task: z.number().int().positive(),
+    brief: SddArtifactPathSchema,
+    findings: SddArtifactPathSchema,
+    report: SddArtifactPathSchema,
+    base: z.string().min(1),
+    head: z.string().min(1),
+    diff: SddArtifactPathSchema.optional(),
+    round: z.number().int().positive().default(1),
+  })
+  .strict();
+
 export const XagentSddStartInputSchema = z.discriminatedUnion("role", [
   ImplementerStartSchema,
   TaskReviewerStartSchema,
   CodeReviewerStartSchema,
 ]);
+
+export const XagentSddStartInputSchemaV2 = z
+  .discriminatedUnion("role", [
+    ImplementerStartSchema,
+    ReviewerStartObject,
+    FixerStartSchema,
+    ReReviewerStartSchema,
+  ])
+  .superRefine((value, ctx) => {
+    if (value.role === "reviewer") {
+      ReviewerRefinement(value, ctx);
+    }
+  });
 
 export const FixFollowupSchema = z
   .object({
@@ -177,6 +280,7 @@ export const FixFollowupSchema = z
     findings: SddArtifactPathSchema,
     findings_text: WorkerFacingText("findings_text"),
     tests: z.array(z.string().min(1)).min(1),
+    report: SddArtifactPathSchema,
     note: NoteSchema,
   })
   .strict();
@@ -187,6 +291,7 @@ export const ReReviewFollowupSchema = z
     agent_id: AgentIdSchema,
     round: z.number().int().positive(),
     findings: SddArtifactPathSchema,
+    report: SddArtifactPathSchema,
     base: z.string().min(1),
     head: z.string().min(1),
     diff: SddArtifactPathSchema.optional(),
@@ -270,6 +375,8 @@ export const XagentSddFollowupAdvertisedSchema = z.object({
     .describe(AdvertisedFor("fix", "The findings, inline.")),
   tests: z.array(z.string().min(1)).min(1).optional()
     .describe(AdvertisedFor("fix", "Commands that must pass before the fix is done.")),
+  report: SddArtifactPathSchema.optional()
+    .describe(AdvertisedFor("fix, re-review", "Absolute path the agent appends its report to.")),
   base: z.string().min(1).optional()
     .describe(AdvertisedFor("re-review", "Base git ref for the re-review diff.")),
   head: z.string().min(1).optional()

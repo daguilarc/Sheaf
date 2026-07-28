@@ -15,12 +15,20 @@ import {
   type SddManager,
 } from "../src/service/sdd_manager.js";
 import { CreateSddStore, GetSddDatabasePath } from "../src/service/sdd_store.js";
+import { z } from "zod";
+
 import {
+  FixFollowupSchema,
+  FixerStartSchema,
+  ReReviewFollowupSchema,
+  ReReviewerStartSchema,
+  ReviewerStartSchema,
   XagentListInputSchema,
   XagentSddFollowupAdvertisedSchema,
   XagentSddFollowupInputSchema,
   XagentSddStartAdvertisedSchema,
   XagentSddStartInputSchema,
+  XagentSddStartInputSchemaV2,
 } from "../src/service/tool_schemas.js";
 import {
   asToolCallResult,
@@ -385,11 +393,12 @@ const x_ValidFollowupPayloads: ReadonlyArray<Record<string, unknown>> = [
   {
     kind: "fix", agent_id: "xrun_20260728000000000_0000abcd", round: 2,
     findings: "/tmp/sdd/task-4-findings.md", findings_text: "one finding",
-    tests: ["npm test"],
+    tests: ["npm test"], report: "/tmp/sdd/task-4-report.md",
   },
   {
     kind: "re-review", agent_id: "xrun_20260728000000000_0000abcd", round: 2,
-    findings: "/tmp/sdd/task-4-findings.md", base: "main", head: "HEAD",
+    findings: "/tmp/sdd/task-4-findings.md", report: "/tmp/sdd/task-4-report.md",
+    base: "main", head: "HEAD",
   },
 ];
 
@@ -448,4 +457,174 @@ test("the advertised SDD schemas never reject a payload the union accepts", () =
       `advertised schema rejects a legal followup: ${JSON.stringify(payload)}`,
     );
   }
+});
+
+function UnwrapZodObject(schema: z.ZodTypeAny): z.ZodObject<z.ZodRawShape> {
+  let current: z.ZodTypeAny = schema;
+  while (current instanceof z.ZodEffects) {
+    current = current._def.schema;
+  }
+  assert.ok(
+    current instanceof z.ZodObject,
+    `expected ZodObject after unwrap, got ${current.constructor.name}`,
+  );
+  return current;
+}
+
+function RequiredKeysOf(schema: z.ZodTypeAny): string[] {
+  const object = UnwrapZodObject(schema);
+  return Object.entries(object.shape)
+    .filter(([, field]) => !(field as z.ZodTypeAny).isOptional())
+    .map(([key]) => key);
+}
+
+test("every required union field appears on the advertised SDD schema", () => {
+  const startProperties = Object.keys(XagentSddStartAdvertisedSchema.shape);
+  for (const variant of XagentSddStartInputSchema.options) {
+    for (const key of RequiredKeysOf(variant)) {
+      assert.ok(
+        startProperties.includes(key),
+        `XagentSddStartAdvertisedSchema is missing required field "${key}"`,
+      );
+    }
+  }
+
+  const followupProperties = Object.keys(XagentSddFollowupAdvertisedSchema.shape);
+  for (const variant of XagentSddFollowupInputSchema.options) {
+    for (const key of RequiredKeysOf(variant)) {
+      assert.ok(
+        followupProperties.includes(key),
+        `XagentSddFollowupAdvertisedSchema is missing required field "${key}"`,
+      );
+    }
+  }
+});
+
+const x_Assignment = {
+  cwd: "/private/tmp/worktree",
+  plan: "/tmp/plans/2026-07-28-redesign-sdd-ledger.md",
+  agent: "grok-4.5",
+  harness: "cursor",
+  effort: "high",
+};
+
+test("reviewer with a task requires report and forbids description", () => {
+  const scoped = ReviewerStartSchema.safeParse({
+    role: "reviewer", ...x_Assignment, task: 4,
+    brief: "/tmp/sdd/task-4-review-brief.md",
+    report: "/tmp/sdd/task-4-report.md",
+    base: "main", head: "HEAD",
+  });
+  assert.equal(scoped.success, true);
+
+  assert.equal(ReviewerStartSchema.safeParse({
+    role: "reviewer", ...x_Assignment, task: 4,
+    brief: "/tmp/sdd/task-4-review-brief.md", base: "main", head: "HEAD",
+  }).success, false);
+
+  assert.equal(ReviewerStartSchema.safeParse({
+    role: "reviewer", ...x_Assignment, task: 4,
+    brief: "/tmp/b.md", report: "/tmp/r.md", base: "main", head: "HEAD",
+    description: "whole branch",
+  }).success, false);
+});
+
+test("reviewer without a task requires description and forbids task-scoped fields", () => {
+  assert.equal(ReviewerStartSchema.safeParse({
+    role: "reviewer", ...x_Assignment,
+    brief: "/tmp/review-brief.md", base: "main", head: "HEAD",
+    description: "Branch adds the v2 ledger.",
+  }).success, true);
+
+  assert.equal(ReviewerStartSchema.safeParse({
+    role: "reviewer", ...x_Assignment,
+    brief: "/tmp/review-brief.md", base: "main", head: "HEAD",
+  }).success, false);
+
+  assert.equal(ReviewerStartSchema.safeParse({
+    role: "reviewer", ...x_Assignment,
+    brief: "/tmp/review-brief.md", base: "main", head: "HEAD",
+    description: "Branch adds the v2 ledger.", report: "/tmp/r.md",
+  }).success, false);
+});
+
+test("v1 role names and the review_brief field name are rejected", () => {
+  assert.equal(XagentSddStartInputSchemaV2.safeParse({
+    role: "task-reviewer", ...x_Assignment, task: 4,
+    brief: "/tmp/b.md", report: "/tmp/r.md", base: "main", head: "HEAD",
+  }).success, false);
+  assert.equal(XagentSddStartInputSchemaV2.safeParse({
+    role: "code-reviewer", ...x_Assignment,
+    review_brief: "/tmp/b.md", description: "x", base: "main", head: "HEAD",
+  }).success, false);
+  assert.equal(ReviewerStartSchema.safeParse({
+    role: "reviewer", ...x_Assignment,
+    review_brief: "/tmp/b.md", base: "main", head: "HEAD", description: "x",
+  }).success, false);
+});
+
+test("fixer requires task, brief, findings, tests, and report and rejects name", () => {
+  const valid = {
+    role: "fixer" as const, ...x_Assignment, task: 4,
+    brief: "/tmp/sdd/task-4-brief.md",
+    findings: "/tmp/sdd/task-4-findings.md",
+    findings_text: "Two open findings.",
+    tests: ["npm test"],
+    report: "/tmp/sdd/task-4-report.md",
+  };
+  assert.equal(FixerStartSchema.safeParse(valid).success, true);
+  assert.equal(FixerStartSchema.parse(valid).round, 1);
+  assert.equal(FixerStartSchema.safeParse({ ...valid, round: 3 }).success, true);
+  assert.equal(FixerStartSchema.safeParse({ ...valid, name: "Task 4 Fix Round 1" }).success, false);
+  assert.equal(FixerStartSchema.safeParse({ ...valid, context: "extra" }).success, false);
+  assert.equal(FixerStartSchema.safeParse({ ...valid, tests: [] }).success, false);
+});
+
+test("re-reviewer requires the original review brief", () => {
+  const valid = {
+    role: "re-reviewer" as const, ...x_Assignment, task: 4,
+    brief: "/tmp/sdd/task-4-review-brief.md",
+    findings: "/tmp/sdd/task-4-findings.md",
+    report: "/tmp/sdd/task-4-report.md",
+    base: "main", head: "HEAD",
+  };
+  assert.equal(ReReviewerStartSchema.safeParse(valid).success, true);
+  const { brief, ...withoutBrief } = valid;
+  assert.equal(ReReviewerStartSchema.safeParse(withoutBrief).success, false);
+});
+
+test("worker-facing text on v2 roles still rejects controller run ids", () => {
+  assert.equal(FixerStartSchema.safeParse({
+    role: "fixer", ...x_Assignment, task: 4,
+    brief: "/tmp/b.md", findings: "/tmp/f.md",
+    findings_text: "see xrun_20260728000000000_0000abcd",
+    tests: ["npm test"], report: "/tmp/r.md",
+  }).success, false);
+});
+
+test("v2 followup shapes require report and keep round render-only", () => {
+  const fix = {
+    kind: "fix" as const,
+    agent_id: "xrun_20260728000000000_0000abcd",
+    round: 2,
+    findings: "/tmp/f.md",
+    findings_text: "one finding",
+    tests: ["npm test"],
+    report: "/tmp/r.md",
+  };
+  assert.equal(FixFollowupSchema.safeParse(fix).success, true);
+  const { report, ...withoutReport } = fix;
+  assert.equal(FixFollowupSchema.safeParse(withoutReport).success, false);
+
+  const reReview = {
+    kind: "re-review" as const,
+    agent_id: "xrun_20260728000000000_0000abcd",
+    round: 2,
+    findings: "/tmp/f.md",
+    report: "/tmp/r.md",
+    base: "main", head: "HEAD",
+  };
+  assert.equal(ReReviewFollowupSchema.safeParse(reReview).success, true);
+  const { report: r2, ...reReviewWithoutReport } = reReview;
+  assert.equal(ReReviewFollowupSchema.safeParse(reReviewWithoutReport).success, false);
 });
