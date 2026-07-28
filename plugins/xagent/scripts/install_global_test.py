@@ -40,6 +40,7 @@ EXPECTED_MCP_TOOL_NAMES = (
     "xagent_close",
     "xagent_inspect",
     "xagent_interrupt",
+    "xagent_list",
     "xagent_message",
     "xagent_sdd_await",
     "xagent_sdd_close",
@@ -1226,3 +1227,57 @@ raise SystemExit(f"unexpected fake codex arguments: {args!r}")
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LauncherPortabilityTests(unittest.TestCase):
+    def test_launcher_has_no_hardcoded_user_path(self) -> None:
+        launcher = (REPO_ROOT / "plugins/xagent/scripts/xagent").read_text(encoding="utf-8")
+        self.assertNotIn("/Users/", launcher)
+        self.assertIn("SHEAF_XAGENT_LOG_ROOT", launcher)
+        self.assertIn(".xagent/data", launcher)
+
+    def test_launcher_discovers_the_sheaf_root_from_the_working_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_base:
+            base = Path(raw_base).resolve()
+            sheaf_root = base / "some-checkout"
+            (sheaf_root / "config").mkdir(parents=True)
+            (sheaf_root / "structure").mkdir()
+            (sheaf_root / "config" / "services.json").write_text("[]\n", encoding="utf-8")
+            nested = sheaf_root / "projects" / "deep"
+            nested.mkdir(parents=True)
+
+            launcher = (REPO_ROOT / "plugins/xagent/scripts/xagent").read_text(encoding="utf-8")
+            start = launcher.index("find_sheaf_root()")
+            end = launcher.index("\n", launcher.index("export XAGENT_LOG_ROOT="))
+            slice_path = base / "log_root_slice.sh"
+            slice_path.write_text(launcher[start:end] + "\n", encoding="utf-8")
+
+            probe = base / "probe.sh"
+            probe.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                f'. "{slice_path}"\n'
+                'printf "%s\\n" "${XAGENT_LOG_ROOT}"\n',
+                encoding="utf-8",
+            )
+            probe.chmod(0o755)
+
+            found = subprocess.run(
+                ["bash", str(probe)],
+                cwd=str(nested),
+                capture_output=True,
+                text=True,
+                check=True,
+                env={**os.environ, "XAGENT_LOG_ROOT": "", "SHEAF_XAGENT_LOG_ROOT": ""},
+            ).stdout.strip()
+            self.assertEqual(found, str(sheaf_root / "data" / "xagent"))
+
+            outside = subprocess.run(
+                ["bash", str(probe)],
+                cwd=str(base),
+                capture_output=True,
+                text=True,
+                check=True,
+                env={**os.environ, "XAGENT_LOG_ROOT": "", "SHEAF_XAGENT_LOG_ROOT": ""},
+            ).stdout.strip()
+            self.assertEqual(outside, str(Path.home() / ".xagent" / "data"))
