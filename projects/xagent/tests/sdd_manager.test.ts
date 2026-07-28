@@ -389,6 +389,7 @@ function CreateFakeRunManager(recorder: ReturnType<typeof CreateOrderRecorder>):
   startError?: Error;
   submitError?: Error;
   closeRunError?: Error;
+  messageError?: Error;
   created: CreateRunOptions[];
   submitted: Array<{ runId: string; text: string }>;
   closed: string[];
@@ -479,6 +480,10 @@ function CreateFakeRunManager(recorder: ReturnType<typeof CreateOrderRecorder>):
     async messageRun(input: XagentMessageInput): Promise<MessageRunResult>
     {
       recorder.Record("messageRun", input);
+      if (this.messageError !== undefined)
+      {
+        throw this.messageError;
+      }
       messageCalls.push(input);
       return {
         run_id: input.run_id,
@@ -1815,4 +1820,48 @@ test("a controller note cannot smuggle a run id to the worker", () =>
     note: "Resume against xrun_20260727192847117_b30af348 when done.",
   });
   assert.equal(rejected.success, false);
+});
+
+test("a raw message is refused while a work turn is still open", async () =>
+{
+  const harness = CreateManagerHarness();
+  await harness.manager.Start(ImplementerStartInput());
+
+  await assert.rejects(
+    () => harness.manager.MessageGeneric({ run_id: x_AgentId, text: "status?" }),
+    (error: unknown) =>
+    {
+      assert.ok(error instanceof ToolValidationError);
+      assert.equal(error.structured.error, "sdd_turn_in_flight");
+      return true;
+    },
+  );
+  assert.equal(harness.runManager.messageCalls.length, 0);
+});
+
+test("a failed message does not disarm the report-binding guard", async () =>
+{
+  const harness = CreateManagerHarness();
+  await StartAndClearOpenTurn(harness);
+  harness.runManager.messageError = new Error("invalid_phase");
+
+  await assert.rejects(
+    () => harness.manager.MessageGeneric({ run_id: x_AgentId, text: "never delivered" }),
+  );
+
+  // The session must still refuse to bind an unbindable work-turn report.
+  harness.runManager.awaitResult = CompletionResult({ sequence: 42 });
+  await assert.rejects(
+    () => harness.manager.Await({
+      agent_id: x_AgentId,
+      after_sequence: 7,
+      deadline_seconds: 7000,
+    }),
+    (error: unknown) =>
+    {
+      assert.ok(error instanceof ToolValidationError);
+      assert.equal(error.structured.error, "sdd_report_unbound");
+      return true;
+    },
+  );
 });

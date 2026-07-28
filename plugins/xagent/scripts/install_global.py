@@ -49,6 +49,22 @@ HARNESS_MCP_REGISTRIES = (
 )
 
 
+def write_json_atomic(path: Path, payload: object) -> None:
+    """Replace a JSON registry without ever leaving it truncated.
+
+    `~/.claude.json` is Claude Code's entire global state file — project list,
+    history metadata, account. A bare write_text that dies between truncate and
+    flush destroys it, so stage a sibling temp file, keep one backup of the
+    previous contents, and swap with os.replace.
+    """
+    serialized = json.dumps(payload, indent=2) + "\n"
+    staged = path.with_name(f".{path.name}.xagent-stage")
+    staged.write_text(serialized, encoding="utf-8")
+    if path.exists():
+        shutil.copy2(path, path.with_name(f"{path.name}.xagent-backup"))
+    os.replace(staged, path)
+
+
 def render_harness_skill(repo_root: Path) -> str:
     """Skill text with the managed marker placed after the YAML frontmatter.
 
@@ -109,7 +125,7 @@ def register_harness_mcp(*, home: Path) -> None:
         servers[PLUGIN_NAME] = dict(XAGENT_MCP_ENTRY)
         registry["mcpServers"] = servers
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
+        write_json_atomic(path, registry)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HELPER_NAMES = (

@@ -28,7 +28,7 @@ pre-plan coordination and Superpowers SDD task execution:
   Superpowers plan exists, every implementer, task reviewer, fix, re-review, and
   final whole-branch reviewer turn uses `xagent_sdd_start` and
   `xagent_sdd_followup` regardless of native model availability. Native
-  subagents, generic `xagent_start`, raw `xagent_message`, quiet
+  subagents, generic `xagent_start_non_sdd`, raw `xagent_message`, quiet
   `xagent supervise`, and terminal polling are prohibited for those turns.
 - **Keep each task's implementer and reviewer open until the task finishes.**
   Do not discard an implementer after its first report or a reviewer after
@@ -61,7 +61,7 @@ ledger.
 - **Native subagents use one long native mailbox wait.** Do not repeat the
   harness default short timeout merely to observe unchanged state.
 - **Cross-provider pre-plan review uses generic xagent service MCP.** Verify
-  Conductor reports xagent healthy at `127.0.0.1:9005`, call `xagent_start`,
+  Conductor reports xagent healthy at `127.0.0.1:9005`, call `xagent_start_non_sdd`,
   do independent work, then one long `xagent_await` with the returned
   `after_sequence` cursor. Consume the sanitized final assistant report from
   `report.text`. Use `xagent_message` only for unstructured non-SDD follow-up
@@ -131,7 +131,7 @@ xagent_sdd_start
   sees position and remaining work.
 - **No SDD fallbacks.** If the xagent SDD MCP facade or Conductor-managed
   xagent service is unavailable, surface broken agentic infrastructure. Do not
-  fall back to native subagents, generic `xagent_start`, raw `xagent_message`,
+  fall back to native subagents, generic `xagent_start_non_sdd`, raw `xagent_message`,
   quiet `xagent supervise`, or terminal polling for Superpowers SDD turns.
 
 While an SDD agent is healthy and the controller has no independent work,

@@ -21,6 +21,8 @@ import {
   FixFollowupSchema,
   ImplementerStartSchema,
   XagentAwaitInputSchema,
+  XagentMessageInputSchema,
+  XagentStartInputSchema,
   XagentSddAwaitInputSchema,
 } from "../src/service/tool_schemas.js";
 import type { SupervisionPolicy, SupervisionScheduler } from "../src/supervision/types.js";
@@ -780,4 +782,40 @@ test("fix follow-up findings text rejects embedded controller run ids", () => {
     tests: ["npm test"],
   });
   assert.equal(clean.success, true);
+});
+
+test("the run-id guard exempts backtick-quoted ids and covers message and prompt", () => {
+  // Quoting xagent's own run ids is legitimate when xagent is the subject.
+  assert.equal(
+    ImplementerStartSchema.safeParse({
+      role: "implementer",
+      cwd: "/tmp/worktree",
+      plan: "/tmp/plan.md",
+      agent: "grok-4.5",
+      harness: "cursor",
+      effort: "high",
+      task: 4,
+      name: "Superpowers managed plugins",
+      brief: "/tmp/brief.md",
+      report: "/tmp/report.md",
+      note: "A cancelled sibling `xrun_20260727192847117_b30af348` left work in the tree.",
+    }).success,
+    true,
+  );
+
+  assert.equal(
+    XagentMessageInputSchema.safeParse({
+      run_id: "xrun_20260726000000000_00000001",
+      text: "Keep xrun_20260727192847117_b30af348 open for re-review.",
+    }).success,
+    false,
+  );
+  assert.equal(
+    XagentStartInputSchema.safeParse({
+      cwd: "/tmp",
+      prompt: "Resume against xrun_20260727192847117_b30af348.",
+      harness: "cursor",
+    }).success,
+    false,
+  );
 });

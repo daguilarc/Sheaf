@@ -645,11 +645,14 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
       //
       const close = database.transaction(() => {
         const result = markClosed.run(closedAt, agentId);
-        if (result.changes === 0) {
-          throw new SddStoreError(
-            `Cannot close SDD session ${agentId}: session missing or already closed.`,
-          );
+        if (result.changes === 0 && selectSession.get(agentId) === undefined) {
+          throw new SddStoreError(`Cannot close SDD session ${agentId}: session missing.`);
         }
+        // Closing an already-closed session is a no-op, not an error. The
+        // incident lost a close confirmation to a crashed client; the natural
+        // retry must not come back as a persistence failure after the provider
+        // session has already been closed.
+        //
         abandonOpenTurns.run(closedAt, agentId);
       });
       close();

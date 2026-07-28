@@ -47,7 +47,7 @@ make xagent-plugin-install-global
 
 After installation, open a new conversation in each harness so it reloads the
 skill and MCP metadata. To confirm, ask the harness to list its tools and look
-for `xagent_start`; on Codex you can also check `codex plugin list` reports
+for `xagent_start_non_sdd`; on Codex you can also check `codex plugin list` reports
 xagent installed and enabled at `$HOME/.agents/plugins/plugins/xagent`.
 
 For recovery, rerun `make xagent-plugin-install-global`. If the installed

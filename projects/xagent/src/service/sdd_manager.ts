@@ -727,6 +727,8 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       });
     }
     await CloseAfterProvider(input.agent_id);
+    artifactsByAgent.delete(input.agent_id);
+    conversationalAgents.delete(input.agent_id);
     return {
       agent_id: input.agent_id,
       closed: true,
@@ -782,7 +784,27 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       //
       if (store.IsSddAgent(input.run_id))
       {
+        // Chit-chat is only safe between work turns. With a turn still open,
+        // the reply would land inside that turn's sequence bracket and
+        // PersistReportBeforeReturn would bind the chit-chat text as the
+        // turn's report — silently replacing the real one, with no error and
+        // a clean-looking session afterwards.
+        //
+        if (store.GetOpenTurn(input.run_id) !== undefined)
+        {
+          throw StructuredFailure({
+            error: "sdd_turn_in_flight",
+            message:
+              `SDD turn is still open for ${input.run_id}; await it before messaging.`,
+            details: { agent_id: input.run_id, tool: "xagent_sdd_await" },
+          });
+        }
+        // Flag only after the provider actually accepted the message: a
+        // rejected submit must not disarm the report-binding guard.
+        //
+        const delivered = await runManager.messageRun(input);
         conversationalAgents.add(input.run_id);
+        return delivered;
       }
       return runManager.messageRun(input);
     },

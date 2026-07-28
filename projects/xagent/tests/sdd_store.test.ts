@@ -389,3 +389,33 @@ test("opening the store repairs turns left running under a closed session", asyn
     await rm(parentRoot, { recursive: true, force: true });
   }
 });
+
+test("closing an already-closed session is a no-op, not a persistence failure", async () => {
+  const parentRoot = await mkdtemp(path.join(tmpdir(), "xagent-sdd-reclose-"));
+  const logRoot = path.join(parentRoot, "sdd-log");
+  try {
+    const store = CreateSddStore(logRoot);
+    store.ReserveInitial(sampleInitialInput);
+    store.MarkClosed(sampleAgentId, "2026-07-28T00:00:00.000Z");
+    // A client that lost the first confirmation retries; that must succeed.
+    store.MarkClosed(sampleAgentId, "2026-07-28T00:01:00.000Z");
+    store.Close();
+  } finally {
+    await rm(parentRoot, { recursive: true, force: true });
+  }
+});
+
+test("closing a session that never existed still fails", async () => {
+  const parentRoot = await mkdtemp(path.join(tmpdir(), "xagent-sdd-noclose-"));
+  const logRoot = path.join(parentRoot, "sdd-log");
+  try {
+    const store = CreateSddStore(logRoot);
+    assert.throws(
+      () => store.MarkClosed("xrun_20260101000000000_deadbeef", "2026-07-28T00:00:00.000Z"),
+      SddStoreError,
+    );
+    store.Close();
+  } finally {
+    await rm(parentRoot, { recursive: true, force: true });
+  }
+});

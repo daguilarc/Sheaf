@@ -292,7 +292,7 @@ const transport = new StreamableHTTPClientTransport(new URL({service_url!r}));
 const client = new Client({{ name: "xagent-plugin-cleanup-test", version: "0.0.0" }});
 await client.connect(transport);
 const started = await client.callTool({{
-  name: "xagent_start",
+  name: "xagent_start_non_sdd",
   arguments: {{ cwd: {str(cwd)!r}, prompt: "owned child cleanup", harness: "codex" }},
 }});
 const body = started.structuredContent ?? started.content?.[0]?.text;
@@ -350,14 +350,14 @@ const client = new Client({{ name: "xagent-plugin-await-test", version: "0.0.0" 
 await client.connect(transport);
 
 const started = await client.callTool({{
-  name: "xagent_start",
+  name: "xagent_start_non_sdd",
   arguments: {{ cwd: {str(cwd)!r}, prompt: "packaged await smoke", harness: "codex" }},
 }});
 const startBody = started.structuredContent ?? started.content?.[0]?.text;
 const startParsed = typeof startBody === "string" ? JSON.parse(startBody) : startBody;
 const runId = startParsed.run_id;
 if (typeof runId !== "string" || runId.length === 0) {{
-  throw new Error(`xagent_start did not return a run_id: ${{JSON.stringify(startParsed)}}`);
+  throw new Error(`xagent_start_non_sdd did not return a run_id: ${{JSON.stringify(startParsed)}}`);
 }}
 
 const inspected = await client.callTool({{
@@ -1430,3 +1430,20 @@ class AllHarnessDistributionTests(unittest.TestCase):
         settings = self.home / ".pi" / "agent" / "settings.json"
         if settings.exists():
             self.assertNotIn("mcpServers", settings.read_text(encoding="utf-8"))
+
+    def test_mcp_registration_never_leaves_a_truncated_registry(self) -> None:
+        # ~/.claude.json is Claude Code's whole global state file.
+        claude_path = self.home / ".claude.json"
+        original = {"mcpServers": {}, "projects": {"/a": {"history": [1, 2, 3]}}}
+        claude_path.write_text(json.dumps(original), encoding="utf-8")
+
+        install_global.register_harness_mcp(home=self.home)
+
+        merged = json.loads(claude_path.read_text(encoding="utf-8"))
+        self.assertEqual(original["projects"], merged["projects"])
+        self.assertIn("xagent", merged["mcpServers"])
+
+        backup = self.home / ".claude.json.xagent-backup"
+        self.assertTrue(backup.is_file(), "the previous contents must be recoverable")
+        self.assertEqual(original, json.loads(backup.read_text(encoding="utf-8")))
+        self.assertFalse((self.home / ".claude.json.xagent-stage").exists())

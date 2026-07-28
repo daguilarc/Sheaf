@@ -80,6 +80,29 @@ export function parseCursorProviderEvent(
     // the status contract. The end-of-turn flush is the real final message;
     // fall back to `result` only when no such flush was observed.
     //
+    // cursor-agent mirrors the Claude Code result schema, so a provider error
+    // arrives as `is_error` on an otherwise ordinary result. Reporting it as a
+    // successful turn would write the error text into the ledger as the
+    // worker's report — worse than a bare exit code, and cursor was the
+    // harness in the incident this came from.
+    //
+    if (raw.is_error === true) {
+      const message = stringValue(raw.result ?? raw.text, "");
+      clearCursorSegment(state);
+      state.cursorFinalSegmentText = undefined;
+      return [{
+        type: "turn.failed",
+        turn_id: context.turnId,
+        code: "provider_error",
+        message: message === "" ? "cursor-agent reported an error result." : message,
+        details: {
+          ...(typeof raw.subtype === "string" ? { subtype: raw.subtype } : {}),
+        },
+        ...(state.providerThreadId === undefined
+          ? {}
+          : { provider_thread_id: state.providerThreadId }),
+      }];
+    }
     const finalSegment = state.cursorFinalSegmentText;
     const text = finalSegment !== undefined && finalSegment.trim() !== ""
       ? finalSegment

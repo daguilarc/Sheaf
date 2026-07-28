@@ -637,3 +637,24 @@ test("cursor does not treat a tool flush without a timestamp as the final segmen
   // No genuine end-of-turn flush was seen, so fall back to the result field.
   assert.equal(events.find((event) => event.type === "turn.completed")?.final_text, "narration");
 });
+
+test("cursor result with is_error fails the turn instead of reporting success", () => {
+  const state: ProcessHarnessState = { providerSequence: 0 };
+  const events = parseCursorProviderEvent(
+    {
+      type: "result",
+      subtype: "error",
+      is_error: true,
+      result: "Rate limit exceeded for composer-2.5.",
+      session_id: "cursor-thread-err",
+    },
+    context,
+    state,
+  );
+
+  const failed = events.find((event) => event.type === "turn.failed");
+  assert.ok(failed, "an is_error result must fail the turn");
+  assert.equal(failed?.type === "turn.failed" ? failed.code : undefined, "provider_error");
+  assert.match(failed?.type === "turn.failed" ? failed.message : "", /Rate limit/);
+  assert.equal(events.find((event) => event.type === "turn.completed"), undefined);
+});
