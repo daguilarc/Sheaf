@@ -145,15 +145,46 @@ Task 9 is the natural owner of all four. This is not a defect in Task 4; it is
 the accounting for a wholesale deletion, recorded so the coverage is rebuilt
 deliberately rather than assumed.
 
-### B2. Unreproduced intermittent test failure — OPEN
+### B2. Intermittent test failure — CONFIRMED REAL, STILL UNIDENTIFIED
 
-The Task 1 implementer reported one `service_main` reconciliation failure that
-passed on isolated re-run and on the subsequent full suite. The controller
-could not reproduce it: 8/8 isolated, 3/3 full-suite clean.
+**Two independent sightings, different agents and different commits.** No
+longer dismissible as one agent's bad run.
 
-Not chased further because there is nothing to bisect. Recorded because an
-occasionally-red suite silently degrades the green signal every later task
-depends on. If it recurs, capture the failing output before re-running.
+- **Sighting 1 (Task 1).** The implementer reported a `service_main`
+  reconciliation failure that passed on isolated re-run and on the subsequent
+  full suite. Controller could not reproduce: 8/8 isolated, 3/3 full-suite.
+- **Sighting 2 (Task 5 fix round, commit `750ac2ef`).** The controller's own
+  verification run reported `377 tests, 375 pass, 1 fail, 1 skipped` while the
+  implementer's run of the same commit reported all green. An immediate re-run
+  was clean, and 8 further full-suite runs were clean.
+
+**The evidence from sighting 2 was lost, and that was the controller's
+error:** the failing test name was not captured before re-running, despite
+this entry already saying to do exactly that. Do not repeat it.
+
+**Capture procedure when it next appears** — save output *first*, diagnose
+second:
+
+```bash
+cd projects/xagent
+for i in $(seq 1 20); do
+  npm test > /tmp/suite-$i.log 2>&1
+  grep -qE "^ℹ fail [1-9]" /tmp/suite-$i.log && { echo "captured in /tmp/suite-$i.log"; break; }
+done
+grep -E "^✖|not ok|AssertionError" -A 20 /tmp/suite-*.log
+```
+
+Note the reporter prints failures as `✖ name` / `not ok`, and a `grep` for
+`failing` finds nothing — that mismatch is part of why the first capture was
+missed.
+
+Why it matters more now than at sighting 1: **every task in this plan gates on
+a green suite**, and both the implementer and the controller take that green
+as evidence. A suite that is red roughly one run in ten means any given task's
+"all green" has a real chance of being one unlucky re-run away from red, and
+that a genuine regression could be dismissed as "the known flake." Owner: the
+whole-branch review, and it should not be closed by another clean sweep —
+only by identifying the test.
 
 ### B3. Residual gaps in the no-`UPDATE` guard test — ACCEPTED
 
