@@ -228,7 +228,7 @@ counts for both SDD tools.
 
 `SequencedEventQueue.publish` (`src/supervision/event_queue.ts:50`) awaits `this.sink(event)` and rejects if the sink throws — so publishing before `session.submit` is exactly what makes a sink failure fail the submit. `Supervisor.#publishEvent` (`supervisor.ts:573`) calls `#assertTransition(body.phase)`; `running → running` is an allowed transition, so publishing a second `running` event inside `submit` is legal.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `projects/xagent/tests/supervision.test.ts`. Use the same fixture helpers the file already uses for other `submit` tests (find an existing `test("...submit...")` case and copy its setup verbatim — the supervisor construction, fake adapter, and captured `eventSink` array).
 
@@ -323,7 +323,7 @@ test("the persisted-await wake filter ignores turn.submitted", () => {
 
 Export `isPersistedAwaitWake` from `src/service/run_manager.ts` so the second test can import it (`export function isPersistedAwaitWake`).
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/supervision.test.js dist/tests/mcp_await.test.js
@@ -331,7 +331,7 @@ cd projects/xagent && npm run build && node --test dist/tests/supervision.test.j
 
 Expected: FAIL. The build fails first with `TS2322` on the `"turn.submitted"` literal not being assignable to `SupervisionEvent["type"]`.
 
-- [ ] **Step 3: Widen the event type union**
+- [x] **Step 3: Widen the event type union**
 
 In `src/supervision/types.ts`, replace line 18:
 
@@ -339,7 +339,7 @@ In `src/supervision/types.ts`, replace line 18:
   type: "supervision.state" | "supervision.attention" | "turn.completed" | "turn.submitted";
 ```
 
-- [ ] **Step 4: Emit the event in `Supervisor.submit`**
+- [x] **Step 4: Emit the event in `Supervisor.submit`**
 
 In `src/supervision/supervisor.ts`, inside `submit()`'s `#withLifecycleMutation` callback, insert one line immediately after the existing `await this.#publishState("running", "turn_started", false);` (line 244) and before the `this.#evidence = new SemanticEvidenceWindow({...})` assignment:
 
@@ -366,7 +366,7 @@ Add the helper immediately after `#publishState` (after line 570):
   }
 ```
 
-- [ ] **Step 5: Exclude it from the persisted-await wake filter**
+- [x] **Step 5: Exclude it from the persisted-await wake filter**
 
 In `src/service/run_manager.ts`, `isPersistedAwaitWake` already whitelists only `supervision.attention`, `turn.completed`, and terminal `supervision.state`, so `turn.submitted` falls through to `false` today. Make that guarantee explicit and testable by exporting the function and adding a comment above line 658:
 
@@ -378,7 +378,7 @@ In `src/service/run_manager.ts`, `isPersistedAwaitWake` already whitelists only 
 
 Change `function isPersistedAwaitWake` to `export function isPersistedAwaitWake`.
 
-- [ ] **Step 6: Run the tests to verify they pass**
+- [x] **Step 6: Run the tests to verify they pass**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/supervision.test.js dist/tests/mcp_await.test.js
@@ -386,7 +386,7 @@ cd projects/xagent && npm run build && node --test dist/tests/supervision.test.j
 
 Expected: PASS, 0 failures.
 
-- [ ] **Step 7: Run the full suite**
+- [x] **Step 7: Run the full suite**
 
 ```bash
 cd projects/xagent && npm test
@@ -394,7 +394,7 @@ cd projects/xagent && npm test
 
 Expected: PASS. Any pre-existing test that counts events on a run will now see one extra event per submit; update those counts rather than suppressing the new event.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add projects/xagent/src/supervision/types.ts projects/xagent/src/supervision/supervisor.ts projects/xagent/src/service/run_manager.ts projects/xagent/tests/supervision.test.ts projects/xagent/tests/mcp_await.test.ts
