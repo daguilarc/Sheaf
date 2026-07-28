@@ -88,7 +88,7 @@ export declare const SupervisionPolicySchema: z.ZodObject<{
 export declare const SddAbsolutePathSchema: z.ZodEffects<z.ZodString, string, string>;
 export declare const ImplementerStartSchema: z.ZodObject<{
     task: z.ZodNumber;
-    name: z.ZodString;
+    name: z.ZodEffects<z.ZodString, string, string>;
     brief: z.ZodEffects<z.ZodString, string, string>;
     report: z.ZodEffects<z.ZodString, string, string>;
     context: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
@@ -382,7 +382,7 @@ export declare const TaskReviewerStartSchema: z.ZodObject<{
 }>;
 export declare const CodeReviewerStartSchema: z.ZodObject<{
     review_brief: z.ZodEffects<z.ZodString, string, string>;
-    description: z.ZodString;
+    description: z.ZodEffects<z.ZodString, string, string>;
     base: z.ZodString;
     head: z.ZodString;
     cwd: z.ZodString;
@@ -523,7 +523,7 @@ export declare const CodeReviewerStartSchema: z.ZodObject<{
 }>;
 export declare const XagentSddStartInputSchema: z.ZodDiscriminatedUnion<"role", [z.ZodObject<{
     task: z.ZodNumber;
-    name: z.ZodString;
+    name: z.ZodEffects<z.ZodString, string, string>;
     brief: z.ZodEffects<z.ZodString, string, string>;
     report: z.ZodEffects<z.ZodString, string, string>;
     context: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
@@ -815,7 +815,7 @@ export declare const XagentSddStartInputSchema: z.ZodDiscriminatedUnion<"role", 
     diff?: string | undefined;
 }>, z.ZodObject<{
     review_brief: z.ZodEffects<z.ZodString, string, string>;
-    description: z.ZodString;
+    description: z.ZodEffects<z.ZodString, string, string>;
     base: z.ZodString;
     head: z.ZodString;
     cwd: z.ZodString;

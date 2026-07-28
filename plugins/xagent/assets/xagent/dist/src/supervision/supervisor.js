@@ -223,16 +223,22 @@ export class Supervisor {
                         return;
                     }
                     this.#recordProgress(event);
-                    // ProcessJsonlSession yields one `raw.provider` event per provider
-                    // line and only attaches the `rawProvider` side-channel to a couple
-                    // of fallback events, so keying off `rawProvider` alone captured
-                    // nothing in production. Mirror the legacy runtime and take both.
+                    // ProcessJsonlSession yields exactly one `raw.provider` event per
+                    // provider line, so that is the whole transcript; the `rawProvider`
+                    // side-channel on other events is a duplicate of the same object.
+                    //
+                    // The transcript is a diagnostic artifact: a failure to persist it
+                    // must never fail a healthy turn. Awaiting inside this loop with the
+                    // error escaping would surface a full disk as `transport.lost` and
+                    // kill a run that was making progress.
                     //
                     if (event.type === "raw.provider") {
-                        await this.#providerTranscriptSink(sanitizeValue(event.payload, this.#startOptions.cwd));
-                    }
-                    else if (event.rawProvider !== undefined) {
-                        await this.#providerTranscriptSink(sanitizeValue(event.rawProvider, this.#startOptions.cwd));
+                        try {
+                            await this.#providerTranscriptSink(sanitizeValue(event.payload, this.#startOptions.cwd));
+                        }
+                        catch {
+                            // Diagnostics only — drop the line rather than the run.
+                        }
                     }
                     const mechanical = mechanicalEventClassification(this.#health, event);
                     if (mechanical?.kind === "attention") {
@@ -251,10 +257,16 @@ export class Supervisor {
                     if (event.type === "turn.failed") {
                         terminalFailure = {
                             reason: event.code,
-                            payload: {
+                            // Provider error text is untrusted content: it can echo an API
+                            // key or an absolute worktree path. Every other terminal-failure
+                            // path here sanitizes; this one must too. `details` carries the
+                            // adapter's structured cause (terminal_reason, subtype).
+                            //
+                            payload: sanitizeValue({
                                 message: event.message,
                                 turn_id: turn.turnId,
-                            },
+                                ...(event.details === undefined ? {} : { details: event.details }),
+                            }, this.#startOptions.cwd),
                         };
                         break;
                     }
