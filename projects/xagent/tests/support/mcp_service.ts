@@ -115,6 +115,11 @@ export async function startMcpService(
   options: StartMcpServiceOptions = {},
 ): Promise<StartedMcpService>
 {
+  // Own only what we created: a caller-supplied logRoot belongs to the caller
+  // (Task 9's restart tests reopen one across two services), but the cwd is
+  // always ours. Mirrors withMcpService's ownsLogRoot handling below.
+  //
+  const ownsLogRoot = options.logRoot === undefined;
   const logRoot = options.logRoot ?? await mkdtemp(path.join(tmpdir(), "xagent-await-filter-"));
   const cwd = await mkdtemp(path.join(tmpdir(), "xagent-await-cwd-"));
   const runManager = new XagentRunManager({
@@ -153,6 +158,11 @@ export async function startMcpService(
     async close()
     {
       await runManager.closeAll();
+      await rm(cwd, { recursive: true, force: true });
+      if (ownsLogRoot)
+      {
+        await rm(logRoot, { recursive: true, force: true });
+      }
     },
   };
 }

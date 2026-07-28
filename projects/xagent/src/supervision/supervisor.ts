@@ -234,7 +234,12 @@ export class Supervisor {
   }
 
   async submit(text: string): Promise<void> {
-    let turnId = `turn_${this.#inputSequence + 1}`;
+    // Empty until the in-lock increment assigns the real id. Deliberately not
+    // a speculative `turn_${#inputSequence + 1}`: that reads the counter
+    // outside the mutation gate, and a plausible-looking but wrong id is a
+    // footgun if the rescue condition below is ever widened.
+    //
+    let turnId = "";
     let turnStarted = false;
     let turn: {
       readonly inputSequence: number;
