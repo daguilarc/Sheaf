@@ -60,9 +60,11 @@ export type SddManager = {
 };
 
 export type SddManagerDeps = {
-  // TRANSITIONAL: Start still writes v1 turn rows until the Start rewrite lands.
-  // This narrows to plain SddAgentStore in that task. MarkFailed is included
-  // because Start's failure path still calls it; the plan Pick list omitted it.
+  // TRANSITIONAL: Start still needs MarkRunning/ReserveInitial/MarkFailed until
+  // Task 6 rewrites it. GetSession is ListGeneric's v1 join and belongs to
+  // Task 8b — the dep narrows to plain SddAgentStore only when that lands.
+  // MarkFailed is included because Start's failure path still calls it; the
+  // plan Pick list omitted it.
   //
   readonly store: SddAgentStore & Pick<
     SddStore,
@@ -77,6 +79,16 @@ export type SddManagerDeps = {
 };
 
 const x_ControllerNoteHeading = "## Controller Note";
+const x_TerminalRunPhases = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "abandoned",
+]);
+const x_BusyRunPhases = new Set([
+  "starting",
+  "running",
+]);
 
 function AppendControllerNote(promptText: string, note: string | undefined): string
 {
@@ -341,12 +353,17 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     }
     // Liveness is a run-manager fact, never a ledger fact: v1's
     // sdd_session_terminal asked the ledger whether the agent was usable and
-    // got a stale answer. The dead end is now a signpost at the recovery path.
+    // got a stale answer. A tracked-but-terminal run is still dead — inspect
+    // returns an object for every phase, so phase must be checked here or the
+    // controller gets a bare supervisor Error instead of a recovery signpost.
     //
     const inspection = runManager.has(input.agent_id)
       ? runManager.inspect(input.agent_id)
       : undefined;
-    if (inspection === undefined)
+    if (
+      inspection === undefined
+      || x_TerminalRunPhases.has(inspection.phase)
+    )
     {
       throw StructuredFailure({
         error: "sdd_agent_not_live",
@@ -359,6 +376,20 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
           plan_path: agent.plan_path,
           task: agent.task,
           recovery: { tool: "xagent_sdd_start", role: RecoveryRoleFor(agent.role) },
+        },
+      });
+    }
+    if (x_BusyRunPhases.has(inspection.phase))
+    {
+      throw StructuredFailure({
+        error: "sdd_agent_busy",
+        message:
+          `SDD agent ${input.agent_id} is mid-turn; await its completion `
+          + "before submitting another follow-up.",
+        details: {
+          agent_id: input.agent_id,
+          phase: inspection.phase,
+          recovery: { tool: "xagent_sdd_await" },
         },
       });
     }
@@ -381,9 +412,13 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       if (agent.task === null)
       {
         throw StructuredFailure({
-          error: "sdd_followup_role_mismatch",
+          error: "sdd_followup_task_required",
           message: "Re-review requires a task-scoped reviewer agent.",
-          details: { agent_id: input.agent_id, role: agent.role },
+          details: {
+            agent_id: input.agent_id,
+            role: agent.role,
+            kind: input.kind,
+          },
         });
       }
       await ReadRequiredText(read, input.findings, "SDD findings");

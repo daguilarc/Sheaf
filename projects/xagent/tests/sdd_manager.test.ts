@@ -12,12 +12,12 @@ import {
   type PrepareFollowupInput,
   type ReserveInitialInput,
   type SddAgentRecord,
+  type SddAgentStore,
   type SddSessionRecord,
   type SddStore,
   type SddTurnRecord,
 } from "../src/service/sdd_store.js";
 import type {
-  FormatFixDispatchInput,
   FormatFixFollowupInput,
   RenderedSddPrompt,
   RenderSddPromptInput,
@@ -37,7 +37,6 @@ import {
   ToolValidationError,
   structuredErrorFromUnknown,
 } from "../src/service/tool_schemas.js";
-import type { SddAgentStore } from "../src/service/sdd_store.js";
 
 const x_AgentId = "xrun_20260727000000000_abcdef12";
 const x_PlanPath = "/tmp/plans/2026-07-26-xagent-sdd-mode.md";
@@ -48,6 +47,8 @@ const x_Cwd = "/tmp/worktree";
 const x_CanonicalCwd = "/private/tmp/worktree";
 const x_BriefText = "Implement SDD start and follow-up.\n";
 const x_PromptText = "Rendered implementer prompt pointing at the brief.\n";
+const x_FindingsPath = "/tmp/sdd/task-3-findings.md";
+const x_FindingsText = "Important: prepared-before-submit must hold.\n";
 
 type CallRecord = {
   readonly name: string;
@@ -476,6 +477,13 @@ function CreateFakeRunManager(
   const messageCalls: XagentMessageInput[] = [];
   const runs = new Set<string>();
   const live = options?.live !== false;
+  if (live)
+  {
+    // Followup tests skip create(); seed the known agent so has/inspect still
+    // check the run id rather than ignoring it.
+    //
+    runs.add(x_AgentId);
+  }
 
   return {
     created,
@@ -489,15 +497,15 @@ function CreateFakeRunManager(
       recorder.Record("allocateRunId");
       return x_AgentId;
     },
-    async create(options: CreateRunOptions): Promise<{ readonly runId: string }>
+    async create(createOptions: CreateRunOptions): Promise<{ readonly runId: string }>
     {
-      recorder.Record("create", options);
+      recorder.Record("create", createOptions);
       if (this.createError !== undefined)
       {
         throw this.createError;
       }
-      created.push(options);
-      const runId = options.runId ?? x_AgentId;
+      created.push(createOptions);
+      const runId = createOptions.runId ?? x_AgentId;
       runs.add(runId);
       return { runId };
     },
@@ -513,6 +521,14 @@ function CreateFakeRunManager(
     async submit(runId: string, text: string): Promise<void>
     {
       recorder.Record("submit", { runId, text });
+      if (!runs.has(runId))
+      {
+        throw new Error(`Cannot submit unknown run: ${runId}`);
+      }
+      if (this.phase !== "ready")
+      {
+        throw new Error(`Cannot submit while supervision phase is ${this.phase}.`);
+      }
       if (this.submitError !== undefined)
       {
         throw this.submitError;
@@ -523,7 +539,7 @@ function CreateFakeRunManager(
     inspect(runId: string)
     {
       recorder.Record("inspect", runId);
-      if (!live)
+      if (!live || !runs.has(runId))
       {
         return undefined;
       }
@@ -539,9 +555,9 @@ function CreateFakeRunManager(
       closed.push(runId);
       runs.delete(runId);
     },
-    has(_runId: string): boolean
+    has(runId: string): boolean
     {
-      return live;
+      return live && runs.has(runId);
     },
     async messageRun(input: XagentMessageInput): Promise<MessageRunResult>
     {
@@ -900,12 +916,12 @@ test("a fix followup renders and submits with zero ledger writes", async () =>
     dispatched_at: "2026-07-28T10:00:00.000Z",
   });
   const runManager = CreateFakeRunManager(recorder);
-  const formatted: FormatFixDispatchInput[] = [];
+  const formatted: FormatFixFollowupInput[] = [];
   const manager = CreateSddManager({
     ...CreateDeps(), store, runManager,
     formatFix: (input) =>
     {
-      formatted.push(input as FormatFixDispatchInput);
+      formatted.push(input);
       return "FIX TEXT";
     },
   });
@@ -922,11 +938,15 @@ test("a fix followup renders and submits with zero ledger writes", async () =>
 
   assert.deepEqual(Object.keys(result).sort(), ["agent_id", "sequence"]);
   assert.equal(result.agent_id, x_AgentId);
+  assert.equal(result.sequence, 7);
   assert.equal(formatted[0]!.briefPath, x_BriefPath);
   assert.equal(formatted[0]!.reportPath, "/tmp/sdd/task-3-report.md");
   assert.equal(formatted[0]!.round, 2);
   assert.equal(store.inserted.length, 0);
   assert.ok(recorder.Names().every((name) => !name.startsWith("store.Insert")));
+  assert.equal(runManager.submitted.length, 1);
+  assert.equal(runManager.submitted[0]!.runId, x_AgentId);
+  assert.equal(runManager.submitted[0]!.text, "FIX TEXT");
 });
 
 test("an unknown agent id is rejected before anything is submitted", async () =>
@@ -982,6 +1002,76 @@ test("a dead agent gets sdd_agent_not_live naming the fresh-agent recovery", asy
   assert.equal(runManager.submitted.length, 0);
 });
 
+test("a tracked terminal agent gets sdd_agent_not_live before submit", async () =>
+{
+  for (const phase of ["completed", "failed", "cancelled", "abandoned"] as const)
+  {
+    const recorder = CreateOrderRecorder();
+    const store = CreateFakeAgentStore(recorder, {
+      agent_id: x_AgentId, plan_path: x_PlanPath, task: 3, role: "implementer",
+      brief_path: x_BriefPath, brief_text: x_BriefText, cwd: x_CanonicalCwd,
+      dispatched_at: "2026-07-28T10:00:00.000Z",
+    });
+    const runManager = CreateFakeRunManager(recorder);
+    runManager.phase = phase;
+    const manager = CreateSddManager({ ...CreateDeps(), store, runManager });
+    await assert.rejects(
+      () => manager.Followup({
+        kind: "fix", agent_id: x_AgentId, round: 1,
+        findings: "/tmp/f.md", findings_text: "x", tests: ["npm test"], report: "/tmp/r.md",
+      }),
+      (error: unknown) =>
+      {
+        const structured = structuredErrorFromUnknown(error);
+        assert.equal(structured.error, "sdd_agent_not_live");
+        assert.deepEqual(structured.details, {
+          agent_id: x_AgentId,
+          role: "implementer",
+          plan_path: x_PlanPath,
+          task: 3,
+          recovery: { tool: "xagent_sdd_start", role: "fixer" },
+        });
+        return true;
+      },
+    );
+    assert.equal(runManager.submitted.length, 0, `phase ${phase} must not submit`);
+  }
+});
+
+test("a busy agent is rejected with sdd_agent_busy before submit", async () =>
+{
+  for (const phase of ["starting", "running"] as const)
+  {
+    const recorder = CreateOrderRecorder();
+    const store = CreateFakeAgentStore(recorder, {
+      agent_id: x_AgentId, plan_path: x_PlanPath, task: 3, role: "implementer",
+      brief_path: x_BriefPath, brief_text: x_BriefText, cwd: x_CanonicalCwd,
+      dispatched_at: "2026-07-28T10:00:00.000Z",
+    });
+    const runManager = CreateFakeRunManager(recorder);
+    runManager.phase = phase;
+    const manager = CreateSddManager({ ...CreateDeps(), store, runManager });
+    await assert.rejects(
+      () => manager.Followup({
+        kind: "fix", agent_id: x_AgentId, round: 1,
+        findings: "/tmp/f.md", findings_text: "x", tests: ["npm test"], report: "/tmp/r.md",
+      }),
+      (error: unknown) =>
+      {
+        const structured = structuredErrorFromUnknown(error);
+        assert.equal(structured.error, "sdd_agent_busy");
+        assert.deepEqual(structured.details, {
+          agent_id: x_AgentId,
+          phase,
+          recovery: { tool: "xagent_sdd_await" },
+        });
+        return true;
+      },
+    );
+    assert.equal(runManager.submitted.length, 0, `phase ${phase} must not submit`);
+  }
+});
+
 test("kind must match the immutable start role", async () =>
 {
   for (const [role, kind, allowed] of [
@@ -1034,7 +1124,59 @@ test("kind must match the immutable start role", async () =>
   }
 });
 
-test("double-calling a followup leaves the ledger untouched", async () =>
+test("re-review rejects a task-less reviewer before rendering", async () =>
+{
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, {
+    agent_id: x_AgentId, plan_path: x_PlanPath, task: null, role: "reviewer",
+    brief_path: x_BriefPath, brief_text: x_BriefText, cwd: x_CanonicalCwd,
+    dispatched_at: "2026-07-28T10:00:00.000Z",
+  });
+  const runManager = CreateFakeRunManager(recorder);
+  const rendered: RenderSddPromptInput[] = [];
+  const manager = CreateSddManager({
+    ...CreateDeps(),
+    store,
+    runManager,
+    async renderPrompt(input: RenderSddPromptInput): Promise<RenderedSddPrompt>
+    {
+      rendered.push(input);
+      return {
+        prompt: { path: x_PromptPath, text: "should not render" },
+        metadata: {
+          promptPath: x_PromptPath,
+          rendererPath: "/service/checkout/projects/agents/utils/dispatch-prompt",
+        },
+      };
+    },
+  });
+  await assert.rejects(
+    () => manager.Followup({
+      kind: "re-review",
+      agent_id: x_AgentId,
+      round: 1,
+      findings: "/tmp/f.md",
+      report: "/tmp/r.md",
+      base: "main",
+      head: "HEAD",
+    }),
+    (error: unknown) =>
+    {
+      const structured = structuredErrorFromUnknown(error);
+      assert.equal(structured.error, "sdd_followup_task_required");
+      assert.deepEqual(structured.details, {
+        agent_id: x_AgentId,
+        role: "reviewer",
+        kind: "re-review",
+      });
+      return true;
+    },
+  );
+  assert.equal(rendered.length, 0);
+  assert.equal(runManager.submitted.length, 0);
+});
+
+test("double-calling a followup leaves the ledger untouched and rejects the busy second call", async () =>
 {
   const recorder = CreateOrderRecorder();
   const store = CreateFakeAgentStore(recorder, {
@@ -1042,16 +1184,148 @@ test("double-calling a followup leaves the ledger untouched", async () =>
     brief_path: x_BriefPath, brief_text: x_BriefText, cwd: x_CanonicalCwd,
     dispatched_at: "2026-07-28T10:00:00.000Z",
   });
+  const runManager = CreateFakeRunManager(recorder);
   const manager = CreateSddManager({
-    ...CreateDeps(), store, runManager: CreateFakeRunManager(recorder),
+    ...CreateDeps(), store, runManager,
   });
   const input = {
     kind: "re-review" as const, agent_id: x_AgentId, round: 1,
     findings: "/tmp/f.md", report: "/tmp/r.md", base: "main", head: "HEAD",
   };
   await manager.Followup(input);
-  await manager.Followup(input);
   assert.equal(store.inserted.length, 0);
+  assert.equal(runManager.submitted.length, 1);
+  assert.equal(runManager.phase, "running");
+  await assert.rejects(
+    () => manager.Followup(input),
+    (error: unknown) =>
+    {
+      assert.equal(structuredErrorFromUnknown(error).error, "sdd_agent_busy");
+      return true;
+    },
+  );
+  assert.equal(store.inserted.length, 0);
+  assert.equal(runManager.submitted.length, 1);
+});
+
+test("Followup fix rejects when findings file is missing or empty", async () =>
+{
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, {
+    agent_id: x_AgentId,
+    plan_path: x_PlanPath,
+    task: 3,
+    role: "implementer",
+    brief_path: x_BriefPath,
+    brief_text: x_BriefText,
+    cwd: x_CanonicalCwd,
+    dispatched_at: "2026-07-28T10:00:00.000Z",
+  });
+
+  const missingRunManager = CreateFakeRunManager(recorder);
+  const missingManager = CreateSddManager({
+    ...CreateDeps(),
+    store,
+    runManager: missingRunManager,
+    async readFile(filePath: string): Promise<string>
+    {
+      if (filePath === x_FindingsPath)
+      {
+        throw new Error("ENOENT");
+      }
+      return x_BriefText;
+    },
+  });
+  await assert.rejects(
+    () => missingManager.Followup({
+      kind: "fix",
+      agent_id: x_AgentId,
+      round: 1,
+      findings: x_FindingsPath,
+      findings_text: x_FindingsText,
+      tests: ["dist/tests/sdd_manager.test.js"],
+      report: x_ReportPath,
+    }),
+    (error: unknown) =>
+    {
+      assert.ok(error instanceof ToolValidationError);
+      assert.equal(error.structured.error, "sdd_artifact_unreadable");
+      return true;
+    },
+  );
+  assert.equal(missingRunManager.submitted.length, 0);
+
+  const emptyRunManager = CreateFakeRunManager(CreateOrderRecorder());
+  const emptyManager = CreateSddManager({
+    ...CreateDeps(),
+    store,
+    runManager: emptyRunManager,
+    async readFile(filePath: string): Promise<string>
+    {
+      if (filePath === x_FindingsPath)
+      {
+        return "  \n";
+      }
+      return x_BriefText;
+    },
+  });
+  await assert.rejects(
+    () => emptyManager.Followup({
+      kind: "fix",
+      agent_id: x_AgentId,
+      round: 1,
+      findings: x_FindingsPath,
+      findings_text: x_FindingsText,
+      tests: ["dist/tests/sdd_manager.test.js"],
+      report: x_ReportPath,
+    }),
+    (error: unknown) =>
+    {
+      assert.ok(error instanceof ToolValidationError);
+      assert.equal(error.structured.error, "sdd_artifact_empty");
+      return true;
+    },
+  );
+  assert.equal(emptyRunManager.submitted.length, 0);
+});
+
+test("a controller note is appended to a fix follow-up", async () =>
+{
+  const note = "Ignore the stray build output in projects/synth; it is not yours.";
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, {
+    agent_id: x_AgentId,
+    plan_path: x_PlanPath,
+    task: 3,
+    role: "implementer",
+    brief_path: x_BriefPath,
+    brief_text: x_BriefText,
+    cwd: x_CanonicalCwd,
+    dispatched_at: "2026-07-28T10:00:00.000Z",
+  });
+  const runManager = CreateFakeRunManager(recorder);
+  const manager = CreateSddManager({
+    ...CreateDeps(),
+    store,
+    runManager,
+    formatFix: () => `Fix body.\n${x_FindingsText}`,
+  });
+
+  await manager.Followup({
+    kind: "fix",
+    agent_id: x_AgentId,
+    round: 1,
+    findings: x_FindingsPath,
+    findings_text: x_FindingsText,
+    tests: ["dist/tests/sdd_manager.test.js"],
+    report: x_ReportPath,
+    note,
+  });
+
+  const submitted = runManager.submitted.at(-1)?.text ?? "";
+  assert.ok(submitted.includes(x_FindingsText), "findings must survive");
+  assert.ok(submitted.includes("## Controller Note"));
+  assert.ok(submitted.includes(note));
 });
 
 test("SddManager exposes only Start, Followup, and ListGeneric", () =>
