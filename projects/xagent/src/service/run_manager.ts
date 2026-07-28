@@ -1,7 +1,7 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { generateRunId, createRunRecord, appendNormalizedEvent, appendRawProviderEvent, appendWatchdogTelemetry, updateRunSupervision, openRunRecord, type RunRecord } from "../logs.js";
+import { generateRunId, createRunRecord, appendNormalizedEvent, appendRawProviderEvent, appendWatchdogTelemetry, listRuns, updateRunSupervision, openRunRecord, type RunRecord } from "../logs.js";
 import { Supervisor } from "../supervision/supervisor.js";
 import type {
   AwaitResult,
@@ -22,6 +22,7 @@ import {
   type XagentAwaitInput,
   type XagentCloseInput,
   type XagentInspectInput,
+  type XagentListInput,
   type XagentInterruptInput,
   type XagentMessageInput,
   type XagentStartInput,
@@ -72,6 +73,23 @@ export type InspectRunResult = {
     source: "health_callback" | "watchdog_callback";
     message: string;
   };
+};
+
+export type XagentListRow = {
+  readonly run_id: string;
+  readonly harness: string;
+  readonly model?: string;
+  readonly phase: string;
+  readonly sequence: number;
+  readonly exit_status: string;
+  readonly live: boolean;
+  readonly supervised: boolean;
+  readonly created_at: string;
+  readonly updated_at: string;
+};
+
+export type ListRunsResult = {
+  readonly runs: readonly XagentListRow[];
 };
 
 export type AwaitRunResult = {
@@ -331,6 +349,33 @@ export class XagentRunManager {
 
   publishAttention(runId: string, reason: string, payload?: unknown): Promise<SupervisionEvent> {
     return this.#require(runId).supervisor.publishAttention(reason, payload);
+  }
+
+  // Recovery, not polling. When a start response is lost — a dropped tool
+  // result, a crashed client — this is the only supported way to find the
+  // orphaned run id over MCP; without it the run leaks until someone reads
+  // the log root by hand.
+  //
+  async listOwnedRuns(input: XagentListInput): Promise<ListRunsResult> {
+    const persisted = await listRuns(this.#logRoot);
+    const runs = persisted
+      .filter((metadata) => metadata.supervised === true)
+      .map((metadata) => ({
+        run_id: metadata.run_id,
+        harness: metadata.harness,
+        ...(metadata.model === undefined ? {} : { model: metadata.model }),
+        phase: metadata.supervision.phase,
+        sequence: metadata.supervision.sequence,
+        exit_status: metadata.exit_status,
+        live: this.#runs.has(metadata.run_id),
+        supervised: true,
+        created_at: metadata.created_at,
+        updated_at: metadata.updated_at,
+      }))
+      .filter((row) => !input.live_only || row.live)
+      .sort((left, right) => right.created_at.localeCompare(left.created_at))
+      .slice(0, input.limit);
+    return { runs };
   }
 
   async inspectRun(input: XagentInspectInput): Promise<InspectRunResult> {

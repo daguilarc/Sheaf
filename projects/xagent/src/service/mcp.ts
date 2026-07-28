@@ -14,6 +14,7 @@ import {
   XagentCloseInputSchema,
   XagentInspectInputSchema,
   XagentInterruptInputSchema,
+  XagentListInputSchema,
   XagentMessageInputSchema,
   XagentSddAwaitInputSchema,
   XagentSddCloseInputSchema,
@@ -191,6 +192,22 @@ function createConfiguredMcpServer(
       return runTool(async () => {
         const input = parseToolInput(XagentInspectInputSchema, args);
         return runManager.inspectRun(input);
+      });
+    },
+  );
+
+  server.registerTool(
+    "xagent_list",
+    {
+      title: "List supervised runs",
+      description:
+        "List service-owned runs, newest first, for recovery — use it when a start response was lost and its run id is unknown. This is not a progress-polling tool.",
+      inputSchema: XagentListInputSchema,
+    },
+    async (args) => {
+      return runTool(async () => {
+        const input = parseToolInput(XagentListInputSchema, args);
+        return runManager.listOwnedRuns(input);
       });
     },
   );

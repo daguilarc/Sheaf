@@ -15,6 +15,7 @@ import {
   type SddManager,
 } from "../src/service/sdd_manager.js";
 import { CreateSddStore, GetSddDatabasePath } from "../src/service/sdd_store.js";
+import { XagentListInputSchema } from "../src/service/tool_schemas.js";
 import {
   asToolCallResult,
   assertInvalidWorkingDirectory,
@@ -30,6 +31,7 @@ const x_GenericToolNames = [
   "xagent_message",
   "xagent_interrupt",
   "xagent_close",
+  "xagent_list",
 ] as const;
 
 const x_ExpectedToolNames = [
@@ -177,24 +179,24 @@ test("xagent_sdd_start and xagent_sdd_await persist the sanitized report before 
   });
 });
 
-test("Streamable HTTP MCP initializes and discovers exactly the six generic tools without sddManager", async () => {
+test("Streamable HTTP MCP initializes and discovers exactly the seven generic tools without sddManager", async () => {
   await withMcpService(async ({ port, client }) => {
     const listed = await client.listTools();
     const names = listed.tools.map((tool) => tool.name).sort();
     assert.deepEqual(names, [...x_GenericToolNames].sort());
-    assert.equal(listed.tools.length, 6);
+    assert.equal(listed.tools.length, 7);
 
     const health = await fetch(`http://127.0.0.1:${port}/health`);
     assert.equal(health.status, 200);
   }, { includeSddManager: false });
 });
 
-test("Streamable HTTP MCP initializes and discovers exactly the ten controller tools", async () => {
+test("Streamable HTTP MCP initializes and discovers exactly the eleven controller tools", async () => {
   await withMcpService(async ({ port, client }) => {
     const listed = await client.listTools();
     const names = listed.tools.map((tool) => tool.name).sort();
     assert.deepEqual(names, [...x_ExpectedToolNames].sort());
-    assert.equal(listed.tools.length, 10);
+    assert.equal(listed.tools.length, 11);
 
     const health = await fetch(`http://127.0.0.1:${port}/health`);
     assert.equal(health.status, 200);
@@ -298,4 +300,43 @@ test("xagent_start accepts an absolute existing directory and returns run_id plu
     createSddManager: ({ runManager, repoRoot, logRoot }) =>
       CreateTestSddManager(runManager, repoRoot, logRoot),
   });
+});
+
+test("xagent_list returns owned runs newest first and flags the live one", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "xagent-mcp-list-"));
+
+  await withMcpService(async ({ client }) => {
+    const startedResult = asToolCallResult(
+      await client.callTool({
+        name: "xagent_start",
+        arguments: { cwd, prompt: "hello", harness: "codex" },
+      }),
+    );
+    assertToolSucceeded(startedResult);
+    const started = structuredToolBody(startedResult);
+
+    const listedResult = asToolCallResult(
+      await client.callTool({ name: "xagent_list", arguments: {} }),
+    );
+    assertToolSucceeded(listedResult);
+    const rows = structuredToolBody(listedResult).runs as Array<Record<string, unknown>>;
+
+    const row = rows.find((entry) => entry.run_id === started.run_id);
+    assert.ok(row, "the started run must be listed");
+    assert.equal(row.live, true);
+    assert.equal(row.supervised, true);
+    assert.equal(row.harness, "codex");
+    assert.equal(typeof row.phase, "string");
+    assert.equal(typeof row.created_at, "string");
+  }, { createSddManager: ({ runManager, repoRoot, logRoot }) => CreateTestSddManager(runManager, repoRoot, logRoot) });
+});
+
+test("xagent_list defaults its paging arguments and rejects unknown ones", () => {
+  const defaults = XagentListInputSchema.parse({});
+  assert.equal(defaults.live_only, false);
+  assert.equal(defaults.limit, 50);
+
+  assert.equal(XagentListInputSchema.safeParse({ bogus: true }).success, false);
+  assert.equal(XagentListInputSchema.safeParse({ limit: 0 }).success, false);
+  assert.equal(XagentListInputSchema.safeParse({ limit: 201 }).success, false);
 });

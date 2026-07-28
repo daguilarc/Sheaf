@@ -208,6 +208,13 @@ export const XagentInspectInputSchema = z
   })
   .strict();
 
+export const XagentListInputSchema = z
+  .object({
+    live_only: z.boolean().default(false),
+    limit: z.number().int().positive().max(200).default(50),
+  })
+  .strict();
+
 export const XagentMessageInputSchema = z
   .object({
     run_id: z.string().min(1),
@@ -230,6 +237,7 @@ export const XagentCloseInputSchema = z
 export type XagentStartInput = z.infer<typeof XagentStartInputSchema>;
 export type XagentAwaitInput = z.infer<typeof XagentAwaitInputSchema>;
 export type XagentInspectInput = z.infer<typeof XagentInspectInputSchema>;
+export type XagentListInput = z.infer<typeof XagentListInputSchema>;
 export type XagentMessageInput = z.infer<typeof XagentMessageInputSchema>;
 export type XagentInterruptInput = z.infer<typeof XagentInterruptInputSchema>;
 export type XagentCloseInput = z.infer<typeof XagentCloseInputSchema>;
