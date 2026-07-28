@@ -313,7 +313,19 @@ a structured `sdd_context_leaks_run_id` error naming the offending id. Controlle
 bookkeeping does not belong in a worker prompt.
 
 #### D3 — Templates resolve from a hardcoded foreign marketplace path
-**Disposition: NO ACTION — that run was what fixed it; likely transient.**
+**Disposition: WAS NOT TRANSIENT — LANDED.**
+
+**Correction:** I marked this no-action on the assumption the audited branch
+resolved it. It did the opposite. Once that branch merged, Superpowers moved
+to `cache/sheaf-managed/superpowers/6.2.0` and `claude-plugins-official` was
+removed entirely — so on current `main` the hardcoded root resolved nothing
+and **every SDD dispatch failed to render**. Found by smoke-testing on the
+rebased branch, not by review.
+
+`dispatch-prompt` now searches both marketplace roots, managed first. The
+service also classifies this failure as `sdd_templates_missing` with a fixed,
+actionable message; it deliberately does not echo the renderer's stderr, which
+can contain brief body text (leak guard in `sdd_prompt.test.ts`).
 
 `projects/agents/utils/dispatch-prompt:28` pins
 `~/.claude/plugins/cache/claude-plugins-official/superpowers`, while the branch

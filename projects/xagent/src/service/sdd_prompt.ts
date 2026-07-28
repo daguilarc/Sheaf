@@ -275,11 +275,26 @@ export async function RenderSddPrompt(
   catch (error) {
     const execError = error as NodeJS.ErrnoException & {
       code?: string | number;
+      stderr?: string;
     };
     if (execError.code === "ENOENT") {
       throw new SddPromptError({
         error: "sdd_python_missing",
         message: "Python 3 is unavailable for SDD prompt rendering.",
+      });
+    }
+    // dispatch-prompt's stderr can echo brief or plan body text, so none of it
+    // may reach the controller (see the leak guard in sdd_prompt.test.ts).
+    // Classify the one failure that is both common and actionable instead, and
+    // emit a fixed string that quotes nothing.
+    //
+    const stderr = typeof execError.stderr === "string" ? execError.stderr : "";
+    if (stderr.includes("could not resolve a Superpowers template")) {
+      throw new SddPromptError({
+        error: "sdd_templates_missing",
+        message:
+          "Superpowers templates are not installed where dispatch-prompt looks. "
+          + "Reinstall the Superpowers package or set SUPERPOWERS_TEMPLATES_ROOT.",
       });
     }
     throw new SddPromptError({

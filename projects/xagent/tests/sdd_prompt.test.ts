@@ -897,3 +897,35 @@ test("RenderSddPrompt reports the searched renderer path when it is missing", as
     },
   );
 });
+
+test("a missing Superpowers template is classified without echoing renderer output", async () => {
+  await assert.rejects(
+    () => RenderSddPrompt({
+      role: "implementer",
+      repoRoot: "/service/checkout",
+      cwd: "/tmp/worktree",
+      plan: "/tmp/worktree/plan.md",
+      task: 1,
+      name: "Thing",
+      brief: "/tmp/worktree/brief.md",
+    }, {
+      async access(): Promise<void> {},
+      async execFile() {
+        const failure = new Error("Command failed") as Error & { code: number; stderr: string };
+        failure.code = 2;
+        failure.stderr =
+          "dispatch-prompt: could not resolve a Superpowers template. Searched:\n"
+          + "  /Users/x/.claude/plugins/cache/BRIEF_BODY_SENTINEL/skills/a.md\n";
+        throw failure;
+      },
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof SddPromptError);
+      assert.equal(error.structured.error, "sdd_templates_missing");
+      assert.match(error.message, /SUPERPOWERS_TEMPLATES_ROOT/);
+      // The classification must not carry renderer output through.
+      assert.doesNotMatch(JSON.stringify(error.structured), /BRIEF_BODY_SENTINEL/);
+      return true;
+    },
+  );
+});

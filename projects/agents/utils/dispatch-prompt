@@ -25,7 +25,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-PLUGIN_ROOT = Path.home() / ".claude/plugins/cache/claude-plugins-official/superpowers"
+# Superpowers can be installed from more than one marketplace. Sheaf's own
+# vendored install lands under `sheaf-managed`; the upstream marketplace
+# install lands under `claude-plugins-official`. Search both, managed first,
+# because pinning one root silently broke every SDD dispatch the moment the
+# vendored install replaced the upstream copy.
+PLUGIN_ROOTS = (
+    Path.home() / ".claude/plugins/cache/sheaf-managed/superpowers",
+    Path.home() / ".claude/plugins/cache/claude-plugins-official/superpowers",
+)
 TEMPLATES_ROOT_ENV = "SUPERPOWERS_TEMPLATES_ROOT"
 
 # Substitution kinds:
@@ -181,13 +189,15 @@ def resolve_template_file(template: Template, explicit: str | None) -> Path:
     # Fall through versions rather than stopping at the highest: a version that
     # ships a skills/ tree without this template must not mask an older one
     # that has it.
-    for entry in installed_versions(PLUGIN_ROOT):
-        source = entry / "skills" / relative
-        searched.append(source)
-        if source.is_file():
-            return source
+    for plugin_root in PLUGIN_ROOTS:
+        for entry in installed_versions(plugin_root):
+            source = entry / "skills" / relative
+            searched.append(source)
+            if source.is_file():
+                return source
 
-    searched.append(PLUGIN_ROOT / "<version>" / "skills" / relative)
+    for plugin_root in PLUGIN_ROOTS:
+        searched.append(plugin_root / "<version>" / "skills" / relative)
     raise Fail(
         "could not resolve a Superpowers template. Searched:\n  "
         + "\n  ".join(str(path) for path in searched)
