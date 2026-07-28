@@ -145,6 +145,29 @@ Task 9 is the natural owner of all four. This is not a defect in Task 4; it is
 the accounting for a wholesale deletion, recorded so the coverage is rebuilt
 deliberately rather than assumed.
 
+### B8. A pruned run directory resurfaces as a dispatch-failure tombstone — OPEN
+
+Found in the Task 8b review.
+
+`ListGeneric` emits a tombstone for every `sdd_agents` row with no
+corresponding run record. `store.ListAll()` is unbounded and the v2 ledger has
+no deletion path, so once retention or cleanup removes an old run directory,
+that agent's row stops matching a run and starts rendering as
+`run_missing: true` — semantically "this dispatch never became a run", when in
+fact it ran and was later pruned.
+
+Literally consistent with xsvc-13's wording ("no run record"), and low impact
+today: newest-first ordering plus `limit` keeps these off the first page, and
+nothing prunes run directories yet. But it is a genuine interaction between
+xsvc-13 (tombstones) and xsvc-14 (run directories are the system of record),
+and the two requirements were written without reference to each other.
+
+Whole-branch review should decide whether a tombstone needs to distinguish
+"never started" from "evidence pruned" — and note that xsvc-14 already forbids
+deleting a ledger-referenced run directory, which if enforced makes this
+unreachable. If that prohibition is the answer, say so in the requirement
+rather than leaving it implicit.
+
 ### B7. The log-root directory is secured at creation only, never re-secured — OPEN
 
 Found while restoring the reopen-permissions coverage the Task 8a review
