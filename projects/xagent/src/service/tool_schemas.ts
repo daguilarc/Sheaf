@@ -370,13 +370,12 @@ export const XagentSddFollowupAdvertisedSchema = z.object({
   agent_id: AgentIdSchema.describe("The live SDD agent to continue."),
   round: z.number().int().positive().describe("Fix or re-review round number; render-only."),
   findings: SddArtifactPathSchema.describe("Absolute path to the findings file."),
+  report: SddArtifactPathSchema.describe("Absolute path the agent appends its report to."),
   note: NoteSchema.describe("Free text appended verbatim to the rendered prompt."),
   findings_text: WorkerFacingText("findings_text").optional()
     .describe(AdvertisedFor("fix", "The findings, inline.")),
   tests: z.array(z.string().min(1)).min(1).optional()
     .describe(AdvertisedFor("fix", "Commands that must pass before the fix is done.")),
-  report: SddArtifactPathSchema.optional()
-    .describe(AdvertisedFor("fix, re-review", "Absolute path the agent appends its report to.")),
   base: z.string().min(1).optional()
     .describe(AdvertisedFor("re-review", "Base git ref for the re-review diff.")),
   head: z.string().min(1).optional()

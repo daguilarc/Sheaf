@@ -471,6 +471,23 @@ function UnwrapZodObject(schema: z.ZodTypeAny): z.ZodObject<z.ZodRawShape> {
   return current;
 }
 
+function UnionOptionsOf(schema: z.ZodTypeAny): ReadonlyArray<z.ZodTypeAny> {
+  let current: z.ZodTypeAny = schema;
+  while (current instanceof z.ZodEffects) {
+    current = current._def.schema;
+  }
+  assert.ok(
+    current instanceof z.ZodDiscriminatedUnion,
+    `expected ZodDiscriminatedUnion after unwrap, got ${current.constructor.name}`,
+  );
+  return current.options as ReadonlyArray<z.ZodTypeAny>;
+}
+
+// RequiredKeysOf reads isOptional() off the object shape. Fields that are
+// .optional() at the shape and only required via superRefine (reviewer's
+// report, description, constraints, diff) never enter the required set — so
+// a green drift test is not full coverage of refinement-gated fields.
+//
 function RequiredKeysOf(schema: z.ZodTypeAny): string[] {
   const object = UnwrapZodObject(schema);
   return Object.entries(object.shape)
@@ -480,7 +497,7 @@ function RequiredKeysOf(schema: z.ZodTypeAny): string[] {
 
 test("every required union field appears on the advertised SDD schema", () => {
   const startProperties = Object.keys(XagentSddStartAdvertisedSchema.shape);
-  for (const variant of XagentSddStartInputSchema.options) {
+  for (const variant of UnionOptionsOf(XagentSddStartInputSchema)) {
     for (const key of RequiredKeysOf(variant)) {
       assert.ok(
         startProperties.includes(key),
@@ -490,7 +507,7 @@ test("every required union field appears on the advertised SDD schema", () => {
   }
 
   const followupProperties = Object.keys(XagentSddFollowupAdvertisedSchema.shape);
-  for (const variant of XagentSddFollowupInputSchema.options) {
+  for (const variant of UnionOptionsOf(XagentSddFollowupInputSchema)) {
     for (const key of RequiredKeysOf(variant)) {
       assert.ok(
         followupProperties.includes(key),
@@ -508,44 +525,87 @@ const x_Assignment = {
   effort: "high",
 };
 
+const x_ReviewerSchemas = [ReviewerStartSchema, XagentSddStartInputSchemaV2] as const;
+
 test("reviewer with a task requires report and forbids description", () => {
-  const scoped = ReviewerStartSchema.safeParse({
-    role: "reviewer", ...x_Assignment, task: 4,
+  const withTask = {
+    role: "reviewer" as const, ...x_Assignment, task: 4,
     brief: "/tmp/sdd/task-4-review-brief.md",
     report: "/tmp/sdd/task-4-report.md",
     base: "main", head: "HEAD",
-  });
-  assert.equal(scoped.success, true);
-
-  assert.equal(ReviewerStartSchema.safeParse({
-    role: "reviewer", ...x_Assignment, task: 4,
-    brief: "/tmp/sdd/task-4-review-brief.md", base: "main", head: "HEAD",
-  }).success, false);
-
-  assert.equal(ReviewerStartSchema.safeParse({
-    role: "reviewer", ...x_Assignment, task: 4,
-    brief: "/tmp/b.md", report: "/tmp/r.md", base: "main", head: "HEAD",
-    description: "whole branch",
-  }).success, false);
+  };
+  const cases: ReadonlyArray<{ payload: Record<string, unknown>; ok: boolean }> = [
+    { payload: withTask, ok: true },
+    {
+      payload: {
+        role: "reviewer", ...x_Assignment, task: 4,
+        brief: "/tmp/sdd/task-4-review-brief.md", base: "main", head: "HEAD",
+      },
+      ok: false,
+    },
+    {
+      payload: {
+        role: "reviewer", ...x_Assignment, task: 4,
+        brief: "/tmp/b.md", report: "/tmp/r.md", base: "main", head: "HEAD",
+        description: "whole branch",
+      },
+      ok: false,
+    },
+    {
+      payload: {
+        ...withTask,
+        constraints: "/tmp/sdd/constraints.md",
+        diff: "/tmp/sdd/scoped.diff",
+      },
+      ok: true,
+    },
+  ];
+  for (const schema of x_ReviewerSchemas) {
+    for (const { payload, ok } of cases) {
+      assert.equal(
+        schema.safeParse(payload).success, ok,
+        `expected ${ok} for ${JSON.stringify(payload)}`,
+      );
+    }
+  }
 });
 
 test("reviewer without a task requires description and forbids task-scoped fields", () => {
-  assert.equal(ReviewerStartSchema.safeParse({
-    role: "reviewer", ...x_Assignment,
+  const wholeBranch = {
+    role: "reviewer" as const, ...x_Assignment,
     brief: "/tmp/review-brief.md", base: "main", head: "HEAD",
     description: "Branch adds the v2 ledger.",
-  }).success, true);
-
-  assert.equal(ReviewerStartSchema.safeParse({
-    role: "reviewer", ...x_Assignment,
-    brief: "/tmp/review-brief.md", base: "main", head: "HEAD",
-  }).success, false);
-
-  assert.equal(ReviewerStartSchema.safeParse({
-    role: "reviewer", ...x_Assignment,
-    brief: "/tmp/review-brief.md", base: "main", head: "HEAD",
-    description: "Branch adds the v2 ledger.", report: "/tmp/r.md",
-  }).success, false);
+  };
+  const cases: ReadonlyArray<{ payload: Record<string, unknown>; ok: boolean }> = [
+    { payload: wholeBranch, ok: true },
+    {
+      payload: {
+        role: "reviewer", ...x_Assignment,
+        brief: "/tmp/review-brief.md", base: "main", head: "HEAD",
+      },
+      ok: false,
+    },
+    {
+      payload: { ...wholeBranch, report: "/tmp/r.md" },
+      ok: false,
+    },
+    {
+      payload: { ...wholeBranch, constraints: "/tmp/sdd/constraints.md" },
+      ok: false,
+    },
+    {
+      payload: { ...wholeBranch, diff: "/tmp/sdd/scoped.diff" },
+      ok: false,
+    },
+  ];
+  for (const schema of x_ReviewerSchemas) {
+    for (const { payload, ok } of cases) {
+      assert.equal(
+        schema.safeParse(payload).success, ok,
+        `expected ${ok} for ${JSON.stringify(payload)}`,
+      );
+    }
+  }
 });
 
 test("v1 role names and the review_brief field name are rejected", () => {
@@ -557,10 +617,12 @@ test("v1 role names and the review_brief field name are rejected", () => {
     role: "code-reviewer", ...x_Assignment,
     review_brief: "/tmp/b.md", description: "x", base: "main", head: "HEAD",
   }).success, false);
-  assert.equal(ReviewerStartSchema.safeParse({
-    role: "reviewer", ...x_Assignment,
-    review_brief: "/tmp/b.md", base: "main", head: "HEAD", description: "x",
-  }).success, false);
+  for (const schema of x_ReviewerSchemas) {
+    assert.equal(schema.safeParse({
+      role: "reviewer", ...x_Assignment,
+      review_brief: "/tmp/b.md", base: "main", head: "HEAD", description: "x",
+    }).success, false);
+  }
 });
 
 test("fixer requires task, brief, findings, tests, and report and rejects name", () => {
@@ -600,6 +662,13 @@ test("worker-facing text on v2 roles still rejects controller run ids", () => {
     findings_text: "see xrun_20260728000000000_0000abcd",
     tests: ["npm test"], report: "/tmp/r.md",
   }).success, false);
+  for (const schema of x_ReviewerSchemas) {
+    assert.equal(schema.safeParse({
+      role: "reviewer", ...x_Assignment,
+      brief: "/tmp/review-brief.md", base: "main", head: "HEAD",
+      description: "see xrun_20260728000000000_0000abcd",
+    }).success, false);
+  }
 });
 
 test("v2 followup shapes require report and keep round render-only", () => {
