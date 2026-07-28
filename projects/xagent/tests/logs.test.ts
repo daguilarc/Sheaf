@@ -11,6 +11,7 @@ import {
   getDefaultLogRoot,
   listRuns,
   readNormalizedLog,
+  openRunRecord,
   updateRunSupervision,
 } from "../src/logs.js";
 
@@ -212,4 +213,61 @@ test("run metadata includes durable supervision, process ownership, and watchdog
     (await readdir(record.runDir)).filter((entry) => entry.includes("metadata.json.")),
     [],
   );
+});
+
+test("supervised terminal phases persist a matching exit status", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-exit-status-"));
+  const logRoot = path.join(await mkdtemp(path.join(tmpdir(), "xagent-exit-root-")), "xagent");
+  const runId = "xrun_20260727000000000_0000ab01";
+
+  const record = await createRunRecord({
+    repoRoot,
+    logRoot,
+    runId,
+    harness: "claude_code",
+    mode: "subagent",
+    supervised: true,
+  });
+  assert.equal(record.exit_status, "running");
+
+  await updateRunSupervision(record, {
+    ...record.supervision,
+    phase: "running",
+    sequence: 3,
+  });
+  assert.equal(record.exit_status, "running");
+
+  await updateRunSupervision(record, {
+    ...record.supervision,
+    phase: "failed",
+    sequence: 4,
+  });
+  assert.equal(record.exit_status, "failed");
+
+  const persisted = await openRunRecord(logRoot, runId);
+  assert.equal(persisted.exit_status, "failed");
+  assert.equal(persisted.supervision.phase, "failed");
+});
+
+test("a completed supervised phase persists exit status completed", async () => {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-exit-status-ok-"));
+  const logRoot = path.join(await mkdtemp(path.join(tmpdir(), "xagent-exit-ok-root-")), "xagent");
+  const runId = "xrun_20260727000000000_0000ab02";
+
+  const record = await createRunRecord({
+    repoRoot,
+    logRoot,
+    runId,
+    harness: "cursor",
+    mode: "subagent",
+    supervised: true,
+  });
+  await updateRunSupervision(record, {
+    ...record.supervision,
+    phase: "completed",
+    sequence: 7,
+  });
+
+  const persisted = await openRunRecord(logRoot, runId);
+  assert.equal(persisted.exit_status, "completed");
 });
