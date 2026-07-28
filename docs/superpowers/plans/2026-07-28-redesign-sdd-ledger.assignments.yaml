@@ -1,0 +1,70 @@
+format: 1
+change: redesign-sdd-ledger
+estimator_id: 7
+tasks:
+  - task: task-1
+    title: "Supervision events: turn.submitted emission + await exclusion"
+    model: gpt-5.6-terra
+    effort: medium
+    complexity: {C1: 3, C2: 3, C3: 3, C4: 3, C5: 3, C6: 3, C7: 2, composite: 3.0}
+    predicted: {p20_usd: 19.8884, p50_usd: 68.6957, p80_usd: 1887249.9632}
+  - task: task-2
+    title: "Ledger v2 store, additive alongside v1"
+    model: gpt-5.4
+    effort: medium
+    complexity: {C1: 2, C2: 2, C3: 2, C4: 2, C5: 2, C6: 3, C7: 1, composite: 2.2}
+    predicted: {p20_usd: 246.1603, p50_usd: 1048075.9084, p80_usd: 405796537285.0992}
+  - task: task-3
+    title: "Additive schemas: v2 start roles + fix-dispatch formatter"
+    model: gpt-5.6-terra
+    effort: high
+    complexity: {C1: 3, C2: 2, C3: 2, C4: 2, C5: 3, C6: 2, C7: 1, composite: 2.3}
+    predicted: {p20_usd: 5.2057, p50_usd: 9.8184, p80_usd: 23.8083}
+  - task: task-4
+    title: "Subtractive: report binding, artifact cache, SDD await/close facade"
+    model: gpt-5.5
+    effort: high
+    complexity: {C1: 3, C2: 4, C3: 2, C4: 3, C5: 2, C6: 3, C7: 2, composite: 2.8}
+    predicted: {p20_usd: 5.9576, p50_usd: 8.5814, p80_usd: 14.2191}
+  - task: task-5
+    title: "Followup v2 against the agent-store port"
+    model: gpt-5.5
+    effort: high
+    complexity: {C1: 3, C2: 4, C3: 3, C4: 3, C5: 3, C6: 3, C7: 2, composite: 3.2}
+    predicted: {p20_usd: 6.7739, p50_usd: 10.2692, p80_usd: 20.5751}
+  - task: task-6
+    title: "Start v2 against the agent-store port + union swap"
+    model: gpt-5.6-terra
+    effort: high
+    complexity: {C1: 3, C2: 4, C3: 3, C4: 3, C5: 3, C6: 3, C7: 2, composite: 3.2}
+    predicted: {p20_usd: 6.6099, p50_usd: 11.4079, p80_usd: 23.4961}
+  - task: task-7
+    title: "Operator gate: reprovision the live sdd.sqlite"
+    model: gpt-5.6-terra
+    effort: high
+    complexity: {C1: 1, C2: 1, C3: 1, C4: 2, C5: 1, C6: 2, C7: 1, composite: 1.3}
+    predicted: {p20_usd: 50.8527, p50_usd: 253.0617, p80_usd: 2437.6173}
+  - task: task-8
+    title: "Store swap, v1 deletion, and xagent_list v2"
+    model: gpt-5.5
+    effort: high
+    complexity: {C1: 4, C2: 4, C3: 3, C4: 4, C5: 3, C6: 3, C7: 2, composite: 3.5}
+    predicted: {p20_usd: 8.7975, p50_usd: 13.9128, p80_usd: 30.1455}
+  - task: task-9
+    title: "Verification suite: e2e lifecycle + failure injection"
+    model: gpt-5.6-terra
+    effort: high
+    complexity: {C1: 3, C2: 2, C3: 3, C4: 4, C5: 4, C6: 4, C7: 2, composite: 3.3}
+    predicted: {p20_usd: 18.0564, p50_usd: 35.1094, p80_usd: 117.999}
+  - task: task-10
+    title: "All documentation, skills, and spec sync"
+    model: gpt-5.5
+    effort: high
+    complexity: {C1: 4, C2: 4, C3: 1, C4: 3, C5: 2, C6: 4, C7: 3, composite: 3.0}
+    predicted: {p20_usd: 8.7636, p50_usd: 23.9992, p80_usd: 109.8444}
+  - task: task-11
+    title: "Full-suite verification and asset repackage"
+    model: gpt-5.6-luna
+    effort: medium
+    complexity: {C1: 2, C2: 1, C3: 1, C4: 3, C5: 2, C6: 2, C7: 2, composite: 1.8}
+    predicted: {p20_usd: 1573.5302, p50_usd: 939706.4125, p80_usd: 2801441449017.7407}
