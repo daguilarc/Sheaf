@@ -613,3 +613,64 @@ class CloseFailingAdapter implements HarnessAdapter {
     };
   }
 }
+
+test("the supervisor forwards sanitized raw provider events to the transcript sink", async () => {
+  const cwd = "/private/tmp/sheaf-xagent-transcript";
+  const transcript: unknown[] = [];
+  const supervisor = new Supervisor({
+    runId: "xrun_transcript_sink",
+    adapter: new FakeHarnessAdapter({
+      scriptedEvents: [[
+        {
+          type: "message.completed",
+          message_id: "m1",
+          role: "assistant",
+          text: "done",
+          rawProvider: { type: "assistant", note: `read ${cwd}/secret.txt` },
+        },
+        {
+          type: "turn.completed",
+          final_text: "done",
+        },
+      ]],
+    }),
+    startOptions: { cwd },
+    policy,
+    providerTranscriptSink: async (raw) => {
+      transcript.push(raw);
+    },
+  });
+
+  await supervisor.start();
+  const cursor = supervisor.inspect().sequence;
+  await supervisor.submit("go");
+  await supervisor.awaitEvent(cursor, 1_000);
+
+  assert.equal(transcript.length, 1);
+  const entry = transcript[0] as { type: string; note: string };
+  assert.equal(entry.type, "assistant");
+  assert.ok(!entry.note.includes(cwd), `expected the cwd to be redacted, got ${entry.note}`);
+});
+
+test("a supervised run without a transcript sink still completes its turn", async () => {
+  const supervisor = new Supervisor({
+    runId: "xrun_transcript_absent",
+    adapter: new FakeHarnessAdapter({
+      scriptedEvents: [[
+        {
+          type: "turn.completed",
+          final_text: "done",
+          rawProvider: { type: "result" },
+        },
+      ]],
+    }),
+    startOptions: { cwd: "/private/tmp/sheaf-xagent-transcript" },
+    policy,
+  });
+
+  await supervisor.start();
+  const cursor = supervisor.inspect().sequence;
+  await supervisor.submit("go");
+  const completion = await supervisor.awaitEvent(cursor, 1_000);
+  assert.equal(completion.type, "turn.completed");
+});

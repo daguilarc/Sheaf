@@ -48,6 +48,12 @@ export type SupervisorOptions = {
   readonly metadataSink?: SupervisionMetadataSink;
   readonly watchdogClassifier?: WatchdogClassifier;
   readonly watchdogTelemetrySink?: WatchdogTelemetrySink;
+  // The supervised path never persisted a provider transcript, so every
+  // service-owned run left an empty raw-provider.jsonl and a failed run had no
+  // post-mortem artifact at all. This sink is disk-only; it does not change
+  // what enters the controller's context.
+  //
+  readonly providerTranscriptSink?: (raw: unknown) => Promise<void>;
 };
 
 const terminalPhases = new Set<SupervisionPhase>([
@@ -68,6 +74,7 @@ export class Supervisor {
   readonly #health: DeterministicHealthMonitor;
   readonly #watchdogScheduler: WatchdogScheduler;
   readonly #watchdogTelemetrySink: WatchdogTelemetrySink;
+  readonly #providerTranscriptSink: (raw: unknown) => Promise<void>;
   readonly #watchdog: WatchdogAggregate = {
     invocation_count: 0,
     controller_wake_count: 0,
@@ -118,6 +125,7 @@ export class Supervisor {
     this.#clock = options.clock ?? (() => new Date());
     this.#metadataSink = options.metadataSink ?? (async () => {});
     this.#watchdogTelemetrySink = options.watchdogTelemetrySink ?? (async () => {});
+    this.#providerTranscriptSink = options.providerTranscriptSink ?? (async () => {});
     const timestamp = this.#clock().toISOString();
     this.#lastTransportProgressAt = timestamp;
     this.#lastSemanticProgressAt = timestamp;
@@ -283,6 +291,11 @@ export class Supervisor {
             return;
           }
           this.#recordProgress(event);
+          if (event.rawProvider !== undefined) {
+            await this.#providerTranscriptSink(
+              sanitizeValue(event.rawProvider, this.#startOptions.cwd),
+            );
+          }
           const mechanical = mechanicalEventClassification(this.#health, event);
           if (mechanical?.kind === "attention") {
             await this.#applyHealthClassification(mechanical);

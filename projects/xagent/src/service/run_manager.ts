@@ -1,7 +1,7 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
-import { generateRunId, createRunRecord, appendNormalizedEvent, appendWatchdogTelemetry, updateRunSupervision, openRunRecord, type RunRecord } from "../logs.js";
+import { generateRunId, createRunRecord, appendNormalizedEvent, appendRawProviderEvent, appendWatchdogTelemetry, updateRunSupervision, openRunRecord, type RunRecord } from "../logs.js";
 import { Supervisor } from "../supervision/supervisor.js";
 import type {
   AwaitResult,
@@ -195,6 +195,13 @@ export class XagentRunManager {
       //
       watchdogTelemetrySink: async (telemetry) => {
         await appendWatchdogTelemetry(record, telemetry);
+      },
+      // Without this wire, raw-provider.jsonl stayed empty for every supervised
+      // run even though the run record advertises it, so a failed run left
+      // nothing to post-mortem. The supervisor already sanitized the payload.
+      //
+      providerTranscriptSink: async (raw) => {
+        await appendRawProviderEvent(record, raw);
       },
     });
     this.#runs.set(runId, { supervisor, record });
