@@ -448,7 +448,7 @@ function CreateFakeAgentStore(
     },
     GetSession(_agentId: string): SddSessionRecord | undefined
     {
-      return undefined;
+      throw new Error("CreateFakeAgentStore.GetSession is not used by current manager tests");
     },
   };
 }
@@ -493,6 +493,7 @@ function CreateFakeRunManager(
     phase: "ready",
     allocateRunId(): string
     {
+      recorder.Record("allocateRunId");
       return x_AgentId;
     },
     async create(createOptions: CreateRunOptions): Promise<{ readonly runId: string }>
@@ -540,6 +541,7 @@ function CreateFakeRunManager(
     },
     inspect(runId: string)
     {
+      recorder.Record("inspect", runId);
       if (!live || !runs.has(runId))
       {
         return undefined;
@@ -725,10 +727,17 @@ test("start canonicalizes cwd, inserts the row before creating the run, then ren
     task: 3, name: "Ledger v2 store", brief: x_BriefPath, report: x_ReportPath,
   });
 
-  assert.deepEqual(recorder.Names().slice(0, 5), [
-    "canonicalizeCwd", "readFile", "renderPrompt", "store.Insert", "runManager.create",
+  assert.deepEqual(recorder.Names(), [
+    "canonicalizeCwd",
+    "readFile",
+    "renderPrompt",
+    "allocateRunId",
+    "store.Insert",
+    "runManager.create",
+    "runManager.start",
+    "inspect",
+    "runManager.submit",
   ]);
-  assert.deepEqual(recorder.Names().slice(5, 7), ["runManager.start", "runManager.submit"]);
   assert.deepEqual(store.inserted[0], {
     agentId: result.agent_id,
     planPath: x_PlanPath,
@@ -778,7 +787,23 @@ test("a failure after the insert leaves the row untouched as a tombstone", async
     task: 3, name: "x", brief: x_BriefPath, report: x_ReportPath,
   }));
   assert.equal(store.inserted.length, 1);
-  assert.ok(recorder.Names().every((name) => name !== "store.MarkFailed"));
+  assert.deepEqual(runManager.closed, [x_AgentId]);
+});
+
+test("a create failure after the insert closes no run and leaves the tombstone", async () =>
+{
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, undefined);
+  const runManager = CreateFakeRunManager(recorder);
+  runManager.createError = new Error("provider create failed");
+  const manager = CreateSddManager({ ...CreateDeps(recorder), store, runManager });
+  await assert.rejects(() => manager.Start({
+    role: "implementer", cwd: x_Cwd, plan: x_PlanPath,
+    agent: "grok-4.5", harness: "cursor", effort: "high",
+    task: 3, name: "x", brief: x_BriefPath, report: x_ReportPath,
+  }));
+  assert.equal(store.inserted.length, 1);
+  assert.equal(runManager.closed.length, 0);
 });
 
 test("reviewer template selection follows task presence", async () =>
@@ -818,7 +843,7 @@ test("a fixer renders the fix template and never an assignment name", async () =
   const store = CreateFakeAgentStore(recorder, undefined);
   const runManager = CreateFakeRunManager(recorder);
   const manager = CreateSddManager({ ...CreateDeps(recorder), store, runManager });
-  await manager.Start({
+  const result = await manager.Start({
     role: "fixer", cwd: x_Cwd, plan: x_PlanPath,
     agent: "grok-4.5", harness: "cursor", effort: "high",
     task: 3, brief: x_BriefPath, findings: "/tmp/f.md",
@@ -829,6 +854,7 @@ test("a fixer renders the fix template and never an assignment name", async () =
   assert.match(submitted, /Fix round 2\./);
   assert.ok(!submitted.includes("Fix Round 2\""));
   assert.equal(store.inserted[0]!.role, "fixer");
+  assert.equal(result.prompt_path, "");
 });
 
 test("a re-reviewer reuses the re-review renderer role", async () =>

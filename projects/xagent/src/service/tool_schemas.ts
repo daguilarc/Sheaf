@@ -336,7 +336,7 @@ export const XagentSddStartAdvertisedSchema = z.object({
   tests: z.array(z.string().min(1)).min(1).optional()
     .describe(AdvertisedFor("fixer", "Commands that must pass before the fix is done.")),
   round: z.number().int().positive().optional()
-    .describe(AdvertisedFor("fixer, re-reviewer", "Fix or re-review round number; render-only.")),
+    .describe("Optional fix or re-review round number for fixer and re-reviewer; defaults to 1."),
 });
 
 export const XagentSddFollowupAdvertisedSchema = z.object({

@@ -134,10 +134,10 @@ async function ReadRequiredText(
 }
 
 function BuildRenderInput(
-  input: XagentSddStartInput,
+  input: Exclude<XagentSddStartInput, { role: "fixer" }>,
   repoRoot: string,
   cwd: string,
-): RenderSddPromptInput | undefined
+): RenderSddPromptInput
 {
   if (input.role === "implementer")
   {
@@ -157,19 +157,35 @@ function BuildRenderInput(
   {
     // Task presence selects the template: v1's task-reviewer / code-reviewer
     // split collapses into one role here and re-expands at the renderer.
+    // Start is callable without the Zod refinement, so enforce the same
+    // task/report/description rules here rather than trusting `!`.
     //
     if (input.task === undefined)
     {
+      if (input.description === undefined)
+      {
+        throw StructuredFailure({
+          error: "invalid_tool_input",
+          message: "reviewer without a task requires description (whole-branch review)",
+        });
+      }
       return {
         role: "code-reviewer",
         repoRoot,
         cwd,
         plan: input.plan,
         reviewBrief: input.brief,
-        description: input.description!,
+        description: input.description,
         base: input.base,
         head: input.head,
       };
+    }
+    if (input.report === undefined)
+    {
+      throw StructuredFailure({
+        error: "invalid_tool_input",
+        message: "reviewer with a task requires report",
+      });
     }
     return {
       role: "task-reviewer",
@@ -178,34 +194,27 @@ function BuildRenderInput(
       plan: input.plan,
       task: input.task,
       brief: input.brief,
-      report: input.report!,
+      report: input.report,
       base: input.base,
       head: input.head,
       ...(input.constraints === undefined ? {} : { constraints: input.constraints }),
       ...(input.diff === undefined ? {} : { diff: input.diff }),
     };
   }
-  if (input.role === "re-reviewer")
-  {
-    return {
-      role: "re-review",
-      repoRoot,
-      cwd,
-      plan: input.plan,
-      task: input.task,
-      round: input.round,
-      brief: input.brief,
-      findings: input.findings,
-      report: input.report,
-      base: input.base,
-      head: input.head,
-      ...(input.diff === undefined ? {} : { diff: input.diff }),
-    };
-  }
-  // `fixer` has no dispatch-prompt renderer role; its text is formatted in
-  // TypeScript so it stays byte-identical to the same-agent continuation.
-  //
-  return undefined;
+  return {
+    role: "re-review",
+    repoRoot,
+    cwd,
+    plan: input.plan,
+    task: input.task,
+    round: input.round,
+    brief: input.brief,
+    findings: input.findings,
+    report: input.report,
+    base: input.base,
+    head: input.head,
+    ...(input.diff === undefined ? {} : { diff: input.diff }),
+  };
 }
 
 function RoleAllowsFollowup(role: SddStartRole, kind: "fix" | "re-review"): boolean
@@ -242,25 +251,28 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     let promptText = "";
     let promptPath = "";
     let rendererPath = "";
-    const renderInput = BuildRenderInput(input, deps.repoRoot, cwd);
-    if (renderInput === undefined)
+    // `fixer` has no dispatch-prompt renderer role; its text is formatted in
+    // TypeScript so it stays byte-identical to the same-agent continuation.
+    // Narrow on role rather than treating a missing render input as fixer —
+    // BuildRenderInput has no exhaustiveness check for a future fifth role.
+    //
+    if (input.role === "fixer")
     {
-      const fixer = input as Extract<XagentSddStartInput, { role: "fixer" }>;
-      await ReadRequiredText(read, fixer.findings, "SDD findings");
+      await ReadRequiredText(read, input.findings, "SDD findings");
       promptText = formatFixDispatch({
-        planPath: fixer.plan,
-        task: fixer.task,
-        round: fixer.round,
-        briefPath: fixer.brief,
-        findingsPath: fixer.findings,
-        findingsText: fixer.findings_text,
-        tests: fixer.tests,
-        reportPath: fixer.report,
+        planPath: input.plan,
+        task: input.task,
+        round: input.round,
+        briefPath: input.brief,
+        findingsPath: input.findings,
+        findingsText: input.findings_text,
+        tests: input.tests,
+        reportPath: input.report,
       });
     }
     else
     {
-      const rendered = await renderPrompt(renderInput);
+      const rendered = await renderPrompt(BuildRenderInput(input, deps.repoRoot, cwd));
       promptText = rendered.prompt.text;
       promptPath = rendered.metadata.promptPath;
       rendererPath = rendered.metadata.rendererPath;
