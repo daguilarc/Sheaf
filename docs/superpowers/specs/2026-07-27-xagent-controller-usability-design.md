@@ -55,7 +55,23 @@ Disposition legend: **FIX NOW** (Tier 1, straight-up bug) · **FIX (Tier 2)**
 ### A. Structural — xagent unreachable from the driving harness
 
 #### A1 — No xagent MCP registered for Cursor (or Pi, or Claude Code)
-**Disposition: FIX (Tier 2) — all harnesses required.**
+**Disposition: LANDED for every harness that supports MCP.**
+
+`install_global.register_harness_mcp` upserts `mcpServers.xagent`
+(`{"type":"http","url":"http://127.0.0.1:9005/mcp"}`) into `~/.claude.json`
+and `~/.cursor/mcp.json`; Codex keeps getting it from the plugin's
+`.mcp.json`. Only the `xagent` key is written, so unrelated servers survive.
+
+**Pi is excluded on purpose.** Pi ships without built-in MCP by design (its
+own `docs/usage.md`: "It intentionally does not include built-in MCP,
+sub-agents, permission popups…"). There is no registry to write. A Pi
+controller therefore has the packaged CLI and the skill, and cannot drive
+Superpowers SDD, because the SDD facade is MCP-only. That is a harness
+constraint, recorded rather than papered over, and it makes A3 sharper: the
+one harness that *needs* a CLI SDD path is the one that can never have MCP.
+
+Verified live: after installing, `cursor-agent` lists all ten `xagent_*`
+tools and `claude --print` lists all ten `mcp__xagent__xagent_*` tools.
 
 The controller's own words, recovered from the conversation cache:
 
@@ -74,7 +90,25 @@ registry, with the same managed-marker/idempotency discipline the installer
 already uses for skills.
 
 #### A2 — The only instruction manual is Codex-only and was not installed for Cursor
-**Disposition: FIX (Tier 2) — all harnesses required.**
+**Disposition: LANDED for all four harnesses.**
+
+SKILL.md is now harness-neutral: no `codex` in the normative text, a surface
+table saying which client each harness gets, and the Pi/no-MCP constraint
+stated up front. `install_global.install_harness_skill` writes it to
+`~/.claude/skills`, `~/.cursor/skills`, and `~/.pi/skills` (Codex has it inside
+the plugin package) behind a `sheaf-xagent-managed` marker, refusing to
+overwrite an unmanaged file.
+
+Ownership had to be settled to make this safe: `install.py` listed
+`xagent-subagents` in `OBSOLETE_GLOBAL_SKILL_IDS`, so `make
+agents-install-global` would have deleted the copies this installer writes. It
+now recognises the plugin marker, reports those files as `plugin-owned`, and
+still prunes genuinely stale agents-managed copies.
+
+The skill also absorbed what the incident taught: the undici 300s await
+ceiling, `xagent_list` for recovery, how to read a failure payload, where the
+provider transcript lives, `renderer_path` semantics, and why a closed SDD
+session is expensive.
 
 `plugins/xagent/skills/xagent-subagents/SKILL.md:8` opens "Use this skill when
 **Codex** needs an external review opinion…" and gates invocation on
@@ -373,7 +407,7 @@ not a fix.
 | Tier | Findings |
 |---|---|
 | **Tier 1 — landed** | B1 (+B1b, Claude reports errors on stdout), B2, B3, C4, C5, D2, E1, F1, F2; C6 as hardening only; D4 diagnostic half only |
-| **Tier 2 — required, larger surface** | A1, A2 |
+| **Tier 2 — landed** | A1 (Claude, Cursor, Codex; Pi has no MCP by design), A2 (all four) |
 | **Discuss** | A3, A5, C1, C2, C3, D1, D4 (renderer trust boundary) |
 | **No action** | D3 |
 

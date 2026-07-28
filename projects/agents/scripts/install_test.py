@@ -22,6 +22,15 @@ OPENSPEC_VENDOR_TOML = (
     REPO_ROOT / "projects" / "agents" / "vendor" / "openspec" / "VENDOR.toml"
 )
 
+# install.py imports its sibling `managed_package` by bare name, which only
+# resolves when the scripts directory is on sys.path. That happens implicitly
+# when unittest discovers this file from inside scripts/, but not when another
+# suite imports it as projects.agents.scripts.install_test — which is exactly
+# what plugins/xagent/scripts/install_global_test.py does, so
+# `make xagent-plugin-test` failed to even load.
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 spec = importlib.util.spec_from_file_location("agents_install", MODULE_PATH)
 assert spec is not None
 install = importlib.util.module_from_spec(spec)
@@ -1288,3 +1297,44 @@ class OpenSpecHarnessInstallTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PluginOwnedSkillTests(unittest.TestCase):
+    def test_agents_installer_does_not_delete_the_plugin_owned_xagent_skill(self) -> None:
+        # plugins/xagent owns xagent-subagents for every harness (A1/A2). If the
+        # agents installer still listed it as obsolete, `make agents-install-global`
+        # would delete the skill the plugin installer just wrote for Claude,
+        # Cursor, and Pi.
+        self.assertIn("xagent-subagents", install.PLUGIN_OWNED_GLOBAL_SKILL_IDS)
+
+        with tempfile.TemporaryDirectory() as raw_home:
+            home = Path(raw_home)
+            live = home / ".claude" / "skills" / "xagent-subagents" / "SKILL.md"
+            live.parent.mkdir(parents=True)
+            live.write_text(
+                "---\nname: xagent-subagents\n---\n\n"
+                f"<!-- {install.PLUGIN_OWNED_MARKER} -->\n\nbody\n",
+                encoding="utf-8",
+            )
+            outputs = install.build_obsolete_global_outputs(home=home, codex_home=None)
+            obsolete = [
+                output for output in outputs if "xagent-subagents" in str(output.path)
+            ]
+            self.assertTrue(obsolete, "stale agents-managed copies must still be prunable")
+
+            self.assertEqual(0, install.clean_outputs(obsolete))
+            self.assertTrue(live.exists(), "the plugin's live skill must survive clean")
+            self.assertEqual(0, install.check_obsolete_outputs(obsolete))
+
+    def test_agents_installer_still_does_not_render_the_plugin_owned_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_home:
+            home = Path(raw_home)
+            outputs = install.build_global_outputs(
+                REPO_ROOT,
+                home=home,
+                codex_home=None,
+            )
+            self.assertEqual(
+                [],
+                [str(output.path) for output in outputs if "xagent-subagents" in str(output.path)],
+            )

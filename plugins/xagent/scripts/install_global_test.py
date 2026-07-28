@@ -1335,3 +1335,98 @@ class LauncherPortabilityTests(unittest.TestCase):
                 env={**os.environ, "XAGENT_LOG_ROOT": "", "SHEAF_XAGENT_LOG_ROOT": ""},
             ).stdout.strip()
             self.assertEqual(resolved, str(main / "data" / "xagent"))
+
+
+class AllHarnessDistributionTests(unittest.TestCase):
+    """A1/A2: every harness must reach xagent, not just Codex."""
+
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.home = Path(self.temporary.name) / "home"
+        self.home.mkdir(parents=True)
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def test_skill_is_installed_for_claude_cursor_and_pi(self) -> None:
+        install_global.install_harness_skill(repo_root=REPO_ROOT, home=self.home)
+
+        source = (
+            REPO_ROOT / "plugins/xagent/skills/xagent-subagents/SKILL.md"
+        ).read_text(encoding="utf-8")
+        for relative in install_global.HARNESS_SKILL_DIRS:
+            path = self.home / relative / "xagent-subagents" / "SKILL.md"
+            self.assertTrue(path.is_file(), f"missing skill for {relative}")
+            content = path.read_text(encoding="utf-8")
+            self.assertTrue(content.startswith("---\n"), "frontmatter must stay first")
+            self.assertIn(install_global.SKILL_MARKER, content)
+            self.assertIn("## Superpowers SDD", content)
+            self.assertIn(source.split("---\n", 2)[2].strip()[:60], content)
+
+    def test_skill_install_is_idempotent(self) -> None:
+        install_global.install_harness_skill(repo_root=REPO_ROOT, home=self.home)
+        first = (
+            self.home / "cursor_probe" if False else
+            self.home / install_global.HARNESS_SKILL_DIRS[0] / "xagent-subagents" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        install_global.install_harness_skill(repo_root=REPO_ROOT, home=self.home)
+        second = (
+            self.home / install_global.HARNESS_SKILL_DIRS[0] / "xagent-subagents" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        self.assertEqual(first, second)
+
+    def test_skill_install_refuses_to_clobber_an_unmanaged_file(self) -> None:
+        path = (
+            self.home
+            / install_global.HARNESS_SKILL_DIRS[0]
+            / "xagent-subagents"
+            / "SKILL.md"
+        )
+        path.parent.mkdir(parents=True)
+        path.write_text("hand written, not ours\n", encoding="utf-8")
+
+        with self.assertRaises(RuntimeError) as caught:
+            install_global.install_harness_skill(repo_root=REPO_ROOT, home=self.home)
+
+        self.assertIn(str(path), str(caught.exception))
+        self.assertEqual("hand written, not ours\n", path.read_text(encoding="utf-8"))
+
+    def test_mcp_is_registered_for_claude_and_cursor(self) -> None:
+        claude_path = self.home / ".claude.json"
+        claude_path.write_text(
+            json.dumps({"mcpServers": {"other": {"type": "http", "url": "http://x"}}}),
+            encoding="utf-8",
+        )
+
+        install_global.register_harness_mcp(home=self.home)
+
+        claude = json.loads(claude_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            {"type": "http", "url": XAGENT_MCP_URL},
+            claude["mcpServers"]["xagent"],
+        )
+        self.assertIn("other", claude["mcpServers"])
+
+        cursor = json.loads((self.home / ".cursor" / "mcp.json").read_text(encoding="utf-8"))
+        self.assertEqual({"type": "http", "url": XAGENT_MCP_URL}, cursor["mcpServers"]["xagent"])
+
+    def test_mcp_registration_is_idempotent(self) -> None:
+        install_global.register_harness_mcp(home=self.home)
+        first = (self.home / ".claude.json").read_text(encoding="utf-8")
+        install_global.register_harness_mcp(home=self.home)
+        self.assertEqual(first, (self.home / ".claude.json").read_text(encoding="utf-8"))
+
+    def test_pi_gets_the_skill_but_no_mcp_registration(self) -> None:
+        # pi ships without built-in MCP by design, so there is no registry to
+        # write. The skill and the packaged CLI are how a pi controller reaches
+        # xagent; asserting the absence keeps that a decision, not a gap.
+        install_global.install_harness_skill(repo_root=REPO_ROOT, home=self.home)
+        install_global.register_harness_mcp(home=self.home)
+
+        self.assertTrue(
+            (self.home / ".pi" / "skills" / "xagent-subagents" / "SKILL.md").is_file()
+        )
+        self.assertFalse((self.home / ".pi" / "mcp.json").exists())
+        settings = self.home / ".pi" / "agent" / "settings.json"
+        if settings.exists():
+            self.assertNotIn("mcpServers", settings.read_text(encoding="utf-8"))

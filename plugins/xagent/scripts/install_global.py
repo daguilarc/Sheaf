@@ -20,6 +20,97 @@ PLUGIN_NAME = "xagent"
 MANAGED_FILE = ".sheaf-managed"
 MANAGED_CONTENT = "sheaf-xagent-plugin\n"
 
+# A1/A2: xagent must be reachable from every harness, not just Codex. Codex
+# gets both the skill and the MCP declaration inside the installed plugin
+# package; the other harnesses have no plugin, so the skill is written to
+# their global skill directory and the MCP endpoint is upserted into their own
+# registry.
+#
+# The marker is deliberately NOT the agents installer's marker: install.py
+# treats xagent-subagents as plugin-owned and must neither render nor delete
+# these files.
+SKILL_ID = "xagent-subagents"
+SKILL_MARKER = "<!-- sheaf-xagent-managed: DO NOT EDIT -->"
+SKILL_SOURCE_REL = Path("plugins") / "xagent" / "skills" / SKILL_ID / "SKILL.md"
+HARNESS_SKILL_DIRS = (
+    Path(".claude") / "skills",
+    Path(".cursor") / "skills",
+    Path(".pi") / "skills",
+)
+
+XAGENT_MCP_URL = "http://127.0.0.1:9005/mcp"
+XAGENT_MCP_ENTRY = {"type": "http", "url": XAGENT_MCP_URL}
+# pi is absent on purpose: it ships without built-in MCP by design, so it has
+# no registry to write. On pi the skill plus the packaged CLI is the whole
+# story. See plugins/xagent/README.md.
+HARNESS_MCP_REGISTRIES = (
+    Path(".claude.json"),
+    Path(".cursor") / "mcp.json",
+)
+
+
+def render_harness_skill(repo_root: Path) -> str:
+    """Skill text with the managed marker placed after the YAML frontmatter.
+
+    Harnesses parse frontmatter from the first line, so the marker cannot lead.
+    """
+    source = (repo_root / SKILL_SOURCE_REL).read_text(encoding="utf-8")
+    if not source.startswith("---\n"):
+        raise RuntimeError(f"{SKILL_SOURCE_REL} must start with YAML frontmatter")
+    closing = source.index("\n---\n", 3)
+    frontmatter = source[: closing + len("\n---\n")]
+    body = source[closing + len("\n---\n") :].lstrip("\n")
+    return f"{frontmatter}\n{SKILL_MARKER}\n\n{body}"
+
+
+def install_harness_skill(*, repo_root: Path, home: Path) -> None:
+    repo_root = repo_root.expanduser().resolve()
+    home = home.expanduser().resolve()
+    content = render_harness_skill(repo_root)
+    for relative in HARNESS_SKILL_DIRS:
+        destination = home / relative / SKILL_ID / "SKILL.md"
+        if destination.exists():
+            existing = destination.read_text(encoding="utf-8")
+            if SKILL_MARKER not in existing:
+                raise RuntimeError(
+                    f"refusing to overwrite unmanaged {destination}; "
+                    "move it aside and re-run"
+                )
+            if existing == content:
+                continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(content, encoding="utf-8")
+
+
+def register_harness_mcp(*, home: Path) -> None:
+    """Upsert the xagent HTTP MCP endpoint into each harness's own registry.
+
+    Only the `xagent` key is touched; every other server the user configured
+    survives untouched.
+    """
+    home = home.expanduser().resolve()
+    for relative in HARNESS_MCP_REGISTRIES:
+        path = home / relative
+        registry: dict[str, object] = {}
+        if path.exists():
+            raw = path.read_text(encoding="utf-8").strip()
+            if raw:
+                loaded = json.loads(raw)
+                if not isinstance(loaded, dict):
+                    raise RuntimeError(f"{path} must contain a JSON object")
+                registry = loaded
+        servers = registry.get("mcpServers")
+        if servers is None:
+            servers = {}
+        if not isinstance(servers, dict):
+            raise RuntimeError(f'{path} "mcpServers" must be a JSON object')
+        if servers.get(PLUGIN_NAME) == XAGENT_MCP_ENTRY:
+            continue
+        servers[PLUGIN_NAME] = dict(XAGENT_MCP_ENTRY)
+        registry["mcpServers"] = servers
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(registry, indent=2) + "\n", encoding="utf-8")
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HELPER_NAMES = (
     "create_basic_plugin.py",
@@ -272,6 +363,12 @@ def install_global(
             env=codex_env,
         ).stdout
         require_installed_plugin(plugin_list, destination)
+
+    # Codex is served by the plugin package above. Every other harness needs
+    # the skill and the MCP endpoint written into its own locations, or a
+    # controller running there has neither the tools nor the manual.
+    install_harness_skill(repo_root=repo_root, home=home)
+    register_harness_mcp(home=home)
 
 
 def default_codex_home() -> Path:
