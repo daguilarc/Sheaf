@@ -866,7 +866,7 @@ git commit -m "feat(xagent): add the insert-only v2 sdd_agents store beside v1 (
 
 **Critical:** `XagentSddStartInputSchema` (the v1 union), `TaskReviewerStartSchema`, and `CodeReviewerStartSchema` stay exactly as they are. `mcp.ts` and `sdd_manager.ts` are not touched.
 
-- [ ] **Step 1: Write the failing schema tests**
+- [x] **Step 1: Write the failing schema tests**
 
 Append to `projects/xagent/tests/mcp.test.ts`:
 
@@ -1032,7 +1032,7 @@ test("FormatFixDispatch is the same-agent fix text plus a plan/task/role header"
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/mcp.test.js dist/tests/sdd_prompt.test.js
@@ -1040,7 +1040,7 @@ cd projects/xagent && npm run build && node --test dist/tests/mcp.test.js dist/t
 
 Expected: FAIL — build error, none of the new exports exist.
 
-- [ ] **Step 3: Add the v2 role schemas**
+- [x] **Step 3: Add the v2 role schemas**
 
 In `src/service/tool_schemas.ts`, after `CodeReviewerStartSchema` (line 164), add:
 
@@ -1149,11 +1149,11 @@ export const XagentSddStartInputSchemaV2 = z
 
 Extract `reviewerRefinement` as a named function holding the body shown in the first snippet so both call sites share it.
 
-- [ ] **Step 4: Add `report` to the followup schemas**
+- [x] **Step 4: Add `report` to the followup schemas**
 
 In `FixFollowupSchema` (line 172) add `report: SddArtifactPathSchema,` after `tests`. In `ReReviewFollowupSchema` (line 184) add `report: SddArtifactPathSchema,` after `findings`. Leave `round` as it is — it is render-only and stays required.
 
-- [ ] **Step 5: Add the fix-dispatch formatter**
+- [x] **Step 5: Add the fix-dispatch formatter**
 
 In `src/service/sdd_prompt.ts`, after `FormatFixFollowup` (line 247), add:
 
@@ -1178,7 +1178,7 @@ export function FormatFixDispatch(input: FormatFixDispatchInput): string {
 }
 ```
 
-- [ ] **Step 6: Fix the existing followup call sites that now fail validation**
+- [x] **Step 6: Fix the existing followup call sites that now fail validation**
 
 `FixFollowupSchema` and `ReReviewFollowupSchema` now require `report`. Search the test suite and add a `report` field to every literal that parses them:
 
@@ -1188,7 +1188,7 @@ cd projects/xagent && grep -rn 'kind: "fix"\|kind: "re-review"' tests/ src/
 
 Update each to include a `report` path. `sdd_manager.ts` does not read `input.report` yet — that lands in Task 5 — so no source change is needed here.
 
-- [ ] **Step 7: Run the tests**
+- [x] **Step 7: Run the tests**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/mcp.test.js dist/tests/sdd_prompt.test.js
@@ -1196,7 +1196,7 @@ cd projects/xagent && npm run build && node --test dist/tests/mcp.test.js dist/t
 
 Expected: PASS.
 
-- [ ] **Step 8: Run the full suite**
+- [x] **Step 8: Run the full suite**
 
 ```bash
 cd projects/xagent && npm test
@@ -1204,7 +1204,7 @@ cd projects/xagent && npm test
 
 Expected: PASS.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add projects/xagent/src/service/tool_schemas.ts projects/xagent/src/service/sdd_prompt.ts projects/xagent/tests/mcp.test.ts projects/xagent/tests/sdd_prompt.test.ts
