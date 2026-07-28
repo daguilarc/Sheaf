@@ -15,7 +15,7 @@ export type SupervisionPhase =
 
 export type SupervisionEvent = {
   schema_version: 1;
-  type: "supervision.state" | "supervision.attention" | "turn.completed";
+  type: "supervision.state" | "supervision.attention" | "turn.completed" | "turn.submitted";
   run_id: string;
   sequence: number;
   timestamp: string;

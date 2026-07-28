@@ -647,7 +647,7 @@ test("a current-turn advisory verdict landing at ready still wakes the controlle
   await submission;
 
   assert.equal(reasons.includes("watchdog_derailed"), true);
-  assert.equal(telemetry[0]?.attention_sequence, 5);
+  assert.equal(telemetry[0]?.attention_sequence, 6);
   assert.equal(supervisor.inspect().phase, "ready");
 });
 

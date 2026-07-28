@@ -6,7 +6,10 @@ import test from "node:test";
 
 import { FakeHarnessAdapter } from "../src/adapters/fake.js";
 import type { AdapterEvent } from "../src/adapters/types.js";
-import { XagentRunManager } from "../src/service/run_manager.js";
+import {
+  isPersistedAwaitWake,
+  XagentRunManager,
+} from "../src/service/run_manager.js";
 import {
   AsSddRunManagerPort,
   CreateSddManager,
@@ -431,7 +434,7 @@ test("completion envelope carries the versioned shape with report, elapsed_ms, a
       schema_version: 1,
       event: "turn.completed",
       run_id: runId,
-      sequence: cursor + 2,
+      sequence: cursor + 3,
       phase: "ready",
       report: { text: "complete final assistant message" },
       elapsed_ms: 123_456,
@@ -819,3 +822,73 @@ test("the run-id guard exempts backtick-quoted ids and covers message and prompt
     false,
   );
 });
+
+test("turn.submitted never wakes a live await", async () => {
+  const service = await startMcpService();
+  try {
+    const started = await service.startRun("await-filter");
+    const pending = service.await(started.run_id, started.sequence, 5);
+    await service.submit(started.run_id, "chit chat");
+    const result = await pending;
+    assert.notEqual(result.event, "turn.submitted");
+  } finally {
+    await service.close();
+  }
+});
+
+test("the persisted-await wake filter ignores turn.submitted", () => {
+  const event = {
+    schema_version: 1 as const,
+    type: "turn.submitted" as const,
+    run_id: "xrun_20260728000000000_0000abcd",
+    sequence: 4,
+    timestamp: "2026-07-28T00:00:00.000Z",
+    phase: "running" as const,
+    reason: "turn_submitted",
+    payload: { text: "hello", turn_id: "turn_1" },
+  };
+  assert.equal(isPersistedAwaitWake(event), false);
+});
+
+async function startMcpService(): Promise<{
+  startRun(prompt: string): Promise<{ run_id: string; sequence: number }>;
+  await(
+    runId: string,
+    afterSequence: number,
+    deadlineSeconds: number,
+  ): Promise<{ event: string }>;
+  submit(runId: string, text: string): Promise<void>;
+  close(): Promise<void>;
+}> {
+  const logRoot = await mkdtemp(path.join(tmpdir(), "xagent-await-filter-"));
+  const cwd = await mkdtemp(path.join(tmpdir(), "xagent-await-cwd-"));
+  const runManager = new XagentRunManager({
+    repoRoot: process.cwd(),
+    logRoot,
+    adapterFactory: () => new FakeHarnessAdapter(),
+    policy: testPolicy,
+  });
+  return {
+    startRun(prompt: string) {
+      return runManager.startRun({
+        cwd,
+        prompt,
+        harness: "codex",
+        mode: "subagent",
+      });
+    },
+    await(runId: string, afterSequence: number, deadlineSeconds: number) {
+      return runManager.awaitRun({
+        run_id: runId,
+        after_sequence: afterSequence,
+        deadline_seconds: deadlineSeconds,
+      });
+    },
+    submit(runId: string, text: string) {
+      return runManager.submit(runId, text);
+    },
+    async close() {
+      await runManager.closeAll();
+    },
+  };
+}

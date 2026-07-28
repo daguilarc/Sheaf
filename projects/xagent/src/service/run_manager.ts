@@ -641,7 +641,7 @@ async function findPersistedAwaitWake(
   return undefined;
 }
 
-function isPersistedAwaitWake(value: unknown): value is SupervisionEvent {
+export function isPersistedAwaitWake(value: unknown): value is SupervisionEvent {
   if (!isRecord(value)) {
     return false;
   }
@@ -655,6 +655,9 @@ function isPersistedAwaitWake(value: unknown): value is SupervisionEvent {
   ) {
     return false;
   }
+  // Whitelist, not a blacklist: only these three shapes may wake a persisted
+  // await. `turn.submitted` is deliberately absent — it is a record of what was
+  // sent, never a deliverable outcome.
   if (value.type === "supervision.attention" || value.type === "turn.completed") {
     return true;
   }

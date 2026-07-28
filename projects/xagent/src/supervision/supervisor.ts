@@ -242,6 +242,7 @@ export class Supervisor {
       const inputSequence = this.#inputSequence;
       const turnId = `turn_${inputSequence}`;
       await this.#publishState("running", "turn_started", false);
+      await this.#publishSubmitted(turnId, text);
       this.#evidence = new SemanticEvidenceWindow({
         repoRoot: this.#startOptions.cwd,
         originalPrompt: text,
@@ -568,6 +569,21 @@ export class Supervisor {
       reason,
       ...(payload === undefined ? {} : { payload }),
     }, deliverable);
+  }
+
+  // The full submitted text — rendered prompt plus any appended controller
+  // note, or a raw xagent_message — recorded before the provider adapter is
+  // handed the text. Published non-deliverable so it never completes a live
+  // await. If this append fails, submit() rejects and the text is never sent:
+  // text the log cannot prove was sent is not sent.
+  //
+  async #publishSubmitted(turnId: string, text: string): Promise<void> {
+    await this.#publishEvent({
+      type: "turn.submitted",
+      phase: "running",
+      reason: "turn_submitted",
+      payload: sanitizeValue({ text, turn_id: turnId }, this.#startOptions.cwd),
+    }, false);
   }
 
   async #publishEvent(

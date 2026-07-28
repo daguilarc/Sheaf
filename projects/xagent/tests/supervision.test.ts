@@ -79,7 +79,7 @@ test("supervisor persists monotonic lifecycle state and delivers turn completion
     schema_version: 1,
     type: "turn.completed",
     run_id: "xrun_supervision",
-    sequence: 4,
+    sequence: 5,
     timestamp: "2026-07-25T12:00:00.000Z",
     phase: "ready",
     reason: "turn_completed",
@@ -93,13 +93,15 @@ test("supervisor persists monotonic lifecycle state and delivers turn completion
     [1, "starting", "supervision.state"],
     [2, "ready", "supervision.state"],
     [3, "running", "supervision.state"],
-    [4, "ready", "turn.completed"],
+    [4, "running", "turn.submitted"],
+    [5, "ready", "turn.completed"],
   ]);
   assert.deepEqual(metadata.map((state) => [state.sequence, state.phase]), [
     [1, "starting"],
     [2, "ready"],
     [3, "running"],
-    [4, "ready"],
+    [4, "running"],
+    [5, "ready"],
   ]);
   assert.deepEqual(adapter.submittedContexts, [
     { text: "do the task", turnId: "turn_1", inputSequence: 1 },
@@ -521,6 +523,43 @@ function fixedClock(): Date {
   return new Date("2026-07-25T12:00:00.000Z");
 }
 
+type SupervisorHarness = {
+  readonly supervisor: Supervisor;
+  readonly adapter: FakeHarnessAdapter;
+  readonly events: SupervisionEvent[];
+  readonly cwd: string;
+  failEventSinkOnType(type: string): void;
+};
+
+function createSupervisorHarness(): SupervisorHarness {
+  const cwd = "/private/tmp/sheaf-xagent-submit";
+  const events: SupervisionEvent[] = [];
+  let failOnType: string | undefined;
+  const adapter = new FakeHarnessAdapter();
+  const supervisor = new Supervisor({
+    runId: "xrun_turn_submitted",
+    adapter,
+    startOptions: { cwd },
+    policy,
+    clock: fixedClock,
+    eventSink: async (event) => {
+      if (failOnType !== undefined && event.type === failOnType) {
+        throw new Error(`event sink failed for ${failOnType}`);
+      }
+      events.push(event);
+    },
+  });
+  return {
+    supervisor,
+    adapter,
+    events,
+    cwd,
+    failEventSinkOnType(type: string) {
+      failOnType = type;
+    },
+  };
+}
+
 function deferred<T>(): {
   promise: Promise<T>;
   resolve(value: T): void;
@@ -712,4 +751,58 @@ test("a supervised run without a transcript sink still completes its turn", asyn
   await supervisor.submit("go");
   const completion = await supervisor.awaitEvent(cursor, 1_000);
   assert.equal(completion.type, "turn.completed");
+});
+
+test("submit emits turn.submitted with the full text before the adapter sees it", async () => {
+  const harness = createSupervisorHarness();
+  await harness.supervisor.start();
+  await harness.supervisor.submit("Rendered prompt body\n\n## Controller Note\n\nbe careful\n");
+
+  const submitted = harness.events.filter((event) => event.type === "turn.submitted");
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0]!.phase, "running");
+  assert.equal(submitted[0]!.reason, "turn_submitted");
+  const payload = submitted[0]!.payload as { text: string; turn_id: string };
+  assert.equal(payload.text, "Rendered prompt body\n\n## Controller Note\n\nbe careful\n");
+  assert.equal(payload.turn_id, "turn_1");
+
+  const started = harness.events.find(
+    (event) => event.type === "supervision.state" && event.reason === "turn_started",
+  );
+  assert.ok(started);
+  assert.equal(submitted[0]!.sequence, started.sequence + 1);
+
+  const completed = harness.events.find((event) => event.type === "turn.completed");
+  assert.ok(completed);
+  assert.equal((completed.payload as { turn_id: string }).turn_id, payload.turn_id);
+});
+
+test("turn.submitted is durable before the provider adapter is invoked", async () => {
+  const harness = createSupervisorHarness();
+  await harness.supervisor.start();
+  const seenBeforeAdapter: string[] = [];
+  harness.adapter.onSubmit = () => {
+    seenBeforeAdapter.push(...harness.events.map((event) => event.type));
+  };
+  await harness.supervisor.submit("hello");
+  assert.ok(seenBeforeAdapter.includes("turn.submitted"));
+});
+
+test("a failed event-sink append fails the submit without reaching the provider", async () => {
+  const harness = createSupervisorHarness();
+  await harness.supervisor.start();
+  let adapterCalled = false;
+  harness.adapter.onSubmit = () => { adapterCalled = true; };
+  harness.failEventSinkOnType("turn.submitted");
+  await assert.rejects(() => harness.supervisor.submit("hello"));
+  assert.equal(adapterCalled, false);
+});
+
+test("turn.submitted text is sanitized like every other payload", async () => {
+  const harness = createSupervisorHarness();
+  await harness.supervisor.start();
+  await harness.supervisor.submit(`work in ${harness.cwd}/src and use sk-secret`);
+  const submitted = harness.events.find((event) => event.type === "turn.submitted");
+  const text = (submitted!.payload as { text: string }).text;
+  assert.ok(!text.includes(harness.cwd));
 });
