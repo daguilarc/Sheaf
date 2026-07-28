@@ -500,8 +500,16 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     //
     async ListGeneric(input: XagentListInput): Promise<ListRunsResult>
     {
+      // Missing-ness is existence of a run record, not membership in the
+      // caller's filtered/truncated page — live_only and limit must not mint
+      // fabricated tombstones for completed or off-page runs (xsvc-13).
+      //
+      const existing = await runManager.listOwnedRuns({
+        live_only: false,
+        limit: Number.MAX_SAFE_INTEGER,
+      });
+      const seen = new Set(existing.runs.map((run) => run.run_id));
       const listed = await runManager.listOwnedRuns(input);
-      const seen = new Set<string>();
       const rows: XagentListEntry[] = listed.runs.map((run) =>
       {
         seen.add(run.run_id);
@@ -528,6 +536,8 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
           sdd: SddListFields(agent),
         });
       }
+      // Equal order keys keep insertion order (reals first, then tombstones).
+      //
       rows.sort((left, right) => EntryOrderKey(right).localeCompare(EntryOrderKey(left)));
       return { runs: rows.slice(0, input.limit) };
     },

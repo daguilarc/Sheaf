@@ -1153,3 +1153,93 @@ test("ListGeneric interleaves tombstones with real rows and limits after the mer
     [newerTombstoneId, olderRealId],
   );
 });
+
+// A completed SDD run still has a run record on disk; live_only filters it from
+// the page, but must not invent a run_missing tombstone for it (xsvc-13).
+//
+test("a completed SDD run is not a tombstone under live_only", async () =>
+{
+  const completedId = "xrun_20260728000000000_completed";
+  const agent: SddAgentRecord = {
+    agent_id: completedId,
+    plan_path: "/tmp/plans/2026-07-28-redesign-sdd-ledger.md",
+    task: 4,
+    role: "implementer",
+    brief_path: "/tmp/sdd/task-4-brief.md",
+    brief_text: "brief\n",
+    cwd: "/private/tmp/worktree",
+    dispatched_at: "2026-07-28T10:00:00.000Z",
+  };
+  const store: SddAgentStore = {
+    Insert(): void
+    {
+      throw new Error("Insert is not used by ListGeneric");
+    },
+    Get(agentId: string)
+    {
+      return agentId === completedId ? agent : undefined;
+    },
+    ListAll()
+    {
+      return [agent];
+    },
+    IsSddAgent(agentId: string)
+    {
+      return agentId === completedId;
+    },
+    Close(): void {},
+  };
+  const completedRow = {
+    run_id: completedId,
+    harness: "cursor",
+    phase: "completed",
+    sequence: 2,
+    exit_status: "completed",
+    live: false,
+    supervised: true,
+    created_at: "2026-07-28T10:00:01.000Z",
+    updated_at: "2026-07-28T11:00:00.000Z",
+  };
+  const runManager: SddRunManagerPort = {
+    allocateRunId()
+    {
+      return completedId;
+    },
+    async create()
+    {
+      return { runId: completedId };
+    },
+    async start() {},
+    async submit() {},
+    inspect()
+    {
+      return undefined;
+    },
+    async close() {},
+    has()
+    {
+      return false;
+    },
+    async listOwnedRuns(input)
+    {
+      const runs = [completedRow]
+        .filter((row) => !input.live_only || row.live)
+        .slice(0, input.limit);
+      return { runs };
+    },
+  };
+  const manager = CreateSddManager({
+    store,
+    runManager,
+    ...CreateDeps(),
+  });
+
+  const listed = await manager.ListGeneric({ live_only: true, limit: 50 });
+  const entry = listed.runs.find((row) => row.run_id === completedId);
+  assert.equal(entry, undefined, "completed runs must not appear under live_only");
+  assert.equal(
+    listed.runs.some((row) => "run_missing" in row && row.run_id === completedId),
+    false,
+    "a run record must never be stamped run_missing",
+  );
+});
