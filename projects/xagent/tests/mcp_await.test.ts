@@ -18,6 +18,8 @@ import {
 import {
   x_DefaultAwaitDeadlineSeconds,
   x_MaxAwaitDeadlineSeconds,
+  FixFollowupSchema,
+  ImplementerStartSchema,
   XagentAwaitInputSchema,
   XagentSddAwaitInputSchema,
 } from "../src/service/tool_schemas.js";
@@ -720,3 +722,61 @@ function deferred<T = void>(): {
     },
   };
 }
+
+test("worker-facing prompt text rejects embedded controller run ids", () => {
+  const leaked = ImplementerStartSchema.safeParse({
+    role: "implementer",
+    cwd: "/tmp/worktree",
+    plan: "/tmp/plan.md",
+    agent: "grok-4.5",
+    harness: "cursor",
+    effort: "high",
+    task: 4,
+    name: "Superpowers managed plugins",
+    brief: "/tmp/brief.md",
+    report: "/tmp/report.md",
+    context: "Keep the reviewer session xrun_20260727192847117_b30af348 open for re-review.",
+  });
+  assert.equal(leaked.success, false);
+  assert.match(
+    leaked.error?.issues.map((issue) => issue.message).join("; ") ?? "",
+    /xrun_20260727192847117_b30af348/,
+  );
+
+  const clean = ImplementerStartSchema.safeParse({
+    role: "implementer",
+    cwd: "/tmp/worktree",
+    plan: "/tmp/plan.md",
+    agent: "grok-4.5",
+    harness: "cursor",
+    effort: "high",
+    task: 4,
+    name: "Superpowers managed plugins",
+    brief: "/tmp/brief.md",
+    report: "/tmp/report.md",
+    context: "Task 3 is complete. Implement Task 4 only.",
+  });
+  assert.equal(clean.success, true);
+});
+
+test("fix follow-up findings text rejects embedded controller run ids", () => {
+  const leaked = FixFollowupSchema.safeParse({
+    kind: "fix",
+    agent_id: "xrun_20260726000000000_00000001",
+    round: 1,
+    findings: "/tmp/findings.md",
+    findings_text: "Resume against xrun_20260727192847117_b30af348 when done.",
+    tests: ["npm test"],
+  });
+  assert.equal(leaked.success, false);
+
+  const clean = FixFollowupSchema.safeParse({
+    kind: "fix",
+    agent_id: "xrun_20260726000000000_00000001",
+    round: 1,
+    findings: "/tmp/findings.md",
+    findings_text: "Important #1: the marker must follow the frontmatter.",
+    tests: ["npm test"],
+  });
+  assert.equal(clean.success, true);
+});
