@@ -22,6 +22,12 @@ export type ProcessHarnessState = {
   //
   cursorSegmentText?: string;
   cursorLastDelta?: string;
+  // cursor-agent's `result` event carries the whole turn's assistant stream
+  // concatenated without separators, so a controller consuming it as the
+  // "final assistant report" got narration fused onto the real answer. Track
+  // the segment seen at the end-of-turn flush and prefer it.
+  //
+  cursorFinalSegmentText?: string;
 };
 
 export type ProviderEventParser = (

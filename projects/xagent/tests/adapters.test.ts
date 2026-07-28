@@ -45,9 +45,12 @@ test("cursor fixture maps provider events into normalized adapter events", async
     .filter((event) => event.type === "message.delta")
     .map((event) => event.type === "message.delta" ? event.delta : "");
   assert.deepEqual(deltas, ["Starting", " now.", "| ", "| ", "Done."]);
+  // `result` fuses both segments ("Starting now.| | Done."), but only the
+  // post-tool segment is the turn's final assistant message. The controller
+  // consumes final_text as the report, so it must not carry narration.
   assert.equal(
-    deltas.join(""),
     events.find((event) => event.type === "turn.completed")?.final_text,
+    "| | Done.",
   );
   const started = events.find((event) => event.type === "tool.started");
   assert.equal(started?.type === "tool.started" ? started.tool_call_id : undefined, "tool-1");
@@ -64,7 +67,7 @@ test("cursor fixture maps provider events into normalized adapter events", async
     completed?.type === "tool.completed" ? completed.output : undefined,
     { success: { content: "ok", path: "sample.txt" } },
   );
-  assert.equal(events.find((event) => event.type === "message.completed")?.text, "Starting now.| | Done.");
+  assert.equal(events.find((event) => event.type === "message.completed")?.text, "| | Done.");
   assert.equal(events.find((event) => event.type === "turn.completed")?.provider_thread_id, "cursor-thread-1");
 });
 
@@ -162,7 +165,8 @@ test("cursor adapter drops flushes via model_call_id and keeps repeated chunks",
     .map((event) => event.type === "message.delta" ? event.delta : "");
   assert.deepEqual(deltas, ["Starting", " now.", "| ", "| ", "Done."]);
   assert.equal(deltas.join(""), "Starting now.| | Done.");
-  assert.equal(events.find((event) => event.type === "turn.completed")?.final_text, "Starting now.| | Done.");
+  // Deltas still stream every segment; the report is the last one only.
+  assert.equal(events.find((event) => event.type === "turn.completed")?.final_text, "| | Done.");
   assert.equal(state.providerThreadId, "cursor-thread-2");
 });
 
@@ -496,3 +500,65 @@ function assertEventTypes(events: AdapterEvent[], expectedTypes: string[]): void
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+test("cursor turn completion reports the final assistant segment, not the whole stream", () => {
+  const state: ProcessHarnessState = { providerSequence: 0 };
+  const events: AdapterEvent[] = [];
+  const rawEvents = [
+    // Narration segment, flushed before a tool call.
+    {
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "I'll read the brief." }] },
+      session_id: "cursor-thread-3",
+      timestamp_ms: 1,
+    },
+    {
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "I'll read the brief." }] },
+      session_id: "cursor-thread-3",
+      timestamp_ms: 2,
+      model_call_id: "call-1",
+    },
+    // Final segment, flushed at turn end (no timestamp_ms, no model_call_id).
+    {
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "**Status:** DONE" }] },
+      session_id: "cursor-thread-3",
+      timestamp_ms: 3,
+    },
+    {
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "**Status:** DONE" }] },
+      session_id: "cursor-thread-3",
+    },
+    {
+      type: "result",
+      subtype: "success",
+      session_id: "cursor-thread-3",
+      result: "I'll read the brief.**Status:** DONE",
+    },
+  ];
+
+  for (const raw of rawEvents) {
+    events.push(...parseCursorProviderEvent(raw, context, state));
+  }
+
+  assert.equal(
+    events.find((event) => event.type === "message.completed")?.text,
+    "**Status:** DONE",
+  );
+  assert.equal(
+    events.find((event) => event.type === "turn.completed")?.final_text,
+    "**Status:** DONE",
+  );
+});
+
+test("cursor falls back to the result field when no final flush was observed", () => {
+  const state: ProcessHarnessState = { providerSequence: 0 };
+  const events = parseCursorProviderEvent(
+    { type: "result", subtype: "success", result: "only text" },
+    context,
+    state,
+  );
+  assert.equal(events.find((event) => event.type === "turn.completed")?.final_text, "only text");
+});
