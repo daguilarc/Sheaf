@@ -78,10 +78,10 @@ export type InspectRunResult = {
 export type XagentSddListFields = {
   readonly role: string;
   readonly plan: string;
-  readonly cwd: string;
-  readonly agent: string;
-  readonly closed: boolean;
   readonly task?: number;
+  readonly cwd: string;
+  readonly brief_path: string;
+  readonly dispatched_at: string;
 };
 
 export type XagentListRow = {

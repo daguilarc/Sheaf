@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 
 import {
   FormatFixDispatch,
@@ -10,15 +11,16 @@ import {
   type RenderSddPromptInput,
 } from "./sdd_prompt.js";
 import type {
+  SddAgentRecord,
   SddAgentStore,
   SddStartRole,
-  SddStore,
 } from "./sdd_store.js";
 import {
   canonicalizeWorkingDirectory,
   type CreateRunOptions,
   type ListRunsResult,
   type XagentRunManager,
+  type XagentSddListFields,
 } from "./run_manager.js";
 import {
   ToolValidationError,
@@ -58,11 +60,7 @@ export type SddManager = {
 };
 
 export type SddManagerDeps = {
-  // TRANSITIONAL: Start no longer needs MarkRunning/ReserveInitial/MarkFailed.
-  // GetSession is ListGeneric's v1 join and belongs to Task 8b — the dep
-  // narrows to plain SddAgentStore only when that lands.
-  //
-  readonly store: SddAgentStore & Pick<SddStore, "GetSession">;
+  readonly store: SddAgentStore;
   readonly runManager: SddRunManagerPort;
   readonly repoRoot: string;
   readonly canonicalizeCwd?: (cwd: string) => Promise<string>;
@@ -71,6 +69,23 @@ export type SddManagerDeps = {
   readonly formatFix?: (input: FormatFixFollowupInput) => string;
   readonly formatFixDispatch?: (input: FormatFixDispatchInput) => string;
 };
+
+function DerivePlanName(planPath: string): string
+{
+  return path.basename(planPath, path.extname(planPath));
+}
+
+function SddListFields(agent: SddAgentRecord): XagentSddListFields
+{
+  return {
+    role: agent.role,
+    plan: DerivePlanName(agent.plan_path),
+    ...(agent.task === null ? {} : { task: agent.task }),
+    cwd: agent.cwd,
+    brief_path: agent.brief_path,
+    dispatched_at: agent.dispatched_at,
+  };
+}
 
 const x_ControllerNoteHeading = "## Controller Note";
 const x_TerminalRunPhases = new Set([
@@ -482,22 +497,12 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       const listed = await runManager.listOwnedRuns(input);
       const runs = listed.runs.map((run) =>
       {
-        const session = store.GetSession(run.run_id);
-        if (session === undefined)
+        const agent = store.Get(run.run_id);
+        if (agent === undefined)
         {
           return run;
         }
-        return {
-          ...run,
-          sdd: {
-            role: session.role,
-            plan: session.plan_name,
-            cwd: session.cwd,
-            agent: session.agent,
-            closed: session.closed_at !== null,
-            ...(session.task_number === null ? {} : { task: session.task_number }),
-          },
-        };
+        return { ...run, sdd: SddListFields(agent) };
       });
       return { runs };
     },

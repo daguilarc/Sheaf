@@ -10,7 +10,7 @@ import {
   CreateSddManager,
   type SddManager,
 } from "../src/service/sdd_manager.js";
-import { CreateSddStore } from "../src/service/sdd_store.js";
+import { CreateSddAgentStore } from "../src/service/sdd_store.js";
 import { z } from "zod";
 
 import {
@@ -58,9 +58,9 @@ function CreateTestSddManager(
   runManager: XagentRunManager,
   repoRoot: string,
   logRoot: string,
-): { manager: SddManager; store: ReturnType<typeof CreateSddStore> }
+): { manager: SddManager; store: ReturnType<typeof CreateSddAgentStore> }
 {
-  const store = CreateSddStore(logRoot);
+  const store = CreateSddAgentStore(logRoot);
   const manager = CreateSddManager({
     store,
     runManager: AsSddRunManagerPort(runManager),
@@ -666,4 +666,80 @@ test("v2 followup shapes require report and keep round render-only", () => {
   assert.equal(ReReviewFollowupSchema.safeParse(reReview).success, true);
   const { report: r2, ...reReviewWithoutReport } = reReview;
   assert.equal(ReReviewFollowupSchema.safeParse(reReviewWithoutReport).success, false);
+});
+
+// Task 8a: v2 sdd identity block on xagent_list. Uses withMcpService rather
+// than the plan's startMcpService().client (that harness has no MCP client).
+// Tombstone / run_missing coverage is Task 8b.
+//
+test("xagent_list carries the v2 sdd identity block", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "xagent-mcp-sdd-list-"));
+  const planPath = path.join(cwd, "2026-07-28-redesign-sdd-ledger.md");
+  const briefPath = path.join(cwd, "brief.md");
+  const reportPath = path.join(cwd, "report.md");
+  await writeFile(planPath, "# plan\n", "utf8");
+  await writeFile(briefPath, "Implement list identity.\n", "utf8");
+  await writeFile(reportPath, "", "utf8");
+
+  await withMcpService(async ({ client }) => {
+    const startedResult = asToolCallResult(
+      await client.callTool({
+        name: "xagent_sdd_start",
+        arguments: {
+          role: "implementer",
+          cwd,
+          plan: planPath,
+          agent: "fake-model",
+          harness: "codex",
+          effort: "high",
+          task: 4,
+          name: "list-identity",
+          brief: briefPath,
+          report: reportPath,
+        },
+      }),
+    );
+    assertToolSucceeded(startedResult);
+    const started = structuredToolBody(startedResult);
+
+    const body = structuredToolBody(asToolCallResult(
+      await client.callTool({ name: "xagent_list", arguments: {} }),
+    ));
+    const runs = body.runs as Array<Record<string, unknown>>;
+    const row = runs.find((entry) => entry.run_id === started.agent_id)!;
+    assert.deepEqual(Object.keys(row.sdd as object).sort(), [
+      "brief_path", "cwd", "dispatched_at", "plan", "role", "task",
+    ]);
+    assert.equal((row.sdd as { plan: string }).plan, "2026-07-28-redesign-sdd-ledger");
+    assert.equal(row.run_missing, undefined);
+  }, {
+    createSddManager: ({ runManager, repoRoot, logRoot }) =>
+      CreateTestSddManager(runManager, repoRoot, logRoot),
+  });
+});
+
+test("a generic run carries no sdd block and no run_missing flag", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "xagent-mcp-generic-list-"));
+
+  await withMcpService(async ({ client }) => {
+    const startedResult = asToolCallResult(
+      await client.callTool({
+        name: "xagent_start_non_sdd",
+        arguments: { cwd, prompt: "generic", harness: "codex" },
+      }),
+    );
+    assertToolSucceeded(startedResult);
+    const started = structuredToolBody(startedResult);
+
+    const body = structuredToolBody(asToolCallResult(
+      await client.callTool({ name: "xagent_list", arguments: {} }),
+    ));
+    const runs = body.runs as Array<Record<string, unknown>>;
+    const row = runs.find((entry) => entry.run_id === started.run_id)!;
+    assert.equal(row.sdd, undefined);
+    assert.equal(row.run_missing, undefined);
+  }, {
+    createSddManager: ({ runManager, repoRoot, logRoot }) =>
+      CreateTestSddManager(runManager, repoRoot, logRoot),
+  });
 });

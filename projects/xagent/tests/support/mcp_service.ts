@@ -5,7 +5,6 @@ import path from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import Database from "better-sqlite3";
 
 import { FakeHarnessAdapter } from "../../src/adapters/fake.js";
 import type { HarnessAdapter } from "../../src/adapters/types.js";
@@ -16,7 +15,7 @@ import {
   CreateSddManager,
   type SddManager,
 } from "../../src/service/sdd_manager.js";
-import { CreateSddStore, GetSddDatabasePath } from "../../src/service/sdd_store.js";
+import { CreateSddAgentStore } from "../../src/service/sdd_store.js";
 import {
   createShutdownController,
   createXagentServer,
@@ -81,14 +80,14 @@ export type WithMcpServiceOptions = {
   readonly policy?: SupervisionPolicy;
   readonly adapterFactory?: () => HarnessAdapter;
   readonly sddManager?: SddManager;
-  readonly sddStore?: ReturnType<typeof CreateSddStore>;
+  readonly sddStore?: ReturnType<typeof CreateSddAgentStore>;
   readonly createSddManager?: (deps: {
     readonly runManager: XagentRunManager;
     readonly repoRoot: string;
     readonly logRoot: string;
   }) => {
     readonly manager: SddManager;
-    readonly store: ReturnType<typeof CreateSddStore>;
+    readonly store: ReturnType<typeof CreateSddAgentStore>;
   };
   readonly clientName?: string;
 };
@@ -102,7 +101,6 @@ export type StartedMcpService = {
     deadlineSeconds: number,
   ): Promise<{ event: string }>;
   submit(runId: string, text: string): Promise<void>;
-  turnRowCount(): number;
   close(): Promise<void>;
   readonly runManager: XagentRunManager;
   readonly logRoot: string;
@@ -139,7 +137,7 @@ export async function startMcpService(
       watchdog: {},
     },
   });
-  let sddStore: ReturnType<typeof CreateSddStore> | undefined;
+  let sddStore: ReturnType<typeof CreateSddAgentStore> | undefined;
   let sddManager: ReturnType<typeof CreateSddManager> | undefined;
 
   function EnsureSddManager(): ReturnType<typeof CreateSddManager>
@@ -148,7 +146,7 @@ export async function startMcpService(
     {
       return sddManager;
     }
-    sddStore = CreateSddStore(logRoot);
+    sddStore = CreateSddAgentStore(logRoot);
     sddManager = CreateSddManager({
       store: sddStore,
       runManager: AsSddRunManagerPort(runManager),
@@ -225,25 +223,6 @@ export async function startMcpService(
     {
       return runManager.submit(runId, text);
     },
-    turnRowCount()
-    {
-      // Counts turn rows in the v1 ledger. Start inserts one; await must not
-      // add another. MarkCompleted (deleted in this task) updated the same
-      // row, so this specifically guards against a second insert path.
-      //
-      const database = new Database(GetSddDatabasePath(logRoot), { readonly: true });
-      try
-      {
-        const row = database
-          .prepare("SELECT COUNT(*) AS count FROM sdd_turns")
-          .get() as { count: number };
-        return row.count;
-      }
-      finally
-      {
-        database.close();
-      }
-    },
     async close()
     {
       await runManager.closeAll();
@@ -275,7 +254,7 @@ export async function withMcpService(
       watchdog: {},
     },
   });
-  let sddStore: ReturnType<typeof CreateSddStore> | undefined = options.sddStore;
+  let sddStore: ReturnType<typeof CreateSddAgentStore> | undefined = options.sddStore;
   let sddManager: SddManager | undefined = includeSddManager ? options.sddManager : undefined;
   if (includeSddManager && sddManager === undefined && options.createSddManager !== undefined)
   {
