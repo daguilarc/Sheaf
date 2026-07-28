@@ -2167,6 +2167,27 @@ git commit -m "feat(xagent): four-way sdd_start role union and insert-only Start
 
 **Why now:** every build up to and including Task 6 wires the **v1** store, so the live service has been safe to leave running. Task 8 is the first build that wires `CreateSddAgentStore`, whose gate refuses `user_version != 2`. Starting a Task 8 build against the existing v1 file fails the SDD manager loudly and takes SDD tooling down. Deleting the file first turns that into a clean provision. **Do not perform this step before Task 6 is committed, and do not defer it past Task 8.**
 
+**Ordering correction — this gate runs INSIDE Task 8a, not before it.** As
+written, Task 7 stops the service and Task 8a is then dispatched to an
+implementer — but the controller dispatches *through* that service, so
+stopping it first makes 8a undispatchable. The plan's real constraint is that
+no Task-8 build may **reach** the running process before the reprovision, and
+"reach" means restart, not compile. A build sitting in `dist/` is inert; the
+running process holds the code it loaded at startup.
+
+So the actual order is:
+
+1. Dispatch Task 8a's implementer and reviewer normally, while the service is
+   still up on its Task-0-era build. Nothing they land reaches it.
+2. Once 8a is committed and its suite is green, perform this gate: stop the
+   service, record the counts, delete the ledger files.
+3. Restart onto the 8a build, which provisions schema v2 on first open.
+4. Verify, then dispatch 8b.
+
+This still satisfies both of the plan's own bounds — after Task 6 is
+committed, and not deferred past Task 8 — because the gate falls within Task
+8's span rather than before it.
+
 - [ ] **Step 1: Find the log root**
 
 ```bash
