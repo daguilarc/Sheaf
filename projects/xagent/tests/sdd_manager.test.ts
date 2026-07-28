@@ -8,8 +8,10 @@ import {
 } from "../src/service/sdd_manager.js";
 import {
   SddStoreError,
+  type InsertSddAgentInput,
   type PrepareFollowupInput,
   type ReserveInitialInput,
+  type SddAgentRecord,
   type SddSessionRecord,
   type SddStore,
   type SddTurnRecord,
@@ -376,6 +378,18 @@ function CreateFakeStore(recorder: ReturnType<typeof CreateOrderRecorder>): SddS
         });
         openTurns.delete(agentId);
       }
+    },
+    Insert(_input: InsertSddAgentInput): void
+    {
+      throw new Error("CreateFakeStore.Insert is not used by current manager tests");
+    },
+    Get(_agentId: string): SddAgentRecord | undefined
+    {
+      return undefined;
+    },
+    ListAll(): readonly SddAgentRecord[]
+    {
+      return [];
     },
     Close(): void
     {

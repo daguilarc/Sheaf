@@ -11,7 +11,6 @@ import {
 import type {
   PrepareFollowupInput,
   ReserveInitialInput,
-  SddRole,
   SddStore,
 } from "./sdd_store.js";
 import { SddStoreError } from "./sdd_store.js";
@@ -247,7 +246,7 @@ function BuildRenderInput(
   };
 }
 
-function RoleAllowsFollowup(role: SddRole, kind: "fix" | "re-review"): boolean
+function RoleAllowsFollowup(role: string, kind: "fix" | "re-review"): boolean
 {
   if (kind === "fix")
   {

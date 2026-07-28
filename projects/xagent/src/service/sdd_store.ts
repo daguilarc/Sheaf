@@ -6,6 +6,37 @@ export type SddRole = "implementer" | "task-reviewer" | "code-reviewer";
 export type SddTurnKind = "initial" | "fix" | "re_review";
 export type SddTurnStatus = "prepared" | "running" | "completed" | "failed" | "abandoned";
 
+export type SddStartRole = "implementer" | "reviewer" | "fixer" | "re-reviewer";
+
+export type SddAgentRecord = {
+  readonly agent_id: string;
+  readonly plan_path: string;
+  readonly task: number | null;
+  readonly role: SddStartRole;
+  readonly brief_path: string;
+  readonly brief_text: string;
+  readonly cwd: string;
+  readonly dispatched_at: string;
+};
+
+export type InsertSddAgentInput = {
+  readonly agentId: string;
+  readonly planPath: string;
+  readonly task?: number;
+  readonly role: SddStartRole;
+  readonly briefPath: string;
+  readonly briefText: string;
+  readonly cwd: string;
+};
+
+export type SddAgentStore = {
+  Insert(input: InsertSddAgentInput): void;
+  Get(agentId: string): SddAgentRecord | undefined;
+  ListAll(): readonly SddAgentRecord[];
+  IsSddAgent(agentId: string): boolean;
+  Close(): void;
+};
+
 export type SddSessionRecord = {
   agent_id: string;
   plan_name: string;
@@ -15,7 +46,7 @@ export type SddSessionRecord = {
   agent: string;
   harness: string;
   effort: string;
-  role: SddRole;
+  role: string;
   started_at: string;
   closed_at: string | null;
 };
@@ -79,6 +110,9 @@ export type SddStore = {
   GetTurnByCompletedSequence(agentId: string, completedSequence: number): SddTurnRecord | undefined;
   IsSddAgent(agentId: string): boolean;
   ReconcileTerminalRuns(phases: ReadonlyMap<string, string>): void;
+  Insert(input: InsertSddAgentInput): void;
+  Get(agentId: string): SddAgentRecord | undefined;
+  ListAll(): readonly SddAgentRecord[];
   Close(): void;
 };
 
@@ -166,6 +200,26 @@ FROM sdd_turns AS t
 JOIN sdd_sessions AS s ON s.agent_id = t.agent_id;
 `;
 
+const x_AgentSchemaVersion = 2;
+
+const x_AgentSchemaSql = `
+CREATE TABLE sdd_agents
+(
+    agent_id      TEXT PRIMARY KEY,
+    plan_path     TEXT NOT NULL,
+    task          INTEGER,
+    role          TEXT NOT NULL CHECK (role IN
+                      ('implementer', 'reviewer', 'fixer', 're-reviewer')),
+    brief_path    TEXT NOT NULL,
+    brief_text    TEXT NOT NULL,
+    cwd           TEXT NOT NULL,
+    dispatched_at TEXT NOT NULL,
+    CHECK (task IS NULL OR task > 0)
+);
+
+CREATE INDEX sdd_agents_assignment ON sdd_agents(plan_path, task, role);
+`;
+
 export class SddStoreError extends Error {
   readonly code: string;
 
@@ -236,7 +290,7 @@ function MapSessionRow(row: Record<string, unknown>): SddSessionRecord {
     agent: String(row.agent),
     harness: String(row.harness),
     effort: String(row.effort),
-    role: row.role as SddRole,
+    role: String(row.role),
     started_at: String(row.started_at),
     closed_at: row.closed_at === null || row.closed_at === undefined
       ? null
@@ -512,6 +566,38 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
     return MapSessionRow(row);
   }
 
+  // TRANSITIONAL (deleted in the v1 store removal task). Lets the v1 ledger
+  // satisfy SddAgentStore so the manager can be rewritten against the v2 port
+  // while the live service is still running on a v1 file. The v1 columns the
+  // v2 model drops are written as 'unrecorded' rather than guessed.
+  //
+  const selectFirstTurn = database.prepare(`
+    SELECT brief_path, brief_text FROM sdd_turns
+    WHERE agent_id = ? ORDER BY turn_number ASC LIMIT 1
+  `);
+  const selectAllSessions = database.prepare(`
+    SELECT agent_id, plan_path, task_number, role, cwd, started_at
+    FROM sdd_sessions ORDER BY started_at
+  `);
+
+  function AgentRecordFor(row: Record<string, unknown>): SddAgentRecord {
+    const turn = selectFirstTurn.get(String(row.agent_id)) as
+      | { brief_path: string; brief_text: string }
+      | undefined;
+    return {
+      agent_id: String(row.agent_id),
+      plan_path: String(row.plan_path),
+      task: row.task_number === null || row.task_number === undefined
+        ? null
+        : Number(row.task_number),
+      role: row.role as SddStartRole,
+      brief_path: turn?.brief_path ?? "",
+      brief_text: turn?.brief_text ?? "",
+      cwd: String(row.cwd),
+      dispatched_at: String(row.started_at),
+    };
+  }
+
   return {
     ReserveInitial(input: ReserveInitialInput): void {
       AssertOpen();
@@ -720,6 +806,143 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
       reconcile();
     },
 
+    Insert(input: InsertSddAgentInput): void {
+      AssertOpen();
+      const startedAt = clock().toISOString();
+      const insert = database.transaction(() => {
+        insertSession.run(
+          input.agentId,
+          path.basename(input.planPath, path.extname(input.planPath)),
+          input.planPath,
+          input.cwd,
+          input.task ?? null,
+          "unrecorded",
+          "unrecorded",
+          "unrecorded",
+          input.role,
+          startedAt,
+        );
+        insertTurn.run(
+          input.agentId, 1, "initial", null,
+          input.briefPath, input.briefText, null, null, null, "prepared", startedAt,
+        );
+      });
+      insert();
+    },
+
+    Get(agentId: string): SddAgentRecord | undefined {
+      AssertOpen();
+      const row = selectSession.get(agentId) as Record<string, unknown> | undefined;
+      return row === undefined ? undefined : AgentRecordFor(row);
+    },
+
+    ListAll(): readonly SddAgentRecord[] {
+      AssertOpen();
+      return (selectAllSessions.all() as Array<Record<string, unknown>>).map(AgentRecordFor);
+    },
+
+    Close(): void {
+      if (!closed) {
+        closed = true;
+        database.close();
+      }
+    },
+  };
+}
+
+function MapAgentRow(row: Record<string, unknown>): SddAgentRecord
+{
+  return {
+    agent_id: String(row.agent_id),
+    plan_path: String(row.plan_path),
+    task: row.task === null || row.task === undefined ? null : Number(row.task),
+    role: row.role as SddStartRole,
+    brief_path: String(row.brief_path),
+    brief_text: String(row.brief_text),
+    cwd: String(row.cwd),
+    dispatched_at: String(row.dispatched_at),
+  };
+}
+
+// The v2 ledger is an immutable dispatch index. It is provisioned at
+// user_version 2 and never migrated: a v1 file is refused outright, because a
+// half-working ledger is worse than a loud one. No UPDATE or DELETE statement
+// against sdd_agents is prepared here, so no code path can rot a row.
+//
+export function CreateSddAgentStore(
+  logRoot: string,
+  clock: () => Date = () => new Date(),
+): SddAgentStore {
+  EnsureOwnerOnlyDirectory(logRoot);
+  const databasePath = path.join(logRoot, x_DatabaseFileName);
+  if (existsSync(databasePath)) {
+    EnsureOwnerOnlyLedgerFiles(databasePath);
+  }
+  const database = OpenSddLedgerDatabase(databasePath);
+  EnsureOwnerOnlyLedgerFiles(databasePath);
+
+  const userVersion = database.pragma("user_version", { simple: true }) as number;
+  if (userVersion !== 0 && userVersion !== x_AgentSchemaVersion) {
+    database.close();
+    throw new SddStoreError(
+      `SDD ledger at ${databasePath} is schema version ${userVersion}; `
+      + `this service requires version ${x_AgentSchemaVersion}. `
+      + "v1 data is not migrated: stop the service, delete "
+      + `${databasePath}, ${databasePath}-wal, and ${databasePath}-shm, `
+      + "then start the service to provision a fresh v2 ledger.",
+      "sdd_ledger_schema_mismatch",
+    );
+  }
+  if (userVersion === 0) {
+    const provision = database.transaction(() => {
+      database.exec(x_AgentSchemaSql);
+      database.pragma(`user_version = ${x_AgentSchemaVersion}`);
+    });
+    provision();
+  }
+
+  const insertAgent = database.prepare(`
+    INSERT INTO sdd_agents (
+      agent_id, plan_path, task, role, brief_path, brief_text, cwd, dispatched_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const selectAgent = database.prepare(
+    "SELECT agent_id, plan_path, task, role, brief_path, brief_text, cwd, dispatched_at "
+    + "FROM sdd_agents WHERE agent_id = ?",
+  );
+  const selectAllAgents = database.prepare(
+    "SELECT agent_id, plan_path, task, role, brief_path, brief_text, cwd, dispatched_at "
+    + "FROM sdd_agents ORDER BY dispatched_at",
+  );
+
+  let closed = false;
+
+  return {
+    Insert(input: InsertSddAgentInput): void {
+      if (closed) {
+        throw new SddStoreError("SDD agent store is closed.");
+      }
+      insertAgent.run(
+        input.agentId,
+        input.planPath,
+        input.task ?? null,
+        input.role,
+        input.briefPath,
+        input.briefText,
+        input.cwd,
+        clock().toISOString(),
+      );
+    },
+    Get(agentId: string): SddAgentRecord | undefined {
+      const row = selectAgent.get(agentId) as Record<string, unknown> | undefined;
+      return row === undefined ? undefined : MapAgentRow(row);
+    },
+    ListAll(): readonly SddAgentRecord[] {
+      return (selectAllAgents.all() as Array<Record<string, unknown>>).map(MapAgentRow);
+    },
+    IsSddAgent(agentId: string): boolean {
+      return selectAgent.get(agentId) !== undefined;
+    },
     Close(): void {
       if (!closed) {
         closed = true;

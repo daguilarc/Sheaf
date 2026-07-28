@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, statSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import test from "node:test";
 import Database from "better-sqlite3";
 
 import {
+  CreateSddAgentStore,
   CreateSddStore,
   GetSddDatabasePath,
   OpenSddLedgerDatabase,
@@ -418,4 +419,133 @@ test("closing a session that never existed still fails", async () => {
   } finally {
     await rm(parentRoot, { recursive: true, force: true });
   }
+});
+
+const x_V2AgentInput = {
+  agentId: "xrun_20260728000000000_0000000a",
+  planPath: "/tmp/plans/2026-07-28-redesign-sdd-ledger.md",
+  task: 4,
+  role: "implementer" as const,
+  briefPath: "/tmp/sdd/task-4-brief.md",
+  briefText: "Implement the v2 ledger store.\n",
+  cwd: "/private/tmp/worktree",
+};
+
+test("v2 provisions exactly sdd_agents and its index at user_version 2", async () => {
+  const logRoot = await mkdtemp(path.join(tmpdir(), "sdd-v2-"));
+  try {
+    const store = CreateSddAgentStore(logRoot);
+    store.Close();
+    const database = new Database(GetSddDatabasePath(logRoot), { readonly: true });
+    try {
+      assert.equal(database.pragma("user_version", { simple: true }), 2);
+      const tables = database
+        .prepare("SELECT name, type FROM sqlite_master WHERE type IN ('table','view','index') AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        .all() as Array<{ name: string; type: string }>;
+      assert.deepEqual(tables, [
+        { name: "sdd_agents", type: "table" },
+        { name: "sdd_agents_assignment", type: "index" },
+      ]);
+    } finally {
+      database.close();
+    }
+  } finally {
+    await rm(logRoot, { recursive: true, force: true });
+  }
+});
+
+test("v2 inserts are readable and carry the brief text as dispatched", async () => {
+  const logRoot = await mkdtemp(path.join(tmpdir(), "sdd-v2-"));
+  try {
+    const store = CreateSddAgentStore(logRoot, () => new Date("2026-07-28T10:00:00.000Z"));
+    store.Insert(x_V2AgentInput);
+    const row = store.Get(x_V2AgentInput.agentId);
+    assert.deepEqual(row, {
+      agent_id: x_V2AgentInput.agentId,
+      plan_path: x_V2AgentInput.planPath,
+      task: 4,
+      role: "implementer",
+      brief_path: x_V2AgentInput.briefPath,
+      brief_text: x_V2AgentInput.briefText,
+      cwd: x_V2AgentInput.cwd,
+      dispatched_at: "2026-07-28T10:00:00.000Z",
+    });
+    assert.equal(store.IsSddAgent(x_V2AgentInput.agentId), true);
+    assert.equal(store.IsSddAgent("xrun_20260728000000000_ffffffff"), false);
+    store.Close();
+  } finally {
+    await rm(logRoot, { recursive: true, force: true });
+  }
+});
+
+test("a task-less reviewer row stores NULL task", async () => {
+  const logRoot = await mkdtemp(path.join(tmpdir(), "sdd-v2-"));
+  try {
+    const store = CreateSddAgentStore(logRoot);
+    store.Insert({ ...x_V2AgentInput, role: "reviewer", task: undefined });
+    assert.equal(store.Get(x_V2AgentInput.agentId)!.task, null);
+    store.Close();
+  } finally {
+    await rm(logRoot, { recursive: true, force: true });
+  }
+});
+
+test("multiple agents may share plan, task, and role", async () => {
+  const logRoot = await mkdtemp(path.join(tmpdir(), "sdd-v2-"));
+  try {
+    const store = CreateSddAgentStore(logRoot);
+    store.Insert(x_V2AgentInput);
+    store.Insert({ ...x_V2AgentInput, agentId: "xrun_20260728000000000_0000000b" });
+    assert.equal(store.ListAll().length, 2);
+    store.Close();
+  } finally {
+    await rm(logRoot, { recursive: true, force: true });
+  }
+});
+
+test("opening a v1 ledger refuses with an actionable reprovision message", async () => {
+  const logRoot = await mkdtemp(path.join(tmpdir(), "sdd-v2-"));
+  try {
+    CreateSddStore(logRoot).Close();          // writes user_version = 1
+    assert.throws(
+      () => CreateSddAgentStore(logRoot),
+      (error: unknown) => {
+        assert.ok(error instanceof SddStoreError);
+        assert.match(error.message, /sdd\.sqlite/);
+        assert.match(error.message, /-wal/);
+        assert.match(error.message, /-shm/);
+        assert.match(error.message, /not migrated/);
+        return true;
+      },
+    );
+  } finally {
+    await rm(logRoot, { recursive: true, force: true });
+  }
+});
+
+test("reopening a v2 ledger writes nothing", async () => {
+  const logRoot = await mkdtemp(path.join(tmpdir(), "sdd-v2-"));
+  try {
+    const first = CreateSddAgentStore(logRoot);
+    first.Insert(x_V2AgentInput);
+    first.Close();
+    const before = statSync(GetSddDatabasePath(logRoot)).size;
+    const digestBefore = CreateSddAgentStore(logRoot);
+    const rows = digestBefore.ListAll();
+    digestBefore.Close();
+    assert.equal(rows.length, 1);
+    assert.equal(statSync(GetSddDatabasePath(logRoot)).size, before);
+  } finally {
+    await rm(logRoot, { recursive: true, force: true });
+  }
+});
+
+test("no update or delete statement against sdd_agents is compiled", async () => {
+  const source = await readFile(
+    new URL("../../src/service/sdd_store.ts", import.meta.url),
+    "utf8",
+  );
+  const v2Section = source.slice(source.indexOf("CreateSddAgentStore"));
+  assert.equal(/UPDATE\s+sdd_agents/i.test(v2Section), false);
+  assert.equal(/DELETE\s+FROM\s+sdd_agents/i.test(v2Section), false);
 });
