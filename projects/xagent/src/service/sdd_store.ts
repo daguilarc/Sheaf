@@ -220,6 +220,38 @@ CREATE TABLE sdd_agents
 CREATE INDEX sdd_agents_assignment ON sdd_agents(plan_path, task, role);
 `;
 
+const x_V1RoleToStartRole: Record<string, SddStartRole> = {
+  "implementer": "implementer",
+  "task-reviewer": "reviewer",
+  "code-reviewer": "reviewer",
+};
+
+const x_StartRoleToV1Role: Partial<Record<SddStartRole, SddRole>> = {
+  "implementer": "implementer",
+  "reviewer": "task-reviewer",
+};
+
+function MapV1RoleToStartRole(agentId: string, role: unknown): SddStartRole {
+  const mapped = x_V1RoleToStartRole[String(role)];
+  if (mapped === undefined) {
+    throw new SddStoreError(
+      `v1 session ${agentId} has role '${String(role)}', which has no v2 equivalent.`,
+    );
+  }
+  return mapped;
+}
+
+function MapStartRoleToV1Role(role: SddStartRole): SddRole {
+  const mapped = x_StartRoleToV1Role[role];
+  if (mapped === undefined) {
+    throw new SddStoreError(
+      `SddStartRole '${role}' has no v1 session equivalent; refuse writing a mixed vocabulary.`,
+      "sdd_role_unmapped",
+    );
+  }
+  return mapped;
+}
+
 export class SddStoreError extends Error {
   readonly code: string;
 
@@ -590,9 +622,9 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
       task: row.task_number === null || row.task_number === undefined
         ? null
         : Number(row.task_number),
-      role: row.role as SddStartRole,
-      brief_path: turn?.brief_path ?? "",
-      brief_text: turn?.brief_text ?? "",
+      role: MapV1RoleToStartRole(String(row.agent_id), row.role),
+      brief_path: turn?.brief_path ?? "unrecorded",
+      brief_text: turn?.brief_text ?? "unrecorded",
       cwd: String(row.cwd),
       dispatched_at: String(row.started_at),
     };
@@ -808,6 +840,7 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
 
     Insert(input: InsertSddAgentInput): void {
       AssertOpen();
+      const v1Role = MapStartRoleToV1Role(input.role);
       const startedAt = clock().toISOString();
       const insert = database.transaction(() => {
         insertSession.run(
@@ -819,7 +852,7 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
           "unrecorded",
           "unrecorded",
           "unrecorded",
-          input.role,
+          v1Role,
           startedAt,
         );
         insertTurn.run(
@@ -884,12 +917,15 @@ export function CreateSddAgentStore(
   const userVersion = database.pragma("user_version", { simple: true }) as number;
   if (userVersion !== 0 && userVersion !== x_AgentSchemaVersion) {
     database.close();
+    const remediation = userVersion < x_AgentSchemaVersion
+      ? "v1 data is not migrated: stop the service, delete "
+        + `${databasePath}, ${databasePath}-wal, and ${databasePath}-shm, `
+        + "then start the service to provision a fresh v2 ledger."
+      : "this build is older than the ledger; upgrade the service — do not delete the ledger.";
     throw new SddStoreError(
       `SDD ledger at ${databasePath} is schema version ${userVersion}; `
       + `this service requires version ${x_AgentSchemaVersion}. `
-      + "v1 data is not migrated: stop the service, delete "
-      + `${databasePath}, ${databasePath}-wal, and ${databasePath}-shm, `
-      + "then start the service to provision a fresh v2 ledger.",
+      + remediation,
       "sdd_ledger_schema_mismatch",
     );
   }
@@ -917,30 +953,51 @@ export function CreateSddAgentStore(
 
   let closed = false;
 
+  function AssertAgentStoreOpen(): void {
+    if (closed) {
+      throw new SddStoreError("SDD agent store is closed.");
+    }
+  }
+
   return {
     Insert(input: InsertSddAgentInput): void {
-      if (closed) {
-        throw new SddStoreError("SDD agent store is closed.");
+      AssertAgentStoreOpen();
+      try {
+        insertAgent.run(
+          input.agentId,
+          input.planPath,
+          input.task ?? null,
+          input.role,
+          input.briefPath,
+          input.briefText,
+          input.cwd,
+          clock().toISOString(),
+        );
+      } catch (error) {
+        if (
+          error instanceof Error
+          && "code" in error
+          && (error as { code: string }).code === "SQLITE_CONSTRAINT_PRIMARYKEY"
+        ) {
+          throw new SddStoreError(
+            `SDD agent already exists: ${input.agentId}`,
+            "sdd_agent_already_exists",
+          );
+        }
+        throw error;
       }
-      insertAgent.run(
-        input.agentId,
-        input.planPath,
-        input.task ?? null,
-        input.role,
-        input.briefPath,
-        input.briefText,
-        input.cwd,
-        clock().toISOString(),
-      );
     },
     Get(agentId: string): SddAgentRecord | undefined {
+      AssertAgentStoreOpen();
       const row = selectAgent.get(agentId) as Record<string, unknown> | undefined;
       return row === undefined ? undefined : MapAgentRow(row);
     },
     ListAll(): readonly SddAgentRecord[] {
+      AssertAgentStoreOpen();
       return (selectAllAgents.all() as Array<Record<string, unknown>>).map(MapAgentRow);
     },
     IsSddAgent(agentId: string): boolean {
+      AssertAgentStoreOpen();
       return selectAgent.get(agentId) !== undefined;
     },
     Close(): void {

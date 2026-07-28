@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, statSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -523,29 +524,149 @@ test("opening a v1 ledger refuses with an actionable reprovision message", async
   }
 });
 
+test("opening a newer ledger refuses without offering delete", async () => {
+  const logRoot = await mkdtemp(path.join(tmpdir(), "sdd-v2-newer-"));
+  try {
+    const databasePath = GetSddDatabasePath(logRoot);
+    const database = new Database(databasePath);
+    database.pragma("user_version = 3");
+    database.close();
+
+    assert.throws(
+      () => CreateSddAgentStore(logRoot),
+      (error: unknown) => {
+        assert.ok(error instanceof SddStoreError);
+        assert.equal(error.code, "sdd_ledger_schema_mismatch");
+        assert.match(error.message, /schema version 3/);
+        assert.match(error.message, /older than the ledger/);
+        assert.match(error.message, /upgrade/);
+        assert.match(error.message, /do not delete/);
+        assert.equal(/not migrated/.test(error.message), false);
+        assert.equal(/stop the service, delete/.test(error.message), false);
+        return true;
+      },
+    );
+  } finally {
+    await rm(logRoot, { recursive: true, force: true });
+  }
+});
+
+function DigestPathOrNull(filePath: string): string | null {
+  if (!existsSync(filePath)) {
+    return null;
+  }
+  return createHash("sha256").update(readFileSync(filePath)).digest("hex");
+}
+
+function DigestLedgerBundle(databasePath: string): {
+  readonly db: string;
+  readonly wal: string | null;
+  readonly shm: string | null;
+} {
+  return {
+    db: createHash("sha256").update(readFileSync(databasePath)).digest("hex"),
+    wal: DigestPathOrNull(`${databasePath}-wal`),
+    shm: DigestPathOrNull(`${databasePath}-shm`),
+  };
+}
+
 test("reopening a v2 ledger writes nothing", async () => {
   const logRoot = await mkdtemp(path.join(tmpdir(), "sdd-v2-"));
   try {
     const first = CreateSddAgentStore(logRoot);
     first.Insert(x_V2AgentInput);
     first.Close();
-    const before = statSync(GetSddDatabasePath(logRoot)).size;
+    const databasePath = GetSddDatabasePath(logRoot);
+    const before = DigestLedgerBundle(databasePath);
     const digestBefore = CreateSddAgentStore(logRoot);
     const rows = digestBefore.ListAll();
     digestBefore.Close();
     assert.equal(rows.length, 1);
-    assert.equal(statSync(GetSddDatabasePath(logRoot)).size, before);
+    assert.deepEqual(DigestLedgerBundle(databasePath), before);
   } finally {
     await rm(logRoot, { recursive: true, force: true });
   }
 });
 
 test("no update or delete statement against sdd_agents is compiled", async () => {
-  const source = await readFile(
-    new URL("../../src/service/sdd_store.ts", import.meta.url),
-    "utf8",
+  // Resolves only when running from dist/tests/ (npm test / node --test dist/...).
+  //
+  const serviceDir = new URL("../../src/service/", import.meta.url);
+  const entries = await readdir(serviceDir);
+  const sources = await Promise.all(
+    entries
+      .filter((name) => name.endsWith(".ts"))
+      .map((name) => readFile(new URL(name, serviceDir), "utf8")),
   );
-  const v2Section = source.slice(source.indexOf("CreateSddAgentStore"));
-  assert.equal(/UPDATE\s+sdd_agents/i.test(v2Section), false);
-  assert.equal(/DELETE\s+FROM\s+sdd_agents/i.test(v2Section), false);
+  const corpus = sources.join("\n");
+  const mutatesAgents =
+    /(?:UPDATE|REPLACE\s+INTO)\s+(?:\w+\.)?["`]?sdd_agents["`]?/i.test(corpus)
+    || /DELETE\s+FROM\s+(?:\w+\.)?["`]?sdd_agents["`]?/i.test(corpus);
+  assert.equal(mutatesAgents, false);
+});
+
+test("v1 adapter maps session roles onto SddStartRole", async () => {
+  const logRoot = await mkdtemp(path.join(tmpdir(), "sdd-v1-role-map-"));
+  try {
+    const store = CreateSddStore(logRoot);
+    store.ReserveInitial({
+      ...sampleInitialInput,
+      role: "task-reviewer",
+    });
+    const record = store.Get(sampleAgentId);
+    assert.equal(record?.role, "reviewer");
+    store.Close();
+  } finally {
+    await rm(logRoot, { recursive: true, force: true });
+  }
+});
+
+test("v1 Insert refuses SddStartRoles with no v1 equivalent", async () => {
+  const logRoot = await mkdtemp(path.join(tmpdir(), "sdd-v1-role-refuse-"));
+  try {
+    const store = CreateSddStore(logRoot);
+    assert.throws(
+      () => store.Insert({ ...x_V2AgentInput, role: "fixer" }),
+      (error: unknown) => {
+        assert.ok(error instanceof SddStoreError);
+        assert.equal(error.code, "sdd_role_unmapped");
+        return true;
+      },
+    );
+    store.Close();
+  } finally {
+    await rm(logRoot, { recursive: true, force: true });
+  }
+});
+
+test("v2 Insert wraps duplicate agent_id as SddStoreError", async () => {
+  const logRoot = await mkdtemp(path.join(tmpdir(), "sdd-v2-dup-"));
+  try {
+    const store = CreateSddAgentStore(logRoot);
+    store.Insert(x_V2AgentInput);
+    assert.throws(
+      () => store.Insert(x_V2AgentInput),
+      (error: unknown) => {
+        assert.ok(error instanceof SddStoreError);
+        assert.equal(error.code, "sdd_agent_already_exists");
+        return true;
+      },
+    );
+    store.Close();
+  } finally {
+    await rm(logRoot, { recursive: true, force: true });
+  }
+});
+
+test("v2 reads after Close throw SddStoreError", async () => {
+  const logRoot = await mkdtemp(path.join(tmpdir(), "sdd-v2-closed-"));
+  try {
+    const store = CreateSddAgentStore(logRoot);
+    store.Close();
+    assert.throws(() => store.Get(x_V2AgentInput.agentId), SddStoreError);
+    assert.throws(() => store.ListAll(), SddStoreError);
+    assert.throws(() => store.IsSddAgent(x_V2AgentInput.agentId), SddStoreError);
+  } finally {
+    await rm(logRoot, { recursive: true, force: true });
+  }
 });

@@ -385,11 +385,11 @@ function CreateFakeStore(recorder: ReturnType<typeof CreateOrderRecorder>): SddS
     },
     Get(_agentId: string): SddAgentRecord | undefined
     {
-      return undefined;
+      throw new Error("CreateFakeStore.Get is not used by current manager tests");
     },
     ListAll(): readonly SddAgentRecord[]
     {
-      return [];
+      throw new Error("CreateFakeStore.ListAll is not used by current manager tests");
     },
     Close(): void
     {
