@@ -145,6 +145,44 @@ Task 9 is the natural owner of all four. This is not a defect in Task 4; it is
 the accounting for a wholesale deletion, recorded so the coverage is rebuilt
 deliberately rather than assumed.
 
+### B7. The log-root directory is secured at creation only, never re-secured — OPEN
+
+Found while restoring the reopen-permissions coverage the Task 8a review
+flagged as lost.
+
+`EnsureOwnerOnlyDirectory` (`src/service/sdd_store.ts:68-72`) calls
+`mkdirSync(..., { mode: 0o700 })` **only when the directory does not exist**.
+It never `chmod`s an existing one. By contrast `EnsureOwnerOnlyLedgerFiles`
+re-secures `sdd.sqlite` and both sidecars to `0o600` on *every* open, twice.
+
+So a log root that becomes group- or world-readable — by an operator `chmod`,
+a restore, a copy, a container image layer — stays that way for the life of
+the service, while the ledger file inside it is repeatedly re-secured. The
+asymmetry is the surprising part: the code clearly intends owner-only, and
+achieves it for files but not for their container.
+
+Impact is bounded but real. The ledger itself stays `0o600`, so `brief_text`
+is not exposed by this. What a readable log root exposes is the **directory
+listing**: agent ids, and the per-run directories. Those run directories are
+already created `0o755` and hold `normalized.jsonl` — which after this change
+is the *only* copy of every agent's reports and submitted prompts (xsvc-14).
+So the run-directory mode is the larger question, and this finding is really
+the narrow end of it.
+
+Pre-existing; not introduced by any task in this change, and untouched by the
+v1 deletion. Deliberately not fixed inside the cutover — changing directory
+permission behaviour during the most irreversible step in the plan is the
+wrong trade.
+
+The restored test at `tests/sdd_store.test.ts` ("v2 re-secures the ledger and
+its WAL sidecars on reopen") pins the file guarantee and carries a comment
+saying explicitly that it does **not** assert the directory mode, so the gap
+is visible rather than silently uncovered.
+
+Whole-branch review should decide two things together: whether
+`EnsureOwnerOnlyDirectory` should re-secure, and whether run directories
+should be `0o700` given they are now the system of record.
+
 ### B2. Intermittent test failure — CONFIRMED REAL, STILL UNIDENTIFIED
 
 **Two independent sightings, different agents and different commits.** No
