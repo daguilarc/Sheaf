@@ -1,0 +1,113 @@
+# Deferred findings — SDD ledger v2 redesign
+
+Things found while executing the plan that were deliberately **not** fixed in
+the task that surfaced them. Each names why it was deferred and where it
+should land. This file is input to the whole-branch review (after Task 11).
+
+---
+
+## A. xagent facade defects found by dogfooding
+
+These were found by using the SDD facade to rebuild the SDD facade. Findings
+1 and 5 are already addressed by this change; 2, 3, and 4 are not.
+
+### A1. SDD dispatch tools advertised empty input schemas — FIXED (Task 0)
+
+`registerTool` derives a tool's advertised JSON Schema from an object schema;
+both SDD tools passed a `z.discriminatedUnion`, which normalizes to
+`undefined`, so the SDK published `{}`. Clients that trusted discovery
+mis-serialized their arguments.
+
+Fixed in Task 0 (`f7ac2fa4`) under new requirement **xsvc-15**. Recorded here
+because the redesign did not originally fix it: v2 swaps the union for another
+union, so the defect would have survived the cutover.
+
+### A2. `xagent_sdd_start` / `xagent_sdd_followup` return timeouts to the client while succeeding server-side — OPEN
+
+Every dispatch in this change returned "operation timed out" to the MCP client
+while the server completed create → start → submit normally. A controller that
+retries on timeout **spawns a duplicate agent**. The only safe recovery is to
+poll `xagent_list` and reconcile.
+
+Not fixed: out of scope for every task in this plan, and the workaround
+(verify via `xagent_list`, never retry) is reliable. Should become an
+requirement — either the tool returns promptly with the allocated `agent_id`
+before the provider is ready, or the contract documents that a timeout is not
+a failure and names the reconciliation path.
+
+### A3. `xagent_await`'s 7000-second contract exceeds any usable client — OPEN
+
+`xsvc-5` specifies a 7200-second HTTP/MCP request lifetime and a 7000-second
+default await deadline. No MCP client driving this service can hold a request
+that long; every long await returns a client-side timeout. The tool itself is
+correct — a 45-second deadline returns a clean `supervision.deadline`.
+
+Not fixed: this is a *specification* problem, not a code defect, so it needs a
+decision rather than a patch. Task 10 rewrites the specs and is the natural
+place to confront it. Options: lower the default to something a client can
+actually hold, or keep the long deadline but document short-deadline polling
+as the supported controller pattern.
+
+### A4. `sdd_turn_unresolved` couples ledger state to controller tool choice — FIXED BY THIS CHANGE
+
+A v1 turn row stays open until the controller calls `xagent_sdd_await`
+specifically; the generic `xagent_await` does not resolve it. The controller
+hit this twice during execution — once per agent — costing a wasted
+round-trip each time.
+
+This is the ledger rot the change exists to remove, and the strongest
+available justification for `xsvc-5` (one await tool) and Task 4 (delete the
+facade). Cite it when Task 10 rewrites `xagent-sdd-workflow`.
+
+---
+
+## B. Code findings deferred out of the task that found them
+
+### B1. `journal_mode = WAL` is set before the `user_version` gate — OPEN
+
+`OpenSddLedgerDatabase` (`src/service/sdd_store.ts`) applies
+`journal_mode = WAL` before `CreateSddAgentStore` checks `user_version`.
+Converting a rollback-journal database to WAL rewrites its header, so refusing
+a newer-than-2 ledger still mutates a file this build just declared it cannot
+read — awkward beside the new "do not delete the ledger; upgrade the service"
+remediation added in Task 2.
+
+Found in the Task 2 re-review. Deferred because it is pre-existing, sits in
+the open path **shared by the v1 and v2 stores**, and reordering shared open
+logic inside an additive task risks a regression in the store the live service
+is running on. Fix: move the version check ahead of the pragma. Whole-branch
+review, or a follow-up change.
+
+### B2. Unreproduced intermittent test failure — OPEN
+
+The Task 1 implementer reported one `service_main` reconciliation failure that
+passed on isolated re-run and on the subsequent full suite. The controller
+could not reproduce it: 8/8 isolated, 3/3 full-suite clean.
+
+Not chased further because there is nothing to bisect. Recorded because an
+occasionally-red suite silently degrades the green signal every later task
+depends on. If it recurs, capture the failing output before re-running.
+
+### B3. Residual gaps in the no-`UPDATE` guard test — ACCEPTED
+
+After the Task 2 fix the guard scans all of `src/service/*.ts` and covers
+quoted, schema-qualified, and `REPLACE INTO` forms. Still outside its reach:
+bracket-quoted `[sdd_agents]`, and subdirectories of `src/service/`.
+
+Accepted: the finding's bar is met and the remaining forms are not idioms this
+codebase uses.
+
+### B4. The two v1/v2 role maps are deliberately not inverses — ACCEPTED
+
+`code-reviewer → reviewer` on read, but `reviewer → task-reviewer` on write,
+so a `code-reviewer` row read and re-inserted would land as `task-reviewer`.
+Inherent to v2 merging two v1 roles into one; no read-then-reinsert path
+exists. Both maps die with the v1 store in Task 8a.
+
+### B5. The v1 adapter's `Insert` refuses `fixer` and `re-reviewer` — ACCEPTED
+
+Two of the port's four roles have no v1 equivalent, because v1 expressed
+fix/re-review as a turn *kind* rather than a role. `Insert` throws
+`sdd_role_unmapped` rather than inventing a mapping. Correct modelling; made
+harmless by the Task 6 → 8a no-restart window, since the rewritten manager
+never runs against a v1 file.

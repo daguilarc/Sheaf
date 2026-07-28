@@ -452,7 +452,7 @@ export function CreateSddAgentStore(logRoot: string, clock?: () => Date): SddAge
 
 **Critical:** v1's `CreateSddStore` and every v1 export stay exactly as they are. This task adds code; it removes none. `SddStore` gains the three `SddAgentStore` methods it does not already have (`Insert`, `Get`, `ListAll`) so that the v1 store also satisfies the port — that is transitional scaffolding, deleted in Task 8.
 
-- [ ] **Step 1: Write the failing store tests**
+- [x] **Step 1: Write the failing store tests**
 
 Append to `projects/xagent/tests/sdd_store.test.ts`. The file already has a temp-directory pattern (`mkdtemp` / `rm`); reuse it.
 
@@ -589,7 +589,7 @@ test("no update or delete statement against sdd_agents is compiled", async () =>
 
 Add `readFile` to the file's `node:fs/promises` import and `CreateSddAgentStore` to the store import.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/sdd_store.test.js
@@ -597,7 +597,7 @@ cd projects/xagent && npm run build && node --test dist/tests/sdd_store.test.js
 
 Expected: FAIL — build error, `CreateSddAgentStore` is not exported from `sdd_store.ts`.
 
-- [ ] **Step 3: Add the v2 schema and store**
+- [x] **Step 3: Add the v2 schema and store**
 
 In `src/service/sdd_store.ts`, after the existing `x_SchemaSql` constant (line 167), add:
 
@@ -731,7 +731,7 @@ export function CreateSddAgentStore(
 }
 ```
 
-- [ ] **Step 4: Make the v1 store satisfy the same port (transitional)**
+- [x] **Step 4: Make the v1 store satisfy the same port (transitional)**
 
 Widen `SddSessionRecord.role` from `SddRole` to `string` (line 19), then add three methods to the `SddStore` type (line 68) and to `CreateSddStore`'s returned object:
 
@@ -816,7 +816,7 @@ and in the returned object:
     },
 ```
 
-- [ ] **Step 5: Run the store tests**
+- [x] **Step 5: Run the store tests**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/sdd_store.test.js
@@ -824,7 +824,7 @@ cd projects/xagent && npm run build && node --test dist/tests/sdd_store.test.js
 
 Expected: PASS, 0 failures.
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 ```bash
 cd projects/xagent && npm test
@@ -832,7 +832,7 @@ cd projects/xagent && npm test
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add projects/xagent/src/service/sdd_store.ts projects/xagent/tests/sdd_store.test.ts
