@@ -76,13 +76,13 @@ WHEN `xagent_start_non_sdd` or `xagent_sdd_start` receives a working directory, 
 
 ### Requirement: xsvc-8 — Ledger: insert-only per-agent dispatch index
 
-WHEN `xagent_sdd_start` accepts a dispatch, THE xagent service SHALL insert exactly one row into the schema-version-2 `sdd_agents` table (`agent_id`, `plan_path`, `task`, `role`, `brief_path`, `brief_sha256`, `cwd`, `predecessor_agent_id`, `dispatched_at`) before creating the run; THE service SHALL never update or delete `sdd_agents` rows, SHALL store no turn status, report text, session closure, harness, model, or effort in the ledger, and SHALL refuse to open a ledger database whose `user_version` is not 2 with an actionable error naming the reprovision step.
+WHEN `xagent_sdd_start` accepts a dispatch, THE xagent service SHALL insert exactly one row into the schema-version-2 `sdd_agents` table (`agent_id`, `plan_path`, `task`, `role`, `brief_path`, `brief_text`, `cwd`, `dispatched_at`) before creating the run; THE service SHALL never update or delete `sdd_agents` rows, SHALL store no turn status, report text, session closure, harness, model, or effort in the ledger, and SHALL refuse to open a ledger database whose `user_version` is not 2 with an actionable error naming the reprovision step.
 
 #### Scenario: Row precedes the run
 
 - **WHEN** an SDD dispatch is accepted
 - **THEN** the `sdd_agents` row is inserted before the provider run record is created
-- **AND** the row carries the SHA-256 of the brief file's content as read at dispatch time
+- **AND** the row carries the brief file's content as read at dispatch time
 
 #### Scenario: Dispatch failure leaves an immutable tombstone
 
@@ -134,36 +134,37 @@ WHEN a supervised run's supervisor submits text to the provider, THE xagent serv
 - **WHEN** the service crashes immediately after a submit call returns
 - **THEN** the `turn.submitted` event for that submission is already durable in `normalized.jsonl`
 
-### Requirement: xsvc-10 — Ledger: predecessor lineage
+### Requirement: xsvc-10 — Ledger: immutable start role and durable brief
 
-WHEN `xagent_sdd_start` receives role `fixer` or `re-reviewer`, THE xagent service SHALL require `predecessor_agent_id`; WHEN it receives role `implementer` or `reviewer`, THE service SHALL accept an optional `predecessor_agent_id` for mid-turn takeover; THE service SHALL reject a `predecessor_agent_id` that does not reference an existing `sdd_agents` row with a structured error, and SHALL record the dispatched role immutably as the role the agent starts as, never rewriting it when the agent is later reused for another turn kind.
+WHEN `xagent_sdd_start` accepts a dispatch, THE xagent service SHALL record the role the agent starts as and SHALL never rewrite it when the agent is later reused for another turn kind; THE service SHALL store the brief's content as `brief_text` read at dispatch time, so the assignment remains readable by SQL after the worktree that held the brief file is deleted or the file is edited; THE service SHALL NOT record any lineage link between agents.
 
-#### Scenario: Fixer requires lineage
+#### Scenario: Reuse does not rewrite the role
 
-- **WHEN** a controller dispatches role `fixer` without `predecessor_agent_id`
-- **THEN** the service rejects the input before inserting a row or creating a run
-
-#### Scenario: Unknown predecessor rejected
-
-- **WHEN** a controller dispatches role `re-reviewer` with a `predecessor_agent_id` absent from `sdd_agents`
-- **THEN** the service returns a structured error naming the unknown id
-- **AND** inserts no row and creates no run
-
-#### Scenario: Takeover implementer records its dead sibling
-
-- **WHEN** an implementer dies mid-turn and a fresh implementer is dispatched with `predecessor_agent_id` set to the dead agent
-- **THEN** the new row records role `implementer` and the predecessor link
-- **AND** the same-role link reads as a takeover without any `kind` column
-
-#### Scenario: Role never mutates
-
-- **WHEN** an agent dispatched as `implementer` later receives a `fix` continuation via `xagent_sdd_followup`
+- **WHEN** an implementer completes its task turn and is then sent a `fix` follow-up on the same agent
 - **THEN** its `sdd_agents` row still records role `implementer`
-- **AND** no per-turn role is recorded anywhere in the ledger
+- **AND** no second row is written
+
+#### Scenario: Brief survives its worktree
+
+- **WHEN** an agent is dispatched with a brief inside a worktree
+- **AND** the worktree is deleted afterwards
+- **THEN** `SELECT brief_text FROM sdd_agents WHERE agent_id = ?` still returns the brief exactly as the agent received it
+
+#### Scenario: Brief drift is detectable
+
+- **WHEN** the brief file at `brief_path` is edited after dispatch
+- **THEN** the stored `brief_text` still reflects what was dispatched
+- **AND** comparing the file against `brief_text` identifies the drift
+
+#### Scenario: Ordering, not lineage, relates agents
+
+- **WHEN** a task has an implementer, then a fresh `fixer`, then another `fixer`
+- **THEN** all three rows share `plan_path` and `task`
+- **AND** their relationship is recoverable by ordering on `dispatched_at`, with no controller-supplied link
 
 ### Requirement: xsvc-11 — SDD dispatch: four-way start role union
 
-WHEN `xagent_sdd_start` is called, THE xagent service SHALL accept exactly the roles `implementer`, `reviewer`, `fixer`, and `re-reviewer` as a discriminated union; `reviewer` with a `task` SHALL render the task-review template and `reviewer` without a `task` SHALL render the whole-branch review template; `fixer` SHALL render a fix template from `plan`, `task`, the original `brief`, `findings`, `tests`, and `report` carrying the predecessor's identity rather than encoding the fix round into an assignment name; `re-reviewer` SHALL render a re-review template from `findings`, `report`, `base`, and `head`.
+WHEN `xagent_sdd_start` is called, THE xagent service SHALL accept exactly the roles `implementer`, `reviewer`, `fixer`, and `re-reviewer` as a discriminated union; `reviewer` with a `task` SHALL render the task-review template and `reviewer` without a `task` SHALL render the whole-branch review template; `fixer` SHALL render a fix template from `plan`, `task`, the original `brief`, `findings`, `tests`, and `report` rather than encoding the fix round into an assignment name; `re-reviewer` SHALL render a re-review template from `findings`, `report`, `base`, and `head`.
 
 #### Scenario: Reviewer merge replaces the v1 role split
 
@@ -173,8 +174,8 @@ WHEN `xagent_sdd_start` is called, THE xagent service SHALL accept exactly the r
 
 #### Scenario: Fresh fixer without impersonation
 
-- **WHEN** a controller dispatches role `fixer` for a task whose implementer is dead, passing the original brief, the findings file, covering tests, and the predecessor id
-- **THEN** the rendered prompt identifies the work as a fix of the predecessor's task
+- **WHEN** a controller dispatches role `fixer` for a task whose implementer is dead, passing the original brief, the findings file, and covering tests
+- **THEN** the rendered prompt identifies the work as a fix for that plan and task
 - **AND** no assignment name of the form "Task N Fix Round M" is required or rendered as the task identity
 
 #### Scenario: Unknown role rejected
@@ -184,7 +185,7 @@ WHEN `xagent_sdd_start` is called, THE xagent service SHALL accept exactly the r
 
 ### Requirement: xsvc-12 — SDD continuation: demoted `xagent_sdd_followup`
 
-WHEN `xagent_sdd_followup` is called with kind `fix` or `re-review`, THE xagent service SHALL render the continuation template and submit it to the same live agent without writing the ledger, validating only that the run is live in the run manager and that the kind matches the agent's immutable start role (`fix` for `implementer` or `fixer`; `re-review` for `reviewer` or `re-reviewer`); WHEN the run is not live, THE service SHALL return a structured `sdd_agent_not_live` error whose details name the fresh-agent recovery: the role to dispatch and `predecessor_agent_id` set to this agent.
+WHEN `xagent_sdd_followup` is called with kind `fix` or `re-review`, THE xagent service SHALL render the continuation template and submit it to the same live agent without writing the ledger, validating only that the run is live in the run manager and that the kind matches the agent's immutable start role (`fix` for `implementer` or `fixer`; `re-review` for `reviewer` or `re-reviewer`); WHEN the run is not live, THE service SHALL return a structured `sdd_agent_not_live` error whose details name the fresh-agent recovery: the role to dispatch for the same `plan_path` and `task`.
 
 #### Scenario: Same-agent fix writes no ledger state
 
@@ -196,7 +197,7 @@ WHEN `xagent_sdd_followup` is called with kind `fix` or `re-review`, THE xagent 
 
 - **WHEN** a controller sends kind `fix` to an agent whose run is terminal or absent from the run manager
 - **THEN** the service returns `sdd_agent_not_live`
-- **AND** the error details state that recovery is `xagent_sdd_start` with role `fixer` and `predecessor_agent_id` set to this agent id
+- **AND** the error details state that recovery is `xagent_sdd_start` with role `fixer` for the same plan and task
 
 #### Scenario: Kind must match start role
 
@@ -212,7 +213,7 @@ WHEN `xagent_sdd_followup` is called with kind `fix` or `re-review`, THE xagent 
 
 ### Requirement: xsvc-13 — Recovery: SDD identity and tombstones in `xagent_list`
 
-WHEN `xagent_list` returns runs, THE xagent service SHALL join `sdd_agents` identity onto SDD-owned rows as an `sdd` block carrying `role`, `plan`, `task`, `brief_path`, `predecessor_agent_id`, and `dispatched_at`, and SHALL additionally return ledger rows that have no run record as tombstone entries flagged `run_missing: true`, ordered among the results by their `dispatched_at`.
+WHEN `xagent_list` returns runs, THE xagent service SHALL join `sdd_agents` identity onto SDD-owned rows as an `sdd` block carrying `role`, `plan`, `task`, `brief_path`, and `dispatched_at`, and SHALL additionally return ledger rows that have no run record as tombstone entries flagged `run_missing: true`, ordered among the results by their `dispatched_at`.
 
 #### Scenario: Lost start response recovered by identity
 

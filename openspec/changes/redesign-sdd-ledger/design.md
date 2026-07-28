@@ -105,26 +105,19 @@ PRAGMA user_version = 2;   -- reprovision: the v1 sdd.sqlite is deleted, no migr
 
 CREATE TABLE sdd_agents
 (
-    agent_id             TEXT PRIMARY KEY,     -- the xagent run id; joins to <log_root>/<agent_id>/
-    plan_path            TEXT NOT NULL,
-    task                 INTEGER,              -- NULL = whole-branch scope
-    role                 TEXT NOT NULL CHECK (role IN
-                             ('implementer', 'reviewer', 'fixer', 're-reviewer')),
-    brief_path           TEXT NOT NULL,
-    brief_sha256         TEXT NOT NULL,        -- content hash of the brief at dispatch time
-    cwd                  TEXT NOT NULL,
-    predecessor_agent_id TEXT REFERENCES sdd_agents(agent_id),
-    dispatched_at        TEXT NOT NULL,
+    agent_id      TEXT PRIMARY KEY,     -- the xagent run id; joins to <log_root>/<agent_id>/
+    plan_path     TEXT NOT NULL,
+    task          INTEGER,              -- NULL = whole-branch scope
+    role          TEXT NOT NULL CHECK (role IN
+                      ('implementer', 'reviewer', 'fixer', 're-reviewer')),
+    brief_path    TEXT NOT NULL,
+    brief_text    TEXT NOT NULL,        -- the brief as dispatched
+    cwd           TEXT NOT NULL,
+    dispatched_at TEXT NOT NULL,
     CHECK (task IS NULL OR task > 0)
 );
 
 CREATE INDEX sdd_agents_assignment ON sdd_agents(plan_path, task, role);
-
-CREATE VIEW sdd_dispatch_log AS
-SELECT a.*,
-       p.role AS predecessor_role
-FROM sdd_agents AS a
-LEFT JOIN sdd_agents AS p ON p.agent_id = a.predecessor_agent_id;
 ```
 
 Column-by-column justification against constraint 2:
@@ -135,26 +128,17 @@ Column-by-column justification against constraint 2:
   directory and parsing prompts: "which run was the Task 4 implementer"
   must be a SQL query, not archaeology. `plan_name` is not a column; it is
   `basename(plan_path)`, derived in queries and the view consumer.
-- `brief_path` — what the agent was assigned, as identity (constraint 4).
-  Brief content at dispatch time reaches the JSONL via `turn.submitted`
-  where templates inline it; where a template only references the path, see
-  `brief_sha256`.
-- `brief_sha256` — 64 bytes answering a question nothing else can: has the
-  brief file changed since this agent was dispatched? Briefs live in
-  worker-writable worktrees and are edited across fix rounds; the incident
-  forensics had to guess at this. The hash detects drift without
-  duplicating content.
-- `cwd` — which worktree the agent operated in. Run `metadata.json` does
-  not record it, and the incident's core confusion (service checkout versus
-  worktree) makes it load-bearing for recovery.
-- `predecessor_agent_id` — the schema expression of constraint 5 and the
-  one genuinely new fact in v2: lineage exists in no log today. Its meaning
-  derives from the successor's role, so there is no `kind` column: a
-  `fixer` whose predecessor is an implementer or fixer is fixing that
-  agent's work (same role = takeover after death); a `re-reviewer`'s
-  predecessor is the reviewer it succeeds; an `implementer` or `reviewer`
-  carries a predecessor only on mid-turn takeover. Required for `fixer` and
-  `re-reviewer`, optional for `implementer` and `reviewer`.
+- `brief_path` — which brief file the agent was pointed at (constraint 4).
+  Identity only; the content is in `brief_text` below.
+- `brief_text` — the brief exactly as dispatched. This is the one place
+  constraint 2's premise does not hold: several templates pass `--brief` as a
+  *path* rather than inlining it, so for those agents the brief content never
+  entered the prompt and is therefore in no `turn.submitted` event. Briefs also
+  live in worker-writable worktrees that get edited across fix rounds and
+  deleted afterwards. Storing the text is equivalent to writing a copy into the
+  run directory — same durability, one SQL query instead of a file hunt — and
+  it is one row per agent, so constraint 3 is untouched. It also subsumes drift
+  detection: compare the file at `brief_path` against `brief_text`.
 - `dispatched_at` — mild duplication of run `created_at`, kept
   deliberately: ordering the rounds of a task must work in SQL without
   opening N metadata files, and it still orders dispatch-failure tombstones
@@ -169,10 +153,30 @@ Explicitly not stored, and where it lives instead:
 |---|---|
 | turn rows, turn status, `resume_sequence`/`completed_sequence` | `normalized.jsonl`: `turn.submitted` / `turn.completed` / terminal events, already sequence-ordered |
 | `report_text` | the `turn.completed` payload in `normalized.jsonl` — already what persisted-await reads; the v1 ledger copy was redundant, so the report is deliberately not recorded in the ledger at all |
-| `brief_text`, `findings_text`, prompt text, notes, chit-chat | `turn.submitted` events |
+| `findings_text`, prompt text, notes, chit-chat | `turn.submitted` events |
+| `predecessor_agent_id` lineage | nothing — deliberately dropped; see D3a |
 | session `status` / `closed_at` | run `metadata.json` `supervision.phase`, maintained by the supervisor's `metadataSink` |
 | `harness`, `agent` (model), `effort` | run `metadata.json`; `xagent_list` already joins it |
 | fix/re-review `round` numbers | the `turn.submitted` prompt text and dispatch order within `(plan_path, task)` |
+
+### D3a: Why there is no lineage column
+
+An earlier draft carried `predecessor_agent_id`, required for `fixer` and
+`re-reviewer` and optional for takeovers. It is dropped, because the service
+cannot determine it — only the controller can, and constraint 1 says the
+ledger must be correct no matter what the lead does. A required link fails
+closed (a fixer without one is an error), but the *optional* takeover link is
+the case that matters most and it would silently go missing whenever the lead
+forgot, producing an orphan row indistinguishable from a first dispatch.
+
+What is lost is precision in one case: with two concurrent fixers on one task,
+"which fixed which" is no longer recorded. What is kept covers every forensic
+question that was actually asked — `(plan_path, task, role)` ordered by
+`dispatched_at` yields the sequence implementer → reviewer → fixer →
+re-reviewer without the controller supplying anything. Ordering is derived from
+data the service writes itself; lineage was derived from data the lead had to
+remember. Between an always-correct approximation and a sometimes-missing
+exact answer, constraint 1 picks the former.
 
 ### D4: Lifecycle without controller cooperation
 
@@ -205,34 +209,38 @@ fact, so `sdd_session_closed` ceases to exist as a concept.
 - Which run was the Task 4 implementer:
   `SELECT agent_id, dispatched_at FROM sdd_agents WHERE plan_path = ? AND
   task = 4 AND role = 'implementer' ORDER BY dispatched_at`. Multiple rows
-  are takeovers, linked by `predecessor_agent_id`.
+  are takeovers or fresh fixers, ordered by `dispatched_at`.
 - Why did this agent stop: `<log_root>/<agent_id>/metadata.json` phase plus
   the terminal event in `normalized.jsonl`, which carries the provider's
   stderr/message (B1). The ledger contributes identity; the run record
   contributes cause; `xagent_list` composes both.
 - What was this agent told: the `turn.submitted` events in
-  `normalized.jsonl`, in sequence order, notes included; `brief_path` and
-  `brief_sha256` say which brief and whether it has since drifted.
+  `normalized.jsonl`, in sequence order, notes included; `brief_text` is the
+  assignment itself, answerable by SQL alone.
 - What work is still in flight: the ledger joined against run metadata —
   rows whose run phase is non-terminal. This is `xagent_list`'s existing
   shape.
 
 ### D6: The MCP surface afterwards
 
-`xagent_sdd_start` becomes a four-way role union:
+`xagent_sdd_start` becomes a four-way role union. Role is the role the agent
+*starts* as and is never rewritten (constraint 4):
 
-- `implementer` — as today, plus optional `predecessor_agent_id` for
-  mid-turn takeover.
-- `reviewer` — merges v1's `task-reviewer` and `code-reviewer`: `task`
-  present selects the task-review template, absent selects whole-branch.
-  Optional `predecessor_agent_id`.
+- `implementer` — as today. A fresh implementer taking over from a dead one is
+  simply another `implementer` row for the same `(plan_path, task)`.
+- `reviewer` — merges v1's `task-reviewer` and `code-reviewer`: `task` present
+  selects the task-review template, absent selects whole-branch.
 - `fixer` — new, and it is finding C2 solved properly: `plan`, `task`, the
-  original `brief`, `findings`, `tests`, `report`, and a required
-  `predecessor_agent_id`. It renders a real fix template carrying the
-  predecessor's identity instead of the incident's
-  `--name "Task 4 Fix Round 1"` impersonation.
-- `re-reviewer` — likewise: `findings`, `report`, `base`/`head`, required
-  `predecessor_agent_id`.
+  original `brief`, `findings`, `tests`, and `report`. It renders a real fix
+  template instead of the incident's `--name "Task 4 Fix Round 1"`
+  impersonation. Used when the fixing is done by a *fresh* agent — because the
+  original died, or because the lead deliberately wants different hands on it.
+- `re-reviewer` — likewise, from `findings`, `report`, `base`, and `head`.
+
+Note the symmetry constraint 5 demands: an implementer that fixes its own work
+via `xagent_sdd_followup` stays an `implementer` and gets no new row; a fresh
+agent doing that fixing is a `fixer` with its own row. Same work, two shapes,
+both first-class.
 
 `xagent_sdd_followup` survives, demoted and reframed. Same-agent
 continuation is the optimization constraint 5 says it is, and still worth a
@@ -243,8 +251,8 @@ runtime checks: the run is live, and the kind matches the immutable start
 role (`fix` on `implementer`/`fixer`, `re-review` on
 `reviewer`/`re-reviewer`). When the run is not live it fails with
 `sdd_agent_not_live`, whose details are the recovery path itself: start a
-fresh `fixer` or `re-reviewer` with `predecessor_agent_id` set to this
-agent. The v1 dead end becomes a signpost. Missing a followup,
+fresh `fixer` or `re-reviewer` for the same plan and task. The v1 dead end
+becomes a signpost. Missing a followup,
 double-calling it, or calling it after death can no longer corrupt
 anything — constraint 1 holds for the tools, not just the ledger.
 
@@ -286,10 +294,11 @@ not forgotten:
   the only copy of evidence, not cache. This is the trade the owner must
   sign off on explicitly; it is stated as a requirement (xsvc-14), and
   cleanup tooling gains a hard constraint.
-- **Brief content recovery is best-effort where templates reference by
-  path.** If a brief lived only uncommitted in a deleted worktree, its
-  content is unrecoverable; `brief_sha256` plus git history is the recovery
-  story. Accepted knowingly.
+- **Briefs are the one thing deliberately duplicated.** Storing `brief_text`
+  is a considered exception to constraint 2, because for path-referencing
+  templates the content is in no `turn.submitted` event at all, and briefs live
+  in worktrees that get edited and deleted. This closes the "brief content is
+  unrecoverable" hole an earlier draft accepted.
 - **Per-turn analytics move out of SQL.** Counting fix rounds across a plan
   means reading `turn.submitted` events per agent. Forensics on one agent
   reads one directory; cross-plan analytics are an offline concern.

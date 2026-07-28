@@ -25,7 +25,7 @@ accepted: the turn model needs a redesign, not more compensating machinery.
   lineage only — no status, no report text, no closure timestamp.
 - Record each agent's start role from the four-way set `implementer`,
   `reviewer`, `fixer`, `re-reviewer`, plus its brief path, a brief content
-  hash, its worktree, and an optional `predecessor_agent_id` lineage link.
+  content, and its worktree.
   v1's `task-reviewer`/`code-reviewer` split collapses into `reviewer` with
   a nullable task number.
 - Add a `turn.submitted` normalized supervision event: the supervisor
@@ -40,13 +40,13 @@ accepted: the turn model needs a redesign, not more compensating machinery.
   directories as ledger blob storage.
 - **BREAKING** Rework `xagent_sdd_start` into a four-way role union. `fixer`
   and `re-reviewer` become first-class fresh-agent dispatches carrying a
-  required `predecessor_agent_id`, replacing the incident's
+  a real fix template, replacing the incident's
   `--name "Task 4 Fix Round 1"` impersonation.
 - Demote `xagent_sdd_followup` to a same-agent continuation convenience: it
   renders and submits but writes nothing to the ledger. When the target run
   is not live it fails with `sdd_agent_not_live`, whose details name the
   recovery path (start a fresh `fixer`/`re-reviewer` with this agent as
-  predecessor). The v1 closed-session dead end ceases to exist.
+  same plan and task). The v1 closed-session dead end ceases to exist.
 - **BREAKING** Delete `xagent_sdd_await` and `xagent_sdd_close`. With report
   persistence and ledger closure gone they would be byte-for-byte aliases of
   `xagent_await` and `xagent_close`; controllers use the generic tools.
@@ -57,7 +57,7 @@ accepted: the turn model needs a redesign, not more compensating machinery.
   `sdd_report_unbound`, `sdd_turn_unresolved`, `sdd_session_closed`,
   `sdd_followup_missing_paths`, and `sdd_report_path_required` error paths.
 - Extend `xagent_list` recovery rows: the `sdd` block carries role, plan,
-  task, brief path, predecessor, and dispatch time; ledger rows with no run
+  task, brief path, and dispatch time; ledger rows with no run
   record surface as `run_missing` dispatch-failure tombstones.
 
 ## Capabilities
