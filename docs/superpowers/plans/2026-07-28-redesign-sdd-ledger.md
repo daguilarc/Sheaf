@@ -96,10 +96,37 @@ The lead executes 7 and 11 directly and records the evidence in the task.
 must not be given to one implementer:
 
 - **Task 8a — the cutover.** Steps 1–4 and 6–9: wire the v2 store into
-  `service_main.ts`, port `ListGeneric` to the v2 store keeping its current
-  output shape, delete the v1 store, prove no `UPDATE`/`DELETE` against
-  `sdd_agents` compiles, restart the service. This is the single most
-  irreversible step in the plan.
+  `service_main.ts`, port `ListGeneric` to the v2 store, delete the v1 store,
+  prove no `UPDATE`/`DELETE` against `sdd_agents` compiles, restart the
+  service. This is the single most irreversible step in the plan.
+
+  **Boundary correction, found in the Task 6 review.** This section used to say
+  8a ports `ListGeneric` "keeping its current output shape". That is
+  impossible. `ListGeneric` builds `agent` from `sdd_sessions.agent` and
+  `closed` from `sdd_sessions.closed_at`; **`SddAgentRecord` has neither
+  column**, so the moment the store swaps, those two fields have no source.
+  The field-shape change is therefore forced *by* the cutover, not deferrable
+  past it.
+
+  There is a second, harder edge: `CreateSddAgentStore` returns bare
+  `SddAgentStore`, while `SddManagerDeps.store` is
+  `SddAgentStore & Pick<SddStore, "GetSession">` — because `ListGeneric` still
+  calls `GetSession`. Wiring the v2 store without porting `ListGeneric` in the
+  same task **does not typecheck**, and deleting the v1 store removes the only
+  thing that could satisfy the `Pick`. So 8a must, in one commit: port
+  `ListGeneric` to `store.Get`, narrow the dep to plain `SddAgentStore`, and
+  then delete v1.
+
+  Porting to `store.Get` drops `agent` and `closed` and makes `brief_path` and
+  `dispatched_at` available. That is most of D8's `XagentSddListFields`, and it
+  lands in 8a of necessity.
+
+- **Task 8b — tombstones only.** 8b keeps its original point: the parallel
+  `XagentSddTombstoneRow`, `run_missing: true` entries for ledger rows with no
+  run record, and the interleaved ordering. Those are a genuinely new feature
+  and remain separately reviewable. The split still holds — a tombstone bug
+  must not block the cutover — it is only the `sdd` block's *field list* that
+  moves from 8b to 8a, because the type system leaves no choice.
 - **Task 8b — the list shape.** Step 5 only: `xagent_list` v2 output per design
   D8 — the parallel `XagentSddTombstoneRow`, the dropped `agent`/`closed`
   fields, `run_missing: true` entries.
