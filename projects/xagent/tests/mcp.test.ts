@@ -459,11 +459,18 @@ test("the advertised SDD schemas never reject a payload the union accepts", () =
   }
 });
 
-function UnwrapZodObject(schema: z.ZodTypeAny): z.ZodObject<z.ZodRawShape> {
+// A refined schema is a ZodEffects wrapping the real one. Task 6 wraps the
+// start union this way, so every structural probe peels first.
+function PeelEffects(schema: z.ZodTypeAny): z.ZodTypeAny {
   let current: z.ZodTypeAny = schema;
   while (current instanceof z.ZodEffects) {
     current = current._def.schema;
   }
+  return current;
+}
+
+function UnwrapZodObject(schema: z.ZodTypeAny): z.ZodObject<z.ZodRawShape> {
+  const current = PeelEffects(schema);
   assert.ok(
     current instanceof z.ZodObject,
     `expected ZodObject after unwrap, got ${current.constructor.name}`,
@@ -472,10 +479,7 @@ function UnwrapZodObject(schema: z.ZodTypeAny): z.ZodObject<z.ZodRawShape> {
 }
 
 function UnionOptionsOf(schema: z.ZodTypeAny): ReadonlyArray<z.ZodTypeAny> {
-  let current: z.ZodTypeAny = schema;
-  while (current instanceof z.ZodEffects) {
-    current = current._def.schema;
-  }
+  const current = PeelEffects(schema);
   assert.ok(
     current instanceof z.ZodDiscriminatedUnion,
     `expected ZodDiscriminatedUnion after unwrap, got ${current.constructor.name}`,
@@ -525,7 +529,26 @@ const x_Assignment = {
   effort: "high",
 };
 
-const x_ReviewerSchemas = [ReviewerStartSchema, XagentSddStartInputSchemaV2] as const;
+// Labelled so a divergence failure names the side that broke. The whole point
+// of running both is that they must agree; an unlabelled message makes the
+// reader guess which one disagreed.
+const x_ReviewerSchemas = [
+  ["ReviewerStartSchema", ReviewerStartSchema],
+  ["XagentSddStartInputSchemaV2", XagentSddStartInputSchemaV2],
+] as const;
+
+function AssertReviewerCases(
+  cases: ReadonlyArray<{ payload: Record<string, unknown>; ok: boolean }>,
+): void {
+  for (const [label, schema] of x_ReviewerSchemas) {
+    for (const { payload, ok } of cases) {
+      assert.equal(
+        schema.safeParse(payload).success, ok,
+        `${label}: expected ${ok} for ${JSON.stringify(payload)}`,
+      );
+    }
+  }
+}
 
 test("reviewer with a task requires report and forbids description", () => {
   const withTask = {
@@ -560,14 +583,7 @@ test("reviewer with a task requires report and forbids description", () => {
       ok: true,
     },
   ];
-  for (const schema of x_ReviewerSchemas) {
-    for (const { payload, ok } of cases) {
-      assert.equal(
-        schema.safeParse(payload).success, ok,
-        `expected ${ok} for ${JSON.stringify(payload)}`,
-      );
-    }
-  }
+  AssertReviewerCases(cases);
 });
 
 test("reviewer without a task requires description and forbids task-scoped fields", () => {
@@ -598,14 +614,7 @@ test("reviewer without a task requires description and forbids task-scoped field
       ok: false,
     },
   ];
-  for (const schema of x_ReviewerSchemas) {
-    for (const { payload, ok } of cases) {
-      assert.equal(
-        schema.safeParse(payload).success, ok,
-        `expected ${ok} for ${JSON.stringify(payload)}`,
-      );
-    }
-  }
+  AssertReviewerCases(cases);
 });
 
 test("v1 role names and the review_brief field name are rejected", () => {
@@ -617,7 +626,7 @@ test("v1 role names and the review_brief field name are rejected", () => {
     role: "code-reviewer", ...x_Assignment,
     review_brief: "/tmp/b.md", description: "x", base: "main", head: "HEAD",
   }).success, false);
-  for (const schema of x_ReviewerSchemas) {
+  for (const [, schema] of x_ReviewerSchemas) {
     assert.equal(schema.safeParse({
       role: "reviewer", ...x_Assignment,
       review_brief: "/tmp/b.md", base: "main", head: "HEAD", description: "x",
@@ -653,6 +662,13 @@ test("re-reviewer requires the original review brief", () => {
   assert.equal(ReReviewerStartSchema.safeParse(valid).success, true);
   const { brief, ...withoutBrief } = valid;
   assert.equal(ReReviewerStartSchema.safeParse(withoutBrief).success, false);
+  // xsvc-11's defining prohibition for fixer and re-reviewer: no `name` field
+  // encoding the round into an assignment identity. `fixer` pins this; without
+  // this line `re-reviewer` did not.
+  assert.equal(
+    ReReviewerStartSchema.safeParse({ ...valid, name: "Task 4 Re-Review Round 1" }).success,
+    false,
+  );
 });
 
 test("worker-facing text on v2 roles still rejects controller run ids", () => {
@@ -662,7 +678,7 @@ test("worker-facing text on v2 roles still rejects controller run ids", () => {
     findings_text: "see xrun_20260728000000000_0000abcd",
     tests: ["npm test"], report: "/tmp/r.md",
   }).success, false);
-  for (const schema of x_ReviewerSchemas) {
+  for (const [, schema] of x_ReviewerSchemas) {
     assert.equal(schema.safeParse({
       role: "reviewer", ...x_Assignment,
       brief: "/tmp/review-brief.md", base: "main", head: "HEAD",
