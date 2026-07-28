@@ -20,6 +20,7 @@ import {
   type CreateRunOptions,
   type ListRunsResult,
   type XagentListEntry,
+  type XagentListRow,
   type XagentRunManager,
   type XagentSddListFields,
 } from "./run_manager.js";
@@ -504,15 +505,28 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       // caller's filtered/truncated page — live_only and limit must not mint
       // fabricated tombstones for completed or off-page runs (xsvc-13).
       //
+      // One read, not two. listOwnedRuns parses every run's metadata before
+      // filtering, so `limit` is only an in-memory slice — the caller's page is
+      // derivable from the unfiltered result. Reading twice would repeat a
+      // directory-wide scan and open a skew window between the two reads.
+      //
       const existing = await runManager.listOwnedRuns({
         live_only: false,
         limit: Number.MAX_SAFE_INTEGER,
       });
       const seen = new Set(existing.runs.map((run) => run.run_id));
-      const listed = await runManager.listOwnedRuns(input);
-      const rows: XagentListEntry[] = listed.runs.map((run) =>
+      // ListRunsResult is the widened union because this method returns
+      // tombstones, but the run manager itself only ever produces real rows.
+      // The guard states that rather than asserting it with a cast.
+      //
+      const realRuns = existing.runs.filter(
+        (run): run is XagentListRow => !("run_missing" in run),
+      );
+      const page = realRuns
+        .filter((run) => !input.live_only || run.live)
+        .slice(0, input.limit);
+      const rows: XagentListEntry[] = page.map((run) =>
       {
-        seen.add(run.run_id);
         const agent = store.Get(run.run_id);
         if (agent === undefined)
         {
