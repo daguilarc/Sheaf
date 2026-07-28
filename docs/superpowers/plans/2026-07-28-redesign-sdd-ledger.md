@@ -147,7 +147,7 @@ Runtime validation is unaffected — a well-typed call reaches business logic
 normally. Only discovery is broken, which is enough to make every client that
 trusts the schema serialize its arguments wrongly.
 
-- [ ] **Step 1: Write the failing tool-surface tests**
+- [x] **Step 1: Write the failing tool-surface tests**
 
 Add to `projects/xagent/tests/mcp.test.ts`: for each of `xagent_sdd_start`
 and `xagent_sdd_followup`, assert the advertised `inputSchema` has a
@@ -158,7 +158,7 @@ payload the union accepts is also accepted by the advertised schema. The
 reverse is deliberately not asserted — the advertised schema is permissive
 and the union does the rejecting.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/mcp.test.js
@@ -166,7 +166,7 @@ cd projects/xagent && npm run build && node --test dist/tests/mcp.test.js
 
 Expected: FAIL — `properties` is empty for both tools.
 
-- [ ] **Step 3: Supply the JSON Schema explicitly at registration**
+- [x] **Step 3: Supply the JSON Schema explicitly at registration**
 
 Passing the union's JSON Schema directly does not work: `normalizeObjectSchema`
 accepts only a raw shape or an object schema, so a plain JSON Schema object
@@ -180,7 +180,7 @@ The handler is unchanged: `parseToolInput(XagentSddStartInputSchema, args)`
 still parses against the union, which remains the sole authority for
 rejection. Keep the description and title text as they are.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/mcp.test.js && npm test
@@ -193,7 +193,7 @@ git add projects/xagent/src/service/mcp.ts projects/xagent/tests/mcp.test.ts
 git commit -m "fix(xagent): advertise the SDD dispatch tools' input schema (xsvc-15)"
 ```
 
-- [ ] **Step 5: Restart the live service onto the fixed build**
+- [x] **Step 5: Restart the live service onto the fixed build**
 
 This restart is explicitly permitted and is the only one before Task 7. The
 build at this point still wires the **v1** store against the existing v1
