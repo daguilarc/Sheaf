@@ -30,7 +30,7 @@ function TrustedRendererPathForTests(repoRoot: string): string {
 
 
 const x_GenericToolNames = [
-  "xagent_start",
+  "xagent_start_non_sdd",
   "xagent_await",
   "xagent_inspect",
   "xagent_message",
@@ -212,10 +212,10 @@ test("Streamable HTTP MCP initializes and discovers exactly the eleven controlle
   });
 });
 
-test("xagent_start rejects relative cwd with invalid_working_directory and creates no run", async () => {
+test("xagent_start_non_sdd rejects relative cwd with invalid_working_directory and creates no run", async () => {
   await withMcpService(async ({ client, runManager }) => {
     const result = await client.callTool({
-      name: "xagent_start",
+      name: "xagent_start_non_sdd",
       arguments: {
         cwd: "relative/worktree",
         prompt: "hello",
@@ -230,11 +230,11 @@ test("xagent_start rejects relative cwd with invalid_working_directory and creat
   });
 });
 
-test("xagent_start rejects missing cwd with invalid_working_directory and creates no run", async () => {
+test("xagent_start_non_sdd rejects missing cwd with invalid_working_directory and creates no run", async () => {
   await withMcpService(async ({ client, runManager }) => {
     const missing = path.join(tmpdir(), `xagent-missing-${Math.random().toString(36).slice(2)}`);
     const result = await client.callTool({
-      name: "xagent_start",
+      name: "xagent_start_non_sdd",
       arguments: {
         cwd: missing,
         prompt: "hello",
@@ -249,13 +249,13 @@ test("xagent_start rejects missing cwd with invalid_working_directory and create
   });
 });
 
-test("xagent_start rejects non-directory cwd with invalid_working_directory and creates no run", async () => {
+test("xagent_start_non_sdd rejects non-directory cwd with invalid_working_directory and creates no run", async () => {
   await withMcpService(async ({ client, runManager }) => {
     const dir = await mkdtemp(path.join(tmpdir(), "xagent-mcp-file-"));
     const filePath = path.join(dir, "not-a-directory");
     await writeFile(filePath, "not a directory\n", "utf8");
     const result = await client.callTool({
-      name: "xagent_start",
+      name: "xagent_start_non_sdd",
       arguments: {
         cwd: filePath,
         prompt: "hello",
@@ -270,12 +270,12 @@ test("xagent_start rejects non-directory cwd with invalid_working_directory and 
   });
 });
 
-test("xagent_start accepts an absolute existing directory and returns run_id plus cursor", async () => {
+test("xagent_start_non_sdd accepts an absolute existing directory and returns run_id plus cursor", async () => {
   await withMcpService(async ({ client, runManager }) => {
     const cwd = await mkdtemp(path.join(tmpdir(), "xagent-mcp-ok-"));
     const result = asToolCallResult(
       await client.callTool({
-        name: "xagent_start",
+        name: "xagent_start_non_sdd",
         arguments: {
           cwd,
           prompt: "hello from mcp",
@@ -314,7 +314,7 @@ test("xagent_list returns owned runs newest first and flags the live one", async
   await withMcpService(async ({ client }) => {
     const startedResult = asToolCallResult(
       await client.callTool({
-        name: "xagent_start",
+        name: "xagent_start_non_sdd",
         arguments: { cwd, prompt: "hello", harness: "codex" },
       }),
     );

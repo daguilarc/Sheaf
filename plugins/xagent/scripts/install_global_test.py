@@ -46,7 +46,7 @@ EXPECTED_MCP_TOOL_NAMES = (
     "xagent_sdd_close",
     "xagent_sdd_followup",
     "xagent_sdd_start",
-    "xagent_start",
+    "xagent_start_non_sdd",
 )
 
 

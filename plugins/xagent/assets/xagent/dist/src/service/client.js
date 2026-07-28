@@ -215,7 +215,7 @@ export function createXagentServiceClient(options = {}) {
     }
     return {
         start(input) {
-            return callTool("xagent_start", { ...input });
+            return callTool("xagent_start_non_sdd", { ...input });
         },
         await(input, signal) {
             return awaitRun(input, signal);

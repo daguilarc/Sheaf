@@ -92,6 +92,7 @@ export declare const ImplementerStartSchema: z.ZodObject<{
     brief: z.ZodEffects<z.ZodString, string, string>;
     report: z.ZodEffects<z.ZodString, string, string>;
     context: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
     agent: z.ZodString;
@@ -182,6 +183,7 @@ export declare const ImplementerStartSchema: z.ZodObject<{
     plan: string;
     agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    note?: string | undefined;
     context?: string | undefined;
     policy?: {
         watchdog: {
@@ -211,6 +213,7 @@ export declare const ImplementerStartSchema: z.ZodObject<{
     plan: string;
     agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    note?: string | undefined;
     context?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
@@ -238,6 +241,7 @@ export declare const TaskReviewerStartSchema: z.ZodObject<{
     head: z.ZodString;
     constraints: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     diff: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
     agent: z.ZodString;
@@ -329,6 +333,7 @@ export declare const TaskReviewerStartSchema: z.ZodObject<{
     effort: "low" | "medium" | "high" | "xhigh";
     base: string;
     head: string;
+    note?: string | undefined;
     policy?: {
         watchdog: {
             suspicionWindowMs?: number | undefined;
@@ -360,6 +365,7 @@ export declare const TaskReviewerStartSchema: z.ZodObject<{
     effort: "low" | "medium" | "high" | "xhigh";
     base: string;
     head: string;
+    note?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
@@ -385,6 +391,7 @@ export declare const CodeReviewerStartSchema: z.ZodObject<{
     description: z.ZodEffects<z.ZodString, string, string>;
     base: z.ZodString;
     head: z.ZodString;
+    note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
     agent: z.ZodString;
@@ -475,6 +482,7 @@ export declare const CodeReviewerStartSchema: z.ZodObject<{
     head: string;
     review_brief: string;
     description: string;
+    note?: string | undefined;
     policy?: {
         watchdog: {
             suspicionWindowMs?: number | undefined;
@@ -503,6 +511,7 @@ export declare const CodeReviewerStartSchema: z.ZodObject<{
     head: string;
     review_brief: string;
     description: string;
+    note?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
@@ -527,6 +536,7 @@ export declare const XagentSddStartInputSchema: z.ZodDiscriminatedUnion<"role", 
     brief: z.ZodEffects<z.ZodString, string, string>;
     report: z.ZodEffects<z.ZodString, string, string>;
     context: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
     agent: z.ZodString;
@@ -617,6 +627,7 @@ export declare const XagentSddStartInputSchema: z.ZodDiscriminatedUnion<"role", 
     plan: string;
     agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    note?: string | undefined;
     context?: string | undefined;
     policy?: {
         watchdog: {
@@ -646,6 +657,7 @@ export declare const XagentSddStartInputSchema: z.ZodDiscriminatedUnion<"role", 
     plan: string;
     agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    note?: string | undefined;
     context?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
@@ -672,6 +684,7 @@ export declare const XagentSddStartInputSchema: z.ZodDiscriminatedUnion<"role", 
     head: z.ZodString;
     constraints: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     diff: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
     agent: z.ZodString;
@@ -763,6 +776,7 @@ export declare const XagentSddStartInputSchema: z.ZodDiscriminatedUnion<"role", 
     effort: "low" | "medium" | "high" | "xhigh";
     base: string;
     head: string;
+    note?: string | undefined;
     policy?: {
         watchdog: {
             suspicionWindowMs?: number | undefined;
@@ -794,6 +808,7 @@ export declare const XagentSddStartInputSchema: z.ZodDiscriminatedUnion<"role", 
     effort: "low" | "medium" | "high" | "xhigh";
     base: string;
     head: string;
+    note?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
@@ -818,6 +833,7 @@ export declare const XagentSddStartInputSchema: z.ZodDiscriminatedUnion<"role", 
     description: z.ZodEffects<z.ZodString, string, string>;
     base: z.ZodString;
     head: z.ZodString;
+    note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
     agent: z.ZodString;
@@ -908,6 +924,7 @@ export declare const XagentSddStartInputSchema: z.ZodDiscriminatedUnion<"role", 
     head: string;
     review_brief: string;
     description: string;
+    note?: string | undefined;
     policy?: {
         watchdog: {
             suspicionWindowMs?: number | undefined;
@@ -936,6 +953,7 @@ export declare const XagentSddStartInputSchema: z.ZodDiscriminatedUnion<"role", 
     head: string;
     review_brief: string;
     description: string;
+    note?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
@@ -961,6 +979,7 @@ export declare const FixFollowupSchema: z.ZodObject<{
     findings: z.ZodEffects<z.ZodString, string, string>;
     findings_text: z.ZodEffects<z.ZodString, string, string>;
     tests: z.ZodArray<z.ZodString, "many">;
+    note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
 }, "strict", z.ZodTypeAny, {
     kind: "fix";
     agent_id: string;
@@ -968,6 +987,7 @@ export declare const FixFollowupSchema: z.ZodObject<{
     findings: string;
     findings_text: string;
     tests: string[];
+    note?: string | undefined;
 }, {
     kind: "fix";
     agent_id: string;
@@ -975,6 +995,7 @@ export declare const FixFollowupSchema: z.ZodObject<{
     findings: string;
     findings_text: string;
     tests: string[];
+    note?: string | undefined;
 }>;
 export declare const ReReviewFollowupSchema: z.ZodObject<{
     kind: z.ZodLiteral<"re-review">;
@@ -984,6 +1005,7 @@ export declare const ReReviewFollowupSchema: z.ZodObject<{
     base: z.ZodString;
     head: z.ZodString;
     diff: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
 }, "strict", z.ZodTypeAny, {
     kind: "re-review";
     base: string;
@@ -991,6 +1013,7 @@ export declare const ReReviewFollowupSchema: z.ZodObject<{
     agent_id: string;
     round: number;
     findings: string;
+    note?: string | undefined;
     diff?: string | undefined;
 }, {
     kind: "re-review";
@@ -999,6 +1022,7 @@ export declare const ReReviewFollowupSchema: z.ZodObject<{
     agent_id: string;
     round: number;
     findings: string;
+    note?: string | undefined;
     diff?: string | undefined;
 }>;
 export declare const XagentSddFollowupInputSchema: z.ZodDiscriminatedUnion<"kind", [z.ZodObject<{
@@ -1008,6 +1032,7 @@ export declare const XagentSddFollowupInputSchema: z.ZodDiscriminatedUnion<"kind
     findings: z.ZodEffects<z.ZodString, string, string>;
     findings_text: z.ZodEffects<z.ZodString, string, string>;
     tests: z.ZodArray<z.ZodString, "many">;
+    note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
 }, "strict", z.ZodTypeAny, {
     kind: "fix";
     agent_id: string;
@@ -1015,6 +1040,7 @@ export declare const XagentSddFollowupInputSchema: z.ZodDiscriminatedUnion<"kind
     findings: string;
     findings_text: string;
     tests: string[];
+    note?: string | undefined;
 }, {
     kind: "fix";
     agent_id: string;
@@ -1022,6 +1048,7 @@ export declare const XagentSddFollowupInputSchema: z.ZodDiscriminatedUnion<"kind
     findings: string;
     findings_text: string;
     tests: string[];
+    note?: string | undefined;
 }>, z.ZodObject<{
     kind: z.ZodLiteral<"re-review">;
     agent_id: z.ZodString;
@@ -1030,6 +1057,7 @@ export declare const XagentSddFollowupInputSchema: z.ZodDiscriminatedUnion<"kind
     base: z.ZodString;
     head: z.ZodString;
     diff: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
 }, "strict", z.ZodTypeAny, {
     kind: "re-review";
     base: string;
@@ -1037,6 +1065,7 @@ export declare const XagentSddFollowupInputSchema: z.ZodDiscriminatedUnion<"kind
     agent_id: string;
     round: number;
     findings: string;
+    note?: string | undefined;
     diff?: string | undefined;
 }, {
     kind: "re-review";
@@ -1045,6 +1074,7 @@ export declare const XagentSddFollowupInputSchema: z.ZodDiscriminatedUnion<"kind
     agent_id: string;
     round: number;
     findings: string;
+    note?: string | undefined;
     diff?: string | undefined;
 }>]>;
 export declare const XagentSddAwaitInputSchema: z.ZodObject<{

@@ -76,7 +76,16 @@ const SddArtifactPathSchema = z
     }
 });
 export const SddAbsolutePathSchema = SddArtifactPathSchema;
+// Free-text the controller appends verbatim to the rendered prompt, for any
+// role and any follow-up kind. This is the channel for things the templates
+// have no slot for — "the tree has uncommitted work from a cancelled sibling",
+// "ignore the stray build output" — instead of smuggling them into a findings
+// list or writing a constraints file. Worker-facing, so it is guarded like the
+// rest of the prompt text.
+//
+const NoteSchema = WorkerFacingText("note").optional();
 const SddAssignmentFields = {
+    note: NoteSchema,
     cwd: CwdSchema,
     plan: SddArtifactPathSchema,
     agent: z.string().min(1),
@@ -131,6 +140,7 @@ export const FixFollowupSchema = z
     findings: SddArtifactPathSchema,
     findings_text: WorkerFacingText("findings_text"),
     tests: z.array(z.string().min(1)).min(1),
+    note: NoteSchema,
 })
     .strict();
 export const ReReviewFollowupSchema = z
@@ -142,6 +152,7 @@ export const ReReviewFollowupSchema = z
     base: z.string().min(1),
     head: z.string().min(1),
     diff: SddArtifactPathSchema.optional(),
+    note: NoteSchema,
 })
     .strict();
 export const XagentSddFollowupInputSchema = z.discriminatedUnion("kind", [

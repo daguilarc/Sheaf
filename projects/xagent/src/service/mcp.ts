@@ -147,11 +147,13 @@ function createConfiguredMcpServer(
   });
 
   server.registerTool(
-    "xagent_start",
+    "xagent_start_non_sdd",
     {
-      title: "Start supervised run",
+      title: "Start supervised run (non-SDD)",
       description:
-        "Validate an absolute working directory, start a service-owned supervised run, and submit the initial prompt.",
+        "Validate an absolute working directory, start a service-owned supervised run, and submit the initial prompt. "
+        + "For generic delegation only — reviews, workers, one-off passes. Superpowers SDD turns MUST use xagent_sdd_start, "
+        + "which renders the role template and reserves the ledger row; starting an SDD turn here produces an untracked run.",
       inputSchema: XagentStartInputSchema,
     },
     async (args) => {

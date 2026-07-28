@@ -245,7 +245,7 @@ test("complete fake-provider service lifecycle through packaged MCP declaration"
   try {
     const cwd = await mkdtemp(path.join(tmpdir(), "xagent-e2e-cwd-"));
     const startResult = asBody(await firstClient.callTool({
-      name: "xagent_start",
+      name: "xagent_start_non_sdd",
       arguments: { cwd, prompt: "implement the task", harness: "codex" },
     }));
     assert.equal(startResult.isError ?? false, false);
@@ -384,7 +384,7 @@ test("silence attention is delivered to a controller through xagent_await", asyn
   try {
     const cwd = await mkdtemp(path.join(tmpdir(), "xagent-e2e-attention-cwd-"));
     const startResult = asBody(await client.callTool({
-      name: "xagent_start",
+      name: "xagent_start_non_sdd",
       arguments: { cwd, prompt: "work then go silent", harness: "codex" },
     }));
     const runId = startResult.body.run_id as string;
@@ -455,7 +455,7 @@ test("cursor deduplication: a second await after the completion sequence does no
   try {
     const cwd = await mkdtemp(path.join(tmpdir(), "xagent-e2e-dedup-cwd-"));
     const startResult = asBody(await client.callTool({
-      name: "xagent_start",
+      name: "xagent_start_non_sdd",
       arguments: { cwd, prompt: "produce a final report", harness: "codex" },
     }));
     const runId = startResult.body.run_id as string;

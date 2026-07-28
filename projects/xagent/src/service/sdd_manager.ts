@@ -101,6 +101,17 @@ type SessionArtifacts = {
   readonly reportPath?: string;
 };
 
+const x_ControllerNoteHeading = "## Controller Note";
+
+function AppendControllerNote(promptText: string, note: string | undefined): string
+{
+  if (note === undefined || note.trim() === "")
+  {
+    return promptText;
+  }
+  return `${promptText.trimEnd()}\n\n${x_ControllerNoteHeading}\n\n${note.trim()}\n`;
+}
+
 function DerivePlanName(planPath: string): string
 {
   return path.basename(planPath, path.extname(planPath));
@@ -255,6 +266,12 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
   const formatFix = deps.formatFix ?? FormatFixFollowup;
   const clock = deps.clock ?? (() => new Date());
   const artifactsByAgent = new Map<string, SessionArtifacts>();
+  // Agents whose most recent submit was a raw `xagent_message` rather than a
+  // rendered SDD turn. Purely in-process: a conversational reply only ever
+  // follows a message in the same live session, and if the service died the
+  // provider session died with it.
+  //
+  const conversationalAgents = new Set<string>();
 
   async function PersistReportBeforeReturn(
     agentId: string,
@@ -280,6 +297,14 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     }
 
     const openTurn = store.GetOpenTurn(agentId);
+    if (openTurn === undefined && conversationalAgents.has(agentId))
+    {
+      // The controller asked a question and the worker answered. There is no
+      // work turn to record it against, and inventing one would pollute the
+      // ledger; hand the text back and leave the ledger alone.
+      //
+      return result;
+    }
     if (openTurn === undefined)
     {
       throw StructuredFailure({
@@ -408,7 +433,11 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         throw new Error(`SDD run disappeared after start: ${agentId}`);
       }
       const resumeSequence = inspection.sequence;
-      await runManager.submit(agentId, rendered.prompt.text);
+      await runManager.submit(
+        agentId,
+        AppendControllerNote(rendered.prompt.text, input.note),
+      );
+      conversationalAgents.delete(agentId);
       store.MarkRunning(agentId, 1, resumeSequence);
       return {
         agent_id: agentId,
@@ -644,7 +673,11 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
 
     try
     {
-      await runManager.submit(input.agent_id, promptText);
+      await runManager.submit(
+        input.agent_id,
+        AppendControllerNote(promptText, input.note),
+      );
+      conversationalAgents.delete(input.agent_id);
       store.MarkRunning(input.agent_id, turnNumber, resumeSequence);
       return {
         agent_id: input.agent_id,
@@ -736,9 +769,20 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     },
     async MessageGeneric(input: XagentMessageInput): Promise<MessageRunResult>
     {
+      // Chit-chat is allowed on an SDD run. The original design rejected this
+      // so a fix round could not be dispatched as unstructured prose with no
+      // ledger row — correct for a WORK turn, wrong for a conversation. A
+      // worker that stops with NEEDS_CONTEXT has to be answerable, and
+      // answering "which marketplace source type?" is not a fix round.
+      //
+      // Work turns still go through Start/Followup, which render the role
+      // template and reserve the ledger row. A raw message deliberately does
+      // neither; it only marks the session conversational so the reply it
+      // produces is not mistaken for an unbindable work-turn report.
+      //
       if (store.IsSddAgent(input.run_id))
       {
-        throw FollowupRequired(input.run_id);
+        conversationalAgents.add(input.run_id);
       }
       return runManager.messageRun(input);
     },

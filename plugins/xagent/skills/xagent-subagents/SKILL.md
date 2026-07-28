@@ -23,7 +23,7 @@ There are two client surfaces, and which one you have depends on your harness:
 | Packaged CLI (`xagent`) | always, once the plugin is installed | generic delegation only — the CLI has no SDD verbs |
 
 Confirm the MCP tools before relying on them: list your available tools and
-look for `xagent_start`. The packaged launcher lives at
+look for `xagent_start_non_sdd`. The packaged launcher lives at
 `$HOME/.agents/plugins/plugins/xagent/scripts/xagent`.
 
 **Pi ships without built-in MCP by design.** On Pi, use the packaged CLI for
@@ -108,8 +108,8 @@ attention, a long await deadline, or an explicit user status request.
 If the xagent SDD MCP facade, Conductor-managed xagent service, trusted
 `dispatch-prompt` renderer, or required Superpowers templates are unavailable,
 surface broken agentic infrastructure. Do not fall back to native subagents,
-generic `xagent_start`, raw `xagent_message`, quiet `xagent supervise`, or
-terminal polling for Superpowers SDD turns.
+generic `xagent_start`, raw `xagent_message` as a work dispatch, quiet
+`xagent supervise`, or terminal polling for Superpowers SDD turns.
 
 ## Generic Delegation
 
@@ -122,7 +122,7 @@ The controller flow is:
 
 ```text
 verify Conductor reports xagent healthy
-→ xagent_start(cwd, prompt, harness/model/policy)
+→ xagent_start_non_sdd(cwd, prompt, harness/model/policy)
 → perform independent boss work
 → one xagent_await(run_id, after_sequence)
 → consume report.text, or handle compact attention
@@ -131,7 +131,7 @@ verify Conductor reports xagent healthy
 
 Record the returned `run_id` and `after_sequence` cursor.
 
-After `xagent_start`, do independent controller work until it is exhausted.
+After `xagent_start_non_sdd`, do independent controller work until it is exhausted.
 Then enter one long `xagent_await` with the latest cursor. Healthy provider
 deltas, tools, raw events, status, and healthy watchdog verdicts never
 complete an await and never enter the leader context.
@@ -145,9 +145,18 @@ When await returns compact attention instead of completion, read the attention
 payload, act only at the controller layer, and call `xagent_await` again with
 the returned cursor only when continuing supervision.
 
-`xagent_message` sends unstructured user input to a generic run. Do not use it
-for Superpowers SDD follow-ups; the SDD facade uses `xagent_sdd_followup`
-instead.
+`xagent_message` sends unstructured user input to a run. It works on SDD runs
+too — that is how you answer a worker that stopped with `NEEDS_CONTEXT`, and
+how you chit-chat generally. It is *not* how you dispatch work: a fix or
+re-review round must go through `xagent_sdd_followup`, which renders the role
+template and reserves the ledger row. A raw message creates no turn and is not
+recorded as one.
+
+Anything the templates have no slot for — "the tree has uncommitted work from
+a cancelled sibling run", "ignore the stray build output" — goes in the
+optional `note` on any `xagent_sdd_start` role or `xagent_sdd_followup` kind.
+It is appended verbatim under a `## Controller Note` heading. Do not smuggle
+it into a findings list or a constraints file.
 
 ### Long Awaits Need a Patient HTTP Client
 

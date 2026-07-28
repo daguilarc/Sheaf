@@ -34,6 +34,7 @@ import type {
   XagentSddStartInput,
 } from "../src/service/tool_schemas.js";
 import {
+  ImplementerStartSchema,
   ToolValidationError,
   structuredErrorFromUnknown,
 } from "../src/service/tool_schemas.js";
@@ -1199,36 +1200,29 @@ test("Followup keeps a prepared row before submit and marks failed on submit err
   assert.ok(failedIndex > submitIndex);
 });
 
-test("MessageGeneric rejects SDD runs and leaves non-SDD messaging unchanged", async () =>
+test("MessageGeneric passes SDD and non-SDD messages through alike", async () =>
 {
   const harness = CreateManagerHarness();
   await StartAndClearOpenTurn(harness);
 
-  await assert.rejects(
-    () => harness.manager.MessageGeneric({
-      run_id: x_AgentId,
-      text: "raw bypass",
-    }),
-    (error: unknown) =>
-    {
-      assert.ok(error instanceof ToolValidationError);
-      assert.equal(error.structured.error, "sdd_followup_required");
-      assert.equal(
-        (error.structured.details as { tool?: string } | undefined)?.tool,
-        "xagent_sdd_followup",
-      );
-      return true;
-    },
-  );
-  assert.equal(harness.runManager.messageCalls.length, 0);
+  // Raw messaging used to be rejected for SDD runs to stop a fix round being
+  // dispatched as unstructured prose. Work turns still go through
+  // Start/Followup; a raw message is conversation and is delivered as-is.
+  const sdd = await harness.manager.MessageGeneric({
+    run_id: x_AgentId,
+    text: "quick clarification, not a fix round",
+  });
+  assert.equal(sdd.run_id, x_AgentId);
+  assert.equal(harness.runManager.messageCalls.length, 1);
+  assert.equal(harness.store.prepared.length, 0);
 
   const nonSdd = await harness.manager.MessageGeneric({
     run_id: "xrun_20260727000000000_00nonssd",
     text: "ordinary follow-up",
   });
   assert.equal(nonSdd.run_id, "xrun_20260727000000000_00nonssd");
-  assert.equal(harness.runManager.messageCalls.length, 1);
-  assert.equal(harness.runManager.messageCalls[0]?.text, "ordinary follow-up");
+  assert.equal(harness.runManager.messageCalls.length, 2);
+  assert.equal(harness.runManager.messageCalls[1]?.text, "ordinary follow-up");
 });
 
 const x_SanitizedReport = "sanitized report";
@@ -1712,4 +1706,113 @@ test("Followup recovers brief and report paths from the ledger after a service r
   assert.equal(harness.store.prepared.at(-1)?.reportPath, x_ReportPath);
   assert.ok(harness.runManager.submitted.at(-1)?.text.includes(x_BriefPath));
   assert.ok(harness.runManager.submitted.at(-1)?.text.includes(x_ReportPath));
+});
+
+test("MessageGeneric chit-chats with an SDD run instead of rejecting it", async () =>
+{
+  const harness = CreateManagerHarness();
+  await StartAndClearOpenTurn(harness);
+
+  const result = await harness.manager.MessageGeneric({
+    run_id: x_AgentId,
+    text: "Which marketplace source type should you use?",
+  });
+
+  assert.equal(result.run_id, x_AgentId);
+  assert.ok(harness.runManager.messageCalls.at(-1)?.text.includes("marketplace source type"));
+  assert.equal(harness.store.prepared.length, 0, "chit-chat must not create a work turn");
+});
+
+test("a conversational reply returns unpersisted instead of failing to bind", async () =>
+{
+  const harness = CreateManagerHarness();
+  await StartAndClearOpenTurn(harness);
+  await harness.manager.MessageGeneric({ run_id: x_AgentId, text: "quick question" });
+
+  harness.runManager.awaitResult = CompletionResult({ sequence: 42 });
+  const result = await harness.manager.Await({
+    agent_id: x_AgentId,
+    after_sequence: 7,
+    deadline_seconds: 7000,
+  });
+
+  assert.ok(result.report?.text);
+  assert.equal(harness.store.completed.length, 0, "a reply is not a work-turn report");
+  assert.equal(harness.recorder.Names().includes("MarkCompleted"), false);
+});
+
+test("a work turn still refuses a report it cannot record", async () =>
+{
+  const harness = CreateManagerHarness();
+  await harness.manager.Start(ImplementerStartInput());
+  harness.store.openTurns.delete(x_AgentId);
+  harness.runManager.awaitResult = CompletionResult({ sequence: 42 });
+
+  await assert.rejects(
+    () => harness.manager.Await({
+      agent_id: x_AgentId,
+      after_sequence: 7,
+      deadline_seconds: 7000,
+    }),
+    (error: unknown) =>
+    {
+      assert.ok(error instanceof ToolValidationError);
+      assert.equal(error.structured.error, "sdd_report_unbound");
+      return true;
+    },
+  );
+});
+
+test("a controller note is appended verbatim to every started role", async () =>
+{
+  const note = "The tree has uncommitted work from a cancelled sibling run; reconcile before editing.";
+  const harness = CreateManagerHarness();
+
+  await harness.manager.Start({ ...ImplementerStartInput(), note });
+
+  const submitted = harness.runManager.submitted.at(-1)?.text ?? "";
+  assert.ok(submitted.includes("## Controller Note"), "note heading missing");
+  assert.ok(submitted.includes(note), "note text missing");
+  assert.ok(
+    submitted.indexOf("## Controller Note") > submitted.indexOf(x_PromptText.trim().slice(0, 20)),
+    "the note must follow the rendered prompt, not replace it",
+  );
+});
+
+test("a started role without a note is unchanged", async () =>
+{
+  const harness = CreateManagerHarness();
+  await harness.manager.Start(ImplementerStartInput());
+  assert.equal(harness.runManager.submitted.at(-1)?.text, x_PromptText);
+});
+
+test("a controller note is appended to a fix follow-up", async () =>
+{
+  const note = "Ignore the stray build output in projects/synth; it is not yours.";
+  const harness = CreateManagerHarness();
+  await StartAndClearOpenTurn(harness);
+
+  await harness.manager.Followup({
+    kind: "fix",
+    agent_id: x_AgentId,
+    round: 1,
+    findings: x_FindingsPath,
+    findings_text: x_FindingsText,
+    tests: ["dist/tests/sdd_manager.test.js"],
+    note,
+  });
+
+  const submitted = harness.runManager.submitted.at(-1)?.text ?? "";
+  assert.ok(submitted.includes(x_FindingsText), "findings must survive");
+  assert.ok(submitted.includes("## Controller Note"));
+  assert.ok(submitted.includes(note));
+});
+
+test("a controller note cannot smuggle a run id to the worker", () =>
+{
+  const rejected = ImplementerStartSchema.safeParse({
+    ...ImplementerStartInput(),
+    note: "Resume against xrun_20260727192847117_b30af348 when done.",
+  });
+  assert.equal(rejected.success, false);
 });
