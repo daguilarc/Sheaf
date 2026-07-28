@@ -152,10 +152,11 @@ trusts the schema serialize its arguments wrongly.
 Add to `projects/xagent/tests/mcp.test.ts`: for each of `xagent_sdd_start`
 and `xagent_sdd_followup`, assert the advertised `inputSchema` has a
 non-empty `properties` map, names the discriminating field (`role` / `kind`),
-and enumerates that field's permitted values. Assert also that a payload
-constructed from the advertised schema alone passes `parseToolInput` against
-the union — this is what keeps the advertised and enforced schemas from
-drifting.
+and enumerates that field's permitted values. Then assert the superset
+direction that matters: for every start role and every follow-up kind, a
+payload the union accepts is also accepted by the advertised schema. The
+reverse is deliberately not asserted — the advertised schema is permissive
+and the union does the rejecting.
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -167,13 +168,17 @@ Expected: FAIL — `properties` is empty for both tools.
 
 - [ ] **Step 3: Supply the JSON Schema explicitly at registration**
 
-In `src/service/mcp.ts`, register both SDD tools with an explicit
-`inputSchema` derived from the union rather than passing the union itself.
-The union remains the sole runtime validator inside the handler
-(`parseToolInput(XagentSddStartInputSchema, args)` is unchanged) — the
-explicit schema describes, it does not enforce.
+Passing the union's JSON Schema directly does not work: `normalizeObjectSchema`
+accepts only a raw shape or an object schema, so a plain JSON Schema object
+falls through to the same empty result. Register both SDD tools with a
+`ZodObject` that is a superset of the union instead — `role`/`kind` as an
+enum of its permitted values, the fields shared by every variant required,
+every variant-specific field optional and `.describe()`d with the variants
+that require it.
 
-Keep the description and title text as they are.
+The handler is unchanged: `parseToolInput(XagentSddStartInputSchema, args)`
+still parses against the union, which remains the sole authority for
+rejection. Keep the description and title text as they are.
 
 - [ ] **Step 4: Verify and commit**
 

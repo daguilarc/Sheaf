@@ -475,11 +475,25 @@ for this change's own test suite: the planned tool-surface test asserts that
 pass vacuously and the positive one fails — the test would have looked like a
 v2 regression when it is really this defect.
 
-So registration supplies the union's JSON Schema explicitly, while the union
-remains the sole runtime validator. Two schemas that can disagree is a worse
-failure mode than one that is merely undiscoverable, so the tool-surface
-suite pins them together: a payload the advertised schema permits and the
-union rejects is a test failure, not a runtime surprise.
+The obvious fix — hand `registerTool` the union's JSON Schema directly —
+does not work either. `normalizeObjectSchema` accepts a raw shape or an
+object schema and nothing else; a plain JSON Schema object fails both checks
+and falls through to the same empty result. The SDK will only publish what it
+can reach through an object schema.
+
+So registration supplies a `ZodObject` that is a deliberate **superset** of
+the union: `role` as an enum of the four values, the shared assignment fields
+required, every variant-specific field optional and `.describe()`d with the
+roles that require it. The handler is untouched — it still parses against the
+union, which stays the sole authority for rejection.
+
+The superset is asymmetric on purpose. It can accept a payload the union
+rejects (a `fixer` with no `findings`), and that costs the caller exactly one
+structured validation error from the union. It must never do the reverse: a
+schema that rejects a legal call hides capability the service would have
+served, and the caller has no way to discover it was wrong. The tool-surface
+suite pins that direction — every role's valid payload must survive the
+advertised schema — rather than pretending the two can be made identical.
 
 The requirement is xsvc-15. It is the one part of this change that cannot be
 dispatched through the facade it repairs, so the controller implements it

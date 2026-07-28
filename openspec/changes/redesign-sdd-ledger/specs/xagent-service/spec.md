@@ -258,7 +258,11 @@ WHILE an `sdd_agents` row references a run directory, THE xagent service SHALL t
 
 ### Requirement: xsvc-15 — MCP: SDD dispatch tools advertise their input contract
 
-WHEN an MCP client lists tools, THE xagent service SHALL advertise, for `xagent_sdd_start` and `xagent_sdd_followup`, an input schema that names every accepted field and its JSON type — including the discriminating `role` and `kind` values and the fields each variant requires — so that a client which has never seen the service can construct a valid call from discovery alone; THE service SHALL NOT advertise an empty or field-less schema for either tool. A Zod discriminated union is not directly convertible to a tool input shape by the MCP SDK, so registration SHALL supply the union's JSON Schema explicitly rather than passing the union where a `ZodObject` is expected; the runtime SHALL continue to parse every call against the union itself, so the advertised schema and the enforced schema cannot drift.
+WHEN an MCP client lists tools, THE xagent service SHALL advertise, for `xagent_sdd_start` and `xagent_sdd_followup`, an input schema that names every accepted field and its JSON type — including the discriminating `role` and `kind` fields with their permitted values, and for each variant-specific field a description naming the variants that require it — so that a client which has never seen the service can construct a valid call from discovery alone; THE service SHALL NOT advertise an empty or field-less schema for either tool.
+
+The MCP SDK derives a tool's advertised schema only from an object schema; a Zod discriminated union normalizes to `undefined` and is published as the empty object. Registration SHALL therefore supply an object schema that is a **superset** of the union — the discriminator as an enumeration, the fields shared by every variant as required, and every variant-specific field as optional — while the handler SHALL continue to parse each call against the union itself. The union remains the sole authority for rejection; the advertised schema exists to describe, never to enforce.
+
+THE advertised schema SHALL NOT reject anything the union accepts. Discovery may be more permissive than enforcement, because an over-permissive schema costs a caller one structured validation error, whereas an over-strict one hides a legal call that the service would have served.
 
 #### Scenario: A cold client can construct a dispatch
 
@@ -272,8 +276,14 @@ WHEN an MCP client lists tools, THE xagent service SHALL advertise, for `xagent_
 - **THEN** it declares at least the discriminating field and the fields shared by every variant
 - **AND** a schema with no properties fails the service's own tool-surface tests
 
-#### Scenario: Advertised and enforced schemas agree
+#### Scenario: Discovery never hides a legal call
 
-- **WHEN** a client sends a payload that the advertised schema permits but the union rejects, or vice versa
-- **THEN** the mismatch is a test failure in the tool-surface suite
-- **AND** the union remains the single authority for runtime validation
+- **WHEN** a payload that the union accepts is checked against the advertised schema, for every start role and every follow-up kind
+- **THEN** the advertised schema accepts it too
+- **AND** the tool-surface suite fails if any variant's valid payload is rejected by the advertised schema
+
+#### Scenario: Enforcement stays with the union
+
+- **WHEN** a client sends a payload the advertised superset permits but the union rejects — a `fixer` missing `findings`, or a task-less `reviewer` that sets `report`
+- **THEN** the handler rejects it with the union's own structured validation error
+- **AND** the advertised schema is never consulted at runtime
