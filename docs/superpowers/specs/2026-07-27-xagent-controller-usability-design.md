@@ -276,7 +276,19 @@ under implementation installs to `cache/sheaf-managed/superpowers/6.2.0`.
 Recorded here so it is not rediscovered as a surprise.
 
 #### D4 — Renderer resolved from the service's repo root, not the run cwd
-**Disposition: FIX NOW.**
+**Disposition: PARTIALLY FIXED — the rest is a trust-boundary decision, DISCUSS.**
+
+**Correction after implementation:** preferring the run cwd's renderer is a
+security regression, not a fix. `tests/sdd_prompt.test.ts` plants a
+`#!/bin/sh echo MALICIOUS` script at
+`<cwd>/projects/agents/utils/dispatch-prompt` and asserts it is never
+executed — the run cwd is a worker-writable worktree, so a renderer found
+there is attacker-controlled code. What shipped is the diagnostic half only:
+`RenderSddPrompt` now returns `metadata.rendererPath`, `xagent_sdd_start`
+returns `renderer_path`, and `sdd_renderer_missing` reports the searched
+path. Closing the worktree/service mismatch requires deciding how a worktree
+renderer could ever be trusted (signature? allowlist? render-in-service-from-
+worktree-templates?) — that is a design question, not a bug.
 
 `sdd_prompt.ts:119-123` builds the renderer path from `repoRoot`, and
 `sdd_manager.ts:347` passes `deps.repoRoot` (the service's checkout). Working in
@@ -338,15 +350,20 @@ message rather than silently writing to a stranger's path.
 5 days 22 hours. Legacy CLI path; matches the known-unreliable `control.exit`.
 Operational cleanup, not a code change in this plan.
 
+**Reaped 2026-07-27:** 23 still-live processes killed (the other 7 had exited
+between the audit and the cleanup); `main.js run --harness` count is now 0.
+The underlying `control.exit` unreliability is unchanged — this was a cleanup,
+not a fix.
+
 ---
 
 ## Tier assignment
 
 | Tier | Findings |
 |---|---|
-| **Tier 1 — fix now** | B1, B2, B3, C4, C5, C6, D2, D4, E1, F1, F2 |
+| **Tier 1 — fix now** | B1, B2, B3, C4, C5, C6, D2, E1, F1, F2 (all landed); D4 diagnostic half only |
 | **Tier 2 — required, larger surface** | A1, A2 |
-| **Discuss** | A3, A5, C1, C2, C3, D1 |
+| **Discuss** | A3, A5, C1, C2, C3, D1, D4 (renderer trust boundary) |
 | **No action** | D3 |
 
 Implementation plan: `docs/superpowers/plans/2026-07-27-xagent-controller-usability.md`
