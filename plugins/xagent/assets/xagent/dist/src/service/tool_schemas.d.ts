@@ -1099,7 +1099,7 @@ export declare const XagentSddCloseInputSchema: z.ZodObject<{
 }>;
 export declare const XagentStartInputSchema: z.ZodObject<{
     cwd: z.ZodString;
-    prompt: z.ZodString;
+    prompt: z.ZodEffects<z.ZodString, string, string>;
     harness: z.ZodEnum<["codex", "pi", "cursor", "claude_code"]>;
     mode: z.ZodDefault<z.ZodEnum<["subagent", "full"]>>;
     model: z.ZodOptional<z.ZodString>;
@@ -1264,7 +1264,7 @@ export declare const XagentListInputSchema: z.ZodObject<{
 }>;
 export declare const XagentMessageInputSchema: z.ZodObject<{
     run_id: z.ZodString;
-    text: z.ZodString;
+    text: z.ZodEffects<z.ZodString, string, string>;
 }, "strict", z.ZodTypeAny, {
     run_id: string;
     text: string;

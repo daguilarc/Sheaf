@@ -19,14 +19,23 @@ const x_EmbeddedRunIdPattern = /xrun_[0-9]{17}_[0-9a-f]{8}/;
 // instruction it must obey and cannot. Fail the dispatch rather than shipping
 // the confusion into the prompt.
 //
+// Quoting a run id is legitimate when the subject matter IS xagent — a findings
+// list citing a log line, a note naming the sibling run whose work is in the
+// tree. Backticks mark it as a quotation rather than an instruction, so text
+// inside them is exempt. Bare run ids in prose stay rejected.
+//
+function StripQuotedSpans(value) {
+    return value.replace(/`[^`]*`/g, "");
+}
 function WorkerFacingText(label) {
     return z.string().min(1).superRefine((value, ctx) => {
-        const match = x_EmbeddedRunIdPattern.exec(value);
+        const match = x_EmbeddedRunIdPattern.exec(StripQuotedSpans(value));
         if (match !== null) {
             ctx.addIssue({
                 code: z.ZodIssueCode.custom,
                 message: `${label} must not contain a controller run id (found ${match[0]}); `
-                    + "a dispatched worker cannot act on xagent session ids",
+                    + "a dispatched worker cannot act on xagent session ids. "
+                    + "If you are quoting it as subject matter, wrap it in backticks.",
             });
         }
     });
@@ -179,7 +188,7 @@ export const XagentSddCloseInputSchema = z
 export const XagentStartInputSchema = z
     .object({
     cwd: CwdSchema,
-    prompt: z.string().min(1),
+    prompt: WorkerFacingText("prompt"),
     harness: z.enum(harnessNames),
     mode: z.enum(outputModes).default("subagent"),
     model: z.string().min(1).optional(),
@@ -215,7 +224,10 @@ export const XagentListInputSchema = z
 export const XagentMessageInputSchema = z
     .object({
     run_id: z.string().min(1),
-    text: z.string().min(1),
+    // Reaches a worker verbatim, and this path is now legal on SDD runs, so it
+    // is guarded like every other worker-facing field.
+    //
+    text: WorkerFacingText("text"),
 })
     .strict();
 export const XagentInterruptInputSchema = z
