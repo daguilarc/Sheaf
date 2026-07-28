@@ -1232,7 +1232,7 @@ git commit -m "feat(xagent): add v2 start-role schemas and the fix-dispatch form
 
 **Why this is safe before the cutover:** `PersistReportBeforeReturn` wrote `report_text` into the turn row *after* the supervisor had already published the report in a `turn.completed` event. Deleting it removes a duplicate, not the record. With report binding gone, the `sdd_turn_in_flight` guard on `xagent_message` (which existed only to protect that binding) and the `conversationalAgents` classification set (which existed only to suppress it) have nothing left to protect and go with it.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `projects/xagent/tests/sdd_manager.test.ts`, delete every test that asserts on report persistence, session closure, conversational classification, or the `sdd_turn_in_flight` / `sdd_followup_required` errors. Then add:
 
@@ -1301,7 +1301,7 @@ test("awaiting an SDD run delivers report text from the event log with no ledger
 
 If `startSddImplementer` or `ledgerWriteCount` do not exist in `tests/support/mcp_service.ts`, add them there: `ledgerWriteCount` counts rows in the ledger table.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/sdd_manager.test.js dist/tests/mcp.test.js dist/tests/mcp_await.test.js
@@ -1309,7 +1309,7 @@ cd projects/xagent && npm run build && node --test dist/tests/sdd_manager.test.j
 
 Expected: FAIL — `Object.keys(manager)` still contains `Await`, `Close`, `MessageGeneric`, `AwaitGeneric`, `CloseGeneric`; the tool list still contains the two facade tools.
 
-- [ ] **Step 3: Delete the manager machinery**
+- [x] **Step 3: Delete the manager machinery**
 
 In `src/service/sdd_manager.ts` delete, by name:
 
@@ -1336,7 +1336,7 @@ export type SddManager = {
 
 In `Start`'s success path, delete the `conversationalAgents.delete(agentId);` line but keep `store.MarkRunning(agentId, 1, resumeSequence);` — it is removed in Task 6.
 
-- [ ] **Step 4: Unregister the facade tools and route the generics directly**
+- [x] **Step 4: Unregister the facade tools and route the generics directly**
 
 In `src/service/mcp.ts`:
 
@@ -1349,11 +1349,11 @@ In `src/service/mcp.ts`:
 
 Update `xagent_start_non_sdd`'s description: replace "reserves the ledger row" with "records the dispatch in the SDD ledger".
 
-- [ ] **Step 5: Delete the facade input schemas**
+- [x] **Step 5: Delete the facade input schemas**
 
 In `src/service/tool_schemas.ts` delete `XagentSddAwaitInputSchema`, `XagentSddCloseInputSchema`, and the `XagentSddAwaitInput` / `XagentSddCloseInput` type exports.
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/sdd_manager.test.js dist/tests/mcp.test.js dist/tests/mcp_await.test.js
@@ -1361,7 +1361,7 @@ cd projects/xagent && npm run build && node --test dist/tests/sdd_manager.test.j
 
 Expected: PASS.
 
-- [ ] **Step 7: Run the full suite**
+- [x] **Step 7: Run the full suite**
 
 ```bash
 cd projects/xagent && npm test
@@ -1369,7 +1369,7 @@ cd projects/xagent && npm test
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add projects/xagent/src/service/sdd_manager.ts projects/xagent/src/service/mcp.ts projects/xagent/src/service/tool_schemas.ts projects/xagent/tests/
