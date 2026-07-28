@@ -1403,7 +1403,7 @@ field, owned by Task 8b. Found in the Task 4 review.
 
 **Critical:** `SddManagerDeps.store` changes type from `SddStore` to `SddAgentStore`. Task 2 made the v1 store satisfy that port, so `service_main.ts` keeps compiling unchanged and the live service keeps running on the v1 file. `Start` still calls `store.MarkRunning`, which is *not* on the port — so temporarily widen the dep to `SddAgentStore & Pick<SddStore, "MarkRunning" | "ReserveInitial" | "GetSession" | "IsSddAgent">` and narrow it to plain `SddAgentStore` in Task 6 when `Start` stops calling those.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Replace the existing `Followup` tests in `projects/xagent/tests/sdd_manager.test.ts` with:
 
@@ -1549,7 +1549,7 @@ test("double-calling a followup leaves the ledger untouched", async () => {
 
 Add `CreateFakeAgentStore(recorder, record: SddAgentRecord | undefined)` to the file's helper section: it returns an `SddAgentStore` whose `Get` returns `record` for `x_AgentId`, `IsSddAgent` returns `record !== undefined`, `ListAll` returns `record === undefined ? [] : [record]`, and whose `Insert` pushes to a public `inserted` array while recording `"store.Insert"` on the recorder. Give `CreateFakeRunManager` a `{ live?: boolean }` option controlling `has()` and `inspect()`.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/sdd_manager.test.js
@@ -1557,7 +1557,7 @@ cd projects/xagent && npm run build && node --test dist/tests/sdd_manager.test.j
 
 Expected: FAIL — `Followup` still returns `turn_number`, still calls `PrepareFollowup`, and still throws `sdd_session_terminal`.
 
-- [ ] **Step 3: Rewrite `Followup`**
+- [x] **Step 3: Rewrite `Followup`**
 
 In `src/service/sdd_manager.ts`:
 
@@ -1686,7 +1686,7 @@ Replace the whole `Followup` body:
 
 Delete the `SessionArtifacts` type, the `artifactsByAgent` map, and the `PrepareFollowupInput` / `SddStoreError` imports if nothing else uses them.
 
-- [ ] **Step 4: Widen the store dep**
+- [x] **Step 4: Widen the store dep**
 
 In `SddManagerDeps`, change:
 
@@ -1701,7 +1701,7 @@ with the comment:
   // This narrows to plain SddAgentStore in that task.
 ```
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/sdd_manager.test.js
@@ -1709,7 +1709,7 @@ cd projects/xagent && npm run build && node --test dist/tests/sdd_manager.test.j
 
 Expected: PASS.
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 ```bash
 cd projects/xagent && npm test
@@ -1717,7 +1717,7 @@ cd projects/xagent && npm test
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add projects/xagent/src/service/sdd_manager.ts projects/xagent/tests/sdd_manager.test.ts
