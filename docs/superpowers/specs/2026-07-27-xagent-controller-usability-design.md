@@ -227,7 +227,18 @@ flagged, plus SDD role/task/plan joined from the ledger when the run is
 SDD-owned. Recovery — not polling — is the documented use.
 
 #### C6 — Follow-up artifact paths live in RAM despite being in SQLite
-**Disposition: FIX NOW.**
+**Disposition: HARDENING LANDED — the restart case it appeared to fix is C1.**
+
+**Correction after implementation** (found independently and confirmed by the
+Opus review): `Followup` checks `runManager.has(agent_id)` *before* it looks at
+the artifact cache (`sdd_manager.ts:474-481`), and `XagentRunManager` has no
+rehydration — `#runs` is populated only by `create()`. After a service restart
+`has()` is false, so a follow-up fails `sdd_session_terminal` with or without
+this change; the provider child did not survive either. The premise below
+("any service restart converts every live session into
+`sdd_followup_missing_paths`") was wrong. What landed removes a redundant
+second source of truth and is correct-by-construction, but restart recovery is
+the C1 discussion item, not this one.
 
 `artifactsByAgent` is an in-memory `Map` (`sdd_manager.ts:252`) even though
 `brief_path`, `brief_text`, and `report_path` are already durable columns in
@@ -361,7 +372,7 @@ not a fix.
 
 | Tier | Findings |
 |---|---|
-| **Tier 1 — fix now** | B1, B2, B3, C4, C5, C6, D2, E1, F1, F2 (all landed); D4 diagnostic half only |
+| **Tier 1 — landed** | B1 (+B1b, Claude reports errors on stdout), B2, B3, C4, C5, D2, E1, F1, F2; C6 as hardening only; D4 diagnostic half only |
 | **Tier 2 — required, larger surface** | A1, A2 |
 | **Discuss** | A3, A5, C1, C2, C3, D1, D4 (renderer trust boundary) |
 | **No action** | D3 |
