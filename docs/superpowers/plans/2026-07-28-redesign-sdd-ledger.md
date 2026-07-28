@@ -127,9 +127,6 @@ must not be given to one implementer:
   and remain separately reviewable. The split still holds — a tombstone bug
   must not block the cutover — it is only the `sdd` block's *field list* that
   moves from 8b to 8a, because the type system leaves no choice.
-- **Task 8b — the list shape.** Step 5 only: `xagent_list` v2 output per design
-  D8 — the parallel `XagentSddTombstoneRow`, the dropped `agent`/`closed`
-  fields, `run_missing: true` entries.
 
 They are bundled in the task text below because they touch the same files, but
 8b is a *new feature* and 8a is a *deletion that cannot be undone*. A tombstone
@@ -1782,7 +1779,7 @@ executing this plan; here it would be unrecoverable without a restart.
 Found in the Task 2 review. Do not restart the service between Task 6 and
 Task 8a for any reason.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `projects/xagent/tests/sdd_manager.test.ts`:
 
@@ -1940,7 +1937,7 @@ test("xagent_sdd_start advertises the four-way role union", async () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/sdd_manager.test.js dist/tests/mcp.test.js
@@ -1948,7 +1945,7 @@ cd projects/xagent && npm run build && node --test dist/tests/sdd_manager.test.j
 
 Expected: FAIL — `manager.Start` still returns `brief_path`, still calls `ReserveInitial`/`MarkFailed`, and rejects role `fixer`.
 
-- [ ] **Step 3: Swap the start union**
+- [x] **Step 3: Swap the start union**
 
 In `src/service/tool_schemas.ts`:
 
@@ -1957,7 +1954,7 @@ In `src/service/tool_schemas.ts`:
 - Rename `XagentSddStartInputSchemaV2` to `XagentSddStartInputSchema`.
 - `XagentSddStartInput` now infers from the v2 union with no further change.
 
-- [ ] **Step 4: Rewrite `Start`**
+- [x] **Step 4: Rewrite `Start`**
 
 In `src/service/sdd_manager.ts`:
 
@@ -2132,7 +2129,7 @@ Narrow the store dep back to plain `SddAgentStore` and delete the transitional `
 
 **Note on the `catch` that used to close the run:** v1 closed the provider run on a start failure. Keep that behavior — wrap the `create`/`start`/`submit` block in `try { … } catch (error) { if (created) { await runManager.close(agentId).catch(() => {}); } throw error; }` with a `let created = false;` set after `create` resolves. Do **not** add any ledger write to that catch.
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/sdd_manager.test.js dist/tests/mcp.test.js dist/tests/sdd_prompt.test.js
@@ -2140,7 +2137,7 @@ cd projects/xagent && npm run build && node --test dist/tests/sdd_manager.test.j
 
 Expected: PASS.
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 ```bash
 cd projects/xagent && npm test
@@ -2148,7 +2145,7 @@ cd projects/xagent && npm test
 
 Expected: PASS. Update any test still dispatching `task-reviewer` or `code-reviewer` to the v2 `reviewer` role.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add projects/xagent/src/service/tool_schemas.ts projects/xagent/src/service/sdd_manager.ts projects/xagent/tests/
