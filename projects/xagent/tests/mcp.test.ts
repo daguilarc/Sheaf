@@ -15,7 +15,13 @@ import {
   type SddManager,
 } from "../src/service/sdd_manager.js";
 import { CreateSddStore, GetSddDatabasePath } from "../src/service/sdd_store.js";
-import { XagentListInputSchema } from "../src/service/tool_schemas.js";
+import {
+  XagentListInputSchema,
+  XagentSddFollowupAdvertisedSchema,
+  XagentSddFollowupInputSchema,
+  XagentSddStartAdvertisedSchema,
+  XagentSddStartInputSchema,
+} from "../src/service/tool_schemas.js";
 import {
   asToolCallResult,
   assertInvalidWorkingDirectory,
@@ -345,4 +351,101 @@ test("xagent_list defaults its paging arguments and rejects unknown ones", () =>
   assert.equal(XagentListInputSchema.safeParse({ bogus: true }).success, false);
   assert.equal(XagentListInputSchema.safeParse({ limit: 0 }).success, false);
   assert.equal(XagentListInputSchema.safeParse({ limit: 201 }).success, false);
+});
+
+const x_AdvertisedAssignment = {
+  cwd: "/private/tmp/worktree",
+  plan: "/tmp/plans/2026-07-28-redesign-sdd-ledger.md",
+  agent: "grok-4.5",
+  harness: "cursor",
+  effort: "high",
+} as const;
+
+// One union-valid payload per variant. These are the payloads the advertised
+// schema must not reject; the union itself is the authority on rejection.
+const x_ValidStartPayloads: ReadonlyArray<Record<string, unknown>> = [
+  {
+    role: "implementer", ...x_AdvertisedAssignment, task: 4,
+    name: "Ledger v2 store", brief: "/tmp/sdd/task-4-brief.md",
+    report: "/tmp/sdd/task-4-report.md",
+  },
+  {
+    role: "task-reviewer", ...x_AdvertisedAssignment, task: 4,
+    brief: "/tmp/sdd/task-4-brief.md", report: "/tmp/sdd/task-4-report.md",
+    base: "main", head: "HEAD",
+  },
+  {
+    role: "code-reviewer", ...x_AdvertisedAssignment,
+    review_brief: "/tmp/sdd/review-brief.md",
+    description: "Branch adds the v2 ledger.", base: "main", head: "HEAD",
+  },
+];
+
+const x_ValidFollowupPayloads: ReadonlyArray<Record<string, unknown>> = [
+  {
+    kind: "fix", agent_id: "xrun_20260728000000000_0000abcd", round: 2,
+    findings: "/tmp/sdd/task-4-findings.md", findings_text: "one finding",
+    tests: ["npm test"],
+  },
+  {
+    kind: "re-review", agent_id: "xrun_20260728000000000_0000abcd", round: 2,
+    findings: "/tmp/sdd/task-4-findings.md", base: "main", head: "HEAD",
+  },
+];
+
+test("the SDD dispatch tools advertise a non-empty input schema naming their discriminator", async () => {
+  await withMcpService(async ({ client }) => {
+    const listed = await client.listTools();
+
+    for (const [name, discriminator, values] of [
+      ["xagent_sdd_start", "role", ["implementer", "task-reviewer", "code-reviewer"]],
+      ["xagent_sdd_followup", "kind", ["fix", "re-review"]],
+    ] as const) {
+      const tool = listed.tools.find((entry) => entry.name === name);
+      assert.ok(tool, `${name} must be registered`);
+      const properties = (tool.inputSchema as { properties?: Record<string, unknown> })
+        .properties ?? {};
+      assert.ok(
+        Object.keys(properties).length > 0,
+        `${name} advertises a field-less schema`,
+      );
+      assert.ok(
+        discriminator in properties,
+        `${name} must advertise its ${discriminator} discriminator`,
+      );
+      const serialized = JSON.stringify(properties[discriminator]);
+      for (const value of values) {
+        assert.ok(
+          serialized.includes(value),
+          `${name} must advertise ${discriminator} value ${value}`,
+        );
+      }
+    }
+  }, {
+    createSddManager: ({ runManager, repoRoot, logRoot }) =>
+      CreateTestSddManager(runManager, repoRoot, logRoot),
+  });
+});
+
+test("the advertised SDD schemas never reject a payload the union accepts", () => {
+  for (const payload of x_ValidStartPayloads) {
+    assert.equal(
+      XagentSddStartInputSchema.safeParse(payload).success, true,
+      `fixture is not union-valid: ${JSON.stringify(payload)}`,
+    );
+    assert.equal(
+      XagentSddStartAdvertisedSchema.safeParse(payload).success, true,
+      `advertised schema rejects a legal start: ${JSON.stringify(payload)}`,
+    );
+  }
+  for (const payload of x_ValidFollowupPayloads) {
+    assert.equal(
+      XagentSddFollowupInputSchema.safeParse(payload).success, true,
+      `fixture is not union-valid: ${JSON.stringify(payload)}`,
+    );
+    assert.equal(
+      XagentSddFollowupAdvertisedSchema.safeParse(payload).success, true,
+      `advertised schema rejects a legal followup: ${JSON.stringify(payload)}`,
+    );
+  }
 });

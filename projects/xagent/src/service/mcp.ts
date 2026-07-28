@@ -18,7 +18,9 @@ import {
   XagentMessageInputSchema,
   XagentSddAwaitInputSchema,
   XagentSddCloseInputSchema,
+  XagentSddFollowupAdvertisedSchema,
   XagentSddFollowupInputSchema,
+  XagentSddStartAdvertisedSchema,
   XagentSddStartInputSchema,
   XagentStartInputSchema,
   type StructuredToolError,
@@ -275,7 +277,10 @@ function createConfiguredMcpServer(
         title: "Start SDD supervised turn",
         description:
           "Render a Superpowers SDD role prompt, reserve the ledger row, and start the owned provider session.",
-        inputSchema: XagentSddStartInputSchema,
+        // Advertised schema only (xsvc-15) — a superset of the union, because
+        // registerTool cannot publish a discriminated union. The handler below
+        // still parses against the union, which does the rejecting.
+        inputSchema: XagentSddStartAdvertisedSchema,
       },
       async (args) => {
         return runTool(async () => {
@@ -291,7 +296,8 @@ function createConfiguredMcpServer(
         title: "Follow up on SDD supervised turn",
         description:
           "Submit a same-session SDD fix or re-review turn without restating stored assignment metadata.",
-        inputSchema: XagentSddFollowupInputSchema,
+        // Advertised schema only (xsvc-15); see xagent_sdd_start above.
+        inputSchema: XagentSddFollowupAdvertisedSchema,
       },
       async (args) => {
         return runTool(async () => {

@@ -199,6 +199,85 @@ export const XagentSddFollowupInputSchema = z.discriminatedUnion("kind", [
   ReReviewFollowupSchema,
 ]);
 
+// Advertised-only schemas (xsvc-15).
+//
+// McpServer.registerTool derives a tool's published JSON Schema from an
+// object schema; a discriminated union normalizes to undefined and is
+// published as the empty object, leaving these two tools undiscoverable
+// while every other tool advertises real fields. Handing registerTool the
+// union's JSON Schema does not help either -- it accepts only a raw shape or
+// an object schema.
+//
+// So these describe the union as a flat object: the discriminator as an
+// enum, the fields every variant shares as required, and every
+// variant-specific field optional and described with the variants that
+// require it. They are never used to validate. The handlers still parse
+// against the unions above, which remain the sole authority for rejection.
+//
+// The asymmetry is deliberate. Accepting a payload the union rejects costs
+// the caller one structured error; rejecting a payload the union accepts
+// hides capability the service would have served, with no way for the caller
+// to discover the mistake. Only the second direction is a defect.
+//
+function AdvertisedFor(roles: string, detail: string): string {
+  return `${detail} (required for: ${roles})`;
+}
+
+export const XagentSddStartAdvertisedSchema = z.object({
+  role: z.enum(["implementer", "task-reviewer", "code-reviewer"])
+    .describe("Which SDD role to dispatch; selects the required fields below."),
+  cwd: CwdSchema.describe("Absolute path to the worktree the agent works in."),
+  plan: SddArtifactPathSchema.describe("Absolute path to the Superpowers plan."),
+  agent: z.string().min(1).describe("Provider model name, e.g. grok-4.5 or opus."),
+  harness: z.enum(harnessNames).describe("Provider harness to run the agent under."),
+  effort: z.enum(thinkingLevels).describe("Reasoning effort for the dispatched agent."),
+  policy: SupervisionPolicySchema.optional().describe("Optional supervision policy overrides."),
+  note: NoteSchema.describe(
+    "Free text appended verbatim to the rendered prompt, for anything the templates have no slot for.",
+  ),
+  task: z.number().int().positive().optional()
+    .describe(AdvertisedFor("implementer, task-reviewer", "Plan task number.")),
+  name: WorkerFacingText("name").optional()
+    .describe(AdvertisedFor("implementer", "Human-readable task name.")),
+  brief: SddArtifactPathSchema.optional()
+    .describe(AdvertisedFor("implementer, task-reviewer", "Absolute path to the task brief.")),
+  report: SddArtifactPathSchema.optional()
+    .describe(AdvertisedFor("implementer, task-reviewer", "Absolute path the agent writes its report to.")),
+  context: WorkerFacingText("context").optional()
+    .describe("Optional scene-setting for an implementer."),
+  review_brief: SddArtifactPathSchema.optional()
+    .describe(AdvertisedFor("code-reviewer", "Absolute path to the review brief.")),
+  description: WorkerFacingText("description").optional()
+    .describe(AdvertisedFor("code-reviewer", "What the branch under review does.")),
+  base: z.string().min(1).optional()
+    .describe(AdvertisedFor("task-reviewer, code-reviewer", "Base git ref for the review diff.")),
+  head: z.string().min(1).optional()
+    .describe(AdvertisedFor("task-reviewer, code-reviewer", "Head git ref for the review diff.")),
+  constraints: SddArtifactPathSchema.optional()
+    .describe("Optional constraints file for a task-reviewer."),
+  diff: SddArtifactPathSchema.optional()
+    .describe("Optional precomputed diff file for a reviewer."),
+});
+
+export const XagentSddFollowupAdvertisedSchema = z.object({
+  kind: z.enum(["fix", "re-review"])
+    .describe("Which continuation to render; selects the required fields below."),
+  agent_id: AgentIdSchema.describe("The live SDD agent to continue."),
+  round: z.number().int().positive().describe("Fix or re-review round number; render-only."),
+  findings: SddArtifactPathSchema.describe("Absolute path to the findings file."),
+  note: NoteSchema.describe("Free text appended verbatim to the rendered prompt."),
+  findings_text: WorkerFacingText("findings_text").optional()
+    .describe(AdvertisedFor("fix", "The findings, inline.")),
+  tests: z.array(z.string().min(1)).min(1).optional()
+    .describe(AdvertisedFor("fix", "Commands that must pass before the fix is done.")),
+  base: z.string().min(1).optional()
+    .describe(AdvertisedFor("re-review", "Base git ref for the re-review diff.")),
+  head: z.string().min(1).optional()
+    .describe(AdvertisedFor("re-review", "Head git ref for the re-review diff.")),
+  diff: SddArtifactPathSchema.optional()
+    .describe("Optional precomputed diff file."),
+});
+
 export const XagentSddAwaitInputSchema = z
   .object({
     agent_id: AgentIdSchema,
