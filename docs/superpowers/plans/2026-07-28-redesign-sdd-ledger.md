@@ -2299,7 +2299,7 @@ export type ListRunsResult = {
 
 **This is the first build that wires the v2 store. Task 7 must already be done.**
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `projects/xagent/tests/mcp.test.ts`:
 
@@ -2387,7 +2387,7 @@ test("the v1 store and its schema are gone", async () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/mcp.test.js dist/tests/sdd_store.test.js
@@ -2395,7 +2395,7 @@ cd projects/xagent && npm run build && node --test dist/tests/mcp.test.js dist/t
 
 Expected: FAIL — the `sdd` block still has `agent`/`closed`, there is no tombstone path, and the v1 symbols still exist.
 
-- [ ] **Step 3: Wire the v2 store**
+- [x] **Step 3: Wire the v2 store**
 
 In `src/service_main.ts`:
 
@@ -2410,11 +2410,11 @@ In `src/service_main.ts`:
 
 - Update the `closeRuns` comment: the ledger is closed after provider sessions purely to release the file handle, not to let a close-time write commit.
 
-- [ ] **Step 4: Delete the v1 store**
+- [x] **Step 4: Delete the v1 store**
 
 In `src/service/sdd_store.ts` delete: `SddRole`, `SddTurnKind`, `SddTurnStatus`, `SddSessionRecord`, `SddTurnRecord`, `ReserveInitialInput`, `PrepareFollowupInput`, the `SddStore` type, `x_CurrentSchemaVersion`, `x_TerminalPhases`, `x_SchemaSql`, `MigrateSchema`, `MapSessionRow`, `MapTurnRow`, `CreateSddStore` in its entirety (including the transitional `Insert`/`Get`/`ListAll` adapter added in Task 2). Keep `SddStoreError`, `EnsureOwnerOnly*`, `OpenSddLedgerDatabase`, `GetSddDatabasePath`, the v2 types, and `CreateSddAgentStore`.
 
-- [ ] **Step 5: Land `xagent_list` v2**
+- [x] **Step 5: Land `xagent_list` v2**
 
 **Carry-forward from Task 4 — the second orphaned `closed_at` reader.** Since
 Task 4 deleted `CloseAfterProvider`, nothing writes `sdd_sessions.closed_at`,
@@ -2486,7 +2486,7 @@ function EntryOrderKey(entry: XagentListEntry): string
 }
 ```
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/sdd_store.test.js dist/tests/mcp.test.js dist/tests/sdd_manager.test.js
@@ -2494,7 +2494,7 @@ cd projects/xagent && npm run build && node --test dist/tests/sdd_store.test.js 
 
 Expected: PASS.
 
-- [ ] **Step 7: Prove no ledger update statement survives**
+- [x] **Step 7: Prove no ledger update statement survives**
 
 ```bash
 cd projects/xagent && grep -c 'UPDATE sdd' src/service/sdd_store.ts
@@ -2502,7 +2502,7 @@ cd projects/xagent && grep -c 'UPDATE sdd' src/service/sdd_store.ts
 
 Expected: `0`.
 
-- [ ] **Step 8: Run the full suite**
+- [x] **Step 8: Run the full suite**
 
 ```bash
 cd projects/xagent && npm test
@@ -2510,7 +2510,7 @@ cd projects/xagent && npm test
 
 Expected: PASS.
 
-- [ ] **Step 9: Commit and restart the service**
+- [x] **Step 9: Commit and restart the service**
 
 ```bash
 git add projects/xagent/src/service/sdd_store.ts projects/xagent/src/service_main.ts projects/xagent/src/service/run_manager.ts projects/xagent/src/service/sdd_manager.ts projects/xagent/tests/
