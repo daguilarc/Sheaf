@@ -194,6 +194,21 @@ WHEN `xagent_sdd_start` is called, THE xagent service SHALL accept exactly the r
 
 WHEN `xagent_sdd_followup` is called with kind `fix` or `re-review`, THE xagent service SHALL accept as input for `fix`: `agent_id`, `round`, `findings`, `findings_text`, `tests`, `report`, `note?`, and for `re-review`: `agent_id`, `round`, `findings`, `report`, `base`, `head`, `diff?`, `note?` — where `report` is a required tool input (the v2 ledger stores no report path), the brief is sourced from the target agent's own `sdd_agents` row and never from input, and `round` parameterizes only the rendered text, recorded nowhere but the resulting `turn.submitted` event; THE service SHALL render the continuation template and submit it to the same live agent without writing the ledger, returning `{ agent_id, sequence }` with no v1 `turn_number` field, validating only that an `sdd_agents` row exists (else `unknown_sdd_agent`), that the run is live in the run manager, and that the kind matches the agent's immutable start role (`fix` for `implementer` or `fixer`; `re-review` for `reviewer` or `re-reviewer`, else `sdd_followup_role_mismatch`); WHEN the run is not live, THE service SHALL return a structured `sdd_agent_not_live` error — replacing v1's `sdd_session_terminal` — whose details name the fresh-agent recovery: the role to dispatch for the same `plan_path` and `task`.
 
+THE service SHALL refuse a follow-up in every supervision phase except `ready`, with a structured error rather than a bare provider phase error: terminal phases (`completed`, `failed`, `cancelled`, `abandoned`) SHALL return `sdd_agent_not_live` as above, and every other non-`ready` phase SHALL return `sdd_agent_busy` naming the observed phase and `xagent_await` as the recovery tool. A re-review addressed to a task-less (whole-branch) reviewer SHALL return `sdd_followup_task_required` before any prompt is rendered. Every recovery pointer SHALL name a tool the service actually registers.
+
+#### Scenario: A dead but still-tracked agent gets the signpost
+
+- **WHEN** a controller sends a follow-up to an agent whose supervisor has reached a terminal phase but whose run is still tracked by the run manager
+- **THEN** the service returns `sdd_agent_not_live` with the fresh-agent recovery details
+- **AND** submits nothing to the provider
+- **AND** the controller never receives an unstructured phase error it cannot act on
+
+#### Scenario: A mid-turn agent is told to wait, not stranded
+
+- **WHEN** a controller sends a follow-up to an agent that is starting or already running a turn
+- **THEN** the service returns `sdd_agent_busy` naming the observed phase
+- **AND** the recovery names `xagent_await`, which the service registers
+
 #### Scenario: Same-agent fix writes no ledger state
 
 - **WHEN** a controller sends kind `fix` to a live implementer

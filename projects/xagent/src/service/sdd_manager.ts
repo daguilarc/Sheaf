@@ -85,10 +85,6 @@ const x_TerminalRunPhases = new Set([
   "cancelled",
   "abandoned",
 ]);
-const x_BusyRunPhases = new Set([
-  "starting",
-  "running",
-]);
 
 function AppendControllerNote(promptText: string, note: string | undefined): string
 {
@@ -379,7 +375,13 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         },
       });
     }
-    if (x_BusyRunPhases.has(inspection.phase))
+    // Fail closed: `ready` is the only phase Supervisor.submit accepts, so
+    // anything else is refused with a structured error rather than being
+    // passed through to become a bare invalidPhase Error. Written as
+    // "not ready" rather than an explicit busy set so a future phase cannot
+    // fall through both sets and reopen that path.
+    //
+    if (inspection.phase !== "ready")
     {
       throw StructuredFailure({
         error: "sdd_agent_busy",
@@ -389,7 +391,11 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         details: {
           agent_id: input.agent_id,
           phase: inspection.phase,
-          recovery: { tool: "xagent_sdd_await" },
+          // xagent_await, not xagent_sdd_await: Task 4 deleted the SDD await
+          // facade. Naming a tool the server does not register is the same
+          // dead-end this error exists to replace.
+          //
+          recovery: { tool: "xagent_await" },
         },
       });
     }

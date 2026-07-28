@@ -1063,7 +1063,7 @@ test("a busy agent is rejected with sdd_agent_busy before submit", async () =>
         assert.deepEqual(structured.details, {
           agent_id: x_AgentId,
           phase,
-          recovery: { tool: "xagent_sdd_await" },
+          recovery: { tool: "xagent_await" },
         });
         return true;
       },
