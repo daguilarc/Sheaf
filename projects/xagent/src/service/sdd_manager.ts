@@ -480,7 +480,25 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       });
     }
 
-    const artifacts = artifactsByAgent.get(input.agent_id);
+    // The in-process map is a cache, not the source of truth: the ledger
+    // already persists brief_path/brief_text/report_path for every turn.
+    // Recovering from it means a service restart no longer turns every live
+    // SDD session into `sdd_followup_missing_paths`.
+    //
+    let artifacts = artifactsByAgent.get(input.agent_id);
+    if (artifacts === undefined)
+    {
+      const latest = store.GetLatestTurn(input.agent_id);
+      if (latest !== undefined)
+      {
+        artifacts = {
+          briefPath: latest.brief_path,
+          briefText: latest.brief_text,
+          ...(latest.report_path === null ? {} : { reportPath: latest.report_path }),
+        };
+        artifactsByAgent.set(input.agent_id, artifacts);
+      }
+    }
     if (artifacts === undefined)
     {
       throw StructuredFailure({

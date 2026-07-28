@@ -322,6 +322,18 @@ function CreateFakeStore(recorder: ReturnType<typeof CreateOrderRecorder>): SddS
     {
       return openTurns.get(agentId);
     },
+    GetLatestTurn(agentId: string): SddTurnRecord | undefined
+    {
+      const candidates = [...(turnsByAgent.get(agentId) ?? [])];
+      const open = openTurns.get(agentId);
+      if (open !== undefined)
+      {
+        candidates.push(open);
+      }
+      return candidates
+        .sort((left, right) => right.turn_number - left.turn_number)
+        .at(0);
+    },
     GetTurnByCompletedSequence(
       agentId: string,
       completedSequence: number,
@@ -1639,4 +1651,43 @@ test("Await rejects a delivered report when no open turn can record it", async (
   );
   assert.equal(harness.recorder.Names().includes("MarkCompleted"), false);
   assert.equal(harness.store.completed.length, 0);
+});
+
+test("Followup recovers brief and report paths from the ledger after a service restart", async () =>
+{
+  const harness = CreateManagerHarness();
+  await StartAndClearOpenTurn(harness);
+
+  // A restarted service keeps the durable ledger but loses every in-process
+  // artifact cache. Before the ledger fallback this rejected with
+  // sdd_followup_missing_paths and stranded a live SDD session.
+  const restarted = CreateSddManager({
+    store: harness.store,
+    runManager: harness.runManager,
+    repoRoot: "/tmp/service-repo",
+    async canonicalizeCwd(): Promise<string>
+    {
+      return x_CanonicalCwd;
+    },
+    async readFile(): Promise<string>
+    {
+      return x_FindingsText;
+    },
+  });
+
+  const result = await restarted.Followup({
+    kind: "fix",
+    agent_id: x_AgentId,
+    round: 1,
+    findings: x_FindingsPath,
+    findings_text: x_FindingsText,
+    tests: ["dist/tests/sdd_manager.test.js"],
+  });
+
+  assert.equal(result.agent_id, x_AgentId);
+  assert.equal(result.turn_number, 2);
+  assert.equal(harness.store.prepared.at(-1)?.briefPath, x_BriefPath);
+  assert.equal(harness.store.prepared.at(-1)?.reportPath, x_ReportPath);
+  assert.ok(harness.runManager.submitted.at(-1)?.text.includes(x_BriefPath));
+  assert.ok(harness.runManager.submitted.at(-1)?.text.includes(x_ReportPath));
 });

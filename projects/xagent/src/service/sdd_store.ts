@@ -75,6 +75,7 @@ export type SddStore = {
   MarkClosed(agentId: string, closedAt: string): void;
   GetSession(agentId: string): SddSessionRecord | undefined;
   GetOpenTurn(agentId: string): SddTurnRecord | undefined;
+  GetLatestTurn(agentId: string): SddTurnRecord | undefined;
   GetTurnByCompletedSequence(agentId: string, completedSequence: number): SddTurnRecord | undefined;
   IsSddAgent(agentId: string): boolean;
   ReconcileTerminalRuns(phases: ReadonlyMap<string, string>): void;
@@ -361,6 +362,34 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
     LIMIT 1
   `);
 
+  // The manager's in-process artifact cache does not survive a service
+  // restart, but every brief/report path is already durable here. This is how
+  // a follow-up recovers them instead of failing sdd_followup_missing_paths.
+  //
+  const selectLatestTurn = database.prepare(`
+    SELECT
+      id,
+      agent_id,
+      turn_number,
+      kind,
+      round,
+      brief_path,
+      brief_text,
+      report_path,
+      findings_path,
+      findings_text,
+      report_text,
+      resume_sequence,
+      completed_sequence,
+      status,
+      created_at,
+      completed_at
+    FROM sdd_turns
+    WHERE agent_id = ?
+    ORDER BY turn_number DESC
+    LIMIT 1
+  `);
+
   const selectTurnByCompletedSequence = database.prepare(`
     SELECT
       id,
@@ -633,6 +662,15 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
       }
       const turn = MapTurnRow(row);
       return turn;
+    },
+
+    GetLatestTurn(agentId: string): SddTurnRecord | undefined {
+      AssertOpen();
+      const row = selectLatestTurn.get(agentId) as Record<string, unknown> | undefined;
+      if (!row) {
+        return undefined;
+      }
+      return MapTurnRow(row);
     },
 
     GetTurnByCompletedSequence(
