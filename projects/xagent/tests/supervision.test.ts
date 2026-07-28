@@ -791,18 +791,23 @@ test("turn.submitted is durable before the provider adapter is invoked", async (
 test("a failed event-sink append fails the submit without reaching the provider", async () => {
   const harness = createSupervisorHarness();
   await harness.supervisor.start();
-  let adapterCalled = false;
-  harness.adapter.onSubmit = () => { adapterCalled = true; };
   harness.failEventSinkOnType("turn.submitted");
   await assert.rejects(() => harness.supervisor.submit("hello"));
-  assert.equal(adapterCalled, false);
+  assert.deepEqual(harness.adapter.submittedTexts, []);
+  assert.equal(harness.supervisor.inspect().phase, "failed");
+  const failure = harness.events.find(
+    (event) => event.type === "supervision.state" && event.reason === "event_persistence_failed",
+  );
+  assert.ok(failure);
+  assert.equal(failure.phase, "failed");
 });
 
 test("turn.submitted text is sanitized like every other payload", async () => {
   const harness = createSupervisorHarness();
   await harness.supervisor.start();
-  await harness.supervisor.submit(`work in ${harness.cwd}/src and use sk-secret`);
+  await harness.supervisor.submit(`work in ${harness.cwd}/src and use sk-testsecret`);
   const submitted = harness.events.find((event) => event.type === "turn.submitted");
   const text = (submitted!.payload as { text: string }).text;
   assert.ok(!text.includes(harness.cwd));
+  assert.ok(!text.includes("sk-testsecret"));
 });

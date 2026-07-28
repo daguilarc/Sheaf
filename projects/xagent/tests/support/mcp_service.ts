@@ -88,6 +88,75 @@ export type WithMcpServiceOptions = {
   readonly clientName?: string;
 };
 
+export type StartedMcpService = {
+  startRun(prompt: string): Promise<{ run_id: string; sequence: number }>;
+  await(
+    runId: string,
+    afterSequence: number,
+    deadlineSeconds: number,
+  ): Promise<{ event: string }>;
+  submit(runId: string, text: string): Promise<void>;
+  close(): Promise<void>;
+  readonly runManager: XagentRunManager;
+  readonly logRoot: string;
+};
+
+export type StartMcpServiceOptions = {
+  readonly repoRoot?: string;
+  readonly logRoot?: string;
+  readonly policy?: SupervisionPolicy;
+  readonly adapterFactory?: () => HarnessAdapter;
+};
+
+// Lightweight run-manager harness for await/submit filter tests that do not
+// need a live MCP HTTP server. Later plan tasks grow this with SDD helpers.
+//
+export async function startMcpService(
+  options: StartMcpServiceOptions = {},
+): Promise<StartedMcpService>
+{
+  const logRoot = options.logRoot ?? await mkdtemp(path.join(tmpdir(), "xagent-await-filter-"));
+  const cwd = await mkdtemp(path.join(tmpdir(), "xagent-await-cwd-"));
+  const runManager = new XagentRunManager({
+    repoRoot: options.repoRoot ?? process.cwd(),
+    logRoot,
+    adapterFactory: options.adapterFactory ?? (() => new FakeHarnessAdapter()),
+    policy: options.policy ?? {
+      silenceTimeoutMs: 600_000,
+      watchdog: {},
+    },
+  });
+  return {
+    runManager,
+    logRoot,
+    startRun(prompt: string)
+    {
+      return runManager.startRun({
+        cwd,
+        prompt,
+        harness: "codex",
+        mode: "subagent",
+      });
+    },
+    await(runId: string, afterSequence: number, deadlineSeconds: number)
+    {
+      return runManager.awaitRun({
+        run_id: runId,
+        after_sequence: afterSequence,
+        deadline_seconds: deadlineSeconds,
+      });
+    },
+    submit(runId: string, text: string)
+    {
+      return runManager.submit(runId, text);
+    },
+    async close()
+    {
+      await runManager.closeAll();
+    },
+  };
+}
+
 export async function withMcpService(
   run: (context: McpServiceContext) => Promise<void>,
   options: WithMcpServiceOptions = {},

@@ -31,6 +31,7 @@ import {
 import type { SupervisionPolicy, SupervisionScheduler } from "../src/supervision/types.js";
 import Database from "better-sqlite3";
 import { writeFile } from "node:fs/promises";
+import { startMcpService } from "./support/mcp_service.js";
 
 const testPolicy: SupervisionPolicy = {
   silenceTimeoutMs: 600_000,
@@ -830,7 +831,7 @@ test("turn.submitted never wakes a live await", async () => {
     const pending = service.await(started.run_id, started.sequence, 5);
     await service.submit(started.run_id, "chit chat");
     const result = await pending;
-    assert.notEqual(result.event, "turn.submitted");
+    assert.equal(result.event, "turn.completed");
   } finally {
     await service.close();
   }
@@ -849,46 +850,3 @@ test("the persisted-await wake filter ignores turn.submitted", () => {
   };
   assert.equal(isPersistedAwaitWake(event), false);
 });
-
-async function startMcpService(): Promise<{
-  startRun(prompt: string): Promise<{ run_id: string; sequence: number }>;
-  await(
-    runId: string,
-    afterSequence: number,
-    deadlineSeconds: number,
-  ): Promise<{ event: string }>;
-  submit(runId: string, text: string): Promise<void>;
-  close(): Promise<void>;
-}> {
-  const logRoot = await mkdtemp(path.join(tmpdir(), "xagent-await-filter-"));
-  const cwd = await mkdtemp(path.join(tmpdir(), "xagent-await-cwd-"));
-  const runManager = new XagentRunManager({
-    repoRoot: process.cwd(),
-    logRoot,
-    adapterFactory: () => new FakeHarnessAdapter(),
-    policy: testPolicy,
-  });
-  return {
-    startRun(prompt: string) {
-      return runManager.startRun({
-        cwd,
-        prompt,
-        harness: "codex",
-        mode: "subagent",
-      });
-    },
-    await(runId: string, afterSequence: number, deadlineSeconds: number) {
-      return runManager.awaitRun({
-        run_id: runId,
-        after_sequence: afterSequence,
-        deadline_seconds: deadlineSeconds,
-      });
-    },
-    submit(runId: string, text: string) {
-      return runManager.submit(runId, text);
-    },
-    async close() {
-      await runManager.closeAll();
-    },
-  };
-}

@@ -234,39 +234,61 @@ export class Supervisor {
   }
 
   async submit(text: string): Promise<void> {
-    const turn = await this.#withLifecycleMutation(async () => {
-      if (this.#phase !== "ready" || this.#session === undefined) {
-        throw invalidPhase("submit", this.#phase);
-      }
-      this.#inputSequence += 1;
-      const inputSequence = this.#inputSequence;
-      const turnId = `turn_${inputSequence}`;
-      await this.#publishState("running", "turn_started", false);
-      await this.#publishSubmitted(turnId, text);
-      this.#evidence = new SemanticEvidenceWindow({
-        repoRoot: this.#startOptions.cwd,
-        originalPrompt: text,
-        clock: this.#clock,
-        ...(this.#previousWatchdogVerdict === undefined
-          ? {}
-          : { previousVerdict: this.#previousWatchdogVerdict }),
-        ...(this.#policy.watchdog.inputLimitBytes === undefined
-          ? {}
-          : { maxInputBytes: this.#policy.watchdog.inputLimitBytes }),
-        ...(this.#policy.watchdog.suspicionWindowMs === undefined
-          ? {}
-          : { suspicionWindowMs: this.#policy.watchdog.suspicionWindowMs }),
-        ...(this.#policy.watchdog.repeatedToolThreshold === undefined
-          ? {}
-          : { repeatedToolThreshold: this.#policy.watchdog.repeatedToolThreshold }),
-        ...(this.#policy.watchdog.repeatedFailureThreshold === undefined
-          ? {}
-          : { repeatedFailureThreshold: this.#policy.watchdog.repeatedFailureThreshold }),
+    let turnId = `turn_${this.#inputSequence + 1}`;
+    let turnStarted = false;
+    let turn: {
+      readonly inputSequence: number;
+      readonly turnId: string;
+      readonly session: HarnessSession;
+    };
+    try {
+      turn = await this.#withLifecycleMutation(async () => {
+        if (this.#phase !== "ready" || this.#session === undefined) {
+          throw invalidPhase("submit", this.#phase);
+        }
+        this.#inputSequence += 1;
+        const inputSequence = this.#inputSequence;
+        turnId = `turn_${inputSequence}`;
+        await this.#publishState("running", "turn_started", false);
+        // Only after turn_started's sink+commit succeeds is phase durable
+        // running; a later turn.submitted sink failure must be rescued.
+        //
+        turnStarted = true;
+        await this.#publishSubmitted(turnId, text);
+        this.#evidence = new SemanticEvidenceWindow({
+          repoRoot: this.#startOptions.cwd,
+          originalPrompt: text,
+          clock: this.#clock,
+          ...(this.#previousWatchdogVerdict === undefined
+            ? {}
+            : { previousVerdict: this.#previousWatchdogVerdict }),
+          ...(this.#policy.watchdog.inputLimitBytes === undefined
+            ? {}
+            : { maxInputBytes: this.#policy.watchdog.inputLimitBytes }),
+          ...(this.#policy.watchdog.suspicionWindowMs === undefined
+            ? {}
+            : { suspicionWindowMs: this.#policy.watchdog.suspicionWindowMs }),
+          ...(this.#policy.watchdog.repeatedToolThreshold === undefined
+            ? {}
+            : { repeatedToolThreshold: this.#policy.watchdog.repeatedToolThreshold }),
+          ...(this.#policy.watchdog.repeatedFailureThreshold === undefined
+            ? {}
+            : { repeatedFailureThreshold: this.#policy.watchdog.repeatedFailureThreshold }),
+        });
+        this.#watchdogScheduler.resetTurn();
+        this.#health.recordMechanicalEvent({ type: "provider.started" });
+        return { inputSequence, turnId, session: this.#session };
       });
-      this.#watchdogScheduler.resetTurn();
-      this.#health.recordMechanicalEvent({ type: "provider.started" });
-      return { inputSequence, turnId, session: this.#session };
-    });
+    } catch (error) {
+      // Rescue outside the lock: rescuePublishFailure re-enters the mutation
+      // gate. Skip when turn_started never committed (phase still ready /
+      // concurrent invalidPhase) so we preserve the pre-existing retry path.
+      //
+      if (turnStarted) {
+        await this.#rescuePublishFailure(error, turnId);
+      }
+      throw error;
+    }
 
     try {
       let lastAssistantText: string | undefined;
