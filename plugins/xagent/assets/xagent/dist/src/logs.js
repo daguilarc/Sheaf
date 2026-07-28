@@ -126,6 +126,15 @@ export async function updateRunSupervision(record, update, clock = () => new Dat
         record.watchdog = watchdog;
     }
     record.owned_process = owned_process;
+    // `updateRunExitStatus` is called only from the legacy `xagent run` runtime,
+    // so every service-owned run persisted `exit_status: "running"` forever while
+    // `supervision.phase` in the same file said completed/failed/cancelled. The
+    // phase is authoritative; derive the legacy field from it so both agree on
+    // the supervised path too.
+    //
+    if (terminalSupervisionPhases.has(supervision.phase)) {
+        record.exit_status = supervision.phase === "completed" ? "completed" : "failed";
+    }
     record.updated_at = clock().toISOString();
     await writeMetadata(record);
 }

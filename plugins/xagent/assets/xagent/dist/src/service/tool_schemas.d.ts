@@ -91,7 +91,7 @@ export declare const ImplementerStartSchema: z.ZodObject<{
     name: z.ZodString;
     brief: z.ZodEffects<z.ZodString, string, string>;
     report: z.ZodEffects<z.ZodString, string, string>;
-    context: z.ZodOptional<z.ZodString>;
+    context: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
     agent: z.ZodString;
@@ -526,7 +526,7 @@ export declare const XagentSddStartInputSchema: z.ZodDiscriminatedUnion<"role", 
     name: z.ZodString;
     brief: z.ZodEffects<z.ZodString, string, string>;
     report: z.ZodEffects<z.ZodString, string, string>;
-    context: z.ZodOptional<z.ZodString>;
+    context: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
     agent: z.ZodString;
@@ -959,7 +959,7 @@ export declare const FixFollowupSchema: z.ZodObject<{
     agent_id: z.ZodString;
     round: z.ZodNumber;
     findings: z.ZodEffects<z.ZodString, string, string>;
-    findings_text: z.ZodString;
+    findings_text: z.ZodEffects<z.ZodString, string, string>;
     tests: z.ZodArray<z.ZodString, "many">;
 }, "strict", z.ZodTypeAny, {
     kind: "fix";
@@ -1006,7 +1006,7 @@ export declare const XagentSddFollowupInputSchema: z.ZodDiscriminatedUnion<"kind
     agent_id: z.ZodString;
     round: z.ZodNumber;
     findings: z.ZodEffects<z.ZodString, string, string>;
-    findings_text: z.ZodString;
+    findings_text: z.ZodEffects<z.ZodString, string, string>;
     tests: z.ZodArray<z.ZodString, "many">;
 }, "strict", z.ZodTypeAny, {
     kind: "fix";
@@ -1222,6 +1222,16 @@ export declare const XagentInspectInputSchema: z.ZodObject<{
 }, {
     run_id: string;
 }>;
+export declare const XagentListInputSchema: z.ZodObject<{
+    live_only: z.ZodDefault<z.ZodBoolean>;
+    limit: z.ZodDefault<z.ZodNumber>;
+}, "strict", z.ZodTypeAny, {
+    live_only: boolean;
+    limit: number;
+}, {
+    live_only?: boolean | undefined;
+    limit?: number | undefined;
+}>;
 export declare const XagentMessageInputSchema: z.ZodObject<{
     run_id: z.ZodString;
     text: z.ZodString;
@@ -1249,6 +1259,7 @@ export declare const XagentCloseInputSchema: z.ZodObject<{
 export type XagentStartInput = z.infer<typeof XagentStartInputSchema>;
 export type XagentAwaitInput = z.infer<typeof XagentAwaitInputSchema>;
 export type XagentInspectInput = z.infer<typeof XagentInspectInputSchema>;
+export type XagentListInput = z.infer<typeof XagentListInputSchema>;
 export type XagentMessageInput = z.infer<typeof XagentMessageInputSchema>;
 export type XagentInterruptInput = z.infer<typeof XagentInterruptInputSchema>;
 export type XagentCloseInput = z.infer<typeof XagentCloseInputSchema>;

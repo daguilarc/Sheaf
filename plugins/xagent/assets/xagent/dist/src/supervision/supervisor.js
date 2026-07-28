@@ -22,6 +22,7 @@ export class Supervisor {
     #health;
     #watchdogScheduler;
     #watchdogTelemetrySink;
+    #providerTranscriptSink;
     #watchdog = {
         invocation_count: 0,
         controller_wake_count: 0,
@@ -67,6 +68,7 @@ export class Supervisor {
         this.#clock = options.clock ?? (() => new Date());
         this.#metadataSink = options.metadataSink ?? (async () => { });
         this.#watchdogTelemetrySink = options.watchdogTelemetrySink ?? (async () => { });
+        this.#providerTranscriptSink = options.providerTranscriptSink ?? (async () => { });
         const timestamp = this.#clock().toISOString();
         this.#lastTransportProgressAt = timestamp;
         this.#lastSemanticProgressAt = timestamp;
@@ -221,6 +223,9 @@ export class Supervisor {
                         return;
                     }
                     this.#recordProgress(event);
+                    if (event.rawProvider !== undefined) {
+                        await this.#providerTranscriptSink(sanitizeValue(event.rawProvider, this.#startOptions.cwd));
+                    }
                     const mechanical = mechanicalEventClassification(this.#health, event);
                     if (mechanical?.kind === "attention") {
                         await this.#applyHealthClassification(mechanical);
@@ -726,6 +731,11 @@ function mechanicalEventClassification(monitor, event) {
             type: "process.exited",
             exitCode: exitStatus.exitCode,
             signal: exitStatus.signal,
+            // Without this the controller's only diagnosis for a dead provider was
+            // `exit_code: 1`. The message is sanitized downstream with the rest of
+            // the failure payload.
+            //
+            ...(event.message === undefined ? {} : { message: event.message }),
         });
     }
     return undefined;

@@ -13,6 +13,24 @@ export class ToolValidationError extends Error {
 }
 export const CwdSchema = z.string().min(1).describe("Absolute path to an existing working directory");
 const x_GeneratedAgentIdPattern = /^xrun_[0-9]{17}_[0-9a-f]{8}$/;
+const x_EmbeddedRunIdPattern = /xrun_[0-9]{17}_[0-9a-f]{8}/;
+// Controller bookkeeping is not worker-actionable. A dispatched worker has no
+// xagent access, so "keep session xrun_… open for re-review" reads as an
+// instruction it must obey and cannot. Fail the dispatch rather than shipping
+// the confusion into the prompt.
+//
+function WorkerFacingText(label) {
+    return z.string().min(1).superRefine((value, ctx) => {
+        const match = x_EmbeddedRunIdPattern.exec(value);
+        if (match !== null) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: `${label} must not contain a controller run id (found ${match[0]}); `
+                    + "a dispatched worker cannot act on xagent session ids",
+            });
+        }
+    });
+}
 export const AgentIdSchema = z
     .string()
     .min(1)
@@ -74,7 +92,7 @@ export const ImplementerStartSchema = z
     name: z.string().min(1),
     brief: SddArtifactPathSchema,
     report: SddArtifactPathSchema,
-    context: z.string().min(1).optional(),
+    context: WorkerFacingText("context").optional(),
 })
     .strict();
 export const TaskReviewerStartSchema = z
@@ -111,7 +129,7 @@ export const FixFollowupSchema = z
     agent_id: AgentIdSchema,
     round: z.number().int().positive(),
     findings: SddArtifactPathSchema,
-    findings_text: z.string().min(1),
+    findings_text: WorkerFacingText("findings_text"),
     tests: z.array(z.string().min(1)).min(1),
 })
     .strict();
@@ -175,6 +193,12 @@ export const XagentAwaitInputSchema = z
 export const XagentInspectInputSchema = z
     .object({
     run_id: z.string().min(1),
+})
+    .strict();
+export const XagentListInputSchema = z
+    .object({
+    live_only: z.boolean().default(false),
+    limit: z.number().int().positive().max(200).default(50),
 })
     .strict();
 export const XagentMessageInputSchema = z

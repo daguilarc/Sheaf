@@ -6,6 +6,7 @@ export type MechanicalHealthEvent = {
     readonly type: "process.exited";
     readonly exitCode: number | null;
     readonly signal: string | null;
+    readonly message?: string;
 } | {
     readonly type: "provider.started";
 } | {

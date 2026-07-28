@@ -6,6 +6,7 @@ export type ProcessHarnessState = {
     providerSequence: number;
     cursorSegmentText?: string;
     cursorLastDelta?: string;
+    cursorFinalSegmentText?: string;
 };
 export type ProviderEventParser = (raw: unknown, context: AdapterTurnContext, state: ProcessHarnessState) => AdapterEvent[];
 export type ProcessCommand = {

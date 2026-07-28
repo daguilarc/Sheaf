@@ -29,6 +29,7 @@ function buildCursorCommand(context, state, options) {
     //
     state.cursorSegmentText = "";
     state.cursorLastDelta = undefined;
+    state.cursorFinalSegmentText = undefined;
     const args = ["--print", "--output-format", "stream-json", "--stream-partial-output", "--trust", "--force"];
     if (state.providerThreadId !== undefined) {
         args.push("--resume", state.providerThreadId);
@@ -58,7 +59,17 @@ export function parseCursorProviderEvent(raw, context, state) {
         return parseCursorAssistantEvent(raw, context, state);
     }
     if (type === "result") {
-        const text = stringValue(raw.result ?? raw.text, extractCursorAssistantText(raw.message));
+        const streamed = stringValue(raw.result ?? raw.text, extractCursorAssistantText(raw.message));
+        // `result` is the whole turn's assistant stream glued together, so the
+        // controller's "final report" arrived with every narration line fused onto
+        // the status contract. The end-of-turn flush is the real final message;
+        // fall back to `result` only when no such flush was observed.
+        //
+        const finalSegment = state.cursorFinalSegmentText;
+        const text = finalSegment !== undefined && finalSegment.trim() !== ""
+            ? finalSegment
+            : streamed;
+        state.cursorFinalSegmentText = undefined;
         clearCursorSegment(state);
         return [{
                 type: "message.completed",
@@ -101,6 +112,9 @@ function parseCursorAssistantEvent(raw, context, state) {
         && state.cursorLastDelta !== undefined
         && text !== state.cursorLastDelta;
     if (isFinalFlush || isToolFlush || isSegmentReplay) {
+        if (isFinalFlush) {
+            state.cursorFinalSegmentText = text;
+        }
         clearCursorSegment(state);
         return [];
     }

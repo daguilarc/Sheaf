@@ -12,6 +12,7 @@ export type SupervisorOptions = {
     readonly metadataSink?: SupervisionMetadataSink;
     readonly watchdogClassifier?: WatchdogClassifier;
     readonly watchdogTelemetrySink?: WatchdogTelemetrySink;
+    readonly providerTranscriptSink?: (raw: unknown) => Promise<void>;
 };
 export declare class Supervisor {
     #private;

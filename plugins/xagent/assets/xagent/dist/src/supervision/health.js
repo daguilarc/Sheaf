@@ -60,7 +60,13 @@ export class DeterministicHealthMonitor {
                 return {
                     kind: "failure",
                     reason: "process_exit",
-                    payload: { exit_code: event.exitCode, signal: event.signal },
+                    payload: {
+                        exit_code: event.exitCode,
+                        signal: event.signal,
+                        ...(event.message === undefined || event.message.trim() === ""
+                            ? {}
+                            : { message: event.message }),
+                    },
                 };
             case "provider.completed":
                 this.#deactivate();
