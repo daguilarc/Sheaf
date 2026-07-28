@@ -585,7 +585,6 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
   };
 }
 
-
 export function AsSddRunManagerPort(runManager: XagentRunManager): SddRunManagerPort
 {
   return runManager;

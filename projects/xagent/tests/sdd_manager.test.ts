@@ -1190,24 +1190,6 @@ test("SddManager exposes only Start, Followup, and ListGeneric", () =>
   assert.deepEqual(Object.keys(harness.manager).sort(), ["Followup", "ListGeneric", "Start"]);
 });
 
-test("messaging an SDD run submits like any run with no ledger write", async () =>
-{
-  // Adapted from the plan snippet: CreateDeps/SeedImplementer do not exist in
-  // this file; CreateManagerHarness + StartAndClearOpenTurn are the local
-  // equivalents. Messaging goes through the run manager directly — the SDD
-  // MessageGeneric facade is deleted in this task.
-  //
-  const harness = CreateManagerHarness();
-  await StartAndClearOpenTurn(harness);
-  await harness.runManager.messageRun({
-    run_id: x_AgentId,
-    text: "which marketplace source type?",
-  });
-  assert.equal(harness.store.completed.length, 0);
-  assert.equal(harness.store.closed.length, 0);
-  assert.ok(!harness.recorder.Names().includes("MarkCompleted"));
-});
-
 test("ReconcileTerminalRuns abandons only unresolved reportless terminal turns", async () =>
 {
   const harness = CreateManagerHarness();

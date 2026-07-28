@@ -102,7 +102,7 @@ export type StartedMcpService = {
     deadlineSeconds: number,
   ): Promise<{ event: string }>;
   submit(runId: string, text: string): Promise<void>;
-  ledgerWriteCount(): number;
+  turnRowCount(): number;
   close(): Promise<void>;
   readonly runManager: XagentRunManager;
   readonly logRoot: string;
@@ -225,7 +225,7 @@ export async function startMcpService(
     {
       return runManager.submit(runId, text);
     },
-    ledgerWriteCount()
+    turnRowCount()
     {
       // Counts turn rows in the v1 ledger. Start inserts one; await must not
       // add another. MarkCompleted (deleted in this task) updated the same

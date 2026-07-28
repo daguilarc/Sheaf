@@ -116,6 +116,35 @@ logic inside an additive task risks a regression in the store the live service
 is running on. Fix: move the version check ahead of the pragma. Whole-branch
 review, or a follow-up change.
 
+### B6. Coverage the deleted e2e lifecycle test took with it — FOR TASK 9
+
+Task 4 deleted `tests/e2e.test.ts`'s "MCP fake adapter drives the full SDD
+lifecycle" test outright rather than migrating it. The controller authorized
+that — its premise was report persistence and `sdd_turns` status, both deleted
+— and the Task 4 reviewer checked what actually died. Three non-report-premised
+invariants it uniquely covered have **no replacement**:
+
+1. **Two concurrent SDD sessions** with independent adapters, distinct agent
+   ids, and per-agent ledger rows. No surviving test drives two SDD sessions at
+   once.
+2. **The only start → await → followup → await round-trip through the MCP tool
+   layer.** Everything left either bypasses the tool layer or drives one turn.
+3. **`assert.notEqual(row.report_text, x_MutableArtifactText)`** — report text
+   comes from the event, not from the mutable artifact file on disk. The v2
+   analogue is worth restating directly: the report in `turn.completed` must
+   not be re-read from the report path. The new `mcp_await` test writes an
+   *empty* report file, so it would not catch a regression that read the file.
+
+Also missing since Task 4: no test exercises `xagent_await` / `xagent_message`
+/ `xagent_close` **through MCP against an SDD-owned run**. The handler bodies
+are now one unbranched line each so structural risk is low, but xsvc-5's
+behavioural claim is asserted nowhere at the tool layer, and it was before this
+task.
+
+Task 9 is the natural owner of all four. This is not a defect in Task 4; it is
+the accounting for a wholesale deletion, recorded so the coverage is rebuilt
+deliberately rather than assumed.
+
 ### B2. Unreproduced intermittent test failure — OPEN
 
 The Task 1 implementer reported one `service_main` reconciliation failure that

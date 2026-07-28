@@ -74,7 +74,7 @@ test("awaiting an SDD run delivers report text from the event log with no ledger
     const result = await service.await(started.agent_id, started.sequence, 30);
     assert.equal(result.event, "turn.completed");
     assert.equal(typeof (result as { report?: { text: string } }).report?.text, "string");
-    assert.equal(service.ledgerWriteCount(), 1);
+    assert.equal(service.turnRowCount(), 1);
   } finally {
     await service.close();
   }

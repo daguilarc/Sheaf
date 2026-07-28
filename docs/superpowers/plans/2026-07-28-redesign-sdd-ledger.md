@@ -1382,6 +1382,17 @@ git commit -m "refactor(xagent): delete SDD report binding and the sdd await/clo
 
 **Satisfies:** xsvc-12
 
+**Carry-forward from Task 4 — one of two orphaned `closed_at` readers.** Task 4
+deleted `CloseAfterProvider`, the only writer of `sdd_sessions.closed_at`. Two
+readers outlived it. This task owns the first: `Followup`'s
+`sdd_session_closed` guard (`sdd_manager.ts:336-343`) is now unreachable in
+production and is kept green only because a test writes `closed_at` directly
+into the fake store. Delete the guard **and** that test; a guard that can only
+fire in a fake is worse than no guard, because it reads as coverage. The
+deleted-by-name checklist already assigns `sdd_session_closed` here — this note
+records *why* it became urgent. The second reader is `ListGeneric`'s `closed`
+field, owned by Task 8b. Found in the Task 4 review.
+
 **Files:**
 - Modify: `projects/xagent/src/service/sdd_manager.ts` (`Followup`, `SddManagerDeps`, `RoleAllowsFollowup`)
 - Test: `projects/xagent/tests/sdd_manager.test.ts`
@@ -2338,6 +2349,15 @@ In `src/service_main.ts`:
 In `src/service/sdd_store.ts` delete: `SddRole`, `SddTurnKind`, `SddTurnStatus`, `SddSessionRecord`, `SddTurnRecord`, `ReserveInitialInput`, `PrepareFollowupInput`, the `SddStore` type, `x_CurrentSchemaVersion`, `x_TerminalPhases`, `x_SchemaSql`, `MigrateSchema`, `MapSessionRow`, `MapTurnRow`, `CreateSddStore` in its entirety (including the transitional `Insert`/`Get`/`ListAll` adapter added in Task 2). Keep `SddStoreError`, `EnsureOwnerOnly*`, `OpenSddLedgerDatabase`, `GetSddDatabasePath`, the v2 types, and `CreateSddAgentStore`.
 
 - [ ] **Step 5: Land `xagent_list` v2**
+
+**Carry-forward from Task 4 — the second orphaned `closed_at` reader.** Since
+Task 4 deleted `CloseAfterProvider`, nothing writes `sdd_sessions.closed_at`,
+so `ListGeneric`'s surviving `closed: session.closed_at !== null` is hard-false
+for every session — including genuinely closed ones. `xagent_list` is the
+recovery tool; telling a recovering controller that a closed session is live is
+a wrong answer on exactly the path this branch exists to make trustworthy. The
+`XagentSddListFields` shape below already drops `closed`, which fixes it. Do
+not carry the field forward "for compatibility". Found in the Task 4 review.
 
 In `src/service/run_manager.ts` replace `XagentSddListFields` and `ListRunsResult` with the shapes in the **Interfaces** block, and add `XagentSddTombstoneRow` and `XagentListEntry`. `XagentListRow` itself is unchanged apart from the `sdd` field's new type.
 
