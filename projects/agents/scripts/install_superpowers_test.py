@@ -232,6 +232,10 @@ class InstallSuperpowersTests(unittest.TestCase):
             str(marketplace_root.resolve()),
             known["sheaf-managed"]["installLocation"],
         )
+        settings = json.loads(
+            (self.home / ".claude" / "settings.json").read_text(encoding="utf-8")
+        )
+        self.assertIs(settings["enabledPlugins"]["superpowers@sheaf-managed"], True)
 
     def test_registry_conflict_preflight_before_any_mutation(self) -> None:
         foreign_path = self.home / "foreign-superpowers"
@@ -627,6 +631,13 @@ class InstallSuperpowersTests(unittest.TestCase):
         cleaned = json.loads(claude_registry.read_text(encoding="utf-8"))
         self.assertNotIn("superpowers@sheaf-managed", cleaned["plugins"])
         self.assertIn("superpowers@claude-plugins-official", cleaned["plugins"])
+        settings = json.loads(
+            (self.home / ".claude" / "settings.json").read_text(encoding="utf-8")
+        )
+        self.assertNotIn(
+            "superpowers@sheaf-managed",
+            settings.get("enabledPlugins", {}),
+        )
         self.assertEqual(
             self.codex_hooks_before,
             (self.codex_home / "hooks.json").read_text(encoding="utf-8"),

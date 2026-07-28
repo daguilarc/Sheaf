@@ -121,6 +121,10 @@ def claude_known_marketplaces_path(home: Path) -> Path:
     return home / ".claude" / "plugins" / "known_marketplaces.json"
 
 
+def claude_settings_path(home: Path) -> Path:
+    return home / ".claude" / "settings.json"
+
+
 def claude_marketplace_root(home: Path) -> Path:
     return home / ".claude" / "plugins" / "marketplaces" / MARKETPLACE_NAME
 
@@ -348,6 +352,19 @@ def merge_claude_installed_plugins(
     print(f"wrote {path}")
 
 
+def enable_claude_plugin(home: Path) -> None:
+    # Claude loads plugin skills only when enabledPlugins marks the key true.
+    #
+    path = claude_settings_path(home)
+    payload = load_json_object(path, {})
+    enabled = payload.setdefault("enabledPlugins", {})
+    if not isinstance(enabled, dict):
+        raise RuntimeError(f"{path} field 'enabledPlugins' must be an object")
+    enabled[CLAUDE_PLUGIN_KEY] = True
+    write_json(path, payload)
+    print(f"wrote {path}")
+
+
 def marketplace_source_path(*, home: Path, destination: Path) -> str:
     try:
         relative = destination.resolve().relative_to(home.resolve())
@@ -480,6 +497,7 @@ def install_superpowers(
         claude_package_path(home, version),
         pin,
     )
+    enable_claude_plugin(home)
     upsert_codex_marketplace(home, codex_package_path(home))
     upsert_pi_settings(home, pi_package_path(home))
     prune_obsolete_claude_versions(home, keep_version=version)
@@ -523,6 +541,22 @@ def check_claude_registry(home: Path, destination: Path) -> int:
     if str(destination.resolve()) != str(Path(str(install_path)).resolve()):
         print(
             f"registry {CLAUDE_PLUGIN_KEY} points at {install_path}, expected {destination}",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def check_claude_enabled(home: Path) -> int:
+    path = claude_settings_path(home)
+    if not path.is_file():
+        print(f"missing {path}", file=sys.stderr)
+        return 1
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    enabled = payload.get("enabledPlugins")
+    if not isinstance(enabled, dict) or enabled.get(CLAUDE_PLUGIN_KEY) is not True:
+        print(
+            f"Claude plugin {CLAUDE_PLUGIN_KEY} is not enabled in {path}",
             file=sys.stderr,
         )
         return 1
@@ -647,6 +681,7 @@ def check_superpowers(
     for destination, label in checks:
         status |= check_package(destination, pin, label)
     status |= check_claude_registry(home, claude_package_path(home, version))
+    status |= check_claude_enabled(home)
     status |= check_claude_marketplace(home, pin)
     status |= check_codex_marketplace(home, codex_package_path(home))
     status |= check_pi_settings(home, pi_package_path(home))
@@ -722,6 +757,19 @@ def clean_claude_registry(home: Path) -> None:
     print(f"wrote {path}")
 
 
+def clean_claude_enabled(home: Path) -> None:
+    path = claude_settings_path(home)
+    if not path.is_file():
+        return
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    enabled = payload.get("enabledPlugins")
+    if not isinstance(enabled, dict) or CLAUDE_PLUGIN_KEY not in enabled:
+        return
+    del enabled[CLAUDE_PLUGIN_KEY]
+    write_json(path, payload)
+    print(f"wrote {path}")
+
+
 def clean_codex_marketplace(home: Path) -> None:
     path = codex_marketplace_path(home)
     if not path.is_file():
@@ -787,6 +835,7 @@ def clean_superpowers(*, home: Path, codex_home: Path) -> int:
     remove_managed_package(pi_package_path(home))
 
     clean_claude_registry(home)
+    clean_claude_enabled(home)
     clean_codex_marketplace(home)
     clean_pi_settings(home)
 

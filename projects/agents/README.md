@@ -202,7 +202,7 @@ Global install also installs Superpowers as managed local plugins from
 
 | Harness | Managed package path | Discovery |
 | --- | --- | --- |
-| Claude | `~/.claude/plugins/cache/sheaf-managed/superpowers/<version>/` | `superpowers@sheaf-managed` in `installed_plugins.json` plus a sheaf-managed marketplace record |
+| Claude | `~/.claude/plugins/cache/sheaf-managed/superpowers/<version>/` | `superpowers@sheaf-managed` in `installed_plugins.json`, sheaf-managed marketplace record, and `enabledPlugins` in `~/.claude/settings.json` (install alone without enable leaves skills on disk but invisible to sessions) |
 | Cursor | `~/.cursor/plugins/local/superpowers/` | Cursor has no sheaf-managed JSON registry entry; presence under `plugins/local/` is the install. Expect skills as `superpowers:<id>` once Cursor loads local plugins (may need a new Agent session). |
 | Codex | `~/.agents/plugins/plugins/superpowers/` | Local-source entry for `superpowers` in `~/.agents/plugins/marketplace.json`. Staging alone may leave `codex plugin list` showing the plugin as available but not installed; run `codex plugin add superpowers@<marketplace-name>` once (suffix is the `name` field of that marketplace file; fresh installs default to `personal`), then open a new conversation. |
 | Pi | `~/.pi/packages/sheaf-managed/superpowers/` | Absolute path in `~/.pi/agent/settings.json` `packages` |
