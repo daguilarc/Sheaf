@@ -1281,3 +1281,57 @@ class LauncherPortabilityTests(unittest.TestCase):
                 env={**os.environ, "XAGENT_LOG_ROOT": "", "SHEAF_XAGENT_LOG_ROOT": ""},
             ).stdout.strip()
             self.assertEqual(outside, str(Path.home() / ".xagent" / "data"))
+
+    def test_launcher_resolves_the_main_checkout_from_inside_a_worktree(self) -> None:
+        # A Sheaf worktree carries config/services.json and structure/ too, so a
+        # naive upward walk would resolve the worktree's own data/ while the
+        # service writes to the main checkout's. The launcher must agree with
+        # the service or `xagent list` reports an empty log root.
+        launcher = (REPO_ROOT / "plugins/xagent/scripts/xagent").read_text(encoding="utf-8")
+        start = launcher.index("find_sheaf_root()")
+        end = launcher.index("\n", launcher.index("export XAGENT_LOG_ROOT="))
+        with tempfile.TemporaryDirectory() as raw_base:
+            base = Path(raw_base).resolve()
+            slice_path = base / "log_root_slice.sh"
+            slice_path.write_text(launcher[start:end] + "\n", encoding="utf-8")
+
+            main = base / "main-checkout"
+            (main / "config").mkdir(parents=True)
+            (main / "structure").mkdir()
+            (main / "config" / "services.json").write_text("[]\n", encoding="utf-8")
+            for command in (
+                ["git", "init", "-q", "-b", "main"],
+                ["git", "config", "user.email", "t@example.com"],
+                ["git", "config", "user.name", "t"],
+                ["git", "add", "-A"],
+                ["git", "commit", "-qm", "seed"],
+            ):
+                subprocess.run(command, cwd=str(main), check=True, capture_output=True)
+
+            tree = base / "wt"
+            subprocess.run(
+                ["git", "worktree", "add", "-q", "-b", "feature", str(tree)],
+                cwd=str(main),
+                check=True,
+                capture_output=True,
+            )
+
+            probe = base / "probe.sh"
+            probe.write_text(
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n"
+                f'. "{slice_path}"\n'
+                'printf "%s\\n" "${XAGENT_LOG_ROOT}"\n',
+                encoding="utf-8",
+            )
+            probe.chmod(0o755)
+
+            resolved = subprocess.run(
+                ["bash", str(probe)],
+                cwd=str(tree),
+                capture_output=True,
+                text=True,
+                check=True,
+                env={**os.environ, "XAGENT_LOG_ROOT": "", "SHEAF_XAGENT_LOG_ROOT": ""},
+            ).stdout.strip()
+            self.assertEqual(resolved, str(main / "data" / "xagent"))

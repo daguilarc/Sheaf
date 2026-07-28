@@ -24,6 +24,7 @@ import type {
   AwaitRunResult,
   CloseRunResult,
   CreateRunOptions,
+  ListRunsResult,
   MessageRunResult,
 } from "../src/service/run_manager.js";
 import type {
@@ -503,6 +504,23 @@ function CreateFakeRunManager(recorder: ReturnType<typeof CreateOrderRecorder>):
         sequence: input.after_sequence,
         phase: "ready",
         elapsed_ms: 0,
+      };
+    },
+    async listOwnedRuns(): Promise<ListRunsResult>
+    {
+      recorder.Record("listOwnedRuns");
+      return {
+        runs: [...runs].map((runId) => ({
+          run_id: runId,
+          harness: "cursor",
+          phase: "ready",
+          sequence: 4,
+          exit_status: "running",
+          live: true,
+          supervised: true,
+          created_at: "2026-07-27T00:00:00.000Z",
+          updated_at: "2026-07-27T00:00:00.000Z",
+        })),
       };
     },
     async closeRun(input: XagentCloseInput): Promise<CloseRunResult>

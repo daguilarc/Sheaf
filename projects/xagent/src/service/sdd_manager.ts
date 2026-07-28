@@ -20,6 +20,7 @@ import {
   type AwaitRunResult,
   type CloseRunResult,
   type CreateRunOptions,
+  type ListRunsResult,
   type MessageRunResult,
   type XagentRunManager,
 } from "./run_manager.js";
@@ -28,6 +29,7 @@ import {
   type StructuredToolError,
   type XagentAwaitInput,
   type XagentCloseInput,
+  type XagentListInput,
   type XagentMessageInput,
   type XagentSddAwaitInput,
   type XagentSddCloseInput,
@@ -68,6 +70,7 @@ export type SddRunManagerPort = {
   messageRun(input: XagentMessageInput): Promise<MessageRunResult>;
   awaitRun(input: XagentAwaitInput, signal?: AbortSignal): Promise<AwaitRunResult>;
   closeRun(input: XagentCloseInput): Promise<CloseRunResult>;
+  listOwnedRuns(input: XagentListInput): Promise<ListRunsResult>;
 };
 
 export type SddManager = {
@@ -75,6 +78,7 @@ export type SddManager = {
   Followup(input: XagentSddFollowupInput): Promise<XagentSddFollowupResult>;
   Await(input: XagentSddAwaitInput, signal?: AbortSignal): Promise<XagentSddAwaitResult>;
   Close(input: XagentSddCloseInput): Promise<XagentSddCloseResult>;
+  ListGeneric(input: XagentListInput): Promise<ListRunsResult>;
   MessageGeneric(input: XagentMessageInput): Promise<MessageRunResult>;
   AwaitGeneric(input: XagentAwaitInput, signal?: AbortSignal): Promise<AwaitRunResult>;
   CloseGeneric(input: XagentCloseInput): Promise<CloseRunResult>;
@@ -701,6 +705,35 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     Followup,
     Await,
     Close,
+    // Bare run ids are not enough to recover from a lost start response: the
+    // incident's controller would have seen several live `cursor` rows and
+    // still not known which was the Task 4 implementer. Join the SDD ledger so
+    // a row identifies itself.
+    //
+    async ListGeneric(input: XagentListInput): Promise<ListRunsResult>
+    {
+      const listed = await runManager.listOwnedRuns(input);
+      const runs = listed.runs.map((run) =>
+      {
+        const session = store.GetSession(run.run_id);
+        if (session === undefined)
+        {
+          return run;
+        }
+        return {
+          ...run,
+          sdd: {
+            role: session.role,
+            plan: session.plan_name,
+            cwd: session.cwd,
+            agent: session.agent,
+            closed: session.closed_at !== null,
+            ...(session.task_number === null ? {} : { task: session.task_number }),
+          },
+        };
+      });
+      return { runs };
+    },
     async MessageGeneric(input: XagentMessageInput): Promise<MessageRunResult>
     {
       if (store.IsSddAgent(input.run_id))

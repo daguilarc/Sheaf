@@ -201,12 +201,15 @@ function createConfiguredMcpServer(
     {
       title: "List supervised runs",
       description:
-        "List service-owned runs, newest first, for recovery — use it when a start response was lost and its run id is unknown. This is not a progress-polling tool.",
+        "List service-owned runs, newest first, for recovery — use it when a start response was lost and its run id is unknown. SDD-owned runs carry an `sdd` block naming their role, plan, task, and cwd. This is not a progress-polling tool.",
       inputSchema: XagentListInputSchema,
     },
     async (args) => {
       return runTool(async () => {
         const input = parseToolInput(XagentListInputSchema, args);
+        if (sddManager !== undefined) {
+          return sddManager.ListGeneric(input);
+        }
         return runManager.listOwnedRuns(input);
       });
     },

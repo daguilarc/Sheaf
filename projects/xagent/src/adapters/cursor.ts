@@ -135,13 +135,22 @@ function parseCursorAssistantEvent(
     && text !== state.cursorLastDelta;
 
   if (isFinalFlush || isToolFlush || isSegmentReplay) {
-    if (isFinalFlush) {
+    // `isFinalFlush` and `isToolFlush` are computed independently, so a flush
+    // carrying a model_call_id but no timestamp_ms would otherwise be mistaken
+    // for the end of the turn. A replay is not excluded here: the end-of-turn
+    // flush replays the accumulated segment by construction.
+    //
+    if (isFinalFlush && !isToolFlush) {
       state.cursorFinalSegmentText = text;
     }
     clearCursorSegment(state);
     return [];
   }
 
+  // A new segment opened after a previous final flush, so that flush was not
+  // the end of the turn after all. Drop it rather than reporting stale text.
+  //
+  state.cursorFinalSegmentText = undefined;
   state.cursorLastDelta = text;
   state.cursorSegmentText = `${segment}${text}`;
   return [{

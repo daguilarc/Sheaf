@@ -75,6 +75,15 @@ export type InspectRunResult = {
   };
 };
 
+export type XagentSddListFields = {
+  readonly role: string;
+  readonly plan: string;
+  readonly cwd: string;
+  readonly agent: string;
+  readonly closed: boolean;
+  readonly task?: number;
+};
+
 export type XagentListRow = {
   readonly run_id: string;
   readonly harness: string;
@@ -86,6 +95,7 @@ export type XagentListRow = {
   readonly supervised: boolean;
   readonly created_at: string;
   readonly updated_at: string;
+  readonly sdd?: XagentSddListFields;
 };
 
 export type ListRunsResult = {

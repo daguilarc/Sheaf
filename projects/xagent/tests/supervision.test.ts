@@ -654,13 +654,41 @@ test("the supervisor forwards sanitized raw provider events to the transcript si
   await supervisor.submit("go");
   await supervisor.awaitEvent(cursor, 1_000);
 
-  assert.equal(transcript.length, 2);
+  // Exactly one entry per provider line — the rawProvider side-channel on
+  // other events is the same object again and must not be written twice.
+  assert.equal(transcript.length, 1);
   const line = transcript[0] as { type: string; note: string };
   assert.equal(line.type, "system");
   assert.ok(!line.note.includes(cwd), `expected the cwd to be redacted, got ${line.note}`);
-  const entry = transcript[1] as { type: string; note: string };
-  assert.equal(entry.type, "assistant");
-  assert.ok(!entry.note.includes(cwd), `expected the cwd to be redacted, got ${entry.note}`);
+});
+
+test("a transcript sink failure cannot fail a healthy turn", async () => {
+  const supervisor = new Supervisor({
+    runId: "xrun_transcript_sink_failure",
+    adapter: new FakeHarnessAdapter({
+      scriptedEvents: [[
+        {
+          type: "raw.provider",
+          harness: "codex",
+          payload: { type: "system" },
+          provider_sequence: 1,
+        },
+        { type: "turn.completed", final_text: "done" },
+      ]],
+    }),
+    startOptions: { cwd: "/private/tmp/sheaf-xagent-transcript" },
+    policy,
+    providerTranscriptSink: async () => {
+      throw new Error("ENOSPC: no space left on device");
+    },
+  });
+
+  await supervisor.start();
+  const cursor = supervisor.inspect().sequence;
+  await supervisor.submit("go");
+  const completion = await supervisor.awaitEvent(cursor, 1_000);
+  assert.equal(completion.type, "turn.completed");
+  assert.equal(supervisor.inspect().phase, "ready");
 });
 
 test("a supervised run without a transcript sink still completes its turn", async () => {

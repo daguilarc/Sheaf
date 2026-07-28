@@ -6,9 +6,14 @@ PLUGIN_DIR="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
 ENTRYPOINT="${PLUGIN_DIR}/assets/xagent/dist/src/main.js"
 
 # The packaged launcher ships to every machine, so it cannot bake in one
-# person's checkout path. Discover the Sheaf root from the working directory
-# using the same marker pair findSheafRoot uses (src/service/config.ts), and
-# fall back to a per-user location when the caller is outside a checkout.
+# person's checkout path. It must also agree with the SERVICE's log root, not
+# the caller's: the service resolves its root once at startup
+# (src/service/config.ts findSheafRoot), so a caller sitting in a worktree
+# must not resolve to the worktree's own data/ — a Sheaf worktree carries
+# config/services.json and structure/ too, and picking it would make
+# `xagent list` report an empty log root while the service writes elsewhere.
+# Ask git for the common dir, which points at the main checkout from inside
+# any linked worktree.
 #
 find_sheaf_root() {
   local dir="${1}"
@@ -22,8 +27,27 @@ find_sheaf_root() {
   return 1
 }
 
+main_checkout_root() {
+  local common_dir primary
+  if ! command -v git >/dev/null 2>&1; then
+    return 1
+  fi
+  common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+  [ -n "${common_dir}" ] || return 1
+  primary="$(dirname "${common_dir}")"
+  if [ -f "${primary}/config/services.json" ] && [ -d "${primary}/structure" ]; then
+    printf '%s\n' "${primary}"
+    return 0
+  fi
+  return 1
+}
+
 default_log_root() {
   local sheaf_root
+  if sheaf_root="$(main_checkout_root)"; then
+    printf '%s\n' "${sheaf_root}/data/xagent"
+    return 0
+  fi
   if sheaf_root="$(find_sheaf_root "$(pwd -P)")"; then
     printf '%s\n' "${sheaf_root}/data/xagent"
     return 0

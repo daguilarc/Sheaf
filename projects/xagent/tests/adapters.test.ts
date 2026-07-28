@@ -605,3 +605,35 @@ test("claude code result without is_error still completes the turn", () => {
   assert.equal(events.find((event) => event.type === "turn.completed")?.final_text, "all good");
   assert.equal(events.find((event) => event.type === "turn.failed"), undefined);
 });
+
+test("cursor drops a stale final segment when a later segment opens", () => {
+  const state: ProcessHarnessState = { providerSequence: 0 };
+  const events: AdapterEvent[] = [];
+  const rawEvents = [
+    { type: "assistant", message: { content: [{ type: "text", text: "early" }] }, timestamp_ms: 1 },
+    // Looks like an end-of-turn flush, but the turn keeps going.
+    { type: "assistant", message: { content: [{ type: "text", text: "early" }] } },
+    { type: "assistant", message: { content: [{ type: "text", text: "real answer" }] }, timestamp_ms: 2 },
+    { type: "assistant", message: { content: [{ type: "text", text: "real answer" }] } },
+    { type: "result", subtype: "success", result: "earlyreal answer" },
+  ];
+  for (const raw of rawEvents) {
+    events.push(...parseCursorProviderEvent(raw, context, state));
+  }
+  assert.equal(events.find((event) => event.type === "turn.completed")?.final_text, "real answer");
+});
+
+test("cursor does not treat a tool flush without a timestamp as the final segment", () => {
+  const state: ProcessHarnessState = { providerSequence: 0 };
+  const events: AdapterEvent[] = [];
+  const rawEvents = [
+    { type: "assistant", message: { content: [{ type: "text", text: "narration" }] }, timestamp_ms: 1 },
+    { type: "assistant", message: { content: [{ type: "text", text: "narration" }] }, model_call_id: "c1" },
+    { type: "result", subtype: "success", result: "narration" },
+  ];
+  for (const raw of rawEvents) {
+    events.push(...parseCursorProviderEvent(raw, context, state));
+  }
+  // No genuine end-of-turn flush was seen, so fall back to the result field.
+  assert.equal(events.find((event) => event.type === "turn.completed")?.final_text, "narration");
+});

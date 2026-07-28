@@ -111,7 +111,7 @@ export const ImplementerStartSchema = z
     role: z.literal("implementer"),
     ...SddAssignmentFields,
     task: z.number().int().positive(),
-    name: z.string().min(1),
+    name: WorkerFacingText("name"),
     brief: SddArtifactPathSchema,
     report: SddArtifactPathSchema,
     context: WorkerFacingText("context").optional(),
@@ -137,7 +137,7 @@ export const CodeReviewerStartSchema = z
     role: z.literal("code-reviewer"),
     ...SddAssignmentFields,
     review_brief: SddArtifactPathSchema,
-    description: z.string().min(1),
+    description: WorkerFacingText("description"),
     base: z.string().min(1),
     head: z.string().min(1),
   })

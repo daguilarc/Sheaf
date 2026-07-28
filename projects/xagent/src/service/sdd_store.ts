@@ -471,8 +471,17 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
 
   // One-shot repair for ledgers written before close resolved its open turns.
   // Idempotent: it only touches prepared/running turns whose session already
-  // has a closed_at.
+  // has a closed_at. Probed first so the overwhelmingly common no-op case stays
+  // read-only — CreateSddStore runs before listen(), so a duplicate service
+  // start must not write to the live instance's ledger on its way to EADDRINUSE.
   //
+  const probeClosedSessionTurns = database.prepare(`
+    SELECT 1 FROM sdd_turns
+    WHERE status IN ('prepared', 'running')
+      AND agent_id IN (SELECT agent_id FROM sdd_sessions WHERE closed_at IS NOT NULL)
+    LIMIT 1
+  `);
+
   const repairClosedSessionTurns = database.prepare(`
     UPDATE sdd_turns
     SET status = 'abandoned',
@@ -483,7 +492,9 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
     WHERE status IN ('prepared', 'running')
       AND agent_id IN (SELECT agent_id FROM sdd_sessions WHERE closed_at IS NOT NULL)
   `);
-  repairClosedSessionTurns.run();
+  if (probeClosedSessionTurns.get() !== undefined) {
+    repairClosedSessionTurns.run();
+  }
 
   let closed = false;
 
