@@ -440,6 +440,22 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
       AND status IN ('prepared', 'running')
   `);
 
+  // One-shot repair for ledgers written before close resolved its open turns.
+  // Idempotent: it only touches prepared/running turns whose session already
+  // has a closed_at.
+  //
+  const repairClosedSessionTurns = database.prepare(`
+    UPDATE sdd_turns
+    SET status = 'abandoned',
+        completed_at = COALESCE(
+          (SELECT closed_at FROM sdd_sessions WHERE sdd_sessions.agent_id = sdd_turns.agent_id),
+          completed_at
+        )
+    WHERE status IN ('prepared', 'running')
+      AND agent_id IN (SELECT agent_id FROM sdd_sessions WHERE closed_at IS NOT NULL)
+  `);
+  repairClosedSessionTurns.run();
+
   let closed = false;
 
   function AssertOpen(): void {
@@ -581,10 +597,22 @@ export function CreateSddStore(logRoot: string, clock: () => Date = () => new Da
 
     MarkClosed(agentId: string, closedAt: string): void {
       AssertOpen();
-      const result = markClosed.run(closedAt, agentId);
-      if (result.changes === 0) {
-        throw new SddStoreError(`Cannot close SDD session ${agentId}: session missing or already closed.`);
-      }
+      // Closing must also resolve any turn still prepared/running. Before this,
+      // `abandonOpenTurns` ran only from startup reconciliation and only for
+      // failed/cancelled/abandoned phases, so a normal close left the turn row
+      // `running` with a null completed_at forever and every ledger reader saw
+      // phantom in-flight work.
+      //
+      const close = database.transaction(() => {
+        const result = markClosed.run(closedAt, agentId);
+        if (result.changes === 0) {
+          throw new SddStoreError(
+            `Cannot close SDD session ${agentId}: session missing or already closed.`,
+          );
+        }
+        abandonOpenTurns.run(closedAt, agentId);
+      });
+      close();
     },
 
     GetSession(agentId: string): SddSessionRecord | undefined {

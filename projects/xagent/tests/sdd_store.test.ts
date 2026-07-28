@@ -330,3 +330,62 @@ test("marks prepared or running turns abandoned during reportless terminal recon
     await rm(logRoot, { recursive: true, force: true });
   }
 });
+
+test("closing a session abandons its unresolved turns", async () => {
+  const parentRoot = await mkdtemp(path.join(tmpdir(), "xagent-sdd-close-"));
+  const logRoot = path.join(parentRoot, "sdd-log");
+
+  try {
+    const store = CreateSddStore(logRoot);
+    store.ReserveInitial(sampleInitialInput);
+    store.MarkRunning(sampleAgentId, 1, 2);
+
+    store.MarkClosed(sampleAgentId, "2026-07-27T20:00:00.000Z");
+    assert.equal(store.GetOpenTurn(sampleAgentId), undefined);
+    store.Close();
+
+    const database = new Database(GetSddDatabasePath(logRoot), { readonly: true });
+    const row = database
+      .prepare("SELECT status, completed_at FROM sdd_turns WHERE agent_id = ? AND turn_number = 1")
+      .get(sampleAgentId) as { status: string; completed_at: string | null };
+    database.close();
+    assert.equal(row.status, "abandoned");
+    assert.equal(row.completed_at, "2026-07-27T20:00:00.000Z");
+  } finally {
+    await rm(parentRoot, { recursive: true, force: true });
+  }
+});
+
+test("opening the store repairs turns left running under a closed session", async () => {
+  const parentRoot = await mkdtemp(path.join(tmpdir(), "xagent-sdd-repair-"));
+  const logRoot = path.join(parentRoot, "sdd-log");
+
+  try {
+    const first = CreateSddStore(logRoot);
+    first.ReserveInitial(sampleInitialInput);
+    first.MarkRunning(sampleAgentId, 1, 2);
+    first.Close();
+
+    // The pre-fix production state: the session row is closed while its turn
+    // is still `running` with a null completed_at.
+    const database = new Database(GetSddDatabasePath(logRoot));
+    database
+      .prepare("UPDATE sdd_sessions SET closed_at = ? WHERE agent_id = ?")
+      .run("2026-07-27T20:00:00.000Z", sampleAgentId);
+    database.close();
+
+    const second = CreateSddStore(logRoot);
+    assert.equal(second.GetOpenTurn(sampleAgentId), undefined);
+    second.Close();
+
+    const verify = new Database(GetSddDatabasePath(logRoot), { readonly: true });
+    const row = verify
+      .prepare("SELECT status, completed_at FROM sdd_turns WHERE agent_id = ? AND turn_number = 1")
+      .get(sampleAgentId) as { status: string; completed_at: string | null };
+    verify.close();
+    assert.equal(row.status, "abandoned");
+    assert.equal(row.completed_at, "2026-07-27T20:00:00.000Z");
+  } finally {
+    await rm(parentRoot, { recursive: true, force: true });
+  }
+});
