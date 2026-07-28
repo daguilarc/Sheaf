@@ -35,5 +35,5 @@
 - [x] 5.1 Document asd-23 exception: Superpowers is vendored third-party tooling via sibling script, not filesystem skill rendering
 - [x] 5.2 Update `projects/agents/README.md` for vendor-first install, PATH note, marketplace Superpowers disable/remove guidance, and Node requirement for repo check/tests
 - [x] 5.3a Smoke-verify per harness (disk/registry): managed `openspec --version`; repo OpenSpec outputs managed; Superpowers managed packages present with pin markers and registry/settings entries
-- [ ] 5.3b Human gate: with foreign marketplace Superpowers copies disabled/removed, confirm in a live Claude/Cursor/Pi/Codex session that `superpowers:<id>` (or harness-equivalent) resolves from the managed package (avt-5 namespace)
+- [x] 5.3b Human gate: with foreign marketplace Superpowers copies disabled/removed, confirm in a live Claude/Cursor/Pi/Codex session that `superpowers:<id>` (or harness-equivalent) resolves from the managed package (avt-5 namespace)
 - [x] 5.4 Run agents unit tests and `openspec validate vendor-openspec-and-superpowers --strict`
