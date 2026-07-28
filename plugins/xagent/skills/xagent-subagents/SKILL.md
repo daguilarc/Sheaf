@@ -108,7 +108,7 @@ attention, a long await deadline, or an explicit user status request.
 If the xagent SDD MCP facade, Conductor-managed xagent service, trusted
 `dispatch-prompt` renderer, or required Superpowers templates are unavailable,
 surface broken agentic infrastructure. Do not fall back to native subagents,
-generic `xagent_start`, raw `xagent_message` as a work dispatch, quiet
+generic `xagent_start_non_sdd`, raw `xagent_message` as a work dispatch, quiet
 `xagent supervise`, or terminal polling for Superpowers SDD turns.
 
 ## Generic Delegation
@@ -229,7 +229,7 @@ interrupts, kills, restarts, edits for, or otherwise steers the worker.
 
 ### Review Routing
 
-For review tasks, prefer a Claude-backed reviewer through `xagent_start`
+For review tasks, prefer a Claude-backed reviewer through `xagent_start_non_sdd`
 with the `claude_code` harness:
 
 - `opus`: strongest reviewer for subtle architecture, security, correctness,
