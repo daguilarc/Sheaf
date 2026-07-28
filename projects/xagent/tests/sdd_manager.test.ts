@@ -17,6 +17,7 @@ import {
   type SddTurnRecord,
 } from "../src/service/sdd_store.js";
 import type {
+  FormatFixDispatchInput,
   FormatFixFollowupInput,
   RenderedSddPrompt,
   RenderSddPromptInput,
@@ -36,6 +37,7 @@ import {
   ToolValidationError,
   structuredErrorFromUnknown,
 } from "../src/service/tool_schemas.js";
+import type { SddAgentStore } from "../src/service/sdd_store.js";
 
 const x_AgentId = "xrun_20260727000000000_abcdef12";
 const x_PlanPath = "/tmp/plans/2026-07-26-xagent-sdd-mode.md";
@@ -394,7 +396,67 @@ function CreateFakeStore(recorder: ReturnType<typeof CreateOrderRecorder>): SddS
   };
 }
 
-function CreateFakeRunManager(recorder: ReturnType<typeof CreateOrderRecorder>): SddRunManagerPort & {
+function CreateFakeAgentStore(
+  recorder: ReturnType<typeof CreateOrderRecorder>,
+  record: SddAgentRecord | undefined,
+): SddAgentStore & Pick<SddStore, "MarkRunning" | "ReserveInitial" | "GetSession" | "MarkFailed"> & {
+  readonly inserted: InsertSddAgentInput[];
+}
+{
+  const inserted: InsertSddAgentInput[] = [];
+  return {
+    inserted,
+    Insert(input: InsertSddAgentInput): void
+    {
+      recorder.Record("store.Insert", input);
+      inserted.push(input);
+    },
+    Get(agentId: string): SddAgentRecord | undefined
+    {
+      if (record === undefined || record.agent_id !== agentId)
+      {
+        return undefined;
+      }
+      return record;
+    },
+    ListAll(): readonly SddAgentRecord[]
+    {
+      return record === undefined ? [] : [record];
+    },
+    IsSddAgent(agentId: string): boolean
+    {
+      return record !== undefined && record.agent_id === agentId;
+    },
+    Close(): void
+    {
+      recorder.Record("Close");
+    },
+    // TRANSITIONAL stubs so this fake satisfies Start's leftover v1 methods.
+    // Followup must not call them.
+    //
+    ReserveInitial(_input: ReserveInitialInput): void
+    {
+      throw new Error("CreateFakeAgentStore.ReserveInitial is not used by Followup tests");
+    },
+    MarkRunning(_agentId: string, _turnNumber: number, _resumeSequence: number): void
+    {
+      throw new Error("CreateFakeAgentStore.MarkRunning is not used by Followup tests");
+    },
+    MarkFailed(_agentId: string, _turnNumber: number): void
+    {
+      throw new Error("CreateFakeAgentStore.MarkFailed is not used by Followup tests");
+    },
+    GetSession(_agentId: string): SddSessionRecord | undefined
+    {
+      throw new Error("CreateFakeAgentStore.GetSession is not used by Followup tests");
+    },
+  };
+}
+
+function CreateFakeRunManager(
+  recorder: ReturnType<typeof CreateOrderRecorder>,
+  options?: { live?: boolean },
+): SddRunManagerPort & {
   createError?: Error;
   startError?: Error;
   submitError?: Error;
@@ -413,6 +475,7 @@ function CreateFakeRunManager(recorder: ReturnType<typeof CreateOrderRecorder>):
   const closed: string[] = [];
   const messageCalls: XagentMessageInput[] = [];
   const runs = new Set<string>();
+  const live = options?.live !== false;
 
   return {
     created,
@@ -460,7 +523,7 @@ function CreateFakeRunManager(recorder: ReturnType<typeof CreateOrderRecorder>):
     inspect(runId: string)
     {
       recorder.Record("inspect", runId);
-      if (!runs.has(runId) && created.length === 0)
+      if (!live)
       {
         return undefined;
       }
@@ -476,9 +539,9 @@ function CreateFakeRunManager(recorder: ReturnType<typeof CreateOrderRecorder>):
       closed.push(runId);
       runs.delete(runId);
     },
-    has(runId: string): boolean
+    has(_runId: string): boolean
     {
-      return runs.has(runId);
+      return live;
     },
     async messageRun(input: XagentMessageInput): Promise<MessageRunResult>
     {
@@ -510,6 +573,48 @@ function CreateFakeRunManager(recorder: ReturnType<typeof CreateOrderRecorder>):
           updated_at: "2026-07-27T00:00:00.000Z",
         })),
       };
+    },
+  };
+}
+
+function CreateDeps(): Omit<SddManagerDeps, "store" | "runManager">
+{
+  return {
+    repoRoot: "/tmp/service-repo",
+    async canonicalizeCwd(cwd: string): Promise<string>
+    {
+      if (!cwd.startsWith("/"))
+      {
+        throw new ToolValidationError({
+          error: "invalid_working_directory",
+          message: "working directory must be an absolute path",
+          details: { cwd },
+        });
+      }
+      return x_CanonicalCwd;
+    },
+    async readFile(_filePath: string): Promise<string>
+    {
+      return x_BriefText;
+    },
+    async renderPrompt(input: RenderSddPromptInput): Promise<RenderedSddPrompt>
+    {
+      return {
+        prompt: {
+          path: x_PromptPath,
+          text: input.role === "re-review" ? "Rendered re-review prompt.\n" : x_PromptText,
+        },
+        metadata: {
+          promptPath: x_PromptPath,
+          rendererPath: "/service/checkout/projects/agents/utils/dispatch-prompt",
+          briefPath: "brief" in input ? input.brief : undefined,
+          reportPath: "report" in input ? input.report : undefined,
+        },
+      };
+    },
+    formatFix(_input: FormatFixFollowupInput): string
+    {
+      return "FIX TEXT";
     },
   };
 }
@@ -781,407 +886,172 @@ test("Start submit failure marks failed and closes the created run", async () =>
   assert.equal(runManager.submitted.length, 0);
 });
 
-const x_FindingsPath = "/tmp/sdd/task-3-findings.md";
-const x_FindingsText = "Important: prepared-before-submit must hold.\n";
-const x_ReReviewPromptText = "Rendered re-review prompt.\n";
-
-function TaskReviewerStartInput(): XagentSddStartInput
+test("a fix followup renders and submits with zero ledger writes", async () =>
 {
-  return {
-    role: "task-reviewer",
-    cwd: x_Cwd,
-    plan: x_PlanPath,
-    agent: "opus",
-    harness: "claude_code",
-    effort: "high",
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, {
+    agent_id: x_AgentId,
+    plan_path: x_PlanPath,
     task: 3,
-    brief: x_BriefPath,
-    report: x_ReportPath,
-    base: "abc123",
-    head: "def456",
-  };
-}
-
-async function StartAndClearOpenTurn(
-  harness: ReturnType<typeof CreateManagerHarness>,
-  input: XagentSddStartInput = ImplementerStartInput(),
-): Promise<void>
-{
-  await harness.manager.Start(input);
-  harness.store.openTurns.delete(x_AgentId);
-  harness.recorder.calls.length = 0;
-  harness.runManager.submitted.length = 0;
-  harness.rendered.length = 0;
-}
-
-test("Followup fix rejects when findings file is missing or empty", async () =>
-{
-  const missingHarness = CreateManagerHarness({
-    readFile: async (filePath: string) =>
+    role: "implementer",
+    brief_path: x_BriefPath,
+    brief_text: x_BriefText,
+    cwd: x_CanonicalCwd,
+    dispatched_at: "2026-07-28T10:00:00.000Z",
+  });
+  const runManager = CreateFakeRunManager(recorder);
+  const formatted: FormatFixDispatchInput[] = [];
+  const manager = CreateSddManager({
+    ...CreateDeps(), store, runManager,
+    formatFix: (input) =>
     {
-      if (filePath === x_FindingsPath)
-      {
-        throw new Error("ENOENT");
-      }
-      return x_BriefText;
+      formatted.push(input as FormatFixDispatchInput);
+      return "FIX TEXT";
     },
   });
-  await StartAndClearOpenTurn(missingHarness);
 
-  await assert.rejects(
-    () => missingHarness.manager.Followup({
-      kind: "fix",
-      agent_id: x_AgentId,
-      round: 1,
-      findings: x_FindingsPath,
-      findings_text: x_FindingsText,
-      tests: ["dist/tests/sdd_manager.test.js"],
-      report: x_ReportPath,
-    }),
-    (error: unknown) =>
-    {
-      assert.ok(error instanceof ToolValidationError);
-      assert.equal(error.structured.error, "sdd_artifact_unreadable");
-      return true;
-    },
-  );
-  assert.equal(missingHarness.recorder.Names().includes("submit"), false);
-  assert.equal(missingHarness.recorder.Names().includes("formatFix"), false);
-
-  const emptyHarness = CreateManagerHarness({
-    readFile: async (filePath: string) =>
-    {
-      if (filePath === x_FindingsPath)
-      {
-        return "  \n";
-      }
-      return x_BriefText;
-    },
-  });
-  await StartAndClearOpenTurn(emptyHarness);
-
-  await assert.rejects(
-    () => emptyHarness.manager.Followup({
-      kind: "fix",
-      agent_id: x_AgentId,
-      round: 1,
-      findings: x_FindingsPath,
-      findings_text: x_FindingsText,
-      tests: ["dist/tests/sdd_manager.test.js"],
-      report: x_ReportPath,
-    }),
-    (error: unknown) =>
-    {
-      assert.ok(error instanceof ToolValidationError);
-      assert.equal(error.structured.error, "sdd_artifact_empty");
-      return true;
-    },
-  );
-  assert.equal(emptyHarness.recorder.Names().includes("submit"), false);
-});
-
-test("Followup fix rejects when implementer started without a report path", async () =>
-{
-  const harness = CreateManagerHarness();
-  const input = ImplementerStartInput();
-  delete (input as { report?: string }).report;
-  await StartAndClearOpenTurn(harness, input);
-
-  await assert.rejects(
-    () => harness.manager.Followup({
-      kind: "fix",
-      agent_id: x_AgentId,
-      round: 1,
-      findings: x_FindingsPath,
-      findings_text: x_FindingsText,
-      tests: ["dist/tests/sdd_manager.test.js"],
-      report: x_ReportPath,
-    }),
-    (error: unknown) =>
-    {
-      assert.ok(error instanceof ToolValidationError);
-      assert.equal(error.structured.error, "sdd_report_path_required");
-      assert.equal(JSON.stringify(error.structured).includes(x_BriefPath), true);
-      assert.equal(
-        harness.runManager.submitted.some((entry) => entry.text.includes(x_BriefPath)),
-        false,
-      );
-      return true;
-    },
-  );
-  assert.equal(harness.recorder.Names().includes("submit"), false);
-  assert.equal(harness.recorder.Names().includes("formatFix"), false);
-});
-
-test("Followup maps store open_turn code to sdd_turn_unresolved without prose matching", async () =>
-{
-  const harness = CreateManagerHarness();
-  await StartAndClearOpenTurn(harness);
-  harness.store.prepareError = new SddStoreError(
-    "ledger turn still unresolved for agent",
-    "open_turn",
-  );
-
-  await assert.rejects(
-    () => harness.manager.Followup({
-      kind: "fix",
-      agent_id: x_AgentId,
-      round: 1,
-      findings: x_FindingsPath,
-      findings_text: x_FindingsText,
-      tests: ["t"],
-      report: x_ReportPath,
-    }),
-    (error: unknown) =>
-    {
-      assert.ok(error instanceof ToolValidationError);
-      assert.equal(error.structured.error, "sdd_turn_unresolved");
-      return true;
-    },
-  );
-  assert.equal(harness.recorder.Names().includes("submit"), false);
-});
-
-test("Followup fix reuses the same run id and stored brief/report paths", async () =>
-{
-  const harness = CreateManagerHarness();
-  await StartAndClearOpenTurn(harness);
-
-  const result = await harness.manager.Followup({
+  const result = await manager.Followup({
     kind: "fix",
     agent_id: x_AgentId,
-    round: 1,
-    findings: x_FindingsPath,
-    findings_text: x_FindingsText,
-    tests: ["dist/tests/sdd_manager.test.js"],
-    report: x_ReportPath,
-  });
-
-  assert.equal(result.agent_id, x_AgentId);
-  assert.equal(result.sequence, 7);
-  assert.equal(result.turn_number, 2);
-  assert.equal(harness.store.prepared.length, 1);
-  assert.equal(harness.store.prepared[0]?.kind, "fix");
-  assert.equal(harness.store.prepared[0]?.briefPath, x_BriefPath);
-  assert.equal(harness.store.prepared[0]?.reportPath, x_ReportPath);
-  assert.equal(harness.store.prepared[0]?.findingsText, x_FindingsText);
-  assert.ok(harness.runManager.submitted[0]?.text.includes(x_BriefPath));
-  assert.ok(harness.runManager.submitted[0]?.text.includes(x_ReportPath));
-  assert.ok(harness.runManager.submitted[0]?.text.includes(x_FindingsText));
-  assert.equal(harness.runManager.created.length, 1);
-  const prepareIndex = harness.recorder.Names().indexOf("PrepareFollowup");
-  const submitIndex = harness.recorder.Names().indexOf("submit");
-  assert.ok(prepareIndex >= 0);
-  assert.ok(submitIndex > prepareIndex);
-  assert.deepEqual(harness.store.running.at(-1), {
-    agentId: x_AgentId,
-    turnNumber: 2,
-    resumeSequence: 7,
-  });
-});
-
-test("Followup re-review uses the same run id and upstream renderer", async () =>
-{
-  const harness = CreateManagerHarness({
-    render: async (input) =>
-    {
-      if (input.role === "re-review")
-      {
-        return {
-          prompt: { path: "/tmp/sdd/re-review.md", text: x_ReReviewPromptText },
-          metadata: {
-            promptPath: "/tmp/sdd/re-review.md",
-            rendererPath: "/service/checkout/projects/agents/utils/dispatch-prompt",
-            briefPath: input.brief,
-            reportPath: input.report,
-            findingsPath: input.findings,
-          },
-        };
-      }
-      return {
-        prompt: { path: x_PromptPath, text: x_PromptText },
-        metadata: {
-          promptPath: x_PromptPath,
-          rendererPath: "/service/checkout/projects/agents/utils/dispatch-prompt",
-          briefPath: "brief" in input ? input.brief : undefined,
-          reportPath: "report" in input ? input.report : undefined,
-        },
-      };
-    },
-    readFile: async (filePath) =>
-    {
-      if (filePath === x_FindingsPath)
-      {
-        return x_FindingsText;
-      }
-      return x_BriefText;
-    },
-  });
-  await StartAndClearOpenTurn(harness, TaskReviewerStartInput());
-
-  const result = await harness.manager.Followup({
-    kind: "re-review",
-    agent_id: x_AgentId,
     round: 2,
-    findings: x_FindingsPath,
-    report: x_ReportPath,
-    base: "aaa",
-    head: "bbb",
-    diff: "/tmp/sdd/scoped.diff",
+    findings: "/tmp/sdd/task-3-findings.md",
+    findings_text: "one finding",
+    tests: ["npm test"],
+    report: "/tmp/sdd/task-3-report.md",
   });
 
+  assert.deepEqual(Object.keys(result).sort(), ["agent_id", "sequence"]);
   assert.equal(result.agent_id, x_AgentId);
-  assert.equal(result.turn_number, 2);
-  assert.equal(harness.rendered.length, 1);
-  assert.equal(harness.rendered[0]?.role, "re-review");
-  assert.equal(harness.runManager.submitted[0]?.text, x_ReReviewPromptText);
-  assert.equal(harness.store.prepared[0]?.kind, "re_review");
-  assert.equal(harness.store.prepared[0]?.findingsPath, x_FindingsPath);
-  assert.equal(JSON.stringify(result).includes(x_FindingsText), false);
+  assert.equal(formatted[0]!.briefPath, x_BriefPath);
+  assert.equal(formatted[0]!.reportPath, "/tmp/sdd/task-3-report.md");
+  assert.equal(formatted[0]!.round, 2);
+  assert.equal(store.inserted.length, 0);
+  assert.ok(recorder.Names().every((name) => !name.startsWith("store.Insert")));
 });
 
-test("Followup rejects when another turn is unresolved", async () =>
+test("an unknown agent id is rejected before anything is submitted", async () =>
 {
-  const harness = CreateManagerHarness();
-  await harness.manager.Start(ImplementerStartInput());
-  harness.recorder.calls.length = 0;
-
+  const recorder = CreateOrderRecorder();
+  const runManager = CreateFakeRunManager(recorder);
+  const manager = CreateSddManager({
+    ...CreateDeps(), store: CreateFakeAgentStore(recorder, undefined), runManager,
+  });
   await assert.rejects(
-    () => harness.manager.Followup({
-      kind: "fix",
-      agent_id: x_AgentId,
-      round: 1,
-      findings: x_FindingsPath,
-      findings_text: x_FindingsText,
-      tests: ["t"],
-      report: x_ReportPath,
+    () => manager.Followup({
+      kind: "fix", agent_id: x_AgentId, round: 1,
+      findings: "/tmp/f.md", findings_text: "x", tests: ["npm test"], report: "/tmp/r.md",
     }),
     (error: unknown) =>
     {
-      assert.ok(error instanceof ToolValidationError);
-      assert.equal(error.structured.error, "sdd_turn_unresolved");
-      assert.equal(JSON.stringify(error.structured).includes(x_FindingsText), false);
+      assert.equal(structuredErrorFromUnknown(error).error, "unknown_sdd_agent");
       return true;
     },
   );
-  assert.equal(harness.recorder.Names().includes("submit"), false);
-  assert.equal(harness.recorder.Names().includes("PrepareFollowup"), false);
+  assert.equal(runManager.submitted.length, 0);
 });
 
-test("Followup rejects wrong role/kind and unknown/terminal agents before provider input", async () =>
+test("a dead agent gets sdd_agent_not_live naming the fresh-agent recovery", async () =>
 {
-  const harness = CreateManagerHarness();
-  await StartAndClearOpenTurn(harness, TaskReviewerStartInput());
-
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, {
+    agent_id: x_AgentId, plan_path: x_PlanPath, task: 3, role: "implementer",
+    brief_path: x_BriefPath, brief_text: x_BriefText, cwd: x_CanonicalCwd,
+    dispatched_at: "2026-07-28T10:00:00.000Z",
+  });
+  const runManager = CreateFakeRunManager(recorder, { live: false });
+  const manager = CreateSddManager({ ...CreateDeps(), store, runManager });
   await assert.rejects(
-    () => harness.manager.Followup({
-      kind: "fix",
-      agent_id: x_AgentId,
-      round: 1,
-      findings: x_FindingsPath,
-      findings_text: x_FindingsText,
-      tests: ["t"],
-      report: x_ReportPath,
+    () => manager.Followup({
+      kind: "fix", agent_id: x_AgentId, round: 1,
+      findings: "/tmp/f.md", findings_text: "x", tests: ["npm test"], report: "/tmp/r.md",
     }),
     (error: unknown) =>
     {
-      assert.ok(error instanceof ToolValidationError);
-      assert.equal(error.structured.error, "sdd_followup_role_mismatch");
+      const structured = structuredErrorFromUnknown(error);
+      assert.equal(structured.error, "sdd_agent_not_live");
+      assert.deepEqual(structured.details, {
+        agent_id: x_AgentId,
+        role: "implementer",
+        plan_path: x_PlanPath,
+        task: 3,
+        recovery: { tool: "xagent_sdd_start", role: "fixer" },
+      });
       return true;
     },
   );
-
-  await assert.rejects(
-    () => harness.manager.Followup({
-      kind: "re-review",
-      agent_id: "xrun_20260727000000000_deadbeef",
-      round: 1,
-      findings: x_FindingsPath,
-      report: x_ReportPath,
-      base: "a",
-      head: "b",
-    }),
-    (error: unknown) =>
-    {
-      assert.ok(error instanceof ToolValidationError);
-      assert.equal(error.structured.error, "unknown_sdd_agent");
-      return true;
-    },
-  );
-
-  const closedHarness = CreateManagerHarness();
-  await StartAndClearOpenTurn(closedHarness);
-  const session = closedHarness.store.sessions.get(x_AgentId)!;
-  closedHarness.store.sessions.set(x_AgentId, { ...session, closed_at: "2026-07-27T01:00:00.000Z" });
-  await assert.rejects(
-    () => closedHarness.manager.Followup({
-      kind: "fix",
-      agent_id: x_AgentId,
-      round: 1,
-      findings: x_FindingsPath,
-      findings_text: x_FindingsText,
-      tests: ["t"],
-      report: x_ReportPath,
-    }),
-    (error: unknown) =>
-    {
-      assert.ok(error instanceof ToolValidationError);
-      assert.equal(error.structured.error, "sdd_session_closed");
-      return true;
-    },
-  );
-
-  const terminalHarness = CreateManagerHarness();
-  await StartAndClearOpenTurn(terminalHarness);
-  await terminalHarness.runManager.close(x_AgentId);
-  terminalHarness.recorder.calls.length = 0;
-  await assert.rejects(
-    () => terminalHarness.manager.Followup({
-      kind: "fix",
-      agent_id: x_AgentId,
-      round: 1,
-      findings: x_FindingsPath,
-      findings_text: x_FindingsText,
-      tests: ["t"],
-      report: x_ReportPath,
-    }),
-    (error: unknown) =>
-    {
-      assert.ok(error instanceof ToolValidationError);
-      assert.equal(error.structured.error, "sdd_session_terminal");
-      return true;
-    },
-  );
-  assert.equal(terminalHarness.recorder.Names().includes("submit"), false);
+  assert.equal(runManager.submitted.length, 0);
 });
 
-test("Followup keeps a prepared row before submit and marks failed on submit error", async () =>
+test("kind must match the immutable start role", async () =>
 {
-  const harness = CreateManagerHarness();
-  await StartAndClearOpenTurn(harness);
-  harness.runManager.submitError = new Error("follow-up submit failed");
+  for (const [role, kind, allowed] of [
+    ["implementer", "fix", true], ["fixer", "fix", true],
+    ["reviewer", "re-review", true], ["re-reviewer", "re-review", true],
+    ["implementer", "re-review", false], ["reviewer", "fix", false],
+    ["fixer", "re-review", false], ["re-reviewer", "fix", false],
+  ] as const)
+  {
+    const recorder = CreateOrderRecorder();
+    const store = CreateFakeAgentStore(recorder, {
+      agent_id: x_AgentId, plan_path: x_PlanPath, task: 3, role,
+      brief_path: x_BriefPath, brief_text: x_BriefText, cwd: x_CanonicalCwd,
+      dispatched_at: "2026-07-28T10:00:00.000Z",
+    });
+    const manager = CreateSddManager({
+      ...CreateDeps(), store, runManager: CreateFakeRunManager(recorder),
+    });
+    const input = kind === "fix"
+      ? {
+          kind: "fix" as const,
+          agent_id: x_AgentId,
+          round: 1,
+          findings: "/tmp/f.md",
+          findings_text: "x",
+          tests: ["npm test"],
+          report: "/tmp/r.md",
+        }
+      : {
+          kind: "re-review" as const,
+          agent_id: x_AgentId,
+          round: 1,
+          findings: "/tmp/f.md",
+          report: "/tmp/r.md",
+          base: "main",
+          head: "HEAD",
+        };
+    if (allowed)
+    {
+      await manager.Followup(input);
+    }
+    else
+    {
+      await assert.rejects(() => manager.Followup(input), (error: unknown) =>
+      {
+        assert.equal(structuredErrorFromUnknown(error).error, "sdd_followup_role_mismatch");
+        return true;
+      });
+    }
+  }
+});
 
-  await assert.rejects(
-    () => harness.manager.Followup({
-      kind: "fix",
-      agent_id: x_AgentId,
-      round: 1,
-      findings: x_FindingsPath,
-      findings_text: x_FindingsText,
-      tests: ["t"],
-      report: x_ReportPath,
-    }),
-    /follow-up submit failed/,
-  );
-
-  assert.equal(harness.store.prepared.length, 1);
-  assert.deepEqual(harness.store.failed.at(-1), { agentId: x_AgentId, turnNumber: 2 });
-  const prepareIndex = harness.recorder.Names().indexOf("PrepareFollowup");
-  const submitIndex = harness.recorder.Names().indexOf("submit");
-  const failedIndex = harness.recorder.Names().indexOf("MarkFailed");
-  assert.ok(prepareIndex >= 0);
-  assert.ok(submitIndex > prepareIndex);
-  assert.ok(failedIndex > submitIndex);
+test("double-calling a followup leaves the ledger untouched", async () =>
+{
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, {
+    agent_id: x_AgentId, plan_path: x_PlanPath, task: 3, role: "reviewer",
+    brief_path: x_BriefPath, brief_text: x_BriefText, cwd: x_CanonicalCwd,
+    dispatched_at: "2026-07-28T10:00:00.000Z",
+  });
+  const manager = CreateSddManager({
+    ...CreateDeps(), store, runManager: CreateFakeRunManager(recorder),
+  });
+  const input = {
+    kind: "re-review" as const, agent_id: x_AgentId, round: 1,
+    findings: "/tmp/f.md", report: "/tmp/r.md", base: "main", head: "HEAD",
+  };
+  await manager.Followup(input);
+  await manager.Followup(input);
+  assert.equal(store.inserted.length, 0);
 });
 
 test("SddManager exposes only Start, Followup, and ListGeneric", () =>
@@ -1270,46 +1140,6 @@ test("ReconcileTerminalRuns abandons only unresolved reportless terminal turns",
   assert.equal(completedPhaseTurn?.report_text, null);
 });
 
-test("Followup recovers brief and report paths from the ledger after a service restart", async () =>
-{
-  const harness = CreateManagerHarness();
-  await StartAndClearOpenTurn(harness);
-
-  // A restarted service keeps the durable ledger but loses every in-process
-  // artifact cache. Before the ledger fallback this rejected with
-  // sdd_followup_missing_paths and stranded a live SDD session.
-  const restarted = CreateSddManager({
-    store: harness.store,
-    runManager: harness.runManager,
-    repoRoot: "/tmp/service-repo",
-    async canonicalizeCwd(): Promise<string>
-    {
-      return x_CanonicalCwd;
-    },
-    async readFile(): Promise<string>
-    {
-      return x_FindingsText;
-    },
-  });
-
-  const result = await restarted.Followup({
-    kind: "fix",
-    agent_id: x_AgentId,
-    round: 1,
-    findings: x_FindingsPath,
-    findings_text: x_FindingsText,
-    tests: ["dist/tests/sdd_manager.test.js"],
-    report: x_ReportPath,
-  });
-
-  assert.equal(result.agent_id, x_AgentId);
-  assert.equal(result.turn_number, 2);
-  assert.equal(harness.store.prepared.at(-1)?.briefPath, x_BriefPath);
-  assert.equal(harness.store.prepared.at(-1)?.reportPath, x_ReportPath);
-  assert.ok(harness.runManager.submitted.at(-1)?.text.includes(x_BriefPath));
-  assert.ok(harness.runManager.submitted.at(-1)?.text.includes(x_ReportPath));
-});
-
 test("a controller note is appended verbatim to every started role", async () =>
 {
   const note = "The tree has uncommitted work from a cancelled sibling run; reconcile before editing.";
@@ -1331,29 +1161,6 @@ test("a started role without a note is unchanged", async () =>
   const harness = CreateManagerHarness();
   await harness.manager.Start(ImplementerStartInput());
   assert.equal(harness.runManager.submitted.at(-1)?.text, x_PromptText);
-});
-
-test("a controller note is appended to a fix follow-up", async () =>
-{
-  const note = "Ignore the stray build output in projects/synth; it is not yours.";
-  const harness = CreateManagerHarness();
-  await StartAndClearOpenTurn(harness);
-
-  await harness.manager.Followup({
-    kind: "fix",
-    agent_id: x_AgentId,
-    round: 1,
-    findings: x_FindingsPath,
-    findings_text: x_FindingsText,
-    tests: ["dist/tests/sdd_manager.test.js"],
-    report: x_ReportPath,
-    note,
-  });
-
-  const submitted = harness.runManager.submitted.at(-1)?.text ?? "";
-  assert.ok(submitted.includes(x_FindingsText), "findings must survive");
-  assert.ok(submitted.includes("## Controller Note"));
-  assert.ok(submitted.includes(note));
 });
 
 test("a controller note cannot smuggle a run id to the worker", () =>

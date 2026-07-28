@@ -9,11 +9,11 @@ import {
   type RenderSddPromptInput,
 } from "./sdd_prompt.js";
 import type {
-  PrepareFollowupInput,
   ReserveInitialInput,
+  SddAgentStore,
+  SddStartRole,
   SddStore,
 } from "./sdd_store.js";
-import { SddStoreError } from "./sdd_store.js";
 import {
   canonicalizeWorkingDirectory,
   type CreateRunOptions,
@@ -40,7 +40,6 @@ export type XagentSddStartResult = {
 export type XagentSddFollowupResult = {
   readonly agent_id: string;
   readonly sequence: number;
-  readonly turn_number: number;
 };
 
 export type SddRunManagerPort = {
@@ -61,19 +60,20 @@ export type SddManager = {
 };
 
 export type SddManagerDeps = {
-  readonly store: SddStore;
+  // TRANSITIONAL: Start still writes v1 turn rows until the Start rewrite lands.
+  // This narrows to plain SddAgentStore in that task. MarkFailed is included
+  // because Start's failure path still calls it; the plan Pick list omitted it.
+  //
+  readonly store: SddAgentStore & Pick<
+    SddStore,
+    "MarkRunning" | "ReserveInitial" | "GetSession" | "MarkFailed"
+  >;
   readonly runManager: SddRunManagerPort;
   readonly repoRoot: string;
   readonly canonicalizeCwd?: (cwd: string) => Promise<string>;
   readonly readFile?: (filePath: string) => Promise<string>;
   readonly renderPrompt?: (input: RenderSddPromptInput) => Promise<RenderedSddPrompt>;
   readonly formatFix?: (input: FormatFixFollowupInput) => string;
-};
-
-type SessionArtifacts = {
-  readonly briefPath: string;
-  readonly briefText: string;
-  readonly reportPath?: string;
 };
 
 const x_ControllerNoteHeading = "## Controller Note";
@@ -202,13 +202,18 @@ function BuildRenderInput(
   };
 }
 
-function RoleAllowsFollowup(role: string, kind: "fix" | "re-review"): boolean
+function RoleAllowsFollowup(role: SddStartRole, kind: "fix" | "re-review"): boolean
 {
   if (kind === "fix")
   {
-    return role === "implementer";
+    return role === "implementer" || role === "fixer";
   }
-  return role === "task-reviewer";
+  return role === "reviewer" || role === "re-reviewer";
+}
+
+function RecoveryRoleFor(role: SddStartRole): "fixer" | "re-reviewer"
+{
+  return role === "implementer" || role === "fixer" ? "fixer" : "re-reviewer";
 }
 
 export function CreateSddManager(deps: SddManagerDeps): SddManager
@@ -219,7 +224,6 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
   const read = deps.readFile ?? ((filePath: string) => readFile(filePath, "utf8"));
   const renderPrompt = deps.renderPrompt ?? ((input: RenderSddPromptInput) => RenderSddPrompt(input));
   const formatFix = deps.formatFix ?? FormatFixFollowup;
-  const artifactsByAgent = new Map<string, SessionArtifacts>();
 
   async function Start(input: XagentSddStartInput): Promise<XagentSddStartResult>
   {
@@ -258,12 +262,6 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         cause: error instanceof Error ? error.message : String(error),
       });
     }
-
-    artifactsByAgent.set(agentId, {
-      briefPath,
-      briefText,
-      ...(reportPath === undefined ? {} : { reportPath }),
-    });
 
     let created = false;
     try
@@ -324,8 +322,8 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
 
   async function Followup(input: XagentSddFollowupInput): Promise<XagentSddFollowupResult>
   {
-    const session = store.GetSession(input.agent_id);
-    if (session === undefined)
+    const agent = store.Get(input.agent_id);
+    if (agent === undefined)
     {
       throw StructuredFailure({
         error: "unknown_sdd_agent",
@@ -333,221 +331,85 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         details: { agent_id: input.agent_id },
       });
     }
-    if (session.closed_at !== null)
-    {
-      throw StructuredFailure({
-        error: "sdd_session_closed",
-        message: `SDD session is closed: ${input.agent_id}`,
-        details: { agent_id: input.agent_id },
-      });
-    }
-    if (!RoleAllowsFollowup(session.role, input.kind))
+    if (!RoleAllowsFollowup(agent.role, input.kind))
     {
       throw StructuredFailure({
         error: "sdd_followup_role_mismatch",
-        message: `Follow-up kind ${input.kind} is not valid for role ${session.role}.`,
+        message: `Follow-up kind ${input.kind} is not valid for role ${agent.role}.`,
+        details: { agent_id: input.agent_id, role: agent.role, kind: input.kind },
+      });
+    }
+    // Liveness is a run-manager fact, never a ledger fact: v1's
+    // sdd_session_terminal asked the ledger whether the agent was usable and
+    // got a stale answer. The dead end is now a signpost at the recovery path.
+    //
+    const inspection = runManager.has(input.agent_id)
+      ? runManager.inspect(input.agent_id)
+      : undefined;
+    if (inspection === undefined)
+    {
+      throw StructuredFailure({
+        error: "sdd_agent_not_live",
+        message:
+          `SDD agent ${input.agent_id} is not live; dispatch a fresh `
+          + `${RecoveryRoleFor(agent.role)} for the same plan and task.`,
         details: {
           agent_id: input.agent_id,
-          role: session.role,
-          kind: input.kind,
+          role: agent.role,
+          plan_path: agent.plan_path,
+          task: agent.task,
+          recovery: { tool: "xagent_sdd_start", role: RecoveryRoleFor(agent.role) },
         },
-      });
-    }
-    if (store.GetOpenTurn(input.agent_id) !== undefined)
-    {
-      throw StructuredFailure({
-        error: "sdd_turn_unresolved",
-        message: `SDD session has an unresolved turn: ${input.agent_id}`,
-        details: { agent_id: input.agent_id },
-      });
-    }
-    if (!runManager.has(input.agent_id))
-    {
-      throw StructuredFailure({
-        error: "sdd_session_terminal",
-        message: `SDD provider session is not available: ${input.agent_id}`,
-        details: { agent_id: input.agent_id },
-      });
-    }
-
-    // The in-process map is a cache, not the source of truth: the ledger
-    // already persists brief_path/brief_text/report_path for every turn.
-    // Recovering from it means a service restart no longer turns every live
-    // SDD session into `sdd_followup_missing_paths`.
-    //
-    let artifacts = artifactsByAgent.get(input.agent_id);
-    if (artifacts === undefined)
-    {
-      const latest = store.GetLatestTurn(input.agent_id);
-      if (latest !== undefined)
-      {
-        artifacts = {
-          briefPath: latest.brief_path,
-          briefText: latest.brief_text,
-          ...(latest.report_path === null ? {} : { reportPath: latest.report_path }),
-        };
-        artifactsByAgent.set(input.agent_id, artifacts);
-      }
-    }
-    if (artifacts === undefined)
-    {
-      throw StructuredFailure({
-        error: "sdd_followup_missing_paths",
-        message: `Unable to recover stored brief/report paths for ${input.agent_id}.`,
-        details: { agent_id: input.agent_id },
       });
     }
 
     let promptText = "";
-    let prepareInput: PrepareFollowupInput;
-
     if (input.kind === "fix")
     {
-      if (artifacts.reportPath === undefined)
-      {
-        throw StructuredFailure({
-          error: "sdd_report_path_required",
-          message: "Fix follow-up requires a stored report path from the initial implementer turn.",
-          details: {
-            agent_id: input.agent_id,
-            brief_path: artifacts.briefPath,
-          },
-        });
-      }
       await ReadRequiredText(read, input.findings, "SDD findings");
-      const reportPath = artifacts.reportPath;
       promptText = formatFix({
         round: input.round,
-        briefPath: artifacts.briefPath,
+        briefPath: agent.brief_path,
         findingsPath: input.findings,
         findingsText: input.findings_text,
         tests: input.tests,
-        reportPath,
+        reportPath: input.report,
       });
-      prepareInput = {
-        agentId: input.agent_id,
-        kind: "fix",
-        round: input.round,
-        briefPath: artifacts.briefPath,
-        briefText: artifacts.briefText,
-        reportPath: artifacts.reportPath,
-        findingsPath: input.findings,
-        findingsText: input.findings_text,
-      };
     }
     else
     {
-      if (session.task_number === null)
+      if (agent.task === null)
       {
         throw StructuredFailure({
           error: "sdd_followup_role_mismatch",
-          message: "Re-review requires a task-scoped reviewer session.",
-          details: { agent_id: input.agent_id, role: session.role },
+          message: "Re-review requires a task-scoped reviewer agent.",
+          details: { agent_id: input.agent_id, role: agent.role },
         });
       }
-      if (artifacts.reportPath === undefined)
-      {
-        throw StructuredFailure({
-          error: "sdd_report_path_required",
-          message: "Re-review requires a stored report path from the initial reviewer turn.",
-          details: {
-            agent_id: input.agent_id,
-            brief_path: artifacts.briefPath,
-          },
-        });
-      }
-      const reportPath = artifacts.reportPath;
-      const findingsText = await ReadRequiredText(read, input.findings, "SDD findings");
+      await ReadRequiredText(read, input.findings, "SDD findings");
       const rendered = await renderPrompt({
         role: "re-review",
         repoRoot: deps.repoRoot,
-        cwd: session.cwd,
-        plan: session.plan_path,
-        task: session.task_number,
+        cwd: agent.cwd,
+        plan: agent.plan_path,
+        task: agent.task,
         round: input.round,
-        brief: artifacts.briefPath,
+        brief: agent.brief_path,
         findings: input.findings,
-        report: reportPath,
+        report: input.report,
         base: input.base,
         head: input.head,
         ...(input.diff === undefined ? {} : { diff: input.diff }),
       });
       promptText = rendered.prompt.text;
-      prepareInput = {
-        agentId: input.agent_id,
-        kind: "re_review",
-        round: input.round,
-        briefPath: artifacts.briefPath,
-        briefText: artifacts.briefText,
-        reportPath: artifacts.reportPath,
-        findingsPath: input.findings,
-        findingsText,
-      };
     }
 
-    let turnNumber = 0;
-    try
-    {
-      turnNumber = store.PrepareFollowup(prepareInput);
-    }
-    catch (error)
-    {
-      if (error instanceof ToolValidationError)
-      {
-        throw error;
-      }
-      if (error instanceof SddStoreError && error.code === "open_turn")
-      {
-        throw StructuredFailure({
-          error: "sdd_turn_unresolved",
-          message: `SDD session has an unresolved turn: ${input.agent_id}`,
-          details: { agent_id: input.agent_id },
-        });
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      throw PersistenceFailed("Unable to prepare SDD follow-up turn.", {
-        cause: message,
-      });
-    }
-
-    const inspection = runManager.inspect(input.agent_id);
-    if (inspection === undefined)
-    {
-      store.MarkFailed(input.agent_id, turnNumber);
-      throw StructuredFailure({
-        error: "sdd_session_terminal",
-        message: `SDD provider session is not available: ${input.agent_id}`,
-        details: { agent_id: input.agent_id },
-      });
-    }
-    const resumeSequence = inspection.sequence;
-
-    try
-    {
-      await runManager.submit(
-        input.agent_id,
-        AppendControllerNote(promptText, input.note),
-      );
-      store.MarkRunning(input.agent_id, turnNumber, resumeSequence);
-      return {
-        agent_id: input.agent_id,
-        sequence: resumeSequence,
-        turn_number: turnNumber,
-      };
-    }
-    catch (error)
-    {
-      try
-      {
-        store.MarkFailed(input.agent_id, turnNumber);
-      }
-      catch
-      {
-        // Best-effort failure transition after submit errors.
-        //
-      }
-      throw error;
-    }
+    const sequence = inspection.sequence;
+    await runManager.submit(
+      input.agent_id,
+      AppendControllerNote(promptText, input.note),
+    );
+    return { agent_id: input.agent_id, sequence };
   }
 
   return {
