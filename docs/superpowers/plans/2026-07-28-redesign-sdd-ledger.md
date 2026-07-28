@@ -10,8 +10,9 @@
 
 ## Global Constraints
 
-- All work happens in the worktree at `/Users/joyo/Sheaf/.claude/worktrees/xagent-controller-usability`. Paths below are relative to that root unless absolute.
-- **Do not restart the live xagent service, and do not run `make xagent-service-run`, at any point except where Task 7 explicitly instructs it.** The service is running from this worktree's build; restarting it onto a partially-landed build takes SDD tooling down.
+- All work happens in the worktree at `/Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5`. Paths below are relative to that root unless absolute.
+- **Do not restart the live xagent service, do not stop it, and do not run `make xagent-service-run`, at any point except where Tasks 7 and 8 explicitly instruct it.** The controller is dispatching *through* that service: taking it down mid-task takes the SDD tooling down with it.
+- **The live service runs from a different worktree** (`/Users/joyo/Sheaf/.claude/worktrees/xagent-controller-usability`, a v1 build) and shares the log root `/Users/joyo/Sheaf/data/xagent`. Nothing you land here reaches the running process until the lead repoints it at Task 8a. Never edit, build, or run anything in that other worktree.
 - **Every task must leave the tree compiling and its tests green.** Run `cd projects/xagent && npm run build` before claiming any task done. TypeScript is `strict`; an unused import or an unreachable literal comparison is a build failure.
 - The v1 store stays wired and correct until Task 8. Do not delete v1 exports while `sdd_manager.ts` or `service_main.ts` still call them.
 - Code style in `projects/xagent/src/service/` uses Allman braces for functions in `sdd_manager.ts` and K&R elsewhere; match the file you are editing. Module-private constants are prefixed `x_`. Exported store/manager functions are `PascalCase`.
@@ -2581,7 +2582,7 @@ In `plugins/xagent/scripts/install_global_test.py`, update any assertion naming 
 - [ ] **Step 4: Run the plugin tests**
 
 ```bash
-cd /Users/joyo/Sheaf/.claude/worktrees/xagent-controller-usability && python3 -m unittest plugins/xagent/scripts/install_global_test.py
+cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5 && python3 -m unittest plugins/xagent/scripts/install_global_test.py
 ```
 
 Expected: `OK`.
@@ -2591,7 +2592,7 @@ Expected: `OK`.
 In `projects/agents/global/skills/openspec-superpowers-workflow/SKILL.md`, update the SDD dispatch guidance to the two-tool surface (`xagent_sdd_start`, `xagent_sdd_followup`) plus generic await/message/close, and add fresh-agent fix/re-review recovery.
 
 ```bash
-cd /Users/joyo/Sheaf/.claude/worktrees/xagent-controller-usability/projects/agents && make test
+cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5/projects/agents && make test
 ```
 
 Expected: `OK` from both unittest discoveries and the repo-scope install check.
@@ -2605,7 +2606,7 @@ In `openspec/specs/xagent-sdd-workflow/spec.md`, remove or rewrite every require
 - [ ] **Step 7: Validate the specs**
 
 ```bash
-cd /Users/joyo/Sheaf/.claude/worktrees/xagent-controller-usability && openspec validate --strict
+cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5 && openspec validate --strict
 ```
 
 Expected: validation passes for both specs. If `openspec` is not on `PATH`, use the vendored entry point under `projects/agents/vendor/`.
@@ -2634,7 +2635,7 @@ git commit -m "docs(xagent): sync skill, README, and specs to the v2 SDD surface
 - [ ] **Step 1: Run the xagent suite**
 
 ```bash
-cd /Users/joyo/Sheaf/.claude/worktrees/xagent-controller-usability && make xagent-test
+cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5 && make xagent-test
 ```
 
 Expected: all `node --test` files pass, 0 failures.
@@ -2642,7 +2643,7 @@ Expected: all `node --test` files pass, 0 failures.
 - [ ] **Step 2: Run the dispatch-prompt suite**
 
 ```bash
-cd /Users/joyo/Sheaf/.claude/worktrees/xagent-controller-usability/projects/agents && python3 -m unittest utils.dispatch_prompt_test
+cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5/projects/agents && python3 -m unittest utils.dispatch_prompt_test
 ```
 
 Expected: `OK`.
@@ -2650,7 +2651,7 @@ Expected: `OK`.
 - [ ] **Step 3: Run the agents installer suite**
 
 ```bash
-cd /Users/joyo/Sheaf/.claude/worktrees/xagent-controller-usability && make agents-test
+cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5 && make agents-test
 ```
 
 Expected: `OK`.
@@ -2658,7 +2659,7 @@ Expected: `OK`.
 - [ ] **Step 4: Repackage the plugin runtime assets**
 
 ```bash
-cd /Users/joyo/Sheaf/.claude/worktrees/xagent-controller-usability && make xagent-plugin-build
+cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5 && make xagent-plugin-build
 ```
 
 Expected: regenerated files under `plugins/xagent/assets/`.
@@ -2666,7 +2667,7 @@ Expected: regenerated files under `plugins/xagent/assets/`.
 - [ ] **Step 5: Run the plugin test suite**
 
 ```bash
-cd /Users/joyo/Sheaf/.claude/worktrees/xagent-controller-usability && make xagent-plugin-test
+cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5 && make xagent-plugin-test
 ```
 
 Expected: unittest `OK`, `package_xagent.py --check` clean, plugin validator clean.
@@ -2674,7 +2675,7 @@ Expected: unittest `OK`, `package_xagent.py --check` clean, plugin validator cle
 - [ ] **Step 6: Prove the deleted symbols are gone**
 
 ```bash
-cd /Users/joyo/Sheaf/.claude/worktrees/xagent-controller-usability/projects/xagent
+cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5/projects/xagent
 for symbol in conversationalAgents artifactsByAgent PersistReportBeforeReturn \
   ReconcileTerminalRuns abandonOpenTurns sdd_report_unbound sdd_turn_unresolved \
   sdd_session_closed sdd_followup_missing_paths sdd_report_path_required \
