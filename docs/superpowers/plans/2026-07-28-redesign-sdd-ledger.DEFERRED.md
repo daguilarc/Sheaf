@@ -48,6 +48,44 @@ place to confront it. Options: lower the default to something a client can
 actually hold, or keep the long deadline but document short-deadline polling
 as the supported controller pattern.
 
+### A5. A late watchdog event can deadlock the controller out of a healthy agent — FIXED BY THIS CHANGE
+
+**The strongest single justification this change has.** Hit while re-reviewing
+Task 3.
+
+The Task 3 reviewer (`xrun_20260728183228287_e8cd2491`) completed its turn
+normally — `turn.completed` at sequence 4, run idle at phase `ready`. A
+`supervision.attention` event (`watchdog_uncertain` / `classifier_timeout`)
+then landed at sequence 5, *after* the completion. The v1 ledger's turn row
+stayed at `status = running` with a NULL `completed_sequence`, and every route
+back to the agent closed:
+
+| Tool | Result |
+|---|---|
+| `xagent_sdd_followup` | `sdd_turn_unresolved` — "await it before continuing" |
+| `xagent_sdd_await` | returns the attention event; **does not resolve the turn** |
+| `xagent_message` | `sdd_turn_in_flight` — "await it before messaging", naming `xagent_sdd_await` |
+
+The facade instructs the controller to await, awaiting does not resolve, and
+no other path is permitted. The agent was alive, idle, and permanently
+unreachable. There is no repair tool, because in v1 the ledger is authoritative
+over liveness and only its own await can advance it.
+
+This is the redesign's thesis demonstrated end to end: ledger state derived
+from what the controller *observed*, desynchronized by an unrelated event, with
+no reconciliation path. In v2 it cannot occur — liveness is a run-manager fact,
+`Followup` writes nothing and validates only that a row exists and the run is
+live, and `xagent_message` is legal on SDD runs unconditionally.
+
+Recovery used: close the deadlocked agent and dispatch a fresh reviewer with
+the prior findings and the fix diff in its brief — which is exactly the
+fresh-agent recovery `sdd_agent_not_live` will name in v2. The v1 dead end was
+escaped by hand-executing the v2 recovery pattern.
+
+Cite this in Task 10 alongside A4 when rewriting `xagent-sdd-workflow`, and in
+the `xsvc-12` scenario "Careless controllers cannot corrupt the ledger" — the
+controller here was not careless, and the ledger corrupted anyway.
+
 ### A4. `sdd_turn_unresolved` couples ledger state to controller tool choice — FIXED BY THIS CHANGE
 
 A v1 turn row stays open until the controller calls `xagent_sdd_await`
