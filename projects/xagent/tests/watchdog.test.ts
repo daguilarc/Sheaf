@@ -402,7 +402,11 @@ test("supervisor classifier seam is bypassed by mechanical completion, input, cr
   assert.equal(crashClassifier.calls.length, 0);
   assert.equal(crash.inspect().phase, "failed");
   assert.equal(crashFailure.reason, "process_exit");
-  assert.deepEqual(crashFailure.payload, { exit_code: 17, signal: null });
+  assert.deepEqual(crashFailure.payload, {
+    exit_code: 17,
+    signal: null,
+    message: "child process exited with code 17",
+  });
 
   const clock = new FakeClock();
   const deadlineClassifier = new ClassifierSpy();

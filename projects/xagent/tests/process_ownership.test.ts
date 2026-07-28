@@ -419,7 +419,11 @@ test("supervisor observes child exit while active ownership persistence is delay
     await within(turn, 1_000, "provider turn did not settle after exit");
     assert.equal(supervisor.inspect().phase, "failed");
     assert.equal(failure.reason, "process_exit");
-    assert.deepEqual(failure.payload, { exit_code: 2, signal: null });
+    assert.deepEqual(failure.payload, {
+      exit_code: 2,
+      signal: null,
+      message: "codex process exited with code 2.",
+    });
     assert.equal(
       persisted.find((state) => state.phase === "failed")?.owned_process,
       undefined,

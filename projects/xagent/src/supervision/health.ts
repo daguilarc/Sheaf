@@ -4,7 +4,16 @@ export type ProviderActivityKind = "transport" | "semantic";
 
 export type MechanicalHealthEvent =
   | { readonly type: "process.spawned" }
-  | { readonly type: "process.exited"; readonly exitCode: number | null; readonly signal: string | null }
+  | {
+      readonly type: "process.exited";
+      readonly exitCode: number | null;
+      readonly signal: string | null;
+      // The adapter already builds a human-readable cause from the child's
+      // stderr (process_jsonl.ts). Carrying it here is what lets a controller
+      // see "usage limit reached" instead of a bare exit_code: 1.
+      //
+      readonly message?: string;
+    }
   | { readonly type: "provider.started" }
   | { readonly type: "provider.completed" }
   | { readonly type: "provider.failed"; readonly code: string; readonly message: string }
@@ -104,7 +113,13 @@ export class DeterministicHealthMonitor {
         return {
           kind: "failure",
           reason: "process_exit",
-          payload: { exit_code: event.exitCode, signal: event.signal },
+          payload: {
+            exit_code: event.exitCode,
+            signal: event.signal,
+            ...(event.message === undefined || event.message.trim() === ""
+              ? {}
+              : { message: event.message }),
+          },
         };
       case "provider.completed":
         this.#deactivate();

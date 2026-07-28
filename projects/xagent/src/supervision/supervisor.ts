@@ -888,6 +888,11 @@ function mechanicalEventClassification(
       type: "process.exited",
       exitCode: exitStatus.exitCode,
       signal: exitStatus.signal,
+      // Without this the controller's only diagnosis for a dead provider was
+      // `exit_code: 1`. The message is sanitized downstream with the rest of
+      // the failure payload.
+      //
+      ...(event.message === undefined ? {} : { message: event.message }),
     });
   }
   return undefined;

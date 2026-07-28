@@ -296,8 +296,59 @@ test("supervisor turns a structured process exit into durable process_exit failu
 
   assert.equal(failure.phase, "failed");
   assert.equal(failure.reason, "process_exit");
-  assert.deepEqual(failure.payload, { exit_code: 137, signal: null });
+  assert.deepEqual(failure.payload, {
+    exit_code: 137,
+    signal: null,
+    message: "child process exited with code 137",
+  });
   assert.equal(classifier.calls.length, 0);
+});
+
+test("process exit classification carries the provider stderr message", () => {
+  const clock = new FakeClock();
+  const monitor = new DeterministicHealthMonitor({
+    silenceTimeoutMs: 300_000,
+    clock: clock.now,
+    scheduler: clock,
+    onClassification: () => {},
+  });
+
+  monitor.recordMechanicalEvent({ type: "process.spawned" });
+  assert.deepEqual(monitor.recordMechanicalEvent({
+    type: "process.exited",
+    exitCode: 1,
+    signal: null,
+    message: "Claude usage limit reached. Your limit will reset at 12pm.",
+  }), {
+    kind: "failure",
+    reason: "process_exit",
+    payload: {
+      exit_code: 1,
+      signal: null,
+      message: "Claude usage limit reached. Your limit will reset at 12pm.",
+    },
+  });
+});
+
+test("process exit classification omits message when the provider printed nothing", () => {
+  const clock = new FakeClock();
+  const monitor = new DeterministicHealthMonitor({
+    silenceTimeoutMs: 300_000,
+    clock: clock.now,
+    scheduler: clock,
+    onClassification: () => {},
+  });
+
+  monitor.recordMechanicalEvent({ type: "process.spawned" });
+  assert.deepEqual(monitor.recordMechanicalEvent({
+    type: "process.exited",
+    exitCode: 2,
+    signal: null,
+  }), {
+    kind: "failure",
+    reason: "process_exit",
+    payload: { exit_code: 2, signal: null },
+  });
 });
 
 test("supervisor sanitizes provider strings before durable mechanical delivery", async () => {
