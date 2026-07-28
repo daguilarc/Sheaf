@@ -397,10 +397,24 @@ function CreateFakeStore(recorder: ReturnType<typeof CreateOrderRecorder>): SddS
   };
 }
 
+function FakeRendered(): RenderedSddPrompt
+{
+  return {
+    prompt: {
+      path: x_PromptPath,
+      text: x_PromptText,
+    },
+    metadata: {
+      promptPath: x_PromptPath,
+      rendererPath: "/service/checkout/projects/agents/utils/dispatch-prompt",
+    },
+  };
+}
+
 function CreateFakeAgentStore(
   recorder: ReturnType<typeof CreateOrderRecorder>,
   record: SddAgentRecord | undefined,
-): SddAgentStore & Pick<SddStore, "MarkRunning" | "ReserveInitial" | "GetSession" | "MarkFailed"> & {
+): SddAgentStore & Pick<SddStore, "GetSession"> & {
   readonly inserted: InsertSddAgentInput[];
 }
 {
@@ -432,31 +446,16 @@ function CreateFakeAgentStore(
     {
       recorder.Record("Close");
     },
-    // TRANSITIONAL stubs so this fake satisfies Start's leftover v1 methods.
-    // Followup must not call them.
-    //
-    ReserveInitial(_input: ReserveInitialInput): void
-    {
-      throw new Error("CreateFakeAgentStore.ReserveInitial is not used by Followup tests");
-    },
-    MarkRunning(_agentId: string, _turnNumber: number, _resumeSequence: number): void
-    {
-      throw new Error("CreateFakeAgentStore.MarkRunning is not used by Followup tests");
-    },
-    MarkFailed(_agentId: string, _turnNumber: number): void
-    {
-      throw new Error("CreateFakeAgentStore.MarkFailed is not used by Followup tests");
-    },
     GetSession(_agentId: string): SddSessionRecord | undefined
     {
-      throw new Error("CreateFakeAgentStore.GetSession is not used by Followup tests");
+      return undefined;
     },
   };
 }
 
 function CreateFakeRunManager(
   recorder: ReturnType<typeof CreateOrderRecorder>,
-  options?: { live?: boolean },
+  options?: { live?: boolean; failStart?: boolean },
 ): SddRunManagerPort & {
   createError?: Error;
   startError?: Error;
@@ -494,12 +493,11 @@ function CreateFakeRunManager(
     phase: "ready",
     allocateRunId(): string
     {
-      recorder.Record("allocateRunId");
       return x_AgentId;
     },
     async create(createOptions: CreateRunOptions): Promise<{ readonly runId: string }>
     {
-      recorder.Record("create", createOptions);
+      recorder.Record("runManager.create", createOptions);
       if (this.createError !== undefined)
       {
         throw this.createError;
@@ -511,7 +509,11 @@ function CreateFakeRunManager(
     },
     async start(runId: string): Promise<void>
     {
-      recorder.Record("start", runId);
+      recorder.Record("runManager.start", runId);
+      if (options?.failStart === true)
+      {
+        throw new Error("provider start failed");
+      }
       if (this.startError !== undefined)
       {
         throw this.startError;
@@ -520,7 +522,7 @@ function CreateFakeRunManager(
     },
     async submit(runId: string, text: string): Promise<void>
     {
-      recorder.Record("submit", { runId, text });
+      recorder.Record("runManager.submit", { runId, text });
       if (!runs.has(runId))
       {
         throw new Error(`Cannot submit unknown run: ${runId}`);
@@ -538,7 +540,6 @@ function CreateFakeRunManager(
     },
     inspect(runId: string)
     {
-      recorder.Record("inspect", runId);
       if (!live || !runs.has(runId))
       {
         return undefined;
@@ -551,7 +552,7 @@ function CreateFakeRunManager(
     },
     async close(runId: string): Promise<void>
     {
-      recorder.Record("close", runId);
+      recorder.Record("runManager.close", runId);
       closed.push(runId);
       runs.delete(runId);
     },
@@ -593,12 +594,15 @@ function CreateFakeRunManager(
   };
 }
 
-function CreateDeps(): Omit<SddManagerDeps, "store" | "runManager">
+function CreateDeps(
+  recorder?: ReturnType<typeof CreateOrderRecorder>,
+): Omit<SddManagerDeps, "store" | "runManager">
 {
   return {
     repoRoot: "/tmp/service-repo",
     async canonicalizeCwd(cwd: string): Promise<string>
     {
+      recorder?.Record("canonicalizeCwd", cwd);
       if (!cwd.startsWith("/"))
       {
         throw new ToolValidationError({
@@ -609,24 +613,28 @@ function CreateDeps(): Omit<SddManagerDeps, "store" | "runManager">
       }
       return x_CanonicalCwd;
     },
-    async readFile(_filePath: string): Promise<string>
+    async readFile(filePath: string): Promise<string>
     {
+      recorder?.Record("readFile", filePath);
       return x_BriefText;
     },
     async renderPrompt(input: RenderSddPromptInput): Promise<RenderedSddPrompt>
     {
-      return {
-        prompt: {
-          path: x_PromptPath,
-          text: input.role === "re-review" ? "Rendered re-review prompt.\n" : x_PromptText,
-        },
-        metadata: {
-          promptPath: x_PromptPath,
-          rendererPath: "/service/checkout/projects/agents/utils/dispatch-prompt",
-          briefPath: "brief" in input ? input.brief : undefined,
-          reportPath: "report" in input ? input.report : undefined,
-        },
-      };
+      recorder?.Record("renderPrompt", input);
+      if (input.role === "re-review")
+      {
+        return {
+          prompt: {
+            path: x_PromptPath,
+            text: "Rendered re-review prompt.\n",
+          },
+          metadata: {
+            promptPath: x_PromptPath,
+            rendererPath: "/service/checkout/projects/agents/utils/dispatch-prompt",
+          },
+        };
+      }
+      return FakeRendered();
     },
     formatFix(_input: FormatFixFollowupInput): string
     {
@@ -653,59 +661,26 @@ function ImplementerStartInput(overrides: Partial<XagentSddStartInput> = {}): Xa
 }
 
 function CreateManagerHarness(options?: {
-  reserveError?: Error;
-  createError?: Error;
-  startError?: Error;
-  submitError?: Error;
   render?: (input: RenderSddPromptInput) => Promise<RenderedSddPrompt>;
   readFile?: (filePath: string) => Promise<string>;
 }): {
   readonly manager: ReturnType<typeof CreateSddManager>;
   readonly recorder: ReturnType<typeof CreateOrderRecorder>;
-  readonly store: ReturnType<typeof CreateFakeStore>;
+  readonly store: ReturnType<typeof CreateFakeAgentStore>;
   readonly runManager: ReturnType<typeof CreateFakeRunManager>;
   readonly rendered: RenderSddPromptInput[];
   readonly readPaths: string[];
 }
 {
   const recorder = CreateOrderRecorder();
-  const store = CreateFakeStore(recorder);
-  if (options?.reserveError !== undefined)
-  {
-    store.reserveError = options.reserveError;
-  }
+  const store = CreateFakeAgentStore(recorder, undefined);
   const runManager = CreateFakeRunManager(recorder);
-  if (options?.createError !== undefined)
-  {
-    runManager.createError = options.createError;
-  }
-  if (options?.startError !== undefined)
-  {
-    runManager.startError = options.startError;
-  }
-  if (options?.submitError !== undefined)
-  {
-    runManager.submitError = options.submitError;
-  }
   const rendered: RenderSddPromptInput[] = [];
   const readPaths: string[] = [];
   const deps: SddManagerDeps = {
     store,
     runManager,
-    repoRoot: "/tmp/service-repo",
-    async canonicalizeCwd(cwd: string): Promise<string>
-    {
-      recorder.Record("canonicalizeCwd", cwd);
-      if (!cwd.startsWith("/"))
-      {
-        throw new ToolValidationError({
-          error: "invalid_working_directory",
-          message: "working directory must be an absolute path",
-          details: { cwd },
-        });
-      }
-      return x_CanonicalCwd;
-    },
+    ...CreateDeps(recorder),
     async readFile(filePath: string): Promise<string>
     {
       recorder.Record("readFile", filePath);
@@ -724,33 +699,7 @@ function CreateManagerHarness(options?: {
       {
         return options.render(input);
       }
-      return {
-        prompt: {
-          path: x_PromptPath,
-          text: x_PromptText,
-        },
-        metadata: {
-          promptPath: x_PromptPath,
-          rendererPath: "/service/checkout/projects/agents/utils/dispatch-prompt",
-          briefPath: "brief" in input ? input.brief : undefined,
-          reportPath: "report" in input ? input.report : undefined,
-        },
-      };
-    },
-    formatFix(input: FormatFixFollowupInput): string
-    {
-      recorder.Record("formatFix", input);
-      return [
-        `Fix round ${input.round}.`,
-        `Read the original brief at ${input.briefPath}.`,
-        `Read and address only the open findings at ${input.findingsPath}.`,
-        "",
-        input.findingsText,
-        "",
-        `Run these covering tests: ${input.tests.join(", ")}.`,
-        `Append the fix report to ${input.reportPath}.`,
-        `Return only the short Superpowers status contract.`,
-      ].join("\n");
+      return FakeRendered();
     },
   };
   return {
@@ -763,81 +712,159 @@ function CreateManagerHarness(options?: {
   };
 }
 
-test("Start follows prepared-before-provider order and returns resolved paths", async () =>
+test("start canonicalizes cwd, inserts the row before creating the run, then renders and submits", async () =>
 {
-  const { manager, recorder, store, runManager } = CreateManagerHarness();
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, undefined);
+  const runManager = CreateFakeRunManager(recorder);
+  const manager = CreateSddManager({ ...CreateDeps(recorder), store, runManager });
 
-  const result = await manager.Start(ImplementerStartInput());
-
-  assert.deepEqual(recorder.Names(), [
-    "canonicalizeCwd",
-    "readFile",
-    "renderPrompt",
-    "allocateRunId",
-    "ReserveInitial",
-    "create",
-    "start",
-    "inspect",
-    "submit",
-    "MarkRunning",
-  ]);
-  assert.equal(store.reserved.length, 1);
-  assert.equal(store.reserved[0]?.agentId, x_AgentId);
-  assert.equal(store.reserved[0]?.planName, "2026-07-26-xagent-sdd-mode");
-  assert.equal(store.reserved[0]?.cwd, x_CanonicalCwd);
-  assert.equal(store.reserved[0]?.briefText, x_BriefText);
-  assert.equal(store.reserved[0]?.reportPath, x_ReportPath);
-  assert.equal(runManager.created.length, 1);
-  assert.equal(runManager.created[0]?.runId, x_AgentId);
-  assert.equal(runManager.created[0]?.model, "grok-4.5");
-  assert.equal(runManager.created[0]?.thinkingLevel, "high");
-  assert.equal(runManager.created[0]?.cwd, x_CanonicalCwd);
-  assert.equal(runManager.created[0]?.mode, "subagent");
-  assert.equal(runManager.submitted[0]?.text, x_PromptText);
-  assert.deepEqual(store.running, [
-    { agentId: x_AgentId, turnNumber: 1, resumeSequence: 7 },
-  ]);
-  assert.deepEqual(result, {
-    agent_id: x_AgentId,
-    sequence: 7,
-    prompt_path: x_PromptPath,
-    renderer_path: "/service/checkout/projects/agents/utils/dispatch-prompt",
-    brief_path: x_BriefPath,
-    report_path: x_ReportPath,
+  const result = await manager.Start({
+    role: "implementer", cwd: x_Cwd, plan: x_PlanPath,
+    agent: "grok-4.5", harness: "cursor", effort: "high",
+    task: 3, name: "Ledger v2 store", brief: x_BriefPath, report: x_ReportPath,
   });
-  assert.equal(JSON.stringify(result).includes(x_BriefText), false);
-  assert.equal(JSON.stringify(result).includes(x_PromptText), false);
+
+  assert.deepEqual(recorder.Names().slice(0, 5), [
+    "canonicalizeCwd", "readFile", "renderPrompt", "store.Insert", "runManager.create",
+  ]);
+  assert.deepEqual(recorder.Names().slice(5, 7), ["runManager.start", "runManager.submit"]);
+  assert.deepEqual(store.inserted[0], {
+    agentId: result.agent_id,
+    planPath: x_PlanPath,
+    task: 3,
+    role: "implementer",
+    briefPath: x_BriefPath,
+    briefText: x_BriefText,
+    cwd: x_CanonicalCwd,
+  });
+  assert.deepEqual(Object.keys(result).sort(), [
+    "agent_id", "prompt_path", "renderer_path", "sequence",
+  ]);
 });
 
-test("Start reservation failure creates no provider run", async () =>
+test("an invalid cwd creates no ledger row and no run", async () =>
 {
-  const { manager, store, runManager, recorder } = CreateManagerHarness({
-    reserveError: new ToolValidationError({
-      error: "sdd_persistence_failed",
-      message: "Unable to reserve SDD session.",
-    }),
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, undefined);
+  const runManager = CreateFakeRunManager(recorder);
+  const manager = CreateSddManager({
+    ...CreateDeps(recorder), store, runManager,
+    canonicalizeCwd: async () =>
+    {
+      throw new ToolValidationError({
+        error: "invalid_working_directory", message: "not a directory",
+      });
+    },
+  });
+  await assert.rejects(() => manager.Start({
+    role: "implementer", cwd: "relative/path", plan: x_PlanPath,
+    agent: "grok-4.5", harness: "cursor", effort: "high",
+    task: 3, name: "x", brief: x_BriefPath, report: x_ReportPath,
+  }));
+  assert.equal(store.inserted.length, 0);
+  assert.equal(runManager.created.length, 0);
+});
+
+test("a failure after the insert leaves the row untouched as a tombstone", async () =>
+{
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, undefined);
+  const runManager = CreateFakeRunManager(recorder, { failStart: true });
+  const manager = CreateSddManager({ ...CreateDeps(recorder), store, runManager });
+  await assert.rejects(() => manager.Start({
+    role: "implementer", cwd: x_Cwd, plan: x_PlanPath,
+    agent: "grok-4.5", harness: "cursor", effort: "high",
+    task: 3, name: "x", brief: x_BriefPath, report: x_ReportPath,
+  }));
+  assert.equal(store.inserted.length, 1);
+  assert.ok(recorder.Names().every((name) => name !== "store.MarkFailed"));
+});
+
+test("reviewer template selection follows task presence", async () =>
+{
+  const rendered: RenderSddPromptInput[] = [];
+  const recorder = CreateOrderRecorder();
+  const manager = CreateSddManager({
+    ...CreateDeps(recorder),
+    store: CreateFakeAgentStore(recorder, undefined),
+    runManager: CreateFakeRunManager(recorder),
+    renderPrompt: async (input) =>
+    {
+      rendered.push(input);
+      return FakeRendered();
+    },
   });
 
-  await assert.rejects(
-    () => manager.Start(ImplementerStartInput()),
-    (error: unknown) =>
-    {
-      assert.ok(error instanceof ToolValidationError);
-      assert.equal(error.structured.error, "sdd_persistence_failed");
-      return true;
-    },
-  );
+  await manager.Start({
+    role: "reviewer", cwd: x_Cwd, plan: x_PlanPath,
+    agent: "opus", harness: "claude_code", effort: "high",
+    task: 3, brief: x_BriefPath, report: x_ReportPath, base: "main", head: "HEAD",
+  });
+  assert.equal(rendered[0]!.role, "task-reviewer");
 
-  assert.equal(runManager.created.length, 0);
-  assert.equal(store.failed.length, 0);
-  assert.ok(recorder.Names().includes("ReserveInitial"));
-  assert.equal(recorder.Names().includes("create"), false);
+  await manager.Start({
+    role: "reviewer", cwd: x_Cwd, plan: x_PlanPath,
+    agent: "opus", harness: "claude_code", effort: "high",
+    brief: x_BriefPath, base: "main", head: "HEAD",
+    description: "Branch adds the v2 ledger.",
+  });
+  assert.equal(rendered[1]!.role, "code-reviewer");
+});
+
+test("a fixer renders the fix template and never an assignment name", async () =>
+{
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, undefined);
+  const runManager = CreateFakeRunManager(recorder);
+  const manager = CreateSddManager({ ...CreateDeps(recorder), store, runManager });
+  await manager.Start({
+    role: "fixer", cwd: x_Cwd, plan: x_PlanPath,
+    agent: "grok-4.5", harness: "cursor", effort: "high",
+    task: 3, brief: x_BriefPath, findings: "/tmp/f.md",
+    findings_text: "one finding", tests: ["npm test"], report: x_ReportPath, round: 2,
+  });
+  const submitted = runManager.submitted[0]!.text;
+  assert.match(submitted, /^You are a fixer for task 3 of plan /);
+  assert.match(submitted, /Fix round 2\./);
+  assert.ok(!submitted.includes("Fix Round 2\""));
+  assert.equal(store.inserted[0]!.role, "fixer");
+});
+
+test("a re-reviewer reuses the re-review renderer role", async () =>
+{
+  const rendered: RenderSddPromptInput[] = [];
+  const recorder = CreateOrderRecorder();
+  const manager = CreateSddManager({
+    ...CreateDeps(recorder),
+    store: CreateFakeAgentStore(recorder, undefined),
+    runManager: CreateFakeRunManager(recorder),
+    renderPrompt: async (input) =>
+    {
+      rendered.push(input);
+      return FakeRendered();
+    },
+  });
+  await manager.Start({
+    role: "re-reviewer", cwd: x_Cwd, plan: x_PlanPath,
+    agent: "opus", harness: "claude_code", effort: "high",
+    task: 3, brief: x_BriefPath, findings: "/tmp/f.md", report: x_ReportPath,
+    base: "main", head: "HEAD", round: 2,
+  });
+  assert.equal(rendered[0]!.role, "re-review");
+  assert.equal((rendered[0] as { round: number }).round, 2);
 });
 
 test("Start surfaces SddPromptError structured codes through structuredErrorFromUnknown", async () =>
 {
-  const { manager, store, runManager } = CreateManagerHarness({
-    render: async () =>
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, undefined);
+  const runManager = CreateFakeRunManager(recorder);
+  const manager = CreateSddManager({
+    ...CreateDeps(recorder),
+    store,
+    runManager,
+    renderPrompt: async () =>
     {
       throw new SddPromptError({
         error: "sdd_renderer_missing",
@@ -860,46 +887,8 @@ test("Start surfaces SddPromptError structured codes through structuredErrorFrom
     },
   );
 
-  assert.equal(store.reserved.length, 0);
+  assert.equal(store.inserted.length, 0);
   assert.equal(runManager.created.length, 0);
-});
-
-test("Start create failure marks the prepared turn failed and closes no live run", async () =>
-{
-  const { manager, store, runManager } = CreateManagerHarness({
-    createError: new Error("provider create failed"),
-  });
-
-  await assert.rejects(() => manager.Start(ImplementerStartInput()), /provider create failed/);
-
-  assert.deepEqual(store.failed, [{ agentId: x_AgentId, turnNumber: 1 }]);
-  assert.deepEqual(runManager.closed, []);
-  assert.equal(runManager.created.length, 0);
-});
-
-test("Start start failure marks failed and closes the created run", async () =>
-{
-  const { manager, store, runManager } = CreateManagerHarness({
-    startError: new Error("provider start failed"),
-  });
-
-  await assert.rejects(() => manager.Start(ImplementerStartInput()), /provider start failed/);
-
-  assert.deepEqual(store.failed, [{ agentId: x_AgentId, turnNumber: 1 }]);
-  assert.deepEqual(runManager.closed, [x_AgentId]);
-});
-
-test("Start submit failure marks failed and closes the created run", async () =>
-{
-  const { manager, store, runManager } = CreateManagerHarness({
-    submitError: new Error("provider submit failed"),
-  });
-
-  await assert.rejects(() => manager.Start(ImplementerStartInput()), /provider submit failed/);
-
-  assert.deepEqual(store.failed, [{ agentId: x_AgentId, turnNumber: 1 }]);
-  assert.deepEqual(runManager.closed, [x_AgentId]);
-  assert.equal(runManager.submitted.length, 0);
 });
 
 test("a fix followup renders and submits with zero ledger writes", async () =>
@@ -1334,17 +1323,33 @@ test("SddManager exposes only Start, Followup, and ListGeneric", () =>
   assert.deepEqual(Object.keys(harness.manager).sort(), ["Followup", "ListGeneric", "Start"]);
 });
 
-test("ReconcileTerminalRuns abandons only unresolved reportless terminal turns", async () =>
+test("ReconcileTerminalRuns abandons only unresolved reportless terminal turns", () =>
 {
-  const harness = CreateManagerHarness();
+  // Manager Start no longer writes v1 turns; seed the fake v1 store directly.
+  //
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeStore(recorder);
   const abandonedId = x_AgentId;
   const failedId = "xrun_20260727000000000_failed01";
   const liveId = "xrun_20260727000000000_live0001";
   const completedPhaseId = "xrun_20260727000000000_done0001";
 
-  await harness.manager.Start(ImplementerStartInput());
+  store.ReserveInitial({
+    agentId: abandonedId,
+    planName: "2026-07-26-xagent-sdd-mode",
+    planPath: x_PlanPath,
+    cwd: x_CanonicalCwd,
+    taskNumber: 3,
+    agent: "grok-4.5",
+    harness: "cursor",
+    effort: "high",
+    role: "implementer",
+    briefPath: x_BriefPath,
+    briefText: x_BriefText,
+  });
+  store.MarkRunning(abandonedId, 1, 7);
 
-  harness.store.ReserveInitial({
+  store.ReserveInitial({
     agentId: failedId,
     planName: "2026-07-26-xagent-sdd-mode",
     planPath: x_PlanPath,
@@ -1357,9 +1362,9 @@ test("ReconcileTerminalRuns abandons only unresolved reportless terminal turns",
     briefPath: x_BriefPath,
     briefText: x_BriefText,
   });
-  harness.store.MarkRunning(failedId, 1, 3);
+  store.MarkRunning(failedId, 1, 3);
 
-  harness.store.ReserveInitial({
+  store.ReserveInitial({
     agentId: liveId,
     planName: "2026-07-26-xagent-sdd-mode",
     planPath: x_PlanPath,
@@ -1372,12 +1377,12 @@ test("ReconcileTerminalRuns abandons only unresolved reportless terminal turns",
     briefPath: x_BriefPath,
     briefText: x_BriefText,
   });
-  harness.store.MarkRunning(liveId, 1, 4);
+  store.MarkRunning(liveId, 1, 4);
 
   // A closed-but-completed provider phase must leave a still-running ledger
   // turn open so the normal await path can persist the delivered report.
   //
-  harness.store.ReserveInitial({
+  store.ReserveInitial({
     agentId: completedPhaseId,
     planName: "2026-07-26-xagent-sdd-mode",
     planPath: x_PlanPath,
@@ -1391,23 +1396,23 @@ test("ReconcileTerminalRuns abandons only unresolved reportless terminal turns",
     briefText: x_BriefText,
     reportPath: x_ReportPath,
   });
-  harness.store.MarkRunning(completedPhaseId, 1, 5);
+  store.MarkRunning(completedPhaseId, 1, 5);
 
-  harness.store.ReconcileTerminalRuns(new Map([
+  store.ReconcileTerminalRuns(new Map([
     [abandonedId, "abandoned"],
     [failedId, "failed"],
     [liveId, "running"],
     [completedPhaseId, "completed"],
   ]));
 
-  assert.equal(harness.store.openTurns.has(abandonedId), false);
-  assert.equal(harness.store.openTurns.has(failedId), false);
-  assert.equal(harness.store.openTurns.get(liveId)?.status, "running");
-  assert.equal(harness.store.openTurns.get(completedPhaseId)?.status, "running");
+  assert.equal(store.openTurns.has(abandonedId), false);
+  assert.equal(store.openTurns.has(failedId), false);
+  assert.equal(store.openTurns.get(liveId)?.status, "running");
+  assert.equal(store.openTurns.get(completedPhaseId)?.status, "running");
 
-  const abandonedTurn = harness.store.turnsByAgent.get(abandonedId)?.at(-1);
-  const failedTurn = harness.store.turnsByAgent.get(failedId)?.at(-1);
-  const completedPhaseTurn = harness.store.turnsByAgent.get(completedPhaseId)?.at(-1);
+  const abandonedTurn = store.turnsByAgent.get(abandonedId)?.at(-1);
+  const failedTurn = store.turnsByAgent.get(failedId)?.at(-1);
+  const completedPhaseTurn = store.turnsByAgent.get(completedPhaseId)?.at(-1);
   assert.equal(abandonedTurn?.status, "abandoned");
   assert.equal(failedTurn?.status, "abandoned");
   assert.equal(completedPhaseTurn?.status, "running");

@@ -16,11 +16,10 @@ import {
 import { generateRunId } from "../src/logs.js";
 import {
   AgentIdSchema,
-  CodeReviewerStartSchema,
   FixFollowupSchema,
   ImplementerStartSchema,
   ReReviewFollowupSchema,
-  TaskReviewerStartSchema,
+  ReviewerStartSchema,
   XagentSddFollowupInputSchema,
   XagentSddStartInputSchema,
 } from "../src/service/tool_schemas.js";
@@ -334,13 +333,13 @@ test("XagentSddStartInputSchema rejects empty agent and unknown harness, effort,
   assert.equal(XagentSddStartInputSchema.safeParse(validImplementerStart({ role: "boss" })).success, false);
 });
 
-test("XagentSddStartInputSchema rejects missing task for task roles and task on code-reviewer", () => {
+test("XagentSddStartInputSchema rejects missing task for task roles and task-less reviewer without description", () => {
   const missingTask = { ...validImplementerStart() };
   delete (missingTask as { task?: number }).task;
   assert.equal(XagentSddStartInputSchema.safeParse(missingTask).success, false);
   assert.equal(
-    TaskReviewerStartSchema.safeParse({
-      role: "task-reviewer",
+    ReviewerStartSchema.safeParse({
+      role: "reviewer",
       cwd: "/tmp/worktree",
       plan: "/tmp/plan.md",
       brief: "/tmp/brief.md",
@@ -354,12 +353,12 @@ test("XagentSddStartInputSchema rejects missing task for task roles and task on 
     false,
   );
   assert.equal(
-    CodeReviewerStartSchema.safeParse({
-      role: "code-reviewer",
+    ReviewerStartSchema.safeParse({
+      role: "reviewer",
       cwd: "/tmp/worktree",
       plan: "/tmp/plan.md",
       task: 1,
-      review_brief: "/tmp/review-brief.md",
+      brief: "/tmp/review-brief.md",
       base: "HEAD~1",
       head: "HEAD",
       agent: "opus",
@@ -386,12 +385,12 @@ test("ImplementerStartSchema requires an absolute report path", () => {
   );
 });
 
-test("code-reviewer permits no task and requires review_brief and description", () => {
-  const parsed = CodeReviewerStartSchema.parse({
-    role: "code-reviewer",
+test("reviewer without a task requires brief and description", () => {
+  const parsed = ReviewerStartSchema.parse({
+    role: "reviewer",
     cwd: "/tmp/worktree",
     plan: "/tmp/plan.md",
-    review_brief: "/tmp/spec-review-brief.md",
+    brief: "/tmp/spec-review-brief.md",
     description: "Whole-branch review scope",
     base: "HEAD~1",
     head: "HEAD",
@@ -399,12 +398,12 @@ test("code-reviewer permits no task and requires review_brief and description", 
     harness: "claude_code",
     effort: "high",
   });
-  assert.equal("task" in parsed, false);
-  assert.equal(parsed.review_brief, "/tmp/spec-review-brief.md");
+  assert.equal(parsed.task, undefined);
+  assert.equal(parsed.brief, "/tmp/spec-review-brief.md");
   assert.equal(parsed.description, "Whole-branch review scope");
   assert.equal(
-    CodeReviewerStartSchema.safeParse({
-      role: "code-reviewer",
+    ReviewerStartSchema.safeParse({
+      role: "reviewer",
       cwd: "/tmp/worktree",
       plan: "/tmp/plan.md",
       base: "HEAD~1",
@@ -416,11 +415,11 @@ test("code-reviewer permits no task and requires review_brief and description", 
     false,
   );
   assert.equal(
-    CodeReviewerStartSchema.safeParse({
-      role: "code-reviewer",
+    ReviewerStartSchema.safeParse({
+      role: "reviewer",
       cwd: "/tmp/worktree",
       plan: "/tmp/plan.md",
-      review_brief: "/tmp/spec-review-brief.md",
+      brief: "/tmp/spec-review-brief.md",
       description: "",
       base: "HEAD~1",
       head: "HEAD",

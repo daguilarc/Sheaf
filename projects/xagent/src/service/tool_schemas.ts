@@ -138,33 +138,8 @@ export const ImplementerStartSchema = z
   })
   .strict();
 
-export const TaskReviewerStartSchema = z
-  .object({
-    role: z.literal("task-reviewer"),
-    ...SddAssignmentFields,
-    task: z.number().int().positive(),
-    brief: SddArtifactPathSchema,
-    report: SddArtifactPathSchema,
-    base: z.string().min(1),
-    head: z.string().min(1),
-    constraints: SddArtifactPathSchema.optional(),
-    diff: SddArtifactPathSchema.optional(),
-  })
-  .strict();
-
-export const CodeReviewerStartSchema = z
-  .object({
-    role: z.literal("code-reviewer"),
-    ...SddAssignmentFields,
-    review_brief: SddArtifactPathSchema,
-    description: WorkerFacingText("description"),
-    base: z.string().min(1),
-    head: z.string().min(1),
-  })
-  .strict();
-
-// v2 start roles. Added beside the v1 shapes so the tool surface can be cut
-// over in the same task that rewrites the manager — never before it.
+// v2 start roles. Task 6 cuts the tool surface over to this union in the same
+// commit that rewrites Start — never before it.
 //
 function ReviewerRefinement(
   value: {
@@ -253,13 +228,7 @@ export const ReReviewerStartSchema = z
   })
   .strict();
 
-export const XagentSddStartInputSchema = z.discriminatedUnion("role", [
-  ImplementerStartSchema,
-  TaskReviewerStartSchema,
-  CodeReviewerStartSchema,
-]);
-
-export const XagentSddStartInputSchemaV2 = z
+export const XagentSddStartInputSchema = z
   .discriminatedUnion("role", [
     ImplementerStartSchema,
     ReviewerStartObject,
@@ -329,7 +298,7 @@ function AdvertisedFor(roles: string, detail: string): string {
 }
 
 export const XagentSddStartAdvertisedSchema = z.object({
-  role: z.enum(["implementer", "task-reviewer", "code-reviewer"])
+  role: z.enum(["implementer", "reviewer", "fixer", "re-reviewer"])
     .describe("Which SDD role to dispatch; selects the required fields below."),
   cwd: CwdSchema.describe("Absolute path to the worktree the agent works in."),
   plan: SddArtifactPathSchema.describe("Absolute path to the Superpowers plan."),
@@ -341,27 +310,33 @@ export const XagentSddStartAdvertisedSchema = z.object({
     "Free text appended verbatim to the rendered prompt, for anything the templates have no slot for.",
   ),
   task: z.number().int().positive().optional()
-    .describe(AdvertisedFor("implementer, task-reviewer", "Plan task number.")),
+    .describe(AdvertisedFor("implementer, reviewer (task-scoped), fixer, re-reviewer", "Plan task number.")),
   name: WorkerFacingText("name").optional()
     .describe(AdvertisedFor("implementer", "Human-readable task name.")),
   brief: SddArtifactPathSchema.optional()
-    .describe(AdvertisedFor("implementer, task-reviewer", "Absolute path to the task brief.")),
+    .describe(AdvertisedFor("implementer, reviewer, fixer, re-reviewer", "Absolute path to the task or review brief.")),
   report: SddArtifactPathSchema.optional()
-    .describe(AdvertisedFor("implementer, task-reviewer", "Absolute path the agent writes its report to.")),
+    .describe(AdvertisedFor("implementer, reviewer (task-scoped), fixer, re-reviewer", "Absolute path the agent writes its report to.")),
   context: WorkerFacingText("context").optional()
     .describe("Optional scene-setting for an implementer."),
-  review_brief: SddArtifactPathSchema.optional()
-    .describe(AdvertisedFor("code-reviewer", "Absolute path to the review brief.")),
   description: WorkerFacingText("description").optional()
-    .describe(AdvertisedFor("code-reviewer", "What the branch under review does.")),
+    .describe(AdvertisedFor("reviewer (whole-branch)", "What the branch under review does.")),
   base: z.string().min(1).optional()
-    .describe(AdvertisedFor("task-reviewer, code-reviewer", "Base git ref for the review diff.")),
+    .describe(AdvertisedFor("reviewer, re-reviewer", "Base git ref for the review diff.")),
   head: z.string().min(1).optional()
-    .describe(AdvertisedFor("task-reviewer, code-reviewer", "Head git ref for the review diff.")),
+    .describe(AdvertisedFor("reviewer, re-reviewer", "Head git ref for the review diff.")),
   constraints: SddArtifactPathSchema.optional()
-    .describe("Optional constraints file for a task-reviewer."),
+    .describe("Optional constraints file for a task-scoped reviewer."),
   diff: SddArtifactPathSchema.optional()
-    .describe("Optional precomputed diff file for a reviewer."),
+    .describe("Optional precomputed diff file for a reviewer or re-reviewer."),
+  findings: SddArtifactPathSchema.optional()
+    .describe(AdvertisedFor("fixer, re-reviewer", "Absolute path to the findings file.")),
+  findings_text: WorkerFacingText("findings_text").optional()
+    .describe(AdvertisedFor("fixer", "The findings, inline.")),
+  tests: z.array(z.string().min(1)).min(1).optional()
+    .describe(AdvertisedFor("fixer", "Commands that must pass before the fix is done.")),
+  round: z.number().int().positive().optional()
+    .describe(AdvertisedFor("fixer, re-reviewer", "Fix or re-review round number; render-only.")),
 });
 
 export const XagentSddFollowupAdvertisedSchema = z.object({

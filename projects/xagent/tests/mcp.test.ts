@@ -24,7 +24,6 @@ import {
   XagentSddFollowupInputSchema,
   XagentSddStartAdvertisedSchema,
   XagentSddStartInputSchema,
-  XagentSddStartInputSchemaV2,
 } from "../src/service/tool_schemas.js";
 import {
   asToolCallResult,
@@ -298,14 +297,29 @@ const x_ValidStartPayloads: ReadonlyArray<Record<string, unknown>> = [
     report: "/tmp/sdd/task-4-report.md",
   },
   {
-    role: "task-reviewer", ...x_AdvertisedAssignment, task: 4,
+    role: "reviewer", ...x_AdvertisedAssignment, task: 4,
     brief: "/tmp/sdd/task-4-brief.md", report: "/tmp/sdd/task-4-report.md",
     base: "main", head: "HEAD",
   },
   {
-    role: "code-reviewer", ...x_AdvertisedAssignment,
-    review_brief: "/tmp/sdd/review-brief.md",
+    role: "reviewer", ...x_AdvertisedAssignment,
+    brief: "/tmp/sdd/review-brief.md",
     description: "Branch adds the v2 ledger.", base: "main", head: "HEAD",
+  },
+  {
+    role: "fixer", ...x_AdvertisedAssignment, task: 4,
+    brief: "/tmp/sdd/task-4-brief.md",
+    findings: "/tmp/sdd/task-4-findings.md",
+    findings_text: "one finding",
+    tests: ["npm test"],
+    report: "/tmp/sdd/task-4-report.md",
+  },
+  {
+    role: "re-reviewer", ...x_AdvertisedAssignment, task: 4,
+    brief: "/tmp/sdd/task-4-brief.md",
+    findings: "/tmp/sdd/task-4-findings.md",
+    report: "/tmp/sdd/task-4-report.md",
+    base: "main", head: "HEAD",
   },
 ];
 
@@ -327,7 +341,7 @@ test("the SDD dispatch tools advertise a non-empty input schema naming their dis
     const listed = await client.listTools();
 
     for (const [name, discriminator, values] of [
-      ["xagent_sdd_start", "role", ["implementer", "task-reviewer", "code-reviewer"]],
+      ["xagent_sdd_start", "role", ["implementer", "reviewer", "fixer", "re-reviewer"]],
       ["xagent_sdd_followup", "kind", ["fix", "re-review"]],
     ] as const) {
       const tool = listed.tools.find((entry) => entry.name === name);
@@ -350,6 +364,26 @@ test("the SDD dispatch tools advertise a non-empty input schema naming their dis
         );
       }
     }
+  }, {
+    createSddManager: ({ runManager, repoRoot, logRoot }) =>
+      CreateTestSddManager(runManager, repoRoot, logRoot),
+  });
+});
+
+test("xagent_sdd_start advertises the four-way role union", async () => {
+  // Plan named startMcpService; that helper has no MCP client. Use withMcpService.
+  //
+  await withMcpService(async ({ client }) => {
+    const listed = await client.listTools();
+    const tool = listed.tools.find((entry) => entry.name === "xagent_sdd_start");
+    assert.ok(tool);
+    // Guard the negatives against passing vacuously: before Task 0 the
+    // advertised schema was `{}`, where "does not mention task-reviewer" is
+    // true for the wrong reason.
+    assert.ok(Object.keys(tool.inputSchema.properties ?? {}).length > 0);
+    assert.equal(JSON.stringify(tool.inputSchema).includes("task-reviewer"), false);
+    assert.equal(JSON.stringify(tool.inputSchema).includes("code-reviewer"), false);
+    assert.ok(JSON.stringify(tool.inputSchema).includes("re-reviewer"));
   }, {
     createSddManager: ({ runManager, repoRoot, logRoot }) =>
       CreateTestSddManager(runManager, repoRoot, logRoot),
@@ -454,7 +488,7 @@ const x_Assignment = {
 // reader guess which one disagreed.
 const x_ReviewerSchemas = [
   ["ReviewerStartSchema", ReviewerStartSchema],
-  ["XagentSddStartInputSchemaV2", XagentSddStartInputSchemaV2],
+  ["XagentSddStartInputSchema", XagentSddStartInputSchema],
 ] as const;
 
 function AssertReviewerCases(
@@ -538,11 +572,11 @@ test("reviewer without a task requires description and forbids task-scoped field
 });
 
 test("v1 role names and the review_brief field name are rejected", () => {
-  assert.equal(XagentSddStartInputSchemaV2.safeParse({
+  assert.equal(XagentSddStartInputSchema.safeParse({
     role: "task-reviewer", ...x_Assignment, task: 4,
     brief: "/tmp/b.md", report: "/tmp/r.md", base: "main", head: "HEAD",
   }).success, false);
-  assert.equal(XagentSddStartInputSchemaV2.safeParse({
+  assert.equal(XagentSddStartInputSchema.safeParse({
     role: "code-reviewer", ...x_Assignment,
     review_brief: "/tmp/b.md", description: "x", base: "main", head: "HEAD",
   }).success, false);

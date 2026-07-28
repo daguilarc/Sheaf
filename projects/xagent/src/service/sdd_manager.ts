@@ -1,15 +1,15 @@
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 
 import {
+  FormatFixDispatch,
   FormatFixFollowup,
   RenderSddPrompt,
+  type FormatFixDispatchInput,
   type FormatFixFollowupInput,
   type RenderedSddPrompt,
   type RenderSddPromptInput,
 } from "./sdd_prompt.js";
 import type {
-  ReserveInitialInput,
   SddAgentStore,
   SddStartRole,
   SddStore,
@@ -33,8 +33,6 @@ export type XagentSddStartResult = {
   readonly sequence: number;
   readonly prompt_path: string;
   readonly renderer_path: string;
-  readonly brief_path: string;
-  readonly report_path?: string;
 };
 
 export type XagentSddFollowupResult = {
@@ -60,22 +58,18 @@ export type SddManager = {
 };
 
 export type SddManagerDeps = {
-  // TRANSITIONAL: Start still needs MarkRunning/ReserveInitial/MarkFailed until
-  // Task 6 rewrites it. GetSession is ListGeneric's v1 join and belongs to
-  // Task 8b — the dep narrows to plain SddAgentStore only when that lands.
-  // MarkFailed is included because Start's failure path still calls it; the
-  // plan Pick list omitted it.
+  // TRANSITIONAL: Start no longer needs MarkRunning/ReserveInitial/MarkFailed.
+  // GetSession is ListGeneric's v1 join and belongs to Task 8b — the dep
+  // narrows to plain SddAgentStore only when that lands.
   //
-  readonly store: SddAgentStore & Pick<
-    SddStore,
-    "MarkRunning" | "ReserveInitial" | "GetSession" | "MarkFailed"
-  >;
+  readonly store: SddAgentStore & Pick<SddStore, "GetSession">;
   readonly runManager: SddRunManagerPort;
   readonly repoRoot: string;
   readonly canonicalizeCwd?: (cwd: string) => Promise<string>;
   readonly readFile?: (filePath: string) => Promise<string>;
   readonly renderPrompt?: (input: RenderSddPromptInput) => Promise<RenderedSddPrompt>;
   readonly formatFix?: (input: FormatFixFollowupInput) => string;
+  readonly formatFixDispatch?: (input: FormatFixDispatchInput) => string;
 };
 
 const x_ControllerNoteHeading = "## Controller Note";
@@ -93,11 +87,6 @@ function AppendControllerNote(promptText: string, note: string | undefined): str
     return promptText;
   }
   return `${promptText.trimEnd()}\n\n${x_ControllerNoteHeading}\n\n${note.trim()}\n`;
-}
-
-function DerivePlanName(planPath: string): string
-{
-  return path.basename(planPath, path.extname(planPath));
 }
 
 function StructuredFailure(structured: StructuredToolError): ToolValidationError
@@ -144,29 +133,11 @@ async function ReadRequiredText(
   return text;
 }
 
-function BriefPathForStart(input: XagentSddStartInput): string
-{
-  if (input.role === "code-reviewer")
-  {
-    return input.review_brief;
-  }
-  return input.brief;
-}
-
-function ReportPathForStart(input: XagentSddStartInput): string | undefined
-{
-  if (input.role === "implementer" || input.role === "task-reviewer")
-  {
-    return input.report;
-  }
-  return undefined;
-}
-
 function BuildRenderInput(
   input: XagentSddStartInput,
   repoRoot: string,
   cwd: string,
-): RenderSddPromptInput
+): RenderSddPromptInput | undefined
 {
   if (input.role === "implementer")
   {
@@ -178,12 +149,28 @@ function BuildRenderInput(
       task: input.task,
       name: input.name,
       brief: input.brief,
-      ...(input.report === undefined ? {} : { report: input.report }),
+      report: input.report,
       ...(input.context === undefined ? {} : { context: input.context }),
     };
   }
-  if (input.role === "task-reviewer")
+  if (input.role === "reviewer")
   {
+    // Task presence selects the template: v1's task-reviewer / code-reviewer
+    // split collapses into one role here and re-expands at the renderer.
+    //
+    if (input.task === undefined)
+    {
+      return {
+        role: "code-reviewer",
+        repoRoot,
+        cwd,
+        plan: input.plan,
+        reviewBrief: input.brief,
+        description: input.description!,
+        base: input.base,
+        head: input.head,
+      };
+    }
     return {
       role: "task-reviewer",
       repoRoot,
@@ -191,23 +178,34 @@ function BuildRenderInput(
       plan: input.plan,
       task: input.task,
       brief: input.brief,
-      report: input.report,
+      report: input.report!,
       base: input.base,
       head: input.head,
       ...(input.constraints === undefined ? {} : { constraints: input.constraints }),
       ...(input.diff === undefined ? {} : { diff: input.diff }),
     };
   }
-  return {
-    role: "code-reviewer",
-    repoRoot,
-    cwd,
-    plan: input.plan,
-    reviewBrief: input.review_brief,
-    description: input.description,
-    base: input.base,
-    head: input.head,
-  };
+  if (input.role === "re-reviewer")
+  {
+    return {
+      role: "re-review",
+      repoRoot,
+      cwd,
+      plan: input.plan,
+      task: input.task,
+      round: input.round,
+      brief: input.brief,
+      findings: input.findings,
+      report: input.report,
+      base: input.base,
+      head: input.head,
+      ...(input.diff === undefined ? {} : { diff: input.diff }),
+    };
+  }
+  // `fixer` has no dispatch-prompt renderer role; its text is formatted in
+  // TypeScript so it stays byte-identical to the same-agent continuation.
+  //
+  return undefined;
 }
 
 function RoleAllowsFollowup(role: SddStartRole, kind: "fix" | "re-review"): boolean
@@ -232,33 +230,59 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
   const read = deps.readFile ?? ((filePath: string) => readFile(filePath, "utf8"));
   const renderPrompt = deps.renderPrompt ?? ((input: RenderSddPromptInput) => RenderSddPrompt(input));
   const formatFix = deps.formatFix ?? FormatFixFollowup;
+  const formatFixDispatch = deps.formatFixDispatch ?? FormatFixDispatch;
 
   async function Start(input: XagentSddStartInput): Promise<XagentSddStartResult>
   {
+    // xsvc-6: canonicalize and validate before anything is written anywhere.
+    //
     const cwd = await canonicalizeCwd(input.cwd);
-    const briefPath = BriefPathForStart(input);
-    const briefText = await ReadRequiredText(read, briefPath, "SDD brief");
-    const rendered = await renderPrompt(BuildRenderInput(input, deps.repoRoot, cwd));
-    const agentId = runManager.allocateRunId();
-    const reportPath = ReportPathForStart(input);
-    const reserveInput: ReserveInitialInput = {
-      agentId,
-      planName: DerivePlanName(input.plan),
-      planPath: input.plan,
-      cwd,
-      ...(input.role === "code-reviewer" ? {} : { taskNumber: input.task }),
-      agent: input.agent,
-      harness: input.harness,
-      effort: input.effort,
-      role: input.role,
-      briefPath,
-      briefText,
-      ...(reportPath === undefined ? {} : { reportPath }),
-    };
+    const briefText = await ReadRequiredText(read, input.brief, "SDD brief");
 
+    let promptText = "";
+    let promptPath = "";
+    let rendererPath = "";
+    const renderInput = BuildRenderInput(input, deps.repoRoot, cwd);
+    if (renderInput === undefined)
+    {
+      const fixer = input as Extract<XagentSddStartInput, { role: "fixer" }>;
+      await ReadRequiredText(read, fixer.findings, "SDD findings");
+      promptText = formatFixDispatch({
+        planPath: fixer.plan,
+        task: fixer.task,
+        round: fixer.round,
+        briefPath: fixer.brief,
+        findingsPath: fixer.findings,
+        findingsText: fixer.findings_text,
+        tests: fixer.tests,
+        reportPath: fixer.report,
+      });
+    }
+    else
+    {
+      const rendered = await renderPrompt(renderInput);
+      promptText = rendered.prompt.text;
+      promptPath = rendered.metadata.promptPath;
+      rendererPath = rendered.metadata.rendererPath;
+    }
+
+    const agentId = runManager.allocateRunId();
+
+    // The row is written before the run exists. If anything after this throws,
+    // the row stands as an immutable dispatch-failure tombstone: v1's
+    // MarkFailed has no v2 analogue, because there is no status to write.
+    //
     try
     {
-      store.ReserveInitial(reserveInput);
+      store.Insert({
+        agentId,
+        planPath: input.plan,
+        ...(input.task === undefined ? {} : { task: input.task }),
+        role: input.role,
+        briefPath: input.brief,
+        briefText,
+        cwd,
+      });
     }
     catch (error)
     {
@@ -266,7 +290,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       {
         throw error;
       }
-      throw PersistenceFailed("Unable to reserve SDD session.", {
+      throw PersistenceFailed("Unable to record the SDD dispatch.", {
         cause: error instanceof Error ? error.message : String(error),
       });
     }
@@ -290,36 +314,16 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       {
         throw new Error(`SDD run disappeared after start: ${agentId}`);
       }
-      const resumeSequence = inspection.sequence;
-      await runManager.submit(
-        agentId,
-        AppendControllerNote(rendered.prompt.text, input.note),
-      );
-      store.MarkRunning(agentId, 1, resumeSequence);
+      await runManager.submit(agentId, AppendControllerNote(promptText, input.note));
       return {
         agent_id: agentId,
-        sequence: resumeSequence,
-        prompt_path: rendered.metadata.promptPath,
-        // Surfaced so a controller working in a worktree can see that the
-        // prompt was rendered by the service checkout's renderer, not the
-        // branch's.
-        //
-        renderer_path: rendered.metadata.rendererPath,
-        brief_path: briefPath,
-        ...(reportPath === undefined ? {} : { report_path: reportPath }),
+        sequence: inspection.sequence,
+        prompt_path: promptPath,
+        renderer_path: rendererPath,
       };
     }
     catch (error)
     {
-      try
-      {
-        store.MarkFailed(agentId, 1);
-      }
-      catch
-      {
-        // Best-effort failure transition after provider errors.
-        //
-      }
       if (created)
       {
         await runManager.close(agentId).catch(() => {});
