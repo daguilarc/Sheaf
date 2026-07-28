@@ -449,6 +449,42 @@ and `xagent_close`, and an alias pair is where the next behavioral
 divergence sneaks in. The skill's story gets simpler: dispatch with
 `sdd_start`/`sdd_followup`; await, message, and close like any run.
 
+### D6a: The union must be advertised, not just enforced
+
+Found while executing this change, by trying to dispatch its own first task.
+
+`McpServer.registerTool` derives a tool's advertised JSON Schema from a
+`ZodObject`/`ZodRawShape`. Both SDD tools pass a `z.discriminatedUnion` where
+a shape is expected. The SDK cannot derive a shape from a union, so it
+advertises `{}`: `tools/list` on the live service reports
+`xagent_sdd_start` and `xagent_sdd_followup` with **zero** properties while
+all nine other tools — every one of them a `z.object` — report real schemas.
+
+The tools still function for a caller that already knows the shape; runtime
+validation against the union is untouched. What is lost is discovery. A
+client that reads the advertised schema learns nothing, and a client that
+infers argument types from it gets them wrong — the first dispatch attempt in
+this change sent `task` as `"1"` instead of `1` and was rejected by the very
+union the schema failed to describe.
+
+This is not fixed by the redesign. v2 replaces the union with another union,
+so the empty schema survives the cutover untouched. It is also load-bearing
+for this change's own test suite: the planned tool-surface test asserts that
+`xagent_sdd_start`'s advertised schema mentions `re-reviewer` and not
+`task-reviewer`/`code-reviewer`. Against `{}` the two negative assertions
+pass vacuously and the positive one fails — the test would have looked like a
+v2 regression when it is really this defect.
+
+So registration supplies the union's JSON Schema explicitly, while the union
+remains the sole runtime validator. Two schemas that can disagree is a worse
+failure mode than one that is merely undiscoverable, so the tool-surface
+suite pins them together: a payload the advertised schema permits and the
+union rejects is a test failure, not a runtime surprise.
+
+The requirement is xsvc-15. It is the one part of this change that cannot be
+dispatched through the facade it repairs, so the controller implements it
+directly and restarts the service onto the fixed build first.
+
 ### D7: Superseded v1 machinery, by name
 
 Each of the following landed on this branch and is deliberately replaced,

@@ -255,3 +255,25 @@ WHILE an `sdd_agents` row references a run directory, THE xagent service SHALL t
 - **WHEN** log-root cleanup or garbage collection considers a run directory whose `agent_id` appears in `sdd_agents`
 - **THEN** the documented policy forbids silent deletion
 - **AND** any future archival step must preserve the `turn.submitted` and `turn.completed` events before removal
+
+### Requirement: xsvc-15 — MCP: SDD dispatch tools advertise their input contract
+
+WHEN an MCP client lists tools, THE xagent service SHALL advertise, for `xagent_sdd_start` and `xagent_sdd_followup`, an input schema that names every accepted field and its JSON type — including the discriminating `role` and `kind` values and the fields each variant requires — so that a client which has never seen the service can construct a valid call from discovery alone; THE service SHALL NOT advertise an empty or field-less schema for either tool. A Zod discriminated union is not directly convertible to a tool input shape by the MCP SDK, so registration SHALL supply the union's JSON Schema explicitly rather than passing the union where a `ZodObject` is expected; the runtime SHALL continue to parse every call against the union itself, so the advertised schema and the enforced schema cannot drift.
+
+#### Scenario: A cold client can construct a dispatch
+
+- **WHEN** an MCP client lists tools and reads the `xagent_sdd_start` input schema without prior knowledge of the service
+- **THEN** the schema names `role` with its four permitted values, and the assignment and role-specific fields with their types
+- **AND** a call constructed from that schema alone passes input validation
+
+#### Scenario: Field-less schemas are a defect
+
+- **WHEN** any advertised SDD dispatch tool schema is inspected
+- **THEN** it declares at least the discriminating field and the fields shared by every variant
+- **AND** a schema with no properties fails the service's own tool-surface tests
+
+#### Scenario: Advertised and enforced schemas agree
+
+- **WHEN** a client sends a payload that the advertised schema permits but the union rejects, or vice versa
+- **THEN** the mismatch is a test failure in the tool-surface suite
+- **AND** the union remains the single authority for runtime validation

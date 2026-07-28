@@ -35,6 +35,7 @@ Requirement ids are from `openspec/changes/redesign-sdd-ledger/specs/xagent-serv
 | xsvc-12 — demoted `xagent_sdd_followup` | 3, 5 |
 | xsvc-13 — SDD identity and tombstones in `xagent_list` | 8 |
 | xsvc-14 — run directories are the system of record | 10 |
+| xsvc-15 — SDD dispatch tools advertise their input contract | 0 |
 
 ## File Structure
 
@@ -72,7 +73,15 @@ Two restart boundaries are load-bearing and must not be re-ordered:
 
 ## Execution guidance (read before dispatching anything)
 
-**Nine tasks get dispatched. Two do not.**
+**Nine tasks get dispatched. Three do not.**
+
+Task 0 is a **controller checkpoint** and the precondition for every dispatch
+in this plan. It repairs the tool surface the controller dispatches *through*,
+so it cannot be handed to a subagent: the facade must already advertise its
+input contract before an implementer can be started at all. The lead
+implements it, restarts the live service onto the fixed build, and verifies
+discovery before Task 1 is dispatched.
+
 
 Tasks 7 and 11 are **controller checkpoints, not implementer work.** Task 7 is
 `stop the service; rm sdd.sqlite; leave it down`. Task 11 is `run four suites;
@@ -104,6 +113,94 @@ one coherent change with its own tests, 6–9 steps. Task 4 bundles three
 deletions but they are one theme (the report-binding machinery); it is the
 riskiest dispatch because it edits five separate line ranges in `mcp.ts` — give
 it the closest review, and expect a fix round.
+
+---
+
+### Task 0: Advertise the SDD dispatch tools' input contract
+**CONTROLLER CHECKPOINT — do not dispatch. This repairs the dispatch path itself.**
+
+**Satisfies:** xsvc-15
+
+**Files:**
+- Modify: `projects/xagent/src/service/mcp.ts` (the two `registerTool` calls for `xagent_sdd_start` and `xagent_sdd_followup`)
+- Test: `projects/xagent/tests/mcp.test.ts`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: a `tools/list` response in which both SDD tools carry a non-empty
+  `inputSchema`. Task 6's tool-surface test depends on this; without it that
+  test cannot pass.
+
+**The defect.** `McpServer.registerTool` derives the advertised JSON Schema
+from a `ZodObject`/`ZodRawShape`. Both SDD tools are registered by passing
+`XagentSddStartInputSchema` / `XagentSddFollowupInputSchema`, which are
+`z.discriminatedUnion`s. The SDK cannot derive a shape from a union and
+advertises `{}`. Verified against the live service:
+
+```
+xagent_await         props=3   ['after_sequence', 'deadline_seconds', 'run_id']
+xagent_sdd_start     props=0   []
+xagent_sdd_followup  props=0   []
+```
+
+Runtime validation is unaffected — a well-typed call reaches business logic
+normally. Only discovery is broken, which is enough to make every client that
+trusts the schema serialize its arguments wrongly.
+
+- [ ] **Step 1: Write the failing tool-surface tests**
+
+Add to `projects/xagent/tests/mcp.test.ts`: for each of `xagent_sdd_start`
+and `xagent_sdd_followup`, assert the advertised `inputSchema` has a
+non-empty `properties` map, names the discriminating field (`role` / `kind`),
+and enumerates that field's permitted values. Assert also that a payload
+constructed from the advertised schema alone passes `parseToolInput` against
+the union — this is what keeps the advertised and enforced schemas from
+drifting.
+
+- [ ] **Step 2: Run to verify failure**
+
+```bash
+cd projects/xagent && npm run build && node --test dist/tests/mcp.test.js
+```
+
+Expected: FAIL — `properties` is empty for both tools.
+
+- [ ] **Step 3: Supply the JSON Schema explicitly at registration**
+
+In `src/service/mcp.ts`, register both SDD tools with an explicit
+`inputSchema` derived from the union rather than passing the union itself.
+The union remains the sole runtime validator inside the handler
+(`parseToolInput(XagentSddStartInputSchema, args)` is unchanged) — the
+explicit schema describes, it does not enforce.
+
+Keep the description and title text as they are.
+
+- [ ] **Step 4: Verify and commit**
+
+```bash
+cd projects/xagent && npm run build && node --test dist/tests/mcp.test.js && npm test
+```
+
+Expected: PASS, 0 failures.
+
+```bash
+git add projects/xagent/src/service/mcp.ts projects/xagent/tests/mcp.test.ts
+git commit -m "fix(xagent): advertise the SDD dispatch tools' input schema (xsvc-15)"
+```
+
+- [ ] **Step 5: Restart the live service onto the fixed build**
+
+This restart is explicitly permitted and is the only one before Task 7. The
+build at this point still wires the **v1** store against the existing v1
+ledger, so no schema gate is involved. Confirm no runs are live first, then
+restart and verify discovery:
+
+```bash
+curl -sS http://127.0.0.1:9005/health
+```
+
+Expected: `healthy: true`, and `tools/list` now reports non-zero property
+counts for both SDD tools.
 
 ---
 
@@ -1774,6 +1871,10 @@ test("xagent_sdd_start advertises the four-way role union", async () => {
     const listed = await service.client.listTools();
     const tool = listed.tools.find((entry) => entry.name === "xagent_sdd_start");
     assert.ok(tool);
+    // Guard the negatives against passing vacuously: before Task 0 the
+    // advertised schema was `{}`, where "does not mention task-reviewer" is
+    // true for the wrong reason.
+    assert.ok(Object.keys(tool.inputSchema.properties ?? {}).length > 0);
     assert.equal(JSON.stringify(tool.inputSchema).includes("task-reviewer"), false);
     assert.equal(JSON.stringify(tool.inputSchema).includes("code-reviewer"), false);
     assert.ok(JSON.stringify(tool.inputSchema).includes("re-reviewer"));

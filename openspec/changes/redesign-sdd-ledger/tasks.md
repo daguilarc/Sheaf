@@ -27,6 +27,17 @@ sequences this; 8.1 only *documents* the step for other operators.
 
 ## 3. Tool Schemas
 
+**Controller-executed precondition — 3.0 blocks every dispatch in this change.**
+`registerTool` derives a tool's advertised JSON Schema from a `ZodObject`
+shape; both SDD tools are registered by passing a `z.discriminatedUnion`
+where a shape is expected, so the live service advertises them with zero
+properties while all nine other tools advertise real schemas. Clients that
+trust discovery mis-serialize their arguments. Because this change is
+executed *through* those tools, 3.0 cannot be dispatched to a subagent — the
+controller implements it directly and restarts the service onto the fixed
+build before dispatching anything else.
+
+- [ ] 3.0 Advertise the SDD dispatch tools' input contract (xsvc-15). Add a failing tool-surface test asserting that `xagent_sdd_start` and `xagent_sdd_followup` each advertise a non-empty input schema naming the discriminating field (`role`/`kind`) and its permitted values; supply the union's JSON Schema explicitly at registration in `service/mcp.ts` while leaving the union itself as the sole runtime validator, so advertised and enforced schemas cannot drift. Deliverable: both tools discoverable from `tools/list` alone; a call constructed from discovery passes validation.
 - [ ] 3.1 Add failing schema tests for the four-way `xagent_sdd_start` discriminated union exactly as pinned in design D6 (`implementer` unchanged; merged `reviewer` with optional `task`, unified `brief`, and the task-present/task-absent conditional fields; `fixer` and `re-reviewer` with required `task` and `brief` and no `name`/`round`): v1 role names and the `review_brief` field name rejected, run-id leak guard and `note` retained on all worker-facing text. Also cover the v2 followup schemas: `report` required on both kinds, `round` retained as a render-only field. Deliverable: red tests in `tests/mcp.test.ts`.
 - [ ] 3.2 Implement the v2 start and followup schemas in `service/tool_schemas.ts` per design D6, deleting `XagentSddAwaitInputSchema` and `XagentSddCloseInputSchema`. Deliverable: 3.1 tests green.
 
