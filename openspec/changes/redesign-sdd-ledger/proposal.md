@@ -21,10 +21,12 @@ accepted: the turn model needs a redesign, not more compensating machinery.
   version is not 2 and names the reprovision step in the error.
 - Replace the turn-based ledger with a single insert-only `sdd_agents`
   table: one immutable row per dispatched agent, written by the service at
-  dispatch, never updated, never deleted. The ledger holds identity and
-  lineage only — no status, no report text, no closure timestamp.
+  dispatch, never updated, never deleted. The ledger holds identity only —
+  no status, no report text, no closure timestamp, no lineage link. The v1
+  `sdd_dispatch_log` view is deleted with the rest of schema v1 and has no
+  v2 replacement; forensics are plain SQL against `sdd_agents`.
 - Record each agent's start role from the four-way set `implementer`,
-  `reviewer`, `fixer`, `re-reviewer`, plus its brief path, a brief content
+  `reviewer`, `fixer`, `re-reviewer`, plus its brief path, its brief
   content, and its worktree.
   v1's `task-reviewer`/`code-reviewer` split collapses into `reviewer` with
   a nullable task number.
@@ -40,7 +42,7 @@ accepted: the turn model needs a redesign, not more compensating machinery.
   directories as ledger blob storage.
 - **BREAKING** Rework `xagent_sdd_start` into a four-way role union. `fixer`
   and `re-reviewer` become first-class fresh-agent dispatches carrying a
-  a real fix template, replacing the incident's
+  real fix template, replacing the incident's
   `--name "Task 4 Fix Round 1"` impersonation.
 - Demote `xagent_sdd_followup` to a same-agent continuation convenience: it
   renders and submits but writes nothing to the ledger. When the target run
@@ -55,9 +57,12 @@ accepted: the turn model needs a redesign, not more compensating machinery.
   `CloseAfterProvider`'s ledger write, `ReconcileTerminalRuns`,
   `abandonOpenTurns`, the one-shot startup repair, and the
   `sdd_report_unbound`, `sdd_turn_unresolved`, `sdd_session_closed`,
-  `sdd_followup_missing_paths`, and `sdd_report_path_required` error paths.
+  `sdd_followup_missing_paths`, `sdd_report_path_required`,
+  `sdd_turn_in_flight`, and `sdd_followup_required` error paths.
+  `sdd_session_terminal` is replaced by `sdd_agent_not_live`;
+  `unknown_sdd_agent` and `sdd_followup_role_mismatch` survive unchanged.
 - Extend `xagent_list` recovery rows: the `sdd` block carries role, plan,
-  task, brief path, and dispatch time; ledger rows with no run
+  task, worktree, brief path, and dispatch time; ledger rows with no run
   record surface as `run_missing` dispatch-failure tombstones.
 
 ## Capabilities
@@ -66,7 +71,7 @@ accepted: the turn model needs a redesign, not more compensating machinery.
 
 - `xagent-service`: v2 ledger schema and insert-only write discipline, the
   `turn.submitted` event, the reduced MCP surface (seven generic tools plus
-  `xagent_sdd_start` and `xagent_sdd_followup`), lineage validation, and
+  `xagent_sdd_start` and `xagent_sdd_followup`), immutable start roles, and
   run-directory retention obligations.
 - `xagent-sdd-workflow`: the v1 turn-ledger, report-before-return, and
   same-session-mandatory requirements are superseded; the spec sync is an
@@ -88,3 +93,16 @@ accepted: the turn model needs a redesign, not more compensating machinery.
   apart from the `agent_id`→`run_id` field name.
 - Log-root cleanup or GC gains a hard constraint: run directories referenced
   by `sdd_agents` are evidence, not cache.
+
+## Owner sign-off (2026-07-28)
+
+Both items the design flagged as requiring an explicit decision are approved:
+
+- **No migration, with prejudice.** The v1 `sdd.sqlite` is deleted outright.
+  No read path, no compatibility shim, no best-effort import. The service
+  refuses any ledger whose `user_version` is not 2 and names the reprovision
+  step in the error.
+- **Run directories are the intended system of record.** Reports, prompts,
+  notes, and chit-chat live in `<log_root>/<agent_id>/` and nowhere else.
+  Any log-root retention, GC, or cleanup tooling must treat a run directory
+  referenced by an `sdd_agents` row as evidence, not cache.

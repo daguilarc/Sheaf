@@ -76,7 +76,7 @@ WHEN `xagent_start_non_sdd` or `xagent_sdd_start` receives a working directory, 
 
 ### Requirement: xsvc-8 — Ledger: insert-only per-agent dispatch index
 
-WHEN `xagent_sdd_start` accepts a dispatch, THE xagent service SHALL insert exactly one row into the schema-version-2 `sdd_agents` table (`agent_id`, `plan_path`, `task`, `role`, `brief_path`, `brief_text`, `cwd`, `dispatched_at`) before creating the run; THE service SHALL never update or delete `sdd_agents` rows, SHALL store no turn status, report text, session closure, harness, model, or effort in the ledger, and SHALL refuse to open a ledger database whose `user_version` is not 2 with an actionable error naming the reprovision step.
+WHEN `xagent_sdd_start` accepts a dispatch, THE xagent service SHALL insert exactly one row into the schema-version-2 `sdd_agents` table (`agent_id`, `plan_path`, `task`, `role`, `brief_path`, `brief_text`, `cwd`, `dispatched_at`) before creating the run; THE service SHALL provision no other SDD table or view at schema version 2 (the v1 `sdd_dispatch_log` view has no v2 replacement), SHALL never update or delete `sdd_agents` rows, SHALL store no turn status, report text, session closure, harness, model, or effort in the ledger, and SHALL refuse to open a ledger database whose `user_version` is not 2 with an actionable error naming the reprovision step.
 
 #### Scenario: Row precedes the run
 
@@ -109,7 +109,7 @@ WHEN `xagent_sdd_start` accepts a dispatch, THE xagent service SHALL insert exac
 
 ### Requirement: xsvc-9 — Events: durable `turn.submitted` submitted-text record
 
-WHEN a supervised run's supervisor submits text to the provider, THE xagent service SHALL append a sanitized `turn.submitted` normalized event carrying the full submitted text — rendered SDD prompts with any appended controller note, and raw `xagent_message` text alike — with the next supervision sequence number, durably before the submit call returns; `turn.submitted` events SHALL NOT complete an await and SHALL NOT enter leader context unprompted.
+WHEN a supervised run's supervisor accepts text for submission, THE xagent service SHALL append a `turn.submitted` normalized event — `type: "turn.submitted"`, `phase: "running"`, `reason: "turn_submitted"`, payload `{ text, turn_id }` where `text` is the full submitted text (rendered SDD prompts with any appended controller note, and raw `xagent_message` text alike) sanitized identically to every other persisted payload and `turn_id` matches the id carried by the same turn's completion or failure payload — with the next supervision sequence number, durably appended via the event sink after the `running`/`turn_started` state event and before the provider adapter's submit is invoked; `turn.submitted` SHALL be non-deliverable: it SHALL NOT complete a live await, SHALL be excluded by the persisted-await wake filter, and SHALL NOT enter leader context unprompted; WHEN the durable append fails, THE service SHALL fail the submit without handing the text to the provider.
 
 #### Scenario: SDD dispatch text is durable
 
@@ -131,8 +131,9 @@ WHEN a supervised run's supervisor submits text to the provider, THE xagent serv
 
 #### Scenario: Service death cannot lose submitted text
 
-- **WHEN** the service crashes immediately after a submit call returns
+- **WHEN** the service crashes at any point after the provider adapter's submit was invoked — including mid-stream, before the turn completes
 - **THEN** the `turn.submitted` event for that submission is already durable in `normalized.jsonl`
+- **AND** its sequence number falls between the turn's `turn_started` state event and every provider-derived event of that turn
 
 ### Requirement: xsvc-10 — Ledger: immutable start role and durable brief
 
@@ -164,7 +165,7 @@ WHEN `xagent_sdd_start` accepts a dispatch, THE xagent service SHALL record the 
 
 ### Requirement: xsvc-11 — SDD dispatch: four-way start role union
 
-WHEN `xagent_sdd_start` is called, THE xagent service SHALL accept exactly the roles `implementer`, `reviewer`, `fixer`, and `re-reviewer` as a discriminated union; `reviewer` with a `task` SHALL render the task-review template and `reviewer` without a `task` SHALL render the whole-branch review template; `fixer` SHALL render a fix template from `plan`, `task`, the original `brief`, `findings`, `tests`, and `report` rather than encoding the fix round into an assignment name; `re-reviewer` SHALL render a re-review template from `findings`, `report`, `base`, and `head`.
+WHEN `xagent_sdd_start` is called, THE xagent service SHALL accept exactly the roles `implementer`, `reviewer`, `fixer`, and `re-reviewer` as a discriminated union over strict objects that all share the v1 assignment fields (`note?`, `cwd`, `plan`, `agent`, `harness`, `effort`, `policy?`) and additionally require: for `implementer` — `task`, `name`, `brief`, `report`, `context?` (unchanged from v1); for `reviewer` — `brief` (unifying v1 `brief` and `review_brief`), `base`, `head`, and an optional `task` that when present requires `report` and permits `constraints?`/`diff?`, and when absent requires `description` and forbids `report`/`constraints`/`diff`; for `fixer` — `task`, the original `brief`, `findings`, `findings_text`, `tests`, and `report`, with no `name`, `context`, or `round` field; for `re-reviewer` — `task`, the original review `brief`, `findings`, `report`, `base`, `head`, `diff?`, with no `round` field; `reviewer` with a `task` SHALL render the task-review template and `reviewer` without a `task` SHALL render the whole-branch review template; `fixer` SHALL render a fix template rather than encoding the fix round into an assignment name; every dispatch SHALL therefore carry a brief, read at dispatch time into `brief_text`.
 
 #### Scenario: Reviewer merge replaces the v1 role split
 
@@ -180,12 +181,18 @@ WHEN `xagent_sdd_start` is called, THE xagent service SHALL accept exactly the r
 
 #### Scenario: Unknown role rejected
 
-- **WHEN** a controller dispatches role `task-reviewer` or `code-reviewer` (the v1 names) or any other unlisted role
+- **WHEN** a controller dispatches role `task-reviewer` or `code-reviewer` (the v1 names) or any other unlisted role, or passes the v1 field name `review_brief` to role `reviewer`
 - **THEN** input validation rejects the call before any ledger or run state is created
+
+#### Scenario: Re-reviewer carries the original review brief
+
+- **WHEN** a controller dispatches role `re-reviewer` for a reviewed task, passing the brief the original reviewer was dispatched with
+- **THEN** the dispatch inserts a row whose `brief_path`/`brief_text` record that brief, satisfying the ledger's unconditional NOT NULL brief columns
+- **AND** a `re-reviewer` dispatch without a `brief` is rejected by input validation
 
 ### Requirement: xsvc-12 — SDD continuation: demoted `xagent_sdd_followup`
 
-WHEN `xagent_sdd_followup` is called with kind `fix` or `re-review`, THE xagent service SHALL render the continuation template and submit it to the same live agent without writing the ledger, validating only that the run is live in the run manager and that the kind matches the agent's immutable start role (`fix` for `implementer` or `fixer`; `re-review` for `reviewer` or `re-reviewer`); WHEN the run is not live, THE service SHALL return a structured `sdd_agent_not_live` error whose details name the fresh-agent recovery: the role to dispatch for the same `plan_path` and `task`.
+WHEN `xagent_sdd_followup` is called with kind `fix` or `re-review`, THE xagent service SHALL accept as input for `fix`: `agent_id`, `round`, `findings`, `findings_text`, `tests`, `report`, `note?`, and for `re-review`: `agent_id`, `round`, `findings`, `report`, `base`, `head`, `diff?`, `note?` — where `report` is a required tool input (the v2 ledger stores no report path), the brief is sourced from the target agent's own `sdd_agents` row and never from input, and `round` parameterizes only the rendered text, recorded nowhere but the resulting `turn.submitted` event; THE service SHALL render the continuation template and submit it to the same live agent without writing the ledger, returning `{ agent_id, sequence }` with no v1 `turn_number` field, validating only that an `sdd_agents` row exists (else `unknown_sdd_agent`), that the run is live in the run manager, and that the kind matches the agent's immutable start role (`fix` for `implementer` or `fixer`; `re-review` for `reviewer` or `re-reviewer`, else `sdd_followup_role_mismatch`); WHEN the run is not live, THE service SHALL return a structured `sdd_agent_not_live` error — replacing v1's `sdd_session_terminal` — whose details name the fresh-agent recovery: the role to dispatch for the same `plan_path` and `task`.
 
 #### Scenario: Same-agent fix writes no ledger state
 
@@ -213,7 +220,7 @@ WHEN `xagent_sdd_followup` is called with kind `fix` or `re-review`, THE xagent 
 
 ### Requirement: xsvc-13 — Recovery: SDD identity and tombstones in `xagent_list`
 
-WHEN `xagent_list` returns runs, THE xagent service SHALL join `sdd_agents` identity onto SDD-owned rows as an `sdd` block carrying `role`, `plan`, `task`, `brief_path`, and `dispatched_at`, and SHALL additionally return ledger rows that have no run record as tombstone entries flagged `run_missing: true`, ordered among the results by their `dispatched_at`.
+WHEN `xagent_list` returns runs, THE xagent service SHALL join `sdd_agents` identity onto SDD-owned rows as an `sdd` block carrying exactly `role`, `plan` (the plan name, `basename(plan_path)` as in v1), `task` (absent when NULL), `cwd`, `brief_path`, and `dispatched_at` — dropping v1's `agent` and `closed` fields — and SHALL additionally return ledger rows that have no run record as tombstone entries of a parallel shape carrying exactly `run_id`, `run_missing: true`, and the `sdd` block, ordered among the results by their `dispatched_at`; `run_missing` SHALL never appear on rows that have a run record.
 
 #### Scenario: Lost start response recovered by identity
 

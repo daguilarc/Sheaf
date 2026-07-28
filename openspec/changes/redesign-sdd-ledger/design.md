@@ -40,7 +40,8 @@ Goals:
 - SQL answers to "which run was the Task 4 implementer" and "what work is
   still in flight"; log answers to "why did this agent stop" and "what was
   this agent told".
-- First-class fresh-agent fix and re-review dispatch with recorded lineage.
+- First-class fresh-agent fix and re-review dispatch, related by dispatch
+  order rather than a recorded lineage link (D3a).
 - Durable submitted text (prompts, notes, chit-chat) with zero controller
   cooperation.
 
@@ -74,7 +75,7 @@ changes over an agent's life (phase, reports, failures, conversation)
 already has a durable, service-written home in the run record, maintained
 by the supervisor's sinks whether or not the controller is alive. The
 ledger's only job is the thing the run logs structurally cannot answer:
-which run is which, and who relates to whom.
+which run is which, and which assignment each one was given.
 
 ### D2: `turn.submitted` — make the JSONL able to answer "what was told"
 
@@ -87,10 +88,44 @@ on this branch appended to the submitted text but recorded nowhere durable
 Rather than store submitted text in the ledger, the supervisor emits a
 `turn.submitted` normalized event on every `submit()`, carrying the full
 sanitized submitted text — rendered role prompt plus appended note, or a
-raw `xagent_message`. It receives the next sequence number, is appended via
-the existing `eventSink` before submit returns, and is excluded from await
-wakes (`isPersistedAwaitWake` ignores it, like healthy deltas — it must
-never complete an await or enter leader context).
+raw `xagent_message`. The contract, pinned:
+
+```ts
+// supervision/types.ts — the type union gains one member:
+//   type: "supervision.state" | "supervision.attention"
+//       | "turn.completed" | "turn.submitted";
+
+// Every turn.submitted event has this shape (a SupervisionEvent with
+// schema_version 1, run_id, sequence, timestamp as usual):
+type TurnSubmittedEvent = SupervisionEvent & {
+  type: "turn.submitted";
+  phase: "running";              // always — see emission point below
+  reason: "turn_submitted";
+  payload: {
+    text: string;                // the FULL submitted text
+    turn_id: string;             // `turn_${inputSequence}`, the same id the
+                                 // turn's completion/failure payloads carry
+  };
+};
+```
+
+- **Emission point.** Inside `Supervisor.submit()`'s lifecycle mutation,
+  immediately after the `running`/`turn_started` state event and *before*
+  `session.submit` hands the text to the provider adapter. Sequence order
+  within a turn is therefore: `supervision.state` (`turn_started`, seq N) →
+  `turn.submitted` (seq N+1) → provider-derived events. Emitting before the
+  adapter sees the text — not merely before the submit Promise resolves —
+  means a crash at any later point, including mid-provider-stream, cannot
+  lose "what was this agent told". If the event-sink append itself fails,
+  the submit fails; text the log cannot prove was sent is not sent.
+- **Sanitization.** `payload.text` passes through the same
+  `sanitizeValue(text, cwd)` treatment as every other persisted payload.
+- **Await behavior.** Published with `deliverable: false`, so it never
+  completes a live await and never enters leader context unprompted. The
+  persisted-path whitelist in `isPersistedAwaitWake` (which accepts only
+  `supervision.attention`, `turn.completed`, and terminal
+  `supervision.state`) must continue to exclude it, with a test pinning
+  that.
 
 This one log-side addition is what permits the ledger to store no text. It
 is a hard precondition, not an enhancement: without it, dropping the turn
@@ -120,6 +155,17 @@ CREATE TABLE sdd_agents
 CREATE INDEX sdd_agents_assignment ON sdd_agents(plan_path, task, role);
 ```
 
+This is the entire v2 schema: one table, one index, no views. The v1
+`sdd_dispatch_log` view is deleted with the rest of schema v1 and has no v2
+replacement — it existed to join sessions onto turns, and with one row per
+agent there is nothing left to join; the forensic queries in D5 run
+directly against `sdd_agents`.
+
+Every role carries a brief (D6), which is why `brief_path` and `brief_text`
+are `NOT NULL` unconditionally: for a `re-reviewer` the brief is the
+original review brief the reviewer under re-check was dispatched with,
+passed explicitly by the controller.
+
 Column-by-column justification against constraint 2:
 
 - `agent_id` — the join key to the run record. Identity itself.
@@ -127,7 +173,8 @@ Column-by-column justification against constraint 2:
   information the run logs cannot answer without opening every run
   directory and parsing prompts: "which run was the Task 4 implementer"
   must be a SQL query, not archaeology. `plan_name` is not a column; it is
-  `basename(plan_path)`, derived in queries and the view consumer.
+  `basename(plan_path)`, derived in queries and in the `xagent_list` join
+  (D8).
 - `brief_path` — which brief file the agent was pointed at (constraint 4).
   Identity only; the content is in `brief_text` below.
 - `brief_text` — the brief exactly as dispatched. This is the one place
@@ -224,18 +271,109 @@ fact, so `sdd_session_closed` ceases to exist as a concept.
 ### D6: The MCP surface afterwards
 
 `xagent_sdd_start` becomes a four-way role union. Role is the role the agent
-*starts* as and is never rewritten (constraint 4):
+*starts* as and is never rewritten (constraint 4). The Zod shapes, pinned —
+every role shares v1's `SddAssignmentFields` verbatim (`note?`, `cwd`,
+`plan`, `agent`, `harness`, `effort`, `policy?`), all objects `.strict()`,
+path fields using the existing `SddArtifactPathSchema` and worker-facing
+text fields using the existing `WorkerFacingText` run-id guard:
+
+```ts
+const ImplementerStartSchema = z.object({
+  role: z.literal("implementer"),
+  ...SddAssignmentFields,
+  task: z.number().int().positive(),
+  name: WorkerFacingText("name"),
+  brief: SddArtifactPathSchema,
+  report: SddArtifactPathSchema,
+  context: WorkerFacingText("context").optional(),
+});                                    // unchanged from v1
+
+const ReviewerStartSchema = z.object({ // merges task-reviewer + code-reviewer
+  role: z.literal("reviewer"),
+  ...SddAssignmentFields,
+  task: z.number().int().positive().optional(),
+  brief: SddArtifactPathSchema,        // v1 task-reviewer `brief` and
+                                       // code-reviewer `review_brief`, unified
+  base: z.string().min(1),
+  head: z.string().min(1),
+  report: SddArtifactPathSchema.optional(),       // required with `task`
+  constraints: SddArtifactPathSchema.optional(),  // task-scoped only
+  diff: SddArtifactPathSchema.optional(),         // task-scoped only
+  description: WorkerFacingText("description").optional(), // whole-branch only
+});
+// superRefine: task present → `report` required, `description` forbidden;
+//              task absent  → `description` required, `report`/`constraints`/
+//                             `diff` forbidden (whole-branch template has no
+//                             slot for them).
+
+const FixerStartSchema = z.object({
+  role: z.literal("fixer"),
+  ...SddAssignmentFields,
+  task: z.number().int().positive(),
+  brief: SddArtifactPathSchema,        // the ORIGINAL implementer brief
+  findings: SddArtifactPathSchema,
+  findings_text: WorkerFacingText("findings_text"),
+  tests: z.array(z.string().min(1)).min(1),
+  report: SddArtifactPathSchema,       // where the fix report is appended
+  // `FormatFixFollowup` and the `re-review` renderer both require a round
+  // number, so it is an input rather than something the service invents.
+  // It is display-only: a fresh agent's own first turn is round 1, which is
+  // the default; a controller that wants the prompt to read "Fix round 3"
+  // because two fixers came before passes 3.
+  round: z.number().int().positive().default(1),
+});
+// Deliberately absent: `name` (the impersonation vector this role replaces),
+// `context`, and `round` — rounds are conveyed by the submitted text and by
+// dispatch order within (plan_path, task), never by identity fields.
+
+const ReReviewerStartSchema = z.object({
+  role: z.literal("re-reviewer"),
+  ...SddAssignmentFields,
+  task: z.number().int().positive(),
+  brief: SddArtifactPathSchema,        // the ORIGINAL review brief
+  findings: SddArtifactPathSchema,
+  report: SddArtifactPathSchema,       // the review report being re-checked
+  base: z.string().min(1),
+  head: z.string().min(1),
+  diff: SddArtifactPathSchema.optional(),
+  round: z.number().int().positive().default(1),   // display-only; see fixer
+});
+
+const XagentSddStartInputSchema = z.discriminatedUnion("role", [
+  ImplementerStartSchema, ReviewerStartSchema,
+  FixerStartSchema, ReReviewerStartSchema,
+]);
+```
+
+v1 field-name disposition, explicitly: the v1 role names `task-reviewer`
+and `code-reviewer` are rejected by validation; `review_brief` is renamed
+to `brief` (the old name is rejected by `.strict()`); `description`
+survives only on the whole-branch `reviewer` shape; `name` and `context`
+survive only on `implementer`; everything in `SddAssignmentFields` survives
+under its v1 name.
+
+Role semantics:
 
 - `implementer` — as today. A fresh implementer taking over from a dead one is
   simply another `implementer` row for the same `(plan_path, task)`.
 - `reviewer` — merges v1's `task-reviewer` and `code-reviewer`: `task` present
   selects the task-review template, absent selects whole-branch.
-- `fixer` — new, and it is finding C2 solved properly: `plan`, `task`, the
-  original `brief`, `findings`, `tests`, and `report`. It renders a real fix
+- `fixer` — new, and it is finding C2 solved properly: it renders a real fix
   template instead of the incident's `--name "Task 4 Fix Round 1"`
   impersonation. Used when the fixing is done by a *fresh* agent — because the
   original died, or because the lead deliberately wants different hands on it.
-- `re-reviewer` — likewise, from `findings`, `report`, `base`, and `head`.
+  The fix template is rendered in TypeScript from the existing
+  `FormatFixFollowup` formatter, extended with a plan/task/role header — it
+  is *not* a new dispatch-prompt renderer role; golden fixtures pin parity
+  between the fresh-fixer prompt and the same-agent fix continuation.
+- `re-reviewer` — likewise, a fresh dispatch of the existing re-review
+  template (which already consumes brief, findings, report, base, head via
+  the dispatch-prompt renderer).
+
+`xagent_sdd_start` returns `{ agent_id, sequence, prompt_path,
+renderer_path }`. v1's `brief_path` and `report_path` result fields are
+deliberately dropped: both were verbatim echoes of the caller's own inputs;
+v2 results carry only service-generated facts.
 
 Note the symmetry constraint 5 demands: an implementer that fixes its own work
 via `xagent_sdd_followup` stays an `implementer` and gets no new row; a fresh
@@ -246,15 +384,63 @@ both first-class.
 continuation is the optimization constraint 5 says it is, and still worth a
 tool: it preserves provider context and enforces template discipline over
 hand-rolled prose. But it writes nothing to the ledger — the agent's row
-exists, and the turn lands in `turn.submitted`. Its guards shrink to two
-runtime checks: the run is live, and the kind matches the immutable start
-role (`fix` on `implementer`/`fixer`, `re-review` on
-`reviewer`/`re-reviewer`). When the run is not live it fails with
-`sdd_agent_not_live`, whose details are the recovery path itself: start a
-fresh `fixer` or `re-reviewer` for the same plan and task. The v1 dead end
+exists, and the turn lands in `turn.submitted`. The v2 input shapes,
+pinned — the material change from v1 is that `report` becomes a tool input
+(v1 recovered it from cached turn artifacts; the v2 ledger stores no
+`report_path`), while the brief comes from the target agent's own
+`sdd_agents` row (`brief_path`/`brief_text`), never from input:
+
+```ts
+const FixFollowupSchema = z.object({
+  kind: z.literal("fix"),
+  agent_id: AgentIdSchema,
+  round: z.number().int().positive(),  // render-only: it appears in the
+                                       // submitted text and is recorded
+                                       // nowhere but the turn.submitted event
+  findings: SddArtifactPathSchema,
+  findings_text: WorkerFacingText("findings_text"),
+  tests: z.array(z.string().min(1)).min(1),
+  report: SddArtifactPathSchema,       // NEW in v2 — the report file the fix
+                                       // appends to, previously cache-sourced
+  note: NoteSchema,
+}).strict();
+
+const ReReviewFollowupSchema = z.object({
+  kind: z.literal("re-review"),
+  agent_id: AgentIdSchema,
+  round: z.number().int().positive(),  // render-only, as above
+  findings: SddArtifactPathSchema,
+  report: SddArtifactPathSchema,       // NEW in v2 — the report under re-review
+  base: z.string().min(1),
+  head: z.string().min(1),
+  diff: SddArtifactPathSchema.optional(),
+  note: NoteSchema,
+}).strict();
+```
+
+The result is `{ agent_id, sequence }` — `sequence` being the supervision
+sequence to pass as `after_sequence` to `xagent_await`. v1's `turn_number`
+result field is deleted; v2 has no turns to number.
+
+Its guards shrink to the checks that remain meaningful: the agent has an
+`sdd_agents` row (else `unknown_sdd_agent`, kept from v1), the run is live,
+and the kind matches the immutable start role (`fix` on
+`implementer`/`fixer`, `re-review` on `reviewer`/`re-reviewer` — else
+`sdd_followup_role_mismatch`, kept from v1). When the run is not live it
+fails with `sdd_agent_not_live` — replacing v1's `sdd_session_terminal` —
+whose details are the recovery path itself: start a fresh `fixer` or
+`re-reviewer` for the same plan and task. The v1 dead end
 becomes a signpost. Missing a followup,
 double-calling it, or calling it after death can no longer corrupt
 anything — constraint 1 holds for the tools, not just the ledger.
+
+v1's `sdd_turn_in_flight` guard on `xagent_message` is deleted along with
+open turns: with no report binding to protect, chit-chat during a running
+turn is merely a provider-level concern (queued or rejected by the
+provider, visible in the event log), and the message is durable in
+`turn.submitted` either way. `sdd_followup_required` — v1's insistence that
+SDD runs be messaged only through the facade — is deleted with it;
+`xagent_message` is legal on SDD runs.
 
 `xagent_sdd_await` and `xagent_sdd_close` are deleted. The review initially
 argued for keeping them as teaching surface; with report persistence and
@@ -285,6 +471,55 @@ not forgotten:
 - `sdd_turn_unresolved`, `sdd_session_closed`,
   `sdd_followup_missing_paths`, `sdd_report_path_required` — deleted along
   with the states they guarded.
+- `sdd_turn_in_flight` and the `FollowupRequired` helper /
+  `sdd_followup_required` error — deleted; `xagent_message` on an SDD run
+  is an ordinary submit, recorded by `turn.submitted` (see D6).
+
+And the error-surface disposition in one place: **kept** —
+`unknown_sdd_agent`, `sdd_followup_role_mismatch`, `sdd_persistence_failed`,
+and the renderer errors (`sdd_renderer_missing`/`sdd_renderer_failed`/
+`sdd_templates_missing`/`sdd_renderer_output_invalid`); **renamed in
+substance** — `sdd_session_terminal` becomes `sdd_agent_not_live` (liveness
+is now a run-manager fact, not a ledger fact); **deleted** — every error
+named in the bullets above. A start failure writes nothing anywhere — v1's
+`MarkFailed` has no v2 analogue; the row inserted before the failure stands
+as the tombstone (D4).
+
+### D8: `xagent_list` v2 shapes
+
+The `sdd` identity block and the tombstone row are pinned as types, not
+prose. `plan` keeps its v1 meaning — the plan *name*,
+`basename(plan_path)` without extension — because that is what controllers
+match against; `plan_path` stays a SQL-only fact. v1's `agent` field cannot
+survive: the v2 ledger stores no model, and a tombstone has no run
+metadata to fabricate it from. v1's `closed` flag dies with ledger closure.
+
+```ts
+type XagentSddListFields = {
+  readonly role: string;           // one of the four start roles
+  readonly plan: string;           // basename(plan_path), v1 meaning
+  readonly task?: number;          // absent when the ledger column is NULL
+  readonly cwd: string;
+  readonly brief_path: string;
+  readonly dispatched_at: string;
+};
+
+// Normal rows: XagentListRow exactly as today, its optional `sdd` block
+// switched to the fields above. `run_missing` never appears on them.
+
+// Ledger rows with no run record are a PARALLEL type, not an XagentListRow
+// with fabricated fields — no phase, sequence, live, harness, exit_status,
+// or timestamps exist to report:
+type XagentSddTombstoneRow = {
+  readonly run_id: string;         // the agent_id that never became a run
+  readonly run_missing: true;
+  readonly sdd: XagentSddListFields;
+};
+
+type XagentListEntry = XagentListRow | XagentSddTombstoneRow;
+// ListRunsResult.runs becomes readonly XagentListEntry[], ordered among
+// themselves by dispatched_at where tombstones are interleaved.
+```
 
 ## Risks / Trade-offs
 
