@@ -1,17 +1,22 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import Database from "better-sqlite3";
 
 import { FakeHarnessAdapter } from "../../src/adapters/fake.js";
 import type { HarnessAdapter } from "../../src/adapters/types.js";
 import { createXagentMcpHandler } from "../../src/service/mcp.js";
 import { XagentRunManager } from "../../src/service/run_manager.js";
-import type { SddManager } from "../../src/service/sdd_manager.js";
-import { CreateSddStore } from "../../src/service/sdd_store.js";
+import {
+  AsSddRunManagerPort,
+  CreateSddManager,
+  type SddManager,
+} from "../../src/service/sdd_manager.js";
+import { CreateSddStore, GetSddDatabasePath } from "../../src/service/sdd_store.js";
 import {
   createShutdownController,
   createXagentServer,
@@ -90,12 +95,14 @@ export type WithMcpServiceOptions = {
 
 export type StartedMcpService = {
   startRun(prompt: string): Promise<{ run_id: string; sequence: number }>;
+  startSddImplementer(): Promise<{ agent_id: string; sequence: number }>;
   await(
     runId: string,
     afterSequence: number,
     deadlineSeconds: number,
   ): Promise<{ event: string }>;
   submit(runId: string, text: string): Promise<void>;
+  ledgerWriteCount(): number;
   close(): Promise<void>;
   readonly runManager: XagentRunManager;
   readonly logRoot: string;
@@ -109,7 +116,7 @@ export type StartMcpServiceOptions = {
 };
 
 // Lightweight run-manager harness for await/submit filter tests that do not
-// need a live MCP HTTP server. Later plan tasks grow this with SDD helpers.
+// need a live MCP HTTP server. SDD helpers are created lazily on first use.
 //
 export async function startMcpService(
   options: StartMcpServiceOptions = {},
@@ -122,8 +129,9 @@ export async function startMcpService(
   const ownsLogRoot = options.logRoot === undefined;
   const logRoot = options.logRoot ?? await mkdtemp(path.join(tmpdir(), "xagent-await-filter-"));
   const cwd = await mkdtemp(path.join(tmpdir(), "xagent-await-cwd-"));
+  const repoRoot = options.repoRoot ?? process.cwd();
   const runManager = new XagentRunManager({
-    repoRoot: options.repoRoot ?? process.cwd(),
+    repoRoot,
     logRoot,
     adapterFactory: options.adapterFactory ?? (() => new FakeHarnessAdapter()),
     policy: options.policy ?? {
@@ -131,6 +139,42 @@ export async function startMcpService(
       watchdog: {},
     },
   });
+  let sddStore: ReturnType<typeof CreateSddStore> | undefined;
+  let sddManager: ReturnType<typeof CreateSddManager> | undefined;
+
+  function EnsureSddManager(): ReturnType<typeof CreateSddManager>
+  {
+    if (sddManager !== undefined)
+    {
+      return sddManager;
+    }
+    sddStore = CreateSddStore(logRoot);
+    sddManager = CreateSddManager({
+      store: sddStore,
+      runManager: AsSddRunManagerPort(runManager),
+      repoRoot,
+      async canonicalizeCwd(candidate: string): Promise<string>
+      {
+        return candidate;
+      },
+      async renderPrompt(input)
+      {
+        const promptPath = path.join(cwd, `dispatch-${input.role}.md`);
+        return {
+          prompt: {
+            path: promptPath,
+            text: `Rendered ${input.role} prompt.\n`,
+          },
+          metadata: {
+            promptPath,
+            rendererPath: path.join(repoRoot, "projects", "agents", "utils", "dispatch-prompt"),
+          },
+        };
+      },
+    });
+    return sddManager;
+  }
+
   return {
     runManager,
     logRoot,
@@ -142,6 +186,32 @@ export async function startMcpService(
         harness: "codex",
         mode: "subagent",
       });
+    },
+    async startSddImplementer()
+    {
+      const manager = EnsureSddManager();
+      const planPath = path.join(cwd, "plan.md");
+      const briefPath = path.join(cwd, "brief.md");
+      const reportPath = path.join(cwd, "report.md");
+      await writeFile(planPath, "# plan\n", "utf8");
+      await writeFile(briefPath, "Implement await without ledger report binding.\n", "utf8");
+      await writeFile(reportPath, "", "utf8");
+      const started = await manager.Start({
+        role: "implementer",
+        cwd,
+        plan: planPath,
+        agent: "fake-model",
+        harness: "codex",
+        effort: "high",
+        task: 4,
+        name: "await-no-ledger-write",
+        brief: briefPath,
+        report: reportPath,
+      });
+      return {
+        agent_id: started.agent_id,
+        sequence: started.sequence,
+      };
     },
     await(runId: string, afterSequence: number, deadlineSeconds: number)
     {
@@ -155,9 +225,29 @@ export async function startMcpService(
     {
       return runManager.submit(runId, text);
     },
+    ledgerWriteCount()
+    {
+      // Counts turn rows in the v1 ledger. Start inserts one; await must not
+      // add another. MarkCompleted (deleted in this task) updated the same
+      // row, so this specifically guards against a second insert path.
+      //
+      const database = new Database(GetSddDatabasePath(logRoot), { readonly: true });
+      try
+      {
+        const row = database
+          .prepare("SELECT COUNT(*) AS count FROM sdd_turns")
+          .get() as { count: number };
+        return row.count;
+      }
+      finally
+      {
+        database.close();
+      }
+    },
     async close()
     {
       await runManager.closeAll();
+      sddStore?.Close();
       await rm(cwd, { recursive: true, force: true });
       if (ownsLogRoot)
       {

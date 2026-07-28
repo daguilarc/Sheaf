@@ -21,12 +21,8 @@ import {
   ImplementerStartSchema,
   ReReviewFollowupSchema,
   TaskReviewerStartSchema,
-  XagentSddAwaitInputSchema,
-  XagentSddCloseInputSchema,
   XagentSddFollowupInputSchema,
   XagentSddStartInputSchema,
-  x_DefaultAwaitDeadlineSeconds,
-  x_MaxAwaitDeadlineSeconds,
 } from "../src/service/tool_schemas.js";
 
 const execFileAsync = promisify(execFile);
@@ -498,38 +494,6 @@ test("AgentIdSchema accepts generateRunId output and rejects invalid ids", () =>
   assert.equal(AgentIdSchema.safeParse(generated).success, true);
   assert.equal(AgentIdSchema.safeParse("not-a-run").success, false);
   assert.equal(AgentIdSchema.safeParse(sampleAgentId).success, true);
-});
-
-test("SDD await and close schemas enforce deadline bounds and after_sequence", () => {
-  const defaultParsed = XagentSddAwaitInputSchema.parse({
-    agent_id: sampleAgentId,
-    after_sequence: 0,
-  });
-  assert.equal(defaultParsed.deadline_seconds, x_DefaultAwaitDeadlineSeconds);
-  assert.equal(x_MaxAwaitDeadlineSeconds, 7000);
-
-  assert.equal(
-    XagentSddAwaitInputSchema.safeParse({
-      agent_id: sampleAgentId,
-      after_sequence: 0,
-      deadline_seconds: 7001,
-    }).success,
-    false,
-  );
-  assert.equal(
-    XagentSddAwaitInputSchema.safeParse({
-      agent_id: sampleAgentId,
-    }).success,
-    false,
-  );
-  assert.equal(
-    XagentSddCloseInputSchema.safeParse({ agent_id: "bad" }).success,
-    false,
-  );
-  assert.equal(
-    XagentSddCloseInputSchema.safeParse({ agent_id: sampleAgentId }).success,
-    true,
-  );
 });
 
 test("FormatFixFollowup emits the golden fix clauses with verbatim findings", () => {

@@ -384,25 +384,6 @@ export const XagentSddFollowupAdvertisedSchema = z.object({
     .describe("Optional precomputed diff file."),
 });
 
-export const XagentSddAwaitInputSchema = z
-  .object({
-    agent_id: AgentIdSchema,
-    after_sequence: z.number().int().min(0),
-    deadline_seconds: z
-      .number()
-      .int()
-      .positive()
-      .max(x_MaxAwaitDeadlineSeconds)
-      .default(x_DefaultAwaitDeadlineSeconds),
-  })
-  .strict();
-
-export const XagentSddCloseInputSchema = z
-  .object({
-    agent_id: AgentIdSchema,
-  })
-  .strict();
-
 export const XagentStartInputSchema = z
   .object({
     cwd: CwdSchema,
@@ -474,8 +455,6 @@ export type XagentInterruptInput = z.infer<typeof XagentInterruptInputSchema>;
 export type XagentCloseInput = z.infer<typeof XagentCloseInputSchema>;
 export type XagentSddStartInput = z.infer<typeof XagentSddStartInputSchema>;
 export type XagentSddFollowupInput = z.infer<typeof XagentSddFollowupInputSchema>;
-export type XagentSddAwaitInput = z.infer<typeof XagentSddAwaitInputSchema>;
-export type XagentSddCloseInput = z.infer<typeof XagentSddCloseInputSchema>;
 
 export function parseToolInput<S extends z.ZodTypeAny>(
   schema: S,

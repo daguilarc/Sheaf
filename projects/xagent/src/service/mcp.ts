@@ -16,8 +16,6 @@ import {
   XagentInterruptInputSchema,
   XagentListInputSchema,
   XagentMessageInputSchema,
-  XagentSddAwaitInputSchema,
-  XagentSddCloseInputSchema,
   XagentSddFollowupAdvertisedSchema,
   XagentSddFollowupInputSchema,
   XagentSddStartAdvertisedSchema,
@@ -155,7 +153,7 @@ function createConfiguredMcpServer(
       description:
         "Validate an absolute working directory, start a service-owned supervised run, and submit the initial prompt. "
         + "For generic delegation only — reviews, workers, one-off passes. Superpowers SDD turns MUST use xagent_sdd_start, "
-        + "which renders the role template and reserves the ledger row; starting an SDD turn here produces an untracked run.",
+        + "which renders the role template and records the dispatch in the SDD ledger; starting an SDD turn here produces an untracked run.",
       inputSchema: XagentStartInputSchema,
     },
     async (args) => {
@@ -177,9 +175,6 @@ function createConfiguredMcpServer(
     async (args, extra) => {
       return runTool(async () => {
         const input = parseToolInput(XagentAwaitInputSchema, args);
-        if (sddManager !== undefined) {
-          return sddManager.AwaitGeneric(input, extra.signal);
-        }
         return runManager.awaitRun(input, extra.signal);
       });
     },
@@ -229,9 +224,6 @@ function createConfiguredMcpServer(
     async (args) => {
       return runTool(async () => {
         const input = parseToolInput(XagentMessageInputSchema, args);
-        if (sddManager !== undefined) {
-          return sddManager.MessageGeneric(input);
-        }
         return runManager.messageRun(input);
       });
     },
@@ -262,9 +254,6 @@ function createConfiguredMcpServer(
     async (args) => {
       return runTool(async () => {
         const input = parseToolInput(XagentCloseInputSchema, args);
-        if (sddManager !== undefined) {
-          return sddManager.CloseGeneric(input);
-        }
         return runManager.closeRun(input);
       });
     },
@@ -303,37 +292,6 @@ function createConfiguredMcpServer(
         return runTool(async () => {
           const input = parseToolInput(XagentSddFollowupInputSchema, args);
           return sddManager.Followup(input);
-        });
-      },
-    );
-
-    server.registerTool(
-      "xagent_sdd_await",
-      {
-        title: "Await SDD supervised event",
-        description:
-          "Await the next durable SDD event and persist a successful report before returning it.",
-        inputSchema: XagentSddAwaitInputSchema,
-      },
-      async (args, extra) => {
-        return runTool(async () => {
-          const input = parseToolInput(XagentSddAwaitInputSchema, args);
-          return sddManager.Await(input, extra.signal);
-        });
-      },
-    );
-
-    server.registerTool(
-      "xagent_sdd_close",
-      {
-        title: "Close SDD supervised session",
-        description: "Close the SDD provider session and record ledger closure afterward.",
-        inputSchema: XagentSddCloseInputSchema,
-      },
-      async (args) => {
-        return runTool(async () => {
-          const input = parseToolInput(XagentSddCloseInputSchema, args);
-          return sddManager.Close(input);
         });
       },
     );

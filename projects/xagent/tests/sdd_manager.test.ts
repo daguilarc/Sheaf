@@ -23,15 +23,11 @@ import type {
 } from "../src/service/sdd_prompt.js";
 import { SddPromptError } from "../src/service/sdd_prompt.js";
 import type {
-  AwaitRunResult,
-  CloseRunResult,
   CreateRunOptions,
   ListRunsResult,
   MessageRunResult,
 } from "../src/service/run_manager.js";
 import type {
-  XagentAwaitInput,
-  XagentCloseInput,
   XagentMessageInput,
   XagentSddStartInput,
 } from "../src/service/tool_schemas.js";
@@ -402,24 +398,19 @@ function CreateFakeRunManager(recorder: ReturnType<typeof CreateOrderRecorder>):
   createError?: Error;
   startError?: Error;
   submitError?: Error;
-  closeRunError?: Error;
   messageError?: Error;
   created: CreateRunOptions[];
   submitted: Array<{ runId: string; text: string }>;
   closed: string[];
-  closeRunCalls: XagentCloseInput[];
-  awaitCalls: XagentAwaitInput[];
   sequence: number;
   phase: string;
   messageCalls: XagentMessageInput[];
-  awaitResult?: AwaitRunResult | ((input: XagentAwaitInput) => AwaitRunResult | Promise<AwaitRunResult>);
+  messageRun(input: XagentMessageInput): Promise<MessageRunResult>;
 }
 {
   const created: CreateRunOptions[] = [];
   const submitted: Array<{ runId: string; text: string }> = [];
   const closed: string[] = [];
-  const closeRunCalls: XagentCloseInput[] = [];
-  const awaitCalls: XagentAwaitInput[] = [];
   const messageCalls: XagentMessageInput[] = [];
   const runs = new Set<string>();
 
@@ -427,8 +418,6 @@ function CreateFakeRunManager(recorder: ReturnType<typeof CreateOrderRecorder>):
     created,
     submitted,
     closed,
-    closeRunCalls,
-    awaitCalls,
     messageCalls,
     sequence: 7,
     phase: "ready",
@@ -505,27 +494,6 @@ function CreateFakeRunManager(recorder: ReturnType<typeof CreateOrderRecorder>):
         sequence: this.sequence,
       };
     },
-    async awaitRun(input: XagentAwaitInput): Promise<AwaitRunResult>
-    {
-      recorder.Record("awaitRun", input);
-      awaitCalls.push(input);
-      if (typeof this.awaitResult === "function")
-      {
-        return this.awaitResult(input);
-      }
-      if (this.awaitResult !== undefined)
-      {
-        return this.awaitResult;
-      }
-      return {
-        schema_version: 1,
-        event: "deadline",
-        run_id: input.run_id,
-        sequence: input.after_sequence,
-        phase: "ready",
-        elapsed_ms: 0,
-      };
-    },
     async listOwnedRuns(): Promise<ListRunsResult>
     {
       recorder.Record("listOwnedRuns");
@@ -541,21 +509,6 @@ function CreateFakeRunManager(recorder: ReturnType<typeof CreateOrderRecorder>):
           created_at: "2026-07-27T00:00:00.000Z",
           updated_at: "2026-07-27T00:00:00.000Z",
         })),
-      };
-    },
-    async closeRun(input: XagentCloseInput): Promise<CloseRunResult>
-    {
-      recorder.Record("closeRun", input);
-      closeRunCalls.push(input);
-      if (this.closeRunError !== undefined)
-      {
-        throw this.closeRunError;
-      }
-      closed.push(input.run_id);
-      runs.delete(input.run_id);
-      return {
-        run_id: input.run_id,
-        closed: true,
       };
     },
   };
@@ -1231,369 +1184,28 @@ test("Followup keeps a prepared row before submit and marks failed on submit err
   assert.ok(failedIndex > submitIndex);
 });
 
-test("MessageGeneric passes SDD and non-SDD messages through alike", async () =>
+test("SddManager exposes only Start, Followup, and ListGeneric", () =>
 {
+  const harness = CreateManagerHarness();
+  assert.deepEqual(Object.keys(harness.manager).sort(), ["Followup", "ListGeneric", "Start"]);
+});
+
+test("messaging an SDD run submits like any run with no ledger write", async () =>
+{
+  // Adapted from the plan snippet: CreateDeps/SeedImplementer do not exist in
+  // this file; CreateManagerHarness + StartAndClearOpenTurn are the local
+  // equivalents. Messaging goes through the run manager directly — the SDD
+  // MessageGeneric facade is deleted in this task.
+  //
   const harness = CreateManagerHarness();
   await StartAndClearOpenTurn(harness);
-
-  // Raw messaging used to be rejected for SDD runs to stop a fix round being
-  // dispatched as unstructured prose. Work turns still go through
-  // Start/Followup; a raw message is conversation and is delivered as-is.
-  const sdd = await harness.manager.MessageGeneric({
+  await harness.runManager.messageRun({
     run_id: x_AgentId,
-    text: "quick clarification, not a fix round",
+    text: "which marketplace source type?",
   });
-  assert.equal(sdd.run_id, x_AgentId);
-  assert.equal(harness.runManager.messageCalls.length, 1);
-  assert.equal(harness.store.prepared.length, 0);
-
-  const nonSdd = await harness.manager.MessageGeneric({
-    run_id: "xrun_20260727000000000_00nonssd",
-    text: "ordinary follow-up",
-  });
-  assert.equal(nonSdd.run_id, "xrun_20260727000000000_00nonssd");
-  assert.equal(harness.runManager.messageCalls.length, 2);
-  assert.equal(harness.runManager.messageCalls[1]?.text, "ordinary follow-up");
-});
-
-const x_SanitizedReport = "sanitized report";
-
-function CompletionResult(overrides: Partial<AwaitRunResult> = {}): AwaitRunResult
-{
-  return {
-    schema_version: 1,
-    event: "turn.completed",
-    run_id: x_AgentId,
-    sequence: 42,
-    phase: "ready",
-    elapsed_ms: 12,
-    report: { text: x_SanitizedReport },
-    ...overrides,
-  };
-}
-
-test("Await persists report before returning completion", async () =>
-{
-  const harness = CreateManagerHarness();
-  await harness.manager.Start(ImplementerStartInput());
-  harness.recorder.calls.length = 0;
-  harness.runManager.awaitResult = CompletionResult();
-
-  const result = await harness.manager.Await({
-    agent_id: x_AgentId,
-    after_sequence: 7,
-    deadline_seconds: 7000,
-  });
-
-  assert.deepEqual(harness.recorder.Names(), ["awaitRun", "MarkCompleted"]);
-  assert.deepEqual(harness.store.completed, [
-    {
-      agentId: x_AgentId,
-      turnNumber: 1,
-      reportText: x_SanitizedReport,
-      completedSequence: 42,
-    },
-  ]);
-  assert.equal(result.report?.text, x_SanitizedReport);
-  assert.equal(result.sequence, 42);
-  assert.equal(harness.store.openTurns.has(x_AgentId), false);
-  assert.equal(harness.runManager.awaitCalls[0]?.run_id, x_AgentId);
-  assert.equal(harness.runManager.awaitCalls[0]?.after_sequence, 7);
-});
-
-test("Await MarkCompleted failure returns sdd_persistence_failed without completion and retry records it", async () =>
-{
-  const harness = CreateManagerHarness();
-  await harness.manager.Start(ImplementerStartInput());
-  harness.recorder.calls.length = 0;
-  harness.runManager.awaitResult = CompletionResult();
-  harness.store.markCompletedError = new SddStoreError("disk full");
-
-  await assert.rejects(
-    () => harness.manager.Await({
-      agent_id: x_AgentId,
-      after_sequence: 7,
-      deadline_seconds: 7000,
-    }),
-    (error: unknown) =>
-    {
-      assert.ok(error instanceof ToolValidationError);
-      assert.equal(error.structured.error, "sdd_persistence_failed");
-      return true;
-    },
-  );
   assert.equal(harness.store.completed.length, 0);
-  assert.equal(harness.store.openTurns.get(x_AgentId)?.status, "running");
-  assert.deepEqual(harness.recorder.Names(), ["awaitRun", "MarkCompleted"]);
-
-  harness.store.markCompletedError = undefined;
-  harness.recorder.calls.length = 0;
-
-  const retried = await harness.manager.Await({
-    agent_id: x_AgentId,
-    after_sequence: 7,
-    deadline_seconds: 7000,
-  });
-
-  assert.equal(retried.report?.text, x_SanitizedReport);
-  assert.equal(retried.sequence, 42);
-  assert.deepEqual(harness.store.completed, [
-    {
-      agentId: x_AgentId,
-      turnNumber: 1,
-      reportText: x_SanitizedReport,
-      completedSequence: 42,
-    },
-  ]);
-});
-
-test("Await deadline and attention do not complete the open turn", async () =>
-{
-  const harness = CreateManagerHarness();
-  await harness.manager.Start(ImplementerStartInput());
-  harness.recorder.calls.length = 0;
-  harness.runManager.awaitResult = {
-    schema_version: 1,
-    event: "deadline",
-    run_id: x_AgentId,
-    sequence: 7,
-    phase: "running",
-    elapsed_ms: 5,
-    reason: "await_deadline",
-  };
-
-  const deadline = await harness.manager.Await({
-    agent_id: x_AgentId,
-    after_sequence: 7,
-    deadline_seconds: 7000,
-  });
-  assert.equal(deadline.event, "deadline");
-  assert.equal(harness.store.completed.length, 0);
-  assert.equal(harness.store.openTurns.get(x_AgentId)?.status, "running");
-  assert.equal(harness.recorder.Names().includes("MarkCompleted"), false);
-
-  harness.runManager.awaitResult = {
-    schema_version: 1,
-    event: "attention",
-    run_id: x_AgentId,
-    sequence: 9,
-    phase: "running",
-    elapsed_ms: 1,
-  };
-  const attention = await harness.manager.Await({
-    agent_id: x_AgentId,
-    after_sequence: 7,
-    deadline_seconds: 7000,
-  });
-  assert.equal(attention.event, "attention");
-  assert.equal(harness.store.completed.length, 0);
-  assert.equal(harness.store.openTurns.get(x_AgentId)?.status, "running");
-});
-
-test("Await refuses to bind a stale replayed completion onto a newer running turn", async () =>
-{
-  const harness = CreateManagerHarness();
-  await harness.manager.Start(ImplementerStartInput());
-  harness.runManager.awaitResult = CompletionResult({ sequence: 42 });
-  await harness.manager.Await({
-    agent_id: x_AgentId,
-    after_sequence: 7,
-    deadline_seconds: 7000,
-  });
-  assert.deepEqual(harness.store.completed, [
-    {
-      agentId: x_AgentId,
-      turnNumber: 1,
-      reportText: x_SanitizedReport,
-      completedSequence: 42,
-    },
-  ]);
-
-  harness.runManager.sequence = 50;
-  await harness.manager.Followup({
-    kind: "fix",
-    agent_id: x_AgentId,
-    round: 1,
-    findings: x_FindingsPath,
-    findings_text: x_FindingsText,
-    tests: ["dist/tests/sdd_manager.test.js"],
-    report: x_ReportPath,
-  });
-  assert.equal(harness.store.openTurns.get(x_AgentId)?.status, "running");
-  assert.equal(harness.store.openTurns.get(x_AgentId)?.resume_sequence, 50);
-  assert.equal(harness.store.openTurns.get(x_AgentId)?.turn_number, 2);
-
-  harness.recorder.calls.length = 0;
-  harness.runManager.awaitResult = CompletionResult({
-    sequence: 42,
-    report: { text: x_SanitizedReport },
-  });
-
-  const replayed = await harness.manager.Await({
-    agent_id: x_AgentId,
-    after_sequence: 7,
-    deadline_seconds: 7000,
-  });
-
-  assert.equal(replayed.sequence, 42);
-  assert.equal(replayed.report?.text, x_SanitizedReport);
-  assert.equal(harness.recorder.Names().includes("MarkCompleted"), false);
-  assert.equal(harness.store.completed.length, 1);
-  assert.equal(harness.store.openTurns.get(x_AgentId)?.status, "running");
-  assert.equal(harness.store.openTurns.get(x_AgentId)?.turn_number, 2);
-  assert.equal(harness.store.openTurns.get(x_AgentId)?.resume_sequence, 50);
-  const turn1 = harness.store.turnsByAgent.get(x_AgentId)?.find((turn) => turn.turn_number === 1);
-  assert.equal(turn1?.status, "completed");
-  assert.equal(turn1?.report_text, x_SanitizedReport);
-  assert.equal(turn1?.completed_sequence, 42);
-});
-
-test("Await does not MarkCompleted while the open turn is still prepared", async () =>
-{
-  const harness = CreateManagerHarness();
-  await StartAndClearOpenTurn(harness);
-  harness.store.PrepareFollowup({
-    agentId: x_AgentId,
-    kind: "fix",
-    round: 1,
-    briefPath: x_BriefPath,
-    briefText: x_BriefText,
-    reportPath: x_ReportPath,
-    findingsPath: x_FindingsPath,
-    findingsText: x_FindingsText,
-  });
-  assert.equal(harness.store.openTurns.get(x_AgentId)?.status, "prepared");
-
-  harness.recorder.calls.length = 0;
-  harness.runManager.awaitResult = CompletionResult({ sequence: 42 });
-
-  const result = await harness.manager.Await({
-    agent_id: x_AgentId,
-    after_sequence: 7,
-    deadline_seconds: 7000,
-  });
-
-  assert.equal(result.report?.text, x_SanitizedReport);
-  assert.equal(harness.recorder.Names().includes("MarkCompleted"), false);
-  assert.equal(harness.store.completed.length, 0);
-  assert.equal(harness.store.openTurns.get(x_AgentId)?.status, "prepared");
-});
-
-test("Await treats an already-recorded identical completed_sequence as success", async () =>
-{
-  const harness = CreateManagerHarness();
-  await harness.manager.Start(ImplementerStartInput());
-  harness.runManager.awaitResult = CompletionResult({ sequence: 42 });
-  await harness.manager.Await({
-    agent_id: x_AgentId,
-    after_sequence: 7,
-    deadline_seconds: 7000,
-  });
-
-  harness.recorder.calls.length = 0;
-  harness.runManager.awaitResult = CompletionResult({ sequence: 42 });
-  const again = await harness.manager.Await({
-    agent_id: x_AgentId,
-    after_sequence: 7,
-    deadline_seconds: 7000,
-  });
-
-  assert.equal(again.report?.text, x_SanitizedReport);
-  assert.equal(again.sequence, 42);
-  assert.equal(harness.recorder.Names().includes("MarkCompleted"), false);
-  assert.equal(harness.store.completed.length, 1);
-});
-
-test("AwaitGeneric persists report for SDD-owned runs and leaves non-SDD await unchanged", async () =>
-{
-  const harness = CreateManagerHarness();
-  await harness.manager.Start(ImplementerStartInput());
-  harness.recorder.calls.length = 0;
-  harness.runManager.awaitResult = CompletionResult();
-
-  const sddResult = await harness.manager.AwaitGeneric({
-    run_id: x_AgentId,
-    after_sequence: 7,
-    deadline_seconds: 7000,
-  });
-  assert.equal(sddResult.report?.text, x_SanitizedReport);
-  assert.deepEqual(harness.store.completed, [
-    {
-      agentId: x_AgentId,
-      turnNumber: 1,
-      reportText: x_SanitizedReport,
-      completedSequence: 42,
-    },
-  ]);
-
-  harness.recorder.calls.length = 0;
-  harness.runManager.awaitResult = {
-    schema_version: 1,
-    event: "turn.completed",
-    run_id: "xrun_20260727000000000_00nonssd",
-    sequence: 3,
-    phase: "ready",
-    elapsed_ms: 1,
-    report: { text: "generic report" },
-  };
-  const nonSdd = await harness.manager.AwaitGeneric({
-    run_id: "xrun_20260727000000000_00nonssd",
-    after_sequence: 1,
-    deadline_seconds: 7000,
-  });
-  assert.equal(nonSdd.report?.text, "generic report");
-  assert.equal(harness.recorder.Names().includes("MarkCompleted"), false);
-  assert.equal(harness.store.completed.length, 1);
-});
-
-test("Close closes provider first then MarkClosed; provider failure leaves closed_at unset", async () =>
-{
-  const harness = CreateManagerHarness();
-  await harness.manager.Start(ImplementerStartInput());
-  harness.store.openTurns.delete(x_AgentId);
-  harness.recorder.calls.length = 0;
-
-  const closed = await harness.manager.Close({ agent_id: x_AgentId });
-  assert.deepEqual(closed, { agent_id: x_AgentId, closed: true });
-  assert.deepEqual(harness.recorder.Names(), ["closeRun", "MarkClosed"]);
-  assert.notEqual(harness.store.sessions.get(x_AgentId)?.closed_at, null);
-  assert.equal(harness.store.closed.length, 1);
-  assert.equal(harness.runManager.closeRunCalls[0]?.run_id, x_AgentId);
-
-  const failHarness = CreateManagerHarness();
-  await failHarness.manager.Start(ImplementerStartInput());
-  failHarness.store.openTurns.delete(x_AgentId);
-  failHarness.runManager.closeRunError = new Error("provider close failed");
-  failHarness.recorder.calls.length = 0;
-
-  await assert.rejects(
-    () => failHarness.manager.Close({ agent_id: x_AgentId }),
-    /provider close failed/,
-  );
-  assert.deepEqual(failHarness.recorder.Names(), ["closeRun"]);
-  assert.equal(failHarness.store.sessions.get(x_AgentId)?.closed_at, null);
-  assert.equal(failHarness.store.closed.length, 0);
-});
-
-test("CloseGeneric records ledger close for SDD runs and leaves non-SDD close unchanged", async () =>
-{
-  const harness = CreateManagerHarness();
-  await harness.manager.Start(ImplementerStartInput());
-  harness.store.openTurns.delete(x_AgentId);
-  harness.recorder.calls.length = 0;
-
-  const sddClosed = await harness.manager.CloseGeneric({ run_id: x_AgentId });
-  assert.deepEqual(sddClosed, { run_id: x_AgentId, closed: true });
-  assert.deepEqual(harness.recorder.Names(), ["closeRun", "MarkClosed"]);
-  assert.ok(harness.store.sessions.get(x_AgentId)?.closed_at);
-
-  harness.recorder.calls.length = 0;
-  const nonSdd = await harness.manager.CloseGeneric({
-    run_id: "xrun_20260727000000000_00nonssd",
-  });
-  assert.deepEqual(nonSdd, { run_id: "xrun_20260727000000000_00nonssd", closed: true });
-  assert.deepEqual(harness.recorder.Names(), ["closeRun"]);
-  assert.equal(harness.store.closed.length, 1);
+  assert.equal(harness.store.closed.length, 0);
+  assert.ok(!harness.recorder.Names().includes("MarkCompleted"));
 });
 
 test("ReconcileTerminalRuns abandons only unresolved reportless terminal turns", async () =>
@@ -1676,31 +1288,6 @@ test("ReconcileTerminalRuns abandons only unresolved reportless terminal turns",
   assert.equal(completedPhaseTurn?.report_text, null);
 });
 
-test("Await rejects a delivered report when no open turn can record it", async () =>
-{
-  const harness = CreateManagerHarness();
-  await harness.manager.Start(ImplementerStartInput());
-  harness.store.openTurns.delete(x_AgentId);
-  harness.recorder.calls.length = 0;
-  harness.runManager.awaitResult = CompletionResult({ sequence: 42 });
-
-  await assert.rejects(
-    () => harness.manager.Await({
-      agent_id: x_AgentId,
-      after_sequence: 7,
-      deadline_seconds: 7000,
-    }),
-    (error: unknown) =>
-    {
-      assert.ok(error instanceof ToolValidationError);
-      assert.equal(error.structured.error, "sdd_report_unbound");
-      return true;
-    },
-  );
-  assert.equal(harness.recorder.Names().includes("MarkCompleted"), false);
-  assert.equal(harness.store.completed.length, 0);
-});
-
 test("Followup recovers brief and report paths from the ledger after a service restart", async () =>
 {
   const harness = CreateManagerHarness();
@@ -1739,61 +1326,6 @@ test("Followup recovers brief and report paths from the ledger after a service r
   assert.equal(harness.store.prepared.at(-1)?.reportPath, x_ReportPath);
   assert.ok(harness.runManager.submitted.at(-1)?.text.includes(x_BriefPath));
   assert.ok(harness.runManager.submitted.at(-1)?.text.includes(x_ReportPath));
-});
-
-test("MessageGeneric chit-chats with an SDD run instead of rejecting it", async () =>
-{
-  const harness = CreateManagerHarness();
-  await StartAndClearOpenTurn(harness);
-
-  const result = await harness.manager.MessageGeneric({
-    run_id: x_AgentId,
-    text: "Which marketplace source type should you use?",
-  });
-
-  assert.equal(result.run_id, x_AgentId);
-  assert.ok(harness.runManager.messageCalls.at(-1)?.text.includes("marketplace source type"));
-  assert.equal(harness.store.prepared.length, 0, "chit-chat must not create a work turn");
-});
-
-test("a conversational reply returns unpersisted instead of failing to bind", async () =>
-{
-  const harness = CreateManagerHarness();
-  await StartAndClearOpenTurn(harness);
-  await harness.manager.MessageGeneric({ run_id: x_AgentId, text: "quick question" });
-
-  harness.runManager.awaitResult = CompletionResult({ sequence: 42 });
-  const result = await harness.manager.Await({
-    agent_id: x_AgentId,
-    after_sequence: 7,
-    deadline_seconds: 7000,
-  });
-
-  assert.ok(result.report?.text);
-  assert.equal(harness.store.completed.length, 0, "a reply is not a work-turn report");
-  assert.equal(harness.recorder.Names().includes("MarkCompleted"), false);
-});
-
-test("a work turn still refuses a report it cannot record", async () =>
-{
-  const harness = CreateManagerHarness();
-  await harness.manager.Start(ImplementerStartInput());
-  harness.store.openTurns.delete(x_AgentId);
-  harness.runManager.awaitResult = CompletionResult({ sequence: 42 });
-
-  await assert.rejects(
-    () => harness.manager.Await({
-      agent_id: x_AgentId,
-      after_sequence: 7,
-      deadline_seconds: 7000,
-    }),
-    (error: unknown) =>
-    {
-      assert.ok(error instanceof ToolValidationError);
-      assert.equal(error.structured.error, "sdd_report_unbound");
-      return true;
-    },
-  );
 });
 
 test("a controller note is appended verbatim to every started role", async () =>
@@ -1849,48 +1381,4 @@ test("a controller note cannot smuggle a run id to the worker", () =>
     note: "Resume against xrun_20260727192847117_b30af348 when done.",
   });
   assert.equal(rejected.success, false);
-});
-
-test("a raw message is refused while a work turn is still open", async () =>
-{
-  const harness = CreateManagerHarness();
-  await harness.manager.Start(ImplementerStartInput());
-
-  await assert.rejects(
-    () => harness.manager.MessageGeneric({ run_id: x_AgentId, text: "status?" }),
-    (error: unknown) =>
-    {
-      assert.ok(error instanceof ToolValidationError);
-      assert.equal(error.structured.error, "sdd_turn_in_flight");
-      return true;
-    },
-  );
-  assert.equal(harness.runManager.messageCalls.length, 0);
-});
-
-test("a failed message does not disarm the report-binding guard", async () =>
-{
-  const harness = CreateManagerHarness();
-  await StartAndClearOpenTurn(harness);
-  harness.runManager.messageError = new Error("invalid_phase");
-
-  await assert.rejects(
-    () => harness.manager.MessageGeneric({ run_id: x_AgentId, text: "never delivered" }),
-  );
-
-  // The session must still refuse to bind an unbindable work-turn report.
-  harness.runManager.awaitResult = CompletionResult({ sequence: 42 });
-  await assert.rejects(
-    () => harness.manager.Await({
-      agent_id: x_AgentId,
-      after_sequence: 7,
-      deadline_seconds: 7000,
-    }),
-    (error: unknown) =>
-    {
-      assert.ok(error instanceof ToolValidationError);
-      assert.equal(error.structured.error, "sdd_report_unbound");
-      return true;
-    },
-  );
 });

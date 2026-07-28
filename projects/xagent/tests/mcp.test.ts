@@ -1,20 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import Database from "better-sqlite3";
-
-import { FakeHarnessAdapter } from "../src/adapters/fake.js";
-import type { AdapterEvent } from "../src/adapters/types.js";
 import type { XagentRunManager } from "../src/service/run_manager.js";
 import {
   AsSddRunManagerPort,
   CreateSddManager,
   type SddManager,
 } from "../src/service/sdd_manager.js";
-import { CreateSddStore, GetSddDatabasePath } from "../src/service/sdd_store.js";
+import { CreateSddStore } from "../src/service/sdd_store.js";
 import { z } from "zod";
 
 import {
@@ -57,8 +53,6 @@ const x_ExpectedToolNames = [
   ...x_GenericToolNames,
   "xagent_sdd_start",
   "xagent_sdd_followup",
-  "xagent_sdd_await",
-  "xagent_sdd_close",
 ] as const;
 
 function CreateTestSddManager(
@@ -94,108 +88,34 @@ function CreateTestSddManager(
   return { manager, store };
 }
 
-test("xagent_sdd_start and xagent_sdd_await persist the sanitized report before returning", async () => {
-  const repoRoot = await mkdtemp(path.join(tmpdir(), "xagent-mcp-sdd-"));
-  const logRoot = path.join(repoRoot, "data", "xagent");
-  const cwd = path.join(repoRoot, "work");
-  await mkdir(cwd, { recursive: true });
-  const planPath = path.join(cwd, "plan.md");
-  const briefPath = path.join(cwd, "brief.md");
-  const reportPath = path.join(cwd, "report.md");
-  await writeFile(planPath, "# plan\n", "utf8");
-  await writeFile(briefPath, "Brief for MCP SDD smoke.\n", "utf8");
-  await writeFile(reportPath, "mutable artifact text\n", "utf8");
-
-  async function* scriptedTurn(): AsyncIterable<AdapterEvent> {
-    yield {
-      type: "message.completed",
-      message_id: "message_mcp_sdd",
-      role: "assistant",
-      text: "sanitized MCP SDD report",
-    };
-    yield {
-      type: "turn.completed",
-      final_text: "sanitized MCP SDD report",
-      provider_thread_id: "fake-thread-mcp-sdd",
-    };
-  }
-
-  await withMcpService(async ({ client, logRoot: serviceLogRoot }) => {
-    const startedResult = asToolCallResult(
-      await client.callTool({
-        name: "xagent_sdd_start",
-        arguments: {
-          role: "implementer",
-          cwd,
-          plan: planPath,
-          agent: "fake-model",
-          harness: "codex",
-          effort: "high",
-          task: 5,
-          name: "mcp-sdd-smoke",
-          brief: briefPath,
-          report: reportPath,
-        },
-      }),
+test("the SDD await and close facade tools are not registered", async () => {
+  await withMcpService(async ({ client }) => {
+    const listed = await client.listTools();
+    const names = listed.tools.map((tool) => tool.name).sort();
+    assert.deepEqual(names, [
+      "xagent_await",
+      "xagent_close",
+      "xagent_inspect",
+      "xagent_interrupt",
+      "xagent_list",
+      "xagent_message",
+      "xagent_sdd_followup",
+      "xagent_sdd_start",
+      "xagent_start_non_sdd",
+    ]);
+    // MCP SDK returns isError rather than throwing for unknown tools.
+    //
+    const awaitMissing = asToolCallResult(
+      await client.callTool({ name: "xagent_sdd_await", arguments: {} }),
     );
-    assertToolSucceeded(startedResult);
-    const started = structuredToolBody(startedResult);
-    const agentId = started.agent_id as string;
-
-    const awaitedResult = asToolCallResult(
-      await client.callTool({
-        name: "xagent_sdd_await",
-        arguments: {
-          agent_id: agentId,
-          after_sequence: started.sequence as number,
-          deadline_seconds: 30,
-        },
-      }),
+    const closeMissing = asToolCallResult(
+      await client.callTool({ name: "xagent_sdd_close", arguments: {} }),
     );
-    assertToolSucceeded(awaitedResult);
-    const awaited = structuredToolBody(awaitedResult);
-    assert.equal(awaited.event, "turn.completed");
-    assert.equal((awaited.report as { text?: string } | undefined)?.text, "sanitized MCP SDD report");
-    assert.equal(JSON.stringify(awaited).includes("Brief for MCP SDD smoke"), false);
-
-    const database = new Database(GetSddDatabasePath(serviceLogRoot), { readonly: true });
-    try
-    {
-      const row = database
-        .prepare(
-          "SELECT status, report_text, completed_sequence, resume_sequence FROM sdd_turns WHERE agent_id = ? AND turn_number = 1",
-        )
-        .get(agentId) as {
-          status: string;
-          report_text: string;
-          completed_sequence: number;
-          resume_sequence: number;
-        };
-      assert.equal(row.status, "completed");
-      assert.equal(row.report_text, "sanitized MCP SDD report");
-      assert.equal(row.completed_sequence, awaited.sequence);
-      assert.equal(row.resume_sequence, started.sequence);
-      assert.notEqual(row.report_text, "mutable artifact text\n");
-    }
-    finally
-    {
-      database.close();
-    }
-
-    const closedResult = asToolCallResult(
-      await client.callTool({
-        name: "xagent_sdd_close",
-        arguments: { agent_id: agentId },
-      }),
-    );
-    assertToolSucceeded(closedResult);
-    assert.deepEqual(structuredToolBody(closedResult), { agent_id: agentId, closed: true });
+    assert.equal(awaitMissing.isError, true);
+    assert.equal(closeMissing.isError, true);
   }, {
-    repoRoot,
-    logRoot,
-    adapterFactory: () => new FakeHarnessAdapter({ scriptedEvents: [scriptedTurn()] }),
-    createSddManager: ({ runManager, repoRoot: serviceRepoRoot, logRoot: serviceLogRoot }) =>
-      CreateTestSddManager(runManager, serviceRepoRoot, serviceLogRoot),
+    createSddManager: ({ runManager, repoRoot, logRoot }) =>
+      CreateTestSddManager(runManager, repoRoot, logRoot),
   });
 });
 
@@ -211,12 +131,12 @@ test("Streamable HTTP MCP initializes and discovers exactly the seven generic to
   }, { includeSddManager: false });
 });
 
-test("Streamable HTTP MCP initializes and discovers exactly the eleven controller tools", async () => {
+test("Streamable HTTP MCP initializes and discovers exactly the nine controller tools", async () => {
   await withMcpService(async ({ port, client }) => {
     const listed = await client.listTools();
     const names = listed.tools.map((tool) => tool.name).sort();
     assert.deepEqual(names, [...x_ExpectedToolNames].sort());
-    assert.equal(listed.tools.length, 11);
+    assert.equal(listed.tools.length, 9);
 
     const health = await fetch(`http://127.0.0.1:${port}/health`);
     assert.equal(health.status, 200);

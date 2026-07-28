@@ -16,22 +16,14 @@ import type {
 import { SddStoreError } from "./sdd_store.js";
 import {
   canonicalizeWorkingDirectory,
-  type AwaitRunResult,
-  type CloseRunResult,
   type CreateRunOptions,
   type ListRunsResult,
-  type MessageRunResult,
   type XagentRunManager,
 } from "./run_manager.js";
 import {
   ToolValidationError,
   type StructuredToolError,
-  type XagentAwaitInput,
-  type XagentCloseInput,
   type XagentListInput,
-  type XagentMessageInput,
-  type XagentSddAwaitInput,
-  type XagentSddCloseInput,
   type XagentSddFollowupInput,
   type XagentSddStartInput,
 } from "./tool_schemas.js";
@@ -51,13 +43,6 @@ export type XagentSddFollowupResult = {
   readonly turn_number: number;
 };
 
-export type XagentSddAwaitResult = AwaitRunResult;
-
-export type XagentSddCloseResult = {
-  readonly agent_id: string;
-  readonly closed: true;
-};
-
 export type SddRunManagerPort = {
   allocateRunId(): string;
   create(options: CreateRunOptions): Promise<{ readonly runId: string }>;
@@ -66,21 +51,13 @@ export type SddRunManagerPort = {
   inspect(runId: string): { readonly phase: string; readonly sequence: number } | undefined;
   close(runId: string): Promise<void>;
   has(runId: string): boolean;
-  messageRun(input: XagentMessageInput): Promise<MessageRunResult>;
-  awaitRun(input: XagentAwaitInput, signal?: AbortSignal): Promise<AwaitRunResult>;
-  closeRun(input: XagentCloseInput): Promise<CloseRunResult>;
   listOwnedRuns(input: XagentListInput): Promise<ListRunsResult>;
 };
 
 export type SddManager = {
   Start(input: XagentSddStartInput): Promise<XagentSddStartResult>;
   Followup(input: XagentSddFollowupInput): Promise<XagentSddFollowupResult>;
-  Await(input: XagentSddAwaitInput, signal?: AbortSignal): Promise<XagentSddAwaitResult>;
-  Close(input: XagentSddCloseInput): Promise<XagentSddCloseResult>;
   ListGeneric(input: XagentListInput): Promise<ListRunsResult>;
-  MessageGeneric(input: XagentMessageInput): Promise<MessageRunResult>;
-  AwaitGeneric(input: XagentAwaitInput, signal?: AbortSignal): Promise<AwaitRunResult>;
-  CloseGeneric(input: XagentCloseInput): Promise<CloseRunResult>;
 };
 
 export type SddManagerDeps = {
@@ -91,7 +68,6 @@ export type SddManagerDeps = {
   readonly readFile?: (filePath: string) => Promise<string>;
   readonly renderPrompt?: (input: RenderSddPromptInput) => Promise<RenderedSddPrompt>;
   readonly formatFix?: (input: FormatFixFollowupInput) => string;
-  readonly clock?: () => Date;
 };
 
 type SessionArtifacts = {
@@ -128,26 +104,6 @@ function PersistenceFailed(message: string, details?: unknown): ToolValidationEr
     message,
     ...(details === undefined ? {} : { details }),
   });
-}
-
-function FollowupRequired(runId: string): ToolValidationError
-{
-  return StructuredFailure({
-    error: "sdd_followup_required",
-    message: "SDD-owned runs must use xagent_sdd_followup instead of xagent_message.",
-    details: {
-      run_id: runId,
-      tool: "xagent_sdd_followup",
-    },
-  });
-}
-
-function HasDeliveredReport(
-  result: AwaitRunResult,
-): result is AwaitRunResult & { readonly report: { readonly text: string } }
-{
-  return result.report !== undefined
-    && typeof result.report.text === "string";
 }
 
 async function ReadRequiredText(
@@ -263,110 +219,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
   const read = deps.readFile ?? ((filePath: string) => readFile(filePath, "utf8"));
   const renderPrompt = deps.renderPrompt ?? ((input: RenderSddPromptInput) => RenderSddPrompt(input));
   const formatFix = deps.formatFix ?? FormatFixFollowup;
-  const clock = deps.clock ?? (() => new Date());
   const artifactsByAgent = new Map<string, SessionArtifacts>();
-  // Agents whose most recent submit was a raw `xagent_message` rather than a
-  // rendered SDD turn. Purely in-process: a conversational reply only ever
-  // follows a message in the same live session, and if the service died the
-  // provider session died with it.
-  //
-  const conversationalAgents = new Set<string>();
-
-  async function PersistReportBeforeReturn(
-    agentId: string,
-    result: AwaitRunResult,
-  ): Promise<AwaitRunResult>
-  {
-    if (!HasDeliveredReport(result))
-    {
-      return result;
-    }
-    const reportText = result.report.text;
-
-    function AlreadyRecorded(): boolean
-    {
-      const recorded = store.GetTurnByCompletedSequence(agentId, result.sequence);
-      return recorded !== undefined
-        && recorded.report_text === reportText;
-    }
-
-    if (AlreadyRecorded())
-    {
-      return result;
-    }
-
-    const openTurn = store.GetOpenTurn(agentId);
-    if (openTurn === undefined && conversationalAgents.has(agentId))
-    {
-      // The controller asked a question and the worker answered. There is no
-      // work turn to record it against, and inventing one would pollute the
-      // ledger; hand the text back and leave the ledger alone.
-      //
-      return result;
-    }
-    if (openTurn === undefined)
-    {
-      throw StructuredFailure({
-        error: "sdd_report_unbound",
-        message: "Delivered SDD report has no matching open turn to record.",
-        details: {
-          agent_id: agentId,
-          sequence: result.sequence,
-        },
-      });
-    }
-    if (
-      openTurn.status !== "running"
-      || openTurn.resume_sequence === null
-      || result.sequence <= openTurn.resume_sequence
-    )
-    {
-      return result;
-    }
-
-    try
-    {
-      store.MarkCompleted(agentId, openTurn.turn_number, reportText, result.sequence);
-    }
-    catch (error)
-    {
-      if (AlreadyRecorded())
-      {
-        return result;
-      }
-      if (error instanceof ToolValidationError)
-      {
-        throw error;
-      }
-      throw PersistenceFailed("Unable to persist SDD turn report before return.", {
-        cause: error instanceof Error ? error.message : String(error),
-        agent_id: agentId,
-        sequence: result.sequence,
-      });
-    }
-    return result;
-  }
-
-  async function CloseAfterProvider(agentId: string): Promise<CloseRunResult>
-  {
-    const closed = await runManager.closeRun({ run_id: agentId });
-    try
-    {
-      store.MarkClosed(agentId, clock().toISOString());
-    }
-    catch (error)
-    {
-      if (error instanceof ToolValidationError)
-      {
-        throw error;
-      }
-      throw PersistenceFailed("Unable to record SDD session close after provider close.", {
-        cause: error instanceof Error ? error.message : String(error),
-        agent_id: agentId,
-      });
-    }
-    return closed;
-  }
 
   async function Start(input: XagentSddStartInput): Promise<XagentSddStartResult>
   {
@@ -436,7 +289,6 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         agentId,
         AppendControllerNote(rendered.prompt.text, input.note),
       );
-      conversationalAgents.delete(agentId);
       store.MarkRunning(agentId, 1, resumeSequence);
       return {
         agent_id: agentId,
@@ -676,7 +528,6 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         input.agent_id,
         AppendControllerNote(promptText, input.note),
       );
-      conversationalAgents.delete(input.agent_id);
       store.MarkRunning(input.agent_id, turnNumber, resumeSequence);
       return {
         agent_id: input.agent_id,
@@ -699,46 +550,9 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     }
   }
 
-  async function Await(
-    input: XagentSddAwaitInput,
-    signal?: AbortSignal,
-  ): Promise<XagentSddAwaitResult>
-  {
-    const result = await runManager.awaitRun(
-      {
-        run_id: input.agent_id,
-        after_sequence: input.after_sequence,
-        deadline_seconds: input.deadline_seconds,
-      },
-      signal,
-    );
-    return PersistReportBeforeReturn(input.agent_id, result);
-  }
-
-  async function Close(input: XagentSddCloseInput): Promise<XagentSddCloseResult>
-  {
-    if (!store.IsSddAgent(input.agent_id))
-    {
-      throw StructuredFailure({
-        error: "unknown_sdd_agent",
-        message: `Unknown SDD agent: ${input.agent_id}`,
-        details: { agent_id: input.agent_id },
-      });
-    }
-    await CloseAfterProvider(input.agent_id);
-    artifactsByAgent.delete(input.agent_id);
-    conversationalAgents.delete(input.agent_id);
-    return {
-      agent_id: input.agent_id,
-      closed: true,
-    };
-  }
-
   return {
     Start,
     Followup,
-    Await,
-    Close,
     // Bare run ids are not enough to recover from a lost start response: the
     // incident's controller would have seen several live `cursor` rows and
     // still not known which was the Task 4 implementer. Join the SDD ledger so
@@ -768,64 +582,9 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       });
       return { runs };
     },
-    async MessageGeneric(input: XagentMessageInput): Promise<MessageRunResult>
-    {
-      // Chit-chat is allowed on an SDD run. The original design rejected this
-      // so a fix round could not be dispatched as unstructured prose with no
-      // ledger row — correct for a WORK turn, wrong for a conversation. A
-      // worker that stops with NEEDS_CONTEXT has to be answerable, and
-      // answering "which marketplace source type?" is not a fix round.
-      //
-      // Work turns still go through Start/Followup, which render the role
-      // template and reserve the ledger row. A raw message deliberately does
-      // neither; it only marks the session conversational so the reply it
-      // produces is not mistaken for an unbindable work-turn report.
-      //
-      if (store.IsSddAgent(input.run_id))
-      {
-        // Chit-chat is only safe between work turns. With a turn still open,
-        // the reply would land inside that turn's sequence bracket and
-        // PersistReportBeforeReturn would bind the chit-chat text as the
-        // turn's report — silently replacing the real one, with no error and
-        // a clean-looking session afterwards.
-        //
-        if (store.GetOpenTurn(input.run_id) !== undefined)
-        {
-          throw StructuredFailure({
-            error: "sdd_turn_in_flight",
-            message:
-              `SDD turn is still open for ${input.run_id}; await it before messaging.`,
-            details: { agent_id: input.run_id, tool: "xagent_sdd_await" },
-          });
-        }
-        // Flag only after the provider actually accepted the message: a
-        // rejected submit must not disarm the report-binding guard.
-        //
-        const delivered = await runManager.messageRun(input);
-        conversationalAgents.add(input.run_id);
-        return delivered;
-      }
-      return runManager.messageRun(input);
-    },
-    async AwaitGeneric(input: XagentAwaitInput, signal?: AbortSignal): Promise<AwaitRunResult>
-    {
-      const result = await runManager.awaitRun(input, signal);
-      if (!store.IsSddAgent(input.run_id))
-      {
-        return result;
-      }
-      return PersistReportBeforeReturn(input.run_id, result);
-    },
-    async CloseGeneric(input: XagentCloseInput): Promise<CloseRunResult>
-    {
-      if (!store.IsSddAgent(input.run_id))
-      {
-        return runManager.closeRun(input);
-      }
-      return CloseAfterProvider(input.run_id);
-    },
   };
 }
+
 
 export function AsSddRunManagerPort(runManager: XagentRunManager): SddRunManagerPort
 {
