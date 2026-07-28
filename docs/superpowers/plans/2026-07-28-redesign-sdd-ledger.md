@@ -68,6 +68,42 @@ Two restart boundaries are load-bearing and must not be re-ordered:
 1. **Ledger schema gate.** No build from Task 8 onward may reach the live service before Task 7's reprovision has been performed.
 2. **Tool surface and manager land together.** The `xagent_sdd_start` union swap lives inside Task 6 with the `Start` rewrite, and the followup schema change lives inside Task 5 with the `Followup` rewrite. Never split them: a service whose tool surface accepts v2 roles while its manager implements v1 accepts dispatches it cannot serve.
 
+
+## Execution guidance (read before dispatching anything)
+
+**Nine tasks get dispatched. Two do not.**
+
+Tasks 7 and 11 are **controller checkpoints, not implementer work.** Task 7 is
+`stop the service; rm sdd.sqlite; leave it down`. Task 11 is `run four suites;
+repackage; commit`. Dispatching an implementer plus two reviewers for either
+costs three agent runs and two review verdicts to wrap a command the lead runs
+in seconds and verifies by reading the output. Worse, an implementer cannot
+honestly verify them: both depend on live service state only the lead can see.
+The lead executes 7 and 11 directly and records the evidence in the task.
+
+**Task 8 is split into two dispatches with a review gate between them**, and
+must not be given to one implementer:
+
+- **Task 8a — the cutover.** Steps 1–4 and 6–9: wire the v2 store into
+  `service_main.ts`, port `ListGeneric` to the v2 store keeping its current
+  output shape, delete the v1 store, prove no `UPDATE`/`DELETE` against
+  `sdd_agents` compiles, restart the service. This is the single most
+  irreversible step in the plan.
+- **Task 8b — the list shape.** Step 5 only: `xagent_list` v2 output per design
+  D8 — the parallel `XagentSddTombstoneRow`, the dropped `agent`/`closed`
+  fields, `run_missing: true` entries.
+
+They are bundled in the task text below because they touch the same files, but
+8b is a *new feature* and 8a is a *deletion that cannot be undone*. A tombstone
+bug must not block the cutover, and a cutover that needs reverting must not
+drag a feature back with it.
+
+**Everything else is correctly sized.** Tasks 1, 2, 3, 5, 6, 9, and 10 are each
+one coherent change with its own tests, 6–9 steps. Task 4 bundles three
+deletions but they are one theme (the report-binding machinery); it is the
+riskiest dispatch because it edits five separate line ranges in `mcp.ts` — give
+it the closest review, and expect a fix round.
+
 ---
 
 ### Task 1: `turn.submitted` supervision event
@@ -1963,7 +1999,8 @@ git commit -m "feat(xagent): four-way sdd_start role union and insert-only Start
 
 ---
 
-### Task 7: Operator gate — reprovision the live ledger
+### Task 7: Operator gate — reprovision the live ledger  
+**CONTROLLER CHECKPOINT — do not dispatch. The lead runs this and records the evidence.**
 
 **Satisfies:** xsvc-8 (operational precondition)
 
@@ -2022,7 +2059,8 @@ Do not restart yet. Task 8 wires the v2 store; restart after Task 8 is committed
 
 ---
 
-### Task 8: Wire the v2 store, delete v1, and land `xagent_list` v2
+### Task 8: Wire the v2 store, delete v1, and land `xagent_list` v2  
+**SPLIT INTO TWO DISPATCHES — 8a is steps 1–4 and 6–9 (the cutover); 8b is step 5 (`xagent_list` v2). Review gate between them. See Execution guidance.**
 
 **Satisfies:** xsvc-8, xsvc-13
 
@@ -2581,7 +2619,8 @@ git commit -m "docs(xagent): sync skill, README, and specs to the v2 SDD surface
 
 ---
 
-### Task 11: Full verification and asset repackage
+### Task 11: Full verification and asset repackage  
+**CONTROLLER CHECKPOINT — do not dispatch. The lead runs this and records the evidence.**
 
 **Satisfies:** none directly — this is the change's acceptance gate.
 
