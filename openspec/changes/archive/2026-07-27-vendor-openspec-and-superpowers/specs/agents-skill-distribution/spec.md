@@ -1,6 +1,6 @@
 ## ADDED Requirements
 
-### Requirement: asd-25 — Installer: vendored OpenSpec and Superpowers integration
+### Requirement: asd-29 — Installer: vendored OpenSpec and Superpowers integration
 
 WHEN OpenSpec and Superpowers are vendored under `projects/agents/vendor/`, THE agents installer SHALL include their install, check, and clean outputs in the existing `repo`, `global`, and `all` scopes according to `agents-vendored-tooling` ownership (OpenSpec harness artifacts in repo scope; OpenSpec CLI and Superpowers managed plugins/packages in global scope), using `projects/agents/vendor/` as the source of truth rather than global npm or harness marketplaces.
 
@@ -34,7 +34,7 @@ WHEN OpenSpec and Superpowers are vendored under `projects/agents/vendor/`, THE 
   `.cursor/skills/openspec-*`, `.pi/skills/openspec-*`, or
   `.codex/skills/openspec-*` paths
 
-### Requirement: asd-26 — Makefile and docs: vendored tooling entry points
+### Requirement: asd-30 — Makefile and docs: vendored tooling entry points
 
 WHEN vendored OpenSpec and Superpowers support is added, THE agents project SHALL document and expose Make (or script) entry points for vendor sync and for install/check/clean that include vendored tooling, and THE documentation SHALL state that Sheaf agent work must not rely on a global OpenSpec npm install or on Claude/Cursor/Codex/Pi Superpowers marketplace installs.
 

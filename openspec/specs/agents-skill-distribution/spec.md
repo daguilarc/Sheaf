@@ -422,7 +422,6 @@ WHEN shared skills are user-global only, THE agents installer SHALL remove or re
 - **WHEN** a repo-local path formerly used by a global skill contains a file without the agents managed marker
 - **THEN** install, check, and clean operations leave that unmanaged file unchanged
 
-<<<<<<< HEAD
 ### Requirement: asd-25 — Shared skill: event-driven xagent supervision
 
 WHEN Codex uses the distributed `xagent-subagents` skill for a long-running external worker or reviewer, THE skill SHALL direct Codex to use the Conductor-managed xagent service through packaged HTTP MCP discovery, enter one long cursor-based await after independent controller work is exhausted, consume the final assistant report directly from the completion result, use the quiet service-client CLI only as the documented transport fallback for non-SDD delegation, and prohibit that fallback for Superpowers SDD.
@@ -568,8 +567,8 @@ WHEN a controller uses the plugin-provided `xagent-subagents` skill for Superpow
 - **WHEN** the xagent SDD guidance is updated
 - **THEN** its canonical xagent skill source remains under `plugins/xagent/skills/xagent-subagents/`
 - **AND** the agents installer does not create a competing standalone copy
-=======
-### Requirement: asd-25 — Installer: vendored OpenSpec and Superpowers integration
+
+### Requirement: asd-29 — Installer: vendored OpenSpec and Superpowers integration
 
 WHEN OpenSpec and Superpowers are vendored under `projects/agents/vendor/`, THE agents installer SHALL include their install, check, and clean outputs in the existing `repo`, `global`, and `all` scopes according to `agents-vendored-tooling` ownership (OpenSpec harness artifacts in repo scope; OpenSpec CLI and Superpowers managed plugins/packages in global scope), using `projects/agents/vendor/` as the source of truth rather than global npm or harness marketplaces.
 
@@ -603,7 +602,7 @@ WHEN OpenSpec and Superpowers are vendored under `projects/agents/vendor/`, THE 
   `.cursor/skills/openspec-*`, `.pi/skills/openspec-*`, or
   `.codex/skills/openspec-*` paths
 
-### Requirement: asd-26 — Makefile and docs: vendored tooling entry points
+### Requirement: asd-30 — Makefile and docs: vendored tooling entry points
 
 WHEN vendored OpenSpec and Superpowers support is added, THE agents project SHALL document and expose Make (or script) entry points for vendor sync and for install/check/clean that include vendored tooling, and THE documentation SHALL state that Sheaf agent work must not rely on a global OpenSpec npm install or on Claude/Cursor/Codex/Pi Superpowers marketplace installs.
 
@@ -623,4 +622,3 @@ WHEN vendored OpenSpec and Superpowers support is added, THE agents project SHAL
 - **THEN** make delegates to `projects/agents` install
 - **AND** that install includes vendored OpenSpec and Superpowers outputs for
   the default scope
->>>>>>> e6efc444 (Mark Superpowers human gate complete and sync vendored-tooling specs.)
