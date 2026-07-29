@@ -212,16 +212,33 @@ test("xagent_await with progressToken emits pings that do not settle the await",
       settled = true;
       return result;
     });
+    // Teardown closes the client, which rejects any still-pending request. If
+    // an assertion below throws, that rejection would surface instead of the
+    // real error and hide what actually broke. Keep it handled; the test still
+    // observes the outcome through `settled` and the explicit `await` below.
+    //
+    const awaitingOutcome = awaiting.catch((error: unknown) => error);
 
-    await sleep(x_ShortPingIntervalMs * 3);
-    assert.equal(settled, false, "pings must not resolve the await");
+    // Poll for pings rather than sleeping a fixed multiple of the interval.
+    // Under parallel-suite load a 40ms timer is readily starved, and a fixed
+    // sleep turns that into a failure of a property that is actually holding.
+    //
+    for (let attempt = 0; attempt < 200 && progressEvents.length < 2; attempt += 1) {
+      await sleep(x_ShortPingIntervalMs);
+    }
     assert.ok(
       progressEvents.length >= 2,
       `expected at least 2 pings before completion, got ${progressEvents.length}`,
     );
+    // The load-independent half of the property: however long the pings took,
+    // they must not have settled the await.
+    //
+    assert.equal(settled, false, "pings must not resolve the await");
 
     releaseTurn.resolve(undefined);
-    const result = await awaiting;
+    const outcome = await awaitingOutcome;
+    assert.ok(!(outcome instanceof Error), `await rejected: ${String(outcome)}`);
+    const result = outcome as Awaited<typeof awaiting>;
     assert.equal(settled, true);
     const body = result.structuredContent as { event?: string; report?: { text: string } };
     assert.equal(body.event, "turn.completed");

@@ -703,10 +703,33 @@ test("the run-id guard exempts backtick-quoted ids and covers message and prompt
   );
 });
 
+// The fake adapter completes its scripted turn asynchronously, so a run is
+// briefly `running` after startRun resolves. Poll for `ready` instead of
+// sleeping: a fixed delay is exactly the assumption that made this flaky.
+//
+async function WaitForReady(
+  service: { readonly runManager: { inspect(runId: string): { readonly phase: string } | undefined } },
+  runId: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    if (service.runManager.inspect(runId)?.phase === "ready") {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`run ${runId} never reached ready`);
+}
+
 test("turn.submitted never wakes a live await", async () => {
   const service = await startMcpService();
   try {
     const started = await service.startRun("await-filter");
+    // startRun returns once the turn is durably RUNNING, not completed, so the
+    // initial turn may still be in flight. Submitting into a running phase
+    // throws invalidPhase — a race that only loses under parallel-suite load.
+    // Wait for ready rather than assuming it.
+    //
+    await WaitForReady(service, started.run_id);
     const pending = service.await(started.run_id, started.sequence, 5);
     await service.submit(started.run_id, "chit chat");
     const result = await pending;

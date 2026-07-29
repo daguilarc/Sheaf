@@ -103,6 +103,22 @@ test("90-minute healthy run: MCP await wakes once; quiet client measured; pollin
     false,
     "healthy 90-minute run must not settle the MCP await before turn completion",
   );
+  // The classifier is invoked asynchronously off the evidence thunk, so the
+  // count trails the fake clock's cadence checkpoints by an unbounded number
+  // of macrotasks. Under parallel-suite load that lag exceeds the single
+  // `await Promise.resolve()` above and the count reads low — a real property
+  // failing a scheduling assumption, not a real regression. Drain until the
+  // cadence has caught up, then assert exactly.
+  //
+  for (
+    let attempt = 0;
+    attempt < 500 && classifier.calls.length < x_ExpectedWatchdogCalls;
+    attempt += 1
+  ) {
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve);
+    });
+  }
   assert.equal(
     classifier.calls.length,
     x_ExpectedWatchdogCalls,

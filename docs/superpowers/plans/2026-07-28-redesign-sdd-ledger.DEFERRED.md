@@ -235,46 +235,32 @@ Whole-branch review should decide two things together: whether
 `EnsureOwnerOnlyDirectory` should re-secure, and whether run directories
 should be `0o700` given they are now the system of record.
 
-### B2. Intermittent test failure — CONFIRMED REAL, STILL UNIDENTIFIED
+### B2. Intermittent test failure — IDENTIFIED AND FIXED
 
-**Two independent sightings, different agents and different commits.** No
-longer dismissible as one agent's bad run.
+**Root cause: three timing-sensitive tests, not one, all load-sensitive under
+`node --test`'s parallel file execution. No production defect.**
 
-- **Sighting 1 (Task 1).** The implementer reported a `service_main`
-  reconciliation failure that passed on isolated re-run and on the subsequent
-  full suite. Controller could not reproduce: 8/8 isolated, 3/3 full-suite.
-- **Sighting 2 (Task 5 fix round, commit `750ac2ef`).** The controller's own
-  verification run reported `377 tests, 375 pass, 1 fail, 1 skipped` while the
-  implementer's run of the same commit reported all green. An immediate re-run
-  was clean, and 8 further full-suite runs were clean.
+Reproduced by saving every run's output before diagnosing — the procedure this
+entry previously specified and the controller previously failed to follow.
+Baseline rate: **3 failures in 25 full-suite runs (~12%)**, and the failing test
+varied, which is why single-test isolation kept coming back clean (0/40).
 
-**The evidence from sighting 2 was lost, and that was the controller's
-error:** the failing test name was not captured before re-running, despite
-this entry already saying to do exactly that. Do not repeat it.
+| Test | Failure | Cause |
+|---|---|---|
+| `turn.submitted never wakes a live await` (`mcp_await.test.ts`) | `Cannot submit while supervision phase is running` | Submitted immediately after `startRun`, which returns once the turn is *running*, not completed. Under load the first turn was still in flight. Dates from Task 1 — almost certainly the original sighting. |
+| `xagent_await with progressToken emits pings that do not settle the await` (`await_liveness.test.ts`) | `MCP error -32000: Connection closed` | A 40ms ping interval with a fixed 120ms sleep, plus a pending request at teardown whose rejection masked whatever actually failed. Introduced by task 9.4. |
+| `90-minute healthy run…` (`supervision_cost.test.ts`) | `1 !== 3` watchdog calls | The classifier is invoked asynchronously off the evidence thunk, so its count trails the fake clock's cadence by an unbounded number of macrotasks. A single `await Promise.resolve()` was not enough drain under load. |
 
-**Capture procedure when it next appears** — save output *first*, diagnose
-second:
+Each fix removes a **timing assumption** while keeping the assertion: poll for
+`ready` instead of assuming it; poll for the ping count and assert the
+load-independent half (`settled === false`) separately; drain macrotasks until
+the cadence catches up, then assert the exact count. The pending-request
+rejection is now caught so it can never again mask a real error.
 
-```bash
-cd projects/xagent
-for i in $(seq 1 20); do
-  npm test > /tmp/suite-$i.log 2>&1
-  grep -qE "^ℹ fail [1-9]" /tmp/suite-$i.log && { echo "captured in /tmp/suite-$i.log"; break; }
-done
-grep -E "^✖|not ok|AssertionError" -A 20 /tmp/suite-*.log
-```
-
-Note the reporter prints failures as `✖ name` / `not ok`, and a `grep` for
-`failing` finds nothing — that mismatch is part of why the first capture was
-missed.
-
-Why it matters more now than at sighting 1: **every task in this plan gates on
-a green suite**, and both the implementer and the controller take that green
-as evidence. A suite that is red roughly one run in ten means any given task's
-"all green" has a real chance of being one unlucky re-run away from red, and
-that a genuine regression could be dismissed as "the known flake." Owner: the
-whole-branch review, and it should not be closed by another clean sweep —
-only by identifying the test.
+**After: 0 failures in 40 full-suite runs.** At the prior ~12% rate, 40 clean
+runs would occur by chance about 0.6% of the time — strong evidence, not proof.
+A rarer fourth offender cannot be excluded, and the capture procedure above
+remains the right response if one appears.
 
 ### B3. Residual gaps in the no-`UPDATE` guard test — ACCEPTED
 
