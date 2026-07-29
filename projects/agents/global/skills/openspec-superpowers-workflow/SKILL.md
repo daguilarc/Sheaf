@@ -21,9 +21,11 @@ pre-plan coordination and Superpowers SDD task execution:
   (`projects/xagent`) on the provider opposite to the one that produced the
   work under review: Claude-produced work is reviewed by a Codex model, and
   Codex-produced work is reviewed by a Claude model.
-- **Pre-plan helpers may use native transport when the model is available.**
-  See Pre-plan coordination for native-vs-xagent transport rules. This does not
-  apply to written-plan SDD task turns.
+- **Pre-plan helpers always use xagent, same-provider included.** Native
+  harness subagents are not used for pre-plan coordination. See Pre-plan
+  coordination for the xagent transport rules. This does not apply to
+  written-plan SDD task turns, which always use the xagent SDD MCP facade
+  regardless of provider.
 - **SDD task turns always use the xagent SDD MCP facade.** Once a written
   Superpowers plan exists, every implementer, task reviewer, fix, re-review, and
   final whole-branch reviewer turn uses `xagent_sdd_start` and
@@ -34,7 +36,8 @@ pre-plan coordination and Superpowers SDD task execution:
   Do not discard an implementer after its first report or a reviewer after
   its first verdict: while the agent is live, send small fixes back via
   `xagent_sdd_followup` and re-reviews via `xagent_sdd_followup` on the same
-  `agent_id` (native pre-plan helpers are resumable). When followup returns
+  `agent_id` (pre-plan helpers stay resumable via `xagent_await` /
+  `xagent_message` on the same run). When followup returns
   `sdd_agent_not_live`, start a fresh `fixer` or `re-reviewer` for the same
   plan and task instead — that is recovery, not optional churn. Start fresh
   agents per task, not per fix round while the prior agent is still live.
@@ -54,38 +57,32 @@ helpers that run before a written Superpowers SDD plan task exists.
 They do not fabricate an SDD plan or task identity solely to enter the SDD
 ledger.
 
-- **Prefer native harness subagents when the assigned model is available.**
-  Native subagents are not the default transport for cross-provider work, and
-  xagent is not the default transport for same-provider work when the harness
-  already offers the assigned model.
-- **Perform independent controller work first.** After dispatching a subagent,
+- **All pre-plan work uses xagent, same-provider included.** Native harness
+  subagents are not used for pre-plan coordination, whether the helper and the
+  work under review share a provider or not. Verify Conductor reports xagent
+  healthy at `127.0.0.1:9005`, call `xagent_start_non_sdd`, do independent
+  work, then one long `xagent_await` with the returned `after_sequence`
+  cursor. Consume the sanitized final assistant report from `report.text`.
+  Use `xagent_message` only for unstructured non-SDD follow-up messages on
+  generic runs. The quiet `xagent supervise` service-client path is a generic
+  transport fallback when plugin MCP discovery is unavailable; it is not for
+  Superpowers SDD. Do not poll `write_stdin`, `xagent list`, xagent logs, or
+  unchanged status at a short fixed interval.
+- **Perform independent controller work first.** After dispatching an agent,
   do controller-only work until it is exhausted, then enter one long wait.
-- **Native subagents use one long native mailbox wait.** Do not repeat the
-  harness default short timeout merely to observe unchanged state.
-- **Cross-provider pre-plan review uses generic xagent service MCP.** Verify
-  Conductor reports xagent healthy at `127.0.0.1:9005`, call `xagent_start_non_sdd`,
-  do independent work, then one long `xagent_await` with the returned
-  `after_sequence` cursor. Consume the sanitized final assistant report from
-  `report.text`. Use `xagent_message` only for unstructured non-SDD follow-up
-  messages on generic runs. The quiet `xagent supervise` service-client path is
-  a generic transport fallback when plugin MCP discovery is unavailable; it is
-  not for Superpowers SDD. Do not poll `write_stdin`, `xagent list`, xagent
-  logs, or unchanged status at a short fixed interval.
 - **Status inspection is reason-gated.** Direct `list_agents`, log, transcript,
   or MCP inspect checks happen only after attention, a long wait deadline, or
   an explicit user status request — never as a fixed-frequency polling loop.
-- **Native child messaging stays sparse.** Dispatch instructs native children to
-  message the controller only for required input, an unresolved blocker, or
-  final completion. Routine tool progress stays in the child thread or activity
-  UI.
-- **Multiple agents complete independently.** When one running subagent
+- **Child messaging stays sparse.** Dispatch instructs children to message the
+  controller only for required input, an unresolved blocker, or final
+  completion. Routine tool progress stays in the child thread or activity UI.
+- **Multiple agents complete independently.** When one running agent
   completes or needs attention, handle that event and enter another long event
   wait for the remaining agents without inserting unchanged `list_agents`
   snapshots.
-- **Broken infrastructure escalates.** If native subagent transport, xagent MCP,
-  the Conductor-managed xagent service, OpenSpec, or Superpowers tooling is
-  broken, stop and surface broken agentic infrastructure instead of working
-  around it.
+- **Broken infrastructure escalates.** If xagent MCP, the Conductor-managed
+  xagent service, OpenSpec, or Superpowers tooling is broken, stop and surface
+  broken agentic infrastructure instead of working around it.
 
 ## Superpowers SDD task execution
 
