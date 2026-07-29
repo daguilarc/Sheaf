@@ -97,12 +97,12 @@ void TestClampingRedistributionDoesNotRepeat()
     b.Row("row", {}, [](synth::ui::Builder& b) {
         b.Label("capped", "c", MainOf(synth::ui::Extent::Weight(1.0f).Max(100.0f)));
         b.Label("limited", "l", MainOf(synth::ui::Extent::Weight(1.0f).Max(330.0f)));
-        b.Label("also-limited", "a", MainOf(synth::ui::Extent::Weight(1.0f).Max(330.0f)));
+        b.Label("open", "o", MainOf(synth::ui::Extent::Weight(1.0f)));
     });
     const auto tree = b.Build({0.0f, 0.0f, 1000.0f, 300.0f});
     Require(NearlyEqual(FindNode(tree, "limited").bounds.width, 330.0f),
             "the first redistribution pass may clamp an eligible child");
-    Require(NearlyEqual(FindNode(tree, "also-limited").bounds.width, 330.0f),
+    Require(NearlyEqual(FindNode(tree, "open").bounds.width, 430.0f),
             "the pass does not repeat to force residual space elsewhere");
 }
 
@@ -121,6 +121,21 @@ void TestFractionIsOfContentExtentNotRemainingSpace()
             "a fraction is taken of content extent, then clamped by the maximum");
     Require(NearlyEqual(FindNode(tree, "rest").bounds.width, 462.0f),
             "the weighted sibling clamps at its own maximum");
+}
+
+void TestUnclampedFractionPinsContentExtentBasis()
+{
+    synth::ui::LayoutOptions row;
+    row.padding = 16.0f;
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 900.0f, 560.0f});
+    b.Row("row", row, [](synth::ui::Builder& b) {
+        b.Label("fraction", "s", MainOf(synth::ui::Extent::Fraction(0.46f)));
+        b.Label("rest", "r", MainOf(synth::ui::Extent::Weight(1.0f)));
+    });
+    const auto tree = b.Build({0.0f, 0.0f, 900.0f, 560.0f});
+    Require(NearlyEqual(FindNode(tree, "fraction").bounds.width, 399.28f),
+            "an unclamped fraction is taken from content extent, not container or post-gap extent");
 }
 
 void TestInfeasibleMinimaOverflowDeterministically()
@@ -235,6 +250,47 @@ void TestFormGridAlignsLabelAndControlColumns()
             "the control column clears the widest label");
 }
 
+void TestFormGridUsesRowLocalPadding()
+{
+    synth::ui::LayoutOptions grid;
+    grid.formGrid = true;
+    grid.padding = 30.0f;
+    synth::ui::LayoutOptions row;
+    row.padding = 4.0f;
+
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 420.0f, 300.0f});
+    b.Column("form", grid, [&row](synth::ui::Builder& b) {
+        b.Row("r1", row, [](synth::ui::Builder& b) {
+            b.Label("r1.label", "Short");
+            b.ComboBox("r1.control", "", {}, "", synth::ui::Action::Named("a"));
+        });
+        b.Row("r2", row, [](synth::ui::Builder& b) {
+            b.Label("r2.label", "Longer label");
+            b.ComboBox("r2.control", "", {}, "", synth::ui::Action::Named("b"));
+        });
+    });
+    const auto tree = b.Build({0.0f, 0.0f, 420.0f, 300.0f});
+    Require(NearlyEqual(FindNode(tree, "r1.label").bounds.x, 4.0f),
+            "form-grid cells use their row's local padding, not the form container padding");
+    Require(NearlyEqual(FindNode(tree, "r1.control").bounds.x, FindNode(tree, "r2.control").bounds.x),
+            "control columns still align with mixed form and row padding");
+}
+
+void TestCrossAxisWeightDoesNotExceedContentExtent()
+{
+    synth::ui::ControlStyle style;
+    style.layout.cross = synth::ui::Extent::Weight(2.0f);
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 300.0f, 160.0f});
+    b.Row("row", LayoutMain(synth::ui::Extent::Px(100.0f)), [&style](synth::ui::Builder& b) {
+        b.Label("tall", "tall", style);
+    });
+    const auto tree = b.Build({0.0f, 0.0f, 300.0f, 160.0f});
+    Require(NearlyEqual(FindNode(tree, "tall").bounds.height, 76.0f),
+            "cross-axis weights are normalized to the available content extent");
+}
+
 void TestCaptionedControlRowOccupiesTheParentFlowSlot()
 {
     synth::ui::ControlStyle style;
@@ -252,6 +308,62 @@ void TestCaptionedControlRowOccupiesTheParentFlowSlot()
     Require(NearlyEqual(FindNode(tree, "after").bounds.y - FindNode(tree, "device.row").bounds.y,
                         34.0f + synth::ui::kSpacing.gap),
             "the captioned row, not the inner control, advances parent flow");
+}
+
+void TestCaptionedAndUncaptionedControlsHonorTheSameDeclaredExtent()
+{
+    synth::ui::ControlStyle captioned;
+    captioned.caption = "Device";
+    captioned.layout.main = synth::ui::Extent::Px(34.0f);
+    synth::ui::ControlStyle plain;
+    plain.layout.main = synth::ui::Extent::Px(34.0f);
+
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 420.0f, 300.0f});
+    b.Column("form", {}, [&](synth::ui::Builder& b) {
+        b.ComboBox("captioned", "", {}, "", synth::ui::Action::Named("captioned"), captioned);
+        b.ComboBox("plain", "", {}, "", synth::ui::Action::Named("plain"), plain);
+    });
+    const auto tree = b.Build({0.0f, 0.0f, 420.0f, 300.0f});
+    Require(NearlyEqual(FindNode(tree, "captioned.row").bounds.height, FindNode(tree, "plain").bounds.height),
+            "captioned and uncaptioned controls honor the same declared flow extent");
+}
+
+void TestSplicedSubtreeLayoutOptionsAreHonoredWhenResolved()
+{
+    synth::ui::Builder inner;
+    inner.Root("inner.root", {0.0f, 0.0f, 100.0f, 50.0f});
+    inner.Label("inner.label", "spliced", MainOf(synth::ui::Extent::Px(44.0f)));
+
+    synth::ui::Builder outer;
+    outer.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    outer.Column("host", {}, [&inner](synth::ui::Builder& b) {
+        b.Splice(inner.BuildSubtree());
+    });
+    const auto tree = outer.Build({0.0f, 0.0f, 400.0f, 300.0f});
+    Require(NearlyEqual(FindNode(tree, "inner.label").bounds.height, 44.0f),
+            "spliced Subtree layout options are honored during resolution");
+}
+
+void TestSplicedSubtreeDrawFactoryStillRuns()
+{
+    synth::ui::Builder inner;
+    inner.Root("inner.root", {0.0f, 0.0f, 100.0f, 50.0f});
+    inner.Draw("inner.canvas", LayoutMain(synth::ui::Extent::Px(36.0f)), [](synth::ui::Bounds extent) {
+        return std::vector<synth::ui::DrawCommand>{
+            synth::ui::DrawCommand::Fill(extent, synth::Color::Rgb(4, 5, 6))};
+    });
+
+    synth::ui::Builder outer;
+    outer.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    outer.Column("host", {}, [&inner](synth::ui::Builder& b) {
+        b.Splice(inner.BuildSubtree());
+    });
+    const auto tree = outer.Build({0.0f, 0.0f, 400.0f, 300.0f});
+    const auto& canvas = FindNode(tree, "inner.canvas");
+    Require(canvas.drawCommands.size() == 1, "spliced Subtree carries Draw factories");
+    Require(NearlyEqual(canvas.drawCommands[0].bounds.height, 36.0f),
+            "the spliced Draw factory fills the resolved extent");
 }
 
 void TestComponentResolvesIdenticallyUnderDifferentParents()
@@ -328,6 +440,46 @@ void TestWrappingRowFlowsOntoAdditionalLines()
             "the container's extent grows to contain every line");
 }
 
+void TestWrappingRowReservesGrownExtentInParentFlow()
+{
+    synth::ui::LayoutOptions row;
+    row.wrap = true;
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 200.0f, 300.0f});
+    b.Column("col", {}, [row](synth::ui::Builder& b) {
+        b.Row("wrapped", row, [](synth::ui::Builder& b) {
+            for (int i = 0; i < 4; ++i)
+            {
+                b.Label("w" + std::to_string(i), "x", MainOf(synth::ui::Extent::Px(80.0f)));
+            }
+        });
+        b.Label("after", "after", MainOf(synth::ui::Extent::Px(20.0f)));
+    });
+    const auto tree = b.Build({0.0f, 0.0f, 200.0f, 300.0f});
+    const auto& wrapped = FindNode(tree, "wrapped");
+    Require(FindNode(tree, "after").bounds.y >= wrapped.bounds.y + wrapped.bounds.height + synth::ui::kSpacing.gap,
+            "a trailing sibling clears the wrapping row's grown extent");
+}
+
+void TestSectionAndScrollAreaStackChildrenVertically()
+{
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    b.Section("section", LayoutMain(synth::ui::Extent::Px(100.0f)), [](synth::ui::Builder& b) {
+        b.Label("section.first", "first", MainOf(synth::ui::Extent::Px(20.0f)));
+        b.Label("section.second", "second", MainOf(synth::ui::Extent::Px(20.0f)));
+    });
+    b.ScrollArea("scroll", LayoutMain(synth::ui::Extent::Px(100.0f)), [](synth::ui::Builder& b) {
+        b.Label("scroll.first", "first", MainOf(synth::ui::Extent::Px(20.0f)));
+        b.Label("scroll.second", "second", MainOf(synth::ui::Extent::Px(20.0f)));
+    });
+    const auto tree = b.Build({0.0f, 0.0f, 400.0f, 300.0f});
+    Require(FindNode(tree, "section.second").bounds.y > FindNode(tree, "section.first").bounds.y,
+            "Section stacks children vertically");
+    Require(FindNode(tree, "scroll.second").bounds.y > FindNode(tree, "scroll.first").bounds.y,
+            "ScrollArea stacks children vertically");
+}
+
 }  // namespace
 
 int main()
@@ -336,14 +488,22 @@ int main()
     TestMaximumClampsAndRedistributesOnce();
     TestClampingRedistributionDoesNotRepeat();
     TestFractionIsOfContentExtentNotRemainingSpace();
+    TestUnclampedFractionPinsContentExtentBasis();
     TestInfeasibleMinimaOverflowDeterministically();
     TestInsertingARowShiftsSiblingsByExtentPlusGap();
     TestExplicitlyPositionedChildrenAreOutOfFlow();
     TestInFlowDrawFactoryReceivesItsResolvedExtent();
     TestFormGridAlignsLabelAndControlColumns();
+    TestFormGridUsesRowLocalPadding();
+    TestCrossAxisWeightDoesNotExceedContentExtent();
     TestCaptionedControlRowOccupiesTheParentFlowSlot();
+    TestCaptionedAndUncaptionedControlsHonorTheSameDeclaredExtent();
+    TestSplicedSubtreeLayoutOptionsAreHonoredWhenResolved();
+    TestSplicedSubtreeDrawFactoryStillRuns();
     TestComponentResolvesIdenticallyUnderDifferentParents();
     TestExtentDrivenRedistribution();
     TestTextReservationIsDeterministicAndBackendFree();
     TestWrappingRowFlowsOntoAdditionalLines();
+    TestWrappingRowReservesGrownExtentInParentFlow();
+    TestSectionAndScrollAreaStackChildrenVertically();
 }

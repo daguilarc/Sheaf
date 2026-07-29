@@ -4,6 +4,7 @@
 #include "synth/PortableUIMetrics.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstddef>
 #include <functional>
@@ -129,7 +130,8 @@ inline float ResolveSimpleExtent(const Node& node,
         case Extent::Mode::Fraction:
             return contentExtent * extent.value;
         case Extent::Mode::Weighted:
-            return contentExtent * std::max(0.0f, extent.value);
+            assert(false && "weighted extents are resolved by AllocateExtents");
+            return 0.0f;
         case Extent::Mode::Intrinsic:
         default:
             return intrinsicForNode(node, axis);
@@ -233,7 +235,9 @@ inline float ResolveCrossExtent(const Node& node,
             value = contentExtent * layout.cross.value;
             break;
         case Extent::Mode::Weighted:
-            value = contentExtent * std::max(0.0f, layout.cross.value);
+            // Cross-axis weights behave as fill fractions: the cross axis is
+            // not stacked, so weights above 1 fill but do not overflow.
+            value = contentExtent * std::min(1.0f, std::max(0.0f, layout.cross.value));
             break;
         case Extent::Mode::Intrinsic:
         default:
@@ -304,7 +308,71 @@ struct Resolver {
         }
     }
 
-    float IntrinsicForNode(const Node& node, Axis axis)
+    float IntrinsicForWrappingRow(const Node& row, float rowWidth)
+    {
+        const LayoutOptions fallback;
+        const LayoutOptions& opts = LayoutFor(layoutByNodeId, row.id, fallback);
+        const float contentWidth = std::max(0.0f, rowWidth - opts.padding * 2.0f);
+        std::vector<const Node*> inFlow;
+        std::vector<LayoutOptions> childLayouts;
+        for (const NodeId& childId : row.children)
+        {
+            const LayoutOptions childLayout = LayoutFor(layoutByNodeId, childId, fallback);
+            if (childLayout.explicitBounds.has_value())
+            {
+                continue;
+            }
+            const Node* child = Find(childId);
+            if (child == nullptr)
+            {
+                continue;
+            }
+            inFlow.push_back(child);
+            childLayouts.push_back(childLayout);
+        }
+
+        const auto intrinsicForNode = [this](const Node& node, Axis axis) {
+            return IntrinsicForNode(node, axis);
+        };
+        const auto mainExtents = AllocateExtents(inFlow,
+                                                 childLayouts,
+                                                 Axis::Horizontal,
+                                                 rowWidth,
+                                                 opts.padding,
+                                                 opts.gap,
+                                                 intrinsicForNode);
+        float lineMain = 0.0f;
+        float lineCross = 0.0f;
+        float totalCross = opts.padding;
+        bool lineHasChild = false;
+
+        for (std::size_t i = 0; i < inFlow.size(); ++i)
+        {
+            const float childMain = mainExtents[i].value;
+            const float childCross = IntrinsicFromExtent(*inFlow[i], childLayouts[i].cross, Axis::Vertical);
+            const float nextMain = lineHasChild ? lineMain + opts.gap + childMain : childMain;
+            if (lineHasChild && nextMain > contentWidth)
+            {
+                totalCross += lineCross + opts.gap;
+                lineMain = childMain;
+                lineCross = childCross;
+            }
+            else
+            {
+                lineMain = nextMain;
+                lineCross = std::max(lineCross, childCross);
+            }
+            lineHasChild = true;
+        }
+
+        if (lineHasChild)
+        {
+            totalCross += lineCross;
+        }
+        return totalCross + opts.padding;
+    }
+
+    float IntrinsicForNode(const Node& node, Axis axis, std::optional<float> knownCrossExtent = std::nullopt)
     {
         if (!IsContainer(node.kind))
         {
@@ -314,6 +382,12 @@ struct Resolver {
         const LayoutOptions fallback;
         const LayoutOptions& opts = LayoutFor(layoutByNodeId, node.id, fallback);
         const Axis mainAxis = MainAxisFor(node);
+        if (node.kind == NodeKind::Row && opts.wrap && axis == Axis::Vertical)
+        {
+            const float rowWidth = knownCrossExtent.value_or(IntrinsicForNode(node, Axis::Horizontal));
+            return IntrinsicForWrappingRow(node, rowWidth);
+        }
+
         float result = 0.0f;
         std::size_t inFlowCount = 0;
 
@@ -362,6 +436,8 @@ struct Resolver {
         const LayoutOptions rootLayout{
             .main = Extent::Intrinsic(),
             .cross = Extent::Weight(1.0f),
+            // Root is the parentless surface extent; applying ordinary
+            // container padding here would shrink every page/app implicitly.
             .padding = 0.0f,
             .gap = 0.0f,
             .wrap = false,
@@ -396,8 +472,20 @@ struct Resolver {
             childLayouts.push_back(childLayout);
         }
 
-        const auto intrinsicForNode = [this](const Node& node, Axis axis) {
+        const auto fallbackIntrinsicForNode = [this](const Node& node, Axis axis) {
             return IntrinsicForNode(node, axis);
+        };
+        const float containerCross = CrossExtent(container.bounds, mainAxis);
+        std::map<std::string, float> childCrossExtents;
+        for (std::size_t i = 0; i < inFlow.size(); ++i)
+        {
+            childCrossExtents[inFlow[i]->id.value] =
+                ResolveCrossExtent(*inFlow[i], mainAxis, childLayouts[i], containerCross, opts.padding, fallbackIntrinsicForNode);
+        }
+
+        const auto intrinsicForNode = [this, &childCrossExtents](const Node& node, Axis axis) {
+            const auto found = childCrossExtents.find(node.id.value);
+            return found == childCrossExtents.end() ? IntrinsicForNode(node, axis) : IntrinsicForNode(node, axis, found->second);
         };
         const auto mainExtents = AllocateExtents(inFlowConst,
                                                  childLayouts,
@@ -407,23 +495,21 @@ struct Resolver {
                                                  opts.gap,
                                                  intrinsicForNode);
 
-        const float containerCross = CrossExtent(container.bounds, mainAxis);
         float mainCursor = opts.padding;
         float crossCursor = opts.padding;
         float lineCrossExtent = 0.0f;
-        float maxMain = opts.padding;
 
         for (std::size_t i = 0; i < inFlow.size(); ++i)
         {
             Node& child = *inFlow[i];
             const float mainExtent = mainExtents[i].value;
-            const float crossExtent =
-                ResolveCrossExtent(child, mainAxis, childLayouts[i], containerCross, opts.padding, intrinsicForNode);
+            const float crossExtent = container.kind == NodeKind::Row && opts.wrap
+                                          ? IntrinsicFromExtent(child, childLayouts[i].cross, Axis::Vertical)
+                                          : childCrossExtents[child.id.value];
 
             if (container.kind == NodeKind::Row && opts.wrap && mainCursor > opts.padding &&
                 mainCursor + mainExtent > std::max(opts.padding, AxisExtent(container.bounds, Axis::Horizontal) - opts.padding))
             {
-                maxMain = std::max(maxMain, mainCursor - opts.gap);
                 mainCursor = opts.padding;
                 crossCursor += lineCrossExtent + opts.gap;
                 lineCrossExtent = 0.0f;
@@ -442,13 +528,6 @@ struct Resolver {
             ResolveNode(child, false);
         }
 
-        if (container.kind == NodeKind::Row && opts.wrap)
-        {
-            maxMain = std::max(maxMain, mainCursor > opts.padding ? mainCursor - opts.gap : opts.padding);
-            container.bounds.width = std::max(container.bounds.width, maxMain + opts.padding);
-            container.bounds.height = std::max(container.bounds.height, crossCursor + lineCrossExtent + opts.padding);
-        }
-
         for (Node* child : outOfFlow)
         {
             ResolveNode(*child, false);
@@ -456,7 +535,7 @@ struct Resolver {
 
         if (opts.formGrid)
         {
-            ApplyFormGrid(container, opts);
+            ApplyFormGrid(container);
         }
     }
 
@@ -480,8 +559,9 @@ struct Resolver {
         return result;
     }
 
-    void ApplyFormGrid(Node& container, const LayoutOptions& opts)
+    void ApplyFormGrid(Node& container)
     {
+        const LayoutOptions fallback;
         float labelColumnWidth = 0.0f;
         std::vector<Node*> rows;
         for (const NodeId& childId : container.children)
@@ -503,15 +583,25 @@ struct Resolver {
             labelColumnWidth = std::max(labelColumnWidth, cells[0]->bounds.width);
         }
 
-        const float controlOffset = opts.padding + labelColumnWidth + kSpacing.labelGap;
         for (Node* row : rows)
         {
+            const LayoutOptions& rowOpts = LayoutFor(layoutByNodeId, row->id, fallback);
+            const float controlOffset = rowOpts.padding + labelColumnWidth + kSpacing.labelGap;
             auto cells = InFlowChildrenOf(*row);
-            cells[0]->bounds.x = opts.padding;
+            cells[0]->bounds.x = rowOpts.padding;
             cells[0]->bounds.width = labelColumnWidth;
             cells[1]->bounds.x = controlOffset;
-            cells[1]->bounds.width = std::max(0.0f, row->bounds.width - controlOffset - opts.padding);
-            ResolveNode(*cells[1], false);
+            cells[1]->bounds.width = std::max(0.0f, row->bounds.width - controlOffset - rowOpts.padding);
+            float extraCursor = cells[1]->bounds.x + cells[1]->bounds.width + rowOpts.gap;
+            for (std::size_t i = 2; i < cells.size(); ++i)
+            {
+                cells[i]->bounds.x = extraCursor;
+                extraCursor += cells[i]->bounds.width + rowOpts.gap;
+            }
+            for (Node* cell : cells)
+            {
+                ResolveNode(*cell, false);
+            }
         }
     }
 };

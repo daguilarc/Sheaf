@@ -289,6 +289,7 @@ struct ControlStyle {
 struct Subtree {
     NodeTree tree;
     std::map<std::string, LayoutOptions> layout;
+    std::map<std::string, DrawFactory> drawFactories;
 };
 
 class Builder {
@@ -367,11 +368,14 @@ public:
         for (auto& entry : subtree.layout) {
             layoutByNodeId_[entry.first] = std::move(entry.second);
         }
+        for (auto& entry : subtree.drawFactories) {
+            drawFactories_[entry.first] = std::move(entry.second);
+        }
         return *this;
     }
 
     Builder& Splice(NodeTree tree) {
-        return Splice(Subtree{std::move(tree), {}});
+        return Splice(Subtree{std::move(tree), {}, {}});
     }
 
     Builder& Label(std::string id, std::string text, ControlStyle style = {}) {
@@ -525,7 +529,7 @@ public:
     }
 
     Subtree BuildSubtree() {
-        return Subtree{tree_, layoutByNodeId_};
+        return Subtree{tree_, layoutByNodeId_, drawFactories_};
     }
 
 private:
