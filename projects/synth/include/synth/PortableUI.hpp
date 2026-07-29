@@ -167,6 +167,11 @@ struct Node {
     std::vector<ControlOption> options;
     std::string selectedOption;
     std::string variant;
+    // Direct appearance properties (sru-45). Optional: absent means the
+    // backend's plain default look. `color`'s meaning is per-kind; glyph
+    // colour always comes from `textStyle`, never from `color`.
+    std::optional<Color> color{};
+    std::optional<TextStyle> textStyle{};
     std::optional<Action> action;
     std::optional<Action> pointerDragAction;
     std::optional<Action> doubleClickAction;

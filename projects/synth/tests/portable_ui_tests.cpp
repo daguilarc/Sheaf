@@ -67,6 +67,16 @@ const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const std::
     return FindNodeById(tree, id.c_str());
 }
 
+const synth::ui::Node& FindNode(const synth::ui::NodeTree& tree, const char* id)
+{
+    const synth::ui::Node* node = FindNodeById(tree, id);
+    if (node == nullptr)
+    {
+        throw std::runtime_error(std::string("missing node: ") + id);
+    }
+    return *node;
+}
+
 int CountRootNodes(const synth::ui::NodeTree& tree)
 {
     int rootCount = 0;
@@ -497,8 +507,129 @@ void TestBraid4StandardModulationViewsRemainPortable()
 
 }  // namespace
 
+static void TestContainersNestToArbitraryDepth()
+{
+    synth::ui::Builder builder;
+    builder.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    builder.Section("sect", {}, [](synth::ui::Builder& b) {
+        b.ScrollArea("scroll", {}, [](synth::ui::Builder& b) {
+            b.Row("row", {}, [](synth::ui::Builder& b) { b.Label("leaf", "hello"); });
+        });
+    });
+    const synth::ui::NodeTree tree = builder.Build();
+    Require(FindNode(tree, "root").children[0].value == "sect", "root holds the section");
+    Require(FindNode(tree, "sect").kind == synth::ui::NodeKind::Section, "sect is a Section");
+    Require(FindNode(tree, "sect").children[0].value == "scroll", "section holds the scroll area");
+    Require(FindNode(tree, "scroll").children[0].value == "row", "scroll area holds the row");
+    Require(FindNode(tree, "row").children[0].value == "leaf", "row holds the leaf");
+}
+
+// A reusable component is an ordinary callable. Nothing else.
+//
+struct CaptionedRow {
+    std::string id, caption;
+    void operator()(synth::ui::Builder& b) const {
+        b.Row(id, {}, [this](synth::ui::Builder& b) {
+            b.Label(id + ".caption", caption);
+            b.Button(id + ".action", "Go", synth::ui::Action::Named("go"));
+        });
+    }
+};
+
+static void TestComponentsComposeComponents()
+{
+    synth::ui::Builder builder;
+    builder.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    builder.Column("col", {}, [](synth::ui::Builder& b) {
+        CaptionedRow{"first", "First"}(b);
+        CaptionedRow{"second", "Second"}(b);
+    });
+    const synth::ui::NodeTree tree = builder.Build();
+    Require(FindNode(tree, "col").children.size() == 2, "column holds both rows");
+    Require(FindNode(tree, "first.caption").text == "First", "each invocation emits in place");
+    Require(FindNode(tree, "first").children.size() == 2, "with distinct stable ids");
+}
+
+static void TestSpliceGraftsWithoutNestedRoot()
+{
+    synth::ui::Builder inner;
+    inner.Root("inner.root", {0.0f, 0.0f, 100.0f, 50.0f});
+    inner.Label("inner.label", "spliced");
+
+    synth::ui::Builder outer;
+    outer.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    outer.Section("host", {}, [&inner](synth::ui::Builder& b) { b.Splice(inner.Build()); });
+
+    const synth::ui::NodeTree tree = outer.Build();
+    std::size_t roots = 0;
+    for (const auto& n : tree.nodes) { if (n.kind == synth::ui::NodeKind::Root) ++roots; }
+    Require(roots == 1, "exactly one Root survives the splice");
+    Require(FindNode(tree, "host").children[0].value == "inner.label",
+            "the spliced root's children become the host's children");
+}
+
+static void TestConstructionExpressesFullControlState()
+{
+    synth::ui::ControlStyle style;
+    style.color = synth::Color::Rgb(0, 200, 0);
+    style.textStyle = synth::ui::TextStyle{16.0f, synth::Color::Rgb(255,255,255),
+                                           synth::ui::TextAlign::Center};
+    style.selected = true;
+    style.enabled = false;
+
+    synth::ui::Builder builder;
+    builder.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    builder.Button("green", "Go", synth::ui::Action::Named("go"), style);
+
+    const synth::ui::NodeTree tree = builder.Build();
+    const synth::ui::Node& n = FindNode(tree, "green");
+    // Color stores channels as r/g/b (plan text said green; the field is g).
+    //
+    Require(n.color.has_value() && n.color->g == 200, "colour reaches the node record");
+    Require(n.textStyle.has_value(), "text style reaches the node record");
+    Require(n.selected && !n.enabled, "selected and enabled reach the node record");
+}
+
+static void TestUnstyledNodesCarryNothing()
+{
+    synth::ui::Builder builder;
+    builder.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    builder.Button("plain", "Plain", synth::ui::Action::Named("go"));
+    const synth::ui::NodeTree tree = builder.Build();
+    const synth::ui::Node& n = FindNode(tree, "plain");
+    Require(!n.color.has_value() && !n.textStyle.has_value(),
+            "an unstyled control carries nothing, so each backend uses its default look");
+}
+
+static void TestCaptionIsAnEmittedLabelNodeNotAField()
+{
+    synth::ui::ControlStyle style;
+    style.caption = "Output device";
+    synth::ui::LayoutOptions grid;
+    grid.formGrid = true;
+
+    synth::ui::Builder builder;
+    builder.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    builder.Column("form", grid, [&style](synth::ui::Builder& b) {
+        b.ComboBox("device", "", {}, "", synth::ui::Action::Named("pick"), style);
+    });
+    const synth::ui::NodeTree tree = builder.Build();
+    Require(FindNode(tree, "device.caption").kind == synth::ui::NodeKind::Label,
+            "a caption is an ordinary Label node in the control's row");
+    Require(FindNode(tree, "device.caption").text == "Output device", "carrying its text");
+    Require(FindNode(tree, "device").label.empty(),
+            "the caption does not route through ComboBox::label");
+}
+
 int main()
 {
+    TestContainersNestToArbitraryDepth();
+    TestComponentsComposeComponents();
+    TestSpliceGraftsWithoutNestedRoot();
+    TestConstructionExpressesFullControlState();
+    TestUnstyledNodesCarryNothing();
+    TestCaptionIsAnEmittedLabelNodeNotAField();
+
     TestGangedRandomLfoVisualizer();
     TestStandardModulatorVisualizersRemainPortable();
     TestBraid4StandardModulationViewsRemainPortable();
