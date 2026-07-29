@@ -11,6 +11,7 @@ import Database from "better-sqlite3";
 import {
   CreateSddAgentStore,
   GetSddDatabasePath,
+  OpenSddLedgerDatabase,
   SddStoreError,
 } from "../src/service/sdd_store.js";
 
@@ -316,4 +317,24 @@ test("the v1 store and its schema are gone", async () => {
     assert.equal(source.includes(symbol), false, `${symbol} must be deleted`);
   }
   assert.equal(/UPDATE\s+sdd/i.test(source), false);
+});
+
+test("a stale v1 ledger refuses at startup with the documented reprovision wording", async () => {
+  const logRoot = await mkdtemp(path.join(tmpdir(), "sdd-v1-"));
+  try {
+    const database = OpenSddLedgerDatabase(GetSddDatabasePath(logRoot));
+    database.pragma("user_version = 1");
+    database.close();
+    assert.throws(() => CreateSddAgentStore(logRoot), (error: unknown) => {
+      assert.ok(error instanceof SddStoreError);
+      assert.equal(error.code, "sdd_ledger_schema_mismatch");
+      assert.match(error.message, /stop the service, delete/);
+      assert.match(error.message, /sdd\.sqlite-wal/);
+      assert.match(error.message, /sdd\.sqlite-shm/);
+      assert.match(error.message, /v1 data is not migrated/);
+      return true;
+    });
+  } finally {
+    await rm(logRoot, { recursive: true, force: true });
+  }
 });

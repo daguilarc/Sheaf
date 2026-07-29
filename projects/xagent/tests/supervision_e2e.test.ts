@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -22,6 +24,11 @@ import type {
   WatchdogVerdict,
 } from "../src/supervision/types.js";
 import { Supervisor } from "../src/supervision/supervisor.js";
+import {
+  asToolCallResult,
+  startMcpService,
+  structuredToolBody,
+} from "./support/mcp_service.js";
 
 const x_FixtureDir = path.join(process.cwd(), "tests", "fixtures", "watchdog");
 const x_PackagedMcpPath = path.join(
@@ -559,3 +566,68 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   const promise = new Promise<T>((res) => { resolve = res; });
   return { promise, resolve };
 }
+
+test("a provider start failure after the insert surfaces as a tombstone in xagent_list", async () => {
+  const service = await startMcpService({ failProviderStart: true });
+  try {
+    await assert.rejects(() => service.startSddImplementer({ task: 4 }));
+    const body = structuredToolBody(asToolCallResult(
+      await service.client.callTool({ name: "xagent_list", arguments: {} }),
+    ));
+    const runs = body.runs as Array<Record<string, unknown>>;
+    const tombstone = runs.find((entry) => entry.run_missing === true);
+    assert.ok(tombstone, "the failed dispatch must be visible as a tombstone");
+    assert.equal((tombstone.sdd as { role: string }).role, "implementer");
+    assert.equal(service.ledger().ListAll().length, 1);
+  } finally {
+    await service.close();
+  }
+});
+
+test("a service restart leaves the ledger byte-identical and steers the controller to a fresh fixer", async () => {
+  const logRoot = await mkdtemp(path.join(tmpdir(), "sdd-e2e-"));
+  try {
+    const first = await startMcpService({ logRoot });
+    const implementer = await first.startSddImplementer({ task: 4 });
+    // Digest after abrupt teardown: hashing while the first store is still open
+    // races WAL checkpoint on close and is not the restart property. The plan
+    // snippet took the digest before killAbruptly; that is stale under WAL.
+    //
+    await first.killAbruptly();
+    const digestBefore = createHash("sha256")
+      .update(readFileSync(path.join(logRoot, "sdd.sqlite")))
+      .digest("hex");
+
+    const second = await startMcpService({ logRoot });
+    try {
+      const digestAfter = createHash("sha256")
+        .update(readFileSync(path.join(logRoot, "sdd.sqlite")))
+        .digest("hex");
+      assert.equal(digestAfter, digestBefore);
+
+      const result = asToolCallResult(await second.client.callTool({
+        name: "xagent_sdd_followup",
+        arguments: {
+          kind: "fix",
+          agent_id: implementer.agent_id,
+          round: 1,
+          findings: second.artifact("task-4-findings.md"),
+          findings_text: "x",
+          tests: ["npm test"],
+          report: second.artifact("task-4-report.md"),
+        },
+      }));
+      assert.equal(result.isError, true);
+      const body = structuredToolBody(result);
+      assert.equal(body.error, "sdd_agent_not_live");
+      assert.deepEqual(
+        (body.details as { recovery: unknown }).recovery,
+        { tool: "xagent_sdd_start", role: "fixer" },
+      );
+    } finally {
+      await second.close();
+    }
+  } finally {
+    await rm(logRoot, { recursive: true, force: true });
+  }
+});
