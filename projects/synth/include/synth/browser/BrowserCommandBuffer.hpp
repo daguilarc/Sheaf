@@ -328,15 +328,26 @@ inline synth::ui::TextAlign DecodeTextAlign(std::uint8_t value)
     return static_cast<synth::ui::TextAlign>(value);
 }
 
+// A presence byte is 0 or 1 and nothing else. Rejecting every other value
+// keeps this decoder exactly as strict as `presence()` in `protocol.ts`: a
+// byte the encoder can never produce means the reader has lost its place in
+// the node section, and silently reading the next four bytes as a colour
+// would turn that into a plausible-looking frame.
+inline bool DecodePresence(std::uint8_t value)
+{
+    if (value > 1) throw std::runtime_error("invalid presence flag");
+    return value == 1;
+}
+
 inline std::optional<synth::Color> ReadOptionalColor(Reader& reader)
 {
-    if (reader.U8() == 0) return std::nullopt;
+    if (!DecodePresence(reader.U8())) return std::nullopt;
     return reader.Color();
 }
 
 inline std::optional<synth::ui::TextStyle> ReadOptionalTextStyle(Reader& reader)
 {
-    if (reader.U8() == 0) return std::nullopt;
+    if (!DecodePresence(reader.U8())) return std::nullopt;
     synth::ui::TextStyle style;
     style.size = reader.Float();
     style.color = reader.Color();

@@ -354,6 +354,65 @@ void TestFullyTransparentBlackIsAPresentColour()
             "a producer legitimately choosing transparent black is not read as absent");
 }
 
+void TestCorruptPresenceFlagIsRejected()
+{
+    Require(!synth_browser::detail::DecodePresence(0) && synth_browser::detail::DecodePresence(1),
+            "0 and 1 are the only presence flags the encoder emits");
+    bool threwOnFlag = false;
+    try
+    {
+        synth_browser::detail::DecodePresence(2);
+    }
+    catch (const std::runtime_error&)
+    {
+        threwOnFlag = true;
+    }
+    Require(threwOnFlag, "a presence flag the encoder can never emit is rejected, as in protocol.ts");
+
+    // Poke the first node's colour presence byte to prove the strictness is
+    // reachable through the whole decode path rather than only in the helper.
+    // Buffer layout: 4 magic + 2 version + 2 reserved + 5 section lengths,
+    // then the string section, then the node section's u32 node count, then
+    // the first node record. Within a record the colour presence byte follows
+    // the id (u32), four u8 flags, the bounds (4 floats), three string
+    // indices (u32), and six floats.
+    const auto encodeRoot = [](std::optional<synth::Color> color) {
+        synth::ui::NodeTree tree;
+        synth::ui::Node root;
+        root.id = synth::ui::NodeId("root");
+        root.kind = synth::ui::NodeKind::Root;
+        root.bounds = {0, 0, 400, 300};
+        root.color = color;
+        tree.nodes.push_back(root);
+        return synth_browser::SerializeNodeTree(tree).bytes;
+    };
+    auto bytes = encodeRoot(std::nullopt);
+    const auto readU32 = [](const std::vector<std::byte>& from, std::size_t at) {
+        std::uint32_t value = 0;
+        for (std::size_t byte = 0; byte < 4; ++byte)
+            value |= static_cast<std::uint32_t>(from[at + byte]) << (8 * byte);
+        return value;
+    };
+    const std::size_t colourPresence = 28 + readU32(bytes, 8) + 4 + 60;
+    // The same offset reads 0 for an unstyled root and 1 for a styled one,
+    // which is what proves the arithmetic lands on the presence byte rather
+    // than on some other zero. Both trees have identical string sections.
+    Require(bytes[colourPresence] == std::byte{0}, "the unstyled root encodes an absent colour");
+    Require(encodeRoot(synth::Color::Rgb(1, 2, 3))[colourPresence] == std::byte{1},
+            "the styled root sets the same byte, so it is the colour presence flag");
+    bytes[colourPresence] = std::byte{2};
+    bool threwOnBuffer = false;
+    try
+    {
+        synth_browser::DecodeCommandBuffer(bytes);
+    }
+    catch (const std::runtime_error&)
+    {
+        threwOnBuffer = true;
+    }
+    Require(threwOnBuffer, "a corrupt presence byte fails the decode instead of inventing a colour");
+}
+
 void TestMovingAParentChangesOnlyTheParentRecord()
 {
     const auto at = [](float parentY) {
@@ -560,6 +619,7 @@ int main()
     TestVersionTwoCarriesStyleAndParentRelativeBounds();
     TestAbsentStyleStaysAbsent();
     TestFullyTransparentBlackIsAPresentColour();
+    TestCorruptPresenceFlagIsRejected();
     TestMovingAParentChangesOnlyTheParentRecord();
     TestVariantCarriesNoAppearanceStrings();
     TestVersionMismatchFailsLoudly();
