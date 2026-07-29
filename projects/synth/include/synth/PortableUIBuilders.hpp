@@ -294,6 +294,7 @@ struct Subtree {
 class Builder {
 public:
     using Children = std::function<void(Builder&)>;
+    using DrawFactory = synth::ui::DrawFactory;
 
     Builder& Root(std::string id, Bounds bounds) {
         Node node;
@@ -473,7 +474,22 @@ public:
         node.kind = NodeKind::Draw;
         node.bounds = bounds;
         node.drawCommands = std::move(commands);
+        style.layout.explicitBounds = bounds;
         return FinishControl(std::move(node), std::move(style));
+    }
+
+    Builder& Draw(std::string id, LayoutOptions opts, DrawFactory factory) {
+        Node node;
+        node.id = NodeId(std::move(id));
+        node.kind = NodeKind::Draw;
+        if (opts.explicitBounds.has_value()) {
+            node.bounds = *opts.explicitBounds;
+        }
+        const std::string key = node.id.value;
+        layoutByNodeId_[key] = opts;
+        drawFactories_[key] = std::move(factory);
+        AppendChild(std::move(node));
+        return *this;
     }
 
     Builder& DrawInteractive(std::string id,
@@ -489,11 +505,23 @@ public:
         node.drawCommands = std::move(commands);
         node.pointerDragAction = std::move(pointerDragAction);
         node.doubleClickAction = std::move(doubleClickAction);
+        style.layout.explicitBounds = bounds;
         return FinishControl(std::move(node), std::move(style));
     }
 
     NodeTree Build() {
-        return tree_;
+        if (scopeStack_.empty()) {
+            return tree_;
+        }
+        return Build(tree_.nodes[scopeStack_.front()].bounds);
+    }
+
+    NodeTree Build(Bounds rootExtent) {
+        NodeTree resolved = tree_;
+        if (!scopeStack_.empty()) {
+            ResolveLayout(resolved, resolved.nodes[scopeStack_.front()].id, rootExtent, layoutByNodeId_, drawFactories_);
+        }
+        return resolved;
     }
 
     Subtree BuildSubtree() {
@@ -571,6 +599,7 @@ private:
     NodeTree tree_;
     std::vector<std::size_t> scopeStack_;
     std::map<std::string, LayoutOptions> layoutByNodeId_;
+    std::map<std::string, DrawFactory> drawFactories_;
 };
 
 }  // namespace synth::ui

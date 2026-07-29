@@ -24,6 +24,7 @@ MIDI_SENDER_TEST_BIN := $(BUILD_DIR)/midi_sender_tests
 VIEWMODEL_TEST_BIN := $(BUILD_DIR)/viewmodel_tests
 BLOCKS_TEST_BIN := $(BUILD_DIR)/blocks_tests
 PORTABLE_UI_TEST_BIN := $(BUILD_DIR)/portable_ui_tests
+PORTABLE_UI_LAYOUT_TEST_BIN := $(BUILD_DIR)/portable_ui_layout_tests
 RUNTIME_MAIN_COMPONENT_TEST_BIN := $(BUILD_DIR)/runtime_main_component_tests
 RUNTIME_FILE_SERVICE_TEST_BIN := $(BUILD_DIR)/runtime_file_service_tests
 CONTROLLERS_PAGE_UI_TEST_BIN := $(BUILD_DIR)/controllers_page_ui_tests
@@ -172,6 +173,9 @@ $(BLOCKS_TEST_BIN): tests/blocks_tests.cpp $(LIB) include/synth/MidiConfigBlocks
 $(PORTABLE_UI_TEST_BIN): tests/portable_ui_tests.cpp apps/miniapp/MiniAppDraw.hpp apps/braid-4/Braid4Draw.hpp apps/braid-4/Braid4UiModel.hpp apps/braid-4/Braid4Core.hpp include/synth/EncoderDraw.hpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp include/synth/ConstantBarVisualizer.hpp include/synth/NoiseWaveformVisualizer.hpp include/synth/DspConstant.hpp include/synth/DspNoise.hpp include/synth/RuntimePages.hpp include/synth/ControllersPageUI.hpp include/synth/MidiConfigBlocks.hpp include/synth/AppConcepts.hpp $(STANDARD_MODULATOR_HEADERS) $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
+$(PORTABLE_UI_LAYOUT_TEST_BIN): tests/portable_ui_layout_tests.cpp include/synth/PortableUI.hpp include/synth/PortableUIBuilders.hpp include/synth/PortableUILayout.hpp include/synth/PortableUIMetrics.hpp $(LIB)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
+
 $(RUNTIME_MAIN_COMPONENT_TEST_BIN): tests/runtime_main_component_tests.cpp include/synth/RuntimeMainComponent.hpp include/synth/AppConcepts.hpp include/synth/ControllerWizardDiscoveryCache.hpp include/synth/ControllersPageUI.hpp include/synth/MidiConfigViewModel.hpp include/synth/RuntimePages.hpp include/synth/RuntimePagePolicy.hpp $(LIB)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
@@ -211,7 +215,7 @@ browser-audio-device-test: $(BROWSER_AUDIO_DEVICE_TEST_BIN)
 browser-midi-bridge-test: $(BROWSER_MIDI_BRIDGE_TEST_BIN)
 	$(BROWSER_MIDI_BRIDGE_TEST_BIN)
 
-test: check-ui-boundary $(TEST_BIN) $(BUTTON_GRID_TEST_BIN) $(DSP_TEST_BIN) $(MASTER_CLOCK_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(BRAID4_SYSTEM_TEST_BIN) $(BRAID4_DEADLINE_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN) $(MIDI_SENDER_TEST_BIN) $(VIEWMODEL_TEST_BIN) $(BLOCKS_TEST_BIN) $(PORTABLE_UI_TEST_BIN) $(RUNTIME_MAIN_COMPONENT_TEST_BIN) $(RUNTIME_FILE_SERVICE_TEST_BIN) $(CONTROLLERS_PAGE_UI_TEST_BIN) $(BROWSER_COMMAND_BUFFER_TEST_BIN) $(BROWSER_AUDIO_DEVICE_TEST_BIN) $(CONTROLLER_WIZARD_TEST_BIN)
+test: check-ui-boundary $(TEST_BIN) $(BUTTON_GRID_TEST_BIN) $(DSP_TEST_BIN) $(MASTER_CLOCK_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(BRAID4_SYSTEM_TEST_BIN) $(BRAID4_DEADLINE_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN) $(MIDI_SENDER_TEST_BIN) $(VIEWMODEL_TEST_BIN) $(BLOCKS_TEST_BIN) $(PORTABLE_UI_TEST_BIN) $(PORTABLE_UI_LAYOUT_TEST_BIN) $(RUNTIME_MAIN_COMPONENT_TEST_BIN) $(RUNTIME_FILE_SERVICE_TEST_BIN) $(CONTROLLERS_PAGE_UI_TEST_BIN) $(BROWSER_COMMAND_BUFFER_TEST_BIN) $(BROWSER_AUDIO_DEVICE_TEST_BIN) $(CONTROLLER_WIZARD_TEST_BIN)
 	$(TEST_BIN)
 	$(BUTTON_GRID_TEST_BIN)
 	$(DSP_TEST_BIN)
@@ -232,6 +236,7 @@ test: check-ui-boundary $(TEST_BIN) $(BUTTON_GRID_TEST_BIN) $(DSP_TEST_BIN) $(MA
 	$(VIEWMODEL_TEST_BIN)
 	$(BLOCKS_TEST_BIN)
 	$(PORTABLE_UI_TEST_BIN)
+	$(PORTABLE_UI_LAYOUT_TEST_BIN)
 	$(RUNTIME_MAIN_COMPONENT_TEST_BIN)
 	$(RUNTIME_FILE_SERVICE_TEST_BIN)
 	$(CONTROLLERS_PAGE_UI_TEST_BIN)
