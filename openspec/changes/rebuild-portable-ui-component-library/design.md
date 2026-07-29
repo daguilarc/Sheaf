@@ -976,10 +976,18 @@ cover — is spot-checked at the human sign-off gate (D4).
    `mouseExit` anywhere in `PortableJuceBackend.hpp`. `SetSemantics` carries
    only appearance duty, which `Node::color` and `Node::textStyle` now replace
    outright. So there is no residual to preserve, no explicit replacement field
-   is needed, and `variant` is deleted from the model together with every
-   appearance-string branch in both backends. The decision was still made
-   before the v2 schema was fixed, which is what mattered — a nonempty residual
-   would have needed a wire slot.
+   is needed, and `variant` carries nothing this change preserves.
+
+   **Staging, because "retired" and "deleted" are not the same task.** The
+   *decision* had to precede the v2 schema, and it did: `variant` is gone from
+   the wire in the schema task, so no second migration is possible. Removing the
+   *field* from `Node` and its branches from both backends cannot happen there —
+   roughly fifteen producer sites and both backends still reference it, and they
+   are converted by the backend and page tasks. So the field survives as a
+   documented dead bridge until the cleanup task (7.2) deletes it along with the
+   appearance-string branches. The same split applies to `ComboBox::label`
+   (OQ5): the schema task stops routing caption duty through it, the page
+   rebuilds stop populating it, and cleanup removes it.
 
 2. **Reservation metric values and JUCE text-fit verification depth.** The
    per-style advance estimates and per-kind intrinsic extents are seeded from
