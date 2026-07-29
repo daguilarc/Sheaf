@@ -2837,7 +2837,7 @@ git commit -m "docs(xagent): sync skill, README, and specs to the v2 SDD surface
 - Consumes: everything.
 - Produces: regenerated plugin runtime assets.
 
-- [ ] **Step 1: Run the xagent suite**
+- [x] **Step 1: Run the xagent suite**
 
 ```bash
 cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5 && make xagent-test
@@ -2845,7 +2845,7 @@ cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5 && make xag
 
 Expected: all `node --test` files pass, 0 failures.
 
-- [ ] **Step 2: Run the dispatch-prompt suite**
+- [x] **Step 2: Run the dispatch-prompt suite**
 
 ```bash
 cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5/projects/agents && python3 -m unittest utils.dispatch_prompt_test
@@ -2853,7 +2853,7 @@ cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5/projects/ag
 
 Expected: `OK`.
 
-- [ ] **Step 3: Run the agents installer suite**
+- [x] **Step 3: Run the agents installer suite**
 
 ```bash
 cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5 && make agents-test
@@ -2861,7 +2861,7 @@ cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5 && make age
 
 Expected: `OK`.
 
-- [ ] **Step 4: Repackage the plugin runtime assets**
+- [x] **Step 4: Repackage the plugin runtime assets**
 
 ```bash
 cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5 && make xagent-plugin-build
@@ -2869,7 +2869,7 @@ cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5 && make xag
 
 Expected: regenerated files under `plugins/xagent/assets/`.
 
-- [ ] **Step 5: Run the plugin test suite**
+- [x] **Step 5: Run the plugin test suite**
 
 ```bash
 cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5 && make xagent-plugin-test
@@ -2877,7 +2877,7 @@ cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5 && make xag
 
 Expected: unittest `OK`, `package_xagent.py --check` clean, plugin validator clean.
 
-- [ ] **Step 6: Prove the deleted symbols are gone**
+- [x] **Step 6: Prove the deleted symbols are gone**
 
 ```bash
 cd /Users/joyo/Sheaf/.claude/worktrees/sdd-ledger-v2-redesign-6203c5/projects/xagent
@@ -2893,7 +2893,7 @@ done
 
 Expected: every line reads `: 0`.
 
-- [ ] **Step 7: Confirm the live service is healthy on a v2 ledger**
+- [x] **Step 7: Confirm the live service is healthy on a v2 ledger**
 
 ```bash
 curl -sS http://127.0.0.1:9005/health
@@ -2902,7 +2902,7 @@ sqlite3 "$LOG_ROOT/sdd.sqlite" "PRAGMA user_version; SELECT COUNT(*) FROM sdd_ag
 
 Expected: `healthy: true`; `user_version` `2`; a row count reflecting dispatches since the reprovision.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add plugins/xagent/assets
