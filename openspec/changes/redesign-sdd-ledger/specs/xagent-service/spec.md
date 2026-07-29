@@ -265,7 +265,7 @@ WHEN `xagent_list` returns runs, THE xagent service SHALL join `sdd_agents` iden
 
 ### Requirement: xsvc-14 — Retention: run directories are the system of record
 
-WHILE an `sdd_agents` row references a run directory, THE xagent service SHALL treat `<log_root>/<agent_id>/` as the durable system of record for that agent's reports and submitted prompts: THE service SHALL NOT prune, truncate, or rotate `normalized.jsonl` for ledger-referenced runs, and service documentation SHALL state that deleting a ledger-referenced run directory deletes the only copy of that agent's reports and prompts.
+WHILE an `sdd_agents` row references a run directory, THE xagent service SHALL treat `<log_root>/<agent_id>/` as the durable system of record for that agent's reports and submitted prompts. THE service SHALL NOT prune, truncate, rotate, compact, or delete `normalized.jsonl` or its containing run directory for any ledger-referenced run, and no retention, cleanup, or garbage-collection feature SHALL be able to do so. Because `sdd_agents` is insert-only and never deletes rows, a referenced run directory stays referenced permanently: there is no age, disk-pressure, or completion condition that makes deleting it legal. Service documentation SHALL state that deleting a ledger-referenced run directory destroys the only copy of that agent's reports and prompts.
 
 #### Scenario: Report recovery long after completion
 
@@ -273,11 +273,24 @@ WHILE an `sdd_agents` row references a run directory, THE xagent service SHALL t
 - **THEN** the report text is readable from the `turn.completed` event in that run's `normalized.jsonl`
 - **AND** no ledger column was expected to hold it
 
-#### Scenario: Cleanup tooling is constrained
+#### Scenario: Pruning a ledger-referenced run is illegal
 
-- **WHEN** log-root cleanup or garbage collection considers a run directory whose `agent_id` appears in `sdd_agents`
-- **THEN** the documented policy forbids silent deletion
-- **AND** any future archival step must preserve the `turn.submitted` and `turn.completed` events before removal
+- **WHEN** any retention, cleanup, or garbage-collection path is asked to remove or shrink a run directory whose `agent_id` appears in `sdd_agents`
+- **THEN** it refuses and leaves the directory byte-for-byte intact
+- **AND** it surfaces the refusal rather than skipping the directory silently
+- **AND** shipping a build that deletes such a directory violates this requirement regardless of the run's age, phase, or the disk pressure that motivated it
+
+#### Scenario: Unreferenced runs are the only prunable ones
+
+- **WHEN** cleanup considers a run directory whose `agent_id` has no row in `sdd_agents`
+- **THEN** removing it is permitted
+- **AND** the referenced-versus-unreferenced test is a ledger query, not a filename, mtime, or age heuristic
+
+#### Scenario: Archival is not an exemption
+
+- **WHEN** someone proposes copying a ledger-referenced run elsewhere and then deleting the original
+- **THEN** that is a deletion under this requirement and is equally illegal
+- **AND** permitting it requires amending this requirement first, not working around it
 
 ### Requirement: xsvc-15 — MCP: SDD dispatch tools advertise their input contract
 

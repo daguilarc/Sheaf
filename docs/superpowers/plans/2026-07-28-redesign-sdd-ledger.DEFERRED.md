@@ -187,7 +187,7 @@ Task 9 is the natural owner of all four. This is not a defect in Task 4; it is
 the accounting for a wholesale deletion, recorded so the coverage is rebuilt
 deliberately rather than assumed.
 
-### B8. A pruned run directory resurfaces as a dispatch-failure tombstone — OPEN
+### B8. A pruned run directory resurfaces as a dispatch-failure tombstone — RESOLVED, pruning made illegal
 
 Found in the Task 8b review.
 
@@ -209,6 +209,39 @@ Whole-branch review should decide whether a tombstone needs to distinguish
 deleting a ledger-referenced run directory, which if enforced makes this
 unreachable. If that prohibition is the answer, say so in the requirement
 rather than leaving it implicit.
+
+**Resolution (owner decision): the prohibition is the answer.** Rather than
+teach the tombstone to distinguish "never started" from "evidence pruned", the
+ambiguity is removed at the source: pruning a ledger-referenced run is illegal,
+so the second case cannot arise.
+
+xsvc-14 was strengthened from a documentation-shaped policy ("the documented
+policy forbids silent deletion") into a hard prohibition, in both the change
+delta and the synced main spec:
+
+- The prohibited verb set now covers deleting the run *directory*, not just
+  pruning/truncating/rotating `normalized.jsonl` inside it.
+- It states why there is no expiry: `sdd_agents` is insert-only and never
+  deletes rows, so a referenced directory stays referenced permanently. No age,
+  phase, or disk-pressure condition makes deletion legal.
+- A new scenario, *Pruning a ledger-referenced run is illegal*, requires any
+  cleanup path to refuse, leave the directory byte-for-byte intact, and surface
+  the refusal rather than skipping silently.
+- A new scenario, *Unreferenced runs are the only prunable ones*, says what
+  cleanup **may** do — and that the referenced test is a ledger query, not an
+  mtime or filename heuristic. This is the part a future implementer needs.
+- A new scenario, *Archival is not an exemption*, closes the copy-then-delete
+  loophole the old wording left open ("any future archival step must preserve
+  the events before removal"), and requires amending the requirement rather
+  than working around it.
+
+Nothing prunes today, so no code changed. The point is that the first build
+that tries will now fail a written requirement instead of quietly discarding
+the only copy of an agent's reports.
+
+xsvc-13's tombstone wording is left alone: under the strengthened xsvc-14 it is
+correct, because `run_missing: true` can now only mean "this dispatch never
+became a run."
 
 ### B7. Owner-only ledger permissions — REMOVED, finding moot
 

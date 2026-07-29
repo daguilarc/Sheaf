@@ -58,8 +58,8 @@ timezone; local offset derived from Unix epoch for Codex/Cursor).
 
 ### Requirement: usage-5 — Partial success: omit failed fields
 
-IF an expected usage or reset field cannot be fetched or parsed, THEN THE
-script SHALL omit that field from the provider object and SHALL still emit the
+IF a usage or reset field cannot be fetched or parsed, THEN THE script SHALL
+omit that expected field from the provider object and SHALL still emit the
 rest of the report.
 
 #### Scenario: One field fails

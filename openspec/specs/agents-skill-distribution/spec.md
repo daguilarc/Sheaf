@@ -501,37 +501,44 @@ WHEN the distributed `openspec-superpowers-workflow` skill coordinates pre-plan 
 - **THEN** the inspection follows a long wait deadline, a reported attention event, or an explicit user status request
 - **AND** is not part of a fixed-frequency polling loop
 
-## ADDED Requirements
-
 ### Requirement: asd-27 — Shared skill: mandatory xagent SDD routing
 
-WHEN the `openspec-superpowers-workflow` skill executes a written Superpowers plan task, THE skill SHALL require every implementer, task reviewer, fix, re-review, and final whole-branch reviewer turn to use the xagent SDD MCP facade with the assigned agent/model, harness, and effort; SHALL require fix and re-review follow-ups to reuse their recorded implementer or task-reviewer SDD agent IDs while the workflow permits reuse; SHALL treat the final whole-branch `code-reviewer` as a single-turn `xagent_sdd_start` → await → `xagent_sdd_close` session with no follow-up; and SHALL prohibit native subagent transport, raw xagent prompt/message composition, and terminal xagent fallback for those SDD turns.
+WHEN the `openspec-superpowers-workflow` skill executes a written Superpowers plan task, THE skill SHALL require every implementer, reviewer, fix, re-review, and final whole-branch reviewer turn to be dispatched through `xagent_sdd_start` with the assigned harness, model, and effort; SHALL require follow-up turns to reuse the recorded `agent_id` via `xagent_sdd_followup` while that agent is live; SHALL require reports to be consumed through the generic `xagent_await` keyed by `run_id`; SHALL treat the final whole-branch `code-reviewer` as a single-turn `xagent_sdd_start` → `xagent_await` → `xagent_close` session with no follow-up; and SHALL prohibit native subagent transport, raw xagent prompt composition, and terminal xagent fallback for those SDD turns.
 
 #### Scenario: Initial task agents use SDD start
 
 - **WHEN** the workflow dispatches an implementer or task reviewer for a Superpowers plan task
-- **THEN** the skill directs the controller to call `xagent_sdd_start`
+- **THEN** the skill directs the controller to call `xagent_sdd_start` with role `implementer` or role `reviewer` plus the task identifier
 - **AND** requires the controller to pass the complete brief and assignment metadata
 - **AND** does not offer native dispatch as an alternative
 
-#### Scenario: Fix and re-review preserve sessions
+#### Scenario: Fix and re-review reuse the live agent
 
-- **WHEN** a task enters a fix round that permits agent reuse
-- **THEN** the skill directs the controller to call `xagent_sdd_followup` with the existing implementer or task-reviewer agent ID
+- **WHEN** a task enters a fix or re-review round and the original agent is still live
+- **THEN** the skill directs the controller to call `xagent_sdd_followup` with that agent's recorded `agent_id`
 - **AND** prohibits starting a fresh agent merely to send that follow-up
+- **AND** states that the follow-up renders and submits without writing a new ledger row
+
+#### Scenario: A dead agent is recovered with a fresh role
+
+- **WHEN** `xagent_sdd_followup` returns `sdd_agent_not_live`
+- **THEN** the skill directs the controller to dispatch a fresh `xagent_sdd_start` for the same plan and task, passing the original brief
+- **AND** selects role `fixer` when the dead agent was an `implementer` or `fixer`, and role `re-reviewer` when it was a `reviewer` or `re-reviewer`
+- **AND** does not describe any tool that reopens or repairs the dead agent
 
 #### Scenario: Whole-branch reviewer is single-turn
 
 - **WHEN** the workflow dispatches the final whole-branch `code-reviewer`
-- **THEN** the skill directs the controller to use `xagent_sdd_start`, one long await, and `xagent_sdd_close`
+- **THEN** the skill directs the controller to use `xagent_sdd_start` with role `reviewer` and no `task`, one long `xagent_await`, and `xagent_close`
 - **AND** does not offer `xagent_sdd_followup` for that session
 - **AND** treats a later whole-branch review round as a new `xagent_sdd_start`
 
-#### Scenario: SDD reports use persisted await
+#### Scenario: SDD reports are read from the run
 
 - **WHEN** an SDD agent is running and independent controller work is exhausted
-- **THEN** the skill directs the controller to call one long `xagent_sdd_await`
-- **AND** consume the returned report only after xagent records it
+- **THEN** the skill directs the controller to call one long `xagent_await` on the run, without supplying a deadline
+- **AND** describes the report as arriving in the run's `turn.completed` event rather than being fetched from a ledger column
+- **AND** does not instruct the controller to wait for xagent to record the report first
 
 #### Scenario: SDD MCP is unavailable
 
@@ -547,20 +554,28 @@ WHEN the `openspec-superpowers-workflow` skill executes a written Superpowers pl
 
 ### Requirement: asd-28 — Plugin skill: SDD-specific xagent API
 
-WHEN a controller uses the plugin-provided `xagent-subagents` skill for Superpowers SDD, THE skill SHALL direct it to the xagent SDD MCP facade rather than the generic xagent tools, explain the initial and follow-up lifecycle, require report consumption through `xagent_sdd_await`, and reserve the generic MCP and quiet service-client guidance for non-SDD delegation.
+WHEN a controller uses the plugin-provided `xagent-subagents` skill for Superpowers SDD, THE skill SHALL direct it to `xagent_sdd_start` and `xagent_sdd_followup` for dispatch rather than raw prompt composition, SHALL name the generic `xagent_await`, `xagent_message`, and `xagent_close` as the tools that carry an SDD run to completion, SHALL explain the four start roles and the fresh-agent recovery path, and SHALL reserve the quiet service-client guidance for non-SDD delegation.
 
-#### Scenario: Skill distinguishes SDD from generic delegation
+#### Scenario: Skill names the v2 surface
 
 - **WHEN** a controller opens the xagent skill
-- **THEN** the skill identifies `xagent_sdd_start`, `xagent_sdd_followup`, `xagent_sdd_await`, and `xagent_sdd_close` as the required Superpowers SDD path
-- **AND** identifies the generic tools as the path for work outside Superpowers SDD
+- **THEN** the skill identifies `xagent_sdd_start` and `xagent_sdd_followup` as the SDD dispatch tools
+- **AND** identifies `xagent_await`, `xagent_message`, and `xagent_close` as generic tools that take a `run_id`, not an `agent_id`
+- **AND** does not mention `xagent_sdd_await` or `xagent_sdd_close`
+
+#### Scenario: Skill documents the start roles
+
+- **WHEN** the skill explains an SDD dispatch
+- **THEN** it names all four roles — `implementer`, `reviewer` (with `task` for a task review, without for a whole-branch review), `fixer`, and `re-reviewer`
+- **AND** states that the role is fixed at start and never changes
+- **AND** states that `xagent_sdd_followup` requires a `report` path
 
 #### Scenario: Skill documents ledger identity
 
-- **WHEN** the skill explains an SDD dispatch
-- **THEN** it tells the controller to retain the returned `agent_id` and supervision sequence
-- **AND** explains that xagent records the brief and sanitized report in its SDD ledger before report delivery
-- **AND** does not describe the sequence as a provider JSONL position
+- **WHEN** the skill explains what xagent persists
+- **THEN** it tells the controller to retain the returned `agent_id` and `run_id`
+- **AND** explains that the ledger holds one immutable dispatch row per agent, written before the run exists
+- **AND** explains that reports and submitted prompts live only in the run directory, so deleting one destroys the only copy
 
 #### Scenario: Skill source remains plugin-owned
 
