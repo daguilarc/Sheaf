@@ -18,6 +18,7 @@ export declare class Supervisor {
     #private;
     constructor(options: SupervisorOptions);
     inspect(): SupervisorInspection;
+    isVouching(): boolean;
     evidenceSnapshot(): SemanticEvidenceSnapshot | undefined;
     start(): Promise<void>;
     submit(text: string): Promise<void>;

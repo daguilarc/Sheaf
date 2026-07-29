@@ -1,9 +1,9 @@
+import type { Progress } from "@modelcontextprotocol/sdk/types.js";
 import type { AwaitRunResult, CloseRunResult, InspectRunResult, InterruptRunResult, MessageRunResult, StartRunResult } from "./run_manager.js";
 import type { StructuredToolError, XagentAwaitInput, XagentCloseInput, XagentInspectInput, XagentInterruptInput, XagentMessageInput, XagentStartInput } from "./tool_schemas.js";
 export declare const XAGENT_DEFAULT_SERVICE_BASE_URL = "http://127.0.0.1:9005";
 export type XagentServiceClientOptions = {
     readonly baseUrl?: string;
-    readonly awaitHttpChunkSeconds?: number;
 };
 export type XagentServiceClient = {
     start(input: XagentStartInput): Promise<StartRunResult>;
@@ -14,12 +14,11 @@ export type XagentServiceClient = {
     closeRun(input: XagentCloseInput): Promise<CloseRunResult>;
     close(): Promise<void>;
     /**
-     * Number of HTTP POST chunks issued by the last `await(...)` call. The quiet
-     * client chunks each request at `x_McpAwaitHttpChunkSeconds` and reissues
-     * until the application deadline; tests use this to prove multi-chunk
-     * reissue against a real transport rather than a single long POST.
+     * Number of `xagent_await` tool calls issued by the last `await(...)` call.
+     * Progress pings keep one held request alive; a healthy await must issue
+     * exactly one call rather than chunk-and-reissue.
      */
-    readonly awaitChunksIssued: number;
+    readonly awaitToolCallsIssued: number;
 };
 export declare class XagentServiceUnavailableError extends Error {
     readonly structured: StructuredToolError;
@@ -31,14 +30,13 @@ export declare class XagentServiceToolError extends Error {
 }
 export declare function resolveXagentServiceBaseUrl(explicit?: string, env?: NodeJS.ProcessEnv): string;
 export declare function createXagentServiceClient(options?: XagentServiceClientOptions): XagentServiceClient;
-export declare const x_McpAwaitTimeoutSlackSeconds = 30;
-export declare const x_McpAwaitHttpChunkSeconds = 240;
-export declare const x_McpAwaitReconnectAttempts = 3;
-export declare const x_McpAwaitReconnectBackoffMs = 250;
+export declare const x_McpAwaitRequestTimeoutMs: number;
 export type McpToolRequestOptions = {
     readonly timeout?: number;
     readonly maxTotalTimeout?: number;
+    readonly resetTimeoutOnProgress?: boolean;
+    readonly onprogress?: (progress: Progress) => void;
     readonly signal?: AbortSignal;
 };
-export declare function mcpToolRequestOptions(toolName: string, args: Record<string, unknown>, signal?: AbortSignal): McpToolRequestOptions;
+export declare function mcpToolRequestOptions(toolName: string, signal?: AbortSignal): McpToolRequestOptions;
 //# sourceMappingURL=client.d.ts.map

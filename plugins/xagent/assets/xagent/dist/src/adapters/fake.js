@@ -11,6 +11,7 @@ export class FakeHarnessAdapter {
     startCount = 0;
     closeCount = 0;
     interruptCount = 0;
+    onSubmit;
     constructor(options = {}) {
         this.options = options;
     }
@@ -38,6 +39,7 @@ class FakeHarnessSession {
         if (this.#closed) {
             throw new Error("Harness session is closed.");
         }
+        this.adapter.onSubmit?.();
         this.adapter.submittedTexts.push(context.text);
         this.adapter.submittedContexts.push(context);
         const scriptedEvents = this.adapter.options.scriptedEvents?.[context.inputSequence - 1];

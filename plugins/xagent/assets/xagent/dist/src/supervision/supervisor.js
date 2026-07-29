@@ -131,6 +131,21 @@ export class Supervisor {
                 }),
         };
     }
+    // Vouching is derived from supervisor liveness, never a bare interval: the
+    // phase must still be live and transport progress must fall inside the
+    // silence bound. An await liveness ping that ignores this vouches for
+    // nothing and hides death.
+    //
+    isVouching() {
+        if (terminalPhases.has(this.#phase)) {
+            return false;
+        }
+        const lastProgressMs = Date.parse(this.#lastTransportProgressAt);
+        if (!Number.isFinite(lastProgressMs)) {
+            return false;
+        }
+        return this.#clock().getTime() - lastProgressMs < this.#policy.silenceTimeoutMs;
+    }
     evidenceSnapshot() {
         return this.#evidence?.snapshot();
     }
@@ -169,38 +184,63 @@ export class Supervisor {
         });
     }
     async submit(text) {
-        const turn = await this.#withLifecycleMutation(async () => {
-            if (this.#phase !== "ready" || this.#session === undefined) {
-                throw invalidPhase("submit", this.#phase);
-            }
-            this.#inputSequence += 1;
-            const inputSequence = this.#inputSequence;
-            const turnId = `turn_${inputSequence}`;
-            await this.#publishState("running", "turn_started", false);
-            this.#evidence = new SemanticEvidenceWindow({
-                repoRoot: this.#startOptions.cwd,
-                originalPrompt: text,
-                clock: this.#clock,
-                ...(this.#previousWatchdogVerdict === undefined
-                    ? {}
-                    : { previousVerdict: this.#previousWatchdogVerdict }),
-                ...(this.#policy.watchdog.inputLimitBytes === undefined
-                    ? {}
-                    : { maxInputBytes: this.#policy.watchdog.inputLimitBytes }),
-                ...(this.#policy.watchdog.suspicionWindowMs === undefined
-                    ? {}
-                    : { suspicionWindowMs: this.#policy.watchdog.suspicionWindowMs }),
-                ...(this.#policy.watchdog.repeatedToolThreshold === undefined
-                    ? {}
-                    : { repeatedToolThreshold: this.#policy.watchdog.repeatedToolThreshold }),
-                ...(this.#policy.watchdog.repeatedFailureThreshold === undefined
-                    ? {}
-                    : { repeatedFailureThreshold: this.#policy.watchdog.repeatedFailureThreshold }),
+        // Empty until the in-lock increment assigns the real id. Deliberately not
+        // a speculative `turn_${#inputSequence + 1}`: that reads the counter
+        // outside the mutation gate, and a plausible-looking but wrong id is a
+        // footgun if the rescue condition below is ever widened.
+        //
+        let turnId = "";
+        let turnStarted = false;
+        let turn;
+        try {
+            turn = await this.#withLifecycleMutation(async () => {
+                if (this.#phase !== "ready" || this.#session === undefined) {
+                    throw invalidPhase("submit", this.#phase);
+                }
+                this.#inputSequence += 1;
+                const inputSequence = this.#inputSequence;
+                turnId = `turn_${inputSequence}`;
+                await this.#publishState("running", "turn_started", false);
+                // Only after turn_started's sink+commit succeeds is phase durable
+                // running; a later turn.submitted sink failure must be rescued.
+                //
+                turnStarted = true;
+                await this.#publishSubmitted(turnId, text);
+                this.#evidence = new SemanticEvidenceWindow({
+                    repoRoot: this.#startOptions.cwd,
+                    originalPrompt: text,
+                    clock: this.#clock,
+                    ...(this.#previousWatchdogVerdict === undefined
+                        ? {}
+                        : { previousVerdict: this.#previousWatchdogVerdict }),
+                    ...(this.#policy.watchdog.inputLimitBytes === undefined
+                        ? {}
+                        : { maxInputBytes: this.#policy.watchdog.inputLimitBytes }),
+                    ...(this.#policy.watchdog.suspicionWindowMs === undefined
+                        ? {}
+                        : { suspicionWindowMs: this.#policy.watchdog.suspicionWindowMs }),
+                    ...(this.#policy.watchdog.repeatedToolThreshold === undefined
+                        ? {}
+                        : { repeatedToolThreshold: this.#policy.watchdog.repeatedToolThreshold }),
+                    ...(this.#policy.watchdog.repeatedFailureThreshold === undefined
+                        ? {}
+                        : { repeatedFailureThreshold: this.#policy.watchdog.repeatedFailureThreshold }),
+                });
+                this.#watchdogScheduler.resetTurn();
+                this.#health.recordMechanicalEvent({ type: "provider.started" });
+                return { inputSequence, turnId, session: this.#session };
             });
-            this.#watchdogScheduler.resetTurn();
-            this.#health.recordMechanicalEvent({ type: "provider.started" });
-            return { inputSequence, turnId, session: this.#session };
-        });
+        }
+        catch (error) {
+            // Rescue outside the lock: rescuePublishFailure re-enters the mutation
+            // gate. Skip when turn_started never committed (phase still ready /
+            // concurrent invalidPhase) so we preserve the pre-existing retry path.
+            //
+            if (turnStarted) {
+                await this.#rescuePublishFailure(error, turnId);
+            }
+            throw error;
+        }
         try {
             let lastAssistantText;
             let completed;
@@ -468,6 +508,20 @@ export class Supervisor {
             reason,
             ...(payload === undefined ? {} : { payload }),
         }, deliverable);
+    }
+    // The full submitted text — rendered prompt plus any appended controller
+    // note, or a raw xagent_message — recorded before the provider adapter is
+    // handed the text. Published non-deliverable so it never completes a live
+    // await. If this append fails, submit() rejects and the text is never sent:
+    // text the log cannot prove was sent is not sent.
+    //
+    async #publishSubmitted(turnId, text) {
+        await this.#publishEvent({
+            type: "turn.submitted",
+            phase: "running",
+            reason: "turn_submitted",
+            payload: sanitizeValue({ text, turn_id: turnId }, this.#startOptions.cwd),
+        }, false);
     }
     async #publishEvent(body, deliverable, options = {}) {
         this.#assertTransition(body.phase);

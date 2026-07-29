@@ -3,7 +3,7 @@ import type { EvidenceSuspicionSignal, SemanticEvidenceSnapshot } from "./eviden
 export type SupervisionPhase = "starting" | "running" | "ready" | "completed" | "failed" | "cancelled" | "abandoned";
 export type SupervisionEvent = {
     schema_version: 1;
-    type: "supervision.state" | "supervision.attention" | "turn.completed";
+    type: "supervision.state" | "supervision.attention" | "turn.completed" | "turn.submitted";
     run_id: string;
     sequence: number;
     timestamp: string;

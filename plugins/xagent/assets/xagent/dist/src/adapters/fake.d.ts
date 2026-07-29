@@ -16,6 +16,7 @@ export declare class FakeHarnessAdapter implements HarnessAdapter {
     startCount: number;
     closeCount: number;
     interruptCount: number;
+    onSubmit?: () => void;
     constructor(options?: FakeHarnessAdapterOptions);
     start(_options: HarnessStartOptions): Promise<HarnessSession>;
 }
