@@ -14,6 +14,7 @@ import type { SddManager } from "./sdd_manager.js";
 import {
   parseToolInput,
   structuredErrorFromUnknown,
+  XagentAwaitAdvertisedSchema,
   XagentAwaitInputSchema,
   XagentCloseInputSchema,
   XagentInspectInputSchema,
@@ -190,7 +191,7 @@ function createConfiguredMcpServer(
       title: "Await supervised event",
       description:
         "Block until a durable completion or attention event after the given cursor, or until the await deadline.",
-      inputSchema: XagentAwaitInputSchema,
+      inputSchema: XagentAwaitAdvertisedSchema,
     },
     async (args, extra) => {
       return runTool(async () => {

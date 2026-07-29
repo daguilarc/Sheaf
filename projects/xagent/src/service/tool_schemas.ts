@@ -373,6 +373,24 @@ export const XagentStartInputSchema = z
   })
   .strict();
 
+// Agent-facing discovery (xsvc-5 / xsvc-15): no deadline. Choosing a timeout
+// whose only correct value depends on transport behaviour the agent cannot
+// observe is not the agent's job. Internal callers and tests still pass
+// deadline_seconds through XagentAwaitInputSchema.
+//
+// `.passthrough()` is load-bearing. The MCP SDK validates call arguments
+// against the registered (advertised) schema before the handler runs and
+// would otherwise strip `deadline_seconds`. Passthrough keeps unknown keys
+// for the handler's real parse, while tools/list still advertises only the
+// shape properties below. This is the inverse of the SDD advertised
+// schemas, which are supersets; here discovery is a subset.
+//
+export const XagentAwaitAdvertisedSchema = z.object({
+  run_id: z.string().min(1).describe("The supervised run to await."),
+  after_sequence: z.number().int().min(0)
+    .describe("Return the next durable wake after this cursor."),
+}).passthrough();
+
 export const XagentAwaitInputSchema = z
   .object({
     run_id: z.string().min(1),

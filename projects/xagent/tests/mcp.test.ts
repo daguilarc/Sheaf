@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { FakeHarnessAdapter } from "../src/adapters/fake.js";
+import type { AdapterEvent } from "../src/adapters/types.js";
 import type { XagentRunManager } from "../src/service/run_manager.js";
 import {
   AsSddRunManagerPort,
@@ -19,6 +21,8 @@ import {
   ReReviewFollowupSchema,
   ReReviewerStartSchema,
   ReviewerStartSchema,
+  XagentAwaitAdvertisedSchema,
+  XagentAwaitInputSchema,
   XagentListInputSchema,
   XagentSddFollowupAdvertisedSchema,
   XagentSddFollowupInputSchema,
@@ -32,6 +36,17 @@ import {
   structuredToolBody,
   withMcpService,
 } from "./support/mcp_service.js";
+
+function deferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
 
 function TrustedRendererPathForTests(repoRoot: string): string {
   return path.join(repoRoot, "projects", "agents", "utils", "dispatch-prompt");
@@ -474,6 +489,111 @@ test("every required union field appears on the advertised SDD schema", () => {
       );
     }
   }
+});
+
+test("advertised xagent_await offers run_id and after_sequence only", () => {
+  const advertisedKeys = Object.keys(XagentAwaitAdvertisedSchema.shape).sort();
+  assert.deepEqual(advertisedKeys, ["after_sequence", "run_id"]);
+  assert.equal("deadline_seconds" in XagentAwaitAdvertisedSchema.shape, false);
+
+  for (const key of RequiredKeysOf(XagentAwaitInputSchema)) {
+    assert.ok(
+      advertisedKeys.includes(key),
+      `XagentAwaitAdvertisedSchema is missing required field "${key}"`,
+    );
+  }
+
+  const fromAdvertised = { run_id: "xrun_1", after_sequence: 0 };
+  assert.equal(XagentAwaitAdvertisedSchema.safeParse(fromAdvertised).success, true);
+  const parsed = XagentAwaitInputSchema.safeParse(fromAdvertised);
+  assert.equal(parsed.success, true, "a call built from the advertised schema alone must parse");
+  if (parsed.success) {
+    assert.equal(typeof parsed.data.deadline_seconds, "number");
+  }
+
+  assert.equal(
+    XagentAwaitInputSchema.safeParse({
+      run_id: "xrun_1",
+      after_sequence: 0,
+      deadline_seconds: 30,
+    }).success,
+    true,
+    "internal callers may still pass deadline_seconds",
+  );
+});
+
+test("xagent_await tools/list omits deadline_seconds", async () => {
+  await withMcpService(async ({ client }) => {
+    const listed = await client.listTools();
+    const tool = listed.tools.find((entry) => entry.name === "xagent_await");
+    assert.ok(tool, "xagent_await must be registered");
+    const properties = (tool.inputSchema as { properties?: Record<string, unknown> })
+      .properties ?? {};
+    assert.ok("run_id" in properties);
+    assert.ok("after_sequence" in properties);
+    assert.equal("deadline_seconds" in properties, false);
+  }, { includeSddManager: false });
+});
+
+test("xagent_await still honours an unadvertised deadline_seconds over MCP", async () => {
+  const releaseTurn = deferred<void>();
+  async function* scriptedTurn(): AsyncIterable<AdapterEvent> {
+    yield {
+      type: "message.delta",
+      message_id: "m_deadline_passthrough",
+      role: "assistant",
+      delta: "holding past a short deadline",
+    };
+    await releaseTurn.promise;
+    yield {
+      type: "message.completed",
+      message_id: "m_deadline_passthrough",
+      role: "assistant",
+      text: "too late",
+    };
+    yield {
+      type: "turn.completed",
+      final_text: "too late",
+      provider_thread_id: "fake-thread-deadline-pt",
+    };
+  }
+
+  await withMcpService(async ({ client }) => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "xagent-await-deadline-"));
+    const started = asToolCallResult(await client.callTool({
+      name: "xagent_start_non_sdd",
+      arguments: {
+        cwd,
+        prompt: "deadline must survive advertised parse",
+        harness: "codex",
+        mode: "subagent",
+      },
+    }));
+    assertToolSucceeded(started);
+    const startedBody = structuredToolBody(started);
+    const start = Date.now();
+    const result = asToolCallResult(await client.callTool({
+      name: "xagent_await",
+      arguments: {
+        run_id: startedBody.run_id,
+        after_sequence: startedBody.sequence,
+        deadline_seconds: 1,
+      },
+    }));
+    const elapsedMs = Date.now() - start;
+    assertToolSucceeded(result);
+    const body = structuredToolBody(result);
+    assert.equal(body.event, "supervision.deadline");
+    assert.equal(body.reason, "await_deadline");
+    assert.ok(
+      elapsedMs < 5_000,
+      `deadline_seconds was stripped (elapsed ${elapsedMs}ms); advertised parse must passthrough`,
+    );
+    releaseTurn.resolve(undefined);
+  }, {
+    includeSddManager: false,
+    adapterFactory: () => new FakeHarnessAdapter({ scriptedEvents: [scriptedTurn()] }),
+  });
 });
 
 const x_Assignment = {

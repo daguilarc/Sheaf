@@ -18,7 +18,7 @@ import {
 import {
   createXagentServiceClient,
   mcpToolRequestOptions,
-  x_McpAwaitTimeoutSlackSeconds,
+  x_McpAwaitRequestTimeoutMs,
   XagentServiceUnavailableError,
 } from "../src/service/client.js";
 import { XagentRunManager } from "../src/service/run_manager.js";
@@ -28,11 +28,8 @@ import {
   type XagentServer,
 } from "../src/service/server.js";
 import {
-  x_ServiceRequestTimeoutMs,
-} from "../src/service/config.js";
-import {
-  x_DefaultAwaitDeadlineSeconds,
-} from "../src/service/tool_schemas.js";
+  x_AwaitLivenessPingIntervalMs,
+} from "../src/service/await_liveness.js";
 import type { SupervisionPolicy } from "../src/supervision/types.js";
 
 const testPolicy: SupervisionPolicy = {
@@ -40,26 +37,21 @@ const testPolicy: SupervisionPolicy = {
   watchdog: {},
 };
 
-test("mcp await request options cover the await deadline instead of the SDK 60s default", () => {
-  const short = mcpToolRequestOptions("xagent_await", { deadline_seconds: 5 });
-  assert.equal(short.timeout, (5 + x_McpAwaitTimeoutSlackSeconds) * 1000);
-  assert.equal(short.maxTotalTimeout, short.timeout);
+test("mcp await request options reset on progress and omit maxTotalTimeout", () => {
+  const awaitOptions = mcpToolRequestOptions("xagent_await");
+  assert.equal(awaitOptions.timeout, x_McpAwaitRequestTimeoutMs);
+  assert.equal(awaitOptions.timeout, 2 * x_AwaitLivenessPingIntervalMs);
+  assert.equal(awaitOptions.resetTimeoutOnProgress, true);
+  assert.equal(awaitOptions.maxTotalTimeout, undefined);
+  assert.equal(typeof awaitOptions.onprogress, "function");
 
-  const defaulted = mcpToolRequestOptions("xagent_await", {});
-  assert.equal(
-    defaulted.timeout,
-    Math.min(
-      x_ServiceRequestTimeoutMs,
-      (x_DefaultAwaitDeadlineSeconds + x_McpAwaitTimeoutSlackSeconds) * 1000,
-    ),
-  );
-  assert.ok((defaulted.timeout ?? 0) > 60_000);
-
-  const other = mcpToolRequestOptions("xagent_inspect", { run_id: "xrun_1" });
+  const other = mcpToolRequestOptions("xagent_inspect");
   assert.equal(other.timeout, undefined);
+  assert.equal(other.resetTimeoutOnProgress, undefined);
+  assert.equal(other.onprogress, undefined);
 });
 
-test("client await chunks HTTP MCP deadlines until the application deadline", async () => {
+test("client await issues one held HTTP MCP tool call for a long wait", async () => {
   await withFakeService(async ({ baseUrl, adapterFactory }) => {
     const releaseTurn = deferred<void>();
     async function* scriptedTurn(): AsyncIterable<AdapterEvent> {
@@ -74,25 +66,22 @@ test("client await chunks HTTP MCP deadlines until the application deadline", as
         type: "message.completed",
         message_id: "message_1",
         role: "assistant",
-        text: "done after chunks",
+        text: "done after one hold",
       };
       yield {
         type: "turn.completed",
-        final_text: "done after chunks",
-        provider_thread_id: "fake-thread-chunk",
+        final_text: "done after one hold",
+        provider_thread_id: "fake-thread-hold",
       };
     }
     adapterFactory.queueScripts([scriptedTurn()]);
 
-    const client = createXagentServiceClient({
-      baseUrl,
-      awaitHttpChunkSeconds: 1,
-    });
+    const client = createXagentServiceClient({ baseUrl });
     try {
-      const cwd = await mkdtemp(path.join(tmpdir(), "xagent-chunk-"));
+      const cwd = await mkdtemp(path.join(tmpdir(), "xagent-hold-"));
       const started = await client.start({
         cwd,
-        prompt: "chunked await",
+        prompt: "single held await",
         harness: "codex",
         mode: "subagent",
       });
@@ -101,18 +90,18 @@ test("client await chunks HTTP MCP deadlines until the application deadline", as
         after_sequence: started.sequence,
         deadline_seconds: 10,
       });
+      // Hold longer than the old 1s chunk budget so a reintroduced chunk loop
+      // would issue multiple tool calls; the ping path must stay at one.
+      //
       await new Promise((resolve) => setTimeout(resolve, 2500));
       releaseTurn.resolve(undefined);
       const result = await awaiting;
       assert.equal(result.event, "turn.completed");
-      assert.equal(result.report?.text, "done after chunks");
-      // The quiet client must chunk-and-reissue against the real HTTP
-      // transport rather than relying on a single long POST. With 1s chunks
-      // and a 2.5s wait before release, at least two chunks were issued.
-      //
-      assert.ok(
-        client.awaitChunksIssued >= 2,
-        `expected at least 2 HTTP await chunks, got ${client.awaitChunksIssued}`,
+      assert.equal(result.report?.text, "done after one hold");
+      assert.equal(
+        client.awaitToolCallsIssued,
+        1,
+        `expected one held await tool call, got ${client.awaitToolCallsIssued}`,
       );
     } finally {
       await client.close();
@@ -675,7 +664,7 @@ test("quiet supervise includes run_id on infrastructure failure after start", as
           throw new Error("unused");
         },
         async close() {},
-        awaitChunksIssued: 0,
+        awaitToolCallsIssued: 0,
       }),
     },
   );
@@ -737,7 +726,7 @@ test("unavailable service emits structured failure and never constructs a Superv
 
 test("await against a downed service fails fast instead of spinning until the deadline", async () => {
   const baseUrl = `http://127.0.0.1:${await findFreePort()}`;
-  const client = createXagentServiceClient({ baseUrl, awaitHttpChunkSeconds: 1 });
+  const client = createXagentServiceClient({ baseUrl });
   const start = Date.now();
   try {
     await assert.rejects(
@@ -855,7 +844,7 @@ test("quiet await returns promptly with run_terminal for a terminal persisted ru
   const port = await server.listen();
   const baseUrl = `http://127.0.0.1:${port}`;
   try {
-    const client = createXagentServiceClient({ baseUrl, awaitHttpChunkSeconds: 1 });
+    const client = createXagentServiceClient({ baseUrl });
     try {
       const start = Date.now();
       const result = await client.await({
@@ -868,11 +857,10 @@ test("quiet await returns promptly with run_terminal for a terminal persisted ru
       assert.equal(result.reason, "run_terminal");
       assert.equal(result.phase, "completed");
       assert.equal(result.run_id, terminalRunId);
-      // A busy loop against the 10s application deadline with 1s chunks would
-      // issue ~10 chunks and take ~10s; the fix returns after one chunk in
-      // well under 2s.
+      // A reintroduced chunk loop against a 10s deadline would keep issuing
+      // tool calls; the single-hold path returns after one call promptly.
       //
-      assert.equal(client.awaitChunksIssued, 1);
+      assert.equal(client.awaitToolCallsIssued, 1);
       assert.ok(
         elapsedMs < 2_000,
         `expected prompt return, got ${elapsedMs}ms`,
