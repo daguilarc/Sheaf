@@ -1156,3 +1156,32 @@ test("rejects a command buffer whose version is not the shell's", () => {
   const staleFrame = makeCommandBuffer([{ id: "root", kind: NodeKind.Root, bounds: [0, 0, 10, 10] }], [], 1);
   expect(() => decodeCommandBuffer(staleFrame)).toThrow(/unsupported command buffer version/);
 });
+
+// Mirror of `TestCorruptPresenceFlagIsRejected` in
+// `tests/browser_command_buffer_tests.cpp`. A presence byte the encoder can
+// never produce means the reader has lost its place in the node section, so
+// reading the next four bytes as a colour would turn a desynchronised read
+// into a plausible-looking frame. Both decoders must reject it.
+test("rejects a corrupt presence flag instead of inventing a colour", () => {
+  const encodeRoot = (color?: [number, number, number, number]) => new Uint8Array(makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 400, 300], color },
+  ]));
+  const unstyled = encodeRoot();
+  // Buffer layout: 4 magic + 2 version + 2 reserved + 5 section lengths, then
+  // the string section, then the node section's u32 node count, then the first
+  // node record. Within a record the colour presence byte follows the id
+  // (u32), four u8 flags, the bounds (4 floats), three string indices (u32),
+  // and six floats. Pinning it here means a field-order change breaks this
+  // test rather than silently passing.
+  const stringSectionLength = new DataView(unstyled.buffer, unstyled.byteOffset).getUint32(8, true);
+  const colourPresence = 28 + stringSectionLength + 4 + 60;
+
+  // The same offset reads 0 unstyled and 1 styled, which is what proves the
+  // arithmetic lands on the presence byte rather than on some other zero.
+  expect(unstyled[colourPresence]).toBe(0);
+  expect(encodeRoot([1, 2, 3, 255])[colourPresence]).toBe(1);
+
+  const corrupt = encodeRoot();
+  corrupt[colourPresence] = 2;
+  expect(() => decodeCommandBuffer(corrupt.buffer)).toThrow(/invalid presence flag/);
+});

@@ -206,7 +206,10 @@ enum class NodeKind {
 //
 // A caption is NOT a field. The component library emits a caption as an
 // ordinary sibling `Label` node in the control's form-grid row, with a stable
-// id derived from the control's (design.md D5).
+// id derived from the control's own id -- `<controlId>.caption` inside a
+// `<controlId>.row` container (design.md D5). Neither this record nor the
+// command buffer gains a caption field, so no control kind can ever hide its
+// caption the way `ComboBox::label` did (design.md OQ5).
 struct Node {
     NodeId id;
     NodeKind kind = NodeKind::Label;
