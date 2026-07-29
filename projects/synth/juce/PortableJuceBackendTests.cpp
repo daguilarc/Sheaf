@@ -233,7 +233,7 @@ int main()
         }
         compositeBuilder.Root("runtime.sidebar.root", synth::ui::Bounds{900.0f, 0.0f, 96.0f, 240.0f})
             .Draw("runtime.sidebar.draw",
-                  synth::ui::Bounds{900.0f, 0.0f, 96.0f, 120.0f},
+                  synth::ui::Bounds{0.0f, 0.0f, 96.0f, 120.0f},
                   {synth::ui::DrawCommand::Fill(synth::Color::Rgb(4, 5, 6))})
             .Button("runtime.sidebar.control", "Side", synth::ui::Action::Named("runtime.sidebar"));
         compositeSurface.tree = compositeBuilder.Build();
@@ -254,10 +254,10 @@ int main()
         Require(wrappedAppControl->getX() == firstAppControl->getX() &&
                     wrappedAppControl->getY() > firstAppControl->getY(),
                 "unbounded app controls wrap within the nested 900-pixel app root");
-        Require(sidebarControl->getX() == 900 + firstAppControl->getX(),
+        Require(sidebarControl->getX() == 900,
                 "unbounded sidebar control flows from the nested sidebar root at x 900");
-        Require(sidebarControl->getY() == 128,
-                "sibling-root draw filtering uses only the sidebar root's draw bounds");
+        Require(sidebarControl->getY() == 0,
+                "sidebar control keeps its producer-resolved y within the sidebar root");
     }
 
     {

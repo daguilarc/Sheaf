@@ -22,10 +22,11 @@ public:
 
 protected:
     std::vector<DrawCommand> DrawVisible() const override {
-        const Bounds bounds = GetBounds();
-        if (values_.empty() || !std::isfinite(bounds.x) || !std::isfinite(bounds.y) ||
-            !std::isfinite(bounds.width) || !std::isfinite(bounds.height) ||
-            bounds.width <= 0.0f || bounds.height <= 0.0f) {
+        const Bounds nodeBounds = GetBounds();
+        const Bounds bounds{0.0f, 0.0f, nodeBounds.width, nodeBounds.height};
+        if (values_.empty() || !std::isfinite(nodeBounds.x) || !std::isfinite(nodeBounds.y) ||
+            !std::isfinite(nodeBounds.width) || !std::isfinite(nodeBounds.height) ||
+            nodeBounds.width <= 0.0f || nodeBounds.height <= 0.0f) {
             return {};
         }
         for (const float value : values_) {

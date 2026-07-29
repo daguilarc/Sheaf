@@ -164,7 +164,7 @@ struct WaveformLayerDrawState
 };
 
 inline std::vector<DrawCommand> BuildScopeWaveformCommands(std::span<const WaveformLayerDrawState> layers,
-                                                           Bounds nodeBounds,
+                                                           Bounds nodeExtent,
                                                            float minY,
                                                            float maxY,
                                                            std::size_t numSamples,
@@ -173,13 +173,14 @@ inline std::vector<DrawCommand> BuildScopeWaveformCommands(std::span<const Wavef
     std::vector<DrawCommand> commands;
 
     constexpr float x_Inset = 4.0f;
-    commands.push_back(DrawCommand::Fill(nodeBounds, Color::Rgb(12, 14, 16)));
+    commands.push_back(DrawCommand::Fill({0.0f, 0.0f, nodeExtent.width, nodeExtent.height},
+                                         Color::Rgb(12, 14, 16)));
 
     Bounds bounds{
-        nodeBounds.x + x_Inset,
-        nodeBounds.y + x_Inset,
-        std::max(0.0f, nodeBounds.width - x_Inset * 2.0f),
-        std::max(0.0f, nodeBounds.height - x_Inset * 2.0f),
+        x_Inset,
+        x_Inset,
+        std::max(0.0f, nodeExtent.width - x_Inset * 2.0f),
+        std::max(0.0f, nodeExtent.height - x_Inset * 2.0f),
     };
 
     commands.push_back(DrawCommand::Line(
@@ -260,7 +261,14 @@ protected:
                 .scopeChannel = layer->scopeChannel.load(std::memory_order_relaxed),
             });
         }
-        return BuildScopeWaveformCommands(snapshots, GetBounds(), minY_, maxY_, numSamples_, drawMarkers_);
+        const Bounds bounds = GetBounds();
+        return BuildScopeWaveformCommands(
+            snapshots,
+            {0.0f, 0.0f, bounds.width, bounds.height},
+            minY_,
+            maxY_,
+            numSamples_,
+            drawMarkers_);
     }
 
 private:

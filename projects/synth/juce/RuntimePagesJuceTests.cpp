@@ -29,6 +29,12 @@ const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const char*
     return nullptr;
 }
 
+juce::Rectangle<int> SurfaceBoundsOf(const synth_juce::PortableComponent& root,
+                                     const juce::Component& component)
+{
+    return root.getLocalArea(&component, component.getLocalBounds());
+}
+
 void RequireInsideRoot(const synth_juce::PortableComponent& root,
                        const juce::Component* component,
                        const char* label)
@@ -232,7 +238,8 @@ int main()
             "flat browser row double-click loads");
     juce::Component* browser = fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kFileBrowser);
     juce::Component* row = fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::FileBrowserEntry(0));
-    Require(browser != nullptr && row != nullptr && browser->getBounds().contains(row->getBounds()),
+    Require(browser != nullptr && row != nullptr &&
+                SurfaceBoundsOf(fileRenderer, *browser).contains(SurfaceBoundsOf(fileRenderer, *row)),
             "browser row is inside browser viewer bounds");
 
     fileSurface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kFileSaveAs));

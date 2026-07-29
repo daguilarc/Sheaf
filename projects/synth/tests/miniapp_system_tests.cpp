@@ -317,8 +317,8 @@ const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const std::
 bool HasOuterEncoderFrame(const synth::ui::Node& encoder) {
     constexpr float kTolerance = 0.0001f;
     const synth::ui::Bounds expected{
-        encoder.bounds.x + 5.0f,
-        encoder.bounds.y + 5.0f,
+        5.0f,
+        5.0f,
         encoder.bounds.width - 10.0f,
         encoder.bounds.height - 10.0f,
     };
@@ -372,7 +372,9 @@ struct TestVisualizer final : synth::ui::Visualizer
 {
     std::vector<synth::ui::DrawCommand> DrawVisible() const override
     {
-        return {synth::ui::DrawCommand::Fill(GetBounds(), synth::Color::Cyan)};
+        const synth::ui::Bounds bounds = GetBounds();
+        return {synth::ui::DrawCommand::Fill({0.0f, 0.0f, bounds.width, bounds.height},
+                                             synth::Color::Cyan)};
     }
 };
 

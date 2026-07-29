@@ -227,7 +227,9 @@ int main()
             if (node.id == synth::ui::NodeId(encoderId))
             {
                 node.drawCommands.push_back(
-                    synth::ui::DrawCommand::Fill(node.bounds, synth::Color::Rgb(90, 120, 160)));
+                    synth::ui::DrawCommand::Fill(
+                        {0.0f, 0.0f, node.bounds.width, node.bounds.height},
+                        synth::Color::Rgb(90, 120, 160)));
                 break;
             }
         }

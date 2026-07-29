@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -75,6 +76,11 @@ const synth::ui::Node& FindNode(const synth::ui::NodeTree& tree, const char* id)
         throw std::runtime_error(std::string("missing node: ") + id);
     }
     return *node;
+}
+
+const synth::ui::Node& FindNode(const synth::ui::NodeTree& tree, const std::string& id)
+{
+    return FindNode(tree, id.c_str());
 }
 
 int CountRootNodes(const synth::ui::NodeTree& tree)
@@ -158,6 +164,25 @@ void FillScopeWriter(synth::ScopeWriter& writer, std::size_t channels)
     writer.Publish();
 }
 
+synth::ui::EncoderDrawState RepresentativeEncoderState()
+{
+    synth::ui::EncoderDrawState state;
+    state.connected = true;
+    state.baseColor = synth::Color::Cyan;
+    state.shortLabel = "tune";
+    state.modulatorsAffectingMask = 1u;
+    state.modulatorColors = {synth::Color::Green};
+    state.gesturesAffectingMask = 1u;
+    state.gestureColors = {synth::Color::Orange};
+    state.voiceCount = 1;
+    state.voices.push_back({.value = 0.25f,
+                            .spreadValue = 0.10f,
+                            .minValue = 0.1f,
+                            .maxValue = 0.9f,
+                            .indicatorColor = synth::Color::Yellow});
+    return state;
+}
+
 void RequireBrowserIsRootlessDescendant(const synth::ui::NodeTree& tree)
 {
     const synth::ui::Node* root = FindNodeById(tree, synth::runtime_ui::NodeIds::kFileRoot);
@@ -187,7 +212,9 @@ struct TestVisualizer final : synth::ui::Visualizer
 {
     std::vector<synth::ui::DrawCommand> DrawVisible() const override
     {
-        return {synth::ui::DrawCommand::Fill(GetBounds(), synth::Color::Cyan)};
+        const synth::ui::Bounds bounds = GetBounds();
+        return {synth::ui::DrawCommand::Fill({0.0f, 0.0f, bounds.width, bounds.height},
+                                             synth::Color::Cyan)};
     }
 };
 
@@ -251,7 +278,8 @@ void TestGangedRandomLfoVisualizer()
     Require(commands[0].kind == DrawCommand::Kind::Fill && commands[1].kind == DrawCommand::Kind::Line,
             "ganged visualizer starts with background and axis");
 
-    const float expectedPresentX = bounds.x + 4.0f + (bounds.width - 8.0f) * 3.0f / 12.0f;
+    const Bounds nodeExtent{0.0f, 0.0f, bounds.width, bounds.height};
+    const float expectedPresentX = 4.0f + (nodeExtent.width - 8.0f) * 3.0f / 12.0f;
     std::array<std::size_t, 2> dots{};
     bool sawCyanPast = false;
     bool sawOrangePast = false;
@@ -266,7 +294,7 @@ void TestGangedRandomLfoVisualizer()
             Require(command.points.size() >= 2, "ganged path polylines have drawable geometry");
             for (const auto point : command.points)
             {
-                Require(PointInside(point, bounds), "ganged path points are caller-clipped");
+                Require(PointInside(point, nodeExtent), "ganged path points are node-clipped");
             }
             if (command.points.back().x <= expectedPresentX + 0.001f)
             {
@@ -288,7 +316,7 @@ void TestGangedRandomLfoVisualizer()
         }
         else if (command.kind == DrawCommand::Kind::FillEllipse)
         {
-            Require(BoundsInside(command.bounds, bounds), "ganged dot is caller-clipped");
+            Require(BoundsInside(command.bounds, nodeExtent), "ganged dot is node-clipped");
             const float centerX = command.bounds.x + command.bounds.width * 0.5f;
             RequireNear(centerX, expectedPresentX, 0.001f, "all ganged dots share present x");
             if (command.color == synth::Color::Cyan)
@@ -296,7 +324,7 @@ void TestGangedRandomLfoVisualizer()
                 ++dots[0];
                 const float centerY = command.bounds.y + command.bounds.height * 0.5f;
                 cyanDotCenter = {centerX, centerY};
-                RequireNear(centerY, bounds.y + 4.0f + (bounds.height - 8.0f), 0.001f,
+                RequireNear(centerY, 4.0f + (nodeExtent.height - 8.0f), 0.001f,
                             "dot reconstructs source hold instead of snapshot output");
             }
             if (command.color == synth::Color::Orange)
@@ -314,11 +342,11 @@ void TestGangedRandomLfoVisualizer()
     // Voice zero lasts ceil(4) + ceil(2) = 6 samples, so its path must hold
     // target to voice one's shared ceil(8) + ceil(4) = 12-sample endpoint.
     bool cyanEndsAtTarget = false;
-    const float targetY = bounds.y + 4.0f;
+    const float targetY = 4.0f;
     for (const DrawCommand& command : commands)
     {
         if (command.kind == DrawCommand::Kind::Polyline && command.color == synth::Color::Cyan &&
-            !command.points.empty() && command.points.back().x > bounds.x + bounds.width - 8.0f)
+            !command.points.empty() && command.points.back().x > nodeExtent.width - 8.0f)
         {
             cyanEndsAtTarget = std::fabs(command.points.back().y - targetY) < 0.01f;
         }
@@ -337,7 +365,7 @@ void TestGangedRandomLfoVisualizer()
     Require(movingDot != movingCommands.end(), "moving interval has a present dot");
     const float shapedQuarter = synth::ShapedInterpolate(0.0f, 1.0f, 1.0f, 0.25);
     RequireNear(movingDot->bounds.y + movingDot->bounds.height * 0.5f,
-                bounds.y + 4.0f + (bounds.height - 8.0f) * (1.0f - shapedQuarter),
+                4.0f + (nodeExtent.height - 8.0f) * (1.0f - shapedQuarter),
                 0.01f,
                 "moving path and dot use shared shaped interpolation");
 
@@ -352,7 +380,7 @@ void TestGangedRandomLfoVisualizer()
     });
     Require(boundaryDot != boundaryCommands.end(), "discarded-remainder boundary has a dot");
     RequireNear(boundaryDot->bounds.y + boundaryDot->bounds.height * 0.5f,
-                bounds.y + 4.0f + (bounds.height - 8.0f),
+                4.0f + (nodeExtent.height - 8.0f),
                 0.01f,
                 "waiting boundary remains aligned after discarded remainder");
     boundarySnapshot.roundElapsedSamples = 5.0;
@@ -364,11 +392,12 @@ void TestGangedRandomLfoVisualizer()
         });
     Require(postBoundaryDot != boundaryCommands.end(), "post-boundary movement has a dot");
     RequireNear(postBoundaryDot->bounds.y + postBoundaryDot->bounds.height * 0.5f,
-                bounds.y + 4.0f + (bounds.height - 8.0f) * 0.4f,
+                4.0f + (nodeExtent.height - 8.0f) * 0.4f,
                 0.01f,
                 "discarded wait remainder does not shift moving interpolation");
 
     const Bounds resized{1.0f, 2.0f, 37.0f, 23.0f};
+    const Bounds resizedExtent{0.0f, 0.0f, resized.width, resized.height};
     std::vector<DrawCommand> resizedCommands;
     auto veryLong = snapshot;
     veryLong.voices[1].waitingIncrement = 1.0 / 1000000000.0;
@@ -383,7 +412,7 @@ void TestGangedRandomLfoVisualizer()
                     "ganged polyline point ceiling is fixed");
             for (const auto point : command.points)
             {
-                Require(PointInside(point, resized), "resized ganged geometry remains clipped");
+                Require(PointInside(point, resizedExtent), "resized ganged geometry remains node-clipped");
             }
         }
     }
@@ -422,6 +451,58 @@ void TestGangedRandomLfoVisualizer()
     synth::ui::GangedRandomLfoVisualizer<2> visualizer(retainedState);
     visualizer.SetBounds(bounds);
     Require(visualizer.Draw().size() == 2, "unstable retained state fails closed");
+}
+
+void TestScopeWaveformCommandsAreNodeLocal()
+{
+    synth::ScopeWriter scope(1, 128);
+    FillScopeWriter(scope, 1);
+    const std::vector<synth::ui::WaveformLayerDrawState> layers{
+        {.connected = true, .scopeColor = synth::Color::Red, .scope = &scope, .scopeChannel = 0},
+    };
+    const synth::ui::Bounds atOrigin{0.0f, 0.0f, 100.0f, 60.0f};
+    const synth::ui::Bounds offset{250.0f, 180.0f, 100.0f, 60.0f};
+    const auto a = synth::ui::BuildScopeWaveformCommands(layers, atOrigin, -1.0f, 1.0f, 64, true);
+    const auto b = synth::ui::BuildScopeWaveformCommands(layers, offset, -1.0f, 1.0f, 64, true);
+    Require(a.size() == b.size(), "the same node extent yields the same scope command count");
+    for (std::size_t i = 0; i < a.size(); ++i)
+    {
+        Require(std::memcmp(&a[i].bounds, &b[i].bounds, sizeof(synth::ui::Bounds)) == 0,
+                "scope draw geometry is node-local: identical extents at different positions produce "
+                "byte-identical command bounds");
+        Require(a[i].points.size() == b[i].points.size(),
+                "scope draw geometry is node-local: command point counts match");
+        for (std::size_t pointIx = 0; pointIx < a[i].points.size(); ++pointIx)
+        {
+            Require(std::memcmp(&a[i].points[pointIx], &b[i].points[pointIx], sizeof(synth::ui::Point)) == 0,
+                    "scope draw geometry is node-local: identical extents at different positions produce "
+                    "byte-identical command points");
+        }
+    }
+}
+
+void TestEncoderDrawIsPositionIndependent()
+{
+    const auto state = RepresentativeEncoderState();
+    const auto a = synth::ui::BuildEncoderDrawCommands(state, {0.0f, 0.0f, 90.0f, 90.0f});
+    const auto b = synth::ui::BuildEncoderDrawCommands(state, {300.0f, 200.0f, 90.0f, 90.0f});
+    Require(a.size() == b.size(), "the same node extent yields the same encoder command count");
+    for (std::size_t i = 0; i < a.size(); ++i)
+    {
+        Require(std::memcmp(&a[i].bounds, &b[i].bounds, sizeof(synth::ui::Bounds)) == 0,
+                "encoder draw commands are identical regardless of node position");
+        Require(std::memcmp(&a[i].from, &b[i].from, sizeof(synth::ui::Point)) == 0,
+                "encoder line starts are identical regardless of node position");
+        Require(std::memcmp(&a[i].to, &b[i].to, sizeof(synth::ui::Point)) == 0,
+                "encoder line ends are identical regardless of node position");
+        Require(a[i].points.size() == b[i].points.size(),
+                "encoder polygon point counts match regardless of node position");
+        for (std::size_t pointIx = 0; pointIx < a[i].points.size(); ++pointIx)
+        {
+            Require(std::memcmp(&a[i].points[pointIx], &b[i].points[pointIx], sizeof(synth::ui::Point)) == 0,
+                    "encoder polygon points are identical regardless of node position");
+        }
+    }
 }
 
 void TestStandardModulatorVisualizersRemainPortable()
@@ -703,6 +784,8 @@ int main()
     TestCaptionIsAnEmittedLabelNodeNotAField();
 
     TestGangedRandomLfoVisualizer();
+    TestScopeWaveformCommandsAreNodeLocal();
+    TestEncoderDrawIsPositionIndependent();
     TestStandardModulatorVisualizersRemainPortable();
     TestBraid4StandardModulationViewsRemainPortable();
     synth::Parameter::UIState parameterState(1, 1, 1);
@@ -785,6 +868,7 @@ int main()
         const synth::ui::Bounds bounds{10.0f, 20.0f, 80.0f, 120.0f};
         visualizer.SetBounds(bounds);
         const auto commands = visualizer.Draw();
+        const synth::ui::Bounds nodeExtent{0.0f, 0.0f, bounds.width, bounds.height};
         Require(!visualizer.WantsEncoderFrame(),
                 "constant visualizer suppresses the shared encoder frame");
         Require(commands.size() == values.size(), "constant visualizer emits one command per voice");
@@ -801,19 +885,19 @@ int main()
             RequireNear(commands[voice].bounds.width, expectedBarWidth, 0.0001f,
                         "constant visualizer halves the post-gap bar width");
             RequireNear(commands[voice].bounds.x + commands[voice].bounds.width * 0.5f,
-                        bounds.x + (static_cast<float>(voice) + 0.5f) * slotWidth,
+                        (static_cast<float>(voice) + 0.5f) * slotWidth,
                         0.0001f,
                         "constant visualizer centers each narrow bar in its voice slot");
-            Require(commands[voice].bounds.x >= bounds.x &&
-                    commands[voice].bounds.x + commands[voice].bounds.width <= bounds.x + bounds.width,
+            Require(commands[voice].bounds.x >= nodeExtent.x &&
+                    commands[voice].bounds.x + commands[voice].bounds.width <= nodeExtent.x + nodeExtent.width,
                     "constant visualizer bar stays horizontally bounded");
             RequireNear(commands[voice].bounds.y + commands[voice].bounds.height,
-                        bounds.y + bounds.height, 0.0001f,
+                        nodeExtent.height, 0.0001f,
                         "constant visualizer bars share the bottom edge");
         }
         RequireNear(commands[0].bounds.height, bounds.height / 12.0f, 0.0001f,
                     "zero voice remains visible");
-        RequireNear(commands[3].bounds.y, bounds.y + bounds.height / 12.0f, 0.0001f,
+        RequireNear(commands[3].bounds.y, nodeExtent.height / 12.0f, 0.0001f,
                     "one voice keeps a top margin");
         Require(commands[1].bounds.height > commands[2].bounds.height,
                 "bar heights retain voice-order values without sorting");
@@ -897,6 +981,7 @@ int main()
         right.SetBounds(bounds);
         const auto leftCommands = left.Draw();
         const auto rightCommands = right.Draw();
+        const synth::ui::Bounds nodeExtent{0.0f, 0.0f, bounds.width, bounds.height};
         Require(leftCommands.size() == 1, "noise visualizer emits one polyline");
         Require(rightCommands.size() == 1, "same seed emits one noise polyline");
         Require(leftCommands[0].kind == synth::ui::DrawCommand::Kind::Polyline,
@@ -910,15 +995,15 @@ int main()
         for (std::size_t point = 0; point < leftCommands[0].points.size(); ++point)
         {
             RequireNear(leftCommands[0].points[point].x,
-                        bounds.x + static_cast<float>(point), 0.0001f,
+                        static_cast<float>(point), 0.0001f,
                         "noise visualizer x matches integer column");
             RequireNear(leftCommands[0].points[point].x, rightCommands[0].points[point].x,
                         0.0001f, "same seed reproduces x");
             RequireNear(leftCommands[0].points[point].y, rightCommands[0].points[point].y,
                         0.0001f, "same seed reproduces y");
-            Require(leftCommands[0].points[point].y > bounds.y,
+            Require(leftCommands[0].points[point].y > nodeExtent.y,
                     "noise visualizer y is above the open lower edge");
-            Require(leftCommands[0].points[point].y < bounds.y + bounds.height,
+            Require(leftCommands[0].points[point].y < nodeExtent.y + nodeExtent.height,
                     "noise visualizer y is below the open upper edge");
         }
     }
@@ -965,16 +1050,16 @@ int main()
         const synth::ui::Bounds bounds{5.5f, 8.0f, 2.25f, 12.0f};
         visualizer.SetBounds(bounds);
         const auto commands = visualizer.Draw();
+        const synth::ui::Bounds nodeExtent{0.0f, 0.0f, bounds.width, bounds.height};
         Require(commands.size() == 1, "fractional-width noise visualizer emits one polyline");
         Require(commands[0].points.size() == 4,
                 "fractional-width noise visualizer covers columns and right edge");
-        const std::array<float, 4> expectedX{bounds.x, bounds.x + 1.0f,
-                                             bounds.x + 2.0f, bounds.x + bounds.width};
+        const std::array<float, 4> expectedX{0.0f, 1.0f, 2.0f, bounds.width};
         for (std::size_t point = 0; point < expectedX.size(); ++point)
         {
             RequireNear(commands[0].points[point].x, expectedX[point], 0.0001f,
                         "fractional-width noise visualizer x matches expected coverage");
-            Require(PointInside(commands[0].points[point], bounds),
+            Require(PointInside(commands[0].points[point], nodeExtent),
                     "fractional-width noise visualizer point stays in bounds");
             if (point > 0)
             {
@@ -998,7 +1083,8 @@ int main()
         builder.Root("noise.stack.root", {0.0f, 0.0f, 100.0f, 100.0f})
             .Visualizer("noise.stack.visualizer", &visualizer)
             .DrawInteractive("noise.stack.encoder", bounds,
-                             {synth::ui::DrawCommand::StrokeEllipse(bounds, synth::Color::White, 1.0f)},
+                             {synth::ui::DrawCommand::StrokeEllipse(
+                                 {0.0f, 0.0f, bounds.width, bounds.height}, synth::Color::White, 1.0f)},
                              synth::ui::Action::Named("drag"));
         const synth::ui::NodeTree tree = builder.Build();
         Require(stableAddress == static_cast<synth::ui::Visualizer*>(&visualizer),
@@ -1036,9 +1122,9 @@ int main()
         waveformLayers, {10.0f, 20.0f, 180.0f, 90.0f}, -1.1f, 1.1f, 64, true);
     const auto rightWaveform = synth::ui::BuildScopeWaveformCommands(
         waveformLayers, {240.0f, 20.0f, 180.0f, 90.0f}, -1.1f, 1.1f, 64, true);
-    RequireWaveformGeometryInside(leftWaveform, {10.0f, 20.0f, 180.0f, 90.0f},
+    RequireWaveformGeometryInside(leftWaveform, {0.0f, 0.0f, 180.0f, 90.0f},
                                   "left waveform geometry stays inside bounds");
-    RequireWaveformGeometryInside(rightWaveform, {240.0f, 20.0f, 180.0f, 90.0f},
+    RequireWaveformGeometryInside(rightWaveform, {0.0f, 0.0f, 180.0f, 90.0f},
                                   "right waveform geometry stays inside bounds");
 
     synth::ScopeWriter inFlightScope(1, 128);
@@ -1093,7 +1179,8 @@ int main()
             100.0f,
         };
         const auto commands = synth::ui::BuildScopeWaveformCommands(singleLayer, cellBounds, -1.1f, 1.1f, 64, true);
-        RequireWaveformGeometryInside(commands, cellBounds, "quad waveform geometry stays inside its cell");
+        RequireWaveformGeometryInside(commands, {0.0f, 0.0f, cellBounds.width, cellBounds.height},
+                                      "quad waveform geometry stays inside its cell");
     }
 
     synth_miniapp::VcoWaveformDrawState miniVcoState;
@@ -1145,7 +1232,7 @@ int main()
     synth::ui::ScopeVisualizer<TestScopeLayerState> scopeVisualizer(scopeLayers, -1.1f, 1.1f, 64, true);
     scopeVisualizer.SetBounds({50.0f, 60.0f, 140.0f, 90.0f});
     const auto scopeVisualizerCommands = scopeVisualizer.Draw();
-    RequireWaveformGeometryInside(scopeVisualizerCommands, scopeVisualizer.GetBounds(),
+    RequireWaveformGeometryInside(scopeVisualizerCommands, {0.0f, 0.0f, 140.0f, 90.0f},
                                   "scope visualizer geometry stays inside bounds");
     const bool sawRed = std::any_of(scopeVisualizerCommands.begin(), scopeVisualizerCommands.end(),
                                     [](const synth::ui::DrawCommand& command) {
@@ -1316,7 +1403,13 @@ int main()
         .Visualizer("stack.encoder.0.visualizer", &stackingVisualizer)
         .DrawInteractive("stack.encoder.0",
                          stackingVisualizer.GetBounds(),
-                         {synth::ui::DrawCommand::StrokeEllipse(stackingVisualizer.GetBounds(), synth::Color::White, 1.0f)},
+                         {synth::ui::DrawCommand::StrokeEllipse(
+                             {0.0f,
+                              0.0f,
+                              stackingVisualizer.GetBounds().width,
+                              stackingVisualizer.GetBounds().height},
+                             synth::Color::White,
+                             1.0f)},
                          synth::ui::Action::Named("drag"),
                          synth::ui::Action::Named("push"));
     const synth::ui::NodeTree stackingTree = stackingBuilder.Build();
@@ -1541,6 +1634,17 @@ int main()
     Require(FindNodeById(saveAsTree, synth::runtime_ui::NodeIds::kFileBrowserSaveName) != nullptr,
             "save-as browser exposes patch-name field");
     RequireBrowserIsRootlessDescendant(saveAsTree);
+    {
+        const synth::ui::Node& browser = FindNode(saveAsTree, synth::runtime_ui::NodeIds::kFileBrowser);
+        const synth::ui::Node& firstEntry =
+            FindNode(saveAsTree, synth::runtime_ui::NodeIds::FileBrowserEntry(0));
+        RequireNear(browser.bounds.x, 10.0f, 0.0001f, "file browser remains placed in root space");
+        RequireNear(firstEntry.bounds.x, 12.0f, 0.0001f, "file browser row x is parent-relative");
+        Require(firstEntry.bounds.y < browser.bounds.y,
+                "file browser row y is inside the browser section, not surface-absolute");
+        Require(firstEntry.bounds.x + firstEntry.bounds.width <= browser.bounds.width,
+                "file browser row width fits inside its parent-relative section");
+    }
     Require(fileSurface.Snapshot().browserEntries.size() == 1, "save-as browser lists one patch directory");
     Require(fileSurface.Snapshot().browserEntries[0].name == "PatchA", "save-as browser lists deterministic patch name");
 
@@ -1642,6 +1746,16 @@ int main()
     const synth::ui::NodeTree versionsTree = versionsSurface.BuildTree();
     Require(FindNodeById(versionsTree, synth::runtime_ui::NodeIds::kFileVersions) != nullptr,
             "current patch shows versions section");
+    {
+        const synth::ui::Node& idle = FindNode(versionsTree, synth::runtime_ui::NodeIds::kFileIdleRegion);
+        const synth::ui::Node& versions = FindNode(versionsTree, synth::runtime_ui::NodeIds::kFileVersions);
+        const synth::ui::Node& versionsTitle = FindNode(versionsTree, synth::runtime_ui::NodeIds::kFileVersionsTitle);
+        RequireNear(versions.bounds.x, 12.0f, 0.0001f, "file versions section x is idle-relative");
+        Require(versions.bounds.y < idle.bounds.y,
+                "file versions section y is inside the idle region, not surface-absolute");
+        RequireNear(versionsTitle.bounds.x, 0.0f, 0.0001f, "file versions title x is versions-relative");
+        RequireNear(versionsTitle.bounds.y, 0.0f, 0.0001f, "file versions title y is versions-relative");
+    }
     const synth::ui::Node* newestVersion =
         FindNodeById(versionsTree, synth::runtime_ui::NodeIds::FileVersionEntry(0));
     Require(newestVersion != nullptr && newestVersion->text.find("20240202") != std::string::npos,

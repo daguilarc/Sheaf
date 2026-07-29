@@ -39,13 +39,14 @@ inline std::vector<synth::ui::DrawCommand> BuildBraid4ScopeCommands(const Braid4
         true);
 }
 
-inline std::vector<synth::ui::DrawCommand> BuildBraid4BackgroundCommands(synth::ui::Bounds bounds)
+inline std::vector<synth::ui::DrawCommand> BuildBraid4BackgroundCommands(synth::ui::Bounds nodeExtent)
 {
     using synth::ui::DrawCommand;
     std::vector<DrawCommand> commands;
-    commands.push_back(DrawCommand::Fill(bounds, Braid4Palette::kVoid));
+    commands.push_back(DrawCommand::Fill({0.0f, 0.0f, nodeExtent.width, nodeExtent.height},
+                                         Braid4Palette::kVoid));
     commands.push_back(DrawCommand::StrokeRect(
-        {bounds.x + 1.0f, bounds.y + 1.0f, std::max(0.0f, bounds.width - 2.0f), std::max(0.0f, bounds.height - 2.0f)},
+        {1.0f, 1.0f, std::max(0.0f, nodeExtent.width - 2.0f), std::max(0.0f, nodeExtent.height - 2.0f)},
         Braid4Palette::kRedDim,
         1.0f));
     return commands;

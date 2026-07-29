@@ -658,21 +658,20 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
 
     const float margin = Layout::kFilePanelPadding;
     const float gap = Layout::kRowGap + 2.0f;
-    const float contentX = area.x + margin;
+    const float contentX = margin;
     const float contentWidth = std::max(0.0f, area.width - margin * 2.0f);
-    const float contentRight = contentX + contentWidth;
-    const float pageBottom = area.y + std::max(0.0f, area.height) - margin;
+    const float pageBottom = std::max(0.0f, area.height) - margin;
 
     ui::Node background;
     background.id = NodeIds::kFileBackground;
     background.kind = ui::NodeKind::Draw;
-    background.bounds = area;
+    background.bounds = {0.0f, 0.0f, area.width, area.height};
     background.drawCommands = {
-        ui::DrawCommand::Fill(area, Color::Rgb(18, 20, 22)),
+        ui::DrawCommand::Fill(background.bounds, Color::Rgb(18, 20, 22)),
     };
     appendRootChild(std::move(background));
 
-    float y = area.y + margin;
+    float y = margin;
 
     ui::Node header;
     header.id = NodeIds::kFileHeader;
@@ -684,10 +683,10 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
     ui::Node headerDraw;
     headerDraw.id = ui::NodeId(std::string(NodeIds::kFileHeader) + ".background");
     headerDraw.kind = ui::NodeKind::Draw;
-    headerDraw.bounds = tree.nodes[headerIndex].bounds;
+    headerDraw.bounds = {0.0f, 0.0f, tree.nodes[headerIndex].bounds.width, tree.nodes[headerIndex].bounds.height};
     headerDraw.drawCommands = {
-        ui::DrawCommand::FillRoundedRect(tree.nodes[headerIndex].bounds, 6.0f, Color::Rgb(29, 33, 37)),
-        ui::DrawCommand::StrokeRoundedRect(tree.nodes[headerIndex].bounds, 6.0f, Color::Rgb(54, 61, 68), 1.0f),
+        ui::DrawCommand::FillRoundedRect(headerDraw.bounds, 6.0f, Color::Rgb(29, 33, 37)),
+        ui::DrawCommand::StrokeRoundedRect(headerDraw.bounds, 6.0f, Color::Rgb(54, 61, 68), 1.0f),
     };
     appendChildTo(headerIndex, std::move(headerDraw));
 
@@ -700,8 +699,8 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
     backButton.kind = ui::NodeKind::Button;
     backButton.label = "Back";
     backButton.variant = "secondary";
-    backButton.bounds = {contentRight - headerPad - backWidth,
-                         y + headerPad,
+    backButton.bounds = {contentWidth - headerPad - backWidth,
+                         headerPad,
                          backWidth,
                          Layout::kBackRowHeight};
     backButton.action = ui::Action::Named(Actions::kFileBack);
@@ -712,7 +711,7 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
     patchName.kind = ui::NodeKind::Label;
     patchName.text = snapshot.patchNameText;
     patchName.variant = snapshot.hasCurrentPatch ? "title" : "muted-title";
-    patchName.bounds = {contentX + headerPad, y + headerPad, headerTextWidth, Layout::kPatchNameRowHeight};
+    patchName.bounds = {headerPad, headerPad, headerTextWidth, Layout::kPatchNameRowHeight};
     appendChildTo(headerIndex, std::move(patchName));
 
     ui::Node patchRoot;
@@ -720,8 +719,8 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
     patchRoot.kind = ui::NodeKind::StatusText;
     patchRoot.text = snapshot.patchesRoot.empty() ? "Patch root not configured" : "Patch root: " + snapshot.patchesRoot;
     patchRoot.variant = "quiet";
-    patchRoot.bounds = {contentX + headerPad,
-                        y + headerPad + Layout::kPatchNameRowHeight,
+    patchRoot.bounds = {headerPad,
+                        headerPad + Layout::kPatchNameRowHeight,
                         std::max(80.0f, contentWidth - headerPad * 2.0f),
                         Layout::kPatchNameRowHeight};
     appendChildTo(headerIndex, std::move(patchRoot));
@@ -738,14 +737,14 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
     const float buttonGap = contentWidth < 420.0f ? 4.0f : 6.0f;
     const float commandButtonWidth =
         std::max(52.0f, std::min(Layout::kPatchButtonWidth, (contentWidth - buttonGap * 4.0f) / 5.0f));
-    float buttonX = contentX;
+    float buttonX = 0.0f;
     const auto appendPatchButton = [&](const char* id, const char* label, const char* actionName) {
         ui::Node button;
         button.id = ui::NodeId(id);
         button.kind = ui::NodeKind::Button;
         button.label = label;
         button.variant = std::string(actionName) == Actions::kFileSave ? "primary" : "secondary";
-        button.bounds = {buttonX, y, commandButtonWidth, Layout::kPatchRowHeight};
+        button.bounds = {buttonX, 0.0f, commandButtonWidth, Layout::kPatchRowHeight};
         button.action = ui::Action::Named(actionName);
         appendChildTo(commandIndex, std::move(button));
         buttonX += commandButtonWidth + buttonGap;
@@ -771,20 +770,20 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
         ui::Node browserDraw;
         browserDraw.id = ui::NodeId(std::string(NodeIds::kFileBrowser) + ".background");
         browserDraw.kind = ui::NodeKind::Draw;
-        browserDraw.bounds = tree.nodes[browserIndex].bounds;
+        browserDraw.bounds = {0.0f, 0.0f, tree.nodes[browserIndex].bounds.width, tree.nodes[browserIndex].bounds.height};
         browserDraw.drawCommands = {
-            ui::DrawCommand::FillRoundedRect(tree.nodes[browserIndex].bounds, 6.0f, Color::Rgb(24, 28, 32)),
-            ui::DrawCommand::StrokeRoundedRect(tree.nodes[browserIndex].bounds, 6.0f, Color::Rgb(63, 73, 82), 1.0f),
+            ui::DrawCommand::FillRoundedRect(browserDraw.bounds, 6.0f, Color::Rgb(24, 28, 32)),
+            ui::DrawCommand::StrokeRoundedRect(browserDraw.bounds, 6.0f, Color::Rgb(63, 73, 82), 1.0f),
         };
         appendChildTo(browserIndex, std::move(browserDraw));
 
         const ui::Bounds browserBounds = tree.nodes[browserIndex].bounds;
         const float browserPad = contentWidth < 420.0f ? 8.0f : 12.0f;
-        const float innerX = browserBounds.x + browserPad;
+        const float innerX = browserPad;
         const float innerWidth = std::max(0.0f, browserBounds.width - browserPad * 2.0f);
         const float innerRight = innerX + innerWidth;
-        const float browserBottom = browserBounds.y + browserBounds.height - browserPad;
-        float browserY = browserBounds.y + browserPad;
+        const float browserBottom = browserBounds.height - browserPad;
+        float browserY = browserPad;
 
         ui::Node title;
         title.id = NodeIds::kFileBrowserTitle;
@@ -897,10 +896,10 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
         ui::Node idleDraw;
         idleDraw.id = ui::NodeId(std::string(NodeIds::kFileIdleRegion) + ".background");
         idleDraw.kind = ui::NodeKind::Draw;
-        idleDraw.bounds = tree.nodes[idleIndex].bounds;
+        idleDraw.bounds = {0.0f, 0.0f, tree.nodes[idleIndex].bounds.width, tree.nodes[idleIndex].bounds.height};
         idleDraw.drawCommands = {
-            ui::DrawCommand::FillRoundedRect(tree.nodes[idleIndex].bounds, 6.0f, Color::Rgb(23, 26, 29)),
-            ui::DrawCommand::StrokeRoundedRect(tree.nodes[idleIndex].bounds, 6.0f, Color::Rgb(48, 55, 62), 1.0f),
+            ui::DrawCommand::FillRoundedRect(idleDraw.bounds, 6.0f, Color::Rgb(23, 26, 29)),
+            ui::DrawCommand::StrokeRoundedRect(idleDraw.bounds, 6.0f, Color::Rgb(48, 55, 62), 1.0f),
         };
         appendChildTo(idleIndex, std::move(idleDraw));
 
@@ -910,14 +909,14 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
         status.kind = ui::NodeKind::StatusText;
         status.text = snapshot.statusText;
         status.variant = FileStatusVariant(snapshot.statusText);
-        status.bounds = {contentX + idlePad,
-                         y + idlePad,
+        status.bounds = {idlePad,
+                         idlePad,
                          std::max(0.0f, contentWidth - idlePad * 2.0f),
                          Layout::kPatchNameRowHeight};
         appendChildTo(idleIndex, std::move(status));
 
-        float idleY = y + idlePad + Layout::kPatchNameRowHeight + Layout::kRowGap;
-        const float idleInnerX = contentX + idlePad;
+        float idleY = idlePad + Layout::kPatchNameRowHeight + Layout::kRowGap;
+        const float idleInnerX = idlePad;
         const float idleInnerWidth = std::max(0.0f, contentWidth - idlePad * 2.0f);
         if (!snapshot.hasCurrentPatch)
         {
@@ -937,8 +936,7 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
             versions.bounds = {idleInnerX,
                                idleY,
                                idleInnerWidth,
-                               std::max(0.0f, tree.nodes[idleIndex].bounds.y + tree.nodes[idleIndex].bounds.height -
-                                                  idlePad - idleY)};
+                               std::max(0.0f, tree.nodes[idleIndex].bounds.height - idlePad - idleY)};
             versions.variant = "quiet";
             const std::size_t versionsIndex = appendChildTo(idleIndex, std::move(versions));
 
@@ -947,11 +945,11 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
             versionsTitle.kind = ui::NodeKind::Label;
             versionsTitle.text = "Versions";
             versionsTitle.variant = "title";
-            versionsTitle.bounds = {idleInnerX, idleY, idleInnerWidth, Layout::kPatchNameRowHeight};
+            versionsTitle.bounds = {0.0f, 0.0f, idleInnerWidth, Layout::kPatchNameRowHeight};
             appendChildTo(versionsIndex, std::move(versionsTitle));
 
-            idleY += Layout::kPatchNameRowHeight + Layout::kRowGap;
-            const float versionBottom = tree.nodes[versionsIndex].bounds.y + tree.nodes[versionsIndex].bounds.height;
+            float versionY = Layout::kPatchNameRowHeight + Layout::kRowGap;
+            const float versionBottom = tree.nodes[versionsIndex].bounds.height;
             if (snapshot.versionEntries.empty())
             {
                 ui::Node emptyVersions;
@@ -959,17 +957,17 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
                 emptyVersions.kind = ui::NodeKind::StatusText;
                 emptyVersions.text = "No saved versions";
                 emptyVersions.variant = "quiet";
-                emptyVersions.bounds = {idleInnerX,
-                                        idleY,
+                emptyVersions.bounds = {0.0f,
+                                        versionY,
                                         idleInnerWidth,
-                                        std::min(Layout::kBrowserRowHeight, std::max(0.0f, versionBottom - idleY))};
+                                        std::min(Layout::kBrowserRowHeight, std::max(0.0f, versionBottom - versionY))};
                 appendChildTo(versionsIndex, std::move(emptyVersions));
             }
             else
             {
                 for (std::size_t ix = 0; ix < snapshot.versionEntries.size(); ++ix)
                 {
-                    if (idleY + Layout::kBrowserRowHeight > versionBottom + 0.5f)
+                    if (versionY + Layout::kBrowserRowHeight > versionBottom + 0.5f)
                     {
                         break;
                     }
@@ -980,11 +978,11 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
                     versionButton.label = entry.label;
                     versionButton.text = entry.label;
                     versionButton.variant = "list-row";
-                    versionButton.bounds = {idleInnerX, idleY, idleInnerWidth, Layout::kBrowserRowHeight};
+                    versionButton.bounds = {0.0f, versionY, idleInnerWidth, Layout::kBrowserRowHeight};
                     versionButton.doubleClickAction =
                         ui::Action::WithValue(Actions::kFileConfirmedLoad, entry.path);
                     appendChildTo(versionsIndex, std::move(versionButton));
-                    idleY += Layout::kBrowserRowHeight;
+                    versionY += Layout::kBrowserRowHeight;
                 }
             }
         }

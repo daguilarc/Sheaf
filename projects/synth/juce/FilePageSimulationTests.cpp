@@ -71,6 +71,32 @@ bool BoundsContain(const synth::ui::Bounds& outer, const synth::ui::Bounds& inne
            inner.y + inner.height <= outer.y + outer.height + kEpsilon;
 }
 
+synth::ui::Bounds ParentExtent(const synth::ui::Node& parent)
+{
+    return {0.0f, 0.0f, parent.bounds.width, parent.bounds.height};
+}
+
+synth::ui::Bounds SurfaceBoundsOfNode(const synth::ui::NodeTree& tree,
+                                      const std::unordered_map<std::string, std::string>& parents,
+                                      const synth::ui::Node& node)
+{
+    const auto parentIt = parents.find(node.id.value);
+    if (parentIt == parents.end())
+    {
+        return node.bounds;
+    }
+    const synth::ui::Node* parent = FindNode(tree, synth::ui::NodeId(parentIt->second));
+    if (parent == nullptr)
+    {
+        return node.bounds;
+    }
+    const synth::ui::Bounds parentBounds = SurfaceBoundsOfNode(tree, parents, *parent);
+    return {parentBounds.x + node.bounds.x,
+            parentBounds.y + node.bounds.y,
+            node.bounds.width,
+            node.bounds.height};
+}
+
 bool PathIsSameOrChild(const std::filesystem::path& root, const std::filesystem::path& target)
 {
     std::error_code ec;
@@ -216,7 +242,7 @@ void VerifyTreeAndRenderer(synth::runtime_ui::FilePageSurface& surface,
         Require(renderer.getLocalBounds().contains(SurfaceBoundsOf(renderer, *component)),
                 "step " + std::to_string(step) + " component escapes root " + node.id.value + " after " +
                     actionDescription);
-        Require(BoundsContain(root->bounds, node.bounds),
+        Require(BoundsContain(root->bounds, SurfaceBoundsOfNode(tree, parents, node)),
                 "step " + std::to_string(step) + " semantic node escapes root " + node.id.value + " after " +
                     actionDescription);
 
@@ -238,7 +264,7 @@ void VerifyTreeAndRenderer(synth::runtime_ui::FilePageSurface& surface,
                     .contains(SurfaceBoundsOf(renderer, *component)),
                 "step " + std::to_string(step) + " component escapes semantic parent " + node.id.value +
                     " after " + actionDescription);
-        Require(BoundsContain(parentNode->bounds, node.bounds),
+        Require(BoundsContain(ParentExtent(*parentNode), node.bounds),
                 "step " + std::to_string(step) + " semantic child escapes parent " + node.id.value + " after " +
                     actionDescription);
     }

@@ -47,8 +47,8 @@ inline Bounds PlotBounds(Bounds bounds)
     const float xInset = std::min(GangedRandomLfoGeometry::kInset, bounds.width * 0.5f);
     const float yInset = std::min(GangedRandomLfoGeometry::kInset, bounds.height * 0.5f);
     return {
-        bounds.x + xInset,
-        bounds.y + yInset,
+        xInset,
+        yInset,
         std::max(0.0f, bounds.width - 2.0f * xInset),
         std::max(0.0f, bounds.height - 2.0f * yInset),
     };
@@ -60,7 +60,8 @@ inline void AppendBackgroundAndAxis(Bounds bounds, std::vector<DrawCommand>& com
     {
         return;
     }
-    commands.push_back(DrawCommand::Fill(bounds, Color::Rgb(12, 14, 16)));
+    commands.push_back(DrawCommand::Fill({0.0f, 0.0f, bounds.width, bounds.height},
+                                         Color::Rgb(12, 14, 16)));
     const Bounds plot = PlotBounds(bounds);
     commands.push_back(DrawCommand::Line(
         {plot.x, plot.y + plot.height * 0.5f},
@@ -138,8 +139,8 @@ inline Bounds ClippedDotBounds(Point center, Bounds plot, Bounds outer)
         plot.width * 0.5f,
         plot.height * 0.5f,
     });
-    const float clampedX = std::clamp(center.x, outer.x + radius, outer.x + outer.width - radius);
-    const float clampedY = std::clamp(center.y, outer.y + radius, outer.y + outer.height - radius);
+    const float clampedX = std::clamp(center.x, radius, outer.width - radius);
+    const float clampedY = std::clamp(center.y, radius, outer.height - radius);
     return {clampedX - radius, clampedY - radius, radius * 2.0f, radius * 2.0f};
 }
 
@@ -153,8 +154,13 @@ void BuildGangedRandomLfoCommands(
 {
     namespace detail = ganged_random_lfo_detail;
 
-    detail::AppendBackgroundAndAxis(bounds, commandBuffer);
-    if (!detail::FiniteBounds(bounds) || bounds.width <= 0.0f || bounds.height <= 0.0f ||
+    if (!detail::FiniteBounds(bounds))
+    {
+        return;
+    }
+    const Bounds nodeExtent{0.0f, 0.0f, bounds.width, bounds.height};
+    detail::AppendBackgroundAndAxis(nodeExtent, commandBuffer);
+    if (nodeExtent.width <= 0.0f || nodeExtent.height <= 0.0f ||
         !std::isfinite(snapshot.sampleRate) || snapshot.sampleRate <= 0.0 ||
         !std::isfinite(snapshot.roundElapsedSamples) || snapshot.roundElapsedSamples < 0.0)
     {
@@ -191,7 +197,7 @@ void BuildGangedRandomLfoCommands(
         0.0,
         sharedDurationSeconds);
     const double presentSamples = presentSeconds * snapshot.sampleRate;
-    const Bounds plot = detail::PlotBounds(bounds);
+    const Bounds plot = detail::PlotBounds(nodeExtent);
 
     for (std::size_t voiceIndex = 0; voiceIndex < VoiceCount; ++voiceIndex)
     {
@@ -236,7 +242,7 @@ void BuildGangedRandomLfoCommands(
 
         const Point dot = detail::PointAtSample(
             voice, timing, presentSamples, sharedDurationSamples, plot);
-        const Bounds dotBounds = detail::ClippedDotBounds(dot, plot, bounds);
+        const Bounds dotBounds = detail::ClippedDotBounds(dot, plot, nodeExtent);
         if (dotBounds.width > 0.0f && dotBounds.height > 0.0f)
         {
             commandBuffer.push_back(DrawCommand::FillEllipse(dotBounds, voice.color));
@@ -261,7 +267,8 @@ protected:
         }
         std::vector<DrawCommand> commands;
         commands.reserve(GangedRandomLfoGeometry::MaximumCommandCount<VoiceCount>());
-        BuildGangedRandomLfoCommands(snapshot, GetBounds(), commands);
+        const Bounds bounds = GetBounds();
+        BuildGangedRandomLfoCommands(snapshot, bounds, commands);
         return commands;
     }
 

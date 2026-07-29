@@ -647,7 +647,7 @@ inline void AppendMotionIndicator(std::vector<DrawCommand>& commands,
 }
 
 inline std::vector<DrawCommand> BuildEncoderDrawCommands(const EncoderDrawState& state,
-                                                                    Bounds nodeBounds)
+                                                                    Bounds nodeExtent)
 {
     std::vector<DrawCommand> commands;
     if (!state.connected)
@@ -657,10 +657,10 @@ inline std::vector<DrawCommand> BuildEncoderDrawCommands(const EncoderDrawState&
 
     constexpr float x_Inset = 4.0f;
     Bounds bounds{
-        nodeBounds.x + x_Inset,
-        nodeBounds.y + x_Inset,
-        std::max(0.0f, nodeBounds.width - x_Inset * 2.0f),
-        std::max(0.0f, nodeBounds.height - x_Inset * 2.0f),
+        x_Inset,
+        x_Inset,
+        std::max(0.0f, nodeExtent.width - x_Inset * 2.0f),
+        std::max(0.0f, nodeExtent.height - x_Inset * 2.0f),
     };
 
     const float centerX = bounds.x + bounds.width * 0.5f;
