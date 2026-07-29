@@ -78,3 +78,30 @@ here by design.
 
 - [ ] 8.1 Document the one-time operator step already performed under the 2.0 gate (delete `<log_root>/sdd.sqlite`, `-wal`, `-shm`; service creates v2 on next start) in `plugins/xagent/README.md`, and verify the refusal message for a stale v1 file names it. Deliverable: README section plus the 6.2 refusal test referencing the same wording.
 - [ ] 8.2 Run the full xagent test suite, the dispatch-prompt suite, the plugin packaging tests, and the agents installer tests; repackage plugin runtime assets. Deliverable: all suites green; regenerated `plugins/xagent/assets/`.
+
+## 9. Await liveness redesign (added post-execution)
+
+Driven by two findings from executing this change: the SDD dispatch tools block
+for a whole subagent turn (xsvc-16), and the await contract in xsvc-5 promised a
+7000s hold that no default MCP client can consume. A fresh-context design review
+established the client-side facts; see
+`docs/superpowers/plans/2026-07-28-redesign-sdd-ledger.DEFERRED.md` A2 and A3.
+
+**Design constraint that governs every task here:** an *agent wakeup* (a tool
+call returning) costs a full context re-input and must happen only when there is
+news. An HTTP round trip below the tool-call boundary costs nothing. Never
+convert the former into a polling loop to avoid the latter.
+
+- [ ] 9.1 Fix the dispatch-blocks-on-turn defect (xsvc-16). `SddManager.Start` and `SddManager.Followup` each `await runManager.submit(...)`, but `Supervisor.submit` consumes the whole provider event stream and resolves at turn completion. Mirror `runManager.startRun`: detach the submit promise, await turn-running, return. Preserve failure visibility and verify the returned `sequence` is still a usable await cursor. Deliverable: both tools return in ~1s; tests pin that `Start` resolves while submit is still pending.
+- [ ] 9.2 Settle whether progress notifications alone lift the controller path's 60s ceiling. Register a throwaway loopback MCP server that emits `notifications/progress` every 20s and returns after 120s; call it from the controller's harness. If it survives, pings suffice. If not, the per-server `"timeout"` in the xagent MCP registration is the remedy — still configuration, never an agent-facing knob. Deliverable: a recorded result, because it decides whether 9.4 is sufficient on its own.
+- [ ] 9.3 Switch the MCP transport out of JSON-response mode (`mcp.ts`, `enableJsonResponse`). In JSON mode a request-scoped notification is silently dropped (`webStandardStreamableHttp.js:702`), and the POST is a silent socket that nothing can keep alive. The flag is per-transport, so every tool response becomes a one-event SSE stream; verify the existing service e2e tests still pass. Deliverable: `xagent_await` responses delivered over SSE.
+- [ ] 9.4 Emit request-scoped progress pings from `xagent_await` while the supervisor vouches for the run (xsvc-5). Cadence ≤60s. Vouching is derived from supervisor liveness — phase live, progress within the silence bound — never a bare interval timer, or the ping vouches for nothing. Stop pinging when vouching stops, so a client timeout carries real information. Deliverable: a healthy long run holds through one await with zero intermediate wakeups.
+- [ ] 9.5 Remove `deadline_seconds` from the advertised `xagent_await` schema, keeping it in the parsed schema for the service-owned client and tests, under the xsvc-15 advertised-versus-parsed split. Deliverable: the advertised schema offers `run_id` and `after_sequence` only; internal callers unaffected.
+- [ ] 9.6 Simplify `client.ts` onto the ping path and delete the chunking workaround — `x_McpAwaitHttpChunkSeconds`, `x_McpAwaitReconnectAttempts`, `x_McpAwaitReconnectBackoffMs`, `x_McpAwaitTimeoutSlackSeconds`, the chunk loop, and its test surface. Do this only after 9.4 is proven; the chunk loop is the current working mechanism and must not be removed on faith. Deliverable: one held request per await, no chunk reassembly.
+
+**Deliberately not doing:** adding an outer transport ceiling for the case where
+the watchdog vouches for a wedged agent. The supervisor-owned `hardDeadlineMs`
+policy already covers it and produces a durable event — waking the await with
+news rather than failing the transport. Left unset by default, honouring
+"hold indefinitely while healthy". The harness's own hard cap is the outermost
+backstop.

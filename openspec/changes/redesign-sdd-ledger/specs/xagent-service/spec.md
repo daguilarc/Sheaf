@@ -28,26 +28,34 @@ WHEN the xagent service is running, THE service SHALL expose Streamable HTTP MCP
 - **THEN** the service returns a bounded 404 response
 - **AND** does not change any supervised run
 
-### Requirement: xsvc-5 — MCP: long blocking request bounds
+### Requirement: xsvc-5 — MCP: awaits end on news, not on a clock
 
-WHEN serving `xagent_await`, THE xagent service SHALL support a 7200-second HTTP/MCP request lifetime, default the application await deadline to 7000 seconds, reject larger deadlines, and release request-local resources when the caller cancels without cancelling the supervised run; `xagent_await` SHALL be the only await tool and SHALL serve SDD-owned and generic runs identically.
+WHEN serving `xagent_await`, THE xagent service SHALL block until the next durable event after the caller's cursor and SHALL NOT end a vouched-for await on elapsed time; an await ends with a durable event, a supervision verdict, or client cancellation, and cancellation SHALL release request-local resources without cancelling the supervised run. `xagent_await` SHALL be the only await tool and SHALL serve SDD-owned and generic runs identically.
 
-#### Scenario: Ninety-minute healthy run
+THE service SHALL deliver `xagent_await` responses over SSE, and WHILE the supervisor vouches for the run THE service SHALL emit request-scoped progress notifications on any await carrying a `progressToken`, at a cadence not exceeding 60 seconds. Vouching means the run's phase is live and the supervisor has observed progress within its silence bound; it is not a bare interval timer. WHEN the supervisor stops vouching, THE service SHALL stop emitting notifications, so that a client-side timeout means "the supervisor stopped vouching" rather than "N seconds elapsed".
 
-- **WHEN** a controller starts one await with the default deadline and the worker remains healthy for 90 minutes before completing
-- **THEN** the same await remains pending through routine progress
-- **AND** returns the completion event without an intermediate deadline wake
+THE `deadline_seconds` input SHALL NOT be advertised on the agent-facing tool schema. It remains in the parsed schema as internal plumbing for the service-owned client and tests, under the advertised-versus-parsed split established by xsvc-15. An agent SHALL NOT be required to choose a timeout whose only correct value depends on transport behaviour it cannot observe.
 
-#### Scenario: Maximum deadline exceeded
+**Client cooperation is part of this contract.** A conforming client MUST either reset its request timeout on progress notifications or configure a request timeout at least as long as its intended await. The MCP SDK's 60-second `DEFAULT_REQUEST_TIMEOUT_MSEC` satisfies neither and is the observed default in at least one shipped harness. Remedies are client-side configuration — a per-server `"timeout"` in the MCP registration, or the harness's own idle-timeout setting — never an agent-facing knob. The 7200-second request lifetime and 7270-second headers timeout (`config.ts`) are transport plumbing, not the headline of this contract.
 
-- **WHEN** a controller requests an await deadline above 7000 seconds
-- **THEN** the service rejects the request before registering a waiter
+#### Scenario: A healthy long run holds without waking the controller
 
-#### Scenario: Request reaches deadline
+- **WHEN** a controller issues one await and the worker stays healthy for ninety minutes before completing
+- **THEN** progress notifications flow for the duration and the await stays pending
+- **AND** it returns the completion event as the controller's first and only wakeup
+- **AND** no intermediate deadline result is delivered
 
-- **WHEN** no deliverable event exists by the accepted await deadline
-- **THEN** the service returns one compact deadline result with the current cursor
-- **AND** leaves the supervised run active
+#### Scenario: The supervisor stops vouching
+
+- **WHEN** the supervised run wedges, dies, or exceeds its silence bound
+- **THEN** the service stops emitting progress notifications
+- **AND** the client's own timeout fires, which is a justified wakeup carrying real information
+
+#### Scenario: Deadlines are not the agent's business
+
+- **WHEN** an agent reads the advertised `xagent_await` schema
+- **THEN** it sees `run_id` and `after_sequence` and no deadline input
+- **AND** a call constructed from that schema alone is valid
 
 #### Scenario: SDD-owned run awaited generically
 
@@ -302,3 +310,32 @@ THE advertised schema SHALL NOT reject anything the union accepts. Discovery may
 - **WHEN** a client sends a payload the advertised superset permits but the union rejects — a `fixer` missing `findings`, or a task-less `reviewer` that sets `report`
 - **THEN** the handler rejects it with the union's own structured validation error
 - **AND** the advertised schema is never consulted at runtime
+
+### Requirement: xsvc-16 — Dispatch tools return when the turn starts, never when it completes
+
+WHEN `xagent_sdd_start` or `xagent_sdd_followup` accepts a dispatch, THE xagent service SHALL return once the turn is **durably started** — the run exists and its `turn_started` event is persisted — and SHALL NOT wait for the turn to complete. Awaiting completion is `xagent_await`'s job and no other tool's.
+
+A submit whose failure surfaces after the tool has returned SHALL still be observable: either as a durable failure event on the run, or through `xagent_inspect`. Detaching the submit SHALL NOT convert a failed dispatch into a silent one.
+
+THE `sequence` a dispatch tool returns SHALL be a cursor the caller can pass directly to `xagent_await` as `after_sequence` without missing the turn's completion or replaying an event it has already seen.
+
+**Why this is stated at all.** `Supervisor.submit` resolves at turn *completion*, not acceptance — it consumes the entire provider event stream. Two call sites awaited it directly, so both dispatch tools blocked for the full duration of a subagent's turn, minutes at a time, and appeared to fail against every client timeout while actually succeeding. A controller that retried on that apparent failure would spawn a duplicate agent. The generic `xagent_start_non_sdd` never had the defect because it detaches the submit and waits only for the turn to reach running; nothing in the spec said the SDD path had to do the same.
+
+#### Scenario: A dispatch returns while its turn runs
+
+- **WHEN** a controller dispatches an agent whose first turn takes minutes
+- **THEN** the dispatch tool returns as soon as the turn is durably started
+- **AND** the response carries the agent id and a usable await cursor
+- **AND** the controller's next action is an await, not a retry
+
+#### Scenario: A late submit failure is not swallowed
+
+- **WHEN** the submit fails after the dispatch tool has already returned
+- **THEN** the failure is visible as a durable event on the run or through inspection
+- **AND** the controller can distinguish it from a run that is merely still working
+
+#### Scenario: The returned cursor is usable
+
+- **WHEN** a controller passes a dispatch tool's returned `sequence` to `xagent_await` as `after_sequence`
+- **THEN** the await delivers that turn's completion
+- **AND** does not replay an event the controller has already been given
