@@ -47,8 +47,8 @@ pre-plan coordination and Superpowers SDD task execution:
 
 ## Pre-plan coordination
 
-These rules apply to pre-plan OpenSpec review, decomposition, plan generation,
-and other helpers that run before a written Superpowers SDD plan task exists.
+These rules apply to pre-plan OpenSpec review, plan generation, and other
+helpers that run before a written Superpowers SDD plan task exists.
 They do not fabricate an SDD plan or task identity solely to enter the SDD
 ledger.
 
@@ -126,6 +126,9 @@ xagent_sdd_start
   disk or poll for completion.
 - **Close sessions deliberately.** Call `xagent_sdd_close` only after the task
   passes both verdicts.
+- **Number tasks in every user-facing update.** In your updates, refer to task
+  numbers as `Task <N>/<Total>` — for example `Task 3/7` — so the user always
+  sees position and remaining work.
 - **No SDD fallbacks.** If the xagent SDD MCP facade or Conductor-managed
   xagent service is unavailable, surface broken agentic infrastructure. Do not
   fall back to native subagents, generic `xagent_start`, raw `xagent_message`,
@@ -175,36 +178,18 @@ attention, a long await deadline, or an explicit user status request.
    - If the OpenSpec proposal, specs, design, and tasks are already clear and
      approved, skip full brainstorming and proceed to implementation planning.
 
-6. Decompose with the task-analyzer decomposition subagent.
-   - Dispatch the decomposition subagent
-     (`projects/agents/task-analyzer/prompts/decomposer.md`) with the
-     change's artifacts and the main-branch estimator database path
-     (`data/agents/task-analyzer.sqlite` on `main` — never a worktree copy).
-   - It proposes and complexity-scores candidate decompositions, runs
-     `estimate.py` on each (default Thompson sampling), and selects the
-     candidate with the lowest `thompson_total_usd`, emitting the
-     `.assignments.yaml` sibling (per-task model, effort, complexity,
-     predicted cost) plus its candidate comparison.
-   - The Superpowers plan's task boundaries follow the selected candidate;
-     per-task implementer models and efforts come from `.assignments.yaml`.
-   - Validate the annotation file with
-     `projects/agents/task-analyzer/annotations.py` before using it.
-   - If the estimator database is unavailable or has no trained estimator,
-     say so, fall back to judgment-based decomposition and model selection,
-     and proceed without annotations rather than blocking.
-
-7. Write the Superpowers plan.
-   - Invoke `superpowers:writing-plans`.
+6. Write the Superpowers plan.
+   - Invoke `superpowers:writing-plans`, and let it decide task boundaries and
+     decomposition.
    - Save the plan under `docs/superpowers/plans/` unless the user specified
      another path.
    - Preserve OpenSpec requirements explicitly in the plan.
-   - Task boundaries follow the selected decomposition from step 6.
    - Include exact files, tests, commands, expected outputs, implementation
      steps, and commits.
    - Include the plan header requiring `superpowers:subagent-driven-development`
      for task-by-task execution.
 
-8. Execute only when authorized.
+7. Execute only when authorized.
    - If the user asked only to convert or plan, stop after writing the plan.
    - If the user explicitly asked to apply, implement, execute, or replace
      `openspec apply`, treat that as authorization to continue after plan
@@ -212,10 +197,9 @@ attention, a long await deadline, or an explicit user status request.
    - If the user explicitly pre-authorized plan-and-execute, do not pause for
      the writing-plans execution-choice prompt.
 
-9. Execute with subagent-driven development.
+8. Execute with subagent-driven development.
    - Invoke `superpowers:subagent-driven-development`.
-   - Dispatch one fresh implementer per plan task through `xagent_sdd_start`
-     on the model and effort assigned in `.assignments.yaml`.
+   - Dispatch one fresh implementer per plan task through `xagent_sdd_start`.
    - After dispatch, do independent controller work, then one long
      `xagent_sdd_await` — not short polling loops.
    - Run spec compliance review before code quality review for each task
@@ -227,11 +211,11 @@ attention, a long await deadline, or an explicit user status request.
    - Do not dispatch implementation subagents in parallel when tasks may touch
      overlapping files.
 
-10. Keep OpenSpec progress synchronized.
-    - Update an OpenSpec task checkbox only after the corresponding Superpowers
-      work is complete, reviewed, and verified.
-    - If one OpenSpec task was split across multiple Superpowers tasks, update
-      the OpenSpec checkbox only after all split tasks are complete.
+9. Keep OpenSpec progress synchronized.
+   - Update an OpenSpec task checkbox only after the corresponding Superpowers
+     work is complete, reviewed, and verified.
+   - If one OpenSpec task was split across multiple Superpowers tasks, update
+     the OpenSpec checkbox only after all split tasks are complete.
 
 ## Stop Conditions
 
