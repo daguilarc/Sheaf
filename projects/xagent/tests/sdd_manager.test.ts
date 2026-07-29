@@ -123,7 +123,7 @@ function FakeRendered(): RenderedSddPrompt
 
 function CreateFakeRunManager(
   recorder: ReturnType<typeof CreateOrderRecorder>,
-  options?: { live?: boolean; failStart?: boolean },
+  options?: { live?: boolean; failStart?: boolean; hangSubmit?: boolean },
 ): SddRunManagerPort & {
   createError?: Error;
   startError?: Error;
@@ -134,6 +134,7 @@ function CreateFakeRunManager(
   closed: string[];
   sequence: number;
   phase: string;
+  submitSettled: boolean;
   messageCalls: XagentMessageInput[];
   messageRun(input: XagentMessageInput): Promise<MessageRunResult>;
 }
@@ -159,6 +160,7 @@ function CreateFakeRunManager(
     messageCalls,
     sequence: 7,
     phase: "ready",
+    submitSettled: true,
     allocateRunId(): string
     {
       recorder.Record("allocateRunId");
@@ -205,7 +207,16 @@ function CreateFakeRunManager(
         throw this.submitError;
       }
       submitted.push({ runId, text });
+      // Advance the cursor the way a real turn.running event would, so tests
+      // can tell a pre-submit snapshot apart from a post-acceptance one.
+      //
+      this.sequence += 1;
       this.phase = "running";
+      if (options?.hangSubmit === true)
+      {
+        this.submitSettled = false;
+        await new Promise<void>(() => {});
+      }
     },
     inspect(runId: string)
     {
@@ -395,7 +406,11 @@ test("start canonicalizes cwd, inserts the row before creating the run, then ren
     task: 3, name: "Ledger v2 store", brief: x_BriefPath, report: x_ReportPath,
   });
 
-  assert.deepEqual(recorder.Names(), [
+  // waitForTurnRunning polls inspect after submit; require the create/start
+  // order and a pre-submit inspect without demanding an exact call list.
+  //
+  const names = recorder.Names();
+  const required = [
     "canonicalizeCwd",
     "readFile",
     "renderPrompt",
@@ -405,7 +420,14 @@ test("start canonicalizes cwd, inserts the row before creating the run, then ren
     "runManager.start",
     "inspect",
     "runManager.submit",
-  ]);
+  ];
+  let searchFrom = 0;
+  for (const name of required)
+  {
+    const idx = names.indexOf(name, searchFrom);
+    assert.ok(idx >= 0, `missing ordered call: ${name}`);
+    searchFrom = idx + 1;
+  }
   assert.deepEqual(store.inserted[0], {
     agentId: result.agent_id,
     planPath: x_PlanPath,
@@ -1009,6 +1031,102 @@ test("a controller note is appended to a fix follow-up", async () =>
   assert.ok(submitted.includes(x_FindingsText), "findings must survive");
   assert.ok(submitted.includes("## Controller Note"));
   assert.ok(submitted.includes(note));
+});
+
+test("Start returns once the turn is running without waiting for submit to finish", async () =>
+{
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, undefined);
+  const runManager = CreateFakeRunManager(recorder, { hangSubmit: true });
+  const manager = CreateSddManager({ ...CreateDeps(recorder), store, runManager });
+
+  const started = await Promise.race([
+    manager.Start(ImplementerStartInput()).then((result) => (
+      { kind: "result" as const, result }
+    )),
+    new Promise<{ kind: "timeout" }>((resolve) =>
+    {
+      setTimeout(() => resolve({ kind: "timeout" }), 200);
+    }),
+  ]);
+
+  assert.equal(started.kind, "result");
+  if (started.kind !== "result")
+  {
+    return;
+  }
+  assert.equal(started.result.agent_id, x_AgentId);
+  // Pre-submit ready cursor, not the advanced running cursor.
+  //
+  assert.equal(started.result.sequence, 7);
+  assert.equal(runManager.phase, "running");
+  assert.equal(runManager.sequence, 8);
+  assert.equal(runManager.submitted.length, 1);
+  assert.equal(runManager.submitSettled, false);
+});
+
+test("Followup returns once the turn is running without waiting for submit to finish", async () =>
+{
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, {
+    agent_id: x_AgentId,
+    plan_path: x_PlanPath,
+    task: 3,
+    role: "implementer",
+    brief_path: x_BriefPath,
+    brief_text: x_BriefText,
+    cwd: x_CanonicalCwd,
+    dispatched_at: "2026-07-28T10:00:00.000Z",
+  });
+  const runManager = CreateFakeRunManager(recorder, { hangSubmit: true });
+  const manager = CreateSddManager({
+    ...CreateDeps(),
+    store,
+    runManager,
+    formatFix: () => "FIX TEXT",
+  });
+
+  const followed = await Promise.race([
+    manager.Followup({
+      kind: "fix",
+      agent_id: x_AgentId,
+      round: 2,
+      findings: "/tmp/sdd/task-3-findings.md",
+      findings_text: "one finding",
+      tests: ["npm test"],
+      report: "/tmp/sdd/task-3-report.md",
+    }).then((result) => ({ kind: "result" as const, result })),
+    new Promise<{ kind: "timeout" }>((resolve) =>
+    {
+      setTimeout(() => resolve({ kind: "timeout" }), 200);
+    }),
+  ]);
+
+  assert.equal(followed.kind, "result");
+  if (followed.kind !== "result")
+  {
+    return;
+  }
+  assert.equal(followed.result.agent_id, x_AgentId);
+  assert.equal(followed.result.sequence, 7);
+  assert.equal(runManager.phase, "running");
+  assert.equal(runManager.submitSettled, false);
+});
+
+test("Start rejects and closes the run when submit fails before the turn is running", async () =>
+{
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, undefined);
+  const runManager = CreateFakeRunManager(recorder);
+  runManager.submitError = new Error("submit boom");
+  const manager = CreateSddManager({ ...CreateDeps(recorder), store, runManager });
+
+  await assert.rejects(
+    () => manager.Start(ImplementerStartInput()),
+    /submit boom/,
+  );
+  assert.equal(store.inserted.length, 1);
+  assert.deepEqual(runManager.closed, [x_AgentId]);
 });
 
 test("SddManager exposes only Start, Followup, and ListGeneric", () =>

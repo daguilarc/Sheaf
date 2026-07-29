@@ -17,6 +17,7 @@ import type {
 } from "./sdd_store.js";
 import {
   canonicalizeWorkingDirectory,
+  waitForTurnRunning,
   type CreateRunOptions,
   type ListRunsResult,
   type XagentListEntry,
@@ -343,21 +344,39 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       });
       created = true;
       await runManager.start(agentId);
+      // Snapshot the ready-state cursor before the turn starts so a controller
+      // awaiting from the returned sequence observes running through
+      // completion, matching startRun / messageRun.
+      //
       const inspection = runManager.inspect(agentId);
       if (inspection === undefined)
       {
         throw new Error(`SDD run disappeared after start: ${agentId}`);
       }
-      await runManager.submit(agentId, AppendControllerNote(promptText, input.note));
+      const startSequence = inspection.sequence;
+      // Supervisor.submit resolves at turn completion, not acceptance. Detach
+      // it and return once the turn is durably running — same pattern as
+      // startRun — so MCP clients are not held past their timeout.
+      //
+      const submitPromise = runManager.submit(
+        agentId,
+        AppendControllerNote(promptText, input.note),
+      );
+      void submitPromise.catch(() => {});
+      await waitForTurnRunning(runManager, agentId, submitPromise);
       return {
         agent_id: agentId,
-        sequence: inspection.sequence,
+        sequence: startSequence,
         prompt_path: promptPath,
         renderer_path: rendererPath,
       };
     }
     catch (error)
     {
+      // Closes only failures that surface before this function returns
+      // (create/start/early submit). A submit that fails after return is a
+      // durable failed event, as with startRun, and cannot be closed here.
+      //
       if (created)
       {
         await runManager.close(agentId).catch(() => {});
@@ -483,12 +502,16 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       promptText = rendered.prompt.text;
     }
 
-    const sequence = inspection.sequence;
-    await runManager.submit(
+    // Ready-state cursor, captured before submit advances the sequence.
+    //
+    const startSequence = inspection.sequence;
+    const submitPromise = runManager.submit(
       input.agent_id,
       AppendControllerNote(promptText, input.note),
     );
-    return { agent_id: input.agent_id, sequence };
+    void submitPromise.catch(() => {});
+    await waitForTurnRunning(runManager, input.agent_id, submitPromise);
+    return { agent_id: input.agent_id, sequence: startSequence };
   }
 
   return {

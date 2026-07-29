@@ -685,8 +685,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function waitForTurnRunning(
-  manager: XagentRunManager,
+export async function waitForTurnRunning(
+  manager: {
+    inspect(runId: string): { readonly phase: string } | undefined;
+  },
   runId: string,
   submitPromise: Promise<void>,
 ): Promise<void> {
