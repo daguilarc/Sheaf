@@ -967,62 +967,20 @@ cover — is spot-checked at the human sign-off gate (D4).
 
 ## Open Questions
 
-1. **Does `Node::variant` survive at all? — RESOLVED: no. The residual set is
-   empty, `variant` retires entirely, and it is not part of the version-2 wire
-   schema.** This is settled in the preconditions group rather than in cleanup
-   because the alternative answers (a shrunken closed set, or a new explicit
-   `bool interactiveRow`-style field) would each have changed the v2 schema
-   *after* the codec and both backends had been built against it, forcing a
-   second migration.
+1. **Does `Node::variant` survive at all? — RESOLVED: no. It retires entirely,
+   and the residual set is empty.** An earlier draft of this document asserted
+   that `variant` retained "interaction-semantics duty (list-row
+   hover/selection behavior in `SetSemantics`)". That was factually wrong, and
+   it survived into the task briefs before implementation caught it: the JUCE
+   backend contains no hover handling at all — no `hover`, `mouseEnter`, or
+   `mouseExit` anywhere in `PortableJuceBackend.hpp`. `SetSemantics` carries
+   only appearance duty, which `Node::color` and `Node::textStyle` now replace
+   outright. So there is no residual to preserve, no explicit replacement field
+   is needed, and `variant` is deleted from the model together with every
+   appearance-string branch in both backends. The decision was still made
+   before the v2 schema was fixed, which is what mattered — a nonempty residual
+   would have needed a wire slot.
 
-   An earlier draft of this document asserted that `variant` carried
-   interaction semantics in `SetSemantics` "which nothing else covers", and
-   named `"list-row"`, `"panel"`, and `"quiet"` as the residual. Reading the
-   backend line by line during task 3 shows that premise is false. Every
-   `variant` branch decides appearance and nothing else:
-
-   - `TextColourForNode` (`PortableJuceBackend.hpp:1119-1137`) — `"danger"`,
-     `"quiet"`/`"muted"`, `"muted-title"` pick a **glyph colour**, which
-     `TextStyle::color` now carries.
-   - `ButtonColourForNode` (`:1139-1157`) — `"primary"`, `"list-row"` pick a
-     **control fill**, which `Node::color` now carries.
-   - the `Label`/`StatusText` branch of `UpdateControlFromNode` (`:1374`) —
-     `"title"`/`"muted-title"` pick **font size 18 instead of 13**, which
-     `TextStyle::size` now carries.
-   - `SemanticPanelComponent::paint` (`:377-403`), reached for `Row`,
-     `Section`, and `ScrollArea` via `SetSemantics` (`:1357-1363`) — decides
-     only **which fill to paint**: empty/`"quiet"`/`"panel"` return without
-     painting, `selected_` paints one colour, `"list-row"` another, anything
-     else a third. `Node::color` now carries the container background fill,
-     absent `color` means "no fill" exactly as the early return does today,
-     and sru-45 already requires the selected/hover/pressed/disabled
-     treatments to be *derived* from the carried colour rather than
-     substituted. Nothing is left over.
-
-   Two further readings confirm there is no hidden non-colour job. First, the
-   JUCE backend contains **no hover code at all** (no `mouseEnter`,
-   `mouseMove`, or `isMouseOver` site anywhere in
-   `PortableJuceBackend.hpp`), so `SetSemantics` cannot be carrying hover
-   semantics. Second, both non-early-return branches of that paint are
-   **unreachable from every current producer**: no producer sets a container
-   variant other than `"panel"` or `"quiet"` (`RuntimePages.hpp:681, 722, 735,
-   768, 894, 942`; `ControllersPageUI.hpp` sets none), and the only two
-   `"list-row"` producers (`RuntimePages.hpp:853, 982`) are `Button` nodes.
-   The browser backend never read `variant` in the first place — zero
-   occurrences in `ui.ts` — and no requirement in `sru-1`–`sru-34` or
-   `sru-43`–`sru-53` pins any `variant` behaviour.
-
-   Consequences, all landing inside the single v2 break: the command buffer
-   neither encodes nor decodes a variant string, `DecodedNode` has no
-   `variant` member, and no replacement field or `IsResidualVariant`
-   membership helper exists to add. The `std::string variant` field stays on
-   the model, documented as retired and non-serialized, only so the ~20
-   unconverted `RuntimePages.hpp` producer sites keep compiling and the JUCE
-   backend keeps painting exactly as it does today until tasks 5.2–5.9a
-   rebuild those pages on the library and task 7.2 deletes the field together
-   with the backend's colour branches. Dropping it from the wire now is
-   behaviour-neutral: the browser already ignored it, and the JUCE backend
-   reads the model directly rather than the command buffer.
 2. **Reservation metric values and JUCE text-fit verification depth.** The
    per-style advance estimates and per-kind intrinsic extents are seeded from
    the two existing backend tables, which currently agree: buttons 72x28,
