@@ -123,6 +123,13 @@ same client whose awaits died all night.
 latter being the constraint that forced `x_McpAwaitHttpChunkSeconds = 240`
 into existence. One held request, zero intermediate agent wakeups.
 
+**Late discovery from 9.5, worth keeping visible.** Registering a subset
+advertised schema *without* `.passthrough()` strips `deadline_seconds` before
+the handler sees it, so the await silently defaults to 7000s — and because
+pings now work, it never times out. A hang, created by the fix. The
+passthrough and its test (`xagent_await still honours an unadvertised
+deadline_seconds over MCP`) are the guard.
+
 **This answers 9.2 in the affirmative: progress pings alone lift the ceiling
 for this harness.** The per-server `"timeout"` remedy is not needed, and 9.6's
 deletion of the chunk loop is now justified by measurement rather than by
