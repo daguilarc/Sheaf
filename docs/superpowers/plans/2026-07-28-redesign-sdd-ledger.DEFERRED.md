@@ -210,43 +210,38 @@ deleting a ledger-referenced run directory, which if enforced makes this
 unreachable. If that prohibition is the answer, say so in the requirement
 rather than leaving it implicit.
 
-### B7. The log-root directory is secured at creation only, never re-secured — OPEN
+### B7. Owner-only ledger permissions — REMOVED, finding moot
 
-Found while restoring the reopen-permissions coverage the Task 8a review
-flagged as lost.
+Originally recorded as "the log-root directory is secured at creation but never
+re-secured". Investigating the *why* showed the guard should not exist at all.
 
-`EnsureOwnerOnlyDirectory` (`src/service/sdd_store.ts:68-72`) calls
-`mkdirSync(..., { mode: 0o700 })` **only when the directory does not exist**.
-It never `chmod`s an existing one. By contrast `EnsureOwnerOnlyLedgerFiles`
-re-secures `sdd.sqlite` and both sidecars to `0o600` on *every* open, twice.
+The rationale came from the archived `add-xagent-sdd-mode` design: owner-only
+permissions "because briefs may contain sensitive repository context", paired
+with a rule to "never include brief text in normalized supervision logs".
 
-So a log root that becomes group- or world-readable — by an operator `chmod`,
-a restore, a copy, a container image layer — stays that way for the life of
-the service, while the ledger file inside it is repeatedly re-secured. The
-asymmetry is the surprising part: the code clearly intends owner-only, and
-achieves it for files but not for their container.
+**This change inverted that pairing.** `turn.submitted` (xsvc-9) exists
+precisely to write the full submitted prompt — rendered brief included — into
+`normalized.jsonl`. So the protected artifact and the unprotected one now hold
+the same text:
 
-Impact is bounded but real. The ledger itself stays `0o600`, so `brief_text`
-is not exposed by this. What a readable log root exposes is the **directory
-listing**: agent ids, and the per-run directories. Those run directories are
-already created `0o755` and hold `normalized.jsonl` — which after this change
-is the *only* copy of every agent's reports and submitted prompts (xsvc-14).
-So the run-directory mode is the larger question, and this finding is really
-the narrow end of it.
+```
+-rw-------  sdd.sqlite                 0600, holds brief_text
+-rw-r--r--  xrun_.../normalized.jsonl  0644, holds the full prompt
+```
 
-Pre-existing; not introduced by any task in this change, and untouched by the
-v1 deletion. Deliberately not fixed inside the cutover — changing directory
-permission behaviour during the most irreversible step in the plan is the
-wrong trade.
+A `chmod` on one copy of a secret that also sits in a plain umask file next to
+it is not protection; it implies a guarantee the system of record never had.
 
-The restored test at `tests/sdd_store.test.ts` ("v2 re-secures the ledger and
-its WAL sidecars on reopen") pins the file guarantee and carries a comment
-saying explicitly that it does **not** assert the directory mode, so the gap
-is visible rather than silently uncovered.
+And the threat model does not survive contact with the actual project: a public
+repository of agents that build browser synthesizers, with the data root
+gitignored, local, and single-user. The "sensitive repository context" is the
+public repo.
 
-Whole-branch review should decide two things together: whether
-`EnsureOwnerOnlyDirectory` should re-secure, and whether run directories
-should be `0o700` given they are now the system of record.
+`EnsureOwnerOnlyDirectory`, `EnsureOwnerOnlyDatabaseFile`, and
+`EnsureOwnerOnlyLedgerFiles` are deleted along with the two tests asserting
+modes. The directory is still created; its permissions come from the umask,
+which is the operator's policy to set. No spec required the modes — only the
+archived design mentioned them.
 
 ### B2. Intermittent test failure — IDENTIFIED AND FIXED
 

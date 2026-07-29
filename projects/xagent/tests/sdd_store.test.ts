@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -240,66 +240,6 @@ test("v2 reads after Close throw SddStoreError", async () => {
     assert.throws(() => store.IsSddAgent(x_V2AgentInput.agentId), SddStoreError);
   } finally {
     await rm(logRoot, { recursive: true, force: true });
-  }
-});
-
-test("v2 re-secures the ledger and its WAL sidecars on reopen", async () => {
-  // EnsureOwnerOnlyLedgerFiles runs twice in CreateSddAgentStore, and the
-  // reopen path is the one that matters: the ledger holds brief_text, so a
-  // permissive mode on the db or either sidecar leaks dispatch briefs. The v1
-  // test that covered this was deleted with the v1 store; the property is v2.
-  //
-  const logRoot = await mkdtemp(path.join(tmpdir(), "sdd-v2-perms-"));
-  try {
-    const first = CreateSddAgentStore(logRoot);
-    first.Insert(x_V2AgentInput);
-    first.Close();
-
-    const databasePath = GetSddDatabasePath(logRoot);
-    chmodSync(databasePath, 0o644);
-    for (const suffix of ["-wal", "-shm"]) {
-      if (existsSync(`${databasePath}${suffix}`)) {
-        chmodSync(`${databasePath}${suffix}`, 0o644);
-      }
-    }
-
-    const reopened = CreateSddAgentStore(logRoot);
-    reopened.Insert({ ...x_V2AgentInput, agentId: "xrun_20260728000000000_0000000c" });
-    reopened.Close();
-
-    assert.equal(Number(statSync(databasePath).mode) & 0o777, 0o600);
-    // Deliberately not asserting the log-root directory mode:
-    // EnsureOwnerOnlyDirectory sets 0o700 only at creation and never
-    // re-secures an existing directory. That gap is pre-existing and recorded
-    // in the deferred-findings ledger; this test pins the file guarantee the
-    // helper does make.
-    for (const suffix of ["-wal", "-shm"]) {
-      const sidecar = `${databasePath}${suffix}`;
-      if (existsSync(sidecar)) {
-        assert.equal(
-          Number(statSync(sidecar).mode) & 0o777, 0o600,
-          `${suffix} sidecar must stay owner-only`,
-        );
-      }
-    }
-  } finally {
-    await rm(logRoot, { recursive: true, force: true });
-  }
-});
-
-test("v2 provisions owner-only permissions on a new ledger", async () => {
-  const parentRoot = await mkdtemp(path.join(tmpdir(), "xagent-sdd-schema-"));
-  const logRoot = path.join(parentRoot, "sdd-log");
-  try {
-    const store = CreateSddAgentStore(logRoot);
-    store.Close();
-    const databasePath = GetSddDatabasePath(logRoot);
-    const stat = statSync(databasePath);
-    const createdLogRootStat = statSync(logRoot);
-    assert.equal(Number(stat.mode) & 0o777, 0o600);
-    assert.equal(Number(createdLogRootStat.mode) & 0o077, 0);
-  } finally {
-    await rm(parentRoot, { recursive: true, force: true });
   }
 });
 

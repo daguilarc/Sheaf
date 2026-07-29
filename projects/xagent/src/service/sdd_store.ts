@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { chmodSync, existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 
 export type SddStartRole = "implementer" | "reviewer" | "fixer" | "re-reviewer";
@@ -65,28 +65,6 @@ export class SddStoreError extends Error {
   }
 }
 
-function EnsureOwnerOnlyDirectory(directoryPath: string): void {
-  if (!existsSync(directoryPath)) {
-    mkdirSync(directoryPath, { recursive: true, mode: 0o700 });
-  }
-}
-
-function EnsureOwnerOnlyDatabaseFile(databasePath: string): void {
-  chmodSync(databasePath, 0o600);
-}
-
-function EnsureOwnerOnlyLedgerFiles(databasePath: string): void {
-  EnsureOwnerOnlyDatabaseFile(databasePath);
-  const walPath = `${databasePath}-wal`;
-  const shmPath = `${databasePath}-shm`;
-  if (existsSync(walPath)) {
-    chmodSync(walPath, 0o600);
-  }
-  if (existsSync(shmPath)) {
-    chmodSync(shmPath, 0o600);
-  }
-}
-
 export function OpenSddLedgerDatabase(databasePath: string): Database.Database {
   const database = new Database(databasePath);
   database.pragma(`busy_timeout = ${x_BusyTimeoutMs}`);
@@ -118,13 +96,17 @@ export function CreateSddAgentStore(
   logRoot: string,
   clock: () => Date = () => new Date(),
 ): SddAgentStore {
-  EnsureOwnerOnlyDirectory(logRoot);
-  const databasePath = path.join(logRoot, x_DatabaseFileName);
-  if (existsSync(databasePath)) {
-    EnsureOwnerOnlyLedgerFiles(databasePath);
+  // Default permissions, deliberately. The ledger holds brief text, but so
+  // does every run directory's normalized.jsonl since turn.submitted landed --
+  // and those are plain umask files. Locking only this one implied a guarantee
+  // the system of record never had. The data root is gitignored, local, and
+  // single-user; the umask is the operator's policy to set.
+  //
+  if (!existsSync(logRoot)) {
+    mkdirSync(logRoot, { recursive: true });
   }
+  const databasePath = path.join(logRoot, x_DatabaseFileName);
   const database = OpenSddLedgerDatabase(databasePath);
-  EnsureOwnerOnlyLedgerFiles(databasePath);
 
   const userVersion = database.pragma("user_version", { simple: true }) as number;
   if (userVersion !== 0 && userVersion !== x_AgentSchemaVersion) {
