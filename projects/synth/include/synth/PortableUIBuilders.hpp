@@ -14,6 +14,7 @@
 #include <initializer_list>
 #include <map>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <utility>
@@ -282,6 +283,14 @@ struct ControlStyle {
     LayoutOptions layout{};
 };
 
+// A subtree plus the layout declarations that belong to it. This is the unit of
+// splicing: NodeTree alone cannot carry LayoutOptions, and Node must not — the
+// model layer knows nothing about the library's layout vocabulary (sru-51).
+struct Subtree {
+    NodeTree tree;
+    std::map<std::string, LayoutOptions> layout;
+};
+
 class Builder {
 public:
     using Children = std::function<void(Builder&)>;
@@ -313,20 +322,38 @@ public:
         return Container(std::move(id), NodeKind::ScrollArea, o, c);
     }
 
-    // Grafts an externally built subtree. A Root node in the subtree is
-    // discarded and its children attach to the currently open scope, so
-    // exactly one Root survives. A ROOTLESS subtree splices whole — that is
-    // the shape Tasks 12 and 13 produce for the patch browser and the wizard.
-    Builder& Splice(NodeTree subtree) {
+    // Grafts a subtree. A Root node in the subtree is discarded and its
+    // children attach to the currently open scope, so exactly one Root
+    // survives. A ROOTLESS subtree attaches its FOREST ROOTS — the nodes not
+    // named in any sibling's `children` — to the open scope; that is the shape
+    // Tasks 12 and 13 produce. Grafting without attaching leaves the nodes
+    // parentless, and PortableJuceBackend.hpp:664-676 throws when more than one
+    // node has no parent.
+    Builder& Splice(Subtree subtree) {
         assert(!scopeStack_.empty() && "Builder::Root must be called before splicing");
         std::optional<NodeId> spliceRoot;
-        for (const Node& n : subtree.nodes) {
+        for (const Node& n : subtree.tree.nodes) {
             if (n.kind == NodeKind::Root) {
                 assert(!spliceRoot.has_value() && "spliced subtree has more than one Root");
                 spliceRoot = n.id;
             }
         }
-        for (Node& n : subtree.nodes) {
+
+        if (!spliceRoot.has_value()) {
+            std::set<std::string> namedAsChild;
+            for (const Node& n : subtree.tree.nodes) {
+                for (const NodeId& child : n.children) {
+                    namedAsChild.insert(child.value);
+                }
+            }
+            for (const Node& n : subtree.tree.nodes) {
+                if (namedAsChild.count(n.id.value) == 0) {
+                    tree_.nodes[scopeStack_.back()].children.push_back(n.id);
+                }
+            }
+        }
+
+        for (Node& n : subtree.tree.nodes) {
             if (spliceRoot.has_value() && n.id == *spliceRoot) {
                 for (const NodeId& child : n.children) {
                     tree_.nodes[scopeStack_.back()].children.push_back(child);
@@ -335,12 +362,20 @@ public:
             }
             tree_.nodes.push_back(std::move(n));
         }
+
+        for (auto& entry : subtree.layout) {
+            layoutByNodeId_[entry.first] = std::move(entry.second);
+        }
         return *this;
+    }
+
+    Builder& Splice(NodeTree tree) {
+        return Splice(Subtree{std::move(tree), {}});
     }
 
     Builder& Label(std::string id, std::string text, ControlStyle style = {}) {
         Node node;
-        node.id = NodeId(id);
+        node.id = NodeId(std::move(id));
         node.kind = NodeKind::Label;
         node.text = std::move(text);
         return FinishControl(std::move(node), std::move(style));
@@ -348,7 +383,7 @@ public:
 
     Builder& StatusText(std::string id, std::string text, ControlStyle style = {}) {
         Node node;
-        node.id = NodeId(id);
+        node.id = NodeId(std::move(id));
         node.kind = NodeKind::StatusText;
         node.text = std::move(text);
         return FinishControl(std::move(node), std::move(style));
@@ -356,7 +391,7 @@ public:
 
     Builder& Button(std::string id, std::string label, Action action, ControlStyle style = {}) {
         Node node;
-        node.id = NodeId(id);
+        node.id = NodeId(std::move(id));
         node.kind = NodeKind::Button;
         node.label = std::move(label);
         node.action = std::move(action);
@@ -365,7 +400,7 @@ public:
 
     Builder& Toggle(std::string id, std::string label, bool checked, Action action, ControlStyle style = {}) {
         Node node;
-        node.id = NodeId(id);
+        node.id = NodeId(std::move(id));
         node.kind = NodeKind::Toggle;
         node.label = std::move(label);
         node.checked = checked;
@@ -382,7 +417,7 @@ public:
                     Action action,
                     ControlStyle style = {}) {
         Node node;
-        node.id = NodeId(id);
+        node.id = NodeId(std::move(id));
         node.kind = NodeKind::Slider;
         node.label = std::move(label);
         node.value = value;
@@ -400,7 +435,7 @@ public:
                       Action action,
                       ControlStyle style = {}) {
         Node node;
-        node.id = NodeId(id);
+        node.id = NodeId(std::move(id));
         node.kind = NodeKind::ComboBox;
         node.label = std::move(label);
         for (const auto& option : options) {
@@ -413,7 +448,7 @@ public:
 
     Builder& TextField(std::string id, std::string label, std::string text, Action action, ControlStyle style = {}) {
         Node node;
-        node.id = NodeId(id);
+        node.id = NodeId(std::move(id));
         node.kind = NodeKind::TextField;
         node.label = std::move(label);
         node.text = std::move(text);
@@ -434,7 +469,7 @@ public:
 
     Builder& Draw(std::string id, Bounds bounds, std::vector<DrawCommand> commands, ControlStyle style = {}) {
         Node node;
-        node.id = NodeId(id);
+        node.id = NodeId(std::move(id));
         node.kind = NodeKind::Draw;
         node.bounds = bounds;
         node.drawCommands = std::move(commands);
@@ -448,7 +483,7 @@ public:
                              std::optional<Action> doubleClickAction = std::nullopt,
                              ControlStyle style = {}) {
         Node node;
-        node.id = NodeId(id);
+        node.id = NodeId(std::move(id));
         node.kind = NodeKind::Draw;
         node.bounds = bounds;
         node.drawCommands = std::move(commands);
@@ -459,6 +494,10 @@ public:
 
     NodeTree Build() {
         return tree_;
+    }
+
+    Subtree BuildSubtree() {
+        return Subtree{tree_, layoutByNodeId_};
     }
 
 private:
@@ -499,11 +538,11 @@ private:
     // form grid sees a label cell and a control cell.
     Builder& FinishControl(Node node, ControlStyle style) {
         ApplyStyle(node, style);
-        if (style.layout.explicitBounds.has_value()) {
-            node.bounds = *style.layout.explicitBounds;
-        }
-        layoutByNodeId_[node.id.value] = style.layout;
         if (style.caption.empty()) {
+            if (style.layout.explicitBounds.has_value()) {
+                node.bounds = *style.layout.explicitBounds;
+            }
+            layoutByNodeId_[node.id.value] = style.layout;
             AppendChild(std::move(node));
             return *this;
         }
@@ -512,8 +551,16 @@ private:
         Node row;
         row.id = NodeId(controlId + ".row");
         row.kind = NodeKind::Row;
+        if (style.layout.explicitBounds.has_value()) {
+            row.bounds = *style.layout.explicitBounds;
+        }
         AppendChild(std::move(row));
-        layoutByNodeId_[controlId + ".row"] = LayoutOptions{};
+        // Author's layout applies to the flow slot occupant — the .row wrapper.
+        //
+        layoutByNodeId_[controlId + ".row"] = style.layout;
+        LayoutOptions controlLayout;
+        controlLayout.main = Extent::Weight(1.0f);
+        layoutByNodeId_[controlId] = controlLayout;
         scopeStack_.push_back(tree_.nodes.size() - 1);
         Label(controlId + ".caption", style.caption);
         AppendChild(std::move(node));

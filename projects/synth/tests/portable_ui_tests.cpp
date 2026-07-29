@@ -568,6 +568,67 @@ static void TestSpliceGraftsWithoutNestedRoot()
             "the spliced root's children become the host's children");
 }
 
+static void TestRootlessSpliceAttachesForestRoots()
+{
+    synth::ui::Subtree browser;
+    {
+        synth::ui::Node row;
+        row.id = synth::ui::NodeId("browser.row.0");
+        row.kind = synth::ui::NodeKind::Row;
+        row.children.push_back(synth::ui::NodeId("browser.row.0.label"));
+        synth::ui::Node label;
+        label.id = synth::ui::NodeId("browser.row.0.label");
+        label.kind = synth::ui::NodeKind::Label;
+        label.text = "patch";
+        browser.tree.nodes.push_back(std::move(row));
+        browser.tree.nodes.push_back(std::move(label));
+    }
+
+    synth::ui::Builder outer;
+    outer.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    outer.Section("file.browser", {}, [&browser](synth::ui::Builder& b) {
+        b.Splice(std::move(browser));
+    });
+
+    const synth::ui::NodeTree tree = outer.Build();
+    std::size_t roots = 0;
+    for (const auto& n : tree.nodes) {
+        if (n.kind == synth::ui::NodeKind::Root) {
+            ++roots;
+        }
+    }
+    Require(roots == 1, "exactly one Root survives a rootless splice");
+    Require(FindNode(tree, "file.browser").children.size() == 1 &&
+                FindNode(tree, "file.browser").children[0].value == "browser.row.0",
+            "the spliced forest root is a descendant of the splice point");
+    Require(FindNode(tree, "browser.row.0").children[0].value == "browser.row.0.label",
+            "nested children inside the spliced forest stay linked");
+}
+
+static void TestSpliceMergesLayoutDeclarations()
+{
+    synth::ui::LayoutOptions opts;
+    opts.padding = 3.0f;
+    opts.formGrid = true;
+
+    synth::ui::Builder inner;
+    inner.Root("inner.root", {0.0f, 0.0f, 100.0f, 50.0f});
+    inner.Column("form", opts, [](synth::ui::Builder& b) {
+        b.Label("field", "x");
+    });
+
+    synth::ui::Builder outer;
+    outer.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    outer.Section("host", {}, [&inner](synth::ui::Builder& b) {
+        b.Splice(inner.BuildSubtree());
+    });
+
+    const synth::ui::Subtree host = outer.BuildSubtree();
+    Require(host.layout.count("form") == 1, "spliced layout key is registered on the host");
+    Require(host.layout.at("form").formGrid, "formGrid survives the splice");
+    Require(host.layout.at("form").padding == 3.0f, "padding survives the splice");
+}
+
 static void TestConstructionExpressesFullControlState()
 {
     synth::ui::ControlStyle style;
@@ -619,6 +680,15 @@ static void TestCaptionIsAnEmittedLabelNodeNotAField()
     Require(FindNode(tree, "device.caption").text == "Output device", "carrying its text");
     Require(FindNode(tree, "device").label.empty(),
             "the caption does not route through ComboBox::label");
+    Require(FindNode(tree, "device.row").kind == synth::ui::NodeKind::Row,
+            "captioned controls are wrapped in an implicit .row");
+    Require(FindNode(tree, "device.row").children.size() == 2 &&
+                FindNode(tree, "device.row").children[0].value == "device.caption" &&
+                FindNode(tree, "device.row").children[1].value == "device",
+            "the .row children are caption then control");
+    Require(FindNode(tree, "form").children.size() == 1 &&
+                FindNode(tree, "form").children[0].value == "device.row",
+            "the author's container holds the .row, not the bare control");
 }
 
 int main()
@@ -626,6 +696,8 @@ int main()
     TestContainersNestToArbitraryDepth();
     TestComponentsComposeComponents();
     TestSpliceGraftsWithoutNestedRoot();
+    TestRootlessSpliceAttachesForestRoots();
+    TestSpliceMergesLayoutDeclarations();
     TestConstructionExpressesFullControlState();
     TestUnstyledNodesCarryNothing();
     TestCaptionIsAnEmittedLabelNodeNotAField();
