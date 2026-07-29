@@ -371,7 +371,8 @@ test("the SDD dispatch tools advertise a non-empty input schema naming their dis
 });
 
 test("xagent_sdd_start advertises the four-way role union", async () => {
-  // Plan named startMcpService; that helper has no MCP client. Use withMcpService.
+  // withMcpService owns the callback-scoped client; startMcpService also exposes
+  // one via ensureClient() after lazy MCP init.
   //
   await withMcpService(async ({ client }) => {
     const listed = await client.listTools();
@@ -668,8 +669,8 @@ test("v2 followup shapes require report and keep round render-only", () => {
   assert.equal(ReReviewFollowupSchema.safeParse(reReviewWithoutReport).success, false);
 });
 
-// Task 8a: v2 sdd identity block on xagent_list. Uses withMcpService rather
-// than the plan's startMcpService().client (that harness has no MCP client).
+// Task 8a: v2 sdd identity block on xagent_list. Uses withMcpService for the
+// callback-scoped client; startMcpService now also exposes MCP via ensureClient().
 //
 test("xagent_list carries the v2 sdd identity block", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "xagent-mcp-sdd-list-"));
@@ -744,8 +745,8 @@ test("a generic run carries no sdd block and no run_missing flag", async () => {
 });
 
 // Task 8b: ledger rows with no run record surface as parallel tombstone
-// entries. Uses withMcpService + ledger() rather than the plan's
-// startMcpService().client (that harness still has no MCP client).
+// entries. Uses withMcpService + ledger(); startMcpService also exposes MCP
+// via ensureClient() / listRuns() after lazy init.
 //
 test("a ledger row with no run record is a tombstone entry", async () => {
   await withMcpService(async ({ client, ledger }) => {

@@ -7,7 +7,7 @@ import test from "node:test";
 
 import { parseArgs } from "../src/cli.js";
 import type { OutputEvent } from "../src/events.js";
-import { startMcpService } from "./support/mcp_service.js";
+import { startMcpService, structuredToolBody } from "./support/mcp_service.js";
 
 // The v1 full-lifecycle MCP SDD test was deleted in Task 4: report binding and
 // the sdd await/close facade are gone, so Followup cannot clear open turns and
@@ -169,11 +169,14 @@ test("two agents, four submissions, two immutable rows, reports only in the log"
       implementer.sequence,
     );
     assert.equal(implementerFirst.event, "turn.completed");
-    assert.notEqual(
+    // FakeHarnessAdapter reports `fake response to ${submitted text}`.
+    //
+    const implementerStartReport = "fake response to Rendered implementer prompt.\n";
+    assert.equal(
       (implementerFirst.report as { text: string }).text,
-      x_MutableArtifactText,
-      "report must come from the event, not the report file on disk",
+      implementerStartReport,
     );
+    assert.notEqual(implementerStartReport, x_MutableArtifactText);
     assert.equal(
       await readFile(implementerReportPath, "utf8"),
       x_MutableArtifactText,
@@ -193,6 +196,10 @@ test("two agents, four submissions, two immutable rows, reports only in the log"
     });
     const implementerFix = await service.awaitTurn(implementer.agent_id, fix.sequence);
     assert.equal(implementerFix.event, "turn.completed");
+    assert.match(
+      (implementerFix.report as { text: string }).text,
+      /^fake response to /,
+    );
     assert.notEqual(
       (implementerFix.report as { text: string }).text,
       x_MutableArtifactText,
@@ -200,17 +207,30 @@ test("two agents, four submissions, two immutable rows, reports only in the log"
 
     // xsvc-5: generic await/message/close serve SDD-owned runs identically.
     //
-    const nudged = await service.message(
-      implementer.agent_id,
-      "controller nudge after the fix turn",
-    );
+    const nudgeText = "controller nudge after the fix turn";
+    const nudged = await service.message(implementer.agent_id, nudgeText);
     const implementerNudge = await service.awaitTurn(
       implementer.agent_id,
       nudged.sequence,
     );
     assert.equal(implementerNudge.event, "turn.completed");
+    assert.equal(
+      (implementerNudge.report as { text: string }).text,
+      `fake response to ${nudgeText}`,
+    );
 
     await service.closeRun(implementer.agent_id);
+    const afterClose = await service.sddFollowupResult({
+      kind: "fix",
+      agent_id: implementer.agent_id,
+      round: 2,
+      findings: service.artifact("task-4-findings-after-close.md"),
+      findings_text: "must not land on a closed agent",
+      tests: ["npm test"],
+      report: implementerReportPath,
+    });
+    assert.equal(afterClose.isError, true);
+    assert.equal(structuredToolBody(afterClose).error, "sdd_agent_not_live");
 
     const rows = service.ledger().ListAll();
     assert.equal(rows.length, 2);
@@ -234,7 +254,7 @@ test("two agents, four submissions, two immutable rows, reports only in the log"
     );
     for (const event of implementerEvents.filter((e) => e.type === "turn.completed")) {
       const reportText = (event.payload as { report: { text: string } }).report.text;
-      assert.equal(typeof reportText, "string");
+      assert.match(reportText, /^fake response to /);
       assert.notEqual(reportText, x_MutableArtifactText);
     }
   } finally {

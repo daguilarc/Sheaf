@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -119,6 +120,16 @@ export type StartedMcpService = {
     readonly tests: readonly string[];
     readonly report: string;
   }): Promise<{ agent_id: string; sequence: number }>;
+  sddFollowupResult(input: {
+    readonly kind: "fix";
+    readonly agent_id: string;
+    readonly round: number;
+    readonly findings: string;
+    readonly findings_text: string;
+    readonly tests: readonly string[];
+    readonly report: string;
+  }): Promise<ToolCallResult>;
+  listRuns(): Promise<Record<string, unknown>>;
   await(
     runId: string,
     afterSequence: number,
@@ -135,11 +146,11 @@ export type StartedMcpService = {
   artifact(name: string): string;
   normalizedEvents(runId: string): Promise<NormalizedLogEvent[]>;
   killAbruptly(): Promise<void>;
+  ensureClient(): Promise<Client>;
   close(): Promise<void>;
   ledger(): ReturnType<typeof CreateSddAgentStore>;
   readonly runManager: XagentRunManager;
   readonly logRoot: string;
-  readonly client: Client;
 };
 
 export type StartMcpServiceOptions = {
@@ -147,11 +158,12 @@ export type StartMcpServiceOptions = {
   readonly logRoot?: string;
   readonly policy?: SupervisionPolicy;
   readonly adapterFactory?: () => HarnessAdapter;
-  readonly failProviderStart?: boolean;
+  readonly failRunCreate?: boolean;
+  readonly failRunStart?: boolean;
 };
 
-// Full MCP harness for Task 9 lifecycle and failure-injection tests. Keeps the
-// direct run-manager await/submit helpers that mcp_await tests already use.
+// Task 9 MCP harness. The HTTP listener and client start lazily on first MCP
+// use so mcp_await callers that only need run-manager helpers pay nothing.
 //
 export async function startMcpService(
   options: StartMcpServiceOptions = {},
@@ -178,18 +190,29 @@ export async function startMcpService(
 
   const sddStore = CreateSddAgentStore(logRoot);
   const basePort = AsSddRunManagerPort(runManager);
-  const sddRunPort: SddRunManagerPort = options.failProviderStart === true
+  const sddRunPort: SddRunManagerPort = (options.failRunCreate === true
+    || options.failRunStart === true)
     ? {
       allocateRunId: () => basePort.allocateRunId(),
-      // Fail after the ledger insert and before a run record exists so the row
-      // surfaces as an xsvc-13 run_missing tombstone. A throw from adapter.start
-      // would leave a run directory and must not set run_missing.
-      //
-      async create(): Promise<{ readonly runId: string }>
+      async create(createOptions)
       {
-        throw new Error("provider start failed");
+        if (options.failRunCreate === true)
+        {
+          // Fail after the ledger insert and before a run record exists so the
+          // row surfaces as an xsvc-13 run_missing tombstone.
+          //
+          throw new Error("run create failed");
+        }
+        return basePort.create(createOptions);
       },
-      start: (runId) => basePort.start(runId),
+      async start(runId)
+      {
+        if (options.failRunStart === true)
+        {
+          throw new Error("run start failed");
+        }
+        return basePort.start(runId);
+      },
       submit: (runId, text) => basePort.submit(runId, text),
       inspect: (runId) => basePort.inspect(runId),
       close: (runId) => basePort.close(runId),
@@ -227,59 +250,85 @@ export async function startMcpService(
   await writeFile(briefPath, "Implement await without ledger report binding.\n", "utf8");
 
   let server: XagentServer | undefined;
+  let client: Client | undefined;
+  let transport: StreamableHTTPClientTransport | undefined;
+  let mcpReady: Promise<void> | undefined;
   let closed = false;
-  const shutdownController = createShutdownController({
-    closeRuns: async () =>
-    {
-      await runManager.closeAll();
-      sddStore.Close();
-    },
-    closeServer: async () =>
-    {
-      await server?.close();
-    },
-  });
-  const allowedHosts = new Set<string>([
-    "127.0.0.1",
-    "localhost",
-    "[::1]",
-    "127.0.0.1:9005",
-    "localhost:9005",
-  ]);
-  const allowedOrigins = new Set<string>([
-    "http://127.0.0.1",
-    "http://localhost",
-    "http://[::1]",
-    "http://127.0.0.1:9005",
-    "http://localhost:9005",
-  ]);
-  const mcpHandler = createXagentMcpHandler({
-    runManager,
-    sddManager,
-    getAllowedHosts: () => [...allowedHosts],
-    getAllowedOrigins: () => [...allowedOrigins],
-  });
-  server = createXagentServer({
-    bindHost: "127.0.0.1",
-    bindPort: 0,
-    runManager,
-    shutdownController,
-    mcpHandler,
-  });
-  const port = await server.listen();
-  allowedHosts.add(`127.0.0.1:${port}`);
-  allowedHosts.add(`localhost:${port}`);
-  allowedOrigins.add(`http://127.0.0.1:${port}`);
-  allowedOrigins.add(`http://localhost:${port}`);
+  let storeClosed = false;
 
-  const client = new Client({
-    name: "xagent-start-mcp-service",
-    version: "0.0.0",
-  });
-  const transport = new StreamableHTTPClientTransport(
-    new URL(`http://127.0.0.1:${port}/mcp`),
-  );
-  await client.connect(transport);
+  async function EnsureMcp(): Promise<Client>
+  {
+    if (client !== undefined)
+    {
+      return client;
+    }
+    if (mcpReady === undefined)
+    {
+      mcpReady = (async () =>
+      {
+        const shutdownController = createShutdownController({
+          closeRuns: async () =>
+          {
+            await runManager.closeAll();
+            if (!storeClosed)
+            {
+              sddStore.Close();
+              storeClosed = true;
+            }
+          },
+          closeServer: async () =>
+          {
+            await server?.close();
+          },
+        });
+        const allowedHosts = new Set<string>([
+          "127.0.0.1",
+          "localhost",
+          "[::1]",
+          "127.0.0.1:9005",
+          "localhost:9005",
+        ]);
+        const allowedOrigins = new Set<string>([
+          "http://127.0.0.1",
+          "http://localhost",
+          "http://[::1]",
+          "http://127.0.0.1:9005",
+          "http://localhost:9005",
+        ]);
+        const mcpHandler = createXagentMcpHandler({
+          runManager,
+          sddManager,
+          getAllowedHosts: () => [...allowedHosts],
+          getAllowedOrigins: () => [...allowedOrigins],
+        });
+        server = createXagentServer({
+          bindHost: "127.0.0.1",
+          bindPort: 0,
+          runManager,
+          shutdownController,
+          mcpHandler,
+        });
+        const port = await server.listen();
+        allowedHosts.add(`127.0.0.1:${port}`);
+        allowedHosts.add(`localhost:${port}`);
+        allowedOrigins.add(`http://127.0.0.1:${port}`);
+        allowedOrigins.add(`http://localhost:${port}`);
+        const nextClient = new Client({
+          name: "xagent-start-mcp-service",
+          version: "0.0.0",
+        });
+        const nextTransport = new StreamableHTTPClientTransport(
+          new URL(`http://127.0.0.1:${port}/mcp`),
+        );
+        await nextClient.connect(nextTransport);
+        client = nextClient;
+        transport = nextTransport;
+      })();
+    }
+    await mcpReady;
+    assert.ok(client !== undefined, "MCP client failed to start");
+    return client;
+  }
 
   function Artifact(name: string): string
   {
@@ -291,12 +340,21 @@ export async function startMcpService(
     await writeFile(filePath, contents, "utf8");
   }
 
+  async function CallTool(
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<ToolCallResult>
+  {
+    const mcpClient = await EnsureMcp();
+    return asToolCallResult(await mcpClient.callTool({ name, arguments: args }));
+  }
+
   async function CallToolOrThrow(
     name: string,
     args: Record<string, unknown>,
   ): Promise<Record<string, unknown>>
   {
-    const result = asToolCallResult(await client.callTool({ name, arguments: args }));
+    const result = await CallTool(name, args);
     const body = structuredToolBody(result);
     if (result.isError === true)
     {
@@ -320,29 +378,42 @@ export async function startMcpService(
       return;
     }
     closed = true;
-    await client.close().catch(() => {});
-    await transport.close().catch(() => {});
-    if (!shutdownController.wasShutdownRequested())
+    if (client !== undefined)
     {
-      await server?.close().catch(() => {});
+      await client.close().catch(() => {});
+    }
+    if (transport !== undefined)
+    {
+      await transport.close().catch(() => {});
+    }
+    if (server !== undefined)
+    {
+      await server.close().catch(() => {});
     }
     await runManager.closeAll().catch(() => {});
-    sddStore.Close();
-    if (!options.abrupt)
+    // Genuine abrupt: leave the store handle open so a populated -wal remains
+    // for the next open to recover. Clean shutdown checkpoints and would make
+    // the restart test exercise only the settled-file case.
+    //
+    if (!options.abrupt && !storeClosed)
     {
-      await rm(cwd, { recursive: true, force: true });
-      await rm(artifactsDir, { recursive: true, force: true });
-      if (ownsLogRoot)
-      {
-        await rm(logRoot, { recursive: true, force: true });
-      }
+      sddStore.Close();
+      storeClosed = true;
+    }
+    // cwd / artifactsDir are not the durability surface under test.
+    //
+    await rm(cwd, { recursive: true, force: true });
+    await rm(artifactsDir, { recursive: true, force: true });
+    if (!options.abrupt && ownsLogRoot)
+    {
+      await rm(logRoot, { recursive: true, force: true });
     }
   }
 
   return {
     runManager,
     logRoot,
-    client,
+    ensureClient: EnsureMcp,
     startRun(prompt: string)
     {
       return runManager.startRun({
@@ -416,6 +487,27 @@ export async function startMcpService(
         agent_id: String(body.agent_id),
         sequence: Number(body.sequence),
       };
+    },
+    async sddFollowupResult(input)
+    {
+      await EnsureArtifact(input.findings, `${input.findings_text}\n`);
+      if (!existsSync(input.report))
+      {
+        await EnsureArtifact(input.report, "");
+      }
+      return CallTool("xagent_sdd_followup", {
+        kind: input.kind,
+        agent_id: input.agent_id,
+        round: input.round,
+        findings: input.findings,
+        findings_text: input.findings_text,
+        tests: [...input.tests],
+        report: input.report,
+      });
+    },
+    async listRuns()
+    {
+      return structuredToolBody(await CallTool("xagent_list", {}));
     },
     await(runId: string, afterSequence: number, deadlineSeconds: number)
     {
