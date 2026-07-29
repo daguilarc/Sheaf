@@ -93,7 +93,7 @@ news. An HTTP round trip below the tool-call boundary costs nothing. Never
 convert the former into a polling loop to avoid the latter.
 
 - [x] 9.1 Fix the dispatch-blocks-on-turn defect (xsvc-16). `SddManager.Start` and `SddManager.Followup` each `await runManager.submit(...)`, but `Supervisor.submit` consumes the whole provider event stream and resolves at turn completion. Mirror `runManager.startRun`: detach the submit promise, await turn-running, return. Preserve failure visibility and verify the returned `sequence` is still a usable await cursor. Deliverable: both tools return in ~1s; tests pin that `Start` resolves while submit is still pending.
-- [ ] 9.2 Settle whether progress notifications alone lift the controller path's 60s ceiling. **Folded into 9.4's acceptance rather than built as a throwaway probe:** the server-side ping work is required regardless — for the service-owned client and for correctness — and the probe only answers whether *this harness* additionally needs configuration. So build 9.3/9.4, restart the service onto them, and issue a deliberately long await from the controller's harness. If it holds with zero intermediate wakeups, pings suffice. If it still dies at 60s, the remedy is the per-server `"timeout"` in the xagent MCP registration — configuration, never an agent-facing knob. Deliverable: a recorded measurement either way, because a negative result changes client config, not the server design.
+- [x] 9.2 Settle whether progress notifications alone lift the controller path's 60s ceiling. **Folded into 9.4's acceptance rather than built as a throwaway probe:** the server-side ping work is required regardless — for the service-owned client and for correctness — and the probe only answers whether *this harness* additionally needs configuration. So build 9.3/9.4, restart the service onto them, and issue a deliberately long await from the controller's harness. If it holds with zero intermediate wakeups, pings suffice. If it still dies at 60s, the remedy is the per-server `"timeout"` in the xagent MCP registration — configuration, never an agent-facing knob. Deliverable: a recorded measurement either way, because a negative result changes client config, not the server design.
 - [x] 9.3 Switch the MCP transport out of JSON-response mode (`mcp.ts`, `enableJsonResponse`). In JSON mode a request-scoped notification is silently dropped (`webStandardStreamableHttp.js:702`), and the POST is a silent socket that nothing can keep alive. The flag is per-transport, so every tool response becomes a one-event SSE stream; verify the existing service e2e tests still pass. Deliverable: `xagent_await` responses delivered over SSE.
 - [x] 9.4 Emit request-scoped progress pings from `xagent_await` while the supervisor vouches for the run (xsvc-5). Cadence ≤60s. Vouching is derived from supervisor liveness — phase live, progress within the silence bound — never a bare interval timer, or the ping vouches for nothing. Stop pinging when vouching stops, so a client timeout carries real information. Deliverable: a healthy long run holds through one await with zero intermediate wakeups.
 - [ ] 9.5 Remove `deadline_seconds` from the advertised `xagent_await` schema, keeping it in the parsed schema for the service-owned client and tests, under the xsvc-15 advertised-versus-parsed split. Deliverable: the advertised schema offers `run_id` and `after_sequence` only; internal callers unaffected.
@@ -105,3 +105,25 @@ policy already covers it and produces a durable event — waking the await with
 news rather than failing the transport. Left unset by default, honouring
 "hold indefinitely while healthy". The harness's own hard cap is the outermost
 backstop.
+
+### Section 9 acceptance measurement (recorded 2026-07-29)
+
+Taken from the controller's own harness against the restarted service, the
+same client whose awaits died all night.
+
+| `deadline_seconds` | Before 9.3/9.4 | After |
+|---|---|---|
+| 58 | clean (`elapsed_ms` 58001) | — |
+| 75 | **client timeout** | — |
+| 120 | — | **clean, `elapsed_ms` 120002** |
+| 330 | — | **clean, `elapsed_ms` 330004** |
+
+330s clears both ceilings that mattered: the MCP SDK's 60s
+`DEFAULT_REQUEST_TIMEOUT_MSEC` and undici's ~300s header/body timers — the
+latter being the constraint that forced `x_McpAwaitHttpChunkSeconds = 240`
+into existence. One held request, zero intermediate agent wakeups.
+
+**This answers 9.2 in the affirmative: progress pings alone lift the ceiling
+for this harness.** The per-server `"timeout"` remedy is not needed, and 9.6's
+deletion of the chunk loop is now justified by measurement rather than by
+reasoning.
