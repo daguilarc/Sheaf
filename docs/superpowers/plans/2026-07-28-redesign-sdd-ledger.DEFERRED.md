@@ -22,7 +22,36 @@ Fixed in Task 0 (`f7ac2fa4`) under new requirement **xsvc-15**. Recorded here
 because the redesign did not originally fix it: v2 swaps the union for another
 union, so the defect would have survived the cutover.
 
-### A2. `xagent_sdd_start` / `xagent_sdd_followup` return timeouts to the client while succeeding server-side — OPEN
+### A2. `xagent_sdd_start` / `xagent_sdd_followup` return timeouts to the client while succeeding server-side — ROOT CAUSE FOUND, OPEN
+
+**Root cause** — found post-plan by a fresh-context Fable review, verified
+independently by the controller. **Not a transport problem.**
+
+`Supervisor.submit` does not resolve when the turn is *accepted*. It consumes
+the entire provider event stream (`for await (const event of providerEvents)`,
+`supervisor.ts:317`) and resolves at turn **completion**.
+
+`SddManager.Start` awaits it directly (`sdd_manager.ts:351`), and
+`SddManager.Followup` does the same (`sdd_manager.ts:487`). Both therefore
+block for the full duration of the subagent's turn — minutes — against the MCP
+client's 60s timeout.
+
+`runManager.startRun` does **not** have this defect: it detaches the submit
+(`void submitPromise.catch(() => {})`, `run_manager.ts:329-334`) and returns via
+`waitForTurnRunning`, bounded at ~1s. That is exactly why
+`xagent_start_non_sdd` returned instantly on the same transport in the same
+session — which was the clue that broke it open.
+
+Every measured symptom fits: the run is always created; `supervisor_created →
+turn_started` is 0.0s; the renderer is 0.116s; invalid-cwd returns instantly
+(it throws before the submit await); and ~15/15 SDD starts plus every SDD
+followup timed out.
+
+**Fix shape:** mirror `startRun` at both call sites — detach the submit
+promise, await turn-running, return. Independent of the await/SSE design
+question, and far smaller.
+
+**Original symptom, as first recorded:**
 
 Every dispatch in this change returned "operation timed out" to the MCP client
 while the server completed create → start → submit normally. A controller that
