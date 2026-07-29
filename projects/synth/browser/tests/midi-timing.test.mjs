@@ -201,7 +201,7 @@ test("decodes the bounded C++ MIDI output ABI descriptor", () => {
     stringToUTF8() {},
     emscriptenRegisterAudioObject: () => 1,
     _synth_browser_abi_version: () => 2,
-    _synth_browser_ui_protocol_version: () => 1,
+    _synth_browser_ui_protocol_version: () => 2,
     _synth_browser_runtime_config_version: () => 1,
     _synth_browser_create: () => 1,
     _synth_browser_set_timestamp_epoch_offset: () => 0,
@@ -251,7 +251,7 @@ test("normalizes a distinct worker time origin into the document engine epoch", 
   const offsets = [];
   const worker = new BrowserRuntimeWorker(async () => ({
     abiVersion: 2,
-    uiProtocolVersion: 1,
+    uiProtocolVersion: 2,
     runtimeConfigVersion: 1,
     create: () => 3,
     setTimestampEpochOffset: (_handle, offsetMicros) => { offsets.push(offsetMicros); return 0; },

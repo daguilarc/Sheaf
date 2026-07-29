@@ -1,3 +1,5 @@
+import { COMMAND_BUFFER_VERSION } from "../../src/protocol.js";
+
 export const NodeKind = {
   Root: 0,
   Row: 1,
@@ -54,13 +56,14 @@ type Node = Partial<{
   label: string;
   text: string;
   selectedOption: string;
-  variant: string;
   value: number;
   minValue: number;
   maxValue: number;
   step: number;
   scrollContentWidth: number;
   scrollContentHeight: number;
+  color: [number, number, number, number];
+  textStyle: { size: number; color: [number, number, number, number]; align: number };
   action: Action;
   pointerDragAction: Action;
   doubleClickAction: Action;
@@ -85,7 +88,8 @@ class Writer {
   toUint8Array() { return Uint8Array.from(this.bytes); }
 }
 
-export function makeCommandBuffer(nodes: Node[], diagnostics: string[] = []): ArrayBuffer {
+export function makeCommandBuffer(nodes: Node[], diagnostics: string[] = [],
+                                  version = COMMAND_BUFFER_VERSION): ArrayBuffer {
   const strings: string[] = [];
   const stringIndex = new Map<string, number>();
   const intern = (value = "") => {
@@ -104,7 +108,7 @@ export function makeCommandBuffer(nodes: Node[], diagnostics: string[] = []): Ar
     return actions.length - 1;
   }));
   for (const node of nodes) {
-    intern(node.id); intern(node.label); intern(node.text); intern(node.selectedOption); intern(node.variant);
+    intern(node.id); intern(node.label); intern(node.text); intern(node.selectedOption);
     for (const option of node.options ?? []) { intern(option.id); intern(option.label); }
     for (const child of node.children ?? []) intern(child);
     for (const draw of node.draws ?? []) intern(draw.text);
@@ -145,8 +149,16 @@ export function makeCommandBuffer(nodes: Node[], diagnostics: string[] = []): Ar
     nodeSection.u32(intern(node.id)); nodeSection.u8(node.kind ?? NodeKind.Label);
     nodeSection.u8(node.checked ? 1 : 0); nodeSection.u8(node.selected ? 1 : 0); nodeSection.u8(node.enabled === false ? 0 : 1);
     for (const value of node.bounds ?? [0, 0, 0, 0]) nodeSection.float(value);
-    for (const value of [node.label, node.text, node.selectedOption, node.variant]) nodeSection.u32(intern(value));
+    for (const value of [node.label, node.text, node.selectedOption]) nodeSection.u32(intern(value));
     for (const value of [node.value ?? 0, node.minValue ?? 0, node.maxValue ?? 1, node.step ?? 0.001, node.scrollContentWidth ?? 0, node.scrollContentHeight ?? 0]) nodeSection.float(value);
+    nodeSection.u8(node.color ? 1 : 0);
+    if (node.color) for (const value of node.color) nodeSection.u8(value);
+    nodeSection.u8(node.textStyle ? 1 : 0);
+    if (node.textStyle) {
+      nodeSection.float(node.textStyle.size);
+      for (const value of node.textStyle.color) nodeSection.u8(value);
+      nodeSection.u8(node.textStyle.align);
+    }
     for (const actionIndex of actionIndexes[index]) nodeSection.i32(actionIndex);
     nodeSection.u32(drawRanges[index][0]); nodeSection.u32(drawRanges[index][1]);
     nodeSection.u32((node.options ?? []).length);
@@ -157,7 +169,7 @@ export function makeCommandBuffer(nodes: Node[], diagnostics: string[] = []): Ar
   const diagnosticSection = new Writer(); diagnosticSection.u32(diagnostics.length);
   for (const diagnostic of diagnostics) { diagnosticSection.u8(1); diagnosticSection.u8(0); diagnosticSection.u16(0); diagnosticSection.u32(intern(diagnostic)); }
   const result = new Writer();
-  result.append(new TextEncoder().encode("SBCB")); result.u16(1); result.u16(0);
+  result.append(new TextEncoder().encode("SBCB")); result.u16(version); result.u16(0);
   for (const section of [stringSection, nodeSection, actionSection, drawTable, diagnosticSection]) result.u32(section.toUint8Array().byteLength);
   for (const section of [stringSection, nodeSection, actionSection, drawTable, diagnosticSection]) result.append(section.toUint8Array());
   return result.toUint8Array().buffer;

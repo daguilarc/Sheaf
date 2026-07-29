@@ -1,6 +1,12 @@
 export const COMMAND_BUFFER_MAGIC = "SBCB";
 export const SUPPORTED_BROWSER_ABI_VERSION = 2;
-export const SUPPORTED_UI_PROTOCOL_VERSION = 1;
+// Version 2 (sru-46): node bounds are parent-relative, `Draw` geometry is
+// node-local, node colour/text style cross the wire behind explicit presence
+// bytes, and `variant` is gone. A hard break with strict equality on both ends
+// and no version-1 fallback. Moves in lockstep with C++
+// `kCommandBufferVersion` and each Wasm package's exported
+// `synth_browser_ui_protocol_version()`.
+export const SUPPORTED_UI_PROTOCOL_VERSION = 2;
 export const SUPPORTED_RUNTIME_CONFIG_VERSION = 1;
 export const COMMAND_BUFFER_VERSION = SUPPORTED_UI_PROTOCOL_VERSION;
 
@@ -58,10 +64,18 @@ export type DrawCommand = {
   kind: DrawKind; align: number; bounds: Bounds; from: Point; to: Point; color: Color; strokeWidth: number;
   startRadians: number; endRadians: number; cornerRadius: number; text: string; textSize: number; textColor: Color; points: Point[];
 };
+export type TextStyle = { size: number; color: Color; align: number };
+// `bounds` are parent-relative and draw geometry is node-local (sru-46).
+// `color` and `textStyle` are absent when the producer carried none, in which
+// case the backend applies its own default look; `color`'s meaning is per-kind
+// (see the contract on `synth::ui::Node` in `include/synth/PortableUI.hpp`) and
+// glyph colour always comes from `textStyle`. There is no `variant`: it carried
+// appearance only and version 2 retired it.
 export type Node = {
   id: string; kind: NodeKind; checked: boolean; selected: boolean; enabled: boolean; bounds: Bounds; label: string; text: string;
-  selectedOption: string; variant: string; value: number; minValue: number; maxValue: number; step: number;
-  scrollContentWidth: number; scrollContentHeight: number; action?: Action; pointerDragAction?: Action; doubleClickAction?: Action;
+  selectedOption: string; value: number; minValue: number; maxValue: number; step: number;
+  scrollContentWidth: number; scrollContentHeight: number; color?: Color; textStyle?: TextStyle;
+  action?: Action; pointerDragAction?: Action; doubleClickAction?: Action;
   drawStart: number; drawCount: number; options: Array<{ id: string; label: string }>; children: string[];
 };
 export type CommandBufferFrame = { version: number; strings: string[]; nodes: Node[]; actions: Action[]; drawCommands: DrawCommand[]; diagnostics: Array<{ code: number; feature: string }> };
@@ -95,6 +109,25 @@ function bounds(reader: Reader, kind: string, index: number): Bounds {
 }
 function point(reader: Reader, kind: string, index: number): Point { return { x: finite(reader.float(), kind, index), y: finite(reader.float(), kind, index) }; }
 function color(reader: Reader): Color { return { r: reader.u8(), g: reader.u8(), b: reader.u8(), a: reader.u8() }; }
+// Optional node fields carry an explicit presence byte. Absence is never a
+// sentinel value, because any sentinel is indistinguishable from a producer
+// legitimately choosing it.
+function presence(reader: Reader, kind: string, index: number): boolean {
+  const flag = reader.u8();
+  if (flag > 1) fail(kind, index, "invalid presence flag");
+  return flag === 1;
+}
+function optionalColor(reader: Reader, kind: string, index: number): Color | undefined {
+  return presence(reader, kind, index) ? color(reader) : undefined;
+}
+function optionalTextStyle(reader: Reader, kind: string, index: number): TextStyle | undefined {
+  if (!presence(reader, kind, index)) return undefined;
+  const size = finite(reader.float(), kind, index);
+  const glyphColor = color(reader);
+  const align = reader.u8();
+  if (align > 2) fail(kind, index, "invalid text alignment");
+  return { size, color: glyphColor, align };
+}
 
 export function decodeCommandBuffer(buffer: ArrayBuffer): CommandBufferFrame {
   const header = new Reader(new Uint8Array(buffer), "header");
@@ -167,9 +200,10 @@ export function decodeCommandBuffer(buffer: ArrayBuffer): CommandBufferFrame {
     if (checked > 1 || selected > 1 || enabled > 1) fail("node", index, "invalid boolean value");
     const node: Node = {
       id, kind, checked: checked === 1, selected: selected === 1, enabled: enabled === 1, bounds: bounds(nodesReader, "node", index),
-      label: stringAt(nodesReader.u32(), "node", index), text: stringAt(nodesReader.u32(), "node", index), selectedOption: stringAt(nodesReader.u32(), "node", index), variant: stringAt(nodesReader.u32(), "node", index),
+      label: stringAt(nodesReader.u32(), "node", index), text: stringAt(nodesReader.u32(), "node", index), selectedOption: stringAt(nodesReader.u32(), "node", index),
       value: finite(nodesReader.float(), "node", index), minValue: finite(nodesReader.float(), "node", index), maxValue: finite(nodesReader.float(), "node", index), step: finite(nodesReader.float(), "node", index),
       scrollContentWidth: finite(nodesReader.float(), "node", index), scrollContentHeight: finite(nodesReader.float(), "node", index),
+      color: optionalColor(nodesReader, "node", index), textStyle: optionalTextStyle(nodesReader, "node", index),
       action: actionAt(nodesReader.i32(), index), pointerDragAction: actionAt(nodesReader.i32(), index), doubleClickAction: actionAt(nodesReader.i32(), index),
       drawStart: nodesReader.u32(), drawCount: nodesReader.u32(), options: [], children: [],
     };

@@ -46,7 +46,7 @@ async function builtFakeCatalogApp() {
     buildId,
     browser: {
       abiVersion: 2,
-      uiProtocolVersion: 1,
+      uiProtocolVersion: 2,
       runtimeConfigVersion: 1,
       entry: `${packageRoot}/fake-browser-app.js`,
       entryUrl: files[0].url,

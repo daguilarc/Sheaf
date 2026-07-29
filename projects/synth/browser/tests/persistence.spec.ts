@@ -30,7 +30,7 @@ test("syncs IDBFS before runtime initialization and flushes patch/config updates
     };
     const worker = new BrowserRuntimeWorker(async () => ({
       abiVersion: 2,
-      uiProtocolVersion: 1,
+      uiProtocolVersion: 2,
       runtimeConfigVersion: 1,
       filesystem,
       create: () => 3,
@@ -140,7 +140,7 @@ test("flushes runtime-reported persistence changes after actions and ticks", asy
     };
     const worker = new BrowserRuntimeWorker(async () => ({
       abiVersion: 2,
-      uiProtocolVersion: 1,
+      uiProtocolVersion: 2,
       runtimeConfigVersion: 1,
       filesystem,
       create: () => 9,
@@ -272,7 +272,7 @@ test("rejects incompatible runtime-config identity before filesystem or runtime 
     const calls: string[] = [];
     const worker = new BrowserRuntimeWorker(async () => ({
       abiVersion: 2,
-      uiProtocolVersion: 1,
+      uiProtocolVersion: 2,
       runtimeConfigVersion: 1,
       filesystem: {
         filesystems: { IDBFS: "idbfs" },

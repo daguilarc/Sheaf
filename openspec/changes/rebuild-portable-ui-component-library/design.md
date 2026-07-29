@@ -424,8 +424,9 @@ applies in full, including its existing selected and disabled treatment.
 **Captions are not a field.** A caption is an ordinary `Label` node the
 library emits into the control's form-grid row, with its own stable id
 derived from the control's. The `Node` record and the command buffer gain no
-caption field, and `ComboBox::label` keeps whatever residual meaning D-OQ5
-settles — the caption path deliberately does not go through it.
+caption field, and `ComboBox::label` carries nothing at all: D-OQ5 retired the
+combo-box meaning of that field rather than renaming it to `placeholder`, so
+the caption path is the only path.
 
 Where coherence comes from without a theme: producers naturally end up with
 named constants they pass to the components they build, the way Braid 4
@@ -437,11 +438,11 @@ Backend consequences: the JUCE backend's `TextColourForNode` /
 `ButtonColourForNode` hardcoded constants stop deciding appearance — carried
 values win; the constants survive at most as the absent-value default. The
 browser renders carried colours/text styles (inline styles or per-node CSS
-custom properties) instead of ignoring styling. What happens to
-`Node::variant` — whether it retires entirely or keeps a residual
-non-colour job (e.g. the list-row hover semantics in `SetSemantics`,
-`PortableJuceBackend.hpp:377-407`) — is resolved during implementation; see
-Open Questions.
+custom properties) instead of ignoring styling. `Node::variant` retires
+entirely and leaves the version-2 wire schema: D-OQ1 found that every one of its
+strings decided appearance and that `SetSemantics` carries no interaction
+semantics behind it, so there is no residual to keep and no replacement field to
+add.
 
 Rejected alternatives: theme tokens with app overrides (cut by the product
 owner — nobody asked for theming, and it was the wrong shape; a future theme
@@ -966,23 +967,62 @@ cover — is spot-checked at the human sign-off gate (D4).
 
 ## Open Questions
 
-1. **Does `Node::variant` survive at all? — RESOLVED: it shrinks to a
-   defined non-colour residual, and the decision is made *before* the v2
-   schema, not after.** Reading the backend, `variant` carries two distinct
-   jobs today: appearance (`"danger"`, `"primary"`, `"quiet"`, `"muted"`,
-   `"muted-title"`, `"title"` — `PortableJuceBackend.hpp:1125-1154,1374`),
-   which direct colour and text style replace outright, and interaction
-   semantics (`"list-row"`, `"panel"`, `"quiet"` in `SetSemantics`,
-   `PortableJuceBackend.hpp:377-407,1357-1363`), which nothing else covers.
-   So `variant` keeps exactly the second job and loses the first: the
-   appearance strings and their colour-table branches are deleted from both
-   backends, and the residual is a small closed set documented on the model.
-   Deferring this to cleanup was itself the defect — one permitted answer
-   (moving the semantics to a new explicit field) would have changed the v2
-   wire schema *after* the codec and both backends had been built and tested
-   against it, forcing a second migration. It is settled in the preconditions
-   group instead, and whichever shape it takes lands inside the single v2
-   schema change.
+1. **Does `Node::variant` survive at all? — RESOLVED: no. The residual set is
+   empty, `variant` retires entirely, and it is not part of the version-2 wire
+   schema.** This is settled in the preconditions group rather than in cleanup
+   because the alternative answers (a shrunken closed set, or a new explicit
+   `bool interactiveRow`-style field) would each have changed the v2 schema
+   *after* the codec and both backends had been built against it, forcing a
+   second migration.
+
+   An earlier draft of this document asserted that `variant` carried
+   interaction semantics in `SetSemantics` "which nothing else covers", and
+   named `"list-row"`, `"panel"`, and `"quiet"` as the residual. Reading the
+   backend line by line during task 3 shows that premise is false. Every
+   `variant` branch decides appearance and nothing else:
+
+   - `TextColourForNode` (`PortableJuceBackend.hpp:1119-1137`) — `"danger"`,
+     `"quiet"`/`"muted"`, `"muted-title"` pick a **glyph colour**, which
+     `TextStyle::color` now carries.
+   - `ButtonColourForNode` (`:1139-1157`) — `"primary"`, `"list-row"` pick a
+     **control fill**, which `Node::color` now carries.
+   - the `Label`/`StatusText` branch of `UpdateControlFromNode` (`:1374`) —
+     `"title"`/`"muted-title"` pick **font size 18 instead of 13**, which
+     `TextStyle::size` now carries.
+   - `SemanticPanelComponent::paint` (`:377-403`), reached for `Row`,
+     `Section`, and `ScrollArea` via `SetSemantics` (`:1357-1363`) — decides
+     only **which fill to paint**: empty/`"quiet"`/`"panel"` return without
+     painting, `selected_` paints one colour, `"list-row"` another, anything
+     else a third. `Node::color` now carries the container background fill,
+     absent `color` means "no fill" exactly as the early return does today,
+     and sru-45 already requires the selected/hover/pressed/disabled
+     treatments to be *derived* from the carried colour rather than
+     substituted. Nothing is left over.
+
+   Two further readings confirm there is no hidden non-colour job. First, the
+   JUCE backend contains **no hover code at all** (no `mouseEnter`,
+   `mouseMove`, or `isMouseOver` site anywhere in
+   `PortableJuceBackend.hpp`), so `SetSemantics` cannot be carrying hover
+   semantics. Second, both non-early-return branches of that paint are
+   **unreachable from every current producer**: no producer sets a container
+   variant other than `"panel"` or `"quiet"` (`RuntimePages.hpp:681, 722, 735,
+   768, 894, 942`; `ControllersPageUI.hpp` sets none), and the only two
+   `"list-row"` producers (`RuntimePages.hpp:853, 982`) are `Button` nodes.
+   The browser backend never read `variant` in the first place — zero
+   occurrences in `ui.ts` — and no requirement in `sru-1`–`sru-34` or
+   `sru-43`–`sru-53` pins any `variant` behaviour.
+
+   Consequences, all landing inside the single v2 break: the command buffer
+   neither encodes nor decodes a variant string, `DecodedNode` has no
+   `variant` member, and no replacement field or `IsResidualVariant`
+   membership helper exists to add. The `std::string variant` field stays on
+   the model, documented as retired and non-serialized, only so the ~20
+   unconverted `RuntimePages.hpp` producer sites keep compiling and the JUCE
+   backend keeps painting exactly as it does today until tasks 5.2–5.9a
+   rebuild those pages on the library and task 7.2 deletes the field together
+   with the backend's colour branches. Dropping it from the wire now is
+   behaviour-neutral: the browser already ignored it, and the JUCE backend
+   reads the model directly rather than the command buffer.
 2. **Reservation metric values and JUCE text-fit verification depth.** The
    per-style advance estimates and per-kind intrinsic extents are seeded from
    the two existing backend tables, which currently agree: buttons 72x28,
@@ -1009,14 +1049,40 @@ cover — is spot-checked at the human sign-off gate (D4).
    both apps populate the widget bay; the bay is the declared home for every
    semantic control outside the visualizer slots and encoder region; encoder
    frame behaviour is unchanged in both apps.
-5. **`ComboBox.label` semantics — decided before the Audio page captions,
-   not after.** Captions are library-emitted `Label` nodes in the form-grid
-   row (D5), which sidesteps the `setTextWhenNothingSelected()` trap
-   (`PortableJuceBackend.hpp:1262`). What remains is whether the model field
-   is renamed to `placeholder` or retired. Because the Audio page rebuild is
-   the first surface to put a caption next to a combo, this is answered in
-   the preconditions group rather than left to the sibling change — an
-   unanswered `label` field is exactly how the trap gets recreated.
+5. **`ComboBox.label` semantics — RESOLVED: retired, not renamed. `Node::label`
+   has no meaning for `NodeKind::ComboBox` in version 2, and no `placeholder`
+   field replaces it.** Captions are library-emitted `Label` nodes in the
+   form-grid row (D5), which sidesteps the `setTextWhenNothingSelected()` trap
+   (`PortableJuceBackend.hpp:1262`). Answered in the preconditions group
+   because the Audio page rebuild (task 5.4) is the first surface to put a
+   caption next to a combo, and an unanswered `label` field is exactly how the
+   trap gets recreated.
+
+   Every combo-box producer in the codebase sets `label` to a **caption**, not
+   a placeholder: `"Audio output"`/`"Audio input"` (`RuntimePages.hpp:576,
+   593`), `"Input"`/`"Output"`/`"Variant"`/`"Kind"`
+   (`ControllersPageUI.hpp:2669, 2682, 2704, 3084`), `"Message"`
+   (`ControllerWizard.cpp:476`). Fed to `setTextWhenNothingSelected()`, each of
+   those captions disappears the instant an option is selected — which is
+   precisely the defect sru-47 requires the Audio page to fix ("captions
+   visible while a device is selected"). No producer and no requirement asks
+   for genuine "nothing selected" hint text, so a renamed `placeholder` field
+   would be speculative wire weight and, worse, a second home for
+   caption-shaped strings — the trap rebuilt under a new name. Nothing is lost
+   in the retirement: the empty-selection state that today shows the caption
+   inside the closed combo will show the sibling caption `Label` beside it
+   instead, which is strictly more information, not less.
+
+   Note that retiring the combo-box meaning does not change the wire at all:
+   `label` stays in the schema because `Button`, `Toggle`, `Slider`,
+   `TextField`, and `Label` still carry their own text in it. So this decision
+   neither creates nor avoids a future migration; it only closes the trap.
+   Two follow-ons fall out of it, to be picked up by the tasks that own those
+   files rather than by the schema task: task 7.1 drops the now-meaningless
+   `label` parameter from `Builder::ComboBox`
+   (`PortableUIBuilders.hpp:436-452`), and task 7.2 deletes the
+   `setTextWhenNothingSelected()` call with the rest of the backend's retired
+   appearance handling.
 6. **Out-of-bounds draw sweep completeness.** The known absolute-geometry
    emitters are listed in D6, found by reading; the sweep task must be
    grep-backed over every `DrawCommand` construction site, and any producer

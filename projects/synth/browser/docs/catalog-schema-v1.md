@@ -1,7 +1,7 @@
 # Browser catalog schema v1
 
 The launcher accepts schema version `1`, browser ABI version `2`, UI protocol
-version `1`, and runtime-config version `1`. This is a strict closed JSON
+version `2`, and runtime-config version `1`. This is a strict closed JSON
 contract: every object must contain exactly its documented fields; missing or
 unknown fields are rejected before an app is presented.
 
@@ -30,7 +30,7 @@ catalogs**.
     "buildId": "a-content-derived-immutable-id",
     "browser": {
       "abiVersion": 2,
-      "uiProtocolVersion": 1,
+      "uiProtocolVersion": 2,
       "runtimeConfigVersion": 1,
       "entry": "packages/tone-grid/a-content-derived-immutable-id/app.js",
       "files": [{

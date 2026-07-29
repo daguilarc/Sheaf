@@ -26,6 +26,24 @@ struct Point {
     float y = 0.0f;
 };
 
+// Coordinate contract (sru-46, command buffer version 2).
+//
+// A node's `bounds` are expressed in its PARENT's coordinate space:
+//   * the single parentless root's bounds are surface coordinates;
+//   * a ScrollArea's children are relative to the scroll-CONTENT origin, so
+//     scrolling is purely a backend view transform and producers never see a
+//     scroll offset;
+//   * every other node's bounds are relative to its parent's origin.
+//
+// A node's `drawCommands` geometry is NODE-LOCAL: against the owning node's
+// own (0, 0, width, height) box. Node content clips to the node's bounds. A
+// producer whose drawing overhangs its node box must grow the node's bounds;
+// there is no classification and no rescue.
+//
+// No backend infers, guesses, or classifies any of the above. A node's
+// rendered position is exactly its own bounds folded over the accumulated
+// origins of its ancestor chain, plus scroll offset and uniform surface scale
+// where applicable.
 struct Bounds {
     float x = 0.0f;
     float y = 0.0f;
@@ -149,10 +167,58 @@ enum class NodeKind {
     Draw
 };
 
+// Coordinate contract (sru-46, command buffer version 2).
+//
+// A node's `bounds` are expressed in its PARENT's coordinate space:
+//   * the single parentless root's bounds are surface coordinates;
+//   * a ScrollArea's children are relative to the scroll-CONTENT origin, so
+//     scrolling is purely a backend view transform and producers never see a
+//     scroll offset;
+//   * every other node's bounds are relative to its parent's origin.
+//
+// A node's `drawCommands` geometry is NODE-LOCAL: against the owning node's
+// own (0, 0, width, height) box. Node content clips to the node's bounds. A
+// producer whose drawing overhangs its node box must grow the node's bounds;
+// there is no classification and no rescue.
+//
+// No backend infers, guesses, or classifies any of the above. A node's
+// rendered position is exactly its own bounds folded over the accumulated
+// origins of its ancestor chain, plus scroll offset and uniform surface scale
+// where applicable.
+//
+// Appearance contract (sru-45). `color` and `textStyle` are optional: absent
+// means the backend's plain default look, including that backend's existing
+// selected and disabled treatment. A carried value beats every backend
+// constant for that node, and selected/hover/pressed/disabled are DERIVED
+// from the carried colour, never substituted from a palette. `color`'s
+// meaning is per-kind:
+//
+//   Button, Toggle              the control fill
+//   ComboBox, TextField         the field background
+//   Slider                      the filled-track accent
+//   Root, Row, Section,
+//   ScrollArea                  the container background fill
+//   Label, StatusText           the text background -- NEVER the glyphs
+//   Draw                        nothing; draw commands carry their own colours
+//
+// Glyph colour ALWAYS comes from `textStyle`, never from `color`, so the two
+// can never compete for the same pixel.
+//
+// A caption is NOT a field. The component library emits a caption as an
+// ordinary sibling `Label` node in the control's form-grid row, with a stable
+// id derived from the control's (design.md D5).
 struct Node {
     NodeId id;
     NodeKind kind = NodeKind::Label;
     Bounds bounds{};
+    // Per-kind text the control renders itself: the button/toggle caption
+    // text, the slider name, the text field's own label, a Label's fallback
+    // text. `ComboBox` IGNORES it -- design.md OQ5 retired the combo-box
+    // meaning of this field, which the JUCE backend used to feed to
+    // `setTextWhenNothingSelected()` so that a producer's intended caption
+    // vanished the moment an option was selected. A combo box's caption is a
+    // sibling `Label` node like every other control's, and no placeholder
+    // field replaces the retired meaning.
     std::string label;
     std::string text;
     bool checked = false;
@@ -166,10 +232,25 @@ struct Node {
     float scrollContentHeight = 0.0f;
     std::vector<ControlOption> options;
     std::string selectedOption;
+    // RETIRED (design.md OQ1). Every `variant` string carried appearance and
+    // nothing else -- glyph colour, control fill, label font size, container
+    // background fill -- all of which `color`/`textStyle`/`selected` now carry
+    // directly. There is no interaction-semantics residual: the JUCE backend
+    // has no hover code at all, and `SemanticPanelComponent::SetSemantics`
+    // decides only which fill to paint. So `variant` is NOT part of the
+    // version-2 wire schema; the command buffer neither encodes nor decodes
+    // it, and no new producer may set it.
+    //
+    // The field itself survives only until the config pages are rebuilt on the
+    // component library (tasks 5.2-5.9a) and task 7.2 deletes it together with
+    // the backend's per-variant colour branches. Until then it keeps the
+    // unconverted `RuntimePages.hpp` producers compiling and the JUCE backend
+    // painting exactly as it does today; the browser backend never read it.
     std::string variant;
-    // Direct appearance properties (sru-45). Optional: absent means the
-    // backend's plain default look. `color`'s meaning is per-kind; glyph
-    // colour always comes from `textStyle`, never from `color`.
+    // Direct appearance properties (sru-45); see the contract above this
+    // struct for the per-kind meaning of `color`. Optional with explicit wire
+    // presence flags: absent decodes as absent, never as a sentinel value a
+    // producer could also have chosen deliberately.
     std::optional<Color> color{};
     std::optional<TextStyle> textStyle{};
     std::optional<Action> action;

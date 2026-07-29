@@ -887,8 +887,10 @@ void TestBrowserContractVersionsAreReadableBeforeRuntimeCreation()
 {
     Require(synth_browser_abi_version() == 2,
             "browser ABI version is available before runtime creation");
-    Require(synth_browser_ui_protocol_version() == 1,
+    Require(synth_browser_ui_protocol_version() == 2,
             "browser UI protocol version is available before runtime creation");
+    Require(synth_browser_ui_protocol_version() == synth_browser::kCommandBufferVersion,
+            "the package's exported UI protocol version equals the command buffer version");
     Require(synth_browser_runtime_config_version() == 1,
             "browser runtime-config version is available before runtime creation");
 }

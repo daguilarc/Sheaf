@@ -23,7 +23,7 @@ test("starts a generic verified package from the isolated launcher's second orig
         locateFile: materialized.locateFile,
         mainScriptUrlOrBlob: materialized.mainScriptUrlOrBlob,
       },
-      versions: { abiVersion: 2, uiProtocolVersion: 1, runtimeConfigVersion: 1 },
+      versions: { abiVersion: 2, uiProtocolVersion: 2, runtimeConfigVersion: 1 },
     });
     const created = await runtime.request({ type: "create" });
     const audio = await runtime.request({ type: "audio-config" });

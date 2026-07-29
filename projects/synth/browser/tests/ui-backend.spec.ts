@@ -931,6 +931,29 @@ test("reports stable generic errors for malformed node trees", async ({ page }) 
   expect(messages).toEqual(cases.map(({ expected }) => expected));
 });
 
+test("a version-mismatched buffer fails loudly and renders no frame", async ({ page }) => {
+  const staleFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 40, 40], children: ["label"] },
+    { id: "label", kind: NodeKind.Label, bounds: [0, 0, 40, 20], text: "stale" },
+  ], [], 1);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const host = document.querySelector("#synth-root")!;
+    let message = "no error";
+    try {
+      new BrowserUiBackend(host).renderFrame(new Uint8Array(bytes).buffer);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    return { message, childCount: host.childElementCount, html: host.innerHTML };
+  }, Array.from(new Uint8Array(staleFrame)));
+
+  expect(result.message).toMatch(/unsupported command buffer version/);
+  expect(result.childCount).toBe(0);
+  expect(result.html).not.toContain("stale");
+});
+
 test("dispose disconnects resize observation and releases active pointer capture", async ({ page }) => {
   const dragFrame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 100, 100], children: ["drag"] },
@@ -1106,4 +1129,30 @@ test("preserves semantic nodes and reports structural buffer errors", () => {
   const decoded = decodeCommandBuffer(frame);
   expect(decoded.nodes).toHaveLength(10);
   expect(() => decodeCommandBuffer(new ArrayBuffer(4))).toThrow(CommandBufferError);
+});
+
+test("carries node colour and text style behind explicit presence flags", () => {
+  const styledFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 100], children: ["styled", "plain", "transparent"] },
+    {
+      id: "styled", kind: NodeKind.Button, bounds: [10, 20, 80, 24],
+      color: [0, 200, 0, 255], textStyle: { size: 16, color: [255, 255, 255, 255], align: 1 },
+    },
+    { id: "plain", kind: NodeKind.Button, bounds: [10, 50, 80, 24] },
+    { id: "transparent", kind: NodeKind.Section, bounds: [10, 80, 80, 24], color: [0, 0, 0, 0] },
+  ]);
+  const byId = new Map(decodeCommandBuffer(styledFrame).nodes.map((node) => [node.id, node]));
+
+  expect(byId.get("styled")!.bounds).toEqual({ x: 10, y: 20, width: 80, height: 24 });
+  expect(byId.get("styled")!.color).toEqual({ r: 0, g: 200, b: 0, a: 255 });
+  expect(byId.get("styled")!.textStyle).toEqual({ size: 16, color: { r: 255, g: 255, b: 255, a: 255 }, align: 1 });
+  expect(byId.get("plain")!.color).toBeUndefined();
+  expect(byId.get("plain")!.textStyle).toBeUndefined();
+  // A sentinel colour would make this indistinguishable from "absent".
+  expect(byId.get("transparent")!.color).toEqual({ r: 0, g: 0, b: 0, a: 0 });
+});
+
+test("rejects a command buffer whose version is not the shell's", () => {
+  const staleFrame = makeCommandBuffer([{ id: "root", kind: NodeKind.Root, bounds: [0, 0, 10, 10] }], [], 1);
+  expect(() => decodeCommandBuffer(staleFrame)).toThrow(/unsupported command buffer version/);
 });

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 
@@ -25,6 +26,30 @@ void Require(bool condition, const char* label)
         throw std::runtime_error(label);
     }
 }
+
+bool NearlyEqual(float left, float right)
+{
+    return std::abs(left - right) < 0.0001f;
+}
+
+// Version-2 schema shape, pinned at compile time (design.md OQ1 and OQ5).
+//
+// OQ1: `variant` carried appearance only, so `Node::color`/`Node::textStyle`
+// replace it outright and it leaves the wire. Nothing replaces it: there is no
+// residual interaction-semantics string and no explicit residual field.
+// OQ5: a caption is a library-emitted `Label` node, so no combo-box caption or
+// placeholder field enters the schema either.
+template <typename T>
+concept CarriesVariant = requires(T record) { record.variant; };
+template <typename T>
+concept CarriesPlaceholder = requires(T record) { record.placeholder; };
+
+static_assert(!CarriesVariant<synth_browser::DecodedNode>,
+              "version 2 carries no variant string on the wire");
+static_assert(!CarriesPlaceholder<synth_browser::DecodedNode>,
+              "version 2 carries no combo-box placeholder on the wire");
+static_assert(!CarriesPlaceholder<synth::ui::Node>,
+              "the model gains no combo-box placeholder field");
 
 const synth_browser::DecodedNode& FindNode(const synth_browser::DecodedCommandBuffer& buffer, const char* id)
 {
@@ -86,7 +111,7 @@ void TestCompleteTreeRoundTrips()
             "buffer magic");
 
     const synth_browser::DecodedCommandBuffer decoded = synth_browser::DecodeCommandBuffer(encoded.bytes);
-    Require(decoded.version == 1, "buffer version");
+    Require(decoded.version == 2, "buffer version");
     Require(decoded.diagnostics.empty(), "complete tree diagnostics");
     Require(decoded.nodes.size() == 8, "node count");
     Require(decoded.actions.size() == 4, "action count");
@@ -262,6 +287,151 @@ void TestUnsupportedDrawFeatureIsGeneric()
     Require(decoded.diagnostics[0].feature == "draw command kind", "generic unsupported draw feature name");
 }
 
+void TestVersionTwoCarriesStyleAndParentRelativeBounds()
+{
+    synth::ui::NodeTree tree;
+    synth::ui::Node root;
+    root.id = synth::ui::NodeId("root");
+    root.kind = synth::ui::NodeKind::Root;
+    root.bounds = {0, 0, 400, 300};
+    root.children.push_back(synth::ui::NodeId("child"));
+    synth::ui::Node child;
+    child.id = synth::ui::NodeId("child");
+    child.kind = synth::ui::NodeKind::Button;
+    child.bounds = {10, 20, 80, 24};  // parent-relative
+    child.color = synth::Color::Rgb(0, 200, 0);
+    child.textStyle = synth::ui::TextStyle{16.0f, synth::Color::Rgb(255, 255, 255),
+                                           synth::ui::TextAlign::Center};
+    tree.nodes.push_back(root);
+    tree.nodes.push_back(child);
+
+    const auto decoded = synth_browser::DecodeCommandBuffer(synth_browser::SerializeNodeTree(tree).bytes);
+    Require(decoded.version == 2, "version two is advertised on the wire");
+    const auto& out = FindNode(decoded, "child");
+    Require(NearlyEqual(out.bounds.x, 10.0f) && NearlyEqual(out.bounds.y, 20.0f),
+            "parent-relative bounds survive encode/decode unchanged");
+    Require(out.color.has_value() && out.color->g == 200, "carried colour survives");
+    Require(out.color->r == 0 && out.color->b == 0 && out.color->a == 255,
+            "carried colour survives channel for channel");
+    Require(out.textStyle.has_value() && NearlyEqual(out.textStyle->size, 16.0f),
+            "carried text style survives");
+    Require(out.textStyle->align == synth::ui::TextAlign::Center,
+            "carried text alignment survives");
+    Require(out.textStyle->color == synth::Color::Rgb(255, 255, 255),
+            "carried glyph colour survives");
+}
+
+void TestAbsentStyleStaysAbsent()
+{
+    synth::ui::NodeTree tree;
+    synth::ui::Node root;
+    root.id = synth::ui::NodeId("root");
+    root.kind = synth::ui::NodeKind::Root;
+    root.bounds = {0, 0, 400, 300};
+    tree.nodes.push_back(root);
+
+    const auto decoded = synth_browser::DecodeCommandBuffer(synth_browser::SerializeNodeTree(tree).bytes);
+    const auto& out = FindNode(decoded, "root");
+    Require(!out.color.has_value(),
+            "an absent colour decodes as absent, not as a sentinel value");
+    Require(!out.textStyle.has_value(),
+            "an absent text style decodes as absent, not as a sentinel value");
+}
+
+void TestFullyTransparentBlackIsAPresentColour()
+{
+    synth::ui::NodeTree tree;
+    synth::ui::Node root;
+    root.id = synth::ui::NodeId("root");
+    root.kind = synth::ui::NodeKind::Root;
+    root.bounds = {0, 0, 400, 300};
+    root.color = synth::Color::Rgba(0, 0, 0, 0);
+    tree.nodes.push_back(root);
+
+    const auto decoded = synth_browser::DecodeCommandBuffer(synth_browser::SerializeNodeTree(tree).bytes);
+    const auto& out = FindNode(decoded, "root");
+    Require(out.color.has_value() && *out.color == synth::Color::Rgba(0, 0, 0, 0),
+            "a producer legitimately choosing transparent black is not read as absent");
+}
+
+void TestMovingAParentChangesOnlyTheParentRecord()
+{
+    const auto at = [](float parentY) {
+        synth::ui::NodeTree tree;
+        synth::ui::Node root;
+        root.id = synth::ui::NodeId("root");
+        root.kind = synth::ui::NodeKind::Root;
+        root.bounds = {0, 0, 400, 300};
+        root.children.push_back(synth::ui::NodeId("parent"));
+        synth::ui::Node parent;
+        parent.id = synth::ui::NodeId("parent");
+        parent.kind = synth::ui::NodeKind::Section;
+        parent.bounds = {0, parentY, 400, 100};
+        parent.children.push_back(synth::ui::NodeId("child"));
+        synth::ui::Node child;
+        child.id = synth::ui::NodeId("child");
+        child.kind = synth::ui::NodeKind::Label;
+        child.bounds = {4, 4, 80, 20};
+        tree.nodes.push_back(root);
+        tree.nodes.push_back(parent);
+        tree.nodes.push_back(child);
+        return synth_browser::DecodeCommandBuffer(synth_browser::SerializeNodeTree(tree).bytes);
+    };
+
+    const auto first = at(0.0f);
+    const auto second = at(50.0f);
+    Require(std::memcmp(&FindNode(first, "child").bounds, &FindNode(second, "child").bounds,
+                        sizeof(synth::ui::Bounds)) == 0,
+            "moving a parent leaves every descendant's serialized bounds byte-identical");
+    Require(FindNode(first, "parent").bounds.y != FindNode(second, "parent").bounds.y,
+            "only the moved parent's record differs");
+}
+
+void TestVariantCarriesNoAppearanceStrings()
+{
+    synth::ui::NodeTree tree;
+    synth::ui::Node root;
+    root.id = synth::ui::NodeId("root");
+    root.kind = synth::ui::NodeKind::Root;
+    root.bounds = {0, 0, 400, 300};
+    root.children.push_back(synth::ui::NodeId("row"));
+    synth::ui::Node row;
+    row.id = synth::ui::NodeId("row");
+    row.kind = synth::ui::NodeKind::Section;
+    row.bounds = {0, 0, 400, 40};
+    row.variant = "list-row";
+    root.variant = "panel";
+    tree.nodes.push_back(root);
+    tree.nodes.push_back(row);
+
+    const auto encoded = synth_browser::SerializeNodeTree(tree);
+    const auto decoded = synth_browser::DecodeCommandBuffer(encoded.bytes);
+    for (const char* retired : {"danger", "primary", "muted", "muted-title", "list-row", "panel"})
+    {
+        Require(std::find(decoded.strings.begin(), decoded.strings.end(), retired) ==
+                    decoded.strings.end(),
+                "no variant string reaches the version-two wire");
+    }
+}
+
+void TestVersionMismatchFailsLoudly()
+{
+    auto bytes = synth_browser::SerializeNodeTree(MakeCompleteTree()).bytes;
+    Require(bytes[4] == std::byte{2} && bytes[5] == std::byte{0},
+            "the serialized header advertises version two");
+    bytes[4] = std::byte{1};
+    bool threw = false;
+    try
+    {
+        synth_browser::DecodeCommandBuffer(bytes);
+    }
+    catch (const std::runtime_error&)
+    {
+        threw = true;
+    }
+    Require(threw, "a version-one buffer is rejected outright with no fallback decode");
+}
+
 void TestPredictiveGangedLfoUsesExistingDrawSchema()
 {
     synth::GangedRandomLfoSnapshot<2> snapshot;
@@ -387,6 +557,12 @@ int main()
     TestSyncPageRoundTripsPortableControlsAndActions();
     TestUnsupportedPortableFeatureIsGeneric();
     TestUnsupportedDrawFeatureIsGeneric();
+    TestVersionTwoCarriesStyleAndParentRelativeBounds();
+    TestAbsentStyleStaysAbsent();
+    TestFullyTransparentBlackIsAPresentColour();
+    TestMovingAParentChangesOnlyTheParentRecord();
+    TestVariantCarriesNoAppearanceStrings();
+    TestVersionMismatchFailsLoudly();
     TestPredictiveGangedLfoUsesExistingDrawSchema();
     TestMiniAppTwoScopeCommandsUseExistingBrowserSchema();
     TestStandardModulatorUnderlaysUseExistingBrowserSchema();

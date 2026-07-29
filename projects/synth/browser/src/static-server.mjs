@@ -35,7 +35,7 @@ const packageFixtureEntry = Buffer.from(`export default async function createRem
     stringToUTF8: () => {},
     emscriptenRegisterAudioObject: () => 7,
     _synth_browser_abi_version: () => 2,
-    _synth_browser_ui_protocol_version: () => 1,
+    _synth_browser_ui_protocol_version: () => 2,
     _synth_browser_runtime_config_version: () => 1,
     _synth_browser_create: () => 41,
     _synth_browser_set_timestamp_epoch_offset: () => 0,
@@ -77,7 +77,7 @@ function packageFixture(request) {
     buildId: "build-1",
     browser: {
       abiVersion: 2,
-      uiProtocolVersion: 1,
+      uiProtocolVersion: 2,
       runtimeConfigVersion: 1,
       entry: `${packageRoot}/remote-fake.js`,
       entryUrl: `${origin}/package-fixture/remote-fake.js`,

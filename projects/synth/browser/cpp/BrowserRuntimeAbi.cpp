@@ -16,9 +16,12 @@ extern "C" std::uint32_t synth_browser_abi_version()
     return 2;
 }
 
+// Every Wasm package exports this independently of the shell bundle, so it must
+// equal the shell's `COMMAND_BUFFER_VERSION`; a package still advertising 1
+// against a version-2 shell is rejected before any frame renders (sru-46).
 extern "C" std::uint32_t synth_browser_ui_protocol_version()
 {
-    return 1;
+    return 2;
 }
 
 extern "C" std::uint32_t synth_browser_runtime_config_version()

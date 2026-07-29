@@ -7,9 +7,16 @@ import test from "node:test";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
+import { readAppBuildManifest } from "../src/app-build-manifest.mjs";
 import { assemblePackage } from "../src/package-contract.mjs";
+import { SUPPORTED_UI_PROTOCOL_VERSION } from "../src/protocol.js";
 
 const execFileAsync = promisify(execFile);
+
+// The compiled test lives in `dist/tests/`, so the browser source root — which
+// holds the uncompiled first-party manifest and the C++ ABI source — is two
+// levels up.
+const browserRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 const REQUIRED_ARTIFACTS = Object.freeze({
   entry: "app.js",
@@ -76,7 +83,7 @@ test("assembles identical emitted files into byte-for-byte stable immutable pack
       abiVersion: one.browser.abiVersion,
       uiProtocolVersion: one.browser.uiProtocolVersion,
       runtimeConfigVersion: one.browser.runtimeConfigVersion,
-    }, { abiVersion: 2, uiProtocolVersion: 1, runtimeConfigVersion: 1 });
+    }, { abiVersion: 2, uiProtocolVersion: 2, runtimeConfigVersion: 1 });
     assert.equal(one.browser.entry, `packages/test-app/${one.buildId}/app.js`);
     assert.deepEqual(one.browser.files.map(({ path: filePath }) => filePath), [
       `packages/test-app/${one.buildId}/app.js`,
@@ -269,4 +276,24 @@ test("package-app command assembles aliased Emscripten roles and prints the cata
   } finally {
     await setup.dispose();
   }
+});
+
+// sru-46: three kinds of artifact advertise the UI protocol version, not two.
+// The shell owns `COMMAND_BUFFER_VERSION`, but every Wasm package exports
+// `synth_browser_ui_protocol_version()` independently, so a shell bumped alone
+// rejects every package it loads. Both real first-party packages compile the
+// one shared ABI source, so pinning that source against the shell constant is
+// what keeps a stale package from reaching publication.
+test("both first-party packages export the shell's UI protocol version", async () => {
+  const manifest = await readAppBuildManifest({ browserRoot });
+  assert.deepEqual(manifest.apps.map(({ appId }) => appId), ["braid-4", "miniapp"]);
+
+  const builder = await readFile(path.join(browserRoot, "src", "build-browser-apps.mjs"), "utf8");
+  assert.match(builder, /path\.join\(browserRoot, "cpp", "BrowserRuntimeAbi\.cpp"\)/,
+    "every first-party package must compile the shared ABI source");
+
+  const abiSource = await readFile(path.join(browserRoot, "cpp", "BrowserRuntimeAbi.cpp"), "utf8");
+  const exported = /synth_browser_ui_protocol_version\(\)\s*\{\s*return\s+(\d+);/.exec(abiSource);
+  assert.ok(exported, "BrowserRuntimeAbi.cpp must export a literal UI protocol version");
+  assert.equal(Number(exported[1]), SUPPORTED_UI_PROTOCOL_VERSION);
 });

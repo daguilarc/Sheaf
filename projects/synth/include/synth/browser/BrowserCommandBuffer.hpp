@@ -19,7 +19,14 @@ namespace synth_browser {
 
 inline constexpr std::array<std::byte, 4> kCommandBufferMagic = {
     std::byte{'S'}, std::byte{'B'}, std::byte{'C'}, std::byte{'B'}};
-inline constexpr std::uint16_t kCommandBufferVersion = 1;
+// Version 2 (sru-46): node bounds are parent-relative, `Draw` geometry is
+// node-local, `Node::color`/`Node::textStyle` cross the wire behind explicit
+// presence bytes, and `Node::variant` is gone. A hard break -- both ends check
+// strict equality and there is no version-1 fallback or negotiation. Every
+// artifact that advertises the UI protocol version moves together: this
+// constant, `COMMAND_BUFFER_VERSION` in `browser/src/protocol.ts`, and each
+// Wasm package's exported `synth_browser_ui_protocol_version()`.
+inline constexpr std::uint16_t kCommandBufferVersion = 2;
 
 enum class CommandNodeKind : std::uint8_t {
     Root,
@@ -100,7 +107,8 @@ struct DecodedNode {
     float scrollContentHeight = 0.0f;
     std::vector<DecodedOption> options;
     std::string selectedOption;
-    std::string variant;
+    std::optional<synth::Color> color;
+    std::optional<synth::ui::TextStyle> textStyle;
     std::optional<DecodedAction> action;
     std::optional<DecodedAction> pointerDragAction;
     std::optional<DecodedAction> doubleClickAction;
@@ -176,6 +184,26 @@ inline void AppendColor(std::vector<std::byte>& output, synth::Color color)
     AppendU8(output, color.g);
     AppendU8(output, color.b);
     AppendU8(output, color.a);
+}
+
+// Optional node fields carry an explicit presence byte. Version 1 had no
+// presence encoding at all -- `DrawCommand::color` is raw RGBA -- and a
+// sentinel colour would be indistinguishable from a producer legitimately
+// choosing that value, so absence is spelled out rather than encoded in-band.
+inline void AppendOptionalColor(std::vector<std::byte>& output, const std::optional<synth::Color>& color)
+{
+    AppendU8(output, color.has_value() ? 1 : 0);
+    if (color.has_value()) AppendColor(output, *color);
+}
+
+inline void AppendOptionalTextStyle(std::vector<std::byte>& output,
+                                    const std::optional<synth::ui::TextStyle>& textStyle)
+{
+    AppendU8(output, textStyle.has_value() ? 1 : 0);
+    if (!textStyle.has_value()) return;
+    AppendFloat(output, textStyle->size);
+    AppendColor(output, textStyle->color);
+    AppendU8(output, static_cast<std::uint8_t>(textStyle->align));
 }
 
 class Reader {
@@ -300,6 +328,22 @@ inline synth::ui::TextAlign DecodeTextAlign(std::uint8_t value)
     return static_cast<synth::ui::TextAlign>(value);
 }
 
+inline std::optional<synth::Color> ReadOptionalColor(Reader& reader)
+{
+    if (reader.U8() == 0) return std::nullopt;
+    return reader.Color();
+}
+
+inline std::optional<synth::ui::TextStyle> ReadOptionalTextStyle(Reader& reader)
+{
+    if (reader.U8() == 0) return std::nullopt;
+    synth::ui::TextStyle style;
+    style.size = reader.Float();
+    style.color = reader.Color();
+    style.align = DecodeTextAlign(reader.U8());
+    return style;
+}
+
 }  // namespace detail
 
 inline CommandBuffer SerializeNodeTree(const synth::ui::NodeTree& tree)
@@ -379,7 +423,6 @@ inline CommandBuffer SerializeNodeTree(const synth::ui::NodeTree& tree)
         intern(node.label);
         intern(node.text);
         intern(node.selectedOption);
-        intern(node.variant);
         for (const auto& option : node.options)
         {
             intern(option.id);
@@ -445,13 +488,14 @@ inline CommandBuffer SerializeNodeTree(const synth::ui::NodeTree& tree)
         detail::AppendU32(nodeSection, stringIndex(node.label));
         detail::AppendU32(nodeSection, stringIndex(node.text));
         detail::AppendU32(nodeSection, stringIndex(node.selectedOption));
-        detail::AppendU32(nodeSection, stringIndex(node.variant));
         detail::AppendFloat(nodeSection, node.value);
         detail::AppendFloat(nodeSection, node.minValue);
         detail::AppendFloat(nodeSection, node.maxValue);
         detail::AppendFloat(nodeSection, node.step);
         detail::AppendFloat(nodeSection, node.scrollContentWidth);
         detail::AppendFloat(nodeSection, node.scrollContentHeight);
+        detail::AppendOptionalColor(nodeSection, node.color);
+        detail::AppendOptionalTextStyle(nodeSection, node.textStyle);
         for (const auto actionIndex : nodeActionIndices[index]) detail::AppendI32(nodeSection, actionIndex);
         detail::AppendU32(nodeSection, drawRanges[index].first);
         detail::AppendU32(nodeSection, drawRanges[index].second);
@@ -595,13 +639,14 @@ inline DecodedCommandBuffer DecodeCommandBuffer(std::span<const std::byte> bytes
             node.label = stringAt(reader.U32());
             node.text = stringAt(reader.U32());
             node.selectedOption = stringAt(reader.U32());
-            node.variant = stringAt(reader.U32());
             node.value = reader.Float();
             node.minValue = reader.Float();
             node.maxValue = reader.Float();
             node.step = reader.Float();
             node.scrollContentWidth = reader.Float();
             node.scrollContentHeight = reader.Float();
+            node.color = detail::ReadOptionalColor(reader);
+            node.textStyle = detail::ReadOptionalTextStyle(reader);
             node.action = actionAt(reader.I32());
             node.pointerDragAction = actionAt(reader.I32());
             node.doubleClickAction = actionAt(reader.I32());
