@@ -44,49 +44,87 @@ somewhere else.
 
 ## Superpowers SDD
 
-Superpowers subagent-driven development (SDD) uses the xagent SDD MCP facade
-exclusively. For every implementer, task-reviewer, fix, re-review, and final
-whole-branch reviewer turn, use only these four tools:
+Superpowers subagent-driven development (SDD) dispatches through the xagent SDD
+MCP facade, then awaits, messages, and closes like any other supervised run.
+The dedicated SDD await and close facade tools are deleted: a late watchdog
+event once landed after `turn.completed`, the v1 turn row stayed `running`,
+followup said "await it", that SDD await returned without resolving it, and
+message said "await it before messaging" — naming the tool that had just
+failed. The agent was alive, idle, and permanently unreachable, with no repair
+tool. Controllers now use `xagent_await` / `xagent_close` with `run_id` (the
+same value returned as `agent_id`), not a separate SDD await keyed on
+`agent_id`. `deadline_seconds` is no longer an agent-facing await input.
+
+For every implementer, reviewer, fixer, re-reviewer, and whole-branch reviewer
+turn, use:
 
 ```text
 xagent_sdd_start
 → independent controller work
-→ one long xagent_sdd_await
+→ one long xagent_await(run_id, after_sequence)
 → consume report.text
-→ xagent_sdd_followup for fix or re-review on the same agent_id
-→ one long xagent_sdd_await
-→ xagent_sdd_close when the session is finished
+→ xagent_sdd_followup for same-agent fix or re-review when the agent is live
+→ one long xagent_await
+→ xagent_close(run_id) when finished
 ```
 
-`xagent_sdd_start` renders the role prompt through the trusted
-`dispatch-prompt` executable in the service checkout, reserves the SDD ledger
-row, and returns `agent_id`, `sequence`, `renderer_path`, and artifact paths. Record the
-returned `agent_id` and `sequence` cursor for every turn. The returned
+`xagent_sdd_start` accepts exactly four start roles: `implementer`, `reviewer`
+(with `task` for a task review, without for a whole-branch review), `fixer`,
+and `re-reviewer`. The role is the role the agent *starts* as and never
+changes — a later fix follow-up on an implementer does not rewrite the ledger
+row to `fixer`. The start call renders the role prompt through the trusted
+`dispatch-prompt` executable in the service checkout, inserts one immutable
+`sdd_agents` row, and returns `agent_id`, `sequence`, `renderer_path`, and
+artifact paths once the turn is durably started (not when it completes —
+awaiting completion is `xagent_await`'s job). Record the returned `agent_id`
+(use it as `run_id` for generic tools) and `sequence` cursor. The returned
 `sequence` is the pre-turn supervision cursor; it is not a provider JSONL position.
-Pass it to `xagent_sdd_await` as `after_sequence`.
+Pass it to `xagent_await` as `after_sequence`.
+
+`xagent_sdd_followup` is a same-agent convenience: it renders and submits, writes
+nothing to the ledger, and returns `{ agent_id, sequence }`. Its `report` path
+is a required input. While the agent is live, use followup for fix or re-review
+rounds — do not start a fresh agent merely to send that follow-up. A whole-branch
+`reviewer` (no `task`) is single-turn: `xagent_sdd_start` → await →
+`xagent_close`; a later whole-branch review round means a new
+`xagent_sdd_start`.
+
+### Recovery when the agent is not live
+
+When `xagent_sdd_followup` returns `sdd_agent_not_live`, dispatch a fresh agent
+with `xagent_sdd_start` for the same plan and task, passing the original brief:
+role `fixer` when the dead agent started as `implementer` or `fixer`, and role
+`re-reviewer` when it started as `reviewer` or `re-reviewer`. When followup
+returns `sdd_agent_busy`, call `xagent_await` — the agent is mid-turn.
+`xagent_list` shows dispatches that never became runs as `run_missing: true`
+tombstones.
+
+### Reports, messages, and retention
 
 After `xagent_sdd_start` or `xagent_sdd_followup`, do independent controller
-work until it is exhausted, then enter one long `xagent_sdd_await` with the
-latest `sequence`. Healthy provider deltas, tools, raw events, status,
-and healthy watchdog verdicts never complete an await and never enter the
-leader context.
+work until it is exhausted, then enter one long `xagent_await` with the latest
+`sequence`. Healthy provider deltas, tools, raw events, status, and healthy
+watchdog verdicts never complete an await and never enter the leader context.
+An await ends on news, not on a clock: while the supervisor vouches for the run,
+progress pings keep one await holding indefinitely.
 
 On successful completion, consume the sanitized final assistant report from
-`report.text` in the await result only after xagent persists it in the SDD
-ledger (report-before-return). Do not read the intermediate transcript, tail
-logs, summarize progress for the leader, or read the mutable Superpowers report
-file on disk. If the service completes without final text, treat that as
-`missing_final_report` and escalate.
+`report.text` in the await result — that text lives in the durable
+`turn.completed` event, not in a ledger column. Do not read the intermediate
+transcript, tail logs, summarize progress for the leader, or read the mutable
+Superpowers report file on disk. If the service completes without final text,
+treat that as `missing_final_report` and escalate.
 
-Fix rounds MUST call `xagent_sdd_followup` on the existing implementer
-`agent_id`. Re-review rounds MUST call `xagent_sdd_followup` on the existing
-task-reviewer `agent_id`. Do not start a fresh agent merely to send that
-follow-up. The final whole-branch `code-reviewer` is a single-turn session:
-`xagent_sdd_start` → await → `xagent_sdd_close`. It has no fix or re-review
-follow-up; a new whole-branch review round means a new `xagent_sdd_start`.
-Close each task-scoped SDD session with `xagent_sdd_close` only after its
-task passes both verdicts — a closed session cannot be followed up, and the
-only recovery is a fresh session that has lost the worker's context.
+`xagent_message` is legal on SDD runs and is recorded like any other submission
+(as a `turn.submitted` event). Use it for unstructured answers and chit-chat —
+for example answering a worker that stopped with `NEEDS_CONTEXT`. It is *not*
+how you dispatch work: a fix or re-review round must go through
+`xagent_sdd_followup` (or a fresh `fixer` / `re-reviewer` start when the agent
+is not live).
+
+`<log_root>/<agent_id>/` is the only copy of that agent's reports and submitted
+prompts. Deleting a run directory referenced by the ledger destroys evidence;
+treat ledger-referenced run directories as evidence, not cache.
 
 `renderer_path` names the `dispatch-prompt` that rendered the turn. It is
 always the service checkout's copy, never the run cwd's: a worktree's own
@@ -103,13 +141,14 @@ While a Superpowers SDD agent is healthy and the controller has no independent
 work, do not poll at a short fixed interval. Specifically, do not poll
 `write_stdin`, `xagent_list`, xagent logs, terminal status, or unchanged MCP
 inspect output merely to observe progress. Inspect supervision state only after
-attention, a long await deadline, or an explicit user status request.
+attention, a supervision stop-vouching wakeup, or an explicit user status
+request.
 
 If the xagent SDD MCP facade, Conductor-managed xagent service, trusted
 `dispatch-prompt` renderer, or required Superpowers templates are unavailable,
 surface broken agentic infrastructure. Do not fall back to native subagents,
-generic `xagent_start_non_sdd`, raw `xagent_message` as a work dispatch, quiet
-`xagent supervise`, or terminal polling for Superpowers SDD turns.
+generic `xagent_start_non_sdd` as a work dispatch, quiet `xagent supervise`, or
+terminal polling for Superpowers SDD turns.
 
 ## Generic Delegation
 
@@ -145,12 +184,8 @@ When await returns compact attention instead of completion, read the attention
 payload, act only at the controller layer, and call `xagent_await` again with
 the returned cursor only when continuing supervision.
 
-`xagent_message` sends unstructured user input to a run. It works on SDD runs
-too — that is how you answer a worker that stopped with `NEEDS_CONTEXT`, and
-how you chit-chat generally. It is *not* how you dispatch work: a fix or
-re-review round must go through `xagent_sdd_followup`, which renders the role
-template and reserves the ledger row. A raw message creates no turn and is not
-recorded as one.
+`xagent_message` sends unstructured user input to a run. On SDD runs it is
+legal and durable (see Superpowers SDD). It is still not how you dispatch work.
 
 Anything the templates have no slot for — "the tree has uncommitted work from
 a cancelled sibling run", "ignore the stray build output" — goes in the
@@ -160,12 +195,14 @@ it into a findings list or a constraints file.
 
 ### Long Awaits Need a Patient HTTP Client
 
-`deadline_seconds` accepts up to 7000, but a default Node/undici HTTP client
-gives up after 300 seconds with `UND_ERR_HEADERS_TIMEOUT`, and the await dies
-client-side even though the run is healthy. The packaged CLI already chunks
-around this. If your client does not and a long await dies, the run is still
-alive: recover it with `xagent_list` and await again. Do not restart the
-worker.
+`deadline_seconds` is no longer advertised on the agent-facing `xagent_await`
+schema. An await ends on news, not on a clock; while the supervisor vouches for
+the run, progress notifications keep one await holding. A conforming client
+must reset its request timeout on those notifications or configure a request
+timeout at least as long as its intended await — the MCP SDK's 60-second
+default does neither. If a long await dies because the client gave up while
+the supervisor was still vouching, the run is still alive: recover it with
+`xagent_list` and await again. Do not restart the worker.
 
 ### Recovering a Lost Run
 
@@ -192,11 +229,11 @@ poll at a short fixed interval. Specifically, do not poll `write_stdin`,
 `xagent list`, xagent logs, terminal status, or unchanged MCP inspect output
 merely to observe progress.
 
-Inspect supervision state only after attention, a long await deadline, or an explicit
-user status request. On the supervised path the persisted surfaces are lifecycle
-phase, attention events, and watchdog telemetry — not a provider transcript; the
-service does not persist routine provider output to the run logs. One long
-blocking await is the default wait mechanism.
+Inspect supervision state only after attention, a supervision stop-vouching
+wakeup, or an explicit user status request. On the supervised path the persisted
+surfaces are lifecycle phase, attention events, and watchdog telemetry — not a
+provider transcript; the service does not persist routine provider output to the
+run logs. One long blocking await is the default wait mechanism.
 
 ### Quiet Service-Client Fallback
 

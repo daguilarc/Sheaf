@@ -42,8 +42,6 @@ EXPECTED_MCP_TOOL_NAMES = (
     "xagent_interrupt",
     "xagent_list",
     "xagent_message",
-    "xagent_sdd_await",
-    "xagent_sdd_close",
     "xagent_sdd_followup",
     "xagent_sdd_start",
     "xagent_start_non_sdd",
@@ -446,69 +444,37 @@ const agentId = startParsed.agent_id;
 if (typeof agentId !== "string" || agentId.length === 0) {{
   throw new Error(`xagent_sdd_start did not return an agent_id: ${{JSON.stringify(startParsed)}}`);
 }}
-
-const databasePath = join({str(log_root)!r}, "sdd.sqlite");
-const expectedReport = "packaged sanitized SDD report";
-const database = new Database(databasePath, {{ readonly: true }});
-const selectReport = database.prepare(
-  "SELECT report_text FROM sdd_turns WHERE agent_id = ? AND turn_number = 1",
-);
-
-let sawReportBeforeResolve = false;
-let awaitResolved = false;
-const awaitPromise = client.callTool({{
-  name: "xagent_sdd_await",
-  arguments: {{
-    agent_id: agentId,
-    after_sequence: startParsed.sequence,
-    deadline_seconds: 30,
-  }},
-}}).then((result) => {{
-  awaitResolved = true;
-  return result;
-}});
-
-const pollPromise = (async () => {{
-  while (!awaitResolved) {{
-    try {{
-      const row = selectReport.get(agentId);
-      if (row?.report_text === expectedReport) {{
-        sawReportBeforeResolve = true;
-        return;
-      }}
-    }} catch {{
-      // The database may not exist until the first SDD write.
-    }}
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }}
-}})();
-
-const awaited = await awaitPromise;
-await pollPromise;
-database.close();
-
-const verifyDatabase = new Database(databasePath, {{ readonly: true }});
-const persisted = verifyDatabase
-  .prepare("SELECT report_text FROM sdd_turns WHERE agent_id = ? AND turn_number = 1")
-  .get(agentId);
-verifyDatabase.close();
-if (persisted?.report_text !== expectedReport) {{
-  throw new Error(`expected persisted report_text after await: ${{JSON.stringify(persisted)}}`);
+if (typeof startParsed.sequence !== "number") {{
+  throw new Error(`xagent_sdd_start did not return a sequence: ${{JSON.stringify(startParsed)}}`);
 }}
 
+const database = new Database(join({str(log_root)!r}, "sdd.sqlite"), {{ readonly: true }});
+const row = database.prepare(
+  "SELECT role, task FROM sdd_agents WHERE agent_id = ?",
+).get(agentId);
+database.close();
+if (row?.role !== "implementer" || row?.task !== 1) {{
+  throw new Error(`expected immutable sdd_agents row: ${{JSON.stringify(row)}}`);
+}}
+
+const expectedReport = "packaged sanitized SDD report";
+const awaited = await client.callTool({{
+  name: "xagent_await",
+  arguments: {{
+    run_id: agentId,
+    after_sequence: startParsed.sequence,
+  }},
+}});
 const awaitBody = awaited.structuredContent ?? awaited.content?.[0]?.text;
 const awaitParsed = typeof awaitBody === "string" ? JSON.parse(awaitBody) : awaitBody;
 if (awaitParsed.event !== "turn.completed") {{
-  throw new Error(`xagent_sdd_await did not settle on turn.completed: ${{JSON.stringify(awaitParsed)}}`);
+  throw new Error(`xagent_await did not settle on turn.completed: ${{JSON.stringify(awaitParsed)}}`);
 }}
 if (awaitParsed.report?.text !== expectedReport) {{
   throw new Error(`unexpected SDD report: ${{JSON.stringify(awaitParsed.report)}}`);
 }}
-if (!sawReportBeforeResolve) {{
-  console.error("warning: report_text was not observed in SQLite before xagent_sdd_await returned");
-}}
 
-await client.callTool({{ name: "xagent_sdd_close", arguments: {{ agent_id: agentId }} }});
+await client.callTool({{ name: "xagent_close", arguments: {{ run_id: agentId }} }});
 await client.close();
 console.log(JSON.stringify({{ event: awaitParsed.event, agent_id: agentId }}));
 """
@@ -845,11 +811,10 @@ class PackageXagentOutputTests(unittest.TestCase):
                     cwd,
                 )
 
-    def test_packaged_mcp_sdd_smoke_persists_report_before_return(self) -> None:
-        # xa-21 / I2: exercise xagent_sdd_start and xagent_sdd_await over the
-        # plugin MCP path. The fake adapter delays completion so the probe can
-        # poll SQLite while the await is pending; the primary assertion is that
-        # report_text is present in sdd_turns after the await returns.
+    def test_packaged_mcp_sdd_smoke_delivers_report_via_generic_await(self) -> None:
+        # Exercise xagent_sdd_start plus generic xagent_await over the plugin
+        # MCP path. The v2 ledger stores identity only; the report lives in
+        # turn.completed and is delivered by xagent_await with run_id.
         #
         with tempfile.TemporaryDirectory(prefix="xagent-package-sdd-test-") as tempdir:
             destination = Path(tempdir) / "package"
@@ -1118,6 +1083,15 @@ if args == ["plugin", "list"]:
             self.destination / "skills" / "xagent-subagents" / "SKILL.md"
         ).read_text(encoding="utf-8")
         assert_xagent_subagents_sdd_guidance(self, packaged_skill)
+        self.assertIn("xagent_sdd_start", packaged_skill)
+        self.assertIn("xagent_sdd_followup", packaged_skill)
+        self.assertNotIn("xagent_sdd_await", packaged_skill)
+        self.assertNotIn("xagent_sdd_close", packaged_skill)
+        for role in ("implementer", "reviewer", "fixer", "re-reviewer"):
+            self.assertIn(role, packaged_skill)
+        self.assertIn("report", packaged_skill.lower())
+        self.assertIn("deadline_seconds", packaged_skill)
+        self.assertIn("no longer", packaged_skill.lower())
         self.assertTrue((self.destination / "assets" / "xagent" / "dist" / "src" / "main.js").is_file())
         with self.assertRaisesRegex(RuntimeError, "installed and enabled"):
             install_global.require_installed_plugin(

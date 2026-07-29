@@ -32,10 +32,12 @@ pre-plan coordination and Superpowers SDD task execution:
   `xagent supervise`, and terminal polling are prohibited for those turns.
 - **Keep each task's implementer and reviewer open until the task finishes.**
   Do not discard an implementer after its first report or a reviewer after
-  its first verdict: send small fixes back to the same implementer session
-  and re-reviews back to the same reviewer session (native pre-plan helpers are
-  resumable; xagent SDD sessions stay open via `agent_id` and
-  `xagent_sdd_followup`). Start fresh agents per task, not per fix round.
+  its first verdict: while the agent is live, send small fixes back via
+  `xagent_sdd_followup` and re-reviews via `xagent_sdd_followup` on the same
+  `agent_id` (native pre-plan helpers are resumable). When followup returns
+  `sdd_agent_not_live`, start a fresh `fixer` or `re-reviewer` for the same
+  plan and task instead — that is recovery, not optional churn. Start fresh
+  agents per task, not per fix round while the prior agent is still live.
   Close nothing until the task passes both verdicts.
 - **Dispatch the full brief, never a summary.** When dispatching an
   implementer or reviewer, hand it the complete task brief / review brief as
@@ -89,54 +91,74 @@ ledger.
 
 Once a written Superpowers plan exists, every implementer, task reviewer, fix,
 re-review, and final whole-branch reviewer turn MUST use the xagent SDD MCP
-facade. The facade renders each turn through the trusted
+facade for dispatch. The facade renders each turn through the trusted
 `dispatch-prompt` executable in the service checkout; controllers pass brief,
 report, and assignment metadata — never the rendered prompt body.
+
+`xagent_sdd_await` and `xagent_sdd_close` are deleted. During this ledger redesign
+a late watchdog event after `turn.completed` left a live healthy agent
+permanently unreachable: the v1 turn row stayed `running`, followup pointed at
+await, the SDD await returned without resolving it, and message named the await
+that had just failed. Controllers now use `xagent_await` / `xagent_close` with
+`run_id` (the returned `agent_id`), and `xagent_message` is legal on SDD runs.
+`deadline_seconds` is no longer an agent-facing await input.
 
 Required SDD flow per turn:
 
 ```text
 xagent_sdd_start
 → independent controller work
-→ one long xagent_sdd_await
-→ consume report.text after report-before-return
-→ xagent_sdd_followup for fix or re-review on the same agent_id
-→ one long xagent_sdd_await
-→ xagent_sdd_close when the session is finished
+→ one long xagent_await(run_id, after_sequence)
+→ consume report.text from turn.completed
+→ xagent_sdd_followup for same-agent fix or re-review when live
+→ one long xagent_await
+→ xagent_close(run_id) when the task is finished
 ```
 
-- **Initial task agents use `xagent_sdd_start`.** Pass the complete brief,
-  plan path, assignment metadata, and report path for implementer and
-  task-reviewer roles. Record the returned `agent_id` and `sequence`.
-  The returned `sequence` is the pre-turn supervision cursor; it is not a
-  provider JSONL position. Pass it to `xagent_sdd_await` as `after_sequence`.
-- **Fix and re-review preserve sessions.** Call `xagent_sdd_followup` with the
-  existing implementer `agent_id` for fixes and the existing task-reviewer
-  `agent_id` for re-reviews. Do not start a fresh agent merely to send that
-  follow-up. The final whole-branch `code-reviewer` is single-turn
-  (`xagent_sdd_start` → await → `xagent_sdd_close`) with no follow-up; a new
+- **Initial task agents use `xagent_sdd_start`.** Roles are the four-way start
+  set: `implementer`, `reviewer` (with `task` for a task review, without for a
+  whole-branch review), `fixer`, and `re-reviewer`. The role is the role the
+  agent *starts* as and never changes. Pass the complete brief, plan path,
+  assignment metadata, and report path where the role requires it. Record the
+  returned `agent_id` and `sequence`. The returned `sequence` is the pre-turn
+  supervision cursor; it is not a provider JSONL position. Pass it to
+  `xagent_await` as `after_sequence` with `run_id` set to that `agent_id`.
+- **Followup is a same-agent convenience.** Call `xagent_sdd_followup` with the
+  existing implementer or fixer `agent_id` for fixes and the existing reviewer
+  or re-reviewer `agent_id` for re-reviews. It renders and submits, writes
+  nothing to the ledger, returns `{ agent_id, sequence }`, and requires a
+  `report` path. Do not start a fresh agent merely to send that follow-up while
+  the agent is live. A whole-branch `reviewer` (no `task`) is single-turn
+  (`xagent_sdd_start` → await → `xagent_close`) with no follow-up; a new
   whole-branch review round means a new `xagent_sdd_start`.
-- **One long SDD await per wait cycle.** After dispatching an SDD agent, do
-  independent controller work, then one long `xagent_sdd_await` with the
-  latest `sequence`. Do not use native mailbox waits or short status
-  loops for SDD turns.
-- **Consume persisted reports only.** Read `report.text` from the await
-  result after xagent records the sanitized assistant report in the SDD ledger
-  (report-before-return). Do not read the mutable Superpowers report file on
-  disk or poll for completion.
-- **Close sessions deliberately.** Call `xagent_sdd_close` only after the task
-  passes both verdicts.
+- **Recover dead agents with a fresh start.** When followup returns
+  `sdd_agent_not_live`, dispatch `xagent_sdd_start` with role `fixer` (for a
+  dead `implementer`/`fixer`) or `re-reviewer` (for a dead `reviewer`/
+  `re-reviewer`) for the same plan and task, passing the original brief. When
+  it returns `sdd_agent_busy`, call `xagent_await`.
+- **One long generic await per wait cycle.** After dispatching an SDD agent, do
+  independent controller work, then one long `xagent_await` with the latest
+  `sequence`. Do not use native mailbox waits or short status loops for SDD
+  turns. An await ends on news, not on a clock.
+- **Consume reports from the await result.** Read `report.text` from
+  `xagent_await` — that text lives in the durable `turn.completed` event, not
+  in a ledger column. Do not read the mutable Superpowers report file on disk
+  or poll for completion.
+- **Close with the generic tool.** Call `xagent_close` with `run_id` only after
+  the task passes both verdicts.
 - **Number tasks in every user-facing update.** In your updates, refer to task
   numbers as `Task <N>/<Total>` — for example `Task 3/7` — so the user always
   sees position and remaining work.
 - **No SDD fallbacks.** If the xagent SDD MCP facade or Conductor-managed
   xagent service is unavailable, surface broken agentic infrastructure. Do not
-  fall back to native subagents, generic `xagent_start_non_sdd`, raw `xagent_message`,
-  quiet `xagent supervise`, or terminal polling for Superpowers SDD turns.
+  fall back to native subagents, generic `xagent_start_non_sdd` as a work
+  dispatch, quiet `xagent supervise`, or terminal polling for Superpowers SDD
+  turns.
 
 While an SDD agent is healthy and the controller has no independent work,
 do not poll at a short fixed interval. Inspect supervision state only after
-attention, a long await deadline, or an explicit user status request.
+attention, a supervision stop-vouching wakeup, or an explicit user status
+request.
 
 ## Workflow
 
@@ -201,13 +223,14 @@ attention, a long await deadline, or an explicit user status request.
    - Invoke `superpowers:subagent-driven-development`.
    - Dispatch one fresh implementer per plan task through `xagent_sdd_start`.
    - After dispatch, do independent controller work, then one long
-     `xagent_sdd_await` — not short polling loops.
+     `xagent_await` with `run_id` — not short polling loops.
    - Run spec compliance review before code quality review for each task
-     through `xagent_sdd_start` with the task-reviewer role on the opposite
-     provider.
+     through `xagent_sdd_start` with the `reviewer` role (and `task`) on the
+     opposite provider.
    - Require fix and re-review loops until both reviews pass, reusing the
      task's open implementer via `xagent_sdd_followup` for fixes and its open
-     reviewer via `xagent_sdd_followup` for re-reviews.
+     reviewer via `xagent_sdd_followup` for re-reviews while those agents are
+     live; on `sdd_agent_not_live`, start a fresh `fixer` or `re-reviewer`.
    - Do not dispatch implementation subagents in parallel when tasks may touch
      overlapping files.
 

@@ -589,11 +589,16 @@ def assert_transport_guidance_scoped(
 XAGENT_SDD_GUIDANCE_PHRASES = (
     "xagent_sdd_start",
     "xagent_sdd_followup",
-    "xagent_sdd_await",
-    "xagent_sdd_close",
+    "xagent_await",
+    "xagent_close",
     "agent_id",
+    "run_id",
     "sequence",
-    "report-before-return",
+    "implementer",
+    "reviewer",
+    "fixer",
+    "re-reviewer",
+    "sdd_agent_not_live",
     "do not start a fresh agent",
     "jsonl position",
     "native subagent",
@@ -603,6 +608,7 @@ XAGENT_SDD_GUIDANCE_PHRASES = (
     "broken agentic infrastructure",
     "do not poll",
     "single-turn",
+    "deadline_seconds",
 )
 
 
@@ -611,6 +617,15 @@ def assert_xagent_subagents_sdd_guidance(
 ) -> None:
     sdd_section = extract_markdown_section(content, "Superpowers SDD")
     assert_all_present(test_case, sdd_section, XAGENT_SDD_GUIDANCE_PHRASES)
+    assert_none_present(
+        test_case,
+        sdd_section,
+        (
+            "xagent_sdd_await",
+            "xagent_sdd_close",
+            "report-before-return",
+        ),
+    )
     assert_transport_guidance_scoped(
         test_case,
         content,
@@ -618,7 +633,6 @@ def assert_xagent_subagents_sdd_guidance(
         forbidden_phrases=(
             "native subagent",
             "xagent_start_non_sdd",
-            "xagent_message",
             "xagent supervise",
         ),
         required_outside_phrases=(
@@ -744,11 +758,16 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
             (
                 "xagent_sdd_start",
                 "xagent_sdd_followup",
-                "xagent_sdd_await",
-                "xagent_sdd_close",
+                "xagent_await",
+                "xagent_close",
                 "agent_id",
+                "run_id",
                 "sequence",
-                "report-before-return",
+                "implementer",
+                "reviewer",
+                "fixer",
+                "re-reviewer",
+                "sdd_agent_not_live",
                 "dispatch-prompt",
                 "do not start a fresh agent",
                 "jsonl position",
@@ -759,6 +778,14 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
                 "broken agentic infrastructure",
                 "do not poll",
                 "single-turn",
+                "deadline_seconds",
+            ),
+        )
+        assert_none_present(
+            self,
+            sdd_section,
+            (
+                "report-before-return",
             ),
         )
         assert_transport_guidance_scoped(
@@ -768,7 +795,6 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
             forbidden_phrases=(
                 "native subagent",
                 "xagent_start_non_sdd",
-                "xagent_message",
                 "xagent supervise",
             ),
         )

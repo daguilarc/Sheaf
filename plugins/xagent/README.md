@@ -53,3 +53,24 @@ xagent installed and enabled at `$HOME/.agents/plugins/plugins/xagent`.
 For recovery, rerun `make xagent-plugin-install-global`. If the installed
 package is unmarked, inspect it and move it aside manually rather than forcing
 overwrite.
+
+## One-time SDD ledger reprovision (schema v2)
+
+The SDD ledger was redesigned as an insert-only per-agent dispatch index at
+schema version 2. There is no migration: v1 rows were already inconsistent and
+their forensic content survives in the run directories they point at.
+
+Once, before starting a service build that includes the v2 ledger:
+
+1. Stop the xagent service.
+2. Delete `<log_root>/sdd.sqlite`, `<log_root>/sdd.sqlite-wal`, and
+   `<log_root>/sdd.sqlite-shm`.
+3. Start the service. It provisions schema v2 on first open.
+
+A service that finds a ledger whose `user_version` is not 2 refuses to start the
+SDD manager and names the files to delete, stating that v1 data is not migrated.
+
+**Run directories are the system of record.** Reports and submitted prompts for
+SDD agents live only in `<log_root>/<agent_id>/normalized.jsonl`. Any cleanup,
+retention, or garbage-collection tooling must treat a run directory whose
+`agent_id` appears in `sdd_agents` as evidence, not cache.

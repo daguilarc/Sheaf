@@ -18,6 +18,10 @@ PACKAGE_DIRECTORIES = (".codex-plugin", "skills", "scripts")
 PACKAGE_COMPANION_FILES = (".mcp.json",)
 CLIENT_SERVICE_FILES = frozenset(
     {
+        "await_liveness.d.ts",
+        "await_liveness.d.ts.map",
+        "await_liveness.js",
+        "await_liveness.js.map",
         "client.d.ts",
         "client.d.ts.map",
         "client.js",
