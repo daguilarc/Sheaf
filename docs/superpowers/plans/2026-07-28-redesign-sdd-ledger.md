@@ -2541,7 +2541,7 @@ Expected: `healthy: true`; `user_version` `2`; exactly one table, `sdd_agents`.
 - Consumes: everything from Tasks 1-8. Adds no production code.
 - Produces: no new interfaces.
 
-- [ ] **Step 1: Write the end-to-end lifecycle test**
+- [x] **Step 1: Write the end-to-end lifecycle test**
 
 Append to `projects/xagent/tests/e2e.test.ts`:
 
@@ -2595,7 +2595,7 @@ test("two agents, four submissions, two immutable rows, reports only in the log"
 
 Add `startSddFixer`, `sddFollowup`, `awaitTurn`, `artifact`, and `normalizedEvents` to `tests/support/mcp_service.ts` if they are absent. `normalizedEvents(runId)` reads `<log_root>/<runId>/normalized.jsonl` and JSON-parses each line.
 
-- [ ] **Step 2: Write the failure-injection tests**
+- [x] **Step 2: Write the failure-injection tests**
 
 Append to `projects/xagent/tests/supervision_e2e.test.ts`:
 
@@ -2685,7 +2685,7 @@ test("a stale v1 ledger refuses at startup with the documented reprovision wordi
 
 Add `failProviderStart`, `logRoot`, and `killAbruptly` options/methods to `tests/support/mcp_service.ts`.
 
-- [ ] **Step 3: Run to verify failure**
+- [x] **Step 3: Run to verify failure**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/e2e.test.js dist/tests/supervision_e2e.test.js dist/tests/sdd_store.test.js
@@ -2693,11 +2693,11 @@ cd projects/xagent && npm run build && node --test dist/tests/e2e.test.js dist/t
 
 Expected: FAIL — the support helpers do not exist yet.
 
-- [ ] **Step 4: Add the missing support helpers**
+- [x] **Step 4: Add the missing support helpers**
 
 Implement each helper named in Steps 1-2 in `projects/xagent/tests/support/mcp_service.ts`, following the file's existing construction pattern (`XagentRunManager` + `CreateSddAgentStore` + `CreateSddManager` + `createXagentServer`). No production source file changes in this task.
 
-- [ ] **Step 5: Run to verify the tests pass**
+- [x] **Step 5: Run to verify the tests pass**
 
 ```bash
 cd projects/xagent && npm run build && node --test dist/tests/e2e.test.js dist/tests/supervision_e2e.test.js dist/tests/sdd_store.test.js
@@ -2707,7 +2707,7 @@ Expected: PASS.
 
 **If any of these tests fails against real production behavior rather than a missing helper, fix the production code in this task** — that is the point of the verification pass. Note the fix in the commit message.
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 ```bash
 cd projects/xagent && npm test
@@ -2715,7 +2715,7 @@ cd projects/xagent && npm test
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add projects/xagent/tests/

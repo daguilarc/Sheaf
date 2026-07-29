@@ -59,8 +59,8 @@ build before dispatching anything else.
 
 ## 6. Lifecycle Verification
 
-- [ ] 6.1 Add an end-to-end service test: dispatch an implementer, complete a turn, send a same-agent fix followup, complete it, then dispatch a fresh `fixer` after closing the implementer — asserting the ledger holds exactly two immutable rows, all four submissions exist as `turn.submitted` events, and both reports are recoverable from `normalized.jsonl` alone. Deliverable: green e2e test in `tests/e2e.test.ts`.
-- [ ] 6.2 Add failure-injection tests: provider start failure after insert (tombstone verified via `xagent_list`), service kill mid-turn followed by restart (startup reconciliation abandons the run record, ledger untouched, `sdd_agent_not_live` steers to a fresh fixer), and a v1 `sdd.sqlite` present at startup (loud refusal naming the reprovision step). Deliverable: green tests in `tests/supervision_e2e.test.ts` and `tests/sdd_store.test.ts`.
+- [x] 6.1 Add an end-to-end service test: dispatch an implementer, complete a turn, send a same-agent fix followup, complete it, then dispatch a fresh `fixer` after closing the implementer — asserting the ledger holds exactly two immutable rows, all four submissions exist as `turn.submitted` events, and both reports are recoverable from `normalized.jsonl` alone. Deliverable: green e2e test in `tests/e2e.test.ts`.
+- [x] 6.2 Add failure-injection tests: provider start failure after insert (tombstone verified via `xagent_list`), service kill mid-turn followed by restart (startup reconciliation abandons the run record, ledger untouched, `sdd_agent_not_live` steers to a fresh fixer), and a v1 `sdd.sqlite` present at startup (loud refusal naming the reprovision step). Deliverable: green tests in `tests/supervision_e2e.test.ts` and `tests/sdd_store.test.ts`.
 
 ## 7. Documentation, Skill, and Spec Sync
 
