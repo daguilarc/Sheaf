@@ -130,6 +130,12 @@ test("opening a newer ledger refuses without offering delete", async () => {
     database.pragma("user_version = 3");
     database.close();
 
+    // Digest the seeded file. user_version alone is not evidence of an
+    // untouched file: converting a rollback-journal database to WAL rewrites
+    // the header without disturbing user_version, so an assertion that only
+    // reads it back passes while the gate mutates the file it just refused.
+    const seededDigest = createHash("sha256").update(readFileSync(databasePath)).digest("hex");
+
     assert.throws(
       () => CreateSddAgentStore(logRoot),
       (error: unknown) => {
@@ -145,10 +151,20 @@ test("opening a newer ledger refuses without offering delete", async () => {
       },
     );
 
-    // The gate must refuse without touching the file it cannot read.
+    // The gate must refuse without touching the file it cannot read. The
+    // remediation says "upgrade the service -- do not delete the ledger",
+    // which is only honest if refusing leaves the ledger byte-identical.
+    assert.equal(
+      createHash("sha256").update(readFileSync(databasePath)).digest("hex"),
+      seededDigest,
+      "refusing a newer ledger must not modify it",
+    );
+    assert.equal(existsSync(`${databasePath}-wal`), false, "refusal must not create a WAL");
+
     const reopened = new Database(databasePath, { readonly: true });
     try {
       assert.equal(reopened.pragma("user_version", { simple: true }), 3);
+      assert.equal(reopened.pragma("journal_mode", { simple: true }), "delete");
     } finally {
       reopened.close();
     }

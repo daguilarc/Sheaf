@@ -143,7 +143,7 @@ facade). Cite it when Task 10 rewrites `xagent-sdd-workflow`.
 
 ## B. Code findings deferred out of the task that found them
 
-### B1. `journal_mode = WAL` is set before the `user_version` gate — OPEN
+### B1. `journal_mode = WAL` is set before the `user_version` gate — FIXED
 
 `OpenSddLedgerDatabase` (`src/service/sdd_store.ts`) applies
 `journal_mode = WAL` before `CreateSddAgentStore` checks `user_version`.
@@ -157,6 +157,32 @@ the open path **shared by the v1 and v2 stores**, and reordering shared open
 logic inside an additive task risks a regression in the store the live service
 is running on. Fix: move the version check ahead of the pragma. Whole-branch
 review, or a follow-up change.
+
+**Fixed at the end of the branch.** The deferral reason expired: Task 4 deleted
+the v1 store, so `OpenSddLedgerDatabase` now has exactly one production caller
+and the shared-path regression risk is gone.
+
+`OpenSddLedgerDatabase` now applies only connection-scoped pragmas
+(`busy_timeout`, `foreign_keys`), neither of which touches the file.
+`CreateSddAgentStore` applies `journal_mode = WAL` immediately after the
+`user_version` gate passes — before the provisioning transaction, since
+`journal_mode` cannot be changed inside one.
+
+**The existing test was a false guard.** "Opening a newer ledger refuses
+without offering delete" already carried the comment *"the gate must refuse
+without touching the file it cannot read"*, but asserted only that
+`user_version` was still 3. WAL conversion rewrites the header without
+disturbing `user_version`, so the assertion passed while the bug was live —
+the same shape as the three fakes-that-cannot-fail this plan has already
+shipped. It now digests the seeded file, re-digests after the refusal, and
+additionally asserts `journal_mode` is still `delete` and that no `-wal`
+sidecar was created. Confirmed to fail against the old ordering (digest
+mismatch) before the fix landed.
+
+This matters because the remediation string added in Task 2 tells the operator
+"upgrade the service — do not delete the ledger." That is only honest if
+refusing leaves the ledger byte-identical, which is now asserted rather than
+assumed.
 
 ### B6. Coverage the deleted e2e lifecycle test took with it — REPAID (Task 9)
 

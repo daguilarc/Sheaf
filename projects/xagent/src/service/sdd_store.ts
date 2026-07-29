@@ -65,10 +65,15 @@ export class SddStoreError extends Error {
   }
 }
 
+// Connection-scoped pragmas only. journal_mode is deliberately absent: it is
+// persistent state in the database header, and converting a rollback-journal
+// file to WAL rewrites that header. Applying it here would mutate a ledger
+// before anyone has checked whether this build is allowed to read it. The
+// caller applies WAL once the user_version gate has passed.
+//
 export function OpenSddLedgerDatabase(databasePath: string): Database.Database {
   const database = new Database(databasePath);
   database.pragma(`busy_timeout = ${x_BusyTimeoutMs}`);
-  database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
   return database;
 }
@@ -123,6 +128,12 @@ export function CreateSddAgentStore(
       "sdd_ledger_schema_mismatch",
     );
   }
+  // Past the gate: this build owns the file, so persistent header state is
+  // now ours to set. WAL must precede the provisioning transaction because
+  // journal_mode cannot be changed inside one.
+  //
+  database.pragma("journal_mode = WAL");
+
   if (userVersion === 0) {
     const provision = database.transaction(() => {
       database.exec(x_AgentSchemaSql);
