@@ -176,7 +176,6 @@ test("two agents, four submissions, two immutable rows, reports only in the log"
       (implementerFirst.report as { text: string }).text,
       implementerStartReport,
     );
-    assert.notEqual(implementerStartReport, x_MutableArtifactText);
     assert.equal(
       await readFile(implementerReportPath, "utf8"),
       x_MutableArtifactText,

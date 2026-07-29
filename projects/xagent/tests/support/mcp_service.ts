@@ -378,6 +378,11 @@ export async function startMcpService(
       return;
     }
     closed = true;
+    // A teardown racing an in-flight EnsureMcp() would find every handle
+    // undefined, skip all three guards, and leak the listener that finishes
+    // binding afterwards. Settle the construction first.
+    //
+    await mcpReady?.catch(() => {});
     if (client !== undefined)
     {
       await client.close().catch(() => {});

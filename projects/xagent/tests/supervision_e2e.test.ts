@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -640,6 +640,16 @@ test("a service restart leaves the ledger byte-identical and steers the controll
     // reopen write is folded into the comparison rather than hidden in WAL.
     //
     await first.killAbruptly();
+    // Pin the invariant DigestLedgerDurable depends on. Its existsSync(-wal)
+    // guard degrades silently to hashing the main file alone, which is exactly
+    // the weakness this test was fixed for — so assert the abrupt teardown
+    // really did leave frames in the WAL. If a future change re-closes the
+    // store on the abrupt path, this fails loudly instead of the digest
+    // quietly asserting less.
+    //
+    const walPath = path.join(logRoot, "sdd.sqlite-wal");
+    assert.ok(existsSync(walPath), "abrupt teardown must leave a WAL behind");
+    assert.ok(statSync(walPath).size > 0, "the surviving WAL must contain frames");
     const digestBefore = DigestLedgerDurable(logRoot);
 
     const second = await startMcpService({ logRoot });
