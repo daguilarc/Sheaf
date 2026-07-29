@@ -22,7 +22,12 @@ Fixed in Task 0 (`f7ac2fa4`) under new requirement **xsvc-15**. Recorded here
 because the redesign did not originally fix it: v2 swaps the union for another
 union, so the defect would have survived the cutover.
 
-### A2. `xagent_sdd_start` / `xagent_sdd_followup` return timeouts to the client while succeeding server-side — ROOT CAUSE FOUND, OPEN
+### A2. `xagent_sdd_start` / `xagent_sdd_followup` return timeouts to the client while succeeding server-side — FIXED (task 9.1, `88ae1355`)
+
+Both dispatch tools now detach the submit and return once the turn is durably
+running, mirroring `runManager.startRun`. The await cursor is snapshotted
+before submit advances it, and an early submit failure still closes the run.
+Requirement **xsvc-16** now states the contract that was missing.
 
 **Root cause** — found post-plan by a fresh-context Fable review, verified
 independently by the controller. **Not a transport problem.**
@@ -64,7 +69,15 @@ requirement — either the tool returns promptly with the allocated `agent_id`
 before the provider is ready, or the contract documents that a timeout is not
 a failure and names the reconciliation path.
 
-### A3. `xagent_await`'s 7000-second contract exceeds any usable client — OPEN
+### A3. `xagent_await`'s 7000-second contract exceeds any usable client — FIXED (tasks 9.3–9.5)
+
+Resolved by making the contract true rather than by lowering the number.
+`xsvc-5` was rewritten from a service-only capacity claim into a liveness
+contract: awaits end on news, the service emits progress pings while the
+supervisor vouches, and `deadline_seconds` left the agent-facing schema.
+Measured from the controller's own harness — the client that died at 60s — a
+**330-second hold**, clearing both the SDK's 60s default and undici's ~300s
+timers. Zero intermediate wakeups.
 
 `xsvc-5` specifies a 7200-second HTTP/MCP request lifetime and a 7000-second
 default await deadline. No MCP client driving this service can hold a request
@@ -145,7 +158,7 @@ logic inside an additive task risks a regression in the store the live service
 is running on. Fix: move the version check ahead of the pragma. Whole-branch
 review, or a follow-up change.
 
-### B6. Coverage the deleted e2e lifecycle test took with it — FOR TASK 9
+### B6. Coverage the deleted e2e lifecycle test took with it — REPAID (Task 9)
 
 Task 4 deleted `tests/e2e.test.ts`'s "MCP fake adapter drives the full SDD
 lifecycle" test outright rather than migrating it. The controller authorized
