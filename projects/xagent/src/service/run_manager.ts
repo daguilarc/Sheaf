@@ -265,6 +265,17 @@ export class XagentRunManager {
     return this.#runs.get(runId)?.supervisor.inspect();
   }
 
+  // mcp.ts asks this instead of reaching into supervisor fields. Unknown or
+  // already-evicted runs are not vouched for.
+  //
+  isRunVouching(runId: string): boolean {
+    const run = this.#runs.get(runId);
+    if (run === undefined) {
+      return false;
+    }
+    return run.supervisor.isVouching();
+  }
+
   interrupt(runId: string): Promise<void> {
     return this.#require(runId).supervisor.interrupt();
   }

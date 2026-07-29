@@ -197,6 +197,22 @@ export class Supervisor {
     };
   }
 
+  // Vouching is derived from supervisor liveness, never a bare interval: the
+  // phase must still be live and transport progress must fall inside the
+  // silence bound. An await liveness ping that ignores this vouches for
+  // nothing and hides death.
+  //
+  isVouching(): boolean {
+    if (terminalPhases.has(this.#phase)) {
+      return false;
+    }
+    const lastProgressMs = Date.parse(this.#lastTransportProgressAt);
+    if (!Number.isFinite(lastProgressMs)) {
+      return false;
+    }
+    return this.#clock().getTime() - lastProgressMs < this.#policy.silenceTimeoutMs;
+  }
+
   evidenceSnapshot(): SemanticEvidenceSnapshot | undefined {
     return this.#evidence?.snapshot();
   }

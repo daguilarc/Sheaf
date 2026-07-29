@@ -5,6 +5,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 
+import {
+  StartAwaitLivenessPings,
+  x_AwaitLivenessPingIntervalMs,
+} from "./await_liveness.js";
 import type { XagentRunManager } from "./run_manager.js";
 import type { SddManager } from "./sdd_manager.js";
 import {
@@ -46,10 +50,16 @@ export type XagentMcpHandlerOptions = {
   //
   readonly getAllowedHosts: () => string[];
   readonly getAllowedOrigins: () => string[];
+  // Test-only override for the await liveness ping cadence. Production uses
+  // x_AwaitLivenessPingIntervalMs.
+  //
+  readonly awaitLivenessPingIntervalMs?: number;
 };
 
 export function createXagentMcpHandler(options: XagentMcpHandlerOptions): XagentMcpHandler {
   const { runManager, sddManager, getAllowedHosts, getAllowedOrigins } = options;
+  const awaitLivenessPingIntervalMs =
+    options.awaitLivenessPingIntervalMs ?? x_AwaitLivenessPingIntervalMs;
   const sessions = new Map<string, SessionEntry>();
 
   async function handleRequest(
@@ -83,11 +93,20 @@ export function createXagentMcpHandler(options: XagentMcpHandlerOptions): Xagent
         return;
       }
 
-      const server = createConfiguredMcpServer(runManager, sddManager);
+      const server = createConfiguredMcpServer(
+        runManager,
+        sddManager,
+        awaitLivenessPingIntervalMs,
+      );
       let transport!: StreamableHTTPServerTransport;
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
-        enableJsonResponse: true,
+        // JSON-response mode silently drops request-scoped notifications
+        // (webStandardStreamableHttp.js:702) and leaves the pending POST as a
+        // silent socket that nothing can keep alive. SSE mode sends headers
+        // immediately and lets progress pings reset body/request timers.
+        //
+        enableJsonResponse: false,
         // The MCP Streamable HTTP specification requires local servers to
         // validate Host and Origin to prevent DNS rebinding, which would
         // otherwise let a browser page reach the loopback endpoint and
@@ -140,6 +159,7 @@ export function createXagentMcpHandler(options: XagentMcpHandlerOptions): Xagent
 function createConfiguredMcpServer(
   runManager: XagentRunManager,
   sddManager: SddManager | undefined,
+  awaitLivenessPingIntervalMs: number,
 ): McpServer {
   const server = new McpServer({
     name: "xagent",
@@ -175,7 +195,22 @@ function createConfiguredMcpServer(
     async (args, extra) => {
       return runTool(async () => {
         const input = parseToolInput(XagentAwaitInputSchema, args);
-        return runManager.awaitRun(input, extra.signal);
+        const progressToken = extra._meta?.progressToken;
+        if (progressToken === undefined) {
+          return runManager.awaitRun(input, extra.signal);
+        }
+        const stopPinging = StartAwaitLivenessPings({
+          progressToken,
+          intervalMs: awaitLivenessPingIntervalMs,
+          isVouching: () => runManager.isRunVouching(input.run_id),
+          sendNotification: (notification) => extra.sendNotification(notification),
+          signal: extra.signal,
+        });
+        try {
+          return await runManager.awaitRun(input, extra.signal);
+        } finally {
+          stopPinging();
+        }
       });
     },
   );

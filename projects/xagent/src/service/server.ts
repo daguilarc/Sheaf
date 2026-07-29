@@ -223,15 +223,13 @@ export function createXagentServer(options: XagentServerOptions): XagentServer {
     close(): Promise<void> {
       acceptingConnections = false;
       // Release the listening handle and transport resources without waiting
-      // for in-flight HTTP connections to drain. With enableJsonResponse, a
-      // pending xagent_await POST never settles after transport.close() —
-      // the SDK only deletes its stream mapping and never calls resolveJson —
-      // so the httpServer.close() drain callback would never fire and the
-      // shutdown controller's closeRuns() would be gated forever, orphaning
-      // owned provider process groups. The listening handle itself is
-      // released synchronously inside httpServer.close(), so Conductor can
-      // rebind the port immediately while stubborn children are still being
-      // cleaned up.
+      // for in-flight HTTP connections to drain. A hung client (or a POST that
+      // never completes its body) can leave a connection non-idle forever, so
+      // httpServer.close()'s drain callback would never fire and the shutdown
+      // controller's closeRuns() would be gated forever, orphaning owned
+      // provider process groups. The listening handle itself is released
+      // synchronously inside httpServer.close(), so Conductor can rebind the
+      // port immediately while stubborn children are still being cleaned up.
       //
       return new Promise((resolve) => {
         void mcpHandler.close().finally(() => {

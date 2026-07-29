@@ -93,6 +93,7 @@ export type WithMcpServiceOptions = {
     readonly store: ReturnType<typeof CreateSddAgentStore>;
   };
   readonly clientName?: string;
+  readonly awaitLivenessPingIntervalMs?: number;
 };
 
 export type NormalizedLogEvent = {
@@ -160,6 +161,7 @@ export type StartMcpServiceOptions = {
   readonly adapterFactory?: () => HarnessAdapter;
   readonly failRunCreate?: boolean;
   readonly failRunStart?: boolean;
+  readonly awaitLivenessPingIntervalMs?: number;
 };
 
 // Task 9 MCP harness. The HTTP listener and client start lazily on first MCP
@@ -300,6 +302,9 @@ export async function startMcpService(
           sddManager,
           getAllowedHosts: () => [...allowedHosts],
           getAllowedOrigins: () => [...allowedOrigins],
+          ...(options.awaitLivenessPingIntervalMs === undefined
+            ? {}
+            : { awaitLivenessPingIntervalMs: options.awaitLivenessPingIntervalMs }),
         });
         server = createXagentServer({
           bindHost: "127.0.0.1",
@@ -637,6 +642,9 @@ export async function withMcpService(
     ...(sddManager === undefined ? {} : { sddManager }),
     getAllowedHosts: () => [...allowedHosts],
     getAllowedOrigins: () => [...allowedOrigins],
+    ...(options.awaitLivenessPingIntervalMs === undefined
+      ? {}
+      : { awaitLivenessPingIntervalMs: options.awaitLivenessPingIntervalMs }),
   });
   server = createXagentServer({
     bindHost: "127.0.0.1",
