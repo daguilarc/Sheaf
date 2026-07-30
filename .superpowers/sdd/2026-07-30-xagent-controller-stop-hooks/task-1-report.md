@@ -378,3 +378,47 @@ OK
 
 - Important 1 remains blocked: no real Claude Code MCP error `PostToolUse` payload was emitted for the tested xagent MCP errors.
 - Important 2 was not addressed because the fix round is blocked on the required real captured error fixture.
+
+---
+
+# Fix Round 1 Resolved Report
+
+## What Changed
+
+- Deleted synthesized `plugins/xagent/scripts/fixtures/controller_stop_hooks/mcp_error.json`.
+- Kept defensive error rejection coverage inline in `PayloadContractTests.test_error_envelope_never_uses_nested_identity`.
+- Added inline coverage for:
+  - outer `isError`;
+  - decoded top-level `error` in Claude's direct JSON-string result form;
+  - nested `run_id` / `sequence` identities not registering pending state.
+- Replaced `_load_state_for_observe` and `_load_state_for_guard` with one shared `_load_state(state_path, missing_state)` helper.
+- Preserved existing fail-open behavior for missing, malformed, and unknown-schema state.
+
+## Covering Test Run
+
+Command:
+
+```bash
+python3 -m unittest plugins/xagent/scripts/controller_stop_hook_test.py
+```
+
+Output:
+
+```text
+....................
+----------------------------------------------------------------------
+Ran 20 tests in 2.964s
+
+OK
+```
+
+## Files Changed
+
+- `plugins/xagent/scripts/controller_stop_hook.py`
+- `plugins/xagent/scripts/controller_stop_hook_test.py`
+- `plugins/xagent/scripts/fixtures/controller_stop_hooks/mcp_error.json`
+- `.superpowers/sdd/2026-07-30-xagent-controller-stop-hooks/task-1-report.md`
+
+## Concerns
+
+- No deferred Minor findings were addressed in this fix round.

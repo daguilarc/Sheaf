@@ -144,21 +144,12 @@ def _empty_state() -> dict[str, object]:
     }
 
 
-def _load_state_for_observe(state_path: Path) -> dict[str, object] | None:
+def _load_state(
+    state_path: Path,
+    missing_state: dict[str, object] | None,
+) -> dict[str, object] | None:
     if not state_path.exists():
-        return _empty_state()
-    try:
-        raw = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    if _validate_state(raw):
-        return raw
-    return None
-
-
-def _load_state_for_guard(state_path: Path) -> dict[str, object] | None:
-    if not state_path.exists():
-        return None
+        return missing_state
     try:
         raw = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -343,7 +334,7 @@ def observe(payload: dict[str, object], harness: str, state_root: Path) -> None:
     state_path, lock_path = session_paths(state_root, harness, session_id)
     try:
         with _session_lock(lock_path):
-            state = _load_state_for_observe(state_path)
+            state = _load_state(state_path, _empty_state())
             if state is None:
                 return
             if not _apply_transition(state, tool_name, result):
@@ -372,7 +363,7 @@ def guard(payload: dict[str, object], harness: str, state_root: Path) -> dict[st
     state_path, lock_path = session_paths(state_root, harness, session_id)
     try:
         with _session_lock(lock_path):
-            state = _load_state_for_guard(state_path)
+            state = _load_state(state_path, None)
             if state is None:
                 return None
             selected = _selected_pending(state)

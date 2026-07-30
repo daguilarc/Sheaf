@@ -97,11 +97,15 @@ class PayloadContractTests(unittest.TestCase):
         )
 
     def test_error_envelope_never_uses_nested_identity(self):
-        captured_error = fixture("mcp_error.json")["tool_response"]
         is_error = {
             "isError": True,
             "structuredContent": {"run_id": "nested-run", "sequence": 9},
         }
+        direct_string_error = (
+            "{\"error\":\"unknown_run\","
+            "\"message\":\"Unknown xagent run\","
+            "\"details\":{\"run_id\":\"nested-run\",\"sequence\":9}}"
+        )
         text_error = {
             "content": [
                 {
@@ -110,9 +114,20 @@ class PayloadContractTests(unittest.TestCase):
                 }
             ],
         }
-        self.assertIsNone(hook.extract_success_result(captured_error))
         self.assertIsNone(hook.extract_success_result(is_error))
+        self.assertIsNone(hook.extract_success_result(direct_string_error))
         self.assertIsNone(hook.extract_success_result(text_error))
+        with tempfile.TemporaryDirectory() as tempdir:
+            payload = {
+                "hook_event_name": "PostToolUse",
+                "session_id": "session-1",
+                "tool_name": "xagent_start_non_sdd",
+                "tool_response": direct_string_error,
+            }
+
+            hook.observe(payload, "claude", Path(tempdir))
+
+            self.assertEqual([], state_files(Path(tempdir)))
 
 
 class ObserverStateTests(unittest.TestCase):
