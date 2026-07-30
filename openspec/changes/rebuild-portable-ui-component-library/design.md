@@ -765,6 +765,29 @@ requires each backend's suite to pin the complete ordered list and per-action
 counts explicitly. A divergence between the two kinds then fails a test
 instead of surfacing as a stateful action firing twice in production.
 
+**Measured while implementing (2026-07-30).** The sequence is `click, click,
+dbl` in **both** backends, so the two agree and both suites pin the same
+literal, asserted against a `Button` carrying the same actions first. The
+speculation above that "JUCE's mouse-up-derived click has its own ordering
+around `mouseDoubleClick`" is therefore false — JUCE matches the DOM. The
+contract stands unchanged: writing it as parity-with-`Button` plus an explicit
+per-backend literal is what made the divergence checkable rather than assumed,
+and it is what caught the two gaps below. Only the prediction was wrong, not
+the approach.
+
+Two Draw-vs-`Button` divergences this section did not anticipate surfaced and
+were closed under sru-52's parity clause:
+
+- The DOM fires a native `click` after a drag that stays inside one element, so
+  "the browser fix is one listener" was incomplete — as first written, a drag
+  also registered as a click, which a `Button` does not do.
+- The `mouseUp`-derived JUCE click fired on release *outside* the node, where
+  both a `juce::Button` and the DOM dispatch nothing.
+
+Both are consequences of the parity requirement rather than new behaviour: the
+whole point of specifying parity instead of a count is that gaps like these fail
+a test. Each is pinned by a test verified failing first.
+
 ### D11: Explicit layering, enforced (sru-51)
 
 The layers, and what each may know:
