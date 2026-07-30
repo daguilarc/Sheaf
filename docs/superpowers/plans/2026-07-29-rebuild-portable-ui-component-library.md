@@ -1148,7 +1148,9 @@ static void TestSubtreesArriveFullyResolved()
 
 Run: `make -C projects/synth test 2>&1 | tail -20`
 
-Replace the per-descendant translation with placing each subtree's root: the app subtree root stays at 0,0 with the app's declared dimensions; the sidebar root goes to x = app width. Descendants are untouched. Every subtree handed to a backend must arrive fully laid out — call `Builder::Build(rootExtent)` with the subtree root's extent before composition.
+Replace the per-descendant translation with placing each subtree's root: the app subtree root stays at 0,0 with the app's declared dimensions; the sidebar root goes to x = app width. Descendants are untouched.
+
+**Do not wrap or rebuild existing trees through `Builder`.** The pages and sidebar hand-place explicit bounds and do not go through `Builder` at all; Tasks 11-13 migrate them. So MODIFIED sprs-2's "every subtree arrives fully laid out" is satisfied trivially today — producers set their own bounds — and only becomes load-bearing once those producers move to the library. Wrapping hand-built trees here would be scope creep that collides with Tasks 11-13.
 
 - [ ] **Step 3: Run and re-pin**
 

@@ -179,7 +179,7 @@ Last audit: controller configuration wizard (baked registry, candidate discovery
   additive shell-width and unclipped 900-pixel app-draw assertions.
 - [`ui-backend.spec.ts`](../browser/tests/ui-backend.spec.ts):
   `flows unbounded controls after explicit draw content`,
-  `keeps absolute surface bounds while nesting composite roots`, and
+  `places nested sidebar descendants from parent-relative bounds`, and
   `reports stable generic errors for malformed node trees`.
 - [`fake-app.e2e.spec.ts`](../browser/tests/fake-app.e2e.spec.ts):
   `real fake-app shared shell remains non-overlapping at narrow width`.
@@ -251,7 +251,7 @@ Last audit: controller configuration wizard (baked registry, candidate discovery
   `sizes long status text within its nearest root before placing the next control`,
   `includes auto-flow below a declared root in the resolved host height`,
   `keeps scroll descendants out of the outer surface extent`,
-  `keeps absolute surface bounds while nesting composite roots`,
+  `places nested sidebar descendants from parent-relative bounds`,
   `keeps the scale transform only on the current parentless root`, and
   `fits a fixed portable surface into a narrow browser viewport`.
 - [`fake-app.e2e.spec.ts`](../browser/tests/fake-app.e2e.spec.ts):
