@@ -96,6 +96,7 @@ export class Supervisor {
   #evidence?: ProviderJsonEvidenceWindow;
   #watchdogSuppressedByExposedWait = false;
   #watchdogSuppressedByHardDeadline = false;
+  #watchdogSuppressedByMechanicalTerminal = false;
   #healthCallbackFailure?: Error;
   #watchdogCallbackFailure?: Error;
   #callbackFailureSurfaced = false;
@@ -275,6 +276,7 @@ export class Supervisor {
         this.#watchdogScheduler.resetTurn();
         this.#watchdogSuppressedByExposedWait = false;
         this.#watchdogSuppressedByHardDeadline = false;
+        this.#watchdogSuppressedByMechanicalTerminal = false;
         this.#health.recordMechanicalEvent({ type: "provider.started" });
         return { inputSequence, turnId, session: this.#session };
       });
@@ -333,6 +335,7 @@ export class Supervisor {
             }
           }
           const mechanical = mechanicalEventClassification(this.#health, event);
+          this.#recordMechanicalWatchdogSuppression(mechanical);
           if (mechanical?.kind === "attention") {
             await this.#applyHealthClassification(mechanical);
           }
@@ -565,6 +568,9 @@ export class Supervisor {
           return;
         }
         const classification = this.#health.recordMechanicalEvent({ type: "cancelled" });
+        if (classification?.kind === "cancellation") {
+          this.#watchdogSuppressedByMechanicalTerminal = true;
+        }
         const closingPhase = this.#phase;
         await this.#closeSessionOnce();
         if (classification?.kind === "cancellation" && closingPhase === "running") {
@@ -692,7 +698,28 @@ export class Supervisor {
   }
 
   #isWatchdogMechanicallySuppressed(): boolean {
-    return this.#watchdogSuppressedByExposedWait || this.#watchdogSuppressedByHardDeadline;
+    return this.#watchdogSuppressedByExposedWait
+      || this.#watchdogSuppressedByHardDeadline
+      || this.#watchdogSuppressedByMechanicalTerminal;
+  }
+
+  #recordMechanicalWatchdogSuppression(
+    classification: DeterministicHealthClassification | undefined,
+  ): void {
+    if (classification === undefined) {
+      return;
+    }
+    if (
+      classification.kind === "completion"
+      || classification.kind === "failure"
+      || classification.kind === "cancellation"
+    ) {
+      this.#watchdogSuppressedByMechanicalTerminal = true;
+      return;
+    }
+    if (classification.reason === "silence_timeout") {
+      this.#watchdogSuppressedByExposedWait = true;
+    }
   }
 
   #recordWatchdogVerdict(
@@ -776,6 +803,7 @@ export class Supervisor {
     if (
       classification.reason === "input_required"
       || classification.reason === "permission_required"
+      || classification.reason === "silence_timeout"
     ) {
       this.#watchdogSuppressedByExposedWait = true;
     }

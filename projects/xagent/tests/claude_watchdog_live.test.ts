@@ -8,6 +8,7 @@ import {
   spawnWatchdogProcess,
 } from "../src/supervision/claude_watchdog.js";
 import type { WatchdogRequest, WatchdogVerdict } from "../src/supervision/types.js";
+import { withWatchdogInputBytes } from "./support/watchdog_request.js";
 
 // Optional live smoke that invokes the real `claude` binary through the
 // production classifier path. This is the only test in the tree that does
@@ -53,23 +54,7 @@ function baseRequest(): WatchdogRequest {
     elapsed_ms: 60_000,
     truncated: false,
   };
-  return {
-    ...value,
-    input_bytes: snapshotByteLength(value),
-  };
-}
-
-function snapshotByteLength(value: Omit<WatchdogRequest, "input_bytes">): number {
-  const inputBytes = Buffer.byteLength(JSON.stringify(value), "utf8");
-  const propertyBytes = Buffer.byteLength(',"input_bytes":', "utf8");
-  let totalBytes = inputBytes + propertyBytes + 1;
-  while (true) {
-    const next = inputBytes + propertyBytes + String(totalBytes).length;
-    if (next === totalBytes) {
-      return totalBytes;
-    }
-    totalBytes = next;
-  }
+  return withWatchdogInputBytes(value);
 }
 
 test("live claude watchdog classify() returns a real verdict shape through the production spawn path", async (t) => {

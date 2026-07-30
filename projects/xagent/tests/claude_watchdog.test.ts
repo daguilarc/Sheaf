@@ -13,6 +13,7 @@ import {
 } from "../src/supervision/claude_watchdog.js";
 import { ProviderJsonEvidenceWindow } from "../src/supervision/evidence.js";
 import type { WatchdogRequest } from "../src/supervision/types.js";
+import { withWatchdogInputBytes } from "./support/watchdog_request.js";
 
 test("launches one fresh isolated no-tools Haiku invocation with bounded stdin", async () => {
   const calls: Array<WatchdogSpawnRequest & { cwdEntries: string[] }> = [];
@@ -487,21 +488,5 @@ function request(): WatchdogRequest {
     elapsed_ms: 600_000,
     truncated: false,
   };
-  return {
-    ...value,
-    input_bytes: snapshotByteLength(value),
-  };
-}
-
-function snapshotByteLength(value: Omit<WatchdogRequest, "input_bytes">): number {
-  const inputBytes = Buffer.byteLength(JSON.stringify(value), "utf8");
-  const propertyBytes = Buffer.byteLength(',"input_bytes":', "utf8");
-  let totalBytes = inputBytes + propertyBytes + 1;
-  while (true) {
-    const next = inputBytes + propertyBytes + String(totalBytes).length;
-    if (next === totalBytes) {
-      return totalBytes;
-    }
-    totalBytes = next;
-  }
+  return withWatchdogInputBytes(value);
 }

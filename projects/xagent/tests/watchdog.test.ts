@@ -22,6 +22,7 @@ import {
   WatchdogScheduler,
   normalizeWatchdogVerdict,
 } from "../src/supervision/watchdog.js";
+import { withWatchdogInputBytes } from "./support/watchdog_request.js";
 
 test("normalizes only the three schema verdicts and the healthy confidence floor", () => {
   assert.deepEqual(normalizeWatchdogVerdict({
@@ -341,60 +342,94 @@ test("new turns reset periodic cadence while preserving the eight-call run cap",
   assert.equal(scheduler.coverageExhausted, true);
 });
 
-test("supervisor classifier seam is bypassed by mechanical completion, input, crash, silence, cancellation, and deadline paths", async () => {
+test("supervisor classifier seam is bypassed by mechanical completion, input, failure, transport, silence, cancellation, and deadline paths", async () => {
+  const completionClock = new FakeClock();
   const completionClassifier = new ClassifierSpy();
+  async function* completionThenRawTurn() {
+    completionClock.advance(10 * 60_000);
+    yield {
+      type: "turn.completed" as const,
+      final_text: "finished mechanically",
+    };
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { event: "after_completion" },
+    };
+  }
   const completion = new Supervisor({
     runId: "xrun_watchdog_completion",
     adapter: new FakeHarnessAdapter({
-      scriptedEvents: [[{
-        type: "turn.completed",
-        final_text: "finished mechanically",
-      }]],
+      scriptedEvents: [completionThenRawTurn()],
     }),
     startOptions: { cwd: process.cwd() },
-    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    policy: { silenceTimeoutMs: 1_200_000, watchdog: {} },
+    clock: completionClock.now,
+    scheduler: completionClock,
     watchdogClassifier: completionClassifier,
   });
   await completion.start();
   await completion.submit("complete");
   assert.equal(completionClassifier.calls.length, 0);
 
+  const inputClock = new FakeClock();
   const inputClassifier = new ClassifierSpy();
+  async function* inputThenRawTurn() {
+    inputClock.advance(10 * 60_000);
+    yield {
+      type: "status" as const,
+      level: "warning" as const,
+      code: "input_required",
+      message: "Choose one.",
+    };
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { event: "input_wait" },
+    };
+    yield { type: "turn.completed" as const, final_text: "finished after input" };
+  }
   const input = new Supervisor({
     runId: "xrun_watchdog_input",
     adapter: new FakeHarnessAdapter({
-      scriptedEvents: [[
-        {
-          type: "status",
-          level: "warning",
-          code: "input_required",
-          message: "Choose one.",
-        },
-        { type: "turn.completed", final_text: "finished after input" },
-      ]],
+      scriptedEvents: [inputThenRawTurn()],
     }),
     startOptions: { cwd: process.cwd() },
-    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    policy: { silenceTimeoutMs: 1_200_000, watchdog: {} },
+    clock: inputClock.now,
+    scheduler: inputClock,
     watchdogClassifier: inputClassifier,
   });
   await input.start();
   await input.submit("wait for input");
   assert.equal(inputClassifier.calls.length, 0);
 
+  const crashClock = new FakeClock();
   const crashClassifier = new ClassifierSpy();
+  async function* crashThenRawTurn() {
+    crashClock.advance(10 * 60_000);
+    yield {
+      type: "error" as const,
+      code: "process_exit",
+      message: "child process exited with code 17",
+      details: { exit_code: 17, signal: null },
+      recoverable: false,
+    };
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { event: "after_crash" },
+    };
+  }
   const crash = new Supervisor({
     runId: "xrun_watchdog_crash",
     adapter: new FakeHarnessAdapter({
-      scriptedEvents: [[{
-        type: "error",
-        code: "process_exit",
-        message: "child process exited with code 17",
-        details: { exit_code: 17, signal: null },
-        recoverable: false,
-      }]],
+      scriptedEvents: [crashThenRawTurn()],
     }),
     startOptions: { cwd: process.cwd() },
-    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    policy: { silenceTimeoutMs: 1_200_000, watchdog: {} },
+    clock: crashClock.now,
+    scheduler: crashClock,
     watchdogClassifier: crashClassifier,
   });
   await crash.start();
@@ -410,11 +445,76 @@ test("supervisor classifier seam is bypassed by mechanical completion, input, cr
     message: "child process exited with code 17",
   });
 
+  const providerFailureClock = new FakeClock();
+  const providerFailureClassifier = new ClassifierSpy();
+  async function* providerFailureThenRawTurn() {
+    providerFailureClock.advance(10 * 60_000);
+    yield {
+      type: "turn.failed" as const,
+      code: "provider_failed",
+      message: "provider reported failure",
+    };
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { event: "after_provider_failure" },
+    };
+  }
+  const providerFailure = new Supervisor({
+    runId: "xrun_watchdog_provider_failure",
+    adapter: new FakeHarnessAdapter({ scriptedEvents: [providerFailureThenRawTurn()] }),
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 1_200_000, watchdog: {} },
+    clock: providerFailureClock.now,
+    scheduler: providerFailureClock,
+    watchdogClassifier: providerFailureClassifier,
+  });
+  await providerFailure.start();
+  await providerFailure.submit("provider failure");
+  assert.equal(providerFailureClassifier.calls.length, 0);
+  assert.equal(providerFailure.inspect().phase, "failed");
+
+  const transportClock = new FakeClock();
+  const transportClassifier = new ClassifierSpy();
+  async function* transportLossThenRawTurn() {
+    transportClock.advance(10 * 60_000);
+    yield {
+      type: "error" as const,
+      code: "transport_lost",
+      message: "provider stdout closed",
+      recoverable: false,
+    };
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { event: "after_transport_loss" },
+    };
+  }
+  const transport = new Supervisor({
+    runId: "xrun_watchdog_transport_loss",
+    adapter: new FakeHarnessAdapter({ scriptedEvents: [transportLossThenRawTurn()] }),
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 1_200_000, watchdog: {} },
+    clock: transportClock.now,
+    scheduler: transportClock,
+    watchdogClassifier: transportClassifier,
+  });
+  await transport.start();
+  await transport.submit("transport loss");
+  assert.equal(transportClassifier.calls.length, 0);
+  assert.equal(transport.inspect().phase, "failed");
+
   const clock = new FakeClock();
   const deadlineClassifier = new ClassifierSpy();
   const release = deferred<void>();
   async function* blockedTurn() {
     await release.promise;
+    clock.advance(8 * 60_000);
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { event: "after_hard_deadline" },
+    };
     yield { type: "turn.completed" as const, final_text: "finished later" };
   }
   const deadline = new Supervisor({
@@ -422,7 +522,7 @@ test("supervisor classifier seam is bypassed by mechanical completion, input, cr
     adapter: new FakeHarnessAdapter({ scriptedEvents: [blockedTurn()] }),
     startOptions: { cwd: process.cwd() },
     policy: {
-      silenceTimeoutMs: 300_000,
+      silenceTimeoutMs: 1_200_000,
       hardDeadlineMs: 120_000,
       watchdog: {},
     },
@@ -438,12 +538,19 @@ test("supervisor classifier seam is bypassed by mechanical completion, input, cr
   assert.equal(deadlineClassifier.calls.length, 0);
   release.resolve(undefined);
   await turn;
+  assert.equal(deadlineClassifier.calls.length, 0);
 
   const silenceClock = new FakeClock();
   const silenceClassifier = new ClassifierSpy();
   const releaseSilence = deferred<void>();
   async function* silentTurn() {
     await releaseSilence.promise;
+    silenceClock.advance(5 * 60_000);
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { event: "after_silence" },
+    };
     yield { type: "turn.completed" as const, final_text: "finished after silence" };
   }
   const silence = new Supervisor({
@@ -461,10 +568,39 @@ test("supervisor classifier seam is bypassed by mechanical completion, input, cr
   silenceClock.advance(300_000);
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(silenceClassifier.calls.length, 0);
-  await silence.close();
-  assert.equal(silenceClassifier.calls.length, 0);
   releaseSilence.resolve(undefined);
   await silentSubmission;
+  assert.equal(silenceClassifier.calls.length, 0);
+
+  const cancellationClock = new FakeClock();
+  const cancellationClassifier = new ClassifierSpy();
+  const releaseCancellation = deferred<void>();
+  async function* cancelledThenRawTurn() {
+    await releaseCancellation.promise;
+    cancellationClock.advance(10 * 60_000);
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { event: "after_cancellation" },
+    };
+    yield { type: "turn.completed" as const, final_text: "finished after cancellation" };
+  }
+  const cancellation = new Supervisor({
+    runId: "xrun_watchdog_cancellation",
+    adapter: new FakeHarnessAdapter({ scriptedEvents: [cancelledThenRawTurn()] }),
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    clock: cancellationClock.now,
+    scheduler: cancellationClock,
+    watchdogClassifier: cancellationClassifier,
+  });
+  await cancellation.start();
+  const cancellationSubmission = cancellation.submit("cancel");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  await cancellation.close();
+  releaseCancellation.resolve(undefined);
+  await cancellationSubmission;
+  assert.equal(cancellationClassifier.calls.length, 0);
 });
 
 test("raw provider records reach the classifier at a periodic checkpoint without normalized events", async () => {
@@ -494,7 +630,7 @@ test("raw provider records reach the classifier at a periodic checkpoint without
     runId: "xrun_watchdog_raw_provider_checkpoint",
     adapter: new ClaudeFakeHarnessAdapter({ scriptedEvents: [rawProviderTurn()] }),
     startOptions: { cwd: process.cwd() },
-    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    policy: { silenceTimeoutMs: 1_200_000, watchdog: {} },
     clock: clock.now,
     scheduler: clock,
     watchdogClassifier: classifier,
@@ -821,7 +957,7 @@ test("close settles the eighth classifier before coverage persistence can be los
     adapter: new FakeHarnessAdapter({ scriptedEvents: [eightCheckpoints()] }),
     startOptions: { cwd: process.cwd() },
     policy: {
-      silenceTimeoutMs: 300_000,
+      silenceTimeoutMs: 3_000_000,
       watchdog: { maximumCalls: 8 },
     },
     clock: clock.now,
@@ -1719,23 +1855,7 @@ function request(
     truncated: false,
     ...overrides,
   };
-  return {
-    ...value,
-    input_bytes: snapshotByteLength(value),
-  };
-}
-
-function snapshotByteLength(value: Omit<WatchdogRequest, "input_bytes">): number {
-  const inputBytes = Buffer.byteLength(JSON.stringify(value), "utf8");
-  const propertyBytes = Buffer.byteLength(',"input_bytes":', "utf8");
-  let totalBytes = inputBytes + propertyBytes + 1;
-  while (true) {
-    const next = inputBytes + propertyBytes + String(totalBytes).length;
-    if (next === totalBytes) {
-      return totalBytes;
-    }
-    totalBytes = next;
-  }
+  return withWatchdogInputBytes(value);
 }
 
 class ClassifierSpy implements WatchdogClassifier {
