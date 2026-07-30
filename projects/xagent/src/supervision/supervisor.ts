@@ -95,6 +95,7 @@ export class Supervisor {
   #lastSemanticProgressAt: string;
   #evidence?: ProviderJsonEvidenceWindow;
   #watchdogSuppressedByExposedWait = false;
+  #watchdogSuppressedBySilence = false;
   #watchdogSuppressedByHardDeadline = false;
   #watchdogSuppressedByMechanicalTerminal = false;
   #healthCallbackFailure?: Error;
@@ -275,6 +276,7 @@ export class Supervisor {
         });
         this.#watchdogScheduler.resetTurn();
         this.#watchdogSuppressedByExposedWait = false;
+        this.#watchdogSuppressedBySilence = false;
         this.#watchdogSuppressedByHardDeadline = false;
         this.#watchdogSuppressedByMechanicalTerminal = false;
         this.#health.recordMechanicalEvent({ type: "provider.started" });
@@ -671,6 +673,9 @@ export class Supervisor {
   #recordProgress(event: AdapterEvent): void {
     const activeSemanticEvidence = isActiveSemanticEvidence(event);
     this.#health.recordProviderActivity(activeSemanticEvidence ? "semantic" : "transport");
+    if (event.type === "raw.provider") {
+      this.#watchdogSuppressedBySilence = false;
+    }
     if (activeSemanticEvidence) {
       this.#watchdogSuppressedByExposedWait = false;
     }
@@ -699,6 +704,7 @@ export class Supervisor {
 
   #isWatchdogMechanicallySuppressed(): boolean {
     return this.#watchdogSuppressedByExposedWait
+      || this.#watchdogSuppressedBySilence
       || this.#watchdogSuppressedByHardDeadline
       || this.#watchdogSuppressedByMechanicalTerminal;
   }
@@ -718,7 +724,7 @@ export class Supervisor {
       return;
     }
     if (classification.reason === "silence_timeout") {
-      this.#watchdogSuppressedByExposedWait = true;
+      this.#watchdogSuppressedBySilence = true;
     }
   }
 
@@ -803,9 +809,11 @@ export class Supervisor {
     if (
       classification.reason === "input_required"
       || classification.reason === "permission_required"
-      || classification.reason === "silence_timeout"
     ) {
       this.#watchdogSuppressedByExposedWait = true;
+    }
+    if (classification.reason === "silence_timeout") {
+      this.#watchdogSuppressedBySilence = true;
     }
     if (classification.reason === "hard_deadline") {
       this.#watchdogSuppressedByHardDeadline = true;

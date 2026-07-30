@@ -244,6 +244,26 @@ test("a small configured cap still produces a valid bounded snapshot", () => {
   assert.deepEqual(snapshot.recent_provider_json, [{ type: "assistant", content: "latest" }]);
 });
 
+test("supervisor rejects invalid evidence policy before persisting lifecycle state", async () => {
+  const persistedPhases: string[] = [];
+
+  assert.throws(() => new Supervisor({
+    runId: "xrun_invalid_evidence_policy",
+    adapter: new FakeHarnessAdapter(),
+    startOptions: { cwd: repoRoot },
+    policy: {
+      silenceTimeoutMs: 300_000,
+      watchdog: { inputLimitBytes: 0 },
+    },
+    metadataSink: async (state) => {
+      persistedPhases.push(state.phase);
+    },
+  }), /inputLimitBytes/);
+  await Promise.resolve();
+
+  assert.deepEqual(persistedPhases, []);
+});
+
 function assertSnapshotShape(snapshot: ProviderJsonEvidenceSnapshot): void {
   assert.deepEqual(Object.keys(snapshot), [
     "original_prompt",

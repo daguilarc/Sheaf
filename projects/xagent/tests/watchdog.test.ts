@@ -342,7 +342,7 @@ test("new turns reset periodic cadence while preserving the eight-call run cap",
   assert.equal(scheduler.coverageExhausted, true);
 });
 
-test("supervisor classifier seam is bypassed by mechanical completion, input, failure, transport, silence, cancellation, and deadline paths", async () => {
+test("supervisor classifier seam is bypassed by mechanical completion, input, failure, transport, cancellation, and deadline paths", async () => {
   const completionClock = new FakeClock();
   const completionClassifier = new ClassifierSpy();
   async function* completionThenRawTurn() {
@@ -540,38 +540,6 @@ test("supervisor classifier seam is bypassed by mechanical completion, input, fa
   await turn;
   assert.equal(deadlineClassifier.calls.length, 0);
 
-  const silenceClock = new FakeClock();
-  const silenceClassifier = new ClassifierSpy();
-  const releaseSilence = deferred<void>();
-  async function* silentTurn() {
-    await releaseSilence.promise;
-    silenceClock.advance(5 * 60_000);
-    yield {
-      type: "raw.provider" as const,
-      harness: "codex" as const,
-      payload: { event: "after_silence" },
-    };
-    yield { type: "turn.completed" as const, final_text: "finished after silence" };
-  }
-  const silence = new Supervisor({
-    runId: "xrun_watchdog_silence",
-    adapter: new FakeHarnessAdapter({ scriptedEvents: [silentTurn()] }),
-    startOptions: { cwd: process.cwd() },
-    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
-    clock: silenceClock.now,
-    scheduler: silenceClock,
-    watchdogClassifier: silenceClassifier,
-  });
-  await silence.start();
-  const silentSubmission = silence.submit("wait silently");
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  silenceClock.advance(300_000);
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  assert.equal(silenceClassifier.calls.length, 0);
-  releaseSilence.resolve(undefined);
-  await silentSubmission;
-  assert.equal(silenceClassifier.calls.length, 0);
-
   const cancellationClock = new FakeClock();
   const cancellationClassifier = new ClassifierSpy();
   const releaseCancellation = deferred<void>();
@@ -601,6 +569,51 @@ test("supervisor classifier seam is bypassed by mechanical completion, input, fa
   releaseCancellation.resolve(undefined);
   await cancellationSubmission;
   assert.equal(cancellationClassifier.calls.length, 0);
+});
+
+test("raw provider activity after silence clears silence suppression before periodic eligibility", async () => {
+  const clock = new FakeClock();
+  const classifier = new ClassifierSpy();
+  const release = deferred<void>();
+  async function* silentThenRawTurn() {
+    await release.promise;
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { event: "resumed_after_silence" },
+    };
+    clock.advance(5 * 60_000);
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { event: "periodic_checkpoint_after_resume" },
+    };
+    yield { type: "turn.completed" as const, final_text: "finished after resume" };
+  }
+  const supervisor = new Supervisor({
+    runId: "xrun_watchdog_silence_resume",
+    adapter: new FakeHarnessAdapter({ scriptedEvents: [silentThenRawTurn()] }),
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    clock: clock.now,
+    scheduler: clock,
+    watchdogClassifier: classifier,
+  });
+
+  await supervisor.start();
+  const submission = supervisor.submit("wait silently");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  clock.advance(300_000);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(classifier.calls.length, 0);
+
+  release.resolve(undefined);
+  await submission;
+
+  assert.equal(classifier.calls.length, 1);
+  assert.deepEqual(classifier.calls[0]?.recent_provider_json.map((item) => {
+    return (item as { readonly event?: string }).event;
+  }), ["resumed_after_silence", "periodic_checkpoint_after_resume"]);
 });
 
 test("raw provider records reach the classifier at a periodic checkpoint without normalized events", async () => {
