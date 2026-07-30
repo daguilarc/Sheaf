@@ -126,7 +126,7 @@ function wrapAdapterWithOwnedChildCleanup(
   };
 }
 
-function wrapSessionWithOwnedChildCleanup(
+export function wrapSessionWithOwnedChildCleanup(
   session: HarnessSession,
   ownedChild: ChildProcess,
 ): HarnessSession {
@@ -158,18 +158,24 @@ async function terminateOwnedChild(child: ChildProcess): Promise<void> {
   if (child.pid === undefined) {
     return;
   }
-  const exited = waitForChildExit(child);
-  signalOwnedChild(child, "SIGTERM");
-  if (await exitWithin(exited, OWNED_CHILD_TERMINATION_GRACE_MS)) {
-    return;
-  }
+  const watch = watchOwnedChild(child);
+  try {
+    signalOwnedChild(child, "SIGTERM");
+    if (await exitWithin(watch.exited, OWNED_CHILD_TERMINATION_GRACE_MS)) {
+      return;
+    }
 
-  signalOwnedChild(child, "SIGKILL");
-  if (await exitWithin(exited, OWNED_CHILD_TERMINATION_GRACE_MS)) {
-    return;
-  }
+    signalOwnedChild(child, "SIGKILL");
+    if (await exitWithin(watch.exited, OWNED_CHILD_TERMINATION_GRACE_MS)) {
+      return;
+    }
 
-  throw new Error("Owned test child did not exit after SIGTERM and SIGKILL.");
+    throw new Error(
+      `Owned test child did not exit after SIGTERM and SIGKILL.${watch.killFailureSuffix()}`,
+    );
+  } finally {
+    watch.dispose();
+  }
 }
 
 function signalOwnedChild(child: ChildProcess, signal: "SIGTERM" | "SIGKILL"): void {
@@ -190,26 +196,59 @@ function signalOwnedChild(child: ChildProcess, signal: "SIGTERM" | "SIGKILL"): v
   }
 }
 
-function waitForChildExit(child: ChildProcess): Promise<void> {
-  if (hasChildExited(child)) {
-    return Promise.resolve();
-  }
-  return new Promise<void>((resolve) => {
-    child.once("exit", () => {
-      resolve();
+type OwnedChildWatch = {
+  readonly exited: Promise<void>;
+  killFailureSuffix(): string;
+  dispose(): void;
+};
+
+// Only a real `exit` releases the wait. Node also emits `error` when a kill
+// fails — notably on the Windows `child.kill()` path — but a failed kill is
+// evidence the child may still be running, so swallowing it here (rather than
+// resolving) keeps `close()` honest while preventing an unhandled `error` event
+// from taking down the service. A child that never exits still fails loudly
+// through the bounded SIGTERM/SIGKILL escalation, which reports the recorded
+// kill failure.
+//
+function watchOwnedChild(child: ChildProcess): OwnedChildWatch {
+  let killFailure: string | undefined;
+  const onError = (error: Error) => {
+    killFailure = error.message;
+  };
+  child.on("error", onError);
+
+  let onExit: (() => void) | undefined;
+  const exited = hasChildExited(child)
+    ? Promise.resolve()
+    : new Promise<void>((resolve) => {
+      onExit = () => {
+        resolve();
+      };
+      child.once("exit", onExit);
+      // The child can exit between the check above and listener installation,
+      // in which case `exit` has already been emitted and would never reach the
+      // listener. Node records the exit status before emitting, so re-checking
+      // here closes that race.
+      //
+      if (hasChildExited(child)) {
+        resolve();
+      }
     });
-    child.once("error", () => {
-      resolve();
-    });
-    // The child can exit between the check above and listener installation, in
-    // which case `exit` has already been emitted and would never reach the
-    // listener. Node records the exit status before emitting, so re-checking
-    // here closes that race.
-    //
-    if (hasChildExited(child)) {
-      resolve();
-    }
-  });
+
+  return {
+    exited,
+    killFailureSuffix: () =>
+      killFailure === undefined ? "" : ` Last kill error: ${killFailure}`,
+    dispose: () => {
+      if (onExit !== undefined) {
+        child.off("exit", onExit);
+      }
+      // The `error` listener stays attached: a kill we already issued can still
+      // fail asynchronously, and an unhandled `error` event would crash the
+      // process.
+      //
+    },
+  };
 }
 
 function hasChildExited(child: ChildProcess): boolean {
