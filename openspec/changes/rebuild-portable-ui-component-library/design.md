@@ -759,10 +759,23 @@ attaches separate `click` and `dblclick` listeners, so a native double-click
 delivers **two** click events before `dblclick`, while JUCE's mouse-up-derived
 click has its own ordering around `mouseDoubleClick`. Rather than assert a
 number that may be wrong in one backend, sru-52 requires a `Draw` node's
-dispatched sequence for click, drag, and double-click gestures to be
+dispatched sequence for the **click and double-click** gestures to be
 identical to a `Button` node's for the same actions in the same backend, and
 requires each backend's suite to pin the complete ordered list and per-action
-counts explicitly. A divergence between the two kinds then fails a test
+counts explicitly.
+
+**The parity clause deliberately excludes the drag gesture** (narrowed
+2026-07-30, during 4.3's review, which read an earlier draft of this paragraph
+as requiring drag parity too). sru-52 specifies `Draw`'s drag behaviour
+directly — a drag past the threshold dispatches the pointer-drag action and no
+click action — and says nothing about `Button` drag, because a JUCE `Button`
+has no pointer-drag path at all and nothing in the codebase gives one a drag
+action: the only `pointerDragAction` producers are the Braid 4 and Mini App
+encoder cells (`Braid4UI.hpp:149`, `MiniAppUI.hpp:134`), both `Draw` nodes.
+Reading drag into the parity clause would require inventing `Button` drag
+dispatch that no requirement asks for and no producer would reach, so the
+clause covers click and double-click, and `Draw`'s drag behaviour is pinned
+against sru-52's own scenario rather than against `Button`. A divergence between the two kinds then fails a test
 instead of surfacing as a stateful action firing twice in production.
 
 **Measured while implementing (2026-07-30).** The sequence is `click, click,
