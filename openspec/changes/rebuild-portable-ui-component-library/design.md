@@ -255,11 +255,21 @@ The library computes each node's **parent-relative** `Bounds` during
      earlier draft of this rule let them "overflow in declaration order,
      deterministically, so the failure is visible rather than silently
      absorbed". That reasoning was wrong in practice: node content clips to its
-     bounds, so an overflowing child is not visible at all, it is cut off. The
-     Sync page shipped exactly that way and a containment test pinned above the
-     real surface height passed over it. Deterministic order is still what the
-     resolver produces; what changed is that producing it is now an error rather
-     than an accepted outcome.
+     bounds, so an overflowing child is not visible at all, it is cut off.
+
+     The Sync page demonstrated both halves. During 5.1-5.5 it overflowed its
+     640x480 surface by 3.18px while its own containment test was pinned at
+     780x585, where the broken layout fit — so a green test sat on top of
+     clipped content until review noticed the two extents differed. That
+     specific overflow was closed in 5.1-5.5's fix round by zeroing the status
+     container's padding and re-pinning the test to 640x480. But the fix made
+     the page *fit* rather than made it *absorb*, so the fixed-stack shape
+     survived: the page still had nothing to take up slack, and any surface
+     shorter than its fixed content would have clipped it again. Patching a page
+     to fit one surface is exactly the fragility this rule now removes.
+
+     Deterministic order is still what the resolver produces; what changed is
+     that producing it is now an error rather than an accepted outcome.
   7. Infeasible minima are only one way to overspend a container, so the gate
      rule 6 names is general: **any** container whose in-flow children do not
      fit its stacking axis fails, with a diagnostic naming the container, the
