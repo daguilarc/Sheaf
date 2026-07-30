@@ -48,7 +48,6 @@ def hook_outputs(outputs: list[object], codex_home: Path) -> list[object]:
     codex_home = codex_home.resolve()
     wanted = {
         codex_home / "hooks" / "sheaf" / "session_start_after_compact.py",
-        codex_home / "hooks.json",
     }
     return [output for output in outputs if output.path in wanted]
 
@@ -70,69 +69,317 @@ def run_main(*args: str) -> int:
 
 
 class CodexHookOutputTests(unittest.TestCase):
-    def test_global_outputs_include_rendered_codex_hook(self) -> None:
+    def shared_output(self, codex_home: Path) -> install.CodexHookSharedOutput:
+        return install.build_codex_hook_shared_output(
+            REPO_ROOT,
+            home=codex_home.parent / "home",
+            codex_home=codex_home,
+        )
+
+    def foreign_group(self, command: str = "python3 /opt/other/compact.py") -> dict[str, object]:
+        return {
+            "matcher": "^compact$",
+            "hooks": [{"type": "command", "command": command}],
+        }
+
+    def xagent_group(self, mode: str) -> dict[str, object]:
+        return {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": (
+                        "python3 /opt/xagent/controller_stop_hook.py "
+                        f"--harness codex --state-root /tmp/xagent {mode}"
+                    ),
+                }
+            ]
+        }
+
+    def write_json(self, path: Path, payload: object) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    def read_json(self, path: Path) -> dict[str, object]:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        self.assertIsInstance(payload, dict)
+        return payload
+
+    def test_install_appends_agents_group_and_preserves_unrelated_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            output = self.shared_output(codex_home)
+            before = self.foreign_group("python3 /opt/other/before.py")
+            after = self.foreign_group("python3 /opt/other/after.py")
+            self.write_json(
+                output.config_path,
+                {
+                    "model": "gpt-5",
+                    "hooks": {"SessionStart": [before, after]},
+                },
+            )
+            outputs = install.build_global_outputs(
+                REPO_ROOT,
+                home=codex_home.parent / "home",
+                codex_home=codex_home,
+            )
+
+            self.assertNotIn(output.config_path, [generic.path for generic in outputs])
+            self.assertEqual(0, install.install_codex_hook_shared(output))
+
+            merged = self.read_json(output.config_path)
+            self.assertEqual("gpt-5", merged["model"])
+            self.assertEqual(
+                [before, after, output.desired_group],
+                merged["hooks"]["SessionStart"],
+            )
+            self.assertTrue(output.script_output.path.is_file())
+
+    def test_install_updates_canonical_agents_group_in_place(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            output = self.shared_output(codex_home)
+            before = self.foreign_group("python3 /opt/other/before.py")
+            after = self.foreign_group("python3 /opt/other/after.py")
+            stale_owned = {
+                "matcher": "^compact$",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": output.desired_group["hooks"][0]["command"],
+                        "statusMessage": "stale message",
+                        "timeout": 99,
+                    }
+                ],
+            }
+            self.write_json(
+                output.config_path,
+                {"hooks": {"SessionStart": [before, stale_owned, after]}},
+            )
+
+            self.assertEqual(0, install.install_codex_hook_shared(output))
+
+            merged = self.read_json(output.config_path)
+            self.assertEqual(
+                [before, output.desired_group, after],
+                merged["hooks"]["SessionStart"],
+            )
+
+    def test_install_migrates_legacy_whole_file_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            output = self.shared_output(codex_home)
+            legacy = {
+                **output.desired_group,
+                "hooks": [
+                    {
+                        **output.desired_group["hooks"][0],
+                        "statusMessage": "legacy",
+                    }
+                ],
+            }
+            xagent = self.xagent_group("observe")
+            self.write_json(
+                output.config_path,
+                {
+                    "_sheaf_agents_managed": (
+                        "sheaf-agents-managed: DO NOT EDIT; "
+                        "source=projects/agents/global/codex/hooks/hooks.json"
+                    ),
+                    "hooks": {"SessionStart": [legacy], "PostToolUse": [xagent]},
+                },
+            )
+
+            self.assertEqual(0, install.install_codex_hook_shared(output))
+
+            merged = self.read_json(output.config_path)
+            self.assertNotIn("_sheaf_agents_managed", merged)
+            self.assertEqual([output.desired_group], merged["hooks"]["SessionStart"])
+            self.assertEqual([xagent], merged["hooks"]["PostToolUse"])
+
+    def test_install_preserves_canonical_xagent_groups(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            output = self.shared_output(codex_home)
+            observe = self.xagent_group("observe")
+            guard = self.xagent_group("guard")
+            self.write_json(
+                output.config_path,
+                {"hooks": {"PostToolUse": [observe], "Stop": [guard]}},
+            )
+
+            self.assertEqual(0, install.install_codex_hook_shared(output))
+
+            merged = self.read_json(output.config_path)
+            self.assertEqual([observe], merged["hooks"]["PostToolUse"])
+            self.assertEqual([guard], merged["hooks"]["Stop"])
+            self.assertEqual([output.desired_group], merged["hooks"]["SessionStart"])
+
+    def test_check_compares_only_script_and_agents_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            output = self.shared_output(codex_home)
+            foreign = self.foreign_group()
+            self.assertEqual(0, install.install_codex_hook_shared(output))
+            config = self.read_json(output.config_path)
+            config["hooks"]["PostToolUse"] = [self.xagent_group("observe")]
+            self.write_json(output.config_path, config)
+
+            self.assertEqual(0, install.check_codex_hook_shared(output))
+
+            config["hooks"]["SessionStart"] = [foreign, output.desired_group]
+            self.write_json(output.config_path, config)
+            self.assertEqual(0, install.check_codex_hook_shared(output))
+
+            broken = dict(output.desired_group)
+            broken["matcher"] = ".*"
+            config["hooks"]["SessionStart"] = [foreign, broken]
+            self.write_json(output.config_path, config)
+            self.assertEqual(1, install.check_codex_hook_shared(output))
+
+            self.write_json(
+                output.config_path,
+                {"hooks": {"SessionStart": [output.desired_group]}},
+            )
+            output.script_output.path.write_text("stale\n", encoding="utf-8")
+            self.assertEqual(1, install.check_codex_hook_shared(output))
+
+    def test_clean_removes_only_agents_group_and_script(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            output = self.shared_output(codex_home)
+            before = self.foreign_group("python3 /opt/other/before.py")
+            after = self.foreign_group("python3 /opt/other/after.py")
+            xagent = self.xagent_group("observe")
+            self.write_json(
+                output.config_path,
+                {
+                    "hooks": {
+                        "SessionStart": [before, output.desired_group, after],
+                        "PostToolUse": [xagent],
+                    }
+                },
+            )
+            output.script_output.path.parent.mkdir(parents=True, exist_ok=True)
+            output.script_output.path.write_text(output.script_output.content, encoding="utf-8")
+
+            self.assertEqual(0, install.clean_codex_hook_shared(output))
+
+            cleaned = self.read_json(output.config_path)
+            self.assertFalse(output.script_output.path.exists())
+            self.assertEqual([before, after], cleaned["hooks"]["SessionStart"])
+            self.assertEqual([xagent], cleaned["hooks"]["PostToolUse"])
+
+    def test_clean_deletes_hooks_json_only_when_no_foreign_content_remains(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            output = self.shared_output(codex_home)
+            self.write_json(
+                output.config_path,
+                {"hooks": {"SessionStart": [output.desired_group]}},
+            )
+            output.script_output.path.parent.mkdir(parents=True, exist_ok=True)
+            output.script_output.path.write_text(output.script_output.content, encoding="utf-8")
+
+            self.assertEqual(0, install.clean_codex_hook_shared(output))
+
+            self.assertFalse(output.config_path.exists())
+            self.assertFalse(output.script_output.path.exists())
+
+    def test_malformed_shared_json_fails_install_check_and_clean_even_with_force(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             home = (Path(tempdir) / "home").resolve()
             codex_home = (Path(tempdir) / "codex-home").resolve()
-            outputs = install.build_global_outputs(
-                REPO_ROOT,
-                home=home,
-                codex_home=codex_home,
+            output = self.shared_output(codex_home)
+            output.config_path.parent.mkdir(parents=True, exist_ok=True)
+            malformed = '{"hooks": {"SessionStart": null}}\n'
+            output.config_path.write_text(malformed, encoding="utf-8")
+            args = (
+                "--scope",
+                "global",
+                "--repo-root",
+                str(REPO_ROOT),
+                "--home",
+                str(home),
+                "--codex-home",
+                str(codex_home),
+                "--force",
             )
-            hooks = hook_outputs(outputs, codex_home)
 
-            self.assertEqual(2, len(hooks))
-            by_path = {output.path: output for output in hooks}
-            script_path = codex_home / "hooks" / "sheaf" / "session_start_after_compact.py"
-            config_path = codex_home / "hooks.json"
+            for mode in ("install", "check", "clean"):
+                with self.subTest(mode=mode):
+                    with mock.patch.object(install, "install_openspec_cli", return_value=0):
+                        with mock.patch.object(install, "check_openspec_cli", return_value=0):
+                            with mock.patch.object(install, "clean_openspec_cli", return_value=0):
+                                with contextlib.redirect_stderr(io.StringIO()):
+                                    self.assertEqual(1, run_main(mode, *args))
+                    self.assertEqual(malformed, output.config_path.read_text(encoding="utf-8"))
 
-            self.assertIn("sheaf-agents-managed: DO NOT EDIT", by_path[script_path].content)
-            self.assertIn("Post-compaction reminder", by_path[script_path].content)
-
-            config = json.loads(by_path[config_path].content)
-            self.assertIn("sheaf-agents-managed: DO NOT EDIT", by_path[config_path].content)
-            group = config["hooks"]["SessionStart"][0]
-            self.assertEqual("^compact$", group["matcher"])
-            command = group["hooks"][0]["command"]
-            self.assertEqual(f"python3 {script_path}", command)
-
-    def test_install_check_and_clean_codex_hook_outputs(self) -> None:
+    def test_install_and_clean_effective_changes_print_trust_notice(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
-            home = Path(tempdir) / "home"
             codex_home = (Path(tempdir) / "codex-home").resolve()
-            outputs = hook_outputs(
-                install.build_global_outputs(REPO_ROOT, home=home, codex_home=codex_home),
-                codex_home,
+            output = self.shared_output(codex_home)
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                self.assertEqual(0, install.install_codex_hook_shared(output))
+            self.assertIn(install.CODEX_HOOK_TRUST_NOTICE, stdout.getvalue())
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                self.assertEqual(0, install.install_codex_hook_shared(output))
+            self.assertNotIn(install.CODEX_HOOK_TRUST_NOTICE, stdout.getvalue())
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                self.assertEqual(0, install.check_codex_hook_shared(output))
+            self.assertNotIn(install.CODEX_HOOK_TRUST_NOTICE, stdout.getvalue())
+
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                self.assertEqual(0, install.clean_codex_hook_shared(output))
+            self.assertIn(install.CODEX_HOOK_TRUST_NOTICE, stdout.getvalue())
+
+    def test_agents_and_xagent_install_order_converges(self) -> None:
+        module_path = REPO_ROOT / "plugins" / "xagent" / "scripts" / "install_global.py"
+        spec = importlib.util.spec_from_file_location("xagent_install_global", module_path)
+        self.assertIsNotNone(spec)
+        xagent_install_global = importlib.util.module_from_spec(spec)
+        self.assertIsNotNone(spec.loader)
+        spec.loader.exec_module(xagent_install_global)
+
+        def apply_xagent(path: Path) -> dict[str, object]:
+            payload: dict[str, object] = {}
+            if path.exists():
+                payload = self.read_json(path)
+            commands = xagent_install_global.hook_commands(
+                installed_hook=Path("/opt/xagent/controller_stop_hook.py"),
+                harness="codex",
+                state_root=Path("/tmp/xagent-state"),
             )
+            merged, _changed = xagent_install_global.merge_xagent_hook_groups(
+                payload,
+                harness="codex",
+                observe_command=commands["observe"],
+                guard_command=commands["guard"],
+            )
+            self.write_json(path, merged)
+            return merged
 
-            self.assertEqual(0, install.install_outputs(outputs, force=False))
-            self.assertEqual(0, install.check_outputs(outputs))
-
-            config_path = codex_home / "hooks.json"
-            config_path.write_text("{}\n", encoding="utf-8")
-            self.assertEqual(1, install.check_outputs(outputs))
-
-            self.assertEqual(0, install.install_outputs(outputs, force=True))
-            self.assertEqual(0, install.clean_outputs(outputs))
-            for output in outputs:
-                self.assertFalse(output.path.exists())
-
-    def test_unmanaged_codex_hooks_json_conflicts(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
-            home = Path(tempdir) / "home"
             codex_home = (Path(tempdir) / "codex-home").resolve()
-            outputs = hook_outputs(
-                install.build_global_outputs(REPO_ROOT, home=home, codex_home=codex_home),
-                codex_home,
-            )
-            config_path = codex_home / "hooks.json"
-            config_path.parent.mkdir(parents=True)
-            config_path.write_text('{"hooks": {}}\n', encoding="utf-8")
+            output = self.shared_output(codex_home)
+            self.assertEqual(0, install.install_codex_hook_shared(output))
+            apply_xagent(output.config_path)
+            self.assertEqual(0, install.install_codex_hook_shared(output))
+            first = self.read_json(output.config_path)
 
-            self.assertEqual(1, install.install_outputs(outputs, force=False))
-            self.assertEqual(1, install.check_outputs(outputs))
-            self.assertEqual(0, install.clean_outputs(outputs))
-            self.assertTrue(config_path.exists())
+            shutil.rmtree(codex_home)
+            output = self.shared_output(codex_home)
+            apply_xagent(output.config_path)
+            self.assertEqual(0, install.install_codex_hook_shared(output))
+            second = self.read_json(output.config_path)
+
+            self.assertEqual(first, second)
 
 
 class SkillScopeOutputTests(unittest.TestCase):

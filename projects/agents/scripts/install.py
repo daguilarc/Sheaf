@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import shlex
@@ -43,6 +44,9 @@ REPO_TARGET_DIRS = {
     "codex": Path(".codex/skills"),
 }
 CODEX_HOOK_COMMAND_PLACEHOLDER = "__SHEAF_CODEX_POST_COMPACT_HOOK_COMMAND__"
+CODEX_HOOK_TRUST_NOTICE = (
+    "Codex hook changes may require approval: run /hooks to review them."
+)
 OPENSPEC_MIN_NODE = (20, 19, 0)
 OPENSPEC_VENDOR_REL = Path("projects") / "agents" / "vendor" / "openspec"
 OPENSPEC_PACKAGE_REL = OPENSPEC_VENDOR_REL / "package"
@@ -85,6 +89,13 @@ class Skill:
 class Output:
     path: Path
     content: str
+
+
+@dataclass(frozen=True)
+class CodexHookSharedOutput:
+    config_path: Path
+    script_output: Output
+    desired_group: dict[str, object]
 
 
 def parse_skill_yaml(path: Path) -> dict[str, object]:
@@ -236,13 +247,18 @@ def replace_hook_command(value: object, command: str) -> tuple[object, int]:
     return value, 0
 
 
-def codex_hooks_content_for(
-    hooks_source: Path, repo_root: Path, installed_script: Path
-) -> str:
-    hooks_rel = hooks_source.relative_to(repo_root)
+def codex_hook_command(installed_script: Path) -> str:
+    return f"python3 {shlex.quote(str(installed_script))}"
+
+
+def codex_hook_desired_group_for(
+    hooks_source: Path, installed_script: Path
+) -> dict[str, object]:
     template = json.loads(hooks_source.read_text(encoding="utf-8"))
-    command = f"python3 {shlex.quote(str(installed_script))}"
-    rendered, replacement_count = replace_hook_command(template, command)
+    rendered, replacement_count = replace_hook_command(
+        template,
+        codex_hook_command(installed_script),
+    )
     if replacement_count != 1:
         raise ValueError(
             f"{hooks_source}: expected exactly one Codex hook command placeholder, "
@@ -250,10 +266,286 @@ def codex_hooks_content_for(
         )
     if not isinstance(rendered, dict):
         raise ValueError(f"{hooks_source}: hook template must be a JSON object")
-    rendered["_sheaf_agents_managed"] = (
-        f"{MANAGED_MARKER}; source={hooks_rel.as_posix()}"
+    hooks = rendered.get("hooks")
+    if not isinstance(hooks, dict):
+        raise ValueError(f'{hooks_source}: field "hooks" must be a JSON object')
+    session_start = hooks.get("SessionStart")
+    if not isinstance(session_start, list) or len(session_start) != 1:
+        raise ValueError(
+            f'{hooks_source}: field "hooks.SessionStart" must contain one group'
+        )
+    group = session_start[0]
+    if not isinstance(group, dict):
+        raise ValueError(
+            f'{hooks_source}: field "hooks.SessionStart[0]" must be a JSON object'
+        )
+    return copy.deepcopy(group)
+
+
+def build_codex_hook_shared_output(
+    repo_root: Path, *, home: Path, codex_home: Path | None
+) -> CodexHookSharedOutput:
+    home = home.expanduser().resolve()
+    resolved_codex_home = codex_home_for(home, codex_home).expanduser().resolve()
+    codex_hooks_root = repo_root / "projects" / "agents" / "global" / "codex" / "hooks"
+    codex_script_source = codex_hooks_root / "session_start_after_compact.py"
+    codex_hooks_source = codex_hooks_root / "hooks.json"
+    if not codex_script_source.exists():
+        raise ValueError(f"missing Codex hook script: {codex_script_source}")
+    if not codex_hooks_source.exists():
+        raise ValueError(f"missing Codex hook config: {codex_hooks_source}")
+
+    installed_codex_script = (
+        resolved_codex_home / "hooks" / "sheaf" / "session_start_after_compact.py"
     )
-    return json.dumps(rendered, indent=2) + "\n"
+    script_output = Output(
+        installed_codex_script,
+        script_content_for(codex_script_source, repo_root),
+    )
+    return CodexHookSharedOutput(
+        config_path=resolved_codex_home / "hooks.json",
+        script_output=script_output,
+        desired_group=codex_hook_desired_group_for(
+            codex_hooks_source,
+            installed_codex_script,
+        ),
+    )
+
+
+def validate_shared_hook_payload(path: Path, payload: dict[str, object]) -> None:
+    hooks = payload.get("hooks")
+    if hooks is None:
+        return
+    if not isinstance(hooks, dict):
+        raise RuntimeError(f'{path} field "hooks" must be a JSON object')
+    for event, groups in hooks.items():
+        if not isinstance(groups, list):
+            raise RuntimeError(f'{path} field "hooks.{event}" must be a JSON array')
+
+
+def load_codex_shared_hook_json(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+    raw = path.read_text(encoding="utf-8")
+    if not raw.strip():
+        raise RuntimeError(f"{path} is empty; remove it or restore its JSON object")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{path} must contain valid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{path} must contain a JSON object")
+    validate_shared_hook_payload(path, payload)
+    return payload
+
+
+def write_json_atomic(path: Path, payload: object) -> None:
+    serialized = json.dumps(payload, indent=2) + "\n"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staged = path.with_name(f".{path.name}.sheaf-stage")
+    staged.write_text(serialized, encoding="utf-8")
+    os.replace(staged, path)
+
+
+def codex_group_command(group: dict[str, object]) -> object:
+    hooks = group.get("hooks")
+    if not isinstance(hooks, list) or len(hooks) != 1:
+        return None
+    entry = hooks[0]
+    if not isinstance(entry, dict):
+        return None
+    return entry.get("command")
+
+
+def codex_group_is_owned(group: object, installed_script: Path) -> bool:
+    return (
+        isinstance(group, dict)
+        and group.get("matcher") == "^compact$"
+        and codex_group_command(group) == codex_hook_command(installed_script)
+    )
+
+
+def validate_agents_codex_group_merge_shape(
+    existing: dict[str, object],
+    desired_group: dict[str, object],
+    installed_script: Path,
+) -> None:
+    validate_shared_hook_payload(Path("Codex hooks payload"), existing)
+    if not codex_group_is_owned(desired_group, installed_script):
+        raise RuntimeError("desired Codex agents hook group is not canonical")
+
+
+def merge_agents_codex_group(
+    existing: dict[str, object],
+    desired_group: dict[str, object],
+    installed_script: Path,
+) -> tuple[dict[str, object], bool]:
+    validate_agents_codex_group_merge_shape(existing, desired_group, installed_script)
+    merged = copy.deepcopy(existing)
+    merged.pop("_sheaf_agents_managed", None)
+
+    hooks = merged.get("hooks")
+    if hooks is None:
+        hooks = {}
+    if not isinstance(hooks, dict):
+        raise RuntimeError('field "hooks" must be a JSON object')
+    session_start = hooks.get("SessionStart")
+    if session_start is None:
+        session_start = []
+    if not isinstance(session_start, list):
+        raise RuntimeError('field "hooks.SessionStart" must be a JSON array')
+
+    updated_groups: list[object] = []
+    kept_owned = False
+    for group in session_start:
+        if not codex_group_is_owned(group, installed_script):
+            updated_groups.append(group)
+            continue
+        if not kept_owned:
+            updated_groups.append(copy.deepcopy(desired_group))
+            kept_owned = True
+
+    if not kept_owned:
+        updated_groups.append(copy.deepcopy(desired_group))
+
+    hooks["SessionStart"] = updated_groups
+    merged["hooks"] = hooks
+    return merged, merged != existing
+
+
+def session_start_groups(payload: dict[str, object]) -> list[object]:
+    hooks = payload.get("hooks")
+    if not isinstance(hooks, dict):
+        return []
+    groups = hooks.get("SessionStart")
+    if not isinstance(groups, list):
+        return []
+    return groups
+
+
+def shared_hook_has_canonical_group(
+    payload: dict[str, object],
+    desired_group: dict[str, object],
+    installed_script: Path,
+) -> bool:
+    hooks = payload.get("hooks")
+    if not isinstance(hooks, dict):
+        return False
+    groups = hooks.get("SessionStart")
+    if not isinstance(groups, list):
+        return False
+    owned = [
+        group
+        for group in groups
+        if codex_group_is_owned(group, installed_script)
+    ]
+    return owned == [desired_group]
+
+
+def shared_payload_has_foreign_content(payload: dict[str, object]) -> bool:
+    hooks = payload.get("hooks")
+    if isinstance(hooks, dict):
+        empty_events = [
+            event
+            for event, groups in hooks.items()
+            if isinstance(groups, list) and not groups
+        ]
+        for event in empty_events:
+            del hooks[event]
+        if not hooks:
+            payload.pop("hooks", None)
+    return bool(payload)
+
+
+def install_codex_hook_shared(output: CodexHookSharedOutput) -> int:
+    script_status = install_outputs([output.script_output], force=False)
+    if script_status != 0:
+        return script_status
+    try:
+        existing = load_codex_shared_hook_json(output.config_path)
+        merged, changed = merge_agents_codex_group(
+            existing,
+            output.desired_group,
+            output.script_output.path,
+        )
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    group_array_changed = session_start_groups(existing) != session_start_groups(merged)
+    if not changed:
+        print(f"ok {output.config_path}")
+        return 0
+
+    write_json_atomic(output.config_path, merged)
+    print(f"wrote {output.config_path}")
+    if group_array_changed:
+        print(CODEX_HOOK_TRUST_NOTICE)
+    return 0
+
+
+def check_codex_hook_shared(output: CodexHookSharedOutput) -> int:
+    status = check_outputs([output.script_output])
+    try:
+        payload = load_codex_shared_hook_json(output.config_path)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if not shared_hook_has_canonical_group(
+        payload,
+        output.desired_group,
+        output.script_output.path,
+    ):
+        print(f"stale {output.config_path}", file=sys.stderr)
+        return 1
+    print(f"ok {output.config_path}")
+    return status
+
+
+def clean_codex_hook_shared(output: CodexHookSharedOutput) -> int:
+    script_status = clean_outputs([output.script_output])
+    if not output.config_path.exists():
+        return script_status
+    try:
+        payload = load_codex_shared_hook_json(output.config_path)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    cleaned = copy.deepcopy(payload)
+    cleaned.pop("_sheaf_agents_managed", None)
+    hooks = cleaned.get("hooks")
+    changed_group_array = False
+    if isinstance(hooks, dict):
+        groups = hooks.get("SessionStart")
+        if isinstance(groups, list):
+            kept_groups = [
+                group
+                for group in groups
+                if not codex_group_is_owned(group, output.script_output.path)
+            ]
+            if kept_groups != groups:
+                hooks["SessionStart"] = kept_groups
+                changed_group_array = True
+
+    if not changed_group_array and cleaned == payload:
+        print(f"ok {output.config_path}")
+        return script_status
+
+    if shared_payload_has_foreign_content(cleaned):
+        write_json_atomic(output.config_path, cleaned)
+        print(f"wrote {output.config_path}")
+    else:
+        output.config_path.unlink()
+        print(f"removed {output.config_path}")
+        parent = output.config_path.parent
+        try:
+            parent.rmdir()
+        except OSError:
+            pass
+    if changed_group_array:
+        print(CODEX_HOOK_TRUST_NOTICE)
+    return script_status
 
 
 def read_sources(repo_root: Path) -> tuple[Path, list[Skill], list[Skill]]:
@@ -357,32 +649,12 @@ def build_global_outputs(
                 )
             )
 
-    codex_hooks_root = repo_root / "projects" / "agents" / "global" / "codex" / "hooks"
-    codex_script_source = codex_hooks_root / "session_start_after_compact.py"
-    codex_hooks_source = codex_hooks_root / "hooks.json"
-    if not codex_script_source.exists():
-        raise ValueError(f"missing Codex hook script: {codex_script_source}")
-    if not codex_hooks_source.exists():
-        raise ValueError(f"missing Codex hook config: {codex_hooks_source}")
-    installed_codex_script = (
-        resolved_codex_home / "hooks" / "sheaf" / "session_start_after_compact.py"
+    codex_hook_shared = build_codex_hook_shared_output(
+        repo_root,
+        home=home,
+        codex_home=resolved_codex_home,
     )
-    outputs.append(
-        Output(
-            installed_codex_script,
-            script_content_for(codex_script_source, repo_root),
-        )
-    )
-    outputs.append(
-        Output(
-            resolved_codex_home / "hooks.json",
-            codex_hooks_content_for(
-                codex_hooks_source,
-                repo_root,
-                installed_codex_script,
-            ),
-        )
-    )
+    outputs.append(codex_hook_shared.script_output)
 
     repo_root_resolved = repo_root.resolve()
     in_repo = [output.path for output in outputs if output.path.is_relative_to(repo_root_resolved)]
@@ -870,6 +1142,20 @@ def build_outputs(
     return outputs
 
 
+def build_shared_codex_outputs(
+    repo_root: Path, *, scope: str, home: Path, codex_home: Path | None
+) -> list[CodexHookSharedOutput]:
+    if scope not in ("global", "all"):
+        return []
+    return [
+        build_codex_hook_shared_output(
+            repo_root,
+            home=home,
+            codex_home=codex_home,
+        )
+    ]
+
+
 def is_managed(content: str) -> bool:
     return MANAGED_MARKER in content
 
@@ -1003,6 +1289,12 @@ def main() -> int:
         home=args.home,
         codex_home=args.codex_home,
     )
+    shared_codex_outputs = build_shared_codex_outputs(
+        repo_root,
+        scope=args.scope,
+        home=args.home,
+        codex_home=args.codex_home,
+    )
     if args.scope in ("repo", "all"):
         try:
             if args.mode in ("install", "check"):
@@ -1028,6 +1320,10 @@ def main() -> int:
         install_status = install_outputs(outputs, force=args.force)
         if install_status != 0:
             return install_status
+        for output in shared_codex_outputs:
+            shared_status = install_codex_hook_shared(output)
+            if shared_status != 0:
+                return shared_status
         obsolete_status = clean_outputs(obsolete_outputs)
         cli_status = 0
         if args.scope in ("global", "all"):
@@ -1039,6 +1335,8 @@ def main() -> int:
         return obsolete_status or cli_status
     if args.mode == "check":
         check_status = check_outputs(outputs)
+        for output in shared_codex_outputs:
+            check_status = check_codex_hook_shared(output) or check_status
         obsolete_status = check_obsolete_outputs(obsolete_outputs)
         cli_status = 0
         if args.scope in ("global", "all"):
@@ -1046,6 +1344,8 @@ def main() -> int:
         return check_status or obsolete_status or cli_status
     if args.mode == "clean":
         clean_status = clean_outputs(outputs)
+        for output in shared_codex_outputs:
+            clean_status = clean_codex_hook_shared(output) or clean_status
         obsolete_status = clean_outputs(obsolete_outputs)
         cli_status = 0
         if args.scope in ("global", "all"):
