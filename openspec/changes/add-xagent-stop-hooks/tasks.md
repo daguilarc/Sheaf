@@ -8,9 +8,9 @@
 
 ## 2. xagent Global Installation
 
-- [ ] 2.1 Add failing installer tests for fresh and pre-populated Claude/Codex hook configuration, append/in-place order preservation, canonical duplicate removal, repeat-install idempotence, malformed-shape rejection, legacy agents-marker tolerance, atomic replacement, backup recovery, and the Codex trust notice.
-- [ ] 2.2 Package the Python hook program under the installed plugin's `scripts/`, keep the plugin manifest free of unsupported hook fields, ship no plugin-root `hooks.json` or `hooks/` directory, and extend `install_global.py` to register stable absolute observer and stop commands with an installer-resolved state root in `$HOME/.claude/settings.json` and resolved `$CODEX_HOME/hooks.json`.
-- [ ] 2.3 Extend plugin packaging and installation assertions to prove the installed hook program exists at the registered paths, no plugin-root hook registration exists, the manifest passes the existing validator, and repeated installation leaves exactly one canonical xagent group per event in each harness.
+- [x] 2.1 Add failing installer tests for fresh and pre-populated Claude/Codex hook configuration, append/in-place order preservation, canonical duplicate removal, repeat-install idempotence, malformed-shape rejection, legacy agents-marker tolerance, atomic replacement, backup recovery, and the Codex trust notice.
+- [x] 2.2 Package the Python hook program under the installed plugin's `scripts/`, keep the plugin manifest free of unsupported hook fields, ship no plugin-root `hooks.json` or `hooks/` directory, and extend `install_global.py` to register stable absolute observer and stop commands with an installer-resolved state root in `$HOME/.claude/settings.json` and resolved `$CODEX_HOME/hooks.json`.
+- [x] 2.3 Extend plugin packaging and installation assertions to prove the installed hook program exists at the registered paths, no plugin-root hook registration exists, the manifest passes the existing validator, and repeated installation leaves exactly one canonical xagent group per event in each harness.
 
 ## 3. Agents Installer Coexistence
 
