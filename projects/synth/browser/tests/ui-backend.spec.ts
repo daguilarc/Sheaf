@@ -668,12 +668,12 @@ test("does not flow unbounded controls after explicit draw content", async ({ pa
   expect(bounds.root.rect).toEqual({ x: 0, y: 0, width: 320, height: 240 });
   expect(bounds.draw.rect).toEqual({ x: 20, y: 16, width: 280, height: 80 });
   for (const unbounded of [bounds.label, bounds.button, bounds.slider]) {
-    // Each is placed at its parent's origin with zero extent. The rendered rect
-    // is checked for position only: a `<button>`'s border-box floor is its own
-    // border and padding, which is the DOM's box model rather than any backend
-    // sizing decision.
+    // Each is placed at its parent's origin with zero extent (sprs-6) — and the
+    // *rendered* extent is zero too, not just the inline style. A `<button>`'s
+    // border-box floor is its own border and padding, which would otherwise
+    // render 26x2 pixels for a node the tree says has none.
     expect(unbounded.extent).toEqual({ left: "0px", top: "0px", width: "0px", height: "0px" });
-    expect({ x: unbounded.rect.x, y: unbounded.rect.y }).toEqual({ x: 0, y: 0 });
+    expect(unbounded.rect).toEqual({ x: 0, y: 0, width: 0, height: 0 });
   }
 });
 
@@ -1147,6 +1147,53 @@ test("paints a geometry-free command without displacing the rest of the buffer",
   expect(pixel).toEqual([30, 180, 70, 255]);
 });
 
+// The guard on the deleted draw classifier. Every other paint fixture keeps its
+// geometry inside the node, where restoring `drawCommandsLookLocal` plus
+// `context.translate(-bounds.x, -bounds.y)` is an arithmetic identity and would
+// still pass. These three commands are chosen so it is not: the 60-wide fill
+// overhangs a 40-wide node and the third has a negative origin, so
+// `boundsLookLocal` fails for them and the old code classified the *whole*
+// buffer as surface-absolute — painting every command translated by minus the
+// node origin, i.e. off the canvas entirely. Under the node-local contract
+// (sru-46) the canvas origin is the node origin, and the overhang is simply
+// clipped by the canvas. If any of these pixels reads transparent, a coordinate
+// classifier has come back.
+test("paints an overhanging draw buffer node-locally with no classifier fallback", async ({ page }) => {
+  const overhangingFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 100, 100], children: ["draw"] },
+    { id: "draw", kind: NodeKind.Draw, bounds: [30, 40, 40, 30], draws: [
+      { kind: DrawKind.Fill, bounds: [0, 0, 60, 30], color: [200, 40, 40, 255] },
+      { kind: DrawKind.Fill, bounds: [-10, 20, 20, 6], color: [40, 200, 40, 255] },
+      { kind: DrawKind.Fill, bounds: [0, 0, 10, 10], color: [40, 40, 200, 255] },
+    ] },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const pixels = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const canvas = document.querySelector<HTMLCanvasElement>('[data-synth-node-id="draw"] canvas')!;
+    const context = canvas.getContext("2d")!;
+    const at = (x: number, y: number) => Array.from(context.getImageData(x, y, 1, 1).data);
+    return {
+      size: [canvas.width, canvas.height],
+      // Only the overhanging fill reaches here, and only because it was not
+      // shifted by the node origin.
+      overhang: at(35, 25),
+      // Inside the negative-origin fill's visible remainder.
+      negativeOrigin: at(2, 22),
+      // The last fill, painted over the first two at the node's own origin.
+      lastAtOrigin: at(1, 1),
+    };
+  }, Array.from(new Uint8Array(overhangingFrame)));
+
+  expect(pixels).toEqual({
+    size: [40, 30],
+    overhang: [200, 40, 40, 255],
+    negativeOrigin: [40, 200, 40, 255],
+    lastAtOrigin: [40, 40, 200, 255],
+  });
+});
+
 test("fits a fixed portable surface into a narrow browser viewport", async ({ page }) => {
   await page.setViewportSize({ width: 342, height: 500 });
   const fixedFrame = makeCommandBuffer([
@@ -1192,6 +1239,9 @@ async function renderAndRead(page: Page, buffer: ArrayBuffer, ids: string[]) {
         styleHeight: element.style.height,
         surfaceX: rect.x,
         surfaceY: rect.y,
+        renderedWidth: rect.width,
+        renderedHeight: rect.height,
+        overflow: getComputedStyle(element).overflowX,
       }];
     }));
   }, { bytes: Array.from(new Uint8Array(buffer)), ids });
@@ -1231,10 +1281,14 @@ test("keeps an overhanging child parent-relative", async ({ page }) => {
 test("does not flow a node without resolved bounds", async ({ page }) => {
   const unresolvedFrame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 400, 300], children: ["parent"] },
-    { id: "parent", kind: NodeKind.Section, bounds: [50, 40, 200, 100], children: ["orphan"] },
+    { id: "parent", kind: NodeKind.Section, bounds: [50, 40, 200, 100], children: ["orphan", "field"] },
     { id: "orphan", kind: NodeKind.Label, bounds: [0, 0, 0, 0], text: "Unresolved" },
+    // A `<select>`-bearing kind whose own border and padding, and whose unsized
+    // child control, would each render pixels the tree does not describe.
+    { id: "field", kind: NodeKind.ComboBox, bounds: [0, 0, 0, 0], selectedOption: "one",
+      options: [{ id: "one", label: "A long option label" }] },
   ]);
-  const layout = await renderAndRead(page, unresolvedFrame, ["orphan"]);
+  const layout = await renderAndRead(page, unresolvedFrame, ["orphan", "field"]);
 
   expect(layout.orphan.styleLeft).toBe("0px");
   expect(layout.orphan.styleTop).toBe("0px");
@@ -1243,6 +1297,16 @@ test("does not flow a node without resolved bounds", async ({ page }) => {
   // It renders at its parent's origin with zero extent, never flowed or sized.
   expect(layout.orphan.surfaceX).toBe(50);
   expect(layout.orphan.surfaceY).toBe(40);
+  // Zero-based extent is the *rendered* extent, not only the inline style: the
+  // border-box floor of a control's own border and padding is exactly the kind
+  // of backend-supplied size sprs-6 rules out.
+  for (const zeroExtent of [layout.orphan, layout.field]) {
+    expect(zeroExtent.renderedWidth).toBe(0);
+    expect(zeroExtent.renderedHeight).toBe(0);
+    // And the toolkit's own unsized inner control is clipped to that extent
+    // rather than spilling out of a box the tree gave no room to.
+    expect(zeroExtent.overflow).toBe("hidden");
+  }
 });
 
 test("emits both the prefixed and the unprefixed node id and kind attributes", async ({ page }) => {
@@ -1319,11 +1383,12 @@ test("renders one carried colour on the surface each node kind assigns it", asyn
 
 test("derives selected and disabled presentation from the carried colour", async ({ page }) => {
   const stateFrame = makeCommandBuffer([
-    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 200], children: ["plain", "selected", "disabled", "unstyled"] },
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 200], children: ["plain", "selected", "disabled", "unstyled", "unstyled-disabled"] },
     { id: "plain", kind: NodeKind.Button, bounds: [0, 0, 80, 24], label: "Plain", color: [0, 120, 0, 255] },
     { id: "selected", kind: NodeKind.Button, bounds: [0, 30, 80, 24], label: "Selected", selected: true, color: [0, 120, 0, 255] },
     { id: "disabled", kind: NodeKind.Button, bounds: [0, 60, 80, 24], label: "Disabled", enabled: false, color: [0, 120, 0, 255] },
     { id: "unstyled", kind: NodeKind.Button, bounds: [0, 90, 80, 24], label: "Unstyled" },
+    { id: "unstyled-disabled", kind: NodeKind.Button, bounds: [0, 120, 80, 24], label: "Unstyled off", enabled: false },
   ]);
   await page.goto("http://127.0.0.1:4173/public/index.html");
   const fills = await page.evaluate(async (bytes) => {
@@ -1339,6 +1404,9 @@ test("derives selected and disabled presentation from the carried colour", async
       // Chromium serializes a computed alpha to two decimals, which cannot
       // distinguish adjacent alpha bytes. Read the derived value exactly.
       disabledCarried: elementOf("disabled").style.getPropertyValue("--synth-fill"),
+      disabledOpacity: getComputedStyle(elementOf("disabled")).opacity,
+      unstyledDisabledFill: fillOf("unstyled-disabled"),
+      unstyledDisabledOpacity: getComputedStyle(elementOf("unstyled-disabled")).opacity,
     };
   }, Array.from(new Uint8Array(stateFrame)));
 
@@ -1346,12 +1414,54 @@ test("derives selected and disabled presentation from the carried colour", async
   // `juce::Colour(0, 120, 0).brighter(0.14f)`, so both backends derive the same
   // selected fill from the same carried colour rather than substituting one.
   expect(fills.selected).toBe("rgb(31, 136, 31)");
-  // `darker(0.35f).withMultipliedAlpha(0.65f)`, the JUCE backend's disabled fold:
-  // channel 120 becomes 88 and alpha 255 becomes 166.
-  expect(fills.disabled).toBe("rgba(0, 88, 0, 0.65)");
-  expect(fills.disabledCarried).toBe(`rgba(0, 88, 0, ${166 / 255})`);
-  // Carrying no colour keeps the backend's own flat default in full.
+  // `juce::Colour(0, 120, 0).darker(0.35f)` and nothing else — the whole of
+  // `StateColourFor`'s disabled fold. Channel 120 becomes 88 and the carried
+  // alpha is untouched, so the two backends produce the same four bytes.
+  expect(fills.disabled).toBe("rgb(0, 88, 0)");
+  expect(fills.disabledCarried).toBe("rgba(0, 88, 0, 1)");
+  // The element dim on top of it is `component.setAlpha(0.58f)`'s counterpart,
+  // which the JUCE backend applies to every disabled node whether it carries a
+  // colour or not. So it is unconditional here too: one colour fold, one dim.
+  expect(fills.disabledOpacity).toBe("0.58");
+  // Carrying no colour keeps the backend's own flat default in full, dimmed by
+  // the same one dim.
   expect(fills.unstyled).toBe("rgb(37, 42, 47)");
+  expect(fills.unstyledDisabledFill).toBe("rgb(37, 42, 47)");
+  expect(fills.unstyledDisabledOpacity).toBe("0.58");
+});
+
+// The two remaining sru-45 derived states. Both are folds of the carried colour
+// rather than palette substitutions. Neither is a cross-backend parity claim:
+// JUCE has no hover state, and its pressed fill is `buttonOnColourId`.
+test("derives hover and pressed presentation from the carried colour", async ({ page }) => {
+  const stateFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 100], children: ["carried", "unstyled"] },
+    { id: "carried", kind: NodeKind.Button, bounds: [0, 0, 80, 24], label: "Carried", color: [0, 120, 0, 255] },
+    { id: "unstyled", kind: NodeKind.Button, bounds: [0, 40, 80, 24], label: "Unstyled" },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+  }, Array.from(new Uint8Array(stateFrame)));
+  const fillOf = (id: string) => page.locator(`[data-node-id="${id}"]`)
+    .evaluate((element) => getComputedStyle(element).backgroundColor);
+
+  const carried = page.locator('[data-node-id="carried"]');
+  await carried.hover();
+  // `brighter(0.14f)` of the carried fill, the same fold selected uses.
+  expect(await fillOf("carried")).toBe("rgb(31, 136, 31)");
+  const box = (await carried.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  // Pressed brightens the *carried* colour by 0.24 rather than compounding with
+  // the hover fold, so holding a selected control does not stack two folds.
+  expect(await fillOf("carried")).toBe("rgb(49, 146, 49)");
+  await page.mouse.up();
+
+  // A node carrying nothing keeps the stylesheet's own hover look.
+  await page.locator('[data-node-id="unstyled"]').hover();
+  expect(await fillOf("unstyled")).toBe("rgb(48, 56, 62)");
 });
 
 test("reads a checked toggle as selected when deriving its carried accent", async ({ page }) => {

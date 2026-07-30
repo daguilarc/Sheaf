@@ -97,6 +97,15 @@ export class BrowserUiBackend {
     // with zero extent (sprs-6). The backend never flows or sizes it.
     element.style.width = `${node.bounds.width}px`;
     element.style.height = `${node.bounds.height}px`;
+    // `box-sizing: border-box` floors a used size at border plus padding, so a
+    // zero-extent `<button>` would still render 26x2 pixels of its own chrome,
+    // and an unsized `<select>` child would spill out of a zero-extent box.
+    // Dropping the decorations and clipping makes the rendered extent the
+    // resolved extent. This grows nothing and sizes nothing.
+    const zeroExtent = node.bounds.width <= 0 || node.bounds.height <= 0;
+    element.style.borderWidth = zeroExtent ? "0" : "";
+    element.style.padding = zeroExtent ? "0" : "";
+    element.style.overflow = zeroExtent ? "hidden" : node.kind === NodeKind.ScrollArea ? "auto" : "";
     const acceptsPointer = acceptsPointerEvents(node);
     element.style.pointerEvents = acceptsPointer ? "auto" : "none";
     element.style.zIndex = acceptsPointer ? "1" : "0";
@@ -122,7 +131,7 @@ export class BrowserUiBackend {
     if (node.kind === NodeKind.ComboBox) { const select = document.createElement("select"); element.append(select); select.addEventListener("change", () => this.dispatchValue(element, select.value)); }
     if (node.kind === NodeKind.TextField) { const input = document.createElement("input"); input.type = "text"; element.append(input); input.addEventListener("input", () => this.dispatchValue(element, input.value)); }
     if (node.kind === NodeKind.Draw) { const canvas = document.createElement("canvas"); element.append(canvas); }
-    if (node.kind === NodeKind.ScrollArea) { const content = document.createElement("div"); content.style.position = "relative"; element.scrollContent = content; element.append(content); element.style.overflow = "auto"; }
+    if (node.kind === NodeKind.ScrollArea) { const content = document.createElement("div"); content.style.position = "relative"; element.scrollContent = content; element.append(content); }
     if (node.kind === NodeKind.Button) element.addEventListener("click", () => this.dispatchValue(element));
     element.addEventListener("dblclick", () => this.dispatchDoubleClick(element));
     return element;
@@ -402,10 +411,12 @@ function setCarriedProperty(element: NodeElement, name: string, value?: string) 
 function flexAlignment(align: number) { return align === 1 ? "center" : align === 2 ? "flex-end" : "flex-start"; }
 
 // Selected and disabled presentation is derived from the carried colour, never
-// substituted from a palette (sru-45). Mirrors `StateColourFor` in
-// `PortableJuceBackend.hpp` so both backends land on the same bytes.
+// substituted from a palette (sru-45). Fold for fold the same as `StateColourFor`
+// in `PortableJuceBackend.hpp` — `darker(0.35f)` disabled, `brighter(0.14f)`
+// selected, alpha carried through untouched — so both backends land on the same
+// bytes for the same carried colour.
 function stateColor(color: Color, selected: boolean, enabled: boolean): Color {
-  if (!enabled) return withMultipliedAlpha(darker(color, 0.35), 0.65);
+  if (!enabled) return darker(color, 0.35);
   return selected ? brighter(color, 0.14) : color;
 }
 // `juce::Colour::brighter`/`darker`: one factor over each channel's distance
@@ -419,10 +430,6 @@ function darker(color: Color, amount: number): Color {
   const factor = 1 / (1 + amount);
   const channel = (value: number) => Math.trunc(factor * value);
   return { r: channel(color.r), g: channel(color.g), b: channel(color.b), a: color.a };
-}
-// `juce::Colour::withMultipliedAlpha` rounds where the channel casts truncate.
-function withMultipliedAlpha(color: Color, factor: number): Color {
-  return { ...color, a: Math.min(255, Math.max(0, Math.round(color.a * factor))) };
 }
 
 function enabledNodeOf(element: NodeElement) { const node = element.synthNode; return node?.enabled ? node : undefined; }

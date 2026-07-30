@@ -120,6 +120,11 @@ body {
   display: block;
 }
 
+/* The element-level dim every disabled node gets, carried colour or not. It is
+   the counterpart of `component.setAlpha(0.58f)` in `PortableJuceBackend.hpp`,
+   which is likewise unconditional, so the two backends dim a disabled node the
+   same way and by the same amount. The carried colour's own disabled fold
+   (`darker(0.35)`) is applied exactly once, before this. */
 #synth-root [aria-disabled="true"] {
   opacity: 0.58;
 }
