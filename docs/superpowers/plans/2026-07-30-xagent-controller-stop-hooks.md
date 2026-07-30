@@ -188,10 +188,13 @@ def session_paths(state_root: Path, harness: str, session_id: str) -> tuple[Path
 `extract_success_result()` must accept only:
 
 1. a dictionary under `tool_response["structuredContent"]`; or
-2. exactly one JSON text block whose decoded value is a dictionary.
+2. Claude Code's captured direct JSON-string `tool_response` whose decoded
+   value is a dictionary; or
+3. exactly one JSON text block whose decoded value is a dictionary.
 
-Reject `tool_response["isError"] is True`, top-level `error`, malformed JSON,
-arrays, and nested-identity-only errors.
+Reject `tool_response["isError"] is True` when the outer envelope can carry it,
+a decoded top-level `error`, malformed JSON, arrays, and nested-identity-only
+errors.
 
 - [ ] **Step 4: Implement the one-second per-session lock and atomic state writes**
 

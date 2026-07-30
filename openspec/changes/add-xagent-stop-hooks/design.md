@@ -86,8 +86,9 @@ only registration path. The plugin manifest remains within the validator's
 accepted field set.
 
 The observer first requires a successful result envelope. It reads top-level
-fields from `structuredContent` when available and otherwise parses the one
-documented JSON text block fallback. It rejects `isError`, a top-level `error`,
+fields from `structuredContent` when available, accepts Claude Code's captured
+direct JSON-string `tool_response` form, and otherwise parses the one documented
+JSON text block fallback. It rejects `isError`, a decoded top-level `error`,
 missing required fields, and nested identifiers in error `details`. Sanitized
 payloads captured from Claude Code and Codex become committed fixtures so the
 adapters are tested against harness output rather than invented shapes.
