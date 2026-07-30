@@ -244,7 +244,7 @@ function newestRecordsWithinBudget(
       + separatorBytes
       + record.bytes;
     if (snapshotByteLengthFromInputBytes(candidateInputBytes) > maxBytes) {
-      break;
+      continue;
     }
     selectedNewestFirst.push(record.value);
     recordListBytes += separatorBytes + record.bytes;

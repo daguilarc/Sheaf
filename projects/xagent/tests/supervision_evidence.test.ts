@@ -101,6 +101,40 @@ test("an oversized record is omitted whole and does not prevent later fitting re
   assert.equal(JSON.stringify(snapshot).includes("field_5999"), false);
 });
 
+test("newest record that cannot fit with the prompt is skipped while older fitting records are retained", () => {
+  const evidence = new ProviderJsonEvidenceWindow({
+    harness: "claude_code",
+    originalPrompt: `Bounded prompt that consumes request budget ${"p".repeat(15_000)}`,
+  });
+  const older = [
+    { type: "assistant", id: "older-1", content: "small-1" },
+    { type: "assistant", id: "older-2", content: "small-2" },
+    { type: "assistant", id: "older-3", content: "small-3" },
+  ];
+  for (const record of older) {
+    evidence.record(record);
+  }
+
+  const newest: Record<string, string> = {
+    type: "assistant",
+    id: "newest-too-large-for-prompt-budget",
+  };
+  for (let index = 0; index < 1_800; index += 1) {
+    newest[`field_${index}`] = `value_${index}_pad`;
+  }
+  const newestBytes = Buffer.byteLength(JSON.stringify(newest), "utf8");
+  assert.ok(newestBytes < maxInputBytes);
+  evidence.record(newest);
+
+  const snapshot = evidence.snapshot();
+
+  assert.deepEqual(snapshot.recent_provider_json, older);
+  assert.equal(snapshot.truncated, true);
+  assert.equal(snapshot.input_bytes, Buffer.byteLength(JSON.stringify(snapshot), "utf8"));
+  assert.ok(snapshot.input_bytes <= maxInputBytes);
+  assert.equal(JSON.stringify(snapshot).includes("newest-too-large-for-prompt-budget"), false);
+});
+
 test("byte pressure evicts oldest complete records and keeps newest complete records", () => {
   const evidence = new ProviderJsonEvidenceWindow({
     harness: "claude_code",
