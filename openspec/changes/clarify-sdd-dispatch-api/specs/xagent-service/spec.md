@@ -62,6 +62,24 @@ THE service SHALL refuse a follow-up in every supervision phase except `ready`, 
 - **THEN** the fix prompt is rendered and submitted, appearing as a `turn.submitted` event
 - **AND** the `sdd_agents` table is unchanged
 
+#### Scenario: Dead agent gets a signpost, not a dead end
+
+- **WHEN** a controller sends kind `fix` to an agent whose run is terminal or absent from the run manager
+- **THEN** the service returns `sdd_agent_not_live`
+- **AND** the error details state that recovery is `xagent_sdd_start` with role `fixer` for the same plan and task
+
+#### Scenario: Kind must match start role
+
+- **WHEN** a controller sends kind `re-review` to an agent whose start role is `implementer`
+- **THEN** the service rejects the call with a structured role-mismatch error
+- **AND** submits nothing to the provider
+
+#### Scenario: Careless controllers cannot corrupt the ledger
+
+- **WHEN** a controller double-calls `xagent_sdd_followup`, skips it entirely, or calls it after the agent died
+- **THEN** no `sdd_agents` row is created, mutated, or orphaned in any of those cases
+- **AND** every submitted continuation remains recoverable from `turn.submitted` events
+
 #### Scenario: Re-review without a diff fails at the facade
 
 - **WHEN** a controller sends kind `re-review` with no `diff` and no derivable review-package file in the plan workspace
@@ -78,7 +96,7 @@ THE advertised schema SHALL NOT reject anything the union accepts. Discovery may
 
 BECAUSE the SDK validates call arguments against the registered advertised schema before the handler runs, and a plain object schema strips keys it does not declare, THE advertised schemas for both dispatch tools SHALL preserve unknown keys so the union receives them. A retired or misspelled field that the advertised schema silently removes cannot be rejected by the union, which would convert a loud error into a wrong dispatch.
 
-#### Scenario: A cold client can construct a start call
+#### Scenario: A cold client can construct a dispatch
 
 - **WHEN** an MCP client lists tools and reads the `xagent_sdd_start` input schema without prior knowledge of the service
 - **THEN** the schema names `role` with its four permitted values, and the assignment and role-specific fields with their types
@@ -87,10 +105,10 @@ BECAUSE the SDK validates call arguments against the registered advertised schem
 #### Scenario: Field-less schemas are a defect
 
 - **WHEN** any advertised SDD dispatch tool schema is inspected
-- **THEN** it declares properties
+- **THEN** it declares at least the discriminating field and the fields shared by every variant
 - **AND** a schema with no properties fails the service's own tool-surface tests
 
-#### Scenario: Advertised superset accepts every union-valid payload
+#### Scenario: Discovery never hides a legal call
 
 - **WHEN** a payload that the union accepts is checked against the advertised schema, for every start role and every follow-up kind
 - **THEN** the advertised schema accepts it too
