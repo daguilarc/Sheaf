@@ -34,6 +34,19 @@ Apply to every task. Copy into your working context before you start.
 - **The shell** adds the sidebar offset to *every* sidebar node (`RuntimeMainComponent.hpp:117`). Under parent-relative semantics the sidebar root already carries that offset, so leaving the loop double-offsets every descendant through component and DOM nesting. → Task 5.
 - **Both apps** append unbounded labels, buttons, toggles, and sliders directly beneath `Root`; the auto-flow cursor is the only thing positioning them. Compilation shims preserve the *signature*, not the layout. → Task 6.
 
+A **fourth** producer was missed here and found during Task 8's review: the
+wizard chooser page. `BuildWizardChooserTree` (`ControllersPageUI.hpp:2158-2217`)
+sets bounds on its root and on nothing else, so its Back button, heading, status
+text, and candidate buttons were positioned entirely by the auto-flow cursor.
+Tasks 7 and 8 therefore both shipped against a violated premise. The JUCE side
+has been silently invisible since Task 7 — every chooser test asserts node
+presence and actions, none asserts bounds — and the browser side survived Task 8
+only because a boundless `<button>` kept a clickable 26x2 border-box sliver,
+which Task 8's zero-extent fix correctly removed. Repaired as Task 8b, which
+must land before Task 9's geometry property test walks the same producer. The
+lesson for any future deletion: "no producer left needing rescue" needed a
+grep-backed enumeration of every tree-building site, not a hand-listed three.
+
 Tasks 4-6 therefore run **before** Tasks 7-8 delete the classifiers and the cursor. Intermediate states stay green: while the classifiers still exist, a well-formed parent-relative tree whose children fit their parents is classified parent-local and translated correctly, so the classifiers are inert rather than wrong once producers have converted. That is precisely why the File page — whose nested children do *not* fit — must convert first.
 
 ## Shared Interfaces
