@@ -169,6 +169,7 @@ xagent-plugin-build:
 
 xagent-plugin-test:
 	python3 -m unittest plugins/xagent/scripts/install_global_test.py
+	python3 -m unittest plugins/xagent/scripts/controller_stop_hook_test.py
 	python3 plugins/xagent/scripts/package_xagent.py --check
 	python3 $(PLUGIN_CREATOR_VALIDATOR) plugins/xagent
 

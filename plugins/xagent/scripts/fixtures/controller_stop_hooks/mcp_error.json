@@ -1,0 +1,31 @@
+{
+  "cwd": "<PROJECT_DIR>",
+  "hook_event_name": "PostToolUse",
+  "model": "gpt-5.6-sol",
+  "permission_mode": "bypassPermissions",
+  "session_id": "codex-session-1",
+  "tool_input": {
+    "after_sequence": 0,
+    "run_id": "missing-capture-run"
+  },
+  "tool_name": "mcp__xagent__xagent_await",
+  "tool_response": {
+    "content": [
+      {
+        "text": "{\"error\":\"unknown_run\",\"message\":\"Unknown xagent run: missing-capture-run\",\"details\":{\"run_id\":\"missing-capture-run\"}}",
+        "type": "text"
+      }
+    ],
+    "isError": true,
+    "structuredContent": {
+      "details": {
+        "run_id": "missing-capture-run"
+      },
+      "error": "unknown_run",
+      "message": "Unknown xagent run: missing-capture-run"
+    }
+  },
+  "tool_use_id": "<TOOL_USE_ID>",
+  "transcript_path": "<TRANSCRIPT_PATH>",
+  "turn_id": "<TURN_ID>"
+}
