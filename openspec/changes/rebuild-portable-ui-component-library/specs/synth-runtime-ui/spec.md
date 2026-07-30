@@ -59,10 +59,11 @@ WHEN a portable tree is built through container components, THE component librar
 - **THEN** the child resolves to 399.28 before clamping, independently of the container's gaps and its siblings' extents
 - **AND** declaring a maximum of 390 alongside it resolves the child to exactly 390
 
-#### Scenario: Infeasible minima overflow deterministically
+#### Scenario: Infeasible minima are deterministic, and then fail
 - **WHEN** a container's children declare minimum extents whose sum exceeds the container's extent
 - **THEN** no child resolves below its declared minimum
-- **AND** the children overflow the container in declaration order, deterministically, rather than being shrunk
+- **AND** the order in which they exceed the container is deterministic and follows declaration order, so the diagnostic always names the same first offending child
+- **AND** resolution then fails per sru-54 rather than yielding a tree whose overflowing children would be silently clipped — determinism describes *how* the overflow is computed, not that it is an acceptable result
 
 #### Scenario: An in-flow Draw node is given its resolved extent
 - **WHEN** a `Draw` node participates in flow and supplies a command factory instead of fixed geometry
