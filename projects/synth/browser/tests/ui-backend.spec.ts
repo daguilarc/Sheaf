@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { BrowserUiBackend, CommandBufferError, decodeCommandBuffer } from "../src/ui.js";
 import { DrawKind, NodeKind, makeCommandBuffer } from "./fixtures/command-buffer.js";
 
@@ -639,7 +639,10 @@ test("draws arcs with isolated round cap and join state", async ({ page }) => {
   ]);
 });
 
-test("flows unbounded controls after explicit draw content", async ({ page }) => {
+// Re-pinned from the retired auto-flow contract: the cursor that placed these
+// unbounded controls is gone, so each renders at its parent's origin with zero
+// extent (sprs-6) rather than at a backend-chosen position and size.
+test("does not flow unbounded controls after explicit draw content", async ({ page }) => {
   const layoutFrame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 320, 240], children: ["draw", "label", "button", "slider"] },
     { id: "draw", kind: NodeKind.Draw, bounds: [20, 16, 280, 80] },
@@ -652,23 +655,36 @@ test("flows unbounded controls after explicit draw content", async ({ page }) =>
     const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
     new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
     const read = (id: string) => {
-      const rect = document.querySelector(`[data-synth-node-id="${id}"]`)!.getBoundingClientRect();
-      return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+      const element = document.querySelector<HTMLElement>(`[data-synth-node-id="${id}"]`)!;
+      const rect = element.getBoundingClientRect();
+      return {
+        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        extent: { left: element.style.left, top: element.style.top, width: element.style.width, height: element.style.height },
+      };
     };
-    return { root: read("root"), label: read("label"), button: read("button"), slider: read("slider") };
+    return { root: read("root"), draw: read("draw"), label: read("label"), button: read("button"), slider: read("slider") };
   }, Array.from(new Uint8Array(layoutFrame)));
 
-  expect(bounds.root).toEqual({ x: 0, y: 0, width: 320, height: 240 });
-  expect(bounds.label).toEqual({ x: 12, y: 104, width: 120, height: 22 });
-  expect(bounds.button).toEqual({ x: 140, y: 104, width: 72, height: 28 });
-  expect(bounds.slider).toEqual({ x: 12, y: 140, width: 140, height: 28 });
+  expect(bounds.root.rect).toEqual({ x: 0, y: 0, width: 320, height: 240 });
+  expect(bounds.draw.rect).toEqual({ x: 20, y: 16, width: 280, height: 80 });
+  for (const unbounded of [bounds.label, bounds.button, bounds.slider]) {
+    // Each is placed at its parent's origin with zero extent. The rendered rect
+    // is checked for position only: a `<button>`'s border-box floor is its own
+    // border and padding, which is the DOM's box model rather than any backend
+    // sizing decision.
+    expect(unbounded.extent).toEqual({ left: "0px", top: "0px", width: "0px", height: "0px" });
+    expect({ x: unbounded.rect.x, y: unbounded.rect.y }).toEqual({ x: 0, y: 0 });
+  }
 });
 
-test("auto-sized controls contain long generic labels", async ({ page }) => {
+// Re-pinned from the retired auto-sizing contract: the backend no longer grows a
+// control to contain its label. It clips the label inside the resolved extent
+// (sru-49) so no neighbour moves.
+test("clips a long toggle label inside its resolved extent", async ({ page }) => {
   const labelFrame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 320, 120], children: ["toggle", "button"] },
-    { id: "toggle", kind: NodeKind.Toggle, label: "Long Modifier", checked: false },
-    { id: "button", kind: NodeKind.Button, label: "Following" },
+    { id: "toggle", kind: NodeKind.Toggle, bounds: [0, 0, 60, 24], label: "Long Modifier", checked: false },
+    { id: "button", kind: NodeKind.Button, bounds: [70, 0, 80, 24], label: "Following" },
   ]);
   await page.goto("http://127.0.0.1:4173/public/index.html");
   const layout = await page.evaluate(async (bytes) => {
@@ -680,46 +696,67 @@ test("auto-sized controls contain long generic labels", async ({ page }) => {
     const buttonBounds = button.getBoundingClientRect();
     return {
       toggleRight: toggleBounds.right,
+      toggleWidth: toggleBounds.width,
       buttonLeft: buttonBounds.left,
       toggleClientWidth: toggle.clientWidth,
       toggleScrollWidth: toggle.scrollWidth,
+      toggleOverflow: getComputedStyle(toggle).overflowX,
     };
   }, Array.from(new Uint8Array(labelFrame)));
 
-  expect(layout.toggleScrollWidth).toBeLessThanOrEqual(layout.toggleClientWidth);
-  expect(layout.toggleRight).toBeLessThanOrEqual(layout.buttonLeft);
+  expect(layout.toggleWidth).toBe(60);
+  expect(layout.toggleRight).toBe(60);
+  // The label genuinely does not fit, and the backend clips it rather than
+  // widening the node, so the following control keeps its own resolved x.
+  expect(layout.toggleScrollWidth).toBeGreaterThan(layout.toggleClientWidth);
+  expect(layout.toggleOverflow).toBe("hidden");
+  expect(layout.buttonLeft).toBe(70);
 });
 
-test("sizes long status text within its nearest root before placing the next control", async ({ page }) => {
+// Re-pinned from the retired auto-flow contract. The numbers are unchanged
+// because they are now the producer's resolved bounds rather than the cursor's
+// output: 376 wide within a 400 root at margin 12, and the next control 8 below.
+test("fits long status text inside its resolved extent without moving the next control", async ({ page }) => {
   const text = "x".repeat(80);
   const labelFrame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 400, 60], children: ["status", "button"] },
-    { id: "status", kind: NodeKind.StatusText, text },
-    { id: "button", kind: NodeKind.Button, label: "Following" },
+    { id: "status", kind: NodeKind.StatusText, bounds: [12, 12, 376, 22], text },
+    { id: "button", kind: NodeKind.Button, bounds: [12, 42, 72, 28], label: "Following" },
   ]);
   await page.goto("http://127.0.0.1:4173/public/index.html");
   const layout = await page.evaluate(async (bytes) => {
     const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
     new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
-    const status = document.querySelector<HTMLElement>('[data-synth-node-id="status"]')!.getBoundingClientRect();
+    const statusElement = document.querySelector<HTMLElement>('[data-synth-node-id="status"]')!;
+    const status = statusElement.getBoundingClientRect();
     const button = document.querySelector<HTMLElement>('[data-synth-node-id="button"]')!.getBoundingClientRect();
+    const statusStyle = getComputedStyle(statusElement);
     return {
       status: { left: status.left, right: status.right, width: status.width, bottom: status.bottom },
+      statusClientWidth: statusElement.clientWidth,
+      statusScrollWidth: statusElement.scrollWidth,
+      statusOverflow: statusStyle.overflowX,
+      statusTextOverflow: statusStyle.textOverflow,
       button: { left: button.left, top: button.top },
     };
   }, Array.from(new Uint8Array(labelFrame)));
 
   expect(layout.status.width).toBe(376);
-  expect(layout.status.right).toBeLessThanOrEqual(388);
+  expect(layout.status.right).toBe(388);
+  // The text overruns its resolved extent, and the backend truncates it there
+  // rather than expanding the node, so the next control does not move.
+  expect(layout.statusScrollWidth).toBeGreaterThan(layout.statusClientWidth);
+  expect(layout.statusOverflow).toBe("hidden");
+  expect(layout.statusTextOverflow).toBe("ellipsis");
   expect(layout.button.top).toBeGreaterThanOrEqual(layout.status.bottom + 8);
 });
 
-test("clips realistic label and status text to their fixed auto-layout height", async ({ page }) => {
+test("clips realistic label and status text to their resolved height", async ({ page }) => {
   const labelFrame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 260, 120], children: ["label", "status", "button"] },
-    { id: "label", kind: NodeKind.Label, text: "MIDI OUTPUT DEVICE CONFIGURATION STATUS" },
-    { id: "status", kind: NodeKind.StatusText, text: "SYSTEM DEFAULT AUDIO OUTPUT IS READY FOR PERFORMANCE" },
-    { id: "button", kind: NodeKind.Button, label: "Following" },
+    { id: "label", kind: NodeKind.Label, bounds: [12, 12, 236, 22], text: "MIDI OUTPUT DEVICE CONFIGURATION STATUS" },
+    { id: "status", kind: NodeKind.StatusText, bounds: [12, 42, 236, 22], text: "SYSTEM DEFAULT AUDIO OUTPUT IS READY FOR PERFORMANCE" },
+    { id: "button", kind: NodeKind.Button, bounds: [12, 72, 72, 28], label: "Following" },
   ]);
   await page.goto("http://127.0.0.1:4173/public/index.html");
   const layout = await page.evaluate(async (bytes) => {
@@ -748,11 +785,14 @@ test("clips realistic label and status text to their fixed auto-layout height", 
   expect(layout.button.top).toBeGreaterThanOrEqual(layout.status.bottom + 8);
 });
 
-test("includes auto-flow below a declared root in the resolved host height", async ({ page }) => {
+// Re-pinned from the retired "host height includes flowed content" contract:
+// the host height is the resolved root extent, and content the producer places
+// past it does not grow the host (sprs-6).
+test("derives the host height from the resolved root extent, not from content", async ({ page }) => {
   const overflowFrame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 30], children: ["label", "button"] },
-    { id: "label", kind: NodeKind.Label, text: "A label that consumes the available row width" },
-    { id: "button", kind: NodeKind.Button, label: "Below" },
+    { id: "label", kind: NodeKind.Label, bounds: [0, 0, 200, 22], text: "A label that consumes the available row width" },
+    { id: "button", kind: NodeKind.Button, bounds: [0, 40, 72, 28], label: "Below" },
   ]);
   await page.goto("http://127.0.0.1:4173/public/index.html");
   const layout = await page.evaluate(async (bytes) => {
@@ -763,8 +803,8 @@ test("includes auto-flow below a declared root in the resolved host height", asy
     return { hostBottom: host.bottom, hostHeight: host.height, buttonBottom: button.bottom };
   }, Array.from(new Uint8Array(overflowFrame)));
 
-  expect(layout.hostHeight).toBeGreaterThan(30);
-  expect(layout.hostBottom).toBeGreaterThanOrEqual(layout.buttonBottom);
+  expect(layout.hostHeight).toBe(30);
+  expect(layout.buttonBottom).toBeGreaterThan(layout.hostBottom);
 });
 
 test("keeps scroll descendants out of the outer surface extent", async ({ page }) => {
@@ -799,8 +839,8 @@ test("places nested sidebar descendants from parent-relative bounds", async ({ p
   const compositeFrame = makeCommandBuffer([
     { id: "main", kind: NodeKind.Root, bounds: [0, 0, 996, 200], children: ["app", "sidebar"] },
     { id: "app", kind: NodeKind.Root, bounds: [0, 0, 900, 200], children: ["app-status", "app-button"] },
-    { id: "app-status", kind: NodeKind.StatusText, text: "x".repeat(160) },
-    { id: "app-button", kind: NodeKind.Button, label: "Next" },
+    { id: "app-status", kind: NodeKind.StatusText, bounds: [12, 12, 876, 22], text: "x".repeat(160) },
+    { id: "app-button", kind: NodeKind.Button, bounds: [12, 42, 72, 28], label: "Next" },
     { id: "sidebar", kind: NodeKind.Root, bounds: [900, 0, 96, 200], children: ["side-button"] },
     { id: "side-button", kind: NodeKind.Button, bounds: [0, 0, 96, 28], label: "Side" },
   ]);
@@ -1009,11 +1049,14 @@ test("dispose is idempotent and renderFrame cannot revive a disposed backend", a
   expect(result).toEqual({ disconnects: 1, message: "cannot render a disposed browser UI backend" });
 });
 
-test("paints surface-space draw commands into positioned canvases", async ({ page }) => {
+// Re-pinned for node-local draw geometry (sru-46): the command that used to
+// carry the node's surface bounds [40, 50, 20, 20] now carries the same
+// rectangle at the node's own origin, and the same canvas pixel is painted.
+test("paints node-local draw commands into positioned canvases", async ({ page }) => {
   const positionedFrame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 100, 100], children: ["draw"] },
     { id: "draw", kind: NodeKind.Draw, bounds: [40, 50, 20, 20], draws: [
-      { kind: DrawKind.Fill, bounds: [40, 50, 20, 20], color: [12, 34, 56, 255] },
+      { kind: DrawKind.Fill, bounds: [0, 0, 20, 20], color: [12, 34, 56, 255] },
     ] },
   ]);
   await page.goto("http://127.0.0.1:4173/public/index.html");
@@ -1027,13 +1070,17 @@ test("paints surface-space draw commands into positioned canvases", async ({ pag
   expect(pixel).toEqual([12, 34, 56, 255]);
 });
 
-test("classifies both endpoints of a line in one coordinate space", async ({ page }) => {
+// Re-pinned for node-local draw geometry: both endpoints are node-local by
+// definition, so there is nothing left to classify. The surface line the old
+// fixture drew from (35, 90) to (185, 90) inside a node at (30, 70) is the same
+// line written node-locally, and it lands on the same canvas pixel.
+test("paints line endpoints in node-local coordinates", async ({ page }) => {
   const positionedFrame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 220, 180], children: ["draw"] },
     { id: "draw", kind: NodeKind.Draw, bounds: [30, 70, 160, 100], draws: [
       { kind: DrawKind.Line,
-        from: { x: 35, y: 90 },
-        to: { x: 185, y: 90 },
+        from: { x: 5, y: 20 },
+        to: { x: 155, y: 20 },
         color: [40, 100, 230, 255],
         strokeWidth: 3 },
     ] },
@@ -1049,18 +1096,20 @@ test("classifies both endpoints of a line in one coordinate space", async ({ pag
   expect(pixel).toEqual([40, 100, 230, 255]);
 });
 
-test("classifies a complete draw-node buffer in one coordinate space", async ({ page }) => {
+// Re-pinned likewise: every command in the buffer is node-local, so no command
+// can reinterpret the space its neighbours are drawn in.
+test("paints every command in a draw-node buffer with node-local geometry", async ({ page }) => {
   const positionedFrame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 220, 180], children: ["draw"] },
     { id: "draw", kind: NodeKind.Draw, bounds: [30, 70, 160, 100], draws: [
       { kind: DrawKind.Line,
-        from: { x: 35, y: 90 },
-        to: { x: 100, y: 90 },
+        from: { x: 5, y: 20 },
+        to: { x: 70, y: 20 },
         color: [230, 170, 30, 255],
         strokeWidth: 3 },
       { kind: DrawKind.Line,
-        from: { x: 100, y: 100 },
-        to: { x: 185, y: 100 },
+        from: { x: 70, y: 30 },
+        to: { x: 155, y: 30 },
         color: [40, 100, 230, 255],
         strokeWidth: 3 },
     ] },
@@ -1076,7 +1125,10 @@ test("classifies a complete draw-node buffer in one coordinate space", async ({ 
   expect(pixel).toEqual([230, 170, 30, 255]);
 });
 
-test("ignores geometry-free commands when classifying a draw-node buffer", async ({ page }) => {
+// A geometry-free command used to be the input that decided how the whole
+// buffer was classified. Now it simply carries no geometry, and the commands
+// around it are unaffected.
+test("paints a geometry-free command without displacing the rest of the buffer", async ({ page }) => {
   const positionedFrame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 100, 100], children: ["draw"] },
     { id: "draw", kind: NodeKind.Draw, bounds: [30, 40, 40, 30], draws: [
@@ -1123,6 +1175,224 @@ test("fits a fixed portable surface into a narrow browser viewport", async ({ pa
   expect(bounds.button.right).toBeLessThanOrEqual(bounds.root.right);
   expect(bounds.button.bottom).toBeLessThanOrEqual(bounds.root.left + bounds.root.height);
   expect(bounds.host.height).toBeCloseTo(bounds.root.height, 2);
+});
+
+async function renderAndRead(page: Page, buffer: ArrayBuffer, ids: string[]) {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  return page.evaluate(async ({ bytes, ids }) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    return Object.fromEntries(ids.map((id) => {
+      const element = document.querySelector<HTMLElement>(`[data-node-id="${id}"]`)!;
+      const rect = element.getBoundingClientRect();
+      return [id, {
+        styleLeft: element.style.left,
+        styleTop: element.style.top,
+        styleWidth: element.style.width,
+        styleHeight: element.style.height,
+        surfaceX: rect.x,
+        surfaceY: rect.y,
+      }];
+    }));
+  }, { bytes: Array.from(new Uint8Array(buffer)), ids });
+}
+
+test("offsets a child by its wire bounds with no parent subtraction", async ({ page }) => {
+  const nestedFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 400, 300], children: ["parent"] },
+    { id: "parent", kind: NodeKind.Section, bounds: [50, 40, 200, 100], children: ["child"] },
+    { id: "child", kind: NodeKind.Label, bounds: [10, 10, 80, 20], text: "Child" },
+  ]);
+  const layout = await renderAndRead(page, nestedFrame, ["parent", "child"]);
+
+  expect(layout.child.styleLeft).toBe("10px");
+  expect(layout.child.styleTop).toBe("10px");
+  // And the surface position is the plain fold of the ancestor origins.
+  expect(layout.child.surfaceX).toBe(60);
+  expect(layout.child.surfaceY).toBe(50);
+});
+
+test("keeps an overhanging child parent-relative", async ({ page }) => {
+  // `explicitBoundsAreParentLocal` reclassified a child that did not fit its
+  // parent as surface-absolute. There is no classifier left to do so.
+  const overhangingFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 400, 300], children: ["parent"] },
+    { id: "parent", kind: NodeKind.Section, bounds: [50, 40, 100, 50], children: ["child"] },
+    { id: "child", kind: NodeKind.Label, bounds: [10, 10, 200, 20], text: "Overhang" },
+  ]);
+  const layout = await renderAndRead(page, overhangingFrame, ["child"]);
+
+  expect(layout.child.styleLeft).toBe("10px");
+  expect(layout.child.styleTop).toBe("10px");
+  expect(layout.child.surfaceX).toBe(60);
+  expect(layout.child.surfaceY).toBe(50);
+});
+
+test("does not flow a node without resolved bounds", async ({ page }) => {
+  const unresolvedFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 400, 300], children: ["parent"] },
+    { id: "parent", kind: NodeKind.Section, bounds: [50, 40, 200, 100], children: ["orphan"] },
+    { id: "orphan", kind: NodeKind.Label, bounds: [0, 0, 0, 0], text: "Unresolved" },
+  ]);
+  const layout = await renderAndRead(page, unresolvedFrame, ["orphan"]);
+
+  expect(layout.orphan.styleLeft).toBe("0px");
+  expect(layout.orphan.styleTop).toBe("0px");
+  expect(layout.orphan.styleWidth).toBe("0px");
+  expect(layout.orphan.styleHeight).toBe("0px");
+  // It renders at its parent's origin with zero extent, never flowed or sized.
+  expect(layout.orphan.surfaceX).toBe(50);
+  expect(layout.orphan.surfaceY).toBe(40);
+});
+
+test("emits both the prefixed and the unprefixed node id and kind attributes", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const attributes = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const elements = [...document.querySelectorAll<HTMLElement>("[data-synth-node-id]")];
+    return {
+      count: elements.length,
+      consistent: elements.every((element) =>
+        element.dataset.nodeId === element.dataset.synthNodeId &&
+        element.dataset.nodeKind === element.dataset.synthNodeKind),
+      scrollAreaKind: document.querySelector<HTMLElement>('[data-node-id="scroll"]')!.dataset.nodeKind,
+    };
+  }, Array.from(new Uint8Array(frame)));
+
+  expect(attributes).toEqual({ count: 10, consistent: true, scrollAreaKind: "scroll-area" });
+});
+
+test("renders one carried colour on the surface each node kind assigns it", async ({ page }) => {
+  const carried: [number, number, number, number] = [0, 200, 0, 255];
+  const styledFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 400, 300], color: [8, 9, 10, 255],
+      children: ["section", "button", "toggle", "slider", "combo", "field", "label", "draw"] },
+    { id: "section", kind: NodeKind.Section, bounds: [0, 0, 120, 24], color: carried },
+    { id: "button", kind: NodeKind.Button, bounds: [0, 30, 120, 24], label: "Go", color: carried },
+    { id: "toggle", kind: NodeKind.Toggle, bounds: [0, 60, 120, 24], label: "On", color: carried },
+    { id: "slider", kind: NodeKind.Slider, bounds: [0, 90, 120, 24], color: carried },
+    { id: "combo", kind: NodeKind.ComboBox, bounds: [0, 120, 120, 24], selectedOption: "one",
+      options: [{ id: "one", label: "One" }], color: carried },
+    { id: "field", kind: NodeKind.TextField, bounds: [0, 150, 120, 24], text: "x", color: carried },
+    { id: "label", kind: NodeKind.Label, bounds: [0, 180, 120, 24], text: "Label",
+      color: [10, 10, 10, 255], textStyle: { size: 14, color: [240, 240, 240, 255], align: 0 } },
+    { id: "draw", kind: NodeKind.Draw, bounds: [0, 210, 120, 24], color: carried,
+      draws: [{ kind: DrawKind.Fill, color: [1, 2, 3, 255] }] },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const painted = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const styleOf = (selector: string) => getComputedStyle(document.querySelector<HTMLElement>(selector)!);
+    return {
+      rootBackground: styleOf('[data-node-id="root"]').backgroundColor,
+      sectionBackground: styleOf('[data-node-id="section"]').backgroundColor,
+      buttonFill: styleOf('[data-node-id="button"]').backgroundColor,
+      toggleAccent: styleOf('[data-node-id="toggle"] input').accentColor,
+      sliderAccent: styleOf('[data-node-id="slider"] input').accentColor,
+      comboBackground: styleOf('[data-node-id="combo"] select').backgroundColor,
+      fieldBackground: styleOf('[data-node-id="field"] input').backgroundColor,
+      labelBackground: styleOf('[data-node-id="label"]').backgroundColor,
+      labelGlyph: styleOf('[data-node-id="label"]').color,
+      labelSize: styleOf('[data-node-id="label"]').fontSize,
+      drawBackground: styleOf('[data-node-id="draw"]').backgroundColor,
+    };
+  }, Array.from(new Uint8Array(styledFrame)));
+
+  expect(painted).toEqual({
+    rootBackground: "rgb(8, 9, 10)",
+    sectionBackground: "rgb(0, 200, 0)",
+    buttonFill: "rgb(0, 200, 0)",
+    toggleAccent: "rgb(0, 200, 0)",
+    sliderAccent: "rgb(0, 200, 0)",
+    comboBackground: "rgb(0, 200, 0)",
+    fieldBackground: "rgb(0, 200, 0)",
+    // The label's node colour backs it; its glyphs come from textStyle.
+    labelBackground: "rgb(10, 10, 10)",
+    labelGlyph: "rgb(240, 240, 240)",
+    labelSize: "14px",
+    // A `Draw` node's colour paints nothing: its commands carry their own.
+    drawBackground: "rgba(0, 0, 0, 0)",
+  });
+});
+
+test("derives selected and disabled presentation from the carried colour", async ({ page }) => {
+  const stateFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 200], children: ["plain", "selected", "disabled", "unstyled"] },
+    { id: "plain", kind: NodeKind.Button, bounds: [0, 0, 80, 24], label: "Plain", color: [0, 120, 0, 255] },
+    { id: "selected", kind: NodeKind.Button, bounds: [0, 30, 80, 24], label: "Selected", selected: true, color: [0, 120, 0, 255] },
+    { id: "disabled", kind: NodeKind.Button, bounds: [0, 60, 80, 24], label: "Disabled", enabled: false, color: [0, 120, 0, 255] },
+    { id: "unstyled", kind: NodeKind.Button, bounds: [0, 90, 80, 24], label: "Unstyled" },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const fills = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const elementOf = (id: string) => document.querySelector<HTMLElement>(`[data-node-id="${id}"]`)!;
+    const fillOf = (id: string) => getComputedStyle(elementOf(id)).backgroundColor;
+    return {
+      plain: fillOf("plain"),
+      selected: fillOf("selected"),
+      disabled: fillOf("disabled"),
+      unstyled: fillOf("unstyled"),
+      // Chromium serializes a computed alpha to two decimals, which cannot
+      // distinguish adjacent alpha bytes. Read the derived value exactly.
+      disabledCarried: elementOf("disabled").style.getPropertyValue("--synth-fill"),
+    };
+  }, Array.from(new Uint8Array(stateFrame)));
+
+  expect(fills.plain).toBe("rgb(0, 120, 0)");
+  // `juce::Colour(0, 120, 0).brighter(0.14f)`, so both backends derive the same
+  // selected fill from the same carried colour rather than substituting one.
+  expect(fills.selected).toBe("rgb(31, 136, 31)");
+  // `darker(0.35f).withMultipliedAlpha(0.65f)`, the JUCE backend's disabled fold:
+  // channel 120 becomes 88 and alpha 255 becomes 166.
+  expect(fills.disabled).toBe("rgba(0, 88, 0, 0.65)");
+  expect(fills.disabledCarried).toBe(`rgba(0, 88, 0, ${166 / 255})`);
+  // Carrying no colour keeps the backend's own flat default in full.
+  expect(fills.unstyled).toBe("rgb(37, 42, 47)");
+});
+
+test("reads a checked toggle as selected when deriving its carried accent", async ({ page }) => {
+  const toggleFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 100], children: ["off", "on"] },
+    { id: "off", kind: NodeKind.Toggle, bounds: [0, 0, 120, 24], label: "Off", checked: false, color: [0, 120, 0, 255] },
+    { id: "on", kind: NodeKind.Toggle, bounds: [0, 30, 120, 24], label: "On", checked: true, color: [0, 120, 0, 255] },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const accents = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const accentOf = (id: string) => getComputedStyle(document.querySelector<HTMLElement>(`[data-node-id="${id}"] input`)!).accentColor;
+    return { off: accentOf("off"), on: accentOf("on") };
+  }, Array.from(new Uint8Array(toggleFrame)));
+
+  expect(accents.off).toBe("rgb(0, 120, 0)");
+  // The same `brighter(0.14f)` fold the JUCE backend applies to a checked toggle.
+  expect(accents.on).toBe("rgb(31, 136, 31)");
+});
+
+test("does not leak a container's carried fill into an unstyled descendant", async ({ page }) => {
+  const nestedFrame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 100], children: ["section"] },
+    { id: "section", kind: NodeKind.Section, bounds: [0, 0, 200, 60], color: [0, 200, 0, 255], children: ["label", "button"] },
+    { id: "label", kind: NodeKind.Label, bounds: [0, 0, 100, 20], text: "Inside" },
+    { id: "button", kind: NodeKind.Button, bounds: [0, 24, 80, 24], label: "Inside" },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const backgrounds = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const backgroundOf = (id: string) => getComputedStyle(document.querySelector<HTMLElement>(`[data-node-id="${id}"]`)!).backgroundColor;
+    return { section: backgroundOf("section"), label: backgroundOf("label"), button: backgroundOf("button") };
+  }, Array.from(new Uint8Array(nestedFrame)));
+
+  expect(backgrounds).toEqual({
+    section: "rgb(0, 200, 0)",
+    label: "rgba(0, 0, 0, 0)",
+    button: "rgb(37, 42, 47)",
+  });
 });
 
 test("preserves semantic nodes and reports structural buffer errors", () => {

@@ -23,16 +23,33 @@ body {
   box-sizing: border-box;
 }
 
+/* Carried node colour and text style (sru-45) reach the DOM as per-node custom
+   properties. Each rule below names the surface that value paints for its node
+   kind, and every `var()` fallback is the flat default look a node that carries
+   nothing still gets. The backend decides nothing here beyond which surface a
+   kind's one carried colour belongs on. */
+
 #synth-root [data-synth-node-kind="root"] {
-  background: #121416;
+  background: var(--synth-fill, #121416);
+}
+
+#synth-root [data-synth-node-kind="row"],
+#synth-root [data-synth-node-kind="section"],
+#synth-root [data-synth-node-kind="scroll-area"] {
+  border-radius: 5px;
+  background: var(--synth-fill, transparent);
 }
 
 #synth-root [data-synth-node-kind="label"],
 #synth-root [data-synth-node-kind="status-text"] {
   display: flex;
   align-items: center;
+  justify-content: var(--synth-text-align, flex-start);
   overflow: hidden;
-  color: #e5e7eb;
+  /* The node colour backs the text; the glyphs come from the text style. */
+  background: var(--synth-fill, transparent);
+  color: var(--synth-glyph, #e5e7eb);
+  font-size: var(--synth-text-size, inherit);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -43,8 +60,8 @@ body {
 #synth-root input[type="text"] {
   border: 1px solid #52606b;
   border-radius: 4px;
-  background: #252a2f;
-  color: #f8fafc;
+  background: var(--synth-fill, #252a2f);
+  color: var(--synth-glyph, #f8fafc);
   font: inherit;
 }
 
@@ -55,11 +72,11 @@ body {
 
 #synth-root button:hover {
   border-color: #78a9b0;
-  background: #30383e;
+  background: var(--synth-fill-hover, #30383e);
 }
 
 #synth-root button:active {
-  background: #285f64;
+  background: var(--synth-fill-active, #285f64);
 }
 
 #synth-root button:focus-visible,
@@ -73,14 +90,19 @@ body {
   display: flex;
   align-items: center;
   gap: 5px;
+  /* Fitting text inside the resolved extent is the backend's own local
+     concern (sru-49): clip rather than push a neighbour aside. */
+  overflow: hidden;
+  color: var(--synth-glyph, inherit);
   white-space: nowrap;
 }
 
+/* A toggle's control is its box, so the carried control fill is its accent. */
 #synth-root [data-synth-node-kind="toggle"] input {
   width: 15px;
   height: 15px;
   margin: 0;
-  accent-color: #2ca7ac;
+  accent-color: var(--synth-fill, #2ca7ac);
 }
 
 #synth-root [data-synth-node-kind="slider"] {
@@ -88,10 +110,11 @@ body {
   align-items: center;
 }
 
+/* The carried colour is the slider's filled-track accent. */
 #synth-root [data-synth-node-kind="slider"] input {
   width: 100%;
   margin: 0;
-  accent-color: #2ca7ac;
+  accent-color: var(--synth-fill, #2ca7ac);
 }
 
 #synth-root canvas {

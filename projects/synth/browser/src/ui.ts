@@ -14,24 +14,12 @@ type PointerHandlers = {
 type NodeElement = HTMLElement & { synthNode?: Node; scrollContent?: HTMLElement; pointerHandlers?: PointerHandlers };
 type CapturedPointer = { element: NodeElement; action: Action; anchorClientX: number; anchorClientY: number };
 type PendingDrag = { action: Action; delta: number };
-type ResolvedFrame = {
-  bounds: Map<string, Bounds>;
-  parents: Map<string, string>;
-  rootId?: string;
-  width: number;
-  height: number;
-};
+// The surface the frame resolves to: which node is the parentless root, and the
+// extent the host is sized to. Nothing else needs resolving — every node's
+// bounds are already in its parent's space (sru-46), so the DOM's own
+// absolute-positioning-within-a-positioned-parent does the fold.
+type ResolvedSurface = { rootId?: string; width: number; height: number };
 export type ActionDispatcher = (action: Action) => void;
-
-const DEFAULT_BUTTON_WIDTH = 72;
-const DEFAULT_BUTTON_HEIGHT = 28;
-const DEFAULT_SLIDER_WIDTH = 140;
-const DEFAULT_SLIDER_HEIGHT = 28;
-const DEFAULT_LABEL_HEIGHT = 22;
-const DEFAULT_COMBO_WIDTH = 160;
-const DEFAULT_TEXT_FIELD_WIDTH = 120;
-const CONTROL_GAP = 8;
-const CONTROL_MARGIN = 12;
 
 export class BrowserUiBackend {
   private readonly elements = new Map<string, NodeElement>();
@@ -54,30 +42,26 @@ export class BrowserUiBackend {
     if (this.disposed) throw new Error("cannot render a disposed browser UI backend");
     const frame = buffer instanceof ArrayBuffer ? decodeCommandBuffer(buffer) : buffer;
     const nodes = new Map(frame.nodes.map((node) => [node.id, node]));
-    const resolved = resolveFrameBounds(frame.nodes, nodes);
-    for (const node of frame.nodes) {
-      const absoluteBounds = resolved.bounds.get(node.id) ?? node.bounds;
-      const parentBounds = resolved.parents.has(node.id) ? resolved.bounds.get(resolved.parents.get(node.id)!) : undefined;
-      this.updateNode(node, absoluteBounds, parentBounds);
-    }
+    const surface = resolveFrameSurface(frame.nodes, nodes);
+    for (const node of frame.nodes) this.updateNode(node);
     for (const [id, element] of this.elements) {
       if (nodes.has(id)) continue;
       this.removePointerGesture(element);
       element.remove();
       this.elements.delete(id);
     }
-    const rootNode = resolved.rootId ? nodes.get(resolved.rootId) : undefined;
+    const rootNode = surface.rootId ? nodes.get(surface.rootId) : undefined;
     this.replaceChildrenIfChanged(this.root, rootNode ? [this.elementFor(rootNode)] : []);
     for (const node of frame.nodes)
       if (node.kind === NodeKind.Root || node.kind === NodeKind.Row || node.kind === NodeKind.Section || node.kind === NodeKind.ScrollArea)
         this.attachChildren(node, nodes);
     for (const node of frame.nodes) {
       if (node.kind !== NodeKind.Draw) continue;
-      this.paint(this.elementFor(node).querySelector("canvas")!, frame.drawCommands.slice(node.drawStart, node.drawStart + node.drawCount), resolved.bounds.get(node.id) ?? node.bounds);
+      this.paint(this.elementFor(node).querySelector("canvas")!, frame.drawCommands.slice(node.drawStart, node.drawStart + node.drawCount), node.bounds);
     }
-    this.surfaceRootId = resolved.rootId;
-    this.surfaceWidth = resolved.width;
-    this.surfaceHeight = resolved.height;
+    this.surfaceRootId = surface.rootId;
+    this.surfaceWidth = surface.width;
+    this.surfaceHeight = surface.height;
     this.fitSurface();
   }
 
@@ -92,23 +76,33 @@ export class BrowserUiBackend {
     for (const element of this.elements.values()) this.removePointerGesture(element);
   }
 
-  private updateNode(node: Node, bounds: Bounds, parentBounds?: Bounds) {
+  private updateNode(node: Node) {
     const element = this.elementFor(node);
+    const kind = kindAttribute(node.kind);
     element.synthNode = node;
     element.dataset.synthNodeId = node.id;
-    element.dataset.synthNodeKind = NodeKind[node.kind].replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`).replace(/^-/, "");
+    element.dataset.synthNodeKind = kind;
+    element.dataset.nodeId = node.id;
+    element.dataset.nodeKind = kind;
     element.style.position = "absolute";
-    element.style.left = `${bounds.x - (parentBounds?.x ?? 0)}px`;
-    element.style.top = `${bounds.y - (parentBounds?.y ?? 0)}px`;
+    // Bounds are parent-relative (sru-46) and this element is an absolutely
+    // positioned child of its parent's element, which is what parent-relative
+    // means in the DOM. So the CSS offset is the wire value itself: no origin
+    // subtraction, no coordinate-space classification.
+    element.style.left = `${node.bounds.x}px`;
+    element.style.top = `${node.bounds.y}px`;
     element.style.transform = "";
     element.style.transformOrigin = "";
-    element.style.width = bounds.width > 0 ? `${bounds.width}px` : "";
-    element.style.height = bounds.height > 0 ? `${bounds.height}px` : "";
+    // A node arriving with no resolved bounds renders at its parent's origin
+    // with zero extent (sprs-6). The backend never flows or sizes it.
+    element.style.width = `${node.bounds.width}px`;
+    element.style.height = `${node.bounds.height}px`;
     const acceptsPointer = acceptsPointerEvents(node);
     element.style.pointerEvents = acceptsPointer ? "auto" : "none";
     element.style.zIndex = acceptsPointer ? "1" : "0";
     if (node.enabled) element.removeAttribute("aria-disabled");
     else element.setAttribute("aria-disabled", "true");
+    applyCarriedStyle(element, node);
     this.updateControl(element, node);
     this.updatePointerGesture(element, node);
   }
@@ -291,22 +285,25 @@ export class BrowserUiBackend {
     canvas.width = Math.max(1, Math.round(bounds.width)); canvas.height = Math.max(1, Math.round(bounds.height));
     canvas.style.width = "100%"; canvas.style.height = "100%";
     const context = canvas.getContext("2d")!;
-    context.translate(-bounds.x, -bounds.y);
-    const commandsAreNodeLocal = drawCommandsLookLocal(commands, bounds);
-    for (const command of commands) this.draw(context, command, bounds, commandsAreNodeLocal);
+    // Draw geometry is relative to the owning node's own origin (sru-46), and
+    // the canvas already spans exactly that node, so the canvas origin is the
+    // node origin. No translation and no classification of the commands.
+    const nodeExtent: Bounds = { x: 0, y: 0, width: bounds.width, height: bounds.height };
+    for (const command of commands) this.draw(context, command, nodeExtent);
   }
 
-  private draw(context: CanvasRenderingContext2D, command: DrawCommand, nodeBounds: Bounds, nodeLocal: boolean) {
-    const fill = colorCss(command.color); const stroke = colorCss(command.color); const b = drawBounds(command.bounds, nodeBounds, nodeLocal);
-    const hasBounds = b.width > 0 && b.height > 0;
+  private draw(context: CanvasRenderingContext2D, command: DrawCommand, nodeExtent: Bounds) {
+    const fill = colorCss(command.color); const stroke = colorCss(command.color); const b = command.bounds;
     context.fillStyle = fill; context.strokeStyle = stroke; context.lineWidth = command.strokeWidth;
     switch (command.kind) {
-      case DrawKind.Fill: context.fillRect(hasBounds ? b.x : nodeBounds.x, hasBounds ? b.y : nodeBounds.y, hasBounds ? b.width : nodeBounds.width, hasBounds ? b.height : nodeBounds.height); break;
-      case DrawKind.StrokeRect: context.strokeRect(b.x, b.y, b.width, b.height); break;
-      case DrawKind.Line: {
-        const [from, to] = drawPoints([command.from, command.to], nodeBounds, nodeLocal);
-        context.beginPath(); context.moveTo(from.x, from.y); context.lineTo(to.x, to.y); context.stroke(); break;
+      case DrawKind.Fill: {
+        // A fill with no geometry of its own covers the whole node.
+        const area = hasExplicitBounds(b) ? b : nodeExtent;
+        context.fillRect(area.x, area.y, area.width, area.height); break;
       }
+      case DrawKind.StrokeRect: context.strokeRect(b.x, b.y, b.width, b.height); break;
+      case DrawKind.Line:
+        context.beginPath(); context.moveTo(command.from.x, command.from.y); context.lineTo(command.to.x, command.to.y); context.stroke(); break;
       case DrawKind.Arc:
         context.save();
         context.lineCap = "round";
@@ -321,13 +318,16 @@ export class BrowserUiBackend {
       case DrawKind.StrokeEllipse: context.beginPath(); context.ellipse(b.x + b.width / 2, b.y + b.height / 2, b.width / 2, b.height / 2, 0, 0, Math.PI * 2); context.stroke(); break;
       case DrawKind.FillRoundedRect: roundedRect(context, b, command.cornerRadius); context.fill(); break;
       case DrawKind.StrokeRoundedRect: roundedRect(context, b, command.cornerRadius); context.stroke(); break;
-      case DrawKind.Polyline: path(context, drawPoints(command.points, nodeBounds, nodeLocal)); context.stroke(); break;
-      case DrawKind.FillPolygon: path(context, drawPoints(command.points, nodeBounds, nodeLocal)); context.fill(); break;
+      case DrawKind.Polyline: path(context, command.points); context.stroke(); break;
+      case DrawKind.FillPolygon: path(context, command.points); context.fill(); break;
     }
   }
 }
 
-function resolveFrameBounds(nodesInOrder: Node[], nodes: Map<string, Node>): ResolvedFrame {
+// Validates the frame's node graph and reports the surface it resolves to. No
+// bounds arithmetic: every node's bounds are already the coordinates its DOM
+// element needs, and the host extent is the root's own resolved extent.
+function resolveFrameSurface(nodesInOrder: Node[], nodes: Map<string, Node>): ResolvedSurface {
   if (nodes.size !== nodesInOrder.length) throw new Error("duplicate node id in browser UI frame");
   const parents = new Map<string, string>();
   let multipleParentError: string | undefined;
@@ -359,147 +359,76 @@ function resolveFrameBounds(nodesInOrder: Node[], nodes: Map<string, Node>): Res
   for (const node of nodesInOrder) visit(node);
   if (multipleParentError) throw new Error(multipleParentError);
 
-  const nearestRoots = new Map<string, string>();
-  const assignNearestRoot = (node: Node, nearestRootId: string) => {
-    const nextRootId = node.kind === NodeKind.Root ? node.id : nearestRootId;
-    nearestRoots.set(node.id, nextRootId);
-    for (const childId of node.children) assignNearestRoot(nodes.get(childId)!, nextRootId);
-  };
-  if (roots[0]) assignNearestRoot(roots[0], roots[0].id);
-
-  const explicitResolved = new Map<string, Bounds>();
-  const resolveExplicit = (node: Node): Bounds => {
-    const cached = explicitResolved.get(node.id);
-    if (cached) return cached;
-    const parent = parents.get(node.id);
-    if (!parent || node.kind === NodeKind.Root) {
-      const rootBounds = { ...node.bounds };
-      explicitResolved.set(node.id, rootBounds);
-      return rootBounds;
-    }
-    const parentNode = nodes.get(parent)!;
-    const parentBounds = resolveExplicit(parentNode);
-    const bounds = explicitBoundsAreParentLocal(node, parentNode)
-      ? { x: parentBounds.x + node.bounds.x, y: parentBounds.y + node.bounds.y, width: node.bounds.width, height: node.bounds.height }
-      : { ...node.bounds };
-    explicitResolved.set(node.id, bounds);
-    return bounds;
-  };
-  const resolved = new Map(nodesInOrder.map((node) => [node.id, (hasExplicitBounds(node.bounds) || node.kind === NodeKind.Root) ? resolveExplicit(node) : { ...node.bounds }]));
-  const cursors = new Map<string, { x: number; y: number; rowHeight: number; right: number; availableWidth: number }>();
-  for (const node of nodesInOrder) {
-    if (hasExplicitBounds(node.bounds) || node.kind === NodeKind.Root) continue;
-    const nearestRoot = nodes.get(nearestRoots.get(node.id)!)!;
-    let cursor = cursors.get(nearestRoot.id);
-    if (!cursor) {
-      let maxDrawBottom = nearestRoot.bounds.y + CONTROL_MARGIN;
-      for (const candidate of nodesInOrder) {
-        if (candidate.kind === NodeKind.Draw && nearestRoots.get(candidate.id) === nearestRoot.id && hasExplicitBounds(candidate.bounds))
-          maxDrawBottom = Math.max(maxDrawBottom, candidate.bounds.y + candidate.bounds.height);
-      }
-      cursor = {
-        x: nearestRoot.bounds.x + CONTROL_MARGIN,
-        y: maxDrawBottom + CONTROL_GAP,
-        rowHeight: 0,
-        right: nearestRoot.bounds.x + nearestRoot.bounds.width - CONTROL_MARGIN,
-        availableWidth: Math.max(0, nearestRoot.bounds.width - CONTROL_MARGIN * 2),
-      };
-      cursors.set(nearestRoot.id, cursor);
-    }
-    const size = defaultSize(node, cursor.availableWidth);
-    if (cursor.x + size.width > cursor.right && cursor.rowHeight > 0) {
-      cursor.x = nearestRoot.bounds.x + CONTROL_MARGIN;
-      cursor.y += cursor.rowHeight + CONTROL_GAP;
-      cursor.rowHeight = 0;
-    }
-    resolved.set(node.id, { x: cursor.x, y: cursor.y, width: size.width, height: size.height });
-    cursor.x += size.width + CONTROL_GAP;
-    cursor.rowHeight = Math.max(cursor.rowHeight, size.height);
-  }
-
-  let width = 0;
-  let height = 0;
-  const isInsideScrollArea = (nodeId: string) => {
-    let parentId = parents.get(nodeId);
-    while (parentId) {
-      if (nodes.get(parentId)?.kind === NodeKind.ScrollArea) return true;
-      parentId = parents.get(parentId);
-    }
-    return false;
-  };
-  for (const [nodeId, bounds] of resolved) {
-    if (isInsideScrollArea(nodeId)) continue;
-    width = Math.max(width, bounds.x + bounds.width);
-    height = Math.max(height, bounds.y + bounds.height);
-  }
-  return { bounds: resolved, parents, rootId: roots[0]?.id, width, height };
+  // The host extent is the resolved root extent, never the union of flowed
+  // content (sprs-6). Nothing the backend does can place content below it.
+  const root = roots[0];
+  return { rootId: root?.id, width: root?.bounds.width ?? 0, height: root?.bounds.height ?? 0 };
 }
 
 function hasExplicitBounds(bounds: Bounds) { return bounds.width > 0 && bounds.height > 0; }
 
-function explicitBoundsAreParentLocal(node: Node, parent: Node) {
-  const parentWidth = parent.kind === NodeKind.ScrollArea ? Math.max(parent.bounds.width, parent.scrollContentWidth) : parent.bounds.width;
-  const parentHeight = parent.kind === NodeKind.ScrollArea ? Math.max(parent.bounds.height, parent.scrollContentHeight) : parent.bounds.height;
-  return node.bounds.x >= 0 && node.bounds.y >= 0 &&
-    node.bounds.x + node.bounds.width <= parentWidth &&
-    node.bounds.y + node.bounds.height <= parentHeight;
+function kindAttribute(kind: NodeKind) {
+  return NodeKind[kind].replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`).replace(/^-/, "");
 }
 
-function defaultSize(node: Node, availableWidth: number): Pick<Bounds, "width" | "height"> {
-  switch (node.kind) {
-    case NodeKind.Slider: return { width: DEFAULT_SLIDER_WIDTH, height: DEFAULT_SLIDER_HEIGHT };
-    case NodeKind.ComboBox: return { width: DEFAULT_COMBO_WIDTH, height: DEFAULT_BUTTON_HEIGHT };
-    case NodeKind.TextField: return { width: DEFAULT_TEXT_FIELD_WIDTH, height: DEFAULT_BUTTON_HEIGHT };
-    case NodeKind.Button: return { width: Math.max(DEFAULT_BUTTON_WIDTH, node.label.length * 6.5 + 24), height: DEFAULT_BUTTON_HEIGHT };
-    case NodeKind.Toggle: return { width: Math.max(DEFAULT_BUTTON_WIDTH, node.label.length * 6.5 + 25), height: DEFAULT_BUTTON_HEIGHT };
-    case NodeKind.Label:
-    case NodeKind.StatusText: return { width: Math.min(availableWidth, Math.max(120, (node.text || node.label).length * 6.5 + 12)), height: DEFAULT_LABEL_HEIGHT };
-    default: return { width: DEFAULT_BUTTON_WIDTH, height: DEFAULT_BUTTON_HEIGHT };
-  }
+// Per-node custom properties rather than per-surface inline styles: one carried
+// value, and `synth-browser.css` decides which surface it paints for each kind
+// (sru-45's per-kind table). The properties are set on *every* node, absent
+// ones to `initial`, because custom properties inherit — otherwise a container's
+// carried fill would leak into an unstyled descendant.
+function applyCarriedStyle(element: NodeElement, node: Node) {
+  // `Draw` carries no node colour: its commands carry their own (sru-45).
+  const carried = node.kind === NodeKind.Draw ? undefined : node.color;
+  // A checked toggle reads as selected, as it does in the JUCE backend.
+  const selected = node.selected || (node.kind === NodeKind.Toggle && node.checked);
+  const fill = carried && stateColor(carried, selected, node.enabled);
+  setCarriedProperty(element, "--synth-fill", fill && colorCss(fill));
+  setCarriedProperty(element, "--synth-fill-hover", fill && colorCss(brighter(fill, 0.14)));
+  // Pressed brightens the carried colour itself, matching the JUCE backend's
+  // `buttonOnColourId`, so it does not compound with the selected fold.
+  setCarriedProperty(element, "--synth-fill-active", carried && colorCss(brighter(carried, 0.24)));
+  setCarriedProperty(element, "--synth-glyph", node.textStyle && colorCss(node.textStyle.color));
+  setCarriedProperty(element, "--synth-text-size", node.textStyle && `${node.textStyle.size}px`);
+  setCarriedProperty(element, "--synth-text-align", node.textStyle && flexAlignment(node.textStyle.align));
+}
+
+// `initial` on a custom property is the guaranteed-invalid value, so every
+// `var(--synth-*, default)` in the stylesheet falls back to the backend's own
+// default look for a node that carries nothing.
+function setCarriedProperty(element: NodeElement, name: string, value?: string) {
+  element.style.setProperty(name, value ?? "initial");
+}
+
+function flexAlignment(align: number) { return align === 1 ? "center" : align === 2 ? "flex-end" : "flex-start"; }
+
+// Selected and disabled presentation is derived from the carried colour, never
+// substituted from a palette (sru-45). Mirrors `StateColourFor` in
+// `PortableJuceBackend.hpp` so both backends land on the same bytes.
+function stateColor(color: Color, selected: boolean, enabled: boolean): Color {
+  if (!enabled) return withMultipliedAlpha(darker(color, 0.35), 0.65);
+  return selected ? brighter(color, 0.14) : color;
+}
+// `juce::Colour::brighter`/`darker`: one factor over each channel's distance
+// from its limit, truncated to a byte.
+function brighter(color: Color, amount: number): Color {
+  const factor = 1 / (1 + amount);
+  const channel = (value: number) => Math.trunc(255 - factor * (255 - value));
+  return { r: channel(color.r), g: channel(color.g), b: channel(color.b), a: color.a };
+}
+function darker(color: Color, amount: number): Color {
+  const factor = 1 / (1 + amount);
+  const channel = (value: number) => Math.trunc(factor * value);
+  return { r: channel(color.r), g: channel(color.g), b: channel(color.b), a: color.a };
+}
+// `juce::Colour::withMultipliedAlpha` rounds where the channel casts truncate.
+function withMultipliedAlpha(color: Color, factor: number): Color {
+  return { ...color, a: Math.min(255, Math.max(0, Math.round(color.a * factor))) };
 }
 
 function enabledNodeOf(element: NodeElement) { const node = element.synthNode; return node?.enabled ? node : undefined; }
 function colorCss(color: Color) { return `rgba(${color.r}, ${color.g}, ${color.b}, ${color.a / 255})`; }
 function appendActionValue(prefix: string, value: string) { return prefix.length > 0 ? `${prefix}:${value}` : value; }
 function portableAngleToCanvas(radians: number) { return radians - Math.PI / 2; }
-function boundsLookLocal(bounds: Bounds, nodeBounds: Bounds) {
-  return bounds.width > 0 && bounds.height > 0 && bounds.x >= 0 && bounds.y >= 0 &&
-    bounds.x + bounds.width <= nodeBounds.width && bounds.y + bounds.height <= nodeBounds.height;
-}
-function drawBounds(bounds: Bounds, nodeBounds: Bounds, nodeLocal: boolean): Bounds {
-  return nodeLocal
-    ? { x: nodeBounds.x + bounds.x, y: nodeBounds.y + bounds.y, width: bounds.width, height: bounds.height }
-    : bounds;
-}
-function pointLooksLocal(point: { x: number; y: number }, nodeBounds: Bounds) {
-  return point.x >= 0 && point.y >= 0 && point.x <= nodeBounds.width && point.y <= nodeBounds.height;
-}
-function drawPoints(points: Array<{ x: number; y: number }>, nodeBounds: Bounds, nodeLocal: boolean) {
-  return nodeLocal
-    ? points.map((point) => ({ x: nodeBounds.x + point.x, y: nodeBounds.y + point.y }))
-    : points;
-}
-function drawCommandLooksLocal(command: DrawCommand, nodeBounds: Bounds) {
-  switch (command.kind) {
-    case DrawKind.Fill: return !hasExplicitBounds(command.bounds) || boundsLookLocal(command.bounds, nodeBounds);
-    case DrawKind.StrokeRect:
-    case DrawKind.Arc:
-    case DrawKind.Text:
-    case DrawKind.FillEllipse:
-    case DrawKind.StrokeEllipse:
-    case DrawKind.FillRoundedRect:
-    case DrawKind.StrokeRoundedRect:
-      return !hasExplicitBounds(command.bounds) || boundsLookLocal(command.bounds, nodeBounds);
-    case DrawKind.Line:
-      return pointLooksLocal(command.from, nodeBounds) && pointLooksLocal(command.to, nodeBounds);
-    case DrawKind.Polyline:
-    case DrawKind.FillPolygon:
-      return command.points.every((point) => pointLooksLocal(point, nodeBounds));
-  }
-}
-function drawCommandsLookLocal(commands: DrawCommand[], nodeBounds: Bounds) {
-  return commands.every((command) => drawCommandLooksLocal(command, nodeBounds));
-}
 function acceptsPointerEvents(node: Node) {
   return node.kind === NodeKind.Button || node.kind === NodeKind.Toggle || node.kind === NodeKind.Slider ||
     node.kind === NodeKind.ComboBox || node.kind === NodeKind.TextField || node.kind === NodeKind.ScrollArea ||
