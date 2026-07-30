@@ -14,11 +14,11 @@
 
 ## 3. Agents Installer Coexistence
 
-- [ ] 3.1 Add failing agents-installer tests for canonical command/matcher ownership, legacy whole-file marker migration, preserving xagent Codex groups during install/check/clean, append/in-place and unrelated-order behavior, deleting `hooks.json` only when empty, rejecting malformed shared JSON even with `--force`, symmetric Codex trust notices, converging in either installer order, and preserving Claude xagent hooks during managed Superpowers enablement.
+- [x] 3.1 Add failing agents-installer tests for canonical command/matcher ownership, legacy whole-file marker migration, preserving xagent Codex groups during install/check/clean, append/in-place and unrelated-order behavior, deleting `hooks.json` only when empty, rejecting malformed shared JSON even with `--force`, symmetric Codex trust notices, converging in either installer order, and preserving Claude xagent hooks during managed Superpowers enablement.
 - [x] 3.2 Refactor `projects/agents/scripts/install.py` `$CODEX_HOME/hooks.json` handling to recognize the canonical agents group, merge/check/clean only that group, migrate the legacy top-level marker, preserve valid canonical xagent and unrelated groups, and report re-approval after effective positional changes.
-- [ ] 3.3 Refactor only the Claude settings merge in `projects/agents/scripts/install_superpowers.py` to use staged atomic replacement with a recoverable sibling backup, preserving xagent Claude hooks and unrelated settings.
+- [x] 3.3 Refactor only the Claude settings merge in `projects/agents/scripts/install_superpowers.py` to use staged atomic replacement with a recoverable sibling backup, preserving xagent Claude hooks and unrelated settings.
 
 ## 4. Documentation and Verification
 
-- [ ] 4.1 Update the xagent and agents installation documentation with top-level Claude/Codex stop-guard scope, Cursor/Pi exclusion, global configuration paths, bounded failure behavior, Codex `/hooks` trust and activation verification, shared-file `--force` semantics, reinstall behavior, and manual rollback ownership boundary.
-- [ ] 4.2 Run the focused hook, xagent installer, agents installer, managed Superpowers installer, root xagent plugin, and OpenSpec requirement-ID suites; run strict OpenSpec validation; and perform or precisely record the isolated manual Claude/Codex activation checks, using Codex trust bypass only inside a disposable test home.
+- [x] 4.1 Update the xagent and agents installation documentation with top-level Claude/Codex stop-guard scope, Cursor/Pi exclusion, global configuration paths, bounded failure behavior, Codex `/hooks` trust and activation verification, shared-file `--force` semantics, reinstall behavior, and manual rollback ownership boundary.
+- [x] 4.2 Run the focused hook, xagent installer, agents installer, managed Superpowers installer, root xagent plugin, and OpenSpec requirement-ID suites; run strict OpenSpec validation; and perform or precisely record the isolated manual Claude/Codex activation checks, using Codex trust bypass only inside a disposable test home.

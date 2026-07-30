@@ -612,7 +612,7 @@ def test_claude_clean_preserves_xagent_hooks_and_is_atomic_and_backed_up(self): 
 Run:
 
 ```bash
-python3 -m unittest projects/agents/scripts/install_superpowers_test.py -v
+PYTHONPATH=projects/agents/scripts python3 -m unittest projects/agents/scripts/install_superpowers_test.py -v
 ```
 
 Expected: atomic/backup tests FAIL with the current plain `write_text`.
@@ -663,7 +663,7 @@ Run:
 python3 -m unittest plugins/xagent/scripts/controller_stop_hook_test.py -v
 python3 -m unittest plugins/xagent/scripts/install_global_test.py -v
 python3 -m unittest projects/agents/scripts/install_test.py -v
-python3 -m unittest projects/agents/scripts/install_superpowers_test.py -v
+PYTHONPATH=projects/agents/scripts python3 -m unittest projects/agents/scripts/install_superpowers_test.py -v
 make xagent-plugin-test
 make -C projects/agents test
 python3 -m unittest tests/openspec_requirement_ids_test.py -v
