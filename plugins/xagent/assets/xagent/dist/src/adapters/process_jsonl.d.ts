@@ -40,4 +40,5 @@ export declare class ProcessJsonlSession implements HarnessSession {
     close(): Promise<void>;
 }
 export declare function assertCommandAvailable(command: string, harness: HarnessName): Promise<void>;
+export declare function exitWithin(exitPromise: Promise<unknown>, timeoutMs: number): Promise<boolean>;
 //# sourceMappingURL=process_jsonl.d.ts.map

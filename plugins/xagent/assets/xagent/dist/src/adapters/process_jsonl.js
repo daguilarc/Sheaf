@@ -298,7 +298,7 @@ function signalActiveTurn(activeTurn, signal) {
         }
     }
 }
-function exitWithin(exitPromise, timeoutMs) {
+export function exitWithin(exitPromise, timeoutMs) {
     return new Promise((resolve) => {
         let settled = false;
         const timeout = setTimeout(() => {

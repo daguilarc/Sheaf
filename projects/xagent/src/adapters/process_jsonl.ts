@@ -432,8 +432,8 @@ function signalActiveTurn(
   }
 }
 
-function exitWithin(
-  exitPromise: ActiveProcessTurn["exitPromise"],
+export function exitWithin(
+  exitPromise: Promise<unknown>,
   timeoutMs: number,
 ): Promise<boolean> {
   return new Promise((resolve) => {

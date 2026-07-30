@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 
 import { FakeHarnessAdapter } from "../adapters/fake.js";
+import { exitWithin } from "../adapters/process_jsonl.js";
 import type { AdapterEvent, HarnessAdapter, HarnessSession, HarnessStartOptions } from "../adapters/types.js";
 import type { HarnessName } from "../events.js";
 import { captureOwnedProcessIdentity } from "../supervision/process_identity.js";
@@ -141,27 +142,78 @@ function wrapSessionWithOwnedChildCleanup(
       }
       closed = true;
       await session.close();
-      terminateOwnedChild(ownedChild);
+      await terminateOwnedChild(ownedChild);
     },
   };
 }
 
-function terminateOwnedChild(child: ChildProcess): void {
+const OWNED_CHILD_TERMINATION_GRACE_MS = 2_000;
+
+// `close()` must not resolve until the owned child is actually gone: callers
+// (and the packaged cleanup smoke) inspect the pid the moment the close
+// contract completes. Mirrors the bounded SIGTERM/SIGKILL escalation used for
+// real provider processes in `process_jsonl.ts`.
+//
+async function terminateOwnedChild(child: ChildProcess): Promise<void> {
+  if (child.pid === undefined) {
+    return;
+  }
+  const exited = waitForChildExit(child);
+  signalOwnedChild(child, "SIGTERM");
+  if (await exitWithin(exited, OWNED_CHILD_TERMINATION_GRACE_MS)) {
+    return;
+  }
+
+  signalOwnedChild(child, "SIGKILL");
+  if (await exitWithin(exited, OWNED_CHILD_TERMINATION_GRACE_MS)) {
+    return;
+  }
+
+  throw new Error("Owned test child did not exit after SIGTERM and SIGKILL.");
+}
+
+function signalOwnedChild(child: ChildProcess, signal: "SIGTERM" | "SIGKILL"): void {
   const pid = child.pid;
   if (pid === undefined) {
     return;
   }
   try {
     if (process.platform === "win32") {
-      child.kill("SIGTERM");
+      child.kill(signal);
       return;
     }
-    process.kill(-pid, "SIGTERM");
+    process.kill(-pid, signal);
   } catch (error) {
     if (!isMissingProcess(error)) {
       throw error;
     }
   }
+}
+
+function waitForChildExit(child: ChildProcess): Promise<void> {
+  if (hasChildExited(child)) {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    child.once("exit", () => {
+      resolve();
+    });
+    child.once("error", () => {
+      resolve();
+    });
+    // The child can exit between the check above and listener installation, in
+    // which case `exit` has already been emitted and would never reach the
+    // listener. Node records the exit status before emitting, so re-checking
+    // here closes that race.
+    //
+    if (hasChildExited(child)) {
+      resolve();
+    }
+  });
+}
+
+function hasChildExited(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
 }
 
 function parsePositiveInteger(raw: string | undefined): number | undefined {
