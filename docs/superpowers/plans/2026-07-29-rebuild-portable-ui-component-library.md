@@ -1794,28 +1794,36 @@ git commit -m "feat(portable-ui): dispatch a plain click from Draw nodes in both
 
 Sync and Audio are the two simple form pages, staged first (design.md D12). Sync proves the form grid; Audio adds conditional rows and the captioned-selector fix.
 
-- [ ] **Step 1: Extract the page style constants**
+- [ ] **Step 1: Wire the page style constants — the extraction is already done**
 
-Read `PortableJuceBackend.hpp:1119-1158` and seed `RuntimePageStyle.hpp` from those exact RGB values so the pages start from today's look. **Fill in every value from the file you read; leave no placeholder.**
+**`RuntimePageStyle.hpp` already exists and is already populated.** Task 7 recovered the constants when the JUCE colour-policy deletion removed the originals: the values were transcribed from `cea7fa88` and verified byte-for-byte in that task's review. OpenSpec 5.1 was amended to say so — "this task is the wiring, not the extraction". Do **not** recreate the header, re-derive its values from `PortableJuceBackend.hpp:1119-1158`, or rename what is in it.
+
+What is actually there today, and nothing includes it yet:
 
 ```cpp
-#pragma once
-#include "synth/PortableUI.hpp"
-
-// The config pages' own appearance choices. Ordinary named constants passed to
-// components — deliberately NOT a styling system, theme, or token vocabulary
-// (design.md D5, Non-Goals). Seeded from the JUCE backend constants this change
-// demotes to absent-value defaults.
 namespace synth::pagestyle {
-inline constexpr Color kPageBackground = /* read from PortableJuceBackend.hpp */;
-inline constexpr Color kControlFill    = /* ... */;
-inline constexpr Color kPrimaryFill    = /* was variant "primary" */;
-inline constexpr Color kDangerFill     = /* was variant "danger" */;
-inline constexpr ui::TextStyle kBodyText  = /* ... */;
-inline constexpr ui::TextStyle kTitleText = /* was "title" */;
-inline constexpr ui::TextStyle kMutedText = /* was "muted" */;
+inline constexpr float kDefaultTextSize = 13.0f;
+inline constexpr float kTitleTextSize   = 18.0f;
+
+inline constexpr Color kDefaultText  = Color::Rgb(255, 255, 255);
+inline constexpr Color kDisabledText = Color::Rgb(125, 132, 138);
+inline constexpr Color kDangerText   = Color::Rgb(255, 160, 148);
+inline constexpr Color kMutedText    = Color::Rgb(178, 188, 196);
+inline constexpr Color kMutedTitleText = Color::Rgb(194, 202, 208);
+
+inline constexpr Color kDefaultButton  = Color::Rgb(42, 47, 52);
+inline constexpr Color kDisabledButton = Color::Rgb(45, 49, 53);
+inline constexpr Color kSelectedButton = Color::Rgb(54, 91, 110);
+inline constexpr Color kPrimaryButton  = Color::Rgb(57, 106, 127);
+inline constexpr Color kListRowButton  = Color::Rgb(34, 39, 44);
+
+inline constexpr Color kSelectedPanel = Color::Rgb(53, 80, 96);
+inline constexpr Color kListRowPanel  = Color::Rgb(34, 39, 44);
+inline constexpr Color kDefaultPanel  = Color::Rgb(30, 34, 38);
 }
 ```
+
+Note it carries text *sizes* and text *colours* separately rather than composed `ui::TextStyle` values, and includes only `synth/Color.hpp`. Composing the `TextStyle` values the pages need is part of this task; adding them to the header is fine, changing the existing names is not — Tasks 12 and 13 both consume this namespace. Keep it ordinary named constants, deliberately **not** a styling system, theme, or token vocabulary (design.md D5, Non-Goals).
 
 - [ ] **Step 2: Write the failing tests**
 
