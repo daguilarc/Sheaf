@@ -15,7 +15,6 @@
     { "type": "tool.completed", "name": "shell", "status": "completed", "output": { "exit_code": 0 } }
   ],
   "expected_classifier_eligible": true,
-  "expected_suspicion_signals": [],
   "scripted_verdict": { "verdict": "healthy", "confidence": 0.92, "reason_code": "steady_progress", "evidence": ["Diverse tools and new semantic progress each step."] },
   "expected_attention": false,
   "false_alert_note": "Healthy high-confidence verdict stays controller-silent; no false alert."

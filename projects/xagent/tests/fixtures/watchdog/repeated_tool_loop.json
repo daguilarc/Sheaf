@@ -1,8 +1,8 @@
 {
   "name": "repeated_tool_loop",
-  "description": "The worker calls the same tool with the same fingerprint three times in ten minutes without producing new semantic progress. Deterministic repetition triggers a suspicion signal that makes the watchdog eligible before the next periodic checkpoint.",
+  "description": "The worker calls the same tool repeatedly without producing new semantic progress. The periodic watchdog checkpoint reviews the raw provider JSON and classifies the turn.",
   "original_prompt": "Fix the failing test in tests/watchdog.test.ts.",
-  "elapsed_ms": 420000,
+  "elapsed_ms": 600000,
   "events": [
     { "type": "message.delta", "role": "assistant", "delta": "Running the test" },
     { "type": "tool.started", "name": "shell", "input": { "cmd": "npm test -- --test-name-pattern=watchdog" } },
@@ -13,8 +13,7 @@
     { "type": "tool.completed", "name": "shell", "status": "failed", "error": "AssertionError: expected 1 to equal 0" }
   ],
   "expected_classifier_eligible": true,
-  "expected_suspicion_signals": ["repeated_failure_fingerprint"],
   "scripted_verdict": { "verdict": "derailed", "confidence": 0.88, "reason_code": "repeated_failed_tool", "evidence": ["Same failing tool fingerprint occurred three times without new progress."] },
   "expected_attention": true,
-  "false_alert_note": "Suspicion signal triggers an early check; the classifier returns derailed and advisory attention is emitted. The worker is not auto-interrupted."
+  "false_alert_note": "The periodic checkpoint triggers the check; the classifier returns derailed and advisory attention is emitted. The worker is not auto-interrupted."
 }

@@ -44,6 +44,11 @@ test("90-minute healthy run: MCP await wakes once; quiet client measured; pollin
     for (let minute = 1; minute <= x_RunDurationMs / x_ProgressIntervalMs; minute += 1) {
       clock.advance(x_ProgressIntervalMs);
       yield {
+        type: "raw.provider",
+        harness: "codex",
+        payload: { type: "assistant_delta", minute },
+      };
+      yield {
         type: "message.delta",
         message_id: "m1",
         role: "assistant",

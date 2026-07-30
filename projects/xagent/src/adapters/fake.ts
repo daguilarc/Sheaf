@@ -7,6 +7,7 @@ import type {
   HarnessStartOptions,
   OwnedProcessIdentity,
 } from "./types.js";
+import type { HarnessName } from "../events.js";
 
 export type FakeHarnessAdapterOptions = {
   readonly includeToolEvents?: boolean;
@@ -18,7 +19,7 @@ export type FakeHarnessAdapterOptions = {
 };
 
 export class FakeHarnessAdapter implements HarnessAdapter {
-  readonly harness = "codex";
+  readonly harness: HarnessName = "codex";
   readonly capabilities: HarnessCapabilities = {
     forwardsModel: true,
     forwardsThinkingLevel: true,

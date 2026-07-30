@@ -1,271 +1,121 @@
-import { createHash } from "node:crypto";
+import type { HarnessName } from "../events.js";
+import { truncateUtf8 } from "../sanitize.js";
 
-import type { AdapterEvent } from "../adapters/types.js";
-import {
-  canonicalJson,
-  sanitizeValue,
-  truncateUtf8,
-} from "../sanitize.js";
-
-export type PriorWatchdogVerdict = {
-  readonly verdict: "healthy" | "derailed" | "uncertain";
-  readonly confidence: number;
-  readonly reason_code: string;
-};
-
-export type EvidenceSuspicionSignal =
-  | "repeated_tool_fingerprint"
-  | "repeated_failure_fingerprint";
-
-export type EvidenceFingerprint = {
-  readonly fingerprint: string;
-  readonly count: number;
-};
-
-export type SemanticEvidenceInput = {
+export type ProviderJsonEvidenceInput = {
   readonly original_prompt: string;
-  readonly recent_events: readonly Record<string, unknown>[];
-  readonly tool_fingerprints: readonly EvidenceFingerprint[];
-  readonly failure_fingerprints: readonly EvidenceFingerprint[];
+  readonly harness: HarnessName;
+  readonly recent_provider_json: readonly unknown[];
   readonly elapsed_ms: number;
-  readonly previous_verdict?: PriorWatchdogVerdict;
-  readonly suspicion_signals: readonly EvidenceSuspicionSignal[];
   readonly truncated: boolean;
 };
 
-export type SemanticEvidenceSnapshot = SemanticEvidenceInput & {
+export type ProviderJsonEvidenceSnapshot = ProviderJsonEvidenceInput & {
   readonly input_bytes: number;
 };
 
-export type SemanticEvidenceWindowOptions = {
-  readonly repoRoot: string;
+export type ProviderJsonEvidenceWindowOptions = {
+  readonly harness: HarnessName;
   readonly originalPrompt: string;
   readonly clock?: () => Date;
-  readonly previousVerdict?: PriorWatchdogVerdict;
   readonly maxInputBytes?: number;
-  readonly suspicionWindowMs?: number;
-  readonly repeatedToolThreshold?: number;
-  readonly repeatedFailureThreshold?: number;
+  readonly maxStringBytes?: number;
 };
 
-type TimedEvent = {
-  readonly recordedAt: number;
-  readonly event: Record<string, unknown>;
-};
-
-type TimedFingerprint = {
-  readonly recordedAt: number;
-  readonly fingerprint: string;
+type RetainedRecord = {
+  readonly value: unknown;
+  readonly bytes: number;
 };
 
 const DEFAULT_MAX_INPUT_BYTES = 64 * 1024;
+const DEFAULT_MAX_STRING_BYTES = 16 * 1024;
 const MIN_INPUT_BYTES = 512;
-const DEFAULT_SUSPICION_WINDOW_MS = 10 * 60_000;
-const MAX_RETAINED_EVENTS = 256;
-const MAX_RETAINED_FINGERPRINTS = 512;
-const MAX_SNAPSHOT_FINGERPRINTS_PER_KIND = 32;
-const MAX_SINGLE_EVENT_BYTES = 16 * 1024;
+const TRUNCATION_MARKER = "[xagent: truncated]";
 
-export class SemanticEvidenceWindow {
-  readonly #repoRoot: string;
+export class ProviderJsonEvidenceWindow {
+  readonly #harness: HarnessName;
   readonly #clock: () => Date;
   readonly #createdAt: number;
-  #previousVerdict?: PriorWatchdogVerdict;
   readonly #maxInputBytes: number;
-  readonly #suspicionWindowMs: number;
-  readonly #repeatedToolThreshold: number;
-  readonly #repeatedFailureThreshold: number;
+  readonly #maxStringBytes: number;
   readonly #originalPrompt: string;
-  readonly #events: TimedEvent[] = [];
-  readonly #toolFingerprints: TimedFingerprint[] = [];
-  readonly #failureFingerprints: TimedFingerprint[] = [];
+  readonly #records: RetainedRecord[] = [];
+  #retainedRecordBytes = 0;
   #wasTruncated = false;
 
-  constructor(options: SemanticEvidenceWindowOptions) {
-    validateSemanticEvidencePolicy(options);
-    this.#repoRoot = options.repoRoot;
+  constructor(options: ProviderJsonEvidenceWindowOptions) {
+    validateProviderJsonEvidencePolicy({
+      maxInputBytes: options.maxInputBytes,
+      maxStringBytes: options.maxStringBytes,
+    });
+    this.#harness = options.harness;
     this.#clock = options.clock ?? (() => new Date());
     this.#createdAt = this.#clock().getTime();
-    this.#previousVerdict = options.previousVerdict;
     this.#maxInputBytes = options.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES;
-    this.#suspicionWindowMs = positiveInteger(
-      options.suspicionWindowMs ?? DEFAULT_SUSPICION_WINDOW_MS,
-      "suspicionWindowMs",
-    );
-    this.#repeatedToolThreshold = positiveInteger(
-      options.repeatedToolThreshold ?? 3,
-      "repeatedToolThreshold",
-    );
-    this.#repeatedFailureThreshold = positiveInteger(
-      options.repeatedFailureThreshold ?? 2,
-      "repeatedFailureThreshold",
-    );
-    const sanitizedPrompt = sanitizeValue(options.originalPrompt, this.#repoRoot);
-    this.#originalPrompt = truncateUtf8(sanitizedPrompt, this.#maxInputBytes);
-    this.#wasTruncated = this.#originalPrompt !== sanitizedPrompt;
+    this.#maxStringBytes = options.maxStringBytes ?? DEFAULT_MAX_STRING_BYTES;
+    const prompt = boundProviderValue(options.originalPrompt, this.#maxStringBytes);
+    this.#originalPrompt = typeof prompt.value === "string" ? prompt.value : "";
+    this.#wasTruncated = prompt.truncated;
   }
 
-  record(event: AdapterEvent): void {
-    const now = this.#clock().getTime();
-    this.#pruneFingerprints(now);
-    const normalized = normalizeSemanticEvent(event, this.#repoRoot);
-    if (normalized === undefined) {
+  record(payload: unknown): void {
+    const bounded = boundProviderValue(payload, this.#maxStringBytes);
+    const encoded = JSON.stringify(bounded.value);
+    if (encoded === undefined) {
+      this.#wasTruncated = true;
+      return;
+    }
+    const bytes = Buffer.byteLength(encoded, "utf8");
+    this.#wasTruncated ||= bounded.truncated;
+    if (bytes > this.#maxInputBytes) {
+      this.#wasTruncated = true;
       return;
     }
 
-    const bounded = boundEvent(normalized);
-    this.#wasTruncated ||= bounded.truncated;
-    this.#events.push({ recordedAt: now, event: bounded.event });
-    if (this.#events.length > MAX_RETAINED_EVENTS) {
-      this.#events.shift();
+    this.#records.push({ value: bounded.value, bytes });
+    this.#retainedRecordBytes += bytes;
+    while (this.#retainedRecordBytes > this.#maxInputBytes) {
+      const removed = this.#records.shift();
+      if (removed === undefined) {
+        this.#retainedRecordBytes = 0;
+        break;
+      }
+      this.#retainedRecordBytes -= removed.bytes;
       this.#wasTruncated = true;
     }
-
-    if (event.type === "tool.started") {
-      this.#toolFingerprints.push({
-        recordedAt: now,
-        fingerprint: fingerprint({
-          name: event.name,
-          input: sanitizeValue(event.input, this.#repoRoot),
-        }),
-      });
-      trimStart(this.#toolFingerprints, MAX_RETAINED_FINGERPRINTS);
-    }
-
-    const failure = normalizeFailureFingerprint(event, this.#repoRoot);
-    if (failure !== undefined) {
-      this.#failureFingerprints.push({ recordedAt: now, fingerprint: fingerprint(failure) });
-      trimStart(this.#failureFingerprints, MAX_RETAINED_FINGERPRINTS);
-    }
   }
 
-  recordPreviousVerdict(verdict: PriorWatchdogVerdict): void {
-    this.#previousVerdict = verdict;
-  }
-
-  snapshot(): SemanticEvidenceSnapshot {
+  snapshot(): ProviderJsonEvidenceSnapshot {
     const now = this.#clock().getTime();
-    this.#pruneFingerprints(now);
-    const toolFingerprintCount = distinctFingerprintCount(this.#toolFingerprints);
-    const failureFingerprintCount = distinctFingerprintCount(this.#failureFingerprints);
-    let toolFingerprints = aggregateFingerprints(
-      this.#toolFingerprints,
-      MAX_SNAPSHOT_FINGERPRINTS_PER_KIND,
-    );
-    let failureFingerprints = aggregateFingerprints(
-      this.#failureFingerprints,
-      MAX_SNAPSHOT_FINGERPRINTS_PER_KIND,
-    );
-    const suspicionSignals: EvidenceSuspicionSignal[] = [];
-    if (toolFingerprints.some(({ count }) => count >= this.#repeatedToolThreshold)) {
-      suspicionSignals.push("repeated_tool_fingerprint");
-    }
-    if (failureFingerprints.some(({ count }) => count >= this.#repeatedFailureThreshold)) {
-      suspicionSignals.push("repeated_failure_fingerprint");
-    }
-
     let originalPrompt = this.#originalPrompt;
-    let recentEvents: Record<string, unknown>[] = [];
-    let truncated = this.#wasTruncated
-      || toolFingerprintCount > toolFingerprints.length
-      || failureFingerprintCount > failureFingerprints.length;
-    let input = this.#createInput(
-      originalPrompt,
-      recentEvents,
-      toolFingerprints,
-      failureFingerprints,
-      suspicionSignals,
-      truncated,
-      now,
-    );
+    let truncated = this.#wasTruncated;
 
-    while (
-      byteLength(input) > this.#maxInputBytes
-      && (toolFingerprints.length > 0 || failureFingerprints.length > 0)
-    ) {
-      if (toolFingerprints.length >= failureFingerprints.length) {
-        toolFingerprints = withoutLowestPriorityFingerprint(toolFingerprints);
-      } else {
-        failureFingerprints = withoutLowestPriorityFingerprint(failureFingerprints);
-      }
-      truncated = true;
-      input = this.#createInput(
-        originalPrompt,
-        recentEvents,
-        toolFingerprints,
-        failureFingerprints,
-        suspicionSignals,
-        truncated,
-        now,
-      );
-    }
-
-    if (byteLength(input) > this.#maxInputBytes) {
+    let emptyInput = this.#createInput(originalPrompt, [], truncated, now);
+    if (byteLength(emptyInput) > this.#maxInputBytes) {
       truncated = true;
       originalPrompt = fitPrompt(
         originalPrompt,
         this.#maxInputBytes,
-        (candidate) => this.#createInput(
-          candidate,
-          recentEvents,
-          toolFingerprints,
-          failureFingerprints,
-          suspicionSignals,
-          truncated,
-          now,
-        ),
+        (candidate) => this.#createInput(candidate, [], truncated, now),
       );
-      input = this.#createInput(
-        originalPrompt,
-        recentEvents,
-        toolFingerprints,
-        failureFingerprints,
-        suspicionSignals,
-        truncated,
-        now,
-      );
+      emptyInput = this.#createInput(originalPrompt, [], truncated, now);
     }
 
-    const allEvents = this.#events.map(({ event }) => event);
-    recentEvents = newestEventsWithinBudget(
-      allEvents,
+    let recentProviderJson = newestRecordsWithinBudget(
+      this.#records,
       this.#maxInputBytes,
-      this.#createInput(
-        originalPrompt,
-        [],
-        toolFingerprints,
-        failureFingerprints,
-        suspicionSignals,
-        truncated,
-        now,
-      ),
+      emptyInput,
     );
-    if (recentEvents.length < allEvents.length && !truncated) {
+    if (recentProviderJson.length < this.#records.length && !truncated) {
       truncated = true;
-      recentEvents = newestEventsWithinBudget(
-        allEvents,
+      emptyInput = this.#createInput(originalPrompt, [], truncated, now);
+      recentProviderJson = newestRecordsWithinBudget(
+        this.#records,
         this.#maxInputBytes,
-        this.#createInput(
-          originalPrompt,
-          [],
-          toolFingerprints,
-          failureFingerprints,
-          suspicionSignals,
-          truncated,
-          now,
-        ),
+        emptyInput,
       );
     }
-    input = this.#createInput(
-      originalPrompt,
-      recentEvents,
-      toolFingerprints,
-      failureFingerprints,
-      suspicionSignals,
-      truncated,
-      now,
-    );
 
+    const input = this.#createInput(originalPrompt, recentProviderJson, truncated, now);
     return {
       ...input,
       input_bytes: byteLength(input),
@@ -274,49 +124,23 @@ export class SemanticEvidenceWindow {
 
   #createInput(
     originalPrompt: string,
-    recentEvents: readonly Record<string, unknown>[],
-    toolFingerprints: readonly EvidenceFingerprint[],
-    failureFingerprints: readonly EvidenceFingerprint[],
-    suspicionSignals: readonly EvidenceSuspicionSignal[],
+    recentProviderJson: readonly unknown[],
     truncated: boolean,
     now: number,
-  ): SemanticEvidenceInput {
+  ): ProviderJsonEvidenceInput {
     return {
       original_prompt: originalPrompt,
-      recent_events: recentEvents,
-      tool_fingerprints: toolFingerprints,
-      failure_fingerprints: failureFingerprints,
+      harness: this.#harness,
+      recent_provider_json: recentProviderJson,
       elapsed_ms: Math.max(0, now - this.#createdAt),
-      ...(this.#previousVerdict === undefined
-        ? {}
-        : { previous_verdict: this.#previousVerdict }),
-      suspicion_signals: suspicionSignals,
       truncated,
     };
   }
-
-  #pruneFingerprints(now: number): void {
-    const earliest = now - this.#suspicionWindowMs;
-    while (
-      this.#toolFingerprints[0] !== undefined
-      && this.#toolFingerprints[0].recordedAt < earliest
-    ) {
-      this.#toolFingerprints.shift();
-    }
-    while (
-      this.#failureFingerprints[0] !== undefined
-      && this.#failureFingerprints[0].recordedAt < earliest
-    ) {
-      this.#failureFingerprints.shift();
-    }
-  }
 }
 
-export function validateSemanticEvidencePolicy(options: {
+export function validateProviderJsonEvidencePolicy(options: {
   readonly maxInputBytes?: number;
-  readonly suspicionWindowMs?: number;
-  readonly repeatedToolThreshold?: number;
-  readonly repeatedFailureThreshold?: number;
+  readonly maxStringBytes?: number;
 }): void {
   const maxInputBytes = positiveInteger(
     options.maxInputBytes ?? DEFAULT_MAX_INPUT_BYTES,
@@ -325,205 +149,105 @@ export function validateSemanticEvidencePolicy(options: {
   if (maxInputBytes < MIN_INPUT_BYTES) {
     throw new Error(`inputLimitBytes must be at least ${MIN_INPUT_BYTES} bytes.`);
   }
-  positiveInteger(
-    options.suspicionWindowMs ?? DEFAULT_SUSPICION_WINDOW_MS,
-    "suspicionWindowMs",
+  const maxStringBytes = positiveInteger(
+    options.maxStringBytes ?? DEFAULT_MAX_STRING_BYTES,
+    "maxStringBytes",
   );
-  positiveInteger(
-    options.repeatedToolThreshold ?? 3,
-    "repeatedToolThreshold",
-  );
-  positiveInteger(
-    options.repeatedFailureThreshold ?? 2,
-    "repeatedFailureThreshold",
-  );
-}
-
-function normalizeSemanticEvent(
-  event: AdapterEvent,
-  repoRoot: string,
-): Record<string, unknown> | undefined {
-  switch (event.type) {
-    case "message.delta":
-      return sanitizeValue({
-        type: event.type,
-        role: event.role,
-        delta: event.delta,
-      }, repoRoot);
-    case "message.completed":
-      return sanitizeValue({
-        type: event.type,
-        role: event.role,
-        text: event.text,
-      }, repoRoot);
-    case "tool.started":
-      return sanitizeValue({
-        type: event.type,
-        name: event.name,
-        ...(event.input === undefined ? {} : { input: event.input }),
-      }, repoRoot);
-    case "tool.completed":
-      return sanitizeValue({
-        type: event.type,
-        name: event.name,
-        status: event.status,
-        ...(event.output === undefined ? {} : { output: event.output }),
-        ...(event.error === undefined ? {} : { error: event.error }),
-      }, repoRoot);
-    case "turn.failed":
-      return sanitizeValue({
-        type: event.type,
-        code: event.code,
-        message: event.message,
-        ...(event.details === undefined ? {} : { details: event.details }),
-      }, repoRoot);
-    case "error":
-      return sanitizeValue({
-        type: event.type,
-        code: event.code,
-        message: event.message,
-        ...(event.details === undefined ? {} : { details: event.details }),
-      }, repoRoot);
-    case "raw.provider":
-    case "status":
-    case "turn.completed":
-      return undefined;
+  const markerBytes = Buffer.byteLength(TRUNCATION_MARKER, "utf8");
+  if (maxStringBytes < markerBytes) {
+    throw new Error(`maxStringBytes must be at least ${markerBytes} bytes.`);
   }
 }
 
-function normalizeFailureFingerprint(
-  event: AdapterEvent,
-  repoRoot: string,
-): Record<string, unknown> | undefined {
-  if (event.type === "tool.completed" && event.status === "failed") {
-    return sanitizeValue({
-      name: event.name,
-      ...(event.error === undefined ? {} : { error: event.error }),
-      ...(event.output === undefined ? {} : { output: event.output }),
-    }, repoRoot);
-  }
-  if (event.type === "turn.failed" || event.type === "error") {
-    return sanitizeValue({
-      code: event.code,
-      message: event.message,
-    }, repoRoot);
-  }
-  return undefined;
-}
-
-function fingerprint(value: unknown): string {
-  return createHash("sha256").update(canonicalJson(value), "utf8").digest("hex");
-}
-
-function aggregateFingerprints(
-  entries: readonly TimedFingerprint[],
-  maximum: number,
-): EvidenceFingerprint[] {
-  const counts = new Map<string, number>();
-  for (const { fingerprint: value } of entries) {
-    counts.set(value, (counts.get(value) ?? 0) + 1);
-  }
-  return [...counts]
-    .map(([value, count]) => ({ fingerprint: value, count }))
-    .sort((left, right) =>
-      right.count - left.count || left.fingerprint.localeCompare(right.fingerprint))
-    .slice(0, maximum)
-    .sort((left, right) => left.fingerprint.localeCompare(right.fingerprint));
-}
-
-function distinctFingerprintCount(entries: readonly TimedFingerprint[]): number {
-  return new Set(entries.map(({ fingerprint: value }) => value)).size;
-}
-
-function withoutLowestPriorityFingerprint(
-  entries: readonly EvidenceFingerprint[],
-): EvidenceFingerprint[] {
-  let dropIndex = 0;
-  for (let index = 1; index < entries.length; index += 1) {
-    const candidate = entries[index];
-    const selected = entries[dropIndex];
-    if (
-      candidate !== undefined
-      && selected !== undefined
-      && (
-        candidate.count < selected.count
-        || (
-          candidate.count === selected.count
-          && candidate.fingerprint > selected.fingerprint
-        )
-      )
-    ) {
-      dropIndex = index;
-    }
-  }
-  return entries.filter((_entry, index) => index !== dropIndex);
-}
-
-function boundEvent(event: Record<string, unknown>): {
-  readonly event: Record<string, unknown>;
+export function boundProviderValue(value: unknown, maxStringBytes: number): {
+  readonly value: unknown;
   readonly truncated: boolean;
 } {
-  const encoded = JSON.stringify(event);
-  if (Buffer.byteLength(encoded, "utf8") <= MAX_SINGLE_EVENT_BYTES) {
-    return { event, truncated: false };
-  }
-  return {
-    event: {
-      type: event.type,
-      summary: truncateUtf8(encoded, MAX_SINGLE_EVENT_BYTES),
+  if (typeof value === "string") {
+    if (Buffer.byteLength(value, "utf8") <= maxStringBytes) {
+      return { value, truncated: false };
+    }
+    const prefixBudget = maxStringBytes - Buffer.byteLength(TRUNCATION_MARKER, "utf8");
+    return {
+      value: `${truncateUtf8(value, prefixBudget)}${TRUNCATION_MARKER}`,
       truncated: true,
-    },
-    truncated: true,
-  };
+    };
+  }
+  if (Array.isArray(value)) {
+    const bounded = value.map((item) => boundProviderValue(item, maxStringBytes));
+    return {
+      value: bounded.map((item) => item.value),
+      truncated: bounded.some((item) => item.truncated),
+    };
+  }
+  if (isRecord(value)) {
+    let truncated = false;
+    const result: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      const bounded = boundProviderValue(item, maxStringBytes);
+      result[key] = bounded.value;
+      truncated ||= bounded.truncated;
+    }
+    return { value: result, truncated };
+  }
+  return { value, truncated: false };
 }
 
 function fitPrompt(
   prompt: string,
   maxBytes: number,
-  buildInput: (candidate: string) => SemanticEvidenceInput,
+  buildInput: (candidate: string) => ProviderJsonEvidenceInput,
 ): string {
-  const characters = [...prompt];
+  const source = prompt.endsWith(TRUNCATION_MARKER)
+    ? prompt.slice(0, -TRUNCATION_MARKER.length)
+    : prompt;
+  if (byteLength(buildInput(TRUNCATION_MARKER)) > maxBytes) {
+    return "";
+  }
+  const characters = [...source];
   let low = 0;
   let high = characters.length;
   while (low < high) {
     const middle = Math.ceil((low + high) / 2);
-    const candidate = characters.slice(0, middle).join("");
+    const candidate = `${characters.slice(0, middle).join("")}${TRUNCATION_MARKER}`;
     if (byteLength(buildInput(candidate)) <= maxBytes) {
       low = middle;
     } else {
       high = middle - 1;
     }
   }
-  return characters.slice(0, low).join("");
+  return `${characters.slice(0, low).join("")}${TRUNCATION_MARKER}`;
 }
 
-function byteLength(value: SemanticEvidenceInput): number {
+function byteLength(value: ProviderJsonEvidenceInput): number {
   return snapshotByteLengthFromInputBytes(
     Buffer.byteLength(JSON.stringify(value), "utf8"),
   );
 }
 
-function newestEventsWithinBudget(
-  events: readonly Record<string, unknown>[],
+function newestRecordsWithinBudget(
+  records: readonly RetainedRecord[],
   maxBytes: number,
-  emptyInput: SemanticEvidenceInput,
-): Record<string, unknown>[] {
+  emptyInput: ProviderJsonEvidenceInput,
+): unknown[] {
   const emptyInputBytes = Buffer.byteLength(JSON.stringify(emptyInput), "utf8");
-  const selectedNewestFirst: Record<string, unknown>[] = [];
-  let eventListBytes = 0;
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
-    if (event === undefined) {
+  const selectedNewestFirst: unknown[] = [];
+  let recordListBytes = 0;
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index];
+    if (record === undefined) {
       continue;
     }
-    const eventBytes = Buffer.byteLength(JSON.stringify(event), "utf8");
     const separatorBytes = selectedNewestFirst.length === 0 ? 0 : 1;
-    const candidateInputBytes = emptyInputBytes + eventListBytes + separatorBytes + eventBytes;
+    const candidateInputBytes = emptyInputBytes
+      + recordListBytes
+      + separatorBytes
+      + record.bytes;
     if (snapshotByteLengthFromInputBytes(candidateInputBytes) > maxBytes) {
       break;
     }
-    selectedNewestFirst.push(event);
-    eventListBytes += separatorBytes + eventBytes;
+    selectedNewestFirst.push(record.value);
+    recordListBytes += separatorBytes + record.bytes;
   }
   return selectedNewestFirst.reverse();
 }
@@ -540,15 +264,13 @@ function snapshotByteLengthFromInputBytes(inputBytes: number): number {
   }
 }
 
-function trimStart<T>(items: T[], maximum: number): void {
-  if (items.length > maximum) {
-    items.splice(0, items.length - maximum);
-  }
-}
-
 function positiveInteger(value: number, name: string): number {
   if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${name} must be a positive safe integer.`);
   }
   return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

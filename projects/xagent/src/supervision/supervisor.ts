@@ -9,9 +9,9 @@ import type {
 import { sanitizeValue } from "../sanitize.js";
 import { ClaudeWatchdogClassifier } from "./claude_watchdog.js";
 import {
-  SemanticEvidenceWindow,
-  type SemanticEvidenceSnapshot,
-  validateSemanticEvidencePolicy,
+  ProviderJsonEvidenceWindow,
+  type ProviderJsonEvidenceSnapshot,
+  validateProviderJsonEvidencePolicy,
 } from "./evidence.js";
 import { SequencedEventQueue } from "./event_queue.js";
 import {
@@ -93,12 +93,9 @@ export class Supervisor {
   #startRequested = false;
   #lastTransportProgressAt: string;
   #lastSemanticProgressAt: string;
-  #evidence?: SemanticEvidenceWindow;
-  #previousWatchdogVerdict?: {
-    readonly verdict: WatchdogVerdict["verdict"];
-    readonly confidence: number;
-    readonly reason_code: string;
-  };
+  #evidence?: ProviderJsonEvidenceWindow;
+  #watchdogSuppressedByExposedWait = false;
+  #watchdogSuppressedByHardDeadline = false;
   #healthCallbackFailure?: Error;
   #watchdogCallbackFailure?: Error;
   #callbackFailureSurfaced = false;
@@ -108,19 +105,10 @@ export class Supervisor {
     this.#adapter = options.adapter;
     this.#startOptions = options.startOptions;
     this.#policy = options.policy;
-    validateSemanticEvidencePolicy({
+    validateProviderJsonEvidencePolicy({
       ...(this.#policy.watchdog.inputLimitBytes === undefined
         ? {}
         : { maxInputBytes: this.#policy.watchdog.inputLimitBytes }),
-      ...(this.#policy.watchdog.suspicionWindowMs === undefined
-        ? {}
-        : { suspicionWindowMs: this.#policy.watchdog.suspicionWindowMs }),
-      ...(this.#policy.watchdog.repeatedToolThreshold === undefined
-        ? {}
-        : { repeatedToolThreshold: this.#policy.watchdog.repeatedToolThreshold }),
-      ...(this.#policy.watchdog.repeatedFailureThreshold === undefined
-        ? {}
-        : { repeatedFailureThreshold: this.#policy.watchdog.repeatedFailureThreshold }),
     });
     this.#clock = options.clock ?? (() => new Date());
     this.#metadataSink = options.metadataSink ?? (async () => {});
@@ -213,7 +201,7 @@ export class Supervisor {
     return this.#clock().getTime() - lastProgressMs < this.#policy.silenceTimeoutMs;
   }
 
-  evidenceSnapshot(): SemanticEvidenceSnapshot | undefined {
+  evidenceSnapshot(): ProviderJsonEvidenceSnapshot | undefined {
     return this.#evidence?.snapshot();
   }
 
@@ -276,27 +264,17 @@ export class Supervisor {
         //
         turnStarted = true;
         await this.#publishSubmitted(turnId, text);
-        this.#evidence = new SemanticEvidenceWindow({
-          repoRoot: this.#startOptions.cwd,
+        this.#evidence = new ProviderJsonEvidenceWindow({
+          harness: this.#adapter.harness,
           originalPrompt: text,
           clock: this.#clock,
-          ...(this.#previousWatchdogVerdict === undefined
-            ? {}
-            : { previousVerdict: this.#previousWatchdogVerdict }),
           ...(this.#policy.watchdog.inputLimitBytes === undefined
             ? {}
             : { maxInputBytes: this.#policy.watchdog.inputLimitBytes }),
-          ...(this.#policy.watchdog.suspicionWindowMs === undefined
-            ? {}
-            : { suspicionWindowMs: this.#policy.watchdog.suspicionWindowMs }),
-          ...(this.#policy.watchdog.repeatedToolThreshold === undefined
-            ? {}
-            : { repeatedToolThreshold: this.#policy.watchdog.repeatedToolThreshold }),
-          ...(this.#policy.watchdog.repeatedFailureThreshold === undefined
-            ? {}
-            : { repeatedFailureThreshold: this.#policy.watchdog.repeatedFailureThreshold }),
         });
         this.#watchdogScheduler.resetTurn();
+        this.#watchdogSuppressedByExposedWait = false;
+        this.#watchdogSuppressedByHardDeadline = false;
         this.#health.recordMechanicalEvent({ type: "provider.started" });
         return { inputSequence, turnId, session: this.#session };
       });
@@ -687,24 +665,34 @@ export class Supervisor {
   #recordProgress(event: AdapterEvent): void {
     const activeSemanticEvidence = isActiveSemanticEvidence(event);
     this.#health.recordProviderActivity(activeSemanticEvidence ? "semantic" : "transport");
+    if (activeSemanticEvidence) {
+      this.#watchdogSuppressedByExposedWait = false;
+    }
     this.#lastTransportProgressAt = this.#health.lastTransportActivityAt;
     this.#lastSemanticProgressAt = this.#health.lastSemanticActivityAt;
-    this.#evidence?.record(event);
-    if (activeSemanticEvidence && this.#evidence !== undefined) {
+    if (
+      event.type === "raw.provider"
+      && this.#evidence !== undefined
+      && !this.#isWatchdogMechanicallySuppressed()
+    ) {
+      this.#evidence.record(event.payload);
       // Pass a thunk so the evidence snapshot is only constructed when the
-      // scheduler is actually eligible to invoke the classifier. The Claude
-      // Code adapter emits a `message.delta` per `content_block_delta`, so
-      // this runs tens of times per second per run; building the snapshot
-      // eagerly on every semantic event dominated the event loop (review I2).
-      // The thunk defers `snapshot()` until after the cheap eligibility
-      // checks (coverage, in-flight, minimum interval, periodic cadence).
+      // scheduler is actually eligible to invoke the classifier. Raw provider
+      // lines can be frequent, so the thunk defers `snapshot()` until after the
+      // cheap scheduler eligibility checks.
       //
       void this.#watchdogScheduler
         .onActiveEvidenceThunk(() => this.#evidence!.snapshot())
         .catch((error: unknown) => {
           this.#watchdogCallbackFailure = asError(error);
         });
+    } else if (event.type === "raw.provider") {
+      this.#evidence?.record(event.payload);
     }
+  }
+
+  #isWatchdogMechanicallySuppressed(): boolean {
+    return this.#watchdogSuppressedByExposedWait || this.#watchdogSuppressedByHardDeadline;
   }
 
   #recordWatchdogVerdict(
@@ -714,12 +702,6 @@ export class Supervisor {
     currentTurn: boolean,
   ): Promise<void> {
     return this.#withLifecycleMutation(async () => {
-      this.#previousWatchdogVerdict = {
-        verdict: verdict.verdict,
-        confidence: verdict.confidence,
-        reason_code: verdict.reason_code,
-      };
-      this.#evidence?.recordPreviousVerdict(this.#previousWatchdogVerdict);
       const nextWatchdog = aggregateWatchdog(
         this.#watchdog,
         request,
@@ -790,6 +772,15 @@ export class Supervisor {
   ): Promise<void> {
     if (classification.kind !== "attention") {
       return Promise.resolve();
+    }
+    if (
+      classification.reason === "input_required"
+      || classification.reason === "permission_required"
+    ) {
+      this.#watchdogSuppressedByExposedWait = true;
+    }
+    if (classification.reason === "hard_deadline") {
+      this.#watchdogSuppressedByHardDeadline = true;
     }
     return this.publishAttention(
       classification.reason,

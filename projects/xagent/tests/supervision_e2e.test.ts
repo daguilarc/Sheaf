@@ -115,14 +115,6 @@ async function runFixture(fixture: Fixture): Promise<void> {
       1,
       `${fixture.name}: expected one classifier call`,
     );
-    if (fixture.expected_suspicion_signals !== undefined) {
-      const actualSignals = classifier.calls[0]?.suspicion_signals ?? [];
-      assert.deepEqual(
-        [...actualSignals].sort(),
-        [...fixture.expected_suspicion_signals].sort(),
-        `${fixture.name}: suspicion signals`,
-      );
-    }
   } else {
     assert.equal(
       classifier.calls.length,
@@ -183,6 +175,11 @@ async function* replayFixture(fixture: Fixture, clock: FakeClock): AsyncIterable
       yield events[eventIndex];
       eventIndex += 1;
     } else if (fixture.expected_classifier_eligible) {
+      yield {
+        type: "raw.provider",
+        harness: "codex",
+        payload: { type: "fixture_progress", step },
+      };
       yield {
         type: "message.delta",
         message_id: `pad_${step}`,
@@ -525,7 +522,6 @@ type Fixture = {
   readonly events: readonly unknown[];
   readonly process_exit?: { readonly exit_code: number; readonly signal: string | null };
   readonly expected_classifier_eligible: boolean;
-  readonly expected_suspicion_signals?: readonly string[];
   readonly scripted_verdict?: WatchdogVerdict;
   readonly expected_attention: boolean;
   readonly expected_attention_reason?: string;

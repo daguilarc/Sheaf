@@ -264,29 +264,29 @@ test("periodic backoff advances only after healthy verdicts and resets after unc
   assert.equal(classifier.calls.length, 4);
 });
 
-test("suspicion is early-check eligible only after the five minute minimum", async () => {
+test("repeated provider activity never invokes before the periodic checkpoint", async () => {
   const clock = new FakeClock();
   const classifier = new ClassifierSpy();
   const scheduler = new WatchdogScheduler({
     classifier,
     clock: clock.now,
+    scheduler: clock,
+    policy: { cadenceMs: [600_000], minimumIntervalMs: 300_000 },
   });
-  scheduler.resetTurn();
-  const suspicious = request(["repeated_tool_fingerprint"]);
 
-  clock.advance(299_999);
-  await scheduler.onActiveEvidence(suspicious);
+  for (let index = 0; index < 20; index += 1) {
+    clock.advance(29_000);
+    await scheduler.onActiveEvidence(request({
+      recent_provider_json: [{ type: "tool_use", id: index % 2 }],
+    }));
+  }
   assert.equal(classifier.calls.length, 0);
-  clock.advance(1);
-  await scheduler.onActiveEvidence(suspicious);
-  assert.equal(classifier.calls.length, 1);
 
-  clock.advance(299_999);
-  await scheduler.onActiveEvidence(suspicious);
+  clock.advance(20_000);
+  await scheduler.onActiveEvidence(request({
+    recent_provider_json: [{ type: "tool_use", id: "checkpoint" }],
+  }));
   assert.equal(classifier.calls.length, 1);
-  clock.advance(1);
-  await scheduler.onActiveEvidence(suspicious);
-  assert.equal(classifier.calls.length, 2);
 });
 
 test("policy cannot relax the five-minute, 64 KiB, 2 KiB, or eight-call bounds", () => {
@@ -333,7 +333,9 @@ test("new turns reset periodic cadence while preserving the eight-call run cap",
   assert.equal(classifier.calls.length, 8);
 
   clock.advance(24 * 60 * 60_000);
-  await scheduler.onActiveEvidence(request(["repeated_failure_fingerprint"]));
+  await scheduler.onActiveEvidence(request({
+    recent_provider_json: [{ type: "tool_use", id: "after_coverage" }],
+  }));
   assert.equal(scheduler.callsUsed, 8);
   assert.equal(classifier.calls.length, 8);
   assert.equal(scheduler.coverageExhausted, true);
@@ -465,33 +467,32 @@ test("supervisor classifier seam is bypassed by mechanical completion, input, cr
   await silentSubmission;
 });
 
-test("mechanical-only provider events beyond every cadence checkpoint never invoke the classifier", async () => {
+test("raw provider records reach the classifier at a periodic checkpoint without normalized events", async () => {
   const clock = new FakeClock();
   const classifier = new ClassifierSpy();
-  async function* mechanicalOnlyTurn() {
-    for (let minute = 4; minute <= 32; minute += 4) {
-      clock.advance(4 * 60_000);
-      yield {
-        type: "raw.provider" as const,
-        harness: "codex" as const,
-        payload: { bytes: minute },
-      };
-    }
-    clock.advance(60_000);
+  async function* rawProviderTurn() {
+    clock.advance(10 * 60_000);
     yield {
-      type: "status" as const,
-      level: "warning" as const,
-      code: "input_required",
-      message: "Choose a migration.",
+      type: "raw.provider" as const,
+      harness: "claude_code" as const,
+      payload: {
+        type: "assistant",
+        message: {
+          content: [
+            { type: "input_json_delta", partial_json: "{\"command\":\"npm test\"}" },
+            { type: "tool_result", content: "tests still running" },
+          ],
+        },
+      },
     };
     yield {
       type: "turn.completed" as const,
-      final_text: "mechanically complete",
+      final_text: "complete",
     };
   }
   const supervisor = new Supervisor({
-    runId: "xrun_watchdog_mechanical_past_cadence",
-    adapter: new FakeHarnessAdapter({ scriptedEvents: [mechanicalOnlyTurn()] }),
+    runId: "xrun_watchdog_raw_provider_checkpoint",
+    adapter: new ClaudeFakeHarnessAdapter({ scriptedEvents: [rawProviderTurn()] }),
     startOptions: { cwd: process.cwd() },
     policy: { silenceTimeoutMs: 300_000, watchdog: {} },
     clock: clock.now,
@@ -501,7 +502,117 @@ test("mechanical-only provider events beyond every cadence checkpoint never invo
   await supervisor.start();
   await supervisor.submit("implement");
 
-  assert.equal(classifier.calls.length, 0);
+  assert.equal(classifier.calls.length, 1);
+  assert.deepEqual(classifier.calls[0]?.recent_provider_json, [{
+    type: "assistant",
+    message: {
+      content: [
+        { type: "input_json_delta", partial_json: "{\"command\":\"npm test\"}" },
+        { type: "tool_result", content: "tests still running" },
+      ],
+    },
+  }]);
+});
+
+test("a stream of only raw provider records does not advance last semantic progress", async () => {
+  const clock = new FakeClock();
+  const metadata: Array<{ readonly last_semantic_progress_at: string; readonly phase: string }> = [];
+  async function* rawOnlyTurn() {
+    for (const minute of [1, 2, 3]) {
+      clock.advance(60_000);
+      yield {
+        type: "raw.provider" as const,
+        harness: "codex" as const,
+        payload: { minute },
+      };
+    }
+    yield { type: "turn.completed" as const, final_text: "complete" };
+  }
+  const supervisor = new Supervisor({
+    runId: "xrun_watchdog_raw_only_semantic_timestamp",
+    adapter: new FakeHarnessAdapter({ scriptedEvents: [rawOnlyTurn()] }),
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    clock: clock.now,
+    scheduler: clock,
+    metadataSink: async (state) => {
+      metadata.push(state);
+    },
+  });
+
+  await supervisor.start();
+  await supervisor.submit("implement");
+
+  const readyState = [...metadata].reverse().find((state) => state.phase === "ready");
+  assert.equal(readyState?.last_semantic_progress_at, "2026-07-25T12:00:00.000Z");
+});
+
+test("permission waits suppress raw-provider watchdog checks until semantic activity clears the wait", async () => {
+  const clock = new FakeClock();
+  const classifier = new ClassifierSpy();
+  const reasons: string[] = [];
+  async function* permissionThenRawTurn() {
+    clock.advance(10 * 60_000);
+    yield {
+      type: "status" as const,
+      level: "warning" as const,
+      code: "permission_required",
+      message: "Approve command.",
+      details: { permission: "Bash(npm test)" },
+    };
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { type: "permission_prompt", id: 1 },
+    };
+    yield {
+      type: "status" as const,
+      level: "warning" as const,
+      code: "permission_required",
+      message: "Approve command again.",
+      details: { permission: "Bash(npm test)" },
+    };
+    clock.advance(10 * 60_000);
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { type: "permission_prompt", id: 2 },
+    };
+    yield {
+      type: "message.delta" as const,
+      message_id: "message_permission_cleared",
+      role: "assistant" as const,
+      delta: "semantic progress after permission",
+    };
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { type: "assistant", message: "permission cleared" },
+    };
+    yield { type: "turn.completed" as const, final_text: "complete" };
+  }
+  const supervisor = new Supervisor({
+    runId: "xrun_watchdog_permission_suppression",
+    adapter: new FakeHarnessAdapter({ scriptedEvents: [permissionThenRawTurn()] }),
+    startOptions: { cwd: process.cwd() },
+    policy: { silenceTimeoutMs: 300_000, watchdog: {} },
+    clock: clock.now,
+    scheduler: clock,
+    watchdogClassifier: classifier,
+    eventSink: async (event) => {
+      reasons.push(event.reason);
+    },
+  });
+
+  await supervisor.start();
+  await supervisor.submit("implement");
+
+  assert.equal(reasons.filter((reason) => reason === "permission_required").length, 1);
+  assert.equal(classifier.calls.length, 1);
+  assert.deepEqual(classifier.calls[0]?.recent_provider_json.at(-1), {
+    type: "assistant",
+    message: "permission cleared",
+  });
 });
 
 test("a classifier verdict completed after close still persists aggregate cost and coverage", async () => {
@@ -543,6 +654,11 @@ test("a classifier verdict completed after close still persists aggregate cost a
       };
     }
     clock.advance(2 * 60_000);
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { bytes: 10 },
+    };
     yield {
       type: "message.delta" as const,
       message_id: "message_terminal_edge",
@@ -685,12 +801,17 @@ test("close settles the eighth classifier before coverage persistence can be los
     for (let call = 1; call <= 8; call += 1) {
       clock.advance(40 * 60_000);
       yield {
+        type: "raw.provider" as const,
+        harness: "codex" as const,
+        payload: { bytes: call },
+      };
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      yield {
         type: "message.delta" as const,
         message_id: `message_checkpoint_${call}`,
         role: "assistant" as const,
         delta: `semantic checkpoint ${call}`,
       };
-      await new Promise<void>((resolve) => setImmediate(resolve));
     }
     await releaseTurn.promise;
     yield { type: "turn.completed" as const, final_text: "late completion" };
@@ -898,6 +1019,11 @@ test("an in-flight classifier does not delay deterministic transport failure", a
     }
     clock.advance(2 * 60_000);
     yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { bytes: 10 },
+    };
+    yield {
       type: "message.delta" as const,
       message_id: "message_before_failure",
       role: "assistant" as const,
@@ -960,6 +1086,11 @@ test("a prior-turn verdict cannot publish attention into a later running turn", 
     }
     clock.advance(2 * 60_000);
     yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { bytes: 10 },
+    };
+    yield {
       type: "message.delta" as const,
       message_id: "message_prior_turn",
       role: "assistant" as const,
@@ -1006,7 +1137,7 @@ test("a prior-turn verdict cannot publish attention into a later running turn", 
   await secondSubmission;
 });
 
-test("derailed semantic checks emit advisory attention without acting on the worker", async () => {
+test("derailed watchdog checks emit advisory attention without acting on the worker", async () => {
   const clock = new FakeClock();
   const telemetry: WatchdogTelemetry[] = [];
   const classifier = new ClassifierSpy({
@@ -1029,6 +1160,11 @@ test("derailed semantic checks emit advisory attention without acting on the wor
       payload: { bytes: 1 },
     };
     clock.advance(120_000);
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { bytes: 10 },
+    };
     yield {
       type: "message.delta" as const,
       message_id: "message_1",
@@ -1097,6 +1233,11 @@ test("classifier-authored attention evidence is sanitized before durable deliver
     }
     clock.advance(2 * 60_000);
     yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { bytes: 10 },
+    };
+    yield {
       type: "message.delta" as const,
       message_id: "message_sanitized_attention",
       role: "assistant" as const,
@@ -1134,7 +1275,7 @@ test("classifier-authored attention evidence is sanitized before durable deliver
   await submission;
 });
 
-test("high-confidence healthy semantic checks remain controller-silent", async () => {
+test("high-confidence healthy watchdog checks remain controller-silent", async () => {
   const clock = new FakeClock();
   const classifier = new ClassifierSpy();
   const reasons: string[] = [];
@@ -1148,6 +1289,11 @@ test("high-confidence healthy semantic checks remain controller-silent", async (
       };
     }
     clock.advance(120_000);
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { bytes: 10 },
+    };
     yield {
       type: "message.delta" as const,
       message_id: "message_healthy",
@@ -1179,7 +1325,7 @@ test("high-confidence healthy semantic checks remain controller-silent", async (
   assert.equal(reasons.includes("turn_completed"), true);
 });
 
-test("later checks receive the prior watchdog verdict in the bounded evidence envelope", async () => {
+test("later checks omit prior watchdog verdicts from the bounded evidence envelope", async () => {
   const clock = new FakeClock();
   const classifier = new ClassifierSpy();
   async function* longActiveTurn() {
@@ -1201,6 +1347,11 @@ test("later checks receive the prior watchdog verdict in the bounded evidence en
       }
     }
     clock.advance(4 * 60_000);
+    yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { bytes: 32 },
+    };
     yield {
       type: "message.delta" as const,
       message_id: "message_second_check",
@@ -1225,11 +1376,7 @@ test("later checks receive the prior watchdog verdict in the bounded evidence en
   await supervisor.submit("implement");
 
   assert.equal(classifier.calls.length, 2);
-  assert.deepEqual(classifier.calls[1]?.previous_verdict, {
-    verdict: "healthy",
-    confidence: 0.95,
-    reason_code: "steady_progress",
-  });
+  assert.equal("previous_verdict" in classifier.calls[1]!, false);
   assert.ok((classifier.calls[1]?.input_bytes ?? 0) <= 64 * 1024);
 });
 
@@ -1332,6 +1479,11 @@ test("watchdog telemetry log records a real classifier verdict driven through th
     };
     clock.advance(120_000);
     yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { bytes: 10 },
+    };
+    yield {
       type: "message.delta" as const,
       message_id: "message_wire_check",
       role: "assistant" as const,
@@ -1428,14 +1580,10 @@ test("appendWatchdogTelemetry persists the supplied aggregate fields without pro
 });
 
 // Review I2 (r7): `onActiveEvidenceThunk` must not construct the evidence
-// snapshot when the scheduler is ineligible to invoke the classifier. The
-// Claude Code adapter emits a `message.delta` per `content_block_delta`
-// (tens per second per run), and `SemanticEvidenceWindow.snapshot()` is
-// expensive; building it eagerly on every semantic event dominated the
-// event loop. The thunk defers `snapshot()` until after the cheap
-// eligibility checks (coverage, in-flight, minimum interval). This test
-// pins that contract: the snapshot thunk is not called while the minimum
-// interval since the last invocation has not elapsed.
+// snapshot when the scheduler is ineligible to invoke the classifier. Raw
+// provider lines can arrive frequently, and the thunk defers `snapshot()` until
+// after the cheap eligibility checks (coverage, in-flight, minimum interval,
+// and periodic cadence).
 //
 test("onActiveEvidenceThunk skips the evidence snapshot while the minimum interval has not elapsed (I2)", async () => {
   const clock = new FakeClock();
@@ -1457,15 +1605,14 @@ test("onActiveEvidenceThunk skips the evidence snapshot while the minimum interv
     clock: clock.now,
   });
 
-  // At turn start (t=0), the minimum interval (5 min) has not elapsed, so
-  // the thunk must not be called even when suspicion signals would be
-  // present. (The suspicion check itself requires the snapshot, so the
-  // scheduler cannot evaluate it without the thunk — but it short-circuits
-  // on the cheaper minimum-interval gate first.)
-  const suspiciousRequest = request(["repeated_failure_fingerprint"]);
+  // At turn start (t=0), the minimum interval (5 min) has not elapsed, so the
+  // thunk must not be called.
+  const providerRequest = request({
+    recent_provider_json: [{ type: "tool_use", id: "checkpoint" }],
+  });
   await scheduler.onActiveEvidenceThunk(() => {
     snapshotCalls += 1;
-    return suspiciousRequest;
+    return providerRequest;
   });
   assert.equal(snapshotCalls, 0);
   assert.equal(classifyCalls, 0);
@@ -1474,7 +1621,7 @@ test("onActiveEvidenceThunk skips the evidence snapshot while the minimum interv
   clock.advance(10 * 60_000);
   await scheduler.onActiveEvidenceThunk(() => {
     snapshotCalls += 1;
-    return suspiciousRequest;
+    return providerRequest;
   });
   assert.equal(snapshotCalls, 1);
   assert.equal(classifyCalls, 1);
@@ -1485,18 +1632,17 @@ test("onActiveEvidenceThunk skips the evidence snapshot while the minimum interv
   for (let i = 0; i < 50; i += 1) {
     await scheduler.onActiveEvidenceThunk(() => {
       snapshotCalls += 1;
-      return suspiciousRequest;
+      return providerRequest;
     });
   }
   assert.equal(snapshotCalls, 1);
   assert.equal(classifyCalls, 1);
 
-  // Once the minimum interval elapses again, the thunk is called once more
-  // (periodic is eligible at the 20-minute cadence mark).
-  clock.advance(5 * 60_000);
+  // Once the periodic backoff elapses again, the thunk is called once more.
+  clock.advance(20 * 60_000);
   await scheduler.onActiveEvidenceThunk(() => {
     snapshotCalls += 1;
-    return suspiciousRequest;
+    return providerRequest;
   });
   assert.equal(snapshotCalls, 2);
   assert.equal(classifyCalls, 2);
@@ -1514,6 +1660,11 @@ async function* semanticCheckpointTurn(
     };
   }
   clock.advance(2 * 60_000);
+  yield {
+    type: "raw.provider" as const,
+    harness: "codex" as const,
+    payload: { bytes: 10 },
+  };
   yield {
     type: "message.delta" as const,
     message_id: "message_checkpoint",
@@ -1540,6 +1691,11 @@ async function* activeCheckpointThenWait(
   }
   clock.advance(2 * 60_000);
   yield {
+    type: "raw.provider" as const,
+    harness: "codex" as const,
+    payload: { bytes: 10 },
+  };
+  yield {
     type: "message.delta" as const,
     message_id: "message_waiting_checkpoint",
     role: "assistant" as const,
@@ -1553,21 +1709,33 @@ async function* activeCheckpointThenWait(
 }
 
 function request(
-  suspicionSignals: WatchdogRequest["suspicion_signals"] = [],
+  overrides: Partial<Omit<WatchdogRequest, "input_bytes">> = {},
 ): WatchdogRequest {
   const value = {
     original_prompt: "Implement the task.",
-    recent_events: [],
-    tool_fingerprints: [],
-    failure_fingerprints: [],
+    harness: "claude_code" as const,
+    recent_provider_json: [],
     elapsed_ms: 0,
-    suspicion_signals: suspicionSignals,
     truncated: false,
+    ...overrides,
   };
   return {
     ...value,
-    input_bytes: Buffer.byteLength(JSON.stringify(value), "utf8"),
+    input_bytes: snapshotByteLength(value),
   };
+}
+
+function snapshotByteLength(value: Omit<WatchdogRequest, "input_bytes">): number {
+  const inputBytes = Buffer.byteLength(JSON.stringify(value), "utf8");
+  const propertyBytes = Buffer.byteLength(',"input_bytes":', "utf8");
+  let totalBytes = inputBytes + propertyBytes + 1;
+  while (true) {
+    const next = inputBytes + propertyBytes + String(totalBytes).length;
+    if (next === totalBytes) {
+      return totalBytes;
+    }
+    totalBytes = next;
+  }
 }
 
 class ClassifierSpy implements WatchdogClassifier {
@@ -1634,6 +1802,10 @@ class FakeClock implements SupervisionScheduler {
   clearTimeout(handle: unknown): void {
     (handle as { cancelled: boolean }).cancelled = true;
   }
+}
+
+class ClaudeFakeHarnessAdapter extends FakeHarnessAdapter {
+  override readonly harness = "claude_code" as const;
 }
 
 function deferred<T>(): {

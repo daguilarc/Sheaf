@@ -135,40 +135,21 @@ export class WatchdogScheduler {
     }
     const now = this.#clock().getTime();
     const lastRelevantCheck = this.#lastInvocationAt ?? this.#turnStartedAt;
-    const minimumElapsed = now - lastRelevantCheck >= this.#minimumIntervalMs;
-    if (!minimumElapsed) {
+    if (now - lastRelevantCheck < this.#minimumIntervalMs || now < this.#nextPeriodicAt) {
       return Promise.resolve();
     }
-    const periodicEligible = now >= this.#nextPeriodicAt;
-    // Periodic eligibility takes precedence over suspicion when both hold.
-    // Only construct the evidence snapshot when periodic is not already
-    // eligible — otherwise the snapshot's `suspicion_signals` is irrelevant.
-    // This skips the snapshot entirely on the hot `message.delta` path once
-    // the periodic cadence has fired, which is the case the review flagged.
-    //
-    if (!periodicEligible) {
-      const request = getRequest();
-      if (request.suspicion_signals.length === 0) {
-        return Promise.resolve();
-      }
-      return this.#invokeWatchdog(request, now, "suspicion");
-    }
-    const request = getRequest();
-    return this.#invokeWatchdog(request, now, "periodic");
+    return this.#invokeWatchdog(getRequest(), now);
   }
 
   #invokeWatchdog(
     request: WatchdogRequest,
     now: number,
-    trigger: "periodic" | "suspicion",
   ): Promise<void> {
     this.#callsUsed += 1;
     const callCount = this.#callsUsed;
     this.#lastInvocationAt = now;
     const turnGeneration = this.#turnGeneration;
-    if (trigger === "periodic") {
-      this.#nextPeriodicAt = now + this.#cadenceMs[this.#cadenceIndex]!;
-    }
+    this.#nextPeriodicAt = now + this.#cadenceMs[this.#cadenceIndex]!;
     const controller = new AbortController();
     const pending = (async () => {
       let verdict: WatchdogVerdict;
@@ -183,7 +164,7 @@ export class WatchdogScheduler {
         verdict = uncertain("classifier_invocation_failed");
       }
       const currentTurn = turnGeneration === this.#turnGeneration;
-      if (trigger === "periodic" && currentTurn) {
+      if (currentTurn) {
         this.#cadenceIndex = verdict.verdict === "healthy"
           ? Math.min(this.#cadenceIndex + 1, this.#cadenceMs.length - 1)
           : 0;

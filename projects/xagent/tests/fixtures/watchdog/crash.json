@@ -8,7 +8,6 @@
   ],
   "process_exit": { "exit_code": 137, "signal": null },
   "expected_classifier_eligible": false,
-  "expected_suspicion_signals": [],
   "expected_attention": false,
   "expected_terminal_phase": "failed",
   "expected_terminal_reason": "process_exit",

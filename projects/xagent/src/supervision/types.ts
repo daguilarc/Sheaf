@@ -1,8 +1,5 @@
 import type { OwnedProcessIdentity } from "../adapters/types.js";
-import type {
-  EvidenceSuspicionSignal,
-  SemanticEvidenceSnapshot,
-} from "./evidence.js";
+import type { ProviderJsonEvidenceSnapshot } from "./evidence.js";
 
 export type SupervisionPhase =
   | "starting"
@@ -45,9 +42,6 @@ export type AwaitResult = SupervisionEvent | AwaitDeadline;
 export type WatchdogPolicy = {
   inputLimitBytes?: number;
   outputLimitBytes?: number;
-  suspicionWindowMs?: number;
-  repeatedToolThreshold?: number;
-  repeatedFailureThreshold?: number;
   cadenceMs?: readonly number[];
   minimumIntervalMs?: number;
   maximumCalls?: number;
@@ -85,9 +79,7 @@ export type WatchdogAggregate = {
   coverage_exhausted?: boolean;
 };
 
-export type WatchdogRequest = SemanticEvidenceSnapshot & {
-  readonly suspicion_signals: readonly EvidenceSuspicionSignal[];
-};
+export type WatchdogRequest = ProviderJsonEvidenceSnapshot;
 
 export type WatchdogUsage = {
   readonly input_tokens?: number;

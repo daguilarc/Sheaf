@@ -43,23 +43,33 @@ function hasClaudeOnPath(): boolean {
 function baseRequest(): WatchdogRequest {
   const value = {
     original_prompt: "Live watchdog smoke: confirm the spawn path survives.",
-    recent_events: [{
-      type: "message.delta",
-      role: "assistant",
-      delta: "smoke progress",
+    harness: "claude_code" as const,
+    recent_provider_json: [{
+      type: "assistant",
+      message: {
+        content: [{ type: "text", text: "smoke progress" }],
+      },
     }],
-    tool_fingerprints: [],
-    failure_fingerprints: [],
     elapsed_ms: 60_000,
-    suspicion_signals: [],
     truncated: false,
-    input_bytes: 0,
   };
-  const serialized = JSON.stringify(value);
   return {
     ...value,
-    input_bytes: Buffer.byteLength(serialized, "utf8"),
+    input_bytes: snapshotByteLength(value),
   };
+}
+
+function snapshotByteLength(value: Omit<WatchdogRequest, "input_bytes">): number {
+  const inputBytes = Buffer.byteLength(JSON.stringify(value), "utf8");
+  const propertyBytes = Buffer.byteLength(',"input_bytes":', "utf8");
+  let totalBytes = inputBytes + propertyBytes + 1;
+  while (true) {
+    const next = inputBytes + propertyBytes + String(totalBytes).length;
+    if (next === totalBytes) {
+      return totalBytes;
+    }
+    totalBytes = next;
+  }
 }
 
 test("live claude watchdog classify() returns a real verdict shape through the production spawn path", async (t) => {

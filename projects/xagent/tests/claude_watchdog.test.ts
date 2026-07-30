@@ -11,6 +11,7 @@ import {
   type WatchdogSpawn,
   type WatchdogSpawnRequest,
 } from "../src/supervision/claude_watchdog.js";
+import { ProviderJsonEvidenceWindow } from "../src/supervision/evidence.js";
 import type { WatchdogRequest } from "../src/supervision/types.js";
 
 test("launches one fresh isolated no-tools Haiku invocation with bounded stdin", async () => {
@@ -69,6 +70,50 @@ test("launches one fresh isolated no-tools Haiku invocation with bounded stdin",
   assert.equal(call.args.some((arg) => arg.includes(process.cwd())), false);
   assert.equal(call.args.includes("--resume"), false);
   assert.equal(call.args.includes("--continue"), false);
+});
+
+test("classify accepts a maximal provider JSON request without reporting input too large", async () => {
+  let spawnCalls = 0;
+  const spawn: WatchdogSpawn = async () => {
+    spawnCalls += 1;
+    return {
+      exitCode: 0,
+      stdout: JSON.stringify({
+        type: "result",
+        subtype: "success",
+        structured_output: {
+          verdict: "healthy",
+          confidence: 0.91,
+          reason_code: "steady_progress",
+          evidence: ["The bounded provider JSON request was accepted."],
+        },
+      }),
+      stderr: "",
+    };
+  };
+  const evidence = new ProviderJsonEvidenceWindow({
+    harness: "claude_code",
+    originalPrompt: `Inspect ${process.cwd()} api_key=prompt-secret ${"🧶".repeat(40_000)}`,
+  });
+  for (let index = 0; index < 200; index += 1) {
+    evidence.record({
+      type: "assistant",
+      index,
+      message: {
+        content: [{ type: "text", text: `${index}:${"progress ".repeat(90)}` }],
+      },
+    });
+  }
+  const requestValue = evidence.snapshot();
+  assert.equal(requestValue.input_bytes, Buffer.byteLength(JSON.stringify(requestValue), "utf8"));
+  assert.ok(requestValue.input_bytes <= 64 * 1024);
+
+  const result = await new ClaudeWatchdogClassifier({ spawn })
+    .classify(requestValue, new AbortController().signal);
+
+  assert.equal(spawnCalls, 1);
+  assert.notEqual(result.reason_code, "classifier_input_too_large");
+  assert.equal(result.verdict, "healthy");
 });
 
 test("default budget covers the maximum envelope and bounds eight-call exposure", () => {
@@ -432,19 +477,31 @@ test("classifier swallows a stdin EPIPE mid-write and returns an uncertain verdi
 function request(): WatchdogRequest {
   const value = {
     original_prompt: "Implement the bounded watchdog.",
-    recent_events: [{
-      type: "message.delta",
-      role: "assistant",
-      delta: "Adding tests.",
+    harness: "claude_code" as const,
+    recent_provider_json: [{
+      type: "assistant",
+      message: {
+        content: [{ type: "text", text: "Adding tests." }],
+      },
     }],
-    tool_fingerprints: [],
-    failure_fingerprints: [],
     elapsed_ms: 600_000,
-    suspicion_signals: [],
     truncated: false,
   };
   return {
     ...value,
-    input_bytes: Buffer.byteLength(JSON.stringify(value), "utf8"),
+    input_bytes: snapshotByteLength(value),
   };
+}
+
+function snapshotByteLength(value: Omit<WatchdogRequest, "input_bytes">): number {
+  const inputBytes = Buffer.byteLength(JSON.stringify(value), "utf8");
+  const propertyBytes = Buffer.byteLength(',"input_bytes":', "utf8");
+  let totalBytes = inputBytes + propertyBytes + 1;
+  while (true) {
+    const next = inputBytes + propertyBytes + String(totalBytes).length;
+    if (next === totalBytes) {
+      return totalBytes;
+    }
+    totalBytes = next;
+  }
 }

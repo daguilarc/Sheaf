@@ -446,6 +446,11 @@ test("watchdog telemetry record carries elapsed_ms for detection latency (xas-10
     };
     clock.advance(120_000);
     yield {
+      type: "raw.provider" as const,
+      harness: "codex" as const,
+      payload: { bytes: 10 },
+    };
+    yield {
       type: "message.delta" as const,
       message_id: "message_elapsed",
       role: "assistant" as const,
@@ -478,9 +483,9 @@ test("watchdog telemetry record carries elapsed_ms for detection latency (xas-10
   assert.equal(entry.verdict, "derailed");
   assert.equal(entry.reason_code, "repeated_failed_tool");
   assert.equal(typeof entry.elapsed_ms, "number");
-  // The watchdog fires at the message.delta emitted after 240_000 + 240_000 +
-  // 120_000 = 600_000 ms of fake-clock progress; elapsed_ms is measured from
-  // turn start, so it must be 600_000.
+  // The watchdog fires at the raw provider checkpoint emitted after
+  // 240_000 + 240_000 + 120_000 = 600_000 ms of fake-clock progress;
+  // elapsed_ms is measured from turn start, so it must be 600_000.
   assert.equal(entry.elapsed_ms, 600_000);
   assert.equal(entry.attention_sequence, attention.sequence);
 });

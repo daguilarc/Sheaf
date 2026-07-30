@@ -2,303 +2,200 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { FakeHarnessAdapter } from "../src/adapters/fake.js";
-import { SemanticEvidenceWindow } from "../src/supervision/evidence.js";
+import {
+  ProviderJsonEvidenceWindow,
+  type ProviderJsonEvidenceSnapshot,
+} from "../src/supervision/evidence.js";
 import { Supervisor } from "../src/supervision/supervisor.js";
 
 const repoRoot = "/private/tmp/sheaf-xagent-supervision";
+const maxInputBytes = 64 * 1024;
+const maxStringBytes = 16 * 1024;
+const truncationMarker = "[xagent: truncated]";
 
-test("evidence sanitizes paths and secrets before stable tool and failure fingerprinting", () => {
-  const clock = new MutableClock();
-  const evidence = new SemanticEvidenceWindow({
-    repoRoot,
-    originalPrompt: `Inspect ${repoRoot}/projects/xagent with api_key=prompt-secret`,
-    clock: clock.now,
+test("provider JSON reaches evidence without normalization, redaction, path rewriting, or hashing", () => {
+  const evidence = new ProviderJsonEvidenceWindow({
+    harness: "claude_code",
+    originalPrompt: `Inspect ${repoRoot} api_key=prompt-secret`,
   });
+  const providerRecord = {
+    type: "assistant",
+    message: {
+      content: [{
+        type: "tool_use",
+        name: "Bash",
+        input: {
+          command: "npm test",
+          cwd: repoRoot,
+          api_key: "tool-secret",
+        },
+      }, {
+        type: "tool_result",
+        content: `failed in ${repoRoot}`,
+      }],
+    },
+  };
 
-  for (let index = 0; index < 3; index += 1) {
-    evidence.record({
-      type: "tool.started",
-      name: "shell",
-      tool_call_id: `tool-${index}`,
-      input: index % 2 === 0
-        ? { cwd: `${repoRoot}/projects/xagent`, api_key: "tool-secret", cmd: "npm test" }
-        : { cmd: "npm test", api_key: "different-secret", cwd: `${repoRoot}/projects/xagent` },
-    });
-    clock.advance(60_000);
-  }
-  for (let index = 0; index < 2; index += 1) {
-    evidence.record({
-      type: "tool.completed",
-      name: "shell",
-      tool_call_id: `failure-${index}`,
-      status: "failed",
-      error: `Command failed in ${repoRoot}/projects/xagent api_key=failure-secret`,
-    });
-    clock.advance(60_000);
-  }
-
+  evidence.record(providerRecord);
   const snapshot = evidence.snapshot();
-  assert.equal(
-    snapshot.original_prompt,
-    "Inspect ./projects/xagent with api_key=[REDACTED]",
-  );
-  assert.equal(snapshot.recent_events.some((event) =>
-    JSON.stringify(event).includes(repoRoot)), false);
-  assert.equal(JSON.stringify(snapshot).includes("prompt-secret"), false);
-  assert.equal(JSON.stringify(snapshot).includes("tool-secret"), false);
-  assert.equal(JSON.stringify(snapshot).includes("different-secret"), false);
-  assert.equal(JSON.stringify(snapshot).includes("failure-secret"), false);
-  assert.deepEqual(snapshot.tool_fingerprints, [{
-    fingerprint: "d883966ef88abae73e3496301128a871f94abe9db9db7dfc390a08fa37fa5093",
-    count: 3,
-  }]);
-  assert.deepEqual(snapshot.failure_fingerprints, [{
-    fingerprint: "c1bc1eae547e7acd3f6ef73db9f6a1340259dc39d306f81c619dec45b08a3c7e",
-    count: 2,
-  }]);
-  assert.deepEqual(snapshot.suspicion_signals, [
-    "repeated_tool_fingerprint",
-    "repeated_failure_fingerprint",
-  ]);
+
+  assert.equal(snapshot.original_prompt, `Inspect ${repoRoot} api_key=prompt-secret`);
+  assert.equal(snapshot.harness, "claude_code");
+  assert.deepEqual(snapshot.recent_provider_json, [providerRecord]);
+  assert.equal("tool_fingerprints" in snapshot, false);
+  assert.equal("failure_fingerprints" in snapshot, false);
+  assert.equal("suspicion_signals" in snapshot, false);
+  assert.equal("previous_verdict" in snapshot, false);
+  assert.equal(Buffer.byteLength(JSON.stringify(snapshot), "utf8"), snapshot.input_bytes);
 });
 
-test("fingerprint suspicion uses a rolling ten-minute window", () => {
-  const clock = new MutableClock();
-  const evidence = new SemanticEvidenceWindow({
-    repoRoot,
-    originalPrompt: "Run the test.",
-    clock: clock.now,
-  });
-  for (let index = 0; index < 3; index += 1) {
-    evidence.record({
-      type: "tool.started",
-      name: "shell",
-      tool_call_id: `old-${index}`,
-      input: { cmd: "npm test" },
-    });
-  }
-  assert.deepEqual(evidence.snapshot().suspicion_signals, ["repeated_tool_fingerprint"]);
-
-  clock.advance(600_001);
-
-  assert.deepEqual(evidence.snapshot().tool_fingerprints, []);
-  assert.deepEqual(evidence.snapshot().suspicion_signals, []);
-});
-
-test("snapshot is capped at 64 KiB of valid UTF-8 and reports deterministic truncation", () => {
-  const evidence = new SemanticEvidenceWindow({
-    repoRoot,
-    originalPrompt: `Begin ${"🧶".repeat(40_000)} end`,
+test("nested object and array strings are individually truncated at 16 KiB without corrupting UTF-8", () => {
+  const evidence = new ProviderJsonEvidenceWindow({
+    harness: "claude_code",
+    originalPrompt: "Inspect nested provider JSON.",
   });
   evidence.record({
-    type: "message.completed",
-    role: "assistant",
-    message_id: "message-large",
-    text: "progress ".repeat(20_000),
-  });
-
-  const snapshot = evidence.snapshot();
-  assert.equal(snapshot.truncated, true);
-  assert.ok(snapshot.input_bytes <= 64 * 1024);
-  assert.equal(Buffer.byteLength(JSON.stringify(snapshot), "utf8"), snapshot.input_bytes);
-  assert.equal(JSON.stringify(snapshot).includes("\uFFFD"), false);
-});
-
-test("snapshot has one bounded serializable evidence shape", () => {
-  const evidence = new SemanticEvidenceWindow({
-    repoRoot,
-    originalPrompt: "Implement the task.",
-  });
-  evidence.record({
-    type: "message.delta",
-    role: "assistant",
-    message_id: "message-one",
-    delta: "working",
-  });
-
-  const snapshot = evidence.snapshot();
-  assert.equal("input" in snapshot, false);
-  assert.equal(Buffer.byteLength(JSON.stringify(snapshot), "utf8"), snapshot.input_bytes);
-  assert.ok(snapshot.input_bytes <= 64 * 1024);
-});
-
-test("compact fingerprint counters cannot push the evidence snapshot over its byte cap", () => {
-  const evidence = new SemanticEvidenceWindow({
-    repoRoot,
-    originalPrompt: "Diagnose distinct failures without retaining raw payloads.",
-  });
-  for (let index = 0; index < 600; index += 1) {
-    evidence.record({
-      type: "tool.started",
-      name: "shell",
-      tool_call_id: `tool-${index}`,
-      input: { cmd: `command-${index}` },
-    });
-    evidence.record({
-      type: "tool.completed",
-      name: "shell",
-      tool_call_id: `tool-${index}`,
-      status: "failed",
-      error: `failure-${index}`,
-    });
-  }
-
-  const snapshot = evidence.snapshot();
-  assert.ok(snapshot.input_bytes <= 64 * 1024);
-  assert.equal(snapshot.truncated, true);
-});
-
-test("a 1 KiB configured cap shrinks distinct fingerprint counters to fit", () => {
-  const evidence = new SemanticEvidenceWindow({
-    repoRoot,
-    originalPrompt: "Diagnose the failures.",
-    maxInputBytes: 1_024,
-  });
-  for (let index = 0; index < 20; index += 1) {
-    evidence.record({
-      type: "tool.started",
-      name: "shell",
-      tool_call_id: `tool-small-cap-${index}`,
-      input: { cmd: `command-${index}` },
-    });
-    evidence.record({
-      type: "tool.completed",
-      name: "shell",
-      tool_call_id: `tool-small-cap-${index}`,
-      status: "failed",
-      error: `failure-${index}`,
-    });
-  }
-
-  const snapshot = evidence.snapshot();
-  assert.ok(snapshot.input_bytes <= 1_024);
-  assert.equal(snapshot.truncated, true);
-});
-
-test("fingerprint byte pressure retains repeated evidence ahead of singletons", () => {
-  const evidence = new SemanticEvidenceWindow({
-    repoRoot,
-    originalPrompt: "Detect repeated tool activity.",
-    maxInputBytes: 700,
-  });
-  for (let index = 0; index < 12; index += 1) {
-    evidence.record({
-      type: "tool.started",
-      name: "shell",
-      tool_call_id: `hot-${index}`,
-      input: { cmd: "hot-29" },
-    });
-  }
-  for (let index = 0; index < 12; index += 1) {
-    evidence.record({
-      type: "tool.started",
-      name: "shell",
-      tool_call_id: `single-${index}`,
-      input: { cmd: `single-${index}` },
-    });
-  }
-
-  const snapshot = evidence.snapshot();
-  assert.equal(snapshot.tool_fingerprints.some(({ count }) => count === 12), true);
-  assert.equal(snapshot.suspicion_signals.includes("repeated_tool_fingerprint"), true);
-});
-
-test("snapshot considers each retained event within a linear serialization budget", () => {
-  const evidence = new SemanticEvidenceWindow({
-    repoRoot,
-    originalPrompt: "Retain only the newest bounded progress.",
-  });
-  for (let index = 0; index < 64; index += 1) {
-    evidence.record({
-      type: "message.completed",
-      role: "assistant",
-      message_id: `message-${index}`,
-      text: `${index}:${"progress".repeat(800)}`,
-    });
-  }
-
-  const originalStringify = JSON.stringify;
-  let serializedBytes = 0;
-  JSON.stringify = ((...args: Parameters<typeof JSON.stringify>) => {
-    const encoded = originalStringify(...args);
-    if (encoded !== undefined) {
-      serializedBytes += Buffer.byteLength(encoded, "utf8");
-    }
-    return encoded;
-  }) as typeof JSON.stringify;
-  try {
-    evidence.snapshot();
-  } finally {
-    JSON.stringify = originalStringify;
-  }
-
-  assert.ok(
-    serializedBytes < 2 * 1024 * 1024,
-    `snapshot serialized ${serializedBytes} bytes while trimming`,
-  );
-});
-
-test("only normalized semantic events enter evidence while all provider activity remains external", () => {
-  const evidence = new SemanticEvidenceWindow({
-    repoRoot,
-    originalPrompt: "Implement the task.",
-    previousVerdict: {
-      verdict: "healthy",
-      confidence: 0.91,
-      reason_code: "steady_progress",
+    outer: {
+      text: `before ${"🧶".repeat(10_000)} after`,
+      nested: [{
+        content: `array ${"測".repeat(10_000)} value`,
+      }],
     },
   });
 
-  evidence.record({
-    type: "raw.provider",
-    harness: "codex",
-    payload: { unrestricted: "provider wire payload" },
+  const snapshot = evidence.snapshot();
+  const retained = snapshot.recent_provider_json[0] as {
+    readonly outer: {
+      readonly text: string;
+      readonly nested: readonly [{ readonly content: string }];
+    };
+  };
+
+  assert.equal(snapshot.truncated, true);
+  assert.ok(Buffer.byteLength(retained.outer.text, "utf8") <= maxStringBytes);
+  assert.ok(Buffer.byteLength(retained.outer.nested[0].content, "utf8") <= maxStringBytes);
+  assert.equal(retained.outer.text.endsWith(truncationMarker), true);
+  assert.equal(retained.outer.nested[0].content.endsWith(truncationMarker), true);
+  assert.equal("outer" in retained, true);
+  assert.equal("nested" in retained.outer, true);
+  assert.equal(JSON.stringify(snapshot).includes("\uFFFD"), false);
+});
+
+test("an oversized record is omitted whole and does not prevent later fitting records", () => {
+  const evidence = new ProviderJsonEvidenceWindow({
+    harness: "claude_code",
+    originalPrompt: "Capture provider records.",
   });
-  evidence.record({
-    type: "status",
-    level: "info",
-    message: "provider heartbeat",
+  const oversized: Record<string, string> = {};
+  for (let index = 0; index < 6_000; index += 1) {
+    oversized[`field_${index}`] = `value_${index}`;
+  }
+  const later = { type: "assistant", message: { content: "later fitting record" } };
+
+  evidence.record(oversized);
+  evidence.record(later);
+  const snapshot = evidence.snapshot();
+
+  assert.equal(snapshot.truncated, true);
+  assert.deepEqual(snapshot.recent_provider_json, [later]);
+  assert.equal(JSON.stringify(snapshot).includes("field_5999"), false);
+});
+
+test("byte pressure evicts oldest complete records and keeps newest complete records", () => {
+  const evidence = new ProviderJsonEvidenceWindow({
+    harness: "claude_code",
+    originalPrompt: "Retain newest provider records.",
+    maxInputBytes: 1_200,
   });
-  evidence.record({
-    type: "message.delta",
-    role: "assistant",
-    message_id: "message-one",
-    delta: "working",
+  const records = Array.from({ length: 10 }, (_item, index) => ({
+    type: "assistant",
+    index,
+    content: `${index}:${"x".repeat(180)}`,
+  }));
+
+  for (const record of records) {
+    evidence.record(record);
+  }
+  const snapshot = evidence.snapshot();
+
+  assert.equal(snapshot.truncated, true);
+  assert.ok(snapshot.recent_provider_json.length > 0);
+  assert.ok(snapshot.recent_provider_json.length < records.length);
+  assert.deepEqual(
+    snapshot.recent_provider_json,
+    records.slice(records.length - snapshot.recent_provider_json.length),
+  );
+});
+
+test("a maximal snapshot reports exact self-referential input bytes within the 64 KiB cap", () => {
+  const evidence = new ProviderJsonEvidenceWindow({
+    harness: "claude_code",
+    originalPrompt: "Retain as much provider JSON as possible.",
+  });
+  for (let index = 0; index < 100; index += 1) {
+    evidence.record({
+      type: "assistant",
+      index,
+      content: `${index}:${"progress ".repeat(80)}`,
+    });
+  }
+
+  const snapshot = evidence.snapshot();
+
+  assert.equal(snapshot.input_bytes, Buffer.byteLength(JSON.stringify(snapshot), "utf8"));
+  assert.ok(snapshot.input_bytes <= maxInputBytes);
+  assert.equal(snapshot.truncated, true);
+});
+
+test("the original prompt keeps secrets and absolute paths subject only to string and total limits", () => {
+  const secretPrompt = `Inspect ${repoRoot}/projects/xagent api_key=prompt-secret `;
+  const evidence = new ProviderJsonEvidenceWindow({
+    harness: "claude_code",
+    originalPrompt: `${secretPrompt}${"🧶".repeat(40_000)}`,
   });
 
   const snapshot = evidence.snapshot();
-  assert.deepEqual(snapshot.recent_events, [{
-    type: "message.delta",
-    role: "assistant",
-    delta: "working",
-  }]);
-  assert.deepEqual(snapshot.previous_verdict, {
-    verdict: "healthy",
-    confidence: 0.91,
-    reason_code: "steady_progress",
-  });
-  assert.equal(JSON.stringify(snapshot).includes("provider wire payload"), false);
+
+  assert.equal(snapshot.original_prompt.includes(repoRoot), true);
+  assert.equal(snapshot.original_prompt.includes("api_key=prompt-secret"), true);
+  assert.equal(snapshot.original_prompt.endsWith(truncationMarker), true);
+  assert.equal(snapshot.truncated, true);
+  assert.equal(snapshot.input_bytes, Buffer.byteLength(JSON.stringify(snapshot), "utf8"));
+  assert.ok(snapshot.input_bytes <= maxInputBytes);
+  assert.equal(JSON.stringify(snapshot).includes("\uFFFD"), false);
 });
 
-test("supervisor exposes bounded evidence using per-run policy and provider events", async () => {
-  const adapter = new FakeHarnessAdapter({
+test("supervisor evidence records only raw provider payloads, not normalized events or rawProvider side channels", async () => {
+  const rawPayload = {
+    type: "assistant",
+    message: {
+      content: [{
+        type: "input_json_delta",
+        partial_json: `{"cwd":"${repoRoot}","api_key":"provider-secret"}`,
+      }],
+    },
+  };
+  const duplicateSideChannel = { duplicate: "must not enter evidence" };
+  const adapter = new ClaudeFakeHarnessAdapter({
     scriptedEvents: [[
       {
-        type: "raw.provider",
-        harness: "codex",
-        payload: { raw: "not evidence" },
-      },
-      {
-        type: "tool.started",
-        name: "shell",
-        tool_call_id: "tool-one",
-        input: { cmd: "npm test", api_key: "secret" },
-      },
-      {
-        type: "message.completed",
+        type: "message.delta",
         role: "assistant",
         message_id: "message-one",
-        text: `Checked ${repoRoot}/projects/xagent`,
+        delta: "normalized semantic event",
+        rawProvider: duplicateSideChannel,
+      },
+      {
+        type: "raw.provider",
+        harness: "claude_code",
+        payload: rawPayload,
+      },
+      {
+        type: "tool.completed",
+        name: "Bash",
+        tool_call_id: "tool-one",
+        status: "completed",
+        output: "normalized tool output",
       },
       {
         type: "turn.completed",
@@ -307,49 +204,64 @@ test("supervisor exposes bounded evidence using per-run policy and provider even
     ]],
   });
   const supervisor = new Supervisor({
-    runId: "xrun_evidence_integration",
+    runId: "xrun_provider_json_evidence_integration",
     adapter,
     startOptions: { cwd: repoRoot },
     policy: {
       silenceTimeoutMs: 300_000,
-      watchdog: {
-        inputLimitBytes: 1_024,
-        suspicionWindowMs: 120_000,
-        repeatedToolThreshold: 2,
-        repeatedFailureThreshold: 2,
-      },
+      watchdog: { inputLimitBytes: 1_024 },
     },
   });
+
   await supervisor.start();
   await supervisor.submit(`Inspect ${repoRoot} api_key=prompt-secret`);
 
   const snapshot = supervisor.evidenceSnapshot();
   assert.ok(snapshot !== undefined);
-  assert.ok(snapshot.input_bytes <= 1_024);
-  assert.equal(JSON.stringify(snapshot).includes(repoRoot), false);
-  assert.equal(JSON.stringify(snapshot).includes("prompt-secret"), false);
-  assert.equal(JSON.stringify(snapshot).includes("not evidence"), false);
-  assert.equal(snapshot.recent_events.length, 2);
+  assert.deepEqual(snapshot.recent_provider_json, [rawPayload]);
+  assert.equal(snapshot.original_prompt, `Inspect ${repoRoot} api_key=prompt-secret`);
+  assert.equal(snapshot.harness, "claude_code");
+  assert.equal(JSON.stringify(snapshot).includes("normalized semantic event"), false);
+  assert.equal(JSON.stringify(snapshot).includes("normalized tool output"), false);
+  assert.equal(JSON.stringify(snapshot).includes("must not enter evidence"), false);
+  assert.equal(JSON.stringify(snapshot).includes("provider-secret"), true);
+  assert.equal(snapshot.input_bytes, Buffer.byteLength(JSON.stringify(snapshot), "utf8"));
 });
 
-test("supervisor rejects invalid evidence policy before persisting lifecycle state", async () => {
-  const persistedPhases: string[] = [];
+test("a small configured cap still produces a valid bounded snapshot", () => {
+  const evidence = new ProviderJsonEvidenceWindow({
+    harness: "claude_code",
+    originalPrompt: "small cap prompt",
+    maxInputBytes: 512,
+  });
+  evidence.record({ type: "assistant", content: "x".repeat(400) });
+  evidence.record({ type: "assistant", content: "latest" });
 
-  assert.throws(() => new Supervisor({
-    runId: "xrun_invalid_evidence_policy",
-    adapter: new FakeHarnessAdapter(),
-    startOptions: { cwd: repoRoot },
-    policy: {
-      silenceTimeoutMs: 300_000,
-      watchdog: { inputLimitBytes: 0 },
-    },
-    metadataSink: async (state) => {
-      persistedPhases.push(state.phase);
-    },
-  }), /inputLimitBytes/);
-  await Promise.resolve();
+  const snapshot = evidence.snapshot();
 
-  assert.deepEqual(persistedPhases, []);
+  assert.ok(snapshot.input_bytes <= 512);
+  assert.equal(snapshot.input_bytes, Buffer.byteLength(JSON.stringify(snapshot), "utf8"));
+  assert.deepEqual(snapshot.recent_provider_json, [{ type: "assistant", content: "latest" }]);
+});
+
+function assertSnapshotShape(snapshot: ProviderJsonEvidenceSnapshot): void {
+  assert.deepEqual(Object.keys(snapshot), [
+    "original_prompt",
+    "harness",
+    "recent_provider_json",
+    "elapsed_ms",
+    "truncated",
+    "input_bytes",
+  ]);
+}
+
+test("snapshot exposes exactly the provider JSON watchdog request fields", () => {
+  const evidence = new ProviderJsonEvidenceWindow({
+    harness: "claude_code",
+    originalPrompt: "Implement the task.",
+  });
+
+  assertSnapshotShape(evidence.snapshot());
 });
 
 class MutableClock {
@@ -359,4 +271,8 @@ class MutableClock {
   advance(durationMs: number): void {
     this.#milliseconds += durationMs;
   }
+}
+
+class ClaudeFakeHarnessAdapter extends FakeHarnessAdapter {
+  override readonly harness = "claude_code" as const;
 }
