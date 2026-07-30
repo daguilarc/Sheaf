@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -45,6 +46,57 @@ void RequireBounds(const synth::ui::Bounds& actual,
 {
     Require(actual.x == x && actual.y == y && actual.width == width && actual.height == height,
             label);
+}
+
+bool NearlyEqual(float actual, float expected)
+{
+    const float delta = actual - expected;
+    return delta <= 0.001f && delta >= -0.001f;
+}
+
+const synth::ui::Node& FindNode(const synth::ui::NodeTree& tree, const char* id)
+{
+    const synth::ui::Node* node = FindNodeById(tree, id);
+    Require(node != nullptr, id);
+    return *node;
+}
+
+bool IsSidebarDescendant(const synth::ui::NodeTree& tree, const synth::ui::NodeId& id)
+{
+    if (id.value == synth::runtime_ui::NodeIds::kSidebarRoot)
+    {
+        return false;
+    }
+
+    std::unordered_map<std::string, std::string> parentByChild;
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        for (const synth::ui::NodeId& child : node.children)
+        {
+            parentByChild.emplace(child.value, node.id.value);
+        }
+    }
+
+    std::string current = id.value;
+    while (true)
+    {
+        const auto parentIt = parentByChild.find(current);
+        if (parentIt == parentByChild.end())
+        {
+            return false;
+        }
+        if (parentIt->second == synth::runtime_ui::NodeIds::kSidebarRoot)
+        {
+            return true;
+        }
+        current = parentIt->second;
+    }
+}
+
+bool IsDeliberatelyZeroExtent(const synth::ui::Node& node)
+{
+    (void)node;
+    return false;
 }
 
 synth::ui::NodeTree MakeValidAppTree()
@@ -234,6 +286,46 @@ struct Fixture
     MainComponent component{app, services};
 };
 
+synth::ui::NodeTree BuildCompositeTree(float width, float height)
+{
+    Require(NearlyEqual(width, 900.0f) && NearlyEqual(height, 560.0f),
+            "BuildCompositeTree matches FakeApp configured size");
+    Fixture fixture;
+    return fixture.component.BuildTree();
+}
+
+void TestPlacingASubtreeRootPlacesEveryDescendant()
+{
+    const synth::ui::NodeTree composite = BuildCompositeTree(900.0f, 560.0f);
+    Require(NearlyEqual(FindNode(composite, "runtime.main.root").bounds.width, 996.0f),
+            "runtime chrome is additive: 900 + 96");
+    Require(NearlyEqual(FindNode(composite, "runtime.sidebar.root").bounds.x, 900.0f),
+            "the sidebar root sits at x 900 relative to the composite root");
+    for (const synth::ui::Node& node : composite.nodes)
+    {
+        if (IsSidebarDescendant(composite, node.id))
+        {
+            Require(node.bounds.x < 96.0f,
+                    "every sidebar descendant carries coordinates relative to its own "
+                    "parent, never translated into the 900-996 band");
+        }
+    }
+}
+
+void TestSubtreesArriveFullyResolved()
+{
+    const synth::ui::NodeTree composite = BuildCompositeTree(900.0f, 560.0f);
+    for (const synth::ui::Node& node : composite.nodes)
+    {
+        if (node.kind == synth::ui::NodeKind::Root)
+        {
+            continue;
+        }
+        Require(node.bounds.width > 0.0f || IsDeliberatelyZeroExtent(node),
+                "every node arrives laid out by the library, not by a backend");
+    }
+}
+
 void TestCompositeBoundsPreserveAppAndAddSidebar()
 {
     Fixture fixture;
@@ -254,9 +346,9 @@ void TestCompositeBoundsPreserveAppAndAddSidebar()
     Require(sidebar != nullptr, "sidebar root exists");
     Require(audio != nullptr, "sidebar audio node exists");
     Require(sync != nullptr, "sidebar sync node exists");
-    RequireBounds(sidebar->bounds, 900.0f, 0.0f, 96.0f, 200.0f, "sidebar root translated");
-    RequireBounds(audio->bounds, 900.0f, 0.0f, 96.0f, 40.0f, "sidebar descendant translated");
-    RequireBounds(sync->bounds, 900.0f, 80.0f, 96.0f, 40.0f, "sidebar sync translated");
+    RequireBounds(sidebar->bounds, 900.0f, 0.0f, 96.0f, 200.0f, "sidebar root placed");
+    RequireBounds(audio->bounds, 0.0f, 0.0f, 96.0f, 40.0f, "sidebar descendant stays parent-relative");
+    RequireBounds(sync->bounds, 0.0f, 80.0f, 96.0f, 40.0f, "sidebar sync stays parent-relative");
     RequireBounds(fixture.component.IntrinsicBounds(),
                   0.0f,
                   0.0f,
@@ -709,6 +801,9 @@ int main()
     static_assert(synth::SynthApplication<FakeApp>);
     static_assert(synth::runtime_ui::RuntimeMainServices<FakeServices>);
 
+    Run("TestPlacingASubtreeRootPlacesEveryDescendant",
+        TestPlacingASubtreeRootPlacesEveryDescendant);
+    Run("TestSubtreesArriveFullyResolved", TestSubtreesArriveFullyResolved);
     Run("TestCompositeBoundsPreserveAppAndAddSidebar", TestCompositeBoundsPreserveAppAndAddSidebar);
     Run("TestSidebarOpensEachPageAndBackRestoresApp", TestSidebarOpensEachPageAndBackRestoresApp);
     Run("TestAppActionsRouteOnlyToAppSurface", TestAppActionsRouteOnlyToAppSurface);

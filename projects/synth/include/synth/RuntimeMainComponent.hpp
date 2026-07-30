@@ -115,11 +115,11 @@ public:
                                        ? MoveRootFirst(std::move(appTree), appRootIndex)
                                        : BuildRuntimePageTree();
         ui::NodeTree sidebarTree = sidebarSurface_.BuildTree();
-        const float sidebarOffset = static_cast<float>(App::Config().uiWidth);
-        for (ui::Node& node : sidebarTree.nodes)
+        if (sidebarTree.nodes.empty())
         {
-            node.bounds.x += sidebarOffset;
+            throw std::invalid_argument("sidebar tree must have a root");
         }
+        sidebarTree.nodes.front().bounds.x = static_cast<float>(App::Config().uiWidth);
 
         ui::Node root;
         root.id = "runtime.main.root";
