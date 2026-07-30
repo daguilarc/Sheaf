@@ -619,6 +619,14 @@ struct Resolver {
     // row heights and gaps by hand, and leaving it unset makes both backends
     // clamp the content to the viewport (`max(bounds, declared)`), which is
     // exactly a list whose tail is unreachable.
+    // Contract for later consumers: this OVERWRITES whatever the container
+    // carried, unconditionally, because the resolver has just placed the
+    // children and is therefore the only layer that knows their true extent. A
+    // producer that wants a content floor *wider* than its children -- the
+    // hand-set minimum-width pattern in `ControllersPageUI.hpp`, for instance --
+    // cannot get it by pre-setting these fields, and needs an explicit library
+    // way to express a floor instead. No such producer exists yet; the first one
+    // that does should add it rather than reaching around this.
     void SetScrollContentExtent(Node& container, float padding)
     {
         float right = 0.0f;

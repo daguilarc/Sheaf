@@ -497,7 +497,11 @@ void RequireSubtreeIsSplicedWhole(const synth::ui::NodeTree& page,
     }
 }
 
-std::string FirstBrowserRowId(const synth::ui::Subtree& subtree)
+// The subtree's first node, whatever kind it is. Since sru-16's boundary moved
+// the whole viewer into the subtree this is the title, not a row -- so it is
+// named for what it returns rather than for what a row assertion would want.
+// To assert about a row, find a child of `kFileBrowserList` instead.
+std::string FirstSubtreeNodeId(const synth::ui::Subtree& subtree)
 {
     Require(!subtree.tree.nodes.empty(), "the patch browser subtree produces nodes");
     return subtree.tree.nodes.front().id.value;
@@ -1356,8 +1360,14 @@ static void TestPatchBrowserSplicesAsARootlessSubtree()
     const synth::ui::NodeTree page =
         synth::runtime_ui::BuildFilePageTree(state, {0.0f, 0.0f, 900.0f, 560.0f});
     Require(CountRootNodes(page) == 1, "the spliced page has exactly one root");
-    Require(IsDescendantOf(page, FirstBrowserRowId(browser), synth::runtime_ui::NodeIds::kFileBrowser),
+    Require(IsDescendantOf(page, FirstSubtreeNodeId(browser), synth::runtime_ui::NodeIds::kFileBrowser),
             "the spliced nodes appear as descendants of the splice point");
+    // The rows specifically, not just the subtree's first node: they are the
+    // deepest thing the splice has to carry, one level below the scroll area.
+    const synth::ui::Node& list = FindNode(page, synth::runtime_ui::NodeIds::kFileBrowserList);
+    Require(!list.children.empty(), "the spliced scroll area carries its rows");
+    Require(IsDescendantOf(page, list.children.front().value, synth::runtime_ui::NodeIds::kFileBrowser),
+            "a spliced row is a descendant of the splice point, not just the subtree's first node");
     RequireSubtreeIsSplicedWhole(page,
                                  browser,
                                  synth::runtime_ui::NodeIds::kFileBrowser,
