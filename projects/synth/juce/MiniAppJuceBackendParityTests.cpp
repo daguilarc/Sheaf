@@ -31,6 +31,14 @@ void RequireNear(float actual, float expected, float tolerance, const char* labe
     }
 }
 
+void RequireExactBounds(synth::ui::Bounds actual, synth::ui::Bounds expected, const char* label)
+{
+    RequireNear(actual.x, expected.x, 0.0001f, (std::string(label) + " x").c_str());
+    RequireNear(actual.y, expected.y, 0.0001f, (std::string(label) + " y").c_str());
+    RequireNear(actual.width, expected.width, 0.0001f, (std::string(label) + " width").c_str());
+    RequireNear(actual.height, expected.height, 0.0001f, (std::string(label) + " height").c_str());
+}
+
 const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const char* id)
 {
     for (const synth::ui::Node& node : tree.nodes)
@@ -223,27 +231,34 @@ int main()
                     SurfaceBoundsOf(tree, encoderFifteenNode->id.value).x,
             "scope stack remains left of encoder grid");
 
-    // The encoder grid's geometry is resolved, not hand-computed. At the
-    // default 900x560 surface the standard layout gives the encoder region
-    // 462 wide, which the grid divides into four columns over three 8 gaps.
-    const synth::ui::Node* encoderRegion = FindNodeById(tree, "miniapp.encoders");
-    Require(encoderRegion != nullptr, "the encoder region resolves");
-    RequireNear(encoderRegion->bounds.width, 462.0f, 0.01f, "encoder region width");
-    const float expectedCellWidth = (462.0f - 8.0f * 3.0f) * 0.25f;
-    RequireNear(encoderNode->bounds.width, expectedCellWidth, 0.01f, "encoder zero width");
-    RequireNear(encoderFifteenNode->bounds.width, expectedCellWidth, 0.01f, "encoder fifteen width");
-    RequireNear(encoderFifteenNode->bounds.height, encoderNode->bounds.height, 0.0001f,
-                "every encoder cell shares one height");
+    // The encoder grid's geometry is resolved rather than hand-computed, so
+    // these are the new exact numbers, not the old ones and not a relation.
+    // At 900x560: the page margin puts content at 16 with 868 across; the
+    // title takes 30 and a 14 gap, so the body starts at y=60; the stack takes
+    // 390 and the encoder region 462, starting at x = 16 + 390 + 14 = 420;
+    // the bay leaves the region 406 high, which four rows over three 8 gaps
+    // divide into 95.5, and 462 divides the same way into 109.5.
     const synth::ui::Bounds encoderZeroSurface = SurfaceBoundsOf(tree, encoderNode->id.value);
     const synth::ui::Bounds encoderFifteenSurface = SurfaceBoundsOf(tree, encoderFifteenNode->id.value);
-    RequireNear(encoderFifteenSurface.x,
-                encoderZeroSurface.x + 3.0f * (expectedCellWidth + 8.0f),
-                0.01f,
-                "encoder fifteen sits three columns right of encoder zero");
-    RequireNear(encoderFifteenSurface.y,
-                encoderZeroSurface.y + 3.0f * (encoderNode->bounds.height + 8.0f),
-                0.01f,
-                "encoder fifteen sits three rows below encoder zero");
+    RequireExactBounds(encoderZeroSurface, {420.0f, 60.0f, 109.5f, 95.5f}, "encoder zero surface bounds");
+    RequireExactBounds(encoderFifteenSurface, {772.5f, 370.5f, 109.5f, 95.5f},
+                       "encoder fifteen surface bounds");
+    RequireExactBounds(SurfaceBoundsOf(tree, "miniapp.encoders"), {420.0f, 60.0f, 462.0f, 406.0f},
+                       "encoder region surface bounds");
+    RequireExactBounds(SurfaceBoundsOf(tree, vcoPanel->id.value), {16.0f, 60.0f, 390.0f, 196.0f},
+                       "VCO scope surface bounds");
+    RequireExactBounds(SurfaceBoundsOf(tree, lfoPanel->id.value), {16.0f, 270.0f, 390.0f, 196.0f},
+                       "LFO scope surface bounds");
+
+    // And the backend must arrive at those same numbers by its own fold, which
+    // is the parity claim: pin them against the literals, not against the tree
+    // the expectations were read out of.
+    Require(component.SurfaceBoundsForNode(synth_miniapp::MiniAppNodeIds::Encoder(0)) ==
+                juce::Rectangle<int>(420, 60, 110, 96),
+            "the JUCE host folds encoder zero to the same surface bounds");
+    Require(component.SurfaceBoundsForNode(synth_miniapp::MiniAppNodeIds::Encoder(15)) ==
+                juce::Rectangle<int>(773, 371, 110, 96),
+            "the JUCE host folds encoder fifteen to the same surface bounds");
 
     StaticSurface paintedGridSurface;
     paintedGridSurface.tree = tree;

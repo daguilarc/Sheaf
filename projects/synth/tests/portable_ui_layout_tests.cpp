@@ -70,6 +70,12 @@ bool NearlyEqual(float a, float b)
     return std::fabs(a - b) < 0.01f;
 }
 
+bool SameBounds(synth::ui::Bounds a, synth::ui::Bounds b)
+{
+    return NearlyEqual(a.x, b.x) && NearlyEqual(a.y, b.y) && NearlyEqual(a.width, b.width) &&
+           NearlyEqual(a.height, b.height);
+}
+
 synth::ui::ControlStyle MainOf(synth::ui::Extent e)
 {
     synth::ui::ControlStyle s;
@@ -603,11 +609,98 @@ void TestOverlayChildTakesItsTargetsResolvedBounds()
                 NearlyEqual(underlay.bounds.width, second.bounds.width) &&
                 NearlyEqual(underlay.bounds.height, second.bounds.height),
             "an overlay child resolves to exactly its target sibling's bounds");
-    Require(NearlyEqual(second.bounds.x, FindNode(build(false), "second").bounds.x),
-            "the overlay consumes no stacking space, so its siblings resolve as if it were absent");
+    const auto without = build(false);
+    for (const char* sibling : {"row", "first", "second"})
+    {
+        Require(SameBounds(FindNode(with, sibling).bounds, FindNode(without, sibling).bounds),
+                std::string("'") + sibling +
+                    "' resolves identically with and without the overlay, so the overlay "
+                    "consumes no stacking space");
+    }
     Require(underlay.drawCommands.size() == 1 &&
                 NearlyEqual(underlay.drawCommands[0].bounds.width, second.bounds.width),
             "the overlay's draw factory receives its resolved node-local extent");
+}
+
+void TestOverlayRejectsATargetThatIsNotInFlow()
+{
+    // sru-44 anchors an overlay to an IN-FLOW sibling. An out-of-flow target
+    // was never placed by the flow, so there is no slot to cover and the
+    // overlay collapses rather than copying a position it was not promised.
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    b.Row("row", {}, [](synth::ui::Builder& b) {
+        synth::ui::LayoutOptions anchored;
+        anchored.explicitBounds = synth::ui::Bounds{5.0f, 6.0f, 70.0f, 40.0f};
+        b.Draw("anchored", anchored, [](synth::ui::Bounds) {
+            return std::vector<synth::ui::DrawCommand>{};
+        });
+
+        synth::ui::LayoutOptions ontoAnchored;
+        ontoAnchored.overlayOf = "anchored";
+        b.Draw("onto.anchored", ontoAnchored, [](synth::ui::Bounds) {
+            return std::vector<synth::ui::DrawCommand>{};
+        });
+
+        synth::ui::LayoutOptions ontoOverlay;
+        ontoOverlay.overlayOf = "onto.anchored";
+        b.Draw("onto.overlay", ontoOverlay, [](synth::ui::Bounds) {
+            return std::vector<synth::ui::DrawCommand>{};
+        });
+
+        // In flow, but under a different parent: not a sibling.
+        synth::ui::LayoutOptions ontoStranger;
+        ontoStranger.overlayOf = "elsewhere";
+        b.Draw("onto.stranger", ontoStranger, [](synth::ui::Bounds) {
+            return std::vector<synth::ui::DrawCommand>{};
+        });
+    });
+    b.Label("elsewhere", "e", MainOf(synth::ui::Extent::Px(50.0f)));
+    const auto tree = b.Build({0.0f, 0.0f, 400.0f, 300.0f});
+    Require(SameBounds(FindNode(tree, "anchored").bounds, {5.0f, 6.0f, 70.0f, 40.0f}),
+            "the explicitly positioned sibling keeps its author-supplied bounds");
+    for (const char* rejected : {"onto.anchored", "onto.overlay", "onto.stranger"})
+    {
+        Require(SameBounds(FindNode(tree, rejected).bounds, {}),
+                std::string("overlay '") + rejected + "' collapses to nothing");
+    }
+}
+
+void TestOverlayTracksATargetTheFormGridMoves()
+{
+    // A form grid moves and resizes its cells after their own row has placed
+    // them. An overlay on such a cell must land on where the cell ended up,
+    // not on where the row first put it.
+    synth::ui::LayoutOptions grid;
+    grid.formGrid = true;
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    b.Column("form", grid, [](synth::ui::Builder& b) {
+        b.Row("r1", {}, [](synth::ui::Builder& b) {
+            b.Label("r1.label", "Tempo");
+            synth::ui::LayoutOptions o;
+            o.overlayOf = "r1.control";
+            b.Draw("r1.underlay", o, [](synth::ui::Bounds extent) {
+                return std::vector<synth::ui::DrawCommand>{
+                    synth::ui::DrawCommand::Fill(extent, synth::Color::Rgb(1, 2, 3))};
+            });
+            b.ComboBox("r1.control", "", {}, "", synth::ui::Action::Named("a"));
+        });
+        b.Row("r2", {}, [](synth::ui::Builder& b) {
+            b.Label("r2.label", "A considerably longer caption");
+            b.ComboBox("r2.control", "", {}, "", synth::ui::Action::Named("b"));
+        });
+    });
+    const auto tree = b.Build({0.0f, 0.0f, 400.0f, 300.0f});
+    const auto& control = FindNode(tree, "r1.control");
+    const auto& underlay = FindNode(tree, "r1.underlay");
+    Require(control.bounds.x > FindNode(tree, "r1.label").bounds.x,
+            "the form grid really did move the control into the shared column");
+    Require(SameBounds(underlay.bounds, control.bounds),
+            "an overlay lands on its target's post-form-grid bounds");
+    Require(underlay.drawCommands.size() == 1 &&
+                NearlyEqual(underlay.drawCommands[0].bounds.width, control.bounds.width),
+            "the overlay's draw factory runs against the post-form-grid extent");
 }
 
 synth::ui::NodeTree BuildStandardLayoutWith(float width,
@@ -708,13 +801,22 @@ void TestEmptyWidgetBayCollapses()
 {
     const auto with = BuildStandardLayoutWithBay();
     const auto without = BuildStandardLayoutWithoutBay();
-    Require(NearlyEqual(FindNode(without, "app.bay").bounds.height, 0.0f),
+    Require(SameBounds(FindNode(without, "app.bay").bounds, {}),
             "an unsupplied widget bay occupies no space and renders no chrome");
     Require(FindNode(without, "app.bay").children.empty(),
             "an unsupplied widget bay renders no placeholder content");
-    Require(FindNode(without, "app.visualizers").bounds.height >
-                FindNode(with, "app.visualizers").bounds.height,
-            "the regions above take the collapsed bay's extent");
+
+    // 560 root less the 16 margin twice is 528 of page content. Supplied, this
+    // bay stacks two 28-high buttons over one 14 gap — 70 — and costs a second
+    // 14 separating it from the body: 528 - 30 title - 14 - 70 - 14 = 400.
+    // Unsupplied, it costs NEITHER extent nor gap, so the body takes all 84
+    // back: 528 - 30 - 14 = 484.
+    Require(NearlyEqual(FindNode(with, "app.bay").bounds.height, 70.0f),
+            "a supplied bay is exactly as high as the controls it was given");
+    Require(NearlyEqual(FindNode(with, "app.visualizers").bounds.height, 400.0f),
+            "the regions above give up the bay's extent and its gap");
+    Require(NearlyEqual(FindNode(without, "app.visualizers").bounds.height, 484.0f),
+            "a collapsed bay gives back its extent AND the gap it would have cost");
 }
 
 void TestStandardLayoutRedistributesAtDifferentExtents()
@@ -762,6 +864,8 @@ int main()
     TestWrappingRowLineBreakHeightIsPinned();
     TestIntrinsicColumnReservesAWrappingRowsGrownExtent();
     TestOverlayChildTakesItsTargetsResolvedBounds();
+    TestOverlayRejectsATargetThatIsNotInFlow();
+    TestOverlayTracksATargetTheFormGridMoves();
     TestSectionAndScrollAreaStackChildrenVertically();
     TestSlotsAcceptArbitraryComponents();
     TestStandardLayoutProportionsMatchBothApps();

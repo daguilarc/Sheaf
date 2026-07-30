@@ -81,12 +81,22 @@ inline void StandardAppLayout::Emit(Builder& builder) const
     encoderRegion.padding = 0.0f;
     encoderRegion.gap = kStandardApp.gap;
 
-    // An unsupplied bay declares no extent at all rather than an intrinsic one,
-    // so it collapses and the regions above take its space.
+    // An unsupplied bay leaves the flow entirely rather than declaring a zero
+    // extent inside it. A zero-extent child is still a child, so the column
+    // would still charge the 14 gap that separates it from the body, and
+    // sru-53 requires the regions above to take the bay's whole extent — all
+    // of it, not all but one gap.
     LayoutOptions bay;
-    bay.main = widgetBay ? Extent::Intrinsic() : Extent::Px(0.0f);
     bay.padding = 0.0f;
     bay.gap = kStandardApp.gap;
+    if (widgetBay)
+    {
+        bay.main = Extent::Intrinsic();
+    }
+    else
+    {
+        bay.explicitBounds = Bounds{};
+    }
 
     builder.Column(idPrefix + ".page", page, [&](Builder& b) {
         b.Label(idPrefix + ".title", title, titleStyle);

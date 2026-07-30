@@ -275,10 +275,16 @@ inline std::map<std::string, std::size_t> BuildNodeIndex(const NodeTree& tree)
 }
 
 struct Resolver {
+    struct DeferredOverlay {
+        Node* node = nullptr;
+        const Node* target = nullptr;
+    };
+
     NodeTree& tree;
     const std::map<std::string, LayoutOptions>& layoutByNodeId;
     const std::map<std::string, DrawFactory>& drawFactories;
     std::map<std::string, std::size_t> byId;
+    std::vector<DeferredOverlay> deferredOverlays{};
 
     Node* Find(const NodeId& id)
     {
@@ -574,17 +580,25 @@ struct Resolver {
             ResolveNode(*child, false);
         }
 
-        // Overlays resolve last so their target has already been placed. An
-        // overlay naming a node that is not an in-flow sibling collapses to
-        // nothing rather than guessing a position.
+        // sru-44: an overlay takes the bounds of the IN-FLOW sibling it names.
+        // A target that is out of flow itself — explicitly positioned, or
+        // another overlay — is not a valid anchor, and an overlay pointed at
+        // one collapses to nothing rather than copying a position it was never
+        // promised. That verdict is declarative, so it is settled here; the
+        // bounds copy is not, so it is deferred (see ResolveDeferredOverlays).
         for (const auto& [child, targetId] : overlays)
         {
             const Node* target = Find(targetId);
-            const bool targetIsSibling =
+            const bool namesASibling =
                 target != nullptr &&
                 std::find(container.children.begin(), container.children.end(), targetId) !=
                     container.children.end();
-            child->bounds = targetIsSibling ? target->bounds : Bounds{};
+            if (namesASibling && !IsOutOfFlow(LayoutFor(layoutByNodeId, targetId, fallback)))
+            {
+                deferredOverlays.push_back({child, target});
+                continue;
+            }
+            child->bounds = Bounds{};
             ResolveNode(*child, false);
         }
 
@@ -592,6 +606,20 @@ struct Resolver {
         {
             ApplyFormGrid(container);
         }
+    }
+
+    // A form grid moves and resizes its cells after their own container has
+    // finished placing them, so an overlay resolved inside that container
+    // would go stale. Every overlay therefore takes its target's bounds only
+    // once the whole tree has stopped moving.
+    void ResolveDeferredOverlays()
+    {
+        for (const DeferredOverlay& overlay : deferredOverlays)
+        {
+            overlay.node->bounds = overlay.target->bounds;
+            ResolveNode(*overlay.node, false);
+        }
+        deferredOverlays.clear();
     }
 
     std::vector<Node*> InFlowChildrenOf(const Node& row)
@@ -682,6 +710,7 @@ inline void ResolveLayout(NodeTree& tree,
     }
     root->bounds = rootExtent;
     resolver.ResolveNode(*root, true);
+    resolver.ResolveDeferredOverlays();
 }
 
 }  // namespace synth::ui

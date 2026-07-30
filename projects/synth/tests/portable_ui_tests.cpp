@@ -612,11 +612,24 @@ void TestBraid4StandardModulationViewsRemainPortable()
             "Braid4 mono disconnected constant position dispatches nothing");
     Require(FindNodeById(monoTree, "braid4.encoder.11.visualizer") == nullptr,
             "Braid4 mono disconnected constant position has no visualizer");
-    const synth::ui::Node* connectedNeighbour = FindNodeById(monoTree, "braid4.encoder.14");
-    Require(connectedNeighbour != nullptr &&
-                connectedNeighbour->bounds.x == FindNodeById(quadTree, "braid4.encoder.14")->bounds.x &&
-                connectedNeighbour->bounds.y == FindNodeById(quadTree, "braid4.encoder.14")->bounds.y,
-            "an inert cell holds its place, so its neighbours never move");
+    // The two views hide different cells — 11 is inert in the mono view and
+    // live in the quad view — so if an inert cell were dropped from the tree
+    // instead of held in place, the cells sharing its row (8, 9, 10) would
+    // widen and every later cell would move. Comparing all sixteen catches
+    // both, where comparing one in another row could not.
+    for (std::size_t encoderIx = 0; encoderIx < synth_braid4::Braid4EncoderGridLayout::kEncoderCount;
+         ++encoderIx)
+    {
+        const std::string encoderId = synth_braid4::Braid4NodeIds::Encoder(encoderIx);
+        const synth::ui::Node* mono = FindNodeById(monoTree, encoderId);
+        const synth::ui::Node* quad = FindNodeById(quadTree, encoderId);
+        Require(mono != nullptr && quad != nullptr,
+                ("both views keep encoder cell " + encoderId).c_str());
+        Require(mono->bounds.x == quad->bounds.x && mono->bounds.y == quad->bounds.y &&
+                    mono->bounds.width == quad->bounds.width &&
+                    mono->bounds.height == quad->bounds.height,
+                ("inert cells hold their place, so " + encoderId + " never moves").c_str());
+    }
     Require(!core.MonoGroup()->GetModulators().Metadata(11).connected,
             "Braid4 mono constant source stays disconnected");
     Require(core.MonoGroup()->GetModulators().Metadata(11).visualizer == nullptr,
