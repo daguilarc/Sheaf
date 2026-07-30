@@ -780,7 +780,7 @@ def clean_claude_enabled(home: Path) -> None:
     if not isinstance(enabled, dict) or CLAUDE_PLUGIN_KEY not in enabled:
         return
     del enabled[CLAUDE_PLUGIN_KEY]
-    write_json(path, payload)
+    write_claude_settings_atomic(path, payload)
     print(f"wrote {path}")
 
 

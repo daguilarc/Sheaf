@@ -211,14 +211,14 @@ Each managed package carries a `.sheaf-managed` marker with the vendor
 `revision` and `version`. Superpowers Codex hooks stay inside that managed
 Codex plugin; they are not merged into Sheaf-owned `$CODEX_HOME/hooks.json`.
 
-When managed Superpowers enables its Claude plugin, it updates
+When managed Superpowers enables or cleans its Claude plugin entry, it updates
 `~/.claude/settings.json` with staged atomic replacement
 (`.settings.json.sheaf-stage` → `settings.json`, prior content copied to
-`settings.json.sheaf-backup`). It merges only the
-`enabledPlugins.superpowers@sheaf-managed` entry and preserves canonical
-xagent `PostToolUse`/`Stop` hook groups plus unrelated valid settings.
-Malformed settings JSON or a non-object `enabledPlugins` fails before any
-write.
+`settings.json.sheaf-backup`). Enable merges only the
+`enabledPlugins.superpowers@sheaf-managed` entry; clean removes only that key.
+Both paths preserve canonical xagent `PostToolUse`/`Stop` hook groups plus
+unrelated valid settings. Malformed settings JSON or a non-object
+`enabledPlugins` fails before any write on enable.
 
 ### Marketplace Superpowers coexistence
 

@@ -888,6 +888,58 @@ class InstallSuperpowersTests(unittest.TestCase):
             settings_path.with_name(f".{settings_path.name}.sheaf-stage").exists()
         )
 
+    def test_claude_clean_removes_only_superpowers_and_is_atomic(self) -> None:
+        settings_path = self.home / ".claude" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        observe = {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": (
+                        "python3 /tmp/controller_stop_hook.py "
+                        "--harness claude --state-root /tmp/state observe"
+                    ),
+                }
+            ]
+        }
+        guard = {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": (
+                        "python3 /tmp/controller_stop_hook.py "
+                        "--harness claude --state-root /tmp/state guard"
+                    ),
+                }
+            ]
+        }
+        prior = {
+            "permissions": {"allow": ["Bash"]},
+            "hooks": {"PostToolUse": [observe], "Stop": [guard]},
+            "enabledPlugins": {
+                "keep@me": True,
+                "superpowers@sheaf-managed": True,
+            },
+            "unrelated": {"nested": 1},
+        }
+        settings_path.write_text(json.dumps(prior) + "\n", encoding="utf-8")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            install_superpowers.clean_claude_enabled(self.home)
+
+        after = json.loads(settings_path.read_text(encoding="utf-8"))
+        self.assertEqual(prior["permissions"], after["permissions"])
+        self.assertEqual(prior["hooks"], after["hooks"])
+        self.assertEqual(prior["unrelated"], after["unrelated"])
+        self.assertIs(after["enabledPlugins"]["keep@me"], True)
+        self.assertNotIn("superpowers@sheaf-managed", after["enabledPlugins"])
+
+        backup = settings_path.with_name(f"{settings_path.name}.sheaf-backup")
+        staged = settings_path.with_name(f".{settings_path.name}.sheaf-stage")
+        self.assertTrue(backup.is_file())
+        self.assertEqual(prior, json.loads(backup.read_text(encoding="utf-8")))
+        self.assertFalse(staged.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
