@@ -36,7 +36,6 @@ body {
 #synth-root [data-synth-node-kind="row"],
 #synth-root [data-synth-node-kind="section"],
 #synth-root [data-synth-node-kind="scroll-area"] {
-  border-radius: 5px;
   background: var(--synth-fill, transparent);
 }
 
