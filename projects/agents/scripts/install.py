@@ -313,9 +313,9 @@ def build_codex_hook_shared_output(
 
 
 def validate_shared_hook_payload(path: Path, payload: dict[str, object]) -> None:
-    hooks = payload.get("hooks")
-    if hooks is None:
+    if "hooks" not in payload:
         return
+    hooks = payload["hooks"]
     if not isinstance(hooks, dict):
         raise RuntimeError(f'{path} field "hooks" must be a JSON object')
     for event, groups in hooks.items():
@@ -442,8 +442,9 @@ def shared_hook_has_canonical_group(
     return owned == [desired_group]
 
 
-def shared_payload_has_foreign_content(payload: dict[str, object]) -> bool:
-    hooks = payload.get("hooks")
+def prune_empty_shared_hook_payload(payload: dict[str, object]) -> dict[str, object]:
+    pruned = copy.deepcopy(payload)
+    hooks = pruned.get("hooks")
     if isinstance(hooks, dict):
         empty_events = [
             event
@@ -453,8 +454,19 @@ def shared_payload_has_foreign_content(payload: dict[str, object]) -> bool:
         for event in empty_events:
             del hooks[event]
         if not hooks:
-            payload.pop("hooks", None)
-    return bool(payload)
+            pruned.pop("hooks", None)
+    return pruned
+
+
+def shared_payload_has_foreign_content(payload: dict[str, object]) -> bool:
+    for key, value in payload.items():
+        if key != "hooks":
+            return True
+        if not isinstance(value, dict):
+            return True
+        if any(not isinstance(groups, list) or groups for groups in value.values()):
+            return True
+    return False
 
 
 def install_codex_hook_shared(output: CodexHookSharedOutput) -> int:
@@ -532,8 +544,9 @@ def clean_codex_hook_shared(output: CodexHookSharedOutput) -> int:
         print(f"ok {output.config_path}")
         return script_status
 
-    if shared_payload_has_foreign_content(cleaned):
-        write_json_atomic(output.config_path, cleaned)
+    pruned = prune_empty_shared_hook_payload(cleaned)
+    if shared_payload_has_foreign_content(pruned):
+        write_json_atomic(output.config_path, pruned)
         print(f"wrote {output.config_path}")
     else:
         output.config_path.unlink()

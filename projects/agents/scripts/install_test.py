@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import importlib.util
 import io
 import json
@@ -313,6 +314,46 @@ class CodexHookOutputTests(unittest.TestCase):
                                 with contextlib.redirect_stderr(io.StringIO()):
                                     self.assertEqual(1, run_main(mode, *args))
                     self.assertEqual(malformed, output.config_path.read_text(encoding="utf-8"))
+
+    def test_top_level_null_hooks_fails_install_check_and_clean_with_force(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            home = (Path(tempdir) / "home").resolve()
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            output = self.shared_output(codex_home)
+            output.config_path.parent.mkdir(parents=True, exist_ok=True)
+            malformed = '{\n  "hooks": null\n}\n'
+            args = (
+                "--scope",
+                "global",
+                "--repo-root",
+                str(REPO_ROOT),
+                "--home",
+                str(home),
+                "--codex-home",
+                str(codex_home),
+                "--force",
+            )
+
+            for mode in ("install", "check", "clean"):
+                with self.subTest(mode=mode):
+                    output.config_path.write_text(malformed, encoding="utf-8")
+                    with mock.patch.object(install, "install_openspec_cli", return_value=0):
+                        with mock.patch.object(install, "check_openspec_cli", return_value=0):
+                            with mock.patch.object(install, "clean_openspec_cli", return_value=0):
+                                with contextlib.redirect_stderr(io.StringIO()):
+                                    self.assertEqual(1, run_main(mode, *args))
+                    self.assertEqual(
+                        malformed,
+                        output.config_path.read_text(encoding="utf-8"),
+                    )
+
+    def test_shared_payload_has_foreign_content_does_not_mutate_payload(self) -> None:
+        payload: dict[str, object] = {"hooks": {"SessionStart": []}}
+        original = copy.deepcopy(payload)
+
+        self.assertFalse(install.shared_payload_has_foreign_content(payload))
+
+        self.assertEqual(original, payload)
 
     def test_install_and_clean_effective_changes_print_trust_notice(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
