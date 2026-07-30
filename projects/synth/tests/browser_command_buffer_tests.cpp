@@ -330,6 +330,25 @@ void TestVersionTwoCarriesStyleAndParentRelativeBounds()
             "carried corner radius survives");
 }
 
+void TestPresentZeroBorderMetricsStayPresent()
+{
+    synth::ui::NodeTree tree;
+    synth::ui::Node root;
+    root.id = synth::ui::NodeId("root");
+    root.kind = synth::ui::NodeKind::Root;
+    root.bounds = {0, 0, 400, 300};
+    root.borderWidth = 0.0f;
+    root.cornerRadius = 0.0f;
+    tree.nodes.push_back(root);
+
+    const auto decoded = synth_browser::DecodeCommandBuffer(synth_browser::SerializeNodeTree(tree).bytes);
+    const auto& out = FindNode(decoded, "root");
+    Require(out.borderWidth.has_value() && NearlyEqual(*out.borderWidth, 0.0f),
+            "a producer explicitly choosing zero border width is not read as absent");
+    Require(out.cornerRadius.has_value() && NearlyEqual(*out.cornerRadius, 0.0f),
+            "a producer explicitly choosing zero corner radius is not read as absent");
+}
+
 void TestAbsentStyleStaysAbsent()
 {
     synth::ui::NodeTree tree;
@@ -387,13 +406,14 @@ void TestCorruptPresenceFlagIsRejected()
     }
     Require(threwOnFlag, "a presence flag the encoder can never emit is rejected, as in protocol.ts");
 
-    // Poke the first node's colour presence byte to prove the strictness is
+    // Poke each first-node appearance presence byte to prove the strictness is
     // reachable through the whole decode path rather than only in the helper.
     // Buffer layout: 4 magic + 2 version + 2 reserved + 5 section lengths,
     // then the string section, then the node section's u32 node count, then
     // the first node record. Within a record the colour presence byte follows
     // the id (u32), four u8 flags, the bounds (4 floats), three string
-    // indices (u32), and six floats.
+    // indices (u32), and six floats; subsequent appearance fields in this
+    // all-absent fixture are consecutive presence bytes.
     const auto encodeRoot = [](std::optional<synth::Color> color) {
         synth::ui::NodeTree tree;
         synth::ui::Node root;
@@ -411,24 +431,39 @@ void TestCorruptPresenceFlagIsRejected()
             value |= static_cast<std::uint32_t>(from[at + byte]) << (8 * byte);
         return value;
     };
-    const std::size_t colourPresence = 28 + readU32(bytes, 8) + 4 + 60;
+    const std::size_t firstNodeRecord = 28 + readU32(bytes, 8) + 4;
+    const std::size_t colourPresence = firstNodeRecord + 60;
     // The same offset reads 0 for an unstyled root and 1 for a styled one,
     // which is what proves the arithmetic lands on the presence byte rather
     // than on some other zero. Both trees have identical string sections.
     Require(bytes[colourPresence] == std::byte{0}, "the unstyled root encodes an absent colour");
     Require(encodeRoot(synth::Color::Rgb(1, 2, 3))[colourPresence] == std::byte{1},
             "the styled root sets the same byte, so it is the colour presence flag");
-    bytes[colourPresence] = std::byte{2};
-    bool threwOnBuffer = false;
-    try
-    {
-        synth_browser::DecodeCommandBuffer(bytes);
-    }
-    catch (const std::runtime_error&)
-    {
-        threwOnBuffer = true;
-    }
-    Require(threwOnBuffer, "a corrupt presence byte fails the decode instead of inventing a colour");
+
+    const auto requireRejectsCorruptPresence = [&](std::size_t offset, const char* label) {
+        std::vector<std::byte> corrupted = bytes;
+        corrupted[offset] = std::byte{2};
+        bool threwOnBuffer = false;
+        try
+        {
+            synth_browser::DecodeCommandBuffer(corrupted);
+        }
+        catch (const std::runtime_error&)
+        {
+            threwOnBuffer = true;
+        }
+        Require(threwOnBuffer, label);
+    };
+    requireRejectsCorruptPresence(colourPresence,
+                                  "a corrupt colour presence byte fails the decode instead of inventing a colour");
+    requireRejectsCorruptPresence(colourPresence + 1,
+                                  "a corrupt text-style presence byte fails the decode instead of inventing a style");
+    requireRejectsCorruptPresence(colourPresence + 2,
+                                  "a corrupt border-colour presence byte fails the decode instead of inventing a border colour");
+    requireRejectsCorruptPresence(colourPresence + 3,
+                                  "a corrupt border-width presence byte fails the decode instead of inventing a border width");
+    requireRejectsCorruptPresence(colourPresence + 4,
+                                  "a corrupt corner-radius presence byte fails the decode instead of inventing a radius");
 }
 
 void TestMovingAParentChangesOnlyTheParentRecord()
@@ -635,6 +670,7 @@ int main()
     TestUnsupportedPortableFeatureIsGeneric();
     TestUnsupportedDrawFeatureIsGeneric();
     TestVersionTwoCarriesStyleAndParentRelativeBounds();
+    TestPresentZeroBorderMetricsStayPresent();
     TestAbsentStyleStaysAbsent();
     TestFullyTransparentBlackIsAPresentColour();
     TestCorruptPresenceFlagIsRejected();

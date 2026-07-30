@@ -312,6 +312,11 @@ private:
         return node.cornerRadius.value_or(0.0f);
     }
 
+    static float ClampedCornerRadius(juce::Rectangle<float> bounds, float cornerRadius)
+    {
+        return std::clamp(cornerRadius, 0.0f, std::min(bounds.getWidth(), bounds.getHeight()) * 0.5f);
+    }
+
     static void PaintContainerAppearance(juce::Graphics& graphics,
                                          juce::Rectangle<float> bounds,
                                          std::optional<juce::Colour> fill,
@@ -319,12 +324,13 @@ private:
                                          std::optional<float> borderWidth,
                                          float cornerRadius)
     {
+        const float clampedRadius = ClampedCornerRadius(bounds, cornerRadius);
         if (fill.has_value())
         {
             graphics.setColour(*fill);
-            if (cornerRadius > 0.0f)
+            if (clampedRadius > 0.0f)
             {
-                graphics.fillRoundedRectangle(bounds, cornerRadius);
+                graphics.fillRoundedRectangle(bounds, clampedRadius);
             }
             else
             {
@@ -334,10 +340,11 @@ private:
         if (border.has_value() && borderWidth.has_value())
         {
             graphics.setColour(*border);
-            if (cornerRadius > 0.0f)
+            if (clampedRadius > 0.0f)
             {
+                const float pathRadius = std::max(0.0f, clampedRadius - *borderWidth * 0.5f);
                 graphics.drawRoundedRectangle(bounds.reduced(*borderWidth * 0.5f),
-                                              cornerRadius,
+                                              pathRadius,
                                               *borderWidth);
             }
             else
@@ -373,11 +380,6 @@ private:
     class SemanticPanelComponent final : public juce::Component
     {
     public:
-        void SetFill(std::optional<juce::Colour> fill)
-        {
-            SetAppearance(fill, std::nullopt, std::nullopt, 0.0f);
-        }
-
         void SetAppearance(std::optional<juce::Colour> fill,
                            std::optional<juce::Colour> border,
                            std::optional<float> borderWidth,
@@ -427,11 +429,6 @@ private:
             return viewport_;
         }
 
-        void SetFill(std::optional<juce::Colour> fill)
-        {
-            content_.SetFill(fill);
-        }
-
         void SetAppearance(std::optional<juce::Colour> fill,
                            std::optional<juce::Colour> border,
                            std::optional<float> borderWidth,
@@ -441,7 +438,10 @@ private:
             border_ = border;
             borderWidth_ = borderWidth;
             cornerRadius_ = cornerRadius;
-            content_.SetAppearance(fill, std::nullopt, std::nullopt, 0.0f);
+            content_.SetAppearance(cornerRadius > 0.0f ? std::nullopt : fill,
+                                   std::nullopt,
+                                   std::nullopt,
+                                   0.0f);
             repaint();
         }
 

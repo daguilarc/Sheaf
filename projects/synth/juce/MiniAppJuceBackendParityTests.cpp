@@ -160,7 +160,9 @@ synth::ui::NodeTree BackendStyleParityTree()
                  .kind = synth::ui::NodeKind::Root,
                  .bounds = {0.0f, 0.0f, 500.0f, 280.0f},
                  .color = synth::Color::Rgb(8, 9, 10),
-                 .children = {synth::ui::NodeId("section"), synth::ui::NodeId("scroll")}},
+                 .children = {synth::ui::NodeId("section"),
+                              synth::ui::NodeId("scroll"),
+                              synth::ui::NodeId("square")}},
                 {.id = synth::ui::NodeId("section"),
                  .kind = synth::ui::NodeKind::Section,
                  .bounds = {20.0f, 16.0f, 220.0f, 160.0f},
@@ -231,6 +233,10 @@ synth::ui::NodeTree BackendStyleParityTree()
                 {.id = synth::ui::NodeId("scroll"),
                  .kind = synth::ui::NodeKind::ScrollArea,
                  .bounds = {260.0f, 20.0f, 120.0f, 90.0f},
+                 .color = synth::Color::Rgb(45, 55, 65),
+                 .borderColor = synth::Color::Rgb(180, 190, 200),
+                 .borderWidth = 4.0f,
+                 .cornerRadius = 10.0f,
                  .scrollContentWidth = 240.0f,
                  .scrollContentHeight = 220.0f,
                  .children = {synth::ui::NodeId("scroll.row"),
@@ -263,6 +269,10 @@ synth::ui::NodeTree BackendStyleParityTree()
                  .kind = synth::ui::NodeKind::Label,
                  .bounds = {150.0f, 10.0f, 0.0f, 0.0f},
                  .text = "unresolved"},
+                {.id = synth::ui::NodeId("square"),
+                 .kind = synth::ui::NodeKind::Section,
+                 .bounds = {400.0f, 20.0f, 40.0f, 40.0f},
+                 .color = synth::Color::Rgb(33, 44, 55)},
             }};
 }
 
@@ -340,8 +350,27 @@ int main()
         RequireExactColour(parityImage.getPixelAt(35, 101),
                            juce::Colour::fromRGB(20, 30, 40),
                            "section carried fill covers the gap between its children");
-        Require(parityImage.getPixelAt(130, 17) != juce::Colour::fromRGB(20, 30, 40),
-                "section border paints over the carried fill");
+        RequireExactColour(parityImage.getPixelAt(130, 18),
+                           juce::Colour::fromRGB(200, 210, 220),
+                           "section border mid-edge uses the carried colour exactly");
+        RequireExactColour(parityImage.getPixelAt(130, 19),
+                           juce::Colour::fromRGB(200, 210, 220),
+                           "section border width covers the declared 4px band");
+        RequireExactColour(parityImage.getPixelAt(130, 21),
+                           juce::Colour::fromRGB(20, 30, 40),
+                           "section fill resumes immediately inside the declared border band");
+        RequireExactColour(parityImage.getPixelAt(28, 16),
+                           juce::Colour::fromRGB(200, 210, 220),
+                           "section rounded border path keeps the declared outer radius");
+        RequireExactColour(parityImage.getPixelAt(261, 21),
+                           juce::Colour::fromRGB(8, 9, 10),
+                           "scroll-area rounded corner leaves the root surface visible");
+        RequireExactColour(parityImage.getPixelAt(320, 22),
+                           juce::Colour::fromRGB(180, 190, 200),
+                           "scroll-area border uses the carried colour exactly");
+        RequireExactColour(parityImage.getPixelAt(400, 20),
+                           juce::Colour::fromRGB(33, 44, 55),
+                           "a filled container with no carried radius uses the shared square default");
         RequireExactColour(FillColourOf(parityComponent, "label"),
                            juce::Colour::fromRGB(10, 10, 10),
                            "label carried colour is its text background");

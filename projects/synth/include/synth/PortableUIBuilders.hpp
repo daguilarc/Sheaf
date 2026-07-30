@@ -317,9 +317,7 @@ public:
         node.id = NodeId(std::move(id));
         node.kind = NodeKind::Root;
         node.bounds = bounds;
-        style.layout.explicitBounds = bounds;
         ApplyStyle(node, style);
-        layoutByNodeId_[node.id.value] = style.layout;
         tree_.nodes.push_back(std::move(node));
         scopeStack_.assign(1, tree_.nodes.size() - 1);
         return *this;
@@ -353,6 +351,9 @@ public:
     Builder& Column(std::string id, LayoutOptions o, const Children& c) {
         return Container(std::move(id), NodeKind::Section, o, c);
     }
+    // The explicit LayoutOptions argument is the container's layout declaration;
+    // ControlStyle::layout is ignored for this overload so appearance and
+    // layout cannot silently disagree.
     Builder& Column(std::string id, LayoutOptions o, ControlStyle style, const Children& c) {
         style.layout = std::move(o);
         return Container(std::move(id), NodeKind::Section, std::move(style), c);
@@ -360,6 +361,7 @@ public:
     Builder& Section(std::string id, LayoutOptions o, const Children& c) {
         return Container(std::move(id), NodeKind::Section, o, c);
     }
+    // The explicit LayoutOptions argument wins over ControlStyle::layout.
     Builder& Section(std::string id, LayoutOptions o, ControlStyle style, const Children& c) {
         style.layout = std::move(o);
         return Container(std::move(id), NodeKind::Section, std::move(style), c);
@@ -367,6 +369,7 @@ public:
     Builder& Row(std::string id, LayoutOptions o, const Children& c) {
         return Container(std::move(id), NodeKind::Row, o, c);
     }
+    // The explicit LayoutOptions argument wins over ControlStyle::layout.
     Builder& Row(std::string id, LayoutOptions o, ControlStyle style, const Children& c) {
         style.layout = std::move(o);
         return Container(std::move(id), NodeKind::Row, std::move(style), c);
@@ -374,6 +377,7 @@ public:
     Builder& ScrollArea(std::string id, LayoutOptions o, const Children& c) {
         return Container(std::move(id), NodeKind::ScrollArea, o, c);
     }
+    // The explicit LayoutOptions argument wins over ControlStyle::layout.
     Builder& ScrollArea(std::string id, LayoutOptions o, ControlStyle style, const Children& c) {
         style.layout = std::move(o);
         return Container(std::move(id), NodeKind::ScrollArea, std::move(style), c);

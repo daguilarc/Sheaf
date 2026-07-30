@@ -1478,7 +1478,7 @@ const backendGeometryPropertyNodes: FixtureNode[] = [
 // MiniAppJuceBackendParityTests.cpp. Boundless FillEllipse is deliberately
 // excluded; see the Task 3.12 note in openspec/.../tasks.md.
 const backendStyleParityNodes: FixtureNode[] = [
-  { id: "root", kind: NodeKind.Root, bounds: [0, 0, 500, 280], color: [8, 9, 10, 255], children: ["section", "scroll"] },
+  { id: "root", kind: NodeKind.Root, bounds: [0, 0, 500, 280], color: [8, 9, 10, 255], children: ["section", "scroll", "square"] },
   { id: "section", kind: NodeKind.Section, bounds: [20, 16, 220, 160], color: [20, 30, 40, 255],
     borderColor: [200, 210, 220, 255], borderWidth: 4, cornerRadius: 8,
     children: ["row", "status", "disabled"] },
@@ -1495,7 +1495,9 @@ const backendStyleParityNodes: FixtureNode[] = [
   { id: "status", kind: NodeKind.StatusText, bounds: [7, 90, 190, 22], text: "Status",
     textStyle: { size: 15, color: [180, 200, 220, 255], align: 0 } },
   { id: "disabled", kind: NodeKind.Button, bounds: [7, 118, 96, 24], label: "Disabled", enabled: false, color: [40, 80, 120, 255] },
-  { id: "scroll", kind: NodeKind.ScrollArea, bounds: [260, 20, 120, 90], scrollContentWidth: 240, scrollContentHeight: 220, children: ["scroll-row", "scroll-draw", "zero"] },
+  { id: "scroll", kind: NodeKind.ScrollArea, bounds: [260, 20, 120, 90],
+    color: [45, 55, 65, 255], borderColor: [180, 190, 200, 255], borderWidth: 4, cornerRadius: 10,
+    scrollContentWidth: 240, scrollContentHeight: 220, children: ["scroll-row", "scroll-draw", "zero"] },
   { id: "scroll-row", kind: NodeKind.Row, bounds: [8, 30, 200, 32], children: ["combo", "field"] },
   { id: "combo", kind: NodeKind.ComboBox, bounds: [4, 4, 75, 24], selectedOption: "one",
     options: [{ id: "one", label: "One" }, { id: "two", label: "Two" }], color: [120, 20, 80, 255] },
@@ -1505,6 +1507,7 @@ const backendStyleParityNodes: FixtureNode[] = [
     { kind: DrawKind.Fill, bounds: [0, 0, 50, 35], color: [4, 5, 6, 255] },
   ] },
   { id: "zero", kind: NodeKind.Label, bounds: [150, 10, 0, 0], text: "unresolved" },
+  { id: "square", kind: NodeKind.Section, bounds: [400, 20, 40, 40], color: [33, 44, 55, 255] },
 ];
 
 function foldAncestorOrigins(nodes: FixtureNode[], id: string, scrollOffsets: Record<string, { x: number; y: number }>) {
@@ -1602,6 +1605,13 @@ test("matches JUCE backend geometry and carried style assignments", async ({ pag
         sectionBorderWidth: element("section").style.getPropertyValue("--synth-border-width"),
         sectionBorderRadius: style('[data-node-id="section"]').borderRadius,
         sectionBorderShadow: style('[data-node-id="section"]').boxShadow,
+        scrollBackground: style('[data-node-id="scroll"]').backgroundColor,
+        scrollBorderColor: element("scroll").style.getPropertyValue("--synth-border-color"),
+        scrollBorderWidth: element("scroll").style.getPropertyValue("--synth-border-width"),
+        scrollBorderRadius: style('[data-node-id="scroll"]').borderRadius,
+        scrollBorderShadow: style('[data-node-id="scroll"]').boxShadow,
+        squareBackground: style('[data-node-id="square"]').backgroundColor,
+        squareBorderRadius: style('[data-node-id="square"]').borderRadius,
         labelBackground: style('[data-node-id="label"]').backgroundColor,
         labelGlyph: style('[data-node-id="label"]').color,
         labelSize: style('[data-node-id="label"]').fontSize,
@@ -1629,6 +1639,13 @@ test("matches JUCE backend geometry and carried style assignments", async ({ pag
     sectionBorderWidth: "4px",
     sectionBorderRadius: "8px",
     sectionBorderShadow: "rgb(200, 210, 220) 0px 0px 0px 4px inset",
+    scrollBackground: "rgb(45, 55, 65)",
+    scrollBorderColor: "rgba(180, 190, 200, 1)",
+    scrollBorderWidth: "4px",
+    scrollBorderRadius: "10px",
+    scrollBorderShadow: "rgb(180, 190, 200) 0px 0px 0px 4px inset",
+    squareBackground: "rgb(33, 44, 55)",
+    squareBorderRadius: "0px",
     labelBackground: "rgb(10, 10, 10)",
     labelGlyph: "rgb(240, 240, 240)",
     labelSize: "14px",

@@ -1070,40 +1070,48 @@ static void TestContainerConstructionCarriesAppearance()
     rootStyle.borderWidth = 3.0f;
     rootStyle.cornerRadius = 7.0f;
 
+    synth::ui::LayoutOptions panelLayout;
+    panelLayout.main = synth::ui::Extent::Px(92.0f);
+    panelLayout.cross = synth::ui::Extent::Px(120.0f);
+    panelLayout.padding = 10.0f;
+    panelLayout.gap = 8.0f;
+
     synth::ui::ControlStyle panelStyle;
     panelStyle.color = synth::Color::Rgb(20, 30, 40);
     panelStyle.borderColor = synth::Color::Rgb(80, 90, 100);
     panelStyle.borderWidth = 2.0f;
     panelStyle.cornerRadius = 6.0f;
-    panelStyle.layout.main = synth::ui::Extent::Px(92.0f);
-    panelStyle.layout.cross = synth::ui::Extent::Px(120.0f);
-    panelStyle.layout.padding = 10.0f;
-    panelStyle.layout.gap = 8.0f;
+    panelStyle.layout.main = synth::ui::Extent::Px(999.0f);
+    panelStyle.layout.cross = synth::ui::Extent::Px(999.0f);
 
     synth::ui::ControlStyle rowStyle;
     rowStyle.color = synth::Color::Rgb(50, 60, 70);
     rowStyle.borderColor = synth::Color::Rgb(100, 110, 120);
     rowStyle.borderWidth = 1.5f;
     rowStyle.cornerRadius = 4.0f;
-    rowStyle.layout.main = synth::ui::Extent::Px(24.0f);
-    rowStyle.layout.cross = synth::ui::Extent::Weight(1.0f);
+    synth::ui::LayoutOptions rowLayout;
+    rowLayout.main = synth::ui::Extent::Px(24.0f);
+    rowLayout.cross = synth::ui::Extent::Weight(1.0f);
+    rowStyle.layout.main = synth::ui::Extent::Px(999.0f);
 
     synth::ui::ControlStyle scrollStyle;
     scrollStyle.color = synth::Color::Rgb(70, 80, 90);
     scrollStyle.borderColor = synth::Color::Rgb(130, 140, 150);
     scrollStyle.borderWidth = 1.0f;
     scrollStyle.cornerRadius = 3.0f;
-    scrollStyle.layout.main = synth::ui::Extent::Weight(1.0f);
-    scrollStyle.layout.cross = synth::ui::Extent::Weight(1.0f);
+    synth::ui::LayoutOptions scrollLayout;
+    scrollLayout.main = synth::ui::Extent::Weight(1.0f);
+    scrollLayout.cross = synth::ui::Extent::Weight(1.0f);
+    scrollStyle.layout.main = synth::ui::Extent::Px(999.0f);
 
     synth::ui::Builder builder;
     builder.Root("root", {0.0f, 0.0f, 200.0f, 120.0f}, rootStyle);
-    builder.Section("panel", panelStyle.layout, panelStyle, [&rowStyle, &scrollStyle](synth::ui::Builder& panel) {
+    builder.Section("panel", panelLayout, panelStyle, [&rowStyle, &rowLayout, &scrollStyle, &scrollLayout](synth::ui::Builder& panel) {
         panel.Label("top", "Top");
-        panel.Row("row", rowStyle.layout, rowStyle, [](synth::ui::Builder& row) {
+        panel.Row("row", rowLayout, rowStyle, [](synth::ui::Builder& row) {
             row.Label("row.child", "Row");
         });
-        panel.ScrollArea("scroll", scrollStyle.layout, scrollStyle, [](synth::ui::Builder& scroll) {
+        panel.ScrollArea("scroll", scrollLayout, scrollStyle, [](synth::ui::Builder& scroll) {
             scroll.Label("scroll.child", "Scroll");
         });
     });
@@ -1122,6 +1130,8 @@ static void TestContainerConstructionCarriesAppearance()
             "Section carries its own fill and border colour");
     Require(panel.borderWidth == panelStyle.borderWidth && panel.cornerRadius == panelStyle.cornerRadius,
             "Section carries its own border width and radius");
+    RequireNear(panel.bounds.height, 92.0f, 0.0001f,
+                "Section uses the explicit LayoutOptions argument rather than ControlStyle::layout");
     Require(row.color == rowStyle.color && row.borderColor == rowStyle.borderColor,
             "Row carries its own fill and border colour");
     Require(row.borderWidth == rowStyle.borderWidth && row.cornerRadius == rowStyle.cornerRadius,
