@@ -263,6 +263,39 @@ int main()
                 "and is derived from the carried colour rather than substituted from a palette");
     }
 
+    {
+        RecordingSurface stateColourSurface;
+        stateColourSurface.tree.nodes = {
+            {.id = synth::ui::NodeId("root"),
+             .kind = synth::ui::NodeKind::Root,
+             .bounds = {0.0f, 0.0f, 200.0f, 140.0f},
+             .children = {synth::ui::NodeId("section"),
+                          synth::ui::NodeId("disabled")}},
+            {.id = synth::ui::NodeId("section"),
+             .kind = synth::ui::NodeKind::Section,
+             .bounds = {8.0f, 8.0f, 80.0f, 40.0f},
+             .color = synth::Color::Rgb(80, 40, 120)},
+            {.id = synth::ui::NodeId("disabled"),
+             .kind = synth::ui::NodeKind::Button,
+             .bounds = {8.0f, 60.0f, 96.0f, 28.0f},
+             .label = "Disabled",
+             .enabled = false,
+             .color = synth::Color::Rgb(40, 80, 120)},
+        };
+        synth_juce::PortableComponent component(stateColourSurface);
+        component.setSize(200, 140);
+        component.RefreshFromSurface();
+
+        const juce::Image image = RenderComponent(component);
+        Require(image.getPixelAt(48, 28) == juce::Colour::fromRGB(80, 40, 120),
+                "a container's background fill is the carried colour");
+        Require(FillColourOf(component, "disabled")
+                    == juce::Colour::fromRGB(40, 80, 120).darker(0.35f),
+                "disabled presentation is derived from the carried colour once");
+        Require(NearlyEqual(component.FindByNodeId("disabled")->getAlpha(), 0.58f),
+                "disabled component alpha carries the dimming opacity");
+    }
+
     RecordingSurface surface;
     synth::ui::Builder builder;
     builder.Root("root", synth::ui::Bounds{0.0f, 0.0f, 320.0f, 240.0f})
@@ -536,8 +569,8 @@ int main()
         Require(SurfaceBoundsOf(hierarchyComponent, *sidebarButton).getX() == 912,
                 "absolute sidebar offset is applied exactly once");
         Require(SurfaceBoundsOf(hierarchyComponent, *flowButton)
-                    == hierarchyComponent.SurfaceBoundsForNode("flow"),
-                "root-flow bounds survive translation into the semantic host");
+                    == juce::Rectangle<int>(30, 30, 0, 0),
+                "zero-bounds child renders at its parent origin with zero extent");
         Require(draw->getParentComponent() == rowA, "draw node is hosted by its semantic row");
         Require(paint->getParentComponent() == rowA, "non-interactive draw node is hosted by its semantic row");
 
@@ -646,11 +679,11 @@ int main()
             {.id = synth::ui::NodeId("row"),
              .kind = synth::ui::NodeKind::Row,
              .bounds = {10.0f, 10.0f, 220.0f, 210.0f},
-             .children = {synth::ui::NodeId("surface.draw"),
+             .children = {synth::ui::NodeId("overflow.draw"),
                           synth::ui::NodeId("local.draw"),
-                          synth::ui::NodeId("surface.line"),
+                          synth::ui::NodeId("local.line"),
                           synth::ui::NodeId("fractional.local")}},
-            {.id = synth::ui::NodeId("surface.draw"),
+            {.id = synth::ui::NodeId("overflow.draw"),
              .kind = synth::ui::NodeKind::Draw,
              .bounds = {10.0f, 10.0f, 40.0f, 30.0f},
              .drawCommands = {synth::ui::DrawCommand::Fill(
@@ -662,7 +695,7 @@ int main()
                  synth::ui::DrawCommand::FillEllipse({}, synth::Color::Rgb(10, 20, 30)),
                  synth::ui::DrawCommand::Fill(
                      {0.0f, 0.0f, 40.0f, 30.0f}, synth::Color::Rgb(30, 180, 70))}},
-            {.id = synth::ui::NodeId("surface.line"),
+            {.id = synth::ui::NodeId("local.line"),
              .kind = synth::ui::NodeKind::Draw,
              .bounds = {20.0f, 40.0f, 160.0f, 100.0f},
              .drawCommands = {
@@ -690,6 +723,8 @@ int main()
 
         Require(image.getPixelAt(40, 40) == juce::Colour(220, 40, 30),
                 "draw command bounds are node-local inside a nested hosted component");
+        Require(image.getPixelAt(65, 45) == juce::Colour(18, 20, 22),
+                "draw command overflow is clipped to the draw node bounds");
         Require(image.getPixelAt(100, 35) == juce::Colour(30, 180, 70),
                 "node-local draw commands paint once inside a nested hosted component");
         Require(image.getPixelAt(65, 125) == juce::Colour(40, 100, 230),
@@ -697,7 +732,7 @@ int main()
         Require(image.getPixelAt(65, 115) == juce::Colour(230, 170, 30),
                 "every command in a draw-node buffer uses node-local geometry");
         Require(image.getPixelAt(30, 170) == juce::Colour(150, 70, 210),
-                "fractional node dimensions classify against portable precision");
+                "fractional node dimensions preserve node-local draw geometry");
     }
 
     {

@@ -277,7 +277,7 @@ private:
         juce::Colour juceColour = UiToJuceColour(color);
         if (!enabled)
         {
-            return juceColour.darker(0.35f).withMultipliedAlpha(0.65f);
+            return juceColour.darker(0.35f);
         }
         return selected ? juceColour.brighter(0.14f) : juceColour;
     }
@@ -604,6 +604,8 @@ private:
                 const juce::Point<int> childOrigin(bounds.getX(), bounds.getY());
                 for (const synth::ui::NodeId& childId : node.children)
                 {
+                    // Child ids and cycles were validated above, so this pure
+                    // coordinate fold can use the indexed child lookup directly.
                     resolve(*nodesById.at(childId.value), childOrigin);
                 }
             };
@@ -641,30 +643,29 @@ private:
                || kind == synth::ui::NodeKind::ScrollArea;
     }
 
-    juce::Rectangle<int> HostLocalBounds(const synth::ui::NodeId& nodeId) const
+    juce::Rectangle<int> HostLocalBounds(const ResolvedNode& resolved) const
     {
-        const synth::ui::Node* node = FindNode(nodeId);
-        if (node == nullptr)
+        juce::Rectangle<int> bounds = resolved.surfaceBounds;
+        std::optional<synth::ui::NodeId> parentId = resolved.parentId;
+        while (parentId.has_value())
         {
-            return {};
-        }
+            const auto control = m_controlIndexById.find(parentId->value);
+            if (control != m_controlIndexById.end()
+                && IsSemanticHostKind(m_controls[control->second].kind))
+            {
+                const auto hostResolved = m_resolvedByNodeId.find(parentId->value);
+                if (hostResolved != m_resolvedByNodeId.end())
+                {
+                    bounds.translate(-hostResolved->second.surfaceBounds.getX(),
+                                     -hostResolved->second.surfaceBounds.getY());
+                }
+                return bounds;
+            }
 
-        juce::Rectangle<int> bounds = UiToJuceRect(node->bounds);
-        auto parent = m_parentByNodeId.find(nodeId.value);
-        while (parent != m_parentByNodeId.end())
-        {
-            const synth::ui::Node* parentNode = FindNode(parent->second);
-            if (parentNode == nullptr)
-            {
-                break;
-            }
-            if (IsSemanticHostKind(parentNode->kind))
-            {
-                break;
-            }
-            const juce::Rectangle<int> parentBounds = UiToJuceRect(parentNode->bounds);
-            bounds.translate(parentBounds.getX(), parentBounds.getY());
-            parent = m_parentByNodeId.find(parentNode->id.value);
+            const auto parentResolved = m_resolvedByNodeId.find(parentId->value);
+            parentId = parentResolved != m_resolvedByNodeId.end()
+                           ? parentResolved->second.parentId
+                           : std::optional<synth::ui::NodeId>();
         }
         return bounds;
     }
@@ -818,7 +819,7 @@ private:
             {
                 host->addAndMakeVisible(component);
             }
-            component.setBounds(HostLocalBounds(nodeId));
+            component.setBounds(HostLocalBounds(resolvedIt->second));
             component.toFront(false);
             if (hadKeyboardFocus && safeComponent != nullptr
                 && !safeComponent->hasKeyboardFocus(true))
@@ -843,7 +844,7 @@ private:
             juce::Component* host = control.getParentComponent();
             if (host != nullptr)
             {
-                control.setBounds(HostLocalBounds(nodeId));
+                control.setBounds(HostLocalBounds(resolvedIt->second));
             }
         }
     }
@@ -1184,6 +1185,8 @@ private:
                 toggle.setToggleState(node.checked, juce::dontSendNotification);
                 if (node.color.has_value())
                 {
+                    // JUCE ToggleButton exposes no fill id, so carried control
+                    // colour is represented by the checkmark/tick colour.
                     const juce::Colour fill = StateColourFor(*node.color, node.selected || node.checked, node.enabled);
                     toggle.setColour(juce::ToggleButton::tickColourId, fill);
                     toggle.setColour(juce::ToggleButton::tickDisabledColourId,
