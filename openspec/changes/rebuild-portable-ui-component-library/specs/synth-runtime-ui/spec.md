@@ -190,7 +190,12 @@ WHEN the Audio, Sync, File, and Controllers pages are rebuilt on the component l
 - **AND** grouping is expressed through nested sections, rows, and grids
 
 ### Requirement: sru-48 — Portable UI: named visual criteria with a Playwright verification loop
-WHEN the rebuilt pages' appearance is verified, THE synth project SHALL define named visual acceptance criteria — like-type controls share column positions; all spacing drawn from the library's shared spacing metrics; every form control captioned; no overlapping nodes and no container overflow on either axis at the reference viewport; every text element rendered within its allocated extent; text contrast meeting at least the WCAG AA 4.5:1 ratio against its effective background; no non-informative text — SHALL fix one named reference viewport, device scale factor, and deterministic page and app fixture state under which every criterion is evaluated and every screenshot captured, SHALL enforce the machine-checkable criteria through Playwright structural assertions against the rendered browser DOM (including an extent check that re-renders at a different root extent and asserts weighted redistribution, verifying sru-50's property without implementing host resizing) and through headless bounds assertions for the resolved portable tree, and SHALL verify overall appearance through a screenshot-baseline loop in which page screenshots are captured, evaluated against the criteria, iterated, and committed as baselines only after explicit human sign-off; a subsequent screenshot differing from an approved baseline SHALL fail verification unless the baseline is deliberately updated with renewed sign-off, so intended change and regression are always distinguishable.
+WHEN the rebuilt pages' appearance is verified, THE synth project SHALL define named visual acceptance criteria — like-type controls share column positions; all spacing drawn from the library's shared spacing metrics; every form control captioned; no overlapping nodes and no container overflow on either axis at the reference viewport; every text element rendered within its allocated extent; text contrast meeting at least the WCAG AA 4.5:1 ratio against its effective background; no non-informative text — SHALL fix one named reference viewport, device scale factor, and deterministic page and app fixture state under which every criterion is evaluated and every screenshot captured, SHALL enforce the machine-checkable criteria through Playwright structural assertions against the rendered browser DOM (including an extent check that re-renders at a different root extent and asserts weighted redistribution, verifying sru-50's property without implementing host resizing) and through headless bounds assertions for the resolved portable tree, and SHALL drive overall appearance to a good state through an iteration loop in which page and app screenshots are captured and evaluated against the criteria, concluding in a single collaborative human review of the final appearance. **Appearance SHALL NOT be pinned as a regression gate**: no screenshot is committed as a baseline, and no pixel-diff comparison gates verification. Screenshots exist to inform the iteration and the final human review, not to fail a later build. The machine-checkable criteria above are the durable regression surface — they are structural and hold at any extent — while the aesthetic judgement is made once, together, and is not re-litigated by a test.
+
+#### Scenario: Appearance is reviewed once, not pinned
+- **WHEN** the rebuilt pages and apps reach a state satisfying every machine-checkable criterion
+- **THEN** their appearance is reviewed collaboratively with a human and adjusted to a final agreed result
+- **AND** no screenshot baseline is committed and no later build fails on a rendered-appearance difference
 
 #### Scenario: Alignment is machine-checked
 - **WHEN** the Playwright suite renders a rebuilt config page
@@ -345,3 +350,40 @@ WHEN a synth application presents the conventional encoder-and-visualizer arrang
 #### Scenario: Standard layout resolves like any component
 - **WHEN** the standard layout is resolved against different root extents
 - **THEN** its regions redistribute through the ordinary resolver with no layout logic of its own outside container declarations
+
+### Requirement: sru-54 — Portable UI: every container absorbs its overflow or fails loudly
+WHEN the component library resolves a container whose in-flow children cannot fit its extent along the stacking axis, THE layout resolver SHALL treat that as an error rather than an accepted outcome: it SHALL fail with a diagnostic naming the container, the axis, the extent available, the extent required, and the identity of the first child that does not fit, and it SHALL NOT silently clip, truncate, or drop the overflowing children. A container SHALL be able to absorb its own overflow by declaring either a `ScrollArea`, whose children lay out in scroll-content space and whose resolved content extent the resolver publishes so the tail stays reachable, or at least one weighted in-flow child that takes up the remaining space; a container that declares neither and whose intrinsic content exceeds its extent is a producer defect, not a rendering outcome. THE component library SHALL NOT require producers to express sizes as pixel literals to satisfy this requirement — an item inside a scrolling region legitimately carries its own extent along the scroll axis, because a fraction of the container would be circular for a list whose length varies.
+
+#### Scenario: A page that cannot fit its surface fails at build time
+- **WHEN** a page's in-flow content exceeds the surface extent it is resolved against, and the page declares no scroll area and no weighted child to absorb the difference
+- **THEN** resolution fails with a diagnostic naming the container, the axis, the available and required extents, and the first child that does not fit
+- **AND** no tree is handed to a backend, so the failure cannot reach a user as invisible clipped content
+
+#### Scenario: A scroll area absorbs a list longer than its viewport
+- **WHEN** a list of arbitrary length is declared inside a `ScrollArea` whose viewport is smaller than the list
+- **THEN** resolution succeeds, every item keeps its own extent, and the resolver publishes a scroll-content extent that contains the last item
+- **AND** the same declaration resolves at a different viewport extent with no producer change
+
+#### Scenario: A weighted child absorbs the remainder
+- **WHEN** a container's other children are intrinsic and one child is weighted
+- **THEN** the weighted child takes the remaining space and resolution succeeds at any container extent large enough for the intrinsic children
+
+#### Scenario: The rebuilt config pages absorb their own content
+- **WHEN** each rebuilt config page is resolved at the smallest surface extent any first-party app declares
+- **THEN** every page resolves without error, with its variable-length region absorbing the difference rather than the page relying on the surface being tall enough
+
+### Requirement: sru-55 — Portable UI: container background and border
+WHEN a portable container is constructed, THE component library SHALL accept the container's own appearance at construction on the same footing as a semantic control's — a background fill colour and a border described by colour, width, and corner radius — for `Root`, `Row`, `Section`, and `ScrollArea`, carried on the node record as optional values with explicit wire presence, absent meaning the backend's plain default look; and both backends SHALL render the carried fill and border, the fill covering the container's own area including its padding and the gaps between its children, which no child's colour can paint. This closes the gap where sru-45 already assigned `Root`, `Row`, `Section`, and `ScrollArea` the meaning "container or surface background fill" and both backends already rendered it, while no container builder accepted a colour, so no producer could ask for one.
+
+#### Scenario: A panel is a panel
+- **WHEN** a producer constructs a section carrying a fill colour and a border
+- **THEN** both backends paint that fill across the section's whole area, including its padding and the gaps between its children, with the border drawn at the declared width, colour, and corner radius
+
+#### Scenario: Container appearance needs no out-of-flow stand-in
+- **WHEN** a page needs a filled, bordered, rounded panel behind a group of controls
+- **THEN** it declares the appearance on the container itself
+- **AND** it does not emit an out-of-flow `Draw` underlay to stand in for the container's own background
+
+#### Scenario: Unstyled containers keep the default look
+- **WHEN** a container carries neither fill nor border
+- **THEN** both backends render their existing default appearance for that container kind

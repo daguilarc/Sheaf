@@ -251,8 +251,15 @@ The library computes each node's **parent-relative** `Bounds` during
      iterative solver, and leaving a few pixels unallocated is the deliberate
      price of that.
   6. If the children's minima exceed the container's extent, no child shrinks
-     below its minimum; they overflow in declaration order, deterministically,
-     so the failure is visible rather than silently absorbed.
+     below its minimum, and the container **fails loudly** — see sru-54. An
+     earlier draft of this rule let them "overflow in declaration order,
+     deterministically, so the failure is visible rather than silently
+     absorbed". That reasoning was wrong in practice: node content clips to its
+     bounds, so an overflowing child is not visible at all, it is cut off. The
+     Sync page shipped exactly that way and a containment test pinned above the
+     real surface height passed over it. Deterministic order is still what the
+     resolver produces; what changed is that producing it is now an error rather
+     than an accepted outcome.
 - Padding and inter-child gaps come from the library's shared spacing
   metrics (plain C++ constants), not per-site numbers.
 - A form-grid option on a container aligns descendant label/control columns
