@@ -152,6 +152,9 @@ synth::ui::Bounds SurfaceBoundsOf(const synth::ui::NodeTree& tree, const std::st
 
 synth::ui::NodeTree BackendStyleParityTree()
 {
+    // Keep this parity fixture in sync with backendStyleParityNodes in
+    // browser/tests/ui-backend.spec.ts. Boundless FillEllipse is deliberately
+    // excluded; see the Task 3.12 note in openspec/.../tasks.md.
     return {.nodes = {
                 {.id = synth::ui::NodeId("root"),
                  .kind = synth::ui::NodeKind::Root,
@@ -359,6 +362,13 @@ int main()
         RequireExactColour(TextColourOf(parityComponent, "field"),
                            juce::Colour::fromRGB(230, 235, 240),
                            "text field glyph colour is assigned from textStyle");
+        const synth::ui::Bounds drawBounds = SurfaceBoundsOf(paritySurface.tree, "draw");
+        RequireExactBounds(drawBounds, {187.0f, 61.0f, 24.0f, 24.0f},
+                           "draw parity fixture geometry");
+        RequireExactColour(parityImage.getPixelAt(static_cast<int>(std::lround(drawBounds.x + 12.0f)),
+                                                  static_cast<int>(std::lround(drawBounds.y + 12.0f))),
+                           juce::Colour::fromRGB(1, 2, 3),
+                           "draw paints its command colour and ignores carried Node::color");
         RequireExactColour(FillColourOf(parityComponent, "disabled"),
                            juce::Colour::fromRGB(40, 80, 120).darker(0.35f),
                            "disabled button fill is derived from its carried colour");

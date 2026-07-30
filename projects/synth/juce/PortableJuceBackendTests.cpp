@@ -123,6 +123,8 @@ struct RecordingSurface final : synth::ui::Surface
 
 synth::ui::NodeTree BackendGeometryPropertyTree()
 {
+    // Keep this representative fixture in sync with backendGeometryPropertyNodes
+    // in browser/tests/ui-backend.spec.ts.
     return {.nodes = {
                 {.id = synth::ui::NodeId("root"),
                  .kind = synth::ui::NodeKind::Root,
@@ -139,7 +141,8 @@ synth::ui::NodeTree BackendGeometryPropertyTree()
                               synth::ui::NodeId("button"),
                               synth::ui::NodeId("toggle"),
                               synth::ui::NodeId("slider"),
-                              synth::ui::NodeId("draw")}},
+                              synth::ui::NodeId("draw"),
+                              synth::ui::NodeId("overhang")}},
                 {.id = synth::ui::NodeId("label"),
                  .kind = synth::ui::NodeKind::Label,
                  .bounds = {4.0f, 3.0f, 48.0f, 18.0f},
@@ -164,6 +167,10 @@ synth::ui::NodeTree BackendGeometryPropertyTree()
                  .bounds = {160.0f, 34.0f, 24.0f, 24.0f},
                  .drawCommands = {synth::ui::DrawCommand::Fill(
                      {0.0f, 0.0f, 24.0f, 24.0f}, synth::Color::Rgb(1, 2, 3))}},
+                {.id = synth::ui::NodeId("overhang"),
+                 .kind = synth::ui::NodeKind::Label,
+                 .bounds = {180.0f, 50.0f, 40.0f, 24.0f},
+                 .text = "Overhang"},
                 {.id = synth::ui::NodeId("status"),
                  .kind = synth::ui::NodeKind::StatusText,
                  .bounds = {7.0f, 90.0f, 190.0f, 22.0f},
@@ -242,10 +249,6 @@ juce::Point<float> FoldAncestorOrigins(
 juce::Rectangle<int> RenderedSurfaceBoundsOf(synth_juce::PortableComponent& component,
                                              const std::string& id)
 {
-    if (id == "root")
-    {
-        return component.getLocalBounds();
-    }
     juce::Component* child = component.FindByNodeId(id);
     Require(child != nullptr, "property fixture node is rendered");
     return SurfaceBoundsOf(component, *child);
@@ -286,9 +289,11 @@ int main()
             const juce::Rectangle<int> actual =
                 RenderedSurfaceBoundsOf(component, node.id.value);
             Require(NearlyEqual(static_cast<float>(actual.getX()), expected.x)
-                        && NearlyEqual(static_cast<float>(actual.getY()), expected.y),
+                        && NearlyEqual(static_cast<float>(actual.getY()), expected.y)
+                        && actual.getWidth() == static_cast<int>(std::lround(node.bounds.width))
+                        && actual.getHeight() == static_cast<int>(std::lround(node.bounds.height)),
                     ("node '" + node.id.value +
-                     "' renders exactly at the fold of its ancestor origins over its own wire bounds")
+                     "' renders exactly at the fold of its ancestor origins with its own wire extent")
                         .c_str());
         }
     }

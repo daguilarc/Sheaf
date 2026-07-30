@@ -1249,10 +1249,12 @@ async function renderAndRead(page: Page, buffer: ArrayBuffer, ids: string[]) {
 
 type FixtureNode = Parameters<typeof makeCommandBuffer>[0][number];
 
+// Keep this representative fixture in sync with BackendGeometryPropertyTree in
+// PortableJuceBackendTests.cpp.
 const backendGeometryPropertyNodes: FixtureNode[] = [
   { id: "root", kind: NodeKind.Root, bounds: [0, 0, 500, 260], children: ["section", "scroll"] },
   { id: "section", kind: NodeKind.Section, bounds: [20, 16, 220, 130], children: ["row", "status"] },
-  { id: "row", kind: NodeKind.Row, bounds: [7, 11, 190, 70], children: ["label", "button", "toggle", "slider", "draw"] },
+  { id: "row", kind: NodeKind.Row, bounds: [7, 11, 190, 70], children: ["label", "button", "toggle", "slider", "draw", "overhang"] },
   { id: "label", kind: NodeKind.Label, bounds: [4, 3, 48, 18], text: "Label" },
   { id: "button", kind: NodeKind.Button, bounds: [60, 4, 64, 24], label: "Go" },
   { id: "toggle", kind: NodeKind.Toggle, bounds: [130, 4, 54, 24], label: "On" },
@@ -1260,6 +1262,7 @@ const backendGeometryPropertyNodes: FixtureNode[] = [
   { id: "draw", kind: NodeKind.Draw, bounds: [160, 34, 24, 24], draws: [
     { kind: DrawKind.Fill, bounds: [0, 0, 24, 24], color: [1, 2, 3, 255] },
   ] },
+  { id: "overhang", kind: NodeKind.Label, bounds: [180, 50, 40, 24], text: "Overhang" },
   { id: "status", kind: NodeKind.StatusText, bounds: [7, 90, 190, 22], text: "Status" },
   { id: "scroll", kind: NodeKind.ScrollArea, bounds: [260, 20, 120, 90], scrollContentWidth: 240, scrollContentHeight: 220, children: ["scroll-row", "scroll-draw", "zero"] },
   { id: "scroll-row", kind: NodeKind.Row, bounds: [8, 30, 200, 32], children: ["combo", "field"] },
@@ -1271,6 +1274,9 @@ const backendGeometryPropertyNodes: FixtureNode[] = [
   { id: "zero", kind: NodeKind.Label, bounds: [150, 10, 0, 0], text: "unresolved" },
 ];
 
+// Keep this parity fixture in sync with BackendStyleParityTree in
+// MiniAppJuceBackendParityTests.cpp. Boundless FillEllipse is deliberately
+// excluded; see the Task 3.12 note in openspec/.../tasks.md.
 const backendStyleParityNodes: FixtureNode[] = [
   { id: "root", kind: NodeKind.Root, bounds: [0, 0, 500, 280], color: [8, 9, 10, 255], children: ["section", "scroll"] },
   { id: "section", kind: NodeKind.Section, bounds: [20, 16, 220, 160], color: [20, 30, 40, 255], children: ["row", "status", "disabled"] },
@@ -1348,7 +1354,12 @@ test("renders every representative node at the fold of its ancestor origins", as
       nodes: Object.fromEntries(ids.map((id) => {
         const element = document.querySelector<HTMLElement>(`[data-node-id="${id}"]`)!;
         const rect = element.getBoundingClientRect();
-        return [id, { x: rect.left - rootRect.left, y: rect.top - rootRect.top }];
+        return [id, {
+          x: rect.left - rootRect.left,
+          y: rect.top - rootRect.top,
+          width: rect.width,
+          height: rect.height,
+        }];
       })),
     };
   }, { bytes: Array.from(new Uint8Array(propertyFrame)), ids: backendGeometryPropertyNodes.map((node) => node.id!) });
@@ -1356,8 +1367,11 @@ test("renders every representative node at the fold of its ancestor origins", as
   expect(rendered.scale).toBeCloseTo(0.5, 4);
   for (const node of backendGeometryPropertyNodes) {
     const expected = foldAncestorOrigins(backendGeometryPropertyNodes, node.id!, { scroll: { x: 13, y: 19 } });
-    expect(rendered.nodes[node.id!].x).toBeCloseTo(expected.x * rendered.scale, 4);
-    expect(rendered.nodes[node.id!].y).toBeCloseTo(expected.y * rendered.scale, 4);
+    const bounds = node.bounds ?? [0, 0, 0, 0];
+    expect(rendered.nodes[node.id!].x, `${node.id} surface x`).toBeCloseTo(expected.x * rendered.scale, 4);
+    expect(rendered.nodes[node.id!].y, `${node.id} surface y`).toBeCloseTo(expected.y * rendered.scale, 4);
+    expect(rendered.nodes[node.id!].width, `${node.id} rendered width`).toBeCloseTo(bounds[2] * rendered.scale, 4);
+    expect(rendered.nodes[node.id!].height, `${node.id} rendered height`).toBeCloseTo(bounds[3] * rendered.scale, 4);
   }
 });
 
@@ -1377,6 +1391,7 @@ test("matches JUCE backend geometry and carried style assignments", async ({ pag
     const style = (selector: string) => getComputedStyle(document.querySelector<HTMLElement>(selector)!);
     const element = (id: string) => document.querySelector<HTMLElement>(`[data-node-id="${id}"]`)!;
     return {
+      scale: rootRect.width / 500,
       geometry: Object.fromEntries(ids.map((id) => [id, readRect(id)])),
       styles: {
         rootBackground: style('[data-node-id="root"]').backgroundColor,
@@ -1399,6 +1414,7 @@ test("matches JUCE backend geometry and carried style assignments", async ({ pag
     };
   }, { bytes: Array.from(new Uint8Array(parityFrame)), ids: backendStyleParityNodes.map((node) => node.id!) });
 
+  expect(rendered.scale).toBe(1);
   expect(rendered.geometry).toEqual(expectedGeometry(backendStyleParityNodes));
   expect(rendered.styles).toEqual({
     rootBackground: "rgb(8, 9, 10)",
