@@ -91,7 +91,10 @@ direct JSON-string `tool_response` form, and otherwise parses the one documented
 JSON text block fallback. It rejects `isError`, a decoded top-level `error`,
 missing required fields, and nested identifiers in error `details`. Sanitized
 payloads captured from Claude Code and Codex become committed fixtures so the
-adapters are tested against harness output rather than invented shapes.
+adapters are tested against harness output rather than invented shapes. Capture
+evidence shows Claude Code emits no `PostToolUse` payload for failed xagent MCP
+calls, so the suite uses inline unit envelopes for defensive error rejection
+instead of committing a synthetic harness fixture.
 
 This is preferred over a background dispatcher because native stop hooks keep
 the original turn alive and preserve the harness transcript and permissions.

@@ -156,7 +156,7 @@ WHEN xagent installs or updates global hook configuration, THE installer SHALL v
 - **AND** it retains a sibling backup containing the previous file content
 
 ### Requirement: xhook-7 — Observation: exact successful-result extraction
-WHEN the observer processes a supported xagent `PostToolUse` payload, THE observer SHALL accept only a successful top-level structured result with the fields required for that transition, preferring `structuredContent` and using an exactly parsed text-content object only as a documented harness fallback.
+WHEN the observer processes a supported xagent `PostToolUse` payload, THE observer SHALL accept only a successful top-level result with the fields required for that transition, preferring `structuredContent`, accepting Claude Code's captured direct JSON-string `tool_response`, and using an exactly parsed text-content object only as the other documented harness fallback.
 
 #### Scenario: Structured content carries a successful result
 - **WHEN** `tool_response.structuredContent` is an object without an error indication and contains the required top-level identity and sequence
@@ -167,6 +167,11 @@ WHEN the observer processes a supported xagent `PostToolUse` payload, THE observ
 - **AND** the documented harness payload contains one JSON text block representing the complete successful result object
 - **THEN** the observer parses that object as the fallback result
 
+#### Scenario: Claude emits a direct JSON-string result
+- **WHEN** structured content is absent
+- **AND** the captured Claude Code payload carries the complete successful result as a direct JSON-string `tool_response`
+- **THEN** the observer parses that object as the Claude fallback result
+
 #### Scenario: Error details contain an identity
 - **WHEN** a tool result is marked as an error or has a top-level `error` field
 - **AND** nested error details contain a `run_id` or `agent_id`
@@ -176,7 +181,8 @@ WHEN the observer processes a supported xagent `PostToolUse` payload, THE observ
 #### Scenario: Representative harness fixtures
 - **WHEN** the hook-state test suite runs
 - **THEN** it exercises sanitized payload fixtures captured from both Claude Code and Codex
-- **AND** the fixtures cover successful structured results, the text fallback, error envelopes, Stop input/output, and native-subagent discrimination
+- **AND** the fixtures cover successful structured results, the captured direct JSON-string form, the JSON text-block fallback, Stop input/output, and native-subagent discrimination
+- **AND** defensive error rejection uses inline unit envelopes when captured failed calls emit no `PostToolUse` payload
 
 ### Requirement: xhook-8 — Packaging: one explicit global registration path
 WHEN the xagent plugin is packaged, THE package SHALL include the hook program under `scripts/`, omit plugin-root `hooks.json` and `hooks/` components discoverable by Codex, keep the plugin manifest within the accepted validator schema, and register hooks only through the explicit global JSON merge.

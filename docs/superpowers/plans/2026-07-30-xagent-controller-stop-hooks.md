@@ -46,7 +46,6 @@
 - Create: `plugins/xagent/scripts/fixtures/controller_stop_hooks/codex_post_tool_use_start.json`
 - Create: `plugins/xagent/scripts/fixtures/controller_stop_hooks/codex_post_tool_use_subagent.json`
 - Create: `plugins/xagent/scripts/fixtures/controller_stop_hooks/codex_stop.json`
-- Create: `plugins/xagent/scripts/fixtures/controller_stop_hooks/mcp_error.json`
 - Modify: `Makefile`
 
 **Assigned agents:**
@@ -124,9 +123,13 @@ groups to `/Users/joyo/.local/bin/claude --settings <file> --print`; for Codex,
 use a disposable `CODEX_HOME` containing copied non-secret configuration,
 symlinked authentication, an xagent MCP entry, `bypass_hook_trust = true`, and
 the capture groups. Trigger a top-level xagent tool, a native subagent tool
-call, and a stop in each harness. Redact absolute home paths, transcript paths,
-tool-use IDs, session IDs, and prompt text while preserving field names,
-nesting, booleans, tool names, result envelopes, and agent discriminators.
+call, and a stop in each harness. Also attempt a failed xagent MCP call in the
+disposable capture environment. If the failed call emits no `PostToolUse`, note
+that evidence in the report and do not invent an error fixture; cover defensive
+error rejection with inline unit payloads instead. Redact absolute home paths,
+transcript paths, tool-use IDs, session IDs, and prompt text while preserving
+field names, nesting, booleans, tool names, result envelopes, and agent
+discriminators.
 
 If either native-subagent capture lacks a reliable discriminator, return
 `BLOCKED` without writing production code.
