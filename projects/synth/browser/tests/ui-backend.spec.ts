@@ -1247,6 +1247,179 @@ async function renderAndRead(page: Page, buffer: ArrayBuffer, ids: string[]) {
   }, { bytes: Array.from(new Uint8Array(buffer)), ids });
 }
 
+type FixtureNode = Parameters<typeof makeCommandBuffer>[0][number];
+
+const backendGeometryPropertyNodes: FixtureNode[] = [
+  { id: "root", kind: NodeKind.Root, bounds: [0, 0, 500, 260], children: ["section", "scroll"] },
+  { id: "section", kind: NodeKind.Section, bounds: [20, 16, 220, 130], children: ["row", "status"] },
+  { id: "row", kind: NodeKind.Row, bounds: [7, 11, 190, 70], children: ["label", "button", "toggle", "slider", "draw"] },
+  { id: "label", kind: NodeKind.Label, bounds: [4, 3, 48, 18], text: "Label" },
+  { id: "button", kind: NodeKind.Button, bounds: [60, 4, 64, 24], label: "Go" },
+  { id: "toggle", kind: NodeKind.Toggle, bounds: [130, 4, 54, 24], label: "On" },
+  { id: "slider", kind: NodeKind.Slider, bounds: [60, 36, 96, 24], value: 0.5, minValue: 0, maxValue: 1, step: 0.01 },
+  { id: "draw", kind: NodeKind.Draw, bounds: [160, 34, 24, 24], draws: [
+    { kind: DrawKind.Fill, bounds: [0, 0, 24, 24], color: [1, 2, 3, 255] },
+  ] },
+  { id: "status", kind: NodeKind.StatusText, bounds: [7, 90, 190, 22], text: "Status" },
+  { id: "scroll", kind: NodeKind.ScrollArea, bounds: [260, 20, 120, 90], scrollContentWidth: 240, scrollContentHeight: 220, children: ["scroll-row", "scroll-draw", "zero"] },
+  { id: "scroll-row", kind: NodeKind.Row, bounds: [8, 30, 200, 32], children: ["combo", "field"] },
+  { id: "combo", kind: NodeKind.ComboBox, bounds: [4, 4, 75, 24], selectedOption: "one", options: [{ id: "one", label: "One" }, { id: "two", label: "Two" }] },
+  { id: "field", kind: NodeKind.TextField, bounds: [86, 4, 88, 24], text: "value" },
+  { id: "scroll-draw", kind: NodeKind.Draw, bounds: [20, 125, 50, 35], draws: [
+    { kind: DrawKind.Fill, bounds: [0, 0, 50, 35], color: [4, 5, 6, 255] },
+  ] },
+  { id: "zero", kind: NodeKind.Label, bounds: [150, 10, 0, 0], text: "unresolved" },
+];
+
+const backendStyleParityNodes: FixtureNode[] = [
+  { id: "root", kind: NodeKind.Root, bounds: [0, 0, 500, 280], color: [8, 9, 10, 255], children: ["section", "scroll"] },
+  { id: "section", kind: NodeKind.Section, bounds: [20, 16, 220, 160], color: [20, 30, 40, 255], children: ["row", "status", "disabled"] },
+  { id: "row", kind: NodeKind.Row, bounds: [7, 11, 190, 70], children: ["label", "button", "toggle", "slider", "draw"] },
+  { id: "label", kind: NodeKind.Label, bounds: [4, 3, 48, 18], text: "Label",
+    color: [10, 10, 10, 255], textStyle: { size: 14, color: [240, 240, 240, 255], align: 0 } },
+  { id: "button", kind: NodeKind.Button, bounds: [60, 4, 64, 24], label: "Go",
+    color: [0, 120, 0, 255], textStyle: { size: 13, color: [244, 245, 246, 255], align: 1 } },
+  { id: "toggle", kind: NodeKind.Toggle, bounds: [130, 4, 54, 24], label: "On", checked: true, color: [0, 120, 0, 255] },
+  { id: "slider", kind: NodeKind.Slider, bounds: [60, 36, 96, 24], value: 0.5, minValue: 0, maxValue: 1, step: 0.01, color: [10, 80, 160, 255] },
+  { id: "draw", kind: NodeKind.Draw, bounds: [160, 34, 24, 24], color: [250, 0, 0, 255], draws: [
+    { kind: DrawKind.Fill, bounds: [0, 0, 24, 24], color: [1, 2, 3, 255] },
+  ] },
+  { id: "status", kind: NodeKind.StatusText, bounds: [7, 90, 190, 22], text: "Status",
+    textStyle: { size: 15, color: [180, 200, 220, 255], align: 0 } },
+  { id: "disabled", kind: NodeKind.Button, bounds: [7, 118, 96, 24], label: "Disabled", enabled: false, color: [40, 80, 120, 255] },
+  { id: "scroll", kind: NodeKind.ScrollArea, bounds: [260, 20, 120, 90], scrollContentWidth: 240, scrollContentHeight: 220, children: ["scroll-row", "scroll-draw", "zero"] },
+  { id: "scroll-row", kind: NodeKind.Row, bounds: [8, 30, 200, 32], children: ["combo", "field"] },
+  { id: "combo", kind: NodeKind.ComboBox, bounds: [4, 4, 75, 24], selectedOption: "one",
+    options: [{ id: "one", label: "One" }, { id: "two", label: "Two" }], color: [120, 20, 80, 255] },
+  { id: "field", kind: NodeKind.TextField, bounds: [86, 4, 88, 24], text: "value",
+    color: [30, 70, 90, 255], textStyle: { size: 13, color: [230, 235, 240, 255], align: 0 } },
+  { id: "scroll-draw", kind: NodeKind.Draw, bounds: [20, 125, 50, 35], draws: [
+    { kind: DrawKind.Fill, bounds: [0, 0, 50, 35], color: [4, 5, 6, 255] },
+  ] },
+  { id: "zero", kind: NodeKind.Label, bounds: [150, 10, 0, 0], text: "unresolved" },
+];
+
+function foldAncestorOrigins(nodes: FixtureNode[], id: string, scrollOffsets: Record<string, { x: number; y: number }>) {
+  const byId = new Map(nodes.map((node) => [node.id!, node]));
+  const parentById = new Map<string, string>();
+  for (const node of nodes)
+    for (const child of node.children ?? []) parentById.set(child, node.id!);
+
+  const start = byId.get(id)!;
+  const bounds = start.bounds ?? [0, 0, 0, 0];
+  let x = bounds[0];
+  let y = bounds[1];
+  for (let parentId = parentById.get(id); parentId; parentId = parentById.get(parentId)) {
+    const parent = byId.get(parentId)!;
+    const parentBounds = parent.bounds ?? [0, 0, 0, 0];
+    x += parentBounds[0];
+    y += parentBounds[1];
+    if (parent.kind === NodeKind.ScrollArea) {
+      const offset = scrollOffsets[parent.id!] ?? { x: 0, y: 0 };
+      x -= offset.x;
+      y -= offset.y;
+    }
+  }
+  return { x, y };
+}
+
+function expectedGeometry(nodes: FixtureNode[]) {
+  return Object.fromEntries(nodes.map((node) => {
+    const folded = foldAncestorOrigins(nodes, node.id!, {});
+    const bounds = node.bounds ?? [0, 0, 0, 0];
+    return [node.id!, { x: folded.x, y: folded.y, width: bounds[2], height: bounds[3] }];
+  }));
+}
+
+test("renders every representative node at the fold of its ancestor origins", async ({ page }) => {
+  await page.setViewportSize({ width: 250, height: 420 });
+  const propertyFrame = makeCommandBuffer(backendGeometryPropertyNodes);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const rendered = await page.evaluate(async ({ bytes, ids }) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const scroll = document.querySelector<HTMLElement>('[data-node-id="scroll"]')!;
+    scroll.scrollLeft = 13;
+    scroll.scrollTop = 19;
+    const root = document.querySelector<HTMLElement>('[data-node-id="root"]')!;
+    const rootRect = root.getBoundingClientRect();
+    return {
+      scale: rootRect.width / 500,
+      nodes: Object.fromEntries(ids.map((id) => {
+        const element = document.querySelector<HTMLElement>(`[data-node-id="${id}"]`)!;
+        const rect = element.getBoundingClientRect();
+        return [id, { x: rect.left - rootRect.left, y: rect.top - rootRect.top }];
+      })),
+    };
+  }, { bytes: Array.from(new Uint8Array(propertyFrame)), ids: backendGeometryPropertyNodes.map((node) => node.id!) });
+
+  expect(rendered.scale).toBeCloseTo(0.5, 4);
+  for (const node of backendGeometryPropertyNodes) {
+    const expected = foldAncestorOrigins(backendGeometryPropertyNodes, node.id!, { scroll: { x: 13, y: 19 } });
+    expect(rendered.nodes[node.id!].x).toBeCloseTo(expected.x * rendered.scale, 4);
+    expect(rendered.nodes[node.id!].y).toBeCloseTo(expected.y * rendered.scale, 4);
+  }
+});
+
+test("matches JUCE backend geometry and carried style assignments", async ({ page }) => {
+  await page.setViewportSize({ width: 620, height: 420 });
+  const parityFrame = makeCommandBuffer(backendStyleParityNodes);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const rendered = await page.evaluate(async ({ bytes, ids }) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const root = document.querySelector<HTMLElement>('[data-node-id="root"]')!;
+    const rootRect = root.getBoundingClientRect();
+    const readRect = (id: string) => {
+      const rect = document.querySelector<HTMLElement>(`[data-node-id="${id}"]`)!.getBoundingClientRect();
+      return { x: rect.left - rootRect.left, y: rect.top - rootRect.top, width: rect.width, height: rect.height };
+    };
+    const style = (selector: string) => getComputedStyle(document.querySelector<HTMLElement>(selector)!);
+    const element = (id: string) => document.querySelector<HTMLElement>(`[data-node-id="${id}"]`)!;
+    return {
+      geometry: Object.fromEntries(ids.map((id) => [id, readRect(id)])),
+      styles: {
+        rootBackground: style('[data-node-id="root"]').backgroundColor,
+        sectionBackground: style('[data-node-id="section"]').backgroundColor,
+        labelBackground: style('[data-node-id="label"]').backgroundColor,
+        labelGlyph: style('[data-node-id="label"]').color,
+        labelSize: style('[data-node-id="label"]').fontSize,
+        buttonFill: style('[data-node-id="button"]').backgroundColor,
+        buttonGlyph: style('[data-node-id="button"]').color,
+        toggleAccent: style('[data-node-id="toggle"] input').accentColor,
+        sliderAccent: style('[data-node-id="slider"] input').accentColor,
+        comboBackground: style('[data-node-id="combo"] select').backgroundColor,
+        fieldBackground: style('[data-node-id="field"] input').backgroundColor,
+        fieldGlyph: style('[data-node-id="field"] input').color,
+        disabledFill: style('[data-node-id="disabled"]').backgroundColor,
+        disabledOpacity: style('[data-node-id="disabled"]').opacity,
+        drawBackground: style('[data-node-id="draw"]').backgroundColor,
+        drawCarriedFill: element("draw").style.getPropertyValue("--synth-fill"),
+      },
+    };
+  }, { bytes: Array.from(new Uint8Array(parityFrame)), ids: backendStyleParityNodes.map((node) => node.id!) });
+
+  expect(rendered.geometry).toEqual(expectedGeometry(backendStyleParityNodes));
+  expect(rendered.styles).toEqual({
+    rootBackground: "rgb(8, 9, 10)",
+    sectionBackground: "rgb(20, 30, 40)",
+    labelBackground: "rgb(10, 10, 10)",
+    labelGlyph: "rgb(240, 240, 240)",
+    labelSize: "14px",
+    buttonFill: "rgb(0, 120, 0)",
+    buttonGlyph: "rgb(244, 245, 246)",
+    toggleAccent: "rgb(31, 136, 31)",
+    sliderAccent: "rgb(10, 80, 160)",
+    comboBackground: "rgb(120, 20, 80)",
+    fieldBackground: "rgb(30, 70, 90)",
+    fieldGlyph: "rgb(230, 235, 240)",
+    disabledFill: "rgb(29, 59, 88)",
+    disabledOpacity: "0.58",
+    drawBackground: "rgba(0, 0, 0, 0)",
+    drawCarriedFill: "initial",
+  });
+});
+
 test("offsets a child by its wire bounds with no parent subtraction", async ({ page }) => {
   const nestedFrame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 400, 300], children: ["parent"] },

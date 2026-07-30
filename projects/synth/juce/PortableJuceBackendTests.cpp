@@ -6,6 +6,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 
 namespace {
 
@@ -120,6 +121,136 @@ struct RecordingSurface final : synth::ui::Surface
     ActionHandler handler_;
 };
 
+synth::ui::NodeTree BackendGeometryPropertyTree()
+{
+    return {.nodes = {
+                {.id = synth::ui::NodeId("root"),
+                 .kind = synth::ui::NodeKind::Root,
+                 .bounds = {0.0f, 0.0f, 500.0f, 260.0f},
+                 .children = {synth::ui::NodeId("section"), synth::ui::NodeId("scroll")}},
+                {.id = synth::ui::NodeId("section"),
+                 .kind = synth::ui::NodeKind::Section,
+                 .bounds = {20.0f, 16.0f, 220.0f, 130.0f},
+                 .children = {synth::ui::NodeId("row"), synth::ui::NodeId("status")}},
+                {.id = synth::ui::NodeId("row"),
+                 .kind = synth::ui::NodeKind::Row,
+                 .bounds = {7.0f, 11.0f, 190.0f, 70.0f},
+                 .children = {synth::ui::NodeId("label"),
+                              synth::ui::NodeId("button"),
+                              synth::ui::NodeId("toggle"),
+                              synth::ui::NodeId("slider"),
+                              synth::ui::NodeId("draw")}},
+                {.id = synth::ui::NodeId("label"),
+                 .kind = synth::ui::NodeKind::Label,
+                 .bounds = {4.0f, 3.0f, 48.0f, 18.0f},
+                 .text = "Label"},
+                {.id = synth::ui::NodeId("button"),
+                 .kind = synth::ui::NodeKind::Button,
+                 .bounds = {60.0f, 4.0f, 64.0f, 24.0f},
+                 .label = "Go"},
+                {.id = synth::ui::NodeId("toggle"),
+                 .kind = synth::ui::NodeKind::Toggle,
+                 .bounds = {130.0f, 4.0f, 54.0f, 24.0f},
+                 .label = "On"},
+                {.id = synth::ui::NodeId("slider"),
+                 .kind = synth::ui::NodeKind::Slider,
+                 .bounds = {60.0f, 36.0f, 96.0f, 24.0f},
+                 .value = 0.5f,
+                 .minValue = 0.0f,
+                 .maxValue = 1.0f,
+                 .step = 0.01f},
+                {.id = synth::ui::NodeId("draw"),
+                 .kind = synth::ui::NodeKind::Draw,
+                 .bounds = {160.0f, 34.0f, 24.0f, 24.0f},
+                 .drawCommands = {synth::ui::DrawCommand::Fill(
+                     {0.0f, 0.0f, 24.0f, 24.0f}, synth::Color::Rgb(1, 2, 3))}},
+                {.id = synth::ui::NodeId("status"),
+                 .kind = synth::ui::NodeKind::StatusText,
+                 .bounds = {7.0f, 90.0f, 190.0f, 22.0f},
+                 .text = "Status"},
+                {.id = synth::ui::NodeId("scroll"),
+                 .kind = synth::ui::NodeKind::ScrollArea,
+                 .bounds = {260.0f, 20.0f, 120.0f, 90.0f},
+                 .scrollContentWidth = 240.0f,
+                 .scrollContentHeight = 220.0f,
+                 .children = {synth::ui::NodeId("scroll.row"),
+                              synth::ui::NodeId("scroll.draw"),
+                              synth::ui::NodeId("zero")}},
+                {.id = synth::ui::NodeId("scroll.row"),
+                 .kind = synth::ui::NodeKind::Row,
+                 .bounds = {8.0f, 30.0f, 200.0f, 32.0f},
+                 .children = {synth::ui::NodeId("combo"), synth::ui::NodeId("field")}},
+                {.id = synth::ui::NodeId("combo"),
+                 .kind = synth::ui::NodeKind::ComboBox,
+                 .bounds = {4.0f, 4.0f, 75.0f, 24.0f},
+                 .options = {{"one", "One"}, {"two", "Two"}},
+                 .selectedOption = "one"},
+                {.id = synth::ui::NodeId("field"),
+                 .kind = synth::ui::NodeKind::TextField,
+                 .bounds = {86.0f, 4.0f, 88.0f, 24.0f},
+                 .text = "value"},
+                {.id = synth::ui::NodeId("scroll.draw"),
+                 .kind = synth::ui::NodeKind::Draw,
+                 .bounds = {20.0f, 125.0f, 50.0f, 35.0f},
+                 .drawCommands = {synth::ui::DrawCommand::Fill(
+                     {0.0f, 0.0f, 50.0f, 35.0f}, synth::Color::Rgb(4, 5, 6))}},
+                {.id = synth::ui::NodeId("zero"),
+                 .kind = synth::ui::NodeKind::Label,
+                 .bounds = {150.0f, 10.0f, 0.0f, 0.0f},
+                 .text = "unresolved"},
+            }};
+}
+
+juce::Point<float> FoldAncestorOrigins(
+    const synth::ui::NodeTree& tree,
+    const std::string& id,
+    const std::unordered_map<std::string, juce::Point<int>>& scrollOffsets)
+{
+    std::unordered_map<std::string, const synth::ui::Node*> nodesById;
+    std::unordered_map<std::string, std::string> parentById;
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        nodesById[node.id.value] = &node;
+        for (const synth::ui::NodeId& child : node.children)
+        {
+            parentById[child.value] = node.id.value;
+        }
+    }
+
+    const synth::ui::Node* node = nodesById.at(id);
+    float x = node->bounds.x;
+    float y = node->bounds.y;
+    for (auto parent = parentById.find(id); parent != parentById.end();
+         parent = parentById.find(parent->second))
+    {
+        const synth::ui::Node* parentNode = nodesById.at(parent->second);
+        x += parentNode->bounds.x;
+        y += parentNode->bounds.y;
+        if (parentNode->kind == synth::ui::NodeKind::ScrollArea)
+        {
+            const auto offset = scrollOffsets.find(parentNode->id.value);
+            if (offset != scrollOffsets.end())
+            {
+                x -= static_cast<float>(offset->second.x);
+                y -= static_cast<float>(offset->second.y);
+            }
+        }
+    }
+    return {x, y};
+}
+
+juce::Rectangle<int> RenderedSurfaceBoundsOf(synth_juce::PortableComponent& component,
+                                             const std::string& id)
+{
+    if (id == "root")
+    {
+        return component.getLocalBounds();
+    }
+    juce::Component* child = component.FindByNodeId(id);
+    Require(child != nullptr, "property fixture node is rendered");
+    return SurfaceBoundsOf(component, *child);
+}
+
 }  // namespace
 
 int main()
@@ -133,6 +264,34 @@ int main()
     Require(!synth_juce::HasExplicitBounds(synth::ui::Bounds{}), "zero bounds are not explicit");
     Require(synth_juce::HasExplicitBounds(synth::ui::Bounds{0.0f, 0.0f, 10.0f, 10.0f}),
             "positive bounds are explicit");
+
+    {
+        RecordingSurface propertySurface;
+        propertySurface.tree = BackendGeometryPropertyTree();
+        synth_juce::PortableComponent component(propertySurface);
+        component.setSize(500, 260);
+        component.RefreshFromSurface();
+        auto* scroll = component.FindByNodeId("scroll");
+        Require(scroll != nullptr, "property scroll area is rendered");
+        auto* viewport = dynamic_cast<juce::Viewport*>(scroll->getChildComponent(0));
+        Require(viewport != nullptr, "property scroll area owns a viewport");
+        viewport->setViewPosition(13, 19);
+
+        const std::unordered_map<std::string, juce::Point<int>> scrollOffsets{
+            {"scroll", {13, 19}}};
+        for (const synth::ui::Node& node : propertySurface.tree.nodes)
+        {
+            const juce::Point<float> expected =
+                FoldAncestorOrigins(propertySurface.tree, node.id.value, scrollOffsets);
+            const juce::Rectangle<int> actual =
+                RenderedSurfaceBoundsOf(component, node.id.value);
+            Require(NearlyEqual(static_cast<float>(actual.getX()), expected.x)
+                        && NearlyEqual(static_cast<float>(actual.getY()), expected.y),
+                    ("node '" + node.id.value +
+                     "' renders exactly at the fold of its ancestor origins over its own wire bounds")
+                        .c_str());
+        }
+    }
 
     {
         RecordingSurface overhangingSurface;

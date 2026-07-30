@@ -39,6 +39,22 @@ void RequireExactBounds(synth::ui::Bounds actual, synth::ui::Bounds expected, co
     RequireNear(actual.height, expected.height, 0.0001f, (std::string(label) + " height").c_str());
 }
 
+void RequireExactColour(juce::Colour actual, juce::Colour expected, const char* label)
+{
+    if (actual != expected)
+    {
+        throw std::runtime_error(std::string(label) + " expected rgba(" +
+                                 std::to_string(expected.getRed()) + "," +
+                                 std::to_string(expected.getGreen()) + "," +
+                                 std::to_string(expected.getBlue()) + "," +
+                                 std::to_string(expected.getAlpha()) + ") got rgba(" +
+                                 std::to_string(actual.getRed()) + "," +
+                                 std::to_string(actual.getGreen()) + "," +
+                                 std::to_string(actual.getBlue()) + "," +
+                                 std::to_string(actual.getAlpha()) + ")");
+    }
+}
+
 const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const char* id)
 {
     for (const synth::ui::Node& node : tree.nodes)
@@ -49,6 +65,58 @@ const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const char*
         }
     }
     return nullptr;
+}
+
+juce::Colour FillColourOf(synth_juce::PortableComponent& component,
+                          const std::string& id)
+{
+    juce::Component* control = component.FindByNodeId(id);
+    Require(control != nullptr, "fill-colour parity node is rendered");
+    if (auto* button = dynamic_cast<juce::TextButton*>(control))
+    {
+        return button->findColour(juce::TextButton::buttonColourId);
+    }
+    if (auto* label = dynamic_cast<juce::Label*>(control))
+    {
+        return label->findColour(juce::Label::backgroundColourId);
+    }
+    if (auto* editor = dynamic_cast<juce::TextEditor*>(control))
+    {
+        return editor->findColour(juce::TextEditor::backgroundColourId);
+    }
+    if (auto* combo = dynamic_cast<juce::ComboBox*>(control))
+    {
+        return combo->findColour(juce::ComboBox::backgroundColourId);
+    }
+    if (auto* slider = dynamic_cast<juce::Slider*>(control))
+    {
+        return slider->findColour(juce::Slider::trackColourId);
+    }
+    if (auto* toggle = dynamic_cast<juce::ToggleButton*>(control))
+    {
+        return toggle->findColour(juce::ToggleButton::tickColourId);
+    }
+    throw std::runtime_error("unsupported fill-colour parity node");
+}
+
+juce::Colour TextColourOf(synth_juce::PortableComponent& component,
+                          const std::string& id)
+{
+    juce::Component* control = component.FindByNodeId(id);
+    Require(control != nullptr, "text-colour parity node is rendered");
+    if (auto* label = dynamic_cast<juce::Label*>(control))
+    {
+        return label->findColour(juce::Label::textColourId);
+    }
+    if (auto* button = dynamic_cast<juce::TextButton*>(control))
+    {
+        return button->findColour(juce::TextButton::textColourOffId);
+    }
+    if (auto* editor = dynamic_cast<juce::TextEditor*>(control))
+    {
+        return editor->findColour(juce::TextEditor::textColourId);
+    }
+    throw std::runtime_error("unsupported text-colour parity node");
 }
 
 // Node bounds are parent-relative, so a claim about where two nodes sit
@@ -80,6 +148,116 @@ synth::ui::Bounds SurfaceBoundsOf(const synth::ui::NodeTree& tree, const std::st
         bounds.y += parentNode->bounds.y;
     }
     return bounds;
+}
+
+synth::ui::NodeTree BackendStyleParityTree()
+{
+    return {.nodes = {
+                {.id = synth::ui::NodeId("root"),
+                 .kind = synth::ui::NodeKind::Root,
+                 .bounds = {0.0f, 0.0f, 500.0f, 280.0f},
+                 .color = synth::Color::Rgb(8, 9, 10),
+                 .children = {synth::ui::NodeId("section"), synth::ui::NodeId("scroll")}},
+                {.id = synth::ui::NodeId("section"),
+                 .kind = synth::ui::NodeKind::Section,
+                 .bounds = {20.0f, 16.0f, 220.0f, 160.0f},
+                 .color = synth::Color::Rgb(20, 30, 40),
+                 .children = {synth::ui::NodeId("row"),
+                              synth::ui::NodeId("status"),
+                              synth::ui::NodeId("disabled")}},
+                {.id = synth::ui::NodeId("row"),
+                 .kind = synth::ui::NodeKind::Row,
+                 .bounds = {7.0f, 11.0f, 190.0f, 70.0f},
+                 .children = {synth::ui::NodeId("label"),
+                              synth::ui::NodeId("button"),
+                              synth::ui::NodeId("toggle"),
+                              synth::ui::NodeId("slider"),
+                              synth::ui::NodeId("draw")}},
+                {.id = synth::ui::NodeId("label"),
+                 .kind = synth::ui::NodeKind::Label,
+                 .bounds = {4.0f, 3.0f, 48.0f, 18.0f},
+                 .text = "Label",
+                 .color = synth::Color::Rgb(10, 10, 10),
+                 .textStyle = synth::ui::TextStyle{14.0f,
+                                                   synth::Color::Rgb(240, 240, 240),
+                                                   synth::ui::TextAlign::Left}},
+                {.id = synth::ui::NodeId("button"),
+                 .kind = synth::ui::NodeKind::Button,
+                 .bounds = {60.0f, 4.0f, 64.0f, 24.0f},
+                 .label = "Go",
+                 .color = synth::Color::Rgb(0, 120, 0),
+                 .textStyle = synth::ui::TextStyle{13.0f,
+                                                   synth::Color::Rgb(244, 245, 246),
+                                                   synth::ui::TextAlign::Center}},
+                {.id = synth::ui::NodeId("toggle"),
+                 .kind = synth::ui::NodeKind::Toggle,
+                 .bounds = {130.0f, 4.0f, 54.0f, 24.0f},
+                 .label = "On",
+                 .checked = true,
+                 .color = synth::Color::Rgb(0, 120, 0)},
+                {.id = synth::ui::NodeId("slider"),
+                 .kind = synth::ui::NodeKind::Slider,
+                 .bounds = {60.0f, 36.0f, 96.0f, 24.0f},
+                 .value = 0.5f,
+                 .minValue = 0.0f,
+                 .maxValue = 1.0f,
+                 .step = 0.01f,
+                 .color = synth::Color::Rgb(10, 80, 160)},
+                {.id = synth::ui::NodeId("draw"),
+                 .kind = synth::ui::NodeKind::Draw,
+                 .bounds = {160.0f, 34.0f, 24.0f, 24.0f},
+                 .color = synth::Color::Rgb(250, 0, 0),
+                 .drawCommands = {synth::ui::DrawCommand::Fill(
+                     {0.0f, 0.0f, 24.0f, 24.0f}, synth::Color::Rgb(1, 2, 3))}},
+                {.id = synth::ui::NodeId("status"),
+                 .kind = synth::ui::NodeKind::StatusText,
+                 .bounds = {7.0f, 90.0f, 190.0f, 22.0f},
+                 .text = "Status",
+                 .textStyle = synth::ui::TextStyle{15.0f,
+                                                   synth::Color::Rgb(180, 200, 220),
+                                                   synth::ui::TextAlign::Left}},
+                {.id = synth::ui::NodeId("disabled"),
+                 .kind = synth::ui::NodeKind::Button,
+                 .bounds = {7.0f, 118.0f, 96.0f, 24.0f},
+                 .label = "Disabled",
+                 .enabled = false,
+                 .color = synth::Color::Rgb(40, 80, 120)},
+                {.id = synth::ui::NodeId("scroll"),
+                 .kind = synth::ui::NodeKind::ScrollArea,
+                 .bounds = {260.0f, 20.0f, 120.0f, 90.0f},
+                 .scrollContentWidth = 240.0f,
+                 .scrollContentHeight = 220.0f,
+                 .children = {synth::ui::NodeId("scroll.row"),
+                              synth::ui::NodeId("scroll.draw"),
+                              synth::ui::NodeId("zero")}},
+                {.id = synth::ui::NodeId("scroll.row"),
+                 .kind = synth::ui::NodeKind::Row,
+                 .bounds = {8.0f, 30.0f, 200.0f, 32.0f},
+                 .children = {synth::ui::NodeId("combo"), synth::ui::NodeId("field")}},
+                {.id = synth::ui::NodeId("combo"),
+                 .kind = synth::ui::NodeKind::ComboBox,
+                 .bounds = {4.0f, 4.0f, 75.0f, 24.0f},
+                 .options = {{"one", "One"}, {"two", "Two"}},
+                 .selectedOption = "one",
+                 .color = synth::Color::Rgb(120, 20, 80)},
+                {.id = synth::ui::NodeId("field"),
+                 .kind = synth::ui::NodeKind::TextField,
+                 .bounds = {86.0f, 4.0f, 88.0f, 24.0f},
+                 .text = "value",
+                 .color = synth::Color::Rgb(30, 70, 90),
+                 .textStyle = synth::ui::TextStyle{13.0f,
+                                                   synth::Color::Rgb(230, 235, 240),
+                                                   synth::ui::TextAlign::Left}},
+                {.id = synth::ui::NodeId("scroll.draw"),
+                 .kind = synth::ui::NodeKind::Draw,
+                 .bounds = {20.0f, 125.0f, 50.0f, 35.0f},
+                 .drawCommands = {synth::ui::DrawCommand::Fill(
+                     {0.0f, 0.0f, 50.0f, 35.0f}, synth::Color::Rgb(4, 5, 6))}},
+                {.id = synth::ui::NodeId("zero"),
+                 .kind = synth::ui::NodeKind::Label,
+                 .bounds = {150.0f, 10.0f, 0.0f, 0.0f},
+                 .text = "unresolved"},
+            }};
 }
 
 struct StaticSurface final : synth::ui::Surface
@@ -127,6 +305,66 @@ void RequireDrawStartsInsideResolvedBounds(const juce::Image& image,
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juce;
+
+    {
+        StaticSurface paritySurface;
+        paritySurface.tree = BackendStyleParityTree();
+        synth_juce::PortableComponent parityComponent(paritySurface);
+        parityComponent.setSize(500, 280);
+        parityComponent.RefreshFromSurface();
+
+        for (const synth::ui::Node& node : paritySurface.tree.nodes)
+        {
+            const juce::Rectangle<int> expected =
+                synth_juce::UiToJuceRect(SurfaceBoundsOf(paritySurface.tree, node.id.value));
+            Require(parityComponent.SurfaceBoundsForNode(node.id.value) == expected,
+                    ("JUCE parity geometry for " + node.id.value + " matches the tree fold").c_str());
+        }
+
+        const juce::Image parityImage = RenderComponent(parityComponent);
+        RequireExactColour(parityImage.getPixelAt(490, 250),
+                           juce::Colour::fromRGB(8, 9, 10),
+                           "root carried background matches browser parity fixture");
+        RequireExactColour(parityImage.getPixelAt(230, 170),
+                           juce::Colour::fromRGB(20, 30, 40),
+                           "section carried background matches browser parity fixture");
+        RequireExactColour(FillColourOf(parityComponent, "label"),
+                           juce::Colour::fromRGB(10, 10, 10),
+                           "label carried colour is its text background");
+        RequireExactColour(TextColourOf(parityComponent, "label"),
+                           juce::Colour::fromRGB(240, 240, 240),
+                           "label glyph colour comes from textStyle");
+        auto* label = dynamic_cast<juce::Label*>(parityComponent.FindByNodeId("label"));
+        Require(label != nullptr, "label parity node is a JUCE Label");
+        RequireNear(label->getFont().getHeight(), 14.0f, 0.001f,
+                    "label textStyle size is assigned");
+        RequireExactColour(FillColourOf(parityComponent, "button"),
+                           juce::Colour::fromRGB(0, 120, 0),
+                           "button carried colour is its fill");
+        RequireExactColour(TextColourOf(parityComponent, "button"),
+                           juce::Colour::fromRGB(244, 245, 246),
+                           "button glyph colour is assigned from textStyle");
+        RequireExactColour(FillColourOf(parityComponent, "toggle"),
+                           juce::Colour::fromRGB(0, 120, 0).brighter(0.14f),
+                           "checked toggle derives its carried accent");
+        RequireExactColour(FillColourOf(parityComponent, "slider"),
+                           juce::Colour::fromRGB(10, 80, 160),
+                           "slider carried colour is its track accent");
+        RequireExactColour(FillColourOf(parityComponent, "combo"),
+                           juce::Colour::fromRGB(120, 20, 80),
+                           "combo carried colour is its field background");
+        RequireExactColour(FillColourOf(parityComponent, "field"),
+                           juce::Colour::fromRGB(30, 70, 90),
+                           "text field carried colour is its field background");
+        RequireExactColour(TextColourOf(parityComponent, "field"),
+                           juce::Colour::fromRGB(230, 235, 240),
+                           "text field glyph colour is assigned from textStyle");
+        RequireExactColour(FillColourOf(parityComponent, "disabled"),
+                           juce::Colour::fromRGB(40, 80, 120).darker(0.35f),
+                           "disabled button fill is derived from its carried colour");
+        RequireNear(parityComponent.FindByNodeId("disabled")->getAlpha(), 0.58f, 0.001f,
+                    "disabled parity node carries the backend dim opacity");
+    }
 
     synth::GangedRandomLfoSnapshot<2> predictiveSnapshot;
     predictiveSnapshot.sampleRate = 48000.0;
