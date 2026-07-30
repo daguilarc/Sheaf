@@ -584,7 +584,8 @@ If the group template did not change, omit it from `git add`.
 - Review with xagent SDD on `harness: claude_code`, `agent: opus`, `effort: high`.
 
 **Interfaces:**
-- `enable_claude_plugin(home: Path)` keeps its public signature.
+- `enable_claude_plugin(home: Path)` and `clean_claude_enabled(home: Path)`
+  keep their public signatures.
 - Add a settings-specific atomic writer:
 
 ```python
@@ -593,7 +594,8 @@ def write_claude_settings_atomic(path: Path, payload: object) -> None: ...
 
 - Backup path is `<settings.json>.sheaf-backup`; stage path is a hidden sibling
   and is absent after success or handled failure.
-- Do not broaden this change to unrelated registry writers.
+- Both managed Superpowers mutations of Claude `settings.json` use this
+  writer. Do not broaden the change to unrelated registry writers.
 
 - [ ] **Step 1: Write failing Claude settings coexistence tests**
 
@@ -604,6 +606,7 @@ def test_claude_enable_preserves_xagent_hooks_and_unrelated_settings(self): ...
 def test_claude_settings_write_is_atomic_and_backed_up(self): ...
 def test_claude_settings_malformed_json_is_not_replaced(self): ...
 def test_claude_enabled_plugins_wrong_shape_is_not_replaced(self): ...
+def test_claude_clean_preserves_xagent_hooks_and_is_atomic_and_backed_up(self): ...
 ```
 
 Run:
@@ -629,8 +632,8 @@ if path.exists():
 os.replace(staged, path)
 ```
 
-Call it from `enable_claude_plugin()` only. Existing object and
-`enabledPlugins` validation stays fail-before-write.
+Call it from `enable_claude_plugin()` and `clean_claude_enabled()` only.
+Existing object and `enabledPlugins` validation stays fail-before-write.
 
 - [ ] **Step 3: Update xagent documentation**
 
