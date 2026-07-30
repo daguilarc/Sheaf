@@ -260,12 +260,22 @@ public:
 
     void paint(juce::Graphics& graphics) override
     {
-        if (const synth::ui::Node* root = RootNode(); root != nullptr && root->color.has_value())
+        const synth::ui::Node* root = RootNode();
+        if (root == nullptr)
         {
-            graphics.fillAll(StateColourFor(*root->color, root->selected, root->enabled));
+            graphics.fillAll(juce::Colour(18, 20, 22));
             return;
         }
-        graphics.fillAll(juce::Colour(18, 20, 22));
+
+        PaintContainerAppearance(graphics,
+                                 getLocalBounds().toFloat(),
+                                 root->color.has_value()
+                                     ? std::optional<juce::Colour>(
+                                           StateColourFor(*root->color, root->selected, root->enabled))
+                                     : std::optional<juce::Colour>(juce::Colour(18, 20, 22)),
+                                 BorderColourForNode(*root),
+                                 BorderWidthForNode(*root),
+                                 CornerRadiusForNode(*root));
     }
 
 private:
@@ -280,6 +290,61 @@ private:
             return juceColour.darker(0.35f);
         }
         return selected ? juceColour.brighter(0.14f) : juceColour;
+    }
+
+    static std::optional<juce::Colour> BorderColourForNode(const synth::ui::Node& node)
+    {
+        return node.borderColor.has_value() ? std::optional<juce::Colour>(UiToJuceColour(*node.borderColor))
+                                            : std::nullopt;
+    }
+
+    static std::optional<float> BorderWidthForNode(const synth::ui::Node& node)
+    {
+        if (!node.borderWidth.has_value() || *node.borderWidth <= 0.0f)
+        {
+            return std::nullopt;
+        }
+        return node.borderWidth;
+    }
+
+    static float CornerRadiusForNode(const synth::ui::Node& node)
+    {
+        return node.cornerRadius.value_or(0.0f);
+    }
+
+    static void PaintContainerAppearance(juce::Graphics& graphics,
+                                         juce::Rectangle<float> bounds,
+                                         std::optional<juce::Colour> fill,
+                                         std::optional<juce::Colour> border,
+                                         std::optional<float> borderWidth,
+                                         float cornerRadius)
+    {
+        if (fill.has_value())
+        {
+            graphics.setColour(*fill);
+            if (cornerRadius > 0.0f)
+            {
+                graphics.fillRoundedRectangle(bounds, cornerRadius);
+            }
+            else
+            {
+                graphics.fillRect(bounds);
+            }
+        }
+        if (border.has_value() && borderWidth.has_value())
+        {
+            graphics.setColour(*border);
+            if (cornerRadius > 0.0f)
+            {
+                graphics.drawRoundedRectangle(bounds.reduced(*borderWidth * 0.5f),
+                                              cornerRadius,
+                                              *borderWidth);
+            }
+            else
+            {
+                graphics.drawRect(bounds, *borderWidth);
+            }
+        }
     }
 
     class ScopedDispatchSuppression
@@ -310,23 +375,36 @@ private:
     public:
         void SetFill(std::optional<juce::Colour> fill)
         {
+            SetAppearance(fill, std::nullopt, std::nullopt, 0.0f);
+        }
+
+        void SetAppearance(std::optional<juce::Colour> fill,
+                           std::optional<juce::Colour> border,
+                           std::optional<float> borderWidth,
+                           float cornerRadius)
+        {
             fill_ = fill;
+            border_ = border;
+            borderWidth_ = borderWidth;
+            cornerRadius_ = cornerRadius;
             repaint();
         }
 
         void paint(juce::Graphics& graphics) override
         {
-            if (!fill_.has_value())
-            {
-                return;
-            }
-
-            graphics.setColour(*fill_);
-            graphics.fillRoundedRectangle(getLocalBounds().toFloat(), 5.0f);
+            PaintContainerAppearance(graphics,
+                                     getLocalBounds().toFloat(),
+                                     fill_,
+                                     border_,
+                                     borderWidth_,
+                                     cornerRadius_);
         }
 
     private:
         std::optional<juce::Colour> fill_;
+        std::optional<juce::Colour> border_;
+        std::optional<float> borderWidth_;
+        float cornerRadius_ = 0.0f;
     };
 
     class PortableScrollAreaComponent final : public juce::Component
@@ -354,6 +432,19 @@ private:
             content_.SetFill(fill);
         }
 
+        void SetAppearance(std::optional<juce::Colour> fill,
+                           std::optional<juce::Colour> border,
+                           std::optional<float> borderWidth,
+                           float cornerRadius)
+        {
+            fill_ = fill;
+            border_ = border;
+            borderWidth_ = borderWidth;
+            cornerRadius_ = cornerRadius;
+            content_.SetAppearance(fill, std::nullopt, std::nullopt, 0.0f);
+            repaint();
+        }
+
         void SetContentExtent(int width, int height)
         {
             declaredContentWidth_ = width;
@@ -365,6 +456,26 @@ private:
         {
             viewport_.setBounds(getLocalBounds());
             UpdateContentSize();
+        }
+
+        void paint(juce::Graphics& graphics) override
+        {
+            PaintContainerAppearance(graphics,
+                                     getLocalBounds().toFloat(),
+                                     fill_,
+                                     std::nullopt,
+                                     std::nullopt,
+                                     cornerRadius_);
+        }
+
+        void paintOverChildren(juce::Graphics& graphics) override
+        {
+            PaintContainerAppearance(graphics,
+                                     getLocalBounds().toFloat(),
+                                     std::nullopt,
+                                     border_,
+                                     borderWidth_,
+                                     cornerRadius_);
         }
 
     private:
@@ -381,6 +492,10 @@ private:
         juce::Viewport viewport_;
         int declaredContentWidth_ = 0;
         int declaredContentHeight_ = 0;
+        std::optional<juce::Colour> fill_;
+        std::optional<juce::Colour> border_;
+        std::optional<float> borderWidth_;
+        float cornerRadius_ = 0.0f;
     };
 
     class SemanticTextButton final : public juce::TextButton
@@ -1165,13 +1280,19 @@ private:
             case synth::ui::NodeKind::Section:
             {
                 auto& panel = static_cast<SemanticPanelComponent&>(component);
-                panel.SetFill(BackgroundFillForNode(node));
+                panel.SetAppearance(BackgroundFillForNode(node),
+                                    BorderColourForNode(node),
+                                    BorderWidthForNode(node),
+                                    CornerRadiusForNode(node));
                 break;
             }
             case synth::ui::NodeKind::ScrollArea:
             {
                 auto& scroll = static_cast<PortableScrollAreaComponent&>(component);
-                scroll.SetFill(BackgroundFillForNode(node));
+                scroll.SetAppearance(BackgroundFillForNode(node),
+                                     BorderColourForNode(node),
+                                     BorderWidthForNode(node),
+                                     CornerRadiusForNode(node));
                 scroll.SetContentExtent(static_cast<int>(std::lround(node.scrollContentWidth)),
                                         static_cast<int>(std::lround(node.scrollContentHeight)));
                 break;

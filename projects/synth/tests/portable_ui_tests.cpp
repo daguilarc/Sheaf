@@ -1062,6 +1062,76 @@ static void TestConstructionExpressesFullControlState()
     Require(n.selected && !n.enabled, "selected and enabled reach the node record");
 }
 
+static void TestContainerConstructionCarriesAppearance()
+{
+    synth::ui::ControlStyle rootStyle;
+    rootStyle.color = synth::Color::Rgb(12, 13, 14);
+    rootStyle.borderColor = synth::Color::Rgb(90, 91, 92);
+    rootStyle.borderWidth = 3.0f;
+    rootStyle.cornerRadius = 7.0f;
+
+    synth::ui::ControlStyle panelStyle;
+    panelStyle.color = synth::Color::Rgb(20, 30, 40);
+    panelStyle.borderColor = synth::Color::Rgb(80, 90, 100);
+    panelStyle.borderWidth = 2.0f;
+    panelStyle.cornerRadius = 6.0f;
+    panelStyle.layout.main = synth::ui::Extent::Px(92.0f);
+    panelStyle.layout.cross = synth::ui::Extent::Px(120.0f);
+    panelStyle.layout.padding = 10.0f;
+    panelStyle.layout.gap = 8.0f;
+
+    synth::ui::ControlStyle rowStyle;
+    rowStyle.color = synth::Color::Rgb(50, 60, 70);
+    rowStyle.borderColor = synth::Color::Rgb(100, 110, 120);
+    rowStyle.borderWidth = 1.5f;
+    rowStyle.cornerRadius = 4.0f;
+    rowStyle.layout.main = synth::ui::Extent::Px(24.0f);
+    rowStyle.layout.cross = synth::ui::Extent::Weight(1.0f);
+
+    synth::ui::ControlStyle scrollStyle;
+    scrollStyle.color = synth::Color::Rgb(70, 80, 90);
+    scrollStyle.borderColor = synth::Color::Rgb(130, 140, 150);
+    scrollStyle.borderWidth = 1.0f;
+    scrollStyle.cornerRadius = 3.0f;
+    scrollStyle.layout.main = synth::ui::Extent::Weight(1.0f);
+    scrollStyle.layout.cross = synth::ui::Extent::Weight(1.0f);
+
+    synth::ui::Builder builder;
+    builder.Root("root", {0.0f, 0.0f, 200.0f, 120.0f}, rootStyle);
+    builder.Section("panel", panelStyle.layout, panelStyle, [&rowStyle, &scrollStyle](synth::ui::Builder& panel) {
+        panel.Label("top", "Top");
+        panel.Row("row", rowStyle.layout, rowStyle, [](synth::ui::Builder& row) {
+            row.Label("row.child", "Row");
+        });
+        panel.ScrollArea("scroll", scrollStyle.layout, scrollStyle, [](synth::ui::Builder& scroll) {
+            scroll.Label("scroll.child", "Scroll");
+        });
+    });
+
+    const synth::ui::NodeTree tree = builder.Build();
+    const synth::ui::Node& root = FindNode(tree, "root");
+    const synth::ui::Node& panel = FindNode(tree, "panel");
+    const synth::ui::Node& row = FindNode(tree, "row");
+    const synth::ui::Node& scroll = FindNode(tree, "scroll");
+
+    Require(root.color == rootStyle.color && root.borderColor == rootStyle.borderColor,
+            "Root carries its own fill and border colour");
+    Require(root.borderWidth == rootStyle.borderWidth && root.cornerRadius == rootStyle.cornerRadius,
+            "Root carries its own border width and radius");
+    Require(panel.color == panelStyle.color && panel.borderColor == panelStyle.borderColor,
+            "Section carries its own fill and border colour");
+    Require(panel.borderWidth == panelStyle.borderWidth && panel.cornerRadius == panelStyle.cornerRadius,
+            "Section carries its own border width and radius");
+    Require(row.color == rowStyle.color && row.borderColor == rowStyle.borderColor,
+            "Row carries its own fill and border colour");
+    Require(row.borderWidth == rowStyle.borderWidth && row.cornerRadius == rowStyle.cornerRadius,
+            "Row carries its own border width and radius");
+    Require(scroll.color == scrollStyle.color && scroll.borderColor == scrollStyle.borderColor,
+            "ScrollArea carries its own fill and border colour");
+    Require(scroll.borderWidth == scrollStyle.borderWidth && scroll.cornerRadius == scrollStyle.cornerRadius,
+            "ScrollArea carries its own border width and radius");
+}
+
 static void TestUnstyledNodesCarryNothing()
 {
     synth::ui::Builder builder;
@@ -2021,42 +2091,37 @@ static void TestFilePageCarriesPageColoursAndTextStyles()
     }
 }
 
-static void TestFilePanelUnderlaysCoverTheirPanels()
+static void TestFilePanelsCarryAppearanceWithoutUnderlays()
 {
-    // Every panel the page paints, in the state that shows it. The underlays
-    // stand in for the container fill sru-45 cannot express through the library
-    // (OpenSpec 2.5a), so an unchecked one is an unchecked appearance decision
-    // -- and the idle panel only exists with the browser closed.
-    const std::vector<std::pair<synth::runtime_ui::FilePageSnapshot, const char*>> panels{
-        {RepresentativeBrowserState(), synth::runtime_ui::NodeIds::kFileHeader},
-        {RepresentativeBrowserState(), synth::runtime_ui::NodeIds::kFileBrowser},
-        {synth::runtime_ui::FilePageSnapshot{}, synth::runtime_ui::NodeIds::kFileIdleRegion},
+    struct ExpectedPanel
+    {
+        synth::runtime_ui::FilePageSnapshot state;
+        const char* id = "";
+        synth::Color fill{};
+        synth::Color border{};
     };
-    for (const auto& [state, panelId] : panels)
+
+    const std::vector<ExpectedPanel> panels{
+        {RepresentativeBrowserState(), synth::runtime_ui::NodeIds::kFileHeader,
+         synth::pagestyle::kHeaderPanelFill, synth::pagestyle::kHeaderPanelBorder},
+        {RepresentativeBrowserState(), synth::runtime_ui::NodeIds::kFileBrowser,
+         synth::pagestyle::kBrowserPanelFill, synth::pagestyle::kBrowserPanelBorder},
+        {synth::runtime_ui::FilePageSnapshot{}, synth::runtime_ui::NodeIds::kFileIdleRegion,
+         synth::pagestyle::kIdlePanelFill, synth::pagestyle::kIdlePanelBorder},
+    };
+    for (const ExpectedPanel& expected : panels)
     {
         const synth::ui::NodeTree tree =
-            synth::runtime_ui::BuildFilePageTree(state, {0.0f, 0.0f, 640.0f, 480.0f});
-        const synth::ui::Node& panel = FindNode(tree, panelId);
-        const synth::ui::Node& underlay = FindNode(tree, std::string(panelId) + ".background");
-        Require(underlay.kind == synth::ui::NodeKind::Draw, "a panel underlay is a Draw node");
-        RequireNear(underlay.bounds.x, panel.bounds.x, 0.0001f, "a panel underlay takes its panel's x");
-        RequireNear(underlay.bounds.y, panel.bounds.y, 0.0001f, "a panel underlay takes its panel's y");
-        RequireNear(underlay.bounds.width, panel.bounds.width, 0.0001f,
-                    "a panel underlay takes its panel's width");
-        RequireNear(underlay.bounds.height, panel.bounds.height, 0.0001f,
-                    "a panel underlay takes its panel's height");
-        Require(underlay.bounds.width > 0.0f && underlay.bounds.height > 0.0f,
-                "a panel underlay resolves to a real extent rather than collapsing");
-        Require(!underlay.drawCommands.empty(), "a panel underlay paints its resolved extent");
-        for (const synth::ui::DrawCommand& command : underlay.drawCommands)
-        {
-            RequireNear(command.bounds.x, 0.0f, 0.0001f, "underlay draw geometry is node-local");
-            RequireNear(command.bounds.y, 0.0f, 0.0001f, "underlay draw geometry is node-local");
-            RequireNear(command.bounds.width, panel.bounds.width, 0.0001f,
-                        "underlay draw geometry spans the resolved extent");
-            RequireNear(command.bounds.height, panel.bounds.height, 0.0001f,
-                        "underlay draw geometry spans the resolved extent");
-        }
+            synth::runtime_ui::BuildFilePageTree(expected.state, {0.0f, 0.0f, 640.0f, 480.0f});
+        const synth::ui::Node& panel = FindNode(tree, expected.id);
+        Require(FindNodeById(tree, std::string(expected.id) + ".background") == nullptr,
+                "File panels no longer emit out-of-flow Draw underlays");
+        Require(panel.color == expected.fill, "File panel fill lives on the container");
+        Require(panel.borderColor == expected.border, "File panel border colour lives on the container");
+        Require(panel.borderWidth == std::optional<float>(synth::pagestyle::kPanelBorderWidth),
+                "File panel border width lives on the container");
+        Require(panel.cornerRadius == std::optional<float>(synth::pagestyle::kPanelCornerRadius),
+                "File panel corner radius lives on the container");
     }
 }
 
@@ -2111,6 +2176,7 @@ int main()
     TestRootlessScopeMarkerNeverEatsAProducerNode();
     TestSpliceMergesLayoutDeclarations();
     TestConstructionExpressesFullControlState();
+    TestContainerConstructionCarriesAppearance();
     TestUnstyledNodesCarryNothing();
     TestCaptionIsAnEmittedLabelNodeNotAField();
     TestComboBoxAcceptsRuntimeOptionVectors();
@@ -2126,7 +2192,7 @@ int main()
     TestFilePagePinsItsResolvedGeometry();
     TestFileIdleRegionPinsItsResolvedGeometry();
     TestFilePageCarriesPageColoursAndTextStyles();
-    TestFilePanelUnderlaysCoverTheirPanels();
+    TestFilePanelsCarryAppearanceWithoutUnderlays();
     TestFilePageDelegatesItsListsToSplicedSubtrees();
     TestEveryRebuiltPageAbsorbsAtTheSmallestDeclaredSurface();
     TestEveryPageAndAppResolvesAtTheSmallestDeclaredSurface();

@@ -186,12 +186,12 @@ enum class NodeKind {
 // origins of its ancestor chain, plus scroll offset and uniform surface scale
 // where applicable.
 //
-// Appearance contract (sru-45). `color` and `textStyle` are optional: absent
-// means the backend's plain default look, including that backend's existing
-// selected and disabled treatment. A carried value beats every backend
-// constant for that node, and selected/hover/pressed/disabled are DERIVED
-// from the carried colour, never substituted from a palette. `color`'s
-// meaning is per-kind:
+// Appearance contract (sru-45, sru-55). `color`, `textStyle`, and container
+// border fields are optional: absent means the backend's plain default look,
+// including that backend's existing selected and disabled treatment. A carried
+// value beats every backend constant for that node, and selected/hover/pressed/
+// disabled are DERIVED from the carried colour, never substituted from a
+// palette. `color`'s meaning is per-kind:
 //
 //   Button, Toggle              the control fill
 //   ComboBox, TextField         the field background
@@ -203,6 +203,15 @@ enum class NodeKind {
 //
 // Glyph colour ALWAYS comes from `textStyle`, never from `color`, so the two
 // can never compete for the same pixel.
+//
+// For Root, Row, Section, and ScrollArea, a border is carried by three
+// independent optional fields: `borderColor`, `borderWidth`, and
+// `cornerRadius`. They use explicit wire presence flags, exactly like `color`
+// and `textStyle`; a missing field is missing, never a sentinel value. A
+// backend paints a border only when a border colour and width are both present,
+// using a missing radius as zero. A present corner radius also rounds the
+// container fill, which is what lets a real panel replace a rounded Draw
+// underlay.
 //
 // A caption is NOT a field. The component library emits a caption as an
 // ordinary sibling `Label` node in the control's form-grid row, with a stable
@@ -256,6 +265,9 @@ struct Node {
     // producer could also have chosen deliberately.
     std::optional<Color> color{};
     std::optional<TextStyle> textStyle{};
+    std::optional<Color> borderColor{};
+    std::optional<float> borderWidth{};
+    std::optional<float> cornerRadius{};
     std::optional<Action> action;
     std::optional<Action> pointerDragAction;
     std::optional<Action> doubleClickAction;

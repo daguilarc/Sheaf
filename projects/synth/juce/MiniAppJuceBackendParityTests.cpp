@@ -165,6 +165,9 @@ synth::ui::NodeTree BackendStyleParityTree()
                  .kind = synth::ui::NodeKind::Section,
                  .bounds = {20.0f, 16.0f, 220.0f, 160.0f},
                  .color = synth::Color::Rgb(20, 30, 40),
+                 .borderColor = synth::Color::Rgb(200, 210, 220),
+                 .borderWidth = 4.0f,
+                 .cornerRadius = 8.0f,
                  .children = {synth::ui::NodeId("row"),
                               synth::ui::NodeId("status"),
                               synth::ui::NodeId("disabled")}},
@@ -331,6 +334,14 @@ int main()
         RequireExactColour(parityImage.getPixelAt(230, 170),
                            juce::Colour::fromRGB(20, 30, 40),
                            "section carried background matches browser parity fixture");
+        RequireExactColour(parityImage.getPixelAt(25, 40),
+                           juce::Colour::fromRGB(20, 30, 40),
+                           "section carried fill covers its own padding, not only its children");
+        RequireExactColour(parityImage.getPixelAt(35, 101),
+                           juce::Colour::fromRGB(20, 30, 40),
+                           "section carried fill covers the gap between its children");
+        Require(parityImage.getPixelAt(130, 17) != juce::Colour::fromRGB(20, 30, 40),
+                "section border paints over the carried fill");
         RequireExactColour(FillColourOf(parityComponent, "label"),
                            juce::Colour::fromRGB(10, 10, 10),
                            "label carried colour is its text background");

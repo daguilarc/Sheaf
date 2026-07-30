@@ -1,9 +1,10 @@
 export const COMMAND_BUFFER_MAGIC = "SBCB";
 export const SUPPORTED_BROWSER_ABI_VERSION = 2;
 // Version 2 (sru-46): node bounds are parent-relative, `Draw` geometry is
-// node-local, node colour/text style cross the wire behind explicit presence
-// bytes, and `variant` is gone. A hard break with strict equality on both ends
-// and no version-1 fallback. Moves in lockstep with C++
+// node-local, node colour/text style and container border fields cross the
+// wire behind explicit presence bytes, and `variant` is gone. A hard break
+// with strict equality on both ends and no version-1 fallback. Moves in
+// lockstep with C++
 // `kCommandBufferVersion` and each Wasm package's exported
 // `synth_browser_ui_protocol_version()`.
 export const SUPPORTED_UI_PROTOCOL_VERSION = 2;
@@ -66,15 +67,17 @@ export type DrawCommand = {
 };
 export type TextStyle = { size: number; color: Color; align: number };
 // `bounds` are parent-relative and draw geometry is node-local (sru-46).
-// `color` and `textStyle` are absent when the producer carried none, in which
-// case the backend applies its own default look; `color`'s meaning is per-kind
-// (see the contract on `synth::ui::Node` in `include/synth/PortableUI.hpp`) and
-// glyph colour always comes from `textStyle`. There is no `variant`: it carried
-// appearance only and version 2 retired it.
+// `color`, `textStyle`, and the container border fields are absent when the
+// producer carried none, in which case the backend applies its own default
+// look; `color`'s meaning is per-kind (see the contract on `synth::ui::Node`
+// in `include/synth/PortableUI.hpp`) and glyph colour always comes from
+// `textStyle`. There is no `variant`: it carried appearance only and version 2
+// retired it.
 export type Node = {
   id: string; kind: NodeKind; checked: boolean; selected: boolean; enabled: boolean; bounds: Bounds; label: string; text: string;
   selectedOption: string; value: number; minValue: number; maxValue: number; step: number;
   scrollContentWidth: number; scrollContentHeight: number; color?: Color; textStyle?: TextStyle;
+  borderColor?: Color; borderWidth?: number; cornerRadius?: number;
   action?: Action; pointerDragAction?: Action; doubleClickAction?: Action;
   drawStart: number; drawCount: number; options: Array<{ id: string; label: string }>; children: string[];
 };
@@ -127,6 +130,9 @@ function optionalTextStyle(reader: Reader, kind: string, index: number): TextSty
   const align = reader.u8();
   if (align > 2) fail(kind, index, "invalid text alignment");
   return { size, color: glyphColor, align };
+}
+function optionalFloat(reader: Reader, kind: string, index: number): number | undefined {
+  return presence(reader, kind, index) ? finite(reader.float(), kind, index) : undefined;
 }
 
 export function decodeCommandBuffer(buffer: ArrayBuffer): CommandBufferFrame {
@@ -204,6 +210,9 @@ export function decodeCommandBuffer(buffer: ArrayBuffer): CommandBufferFrame {
       value: finite(nodesReader.float(), "node", index), minValue: finite(nodesReader.float(), "node", index), maxValue: finite(nodesReader.float(), "node", index), step: finite(nodesReader.float(), "node", index),
       scrollContentWidth: finite(nodesReader.float(), "node", index), scrollContentHeight: finite(nodesReader.float(), "node", index),
       color: optionalColor(nodesReader, "node", index), textStyle: optionalTextStyle(nodesReader, "node", index),
+      borderColor: optionalColor(nodesReader, "node", index),
+      borderWidth: optionalFloat(nodesReader, "node", index),
+      cornerRadius: optionalFloat(nodesReader, "node", index),
       action: actionAt(nodesReader.i32(), index), pointerDragAction: actionAt(nodesReader.i32(), index), doubleClickAction: actionAt(nodesReader.i32(), index),
       drawStart: nodesReader.u32(), drawCount: nodesReader.u32(), options: [], children: [],
     };

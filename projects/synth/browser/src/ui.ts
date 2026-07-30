@@ -421,6 +421,11 @@ function applyCarriedStyle(element: NodeElement, node: Node) {
   setCarriedProperty(element, "--synth-glyph", node.textStyle && colorCss(node.textStyle.color));
   setCarriedProperty(element, "--synth-text-size", node.textStyle && `${node.textStyle.size}px`);
   setCarriedProperty(element, "--synth-text-align", node.textStyle && flexAlignment(node.textStyle.align));
+  const container = node.kind === NodeKind.Root || node.kind === NodeKind.Row ||
+                    node.kind === NodeKind.Section || node.kind === NodeKind.ScrollArea;
+  setCarriedProperty(element, "--synth-border-color", container && node.borderColor ? colorCss(node.borderColor) : undefined);
+  setCarriedProperty(element, "--synth-border-width", container && node.borderWidth !== undefined ? `${node.borderWidth}px` : undefined);
+  setCarriedProperty(element, "--synth-corner-radius", container && node.cornerRadius !== undefined ? `${node.cornerRadius}px` : undefined);
 }
 
 // `initial` on a custom property is the guaranteed-invalid value, so every

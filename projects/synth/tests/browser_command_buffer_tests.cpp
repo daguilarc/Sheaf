@@ -302,6 +302,9 @@ void TestVersionTwoCarriesStyleAndParentRelativeBounds()
     child.color = synth::Color::Rgb(0, 200, 0);
     child.textStyle = synth::ui::TextStyle{16.0f, synth::Color::Rgb(255, 255, 255),
                                            synth::ui::TextAlign::Center};
+    child.borderColor = synth::Color::Rgb(40, 50, 60);
+    child.borderWidth = 2.5f;
+    child.cornerRadius = 6.0f;
     tree.nodes.push_back(root);
     tree.nodes.push_back(child);
 
@@ -319,6 +322,12 @@ void TestVersionTwoCarriesStyleAndParentRelativeBounds()
             "carried text alignment survives");
     Require(out.textStyle->color == synth::Color::Rgb(255, 255, 255),
             "carried glyph colour survives");
+    Require(out.borderColor.has_value() && *out.borderColor == synth::Color::Rgb(40, 50, 60),
+            "carried border colour survives");
+    Require(out.borderWidth.has_value() && NearlyEqual(*out.borderWidth, 2.5f),
+            "carried border width survives");
+    Require(out.cornerRadius.has_value() && NearlyEqual(*out.cornerRadius, 6.0f),
+            "carried corner radius survives");
 }
 
 void TestAbsentStyleStaysAbsent()
@@ -336,6 +345,12 @@ void TestAbsentStyleStaysAbsent()
             "an absent colour decodes as absent, not as a sentinel value");
     Require(!out.textStyle.has_value(),
             "an absent text style decodes as absent, not as a sentinel value");
+    Require(!out.borderColor.has_value(),
+            "an absent border colour decodes as absent, not as a sentinel value");
+    Require(!out.borderWidth.has_value(),
+            "an absent border width decodes as absent, not as a sentinel value");
+    Require(!out.cornerRadius.has_value(),
+            "an absent corner radius decodes as absent, not as a sentinel value");
 }
 
 void TestFullyTransparentBlackIsAPresentColour()
@@ -346,12 +361,15 @@ void TestFullyTransparentBlackIsAPresentColour()
     root.kind = synth::ui::NodeKind::Root;
     root.bounds = {0, 0, 400, 300};
     root.color = synth::Color::Rgba(0, 0, 0, 0);
+    root.borderColor = synth::Color::Rgba(0, 0, 0, 0);
     tree.nodes.push_back(root);
 
     const auto decoded = synth_browser::DecodeCommandBuffer(synth_browser::SerializeNodeTree(tree).bytes);
     const auto& out = FindNode(decoded, "root");
     Require(out.color.has_value() && *out.color == synth::Color::Rgba(0, 0, 0, 0),
             "a producer legitimately choosing transparent black is not read as absent");
+    Require(out.borderColor.has_value() && *out.borderColor == synth::Color::Rgba(0, 0, 0, 0),
+            "a producer legitimately choosing a transparent black border is not read as absent");
 }
 
 void TestCorruptPresenceFlagIsRejected()

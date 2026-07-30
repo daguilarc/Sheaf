@@ -64,6 +64,9 @@ type Node = Partial<{
   scrollContentHeight: number;
   color: [number, number, number, number];
   textStyle: { size: number; color: [number, number, number, number]; align: number };
+  borderColor: [number, number, number, number];
+  borderWidth: number;
+  cornerRadius: number;
   action: Action;
   pointerDragAction: Action;
   doubleClickAction: Action;
@@ -159,6 +162,12 @@ export function makeCommandBuffer(nodes: Node[], diagnostics: string[] = [],
       for (const value of node.textStyle.color) nodeSection.u8(value);
       nodeSection.u8(node.textStyle.align);
     }
+    nodeSection.u8(node.borderColor ? 1 : 0);
+    if (node.borderColor) for (const value of node.borderColor) nodeSection.u8(value);
+    nodeSection.u8(node.borderWidth === undefined ? 0 : 1);
+    if (node.borderWidth !== undefined) nodeSection.float(node.borderWidth);
+    nodeSection.u8(node.cornerRadius === undefined ? 0 : 1);
+    if (node.cornerRadius !== undefined) nodeSection.float(node.cornerRadius);
     for (const actionIndex of actionIndexes[index]) nodeSection.i32(actionIndex);
     nodeSection.u32(drawRanges[index][0]); nodeSection.u32(drawRanges[index][1]);
     nodeSection.u32((node.options ?? []).length);

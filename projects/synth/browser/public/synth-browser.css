@@ -31,12 +31,16 @@ body {
 
 #synth-root [data-synth-node-kind="root"] {
   background: var(--synth-fill, #121416);
+  border-radius: var(--synth-corner-radius, 0);
+  box-shadow: inset 0 0 0 var(--synth-border-width, 0) var(--synth-border-color, transparent);
 }
 
 #synth-root [data-synth-node-kind="row"],
 #synth-root [data-synth-node-kind="section"],
 #synth-root [data-synth-node-kind="scroll-area"] {
   background: var(--synth-fill, transparent);
+  border-radius: var(--synth-corner-radius, 0);
+  box-shadow: inset 0 0 0 var(--synth-border-width, 0) var(--synth-border-color, transparent);
 }
 
 #synth-root [data-synth-node-kind="label"],

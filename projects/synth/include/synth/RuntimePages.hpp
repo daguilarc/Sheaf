@@ -548,6 +548,16 @@ inline ui::LayoutOptions PanelLayout(ui::Extent main)
     return layout;
 }
 
+inline ui::ControlStyle PanelAppearance(Color fill, Color border)
+{
+    ui::ControlStyle style;
+    style.color = fill;
+    style.borderColor = border;
+    style.borderWidth = pagestyle::kPanelBorderWidth;
+    style.cornerRadius = pagestyle::kPanelCornerRadius;
+    return style;
+}
+
 // A group nested inside a panel: it adds no padding of its own, so its children
 // keep the enclosing panel's inset and separate on the shared row gap.
 inline ui::LayoutOptions PanelGroupLayout(ui::Extent main)
@@ -557,28 +567,6 @@ inline ui::LayoutOptions PanelGroupLayout(ui::Extent main)
     layout.padding = 0.0f;
     layout.gap = Layout::kRowGap;
     return layout;
-}
-
-// A panel's background, declared as the sru-44 underlay of the panel it names.
-// The panel's extent is the resolver's to decide, so the producer anchors to it
-// by id instead of restating it, and the fill is painted from the extent the
-// resolver hands the factory.
-inline ui::LayoutOptions PanelUnderlayLayout(std::string panelId)
-{
-    ui::LayoutOptions layout;
-    layout.overlayOf = std::move(panelId);
-    return layout;
-}
-
-inline ui::Builder::DrawFactory PanelUnderlayFill(Color fill, Color border)
-{
-    return [fill, border](ui::Bounds extent) {
-        return std::vector<ui::DrawCommand>{
-            ui::DrawCommand::FillRoundedRect(extent, pagestyle::kPanelCornerRadius, fill),
-            ui::DrawCommand::StrokeRoundedRect(
-                extent, pagestyle::kPanelCornerRadius, border, pagestyle::kPanelBorderWidth),
-        };
-    };
 }
 
 inline std::vector<ui::ControlOption> ControlOptionsFor(const std::vector<AudioDeviceOption>& options)
@@ -948,12 +936,10 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
     ui::Builder builder;
     builder.Root(NodeIds::kFileRoot, area);
     builder.Column(NodeIds::kFilePage, PageControls::PageLayout(), [&](ui::Builder& page) {
-        page.Draw(std::string(NodeIds::kFileHeader) + ".background",
-                  PageControls::PanelUnderlayLayout(NodeIds::kFileHeader),
-                  PageControls::PanelUnderlayFill(pagestyle::kHeaderPanelFill,
-                                                  pagestyle::kHeaderPanelBorder));
         page.Row(NodeIds::kFileHeader,
                  PageControls::PanelLayout(ui::Extent::Intrinsic()),
+                 PageControls::PanelAppearance(pagestyle::kHeaderPanelFill,
+                                               pagestyle::kHeaderPanelBorder),
                  [&](ui::Builder& header) {
                      header.Column(NodeIds::kFileHeaderText,
                                    PageControls::PanelGroupLayout(ui::Extent::Weight(1.0f)),
@@ -1001,24 +987,20 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
 
         if (snapshot.browserOpen)
         {
-            page.Draw(std::string(NodeIds::kFileBrowser) + ".background",
-                      PageControls::PanelUnderlayLayout(NodeIds::kFileBrowser),
-                      PageControls::PanelUnderlayFill(pagestyle::kBrowserPanelFill,
-                                                      pagestyle::kBrowserPanelBorder));
             page.Section(NodeIds::kFileBrowser,
                          PageControls::PanelLayout(ui::Extent::Weight(1.0f)),
+                         PageControls::PanelAppearance(pagestyle::kBrowserPanelFill,
+                                                       pagestyle::kBrowserPanelBorder),
                          [&](ui::Builder& browser) {
                              browser.Splice(BuildPatchBrowserSubtree(snapshot));
                          });
             return;
         }
 
-        page.Draw(std::string(NodeIds::kFileIdleRegion) + ".background",
-                  PageControls::PanelUnderlayLayout(NodeIds::kFileIdleRegion),
-                  PageControls::PanelUnderlayFill(pagestyle::kIdlePanelFill,
-                                                  pagestyle::kIdlePanelBorder));
         page.Section(NodeIds::kFileIdleRegion,
                      PageControls::PanelLayout(ui::Extent::Weight(1.0f)),
+                     PageControls::PanelAppearance(pagestyle::kIdlePanelFill,
+                                                   pagestyle::kIdlePanelBorder),
                      [&](ui::Builder& idle) {
                          idle.StatusText(NodeIds::kFileStatus,
                                          snapshot.statusText,

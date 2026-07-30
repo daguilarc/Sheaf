@@ -282,6 +282,9 @@ private:
 struct ControlStyle {
     std::optional<Color> color{};
     std::optional<TextStyle> textStyle{};
+    std::optional<Color> borderColor{};
+    std::optional<float> borderWidth{};
+    std::optional<float> cornerRadius{};
     bool selected = false;
     bool enabled = true;
     std::optional<Action> action{};            // plain click
@@ -306,10 +309,17 @@ public:
     using DrawFactory = synth::ui::DrawFactory;
 
     Builder& Root(std::string id, Bounds bounds) {
+        return Root(std::move(id), bounds, {});
+    }
+
+    Builder& Root(std::string id, Bounds bounds, ControlStyle style) {
         Node node;
         node.id = NodeId(std::move(id));
         node.kind = NodeKind::Root;
         node.bounds = bounds;
+        style.layout.explicitBounds = bounds;
+        ApplyStyle(node, style);
+        layoutByNodeId_[node.id.value] = style.layout;
         tree_.nodes.push_back(std::move(node));
         scopeStack_.assign(1, tree_.nodes.size() - 1);
         return *this;
@@ -343,14 +353,30 @@ public:
     Builder& Column(std::string id, LayoutOptions o, const Children& c) {
         return Container(std::move(id), NodeKind::Section, o, c);
     }
+    Builder& Column(std::string id, LayoutOptions o, ControlStyle style, const Children& c) {
+        style.layout = std::move(o);
+        return Container(std::move(id), NodeKind::Section, std::move(style), c);
+    }
     Builder& Section(std::string id, LayoutOptions o, const Children& c) {
         return Container(std::move(id), NodeKind::Section, o, c);
+    }
+    Builder& Section(std::string id, LayoutOptions o, ControlStyle style, const Children& c) {
+        style.layout = std::move(o);
+        return Container(std::move(id), NodeKind::Section, std::move(style), c);
     }
     Builder& Row(std::string id, LayoutOptions o, const Children& c) {
         return Container(std::move(id), NodeKind::Row, o, c);
     }
+    Builder& Row(std::string id, LayoutOptions o, ControlStyle style, const Children& c) {
+        style.layout = std::move(o);
+        return Container(std::move(id), NodeKind::Row, std::move(style), c);
+    }
     Builder& ScrollArea(std::string id, LayoutOptions o, const Children& c) {
         return Container(std::move(id), NodeKind::ScrollArea, o, c);
+    }
+    Builder& ScrollArea(std::string id, LayoutOptions o, ControlStyle style, const Children& c) {
+        style.layout = std::move(o);
+        return Container(std::move(id), NodeKind::ScrollArea, std::move(style), c);
     }
 
     // Grafts a subtree. A Root node in the subtree is discarded and its
@@ -622,6 +648,9 @@ private:
     void ApplyStyle(Node& node, const ControlStyle& s) {
         node.color = s.color;
         node.textStyle = s.textStyle;
+        node.borderColor = s.borderColor;
+        node.borderWidth = s.borderWidth;
+        node.cornerRadius = s.cornerRadius;
         node.selected = s.selected;
         node.enabled = s.enabled;
         if (s.action.has_value())            { node.action = s.action; }
@@ -637,13 +666,20 @@ private:
     }
 
     Builder& Container(std::string id, NodeKind kind, LayoutOptions opts, const Children& children) {
+        ControlStyle style;
+        style.layout = std::move(opts);
+        return Container(std::move(id), kind, std::move(style), children);
+    }
+
+    Builder& Container(std::string id, NodeKind kind, ControlStyle style, const Children& children) {
         Node node;
         node.id = NodeId(std::move(id));
         node.kind = kind;
-        if (opts.explicitBounds.has_value()) { node.bounds = *opts.explicitBounds; }
+        if (style.layout.explicitBounds.has_value()) { node.bounds = *style.layout.explicitBounds; }
+        ApplyStyle(node, style);
         const std::string key = node.id.value;
         AppendChild(std::move(node));
-        layoutByNodeId_[key] = opts;
+        layoutByNodeId_[key] = std::move(style.layout);
         scopeStack_.push_back(tree_.nodes.size() - 1);
         if (children) { children(*this); }
         scopeStack_.pop_back();

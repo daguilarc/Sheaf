@@ -20,9 +20,10 @@ namespace synth_browser {
 inline constexpr std::array<std::byte, 4> kCommandBufferMagic = {
     std::byte{'S'}, std::byte{'B'}, std::byte{'C'}, std::byte{'B'}};
 // Version 2 (sru-46): node bounds are parent-relative, `Draw` geometry is
-// node-local, `Node::color`/`Node::textStyle` cross the wire behind explicit
-// presence bytes, and `Node::variant` is gone. A hard break -- both ends check
-// strict equality and there is no version-1 fallback or negotiation. Every
+// node-local, `Node::color`/`Node::textStyle` and the sru-55 container border
+// fields cross the wire behind explicit presence bytes, and `Node::variant` is
+// gone. A hard break -- both ends check strict equality and there is no
+// version-1 fallback or negotiation. Every
 // artifact that advertises the UI protocol version moves together: this
 // constant, `COMMAND_BUFFER_VERSION` in `browser/src/protocol.ts`, and each
 // Wasm package's exported `synth_browser_ui_protocol_version()`.
@@ -109,6 +110,9 @@ struct DecodedNode {
     std::string selectedOption;
     std::optional<synth::Color> color;
     std::optional<synth::ui::TextStyle> textStyle;
+    std::optional<synth::Color> borderColor;
+    std::optional<float> borderWidth;
+    std::optional<float> cornerRadius;
     std::optional<DecodedAction> action;
     std::optional<DecodedAction> pointerDragAction;
     std::optional<DecodedAction> doubleClickAction;
@@ -204,6 +208,12 @@ inline void AppendOptionalTextStyle(std::vector<std::byte>& output,
     AppendFloat(output, textStyle->size);
     AppendColor(output, textStyle->color);
     AppendU8(output, static_cast<std::uint8_t>(textStyle->align));
+}
+
+inline void AppendOptionalFloat(std::vector<std::byte>& output, const std::optional<float>& value)
+{
+    AppendU8(output, value.has_value() ? 1 : 0);
+    if (value.has_value()) AppendFloat(output, *value);
 }
 
 class Reader {
@@ -353,6 +363,12 @@ inline std::optional<synth::ui::TextStyle> ReadOptionalTextStyle(Reader& reader)
     style.color = reader.Color();
     style.align = DecodeTextAlign(reader.U8());
     return style;
+}
+
+inline std::optional<float> ReadOptionalFloat(Reader& reader)
+{
+    if (!DecodePresence(reader.U8())) return std::nullopt;
+    return reader.Float();
 }
 
 }  // namespace detail
@@ -507,6 +523,9 @@ inline CommandBuffer SerializeNodeTree(const synth::ui::NodeTree& tree)
         detail::AppendFloat(nodeSection, node.scrollContentHeight);
         detail::AppendOptionalColor(nodeSection, node.color);
         detail::AppendOptionalTextStyle(nodeSection, node.textStyle);
+        detail::AppendOptionalColor(nodeSection, node.borderColor);
+        detail::AppendOptionalFloat(nodeSection, node.borderWidth);
+        detail::AppendOptionalFloat(nodeSection, node.cornerRadius);
         for (const auto actionIndex : nodeActionIndices[index]) detail::AppendI32(nodeSection, actionIndex);
         detail::AppendU32(nodeSection, drawRanges[index].first);
         detail::AppendU32(nodeSection, drawRanges[index].second);
@@ -658,6 +677,9 @@ inline DecodedCommandBuffer DecodeCommandBuffer(std::span<const std::byte> bytes
             node.scrollContentHeight = reader.Float();
             node.color = detail::ReadOptionalColor(reader);
             node.textStyle = detail::ReadOptionalTextStyle(reader);
+            node.borderColor = detail::ReadOptionalColor(reader);
+            node.borderWidth = detail::ReadOptionalFloat(reader);
+            node.cornerRadius = detail::ReadOptionalFloat(reader);
             node.action = actionAt(reader.I32());
             node.pointerDragAction = actionAt(reader.I32());
             node.doubleClickAction = actionAt(reader.I32());

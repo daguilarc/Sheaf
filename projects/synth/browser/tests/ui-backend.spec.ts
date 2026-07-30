@@ -1479,7 +1479,9 @@ const backendGeometryPropertyNodes: FixtureNode[] = [
 // excluded; see the Task 3.12 note in openspec/.../tasks.md.
 const backendStyleParityNodes: FixtureNode[] = [
   { id: "root", kind: NodeKind.Root, bounds: [0, 0, 500, 280], color: [8, 9, 10, 255], children: ["section", "scroll"] },
-  { id: "section", kind: NodeKind.Section, bounds: [20, 16, 220, 160], color: [20, 30, 40, 255], children: ["row", "status", "disabled"] },
+  { id: "section", kind: NodeKind.Section, bounds: [20, 16, 220, 160], color: [20, 30, 40, 255],
+    borderColor: [200, 210, 220, 255], borderWidth: 4, cornerRadius: 8,
+    children: ["row", "status", "disabled"] },
   { id: "row", kind: NodeKind.Row, bounds: [7, 11, 190, 70], children: ["label", "button", "toggle", "slider", "draw"] },
   { id: "label", kind: NodeKind.Label, bounds: [4, 3, 48, 18], text: "Label",
     color: [10, 10, 10, 255], textStyle: { size: 14, color: [240, 240, 240, 255], align: 0 } },
@@ -1596,6 +1598,10 @@ test("matches JUCE backend geometry and carried style assignments", async ({ pag
       styles: {
         rootBackground: style('[data-node-id="root"]').backgroundColor,
         sectionBackground: style('[data-node-id="section"]').backgroundColor,
+        sectionBorderColor: element("section").style.getPropertyValue("--synth-border-color"),
+        sectionBorderWidth: element("section").style.getPropertyValue("--synth-border-width"),
+        sectionBorderRadius: style('[data-node-id="section"]').borderRadius,
+        sectionBorderShadow: style('[data-node-id="section"]').boxShadow,
         labelBackground: style('[data-node-id="label"]').backgroundColor,
         labelGlyph: style('[data-node-id="label"]').color,
         labelSize: style('[data-node-id="label"]').fontSize,
@@ -1619,6 +1625,10 @@ test("matches JUCE backend geometry and carried style assignments", async ({ pag
   expect(rendered.styles).toEqual({
     rootBackground: "rgb(8, 9, 10)",
     sectionBackground: "rgb(20, 30, 40)",
+    sectionBorderColor: "rgba(200, 210, 220, 1)",
+    sectionBorderWidth: "4px",
+    sectionBorderRadius: "8px",
+    sectionBorderShadow: "rgb(200, 210, 220) 0px 0px 0px 4px inset",
     labelBackground: "rgb(10, 10, 10)",
     labelGlyph: "rgb(240, 240, 240)",
     labelSize: "14px",
@@ -1768,6 +1778,64 @@ test("renders one carried colour on the surface each node kind assigns it", asyn
     // A `Draw` node's colour paints nothing: its commands carry their own.
     drawBackground: "rgba(0, 0, 0, 0)",
   });
+});
+
+test("renders a container fill and rounded border across padding and gaps", async ({ page }) => {
+  const frame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 220, 160], children: ["panel"] },
+    { id: "panel", kind: NodeKind.Section, bounds: [20, 20, 160, 100],
+      color: [20, 30, 40, 255], borderColor: [200, 210, 220, 255], borderWidth: 4, cornerRadius: 8,
+      children: ["first", "second"] },
+    { id: "first", kind: NodeKind.Label, bounds: [16, 16, 54, 20], text: "One", color: [70, 80, 90, 255] },
+    { id: "second", kind: NodeKind.Label, bounds: [16, 52, 54, 20], text: "Two", color: [90, 100, 110, 255] },
+  ]);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const rendered = await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    new BrowserUiBackend(document.querySelector("#synth-root")!).renderFrame(new Uint8Array(bytes).buffer);
+    const panel = document.querySelector<HTMLElement>('[data-node-id="panel"]')!;
+    const first = document.querySelector<HTMLElement>('[data-node-id="first"]')!;
+    const second = document.querySelector<HTMLElement>('[data-node-id="second"]')!;
+    const panelStyle = getComputedStyle(panel);
+    const rectOf = (element: HTMLElement) => {
+      const rect = element.getBoundingClientRect();
+      const root = document.querySelector<HTMLElement>('[data-node-id="root"]')!.getBoundingClientRect();
+      return { x: rect.left - root.left, y: rect.top - root.top, width: rect.width, height: rect.height };
+    };
+    return {
+      panel: {
+        background: panelStyle.backgroundColor,
+        borderColor: panel.style.getPropertyValue("--synth-border-color"),
+        borderWidth: panel.style.getPropertyValue("--synth-border-width"),
+        borderRadius: panelStyle.borderRadius,
+        borderShadow: panelStyle.boxShadow,
+      },
+      panelRect: rectOf(panel),
+      firstRect: rectOf(first),
+      secondRect: rectOf(second),
+    };
+  }, Array.from(new Uint8Array(frame)));
+
+  expect(rendered.panel).toEqual({
+    background: "rgb(20, 30, 40)",
+    borderColor: "rgba(200, 210, 220, 1)",
+    borderWidth: "4px",
+    borderRadius: "8px",
+    borderShadow: "rgb(200, 210, 220) 0px 0px 0px 4px inset",
+  });
+  const paddingPoint = { x: rendered.panelRect.x + 8, y: rendered.panelRect.y + 8 };
+  const gapPoint = { x: rendered.panelRect.x + 32, y: rendered.panelRect.y + 44 };
+  for (const [name, point] of Object.entries({ paddingPoint, gapPoint })) {
+    expect(point.x, `${name} is inside panel x`).toBeGreaterThan(rendered.panelRect.x);
+    expect(point.y, `${name} is inside panel y`).toBeGreaterThan(rendered.panelRect.y);
+    expect(point.x, `${name} is inside panel right`).toBeLessThan(rendered.panelRect.x + rendered.panelRect.width);
+    expect(point.y, `${name} is inside panel bottom`).toBeLessThan(rendered.panelRect.y + rendered.panelRect.height);
+    for (const child of [rendered.firstRect, rendered.secondRect]) {
+      expect(point.x < child.x || point.x > child.x + child.width ||
+             point.y < child.y || point.y > child.y + child.height,
+             `${name} is not painted by either child`).toBe(true);
+    }
+  }
 });
 
 test("derives selected and disabled presentation from the carried colour", async ({ page }) => {
