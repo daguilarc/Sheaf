@@ -261,3 +261,120 @@ I intentionally did not change:
 - `make xagent-plugin-test` does not complete because `package_xagent.py --check` reports pre-existing tracked runtime asset drift after `projects/xagent` is built. The newly inserted hook module runs and passes before that failure.
 - `install_global_test.py` emits two `ResourceWarning: unclosed file` warnings during the full target; those warnings pre-exist this task and are outside the hook module.
 - The Codex Stop output contract is tested at our CLI boundary against captured input, but I did not perform an interactive Codex `/hooks` activation check. That belongs to later installer/activation tasks.
+
+---
+
+# Fix Round 1 Report
+
+## Status
+
+BLOCKED.
+
+The round-1 findings require replacing `plugins/xagent/scripts/fixtures/controller_stop_hooks/mcp_error.json` with a real Claude Code MCP error `PostToolUse` payload. I attempted two disposable Claude Code captures for real xagent MCP errors. Claude Code did not emit a usable xagent `PostToolUse` hook payload for either error; only `ToolSearch` and `Stop` hook envelopes were captured.
+
+Per the finding instruction, I did not invent another error shape and did not modify production code or fixtures.
+
+## Capture Attempt 1: Unknown Run Error
+
+Disposable capture directory:
+
+```text
+/tmp/xagent-claude-error-capture-VAS9Uj
+```
+
+Command:
+
+```bash
+XAGENT_HOOK_CAPTURE=/tmp/xagent-claude-error-capture-VAS9Uj/capture.jsonl /Users/joyo/.local/bin/claude \
+  --settings /tmp/xagent-claude-error-capture-VAS9Uj/claude-settings.json \
+  --mcp-config /tmp/xagent-claude-error-capture-VAS9Uj/claude-mcp.json \
+  --strict-mcp-config \
+  --print \
+  --output-format json \
+  --include-hook-events \
+  --permission-mode bypassPermissions \
+  --allowedTools=mcp__xagent__xagent_await \
+  "Call the xagent_await MCP tool exactly once with run_id='missing-claude-error-capture' and after_sequence=0. Do not call any other tool and do not repair. After the tool call, reply DONE."
+```
+
+Claude result evidence:
+
+```text
+The call returned an error: `unknown_run` — "Unknown xagent run: missing-claude-error-capture".
+```
+
+Captured hook JSONL summary:
+
+```text
+records 2
+1 PostToolUse ToolSearch {'matches': ['mcp__xagent__xagent_await'], 'query': 'select:mcp__xagent__xagent_await', 'total_deferred_tools': 28}
+2 Stop None None
+```
+
+No `PostToolUse` payload for `mcp__xagent__xagent_await` was emitted.
+
+## Capture Attempt 2: xagent Start Validation Error
+
+Disposable capture directory:
+
+```text
+/tmp/xagent-claude-error-capture-eT72U5
+```
+
+Command:
+
+```bash
+XAGENT_HOOK_CAPTURE=/tmp/xagent-claude-error-capture-eT72U5/capture.jsonl /Users/joyo/.local/bin/claude \
+  --settings /tmp/xagent-claude-error-capture-eT72U5/claude-settings.json \
+  --mcp-config /tmp/xagent-claude-error-capture-eT72U5/claude-mcp.json \
+  --strict-mcp-config \
+  --print \
+  --output-format json \
+  --include-hook-events \
+  --permission-mode bypassPermissions \
+  --allowedTools=mcp__xagent__xagent_start_non_sdd \
+  "Call the xagent_start_non_sdd MCP tool exactly once with harness='codex', mode='subagent', cwd='/Users/joyo/.codex/worktrees/a9c6246a-0e6c-438d-9cfb-1d37f493bcb5/Sheaf', prompt='This invalid prompt contains bare controller run id xrun_20260730123456789_deadbeef'. Do not call any other tool and do not repair. After the tool call, reply DONE."
+```
+
+Claude result evidence:
+
+```text
+The tool call was rejected by input validation: the prompt contains a bare controller run id (`xrun_20260730123456789_deadbeef`).
+```
+
+Captured hook JSONL summary:
+
+```text
+records 2
+1 PostToolUse ToolSearch {'matches': ['mcp__xagent__xagent_start_non_sdd'], 'query': 'select:mcp__xagent__xagent_start_non_sdd', 'total_deferred_tools': 28}
+2 Stop None None
+```
+
+No `PostToolUse` payload for `mcp__xagent__xagent_start_non_sdd` was emitted.
+
+## Covering Test Run
+
+Command:
+
+```bash
+python3 -m unittest plugins/xagent/scripts/controller_stop_hook_test.py
+```
+
+Output:
+
+```text
+....................
+----------------------------------------------------------------------
+Ran 20 tests in 2.923s
+
+OK
+```
+
+## Files Changed
+
+- `.superpowers/sdd/2026-07-30-xagent-controller-stop-hooks/task-1-report.md`
+
+## Remaining Open Findings
+
+- Important 1 remains blocked: no real Claude Code MCP error `PostToolUse` payload was emitted for the tested xagent MCP errors.
+- Important 2 was not addressed because the fix round is blocked on the required real captured error fixture.
