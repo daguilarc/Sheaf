@@ -149,6 +149,31 @@ async function gestureCentreOf(page: Page, id: string) {
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
+// The node a press at this point actually reaches, which is not always the node
+// whose centre it is: a node that intercepts nothing lets the press fall through.
+const nodeIdAtPoint = (page: Page, point: { x: number; y: number }) =>
+  page.evaluate(({ x, y }) =>
+    document.elementFromPoint(x, y)?.closest("[data-node-id]")?.getAttribute("data-node-id"), point);
+
+// 30 px right: `30 * 0.0025` is 0.075, well past `continuePointerDrag`'s
+// threshold, which mirrors `kPointerDragThreshold`.
+async function dragPastThreshold(page: Page, from: { x: number; y: number }) {
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 30, from.y);
+  await page.mouse.up();
+}
+
+// One Draw node and one Button node carrying the same click and double-click
+// actions, for the parity assertions.
+const clickAndDoubleClickFrame = makeCommandBuffer([
+  { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 200], children: ["canvas", "btn"] },
+  { id: "canvas", kind: NodeKind.Draw, bounds: [0, 0, 100, 100], draws: canvasDraws,
+    action: { name: "click", value: "" }, doubleClickAction: { name: "dbl", value: "" } },
+  { id: "btn", kind: NodeKind.Button, bounds: [0, 100, 100, 100], label: "Btn",
+    action: { name: "click", value: "" }, doubleClickAction: { name: "dbl", value: "" } },
+]);
+
 test("dispatches a plain click from a click-only draw node", async ({ page }) => {
   await renderRecording(page, canvasFrame({ action: { name: "canvas.click", value: "" } }));
   const centre = await gestureCentreOf(page, "canvas");
@@ -156,25 +181,78 @@ test("dispatches a plain click from a click-only draw node", async ({ page }) =>
   expect(await dispatchedNames(page)).toEqual(["canvas.click"]);
 });
 
+test("dispatches the same single-click sequence from a draw node as from a button", async ({ page }) => {
+  await renderRecording(page, clickAndDoubleClickFrame);
+  const canvasCentre = await gestureCentreOf(page, "canvas");
+  await page.mouse.click(canvasCentre.x, canvasCentre.y);
+  const fromDraw = await dispatchedNames(page);
+  await forgetDispatched(page);
+  const buttonCentre = await gestureCentreOf(page, "btn");
+  await page.mouse.click(buttonCentre.x, buttonCentre.y);
+  const fromButton = await dispatchedNames(page);
+
+  expect(fromDraw).toEqual(fromButton);
+  expect(fromDraw).toEqual(["click"]);
+});
+
+// The exact ordered list pins both halves of sru-52's drag clause at once: the
+// pointer-drag action is dispatched, and no click action is. Deliberately not
+// compared against a Button — design.md D10b's parity clause covers click and
+// double-click only, because a JUCE Button has no pointer-drag path and no
+// producer gives one a drag action.
 test("dispatches no click from a draw drag past the drag threshold", async ({ page }) => {
   await renderRecording(page, canvasFrame({
     action: { name: "canvas.click", value: "" },
     pointerDragAction: { name: "canvas.drag", value: "" },
   }));
   const centre = await gestureCentreOf(page, "canvas");
-  await page.mouse.move(centre.x, centre.y);
-  await page.mouse.down();
-  await page.mouse.move(centre.x + 30, centre.y);
-  await page.mouse.up();
+  await dragPastThreshold(page, centre);
   // The DOM fires a native `click` for a press and release inside one element
   // however far the pointer travelled between them, so the drag has to consume
   // it — otherwise one gesture would be both a drag and a click.
   expect(await dispatchedNames(page)).toEqual(["canvas.drag"]);
 });
 
+// The suppression is per gesture, not sticky. Every other case here is one
+// gesture on a freshly rendered node, so none of them would notice a suppression
+// that outlived the drag that raised it.
+test("keeps dispatching a click after a drag on the same draw node", async ({ page }) => {
+  await renderRecording(page, canvasFrame({
+    action: { name: "canvas.click", value: "" },
+    pointerDragAction: { name: "canvas.drag", value: "" },
+  }));
+  const centre = await gestureCentreOf(page, "canvas");
+  const box = (await page.locator('[data-node-id="canvas"]').boundingBox())!;
+
+  await dragPastThreshold(page, centre);
+  expect(await dispatchedNames(page)).toEqual(["canvas.drag"]);
+  await forgetDispatched(page);
+  await page.mouse.click(centre.x, centre.y);
+  expect(await dispatchedNames(page)).toEqual(["canvas.click"]);
+  await forgetDispatched(page);
+
+  // And again for a drag that leaves the node: the captured pointer retargets the
+  // release to the element, so this gesture still ends in a native `click` that
+  // its own drag has to consume — and the click after it still dispatches.
+  await page.mouse.move(centre.x, centre.y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width + 40, centre.y);
+  await page.mouse.up();
+  expect(await dispatchedNames(page)).toEqual(["canvas.drag"]);
+  await forgetDispatched(page);
+  await page.mouse.click(centre.x, centre.y);
+  expect(await dispatchedNames(page)).toEqual(["canvas.click"]);
+});
+
 test("dispatches nothing from a disabled draw node", async ({ page }) => {
   await renderRecording(page, canvasFrame({ enabled: false, action: { name: "canvas.click", value: "" } }));
   const centre = await gestureCentreOf(page, "canvas");
+  // Disabled is a dispatch rule, not an interception one: the node still takes
+  // the press. Without this, an empty action list would also be the result of
+  // wrongly dropping `pointer-events` and letting the press land on a parent
+  // that dispatches nothing anyway — a different bug wearing the same result.
+  expect(await page.locator('[data-node-id="canvas"]').evaluate((element) => getComputedStyle(element).pointerEvents)).toBe("auto");
+  expect(await nodeIdAtPoint(page, centre)).toBe("canvas");
   await page.mouse.click(centre.x, centre.y);
   expect(await dispatchedNames(page)).toEqual([]);
 });
@@ -191,9 +269,7 @@ test("passes a click over an inert draw node through to the node behind it", asy
   ]));
   const centre = await gestureCentreOf(page, "underlay");
   expect(await page.locator('[data-node-id="underlay"]').evaluate((element) => getComputedStyle(element).pointerEvents)).toBe("none");
-  const hit = await page.evaluate(({ x, y }) =>
-    document.elementFromPoint(x, y)?.closest("[data-node-id]")?.getAttribute("data-node-id"), centre);
-  expect(hit).toBe("encoder");
+  expect(await nodeIdAtPoint(page, centre)).toBe("encoder");
   await page.mouse.click(centre.x, centre.y);
   expect(await dispatchedNames(page)).toEqual(["encoder.click"]);
 });
@@ -212,13 +288,7 @@ test("dispatches no click when a press on a draw node is released off it", async
 });
 
 test("dispatches the same double-click sequence from a draw node as from a button", async ({ page }) => {
-  await renderRecording(page, makeCommandBuffer([
-    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 200], children: ["canvas", "btn"] },
-    { id: "canvas", kind: NodeKind.Draw, bounds: [0, 0, 100, 100], draws: canvasDraws,
-      action: { name: "click", value: "" }, doubleClickAction: { name: "dbl", value: "" } },
-    { id: "btn", kind: NodeKind.Button, bounds: [0, 100, 100, 100], label: "Btn",
-      action: { name: "click", value: "" }, doubleClickAction: { name: "dbl", value: "" } },
-  ]));
+  await renderRecording(page, clickAndDoubleClickFrame);
 
   const canvasCentre = await gestureCentreOf(page, "canvas");
   await page.mouse.dblclick(canvasCentre.x, canvasCentre.y);

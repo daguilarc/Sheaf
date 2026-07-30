@@ -423,6 +423,25 @@ void TestDrawClickOnlyDispatchesOnce()
             "a click-only Draw node dispatches exactly once on a single click");
 }
 
+void TestClickSequenceMatchesButtonExactly()
+{
+    GestureFixture drawFixture(CanvasTree({.action = synth::ui::Action::Named("click")}));
+    GestureFixture buttonFixture(ButtonTree(synth::ui::Action::Named("click"), {}));
+
+    const std::vector<std::string> fromDraw = SimulateClick(drawFixture, "canvas");
+    const std::vector<std::string> fromButton = SimulateClick(buttonFixture, "btn");
+    Require(fromDraw == fromButton,
+            "a Draw node's single-click sequence is identical to a Button's, "
+            "in both order and per-action count");
+    Require(fromDraw == std::vector<std::string>{"click"},
+            "the exact single-click sequence is one click");
+}
+
+// The exact ordered list pins both halves of sru-52's drag clause at once: the
+// pointer-drag action is dispatched, and no click action is. Deliberately not
+// compared against a Button — design.md D10b's parity clause covers click and
+// double-click only, because a JUCE Button has no pointer-drag path and no
+// producer gives one a drag action.
 void TestDragDispatchesNoClick()
 {
     GestureFixture fixture(CanvasTree({.action = synth::ui::Action::Named("canvas.click"),
@@ -432,10 +451,36 @@ void TestDragDispatchesNoClick()
             "a drag past the threshold dispatches the drag action and no click");
 }
 
+// The drag consumes only its own gesture. Every other case here is one gesture on
+// a fresh component, which would still pass if the per-press reset were dropped.
+void TestClickAfterADragOnTheSameNodeStillDispatches()
+{
+    GestureFixture fixture(CanvasTree({.action = synth::ui::Action::Named("canvas.click"),
+                                       .pointerDragAction = synth::ui::Action::Named("canvas.drag")}));
+    Require(SimulateDragPastThreshold(fixture, "canvas")
+                == std::vector<std::string>{"canvas.drag"},
+            "the first gesture on the shared fixture is a drag");
+    Require(SimulateClick(fixture, "canvas") == std::vector<std::string>{"canvas.click"},
+            "a click after a drag on the same node still dispatches");
+}
+
 void TestDisabledDrawDispatchesNothing()
 {
     GestureFixture fixture(
         CanvasTree({.enabled = false, .action = synth::ui::Action::Named("canvas.click")}));
+    juce::Component* canvas = fixture.Component().FindByNodeId("canvas");
+    Require(canvas != nullptr, "the disabled canvas is rendered");
+    // Disabled is a dispatch rule, not an interception one: the node still takes
+    // the press. Without this, an empty action list would also be the result of
+    // wrongly clearing interception and letting the press land on a parent that
+    // dispatches nothing anyway — a different bug wearing the same test result.
+    bool interceptsItself = false;
+    bool interceptsChildren = true;
+    canvas->getInterceptsMouseClicks(interceptsItself, interceptsChildren);
+    Require(interceptsItself && !interceptsChildren,
+            "a disabled Draw node carrying a click action still intercepts pointer input");
+    Require(&GestureTargetOver(fixture.Component(), "canvas") == canvas,
+            "a press over a disabled Draw node still lands on that node");
     Require(SimulateClick(fixture, "canvas").empty(), "a disabled Draw node dispatches nothing");
 }
 
@@ -1567,7 +1612,9 @@ int main()
     // sru-52: Draw nodes dispatch a plain click, and their gesture sequences
     // match a Button's exactly.
     TestDrawClickOnlyDispatchesOnce();
+    TestClickSequenceMatchesButtonExactly();
     TestDragDispatchesNoClick();
+    TestClickAfterADragOnTheSameNodeStillDispatches();
     TestDisabledDrawDispatchesNothing();
     TestInertDrawInterceptsNothing();
     TestReleaseOutsideTheNodeIsNoClick();
