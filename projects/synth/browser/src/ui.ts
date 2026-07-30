@@ -11,7 +11,7 @@ type PointerHandlers = {
   cancel: (event: PointerEvent) => void;
   lostCapture: (event: PointerEvent) => void;
 };
-type NodeElement = HTMLElement & { synthNode?: Node; scrollContent?: HTMLElement; pointerHandlers?: PointerHandlers };
+type NodeElement = HTMLElement & { synthNode?: Node; scrollContent?: HTMLElement; pointerHandlers?: PointerHandlers; draggedSincePointerDown?: boolean };
 type CapturedPointer = { element: NodeElement; action: Action; anchorClientX: number; anchorClientY: number };
 type PendingDrag = { action: Action; delta: number };
 // The surface the frame resolves to: which node is the parentless root, and the
@@ -132,7 +132,13 @@ export class BrowserUiBackend {
     if (node.kind === NodeKind.TextField) { const input = document.createElement("input"); input.type = "text"; element.append(input); input.addEventListener("input", () => this.dispatchValue(element, input.value)); }
     if (node.kind === NodeKind.Draw) { const canvas = document.createElement("canvas"); element.append(canvas); }
     if (node.kind === NodeKind.ScrollArea) { const content = document.createElement("div"); content.style.position = "relative"; element.scrollContent = content; element.append(content); }
-    if (node.kind === NodeKind.Button) element.addEventListener("click", () => this.dispatchValue(element));
+    // sru-52 adds `Draw` here: a `Draw` node carrying a plain click action
+    // dispatches it through the same `dispatchValue` a `Button` does, on one
+    // shared listener so the two kinds cannot diverge. `acceptsPointerEvents`
+    // already lets a node with an action take pointer input, so a `Draw` node
+    // carrying no action at all still intercepts nothing.
+    if (node.kind === NodeKind.Button || node.kind === NodeKind.Draw)
+      element.addEventListener("click", () => { if (!this.consumeDragSuppression(element)) this.dispatchValue(element); });
     element.addEventListener("dblclick", () => this.dispatchDoubleClick(element));
     return element;
   }
@@ -157,7 +163,19 @@ export class BrowserUiBackend {
     }
   }
 
+  // sru-52: the DOM fires a native `click` for a press and release inside one
+  // element however far the pointer travelled between them, so a gesture that
+  // has already dispatched a drag consumes the click it would otherwise also be
+  // read as. The drag threshold is `continuePointerDrag`'s and only its — this
+  // asks whether that threshold was crossed, never how far the pointer moved.
+  private consumeDragSuppression(element: NodeElement) {
+    if (!element.draggedSincePointerDown) return false;
+    element.draggedSincePointerDown = false;
+    return true;
+  }
+
   private beginPointerDrag(element: NodeElement, event: PointerEvent) {
+    element.draggedSincePointerDown = false;
     const action = enabledNodeOf(element)?.pointerDragAction;
     if (!action) return;
     for (const captured of this.capturedPointers.values())
@@ -179,6 +197,7 @@ export class BrowserUiBackend {
     const delta = (((event.clientX - captured.anchorClientX) / this.surfaceScale) -
       ((event.clientY - captured.anchorClientY) / this.surfaceScale)) * 0.0025;
     if (Math.abs(delta) < 0.001) return;
+    element.draggedSincePointerDown = true;
     this.dispatchDrag(captured.action, delta);
     captured.anchorClientX = event.clientX;
     captured.anchorClientY = event.clientY;
@@ -205,6 +224,9 @@ export class BrowserUiBackend {
     element.removeEventListener("pointercancel", handlers.cancel);
     element.removeEventListener("lostpointercapture", handlers.lostCapture);
     delete element.pointerHandlers;
+    // A node that has just lost its drag action must not carry a suppression
+    // into its next click.
+    delete element.draggedSincePointerDown;
   }
 
   private updateControl(element: NodeElement, node: Node) {

@@ -4,9 +4,11 @@
 
 #include <cmath>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace {
 
@@ -112,11 +114,13 @@ struct RecordingSurface final : synth::ui::Surface
     void DispatchAction(const synth::ui::Action& action) override
     {
         lastAction = action;
+        actions.push_back(action);
         dispatchCount += 1;
     }
 
     synth::ui::NodeTree tree;
     synth::ui::Action lastAction;
+    std::vector<synth::ui::Action> actions;
     int dispatchCount = 0;
     ActionHandler handler_;
 };
@@ -252,6 +256,241 @@ juce::Rectangle<int> RenderedSurfaceBoundsOf(synth_juce::PortableComponent& comp
     juce::Component* child = component.FindByNodeId(id);
     Require(child != nullptr, "property fixture node is rendered");
     return SurfaceBoundsOf(component, *child);
+}
+
+// ---------------------------------------------------------------------------
+// sru-52: pointer gestures over Draw and Button nodes.
+// ---------------------------------------------------------------------------
+
+// A rendered surface and the recorder behind it. `PortableComponent` holds a
+// reference to its surface, so the two have to live and die together.
+class GestureFixture
+{
+public:
+    explicit GestureFixture(synth::ui::NodeTree tree)
+        : recorder_(std::make_unique<RecordingSurface>())
+    {
+        recorder_->tree = std::move(tree);
+        component_ = std::make_unique<synth_juce::PortableComponent>(*recorder_);
+        component_->setSize(200, 200);
+        // `getComponentAt` hit-tests only visible components, and hit testing is
+        // what decides which node a click over an inert overlay reaches.
+        component_->setVisible(true);
+        component_->RefreshFromSurface();
+    }
+
+    synth_juce::PortableComponent& Component() noexcept { return *component_; }
+    std::vector<synth::ui::Action>& Dispatched() noexcept { return recorder_->actions; }
+
+private:
+    std::unique_ptr<RecordingSurface> recorder_;
+    std::unique_ptr<synth_juce::PortableComponent> component_;
+};
+
+std::vector<std::string> DispatchedNames(const std::vector<synth::ui::Action>& actions)
+{
+    std::vector<std::string> names;
+    names.reserve(actions.size());
+    for (const synth::ui::Action& action : actions)
+    {
+        names.push_back(action.name);
+    }
+    return names;
+}
+
+juce::MouseEvent PointerEvent(juce::Component* target,
+                              juce::Point<float> position,
+                              juce::Point<float> downPosition,
+                              int numberOfClicks)
+{
+    return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(),
+                            position,
+                            juce::ModifierKeys::leftButtonModifier,
+                            1.0f,
+                            1.0f,
+                            1.0f,
+                            1.0f,
+                            1.0f,
+                            target,
+                            target,
+                            juce::Time::getCurrentTime(),
+                            downPosition,
+                            juce::Time::getCurrentTime(),
+                            numberOfClicks,
+                            false);
+}
+
+// The component a pointer press over the centre of `id` actually reaches. It is
+// not always that node's own component: a node that intercepts nothing lets the
+// press fall through to whatever is behind it (sru-25).
+juce::Component& GestureTargetOver(synth_juce::PortableComponent& surface, const std::string& id)
+{
+    juce::Component* named = surface.FindByNodeId(id);
+    Require(named != nullptr, "gesture fixture node is rendered");
+    const juce::Rectangle<int> onSurface = SurfaceBoundsOf(surface, *named);
+    // A node resolved to zero extent could never be clicked, which would make
+    // every gesture assertion below vacuously true.
+    Require(!onSurface.isEmpty(), "gesture fixture node has a clickable extent");
+    juce::Component* target = surface.getComponentAt(onSurface.getCentre());
+    Require(target != nullptr, "a pointer press over the surface reaches some component");
+    return *target;
+}
+
+std::vector<std::string> SimulateClick(GestureFixture& fixture, const std::string& id)
+{
+    fixture.Dispatched().clear();
+    juce::Component& target = GestureTargetOver(fixture.Component(), id);
+    const juce::Point<float> at = target.getLocalBounds().getCentre().toFloat();
+    target.mouseDown(PointerEvent(&target, at, at, 1));
+    target.mouseUp(PointerEvent(&target, at, at, 1));
+    return DispatchedNames(fixture.Dispatched());
+}
+
+// JUCE delivers `mouseDoubleClick` from `Component::internalMouseUp` *after* the
+// second press's `mouseUp` (juce_Component.cpp:2248-2265), never in place of it.
+// So a double click is two full down/up pairs and then the double-click
+// callback, and that is the order this helper replays.
+std::vector<std::string> SimulateDoubleClick(GestureFixture& fixture, const std::string& id)
+{
+    fixture.Dispatched().clear();
+    juce::Component& target = GestureTargetOver(fixture.Component(), id);
+    const juce::Point<float> at = target.getLocalBounds().getCentre().toFloat();
+    target.mouseDown(PointerEvent(&target, at, at, 1));
+    target.mouseUp(PointerEvent(&target, at, at, 1));
+    target.mouseDown(PointerEvent(&target, at, at, 2));
+    target.mouseUp(PointerEvent(&target, at, at, 2));
+    target.mouseDoubleClick(PointerEvent(&target, at, at, 2));
+    return DispatchedNames(fixture.Dispatched());
+}
+
+// 30 px right and 6 px up: `(30 - -6) * kPointerDragSensitivity` is 0.09, well
+// past `kPointerDragThreshold`.
+std::vector<std::string> SimulateDragPastThreshold(GestureFixture& fixture, const std::string& id)
+{
+    fixture.Dispatched().clear();
+    juce::Component& target = GestureTargetOver(fixture.Component(), id);
+    const juce::Point<float> down(10.0f, 10.0f);
+    const juce::Point<float> moved(40.0f, 4.0f);
+    target.mouseDown(PointerEvent(&target, down, down, 1));
+    target.mouseDrag(PointerEvent(&target, moved, down, 1));
+    target.mouseUp(PointerEvent(&target, moved, down, 1));
+    return DispatchedNames(fixture.Dispatched());
+}
+
+// A press on the node released well off it, the gesture every toolkit treats as
+// an abandoned click rather than a click.
+std::vector<std::string> SimulateReleaseOutside(GestureFixture& fixture, const std::string& id)
+{
+    fixture.Dispatched().clear();
+    juce::Component& target = GestureTargetOver(fixture.Component(), id);
+    const juce::Point<float> down = target.getLocalBounds().getCentre().toFloat();
+    const juce::Point<float> outside = target.getLocalBounds().getBottomRight().toFloat()
+                                     + juce::Point<float>(40.0f, 40.0f);
+    target.mouseDown(PointerEvent(&target, down, down, 1));
+    target.mouseDrag(PointerEvent(&target, outside, down, 1));
+    target.mouseUp(PointerEvent(&target, outside, down, 1));
+    return DispatchedNames(fixture.Dispatched());
+}
+
+constexpr synth::ui::Bounds kGestureBounds{0.0f, 0.0f, 100.0f, 100.0f};
+constexpr synth::ui::Bounds kGestureRootBounds{0.0f, 0.0f, 200.0f, 200.0f};
+
+// One 100x100 canvas under a 200x200 root. Built through the component library
+// rather than by hand, so these tests also cover a producer attaching the click
+// action when the node is constructed — sru-52's library clause.
+synth::ui::NodeTree CanvasTree(synth::ui::ControlStyle style)
+{
+    synth::ui::Builder builder;
+    builder.Root("root", kGestureRootBounds)
+        .Draw("canvas", kGestureBounds, std::vector<synth::ui::DrawCommand>{}, std::move(style));
+    return builder.Build();
+}
+
+// The Button counterpart of `CanvasTree`, for the parity assertions.
+synth::ui::NodeTree ButtonTree(synth::ui::Action action, synth::ui::ControlStyle style)
+{
+    style.layout.explicitBounds = kGestureBounds;
+    synth::ui::Builder builder;
+    builder.Root("root", kGestureRootBounds)
+        .Button("btn", "Btn", std::move(action), std::move(style));
+    return builder.Build();
+}
+
+void TestDrawClickOnlyDispatchesOnce()
+{
+    GestureFixture fixture(CanvasTree({.action = synth::ui::Action::Named("canvas.click")}));
+    Require(SimulateClick(fixture, "canvas") == std::vector<std::string>{"canvas.click"},
+            "a click-only Draw node dispatches exactly once on a single click");
+}
+
+void TestDragDispatchesNoClick()
+{
+    GestureFixture fixture(CanvasTree({.action = synth::ui::Action::Named("canvas.click"),
+                                       .pointerDragAction = synth::ui::Action::Named("canvas.drag")}));
+    Require(SimulateDragPastThreshold(fixture, "canvas")
+                == std::vector<std::string>{"canvas.drag"},
+            "a drag past the threshold dispatches the drag action and no click");
+}
+
+void TestDisabledDrawDispatchesNothing()
+{
+    GestureFixture fixture(
+        CanvasTree({.enabled = false, .action = synth::ui::Action::Named("canvas.click")}));
+    Require(SimulateClick(fixture, "canvas").empty(), "a disabled Draw node dispatches nothing");
+}
+
+void TestInertDrawInterceptsNothing()
+{
+    // sru-25: translucent visualizer underlays must keep passing clicks through
+    // to the encoders beneath them.
+    synth::ui::Builder builder;
+    builder.Root("root", kGestureRootBounds)
+        .Draw("encoder",
+              kGestureBounds,
+              std::vector<synth::ui::DrawCommand>{},
+              {.action = synth::ui::Action::Named("encoder.click")})
+        .Draw("underlay", kGestureBounds, std::vector<synth::ui::DrawCommand>{});
+    GestureFixture fixture(builder.Build());
+
+    juce::Component* underlay = fixture.Component().FindByNodeId("underlay");
+    Require(underlay != nullptr, "the inert underlay is rendered");
+    Require(underlay->isVisible(), "the inert underlay is rendered visible, not hidden");
+    bool interceptsItself = true;
+    bool interceptsChildren = true;
+    underlay->getInterceptsMouseClicks(interceptsItself, interceptsChildren);
+    Require(!interceptsItself && !interceptsChildren,
+            "an inert Draw node intercepts no pointer input");
+    Require(SimulateClick(fixture, "underlay") == std::vector<std::string>{"encoder.click"},
+            "a click over an inert Draw node reaches the interactive node behind it");
+}
+
+void TestReleaseOutsideTheNodeIsNoClick()
+{
+    GestureFixture drawFixture(CanvasTree({.action = synth::ui::Action::Named("click")}));
+    GestureFixture buttonFixture(ButtonTree(synth::ui::Action::Named("click"), {}));
+    Require(SimulateReleaseOutside(drawFixture, "canvas").empty()
+                && SimulateReleaseOutside(buttonFixture, "btn").empty(),
+            "a press released off the node is no click, in a Draw node exactly as in a Button");
+}
+
+void TestDoubleClickSequenceMatchesButtonExactly()
+{
+    GestureFixture drawFixture(CanvasTree({.action = synth::ui::Action::Named("click"),
+                                           .doubleClickAction = synth::ui::Action::Named("dbl")}));
+    GestureFixture buttonFixture(
+        ButtonTree(synth::ui::Action::Named("click"),
+                   {.doubleClickAction = synth::ui::Action::Named("dbl")}));
+
+    const std::vector<std::string> fromDraw = SimulateDoubleClick(drawFixture, "canvas");
+    const std::vector<std::string> fromButton = SimulateDoubleClick(buttonFixture, "btn");
+    Require(fromDraw == fromButton,
+            "a Draw node's double-click sequence is identical to a Button's, "
+            "in both order and per-action count");
+    // Pinned as a literal, read off the observed sequence: JUCE derives each
+    // click from a `mouseUp`, and both presses of a double click deliver one,
+    // so the double-click action lands third and last.
+    Require(fromDraw == std::vector<std::string>{"click", "click", "dbl"},
+            "the exact double-click sequence is click, click, double-click");
 }
 
 }  // namespace
@@ -1324,6 +1563,15 @@ int main()
                     && columnBounds("column.1.row.1") == juce::Rectangle<int>(104, 100, 80, 28),
                 "declared two-column bounds resolve exactly, without renderer reflow");
     }
+
+    // sru-52: Draw nodes dispatch a plain click, and their gesture sequences
+    // match a Button's exactly.
+    TestDrawClickOnlyDispatchesOnce();
+    TestDragDispatchesNoClick();
+    TestDisabledDrawDispatchesNothing();
+    TestInertDrawInterceptsNothing();
+    TestReleaseOutsideTheNodeIsNoClick();
+    TestDoubleClickSequenceMatchesButtonExactly();
 
     std::cout << "PortableJuceBackendTests passed\n";
     return 0;

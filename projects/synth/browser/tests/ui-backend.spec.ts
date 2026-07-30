@@ -106,6 +106,136 @@ test("dispatches real mouse double-clicks on draggable draw controls", async ({ 
   expect(dispatched).toEqual([{ name: "generic.reset", value: "axis" }]);
 });
 
+// ---------------------------------------------------------------------------
+// sru-52: pointer gestures over Draw and Button nodes. Mirrors the gesture
+// tests at the end of juce/PortableJuceBackendTests.cpp.
+// ---------------------------------------------------------------------------
+
+type GestureAction = { name: string; value: string };
+type GestureSpec = Partial<{ enabled: boolean; action: GestureAction; pointerDragAction: GestureAction; doubleClickAction: GestureAction }>;
+const canvasDraws = [{ kind: DrawKind.Fill, color: [20, 30, 40, 255] as [number, number, number, number] }];
+
+// One 100x100 canvas under a 200x200 root, carrying whatever combination of
+// actions the case under test needs.
+const canvasFrame = (canvas: GestureSpec) => makeCommandBuffer([
+  { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 200], children: ["canvas"] },
+  { id: "canvas", kind: NodeKind.Draw, bounds: [0, 0, 100, 100], draws: canvasDraws, ...canvas },
+]);
+
+async function renderRecording(page: Page, buffer: ArrayBuffer) {
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  await page.evaluate(async (bytes) => {
+    const { BrowserUiBackend } = await import("../dist/src/" + "ui.js");
+    const browserWindow = window as unknown as { actions: { name: string }[] };
+    browserWindow.actions = [];
+    new BrowserUiBackend(document.querySelector("#synth-root")!,
+      (action: { name: string }) => browserWindow.actions.push(action))
+      .renderFrame(new Uint8Array(bytes).buffer);
+  }, Array.from(new Uint8Array(buffer)));
+}
+
+const dispatchedNames = (page: Page) =>
+  page.evaluate(() => (window as unknown as { actions: { name: string }[] }).actions.map((action) => action.name));
+
+const forgetDispatched = (page: Page) =>
+  page.evaluate(() => { (window as unknown as { actions: unknown[] }).actions.length = 0; });
+
+async function gestureCentreOf(page: Page, id: string) {
+  const box = (await page.locator(`[data-node-id="${id}"]`).boundingBox())!;
+  // A node resolved to zero extent could never be clicked, which would make
+  // every gesture assertion below vacuously true.
+  expect(box.width, `${id} clickable width`).toBeGreaterThan(0);
+  expect(box.height, `${id} clickable height`).toBeGreaterThan(0);
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+}
+
+test("dispatches a plain click from a click-only draw node", async ({ page }) => {
+  await renderRecording(page, canvasFrame({ action: { name: "canvas.click", value: "" } }));
+  const centre = await gestureCentreOf(page, "canvas");
+  await page.mouse.click(centre.x, centre.y);
+  expect(await dispatchedNames(page)).toEqual(["canvas.click"]);
+});
+
+test("dispatches no click from a draw drag past the drag threshold", async ({ page }) => {
+  await renderRecording(page, canvasFrame({
+    action: { name: "canvas.click", value: "" },
+    pointerDragAction: { name: "canvas.drag", value: "" },
+  }));
+  const centre = await gestureCentreOf(page, "canvas");
+  await page.mouse.move(centre.x, centre.y);
+  await page.mouse.down();
+  await page.mouse.move(centre.x + 30, centre.y);
+  await page.mouse.up();
+  // The DOM fires a native `click` for a press and release inside one element
+  // however far the pointer travelled between them, so the drag has to consume
+  // it — otherwise one gesture would be both a drag and a click.
+  expect(await dispatchedNames(page)).toEqual(["canvas.drag"]);
+});
+
+test("dispatches nothing from a disabled draw node", async ({ page }) => {
+  await renderRecording(page, canvasFrame({ enabled: false, action: { name: "canvas.click", value: "" } }));
+  const centre = await gestureCentreOf(page, "canvas");
+  await page.mouse.click(centre.x, centre.y);
+  expect(await dispatchedNames(page)).toEqual([]);
+});
+
+test("passes a click over an inert draw node through to the node behind it", async ({ page }) => {
+  // sru-25: translucent visualizer underlays must keep passing clicks through
+  // to the encoders beneath them. The underlay is declared last, so it would
+  // take the click if it intercepted anything.
+  await renderRecording(page, makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 200], children: ["encoder", "underlay"] },
+    { id: "encoder", kind: NodeKind.Draw, bounds: [0, 0, 100, 100], draws: canvasDraws,
+      action: { name: "encoder.click", value: "" } },
+    { id: "underlay", kind: NodeKind.Draw, bounds: [0, 0, 100, 100], draws: canvasDraws },
+  ]));
+  const centre = await gestureCentreOf(page, "underlay");
+  expect(await page.locator('[data-node-id="underlay"]').evaluate((element) => getComputedStyle(element).pointerEvents)).toBe("none");
+  const hit = await page.evaluate(({ x, y }) =>
+    document.elementFromPoint(x, y)?.closest("[data-node-id]")?.getAttribute("data-node-id"), centre);
+  expect(hit).toBe("encoder");
+  await page.mouse.click(centre.x, centre.y);
+  expect(await dispatchedNames(page)).toEqual(["encoder.click"]);
+});
+
+test("dispatches no click when a press on a draw node is released off it", async ({ page }) => {
+  // Not a click in either backend: the DOM fires `click` on the common ancestor
+  // of the press and the release, and `juce::Button` needs `isOver` at mouse-up.
+  await renderRecording(page, canvasFrame({ action: { name: "canvas.click", value: "" } }));
+  const centre = await gestureCentreOf(page, "canvas");
+  const box = (await page.locator('[data-node-id="canvas"]').boundingBox())!;
+  await page.mouse.move(centre.x, centre.y);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width + 40, box.y + box.height + 40);
+  await page.mouse.up();
+  expect(await dispatchedNames(page)).toEqual([]);
+});
+
+test("dispatches the same double-click sequence from a draw node as from a button", async ({ page }) => {
+  await renderRecording(page, makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 200], children: ["canvas", "btn"] },
+    { id: "canvas", kind: NodeKind.Draw, bounds: [0, 0, 100, 100], draws: canvasDraws,
+      action: { name: "click", value: "" }, doubleClickAction: { name: "dbl", value: "" } },
+    { id: "btn", kind: NodeKind.Button, bounds: [0, 100, 100, 100], label: "Btn",
+      action: { name: "click", value: "" }, doubleClickAction: { name: "dbl", value: "" } },
+  ]));
+
+  const canvasCentre = await gestureCentreOf(page, "canvas");
+  await page.mouse.dblclick(canvasCentre.x, canvasCentre.y);
+  const fromDraw = await dispatchedNames(page);
+  await forgetDispatched(page);
+  const buttonCentre = await gestureCentreOf(page, "btn");
+  await page.mouse.dblclick(buttonCentre.x, buttonCentre.y);
+  const fromButton = await dispatchedNames(page);
+
+  expect(fromDraw).toEqual(fromButton);
+  // Pinned as a literal, read off the observed sequence: the DOM's separate
+  // `click` and `dblclick` listeners see both presses of a double click, so the
+  // double-click action lands third and last. The JUCE backend, which derives
+  // each click from a `mouseUp`, observes the same three in the same order.
+  expect(fromDraw).toEqual(["click", "click", "dbl"]);
+});
+
 test("appends control values to action prefixes without losing option ids", async ({ page }) => {
   const prefixedFrame = makeCommandBuffer([
     { id: "root", kind: NodeKind.Root, bounds: [0, 0, 320, 120], children: ["combo", "field", "toggle"] },

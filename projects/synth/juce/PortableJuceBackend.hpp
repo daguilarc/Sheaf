@@ -404,9 +404,11 @@ private:
     class RetainedDrawComponent final : public juce::Component
     {
     public:
-        explicit RetainedDrawComponent(std::function<void(const synth::ui::NodeId&, float)> dragDispatch,
+        explicit RetainedDrawComponent(std::function<void(const synth::ui::NodeId&)> clickDispatch,
+                                       std::function<void(const synth::ui::NodeId&, float)> dragDispatch,
                                        std::function<void(const synth::ui::NodeId&)> doubleClickDispatch)
-            : dragDispatch_(std::move(dragDispatch))
+            : clickDispatch_(std::move(clickDispatch))
+            , dragDispatch_(std::move(dragDispatch))
             , doubleClickDispatch_(std::move(doubleClickDispatch))
         {
         }
@@ -414,15 +416,21 @@ private:
         void SetNode(synth::ui::NodeId id,
                      std::vector<synth::ui::DrawCommand> commands,
                      juce::Rectangle<float> nodeBounds,
+                     bool acceptsClick,
                      bool acceptsDrag,
                      bool acceptsDoubleClick)
         {
             id_ = std::move(id);
             commands_ = std::move(commands);
             nodeBounds_ = nodeBounds;
+            acceptsClick_ = acceptsClick;
             acceptsDrag_ = acceptsDrag;
             acceptsDoubleClick_ = acceptsDoubleClick;
-            setInterceptsMouseClicks(acceptsDrag_ || acceptsDoubleClick_, false);
+            // sru-52 widens this to the plain-click case. The inert case is
+            // unchanged: a Draw node carrying no action at all still intercepts
+            // nothing, so sru-25's translucent visualizer underlays keep passing
+            // clicks through to the encoders beneath them.
+            setInterceptsMouseClicks(acceptsClick_ || acceptsDrag_ || acceptsDoubleClick_, false);
             repaint();
         }
 
@@ -436,10 +444,8 @@ private:
 
         void mouseDown(const juce::MouseEvent& event) override
         {
-            if (acceptsDrag_)
-            {
-                lastMousePosition_ = event.position;
-            }
+            lastMousePosition_ = event.position;
+            draggedPastThreshold_ = false;
         }
 
         void mouseDrag(const juce::MouseEvent& event) override
@@ -454,11 +460,31 @@ private:
             {
                 return;
             }
+            draggedPastThreshold_ = true;
             if (dragDispatch_)
             {
                 dragDispatch_(id_, delta);
             }
             lastMousePosition_ = event.position;
+        }
+
+        // sru-52: the plain click is derived from the drag bookkeeping above
+        // rather than from a threshold of its own, so a gesture that already
+        // moved past `kPointerDragThreshold` is a drag and never also a click.
+        // A release off the node is not a click either — `juce::Button` needs
+        // `isOver` at mouse-up, and the DOM fires `click` on the common ancestor
+        // of the press and the release — so neither backend reads one as one.
+        void mouseUp(const juce::MouseEvent& event) override
+        {
+            if (!acceptsClick_ || draggedPastThreshold_
+                || !getLocalBounds().toFloat().contains(event.position))
+            {
+                return;
+            }
+            if (clickDispatch_)
+            {
+                clickDispatch_(id_);
+            }
         }
 
         void mouseDoubleClick(const juce::MouseEvent&) override
@@ -474,10 +500,13 @@ private:
         std::vector<synth::ui::DrawCommand> commands_;
         juce::Rectangle<float> nodeBounds_;
         juce::Point<float> lastMousePosition_;
+        std::function<void(const synth::ui::NodeId&)> clickDispatch_;
         std::function<void(const synth::ui::NodeId&, float)> dragDispatch_;
         std::function<void(const synth::ui::NodeId&)> doubleClickDispatch_;
+        bool acceptsClick_ = false;
         bool acceptsDrag_ = false;
         bool acceptsDoubleClick_ = false;
+        bool draggedPastThreshold_ = false;
     };
 
     const synth::ui::Node* RootNode() const
@@ -1109,6 +1138,9 @@ private:
             case synth::ui::NodeKind::Draw:
             {
                 auto draw = std::make_unique<RetainedDrawComponent>(
+                    [this](const synth::ui::NodeId& id) {
+                        DispatchCurrentNodeAction(id);
+                    },
                     [this](const synth::ui::NodeId& id, float delta) {
                         DispatchCurrentNodePointerDragAction(id, delta);
                     },
@@ -1279,6 +1311,7 @@ private:
                 draw.SetNode(node.id,
                              node.drawCommands,
                              nodeBounds,
+                             node.action.has_value(),
                              node.pointerDragAction.has_value(),
                              node.doubleClickAction.has_value());
                 break;
