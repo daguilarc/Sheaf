@@ -449,9 +449,9 @@ inline ui::NodeTree BuildSyncPageTree(const SyncPageSnapshot& snapshot, ui::Boun
         tree.nodes.push_back(std::move(node));
     };
 
-    const float contentX = area.x + Layout::kPageMargin;
+    const float contentX = Layout::kPageMargin;
     const float contentWidth = std::max(0.0f, area.width - Layout::kPageMargin * 2.0f);
-    float y = area.y + Layout::kPageMargin;
+    float y = Layout::kPageMargin;
 
     ui::Node back;
     back.id = NodeIds::kSyncBack;
@@ -467,7 +467,7 @@ inline ui::NodeTree BuildSyncPageTree(const SyncPageSnapshot& snapshot, ui::Boun
 
     constexpr std::size_t kRemainingRows = 14;
     const float remainingHeight =
-        std::max(0.0f, area.y + area.height - Layout::kPageMargin - y);
+        std::max(0.0f, area.height - Layout::kPageMargin - y);
     const float gap = remainingHeight >= 280.0f ? 3.0f : 1.0f;
     const float rowHeight = std::max(
         1.0f,
@@ -554,8 +554,8 @@ inline ui::NodeTree BuildAudioPageTree(const AudioPageSnapshot& snapshot, ui::Bo
         tree.nodes.push_back(std::move(node));
     };
 
-    float y = area.y + Layout::kPageMargin;
-    const float contentX = area.x + Layout::kPageMargin;
+    float y = Layout::kPageMargin;
+    const float contentX = Layout::kPageMargin;
     const float contentWidth = area.width - Layout::kPageMargin * 2.0f;
 
     ui::Node backButton;

@@ -2323,8 +2323,8 @@ private:
             tree.nodes.push_back(std::move(node));
         };
 
-        float y = area.y + ControllersLayout::kPageMargin;
-        const float contentX = area.x + ControllersLayout::kPageMargin;
+        float y = ControllersLayout::kPageMargin;
+        const float contentX = ControllersLayout::kPageMargin;
         const float contentWidth = area.width - ControllersLayout::kPageMargin * 2.0f;
 
         ui::Node backButton;
@@ -2350,7 +2350,7 @@ private:
         ui::Node scrollArea;
         scrollArea.id = NodeIds::kScroll;
         scrollArea.kind = ui::NodeKind::ScrollArea;
-        const float scrollBottom = area.y + area.height - ControllersLayout::kStatusRowHeight - ControllersLayout::kRowGap - ControllersLayout::kPageMargin;
+        const float scrollBottom = area.height - ControllersLayout::kStatusRowHeight - ControllersLayout::kRowGap - ControllersLayout::kPageMargin;
         scrollArea.bounds = {contentX, y, contentWidth, scrollBottom - y};
         scrollArea.scrollContentWidth = std::max(contentWidth, ControllersLayout::kControllerHeaderMinWidth);
         scrollArea.scrollContentHeight = scrollArea.bounds.height;

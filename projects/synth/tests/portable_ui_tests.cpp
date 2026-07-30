@@ -1477,6 +1477,88 @@ int main()
     Require(FindNodeById(audioTree, synth::runtime_ui::NodeIds::kAudioDeviceLine) != nullptr, "audio device line");
     Require(FindNodeById(audioTree, synth::runtime_ui::NodeIds::kAudioStatusLine) != nullptr, "audio status line");
 
+    {
+        const synth::ui::Bounds originZero{0.0f, 0.0f, 640.0f, 480.0f};
+        const synth::ui::Bounds shifted{12.0f, 6.0f, 640.0f, 480.0f};
+        const synth::ui::NodeTree audioOriginZero =
+            synth::runtime_ui::BuildAudioPageTree(audioSnapshot, originZero);
+        const synth::ui::NodeTree audioShifted =
+            synth::runtime_ui::BuildAudioPageTree(audioSnapshot, shifted);
+        const synth::ui::Node* audioBackZero =
+            FindNodeById(audioOriginZero, synth::runtime_ui::NodeIds::kAudioBack);
+        const synth::ui::Node* audioBackShifted =
+            FindNodeById(audioShifted, synth::runtime_ui::NodeIds::kAudioBack);
+        Require(audioBackZero != nullptr && audioBackShifted != nullptr,
+                "audio back exists for origin-zero and shifted areas");
+        Require(audioBackZero->bounds.x == audioBackShifted->bounds.x &&
+                    audioBackZero->bounds.y == audioBackShifted->bounds.y &&
+                    audioBackZero->bounds.width == audioBackShifted->bounds.width &&
+                    audioBackZero->bounds.height == audioBackShifted->bounds.height,
+                "audio root-level children are root-relative, not area-origin absolute");
+
+        synth::runtime_ui::SyncPageSnapshot syncSnapshot;
+        const synth::ui::NodeTree syncOriginZero =
+            synth::runtime_ui::BuildSyncPageTree(syncSnapshot, originZero);
+        const synth::ui::NodeTree syncShifted =
+            synth::runtime_ui::BuildSyncPageTree(syncSnapshot, shifted);
+        const synth::ui::Node* syncBackZero =
+            FindNodeById(syncOriginZero, synth::runtime_ui::NodeIds::kSyncBack);
+        const synth::ui::Node* syncBackShifted =
+            FindNodeById(syncShifted, synth::runtime_ui::NodeIds::kSyncBack);
+        const synth::ui::Node* syncSendZero =
+            FindNodeById(syncOriginZero, synth::runtime_ui::NodeIds::kSyncSendClock);
+        const synth::ui::Node* syncSendShifted =
+            FindNodeById(syncShifted, synth::runtime_ui::NodeIds::kSyncSendClock);
+        Require(syncBackZero != nullptr && syncBackShifted != nullptr &&
+                    syncSendZero != nullptr && syncSendShifted != nullptr,
+                "sync root-level children exist for origin-zero and shifted areas");
+        Require(syncBackZero->bounds.x == syncBackShifted->bounds.x &&
+                    syncBackZero->bounds.y == syncBackShifted->bounds.y &&
+                    syncBackZero->bounds.width == syncBackShifted->bounds.width &&
+                    syncBackZero->bounds.height == syncBackShifted->bounds.height,
+                "sync root-level children are root-relative, not area-origin absolute");
+        Require(syncSendZero->bounds.y == syncSendShifted->bounds.y &&
+                    syncSendZero->bounds.height == syncSendShifted->bounds.height,
+                "sync remaining-height allocation ignores the area origin");
+
+        synth::MidiInstrumentConfig controllerInstrument;
+        synth::MidiConnectionState controllerConnection;
+        synth::runtime_ui::ControllersPageCallbacks controllerCallbacks;
+        controllerCallbacks.instrumentSnapshot = [&controllerInstrument] {
+            return controllerInstrument;
+        };
+        controllerCallbacks.connectionState = [&controllerConnection] {
+            return controllerConnection;
+        };
+        synth::runtime_ui::ControllersPageSurface controllersSurface(std::move(controllerCallbacks));
+        controllersSurface.SetContentBounds(originZero);
+        controllersSurface.MarkDirty();
+        controllersSurface.RefreshOnTick();
+        const synth::ui::NodeTree controllersOriginZero = controllersSurface.BuildTree();
+        controllersSurface.SetContentBounds(shifted);
+        controllersSurface.MarkDirty();
+        const synth::ui::NodeTree controllersShifted = controllersSurface.BuildTree();
+        const synth::ui::Node* controllersBackZero =
+            FindNodeById(controllersOriginZero, synth::runtime_ui::NodeIds::kBack);
+        const synth::ui::Node* controllersBackShifted =
+            FindNodeById(controllersShifted, synth::runtime_ui::NodeIds::kBack);
+        const synth::ui::Node* controllersScrollZero =
+            FindNodeById(controllersOriginZero, synth::runtime_ui::NodeIds::kScroll);
+        const synth::ui::Node* controllersScrollShifted =
+            FindNodeById(controllersShifted, synth::runtime_ui::NodeIds::kScroll);
+        Require(controllersBackZero != nullptr && controllersBackShifted != nullptr &&
+                    controllersScrollZero != nullptr && controllersScrollShifted != nullptr,
+                "controllers root-level children exist for origin-zero and shifted areas");
+        Require(controllersBackZero->bounds.x == controllersBackShifted->bounds.x &&
+                    controllersBackZero->bounds.y == controllersBackShifted->bounds.y &&
+                    controllersBackZero->bounds.width == controllersBackShifted->bounds.width &&
+                    controllersBackZero->bounds.height == controllersBackShifted->bounds.height,
+                "controllers root-level children are root-relative, not area-origin absolute");
+        Require(controllersScrollZero->bounds.y == controllersScrollShifted->bounds.y &&
+                    controllersScrollZero->bounds.height == controllersScrollShifted->bounds.height,
+                "controllers scroll extent ignores the area origin");
+    }
+
     synth::runtime_ui::FilePageSnapshot fileSnapshot;
     fileSnapshot.patchNameText = "my_patch";
     fileSnapshot.statusText = "Save requested";
