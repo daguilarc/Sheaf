@@ -1,6 +1,7 @@
 #pragma once
 
 #include "synth/Color.hpp"
+#include "synth/PortableUI.hpp"
 
 namespace synth::pagestyle {
 
@@ -24,5 +25,11 @@ inline constexpr Color kListRowButton = Color::Rgb(34, 39, 44);
 inline constexpr Color kSelectedPanel = Color::Rgb(53, 80, 96);
 inline constexpr Color kListRowPanel = Color::Rgb(34, 39, 44);
 inline constexpr Color kDefaultPanel = Color::Rgb(30, 34, 38);
+
+inline constexpr ui::TextStyle kDefaultTextStyle{kDefaultTextSize, kDefaultText, ui::TextAlign::Left};
+inline constexpr ui::TextStyle kDisabledTextStyle{kDefaultTextSize, kDisabledText, ui::TextAlign::Left};
+inline constexpr ui::TextStyle kDangerTextStyle{kDefaultTextSize, kDangerText, ui::TextAlign::Left};
+inline constexpr ui::TextStyle kMutedTextStyle{kDefaultTextSize, kMutedText, ui::TextAlign::Left};
+inline constexpr ui::TextStyle kMutedTitleTextStyle{kTitleTextSize, kMutedTitleText, ui::TextAlign::Left};
 
 }  // namespace synth::pagestyle

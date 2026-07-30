@@ -18,6 +18,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <stdexcept>
@@ -81,6 +82,92 @@ const synth::ui::Node& FindNode(const synth::ui::NodeTree& tree, const char* id)
 const synth::ui::Node& FindNode(const synth::ui::NodeTree& tree, const std::string& id)
 {
     return FindNode(tree, id.c_str());
+}
+
+bool HasNode(const synth::ui::NodeTree& tree, const char* id)
+{
+    return FindNodeById(tree, id) != nullptr;
+}
+
+std::string ReadSource(const std::string& repoRelativePath)
+{
+    std::filesystem::path prefix = std::filesystem::current_path();
+    while (!prefix.empty())
+    {
+        const std::filesystem::path candidate = prefix / repoRelativePath;
+        std::ifstream stream(candidate);
+        if (stream)
+        {
+            return std::string(std::istreambuf_iterator<char>(stream),
+                               std::istreambuf_iterator<char>());
+        }
+        const std::filesystem::path next = prefix.parent_path();
+        if (next == prefix)
+        {
+            break;
+        }
+        prefix = next;
+    }
+    throw std::runtime_error("missing source file: " + repoRelativePath);
+}
+
+bool FunctionBodyContains(const std::string& source, const std::string& functionName, const std::string& needle)
+{
+    const std::string marker = functionName + "(";
+    const std::size_t signature = source.find(marker);
+    if (signature == std::string::npos)
+    {
+        throw std::runtime_error("missing function: " + functionName);
+    }
+    const std::size_t bodyStart = source.find('{', signature);
+    if (bodyStart == std::string::npos)
+    {
+        throw std::runtime_error("missing function body: " + functionName);
+    }
+    int depth = 0;
+    for (std::size_t i = bodyStart; i < source.size(); ++i)
+    {
+        if (source[i] == '{')
+        {
+            ++depth;
+        }
+        else if (source[i] == '}')
+        {
+            --depth;
+            if (depth == 0)
+            {
+                return source.substr(bodyStart, i - bodyStart + 1).find(needle) != std::string::npos;
+            }
+        }
+    }
+    throw std::runtime_error("unterminated function body: " + functionName);
+}
+
+std::vector<float> ColumnXOffsetsOf(const synth::ui::NodeTree& tree, const char* formId, std::size_t column)
+{
+    const synth::ui::Node& form = FindNode(tree, formId);
+    std::vector<float> offsets;
+    for (const synth::ui::NodeId& rowId : form.children)
+    {
+        const synth::ui::Node& row = FindNode(tree, rowId.value);
+        if (row.kind != synth::ui::NodeKind::Row || row.children.size() <= column)
+        {
+            continue;
+        }
+        offsets.push_back(FindNode(tree, row.children[column].value).bounds.x);
+    }
+    return offsets;
+}
+
+bool AllEqual(const std::vector<float>& offsets)
+{
+    if (offsets.empty())
+    {
+        return false;
+    }
+    return std::all_of(offsets.begin(), offsets.end(), [&](float value) {
+        return std::fabs(value - offsets.front()) <= 0.0001f;
+    });
 }
 
 int CountRootNodes(const synth::ui::NodeTree& tree)
@@ -822,6 +909,115 @@ static void TestCaptionIsAnEmittedLabelNodeNotAField()
             "the author's container holds the .row, not the bare control");
 }
 
+static void TestComboBoxAcceptsRuntimeOptionVectors()
+{
+    synth::ui::Builder builder;
+    builder.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    const std::vector<synth::ui::ControlOption> options = {{"system_default", "System Default"},
+                                                           {"speakers", "Speakers"}};
+    builder.ComboBox("device", "", options, "speakers", synth::ui::Action::Named("pick"));
+
+    const synth::ui::NodeTree tree = builder.Build();
+    const synth::ui::Node& combo = FindNode(tree, "device");
+    Require(combo.options.size() == 2 && combo.options[1].id == "speakers" &&
+                combo.options[1].label == "Speakers",
+            "ComboBox carries runtime-provided option vectors");
+}
+
+static void TestSyncPageAlignsThroughTheFormGrid()
+{
+    synth::runtime_ui::SyncPageSnapshot snapshot;
+    snapshot.staged = {.sendClock = true,
+                       .receiveClock = false,
+                       .sendTransport = true,
+                       .receiveTransport = false,
+                       .ppqn = 96};
+    const synth::ui::NodeTree tree =
+        synth::runtime_ui::BuildSyncPageTree(snapshot, {0.0f, 0.0f, 900.0f, 560.0f});
+
+    Require(AllEqual(ColumnXOffsetsOf(tree, "runtime.sync.form", 0)),
+            "every Sync label starts at the same form-grid x-offset");
+    Require(AllEqual(ColumnXOffsetsOf(tree, "runtime.sync.form", 1)),
+            "every Sync control starts at the same form-grid x-offset");
+    Require(FindNode(tree, std::string(synth::runtime_ui::NodeIds::kSyncPpqn) + ".caption").text ==
+                "PPQN (1-960)",
+            "the Sync PPQN field keeps its user-facing caption outside the text field");
+}
+
+static void TestSyncPageFitsWithinTheRuntimeRoot()
+{
+    synth::runtime_ui::SyncPageSnapshot snapshot;
+    snapshot.validationText = "PPQN must be in the range 1 to 960";
+    snapshot.warningText = "96 PPQN is nonstandard";
+    const synth::ui::NodeTree tree =
+        synth::runtime_ui::BuildSyncPageTree(snapshot, {0.0f, 0.0f, 780.0f, 585.0f});
+
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        if (node.id.value.rfind("runtime.sync.", 0) == 0 &&
+            node.id.value != synth::runtime_ui::NodeIds::kSyncRoot)
+        {
+            RequireNodeContainedInParent(tree, node.id.value);
+        }
+    }
+}
+
+static void TestSyncAndAudioPagesHaveNoOffsetArithmetic()
+{
+    const std::string source = ReadSource("projects/synth/include/synth/RuntimePages.hpp");
+    for (const std::string& functionName : {"BuildSyncPageTree", "BuildAudioPageTree"})
+    {
+        Require(!FunctionBodyContains(source, functionName, "float y"),
+                "rebuilt page construction declares layout instead of a y cursor");
+        Require(!FunctionBodyContains(source, functionName, "y +="),
+                "rebuilt page construction has no page-level y offset accumulation");
+    }
+}
+
+static void TestAudioSelectorsAreCaptionedWhileADeviceIsSelected()
+{
+    synth::runtime_ui::AudioPageSnapshot snapshot;
+    snapshot.outputOptions =
+        synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Output"});
+    snapshot.inputOptions =
+        synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Microphone"});
+    snapshot.selectedOutputId = "Built-in Output";
+    snapshot.selectedInputId = "Built-in Microphone";
+    snapshot.showInputCombo = true;
+    const synth::ui::NodeTree tree =
+        synth::runtime_ui::BuildAudioPageTree(snapshot, {0.0f, 0.0f, 900.0f, 560.0f});
+
+    Require(FindNode(tree, std::string(synth::runtime_ui::NodeIds::kAudioOutput) + ".caption").text ==
+                "Output device",
+            "the output selector shows a visible caption while a device is selected");
+    Require(FindNode(tree, std::string(synth::runtime_ui::NodeIds::kAudioInput) + ".caption").text ==
+                "Input device",
+            "the input selector shows a visible caption while a device is selected");
+    Require(FindNode(tree, synth::runtime_ui::NodeIds::kAudioOutput).label.empty(),
+            "the output selector caption does not route through ComboBox::label");
+    Require(FindNode(tree, synth::runtime_ui::NodeIds::kAudioInput).label.empty(),
+            "the input selector caption does not route through ComboBox::label");
+}
+
+static void TestHiddenInputSelectorLeavesNoOrphanedCaption()
+{
+    synth::runtime_ui::AudioPageSnapshot snapshot;
+    snapshot.outputOptions =
+        synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Output"});
+    snapshot.inputOptions =
+        synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Microphone"});
+    snapshot.selectedOutputId = "Built-in Output";
+    snapshot.selectedInputId = "Built-in Microphone";
+    snapshot.showInputCombo = false;
+    const synth::ui::NodeTree tree =
+        synth::runtime_ui::BuildAudioPageTree(snapshot, {0.0f, 0.0f, 900.0f, 560.0f});
+
+    Require(!HasNode(tree, (std::string(synth::runtime_ui::NodeIds::kAudioInput) + ".caption").c_str()),
+            "hidden input selector leaves no orphaned caption");
+    Require(!HasNode(tree, synth::runtime_ui::NodeIds::kAudioInput),
+            "hidden input selector leaves no orphaned control");
+}
+
 int main()
 {
     TestContainersNestToArbitraryDepth();
@@ -832,6 +1028,12 @@ int main()
     TestConstructionExpressesFullControlState();
     TestUnstyledNodesCarryNothing();
     TestCaptionIsAnEmittedLabelNodeNotAField();
+    TestComboBoxAcceptsRuntimeOptionVectors();
+    TestSyncPageAlignsThroughTheFormGrid();
+    TestSyncPageFitsWithinTheRuntimeRoot();
+    TestSyncAndAudioPagesHaveNoOffsetArithmetic();
+    TestAudioSelectorsAreCaptionedWhileADeviceIsSelected();
+    TestHiddenInputSelectorLeavesNoOrphanedCaption();
 
     TestGangedRandomLfoVisualizer();
     TestScopeWaveformCommandsAreNodeLocal();

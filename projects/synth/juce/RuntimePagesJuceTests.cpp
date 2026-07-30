@@ -108,9 +108,12 @@ int main()
     synth::runtime_ui::AudioPageSurface audioSurface;
     synth::runtime_ui::AudioPageSnapshot& audioSnapshot = audioSurface.Snapshot();
     audioSnapshot.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Speakers"});
+    audioSnapshot.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Microphone"});
     audioSnapshot.deviceLineText = "Speakers: 48000 Hz, 512 frames";
     audioSnapshot.statusLineText = "Audio: Speakers";
     audioSnapshot.selectedOutputId = "Speakers";
+    audioSnapshot.selectedInputId = "Microphone";
+    audioSnapshot.showInputCombo = true;
     audioSurface.SetContentBounds({0.0f, 0.0f, 640.0f, 200.0f});
 
     synth_juce::PortableComponent audioRenderer(audioSurface);
@@ -118,9 +121,27 @@ int main()
     audioRenderer.RefreshFromSurface();
     Require(audioRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kAudioOutput) != nullptr,
             "audio output combo renders");
+    Require(audioRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kAudioInput) != nullptr,
+            "audio input combo renders when configured");
+    auto* outputCaption = dynamic_cast<juce::Label*>(
+        audioRenderer.FindByNodeId((std::string(synth::runtime_ui::NodeIds::kAudioOutput) + ".caption").c_str()));
+    Require(outputCaption != nullptr && outputCaption->getText() == juce::String("Output device"),
+            "JUCE audio output caption remains visible while a device is selected");
+    auto* inputCaption = dynamic_cast<juce::Label*>(
+        audioRenderer.FindByNodeId((std::string(synth::runtime_ui::NodeIds::kAudioInput) + ".caption").c_str()));
+    Require(inputCaption != nullptr && inputCaption->getText() == juce::String("Input device"),
+            "JUCE audio input caption remains visible while a device is selected");
     Require(audioRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kAudioDeviceLine) != nullptr,
             "audio device line renders");
 
+    audioSnapshot.showInputCombo = false;
+    audioRenderer.RefreshFromSurface();
+    Require(audioRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kAudioInput) == nullptr,
+            "JUCE audio input combo is removed when the input selector is hidden");
+    Require(audioRenderer.FindByNodeId((std::string(synth::runtime_ui::NodeIds::kAudioInput) + ".caption").c_str()) == nullptr,
+            "JUCE audio input caption is removed with the hidden input selector");
+
+    audioSnapshot.showInputCombo = true;
     audioSnapshot.deviceLineText = "Speakers: 44100 Hz, 256 frames";
     audioRenderer.RefreshFromSurface();
     const synth::ui::NodeTree refreshedAudioTree = audioSurface.BuildTree();

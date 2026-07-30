@@ -447,13 +447,30 @@ public:
                       std::string selectedOption,
                       Action action,
                       ControlStyle style = {}) {
+        std::vector<ControlOption> vectorOptions;
+        vectorOptions.reserve(options.size());
+        for (const auto& option : options) {
+            vectorOptions.push_back(ControlOption{option.first, option.second});
+        }
+        return ComboBox(std::move(id),
+                        std::move(label),
+                        vectorOptions,
+                        std::move(selectedOption),
+                        std::move(action),
+                        std::move(style));
+    }
+
+    Builder& ComboBox(std::string id,
+                      std::string label,
+                      const std::vector<ControlOption>& options,
+                      std::string selectedOption,
+                      Action action,
+                      ControlStyle style = {}) {
         Node node;
         node.id = NodeId(std::move(id));
         node.kind = NodeKind::ComboBox;
         node.label = std::move(label);
-        for (const auto& option : options) {
-            node.options.push_back(ControlOption{option.first, option.second});
-        }
+        node.options = options;
         node.selectedOption = std::move(selectedOption);
         node.action = std::move(action);
         return FinishControl(std::move(node), std::move(style));

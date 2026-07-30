@@ -5,6 +5,8 @@
 
 #include "synth/PatchBrowser.hpp"
 #include "synth/PortableUI.hpp"
+#include "synth/PortableUIBuilders.hpp"
+#include "synth/RuntimePageStyle.hpp"
 #include "synth/MasterClock.hpp"
 #include "synth/MidiController.hpp"
 
@@ -39,11 +41,14 @@ inline constexpr const char* kAudioRoot = "runtime.audio.root";
 inline constexpr const char* kAudioBack = "runtime.audio.back";
 inline constexpr const char* kAudioOutput = "runtime.audio.output";
 inline constexpr const char* kAudioInput = "runtime.audio.input";
+inline constexpr const char* kAudioForm = "runtime.audio.form";
 inline constexpr const char* kAudioDeviceLine = "runtime.audio.device_line";
 inline constexpr const char* kAudioStatusLine = "runtime.audio.status_line";
 
 inline constexpr const char* kSyncRoot = "runtime.sync.root";
 inline constexpr const char* kSyncBack = "runtime.sync.back";
+inline constexpr const char* kSyncForm = "runtime.sync.form";
+inline constexpr const char* kSyncStatus = "runtime.sync.status";
 inline constexpr const char* kSyncSendClock = "runtime.sync.send_clock";
 inline constexpr const char* kSyncReceiveClock = "runtime.sync.receive_clock";
 inline constexpr const char* kSyncSendTransport = "runtime.sync.send_transport";
@@ -328,6 +333,85 @@ inline std::string BuildNegotiatedDeviceLine(const std::string& deviceName,
 
 }  // namespace Layout
 
+namespace PageControls {
+
+inline ui::LayoutOptions CompactFormRowLayout()
+{
+    ui::LayoutOptions layout;
+    layout.padding = 0.0f;
+    layout.gap = ui::kSpacing.labelGap;
+    return layout;
+}
+
+inline ui::ControlStyle Button()
+{
+    ui::ControlStyle style;
+    style.color = pagestyle::kDefaultButton;
+    style.textStyle = pagestyle::kDefaultTextStyle;
+    return style;
+}
+
+inline ui::ControlStyle Toggle(std::string caption)
+{
+    ui::ControlStyle style = Button();
+    style.caption = std::move(caption);
+    style.layout = CompactFormRowLayout();
+    return style;
+}
+
+inline ui::ControlStyle Field(std::string caption)
+{
+    ui::ControlStyle style;
+    style.color = pagestyle::kDefaultPanel;
+    style.textStyle = pagestyle::kDefaultTextStyle;
+    style.caption = std::move(caption);
+    style.layout = CompactFormRowLayout();
+    return style;
+}
+
+inline ui::ControlStyle MutedText()
+{
+    ui::ControlStyle style;
+    style.textStyle = pagestyle::kMutedTextStyle;
+    return style;
+}
+
+inline ui::ControlStyle DangerText()
+{
+    ui::ControlStyle style;
+    style.textStyle = pagestyle::kDangerTextStyle;
+    return style;
+}
+
+inline ui::LayoutOptions FormGridLayout()
+{
+    ui::LayoutOptions layout;
+    layout.formGrid = true;
+    layout.padding = 0.0f;
+    return layout;
+}
+
+inline ui::LayoutOptions StatusStackLayout()
+{
+    ui::LayoutOptions layout;
+    layout.padding = 0.0f;
+    layout.gap = Layout::kRowGap;
+    return layout;
+}
+
+inline std::vector<ui::ControlOption> ControlOptionsFor(const std::vector<AudioDeviceOption>& options)
+{
+    std::vector<ui::ControlOption> controls;
+    controls.reserve(options.size());
+    for (const AudioDeviceOption& option : options)
+    {
+        controls.push_back(ui::ControlOption{option.id, option.label});
+    }
+    return controls;
+}
+
+}  // namespace PageControls
+
 inline ui::NodeTree BuildSidebarTree(const SidebarSnapshot& snapshot)
 {
     const ui::Bounds rootBounds = Layout::SidebarRootBounds();
@@ -437,190 +521,99 @@ inline std::string FormatSyncOutputLatency(std::uint64_t latencyMicros)
 
 inline ui::NodeTree BuildSyncPageTree(const SyncPageSnapshot& snapshot, ui::Bounds area)
 {
-    ui::NodeTree tree;
-    ui::Node root;
-    root.id = NodeIds::kSyncRoot;
-    root.kind = ui::NodeKind::Root;
-    root.bounds = area;
-    tree.nodes.push_back(root);
-
-    auto appendChild = [&](ui::Node node) {
-        tree.nodes.front().children.push_back(node.id);
-        tree.nodes.push_back(std::move(node));
-    };
-
-    const float contentX = Layout::kPageMargin;
-    const float contentWidth = std::max(0.0f, area.width - Layout::kPageMargin * 2.0f);
-    float y = Layout::kPageMargin;
-
-    ui::Node back;
-    back.id = NodeIds::kSyncBack;
-    back.kind = ui::NodeKind::Button;
-    back.label = "Back";
-    back.bounds = {contentX,
-                   y,
-                   std::min(Layout::kBackButtonWidth, contentWidth),
-                   Layout::kBackRowHeight};
-    back.action = ui::Action::Named(Actions::kSyncBack);
-    appendChild(std::move(back));
-    y += Layout::kBackRowHeight + Layout::kRowGap;
-
-    constexpr std::size_t kRemainingRows = 14;
-    const float remainingHeight =
-        std::max(0.0f, area.height - Layout::kPageMargin - y);
-    const float gap = remainingHeight >= 280.0f ? 3.0f : 1.0f;
-    const float rowHeight = std::max(
-        1.0f,
-        std::min(28.0f,
-                 (remainingHeight - gap * static_cast<float>(kRemainingRows - 1)) /
-                     static_cast<float>(kRemainingRows)));
-
-    auto appendRow = [&](ui::Node node) {
-        node.bounds = {contentX, y, contentWidth, rowHeight};
-        appendChild(std::move(node));
-        y += rowHeight + gap;
-    };
-    auto appendToggle = [&](const char* id,
-                            const char* label,
-                            bool checked,
-                            const char* action) {
-        ui::Node node;
-        node.id = id;
-        node.kind = ui::NodeKind::Toggle;
-        node.label = label;
-        node.checked = checked;
-        node.action = ui::Action::Named(action);
-        appendRow(std::move(node));
-    };
-    appendToggle(NodeIds::kSyncSendClock,
-                 "Send clock",
-                 snapshot.staged.sendClock,
-                 Actions::kSyncSendClock);
-    appendToggle(NodeIds::kSyncReceiveClock,
-                 "Receive clock",
-                 snapshot.staged.receiveClock,
-                 Actions::kSyncReceiveClock);
-    appendToggle(NodeIds::kSyncSendTransport,
-                 "Send transport",
-                 snapshot.staged.sendTransport,
-                 Actions::kSyncSendTransport);
-    appendToggle(NodeIds::kSyncReceiveTransport,
-                 "Receive transport",
-                 snapshot.staged.receiveTransport,
-                 Actions::kSyncReceiveTransport);
-
-    ui::Node ppqn;
-    ppqn.id = NodeIds::kSyncPpqn;
-    ppqn.kind = ui::NodeKind::TextField;
-    ppqn.label = "PPQN (1-960)";
-    ppqn.text = std::to_string(snapshot.staged.ppqn);
-    ppqn.action = ui::Action::Named(Actions::kSyncPpqn);
-    appendRow(std::move(ppqn));
-
-    auto appendStatus = [&](const char* id, std::string text) {
-        ui::Node node;
-        node.id = id;
-        node.kind = ui::NodeKind::StatusText;
-        node.text = std::move(text);
-        appendRow(std::move(node));
-    };
-    appendStatus(NodeIds::kSyncValidation, snapshot.validationText);
-    appendStatus(NodeIds::kSyncWarning, snapshot.warningText);
-    appendStatus(NodeIds::kSyncBpm, FormatSyncBpm(snapshot.status.currentBpm));
-    appendStatus(NodeIds::kSyncLock, "Lock: " + snapshot.status.lockState);
-    appendStatus(NodeIds::kSyncSource, "Source: " + snapshot.status.sourceName);
-    appendStatus(NodeIds::kSyncOutputLatency,
-                 FormatSyncOutputLatency(snapshot.status.outputLatencyMicros));
-    appendStatus(NodeIds::kSyncIgnoredInput,
-                 "Ignored input: " + std::to_string(snapshot.status.ignoredInputCount));
-    appendStatus(NodeIds::kSyncLateEvents,
-                 "Late events: " + std::to_string(snapshot.status.lateEventCount));
-    appendStatus(NodeIds::kSyncDroppedOutput,
-                 "Dropped output: " + std::to_string(snapshot.status.droppedOutputCount));
-    return tree;
+    ui::Builder builder;
+    builder.Root(NodeIds::kSyncRoot, area);
+    builder.Button(NodeIds::kSyncBack, "Back", ui::Action::Named(Actions::kSyncBack), PageControls::Button());
+    builder.Column(NodeIds::kSyncForm, PageControls::FormGridLayout(), [&](ui::Builder& form) {
+        form.Toggle(NodeIds::kSyncSendClock,
+                    "",
+                    snapshot.staged.sendClock,
+                    ui::Action::Named(Actions::kSyncSendClock),
+                    PageControls::Toggle("Send clock"));
+        form.Toggle(NodeIds::kSyncReceiveClock,
+                    "",
+                    snapshot.staged.receiveClock,
+                    ui::Action::Named(Actions::kSyncReceiveClock),
+                    PageControls::Toggle("Receive clock"));
+        form.Toggle(NodeIds::kSyncSendTransport,
+                    "",
+                    snapshot.staged.sendTransport,
+                    ui::Action::Named(Actions::kSyncSendTransport),
+                    PageControls::Toggle("Send transport"));
+        form.Toggle(NodeIds::kSyncReceiveTransport,
+                    "",
+                    snapshot.staged.receiveTransport,
+                    ui::Action::Named(Actions::kSyncReceiveTransport),
+                    PageControls::Toggle("Receive transport"));
+        form.TextField(NodeIds::kSyncPpqn,
+                       "",
+                       std::to_string(snapshot.staged.ppqn),
+                       ui::Action::Named(Actions::kSyncPpqn),
+                       PageControls::Field("PPQN (1-960)"));
+    });
+    builder.Column(NodeIds::kSyncStatus, PageControls::StatusStackLayout(), [&](ui::Builder& status) {
+        status.StatusText(NodeIds::kSyncValidation,
+                          snapshot.validationText,
+                          snapshot.validationText.empty() ? PageControls::MutedText()
+                                                          : PageControls::DangerText());
+        status.StatusText(NodeIds::kSyncWarning,
+                          snapshot.warningText,
+                          snapshot.warningText.empty() ? PageControls::MutedText()
+                                                       : PageControls::DangerText());
+        status.StatusText(NodeIds::kSyncBpm,
+                          FormatSyncBpm(snapshot.status.currentBpm),
+                          PageControls::MutedText());
+        status.StatusText(NodeIds::kSyncLock,
+                          "Lock: " + snapshot.status.lockState,
+                          PageControls::MutedText());
+        status.StatusText(NodeIds::kSyncSource,
+                          "Source: " + snapshot.status.sourceName,
+                          PageControls::MutedText());
+        status.StatusText(NodeIds::kSyncOutputLatency,
+                          FormatSyncOutputLatency(snapshot.status.outputLatencyMicros),
+                          PageControls::MutedText());
+        status.StatusText(NodeIds::kSyncIgnoredInput,
+                          "Ignored input: " + std::to_string(snapshot.status.ignoredInputCount),
+                          PageControls::MutedText());
+        status.StatusText(NodeIds::kSyncLateEvents,
+                          "Late events: " + std::to_string(snapshot.status.lateEventCount),
+                          PageControls::MutedText());
+        status.StatusText(NodeIds::kSyncDroppedOutput,
+                          "Dropped output: " + std::to_string(snapshot.status.droppedOutputCount),
+                          PageControls::MutedText());
+    });
+    return builder.Build(area);
 }
 
 inline ui::NodeTree BuildAudioPageTree(const AudioPageSnapshot& snapshot, ui::Bounds area)
 {
-    ui::NodeTree tree;
-    ui::Node root;
-    root.id = NodeIds::kAudioRoot;
-    root.kind = ui::NodeKind::Root;
-    root.bounds = area;
-    tree.nodes.push_back(root);
-
-    auto appendChild = [&](ui::Node node) {
-        tree.nodes.front().children.push_back(node.id);
-        tree.nodes.push_back(std::move(node));
-    };
-
-    float y = Layout::kPageMargin;
-    const float contentX = Layout::kPageMargin;
-    const float contentWidth = area.width - Layout::kPageMargin * 2.0f;
-
-    ui::Node backButton;
-    backButton.id = NodeIds::kAudioBack;
-    backButton.kind = ui::NodeKind::Button;
-    backButton.label = "Back";
-    backButton.bounds = {contentX, y, Layout::kBackButtonWidth, Layout::kBackRowHeight};
-    backButton.action = ui::Action::Named(Actions::kAudioBack);
-    appendChild(std::move(backButton));
-
-    y += Layout::kBackRowHeight + Layout::kRowGap;
-
-    const float comboWidth = contentWidth / 4.0f > 120.0f ? contentWidth / 4.0f : 120.0f;
-    float comboX = contentX;
-
-    ui::Node outputCombo;
-    outputCombo.id = NodeIds::kAudioOutput;
-    outputCombo.kind = ui::NodeKind::ComboBox;
-    outputCombo.label = "Audio output";
-    for (const AudioDeviceOption& option : snapshot.outputOptions)
-    {
-        outputCombo.options.push_back(ui::ControlOption{option.id, option.label});
-    }
-    outputCombo.selectedOption = snapshot.selectedOutputId;
-    outputCombo.bounds = {comboX, y, comboWidth, Layout::kComboRowHeight};
-    outputCombo.action = ui::Action::Named(Actions::kAudioOutputSelect);
-    appendChild(std::move(outputCombo));
-
-    comboX += comboWidth;
-
-    if (snapshot.showInputCombo)
-    {
-        ui::Node inputCombo;
-        inputCombo.id = NodeIds::kAudioInput;
-        inputCombo.kind = ui::NodeKind::ComboBox;
-        inputCombo.label = "Audio input";
-        for (const AudioDeviceOption& option : snapshot.inputOptions)
+    ui::Builder builder;
+    builder.Root(NodeIds::kAudioRoot, area);
+    builder.Button(NodeIds::kAudioBack, "Back", ui::Action::Named(Actions::kAudioBack), PageControls::Button());
+    builder.Column(NodeIds::kAudioForm, PageControls::FormGridLayout(), [&](ui::Builder& form) {
+        form.ComboBox(NodeIds::kAudioOutput,
+                      "",
+                      PageControls::ControlOptionsFor(snapshot.outputOptions),
+                      snapshot.selectedOutputId,
+                      ui::Action::Named(Actions::kAudioOutputSelect),
+                      PageControls::Field("Output device"));
+        if (snapshot.showInputCombo)
         {
-            inputCombo.options.push_back(ui::ControlOption{option.id, option.label});
+            form.ComboBox(NodeIds::kAudioInput,
+                          "",
+                          PageControls::ControlOptionsFor(snapshot.inputOptions),
+                          snapshot.selectedInputId,
+                          ui::Action::Named(Actions::kAudioInputSelect),
+                          PageControls::Field("Input device"));
         }
-        inputCombo.selectedOption = snapshot.selectedInputId;
-        inputCombo.bounds = {comboX, y, comboWidth, Layout::kComboRowHeight};
-        inputCombo.action = ui::Action::Named(Actions::kAudioInputSelect);
-        appendChild(std::move(inputCombo));
-    }
-
-    y += Layout::kComboRowHeight;
-
-    ui::Node deviceLine;
-    deviceLine.id = NodeIds::kAudioDeviceLine;
-    deviceLine.kind = ui::NodeKind::Label;
-    deviceLine.text = snapshot.deviceLineText;
-    deviceLine.bounds = {contentX, y, contentWidth, Layout::kStatusRowHeight};
-    appendChild(std::move(deviceLine));
-
-    y += Layout::kStatusRowHeight;
-
-    ui::Node statusLine;
-    statusLine.id = NodeIds::kAudioStatusLine;
-    statusLine.kind = ui::NodeKind::StatusText;
-    statusLine.text = snapshot.statusLineText;
-    statusLine.bounds = {contentX, y, contentWidth, Layout::kStatusRowHeight};
-    appendChild(std::move(statusLine));
-
-    return tree;
+    });
+    builder.Label(NodeIds::kAudioDeviceLine,
+                  snapshot.deviceLineText,
+                  PageControls::MutedText());
+    builder.StatusText(NodeIds::kAudioStatusLine,
+                       snapshot.statusLineText,
+                       PageControls::MutedText());
+    return builder.Build(area);
 }
 
 inline const char* FileStatusVariant(const std::string& statusText)
