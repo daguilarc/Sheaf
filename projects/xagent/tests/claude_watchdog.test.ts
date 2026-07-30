@@ -66,6 +66,14 @@ test("launches one fresh isolated no-tools Haiku invocation with bounded stdin",
   const budgetIndex = call.args.indexOf("--max-budget-usd");
   assert.ok(budgetIndex >= 0);
   assert.equal(call.args[budgetIndex + 1], "0.1");
+  const systemPromptIndex = call.args.indexOf("--system-prompt");
+  assert.ok(systemPromptIndex >= 0);
+  const systemPrompt = call.args[systemPromptIndex + 1];
+  assert.ok(typeof systemPrompt === "string");
+  assert.match(systemPrompt, /bounded provider JSON/i);
+  assert.match(systemPrompt, /harness/i);
+  assert.match(systemPrompt, /repeated tools.*ambiguous/i);
+  assert.doesNotMatch(systemPrompt, /sanitized JSON evidence/i);
   assert.deepEqual(call.cwdEntries, []);
   assert.ok(Buffer.byteLength(call.input, "utf8") <= 64 * 1024);
   assert.equal(call.args.some((arg) => arg.includes(process.cwd())), false);

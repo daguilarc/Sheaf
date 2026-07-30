@@ -2,6 +2,7 @@
   "name": "silence",
   "description": "The child process stays alive but produces no transport or semantic activity through the silence timeout. Deterministic monitoring classifies this as a silence attention without ever invoking the semantic watchdog.",
   "original_prompt": "Run the long-running integration suite.",
+  "harness": "codex",
   "elapsed_ms": 300000,
   "events": [],
   "expected_classifier_eligible": false,

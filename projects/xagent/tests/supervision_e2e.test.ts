@@ -86,13 +86,21 @@ test("recorded watchdog fixtures classify and alert as documented", async () => 
 });
 
 async function runFixture(fixture: Fixture): Promise<void> {
+  assert.equal(
+    "expected_suspicion_signals" in fixture,
+    false,
+    `${fixture.name}: fixtures must not encode expected_suspicion_signals`,
+  );
   const clock = new FakeClock();
   const classifier = new ScriptedClassifier(fixture.scripted_verdict);
   const reasons: string[] = [];
-  const adapter = new FakeHarnessAdapter({
+  const adapterOptions = {
     scriptedEvents: [replayFixture(fixture, clock)],
     supportsInterrupt: false,
-  });
+  };
+  const adapter = fixture.harness === "claude_code"
+    ? new ClaudeFakeHarnessAdapter(adapterOptions)
+    : new FakeHarnessAdapter(adapterOptions);
   const supervisor = new Supervisor({
     runId: `xrun_fixture_${fixture.name}`,
     adapter,
@@ -106,7 +114,6 @@ async function runFixture(fixture: Fixture): Promise<void> {
     },
   });
   await supervisor.start();
-  const cursor = supervisor.inspect().sequence;
   await supervisor.submit(fixture.original_prompt);
 
   if (fixture.expected_classifier_eligible) {
@@ -115,6 +122,29 @@ async function runFixture(fixture: Fixture): Promise<void> {
       1,
       `${fixture.name}: expected one classifier call`,
     );
+    const request = classifier.calls[0];
+    assert.ok(request);
+    assert.equal(typeof request.original_prompt, "string");
+    assert.equal(request.harness, fixture.harness ?? "codex");
+    assert.equal(Array.isArray(request.recent_provider_json), true);
+    assert.equal(typeof request.elapsed_ms, "number");
+    assert.equal(typeof request.truncated, "boolean");
+    assert.equal(typeof request.input_bytes, "number");
+    assert.equal(
+      request.input_bytes,
+      Buffer.byteLength(JSON.stringify(request), "utf8"),
+      `${fixture.name}: input_bytes must equal serialized request size`,
+    );
+    if (fixture.expected_classifier_contains !== undefined) {
+      const serialized = JSON.stringify(request.recent_provider_json);
+      for (const needle of fixture.expected_classifier_contains) {
+        assert.equal(
+          serialized.includes(needle),
+          true,
+          `${fixture.name}: classifier request missing ${needle}`,
+        );
+      }
+    }
   } else {
     assert.equal(
       classifier.calls.length,
@@ -177,7 +207,7 @@ async function* replayFixture(fixture: Fixture, clock: FakeClock): AsyncIterable
     } else if (fixture.expected_classifier_eligible) {
       yield {
         type: "raw.provider",
-        harness: "codex",
+        harness: fixture.harness ?? "codex",
         payload: { type: "fixture_progress", step },
       };
       yield {
@@ -518,16 +548,22 @@ test("cursor deduplication: a second await after the completion sequence does no
 type Fixture = {
   readonly name: string;
   readonly original_prompt: string;
+  readonly harness?: "codex" | "claude_code";
   readonly elapsed_ms: number;
   readonly events: readonly unknown[];
   readonly process_exit?: { readonly exit_code: number; readonly signal: string | null };
   readonly expected_classifier_eligible: boolean;
+  readonly expected_classifier_contains?: readonly string[];
   readonly scripted_verdict?: WatchdogVerdict;
   readonly expected_attention: boolean;
   readonly expected_attention_reason?: string;
   readonly expected_terminal_phase?: string;
   readonly expected_terminal_reason?: string;
 };
+
+class ClaudeFakeHarnessAdapter extends FakeHarnessAdapter {
+  override readonly harness = "claude_code" as const;
+}
 
 class ScriptedClassifier implements WatchdogClassifier {
   readonly calls: WatchdogRequest[] = [];

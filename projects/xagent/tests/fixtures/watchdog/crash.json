@@ -2,9 +2,20 @@
   "name": "crash",
   "description": "The owned child process exits unexpectedly. Deterministic monitoring classifies this as a process_exit failure without ever invoking the semantic watchdog.",
   "original_prompt": "Run the build and report the result.",
+  "harness": "codex",
   "elapsed_ms": 5000,
   "events": [
-    { "type": "message.delta", "role": "assistant", "delta": "Starting the build" }
+    {
+      "type": "raw.provider",
+      "harness": "codex",
+      "payload": {
+        "type": "response.output_item.done",
+        "item": {
+          "type": "message",
+          "content": [{ "type": "output_text", "text": "Starting the build" }]
+        }
+      }
+    }
   ],
   "process_exit": { "exit_code": 137, "signal": null },
   "expected_classifier_eligible": false,

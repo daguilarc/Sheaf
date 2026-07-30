@@ -63,7 +63,9 @@ const WATCHDOG_SCHEMA = {
 export const WATCHDOG_SCHEMA_JSON = JSON.stringify(WATCHDOG_SCHEMA);
 
 const WATCHDOG_SYSTEM_PROMPT = [
-  "Classify only the semantic health of the active worker from the supplied sanitized JSON evidence.",
+  "Classify only the semantic health of the active worker from bounded provider JSON.",
+  "Use the harness field to interpret provider-specific records.",
+  "Repeated tools, retries, failures, empty deltas, and unfamiliar transport records are ambiguous and are not by themselves evidence of derailment.",
   "Return healthy, derailed, or uncertain using the required schema.",
   "Evidence entries must be short factual observations already supported by the input.",
   "Do not provide commands, remediation, controller actions, or instructions to the worker.",

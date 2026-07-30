@@ -1,19 +1,72 @@
 {
   "name": "repeated_tool_loop",
-  "description": "The worker calls the same tool repeatedly without producing new semantic progress. The periodic watchdog checkpoint reviews the raw provider JSON and classifies the turn.",
+  "description": "The worker repeats the same tool in production-shaped provider JSON for nine minutes. Repetition never triggers an early Haiku check; the classifier stays idle before the ten-minute periodic checkpoint.",
   "original_prompt": "Fix the failing test in tests/watchdog.test.ts.",
-  "elapsed_ms": 600000,
+  "harness": "codex",
+  "elapsed_ms": 540000,
   "events": [
-    { "type": "message.delta", "role": "assistant", "delta": "Running the test" },
-    { "type": "tool.started", "name": "shell", "input": { "cmd": "npm test -- --test-name-pattern=watchdog" } },
-    { "type": "tool.completed", "name": "shell", "status": "failed", "error": "AssertionError: expected 1 to equal 0" },
-    { "type": "tool.started", "name": "shell", "input": { "cmd": "npm test -- --test-name-pattern=watchdog" } },
-    { "type": "tool.completed", "name": "shell", "status": "failed", "error": "AssertionError: expected 1 to equal 0" },
-    { "type": "tool.started", "name": "shell", "input": { "cmd": "npm test -- --test-name-pattern=watchdog" } },
-    { "type": "tool.completed", "name": "shell", "status": "failed", "error": "AssertionError: expected 1 to equal 0" }
+    {
+      "type": "raw.provider",
+      "harness": "codex",
+      "payload": {
+        "type": "response.output_item.done",
+        "item": {
+          "type": "function_call",
+          "name": "shell",
+          "arguments": "{\"cmd\":\"npm test -- --test-name-pattern=watchdog\"}"
+        }
+      }
+    },
+    {
+      "type": "raw.provider",
+      "harness": "codex",
+      "payload": {
+        "type": "response.function_call_output",
+        "output": "AssertionError: expected 1 to equal 0"
+      }
+    },
+    {
+      "type": "raw.provider",
+      "harness": "codex",
+      "payload": {
+        "type": "response.output_item.done",
+        "item": {
+          "type": "function_call",
+          "name": "shell",
+          "arguments": "{\"cmd\":\"npm test -- --test-name-pattern=watchdog\"}"
+        }
+      }
+    },
+    {
+      "type": "raw.provider",
+      "harness": "codex",
+      "payload": {
+        "type": "response.function_call_output",
+        "output": "AssertionError: expected 1 to equal 0"
+      }
+    },
+    {
+      "type": "raw.provider",
+      "harness": "codex",
+      "payload": {
+        "type": "response.output_item.done",
+        "item": {
+          "type": "function_call",
+          "name": "shell",
+          "arguments": "{\"cmd\":\"npm test -- --test-name-pattern=watchdog\"}"
+        }
+      }
+    },
+    {
+      "type": "raw.provider",
+      "harness": "codex",
+      "payload": {
+        "type": "response.function_call_output",
+        "output": "AssertionError: expected 1 to equal 0"
+      }
+    }
   ],
-  "expected_classifier_eligible": true,
-  "scripted_verdict": { "verdict": "derailed", "confidence": 0.88, "reason_code": "repeated_failed_tool", "evidence": ["Same failing tool fingerprint occurred three times without new progress."] },
-  "expected_attention": true,
-  "false_alert_note": "The periodic checkpoint triggers the check; the classifier returns derailed and advisory attention is emitted. The worker is not auto-interrupted."
+  "expected_classifier_eligible": false,
+  "expected_attention": false,
+  "false_alert_note": "Repetition never triggers an early check. Haiku would evaluate the activity only at a periodic checkpoint."
 }

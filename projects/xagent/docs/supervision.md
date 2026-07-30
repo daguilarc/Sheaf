@@ -189,7 +189,7 @@ Mechanical states are classified deterministically and never invoke Haiku:
 - hard deadline
 - silence timeout
 
-Haiku is eligible only while a live worker is actively producing tokens, messages, or tools. It runs fresh with `--safe-mode`, `--tools ""`, `--strict-mcp-config`, an empty MCP config, `--no-session-persistence`, structured JSON output, bounded input/output, and no repository working directory.
+Haiku is eligible only while a live worker continues emitting provider JSON. It runs fresh with `--safe-mode`, `--tools ""`, `--strict-mcp-config`, an empty MCP config, `--no-session-persistence`, structured JSON output, bounded input/output, and no repository working directory. The system prompt describes the input as bounded provider JSON and treats repeated tools, retries, failures, empty deltas, and unfamiliar transport records as ambiguous rather than deterministic derailment evidence.
 
 ## Watchdog defaults
 
@@ -197,12 +197,15 @@ Haiku is eligible only while a live worker is actively producing tokens, message
 | --- | --- |
 | Active-work cadence | 10 / 20 / 40 minutes |
 | Minimum interval between checks | 5 minutes |
-| Repeated tool fingerprint threshold | 3 identical in 10 minutes |
-| Repeated failure fingerprint threshold | 2 identical in 10 minutes |
 | Healthy confidence floor | `0.8` |
+| String field bound | 16 KiB UTF-8 with marker `[xagent: truncated]` |
 | Input bound | 64 KiB UTF-8 |
 | Output bound | 2 KiB (applied to the normalized structured verdict with evidence truncated to a per-item UTF-8 byte bound, not the Claude Code JSON envelope) |
 | Maximum calls per run | 8 |
+
+Each Haiku request is exactly six fields: `original_prompt`, `harness`, `recent_provider_json`, `elapsed_ms`, `truncated`, and `input_bytes`. The evidence window retains newest complete `raw.provider` payloads that fit; an individually oversized record is omitted as a whole rather than summarized. Provider JSON and the task prompt are not redacted before the isolated Haiku call; classifier input is never persisted in supervision telemetry. Provider adapter normalization defects outside the watchdog evidence path are not repaired by this evidence model.
+
+`raw.provider` records advance periodic watchdog eligibility without changing the health monitor's semantic-versus-transport timestamps or deterministic exposed-wait deduplication.
 
 Watchdog results are advisory only. `derailed`, `uncertain`, invalid, failed, over-budget, and low-confidence output emit one sequenced attention event but never message, interrupt, kill, restart, edit for, or otherwise steer the worker.
 
@@ -212,9 +215,9 @@ The "false-alert posture" documented here describes the **supervisor's response 
 
 The watchdog fixtures document the supervisor response boundary for each scenario:
 
-- **Healthy exploration**: a high-confidence healthy verdict (`confidence >= 0.8`) stays controller-silent. No attention is emitted. This is the primary false-alert guard: routine diverse work never wakes the controller.
-- **Repeated tool / failure loops**: deterministic suspicion signals (`repeated_failure_fingerprint` at 2 occurrences, `repeated_tool_fingerprint` at 3) make the watchdog eligible early, but the classifier must still confirm `derailed`. A single suspicion signal alone never declares the worker derailed.
-- **Task contradiction / insufficient evidence**: no deterministic signal fires; only the periodic Haiku check detects these. An `uncertain` verdict (e.g., from a single short delta) emits one advisory attention so the controller can decide — it is a true uncertain verdict, not a false alert.
+- **Healthy exploration**: a high-confidence healthy verdict (`confidence >= 0.8`) stays controller-silent. No attention is emitted. This is the primary false-alert guard: routine diverse work never wakes the controller. Claude Code production fixtures also assert that raw `input_json_delta` arguments and `tool_result` content remain visible in the watchdog request at the periodic checkpoint.
+- **Repeated tool / failure loops**: repetition never triggers an early check. Haiku evaluates repeated tools or failures only at a periodic checkpoint; the repeated-tool and repeated-failure fixtures are regressions for zero classifier calls before ten minutes.
+- **Task contradiction / insufficient evidence**: only the periodic Haiku check detects these. An `uncertain` verdict (e.g., from a single short delta) emits one advisory attention so the controller can decide — it is a true uncertain verdict, not a false alert.
 - **Silence / crash**: zero classifier calls. These are deterministic and advisory; the controller decides whether to wait, interrupt, or close.
 
 In all cases the worker is never auto-interrupted, auto-killed, or auto-restarted by the watchdog.
