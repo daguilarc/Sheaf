@@ -4,7 +4,8 @@ Lands first: tasks 3 and 4 consume its `--describe-slots` output and its
 argument-fault trailer.
 
 - [ ] 1.1 Add a `direction` field to `Slot` populated only for artifact-bearing kinds — `path` and `filetext` are `reads`, `path_out` is `writes` — leaving `text` and `literal` with no direction, and keeping `kind` as the complete per-slot description
-- [ ] 1.2 Add a `derivation` field to `Slot` naming the conventional plan-workspace filename that `_supplied` can satisfy it with (`task-<N>-report.md`, `global-constraints.md`, `review-<base>..<head>.diff`), or `None`, so renderability and caller-must-supply stop being conflated
+- [ ] 1.2 Add a structured `derivation` to `Slot` — `None`, `{kind: "repo_root"}` for `--dir`, or `{kind: "plan_workspace", pattern, requires_existing}` with patterns `task-{task}-report.md`, `global-constraints.md`, and `review-{short(base)}..{short(head)}.diff` — covering every derivation `_supplied` performs, so renderability and caller-must-supply stop being conflated
+- [ ] 1.2a Document `short` in the renderer as `git rev-parse --short <rev>` in the working directory, falling back to the first seven characters, and assert in a test that the described pattern resolves to the filename `_supplied` actually looks for
 - [ ] 1.3 Bring `--help` text in line with the directions, notably `--report` per template and `--diff` on the task-review and re-review templates
 - [ ] 1.4 Emit the dpr-10 argument-fault trailer: a single-line JSON object as the final stderr line carrying `error` (one of `no_such_file`, `empty_file`, `parent_missing`, `not_accepted`, `required_missing`), `option`, and where applicable `path` and `template` — emitted for those faults only, never for template-resolution or drift failures
 - [ ] 1.5 Add `--describe-slots`: writes one versioned JSON document to stdout and exits zero without reading a plan, creating a workspace, or requiring any other option
@@ -26,12 +27,15 @@ Independent of Task 1; may run concurrently.
 
 Consumes Task 1 (1.4, 1.5) and Task 2's vocabulary.
 
-- [ ] 3.1 Build the dispatch field manifest: parse `--describe-slots` for the renderer-backed variants, and add a service-owned declaration for `fixer` and follow-up `fix`, each entry carrying surface field, prompt source, renderer option or service-formatted marker, direction, required condition, and derivation
+- [ ] 3.0 Declare the closed variant registry — exactly `implementer`, `reviewer:task`, `reviewer:branch`, `fixer`, `re-reviewer`, `followup:fix`, `followup:re-review` — and the artifact-field set (`plan`, `brief`, `report_out`, `implementer_report`, `fixer_report`, `constraints`, `diff`, `findings`), with `cwd` excluded as operational
+- [ ] 3.1 Build the dispatch field manifest as a **checked-in artifact generated from `--describe-slots` at packaging time**, not a startup subprocess: entries carry variant, field, source, renderer option or service-formatted marker, `surface_kind`, direction, `transport`, required condition, and derivation; add a `--check` mode that fails when the checked-in copy diverges from the renderer, and fail generation loudly on an unsupported `schema_version`
+- [ ] 3.1a Cover every renderer option the facade sends, including non-artifact ones (`--name`, `--base`, `--head`, `--task`, `--round`, `--description`, `--context`, `--requirements`, `--plan`) with a null direction, so every dpr-10 trailer has a surface field to report
+- [ ] 3.1b Record `reviewer:branch`'s `brief` as `surface_kind: path`, `direction: reads`, `transport: inlined_contents` via `--requirements`, so a path surface field delivered through a text slot does not contradict dpr-5
 - [ ] 3.2 Generate every artifact-field description from the manifest, replacing the shared "Absolute path the agent writes its report to", and state transport (path-substituted vs contents-inlined) for `brief` and `findings` without renaming them
 - [ ] 3.3 Require `diff` for a task-scoped `reviewer`, a `re-reviewer`, and follow-up kind `re-review` unless the derivable `review-<base>..<head>.diff` exists in the plan workspace
-- [ ] 3.4 Add the tool-surface test that fails when a description disagrees with the manifest, when an advertised artifact field appears in neither manifest source, or when a direction or required condition drifts
-- [ ] 3.5 Add `sdd_renderer_bad_input` classified from the dpr-10 trailer's closed allowlist, with the role-aware reverse mapping from renderer option to surface field so a bad `--report` returns `report_out`, `implementer_report`, or `fixer_report` per role
-- [ ] 3.6 Keep `sdd_renderer_failed` for unmatched exits, and assert no renderer stderr appears in either response
+- [ ] 3.4 Add the tool-surface test that fails when a description disagrees with the manifest, when a direction or required condition drifts, and — critically — when the manifest's `(variant, field)` pairs are not **exactly equal** to the registry's, including a mutation test where a new variant reusing only existing advertised fields must still fail until registered
+- [ ] 3.5 Add `sdd_renderer_bad_input` classified from the dpr-10 trailer's closed allowlist, with the variant-aware reverse mapping so a bad `--report` returns `report_out`, `implementer_report`, or `fixer_report` per variant, and a non-artifact option such as `--base` still resolves to a surface field
+- [ ] 3.6 Return details of exactly `{reason, field}` for `required_missing`/`not_accepted` and `{reason, field, path}` for the three path faults — never the renderer template or option — keep `sdd_renderer_failed` for unmatched exits and for options the facade never sends, and assert no renderer stderr appears in either response
 - [ ] 3.7 Verify the xsvc-15 superset property still holds after the renames: every payload the union accepts is accepted by the advertised schema
 
 ## 4. Audit and ship: docs, skills, package (xsdd-9)
@@ -40,7 +44,7 @@ Consumes Task 1 (1.4, 1.5) and Task 2's vocabulary.
 - [ ] 4.2 Update `projects/agents/global/skills/openspec-superpowers-workflow/SKILL.md` for the same renames, the `diff` requirement, and the report directions
 - [ ] 4.3 Sweep `projects/xagent/docs/` for retired field names and stale directions
 - [ ] 4.4 Grep the repo for `agent_id`, `\bagent:`, and `report` in an SDD dispatch context, excluding `openspec/changes/archive/`, and fix or consciously leave each hit
-- [ ] 4.5 Rebuild the tracked plugin package with `python3 plugins/xagent/scripts/package_xagent.py` so `plugins/xagent/assets/xagent/dist/` no longer ships the retired schemas
+- [ ] 4.5 Regenerate the checked-in dispatch field manifest and rebuild the tracked plugin package with `python3 plugins/xagent/scripts/package_xagent.py` so neither the manifest nor `plugins/xagent/assets/xagent/dist/` ships the retired schemas
 
 ## 5. Verification
 

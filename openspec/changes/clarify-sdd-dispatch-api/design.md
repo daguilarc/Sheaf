@@ -143,6 +143,35 @@ turning a loud error into a wrong dispatch. The repo already documents this
 hazard and its fix for `xagent_await`. Union-level tests are insufficient here;
 the tests must go through the real MCP boundary.
 
+**D9 — A closed variant registry, compared for exact equality.** The second
+review round found the seam: the advertised schemas are flat supersets carrying
+no variant association, and task-scoped versus whole-branch reviewer lives in a
+refinement. So a coverage check against the advertised field set cannot notice a
+new variant that reuses only existing fields. xsvc-17 therefore declares seven
+variants explicitly — `implementer`, `reviewer:task`, `reviewer:branch`,
+`fixer`, `re-reviewer`, `followup:fix`, `followup:re-review` — and requires the
+manifest's `(variant, field)` pairs to *equal* the registry's, not merely cover
+it. A mutation test adds a field-reusing variant and asserts the suite fails
+until it is registered.
+
+**D10 — The manifest is a generated, checked-in artifact, not a startup
+subprocess.** The advertised schemas are module-level constants and MCP
+registration is synchronous, so building the manifest at startup would add
+Python availability, renderer resolution, and schema-version negotiation to the
+service's boot path — for data that changes only when the renderer does.
+Generating it at packaging time with a `--check` verification mode makes drift a
+build failure instead, matching how `package_xagent.py --check` already gates the
+shipped plugin. A test-only comparison was rejected: it would leave production
+descriptions independently authored, which is precisely what xsvc-17 forbids.
+
+**D11 — Direction is a property of the surface field; transport is a property of
+the slot.** A whole-branch reviewer's `brief` is a path the agent reads,
+delivered through the renderer's `--requirements` *text* slot, which dpr-5
+correctly gives no direction. Recording `direction: reads` alongside
+`transport: inlined_contents` lets both statements be true at once. Without the
+split, the narrowed direction rule and dpr-5 contradict each other on the one
+field that most needed describing.
+
 ## Risks / Trade-offs
 
 - **A live controller mid-plan breaks on the rename.** → Accepted and intended:

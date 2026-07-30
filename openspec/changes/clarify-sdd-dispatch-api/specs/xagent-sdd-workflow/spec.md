@@ -191,6 +191,8 @@ controller retains the cursor returned by `xagent_sdd_start`,
 
 THE xagent SDD dispatch surface SHALL NOT use one field name for two functions, and SHALL NOT expose one value under two names. A field whose function depends on the variant that receives it SHALL be split into variant-distinct names; a value already named by the generic lifecycle tools SHALL keep that name on the SDD tools.
 
+THE prohibition on two names for one value SHALL apply to identifiers and inputs carried across tool transitions — the case where a controller must be told to pass one field's value as a differently named field. A result field that returns the **resolved** form of an input is a distinct representation, not an alias, and SHALL carry the `_path` suffix: `report_out_path` returns the absolute, symlink-resolved form of the `report_out` the caller supplied, which may have been relative or unnormalized. Two representations of one artifact are legitimate where the transformation is stated; two names for the identical value are not.
+
 **Function** SHALL mean the logical role the artifact plays in the dispatch — the assignment document, the findings, a report the agent reads, a report the agent writes — and SHALL NOT mean the transport by which the prompt receives it. Two variants that both take "the findings for this task" share a function even where one prompt substitutes the path and the other inlines the contents, because transport is a rendering choice below this API and no caller supplies a different thing on account of it. What a caller does supply differently, and has twice supplied wrongly, is a file to be read versus a path to be written.
 
 The surface previously carried `report` in both directions, `agent` for a provider model beside `agent_id` for a run identity, and `agent_id` for the value every other tool calls `run_id` — a collision both skills had to teach controllers to work around. Two controllers constructed wrong calls directly from the resulting descriptions.
@@ -213,6 +215,12 @@ The surface previously carried `report` in both directions, `agent` for a provid
 - **THEN** the field keeps the single name `brief`, since both are the assignment document for the dispatch
 - **AND** the advertised description states which document each variant supplies and how the prompt receives it
 - **AND** the same holds for `findings` across `fixer` and follow-up kind `re-review`
+
+#### Scenario: A resolved result path is not an alias
+
+- **WHEN** a start result returns `report_out_path` for the `report_out` the caller supplied
+- **THEN** the result field carries the absolute, symlink-resolved form
+- **AND** the `_path` suffix marks it as a resolved representation rather than a second name for the input
 
 #### Scenario: Variant selection by field presence is not a collision
 

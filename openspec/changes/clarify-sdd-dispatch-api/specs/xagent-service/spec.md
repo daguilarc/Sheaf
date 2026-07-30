@@ -130,76 +130,106 @@ BECAUSE the SDK validates call arguments against the registered advertised schem
 
 ### Requirement: xsvc-17 — MCP: advertised SDD field descriptions derive from a dispatch field manifest
 
-WHEN an MCP client reads the advertised `xagent_sdd_start` or `xagent_sdd_followup` input schema, THE xagent service SHALL describe every artifact-path field from a **dispatch field manifest** rather than from independently authored prose, and SHALL fail its own tool-surface suite when a description disagrees with that manifest.
+WHEN an MCP client reads the advertised `xagent_sdd_start` or `xagent_sdd_followup` input schema, THE xagent service SHALL derive every artifact-field description from a **dispatch field manifest** rather than from independently authored prose, and SHALL fail its own tool-surface suite when a description, direction, or required condition disagrees with that manifest.
 
-THE manifest SHALL have exactly one entry per (variant, artifact field) pair, carrying: the surface field name; the prompt source that consumes it; the renderer option it maps to, or an explicit marker that the variant is service-formatted; the **direction**; the **required condition**; and the **derivation** that can satisfy it when the caller omits it.
+**The variant registry.** THE service SHALL declare a closed registry of exactly seven public dispatch variants — `implementer`, `reviewer:task`, `reviewer:branch`, `fixer`, `re-reviewer`, `followup:fix`, and `followup:re-review` — and the manifest's set of `(variant, field)` pairs SHALL be exactly equal to the registry's, neither a subset nor a superset. Equality rather than containment is the point: the advertised schemas are flat supersets carrying no variant association, so a new variant that reuses only existing fields would otherwise change no advertised field set and slip past a coverage check. Adding a variant without registering it SHALL fail the suite.
 
-THE manifest SHALL draw from exactly two sources, and their union SHALL cover every advertised artifact field:
+**Artifact fields.** An artifact field is a surface field whose value is a filesystem path to a file the dispatch supplies or produces: `plan`, `brief`, `report_out`, `implementer_report`, `fixer_report`, `constraints`, `diff`, and `findings`. `cwd` is operational — a directory, not a dispatch artifact — and SHALL be excluded. Non-artifact fields SHALL appear in the manifest with a null direction, because dpr-10 can name their renderer options in a fault trailer (see xsvc-18) and every such option needs a surface field to report.
 
-1. The renderer's machine-readable slot table (dpr-11), for the variants whose prompts `dispatch-prompt` renders — `implementer`, task-scoped and whole-branch `reviewer`, and `re-reviewer`.
-2. A service-owned declaration for the variants the service formats in its own code and the renderer has no template for — the `fixer` start role and follow-up kind `fix`. Superpowers ships no fix template; a fix upstream is a follow-up to a live implementer or a fresh implementer, so `fixer` is a service-local recovery role whose prompt text is the authority for its fields.
+**Manifest entries.** Each entry SHALL carry: `variant`; `field`; `source`; `renderer_option` or an explicit service-formatted marker; `surface_kind` — whether the surface value is a path or inline text; `direction`; `transport` — how the prompt receives it, `path_substituted` or `inlined_contents` or `not_applicable`; `required_condition`; and `derivation`.
 
-**Direction** SHALL mean only the direction the dispatched agent applies to a caller-supplied filesystem path: a path it READS (whether the prompt receives the path or the file's contents) or a path it WRITES. Direction SHALL be declared only for artifact-bearing fields. Fields carrying inline text, an inline-or-`@FILE` value, or a plain literal SHALL carry no direction, and the tool-surface suite SHALL NOT require one. Whether a read path is substituted as a path or inlined as contents is a rendering detail below this API; it SHALL be stated in the field description and SHALL NOT by itself require distinct field names (see xsdd-9).
+**Direction is a property of the surface field, not of the renderer slot.** Direction SHALL mean only the direction the dispatched agent applies to a caller-supplied path: READS or WRITES. `transport` carries the orthogonal fact that dpr-5 declares on the slot. This distinction is load-bearing: a whole-branch reviewer's `brief` is a path the agent reads, delivered through the renderer's `--requirements` text slot which dpr-5 gives no direction. The surface field is `reads`; the slot has no direction; the manifest records both without contradiction. Fields whose surface value is inline text SHALL carry a null direction, and the suite SHALL NOT require one.
 
-**Required condition** SHALL state whether the caller must supply the field, and SHALL account for derivation: a slot the renderer cannot render without is not thereby a field the caller must supply, when a documented derivation from the plan workspace can satisfy it. A field the renderer requires and no derivation can satisfy SHALL NOT be advertised as unconditionally optional.
+**Two sources.** The manifest SHALL draw from exactly two sources whose union equals the registry:
+
+1. The renderer's slot table (dpr-11) plus the service's own record of how it adapts each renderer-backed variant — which surface field maps to which renderer option, and where a path surface field is delivered through a text slot. `dispatch-prompt` renders `implementer`, both `reviewer` variants, `re-reviewer`, and `followup:re-review`.
+2. A service-owned declaration for the variants the renderer has no template for — `fixer` and `followup:fix`. Superpowers ships no fix template; upstream a fix is a follow-up to a live implementer or a fresh implementer, so `fixer` is a service-local recovery role whose prompt text is the authority for its fields.
+
+**Construction.** THE manifest SHALL be a checked-in artifact generated from `dispatch-prompt --describe-slots` by the repository's packaging step, verified by a `--check` mode that fails when the checked-in copy diverges from the renderer. It SHALL NOT be built by executing the renderer during service startup or MCP registration: the advertised schemas are module-level constants and registration is synchronous, so a startup subprocess would add Python availability, renderer resolution, and schema-version negotiation to the service's boot path for data that changes only when the renderer does. Generation SHALL fail loudly on an unsupported `schema_version` rather than degrade.
 
 #### Scenario: Read-direction paths are advertised as inputs
 
-- **WHEN** a client reads the advertised schema for a variant that reads an existing report — a task-scoped `reviewer`, a `re-reviewer`, or follow-up kind `re-review`
+- **WHEN** a client reads the advertised schema for a variant that reads an existing report — `reviewer:task`, `re-reviewer`, or `followup:re-review`
 - **THEN** the field is named for the report it reads rather than the generic `report`
 - **AND** its description states that the file must already exist and is read, not written
 
 #### Scenario: Write-direction paths are advertised as outputs
 
-- **WHEN** a client reads the advertised schema for a variant that writes its own report — an `implementer`, a `fixer`, or follow-up kind `fix`
+- **WHEN** a client reads the advertised schema for a variant that writes its own report — `implementer`, `fixer`, or `followup:fix`
 - **THEN** the field is `report_out`
 - **AND** its description states that the agent writes to that path
 
+#### Scenario: Surface direction survives an inlining transport
+
+- **WHEN** the manifest describes `reviewer:branch`'s `brief`, delivered through the renderer's `--requirements` text slot
+- **THEN** the entry records direction `reads`, `surface_kind` path, and transport `inlined_contents`
+- **AND** the renderer's own slot table still declares no direction for that slot, without the suite reporting a contradiction
+
+#### Scenario: The registry is closed and exactly matched
+
+- **WHEN** the suite compares the manifest's `(variant, field)` pairs with the variant registry's
+- **THEN** they are exactly equal
+- **AND** a variant added to the registry without a manifest entry fails the suite
+- **AND** a manifest entry for an unregistered variant fails the suite
+
+#### Scenario: A new variant reusing only existing fields cannot slip through
+
+- **WHEN** a variant is introduced that reuses only fields already advertised, and is not added to the registry
+- **THEN** the suite fails
+- **AND** the failure names the unregistered variant rather than passing because the flat advertised field set was unchanged
+
 #### Scenario: Conditionally required fields say what satisfies them
 
-- **WHEN** a field is required by its prompt source and a workspace derivation can satisfy it
+- **WHEN** a field is required by its prompt source and a documented derivation can satisfy it
 - **THEN** the description states the condition and names the derivation
 - **AND** the field is not described as unconditionally optional
 
-#### Scenario: Both manifest sources are covered
+#### Scenario: The checked-in manifest cannot silently diverge
 
-- **WHEN** the tool-surface suite builds the manifest
-- **THEN** it joins the renderer slot table with the service-owned fixer declaration
-- **AND** fails if any advertised artifact field of any variant appears in neither source
-
-#### Scenario: Divergence is caught by test, not by a controller
-
-- **WHEN** a renderer slot changes direction or required condition, or the fixer prompt gains or loses a field, without the corresponding description change
-- **THEN** the tool-surface suite fails
-- **AND** the failure names the field and the disagreeing attribute
+- **WHEN** the renderer's slot table changes and the checked-in manifest is not regenerated
+- **THEN** the packaging `--check` mode fails
+- **AND** the failure names the diverging template and option
 
 #### Scenario: Non-artifact fields need no direction
 
-- **WHEN** the suite inspects `context`, `description`, `findings_text`, `note`, `base`, or `head`
+- **WHEN** the suite inspects `context`, `description`, `findings_text`, `note`, `base`, `head`, `task`, or `round`
 - **THEN** it requires no direction for them
-- **AND** their presence without a direction is not a failure
+- **AND** their presence with a null direction is not a failure
 
 ### Requirement: xsvc-18 — MCP: renderer argument failures are structured, coded, and named in surface vocabulary
 
-WHEN `dispatch-prompt` exits non-zero having emitted an allowlisted argument-fault diagnostic (dpr-10), THE xagent service SHALL return a structured `sdd_renderer_bad_input` error whose details carry the fixed `reason` code and the **surface field name** the caller actually sent, and SHALL continue to withhold raw renderer stderr, which can echo brief and plan body text. THE service SHALL return the opaque `sdd_renderer_failed` for any non-zero exit whose diagnostic is absent, unparseable, or carries a reason outside the allowlist.
+WHEN `dispatch-prompt` exits non-zero having emitted an allowlisted argument-fault trailer (dpr-10), THE xagent service SHALL return a structured `sdd_renderer_bad_input` error whose details carry the fixed `reason` code and the **corresponding surface field** for the variant being dispatched, and SHALL continue to withhold raw renderer stderr, which can echo brief and plan body text. THE service SHALL return the opaque `sdd_renderer_failed` for any non-zero exit whose trailer is absent, unparseable, carries a reason outside the allowlist, or names a renderer option the facade never sends.
 
 THE allowlisted reason codes SHALL be exactly: `no_such_file`, `empty_file`, `parent_missing`, `not_accepted`, and `required_missing`.
 
-THE service SHALL translate the renderer option back to the surface field name using the same dispatch field manifest that xsvc-17 describes the schema from — the mapping is role-aware, because one renderer option serves differently named surface fields across variants: `--report` backs `report_out` for an `implementer`, `implementer_report` for a task-scoped `reviewer`, and `fixer_report` for a `re-reviewer`. Returning the raw renderer flag SHALL be a defect: it reintroduces the retired ambiguous vocabulary and does not identify the caller's own field.
+THE public `details` shape SHALL be exactly `{ reason, field }` for `required_missing` and `not_accepted`, and `{ reason, field, path }` for `no_such_file`, `empty_file`, and `parent_missing`. THE details SHALL NOT carry the renderer template name, the renderer option, or any other renderer-internal vocabulary. `field` names the surface field corresponding to the faulting option for that variant — not necessarily a field the caller sent, since `required_missing` fires precisely when the caller sent nothing.
+
+THE service SHALL translate the renderer option to the surface field through the same dispatch field manifest xsvc-17 describes the schema from. The mapping is variant-aware, because one renderer option serves differently named surface fields: `--report` backs `report_out` for an `implementer`, `implementer_report` for `reviewer:task`, and `fixer_report` for `re-reviewer`. Returning the raw renderer flag SHALL be a defect: it reintroduces the retired ambiguous vocabulary and does not identify the caller's own field. Because the manifest covers every renderer option the facade sends — including the non-artifact ones dpr-10 can name, such as `--name`, `--base`, `--head`, `--task`, and `--round` — every allowlisted trailer has a surface field to report.
 
 An option name and a caller-supplied path are already in the caller's own request, so returning them discloses nothing the caller did not send. Withholding them forced two controllers to reproduce the renderer invocation by hand to learn which flag was wrong, and one escalated on a misdiagnosis.
 
 #### Scenario: A missing input file names the caller's field
 
-- **WHEN** a task-scoped `reviewer` start supplies an `implementer_report` path that does not exist
-- **THEN** the service returns `sdd_renderer_bad_input` with reason `no_such_file`
-- **AND** the details name `implementer_report`, not `--report`
-- **AND** no renderer stderr text appears in the response
+- **WHEN** a `reviewer:task` start supplies an `implementer_report` path that does not exist
+- **THEN** the service returns `sdd_renderer_bad_input` with details `{ reason: "no_such_file", field: "implementer_report", path }`
+- **AND** no renderer stderr, template name, or renderer option appears in the response
 
-#### Scenario: The same renderer option maps per role
+#### Scenario: The same renderer option maps per variant
 
-- **WHEN** the identical `no_such_file` diagnostic for `--report` arises from an `implementer`, a task-scoped `reviewer`, and a `re-reviewer`
+- **WHEN** the identical `no_such_file` trailer for `--report` arises from an `implementer`, a `reviewer:task`, and a `re-reviewer`
 - **THEN** the returned field is `report_out`, `implementer_report`, and `fixer_report` respectively
+
+#### Scenario: Non-artifact options also resolve to a surface field
+
+- **WHEN** the renderer emits `required_missing` or `not_accepted` for a non-artifact option such as `--name`, `--base`, `--head`, `--task`, or `--round`
+- **THEN** the service returns `sdd_renderer_bad_input` naming that option's surface field
+- **AND** does not fall back to the opaque error merely because the field carries no direction
+
+#### Scenario: Details shape follows the reason
+
+- **WHEN** the reason is `required_missing` or `not_accepted`
+- **THEN** details carry exactly `reason` and `field`
+- **AND** when the reason is a path fault, details carry exactly `reason`, `field`, and `path`
 
 #### Scenario: Every allowlisted reason classifies
 
@@ -208,7 +238,7 @@ An option name and a caller-supplied path are already in the caller's own reques
 
 #### Scenario: Unrecognized renderer failures stay opaque
 
-- **WHEN** the renderer exits non-zero with no parseable diagnostic, or a reason outside the allowlist
+- **WHEN** the renderer exits non-zero with no parseable trailer, a reason outside the allowlist, or an option the facade never sends
 - **THEN** the service returns `sdd_renderer_failed`
 - **AND** discloses no renderer stderr
 

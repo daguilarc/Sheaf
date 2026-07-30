@@ -79,7 +79,17 @@ A structured trailer rather than parsed prose is deliberate: an embedder that su
 - **AND** an embedder classifying by trailer treats the failure as unrecognized
 
 ### Requirement: dpr-11 — Slot table: a versioned machine-readable description of every template's contract
-THE utility SHALL support a `--describe-slots` invocation that writes to stdout a single JSON document describing every supported template and exits zero without rendering, reading a plan, or requiring any other option. THE document SHALL carry a `schema_version` integer, incremented whenever the shape changes, and for each template an entry per slot carrying at least: the renderer `option`, the placeholder `token`, the `kind`, the `direction` where the slot is artifact-bearing, whether a `fallback` exists, and the `derivation` — the conventional plan-workspace filename that can satisfy the slot when no value is supplied, or null.
+THE utility SHALL support a `--describe-slots` invocation that writes to stdout a single JSON document describing every supported template and exits zero without rendering, reading a plan, or requiring any other option.
+
+THE version-1 document SHALL be an object carrying `schema_version` (integer, `1`) and `templates` (an object keyed by template name whose values are arrays of slot entries). Each slot entry SHALL carry exactly: `option`, `token`, `kind`, `direction` (`"reads"`, `"writes"`, or null), `has_fallback` (boolean), and `derivation`. `schema_version` SHALL increment whenever this shape changes.
+
+THE `derivation` SHALL be a structured object rather than a bare filename, because the renderer's derivations are not all plan-workspace lookups, and SHALL be one of:
+
+- `null` — no derivation.
+- `{ "kind": "repo_root" }` — the value defaults to the repository root, as `--dir` does.
+- `{ "kind": "plan_workspace", "pattern": "<template>", "requires_existing": <boolean> }` — the value defaults to a file in the plan's SDD workspace. THE `pattern` SHALL use `{task}` for the task number and `{short(base)}` / `{short(head)}` for abbreviated revisions, so a consumer reproduces the exact filename rather than guessing it: `task-{task}-report.md`, `global-constraints.md`, `review-{short(base)}..{short(head)}.diff`.
+
+THE `short` function SHALL be defined exactly as: `git rev-parse --short <rev>` executed in the renderer's working directory, falling back to the first seven characters of the supplied revision string when that command fails. A consumer that implements a different abbreviation will search a different filename and wrongly conclude a derivation is unavailable.
 
 This interface exists so an embedder can describe its own surface from the renderer's contract instead of restating it. An embedder that restates it is exactly the defect this change was raised to fix.
 
@@ -96,7 +106,17 @@ This interface exists so an embedder can describe its own surface from the rende
 #### Scenario: Directions and derivations are machine-readable
 - **WHEN** a consumer reads a slot entry for an artifact-bearing slot
 - **THEN** the entry states its direction and whether a fallback exists
-- **AND** states the conventional derivation filename, or null where none exists
+- **AND** states a structured derivation object, or null where none exists
+
+#### Scenario: Every derivation the renderer performs is described
+- **WHEN** the document is compared against the utility's own derivation logic
+- **THEN** each slot the utility can satisfy without an explicit value carries a matching derivation entry, including the repository-root default and each plan-workspace pattern
+- **AND** a slot the utility cannot derive carries null
+
+#### Scenario: A consumer reproduces the diff filename exactly
+- **WHEN** a consumer resolves the review-package derivation for a given base and head
+- **THEN** it abbreviates both revisions with `git rev-parse --short`, falling back to the first seven characters on failure
+- **AND** arrives at the same filename the utility would derive
 
 #### Scenario: The shape is versioned
 - **WHEN** the document's shape changes
