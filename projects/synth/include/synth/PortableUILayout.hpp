@@ -612,10 +612,17 @@ struct Resolver {
     // finished placing them, so an overlay resolved inside that container
     // would go stale. Every overlay therefore takes its target's bounds only
     // once the whole tree has stopped moving.
+    //
+    // An overlay may itself be a container holding an overlay of its own, and
+    // resolving it appends that one here. So this walks by index and copies
+    // each entry: a range-for would hold an iterator across a push_back that
+    // can reallocate, and would stop at the end sentinel it started with,
+    // silently leaving every nested overlay at zero.
     void ResolveDeferredOverlays()
     {
-        for (const DeferredOverlay& overlay : deferredOverlays)
+        for (std::size_t i = 0; i < deferredOverlays.size(); ++i)
         {
+            const DeferredOverlay overlay = deferredOverlays[i];
             overlay.node->bounds = overlay.target->bounds;
             ResolveNode(*overlay.node, false);
         }

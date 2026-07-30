@@ -666,6 +666,50 @@ void TestOverlayRejectsATargetThatIsNotInFlow()
     }
 }
 
+void TestOverlayInsideAnOverlayContainerResolves()
+{
+    // An overlay may be a container, and resolving it discovers an overlay of
+    // its own. That inner one is found only while the deferred overlays are
+    // already being walked, so it has to be picked up by the same walk.
+    synth::ui::LayoutOptions panelOverlay;
+    panelOverlay.overlayOf = "target";
+    panelOverlay.padding = 0.0f;
+
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    b.Column("col", {}, [&panelOverlay](synth::ui::Builder& b) {
+        b.Section("panel", panelOverlay, [](synth::ui::Builder& b) {
+            b.Label("inner.target", "inner", MainOf(synth::ui::Extent::Px(20.0f)));
+            synth::ui::LayoutOptions inner;
+            inner.overlayOf = "inner.target";
+            b.Draw("inner.overlay", inner, [](synth::ui::Bounds extent) {
+                return std::vector<synth::ui::DrawCommand>{
+                    synth::ui::DrawCommand::Fill(extent, synth::Color::Rgb(3, 4, 5))};
+            });
+        });
+        b.Label("target", "target", MainOf(synth::ui::Extent::Px(40.0f)));
+    });
+    const auto tree = b.Build({0.0f, 0.0f, 400.0f, 300.0f});
+
+    const auto& panel = FindNode(tree, "panel");
+    const auto& target = FindNode(tree, "target");
+    Require(SameBounds(panel.bounds, target.bounds),
+            "the overlay container takes its own target's bounds");
+    Require(panel.bounds.width > 0.0f && panel.bounds.height > 0.0f,
+            "the overlay container really was given an extent to resolve into");
+
+    const auto& innerTarget = FindNode(tree, "inner.target");
+    const auto& innerOverlay = FindNode(tree, "inner.overlay");
+    Require(SameBounds(innerTarget.bounds, {0.0f, 0.0f, panel.bounds.width, 20.0f}),
+            "the overlay container lays its own children out");
+    Require(SameBounds(innerOverlay.bounds, innerTarget.bounds),
+            "an overlay nested inside an overlay container still reaches its target");
+    Require(innerOverlay.drawCommands.size() == 1 &&
+                NearlyEqual(innerOverlay.drawCommands[0].bounds.width, innerTarget.bounds.width) &&
+                NearlyEqual(innerOverlay.drawCommands[0].bounds.height, innerTarget.bounds.height),
+            "the nested overlay's draw factory runs against its resolved extent");
+}
+
 void TestOverlayTracksATargetTheFormGridMoves()
 {
     // A form grid moves and resizes its cells after their own row has placed
@@ -865,6 +909,7 @@ int main()
     TestIntrinsicColumnReservesAWrappingRowsGrownExtent();
     TestOverlayChildTakesItsTargetsResolvedBounds();
     TestOverlayRejectsATargetThatIsNotInFlow();
+    TestOverlayInsideAnOverlayContainerResolves();
     TestOverlayTracksATargetTheFormGridMoves();
     TestSectionAndScrollAreaStackChildrenVertically();
     TestSlotsAcceptArbitraryComponents();
