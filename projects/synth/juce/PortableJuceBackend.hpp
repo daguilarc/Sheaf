@@ -62,110 +62,41 @@ inline bool HasExplicitBounds(const synth::ui::Bounds& bounds)
     return bounds.width > 0.0f && bounds.height > 0.0f;
 }
 
-inline bool DrawBoundsLookLocal(const synth::ui::Bounds& bounds,
-                                juce::Rectangle<float> nodeBounds)
+inline juce::Rectangle<float> ResolveDrawBounds(const synth::ui::Bounds& bounds)
 {
-    return HasExplicitBounds(bounds) && bounds.x >= 0.0f && bounds.y >= 0.0f
-           && bounds.x + bounds.width <= nodeBounds.getWidth()
-           && bounds.y + bounds.height <= nodeBounds.getHeight();
+    return UiToJuceRectF(bounds);
 }
 
-inline juce::Rectangle<float> ResolveDrawBounds(const synth::ui::Bounds& bounds,
-                                                juce::Rectangle<float> nodeBounds,
-                                                bool nodeLocal)
+inline juce::Point<float> ResolveDrawPoint(const synth::ui::Point& point)
 {
-    juce::Rectangle<float> resolved = UiToJuceRectF(bounds);
-    if (nodeLocal)
-    {
-        resolved.translate(nodeBounds.getX(), nodeBounds.getY());
-    }
-    return resolved;
-}
-
-inline bool DrawPointLooksLocal(const synth::ui::Point& point,
-                                juce::Rectangle<float> nodeBounds)
-{
-    return point.x >= 0.0f && point.y >= 0.0f && point.x <= nodeBounds.getWidth()
-           && point.y <= nodeBounds.getHeight();
-}
-
-inline bool DrawCommandLooksLocal(const synth::ui::DrawCommand& command,
-                                  juce::Rectangle<float> nodeBounds)
-{
-    switch (command.kind)
-    {
-        case synth::ui::DrawCommand::Kind::Fill:
-            return !HasExplicitBounds(command.bounds) || DrawBoundsLookLocal(command.bounds, nodeBounds);
-        case synth::ui::DrawCommand::Kind::StrokeRect:
-        case synth::ui::DrawCommand::Kind::Arc:
-        case synth::ui::DrawCommand::Kind::Text:
-        case synth::ui::DrawCommand::Kind::FillEllipse:
-        case synth::ui::DrawCommand::Kind::StrokeEllipse:
-        case synth::ui::DrawCommand::Kind::FillRoundedRect:
-        case synth::ui::DrawCommand::Kind::StrokeRoundedRect:
-            return !HasExplicitBounds(command.bounds)
-                   || DrawBoundsLookLocal(command.bounds, nodeBounds);
-        case synth::ui::DrawCommand::Kind::Line:
-            return DrawPointLooksLocal(command.from, nodeBounds)
-                   && DrawPointLooksLocal(command.to, nodeBounds);
-        case synth::ui::DrawCommand::Kind::Polyline:
-        case synth::ui::DrawCommand::Kind::FillPolygon:
-            return std::all_of(command.points.begin(),
-                               command.points.end(),
-                               [&](const synth::ui::Point& point) {
-                                   return DrawPointLooksLocal(point, nodeBounds);
-                               });
-    }
-    return false;
-}
-
-inline bool DrawCommandsLookLocal(const std::vector<synth::ui::DrawCommand>& commands,
-                                  juce::Rectangle<float> nodeBounds)
-{
-    return std::all_of(commands.begin(),
-                       commands.end(),
-                       [&](const synth::ui::DrawCommand& command) {
-                           return DrawCommandLooksLocal(command, nodeBounds);
-                       });
-}
-
-inline juce::Point<float> ResolveDrawPoint(const synth::ui::Point& point,
-                                           juce::Rectangle<float> nodeBounds,
-                                           bool local)
-{
-    return {point.x + (local ? nodeBounds.getX() : 0.0f),
-            point.y + (local ? nodeBounds.getY() : 0.0f)};
+    return {point.x, point.y};
 }
 
 inline void PaintDrawCommand(juce::Graphics& graphics,
                              const synth::ui::DrawCommand& command,
-                             juce::Rectangle<float> nodeBounds,
-                             bool nodeLocal)
+                             juce::Rectangle<float> nodeBounds)
 {
     switch (command.kind)
     {
         case synth::ui::DrawCommand::Kind::Fill:
         {
             graphics.setColour(UiToJuceColour(command.color));
-            const juce::Rectangle<float> fillBounds =
-                HasExplicitBounds(command.bounds)
-                    ? ResolveDrawBounds(command.bounds, nodeBounds, nodeLocal)
-                    : nodeBounds;
-            graphics.fillRect(fillBounds);
+            graphics.fillRect(HasExplicitBounds(command.bounds) ? ResolveDrawBounds(command.bounds)
+                                                                : nodeBounds);
             break;
         }
         case synth::ui::DrawCommand::Kind::StrokeRect:
         {
             graphics.setColour(UiToJuceColour(command.color));
-            const auto rect = ResolveDrawBounds(command.bounds, nodeBounds, nodeLocal);
+            const auto rect = ResolveDrawBounds(command.bounds);
             graphics.drawRect(rect, command.strokeWidth);
             break;
         }
         case synth::ui::DrawCommand::Kind::Line:
         {
             graphics.setColour(UiToJuceColour(command.color));
-            const juce::Point<float> from = ResolveDrawPoint(command.from, nodeBounds, nodeLocal);
-            const juce::Point<float> to = ResolveDrawPoint(command.to, nodeBounds, nodeLocal);
+            const juce::Point<float> from = ResolveDrawPoint(command.from);
+            const juce::Point<float> to = ResolveDrawPoint(command.to);
             graphics.drawLine(from.x,
                               from.y,
                               to.x,
@@ -176,7 +107,7 @@ inline void PaintDrawCommand(juce::Graphics& graphics,
         case synth::ui::DrawCommand::Kind::Arc:
         {
             graphics.setColour(UiToJuceColour(command.color));
-            const auto rect = ResolveDrawBounds(command.bounds, nodeBounds, nodeLocal);
+            const auto rect = ResolveDrawBounds(command.bounds);
             juce::Path path;
             path.addCentredArc(rect.getCentreX(),
                                rect.getCentreY(),
@@ -194,7 +125,7 @@ inline void PaintDrawCommand(juce::Graphics& graphics,
         }
         case synth::ui::DrawCommand::Kind::Text:
         {
-            const auto rect = ResolveDrawBounds(command.bounds, nodeBounds, nodeLocal);
+            const auto rect = ResolveDrawBounds(command.bounds);
             graphics.setColour(UiToJuceColour(command.textStyle.color));
             graphics.setFont(juce::Font(juce::FontOptions(command.textStyle.size)));
             graphics.drawText(command.text,
@@ -206,30 +137,28 @@ inline void PaintDrawCommand(juce::Graphics& graphics,
         case synth::ui::DrawCommand::Kind::FillEllipse:
         {
             graphics.setColour(UiToJuceColour(command.color));
-            const auto rect = HasExplicitBounds(command.bounds)
-                                  ? ResolveDrawBounds(command.bounds, nodeBounds, nodeLocal)
-                                  : nodeBounds;
-            graphics.fillEllipse(rect);
+            graphics.fillEllipse(HasExplicitBounds(command.bounds) ? ResolveDrawBounds(command.bounds)
+                                                                   : nodeBounds);
             break;
         }
         case synth::ui::DrawCommand::Kind::StrokeEllipse:
         {
             graphics.setColour(UiToJuceColour(command.color));
-            const auto rect = ResolveDrawBounds(command.bounds, nodeBounds, nodeLocal);
+            const auto rect = ResolveDrawBounds(command.bounds);
             graphics.drawEllipse(rect, command.strokeWidth);
             break;
         }
         case synth::ui::DrawCommand::Kind::FillRoundedRect:
         {
             graphics.setColour(UiToJuceColour(command.color));
-            const auto rect = ResolveDrawBounds(command.bounds, nodeBounds, nodeLocal);
+            const auto rect = ResolveDrawBounds(command.bounds);
             graphics.fillRoundedRectangle(rect, command.cornerRadius);
             break;
         }
         case synth::ui::DrawCommand::Kind::StrokeRoundedRect:
         {
             graphics.setColour(UiToJuceColour(command.color));
-            const auto rect = ResolveDrawBounds(command.bounds, nodeBounds, nodeLocal);
+            const auto rect = ResolveDrawBounds(command.bounds);
             graphics.drawRoundedRectangle(rect, command.cornerRadius, command.strokeWidth);
             break;
         }
@@ -241,11 +170,11 @@ inline void PaintDrawCommand(juce::Graphics& graphics,
             }
             graphics.setColour(UiToJuceColour(command.color));
             juce::Path path;
-            const juce::Point<float> first = ResolveDrawPoint(command.points.front(), nodeBounds, nodeLocal);
+            const juce::Point<float> first = ResolveDrawPoint(command.points.front());
             path.startNewSubPath(first.x, first.y);
             for (std::size_t pointIx = 1; pointIx < command.points.size(); ++pointIx)
             {
-                const juce::Point<float> point = ResolveDrawPoint(command.points[pointIx], nodeBounds, nodeLocal);
+                const juce::Point<float> point = ResolveDrawPoint(command.points[pointIx]);
                 path.lineTo(point.x, point.y);
             }
             graphics.strokePath(path, juce::PathStrokeType(command.strokeWidth));
@@ -259,11 +188,11 @@ inline void PaintDrawCommand(juce::Graphics& graphics,
             }
             graphics.setColour(UiToJuceColour(command.color));
             juce::Path path;
-            const juce::Point<float> first = ResolveDrawPoint(command.points.front(), nodeBounds, nodeLocal);
+            const juce::Point<float> first = ResolveDrawPoint(command.points.front());
             path.startNewSubPath(first.x, first.y);
             for (std::size_t pointIx = 1; pointIx < command.points.size(); ++pointIx)
             {
-                const juce::Point<float> point = ResolveDrawPoint(command.points[pointIx], nodeBounds, nodeLocal);
+                const juce::Point<float> point = ResolveDrawPoint(command.points[pointIx]);
                 path.lineTo(point.x, point.y);
             }
             path.closeSubPath();
@@ -287,7 +216,6 @@ public:
     {
         juce::Rectangle<int> surfaceBounds;
         std::optional<synth::ui::NodeId> parentId;
-        synth::ui::NodeId nearestRootId;
     };
 
     explicit PortableComponent(synth::ui::Surface& surface)
@@ -332,21 +260,27 @@ public:
 
     void paint(juce::Graphics& graphics) override
     {
+        if (const synth::ui::Node* root = RootNode(); root != nullptr && root->color.has_value())
+        {
+            graphics.fillAll(StateColourFor(*root->color, root->selected, root->enabled));
+            return;
+        }
         graphics.fillAll(juce::Colour(18, 20, 22));
     }
 
 private:
-    static constexpr int kDefaultButtonWidth = 72;
-    static constexpr int kDefaultButtonHeight = 28;
-    static constexpr int kDefaultSliderWidth = 140;
-    static constexpr int kDefaultSliderHeight = 28;
-    static constexpr int kDefaultLabelHeight = 22;
-    static constexpr int kDefaultComboWidth = 160;
-    static constexpr int kDefaultTextFieldWidth = 120;
-    static constexpr int kControlGap = 8;
-    static constexpr int kControlMargin = 12;
     static constexpr float kPointerDragSensitivity = 0.0025f;
     static constexpr float kPointerDragThreshold = 0.001f;
+
+    static juce::Colour StateColourFor(synth::Color color, bool selected, bool enabled)
+    {
+        juce::Colour juceColour = UiToJuceColour(color);
+        if (!enabled)
+        {
+            return juceColour.darker(0.35f).withMultipliedAlpha(0.65f);
+        }
+        return selected ? juceColour.brighter(0.14f) : juceColour;
+    }
 
     class ScopedDispatchSuppression
     {
@@ -374,38 +308,25 @@ private:
     class SemanticPanelComponent final : public juce::Component
     {
     public:
-        void SetSemantics(std::string variant, bool selected)
+        void SetFill(std::optional<juce::Colour> fill)
         {
-            variant_ = std::move(variant);
-            selected_ = selected;
+            fill_ = fill;
             repaint();
         }
 
         void paint(juce::Graphics& graphics) override
         {
-            if (variant_.empty() || variant_ == "quiet" || variant_ == "panel")
+            if (!fill_.has_value())
             {
                 return;
             }
 
-            if (selected_)
-            {
-                graphics.setColour(juce::Colour(53, 80, 96));
-            }
-            else if (variant_ == "list-row")
-            {
-                graphics.setColour(juce::Colour(34, 39, 44));
-            }
-            else
-            {
-                graphics.setColour(juce::Colour(30, 34, 38));
-            }
+            graphics.setColour(*fill_);
             graphics.fillRoundedRectangle(getLocalBounds().toFloat(), 5.0f);
         }
 
     private:
-        std::string variant_;
-        bool selected_ = false;
+        std::optional<juce::Colour> fill_;
     };
 
     class PortableScrollAreaComponent final : public juce::Component
@@ -428,9 +349,9 @@ private:
             return viewport_;
         }
 
-        void SetSemantics(std::string variant, bool selected)
+        void SetFill(std::optional<juce::Colour> fill)
         {
-            content_.SetSemantics(std::move(variant), selected);
+            content_.SetFill(fill);
         }
 
         void SetContentExtent(int width, int height)
@@ -488,19 +409,17 @@ private:
             : dragDispatch_(std::move(dragDispatch))
             , doubleClickDispatch_(std::move(doubleClickDispatch))
         {
-            setPaintingIsUnclipped(true);
         }
 
         void SetNode(synth::ui::NodeId id,
                      std::vector<synth::ui::DrawCommand> commands,
-                     juce::Rectangle<float> surfaceBounds,
+                     juce::Rectangle<float> nodeBounds,
                      bool acceptsDrag,
                      bool acceptsDoubleClick)
         {
             id_ = std::move(id);
             commands_ = std::move(commands);
-            surfaceBounds_ = surfaceBounds;
-            commandsAreNodeLocal_ = DrawCommandsLookLocal(commands_, surfaceBounds_);
+            nodeBounds_ = nodeBounds;
             acceptsDrag_ = acceptsDrag;
             acceptsDoubleClick_ = acceptsDoubleClick;
             setInterceptsMouseClicks(acceptsDrag_ || acceptsDoubleClick_, false);
@@ -509,14 +428,10 @@ private:
 
         void paint(juce::Graphics& graphics) override
         {
-            graphics.saveState();
-            graphics.addTransform(juce::AffineTransform::translation(
-                -surfaceBounds_.getX(), -surfaceBounds_.getY()));
             for (const synth::ui::DrawCommand& command : commands_)
             {
-                PaintDrawCommand(graphics, command, surfaceBounds_, commandsAreNodeLocal_);
+                PaintDrawCommand(graphics, command, nodeBounds_);
             }
-            graphics.restoreState();
         }
 
         void mouseDown(const juce::MouseEvent& event) override
@@ -557,8 +472,7 @@ private:
     private:
         synth::ui::NodeId id_;
         std::vector<synth::ui::DrawCommand> commands_;
-        juce::Rectangle<float> surfaceBounds_;
-        bool commandsAreNodeLocal_ = true;
+        juce::Rectangle<float> nodeBounds_;
         juce::Point<float> lastMousePosition_;
         std::function<void(const synth::ui::NodeId&, float)> dragDispatch_;
         std::function<void(const synth::ui::NodeId&)> doubleClickDispatch_;
@@ -587,43 +501,9 @@ private:
         return nullptr;
     }
 
-    juce::Rectangle<int> DefaultSizeForNode(const synth::ui::Node& node,
-                                            int availableWidth) const
-    {
-        switch (node.kind)
-        {
-            case synth::ui::NodeKind::Slider:
-                return {0, 0, kDefaultSliderWidth, kDefaultSliderHeight};
-            case synth::ui::NodeKind::ComboBox:
-                return {0, 0, kDefaultComboWidth, kDefaultButtonHeight};
-            case synth::ui::NodeKind::TextField:
-                return {0, 0, kDefaultTextFieldWidth, kDefaultButtonHeight};
-            case synth::ui::NodeKind::Label:
-            case synth::ui::NodeKind::StatusText:
-            {
-                const std::string& text = node.text.empty() ? node.label : node.text;
-                const int width = static_cast<int>(std::lround(text.size() * 6.5 + 12.0));
-                return {0, 0, std::min(availableWidth, std::max(120, width)), kDefaultLabelHeight};
-            }
-            case synth::ui::NodeKind::Button:
-            {
-                const int width = static_cast<int>(std::lround(node.label.size() * 6.5 + 24.0));
-                return {0, 0, std::max(kDefaultButtonWidth, width), kDefaultButtonHeight};
-            }
-            case synth::ui::NodeKind::Toggle:
-            {
-                const int width = static_cast<int>(std::lround(node.label.size() * 6.5 + 25.0));
-                return {0, 0, std::max(kDefaultButtonWidth, width), kDefaultButtonHeight};
-            }
-            default:
-                return {0, 0, kDefaultButtonWidth, kDefaultButtonHeight};
-        }
-    }
-
     void ResolveTree()
     {
         m_parentByNodeId.clear();
-        m_nearestRootByNodeId.clear();
         m_resolvedByNodeId.clear();
         m_rootNodeId.reset();
 
@@ -711,140 +591,23 @@ private:
         }
 
         m_rootNodeId = roots.front()->id;
-        std::function<void(const synth::ui::Node&, const synth::ui::NodeId&)> assignNearestRoot =
-            [&](const synth::ui::Node& node, const synth::ui::NodeId& nearestRootId) {
-                const synth::ui::NodeId nextRootId =
-                    node.kind == synth::ui::NodeKind::Root ? node.id : nearestRootId;
-                m_nearestRootByNodeId[node.id.value] = nextRootId;
+        std::function<void(const synth::ui::Node&, juce::Point<int>)> resolve =
+            [&](const synth::ui::Node& node, juce::Point<int> parentOrigin) {
+                juce::Rectangle<int> bounds = UiToJuceRect(node.bounds);
+                bounds.translate(parentOrigin.x, parentOrigin.y);
+                const auto parent = m_parentByNodeId.find(node.id.value);
+                m_resolvedByNodeId[node.id.value] = {
+                    bounds,
+                    parent == m_parentByNodeId.end()
+                        ? std::optional<synth::ui::NodeId>()
+                        : std::optional<synth::ui::NodeId>(parent->second)};
+                const juce::Point<int> childOrigin(bounds.getX(), bounds.getY());
                 for (const synth::ui::NodeId& childId : node.children)
                 {
-                    assignNearestRoot(*nodesById.at(childId.value), nextRootId);
+                    resolve(*nodesById.at(childId.value), childOrigin);
                 }
             };
-        assignNearestRoot(*roots.front(), roots.front()->id);
-
-        for (const synth::ui::Node& node : m_tree.nodes)
-        {
-            const auto parent = m_parentByNodeId.find(node.id.value);
-            m_resolvedByNodeId[node.id.value] = {
-                UiToJuceRect(node.bounds),
-                parent == m_parentByNodeId.end() ? std::optional<synth::ui::NodeId>()
-                                                 : std::optional<synth::ui::NodeId>(parent->second),
-                m_nearestRootByNodeId.at(node.id.value)};
-        }
-
-        std::unordered_map<std::string, int> explicitVisitState;
-        for (const synth::ui::Node& node : m_tree.nodes)
-        {
-            if (HasExplicitBounds(node.bounds) || node.kind == synth::ui::NodeKind::Root)
-            {
-                ResolveExplicitNode(node, explicitVisitState);
-            }
-        }
-
-        struct FlowCursor
-        {
-            int x = 0;
-            int y = 0;
-            int rowHeight = 0;
-            int right = 0;
-            int availableWidth = 0;
-        };
-        std::unordered_map<std::string, FlowCursor> cursors;
-        for (const synth::ui::Node& node : m_tree.nodes)
-        {
-            if (HasExplicitBounds(node.bounds) || node.kind == synth::ui::NodeKind::Root)
-            {
-                continue;
-            }
-
-            const synth::ui::NodeId& nearestRootId = m_nearestRootByNodeId.at(node.id.value);
-            const synth::ui::Node* nearestRoot = nodesById.at(nearestRootId.value);
-            auto [cursorIt, inserted] = cursors.try_emplace(nearestRootId.value);
-            FlowCursor& cursor = cursorIt->second;
-            if (inserted)
-            {
-                const juce::Rectangle<int> rootBounds = m_resolvedByNodeId.at(nearestRootId.value).surfaceBounds;
-                int maxDrawBottom = rootBounds.getY() + kControlMargin;
-                for (const synth::ui::Node& candidate : m_tree.nodes)
-                {
-                    if (candidate.kind == synth::ui::NodeKind::Draw
-                        && m_nearestRootByNodeId.at(candidate.id.value) == nearestRootId
-                        && HasExplicitBounds(candidate.bounds))
-                    {
-                        maxDrawBottom = std::max(
-                            maxDrawBottom,
-                            static_cast<int>(std::lround(candidate.bounds.y + candidate.bounds.height)));
-                    }
-                }
-                cursor.x = rootBounds.getX() + kControlMargin;
-                cursor.y = maxDrawBottom + kControlGap;
-                cursor.right = rootBounds.getRight() - kControlMargin;
-                cursor.availableWidth = std::max(0, rootBounds.getWidth() - kControlMargin * 2);
-            }
-
-            juce::Rectangle<int> bounds = DefaultSizeForNode(node, cursor.availableWidth);
-            if (cursor.x + bounds.getWidth() > cursor.right && cursor.rowHeight > 0)
-            {
-                const juce::Rectangle<int> rootBounds = m_resolvedByNodeId.at(nearestRoot->id.value).surfaceBounds;
-                cursor.x = rootBounds.getX() + kControlMargin;
-                cursor.y += cursor.rowHeight + kControlGap;
-                cursor.rowHeight = 0;
-            }
-            bounds.setPosition(cursor.x, cursor.y);
-            m_resolvedByNodeId.at(node.id.value).surfaceBounds = bounds;
-            cursor.x += bounds.getWidth() + kControlGap;
-            cursor.rowHeight = std::max(cursor.rowHeight, bounds.getHeight());
-        }
-    }
-
-    juce::Rectangle<int> ResolveExplicitNode(const synth::ui::Node& node,
-                                             std::unordered_map<std::string, int>& visitState)
-    {
-        const int state = visitState[node.id.value];
-        if (state == 1)
-        {
-            throw std::runtime_error("cycle resolving portable JUCE bounds at " + node.id.value);
-        }
-        if (state == 2)
-        {
-            return m_resolvedByNodeId.at(node.id.value).surfaceBounds;
-        }
-        visitState[node.id.value] = 1;
-
-        juce::Rectangle<int> bounds = UiToJuceRect(node.bounds);
-        const auto parent = m_parentByNodeId.find(node.id.value);
-        if (parent != m_parentByNodeId.end() && node.kind != synth::ui::NodeKind::Root)
-        {
-            const synth::ui::Node* parentNode = FindNode(parent->second);
-            if (parentNode == nullptr)
-            {
-                throw std::runtime_error("missing parent while resolving portable JUCE bounds");
-            }
-            const juce::Rectangle<int> parentBounds = ResolveExplicitNode(*parentNode, visitState);
-            if (ExplicitBoundsAreParentLocal(node, *parentNode))
-            {
-                bounds.translate(parentBounds.getX(), parentBounds.getY());
-            }
-        }
-
-        m_resolvedByNodeId.at(node.id.value).surfaceBounds = bounds;
-        visitState[node.id.value] = 2;
-        return bounds;
-    }
-
-    bool ExplicitBoundsAreParentLocal(const synth::ui::Node& node,
-                                      const synth::ui::Node& parent) const
-    {
-        const float parentWidth = parent.kind == synth::ui::NodeKind::ScrollArea
-                                      ? std::max(parent.bounds.width, parent.scrollContentWidth)
-                                      : parent.bounds.width;
-        const float parentHeight = parent.kind == synth::ui::NodeKind::ScrollArea
-                                       ? std::max(parent.bounds.height, parent.scrollContentHeight)
-                                       : parent.bounds.height;
-        return node.bounds.x >= 0.0f && node.bounds.y >= 0.0f
-               && node.bounds.x + node.bounds.width <= parentWidth
-               && node.bounds.y + node.bounds.height <= parentHeight;
+        resolve(*roots.front(), {});
     }
 
     juce::Component* SemanticHostFor(const ResolvedNode& resolved)
@@ -878,17 +641,30 @@ private:
                || kind == synth::ui::NodeKind::ScrollArea;
     }
 
-    juce::Rectangle<int> HostLocalBounds(const ResolvedNode& resolved,
-                                         const juce::Component& host) const
+    juce::Rectangle<int> HostLocalBounds(const synth::ui::NodeId& nodeId) const
     {
-        juce::Rectangle<int> bounds = host.getLocalArea(this, resolved.surfaceBounds);
-        for (const juce::Component* ancestor = &host; ancestor != nullptr;
-             ancestor = ancestor->getParentComponent())
+        const synth::ui::Node* node = FindNode(nodeId);
+        if (node == nullptr)
         {
-            if (const auto* viewport = dynamic_cast<const juce::Viewport*>(ancestor))
+            return {};
+        }
+
+        juce::Rectangle<int> bounds = UiToJuceRect(node->bounds);
+        auto parent = m_parentByNodeId.find(nodeId.value);
+        while (parent != m_parentByNodeId.end())
+        {
+            const synth::ui::Node* parentNode = FindNode(parent->second);
+            if (parentNode == nullptr)
             {
-                bounds.translate(-viewport->getViewPositionX(), -viewport->getViewPositionY());
+                break;
             }
+            if (IsSemanticHostKind(parentNode->kind))
+            {
+                break;
+            }
+            const juce::Rectangle<int> parentBounds = UiToJuceRect(parentNode->bounds);
+            bounds.translate(parentBounds.getX(), parentBounds.getY());
+            parent = m_parentByNodeId.find(parentNode->id.value);
         }
         return bounds;
     }
@@ -987,7 +763,7 @@ private:
         nextControls.reserve(m_controls.size());
 
         m_renderedNodeIds.clear();
-        CollectRenderableDescendants(*root, root->id);
+        CollectRenderableDescendants(*root);
 
         for (const synth::ui::NodeId& nodeId : m_renderedNodeIds)
         {
@@ -1042,7 +818,7 @@ private:
             {
                 host->addAndMakeVisible(component);
             }
-            component.setBounds(HostLocalBounds(resolvedIt->second, *host));
+            component.setBounds(HostLocalBounds(nodeId));
             component.toFront(false);
             if (hadKeyboardFocus && safeComponent != nullptr
                 && !safeComponent->hasKeyboardFocus(true))
@@ -1067,13 +843,12 @@ private:
             juce::Component* host = control.getParentComponent();
             if (host != nullptr)
             {
-                control.setBounds(HostLocalBounds(resolvedIt->second, *host));
+                control.setBounds(HostLocalBounds(nodeId));
             }
         }
     }
 
-    void CollectRenderableDescendants(const synth::ui::Node& parent,
-                                      const synth::ui::NodeId& nearestRootId)
+    void CollectRenderableDescendants(const synth::ui::Node& parent)
     {
         for (const synth::ui::NodeId& childId : parent.children)
         {
@@ -1083,15 +858,12 @@ private:
                 continue;
             }
 
-            const synth::ui::NodeId& childRootId =
-                node->kind == synth::ui::NodeKind::Root ? node->id : nearestRootId;
-
             if (IsRenderableKind(node->kind))
             {
                 m_renderedNodeIds.push_back(node->id);
             }
 
-            CollectRenderableDescendants(*node, childRootId);
+            CollectRenderableDescendants(*node);
         }
     }
 
@@ -1122,19 +894,18 @@ private:
         {
             return juce::Colour(125, 132, 138);
         }
-        if (node.variant == "danger")
-        {
-            return juce::Colour(255, 160, 148);
-        }
-        if (node.variant == "quiet" || node.variant == "muted")
-        {
-            return juce::Colour(178, 188, 196);
-        }
-        if (node.variant == "muted-title")
-        {
-            return juce::Colour(194, 202, 208);
-        }
         return juce::Colours::white;
+    }
+
+    static juce::Colour GlyphColourForNode(const synth::ui::Node& node)
+    {
+        return node.textStyle.has_value() ? UiToJuceColour(node.textStyle->color)
+                                          : TextColourForNode(node);
+    }
+
+    static float TextSizeForNode(const synth::ui::Node& node)
+    {
+        return node.textStyle.has_value() ? node.textStyle->size : 13.0f;
     }
 
     static juce::Colour ButtonColourForNode(const synth::ui::Node& node)
@@ -1147,15 +918,22 @@ private:
         {
             return juce::Colour(54, 91, 110);
         }
-        if (node.variant == "primary")
-        {
-            return juce::Colour(57, 106, 127);
-        }
-        if (node.variant == "list-row")
-        {
-            return juce::Colour(34, 39, 44);
-        }
         return juce::Colour(42, 47, 52);
+    }
+
+    static juce::Colour ControlFillForNode(const synth::ui::Node& node)
+    {
+        return node.color.has_value() ? StateColourFor(*node.color, node.selected, node.enabled)
+                                      : ButtonColourForNode(node);
+    }
+
+    static std::optional<juce::Colour> BackgroundFillForNode(const synth::ui::Node& node)
+    {
+        if (!node.color.has_value())
+        {
+            return std::nullopt;
+        }
+        return StateColourFor(*node.color, node.selected, node.enabled);
     }
 
     static bool ComboOptionsMatch(const juce::ComboBox& combo, const std::vector<synth::ui::ControlOption>& options)
@@ -1354,13 +1132,13 @@ private:
             case synth::ui::NodeKind::Section:
             {
                 auto& panel = static_cast<SemanticPanelComponent&>(component);
-                panel.SetSemantics(node.variant, node.selected);
+                panel.SetFill(BackgroundFillForNode(node));
                 break;
             }
             case synth::ui::NodeKind::ScrollArea:
             {
                 auto& scroll = static_cast<PortableScrollAreaComponent&>(component);
-                scroll.SetSemantics(node.variant, node.selected);
+                scroll.SetFill(BackgroundFillForNode(node));
                 scroll.SetContentExtent(static_cast<int>(std::lround(node.scrollContentWidth)),
                                         static_cast<int>(std::lround(node.scrollContentHeight)));
                 break;
@@ -1370,25 +1148,33 @@ private:
             {
                 auto& label = static_cast<juce::Label&>(component);
                 label.setText(node.text.empty() ? node.label : node.text, juce::dontSendNotification);
-                label.setColour(juce::Label::textColourId, TextColourForNode(node));
-                if (node.variant == "title" || node.variant == "muted-title")
+                label.setColour(juce::Label::textColourId, GlyphColourForNode(node));
+                if (const auto background = BackgroundFillForNode(node); background.has_value())
                 {
-                    label.setFont(juce::Font(juce::FontOptions(18.0f)));
+                    label.setColour(juce::Label::backgroundColourId, *background);
                 }
                 else
                 {
-                    label.setFont(juce::Font(juce::FontOptions(13.0f)));
+                    label.removeColour(juce::Label::backgroundColourId);
                 }
+                label.setFont(juce::Font(juce::FontOptions(TextSizeForNode(node))));
+                label.setJustificationType(node.textStyle.has_value()
+                                               ? ToJuceJustification(node.textStyle->align)
+                                               : juce::Justification::centredLeft);
                 break;
             }
             case synth::ui::NodeKind::Button:
             {
                 auto& button = static_cast<juce::TextButton&>(component);
                 button.setButtonText(node.label);
-                button.setColour(juce::TextButton::buttonColourId, ButtonColourForNode(node));
-                button.setColour(juce::TextButton::buttonOnColourId, ButtonColourForNode(node).brighter(0.14f));
-                button.setColour(juce::TextButton::textColourOffId, TextColourForNode(node));
-                button.setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+                const juce::Colour fill = ControlFillForNode(node);
+                button.setColour(juce::TextButton::buttonColourId, fill);
+                button.setColour(juce::TextButton::buttonOnColourId,
+                                 node.color.has_value()
+                                     ? UiToJuceColour(*node.color).brighter(0.24f)
+                                     : fill.brighter(0.14f));
+                button.setColour(juce::TextButton::textColourOffId, GlyphColourForNode(node));
+                button.setColour(juce::TextButton::textColourOnId, GlyphColourForNode(node));
                 break;
             }
             case synth::ui::NodeKind::Toggle:
@@ -1396,12 +1182,42 @@ private:
                 auto& toggle = static_cast<juce::ToggleButton&>(component);
                 toggle.setButtonText(node.label);
                 toggle.setToggleState(node.checked, juce::dontSendNotification);
+                if (node.color.has_value())
+                {
+                    const juce::Colour fill = StateColourFor(*node.color, node.selected || node.checked, node.enabled);
+                    toggle.setColour(juce::ToggleButton::tickColourId, fill);
+                    toggle.setColour(juce::ToggleButton::tickDisabledColourId,
+                                     StateColourFor(*node.color, node.selected || node.checked, false));
+                }
+                else
+                {
+                    toggle.removeColour(juce::ToggleButton::tickColourId);
+                    toggle.removeColour(juce::ToggleButton::tickDisabledColourId);
+                }
+                toggle.setColour(juce::ToggleButton::textColourId, GlyphColourForNode(node));
                 break;
             }
             case synth::ui::NodeKind::Slider:
             {
                 auto& slider = static_cast<juce::Slider&>(component);
                 slider.setRange(node.minValue, node.maxValue, node.step);
+                if (node.color.has_value())
+                {
+                    slider.setColour(juce::Slider::trackColourId,
+                                     StateColourFor(*node.color, node.selected, node.enabled));
+                }
+                else
+                {
+                    slider.removeColour(juce::Slider::trackColourId);
+                }
+                if (node.textStyle.has_value())
+                {
+                    slider.setColour(juce::Slider::textBoxTextColourId, UiToJuceColour(node.textStyle->color));
+                }
+                else
+                {
+                    slider.removeColour(juce::Slider::textBoxTextColourId);
+                }
                 if (!slider.isMouseButtonDown(true))
                 {
                     slider.setValue(node.value, juce::dontSendNotification);
@@ -1411,6 +1227,16 @@ private:
             case synth::ui::NodeKind::ComboBox:
             {
                 auto& combo = static_cast<juce::ComboBox&>(component);
+                if (node.color.has_value())
+                {
+                    combo.setColour(juce::ComboBox::backgroundColourId,
+                                    StateColourFor(*node.color, node.selected, node.enabled));
+                }
+                else
+                {
+                    combo.removeColour(juce::ComboBox::backgroundColourId);
+                }
+                combo.setColour(juce::ComboBox::textColourId, GlyphColourForNode(node));
                 if (!ComboOptionsMatch(combo, node.options))
                 {
                     RebuildComboOptions(combo, node.options);
@@ -1428,8 +1254,11 @@ private:
             case synth::ui::NodeKind::TextField:
             {
                 auto& editor = static_cast<juce::TextEditor&>(component);
-                editor.setColour(juce::TextEditor::backgroundColourId, juce::Colour(22, 25, 28));
-                editor.setColour(juce::TextEditor::textColourId, TextColourForNode(node));
+                editor.setColour(juce::TextEditor::backgroundColourId,
+                                 node.color.has_value()
+                                     ? StateColourFor(*node.color, node.selected, node.enabled)
+                                     : juce::Colour(22, 25, 28));
+                editor.setColour(juce::TextEditor::textColourId, GlyphColourForNode(node));
                 editor.setColour(juce::TextEditor::outlineColourId, juce::Colour(72, 84, 94));
                 if (!editor.hasKeyboardFocus(true) && editor.getText() != juce::String(node.text))
                 {
@@ -1440,16 +1269,13 @@ private:
             case synth::ui::NodeKind::Draw:
             {
                 auto& draw = static_cast<RetainedDrawComponent&>(component);
-                juce::Rectangle<float> drawSurfaceBounds =
-                    m_resolvedByNodeId.at(node.id.value).surfaceBounds.toFloat();
-                if (HasExplicitBounds(node.bounds))
-                {
-                    drawSurfaceBounds.setWidth(node.bounds.width);
-                    drawSurfaceBounds.setHeight(node.bounds.height);
-                }
+                const juce::Rectangle<float> nodeBounds(0.0f,
+                                                        0.0f,
+                                                        node.bounds.width,
+                                                        node.bounds.height);
                 draw.SetNode(node.id,
                              node.drawCommands,
-                             drawSurfaceBounds,
+                             nodeBounds,
                              node.pointerDragAction.has_value(),
                              node.doubleClickAction.has_value());
                 break;
@@ -1464,7 +1290,6 @@ private:
     std::vector<PortableControlEntry> m_controls;
     std::unordered_map<std::string, std::size_t> m_controlIndexById;
     std::unordered_map<std::string, synth::ui::NodeId> m_parentByNodeId;
-    std::unordered_map<std::string, synth::ui::NodeId> m_nearestRootByNodeId;
     std::unordered_map<std::string, ResolvedNode> m_resolvedByNodeId;
     std::optional<synth::ui::NodeId> m_rootNodeId;
     std::vector<synth::ui::NodeId> m_renderedNodeIds;

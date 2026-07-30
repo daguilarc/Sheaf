@@ -34,6 +34,68 @@ juce::Image RenderComponent(juce::Component& component)
     return image;
 }
 
+bool NearlyEqual(float actual, float expected, float tolerance = 0.001f)
+{
+    return std::fabs(actual - expected) <= tolerance;
+}
+
+juce::Colour FillColourOf(synth_juce::PortableComponent& component,
+                          const std::string& id)
+{
+    juce::Component* control = component.FindByNodeId(id);
+    Require(control != nullptr, "fill-colour fixture node is rendered");
+    if (auto* button = dynamic_cast<juce::TextButton*>(control))
+    {
+        return button->findColour(juce::TextButton::buttonColourId);
+    }
+    if (auto* label = dynamic_cast<juce::Label*>(control))
+    {
+        return label->findColour(juce::Label::backgroundColourId);
+    }
+    if (auto* editor = dynamic_cast<juce::TextEditor*>(control))
+    {
+        return editor->findColour(juce::TextEditor::backgroundColourId);
+    }
+    if (auto* combo = dynamic_cast<juce::ComboBox*>(control))
+    {
+        return combo->findColour(juce::ComboBox::backgroundColourId);
+    }
+    if (auto* slider = dynamic_cast<juce::Slider*>(control))
+    {
+        return slider->findColour(juce::Slider::trackColourId);
+    }
+    if (auto* toggle = dynamic_cast<juce::ToggleButton*>(control))
+    {
+        return toggle->findColour(juce::ToggleButton::tickColourId);
+    }
+    throw std::runtime_error("unsupported fill-colour fixture node");
+}
+
+juce::Colour TextColourOf(synth_juce::PortableComponent& component,
+                          const std::string& id)
+{
+    juce::Component* control = component.FindByNodeId(id);
+    Require(control != nullptr, "text-colour fixture node is rendered");
+    if (auto* label = dynamic_cast<juce::Label*>(control))
+    {
+        return label->findColour(juce::Label::textColourId);
+    }
+    if (auto* button = dynamic_cast<juce::TextButton*>(control))
+    {
+        return button->findColour(juce::TextButton::textColourOffId);
+    }
+    if (auto* editor = dynamic_cast<juce::TextEditor*>(control))
+    {
+        return editor->findColour(juce::TextEditor::textColourId);
+    }
+    throw std::runtime_error("unsupported text-colour fixture node");
+}
+
+bool IsDerivedFrom(juce::Colour colour, juce::Colour base)
+{
+    return colour == base.brighter(0.14f);
+}
+
 struct RecordingSurface final : synth::ui::Surface
 {
     synth::ui::NodeTree BuildTree() override
@@ -71,6 +133,135 @@ int main()
     Require(!synth_juce::HasExplicitBounds(synth::ui::Bounds{}), "zero bounds are not explicit");
     Require(synth_juce::HasExplicitBounds(synth::ui::Bounds{0.0f, 0.0f, 10.0f, 10.0f}),
             "positive bounds are explicit");
+
+    {
+        RecordingSurface overhangingSurface;
+        overhangingSurface.tree.nodes = {
+            {.id = synth::ui::NodeId("root"),
+             .kind = synth::ui::NodeKind::Root,
+             .bounds = {0.0f, 0.0f, 400.0f, 300.0f},
+             .children = {synth::ui::NodeId("parent")}},
+            {.id = synth::ui::NodeId("parent"),
+             .kind = synth::ui::NodeKind::Section,
+             .bounds = {50.0f, 40.0f, 100.0f, 50.0f},
+             .children = {synth::ui::NodeId("child")}},
+            {.id = synth::ui::NodeId("child"),
+             .kind = synth::ui::NodeKind::Label,
+             .bounds = {10.0f, 10.0f, 200.0f, 20.0f},
+             .text = "overhang"},
+        };
+        synth_juce::PortableComponent component(overhangingSurface);
+        component.setSize(400, 300);
+        component.RefreshFromSurface();
+        juce::Component* child = component.FindByNodeId("child");
+        Require(child != nullptr, "overhanging child is rendered");
+        const juce::Rectangle<int> childBounds = SurfaceBoundsOf(component, *child);
+        Require(NearlyEqual(static_cast<float>(childBounds.getX()), 60.0f),
+                "surface x is the parent's origin plus the child's own bounds, with no reclassification");
+        Require(NearlyEqual(static_cast<float>(childBounds.getY()), 50.0f),
+                "and surface y is likewise the simple fold");
+    }
+
+    {
+        RecordingSurface zeroBoundsSurface;
+        zeroBoundsSurface.tree.nodes = {
+            {.id = synth::ui::NodeId("root"),
+             .kind = synth::ui::NodeKind::Root,
+             .bounds = {0.0f, 0.0f, 400.0f, 300.0f},
+             .children = {synth::ui::NodeId("parent")}},
+            {.id = synth::ui::NodeId("parent"),
+             .kind = synth::ui::NodeKind::Section,
+             .bounds = {50.0f, 40.0f, 200.0f, 100.0f},
+             .children = {synth::ui::NodeId("orphan")}},
+            {.id = synth::ui::NodeId("orphan"),
+             .kind = synth::ui::NodeKind::Label,
+             .bounds = {0.0f, 0.0f, 0.0f, 0.0f},
+             .text = "unresolved"},
+        };
+        synth_juce::PortableComponent component(zeroBoundsSurface);
+        component.setSize(400, 300);
+        component.RefreshFromSurface();
+        juce::Component* orphan = component.FindByNodeId("orphan");
+        Require(orphan != nullptr, "zero-bounds child is rendered");
+        const juce::Rectangle<int> b = SurfaceBoundsOf(component, *orphan);
+        Require(NearlyEqual(static_cast<float>(b.getX()), 50.0f)
+                    && NearlyEqual(static_cast<float>(b.getY()), 40.0f),
+                "a node without resolved bounds renders at its parent's origin");
+        Require(b.getWidth() == 0 && b.getHeight() == 0,
+                "with zero-based extent, never flowed or sized by the backend");
+    }
+
+    {
+        RecordingSurface colourSurface;
+        colourSurface.tree.nodes = {
+            {.id = synth::ui::NodeId("root"),
+             .kind = synth::ui::NodeKind::Root,
+             .bounds = {0.0f, 0.0f, 400.0f, 300.0f},
+             .children = {synth::ui::NodeId("styled")}},
+            {.id = synth::ui::NodeId("styled"),
+             .kind = synth::ui::NodeKind::Button,
+             .bounds = {0.0f, 0.0f, 80.0f, 24.0f},
+             .label = "Styled",
+             .variant = "primary",
+             .color = synth::Color::Rgb(0, 200, 0)},
+        };
+        synth_juce::PortableComponent component(colourSurface);
+        component.setSize(400, 300);
+        component.RefreshFromSurface();
+        Require(FillColourOf(component, "styled") == juce::Colour::fromRGB(0, 200, 0),
+                "the carried colour decides the button fill, not the variant constant");
+    }
+
+    {
+        RecordingSurface textStyleSurface;
+        textStyleSurface.tree.nodes = {
+            {.id = synth::ui::NodeId("root"),
+             .kind = synth::ui::NodeKind::Root,
+             .bounds = {0.0f, 0.0f, 400.0f, 300.0f},
+             .children = {synth::ui::NodeId("lbl")}},
+            {.id = synth::ui::NodeId("lbl"),
+             .kind = synth::ui::NodeKind::Label,
+             .bounds = {0.0f, 0.0f, 120.0f, 20.0f},
+             .text = "Label",
+             .color = synth::Color::Rgb(10, 10, 10),
+             .textStyle = synth::ui::TextStyle{14.0f,
+                                               synth::Color::Rgb(240, 240, 240),
+                                               synth::ui::TextAlign::Left}},
+        };
+        synth_juce::PortableComponent component(textStyleSurface);
+        component.setSize(400, 300);
+        component.RefreshFromSurface();
+        Require(TextColourOf(component, "lbl") == juce::Colour::fromRGB(240, 240, 240),
+                "a label's glyphs take their colour from textStyle, never from node colour");
+    }
+
+    {
+        RecordingSurface selectedSurface;
+        selectedSurface.tree.nodes = {
+            {.id = synth::ui::NodeId("root"),
+             .kind = synth::ui::NodeKind::Root,
+             .bounds = {0.0f, 0.0f, 400.0f, 300.0f},
+             .children = {synth::ui::NodeId("plain"), synth::ui::NodeId("sel")}},
+            {.id = synth::ui::NodeId("plain"),
+             .kind = synth::ui::NodeKind::Button,
+             .bounds = {0.0f, 0.0f, 80.0f, 24.0f},
+             .label = "Plain",
+             .color = synth::Color::Rgb(0, 120, 0)},
+            {.id = synth::ui::NodeId("sel"),
+             .kind = synth::ui::NodeKind::Button,
+             .bounds = {0.0f, 32.0f, 80.0f, 24.0f},
+             .label = "Selected",
+             .selected = true,
+             .color = synth::Color::Rgb(0, 120, 0)},
+        };
+        synth_juce::PortableComponent component(selectedSurface);
+        component.setSize(400, 300);
+        component.RefreshFromSurface();
+        Require(FillColourOf(component, "sel") != FillColourOf(component, "plain"),
+                "selected presentation differs from unselected");
+        Require(IsDerivedFrom(FillColourOf(component, "sel"), juce::Colour::fromRGB(0, 120, 0)),
+                "and is derived from the carried colour rather than substituted from a palette");
+    }
 
     RecordingSurface surface;
     synth::ui::Builder builder;
@@ -249,15 +440,15 @@ int main()
         const juce::Component* sidebarControl = compositeComponent.FindByNodeId("runtime.sidebar.control");
         Require(firstAppControl != nullptr && wrappedAppControl != nullptr && sidebarControl != nullptr,
                 "composite controls are hosted");
-        Require(firstAppControl->getY() == 48,
-                "app draw offsets only the trailing controls in its nearest root");
-        Require(wrappedAppControl->getX() == firstAppControl->getX() &&
-                    wrappedAppControl->getY() > firstAppControl->getY(),
-                "unbounded app controls wrap within the nested 900-pixel app root");
-        Require(sidebarControl->getX() == 900,
-                "unbounded sidebar control flows from the nested sidebar root at x 900");
-        Require(sidebarControl->getY() == 0,
-                "sidebar control keeps its producer-resolved y within the sidebar root");
+        Require(SurfaceBoundsOf(compositeComponent, *firstAppControl)
+                    == juce::Rectangle<int>(0, 0, 0, 0),
+                "unbounded app controls are not rescued by backend flow");
+        Require(SurfaceBoundsOf(compositeComponent, *wrappedAppControl)
+                    == juce::Rectangle<int>(0, 0, 0, 0),
+                "unbounded app controls are not wrapped by a backend cursor");
+        Require(SurfaceBoundsOf(compositeComponent, *sidebarControl)
+                    == juce::Rectangle<int>(900, 0, 96, 28),
+                "producer-resolved sidebar control folds through its subtree root with one sidebar offset");
     }
 
     {
@@ -497,14 +688,14 @@ int main()
         drawCoordinateComponent.RefreshFromSurface();
         const juce::Image image = RenderComponent(drawCoordinateComponent);
 
-        Require(image.getPixelAt(40, 35) == juce::Colour(220, 40, 30),
-                "surface-space draw commands paint once inside a nested hosted component");
+        Require(image.getPixelAt(40, 40) == juce::Colour(220, 40, 30),
+                "draw command bounds are node-local inside a nested hosted component");
         Require(image.getPixelAt(100, 35) == juce::Colour(30, 180, 70),
                 "node-local draw commands paint once inside a nested hosted component");
-        Require(image.getPixelAt(35, 75) == juce::Colour(40, 100, 230),
-                "a surface-space line is classified as one command, not one endpoint at a time");
-        Require(image.getPixelAt(35, 65) == juce::Colour(230, 170, 30),
-                "one surface-space command classifies the complete draw-node buffer");
+        Require(image.getPixelAt(65, 125) == juce::Colour(40, 100, 230),
+                "a node-local line is folded through the draw-node origin");
+        Require(image.getPixelAt(65, 115) == juce::Colour(230, 170, 30),
+                "every command in a draw-node buffer uses node-local geometry");
         Require(image.getPixelAt(30, 170) == juce::Colour(150, 70, 210),
                 "fractional node dimensions classify against portable precision");
     }

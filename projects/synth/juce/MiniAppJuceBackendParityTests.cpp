@@ -145,12 +145,9 @@ int main()
     std::size_t predictivePolylines = 0;
     std::size_t predictiveDots = 0;
     const juce::Rectangle<float> predictiveBounds{0.0f, 0.0f, 160.0f, 80.0f};
-    const bool predictiveCommandsAreLocal =
-        synth_juce::DrawCommandsLookLocal(predictiveCommands, predictiveBounds);
     for (const auto& command : predictiveCommands)
     {
-        synth_juce::PaintDrawCommand(
-            predictiveGraphics, command, predictiveBounds, predictiveCommandsAreLocal);
+        synth_juce::PaintDrawCommand(predictiveGraphics, command, predictiveBounds);
         predictivePolylines += command.kind == synth::ui::DrawCommand::Kind::Polyline ? 1u : 0u;
         predictiveDots += command.kind == synth::ui::DrawCommand::Kind::FillEllipse ? 1u : 0u;
     }
@@ -206,18 +203,20 @@ int main()
     for (const synth::ui::Node* panel : {vcoPanel, lfoPanel})
     {
         Require(!panel->drawCommands.empty(), "each MiniApp scope supplies portable draw commands");
-        const juce::Rectangle<float> panelBounds =
+        const juce::Rectangle<float> surfacePanelBounds =
             synth_juce::UiToJuceRectF(SurfaceBoundsOf(tree, panel->id.value));
-        const bool panelCommandsAreLocal =
-            synth_juce::DrawCommandsLookLocal(panel->drawCommands, panelBounds);
+        const juce::Rectangle<float> panelBounds{0.0f,
+                                                 0.0f,
+                                                 panel->bounds.width,
+                                                 panel->bounds.height};
+        panelGraphics.saveState();
+        panelGraphics.addTransform(juce::AffineTransform::translation(
+            surfacePanelBounds.getX(), surfacePanelBounds.getY()));
         for (const auto& command : panel->drawCommands)
         {
-            synth_juce::PaintDrawCommand(
-                panelGraphics,
-                command,
-                panelBounds,
-                panelCommandsAreLocal);
+            synth_juce::PaintDrawCommand(panelGraphics, command, panelBounds);
         }
+        panelGraphics.restoreState();
     }
 
     const synth::ui::Node* encoderNode = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::Encoder(0).c_str());
