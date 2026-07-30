@@ -223,6 +223,17 @@ const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, std::string
     return nullptr;
 }
 
+const synth::ui::Node* FindParentOf(const synth::ui::NodeTree& tree, std::string_view childId) {
+    for (const synth::ui::Node& node : tree.nodes) {
+        for (const synth::ui::NodeId& child : node.children) {
+            if (child.value == childId) {
+                return &node;
+            }
+        }
+    }
+    return nullptr;
+}
+
 // Resolves a form node's position in the form's own coordinate space the way a
 // host does: every child's bounds are parent-local, so absolute position is the
 // sum of its ancestors' origins.
@@ -315,6 +326,28 @@ TEST_CASE(MfTwisterConfigFormPlacesSixButtonsInTwoColumnsOfThree) {
     // reports an intrinsic height that covers everything it laid out.
     REQUIRE_TRUE(message[0].y >= slot.y + slot.height);
     REQUIRE_TRUE(tree.nodes.front().bounds.height >= message[2].y + message[2].height);
+}
+
+TEST_CASE(MfTwisterConfigFormBuildsRootlessSubtreeForWizardHosts) {
+    synth::MfTwisterConfigForm form;
+    const synth::ui::Subtree subtree = form.BuildSubtree();
+    REQUIRE_TRUE(FindNodeById(subtree.tree, "controller-wizard.twister") == nullptr);
+    const synth::ui::Node* body = FindNodeById(subtree.tree, "controller-wizard.twister.body");
+    REQUIRE_TRUE(body != nullptr && body->kind == synth::ui::NodeKind::Section);
+    REQUIRE_TRUE(FindParentOf(subtree.tree, body->id.value) == nullptr);
+    REQUIRE_TRUE(FindNodeById(subtree.tree, "controller-wizard.twister.encoder-slot") != nullptr);
+    REQUIRE_TRUE(FindNodeById(subtree.tree, "controller-wizard.twister.columns") != nullptr);
+    REQUIRE_TRUE(FindParentOf(subtree.tree, "controller-wizard.twister.column.0")->id.value ==
+                 "controller-wizard.twister.columns");
+
+    synth::ui::Builder host;
+    host.Root("host", {0.0f, 0.0f, 640.0f, 420.0f});
+    host.Splice(form.BuildSubtree());
+    const synth::ui::NodeTree hosted = host.Build({0.0f, 0.0f, 640.0f, 420.0f});
+    const synth::ui::Node* root = FindNodeById(hosted, "host");
+    REQUIRE_TRUE(root != nullptr);
+    REQUIRE_TRUE(root->children.size() == 1);
+    REQUIRE_TRUE(root->children.front().value == "controller-wizard.twister.body");
 }
 
 TEST_CASE(MfTwisterConfigFormBuildsClosedSixButtonSurfaceAndRoutesPortableActions) {
@@ -452,7 +485,14 @@ TEST_CASE(MfTwisterConfigFormValidatesExactSizeTIntegerTextAndIgnoresDisabledArg
     }
     form.buttons[0].argumentText = "1x";
     const synth::ui::NodeTree invalidTree = form.BuildTree();
-    REQUIRE_TRUE(FindNodeById(invalidTree, "controller-wizard.twister.button.0.argument.error") != nullptr);
+    const synth::ui::Node* argumentError =
+        FindNodeById(invalidTree, "controller-wizard.twister.button.0.argument.error");
+    REQUIRE_TRUE(argumentError != nullptr);
+    REQUIRE_TRUE(FindParentOf(invalidTree, argumentError->id.value)->id.value ==
+                 "controller-wizard.twister.button.0");
+    const synth::ui::Bounds errorBounds = FormBounds(invalidTree, argumentError->id.value);
+    const synth::ui::Bounds buttonBounds = FormBounds(invalidTree, "controller-wizard.twister.button.0");
+    REQUIRE_TRUE(errorBounds.y + errorBounds.height <= buttonBounds.y + buttonBounds.height);
     form.buttons[0].message = synth::UISystemMessage::NextParamBank;
     REQUIRE_TRUE(form.Validate(error));
     const synth::ui::NodeTree disabledTree = form.BuildTree();

@@ -11,6 +11,7 @@
 #include "synth/MidiReconcile.hpp"
 #include "synth/PortableUI.hpp"
 #include "synth/PortableUIBuilders.hpp"
+#include "synth/RuntimePageStyle.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -2232,90 +2233,74 @@ private:
 
     ui::NodeTree BuildWizardFormTree()
     {
-        ui::NodeTree tree = m_wizardSession->form->BuildTree();
-        if (tree.nodes.empty())
-        {
-            return tree;
-        }
-        // The form lays itself out and reports its intrinsic height, so the
-        // page places its own session chrome underneath instead of flowing it
-        // over the form's controls. The page learns nothing about the form's
-        // contents beyond that height.
-        const float formHeight = tree.nodes.front().bounds.height;
-        tree.nodes.front().id = NodeIds::kWizardForm;
-        tree.nodes.front().bounds = m_contentBounds;
-        float chromeX = ControllersLayout::kPageMargin;
-        const float chromeY = formHeight + ControllersLayout::kRowGap;
-        auto append = [&](ui::Node node, float width) {
-            node.bounds = {chromeX, chromeY, width, ControllersLayout::kBackRowHeight};
-            chromeX += width + ControllersLayout::kRowGap;
-            tree.nodes.front().children.push_back(node.id);
-            tree.nodes.push_back(std::move(node));
+        ui::LayoutOptions body;
+        body.main = ui::Extent::Weight(1.0f);
+        body.padding = ControllersLayout::kPageMargin;
+        body.gap = ControllersLayout::kRowGap;
+
+        ui::LayoutOptions actionsRow;
+        actionsRow.main = ui::Extent::Px(ControllersLayout::kBackRowHeight);
+        actionsRow.padding = 0.0f;
+        actionsRow.gap = ControllersLayout::kRowGap;
+
+        const auto buttonStyle = [](float width) {
+            ui::ControlStyle style;
+            style.color = pagestyle::kDefaultButton;
+            style.textStyle = pagestyle::kDefaultTextStyle;
+            style.layout.main = ui::Extent::Px(width);
+            style.layout.cross = ui::Extent::Px(ControllersLayout::kBackRowHeight);
+            return style;
         };
 
-        ui::Node back;
-        back.id = NodeIds::kWizardBack;
-        back.kind = ui::NodeKind::Button;
-        back.label = "Back";
-        back.action = ui::Action::Named(Actions::kWizardBack);
-        append(std::move(back), ControllersLayout::kBackButtonWidth);
+        ui::ControlStyle messageStyle;
+        messageStyle.textStyle = pagestyle::kMutedTextStyle;
+        messageStyle.layout.main = ui::Extent::Px(ControllersLayout::kStatusRowHeight);
 
-        ui::Node cancel;
-        cancel.id = NodeIds::kWizardCancel;
-        cancel.kind = ui::NodeKind::Button;
-        cancel.label = "Cancel";
-        cancel.action = ui::Action::Named(Actions::kWizardCancel);
-        append(std::move(cancel), ControllersLayout::kBackButtonWidth);
-
-        ui::Node submit;
-        submit.id = NodeIds::kWizardSubmit;
-        submit.kind = ui::NodeKind::Button;
-        submit.label = "Submit";
-        submit.action = ui::Action::Named(Actions::kWizardSubmit);
-        append(std::move(submit), ControllersLayout::kBackButtonWidth);
-
-        if (std::holds_alternative<WizardCandidate>(m_wizardSession->target))
-        {
-            ui::Node ignore;
-            ignore.id = NodeIds::kWizardIgnore;
-            ignore.kind = ui::NodeKind::Button;
-            ignore.label = "Ignore this controller";
-            ignore.action = ui::Action::Named(Actions::kWizardIgnore);
-            append(std::move(ignore), ControllersLayout::kWizardIgnoreWidth);
-        }
-        float messageY = chromeY + ControllersLayout::kBackRowHeight + ControllersLayout::kRowGap;
-        const float messageWidth =
-            std::max(0.0f, m_contentBounds.width - ControllersLayout::kPageMargin * 2.0f);
-        auto appendMessage = [&](ui::Node node) {
-            node.bounds = {ControllersLayout::kPageMargin, messageY, messageWidth,
-                           ControllersLayout::kStatusRowHeight};
-            messageY += ControllersLayout::kStatusRowHeight + ControllersLayout::kRowGap;
-            tree.nodes.front().children.push_back(node.id);
-            tree.nodes.push_back(std::move(node));
-        };
-        if (!m_wizardSession->warning.empty())
-        {
-            ui::Node warning;
-            warning.id = NodeIds::kWizardWarning;
-            warning.kind = ui::NodeKind::StatusText;
-            warning.text = m_wizardSession->warning;
-            appendMessage(std::move(warning));
-        }
-        if (!m_wizardSession->status.empty())
-        {
-            ui::Node status;
-            status.id = NodeIds::kWizardStatus;
-            status.kind = ui::NodeKind::StatusText;
-            status.text = m_wizardSession->status;
-            appendMessage(std::move(status));
-        }
-        return tree;
+        ui::Builder builder;
+        builder.Root(NodeIds::kWizardForm, m_contentBounds);
+        builder.Column(std::string(NodeIds::kWizardForm) + ".body", body, [&](ui::Builder& page) {
+            page.Splice(m_wizardSession->form->BuildSubtree());
+            page.Row(std::string(NodeIds::kWizardForm) + ".actions", actionsRow, [&](ui::Builder& row) {
+                row.Button(NodeIds::kWizardBack,
+                           "Back",
+                           ui::Action::Named(Actions::kWizardBack),
+                           buttonStyle(ControllersLayout::kBackButtonWidth));
+                row.Button(NodeIds::kWizardCancel,
+                           "Cancel",
+                           ui::Action::Named(Actions::kWizardCancel),
+                           buttonStyle(ControllersLayout::kBackButtonWidth));
+                row.Button(NodeIds::kWizardSubmit,
+                           "Submit",
+                           ui::Action::Named(Actions::kWizardSubmit),
+                           buttonStyle(ControllersLayout::kBackButtonWidth));
+                if (std::holds_alternative<WizardCandidate>(m_wizardSession->target))
+                {
+                    row.Button(NodeIds::kWizardIgnore,
+                               "Ignore this controller",
+                               ui::Action::Named(Actions::kWizardIgnore),
+                               buttonStyle(ControllersLayout::kWizardIgnoreWidth));
+                }
+            });
+            if (!m_wizardSession->warning.empty())
+            {
+                page.StatusText(NodeIds::kWizardWarning,
+                                m_wizardSession->warning,
+                                messageStyle);
+            }
+            if (!m_wizardSession->status.empty())
+            {
+                page.StatusText(NodeIds::kWizardStatus,
+                                m_wizardSession->status,
+                                messageStyle);
+            }
+        });
+        return builder.Build(m_contentBounds);
     }
 
     static ui::NodeTree BuildControllersPageTree(const MidiConfigViewModel& vm,
-                                                   const MidiDeviceList& devices,
-                                                   const WizardDiscovery& discovery,
-                                                   ui::Bounds area,
+                                                  const MidiDeviceList& devices,
+                                                  const WizardDiscovery& discovery,
+                                                  ui::Bounds area,
                                                   const std::string& statusText,
                                                   const std::string& addControllerName,
                                                   const std::string& addControllerKindId,
@@ -2325,151 +2310,57 @@ private:
             const auto it = renameDrafts.find(name);
             return it != renameDrafts.end() ? it->second : name;
         };
-        ui::NodeTree tree;
-        ui::Node root;
-        root.id = NodeIds::kRoot;
-        root.kind = ui::NodeKind::Root;
-        root.bounds = area;
-        tree.nodes.push_back(root);
+        const float contentWidth =
+            std::max(0.0f, area.width - ControllersLayout::kPageMargin * 2.0f);
+        const float scrollWidth =
+            std::max(contentWidth, ControllersLayout::kControllerHeaderMinWidth);
 
-        auto appendChild = [&](ui::Node node) {
-            tree.nodes.front().children.push_back(node.id);
-            tree.nodes.push_back(std::move(node));
+        const auto layout = [](ui::Extent main, ui::Extent cross, float gap, float padding = 0.0f) {
+            ui::LayoutOptions out;
+            out.main = main;
+            out.cross = cross;
+            out.padding = padding;
+            out.gap = gap;
+            return out;
         };
-
-        float y = ControllersLayout::kPageMargin;
-        const float contentX = ControllersLayout::kPageMargin;
-        const float contentWidth = area.width - ControllersLayout::kPageMargin * 2.0f;
-
-        ui::Node backButton;
-        backButton.id = NodeIds::kBack;
-        backButton.kind = ui::NodeKind::Button;
-        backButton.label = "Back";
-        backButton.bounds = {contentX, y, ControllersLayout::kBackButtonWidth, ControllersLayout::kBackRowHeight};
-        backButton.action = ui::Action::Named(Actions::kBack);
-        appendChild(std::move(backButton));
-
-        ui::Node wizardLaunch;
-        wizardLaunch.id = NodeIds::kWizardLaunch;
-        wizardLaunch.kind = ui::NodeKind::Button;
-        wizardLaunch.label = "Configuration Wizard";
-        wizardLaunch.enabled = !discovery.available.empty();
-        wizardLaunch.bounds = {contentX + ControllersLayout::kBackButtonWidth + ControllersLayout::kRowGap,
-                               y, 180.0f, ControllersLayout::kBackRowHeight};
-        wizardLaunch.action = ui::Action::Named(Actions::kWizardOpen);
-        appendChild(std::move(wizardLaunch));
-
-        y += ControllersLayout::kBackRowHeight + ControllersLayout::kRowGap;
-
-        ui::Node scrollArea;
-        scrollArea.id = NodeIds::kScroll;
-        scrollArea.kind = ui::NodeKind::ScrollArea;
-        const float scrollBottom = area.height - ControllersLayout::kStatusRowHeight - ControllersLayout::kRowGap - ControllersLayout::kPageMargin;
-        scrollArea.bounds = {contentX, y, contentWidth, scrollBottom - y};
-        scrollArea.scrollContentWidth = std::max(contentWidth, ControllersLayout::kControllerHeaderMinWidth);
-        scrollArea.scrollContentHeight = scrollArea.bounds.height;
-        tree.nodes.front().children.push_back(scrollArea.id);
-        const std::size_t scrollAreaIndex = tree.nodes.size();
-        tree.nodes.push_back(scrollArea);
-
-        float scrollY = 0.0f;
-        const float scrollWidth = tree.nodes[scrollAreaIndex].scrollContentWidth;
-        auto appendScrollChild = [&](ui::Node node) {
-            tree.nodes[scrollAreaIndex].children.push_back(node.id);
-            tree.nodes.push_back(std::move(node));
+        const auto columnLayout = [&](ui::Extent main, float gap, float padding = 0.0f) {
+            ui::LayoutOptions out = layout(main, ui::Extent::Weight(1.0f), gap, padding);
+            return out;
         };
-
-        ui::Node available;
-        available.id = NodeIds::kAvailable;
-        available.kind = ui::NodeKind::Section;
-        available.bounds = {0.0f, scrollY, scrollWidth, 0.0f};
-        tree.nodes[scrollAreaIndex].children.push_back(available.id);
-        const std::size_t availableNodeIndex = tree.nodes.size();
-        tree.nodes.push_back(std::move(available));
-        auto appendAvailableChild = [&](ui::Node node) {
-            tree.nodes[availableNodeIndex].children.push_back(node.id);
-            tree.nodes.push_back(std::move(node));
+        const auto rowLayout = [&](float height, float width, float gap) {
+            return layout(ui::Extent::Px(height), ui::Extent::Px(width), gap);
         };
-
-        // No backend paints a container node's own label, so the area heading is
-        // an explicit child node like every other heading in the runtime UI.
-        ui::Node availableHeading;
-        availableHeading.id = NodeIds::kAvailableHeading;
-        availableHeading.kind = ui::NodeKind::Label;
-        availableHeading.text = "Available controllers";
-        availableHeading.bounds = {0.0f, scrollY, scrollWidth, ControllersLayout::kStatusRowHeight};
-        appendAvailableChild(std::move(availableHeading));
-        scrollY += ControllersLayout::kStatusRowHeight;
-
-        if (discovery.available.empty())
-        {
-            ui::Node empty;
-            empty.id = NodeIds::kAvailableEmpty;
-            empty.kind = ui::NodeKind::StatusText;
-            empty.text = "No recognized unconfigured controller pair is present";
-            empty.bounds = {0.0f, scrollY, scrollWidth, ControllersLayout::kStatusRowHeight};
-            appendAvailableChild(std::move(empty));
-            scrollY += ControllersLayout::kStatusRowHeight;
-        }
-        else
-        {
-            for (std::size_t candidateIx = 0; candidateIx < discovery.available.size(); ++candidateIx)
-            {
-                const WizardCandidate& candidate = discovery.available[candidateIx];
-                ui::Node row;
-                row.id = ui::NodeId(NodeIds::AvailableRow(candidateIx));
-                row.kind = ui::NodeKind::Row;
-                row.bounds = {0.0f, scrollY, scrollWidth, ControllersLayout::kControllerHeaderHeight};
-                const std::size_t rowNodeIndex = tree.nodes.size();
-                tree.nodes.push_back(std::move(row));
-                tree.nodes[availableNodeIndex].children.push_back(tree.nodes[rowNodeIndex].id);
-                auto appendRowChild = [&](ui::Node node) {
-                    tree.nodes[rowNodeIndex].children.push_back(node.id);
-                    tree.nodes.push_back(std::move(node));
-                };
-
-                float availableX = 0.0f;
-                const auto appendAvailableColumn = [&](ui::Node node, float width) {
-                    node.bounds = {availableX, 0.0f, width,
-                                   ControllersLayout::kControllerHeaderHeight};
-                    availableX += width + ControllersLayout::kAvailableControlGap;
-                    appendRowChild(std::move(node));
-                };
-
-                // The recognized controller is named by its registry descriptor,
-                // which need not resemble the endpoint device names beside it.
-                ui::Node name;
-                name.id = ui::NodeId(NodeIds::AvailableName(candidateIx));
-                name.kind = ui::NodeKind::Label;
-                name.text = candidate.displayName;
-                appendAvailableColumn(std::move(name), ControllersLayout::kAvailableNameWidth);
-
-                ui::Node endpoints;
-                endpoints.id = ui::NodeId(NodeIds::AvailableRow(candidateIx) + ".endpoints");
-                endpoints.kind = ui::NodeKind::Label;
-                endpoints.text = candidate.input.name + " / " + candidate.output.name;
-                appendAvailableColumn(std::move(endpoints),
-                                      ControllersLayout::kAvailableEndpointsWidth);
-
-                ui::Node configure;
-                configure.id = ui::NodeId(NodeIds::AvailableConfigure(candidateIx));
-                configure.kind = ui::NodeKind::Button;
-                configure.label = "Configure";
-                configure.action = ui::Action::WithValue(Actions::kAvailableConfigure,
-                                                         std::to_string(candidateIx));
-                appendAvailableColumn(std::move(configure),
-                                      ControllersLayout::kAvailableConfigureWidth);
-
-                ui::Node ignore;
-                ignore.id = ui::NodeId(NodeIds::AvailableIgnore(candidateIx));
-                ignore.kind = ui::NodeKind::Button;
-                ignore.label = "Ignore";
-                ignore.action = ui::Action::WithValue(Actions::kAvailableIgnore,
-                                                      NodeIds::WizardCandidateToken(candidate));
-                appendAvailableColumn(std::move(ignore), ControllersLayout::kAvailableIgnoreWidth);
-                scrollY += ControllersLayout::kControllerHeaderHeight;
-            }
-        }
+        const auto style = [](float main, float cross) {
+            ui::ControlStyle out;
+            out.color = pagestyle::kDefaultButton;
+            out.textStyle = pagestyle::kDefaultTextStyle;
+            out.layout.main = ui::Extent::Px(main);
+            out.layout.cross = ui::Extent::Px(cross);
+            return out;
+        };
+        const auto labelStyle = [](float main) {
+            ui::ControlStyle out;
+            out.textStyle = pagestyle::kDefaultTextStyle;
+            out.layout.main = ui::Extent::Px(main);
+            return out;
+        };
+        const auto statusStyle = [](float main) {
+            ui::ControlStyle out;
+            out.textStyle = pagestyle::kMutedTextStyle;
+            out.layout.main = ui::Extent::Px(main);
+            return out;
+        };
+        const auto button = [&](float width, float height = ControllersLayout::kControllerHeaderHeight) {
+            return style(width, height);
+        };
+        const auto columnControl = [](float width, float height) {
+            ui::ControlStyle out;
+            out.color = pagestyle::kDefaultButton;
+            out.textStyle = pagestyle::kDefaultTextStyle;
+            out.layout.main = ui::Extent::Px(height);
+            out.layout.cross = ui::Extent::Px(width);
+            return out;
+        };
 
         const auto diagnosticText = [](const char* label, const std::vector<MidiDeviceInfoRef>& devices) {
             std::string text = label;
@@ -2483,560 +2374,368 @@ private:
             }
             return text;
         };
-        if (!discovery.unmatchedInputs.empty())
-        {
-            ui::Node diagnostics;
-            diagnostics.id = NodeIds::kAvailableUnmatchedInputs;
-            diagnostics.kind = ui::NodeKind::StatusText;
-            diagnostics.text = diagnosticText("Unmatched input: ", discovery.unmatchedInputs);
-            diagnostics.bounds = {0.0f, scrollY, scrollWidth, ControllersLayout::kStatusRowHeight};
-            appendAvailableChild(std::move(diagnostics));
-            scrollY += ControllersLayout::kStatusRowHeight;
-        }
-        if (!discovery.unmatchedOutputs.empty())
-        {
-            ui::Node diagnostics;
-            diagnostics.id = NodeIds::kAvailableUnmatchedOutputs;
-            diagnostics.kind = ui::NodeKind::StatusText;
-            diagnostics.text = diagnosticText("Unmatched output: ", discovery.unmatchedOutputs);
-            diagnostics.bounds = {0.0f, scrollY, scrollWidth, ControllersLayout::kStatusRowHeight};
-            appendAvailableChild(std::move(diagnostics));
-            scrollY += ControllersLayout::kStatusRowHeight;
-        }
-        tree.nodes[availableNodeIndex].bounds.height = scrollY - tree.nodes[availableNodeIndex].bounds.y;
-        scrollY += ControllersLayout::kRowGap;
 
-        const auto& controllers = vm.Controllers();
-        for (std::size_t controllerIx = 0; controllerIx < controllers.size(); ++controllerIx)
-        {
-            const MidiControllerRowVM& rowVm = controllers[controllerIx];
+        const auto emitAvailable = [&](ui::Builder& scroll) {
+            ui::LayoutOptions availableLayout = columnLayout(ui::Extent::Intrinsic(), 0.0f);
+            availableLayout.cross = ui::Extent::Px(scrollWidth);
+            scroll.Section(NodeIds::kAvailable,
+                           availableLayout,
+                           [&](ui::Builder& available) {
+                               available.Label(NodeIds::kAvailableHeading,
+                                               "Available controllers",
+                                               labelStyle(ControllersLayout::kStatusRowHeight));
+                               if (discovery.available.empty())
+                               {
+                                   available.StatusText(
+                                       NodeIds::kAvailableEmpty,
+                                       "No recognized unconfigured controller pair is present",
+                                       statusStyle(ControllersLayout::kStatusRowHeight));
+                               }
+                               else
+                               {
+                                   for (std::size_t candidateIx = 0;
+                                        candidateIx < discovery.available.size();
+                                        ++candidateIx)
+                                   {
+                                       const WizardCandidate& candidate =
+                                           discovery.available[candidateIx];
+                                       available.Row(
+                                           NodeIds::AvailableRow(candidateIx),
+                                           rowLayout(ControllersLayout::kControllerHeaderHeight,
+                                                     scrollWidth,
+                                                     ControllersLayout::kAvailableControlGap),
+                                           [&](ui::Builder& row) {
+                                               row.Label(NodeIds::AvailableName(candidateIx),
+                                                         candidate.displayName,
+                                                         labelStyle(ControllersLayout::kAvailableNameWidth));
+                                               row.Label(NodeIds::AvailableRow(candidateIx) + ".endpoints",
+                                                         candidate.input.name + " / " +
+                                                             candidate.output.name,
+                                                         labelStyle(ControllersLayout::kAvailableEndpointsWidth));
+                                               row.Button(NodeIds::AvailableConfigure(candidateIx),
+                                                          "Configure",
+                                                          ui::Action::WithValue(
+                                                              Actions::kAvailableConfigure,
+                                                              std::to_string(candidateIx)),
+                                                          button(ControllersLayout::kAvailableConfigureWidth));
+                                               row.Button(NodeIds::AvailableIgnore(candidateIx),
+                                                          "Ignore",
+                                                          ui::Action::WithValue(
+                                                              Actions::kAvailableIgnore,
+                                                              NodeIds::WizardCandidateToken(candidate)),
+                                                          button(ControllersLayout::kAvailableIgnoreWidth));
+                                           });
+                                   }
+                               }
+                               if (!discovery.unmatchedInputs.empty())
+                               {
+                                   available.StatusText(
+                                       NodeIds::kAvailableUnmatchedInputs,
+                                       diagnosticText("Unmatched input: ", discovery.unmatchedInputs),
+                                       statusStyle(ControllersLayout::kStatusRowHeight));
+                               }
+                               if (!discovery.unmatchedOutputs.empty())
+                               {
+                                   available.StatusText(
+                                       NodeIds::kAvailableUnmatchedOutputs,
+                                       diagnosticText("Unmatched output: ", discovery.unmatchedOutputs),
+                                       statusStyle(ControllersLayout::kStatusRowHeight));
+                               }
+                           });
+        };
 
-            ui::Node controllerRow;
-            controllerRow.id = ui::NodeId(NodeIds::ControllerRow(controllerIx));
-            controllerRow.kind = ui::NodeKind::Row;
-            controllerRow.bounds = {0.0f, scrollY, scrollWidth, ControllersLayout::kControllerHeaderHeight};
-            tree.nodes[scrollAreaIndex].children.push_back(controllerRow.id);
-            const std::size_t controllerNodeIndex = tree.nodes.size();
-            tree.nodes.push_back(std::move(controllerRow));
-            auto appendControllerChild = [&](ui::Node node) {
-                tree.nodes[controllerNodeIndex].children.push_back(node.id);
-                tree.nodes.push_back(std::move(node));
-            };
-
-            if (rowVm.disposition == MidiControllerDisposition::Blacklisted)
+        const auto emitMappingField = [&](ui::Builder& mappingRow,
+                                          std::size_t controllerIx,
+                                          MidiConfigSection section,
+                                          std::size_t mappingRowIx,
+                                          MidiMappingRowVM::Field field) {
+            const float fieldWidth = static_cast<float>(ControllersLayout::FieldEditorWidth(field));
+            ui::ControlStyle fieldStyle = style(fieldWidth, ControllersLayout::kMappingRowHeight);
+            if (field == MidiMappingRowVM::Field::MessageKind)
             {
-                float lifecycleX = 0.0f;
-                ui::Node nameLabel;
-                nameLabel.id = ui::NodeId(NodeIds::ControllerName(controllerIx));
-                nameLabel.kind = ui::NodeKind::Label;
-                nameLabel.text = rowVm.name;
-                nameLabel.bounds = {lifecycleX, 0.0f, ControllersLayout::kControllerNameWidth,
-                                    ControllersLayout::kControllerHeaderHeight};
-                appendControllerChild(std::move(nameLabel));
-                lifecycleX += ControllersLayout::kControllerNameWidth +
-                              ControllersLayout::kControllerIdentityGap;
-
-                ui::Node kindLabel;
-                kindLabel.id = ui::NodeId(NodeIds::ControllerKind(controllerIx));
-                kindLabel.kind = ui::NodeKind::Label;
-                kindLabel.text = MidiProfileKindName(rowVm.kind);
-                kindLabel.bounds = {lifecycleX, 0.0f, ControllersLayout::kControllerKindWidth,
-                                    ControllersLayout::kControllerHeaderHeight};
-                appendControllerChild(std::move(kindLabel));
-                lifecycleX += ControllersLayout::kControllerKindWidth +
-                              ControllersLayout::kControllerIdentityGap;
-
-                ui::Node badge;
-                badge.id = ui::NodeId(NodeIds::ControllerBadge(controllerIx));
-                badge.kind = ui::NodeKind::Label;
-                badge.text = "Blacklisted";
-                badge.bounds = {lifecycleX, 0.0f, ControllersLayout::kBlacklistedBadgeWidth,
-                                ControllersLayout::kControllerHeaderHeight};
-                appendControllerChild(std::move(badge));
-                lifecycleX += ControllersLayout::kBlacklistedBadgeWidth +
-                              ControllersLayout::kControllerIdentityGap;
-
-                ui::Node inputLabel;
-                inputLabel.id = ui::NodeId(NodeIds::ControllerInputLabel(controllerIx));
-                inputLabel.kind = ui::NodeKind::Label;
-                inputLabel.text = "Input: " + ControllersLayout::StoredEndpointLabel(rowVm.storedInput);
-                inputLabel.bounds = {lifecycleX, 0.0f, ControllersLayout::kBlacklistedEndpointLabelWidth,
-                                     ControllersLayout::kControllerHeaderHeight};
-                appendControllerChild(std::move(inputLabel));
-                lifecycleX += ControllersLayout::kBlacklistedEndpointLabelWidth +
-                              ControllersLayout::kControllerIdentityGap;
-
-                ui::Node outputLabel;
-                outputLabel.id = ui::NodeId(NodeIds::ControllerOutputLabel(controllerIx));
-                outputLabel.kind = ui::NodeKind::Label;
-                outputLabel.text = "Output: " + ControllersLayout::StoredEndpointLabel(rowVm.storedOutput);
-                outputLabel.bounds = {lifecycleX, 0.0f, ControllersLayout::kBlacklistedEndpointLabelWidth,
-                                      ControllersLayout::kControllerHeaderHeight};
-                appendControllerChild(std::move(outputLabel));
-                lifecycleX += ControllersLayout::kBlacklistedEndpointLabelWidth +
-                              ControllersLayout::kLifecycleControlGap;
-
-                ui::Node rename;
-                rename.id = ui::NodeId(NodeIds::ControllerRenameDraft(controllerIx));
-                rename.kind = ui::NodeKind::TextField;
-                rename.label = "Rename";
-                rename.text = renameDraftFor(rowVm.name);
-                rename.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleDraftWidth,
-                                 ControllersLayout::kControllerHeaderHeight};
-                rename.action = ui::Action::WithValue(Actions::kControllerRenameDraft,
-                                                      NodeIds::ControllerActionToken(controllerIx, rowVm.name));
-                appendControllerChild(std::move(rename));
-
-                lifecycleX += ControllersLayout::kLifecycleDraftWidth +
-                              ControllersLayout::kLifecycleControlGap;
-                ui::Node renameButton;
-                renameButton.id = ui::NodeId(NodeIds::ControllerRename(controllerIx));
-                renameButton.kind = ui::NodeKind::Button;
-                renameButton.label = "Rename";
-                renameButton.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleRenameWidth,
-                                       ControllersLayout::kControllerHeaderHeight};
-                renameButton.action = ui::Action::WithValue(Actions::kControllerRename,
-                                                            NodeIds::ControllerActionToken(controllerIx, rowVm.name));
-                appendControllerChild(std::move(renameButton));
-                lifecycleX += ControllersLayout::kLifecycleRenameWidth +
-                              ControllersLayout::kLifecycleControlGap;
-                if (rowVm.hasResolvedWizard)
+                std::vector<ui::ControlOption> options;
+                const auto& catalog = UISystemMessageCatalog();
+                for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix)
                 {
-                    ui::Node configure;
-                    configure.id = ui::NodeId(NodeIds::ControllerConfigure(controllerIx));
-                    configure.kind = ui::NodeKind::Button;
-                    configure.label = "Configure";
-                    configure.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleConfigureWidth,
-                                        ControllersLayout::kControllerHeaderHeight};
-                    configure.action = ui::Action::WithValue(Actions::kControllerConfigure,
-                                                             NodeIds::ControllerActionToken(controllerIx, rowVm.name));
-                    appendControllerChild(std::move(configure));
-                    lifecycleX += ControllersLayout::kLifecycleConfigureWidth +
-                                  ControllersLayout::kLifecycleControlGap;
+                    options.push_back({std::to_string(ix), catalog[static_cast<std::size_t>(ix)].label});
                 }
-                ui::Node remove;
-                remove.id = ui::NodeId(NodeIds::ControllerRemoveBlacklist(controllerIx));
-                remove.kind = ui::NodeKind::Button;
-                remove.label = "Remove";
-                remove.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleRemoveWidth,
-                                 ControllersLayout::kControllerHeaderHeight};
-                remove.action = ui::Action::WithValue(Actions::kControllerRemoveBlacklist,
-                                                       NodeIds::ControllerActionToken(controllerIx, rowVm.name));
-                appendControllerChild(std::move(remove));
-
-                scrollY += ControllersLayout::kControllerHeaderHeight + ControllersLayout::kRowGap;
-                continue;
+                const int current = vm.UISystemMessageIndex(controllerIx, section, mappingRowIx);
+                mappingRow.ComboBox(NodeIds::MappingField(controllerIx, section, mappingRowIx, field),
+                                    "",
+                                    std::move(options),
+                                    current >= 0 ? std::to_string(current) : "0",
+                                    ui::Action::WithValue(
+                                        Actions::kMappingFieldCommit,
+                                        std::to_string(controllerIx) + ":" +
+                                            ControllersLayout::SectionToken(section) + ":" +
+                                            std::to_string(mappingRowIx) + ":" +
+                                            ControllersLayout::FieldToken(field)),
+                                    fieldStyle);
+                return;
             }
-
-            ui::Node disclosure;
-            disclosure.id = ui::NodeId(NodeIds::ControllerDisclosure(controllerIx));
-            disclosure.kind = ui::NodeKind::Button;
-            disclosure.label = rowVm.configExpanded ? "v" : ">";
-            disclosure.bounds = {0.0f, 0.0f, ControllersLayout::kControllerDisclosureWidth,
-                                 ControllersLayout::kControllerHeaderHeight};
-            disclosure.action = ui::Action::WithValue(Actions::kToggleConfig, std::to_string(controllerIx));
-            appendControllerChild(std::move(disclosure));
-
-            ui::Node nameLabel;
-            nameLabel.id = ui::NodeId(NodeIds::ControllerName(controllerIx));
-            nameLabel.kind = ui::NodeKind::Label;
-            nameLabel.text = rowVm.name;
-            nameLabel.bounds = {ControllersLayout::kControllerDisclosureWidth +
-                                    ControllersLayout::kControllerIdentityGap,
-                                0.0f,
-                                ControllersLayout::kControllerNameWidth,
-                                ControllersLayout::kControllerHeaderHeight};
-            appendControllerChild(std::move(nameLabel));
-
-            ui::Node kindLabel;
-            kindLabel.id = ui::NodeId(NodeIds::ControllerKind(controllerIx));
-            kindLabel.kind = ui::NodeKind::Label;
-            kindLabel.text = MidiProfileKindName(rowVm.kind);
-            kindLabel.bounds = {ControllersLayout::kControllerDisclosureWidth +
-                                    ControllersLayout::kControllerIdentityGap +
-                                    ControllersLayout::kControllerNameWidth +
-                                    ControllersLayout::kControllerIdentityGap,
-                                0.0f,
-                                ControllersLayout::kControllerKindWidth,
-                                ControllersLayout::kControllerHeaderHeight};
-            appendControllerChild(std::move(kindLabel));
-
-            float headerX = ControllersLayout::kHeaderControlsX;
-
-            ui::Node statusDots;
-            statusDots.id = ui::NodeId(NodeIds::ControllerStatusDots(controllerIx));
-            statusDots.kind = ui::NodeKind::Draw;
-            statusDots.bounds = {headerX, ControllersLayout::kControllerHeaderHeight * 0.5f - 4.0f,
-                                 ControllersLayout::kStatusDotsWidth, 8.0f};
-            statusDots.drawCommands.push_back(ui::DrawCommand::FillEllipse(
-                {0.0f, 0.0f, 8.0f, 8.0f}, ControllersLayout::EndpointStatusColor(rowVm.inputStatus)));
-            statusDots.drawCommands.push_back(ui::DrawCommand::FillEllipse(
-                {14.0f, 0.0f, 8.0f, 8.0f}, ControllersLayout::EndpointStatusColor(rowVm.outputStatus)));
-            appendControllerChild(std::move(statusDots));
-
-            headerX += ControllersLayout::kStatusDotsWidth + ControllersLayout::kLifecycleControlGap;
-
-            std::string selectedInput;
-            ui::Node inputCombo;
-            inputCombo.id = ui::NodeId(NodeIds::ControllerInput(controllerIx));
-            inputCombo.kind = ui::NodeKind::ComboBox;
-            inputCombo.label = "Input";
-            inputCombo.options =
-                ControllersLayout::BuildEndpointOptions(devices.inputs, rowVm.inputStatus, rowVm.storedInput,
-                                                       rowVm.inputDeviceLabel, selectedInput);
-            inputCombo.selectedOption = selectedInput;
-            inputCombo.bounds = {headerX, 0.0f, ControllersLayout::kEndpointBoxWidth,
-                                 ControllersLayout::kControllerHeaderHeight};
-            inputCombo.action = ui::Action::WithValue(Actions::kEndpointSelect, std::to_string(controllerIx) + ":input");
-            appendControllerChild(std::move(inputCombo));
-
-            ui::Node outputCombo;
-            outputCombo.id = ui::NodeId(NodeIds::ControllerOutput(controllerIx));
-            outputCombo.kind = ui::NodeKind::ComboBox;
-            outputCombo.label = "Output";
-            std::string selectedOutput;
-            outputCombo.options = ControllersLayout::BuildEndpointOptions(devices.outputs,
-                                                             rowVm.outputStatus,
-                                                             rowVm.storedOutput,
-                                                             rowVm.outputDeviceLabel,
-                                                             selectedOutput);
-            outputCombo.selectedOption = selectedOutput;
-            outputCombo.bounds = {headerX + ControllersLayout::kEndpointBoxWidth + ControllersLayout::kEndpointBoxGap,
-                                  0.0f, ControllersLayout::kEndpointBoxWidth,
-                                  ControllersLayout::kControllerHeaderHeight};
-            outputCombo.action = ui::Action::WithValue(Actions::kEndpointSelect, std::to_string(controllerIx) + ":output");
-            appendControllerChild(std::move(outputCombo));
-
-            if (rowVm.kind == MidiProfileKind::Launchpad)
+            if (field == MidiMappingRowVM::Field::EncoderMode)
             {
-                std::string selectedVariant;
-                const std::vector<ui::ControlOption> variantOptions =
-                    ControllersLayout::BuildLaunchpadVariantOptions(vm.LaunchpadVariantIndex(controllerIx), selectedVariant);
-                ui::Node variantCombo;
-                variantCombo.id = ui::NodeId(NodeIds::ControllerVariant(controllerIx));
-                variantCombo.kind = ui::NodeKind::ComboBox;
-                variantCombo.label = "Variant";
-                variantCombo.options = variantOptions;
-                variantCombo.selectedOption = selectedVariant;
-                variantCombo.bounds = {headerX + (ControllersLayout::kEndpointBoxWidth +
-                                                  ControllersLayout::kEndpointBoxGap) *
-                                                     2.0f,
-                                       0.0f, ControllersLayout::kVariantBoxWidth,
-                                       ControllersLayout::kControllerHeaderHeight};
-                variantCombo.action = ui::Action::WithValue(Actions::kVariantSelect, std::to_string(controllerIx));
-                appendControllerChild(std::move(variantCombo));
-            }
-
-            float lifecycleX = headerX + (ControllersLayout::kEndpointBoxWidth +
-                                          ControllersLayout::kEndpointBoxGap) * 2.0f;
-            if (rowVm.kind == MidiProfileKind::Launchpad)
-            {
-                lifecycleX += ControllersLayout::kVariantBoxWidth + ControllersLayout::kEndpointBoxGap;
-            }
-
-            ui::Node rename;
-            rename.id = ui::NodeId(NodeIds::ControllerRenameDraft(controllerIx));
-            rename.kind = ui::NodeKind::TextField;
-            rename.label = "Rename";
-            rename.text = renameDraftFor(rowVm.name);
-            rename.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleDraftWidth,
-                             ControllersLayout::kControllerHeaderHeight};
-            rename.action = ui::Action::WithValue(Actions::kControllerRenameDraft,
-                                                  NodeIds::ControllerActionToken(controllerIx, rowVm.name));
-            appendControllerChild(std::move(rename));
-
-            lifecycleX += ControllersLayout::kLifecycleDraftWidth +
-                          ControllersLayout::kLifecycleControlGap;
-            ui::Node renameButton;
-            renameButton.id = ui::NodeId(NodeIds::ControllerRename(controllerIx));
-            renameButton.kind = ui::NodeKind::Button;
-            renameButton.label = "Rename";
-            renameButton.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleRenameWidth,
-                                   ControllersLayout::kControllerHeaderHeight};
-            renameButton.action = ui::Action::WithValue(Actions::kControllerRename,
-                                                        NodeIds::ControllerActionToken(controllerIx, rowVm.name));
-            appendControllerChild(std::move(renameButton));
-            lifecycleX += ControllersLayout::kLifecycleRenameWidth +
-                          ControllersLayout::kLifecycleControlGap;
-            ui::Node remove;
-            remove.id = ui::NodeId(NodeIds::ControllerDelete(controllerIx));
-            remove.kind = ui::NodeKind::Button;
-            remove.label = "Delete";
-            remove.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleDeleteWidth,
-                             ControllersLayout::kControllerHeaderHeight};
-            remove.action = ui::Action::WithValue(Actions::kControllerDelete,
-                                                   NodeIds::ControllerActionToken(controllerIx, rowVm.name));
-            appendControllerChild(std::move(remove));
-            lifecycleX += ControllersLayout::kLifecycleDeleteWidth +
-                          ControllersLayout::kLifecycleControlGap;
-            if (rowVm.hasResolvedWizard)
-            {
-                ui::Node reconfigure;
-                reconfigure.id = ui::NodeId(NodeIds::ControllerReconfigure(controllerIx));
-                reconfigure.kind = ui::NodeKind::Button;
-                reconfigure.label = "Reconfigure";
-                reconfigure.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleReconfigureWidth,
-                                      ControllersLayout::kControllerHeaderHeight};
-                reconfigure.action = ui::Action::WithValue(Actions::kControllerReconfigure,
-                                                            NodeIds::ControllerActionToken(controllerIx, rowVm.name));
-                appendControllerChild(std::move(reconfigure));
-                lifecycleX += ControllersLayout::kLifecycleReconfigureWidth +
-                              ControllersLayout::kLifecycleControlGap;
-
-                ui::Node blacklist;
-                blacklist.id = ui::NodeId(NodeIds::ControllerBlacklist(controllerIx));
-                blacklist.kind = ui::NodeKind::Button;
-                blacklist.label = "Blacklist";
-                blacklist.enabled = rowVm.hasCompleteEndpointPair;
-                blacklist.bounds = {lifecycleX, 0.0f, ControllersLayout::kLifecycleBlacklistWidth,
-                                    ControllersLayout::kControllerHeaderHeight};
-                blacklist.action = ui::Action::WithValue(Actions::kControllerBlacklist,
-                                                          NodeIds::ControllerActionToken(controllerIx, rowVm.name));
-                appendControllerChild(std::move(blacklist));
-            }
-
-            scrollY += ControllersLayout::kControllerHeaderHeight + ControllersLayout::kRowGap;
-
-            if (!rowVm.configExpanded)
-            {
-                continue;
-            }
-
-            for (MidiConfigSection section : rowVm.sections)
-            {
-                ui::Node sectionToggle;
-                sectionToggle.id = ui::NodeId(NodeIds::SectionToggle(controllerIx, section));
-                sectionToggle.kind = ui::NodeKind::Button;
-                const bool expanded = vm.SectionExpanded(controllerIx, section);
-                sectionToggle.label = std::string(ControllersLayout::SectionName(section)) + (expanded ? " v" : " >");
-                sectionToggle.bounds = {ControllersLayout::kSectionPadding, scrollY, 220.0f, ControllersLayout::kSectionHeaderHeight};
-                sectionToggle.action =
-                    ui::Action::WithValue(Actions::kToggleSection,
-                                          std::to_string(controllerIx) + ":" + ControllersLayout::SectionToken(section));
-                appendScrollChild(std::move(sectionToggle));
-                scrollY += ControllersLayout::kSectionHeaderHeight;
-
-                if (!expanded)
+                std::vector<ui::ControlOption> options;
+                const auto& catalog = EncoderModeCatalog();
+                for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix)
                 {
-                    continue;
+                    options.push_back({std::to_string(ix), catalog[static_cast<std::size_t>(ix)]});
                 }
-
-                ui::Node sectionBody;
-                sectionBody.id = ui::NodeId(NodeIds::SectionBody(controllerIx, section));
-                sectionBody.kind = ui::NodeKind::Section;
-                const std::vector<MidiMappingRowVM> rows = vm.SectionRows(controllerIx, section);
-                auto fieldsWidth = [](const std::vector<MidiMappingRowVM::Field>& fields) {
-                    float width = 0.0f;
-                    for (MidiMappingRowVM::Field field : fields)
+                double current = 0.0;
+                std::string selected = "0";
+                if (vm.RowFieldValue(controllerIx, section, mappingRowIx, field, current))
+                {
+                    selected = std::to_string(static_cast<int>(current));
+                }
+                mappingRow.ComboBox(NodeIds::MappingField(controllerIx, section, mappingRowIx, field),
+                                    "",
+                                    std::move(options),
+                                    selected,
+                                    ui::Action::WithValue(
+                                        Actions::kMappingFieldCommit,
+                                        std::to_string(controllerIx) + ":" +
+                                            ControllersLayout::SectionToken(section) + ":" +
+                                            std::to_string(mappingRowIx) + ":" +
+                                            ControllersLayout::FieldToken(field)),
+                                    fieldStyle);
+                return;
+            }
+            if (field == MidiMappingRowVM::Field::AddressType)
+            {
+                std::vector<ui::ControlOption> options;
+                const auto& catalog = ControlAddressTypeCatalog();
+                for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix)
+                {
+                    options.push_back({std::to_string(ix), catalog[static_cast<std::size_t>(ix)]});
+                }
+                double current = 0.0;
+                std::string selected = "0";
+                if (vm.RowFieldValue(controllerIx, section, mappingRowIx, field, current))
+                {
+                    const int currentIx = static_cast<int>(current);
+                    if (current == static_cast<double>(currentIx) && currentIx >= 0 &&
+                        currentIx < static_cast<int>(catalog.size()))
                     {
-                        width += static_cast<float>(ControllersLayout::FieldEditorWidth(field));
+                        selected = std::to_string(currentIx);
                     }
-                    return width;
-                };
-                float desiredSectionWidth = 420.0f;
-                for (const MidiMappingRowVM& row : rows)
-                {
-                    desiredSectionWidth = std::max(desiredSectionWidth,
-                                                   fieldsWidth(row.editableFields) +
-                                                       (row.deletable ? ControllersLayout::kDeleteButtonWidth : 0.0f));
                 }
-                for (MidiMappingRowVM::RowGroup group : vm.AddableGroups(controllerIx, section))
+                mappingRow.ComboBox(NodeIds::MappingField(controllerIx, section, mappingRowIx, field),
+                                    "",
+                                    std::move(options),
+                                    selected,
+                                    ui::Action::WithValue(
+                                        Actions::kMappingFieldCommit,
+                                        std::to_string(controllerIx) + ":" +
+                                            ControllersLayout::SectionToken(section) + ":" +
+                                            std::to_string(mappingRowIx) + ":" +
+                                            ControllersLayout::FieldToken(field)),
+                                    fieldStyle);
+                return;
+            }
+            if (field == MidiMappingRowVM::Field::BlockMessageType)
+            {
+                std::vector<ui::ControlOption> options;
+                const auto& catalog = BlockableMessageCatalog();
+                for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix)
                 {
-                    desiredSectionWidth = std::max(desiredSectionWidth,
-                                                   fieldsWidth(vm.GroupColumnFields(controllerIx, section, group)) +
-                                                       ControllersLayout::kAddButtonWidth * 2.0f + 16.0f);
+                    options.push_back({std::to_string(ix), catalog[static_cast<std::size_t>(ix)]});
                 }
-                const float sectionWidth = std::min(scrollWidth - ControllersLayout::kSectionPadding * 2.0f,
-                                                    desiredSectionWidth + 16.0f);
-                float sectionHeight = 0.0f;
+                const int current = vm.BlockMessageTypeIndex(controllerIx, section, mappingRowIx);
+                mappingRow.ComboBox(NodeIds::MappingField(controllerIx, section, mappingRowIx, field),
+                                    "",
+                                    std::move(options),
+                                    current >= 0 ? std::to_string(current) : "0",
+                                    ui::Action::WithValue(
+                                        Actions::kMappingFieldCommit,
+                                        std::to_string(controllerIx) + ":" +
+                                            ControllersLayout::SectionToken(section) + ":" +
+                                            std::to_string(mappingRowIx) + ":" +
+                                            ControllersLayout::FieldToken(field)),
+                                    fieldStyle);
+                return;
+            }
+            if (field == MidiMappingRowVM::Field::BlockRowMajor ||
+                field == MidiMappingRowVM::Field::BlockOutputFeedback)
+            {
+                double current = 0.0;
+                if (vm.RowFieldValue(controllerIx, section, mappingRowIx, field, current))
+                {
+                    mappingRow.Toggle(
+                        NodeIds::MappingField(controllerIx, section, mappingRowIx, field),
+                        FieldShortLabel(field),
+                        current != 0.0,
+                        ui::Action::WithValue(
+                            Actions::kMappingFieldCommit,
+                            std::to_string(controllerIx) + ":" +
+                                ControllersLayout::SectionToken(section) + ":" +
+                                std::to_string(mappingRowIx) + ":" +
+                                ControllersLayout::FieldToken(field)),
+                        fieldStyle);
+                }
+                return;
+            }
+
+            double initial = 0.0;
+            if (!vm.RowFieldValue(controllerIx, section, mappingRowIx, field, initial))
+            {
+                return;
+            }
+            mappingRow.TextField(
+                NodeIds::MappingField(controllerIx, section, mappingRowIx, field),
+                FieldShortLabel(field),
+                ControllersLayout::FormatFieldValue(field, initial),
+                ui::Action::WithValue(
+                    Actions::kMappingFieldCommit,
+                    std::to_string(controllerIx) + ":" + ControllersLayout::SectionToken(section) +
+                        ":" + std::to_string(mappingRowIx) + ":" +
+                        ControllersLayout::FieldToken(field)),
+                fieldStyle);
+        };
+
+        const auto emitSection = [&](ui::Builder& scroll,
+                                     std::size_t controllerIx,
+                                     MidiConfigSection section) {
+            const bool expanded = vm.SectionExpanded(controllerIx, section);
+            ui::ControlStyle sectionToggleStyle =
+                columnControl(220.0f, ControllersLayout::kSectionHeaderHeight);
+            scroll.Button(NodeIds::SectionToggle(controllerIx, section),
+                          std::string(ControllersLayout::SectionName(section)) +
+                              (expanded ? " v" : " >"),
+                          ui::Action::WithValue(
+                              Actions::kToggleSection,
+                              std::to_string(controllerIx) + ":" +
+                                  ControllersLayout::SectionToken(section)),
+                          sectionToggleStyle);
+            if (!expanded)
+            {
+                return;
+            }
+
+            const std::vector<MidiMappingRowVM> rows = vm.SectionRows(controllerIx, section);
+            constexpr float kGroupCaptionWidth = 120.0f;
+            auto fieldsWidth = [](const std::vector<MidiMappingRowVM::Field>& fields) {
+                float width = 0.0f;
+                for (MidiMappingRowVM::Field field : fields)
+                {
+                    width += static_cast<float>(ControllersLayout::FieldEditorWidth(field));
+                }
+                return width;
+            };
+            float desiredSectionWidth = 420.0f;
+            for (const MidiMappingRowVM& row : rows)
+            {
+                float headerControlsWidth = 0.0f;
+                if (vm.GroupSupportsAdd(controllerIx, section, row.group))
+                {
+                    headerControlsWidth += ControllersLayout::kAddButtonWidth;
+                    if (vm.GroupSupportsBlocks(controllerIx, section, row.group))
+                    {
+                        headerControlsWidth += ControllersLayout::kAddButtonWidth;
+                    }
+                }
+                desiredSectionWidth = std::max(
+                    desiredSectionWidth,
+                    kGroupCaptionWidth + fieldsWidth(row.editableFields) +
+                        std::max(headerControlsWidth,
+                                 row.deletable ? ControllersLayout::kDeleteButtonWidth : 0.0f));
+            }
+            for (MidiMappingRowVM::RowGroup group : vm.AddableGroups(controllerIx, section))
+            {
+                desiredSectionWidth = std::max(
+                    desiredSectionWidth,
+                    kGroupCaptionWidth + fieldsWidth(vm.GroupColumnFields(controllerIx, section, group)) +
+                        ControllersLayout::kAddButtonWidth * 2.0f + 16.0f);
+            }
+            const float sectionWidth = desiredSectionWidth + 16.0f;
+            ui::LayoutOptions sectionLayout =
+                columnLayout(ui::Extent::Intrinsic(), 0.0f);
+            sectionLayout.cross = ui::Extent::Px(sectionWidth);
+            scroll.Section(NodeIds::SectionBody(controllerIx, section), sectionLayout, [&](ui::Builder& body) {
                 std::size_t headerIx = 0;
                 std::size_t mappingRowIx = 0;
                 std::optional<MidiMappingRowVM::RowGroup> previousGroup;
                 std::optional<std::vector<MidiMappingRowVM::Field>> previousFields;
                 std::set<MidiMappingRowVM::RowGroup> seenGroups;
 
-                auto appendSectionChild = [&](ui::Node node) {
-                    sectionBody.children.push_back(node.id);
-                    tree.nodes.push_back(std::move(node));
-                };
-
-                auto appendGroupHeader = [&](MidiMappingRowVM::RowGroup group,
-                                             const std::vector<MidiMappingRowVM::Field>& fields,
-                                             bool isFirstHeaderForGroup,
-                                             MidiMappingRowVM::Kind kind) {
-                    ui::Node header;
-                    header.id = ui::NodeId(NodeIds::GroupHeader(controllerIx, section, headerIx));
-                    header.kind = ui::NodeKind::Row;
-                    header.label = ControllersLayout::RowGroupCaption(group, kind);
-                    header.bounds = {0.0f, sectionHeight, sectionWidth, ControllersLayout::kGroupHeaderHeight};
-                    float labelX = 0.0f;
-                    const bool showColumnLabels = fields.size() > 1;
-                    for (std::size_t fieldIx = 0; showColumnLabels && fieldIx < fields.size(); ++fieldIx)
-                    {
-                        const MidiMappingRowVM::Field field = fields[fieldIx];
-                        const float fieldWidth = static_cast<float>(ControllersLayout::FieldEditorWidth(field));
-                        ui::Node label;
-                        label.id = ui::NodeId(NodeIds::GroupColumnLabel(controllerIx, section, headerIx, fieldIx));
-                        label.kind = ui::NodeKind::Label;
-                        label.text = FieldShortLabel(field);
-                        label.bounds = {labelX + 4.0f, 21.0f, std::max(1.0f, fieldWidth - 8.0f), 16.0f};
-                        header.children.push_back(label.id);
-                        tree.nodes.push_back(std::move(label));
-                        labelX += fieldWidth;
-                    }
-                    if (isFirstHeaderForGroup && vm.GroupSupportsAdd(controllerIx, section, group))
-                    {
-                        ui::Node addSingle;
-                        addSingle.id = ui::NodeId(NodeIds::GroupAddSingle(controllerIx, section, headerIx));
-                        addSingle.kind = ui::NodeKind::Button;
-                        addSingle.label = "Add";
-                        addSingle.bounds = {header.bounds.width - ControllersLayout::kAddButtonWidth * 2.0f - 8.0f, 5.0f,
-                                            ControllersLayout::kAddButtonWidth, 28.0f};
-                        addSingle.action = ui::Action::WithValue(
-                            Actions::kAddSingle,
-                            std::to_string(controllerIx) + ":" + ControllersLayout::SectionToken(section) + ":" +
-                                ControllersLayout::RowGroupToken(group));
-                        header.children.push_back(addSingle.id);
-                        tree.nodes.push_back(std::move(addSingle));
-
-                        if (vm.GroupSupportsBlocks(controllerIx, section, group))
-                        {
-                            ui::Node addBlock;
-                            addBlock.id = ui::NodeId(NodeIds::GroupAddBlock(controllerIx, section, headerIx));
-                            addBlock.kind = ui::NodeKind::Button;
-                            addBlock.label = "Block";
-                            addBlock.bounds = {header.bounds.width - ControllersLayout::kAddButtonWidth - 4.0f, 5.0f,
-                                               ControllersLayout::kAddButtonWidth, 28.0f};
-                            addBlock.action = ui::Action::WithValue(
-                                Actions::kAddBlock,
-                                std::to_string(controllerIx) + ":" + ControllersLayout::SectionToken(section) + ":" +
-                                    ControllersLayout::RowGroupToken(group));
-                            header.children.push_back(addBlock.id);
-                            tree.nodes.push_back(std::move(addBlock));
-                        }
-                    }
-                    appendSectionChild(std::move(header));
-                    sectionHeight += ControllersLayout::kGroupHeaderHeight;
+                const auto emitGroupHeader = [&](MidiMappingRowVM::RowGroup group,
+                                                 const std::vector<MidiMappingRowVM::Field>& fields,
+                                                 bool isFirstHeaderForGroup,
+                                                 MidiMappingRowVM::Kind kind) {
+                    body.Row(NodeIds::GroupHeader(controllerIx, section, headerIx),
+                             rowLayout(ControllersLayout::kGroupHeaderHeight,
+                                       sectionWidth,
+                                       0.0f),
+                             [&](ui::Builder& header) {
+                                 header.Label(
+                                     NodeIds::GroupHeader(controllerIx, section, headerIx) + ".caption",
+                                     ControllersLayout::RowGroupCaption(group, kind),
+                                     labelStyle(kGroupCaptionWidth));
+                                 const bool showColumnLabels = fields.size() > 1;
+                                 for (std::size_t fieldIx = 0;
+                                      showColumnLabels && fieldIx < fields.size();
+                                      ++fieldIx)
+                                 {
+                                     const MidiMappingRowVM::Field field = fields[fieldIx];
+                                     header.Label(
+                                         NodeIds::GroupColumnLabel(
+                                             controllerIx, section, headerIx, fieldIx),
+                                         FieldShortLabel(field),
+                                         labelStyle(static_cast<float>(
+                                             ControllersLayout::FieldEditorWidth(field))));
+                                 }
+                                 if (isFirstHeaderForGroup &&
+                                     vm.GroupSupportsAdd(controllerIx, section, group))
+                                 {
+                                     header.Button(
+                                         NodeIds::GroupAddSingle(controllerIx, section, headerIx),
+                                         "Add",
+                                         ui::Action::WithValue(
+                                             Actions::kAddSingle,
+                                             std::to_string(controllerIx) + ":" +
+                                                 ControllersLayout::SectionToken(section) + ":" +
+                                                 ControllersLayout::RowGroupToken(group)),
+                                         button(ControllersLayout::kAddButtonWidth, 28.0f));
+                                     if (vm.GroupSupportsBlocks(controllerIx, section, group))
+                                     {
+                                         header.Button(
+                                             NodeIds::GroupAddBlock(controllerIx, section, headerIx),
+                                             "Block",
+                                             ui::Action::WithValue(
+                                                 Actions::kAddBlock,
+                                                 std::to_string(controllerIx) + ":" +
+                                                     ControllersLayout::SectionToken(section) + ":" +
+                                                     ControllersLayout::RowGroupToken(group)),
+                                             button(ControllersLayout::kAddButtonWidth, 28.0f));
+                                     }
+                                 }
+                             });
                     ++headerIx;
                 };
 
-                auto appendMappingRow = [&](const MidiMappingRowVM& rowVmRow) {
-                    ui::Node mappingRow;
-                    mappingRow.id = ui::NodeId(NodeIds::MappingRow(controllerIx, section, mappingRowIx));
-                    mappingRow.kind = ui::NodeKind::Row;
-                    mappingRow.bounds = {0.0f, sectionHeight, sectionWidth, ControllersLayout::kMappingRowHeight};
-                    float fieldX = 0.0f;
-                    for (MidiMappingRowVM::Field field : rowVmRow.editableFields)
-                    {
-                        ui::Node fieldNode;
-                        fieldNode.id = ui::NodeId(NodeIds::MappingField(controllerIx, section, mappingRowIx, field));
-                        const float fieldWidth = static_cast<float>(ControllersLayout::FieldEditorWidth(field));
-                        fieldNode.bounds = {fieldX, 0.0f, fieldWidth, ControllersLayout::kMappingRowHeight};
-                        fieldX += fieldWidth;
-
-                        if (field == MidiMappingRowVM::Field::MessageKind)
-                        {
-                            fieldNode.kind = ui::NodeKind::ComboBox;
-                            const auto& catalog = UISystemMessageCatalog();
-                            for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix)
-                            {
-                                fieldNode.options.push_back({std::to_string(ix), catalog[static_cast<std::size_t>(ix)].label});
-                            }
-                            const int current = vm.UISystemMessageIndex(controllerIx, section, mappingRowIx);
-                            fieldNode.selectedOption = current >= 0 ? std::to_string(current) : "0";
-                        }
-                        else if (field == MidiMappingRowVM::Field::EncoderMode)
-                        {
-                            fieldNode.kind = ui::NodeKind::ComboBox;
-                            const auto& catalog = EncoderModeCatalog();
-                            for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix)
-                            {
-                                fieldNode.options.push_back({std::to_string(ix), catalog[static_cast<std::size_t>(ix)]});
-                            }
-                            double current = 0.0;
-                            if (vm.RowFieldValue(controllerIx, section, mappingRowIx, field, current))
-                            {
-                                fieldNode.selectedOption = std::to_string(static_cast<int>(current));
-                            }
-                        }
-                        else if (field == MidiMappingRowVM::Field::AddressType)
-                        {
-                            fieldNode.kind = ui::NodeKind::ComboBox;
-                            const auto& catalog = ControlAddressTypeCatalog();
-                            for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix)
-                            {
-                                fieldNode.options.push_back(
-                                    {std::to_string(ix), catalog[static_cast<std::size_t>(ix)]});
-                            }
-                            double current = 0.0;
-                            if (vm.RowFieldValue(controllerIx, section, mappingRowIx, field, current))
-                            {
-                                const int currentIx = static_cast<int>(current);
-                                if (current == static_cast<double>(currentIx) && currentIx >= 0 &&
-                                    currentIx < static_cast<int>(catalog.size()))
-                                {
-                                    fieldNode.selectedOption = std::to_string(currentIx);
-                                }
-                            }
-                        }
-                        else if (field == MidiMappingRowVM::Field::BlockMessageType)
-                        {
-                            fieldNode.kind = ui::NodeKind::ComboBox;
-                            const auto& catalog = BlockableMessageCatalog();
-                            for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix)
-                            {
-                                fieldNode.options.push_back({std::to_string(ix), catalog[static_cast<std::size_t>(ix)]});
-                            }
-                            const int current = vm.BlockMessageTypeIndex(controllerIx, section, mappingRowIx);
-                            fieldNode.selectedOption = current >= 0 ? std::to_string(current) : "0";
-                        }
-                        else if (field == MidiMappingRowVM::Field::BlockRowMajor ||
-                                 field == MidiMappingRowVM::Field::BlockOutputFeedback)
-                        {
-                            fieldNode.kind = ui::NodeKind::Toggle;
-                            fieldNode.label = FieldShortLabel(field);
-                            double current = 0.0;
-                            if (vm.RowFieldValue(controllerIx, section, mappingRowIx, field, current))
-                            {
-                                fieldNode.checked = current != 0.0;
-                            }
-                        }
-                        else
-                        {
-                            double initial = 0.0;
-                            if (!vm.RowFieldValue(controllerIx, section, mappingRowIx, field, initial))
-                            {
-                                continue;
-                            }
-                            fieldNode.kind = ui::NodeKind::TextField;
-                            fieldNode.text = ControllersLayout::FormatFieldValue(field, initial);
-                        }
-
-                        fieldNode.action = ui::Action::WithValue(
-                            Actions::kMappingFieldCommit,
-                            std::to_string(controllerIx) + ":" + ControllersLayout::SectionToken(section) + ":" +
-                                std::to_string(mappingRowIx) + ":" + ControllersLayout::FieldToken(field));
-                        mappingRow.children.push_back(fieldNode.id);
-                        tree.nodes.push_back(std::move(fieldNode));
-                    }
-
-                    if (rowVmRow.deletable)
-                    {
-                        ui::Node deleteButton;
-                        deleteButton.id = ui::NodeId(NodeIds::MappingDelete(controllerIx, section, mappingRowIx));
-                        deleteButton.kind = ui::NodeKind::Button;
-                        deleteButton.label = "x";
-                        deleteButton.bounds = {fieldX, 0.0f, ControllersLayout::kDeleteButtonWidth, ControllersLayout::kMappingRowHeight};
-                        deleteButton.action = ui::Action::WithValue(
-                            Actions::kDeleteRow,
-                            std::to_string(controllerIx) + ":" + ControllersLayout::SectionToken(section) + ":" +
-                                std::to_string(mappingRowIx));
-                        mappingRow.children.push_back(deleteButton.id);
-                        tree.nodes.push_back(std::move(deleteButton));
-                    }
-
-                    appendSectionChild(std::move(mappingRow));
-                    sectionHeight += ControllersLayout::kMappingRowHeight;
+                const auto emitMappingRow = [&](const MidiMappingRowVM& rowVmRow) {
+                    body.Row(NodeIds::MappingRow(controllerIx, section, mappingRowIx),
+                             rowLayout(ControllersLayout::kMappingRowHeight,
+                                       sectionWidth,
+                                       0.0f),
+                             [&](ui::Builder& row) {
+                                 for (MidiMappingRowVM::Field field : rowVmRow.editableFields)
+                                 {
+                                     emitMappingField(row, controllerIx, section, mappingRowIx, field);
+                                 }
+                                 if (rowVmRow.deletable)
+                                 {
+                                     row.Button(
+                                         NodeIds::MappingDelete(controllerIx, section, mappingRowIx),
+                                         "x",
+                                         ui::Action::WithValue(
+                                             Actions::kDeleteRow,
+                                             std::to_string(controllerIx) + ":" +
+                                                 ControllersLayout::SectionToken(section) + ":" +
+                                                 std::to_string(mappingRowIx)),
+                                         button(ControllersLayout::kDeleteButtonWidth,
+                                                ControllersLayout::kMappingRowHeight));
+                                 }
+                             });
                     ++mappingRowIx;
                 };
 
@@ -3047,12 +2746,12 @@ private:
                         *previousFields != rows[rowIx].editableFields)
                     {
                         const bool isFirstHeaderForGroup = seenGroups.insert(group).second;
-                        appendGroupHeader(group, rows[rowIx].editableFields, isFirstHeaderForGroup,
-                                          rows[rowIx].kind);
+                        emitGroupHeader(group, rows[rowIx].editableFields, isFirstHeaderForGroup,
+                                        rows[rowIx].kind);
                         previousGroup = group;
                         previousFields = rows[rowIx].editableFields;
                     }
-                    appendMappingRow(rows[rowIx]);
+                    emitMappingRow(rows[rowIx]);
                 }
 
                 for (MidiMappingRowVM::RowGroup group : vm.AddableGroups(controllerIx, section))
@@ -3061,67 +2760,298 @@ private:
                     {
                         continue;
                     }
-                    appendGroupHeader(group, vm.GroupColumnFields(controllerIx, section, group), true,
-                                      MidiMappingRowVM::Kind::Individual);
+                    emitGroupHeader(group,
+                                    vm.GroupColumnFields(controllerIx, section, group),
+                                    true,
+                                    MidiMappingRowVM::Kind::Individual);
                 }
-
-                sectionBody.bounds = {ControllersLayout::kSectionPadding, scrollY, sectionWidth, sectionHeight};
-                appendScrollChild(std::move(sectionBody));
-                scrollY += sectionHeight + ControllersLayout::kRowGap;
-            }
-        }
-
-        ui::Node addRow;
-        addRow.id = NodeIds::kAddRow;
-        addRow.kind = ui::NodeKind::Row;
-        addRow.bounds = {0.0f, scrollY, scrollWidth, ControllersLayout::kAddRowHeight};
-        tree.nodes[scrollAreaIndex].children.push_back(addRow.id);
-        const std::size_t addRowNodeIndex = tree.nodes.size();
-        tree.nodes.push_back(std::move(addRow));
-        auto appendAddRowChild = [&](ui::Node node) {
-            tree.nodes[addRowNodeIndex].children.push_back(node.id);
-            tree.nodes.push_back(std::move(node));
+            });
         };
 
-        ui::Node addName;
-        addName.id = NodeIds::kAddName;
-        addName.kind = ui::NodeKind::TextField;
-        addName.label = "New controller name";
-        addName.text = addControllerName;
-        addName.bounds = {0.0f, 0.0f, 180.0f, ControllersLayout::kAddRowHeight};
-        addName.action = ui::Action::Named(Actions::kAddNameDraft);
-        appendAddRowChild(std::move(addName));
+        const auto emitControllerRow = [&](ui::Builder& scroll,
+                                           const MidiControllerRowVM& rowVm,
+                                           std::size_t controllerIx) {
+            scroll.Row(NodeIds::ControllerRow(controllerIx),
+                       rowLayout(ControllersLayout::kControllerHeaderHeight,
+                                 scrollWidth,
+                                 ControllersLayout::kLifecycleControlGap),
+                       [&](ui::Builder& row) {
+                           if (rowVm.disposition == MidiControllerDisposition::Blacklisted)
+                           {
+                               row.Label(NodeIds::ControllerName(controllerIx),
+                                         rowVm.name,
+                                         labelStyle(ControllersLayout::kControllerNameWidth));
+                               row.Label(NodeIds::ControllerKind(controllerIx),
+                                         MidiProfileKindName(rowVm.kind),
+                                         labelStyle(ControllersLayout::kControllerKindWidth));
+                               row.Label(NodeIds::ControllerBadge(controllerIx),
+                                         "Blacklisted",
+                                         labelStyle(ControllersLayout::kBlacklistedBadgeWidth));
+                               row.Label(NodeIds::ControllerInputLabel(controllerIx),
+                                         "Input: " +
+                                             ControllersLayout::StoredEndpointLabel(rowVm.storedInput),
+                                         labelStyle(ControllersLayout::kBlacklistedEndpointLabelWidth));
+                               row.Label(NodeIds::ControllerOutputLabel(controllerIx),
+                                         "Output: " +
+                                             ControllersLayout::StoredEndpointLabel(rowVm.storedOutput),
+                                         labelStyle(ControllersLayout::kBlacklistedEndpointLabelWidth));
+                               row.TextField(
+                                   NodeIds::ControllerRenameDraft(controllerIx),
+                                   "Rename",
+                                   renameDraftFor(rowVm.name),
+                                   ui::Action::WithValue(
+                                       Actions::kControllerRenameDraft,
+                                       NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
+                                   button(ControllersLayout::kLifecycleDraftWidth));
+                               row.Button(
+                                   NodeIds::ControllerRename(controllerIx),
+                                   "Rename",
+                                   ui::Action::WithValue(
+                                       Actions::kControllerRename,
+                                       NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
+                                   button(ControllersLayout::kLifecycleRenameWidth));
+                               if (rowVm.hasResolvedWizard)
+                               {
+                                   row.Button(
+                                       NodeIds::ControllerConfigure(controllerIx),
+                                       "Configure",
+                                       ui::Action::WithValue(
+                                           Actions::kControllerConfigure,
+                                           NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
+                                       button(ControllersLayout::kLifecycleConfigureWidth));
+                               }
+                               row.Button(
+                                   NodeIds::ControllerRemoveBlacklist(controllerIx),
+                                   "Remove",
+                                   ui::Action::WithValue(
+                                       Actions::kControllerRemoveBlacklist,
+                                       NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
+                                   button(ControllersLayout::kLifecycleRemoveWidth));
+                               return;
+                           }
 
-        ui::Node addKind;
-        addKind.id = NodeIds::kAddKind;
-        addKind.kind = ui::NodeKind::ComboBox;
-        addKind.label = "Kind";
-        addKind.options = ControllersLayout::BuildAddControllerKindOptions();
-        addKind.selectedOption = addControllerKindId.empty() ? "wrldbldr" : addControllerKindId;
-        addKind.bounds = {188.0f, 0.0f, 140.0f, ControllersLayout::kAddRowHeight};
-        addKind.action = ui::Action::Named(Actions::kAddKindDraft);
-        appendAddRowChild(std::move(addKind));
+                           row.Button(NodeIds::ControllerDisclosure(controllerIx),
+                                      rowVm.configExpanded ? "v" : ">",
+                                      ui::Action::WithValue(Actions::kToggleConfig,
+                                                            std::to_string(controllerIx)),
+                                      button(ControllersLayout::kControllerDisclosureWidth));
+                           row.Label(NodeIds::ControllerName(controllerIx),
+                                     rowVm.name,
+                                     labelStyle(ControllersLayout::kControllerNameWidth));
+                           row.Label(NodeIds::ControllerKind(controllerIx),
+                                     MidiProfileKindName(rowVm.kind),
+                                     labelStyle(ControllersLayout::kControllerKindWidth));
 
-        ui::Node addButton;
-        addButton.id = NodeIds::kAddButton;
-        addButton.kind = ui::NodeKind::Button;
-        addButton.label = "Add";
-        addButton.bounds = {336.0f, 0.0f, 72.0f, ControllersLayout::kAddRowHeight};
-        addButton.action = ui::Action::Named(Actions::kAddController);
-        appendAddRowChild(std::move(addButton));
+                           const bool hasVariant = rowVm.kind == MidiProfileKind::Launchpad;
+                           const float endpointClusterWidth =
+                               ControllersLayout::kStatusDotsWidth +
+                               ControllersLayout::kEndpointBoxGap +
+                               ControllersLayout::kEndpointBoxWidth +
+                               ControllersLayout::kEndpointBoxGap +
+                               ControllersLayout::kEndpointBoxWidth +
+                               (hasVariant ? ControllersLayout::kEndpointBoxGap +
+                                                 ControllersLayout::kVariantBoxWidth
+                                           : 0.0f);
+                           row.Row(NodeIds::ControllerRow(controllerIx) + ".endpoints",
+                                   layout(ui::Extent::Px(endpointClusterWidth),
+                                          ui::Extent::Px(ControllersLayout::kControllerHeaderHeight),
+                                          ControllersLayout::kEndpointBoxGap),
+                                   [&](ui::Builder& endpoints) {
+                                       ui::LayoutOptions dotsCellLayout;
+                                       dotsCellLayout.main =
+                                           ui::Extent::Px(ControllersLayout::kStatusDotsWidth);
+                                       dotsCellLayout.cross = ui::Extent::Px(
+                                           ControllersLayout::kControllerHeaderHeight);
+                                       endpoints.Section(
+                                           NodeIds::ControllerStatusDots(controllerIx) + ".cell",
+                                           dotsCellLayout,
+                                           [&](ui::Builder& dotsCell) {
+                                               const float dotsY =
+                                                   (ControllersLayout::kControllerHeaderHeight - 8.0f) /
+                                                   2.0f;
+                                               dotsCell.Draw(
+                                                   NodeIds::ControllerStatusDots(controllerIx),
+                                                   {0.0f,
+                                                    dotsY,
+                                                    ControllersLayout::kStatusDotsWidth,
+                                                    8.0f},
+                                                   {ui::DrawCommand::FillEllipse(
+                                                        {0.0f, 0.0f, 8.0f, 8.0f},
+                                                        ControllersLayout::EndpointStatusColor(
+                                                            rowVm.inputStatus)),
+                                                    ui::DrawCommand::FillEllipse(
+                                                        {14.0f, 0.0f, 8.0f, 8.0f},
+                                                        ControllersLayout::EndpointStatusColor(
+                                                            rowVm.outputStatus))});
+                                           });
 
-        scrollY += ControllersLayout::kAddRowHeight;
-        tree.nodes[scrollAreaIndex].scrollContentWidth = scrollWidth;
-        tree.nodes[scrollAreaIndex].scrollContentHeight = std::max(tree.nodes[scrollAreaIndex].bounds.height, scrollY);
+                                       std::string selectedInput;
+                                       endpoints.ComboBox(
+                                           NodeIds::ControllerInput(controllerIx),
+                                           "Input",
+                                           ControllersLayout::BuildEndpointOptions(
+                                               devices.inputs,
+                                               rowVm.inputStatus,
+                                               rowVm.storedInput,
+                                               rowVm.inputDeviceLabel,
+                                               selectedInput),
+                                           selectedInput,
+                                           ui::Action::WithValue(
+                                               Actions::kEndpointSelect,
+                                               std::to_string(controllerIx) + ":input"),
+                                           button(ControllersLayout::kEndpointBoxWidth));
 
-        ui::Node statusLine;
-        statusLine.id = NodeIds::kStatus;
-        statusLine.kind = ui::NodeKind::StatusText;
-        statusLine.text = statusText.empty() ? "Ready" : statusText;
-        statusLine.bounds = {contentX, scrollBottom + ControllersLayout::kRowGap, contentWidth, ControllersLayout::kStatusRowHeight};
-        appendChild(std::move(statusLine));
+                                       std::string selectedOutput;
+                                       endpoints.ComboBox(
+                                           NodeIds::ControllerOutput(controllerIx),
+                                           "Output",
+                                           ControllersLayout::BuildEndpointOptions(
+                                               devices.outputs,
+                                               rowVm.outputStatus,
+                                               rowVm.storedOutput,
+                                               rowVm.outputDeviceLabel,
+                                               selectedOutput),
+                                           selectedOutput,
+                                           ui::Action::WithValue(
+                                               Actions::kEndpointSelect,
+                                               std::to_string(controllerIx) + ":output"),
+                                           button(ControllersLayout::kEndpointBoxWidth));
+                                       if (hasVariant)
+                                       {
+                                           std::string selectedVariant;
+                                           endpoints.ComboBox(
+                                               NodeIds::ControllerVariant(controllerIx),
+                                               "Variant",
+                                               ControllersLayout::BuildLaunchpadVariantOptions(
+                                                   vm.LaunchpadVariantIndex(controllerIx),
+                                                   selectedVariant),
+                                               selectedVariant,
+                                               ui::Action::WithValue(
+                                                   Actions::kVariantSelect,
+                                                   std::to_string(controllerIx)),
+                                               button(ControllersLayout::kVariantBoxWidth));
+                                       }
+                                   });
+                           row.TextField(
+                               NodeIds::ControllerRenameDraft(controllerIx),
+                               "Rename",
+                               renameDraftFor(rowVm.name),
+                               ui::Action::WithValue(
+                                   Actions::kControllerRenameDraft,
+                                   NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
+                               button(ControllersLayout::kLifecycleDraftWidth));
+                           row.Button(
+                               NodeIds::ControllerRename(controllerIx),
+                               "Rename",
+                               ui::Action::WithValue(
+                                   Actions::kControllerRename,
+                                   NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
+                               button(ControllersLayout::kLifecycleRenameWidth));
+                           row.Button(NodeIds::ControllerDelete(controllerIx),
+                                      "Delete",
+                                      ui::Action::WithValue(
+                                          Actions::kControllerDelete,
+                                          NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
+                                      button(ControllersLayout::kLifecycleDeleteWidth));
+                           if (rowVm.hasResolvedWizard)
+                           {
+                               row.Button(
+                                   NodeIds::ControllerReconfigure(controllerIx),
+                                   "Reconfigure",
+                                   ui::Action::WithValue(
+                                       Actions::kControllerReconfigure,
+                                       NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
+                                   button(ControllersLayout::kLifecycleReconfigureWidth));
+                               ui::ControlStyle blacklist = button(ControllersLayout::kLifecycleBlacklistWidth);
+                               blacklist.enabled = rowVm.hasCompleteEndpointPair;
+                               row.Button(
+                                   NodeIds::ControllerBlacklist(controllerIx),
+                                   "Blacklist",
+                                   ui::Action::WithValue(
+                                       Actions::kControllerBlacklist,
+                                       NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
+                                   blacklist);
+                           }
+                       });
+        };
 
-        return tree;
+        ui::Builder builder;
+        builder.Root(NodeIds::kRoot, area);
+
+        ui::LayoutOptions pageLayout;
+        pageLayout.main = ui::Extent::Weight(1.0f);
+        pageLayout.cross = ui::Extent::Weight(1.0f);
+        pageLayout.padding = ControllersLayout::kPageMargin;
+        pageLayout.gap = ControllersLayout::kRowGap;
+
+        ui::LayoutOptions actionsLayout =
+            rowLayout(ControllersLayout::kBackRowHeight, contentWidth, ControllersLayout::kRowGap);
+        ui::LayoutOptions scrollLayout;
+        scrollLayout.main = ui::Extent::Weight(1.0f);
+        scrollLayout.cross = ui::Extent::Weight(1.0f);
+        scrollLayout.padding = 0.0f;
+        scrollLayout.gap = ControllersLayout::kRowGap;
+
+        builder.Column(std::string(NodeIds::kRoot) + ".page", pageLayout, [&](ui::Builder& page) {
+            page.Row(std::string(NodeIds::kRoot) + ".actions", actionsLayout, [&](ui::Builder& actions) {
+                actions.Button(NodeIds::kBack,
+                               "Back",
+                               ui::Action::Named(Actions::kBack),
+                               button(ControllersLayout::kBackButtonWidth,
+                                      ControllersLayout::kBackRowHeight));
+                ui::ControlStyle wizard = button(180.0f, ControllersLayout::kBackRowHeight);
+                wizard.enabled = !discovery.available.empty();
+                actions.Button(NodeIds::kWizardLaunch,
+                               "Configuration Wizard",
+                               ui::Action::Named(Actions::kWizardOpen),
+                               wizard);
+            });
+            page.ScrollArea(NodeIds::kScroll, scrollLayout, [&](ui::Builder& scroll) {
+                emitAvailable(scroll);
+                const auto& controllers = vm.Controllers();
+                for (std::size_t controllerIx = 0; controllerIx < controllers.size(); ++controllerIx)
+                {
+                    const MidiControllerRowVM& rowVm = controllers[controllerIx];
+                    emitControllerRow(scroll, rowVm, controllerIx);
+                    if (rowVm.disposition == MidiControllerDisposition::Blacklisted ||
+                        !rowVm.configExpanded)
+                    {
+                        continue;
+                    }
+                    for (MidiConfigSection section : rowVm.sections)
+                    {
+                        emitSection(scroll, controllerIx, section);
+                    }
+                }
+                scroll.Row(NodeIds::kAddRow,
+                           rowLayout(ControllersLayout::kAddRowHeight,
+                                     scrollWidth,
+                                     ControllersLayout::kAvailableControlGap),
+                           [&](ui::Builder& row) {
+                               row.TextField(NodeIds::kAddName,
+                                             "New controller name",
+                                             addControllerName,
+                                             ui::Action::Named(Actions::kAddNameDraft),
+                                             button(180.0f, ControllersLayout::kAddRowHeight));
+                               row.ComboBox(NodeIds::kAddKind,
+                                            "Kind",
+                                            ControllersLayout::BuildAddControllerKindOptions(),
+                                            addControllerKindId.empty() ? "wrldbldr"
+                                                                        : addControllerKindId,
+                                            ui::Action::Named(Actions::kAddKindDraft),
+                                            button(140.0f, ControllersLayout::kAddRowHeight));
+                               row.Button(NodeIds::kAddButton,
+                                          "Add",
+                                          ui::Action::Named(Actions::kAddController),
+                                          button(72.0f, ControllersLayout::kAddRowHeight));
+                           });
+            });
+            page.StatusText(NodeIds::kStatus,
+                            statusText.empty() ? "Ready" : statusText,
+                            statusStyle(ControllersLayout::kStatusRowHeight));
+        });
+
+        return builder.Build(area);
     }
 
     ControllersPageCallbacks m_callbacks;

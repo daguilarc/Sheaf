@@ -4,6 +4,7 @@
 #include "synth/MidiConfigViewModel.hpp"
 #include "synth/MidiReconcile.hpp"
 #include "synth/PortableUI.hpp"
+#include "synth/PortableUIBuilders.hpp"
 
 #include <array>
 #include <cassert>
@@ -23,6 +24,7 @@ class ControllerConfigForm : public ui::Surface {
 public:
     ~ControllerConfigForm() override = default;
     virtual std::string_view WizardId() const = 0;
+    virtual ui::Subtree BuildSubtree() { return ui::Subtree{BuildTree(), {}, {}}; }
     virtual bool Validate(std::string& error) const = 0;
     virtual std::string_view ReconfigureWarning() const { return {}; }
 };
@@ -42,6 +44,7 @@ public:
     std::array<MfTwisterButtonConfig, kButtonCount> buttons;
 
     std::string_view WizardId() const override;
+    ui::Subtree BuildSubtree() override;
     ui::NodeTree BuildTree() override;
     void SetActionHandler(ActionHandler handler) override;
     void DispatchAction(const ui::Action&) override;

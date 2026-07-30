@@ -2984,10 +2984,18 @@ int main()
     const synth::ui::NodeTree wizardTree = controllersSurface.BuildTree();
     const synth::ui::Node* wizardRoot = FindNodeById(
         wizardTree, synth::runtime_ui::NodeIds::kWizardForm);
-    Require(wizardRoot != nullptr &&
-                NodeHasChild(wizardRoot, synth::ui::NodeId("controller-wizard.twister.encoder-slot")) &&
-                NodeHasChild(wizardRoot, synth::ui::NodeId(synth::runtime_ui::NodeIds::kWizardSubmit)) &&
-                NodeHasChild(wizardRoot, synth::ui::NodeId(synth::runtime_ui::NodeIds::kWizardIgnore)),
+    const std::string wizardBody = std::string(synth::runtime_ui::NodeIds::kWizardForm) + ".body";
+    const std::string wizardActions =
+        std::string(synth::runtime_ui::NodeIds::kWizardForm) + ".actions";
+    Require(CountRootNodes(wizardTree) == 1 &&
+                wizardRoot != nullptr &&
+                NodeHasChild(wizardRoot, synth::ui::NodeId(wizardBody)) &&
+                IsDescendantOf(wizardTree, "controller-wizard.twister.body", wizardBody) &&
+                IsDescendantOf(wizardTree, "controller-wizard.twister.encoder-slot", wizardBody) &&
+                NodeHasChild(FindNodeById(wizardTree, wizardActions),
+                             synth::ui::NodeId(synth::runtime_ui::NodeIds::kWizardSubmit)) &&
+                NodeHasChild(FindNodeById(wizardTree, wizardActions),
+                             synth::ui::NodeId(synth::runtime_ui::NodeIds::kWizardIgnore)),
             "portable wizard session composes the form and workflow actions into one tree");
 
     return 0;

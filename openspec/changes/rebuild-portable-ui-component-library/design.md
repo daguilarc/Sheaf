@@ -1112,6 +1112,16 @@ cover — is spot-checked at the human sign-off gate (D4).
    found relying on overdraw beyond its node box needs a per-case call
    (grow the node vs. redesign the drawing).
 7. **How much of `ControllersPageUI.hpp`'s node construction is genuinely
-   tree-shape versus view-model presentation logic** is estimated from
-   structure (186 node sites), not from a completed line-by-line read; the
-   Controllers task budget may move after the first migration spike.
+   tree-shape versus view-model presentation logic. RESOLVED by Task 13
+   spike.** The controller-list-row spike covered 24 of the 186 old
+   `ui::Node` construction sites: 17 were pure tree shape (container/control
+   kind, id, child placement, fixed extents) and 7 carried presentation
+   values from the view model (row text, selected options, enabled/action
+   state, status-dot draw state), a 71% shape / 29% presentation split. The
+   implication for the remaining work is that the plan's risk was real but
+   not a design defect: the presentation logic is adjacent to construction
+   and can remain as builder arguments without touching the view model,
+   edit-session logic, or wizard state machine. Re-estimate: the rest of the
+   186-node migration is larger than a mechanical find/replace because each
+   list-like section needs real `ScrollArea` furniture and fixed/intrinsic row
+   extents, but it does not require a new component-library primitive.

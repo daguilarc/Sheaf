@@ -1,5 +1,6 @@
 #include "synth/ControllersPageUI.hpp"
 #include "synth/ControllerWizard.hpp"
+#include "support/SourceScan.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
 #error "controllers page UI tests must not see JUCE"
@@ -8,6 +9,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cctype>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -53,6 +55,21 @@ bool BoundsAre(const synth::ui::Node* node, float x, float y, float width, float
 {
     return node != nullptr && node->bounds.x == x && node->bounds.y == y &&
            node->bounds.width == width && node->bounds.height == height;
+}
+
+const synth::ui::Node* FindParentOf(const synth::ui::NodeTree& tree, const std::string& childId)
+{
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        for (const synth::ui::NodeId& child : node.children)
+        {
+            if (child.value == childId)
+            {
+                return &node;
+            }
+        }
+    }
+    return nullptr;
 }
 
 bool StacksInDeclarationOrder(const synth::ui::NodeTree& tree, const std::string& parentId)
@@ -1077,6 +1094,96 @@ void TestEndpointSelectorsPreferTheExactStoredIdentifier()
     }
 }
 
+void TestNoHandRolledControllerNodesSurvive()
+{
+    for (const char* file : {"projects/synth/include/synth/ControllersPageUI.hpp",
+                             "projects/synth/src/ControllerWizard.cpp"})
+    {
+        Require(!synth::test::SourceContainsFieldByFieldNodeInit(file),
+                (std::string(file) +
+                 " no longer initializes ui::Node structs field-by-field").c_str());
+    }
+}
+
+void TestControllersSectionsNestThroughLibraryContainers()
+{
+    TestHarness harness;
+    auto surface = harness.MakeSurface();
+    surface.SetContentBounds({0.0f, 0.0f, 900.0f, 560.0f});
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleConfig, "0"));
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleSection,
+                                     "0:system_messages"));
+
+    const synth::ui::NodeTree tree = surface.BuildTree();
+    const synth::ui::Node* scroll =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::kScroll);
+    Require(scroll != nullptr && scroll->kind == synth::ui::NodeKind::ScrollArea,
+            "the mapping list lives in a real scroll area");
+    Require(!scroll->children.empty(), "the Controllers scroll area has nested children");
+    const synth::ui::Node* row =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerRow(0));
+    Require(row != nullptr && row->kind == synth::ui::NodeKind::Row,
+            "controller list entries are Row containers");
+    Require(FindParentOf(tree, row->id.value) == scroll,
+            "controller list rows are nested under the scroll area");
+    const synth::ui::Node* section =
+        FindNodeById(tree,
+                     synth::runtime_ui::NodeIds::SectionBody(
+                         0, synth::MidiConfigSection::SystemMessages));
+    Require(section != nullptr && section->kind == synth::ui::NodeKind::Section,
+            "expanded mapping groups are section containers");
+    Require(FindParentOf(tree, section->id.value) == scroll,
+            "expanded mapping sections remain scroll-content children");
+    Require(section->children.size() > 1, "mapping sections carry real nested row children");
+    const synth::ui::Node* toggle =
+        FindNodeById(tree,
+                     synth::runtime_ui::NodeIds::SectionToggle(
+                         0, synth::MidiConfigSection::SystemMessages));
+    Require(toggle != nullptr &&
+                toggle->bounds.width == 220.0f &&
+                toggle->bounds.height == synth::runtime_ui::ControllersLayout::kSectionHeaderHeight,
+            "section toggles keep column-oriented width and height");
+}
+
+void TestControllerRowsStayReadableWithLargeLists()
+{
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    for (int ix = 0; ix < 60; ++ix)
+    {
+        std::ostringstream name;
+        name << "controller " << ix;
+        Require(harness.instrument.AddController(MakeGenericSlot(name.str().c_str())),
+                "add large-list controller");
+        harness.connection.controllers.push_back({});
+    }
+
+    auto surface = harness.MakeSurface();
+    surface.SetContentBounds({0.0f, 0.0f, 360.0f, 360.0f});
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    const synth::ui::NodeTree tree = surface.BuildTree();
+    const synth::ui::Node* scroll =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::kScroll);
+    const synth::ui::Node* first =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerRow(0));
+    const synth::ui::Node* tail =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerRow(59));
+    Require(scroll != nullptr && first != nullptr && tail != nullptr,
+            "large controller list exposes first and tail rows");
+    Require(first->bounds.height == 36.0f && tail->bounds.height == 36.0f,
+            "large controller list rows keep the recovered readable height");
+    Require(scroll->scrollContentHeight > scroll->bounds.height,
+            "large controller list publishes a larger scroll content extent");
+    Require(tail->bounds.y + tail->bounds.height <= scroll->scrollContentHeight + 0.001f,
+            "large controller list tail stays inside scroll content");
+}
+
 void TestControllerLifecycleActionsUseTheNormalCommitAndSavePath()
 {
     TestHarness harness;
@@ -1293,6 +1400,9 @@ std::string VisibleTextLower(const synth::ui::NodeTree& tree)
 
 int main()
 {
+    TestNoHandRolledControllerNodesSurvive();
+    TestControllersSectionsNestThroughLibraryContainers();
+    TestControllerRowsStayReadableWithLargeLists();
     TestDiscoveryRendersPortableAvailableRowsAndDiagnostics();
     TestWizardSessionRoutesPortableChooserAndForm();
     TestWizardSubmitCommitsCompleteProfileThenSaves();
@@ -1332,6 +1442,8 @@ int main()
         FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerInput(1));
     const synth::ui::Node* wrldOutput =
         FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerOutput(0));
+    const synth::ui::Node* wrldDots =
+        FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerStatusDots(0));
     const synth::ui::Node* padsOutput =
         FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerOutput(1));
     const synth::ui::Node* padsVariant =
@@ -1339,12 +1451,23 @@ int main()
     const synth::ui::Node* scrollNode = FindNodeById(initialTree, synth::runtime_ui::NodeIds::kScroll);
     Require(wrldInput != nullptr && padsInput != nullptr && wrldOutput != nullptr && padsOutput != nullptr,
             "controller device controls render");
+    Require(wrldDots != nullptr, "controller status dots render");
     Require(padsVariant != nullptr, "launchpad variant selector renders");
     Require(scrollNode != nullptr, "scroll area node still present");
     Require(wrldInput->bounds.x == padsInput->bounds.x, "launchpad input aligns with other controller inputs");
     Require(wrldOutput->bounds.x == padsOutput->bounds.x, "launchpad output aligns with other controller outputs");
+    Require(wrldOutput->bounds.x == wrldInput->bounds.x + wrldInput->bounds.width +
+                                      synth::runtime_ui::ControllersLayout::kEndpointBoxGap,
+            "input and output selectors keep endpoint spacing");
     Require(padsVariant->bounds.x > padsOutput->bounds.x + padsOutput->bounds.width,
             "launchpad variant sits to the right of output");
+    Require(padsVariant->bounds.x == padsOutput->bounds.x + padsOutput->bounds.width +
+                                      synth::runtime_ui::ControllersLayout::kEndpointBoxGap,
+            "output and variant selectors keep endpoint spacing");
+    Require(wrldDots->bounds.y ==
+                (synth::runtime_ui::ControllersLayout::kControllerHeaderHeight - wrldDots->bounds.height) /
+                    2.0f,
+            "status dots are vertically centered in the controller row");
     Require(scrollNode->scrollContentWidth >= padsVariant->bounds.x + padsVariant->bounds.width,
             "scroll content reserves launchpad variant width");
 
@@ -1590,11 +1713,8 @@ int main()
                 modeFieldBefore->options[2].label == "Absolute",
             "portable mode combo labels all modes in declaration order");
     Require(modeFieldBefore->selectedOption == "0", "portable mode combo starts signed 7-bit");
-    bool sawRelativeOnlyCue = false;
-    for (const synth::ui::Node& node : beforeAbsoluteTree.nodes)
-    {
-        sawRelativeOnlyCue = sawRelativeOnlyCue || node.label.find("relative modes only") != std::string::npos;
-    }
+    const bool sawRelativeOnlyCue =
+        VisibleTextLower(beforeAbsoluteTree).find("relative modes only") != std::string::npos;
     Require(sawRelativeOnlyCue, "portable turn-step row identifies relative-only behavior");
 
     const std::string absoluteValue =
