@@ -72,10 +72,12 @@ The plugin will package `scripts/controller_stop_hook.py` with two modes:
   captured async-rewake contract requires it; stdout remains the authoritative
   decision JSON.
 
-The `PostToolUse` matcher will be restricted to xagent MCP tools where the
-harness supports matching. The program will still validate the normalized tool
-name itself because matcher syntax and MCP name decoration differ between
-harnesses.
+The captured Claude Code and Codex configurations used neither a matcher nor a
+timeout. Canonical `PostToolUse` and `Stop` groups therefore omit both fields,
+and the program validates the normalized tool name itself. Narrowing the hook
+registration later requires fresh capture evidence because matcher syntax and
+MCP name decoration differ between harnesses and an incorrect matcher silently
+disables observation.
 
 The installed command is `python3 <absolute-script> --harness <name>
 --state-root <absolute-data-root> <mode>`. The state root is rendered from the

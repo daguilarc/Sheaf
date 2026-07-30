@@ -388,10 +388,12 @@ observe_command = f"{base} observe"
 guard_command = f"{base} guard"
 ```
 
-Use event keys `PostToolUse` and `Stop`; preserve the captured harness-specific
-matcher and timeout values from Task 1 fixtures. Append absent groups and
-replace the first canonical owned group at the same index. Remove only later
-canonical duplicates. Never sort event arrays or unrelated keys.
+Use event keys `PostToolUse` and `Stop`. The captured Claude Code and Codex
+configurations contain neither `matcher` nor `timeout`, so canonical groups omit
+both fields and rely on the observer's tool-name validation. Do not add an
+unverified matcher that could silently disable MCP observation. Append absent
+groups and replace the first canonical owned group at the same index. Remove
+only later canonical duplicates. Never sort event arrays or unrelated keys.
 
 - [ ] **Step 3: Implement validated shared-JSON loading and atomic writes**
 
