@@ -1479,7 +1479,7 @@ void RequireResolves(const std::string& name, const std::function<void()>& build
 // as a fixed stack passes "it resolved" and fails this.
 void RequireRegionAbsorbsTheDifference(const synth::ui::NodeTree& shortSurface,
                                        const synth::ui::NodeTree& tallSurface,
-                                       const char* absorbingId,
+                                       const std::string& absorbingId,
                                        const std::vector<std::string>& furnitureIds,
                                        const char* label)
 {
@@ -1529,6 +1529,23 @@ static void TestEveryRebuiltPageAbsorbsAtTheSmallestDeclaredSurface()
         synth::runtime_ui::NodeIds::kFileBrowser,
         {synth::runtime_ui::NodeIds::kFileHeader, synth::runtime_ui::NodeIds::kFileCommandStrip},
         "the File browser panel absorbs the whole difference between surface heights");
+
+    // The idle region has two branches and only the has-patch one used to
+    // absorb: with a patch the versions list takes what the status line leaves,
+    // and without one the placeholder was a second fixed row, so the panel was a
+    // fixed stack that happened to fit. Both branches are pinned.
+    RequireRegionAbsorbsTheDifference(
+        synth::runtime_ui::BuildFilePageTree(LongVersionsState(60), kSmallestDeclaredSurface),
+        synth::runtime_ui::BuildFilePageTree(LongVersionsState(60), kTallerSurface),
+        synth::runtime_ui::NodeIds::kFileVersionsList,
+        {synth::runtime_ui::NodeIds::kFileStatus, synth::runtime_ui::NodeIds::kFileVersionsTitle},
+        "the File versions list absorbs the whole difference between surface heights");
+    RequireRegionAbsorbsTheDifference(
+        synth::runtime_ui::BuildFilePageTree({}, kSmallestDeclaredSurface),
+        synth::runtime_ui::BuildFilePageTree({}, kTallerSurface),
+        std::string(synth::runtime_ui::NodeIds::kFileIdleRegion) + ".message",
+        {synth::runtime_ui::NodeIds::kFileStatus},
+        "the File idle placeholder absorbs the whole difference between surface heights");
 }
 
 static void TestEveryPageAndAppResolvesAtTheSmallestDeclaredSurface()

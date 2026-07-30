@@ -240,9 +240,9 @@ inline std::vector<ResolvedExtent> AllocateExtents(const std::vector<const Node*
     return resolved;
 }
 
-// Float allocation of a container's extent across its children accumulates a
-// little error; three pixels of real overflow is what this has to catch, so a
-// hundredth of a pixel is the right side of both.
+// Dividing a container's extent across its children accumulates a little float
+// error, while a real overflow is whole pixels of clipped content. A hundredth
+// of a pixel is on the right side of both.
 inline constexpr float kOverflowTolerance = 0.01f;
 
 inline std::string FormatExtent(float value)
@@ -764,24 +764,25 @@ struct Resolver {
             isRoot ? rootLayout : LayoutFor(layoutByNodeId, container.id, fallback);
 
         std::vector<const Node*> inFlow;
-        std::vector<const Node*> children;
         for (const NodeId& childId : container.children)
         {
             const Node* child = Find(childId);
-            if (child == nullptr)
-            {
-                continue;
-            }
-            children.push_back(child);
-            if (!IsOutOfFlow(LayoutFor(layoutByNodeId, childId, fallback)))
+            if (child != nullptr && !IsOutOfFlow(LayoutFor(layoutByNodeId, childId, fallback)))
             {
                 inFlow.push_back(child);
             }
         }
         RequireContainerHoldsItsChildren(container, opts, MainAxisFor(container), inFlow);
-        for (const Node* child : children)
+
+        // Every child, not just the in-flow ones: an out-of-flow container is
+        // still a container, and its own children still have to fit it.
+        for (const NodeId& childId : container.children)
         {
-            RequireEveryContainerHoldsItsChildren(*child, false);
+            const Node* child = Find(childId);
+            if (child != nullptr)
+            {
+                RequireEveryContainerHoldsItsChildren(*child, false);
+            }
         }
     }
 
