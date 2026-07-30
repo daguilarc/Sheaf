@@ -1,4 +1,5 @@
 #include "synth/ControllerWizard.hpp"
+#include "synth/RuntimePageStyle.hpp"
 
 #include <algorithm>
 #include <array>
@@ -63,6 +64,8 @@ inline constexpr float kErrorGap = 2.0f;
 inline constexpr float kFieldGap = 8.0f;
 inline constexpr float kRowGap = 6.0f;
 inline constexpr float kSlotWidth = 160.0f;
+inline constexpr float kSlotLabelWidth = 90.0f;
+inline constexpr float kFormGridLabelGap = 8.0f;
 inline constexpr float kButtonLabelWidth = 70.0f;
 inline constexpr float kMessageWidth = 150.0f;
 inline constexpr float kArgumentWidth = 80.0f;
@@ -77,6 +80,8 @@ inline constexpr std::size_t kRowsPerColumn = 3;
 inline constexpr float kMessageX = kButtonLabelWidth + kFieldGap;
 inline constexpr float kArgumentX = kMessageX + kMessageWidth + kFieldGap;
 inline constexpr float kColumnWidth = kArgumentX + kArgumentWidth;
+inline constexpr float kSlotRowWidth = kSlotLabelWidth + kFormGridLabelGap + kSlotWidth;
+inline constexpr float kButtonFieldsWidth = kMessageWidth + kFieldGap + kArgumentWidth;
 inline constexpr float kButtonRowHeight = kControlHeight + kErrorGap + kErrorHeight;
 inline constexpr float kColumnsTop = kMargin + kControlHeight + kErrorGap + kErrorHeight + kRowGap;
 inline constexpr float kColumnHeight =
@@ -380,6 +385,7 @@ ui::Subtree MfTwisterConfigForm::BuildSubtree() {
         layout.cross = ui::Extent::Weight(1.0f);
         layout.padding = 0.0f;
         layout.gap = Layout::kRowGap;
+        layout.formGrid = true;
         return layout;
     };
     const auto fixedControl = [](float width, float height, bool enabled = true) {
@@ -389,23 +395,25 @@ ui::Subtree MfTwisterConfigForm::BuildSubtree() {
         style.layout.cross = ui::Extent::Px(height);
         return style;
     };
+    const auto fixedField = [&](float width, float height, bool enabled = true) {
+        ui::ControlStyle style = fixedControl(width, height, enabled);
+        style.color = pagestyle::kDefaultPanel;
+        return style;
+    };
     const auto textRow = [](float height) {
         ui::ControlStyle style;
         style.layout.main = ui::Extent::Px(height);
         return style;
     };
-    const auto columnControlSlot = [](float width, float height) {
-        ui::ControlStyle style;
-        style.layout.main = ui::Extent::Px(height);
-        style.layout.cross = ui::Extent::Px(width);
-        return style;
-    };
-
     ui::LayoutOptions body;
     body.main = ui::Extent::Intrinsic();
     body.cross = ui::Extent::Px(Layout::kFormWidth);
     body.padding = Layout::kMargin;
     body.gap = Layout::kRowGap;
+    body.formGrid = true;
+
+    ui::LayoutOptions slotRow = fixedRow(Layout::kControlHeight);
+    slotRow.cross = ui::Extent::Px(Layout::kSlotRowWidth);
 
     ui::LayoutOptions columnsRow;
     columnsRow.main = ui::Extent::Px(Layout::kColumnHeight);
@@ -413,98 +421,157 @@ ui::Subtree MfTwisterConfigForm::BuildSubtree() {
     columnsRow.padding = 0.0f;
     columnsRow.gap = Layout::kColumnGap;
 
+    ui::LayoutOptions columnsWrapper;
+    columnsWrapper.main = ui::Extent::Px(Layout::kColumnHeight);
+    columnsWrapper.cross = ui::Extent::Px(Layout::kFormWidth - Layout::kMargin * 2.0f);
+    columnsWrapper.padding = 0.0f;
+    columnsWrapper.gap = 0.0f;
+
+    ui::LayoutOptions buttonFieldsRow;
+    buttonFieldsRow.main = ui::Extent::Px(Layout::kButtonFieldsWidth);
+    buttonFieldsRow.cross = ui::Extent::Px(Layout::kControlHeight);
+    buttonFieldsRow.padding = 0.0f;
+    buttonFieldsRow.gap = Layout::kFieldGap;
+
     const std::string slotId = std::string(kMfTwisterFormRootId) + ".encoder-slot";
     ui::Builder builder;
     builder.Rootless();
     builder.Column(std::string(kMfTwisterFormRootId) + ".body", body, [&](ui::Builder& form) {
-        ui::ControlStyle slotStyle = columnControlSlot(Layout::kSlotWidth, Layout::kControlHeight);
-        slotStyle.caption = "Encoder Slot";
-        form.TextField(slotId, "", encoderSlotText, ui::Action::Named(slotId), slotStyle);
+        form.Row(std::string(kMfTwisterFormRootId) + ".slot", slotRow, [&](ui::Builder& row) {
+            row.Label(std::string(kMfTwisterFormRootId) + ".encoder-slot.label",
+                      "Encoder Slot",
+                      fixedControl(Layout::kSlotLabelWidth, Layout::kControlHeight));
+            row.TextField(slotId,
+                          "",
+                          encoderSlotText,
+                          ui::Action::Named(slotId),
+                          fixedField(Layout::kSlotWidth, Layout::kControlHeight));
+        });
         if (FieldHasError(encoderSlotText)) {
             form.StatusText(slotId + ".error",
                             "Encoder Slot must be a non-negative base-10 integer",
                             textRow(Layout::kErrorHeight));
         }
 
-        form.Row(std::string(kMfTwisterFormRootId) + ".columns", columnsRow, [&](ui::Builder& columns) {
-            for (std::size_t column = 0; column < Layout::kColumnCount; ++column) {
-                columns.Section(std::string(kMfTwisterFormRootId) + ".column." +
-                                    std::to_string(column),
-                                fixedColumn(Layout::kColumnWidth),
-                                [&](ui::Builder& columnBuilder) {
-                                    columnBuilder.Label(
-                                        std::string(kMfTwisterFormRootId) + ".column." +
-                                            std::to_string(column) + ".heading",
-                                        column == 0 ? "Left (CC 8-10)" : "Right (CC 11-13)",
-                                        textRow(Layout::kColumnHeaderHeight));
-                                    for (std::size_t row = 0; row < Layout::kRowsPerColumn; ++row) {
-                                        const std::size_t buttonIx =
-                                            column * Layout::kRowsPerColumn + row;
-                                        const MfTwisterButtonConfig& button = buttons[buttonIx];
-                                        columnBuilder.Row(
-                                            std::string(kMfTwisterFormRootId) + ".button." +
-                                                std::to_string(buttonIx),
-                                            fixedRow(Layout::kButtonRowHeight),
-                                            [&](ui::Builder& buttonRow) {
-                                                buttonRow.Label(
-                                                    ButtonFieldId(buttonIx, "label"),
-                                                    "Button " + std::to_string(buttonIx + 1),
-                                                    fixedControl(Layout::kButtonLabelWidth,
-                                                                 Layout::kControlHeight));
+        form.Section(std::string(kMfTwisterFormRootId) + ".columns-wrapper",
+                     columnsWrapper,
+                     [&](ui::Builder& wrapper) {
+                         wrapper.Row(std::string(kMfTwisterFormRootId) + ".columns",
+                                     columnsRow,
+                                     [&](ui::Builder& columns) {
+                                         for (std::size_t column = 0;
+                                              column < Layout::kColumnCount;
+                                              ++column) {
+                                             columns.Section(
+                                                 std::string(kMfTwisterFormRootId) + ".column." +
+                                                     std::to_string(column),
+                                                 fixedColumn(Layout::kColumnWidth),
+                                                 [&](ui::Builder& columnBuilder) {
+                                                     columnBuilder.Label(
+                                                         std::string(kMfTwisterFormRootId) +
+                                                             ".column." + std::to_string(column) +
+                                                             ".heading",
+                                                         column == 0 ? "Left (CC 8-10)"
+                                                                     : "Right (CC 11-13)",
+                                                         textRow(Layout::kColumnHeaderHeight));
+                                                     for (std::size_t row = 0;
+                                                          row < Layout::kRowsPerColumn;
+                                                          ++row) {
+                                                         const std::size_t buttonIx =
+                                                             column * Layout::kRowsPerColumn + row;
+                                                         const MfTwisterButtonConfig& button =
+                                                             buttons[buttonIx];
+                                                         columnBuilder.Row(
+                                                             std::string(kMfTwisterFormRootId) +
+                                                                 ".button." +
+                                                                 std::to_string(buttonIx),
+                                                             fixedRow(Layout::kButtonRowHeight),
+                                                             [&](ui::Builder& buttonRow) {
+                                                                 buttonRow.Label(
+                                                                     ButtonFieldId(buttonIx, "label"),
+                                                                     "Button " +
+                                                                         std::to_string(buttonIx + 1),
+                                                                     fixedControl(
+                                                                         Layout::kButtonLabelWidth,
+                                                                         Layout::kControlHeight));
 
-                                                std::vector<ui::ControlOption> options;
-                                                for (const TwisterMessageChoice& choice :
-                                                     kTwisterMessageChoices) {
-                                                    const UISystemMessageChoice* catalogChoice =
-                                                        FindUISystemMessageChoice(choice.message);
-                                                    if (catalogChoice != nullptr) {
-                                                        options.push_back(
-                                                            {std::string(choice.id),
-                                                             catalogChoice->label});
-                                                    }
-                                                }
-                                                const std::string messageId =
-                                                    ButtonFieldId(buttonIx, "message");
-                                                buttonRow.ComboBox(
-                                                    messageId,
-                                                    "Message",
-                                                    std::move(options),
-                                                    MessageOptionId(button.message),
-                                                    ui::Action::Named(messageId),
-                                                    fixedControl(Layout::kMessageWidth,
-                                                                 Layout::kControlHeight));
+                                                                 buttonRow.Row(
+                                                                     std::string(kMfTwisterFormRootId) +
+                                                                         ".button." +
+                                                                         std::to_string(buttonIx) +
+                                                                         ".fields",
+                                                                     buttonFieldsRow,
+                                                                     [&](ui::Builder& fields) {
+                                                                         std::vector<ui::ControlOption>
+                                                                             options;
+                                                                         for (const TwisterMessageChoice&
+                                                                                  choice :
+                                                                              kTwisterMessageChoices) {
+                                                                             const UISystemMessageChoice*
+                                                                                 catalogChoice =
+                                                                                     FindUISystemMessageChoice(
+                                                                                         choice.message);
+                                                                             if (catalogChoice != nullptr) {
+                                                                                 options.push_back(
+                                                                                     {std::string(choice.id),
+                                                                                      catalogChoice->label});
+                                                                             }
+                                                                         }
+                                                                         const std::string messageId =
+                                                                             ButtonFieldId(buttonIx,
+                                                                                           "message");
+                                                                         fields.ComboBox(
+                                                                             messageId,
+                                                                             "Message",
+                                                                             std::move(options),
+                                                                             MessageOptionId(button.message),
+                                                                             ui::Action::Named(messageId),
+                                                                             fixedField(
+                                                                                 Layout::kMessageWidth,
+                                                                                 Layout::kControlHeight));
 
-                                                const std::string argumentId =
-                                                    ButtonFieldId(buttonIx, "argument");
-                                                const bool argumentEnabled =
-                                                    TwisterArgumentEnabled(button.message);
-                                                buttonRow.TextField(
-                                                    argumentId,
-                                                    "Argument",
-                                                    button.argumentText,
-                                                    ui::Action::Named(argumentId),
-                                                    fixedControl(Layout::kArgumentWidth,
-                                                                 Layout::kControlHeight,
-                                                                 argumentEnabled));
-                                                if (argumentEnabled &&
-                                                    FieldHasError(button.argumentText)) {
-                                                    ui::ControlStyle errorStyle =
-                                                        textRow(Layout::kErrorHeight);
-                                                    errorStyle.layout.explicitBounds = {
-                                                        0.0f,
-                                                        Layout::kControlHeight + Layout::kErrorGap,
-                                                        Layout::kColumnWidth,
-                                                        Layout::kErrorHeight};
-                                                    buttonRow.StatusText(
-                                                        argumentId + ".error",
-                                                        "Argument must be a non-negative base-10 integer",
-                                                        errorStyle);
-                                                }
-                                            });
-                                    }
-                                });
-            }
-        });
+                                                                         const std::string argumentId =
+                                                                             ButtonFieldId(buttonIx,
+                                                                                           "argument");
+                                                                         const bool argumentEnabled =
+                                                                             TwisterArgumentEnabled(
+                                                                                 button.message);
+                                                                         fields.TextField(
+                                                                             argumentId,
+                                                                             "Argument",
+                                                                             button.argumentText,
+                                                                             ui::Action::Named(argumentId),
+                                                                             fixedField(
+                                                                                 Layout::kArgumentWidth,
+                                                                                 Layout::kControlHeight,
+                                                                                 argumentEnabled));
+                                                                     });
+                                                                 const std::string argumentId =
+                                                                     ButtonFieldId(buttonIx, "argument");
+                                                                 const bool argumentEnabled =
+                                                                     TwisterArgumentEnabled(button.message);
+                                                                 if (argumentEnabled &&
+                                                                     FieldHasError(
+                                                                         button.argumentText)) {
+                                                                     ui::ControlStyle errorStyle =
+                                                                         textRow(Layout::kErrorHeight);
+                                                                     errorStyle.layout.explicitBounds = {
+                                                                         0.0f,
+                                                                         Layout::kControlHeight +
+                                                                             Layout::kErrorGap,
+                                                                         Layout::kColumnWidth,
+                                                                         Layout::kErrorHeight};
+                                                                     buttonRow.StatusText(
+                                                                         argumentId + ".error",
+                                                                         "Argument must be a non-negative base-10 integer",
+                                                                         errorStyle);
+                                                                 }
+                                                             });
+                                                     }
+                                                 });
+                                         }
+                                     });
+                     });
     });
     return builder.BuildSubtree();
 }

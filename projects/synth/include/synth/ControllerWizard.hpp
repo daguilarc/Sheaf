@@ -6,6 +6,7 @@
 #include "synth/PortableUI.hpp"
 #include "synth/PortableUIBuilders.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <concepts>
@@ -14,6 +15,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace synth {
@@ -24,7 +26,17 @@ class ControllerConfigForm : public ui::Surface {
 public:
     ~ControllerConfigForm() override = default;
     virtual std::string_view WizardId() const = 0;
-    virtual ui::Subtree BuildSubtree() { return ui::Subtree{BuildTree(), {}, {}}; }
+    virtual ui::Subtree BuildSubtree() {
+        ui::NodeTree tree = BuildTree();
+        const auto root =
+            std::find_if(tree.nodes.begin(), tree.nodes.end(), [](const ui::Node& node) {
+                return node.kind == ui::NodeKind::Root;
+            });
+        if (root != tree.nodes.end()) {
+            tree.nodes.erase(root);
+        }
+        return ui::Subtree{std::move(tree), {}, {}};
+    }
     virtual bool Validate(std::string& error) const = 0;
     virtual std::string_view ReconfigureWarning() const { return {}; }
 };

@@ -10,6 +10,8 @@
 #include "synth/NoiseWaveformVisualizer.hpp"
 #include "synth/StandardModulators.hpp"
 
+#include "support/SourceScan.hpp"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -17,7 +19,6 @@
 #include <cstddef>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <iterator>
 #include <limits>
 #include <optional>
@@ -90,54 +91,6 @@ bool HasNode(const synth::ui::NodeTree& tree, const char* id)
     return FindNodeById(tree, id) != nullptr;
 }
 
-std::string ReadSource(const std::string& repoRelativePath)
-{
-    std::filesystem::path prefix = std::filesystem::current_path();
-    while (!prefix.empty())
-    {
-        const std::filesystem::path candidate = prefix / repoRelativePath;
-        std::ifstream stream(candidate);
-        if (stream)
-        {
-            return std::string(std::istreambuf_iterator<char>(stream),
-                               std::istreambuf_iterator<char>());
-        }
-        const std::filesystem::path next = prefix.parent_path();
-        if (next == prefix)
-        {
-            break;
-        }
-        prefix = next;
-    }
-    throw std::runtime_error("missing source file: " + repoRelativePath);
-}
-
-// Comments describe what the code does not do, so a body whose comment says
-// "names no bounds" would otherwise fail a scan for "bounds". Strip them first.
-std::string StripComments(const std::string& source)
-{
-    std::string stripped;
-    stripped.reserve(source.size());
-    for (std::size_t i = 0; i < source.size();)
-    {
-        if (source.compare(i, 2, "//") == 0)
-        {
-            const std::size_t lineEnd = source.find('\n', i);
-            i = lineEnd == std::string::npos ? source.size() : lineEnd;
-            continue;
-        }
-        if (source.compare(i, 2, "/*") == 0)
-        {
-            const std::size_t blockEnd = source.find("*/", i + 2);
-            i = blockEnd == std::string::npos ? source.size() : blockEnd + 2;
-            continue;
-        }
-        stripped.push_back(source[i]);
-        ++i;
-    }
-    return stripped;
-}
-
 bool FunctionBodyContains(const std::string& source,
                           const std::string& functionName,
                           const std::string& needle,
@@ -166,8 +119,8 @@ bool FunctionBodyContains(const std::string& source,
             --depth;
             if (depth == 0)
             {
-                return StripComments(source.substr(bodyStart, i - bodyStart + 1)).find(needle) !=
-                       std::string::npos;
+                return synth::test::StripComments(source.substr(bodyStart, i - bodyStart + 1))
+                           .find(needle) != std::string::npos;
             }
         }
     }
@@ -1760,7 +1713,8 @@ static void TestFilePanelUnderlaysCoverTheirPanels()
 
 static void TestFilePageDelegatesItsListsToSplicedSubtrees()
 {
-    const std::string source = ReadSource("projects/synth/include/synth/RuntimePages.hpp");
+    const std::string source =
+        synth::test::ReadSourceFile("projects/synth/include/synth/RuntimePages.hpp");
 
     for (const std::string& functionName : {"BuildSyncPageTree", "BuildAudioPageTree", "BuildFilePageTree"})
     {

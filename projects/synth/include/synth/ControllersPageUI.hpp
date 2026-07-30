@@ -467,7 +467,6 @@ inline constexpr float kAvailableIgnoreWidth = 72.0f;
 inline constexpr float kAvailableControlGap = 8.0f;
 inline constexpr float kControllerNameWidth = 120.0f;
 inline constexpr float kControllerKindWidth = 100.0f;
-inline constexpr float kControllerIdentityGap = 4.0f;
 inline constexpr float kControllerDisclosureWidth = 24.0f;
 inline constexpr float kLifecycleDraftWidth = 120.0f;
 inline constexpr float kLifecycleRenameWidth = 72.0f;
@@ -500,7 +499,6 @@ inline constexpr float kBlacklistedControllerHeaderWidth =
 inline constexpr float kControllerHeaderMinWidth =
     std::max(kActiveControllerHeaderWidth, kBlacklistedControllerHeaderWidth);
 inline constexpr float kSectionMaxHeight = 220.0f;
-inline constexpr float kSectionPadding = 8.0f;
 
 inline int FieldEditorWidth(MidiMappingRowVM::Field field)
 {
@@ -2330,9 +2328,9 @@ private:
         const auto rowLayout = [&](float height, float width, float gap) {
             return layout(ui::Extent::Px(height), ui::Extent::Px(width), gap);
         };
-        const auto style = [](float main, float cross) {
+        const auto style = [](float main, float cross, Color color) {
             ui::ControlStyle out;
-            out.color = pagestyle::kDefaultButton;
+            out.color = color;
             out.textStyle = pagestyle::kDefaultTextStyle;
             out.layout.main = ui::Extent::Px(main);
             out.layout.cross = ui::Extent::Px(cross);
@@ -2351,7 +2349,11 @@ private:
             return out;
         };
         const auto button = [&](float width, float height = ControllersLayout::kControllerHeaderHeight) {
-            return style(width, height);
+            return style(width, height, pagestyle::kDefaultButton);
+        };
+        const auto fieldControl = [&](float width,
+                                      float height = ControllersLayout::kControllerHeaderHeight) {
+            return style(width, height, pagestyle::kDefaultPanel);
         };
         const auto columnControl = [](float width, float height) {
             ui::ControlStyle out;
@@ -2450,7 +2452,9 @@ private:
                                           std::size_t mappingRowIx,
                                           MidiMappingRowVM::Field field) {
             const float fieldWidth = static_cast<float>(ControllersLayout::FieldEditorWidth(field));
-            ui::ControlStyle fieldStyle = style(fieldWidth, ControllersLayout::kMappingRowHeight);
+            ui::ControlStyle fieldStyle =
+                fieldControl(fieldWidth, ControllersLayout::kMappingRowHeight);
+            ui::ControlStyle toggleStyle = button(fieldWidth, ControllersLayout::kMappingRowHeight);
             if (field == MidiMappingRowVM::Field::MessageKind)
             {
                 std::vector<ui::ControlOption> options;
@@ -2570,7 +2574,7 @@ private:
                                 ControllersLayout::SectionToken(section) + ":" +
                                 std::to_string(mappingRowIx) + ":" +
                                 ControllersLayout::FieldToken(field)),
-                        fieldStyle);
+                        toggleStyle);
                 }
                 return;
             }
@@ -2612,7 +2616,6 @@ private:
             }
 
             const std::vector<MidiMappingRowVM> rows = vm.SectionRows(controllerIx, section);
-            constexpr float kGroupCaptionWidth = 120.0f;
             auto fieldsWidth = [](const std::vector<MidiMappingRowVM::Field>& fields) {
                 float width = 0.0f;
                 for (MidiMappingRowVM::Field field : fields)
@@ -2635,7 +2638,7 @@ private:
                 }
                 desiredSectionWidth = std::max(
                     desiredSectionWidth,
-                    kGroupCaptionWidth + fieldsWidth(row.editableFields) +
+                    fieldsWidth(row.editableFields) +
                         std::max(headerControlsWidth,
                                  row.deletable ? ControllersLayout::kDeleteButtonWidth : 0.0f));
             }
@@ -2643,7 +2646,7 @@ private:
             {
                 desiredSectionWidth = std::max(
                     desiredSectionWidth,
-                    kGroupCaptionWidth + fieldsWidth(vm.GroupColumnFields(controllerIx, section, group)) +
+                    fieldsWidth(vm.GroupColumnFields(controllerIx, section, group)) +
                         ControllersLayout::kAddButtonWidth * 2.0f + 16.0f);
             }
             const float sectionWidth = desiredSectionWidth + 16.0f;
@@ -2661,15 +2664,15 @@ private:
                                                  const std::vector<MidiMappingRowVM::Field>& fields,
                                                  bool isFirstHeaderForGroup,
                                                  MidiMappingRowVM::Kind kind) {
-                    body.Row(NodeIds::GroupHeader(controllerIx, section, headerIx),
+                    const std::string headerId = NodeIds::GroupHeader(controllerIx, section, headerIx);
+                    body.Label(headerId + ".caption",
+                               ControllersLayout::RowGroupCaption(group, kind),
+                               labelStyle(ControllersLayout::kStatusRowHeight));
+                    body.Row(headerId,
                              rowLayout(ControllersLayout::kGroupHeaderHeight,
                                        sectionWidth,
                                        0.0f),
                              [&](ui::Builder& header) {
-                                 header.Label(
-                                     NodeIds::GroupHeader(controllerIx, section, headerIx) + ".caption",
-                                     ControllersLayout::RowGroupCaption(group, kind),
-                                     labelStyle(kGroupCaptionWidth));
                                  const bool showColumnLabels = fields.size() > 1;
                                  for (std::size_t fieldIx = 0;
                                       showColumnLabels && fieldIx < fields.size();
@@ -2802,7 +2805,7 @@ private:
                                    ui::Action::WithValue(
                                        Actions::kControllerRenameDraft,
                                        NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
-                                   button(ControllersLayout::kLifecycleDraftWidth));
+                                   fieldControl(ControllersLayout::kLifecycleDraftWidth));
                                row.Button(
                                    NodeIds::ControllerRename(controllerIx),
                                    "Rename",
@@ -2899,7 +2902,7 @@ private:
                                            ui::Action::WithValue(
                                                Actions::kEndpointSelect,
                                                std::to_string(controllerIx) + ":input"),
-                                           button(ControllersLayout::kEndpointBoxWidth));
+                                           fieldControl(ControllersLayout::kEndpointBoxWidth));
 
                                        std::string selectedOutput;
                                        endpoints.ComboBox(
@@ -2915,7 +2918,7 @@ private:
                                            ui::Action::WithValue(
                                                Actions::kEndpointSelect,
                                                std::to_string(controllerIx) + ":output"),
-                                           button(ControllersLayout::kEndpointBoxWidth));
+                                           fieldControl(ControllersLayout::kEndpointBoxWidth));
                                        if (hasVariant)
                                        {
                                            std::string selectedVariant;
@@ -2929,7 +2932,7 @@ private:
                                                ui::Action::WithValue(
                                                    Actions::kVariantSelect,
                                                    std::to_string(controllerIx)),
-                                               button(ControllersLayout::kVariantBoxWidth));
+                                               fieldControl(ControllersLayout::kVariantBoxWidth));
                                        }
                                    });
                            row.TextField(
@@ -2939,7 +2942,7 @@ private:
                                ui::Action::WithValue(
                                    Actions::kControllerRenameDraft,
                                    NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
-                               button(ControllersLayout::kLifecycleDraftWidth));
+                               fieldControl(ControllersLayout::kLifecycleDraftWidth));
                            row.Button(
                                NodeIds::ControllerRename(controllerIx),
                                "Rename",
@@ -3032,14 +3035,14 @@ private:
                                              "New controller name",
                                              addControllerName,
                                              ui::Action::Named(Actions::kAddNameDraft),
-                                             button(180.0f, ControllersLayout::kAddRowHeight));
+                                             fieldControl(180.0f, ControllersLayout::kAddRowHeight));
                                row.ComboBox(NodeIds::kAddKind,
                                             "Kind",
                                             ControllersLayout::BuildAddControllerKindOptions(),
                                             addControllerKindId.empty() ? "wrldbldr"
                                                                         : addControllerKindId,
                                             ui::Action::Named(Actions::kAddKindDraft),
-                                            button(140.0f, ControllersLayout::kAddRowHeight));
+                                            fieldControl(140.0f, ControllersLayout::kAddRowHeight));
                                row.Button(NodeIds::kAddButton,
                                           "Add",
                                           ui::Action::Named(Actions::kAddController),

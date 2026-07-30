@@ -286,7 +286,7 @@ TEST_CASE(MfTwisterConfigFormPlacesSixButtonsInTwoColumnsOfThree) {
     const synth::ui::NodeTree tree = form.BuildTree();
 
     const synth::ui::Bounds slot = FormBounds(tree, "controller-wizard.twister.encoder-slot");
-    REQUIRE_TRUE(slot.width > 0.0f && slot.height > 0.0f);
+    REQUIRE_TRUE(slot.width == 160.0f && slot.height > 0.0f);
 
     std::vector<synth::ui::Bounds> message;
     for (std::size_t buttonIx = 0; buttonIx < synth::MfTwisterConfigForm::kButtonCount; ++buttonIx) {
@@ -335,6 +335,9 @@ TEST_CASE(MfTwisterConfigFormBuildsRootlessSubtreeForWizardHosts) {
     const synth::ui::Node* body = FindNodeById(subtree.tree, "controller-wizard.twister.body");
     REQUIRE_TRUE(body != nullptr && body->kind == synth::ui::NodeKind::Section);
     REQUIRE_TRUE(FindParentOf(subtree.tree, body->id.value) == nullptr);
+    REQUIRE_TRUE(subtree.layout.at("controller-wizard.twister.body").formGrid);
+    REQUIRE_TRUE(subtree.layout.at("controller-wizard.twister.column.0").formGrid);
+    REQUIRE_TRUE(subtree.layout.at("controller-wizard.twister.column.1").formGrid);
     REQUIRE_TRUE(FindNodeById(subtree.tree, "controller-wizard.twister.encoder-slot") != nullptr);
     REQUIRE_TRUE(FindNodeById(subtree.tree, "controller-wizard.twister.columns") != nullptr);
     REQUIRE_TRUE(FindParentOf(subtree.tree, "controller-wizard.twister.column.0")->id.value ==

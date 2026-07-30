@@ -6,12 +6,15 @@
 #error "controllers page UI tests must not see JUCE"
 #endif
 
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <algorithm>
 #include <cctype>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -406,8 +409,12 @@ void TestWizardSessionRoutesPortableChooserAndForm()
     std::size_t twisterRows = 0;
     for (const synth::ui::Node& node : formTree.nodes)
     {
+        constexpr std::string_view prefix = "controller-wizard.twister.button.";
         if (node.kind == synth::ui::NodeKind::Row &&
-            node.id.value.rfind("controller-wizard.twister.button.", 0) == 0)
+            node.id.value.rfind(prefix, 0) == 0 &&
+            std::all_of(node.id.value.begin() + static_cast<std::string::difference_type>(prefix.size()),
+                        node.id.value.end(),
+                        [](char ch) { return std::isdigit(static_cast<unsigned char>(ch)); }))
         {
             ++twisterRows;
         }
@@ -1096,6 +1103,57 @@ void TestEndpointSelectorsPreferTheExactStoredIdentifier()
 
 void TestNoHandRolledControllerNodesSurvive()
 {
+    const auto findRepoRoot = [](std::filesystem::path prefix) {
+        while (!prefix.empty())
+        {
+            if (std::filesystem::exists(prefix / "projects/synth/include/synth/ControllersPageUI.hpp"))
+            {
+                return prefix;
+            }
+            const std::filesystem::path next = prefix.parent_path();
+            if (next == prefix)
+            {
+                break;
+            }
+            prefix = next;
+        }
+        throw std::runtime_error("missing repo root for source scan test");
+    };
+
+    struct RestoreCurrentPath
+    {
+        std::filesystem::path path;
+        ~RestoreCurrentPath() { std::filesystem::current_path(path); }
+    } restore{std::filesystem::current_path()};
+
+    const std::filesystem::path repoRoot = findRepoRoot(restore.path);
+    std::filesystem::current_path(repoRoot / "projects/synth");
+    Require(!synth::test::ReadSourceFile("projects/synth/include/synth/ControllersPageUI.hpp").empty(),
+            "source scan resolves repo-relative paths from a nested working directory");
+    std::filesystem::current_path(restore.path);
+
+    const std::filesystem::path temp =
+        std::filesystem::temp_directory_path() / "sheaf-source-scan-round1.cpp";
+    {
+        std::ofstream out(temp);
+        out << "// ui::Node commented; commented.kind = synth::ui::NodeKind::Root;\n"
+               "void clean() {}\n";
+    }
+    Require(!synth::test::SourceContainsFieldByFieldNodeInit(temp),
+            "source scan ignores commented node examples");
+    {
+        std::ofstream out(temp);
+        out << "void brace() { ui::Node node{}; }\n";
+    }
+    Require(synth::test::SourceContainsFieldByFieldNodeInit(temp),
+            "source scan catches brace-initialized ui::Node construction");
+    {
+        std::ofstream out(temp);
+        out << "void copy() { synth::ui::Node node = synth::ui::Node{}; }\n";
+    }
+    Require(synth::test::SourceContainsFieldByFieldNodeInit(temp),
+            "source scan catches copy-initialized ui::Node construction");
+
     for (const char* file : {"projects/synth/include/synth/ControllersPageUI.hpp",
                              "projects/synth/src/ControllerWizard.cpp"})
     {
@@ -1109,7 +1167,7 @@ void TestControllersSectionsNestThroughLibraryContainers()
 {
     TestHarness harness;
     auto surface = harness.MakeSurface();
-    surface.SetContentBounds({0.0f, 0.0f, 900.0f, 560.0f});
+    surface.SetContentBounds({0.0f, 0.0f, 360.0f, 560.0f});
     surface.MarkDirty();
     surface.RefreshOnTick();
     surface.DispatchAction(
@@ -1139,6 +1197,10 @@ void TestControllersSectionsNestThroughLibraryContainers()
     Require(FindParentOf(tree, section->id.value) == scroll,
             "expanded mapping sections remain scroll-content children");
     Require(section->children.size() > 1, "mapping sections carry real nested row children");
+    Require(section->bounds.width > scroll->bounds.width,
+            "wide mapping sections keep their natural width for horizontal scrolling");
+    Require(scroll->scrollContentWidth >= section->bounds.x + section->bounds.width,
+            "expanded mapping section is inside the horizontal scroll content width");
     const synth::ui::Node* toggle =
         FindNodeById(tree,
                      synth::runtime_ui::NodeIds::SectionToggle(
@@ -1885,6 +1947,18 @@ int main()
     requireTypeCombo(synth::MidiConfigSection::Encoders, *pushBlockIx, "1");
     const synth::ui::Node* pushIndividualType =
         requireTypeCombo(synth::MidiConfigSection::Encoders, *pushIndividualIx, "0");
+    const synth::ui::Node* blockMessageTypeField = FindNodeById(
+        typedTree,
+        synth::runtime_ui::NodeIds::MappingField(
+            2, synth::MidiConfigSection::SystemMessages, *systemBlockIx,
+            synth::MidiMappingRowVM::Field::BlockMessageType));
+    Require(blockMessageTypeField != nullptr,
+            "Generic system block message-type field is present");
+    Require(blockMessageTypeHeader->bounds.x == blockMessageTypeField->bounds.x,
+            "first column header aligns with the first mapping field");
+    Require(pushIndividualType->color.has_value() &&
+                *pushIndividualType->color == synth::pagestyle::kDefaultPanel,
+            "mapping combo boxes carry the field background rather than the button background");
     requireTypeCombo(synth::MidiConfigSection::SystemMessages, *systemBlockIx, "1");
     requireTypeCombo(synth::MidiConfigSection::SystemMessages, *systemIndividualIx, "0");
 
@@ -1902,6 +1976,9 @@ int main()
     Require(numericChannel != nullptr && numericChannel->kind == synth::ui::NodeKind::TextField &&
                 numericChannel->text == "1",
             "note-capable row keeps channel as decimal text field");
+    Require(numericChannel->color.has_value() &&
+                *numericChannel->color == synth::pagestyle::kDefaultPanel,
+            "mapping text fields carry the field background rather than the button background");
     Require(FindNodeById(
                 typedTree,
                 synth::runtime_ui::NodeIds::MappingField(

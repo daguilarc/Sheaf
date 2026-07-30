@@ -9,9 +9,36 @@
 
 namespace synth::test {
 
+inline std::filesystem::path ResolveSourcePath(const std::filesystem::path& path)
+{
+    if (path.is_absolute())
+    {
+        return path;
+    }
+
+    std::filesystem::path prefix = std::filesystem::current_path();
+    while (!prefix.empty())
+    {
+        const std::filesystem::path candidate = prefix / path;
+        if (std::filesystem::exists(candidate))
+        {
+            return candidate;
+        }
+
+        const std::filesystem::path next = prefix.parent_path();
+        if (next == prefix)
+        {
+            break;
+        }
+        prefix = next;
+    }
+    return path;
+}
+
 inline std::string ReadSourceFile(const std::filesystem::path& path)
 {
-    std::ifstream in(path);
+    const std::filesystem::path resolved = ResolveSourcePath(path);
+    std::ifstream in(resolved);
     if (!in)
     {
         throw std::runtime_error("failed to open source file: " + path.string());
@@ -21,13 +48,46 @@ inline std::string ReadSourceFile(const std::filesystem::path& path)
     return out.str();
 }
 
+// Comments describe constraints and counterexamples. Strip them before source
+// shape scans so documentation does not satisfy or fail implementation checks.
+inline std::string StripComments(const std::string& source)
+{
+    std::string stripped;
+    stripped.reserve(source.size());
+    for (std::size_t i = 0; i < source.size();)
+    {
+        if (source.compare(i, 2, "//") == 0)
+        {
+            const std::size_t lineEnd = source.find('\n', i);
+            i = lineEnd == std::string::npos ? source.size() : lineEnd;
+            continue;
+        }
+        if (source.compare(i, 2, "/*") == 0)
+        {
+            const std::size_t blockEnd = source.find("*/", i + 2);
+            i = blockEnd == std::string::npos ? source.size() : blockEnd + 2;
+            continue;
+        }
+        stripped.push_back(source[i]);
+        ++i;
+    }
+    return stripped;
+}
+
 inline bool SourceContainsFieldByFieldNodeInit(const std::filesystem::path& path)
 {
-    const std::string source = ReadSourceFile(path);
-    const std::regex declaration(R"(\b(?:synth::)?ui::Node\s+([A-Za-z_][A-Za-z0-9_]*)\s*;)");
+    const std::string source = StripComments(ReadSourceFile(path));
+    const std::regex declaration(
+        R"(\b(?:synth::)?ui::Node\s+([A-Za-z_][A-Za-z0-9_]*)\s*(;|\{|=))");
     for (std::sregex_iterator it(source.begin(), source.end(), declaration), end; it != end; ++it)
     {
         const std::string variable = (*it)[1].str();
+        const std::string initializer = (*it)[2].str();
+        if (initializer == "{" || initializer == "=")
+        {
+            return true;
+        }
+
         const std::size_t afterDeclaration =
             static_cast<std::size_t>((*it).position() + (*it).length());
         const std::string rest = source.substr(afterDeclaration);

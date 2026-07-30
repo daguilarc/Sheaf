@@ -1113,15 +1113,13 @@ cover — is spot-checked at the human sign-off gate (D4).
    (grow the node vs. redesign the drawing).
 7. **How much of `ControllersPageUI.hpp`'s node construction is genuinely
    tree-shape versus view-model presentation logic. RESOLVED by Task 13
-   spike.** The controller-list-row spike covered 24 of the 186 old
-   `ui::Node` construction sites: 17 were pure tree shape (container/control
-   kind, id, child placement, fixed extents) and 7 carried presentation
-   values from the view model (row text, selected options, enabled/action
-   state, status-dot draw state), a 71% shape / 29% presentation split. The
-   implication for the remaining work is that the plan's risk was real but
-   not a design defect: the presentation logic is adjacent to construction
-   and can remain as builder arguments without touching the view model,
-   edit-session logic, or wizard state machine. Re-estimate: the rest of the
-   186-node migration is larger than a mechanical find/replace because each
-   list-like section needs real `ScrollArea` furniture and fixed/intrinsic row
-   extents, but it does not require a new component-library primitive.
+   spike.** The controller-list-row spike found presentation logic adjacent
+   to, but not fused with, tree construction. Row text, endpoint selections,
+   enabled/action state, and status-dot colours still come from the existing
+   view model, but they can be passed as builder arguments without changing the
+   view model, edit-session logic, or wizard state machine. The implication for
+   the remaining work is that the plan's risk was real but not a design defect:
+   the rest of the 186-node migration is larger than a mechanical find/replace
+   because list-like sections need real `ScrollArea` furniture and
+   fixed/intrinsic row extents, but it does not require a new
+   component-library primitive.
