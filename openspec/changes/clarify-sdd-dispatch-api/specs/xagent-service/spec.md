@@ -132,13 +132,23 @@ BECAUSE the SDK validates call arguments against the registered advertised schem
 
 WHEN an MCP client reads the advertised `xagent_sdd_start` or `xagent_sdd_followup` input schema, THE xagent service SHALL derive every artifact-field description from a **dispatch field manifest** rather than from independently authored prose, and SHALL fail its own tool-surface suite when a description, direction, or required condition disagrees with that manifest.
 
-**The variant registry.** THE service SHALL declare a closed registry of exactly seven public dispatch variants — `implementer`, `reviewer:task`, `reviewer:branch`, `fixer`, `re-reviewer`, `followup:fix`, and `followup:re-review` — and the manifest's set of `(variant, field)` pairs SHALL be exactly equal to the registry's, neither a subset nor a superset. Equality rather than containment is the point: the advertised schemas are flat supersets carrying no variant association, so a new variant that reuses only existing fields would otherwise change no advertised field set and slip past a coverage check. Adding a variant without registering it SHALL fail the suite.
+**The variant registry.** THE service SHALL declare a closed registry naming exactly seven public dispatch variants — `implementer`, `reviewer:task`, `reviewer:branch`, `fixer`, `re-reviewer`, `followup:fix`, and `followup:re-review` — **and, for each, the canonical set of in-scope public fields it accepts**. A bare list of variant names is not a registry: without the per-variant field matrix there is nothing for the manifest to be equal to.
 
-**Artifact fields.** An artifact field is a surface field whose value is a filesystem path to a file the dispatch supplies or produces: `plan`, `brief`, `report_out`, `implementer_report`, `fixer_report`, `constraints`, `diff`, and `findings`. `cwd` is operational — a directory, not a dispatch artifact — and SHALL be excluded. Non-artifact fields SHALL appear in the manifest with a null direction, because dpr-10 can name their renderer options in a fault trailer (see xsvc-18) and every such option needs a surface field to report.
+THE suite SHALL assert three independent equalities, because each closes a different seam:
 
-**Manifest entries.** Each entry SHALL carry: `variant`; `field`; `source`; `renderer_option` or an explicit service-formatted marker; `surface_kind` — whether the surface value is a path or inline text; `direction`; `transport` — how the prompt receives it, `path_substituted` or `inlined_contents` or `not_applicable`; `required_condition`; and `derivation`.
+1. The variants the union, the reviewer refinement, and the dispatch router actually recognize SHALL equal the registry's variant keys. Without this, a new route can be added while registry and manifest stay equal to each other and both stay wrong.
+2. The public `(variant, field)` pairs the schemas actually accept SHALL equal the registry matrix.
+3. The manifest's caller-input pairs SHALL equal the registry's in-scope pairs.
 
-**Direction is a property of the surface field, not of the renderer slot.** Direction SHALL mean only the direction the dispatched agent applies to a caller-supplied path: READS or WRITES. `transport` carries the orthogonal fact that dpr-5 declares on the slot. This distinction is load-bearing: a whole-branch reviewer's `brief` is a path the agent reads, delivered through the renderer's `--requirements` text slot which dpr-5 gives no direction. The surface field is `reads`; the slot has no direction; the manifest records both without contradiction. Fields whose surface value is inline text SHALL carry a null direction, and the suite SHALL NOT require one.
+**In-scope and operational fields.** An in-scope field is one the caller supplies that reaches a renderer argument or a service-formatted prompt. THE operational exclusion set SHALL be exactly `role`, `kind`, `cwd`, `model`, `harness`, `effort`, `policy`, `note`, and `run_id` — routing, transport, and supervision inputs that no prompt consumes. Every other public field is in scope, artifact-bearing or not.
+
+**Artifact fields.** An artifact field is an in-scope field whose value is a filesystem path: `plan`, `brief`, `report_out`, `implementer_report`, `fixer_report`, `constraints`, `diff`, and `findings`. Non-artifact in-scope fields — `task`, `name`, `context`, `description`, `base`, `head`, `round`, `tests`, `findings_text` — SHALL appear with a null direction, because dpr-10 can name their renderer options in a fault trailer.
+
+**Manifest entries.** Each entry SHALL carry: `variant`; `field`; `source`; `renderer_option` or an explicit service-formatted marker; **`provenance`**; `surface_kind`; `direction`; `transport`; `required_condition`; and `derivation`.
+
+**Provenance.** THE `provenance` SHALL be `caller_input`, `ledger`, or `derived`. Not every renderer argument comes from the caller: a `followup:re-review` sources `--plan`, `--task`, and `--brief` from the target agent's `sdd_agents` row, and the follow-up schema deliberately exposes none of them. Only `caller_input` entries SHALL be compared against the registry matrix, and only they SHALL carry a surface field. A `ledger` or `derived` entry SHALL carry a null surface field, so the manifest can be simultaneously equal to the public surface and complete over renderer arguments.
+
+**Direction is artifact lifecycle, not who does the reading.** `reads` SHALL mean the supplied path must identify an existing file consumed by the dispatch pipeline — by the renderer, by the agent, or by both. `writes` SHALL mean the path is an agent output destination. Direction SHALL NOT be defined as what the dispatched agent does with the path: for a whole-branch reviewer the renderer inlines `--requirements` and the agent never receives the path at all, so an agent-centred definition would make `reads` untrue for the one field that most needed describing. `transport` carries the orthogonal fact dpr-5 declares on the slot, so `reviewer:branch`'s `brief` records `direction: reads` with `transport: inlined_contents` and both are true. `plan` is `reads` under this definition — it must exist, and the pipeline consumes it to locate the workspace. Fields whose surface value is inline text SHALL carry a null direction.
 
 **Two sources.** The manifest SHALL draw from exactly two sources whose union equals the registry:
 
@@ -165,18 +175,29 @@ WHEN an MCP client reads the advertised `xagent_sdd_start` or `xagent_sdd_follow
 - **THEN** the entry records direction `reads`, `surface_kind` path, and transport `inlined_contents`
 - **AND** the renderer's own slot table still declares no direction for that slot, without the suite reporting a contradiction
 
-#### Scenario: The registry is closed and exactly matched
+#### Scenario: The registry is bound to the routes that actually exist
 
-- **WHEN** the suite compares the manifest's `(variant, field)` pairs with the variant registry's
-- **THEN** they are exactly equal
-- **AND** a variant added to the registry without a manifest entry fails the suite
-- **AND** a manifest entry for an unregistered variant fails the suite
+- **WHEN** the suite enumerates the variants the union, the reviewer refinement, and the dispatch router recognize
+- **THEN** that set equals the registry's variant keys
+- **AND** a route added without registering it fails the suite, rather than passing because registry and manifest remain equal to each other
+
+#### Scenario: The registry matrix is bound to the accepted fields
+
+- **WHEN** the suite enumerates the `(variant, field)` pairs the schemas actually accept
+- **THEN** that set equals the registry matrix
+- **AND** the manifest's caller-input pairs equal the registry's in-scope pairs
 
 #### Scenario: A new variant reusing only existing fields cannot slip through
 
 - **WHEN** a variant is introduced that reuses only fields already advertised, and is not added to the registry
 - **THEN** the suite fails
 - **AND** the failure names the unregistered variant rather than passing because the flat advertised field set was unchanged
+
+#### Scenario: Ledger-sourced renderer arguments carry no surface field
+
+- **WHEN** the manifest describes `followup:re-review`'s `--plan`, `--task`, and `--brief`, which the service reads from the `sdd_agents` row
+- **THEN** each entry carries provenance `ledger` and a null surface field
+- **AND** those entries are excluded from the registry comparison, so the manifest is complete over renderer arguments without claiming public fields that do not exist
 
 #### Scenario: Conditionally required fields say what satisfies them
 
@@ -204,7 +225,9 @@ THE allowlisted reason codes SHALL be exactly: `no_such_file`, `empty_file`, `pa
 
 THE public `details` shape SHALL be exactly `{ reason, field }` for `required_missing` and `not_accepted`, and `{ reason, field, path }` for `no_such_file`, `empty_file`, and `parent_missing`. THE details SHALL NOT carry the renderer template name, the renderer option, or any other renderer-internal vocabulary. `field` names the surface field corresponding to the faulting option for that variant — not necessarily a field the caller sent, since `required_missing` fires precisely when the caller sent nothing.
 
-THE service SHALL translate the renderer option to the surface field through the same dispatch field manifest xsvc-17 describes the schema from. The mapping is variant-aware, because one renderer option serves differently named surface fields: `--report` backs `report_out` for an `implementer`, `implementer_report` for `reviewer:task`, and `fixer_report` for `re-reviewer`. Returning the raw renderer flag SHALL be a defect: it reintroduces the retired ambiguous vocabulary and does not identify the caller's own field. Because the manifest covers every renderer option the facade sends — including the non-artifact ones dpr-10 can name, such as `--name`, `--base`, `--head`, `--task`, and `--round` — every allowlisted trailer has a surface field to report.
+THE service SHALL translate the renderer option to the surface field through the same dispatch field manifest xsvc-17 describes the schema from. The mapping is variant-aware, because one renderer option serves differently named surface fields: `--report` backs `report_out` for an `implementer`, `implementer_report` for `reviewer:task`, and `fixer_report` for `re-reviewer`. Returning the raw renderer flag SHALL be a defect: it reintroduces the retired ambiguous vocabulary and does not identify the caller's own field. The manifest covers every renderer option the facade sends, including the non-artifact ones dpr-10 can name — `--name`, `--base`, `--head`, `--task`, `--round` — so every trailer arising from caller input has a surface field to report.
+
+**Ledger-sourced faults are not bad caller input.** WHERE the faulting option's manifest entry has provenance `ledger` — a `followup:re-review` whose stored `plan` or `brief` has been deleted, emptied, or moved since dispatch — THE service SHALL NOT return `sdd_renderer_bad_input`, because the caller supplied no such field and naming one would blame it for a value it never sent. THE service SHALL instead return a structured `sdd_stored_artifact_missing` error naming the stored artifact and the fresh-start recovery: `xagent_sdd_start` with role `re-reviewer` for the same plan and task, supplying the brief again. An option with provenance `derived` and no surface field SHALL fall back to `sdd_renderer_failed`.
 
 An option name and a caller-supplied path are already in the caller's own request, so returning them discloses nothing the caller did not send. Withholding them forced two controllers to reproduce the renderer invocation by hand to learn which flag was wrong, and one escalated on a misdiagnosis.
 
@@ -218,6 +241,13 @@ An option name and a caller-supplied path are already in the caller's own reques
 
 - **WHEN** the identical `no_such_file` trailer for `--report` arises from an `implementer`, a `reviewer:task`, and a `re-reviewer`
 - **THEN** the returned field is `report_out`, `implementer_report`, and `fixer_report` respectively
+
+#### Scenario: A deleted ledger-sourced artifact is not blamed on the caller
+
+- **WHEN** a `followup:re-review` renders and the `brief` stored in the agent's `sdd_agents` row has been deleted or emptied since dispatch
+- **THEN** the service returns `sdd_stored_artifact_missing`, not `sdd_renderer_bad_input`
+- **AND** the details name the stored artifact and the fresh-start recovery
+- **AND** no field the caller never sent is named as bad input
 
 #### Scenario: Non-artifact options also resolve to a surface field
 

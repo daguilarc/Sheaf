@@ -1,7 +1,9 @@
 ## Context
 
 The SDD dispatch surface has three layers: `dispatch-prompt` (the renderer,
-which owns the contract for four of the six prompt variants), `sdd_prompt.ts` /
+which owns the contract for five of the seven public dispatch variants —
+`re-reviewer` and `followup:re-review` reuse one template but stay distinct
+manifest variants), `sdd_prompt.ts` /
 `sdd_manager.ts` (the facade, which translates MCP input into renderer arguments
 and formats the two variants the renderer has no template for), and
 `tool_schemas.ts` (the advertised schema plus the enforcing union). The

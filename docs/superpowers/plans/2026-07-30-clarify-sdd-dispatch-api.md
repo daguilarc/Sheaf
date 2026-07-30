@@ -33,7 +33,8 @@
 **Interfaces:**
 - Consumes: nothing from other tasks.
 - Produces: `python3 dispatch-prompt --describe-slots` → JSON on stdout, shape
-  `{"schema_version": 1, "templates": {"<name>": [{"option": str, "token": str, "kind": str, "direction": "reads"|"writes"|null, "has_fallback": bool, "derivation": str|null}, ...]}}`.
+  `{"schema_version": 1, "templates": {"<name>": [{"option": str, "token": str, "kind": str, "direction": "reads"|"writes"|null, "has_fallback": bool, "derivation": Derivation|null}, ...]}}`
+  where `Derivation` is `{"kind": "repo_root"}` or `{"kind": "plan_workspace", "pattern": str, "requires_existing": bool}` with `{task}`, `{short(base)}`, `{short(head)}` placeholders.
   Also produces the stderr trailer `{"error": <code>, "option": str, "path"?: str, "template"?: str}` where `<code>` is one of `no_such_file`, `empty_file`, `parent_missing`, `not_accepted`, `required_missing`. Task 3 consumes both.
 
 - [ ] **Step 1: Write the failing tests for direction and the slot dump**
@@ -127,18 +128,52 @@ class Slot:
         return DIRECTIONS[self.kind]
 ```
 
-- [ ] **Step 4: Declare the three derivations on the slots that have them**
+- [ ] **Step 4: Declare the structured derivations on the slots that have them**
 
-These mirror `_supplied` exactly. In `TEMPLATES`, add `derivation=` to the four slots `_supplied` can fill:
+These must mirror `_supplied` exactly — a consumer reproduces the filename from them, so an approximation sends the facade looking for a file that is not there. Add above `TEMPLATES`:
 
-- `implementer` `[REPORT_FILE]` → `derivation="task-<N>-report.md"`
-- `task-reviewer` `[REPORT_FILE]` → `derivation="task-<N>-report.md"`
-- `task-reviewer` `[GLOBAL_CONSTRAINTS]` → `derivation="global-constraints.md"`
-- `task-reviewer` `[DIFF_FILE]` → `derivation="review-<base>..<head>.diff"`
-- `re-review` `[REPORT_FILE]` → `derivation="task-<N>-report.md"`
-- `re-review` `[DIFF_FILE]` → `derivation="review-<base>..<head>.diff"`
+```python
+def workspace_derivation(pattern: str, *, requires_existing: bool = True) -> dict:
+    """A file `_supplied` looks for in the plan's SDD workspace (dpr-11).
+
+    `{task}` is the task number; `{short(base)}` and `{short(head)}` are
+    `git rev-parse --short` of those revisions, falling back to the first
+    seven characters — see `short_sha`.
+    """
+    return {"kind": "plan_workspace", "pattern": pattern,
+            "requires_existing": requires_existing}
+
+
+REPO_ROOT_DERIVATION = {"kind": "repo_root"}
+REVIEW_DIFF_PATTERN = "review-{short(base)}..{short(head)}.diff"
+```
+
+Then add `derivation=` to every slot `_supplied` can fill:
+
+- `implementer` `[REPORT_FILE]` → `workspace_derivation("task-{task}-report.md", requires_existing=False)` — an implementer writes it, so `_supplied` derives it unconditionally
+- `implementer` `[directory]` → `REPO_ROOT_DERIVATION`
+- `task-reviewer` `[REPORT_FILE]` → `workspace_derivation("task-{task}-report.md")`
+- `task-reviewer` `[GLOBAL_CONSTRAINTS]` → `workspace_derivation("global-constraints.md")`
+- `task-reviewer` `[DIFF_FILE]` → `workspace_derivation(REVIEW_DIFF_PATTERN)`
+- `re-review` `[REPORT_FILE]` → `workspace_derivation("task-{task}-report.md")`
+- `re-review` `[DIFF_FILE]` → `workspace_derivation(REVIEW_DIFF_PATTERN)`
 
 Leave every other slot's `derivation` at `None`.
+
+Add a test asserting the described pattern resolves to the filename `_supplied` actually opens, so the two cannot drift:
+
+```python
+    def test_described_diff_pattern_matches_what_supplied_looks_for(self) -> None:
+        self.seed_report()
+        doc = json.loads(self.run_util("--describe-slots").stdout)
+        entry = next(s for s in doc["templates"]["task-reviewer"]
+                     if s["option"] == "--diff")
+        sha = self.short()
+        resolved = (entry["derivation"]["pattern"]
+                    .replace("{short(base)}", sha)
+                    .replace("{short(head)}", sha))
+        self.assertTrue((self.workspace / resolved).is_file())
+```
 
 - [ ] **Step 5: Implement `--describe-slots`**
 
@@ -500,16 +535,20 @@ git commit -m "feat(xagent): one name per function on the SDD dispatch surface (
 Depends on Task 1 (`--describe-slots`, the fault trailer) and Task 2 (the field vocabulary).
 
 **Files:**
-- Create: `projects/xagent/src/service/dispatch_manifest.ts`
+- Create: `projects/xagent/src/service/dispatch_manifest.ts` (the registry, the entry type, and the generated-artifact loader)
+- Create: `projects/xagent/src/service/dispatch_manifest.generated.json` (checked in, produced by the packaging step)
 - Modify: `projects/xagent/src/service/tool_schemas.ts`
 - Modify: `projects/xagent/src/service/sdd_prompt.ts`
+- Modify: `plugins/xagent/scripts/package_xagent.py` (generate + `--check` the manifest)
 - Test: `projects/xagent/tests/dispatch_manifest.test.ts`, `projects/xagent/tests/sdd_prompt.test.ts`
 
 **Interfaces:**
 - Consumes: Task 1's `--describe-slots` JSON and stderr trailer; Task 2's field names.
-- Produces: `LoadDispatchManifest()` returning `ManifestEntry[]` where
-  `ManifestEntry = { variant: string; field: string; source: "renderer" | "service"; rendererOption: string | null; direction: "reads" | "writes" | null; requiredCondition: string; derivation: string | null }`,
-  and `SurfaceFieldFor(variant: string, rendererOption: string): string` — **synchronous**, backed by the static `x_OptionFields` table, so the error path never awaits a subprocess.
+- Produces:
+  - `DISPATCH_VARIANTS`: the closed registry, exactly `["implementer", "reviewer:task", "reviewer:branch", "fixer", "re-reviewer", "followup:fix", "followup:re-review"]`.
+  - `ManifestEntry = { variant: string; field: string; source: "renderer" | "service"; rendererOption: string | null; surfaceKind: "path" | "text"; direction: "reads" | "writes" | null; transport: "path_substituted" | "inlined_contents" | "not_applicable"; requiredCondition: "always" | "unless-derivable" | "optional"; derivation: Derivation | null }`.
+  - `DispatchManifest(): ManifestEntry[]` — **synchronous**, reading the checked-in generated JSON. No subprocess at runtime.
+  - `SurfaceFieldFor(variant: string, rendererOption: string): string | null` — **synchronous**; null when the facade never sends that option, which the caller turns into `sdd_renderer_failed`.
 
 - [ ] **Step 1: Write the failing manifest-coverage test**
 
@@ -521,36 +560,60 @@ import assert from "node:assert/strict";
 import { LoadDispatchManifest, SurfaceFieldFor } from "../src/service/dispatch_manifest.ts";
 import { XagentSddStartAdvertisedSchema } from "../src/service/tool_schemas.ts";
 
-test("every advertised artifact field appears in exactly one manifest source", async () => {
-  const manifest = await LoadDispatchManifest();
-  const artifactFields = [
-    "brief", "report_out", "implementer_report", "fixer_report",
-    "constraints", "diff", "findings",
-  ];
-  for (const field of artifactFields) {
-    const entries = manifest.filter((e) => e.field === field);
-    assert.ok(entries.length > 0, `${field} is advertised but in no manifest source`);
+test("the manifest exactly equals the variant registry", () => {
+  const manifest = DispatchManifest();
+  const covered = new Set(manifest.map((e) => e.variant));
+  assert.deepEqual([...covered].sort(), [...DISPATCH_VARIANTS].sort(),
+    "manifest variants must equal the registry — neither subset nor superset");
+});
+
+test("a variant reusing only existing fields still fails until registered", () => {
+  // The mutation guard: the advertised field set is flat, so a new variant
+  // that reuses `brief` and `report_out` changes nothing observable there.
+  const manifest = DispatchManifest().concat([{
+    variant: "reviewer:security", field: "brief", source: "service",
+    rendererOption: null, surfaceKind: "path", direction: "reads",
+    transport: "path_substituted", requiredCondition: "always", derivation: null,
+  }]);
+  const covered = new Set(manifest.map((e) => e.variant));
+  assert.notDeepEqual([...covered].sort(), [...DISPATCH_VARIANTS].sort());
+});
+
+test("service-formatted variants are covered by the service source", () => {
+  for (const variant of ["fixer", "followup:fix"]) {
+    const entries = DispatchManifest().filter((e) => e.variant === variant);
+    assert.ok(entries.length > 0, `${variant} has no manifest entries`);
+    assert.equal(entries.every((e) => e.source === "service"), true);
+    assert.equal(entries.find((e) => e.field === "report_out")?.direction, "writes");
   }
 });
 
-test("service-formatted variants are covered by the service source", async () => {
-  const manifest = await LoadDispatchManifest();
-  const fixer = manifest.filter((e) => e.variant === "fixer");
-  assert.ok(fixer.length > 0, "fixer has no manifest entries");
-  assert.equal(fixer.every((e) => e.source === "service"), true);
-  assert.equal(fixer.find((e) => e.field === "report_out")?.direction, "writes");
+test("a path surface field delivered by an inlining slot records both facts", () => {
+  const brief = DispatchManifest().find(
+    (e) => e.variant === "reviewer:branch" && e.field === "brief");
+  assert.equal(brief?.surfaceKind, "path");
+  assert.equal(brief?.direction, "reads");
+  assert.equal(brief?.transport, "inlined_contents");
+  assert.equal(brief?.rendererOption, "--requirements");
 });
 
-test("one renderer option maps to the role's own surface field", () => {
+test("one renderer option maps to the variant's own surface field", () => {
   assert.equal(SurfaceFieldFor("implementer", "--report"), "report_out");
   assert.equal(SurfaceFieldFor("reviewer:task", "--report"), "implementer_report");
   assert.equal(SurfaceFieldFor("re-reviewer", "--report"), "fixer_report");
 });
 
-test("advertised descriptions agree with the manifest", async () => {
-  const manifest = await LoadDispatchManifest();
+test("non-artifact options resolve too, so every trailer has a field", () => {
+  assert.equal(SurfaceFieldFor("implementer", "--name"), "name");
+  assert.equal(SurfaceFieldFor("reviewer:task", "--base"), "base");
+  assert.equal(SurfaceFieldFor("implementer", "--task"), "task");
+  // An option the facade never sends has no surface field.
+  assert.equal(SurfaceFieldFor("implementer", "--out"), null);
+});
+
+test("advertised descriptions agree with the manifest", () => {
   const shape = XagentSddStartAdvertisedSchema.shape;
-  for (const entry of manifest.filter((e) => e.direction !== null)) {
+  for (const entry of DispatchManifest().filter((e) => e.direction !== null)) {
     const described = shape[entry.field]?.description ?? "";
     const expected = entry.direction === "writes" ? /writes/i : /reads|must already exist/i;
     assert.match(described, expected,
@@ -564,9 +627,11 @@ test("advertised descriptions agree with the manifest", async () => {
 Run: `cd projects/xagent && npx tsx --test tests/dispatch_manifest.test.ts`
 Expected: FAIL — `Cannot find module '../src/service/dispatch_manifest.ts'`.
 
-- [ ] **Step 3: Build the manifest module**
+- [ ] **Step 3: Build the manifest module and its generator**
 
-Create `projects/xagent/src/service/dispatch_manifest.ts`. It shells the trusted renderer once with `--describe-slots`, maps each renderer-backed variant to its template, and concatenates the service-owned declaration:
+The manifest is a **checked-in generated artifact**, not a runtime subprocess: the advertised schemas are module-level constants and MCP registration is synchronous, so the renderer must not be on the service's boot path. `package_xagent.py` gains a generation step that runs `dispatch-prompt --describe-slots`, joins it with the service-owned declaration, and writes `dispatch_manifest.generated.json`; its existing `--check` mode compares the checked-in copy and fails on divergence. Generation aborts if `schema_version !== 1`.
+
+Create `projects/xagent/src/service/dispatch_manifest.ts` holding the registry, the entry type, the service-owned declaration, the variant→template and option→field maps, and a synchronous loader over the generated JSON:
 
 ```typescript
 // The renderer owns the contract for the variants it renders. `fixer` and
@@ -586,24 +651,55 @@ const x_ServiceEntries: readonly ManifestEntry[] = [
     direction: "writes", requiredCondition: "always", derivation: null },
 ];
 
-const x_VariantTemplates: Record<string, string> = {
+export const DISPATCH_VARIANTS = [
+  "implementer", "reviewer:task", "reviewer:branch", "fixer",
+  "re-reviewer", "followup:fix", "followup:re-review",
+] as const;
+
+const x_VariantTemplates: Record<string, string | null> = {
   "implementer": "implementer",
   "reviewer:task": "task-reviewer",
   "reviewer:branch": "code-reviewer",
   "re-reviewer": "re-review",
-  "re-review": "re-review",
+  "followup:re-review": "re-review",
+  "fixer": null,          // service-formatted
+  "followup:fix": null,   // service-formatted
 };
 
+// Every renderer option the facade sends, per variant. Non-artifact options
+// are here too: dpr-10 can name them in a trailer, and xsvc-18 requires every
+// allowlisted trailer to resolve to a surface field. An option absent here is
+// one the facade never sends, and classification falls back to opaque.
 const x_OptionFields: Record<string, Record<string, string>> = {
-  "implementer": { "--report": "report_out", "--brief": "brief" },
-  "reviewer:task": { "--report": "implementer_report", "--brief": "brief" },
-  "reviewer:branch": { "--requirements": "brief" },
-  "re-reviewer": { "--report": "fixer_report", "--brief": "brief" },
-  "re-review": { "--report": "fixer_report", "--brief": "brief" },
+  "implementer": {
+    "--report": "report_out", "--brief": "brief", "--name": "name",
+    "--context": "context", "--task": "task", "--plan": "plan",
+  },
+  "reviewer:task": {
+    "--report": "implementer_report", "--brief": "brief",
+    "--constraints": "constraints", "--diff": "diff",
+    "--base": "base", "--head": "head", "--task": "task", "--plan": "plan",
+  },
+  "reviewer:branch": {
+    "--requirements": "brief", "--description": "description",
+    "--base": "base", "--head": "head", "--plan": "plan",
+  },
+  "re-reviewer": {
+    "--report": "fixer_report", "--brief": "brief", "--findings": "findings",
+    "--diff": "diff", "--base": "base", "--head": "head",
+    "--round": "round", "--task": "task", "--plan": "plan",
+  },
+  "followup:re-review": {
+    "--report": "fixer_report", "--brief": "brief", "--findings": "findings",
+    "--diff": "diff", "--base": "base", "--head": "head",
+    "--round": "round", "--task": "task", "--plan": "plan",
+  },
 };
 ```
 
-`LoadDispatchManifest()` parses the dump, asserts `schema_version === 1`, and produces one entry per (variant, slot) with `requiredCondition` computed as `has_fallback ? "optional" : derivation ? "unless-derivable" : "always"`. `SurfaceFieldFor(variant, option)` reads `x_OptionFields`, falling back to the option name with the leading dashes stripped.
+Note `reviewer:branch`'s `brief` maps to `--requirements`, a `text` slot the renderer gives no direction. The entry records `surfaceKind: "path"`, `direction: "reads"`, `transport: "inlined_contents"` — both statements true at once (xsvc-17, design D11).
+
+`DispatchManifest()` reads the generated JSON synchronously and returns `ManifestEntry[]`; `requiredCondition` is computed at generation time as `has_fallback ? "optional" : derivation ? "unless-derivable" : "always"`. `SurfaceFieldFor(variant, option)` reads `x_OptionFields` and returns `null` for an unknown option — never a dash-stripped guess, which would leak renderer vocabulary into a public error.
 
 - [ ] **Step 4: Generate the descriptions from the manifest**
 
@@ -641,6 +737,8 @@ const x_RendererFaultCodes = new Set([
   "no_such_file", "empty_file", "parent_missing", "not_accepted", "required_missing",
 ]);
 
+const x_PathFaults = new Set(["no_such_file", "empty_file", "parent_missing"]);
+
 function ClassifyRendererFault(stderr: string, variant: string): SddPromptError | null {
   const lines = stderr.split(/\r?\n/).filter((line) => line.trim() !== "");
   const last = lines.at(-1);
@@ -649,15 +747,19 @@ function ClassifyRendererFault(stderr: string, variant: string): SddPromptError 
   try { body = JSON.parse(last); }
   catch { return null; }
   if (body.error === undefined || !x_RendererFaultCodes.has(body.error)) { return null; }
+  // The renderer only knows --report; the caller sent implementer_report.
+  // A null field means an option the facade never sends — stay opaque rather
+  // than leak renderer vocabulary (xsvc-18).
+  const field = SurfaceFieldFor(variant, body.option ?? "");
+  if (field === null) { return null; }
   return new SddPromptError({
     error: "sdd_renderer_bad_input",
     message: "dispatch-prompt rejected an input argument.",
-    details: {
-      reason: body.error,
-      // The renderer only knows --report; the caller sent implementer_report.
-      field: SurfaceFieldFor(variant, body.option ?? ""),
-      ...(body.path === undefined ? {} : { path: body.path }),
-    },
+    // Exactly {reason, field}, plus `path` only for the three path faults.
+    // Never the renderer template or option.
+    details: x_PathFaults.has(body.error) && body.path !== undefined
+      ? { reason: body.error, field, path: body.path }
+      : { reason: body.error, field },
   });
 }
 ```
