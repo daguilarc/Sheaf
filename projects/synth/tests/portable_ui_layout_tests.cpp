@@ -657,6 +657,36 @@ void TestWrappingRowFlowsOntoAdditionalLines()
             "the container's extent grows to contain every line");
 }
 
+void TestAWrappingRowStillFailsOnAChildWiderThanTheRow()
+{
+    // Wrapping is not an absorber for a child that cannot wrap. A line only
+    // breaks when the cursor has already moved (`mainCursor > opts.padding`),
+    // so the FIRST child is placed wherever it lands however wide it is --
+    // there is no earlier line to push it onto. Exempting wrapping rows from
+    // the gate therefore reopened exactly the hole sru-54 closes: a 200-wide
+    // child in a 100-wide row laid out 124 past the content edge and was
+    // clipped in silence.
+    const auto build = [] {
+        synth::ui::LayoutOptions row;
+        row.wrap = true;
+        synth::ui::Builder b;
+        b.Root("root", {0.0f, 0.0f, 100.0f, 300.0f});
+        b.Row("strip", row, [](synth::ui::Builder& b) {
+            b.Label("unwrappable", "unwrappable", MainOf(synth::ui::Extent::Px(200.0f)));
+        });
+        return b.Build({0.0f, 0.0f, 100.0f, 300.0f});
+    };
+    const std::string diagnostic = ResolutionDiagnostic(build);
+    Require(!diagnostic.empty(),
+            "a wrapping row whose child cannot wrap fails like any other container");
+    Require(Mentions(diagnostic, "'strip'") && Mentions(diagnostic, "horizontal"),
+            "the wrapping row names itself and its own stacking axis: " + diagnostic);
+    Require(Mentions(diagnostic, "100.00") && Mentions(diagnostic, "224.00"),
+            "12 + 200 + 12 is what the unwrappable child costs the row: " + diagnostic);
+    Require(Mentions(diagnostic, "'unwrappable'"),
+            "the child that could not wrap is the one named: " + diagnostic);
+}
+
 void TestWrappingRowReservesGrownExtentInParentFlow()
 {
     synth::ui::LayoutOptions row;
@@ -1087,6 +1117,7 @@ int main()
     TestExtentDrivenRedistribution();
     TestTextReservationIsDeterministicAndBackendFree();
     TestWrappingRowFlowsOntoAdditionalLines();
+    TestAWrappingRowStillFailsOnAChildWiderThanTheRow();
     TestWrappingRowReservesGrownExtentInParentFlow();
     TestWrappingRowLineBreakHeightIsPinned();
     TestIntrinsicColumnReservesAWrappingRowsGrownExtent();

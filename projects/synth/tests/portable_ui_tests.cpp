@@ -1495,6 +1495,37 @@ void RequireRegionAbsorbsTheDifference(const synth::ui::NodeTree& shortSurface,
     }
 }
 
+// Making Sync and Audio absorb moved their status regions from an intrinsic
+// stack under the root into a weighted ScrollArea, and the claim that went with
+// it was that nothing moved on screen. That claim is worth exactly as much as
+// the assertion behind it, and the absorption pin above is not that assertion:
+// it constrains the region's height and the furniture's, and would sit green
+// through a status line that shifted, an inserted gap, or a changed left edge.
+// Task 17 pairs over these two surfaces, so an unexplained shift there is the
+// failure mode to close here.
+void RequireStatusLinesStackFromTheRegionTop(const synth::ui::NodeTree& tree,
+                                             const char* regionId,
+                                             const std::vector<std::string>& lineIds,
+                                             float gap,
+                                             const char* label)
+{
+    const synth::ui::Node& region = FindNode(tree, regionId);
+    float expectedY = 0.0f;
+    for (const std::string& lineId : lineIds)
+    {
+        const synth::ui::Node& line = FindNode(tree, lineId);
+        RequireNear(line.bounds.y, expectedY, 0.01f, label);
+        RequireNear(line.bounds.x, 0.0f, 0.01f,
+                    "every status line shares the region's left edge");
+        Require(line.bounds.height > 0.0f && line.bounds.width > 0.0f,
+                "a pinned status line has a real extent, so its position is a position");
+        expectedY += line.bounds.height + gap;
+    }
+    // Bounds are parent-relative, so pinning the children inside the region and
+    // the region under the furniture is what pins the position on the surface.
+    Require(region.bounds.height > 0.0f, "the status region resolved to a real extent");
+}
+
 static void TestEveryRebuiltPageAbsorbsAtTheSmallestDeclaredSurface()
 {
     synth::runtime_ui::SyncPageSnapshot sync;
@@ -1521,6 +1552,70 @@ static void TestEveryRebuiltPageAbsorbsAtTheSmallestDeclaredSurface()
         synth::runtime_ui::NodeIds::kAudioStatus,
         {synth::runtime_ui::NodeIds::kAudioBack, synth::runtime_ui::NodeIds::kAudioForm},
         "the Audio status region absorbs the whole difference between surface heights");
+
+    // Sync at the floor surface: Back is 28 high and the five-row form is 172,
+    // and the root neither pads nor gaps, so the status region starts at 200 and
+    // takes the remaining 280. Its nine lines stack from its top on the page's
+    // own row gap, 22 high each, which is where they were before the region
+    // existed.
+    const synth::ui::NodeTree syncAtFloor =
+        synth::runtime_ui::BuildSyncPageTree(sync, kSmallestDeclaredSurface);
+    const synth::ui::Node& syncStatus =
+        FindNode(syncAtFloor, synth::runtime_ui::NodeIds::kSyncStatus);
+    RequireNear(syncStatus.bounds.y,
+                FindNode(syncAtFloor, synth::runtime_ui::NodeIds::kSyncBack).bounds.height +
+                    FindNode(syncAtFloor, synth::runtime_ui::NodeIds::kSyncForm).bounds.height,
+                0.01f,
+                "the Sync status region begins exactly where the furniture ends: the root neither "
+                "pads nor gaps, so becoming a region moved nothing");
+    RequireStatusLinesStackFromTheRegionTop(
+        syncAtFloor,
+        synth::runtime_ui::NodeIds::kSyncStatus,
+        {synth::runtime_ui::NodeIds::kSyncValidation,
+         synth::runtime_ui::NodeIds::kSyncWarning,
+         synth::runtime_ui::NodeIds::kSyncBpm,
+         synth::runtime_ui::NodeIds::kSyncLock,
+         synth::runtime_ui::NodeIds::kSyncSource,
+         synth::runtime_ui::NodeIds::kSyncOutputLatency,
+         synth::runtime_ui::NodeIds::kSyncIgnoredInput,
+         synth::runtime_ui::NodeIds::kSyncLateEvents,
+         synth::runtime_ui::NodeIds::kSyncDroppedOutput},
+        synth::runtime_ui::Layout::kRowGap,
+        "each Sync status line keeps its position inside the region that now absorbs the page");
+    RequireNear(FindNode(syncAtFloor, synth::runtime_ui::NodeIds::kSyncBpm).bounds.y,
+                2.0f * (22.0f + synth::runtime_ui::Layout::kRowGap),
+                0.01f,
+                "the third Sync status line sits two 22-high lines and two row gaps down");
+
+    // Audio's status region is the one place a gap would be invisible to the
+    // absorption pin and visible on screen: its two device lines were direct
+    // children of a root whose gap is zero, so the region that now holds them
+    // declares a zero gap of its own and they still abut.
+    const synth::ui::NodeTree audioAtFloor =
+        synth::runtime_ui::BuildAudioPageTree(audio, kSmallestDeclaredSurface);
+    RequireNear(FindNode(audioAtFloor, synth::runtime_ui::NodeIds::kAudioStatus).bounds.y,
+                FindNode(audioAtFloor, synth::runtime_ui::NodeIds::kAudioBack).bounds.height +
+                    FindNode(audioAtFloor, synth::runtime_ui::NodeIds::kAudioForm).bounds.height,
+                0.01f,
+                "the Audio status region begins exactly where the furniture ends");
+    RequireStatusLinesStackFromTheRegionTop(
+        audioAtFloor,
+        synth::runtime_ui::NodeIds::kAudioStatus,
+        {synth::runtime_ui::NodeIds::kAudioDeviceLine,
+         synth::runtime_ui::NodeIds::kAudioStatusLine},
+        0.0f,
+        "the Audio device line and status line still abut, on a region gap of zero");
+    const synth::ui::Node& audioDeviceLine =
+        FindNode(audioAtFloor, synth::runtime_ui::NodeIds::kAudioDeviceLine);
+    const synth::ui::Node& audioStatusLine =
+        FindNode(audioAtFloor, synth::runtime_ui::NodeIds::kAudioStatusLine);
+    RequireNear(audioStatusLine.bounds.y,
+                audioDeviceLine.bounds.y + audioDeviceLine.bounds.height,
+                0.01f,
+                "the Audio status line starts where the device line ends -- any gap on the region "
+                "would separate two lines that were touching");
+    RequireNear(audioStatusLine.bounds.x, audioDeviceLine.bounds.x, 0.01f,
+                "both Audio status lines share one left edge");
 
     const synth::runtime_ui::FilePageSnapshot browserState = LongBrowserState(60);
     RequireRegionAbsorbsTheDifference(
@@ -1643,8 +1738,33 @@ static void TestControllersWizardAndBraid4ResolveAtTheSmallestDeclaredSurface()
     form->SetDiscovery({.available = {candidate("-a")}});
     form->DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
     RequireResolves("the wizard form", [&] { form->BuildTree(); });
-    Require(FindNodeById(form->BuildTree(), synth::runtime_ui::NodeIds::kWizardForm) != nullptr,
+    const synth::ui::NodeTree formTree = form->BuildTree();
+    Require(FindNodeById(formTree, synth::runtime_ui::NodeIds::kWizardForm) != nullptr,
             "the wizard form really is the page under test");
+
+    // The Twister column's declared height counted two gaps for four stacked
+    // children, so the last button row's error band sat six pixels outside it.
+    // "The form resolves" is satisfied by any height at or above the content,
+    // including one that is too tall, so what is pinned here is the equality --
+    // and the gap the old constant omitted, read off the resolved children
+    // rather than restated from the producer's private constants.
+    const synth::ui::Node& column = FindNode(formTree, "controller-wizard.twister.column.0");
+    const synth::ui::Node& heading = FindNode(formTree, "controller-wizard.twister.column.0.heading");
+    const synth::ui::Node& firstButton = FindNode(formTree, "controller-wizard.twister.button.0");
+    const synth::ui::Node& secondButton = FindNode(formTree, "controller-wizard.twister.button.1");
+    const synth::ui::Node& lastButton = FindNode(formTree, "controller-wizard.twister.button.2");
+    RequireNear(lastButton.bounds.y + lastButton.bounds.height,
+                column.bounds.height,
+                0.01f,
+                "the column is exactly as tall as its heading, its three button rows and the "
+                "three gaps between them -- neither six pixels short nor any pixels spare");
+    RequireNear(firstButton.bounds.y - (heading.bounds.y + heading.bounds.height),
+                secondButton.bounds.y - (firstButton.bounds.y + firstButton.bounds.height),
+                0.01f,
+                "the heading is separated from the first button row by the same gap the rows use, "
+                "which is the gap the old column height left out");
+    Require(lastButton.bounds.height > 0.0f && heading.bounds.height > 0.0f,
+            "the pinned column really contains a heading and a last button row");
 
     synth::ParameterManager manager;
     synth::MessageInBus uiBus(&manager);

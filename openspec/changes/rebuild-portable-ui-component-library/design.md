@@ -284,10 +284,16 @@ The library computes each node's **parent-relative** `Bounds` during
      that has to fit. It is walked **pre-order from the root**, so the
      outermost container that cannot hold its content is the one reported: a
      descendant squeezed by an ancestor's overflow is a symptom, and repairing
-     it would not fix the page. And a `ScrollArea` and a wrapping `Row` are
-     exempt along their own main axis, because both absorb it — what a wrapping
-     row cannot fit across becomes cross-axis extent its parent then has to
-     hold, and is caught there. This is **not** a ban on pixel extents: an item
+     it would not fix the page. And the only container exempt from it is a
+     `ScrollArea`, on the strength of its kind rather than of any number.
+     A wrapping `Row` is **not** exempt. It reads like a second absorber and it
+     is not one: a line only breaks once the cursor has moved off the padding,
+     so the first child of a line is placed however wide it is, and a child
+     wider than the content box has no earlier line to be pushed onto — which
+     is the same silent clipping this rule exists to stop. Checking wrapping
+     rows costs nothing, because a legitimate wrap already keeps every line
+     inside the content box: the placement loop breaks against the same content
+     edge the gate measures against. This is **not** a ban on pixel extents: an item
      inside a scrolling list legitimately carries its own extent along the
      scroll axis, because a fraction of the container is circular for a list
      whose length varies.

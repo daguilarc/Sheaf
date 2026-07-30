@@ -269,16 +269,20 @@ inline void RequireContainerHoldsItsChildren(const Node& container,
                                              Axis mainAxis,
                                              const std::vector<const Node*>& inFlow)
 {
-    // The two sanctioned absorbers. A ScrollArea places its children in
-    // scroll-content space and publishes the extent that reaches the tail, so
-    // content past the viewport is reachable rather than lost. A wrapping row
-    // absorbs along its own main axis by breaking lines; what it cannot fit
-    // becomes cross-axis extent, which its parent then has to hold.
+    // The one structural absorber, and it is a fact about the node kind rather
+    // than a number: a ScrollArea places its children in scroll-content space
+    // and publishes the extent that reaches the tail, so content past the
+    // viewport is reachable rather than lost.
+    //
+    // A WRAPPING ROW IS NOT EXEMPT. It looked like a second absorber and it is
+    // not one: a line only breaks once the cursor has moved off the padding, so
+    // the first child of a line is placed however wide it is, and a child wider
+    // than the content box has no earlier line to be pushed onto. Exempting
+    // wrapping rows let exactly that case overflow in silence. Nothing is lost
+    // by checking them, because a legitimate wrap already keeps every line
+    // inside the content box -- the placement loop breaks against the same
+    // content edge this gate measures against.
     if (container.kind == NodeKind::ScrollArea)
-    {
-        return;
-    }
-    if (container.kind == NodeKind::Row && opts.wrap)
     {
         return;
     }
