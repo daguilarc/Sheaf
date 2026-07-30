@@ -1,19 +1,23 @@
 ## Context
 
-The SDD dispatch surface has three layers: `dispatch-prompt` (the renderer, which
-owns the real contract), `sdd_prompt.ts` / `sdd_manager.ts` (the facade, which
-translates MCP input into renderer arguments), and `tool_schemas.ts` (the
-advertised schema plus the enforcing union). The renderer's own contract has been
-correct throughout — `--help` reads `--report: implementer report file`. The
-facade's advertised description says the opposite for half the roles, and the
-facade is the only layer a controller can see.
+The SDD dispatch surface has three layers: `dispatch-prompt` (the renderer,
+which owns the contract for four of the six prompt variants), `sdd_prompt.ts` /
+`sdd_manager.ts` (the facade, which translates MCP input into renderer arguments
+and formats the two variants the renderer has no template for), and
+`tool_schemas.ts` (the advertised schema plus the enforcing union). The
+renderer's own contract has been correct throughout — `--help` reads
+`--report: implementer report file`. The facade's advertised description says the
+opposite for half the roles, and the facade is the only layer a controller sees.
 
 Two controllers built wrong calls from it. The 2026-07-28 opus-5 session
 (`afc24542`) recovered in about fifteen minutes by running the renderer by hand;
-the 2026-07-29 session (`85b47883`) escalated with a diagnosis that was wrong
-twice over — it blamed a `--dir` flag the facade never sends, and concluded the
+the 2026-07-29 session (`85b47883`) escalated with a diagnosis wrong in both
+particulars — it blamed a `--dir` flag the facade never sends, and concluded the
 task-reviewer template had "zero placeholders" after grepping `\[[a-z ]*\]`
 against a template whose six placeholders are uppercase.
+
+A pre-plan spec review by gpt-5.6-sol against the first draft of these artifacts
+returned thirteen findings, two Critical. This design incorporates all of them.
 
 Constraints: only `main` is deployed, nothing redeploys until this change is
 complete, and implementation happens in isolated worktrees. That removes the
@@ -23,20 +27,22 @@ usual reason to carry compatibility aliases.
 
 **Goals:**
 
-- Every advertised description is true against the renderer, and a test fails
-  when it stops being true.
-- No field name means two things; no value has two names.
-- A renderer argument fault tells the caller which of its own arguments was
+- Every advertised description is true against the prompt that consumes it, and
+  a test fails when it stops being true.
+- No field name means two things; no value has two names — including in error
+  payloads, which are tool outputs.
+- A renderer argument fault tells the caller which of *its own* fields was
   wrong, without disclosing template or brief bodies.
-- Every doc, spec, and skill that describes this API agrees with it.
+- Every doc, spec, skill, and shipped package that describes this API agrees
+  with it.
 
 **Non-Goals:**
 
-- Changing renderer slot semantics. They are correct; only their description and
-  their normative statement in `dpr-5` change.
+- Changing renderer slot semantics. They are correct; their *declaration* and
+  their normative statement in dpr-5 change.
+- Adding fixer prompts to the vendored Superpowers tree.
 - Compatibility aliases or a deprecation window.
 - Redesigning the role union, the ledger schema, or the await/close lifecycle.
-- Changing the vendored Superpowers templates, which are upstream.
 
 ## Decisions
 
@@ -49,104 +55,126 @@ existing file (`reviewer` with `task`, `re-reviewer`, follow-up `re-review`).
 Rejected — a description is advisory and a name is not. The controller that
 escalated read a role-scoped description (`AdvertisedFor(...)` already names
 roles) and still built the wrong call, because the field name told it the field
-was uniform. Naming the reader's input after the writer that produced it also
-makes the data flow legible: a reviewer reads the `implementer_report`.
+was uniform.
 
-*Secondary benefit:* `report` as a bare input name disappears, ending its
-collision with `report.text` in the `xagent_await` result, which is final
-assistant text rather than a path.
-
-**D2 — Rename `agent` to `model`.** It holds a provider model name, it sits one
+**D2 — Rename `agent` to `model`.** It holds a provider model name, sits one
 letter from the unrelated `agent_id`, and `xagent_start_non_sdd` already calls the
-identical concept `model`. Renaming fixes a name-with-two-meanings and a
+identical concept `model`. This fixes a name-with-two-meanings and a
 concept-with-two-names in one move, and leaves "agent" meaning the dispatched
-worker everywhere on the surface — including the `sdd_agent_not_live` and
-`sdd_agent_busy` error names, which become unambiguous rather than needing to be
-read against a `agent: "opus"` field.
+worker everywhere — including `sdd_agent_not_live` and `sdd_agent_busy`, which
+become unambiguous rather than needing to be read against an `agent: "opus"`
+field.
 
-**D3 — Return `run_id`, not `agent_id`.** It is the same value the generic tools
-take as `run_id`; the schema's own validator message says so. Both skills
-currently teach the aliasing in prose, which is the tell. The internal
-`sdd_agents.agent_id` column keeps its name — it is a ledger identity, never a
-tool field, and `xsdd-4` is untouched.
+**D3 — Return `run_id`, not `agent_id`, on every public surface.** Same value the
+generic tools take; the schema's own validator message says so. The rename covers
+results, structured error details, and validation message text, because those are
+all tool outputs — a rename scoped to the success path could be completed while
+still violating xsdd-9. The internal `sdd_agents.agent_id` column keeps its name.
 
-*Alternative considered:* rename `run_id` to `agent_id` on the generic tools
-instead. Rejected — the generic tools serve non-SDD runs that have no agent
-identity, and the blast radius is much larger.
+**D4 — "Function" is logical purpose, not transport.** The spec review argued
+that `brief` and `findings` also carry two functions, since a task reviewer's
+`brief` is path-substituted (`--brief`) while a whole-branch reviewer's is
+contents-inlined (`--requirements @FILE`), and `findings` splits the same way
+between `fixer` and `re-review`. The owner ruled that the principle keys on
+logical purpose. xsdd-9 now says so explicitly, and xsvc-17's "direction" is
+narrowed to read-versus-write on caller-supplied paths.
 
-**D4 — Make the renderer boundary visible instead of moving it.** `diff` is
+The reasoning: a caller supplying "the findings for this task" supplies the same
+artifact regardless of how the prompt ingests it, and no controller has ever
+erred on that axis. What two controllers *did* get wrong is supplying a path they
+intended to be written where an existing file was required. Transport is
+described in the field description; direction is enforced by name.
+
+*Consequence:* `brief` and `findings` keep single names, and the tool-surface
+test asserts direction only on artifact-bearing path fields.
+
+**D5 — Make the renderer boundary visible instead of moving it.** `diff` is
 required by the task-review and re-review templates and advertised optional.
-Rather than give `[DIFF_FILE]` a fallback (which would silently render a review
-prompt with no diff — worse than failing), the union and the advertised schema
+Rather than give `[DIFF_FILE]` a fallback — which would silently render a review
+prompt with no diff, worse than failing — the union and the advertised schema
 learn the renderer's rule: required unless the plan workspace holds the derivable
-`review-<base>..<head>.diff`. The service validates before dispatch, so the
-failure arrives as a structured input error rather than an opaque exit 2.
+`review-<base>..<head>.diff`. This applies to the `reviewer` and `re-reviewer`
+start roles **and** to follow-up kind `re-review`, which renders the same
+template.
 
-This is a third asymmetry the `xsvc-15` comment block did not anticipate. It
-reasons about the advertised schema versus the union, and concludes only
+This is a third asymmetry the xsvc-15 comment block did not anticipate. It
+reasons about the advertised schema versus the union and concludes only
 over-strict advertisement is a defect. The union accepting a payload the
-*renderer* then rejects is equally a defect, and `xsvc-17` names it.
+*renderer* then rejects is equally a defect, and xsvc-17 names it.
 
-**D5 — Classify renderer argument errors from an allowlist, keep stderr
-suppressed.** `sdd_prompt.ts` already does exactly this for
-`sdd_templates_missing` by matching a fixed substring; the new
-`sdd_renderer_bad_input` follows the same shape, matching the `dpr-10` grammar and
-returning `{ flag, reason }`. Raw stderr stays withheld because it can carry
-inlined brief and findings text. An option name and a caller-supplied path are
-already in the caller's request, so returning them discloses nothing new.
+**D6 — Two manifest sources, because the renderer is not the whole surface.**
+`fixer` and follow-up `fix` have no `dispatch-prompt` template. Superpowers ships
+`implementer-prompt.md`, `task-reviewer-prompt.md`, and `re-review-prompt.md` and
+no fix template, because upstream a fix is a follow-up to a live implementer or a
+fresh implementer — the skill's own flowchart says "R≤3 resume implementer; R≥4
+fresh implementer." `fixer` is a Sheaf-local recovery role added by the ledger-v2
+four-way union, and its prompt is formatted in TypeScript so a fresh fixer's
+prompt is byte-identical to the same-agent continuation plus a two-line preamble.
 
-*Alternative considered:* pass stderr through when the exit is an argument fault.
-Rejected — classification is what makes the disclosure boundary auditable; a
-passthrough would depend on the renderer never inlining a body into an argument
-diagnostic, which `dpr-10` can require but a passthrough cannot verify.
+So the manifest joins the renderer's `--describe-slots` output with a
+service-owned declaration for `fixer`/`fix`, and xsvc-17 requires their union to
+cover every advertised artifact field.
 
-**D6 — Keep `brief` and keep `task`-presence as the review-mode discriminator.**
-The audit flagged both. `brief` names the assignment document for the dispatch in
-every role; the task-scoped reviewer's is the implementer's task brief and the
-whole-branch reviewer's is purpose-written, but the function is identical, so
-`xsdd-9` records this as documented rather than renamed. `task` presence
-selecting the template is the existing discriminated-union design and is already
-enforced by refinements that reject the wrong companion fields; splitting
-`reviewer` into two roles would reverse a deliberate v2 unification for no
-clarity the descriptions cannot supply.
+*Alternative considered:* author `fixer-prompt.md` in the vendored Superpowers
+tree. Rejected — it invents upstream content inside a tree whose value is being a
+faithful copy, forces a dpr-2 change (which pins the renderer to exactly the four
+upstream template names), and reintroduces the start/continuation drift the
+current TypeScript formatting exists to prevent.
 
-**D7 — The renderer is the single source of truth, enforced by test.** The
-tool-surface suite reads the renderer's slot table — direction and fallback
-presence — and asserts the advertised descriptions and union optionality agree.
-This is the requirement that keeps the class of defect from recurring; the
-renames only fix today's instance.
+**D7 — Classify renderer argument faults from a structured trailer, not from
+prose.** `sdd_prompt.ts` already classifies `sdd_templates_missing` by substring
+match. Rather than extend prose matching, dpr-10 has the renderer emit a
+single-line JSON object as the final stderr line, with an enumerated `error` code
+and only enumerated keys — so no inlined body text can reach the stream through
+it. The facade parses that last line, checks the code against a closed allowlist,
+and otherwise falls back to the opaque `sdd_renderer_failed`. Raw stderr stays
+withheld.
+
+The reverse mapping matters as much as the code: the renderer only ever knows
+`--report`, and the caller sent `implementer_report`. xsvc-18 requires the facade
+to translate through the same manifest xsvc-17 describes the schema from, so the
+error names the caller's field.
+
+**D8 — Preserve unknown keys on both advertised dispatch schemas.** The SDK
+validates against the advertised schema before the handler runs, and a plain
+`z.object` strips undeclared keys — so a retired `agent` or `report` sent
+alongside a valid payload would vanish before the strict union could reject it,
+turning a loud error into a wrong dispatch. The repo already documents this
+hazard and its fix for `xagent_await`. Union-level tests are insufficient here;
+the tests must go through the real MCP boundary.
 
 ## Risks / Trade-offs
 
 - **A live controller mid-plan breaks on the rename.** → Accepted and intended:
-  nothing redeploys until the change is complete, and the strict union rejects
-  retired names loudly rather than ignoring them. The stuck session is unblocked
-  by the corrected invocation, not by this change landing.
-- **The slot-table test couples the service suite to a Python utility.** →
-  The coupling already exists at runtime; the test makes it visible. The renderer
-  exposes its table through a machine-readable dump rather than the suite parsing
-  Python source.
-- **`dpr-10`'s grammar constrains future renderer error text.** → It constrains
-  only argument faults, which are already one line and already name their option.
-- **Splitting `report` into three names grows the field list.** → The union is
-  already role-discriminated, so each role still sees exactly one report field;
-  only the advertised superset grows, and its job is description, not enforcement.
-- **The audit corrects skills that in-flight sessions have already read.** →
-  Skill text is read at session start, so corrections reach new sessions only.
-  This is why the renames must land with the docs, not before them.
+  nothing redeploys until the change is complete, and the union rejects retired
+  names loudly rather than ignoring them (D8 is what makes that true).
+- **The tool-surface test couples the service suite to a Python utility.** →
+  The coupling already exists at runtime; the test makes it visible, and dpr-11
+  gives it a versioned interface rather than parsing Python source.
+- **Two manifest sources can drift from each other.** → The suite fails when
+  their union does not cover every advertised artifact field, so a new variant
+  in either source without a description is a red build.
+- **dpr-10's trailer constrains renderer error output.** → It constrains only
+  the enumerated argument faults, and it is additive: human-readable lines may
+  still precede it.
+- **The shipped plugin package can lag the source.** → `make xagent-plugin-test`
+  runs `package_xagent.py --check` and root `make test` depends on it, so a stale
+  package is already a failing build. The change adds the rebuild as an explicit
+  task rather than relying on someone noticing.
 
 ## Migration Plan
 
-1. Land the renderer changes first (`dpr-5` declarations, `dpr-10` grammar,
-   slot-table dump) — additive, no facade dependency.
-2. Land the facade renames, the `diff` requirement, and error classification
-   together; they share the union and would leave the surface inconsistent if
-   split.
-3. Land the doc, spec, and skill corrections in the same change so no published
-   surface describes a retired name.
-4. Rebuild and redeploy the service as one unit. There is no partial-deploy
-   state: a renamed union and an old skill would produce exactly the failure this
-   change exists to remove.
+Task dependency edges are real and were mis-stated in the first draft:
+
+1. **Task 1 (renderer)** — dpr-5 declarations, dpr-10 trailer, dpr-11
+   `--describe-slots`. No facade dependency. **Produces the interfaces Tasks 3
+   and 4 consume**, so it lands first.
+2. **Task 2 (facade renames)** — independent of Task 1; touches the union,
+   results, and error details.
+3. **Task 3 (facade manifest, descriptions, `diff`, error classification)** —
+   consumes Task 1's `--describe-slots` and trailer, and Task 2's vocabulary.
+4. **Task 4 (docs, skills, package rebuild)** — consumes the finished
+   vocabulary and error surface.
 
 Rollback is `git revert` of the whole change plus a redeploy; there is no data
 migration, since no renamed field is persisted — `sdd_agents` columns are
@@ -154,8 +182,8 @@ untouched.
 
 ## Open Questions
 
-None blocking. One deferred: whether `constraints` should also be required for a
+None blocking. One deferred: whether `constraints` should be required for a
 task-scoped reviewer rather than falling back to "None beyond the task brief."
-The fallback is real optionality, so it is truthful today; whether a review
-*should* proceed without global constraints is a workflow question for the
-Superpowers plan template, not an API-clarity defect.
+The fallback is real optionality, so the advertisement is truthful today; whether
+a review *should* proceed without global constraints is a workflow question for
+the Superpowers plan template, not an API-clarity defect.
