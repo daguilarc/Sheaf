@@ -113,7 +113,7 @@ std::string ReadSource(const std::string& repoRelativePath)
 
 bool FunctionBodyContains(const std::string& source, const std::string& functionName, const std::string& needle)
 {
-    const std::string marker = functionName + "(";
+    const std::string marker = "inline ui::NodeTree " + functionName + "(";
     const std::size_t signature = source.find(marker);
     if (signature == std::string::npos)
     {
@@ -159,6 +159,22 @@ std::vector<float> ColumnXOffsetsOf(const synth::ui::NodeTree& tree, const char*
     return offsets;
 }
 
+std::vector<float> ColumnWidthsOf(const synth::ui::NodeTree& tree, const char* formId, std::size_t column)
+{
+    const synth::ui::Node& form = FindNode(tree, formId);
+    std::vector<float> widths;
+    for (const synth::ui::NodeId& rowId : form.children)
+    {
+        const synth::ui::Node& row = FindNode(tree, rowId.value);
+        if (row.kind != synth::ui::NodeKind::Row || row.children.size() <= column)
+        {
+            continue;
+        }
+        widths.push_back(FindNode(tree, row.children[column].value).bounds.width);
+    }
+    return widths;
+}
+
 bool AllEqual(const std::vector<float>& offsets)
 {
     if (offsets.empty())
@@ -168,6 +184,28 @@ bool AllEqual(const std::vector<float>& offsets)
     return std::all_of(offsets.begin(), offsets.end(), [&](float value) {
         return std::fabs(value - offsets.front()) <= 0.0001f;
     });
+}
+
+float MaxRightEdgeOfColumn(const synth::ui::NodeTree& tree, const char* formId, std::size_t column)
+{
+    const synth::ui::Node& form = FindNode(tree, formId);
+    float result = 0.0f;
+    for (const synth::ui::NodeId& rowId : form.children)
+    {
+        const synth::ui::Node& row = FindNode(tree, rowId.value);
+        if (row.kind != synth::ui::NodeKind::Row || row.children.size() <= column)
+        {
+            continue;
+        }
+        const synth::ui::Node& cell = FindNode(tree, row.children[column].value);
+        result = std::max(result, cell.bounds.x + cell.bounds.width);
+    }
+    return result;
+}
+
+bool TextStyleMatches(const synth::ui::TextStyle& actual, const synth::ui::TextStyle& expected)
+{
+    return actual.size == expected.size && actual.color == expected.color && actual.align == expected.align;
 }
 
 int CountRootNodes(const synth::ui::NodeTree& tree)
@@ -935,13 +973,30 @@ static void TestSyncPageAlignsThroughTheFormGrid()
     const synth::ui::NodeTree tree =
         synth::runtime_ui::BuildSyncPageTree(snapshot, {0.0f, 0.0f, 900.0f, 560.0f});
 
+    const synth::ui::Node& back = FindNode(tree, synth::runtime_ui::NodeIds::kSyncBack);
+    RequireNear(back.bounds.width,
+                synth::runtime_ui::Layout::kBackButtonWidth,
+                0.0001f,
+                "Sync Back button keeps the recovered compact page width");
+    Require(back.color.has_value() && *back.color == synth::pagestyle::kDefaultButton,
+            "Sync Back button carries the default page button colour");
     Require(AllEqual(ColumnXOffsetsOf(tree, "runtime.sync.form", 0)),
             "every Sync label starts at the same form-grid x-offset");
     Require(AllEqual(ColumnXOffsetsOf(tree, "runtime.sync.form", 1)),
             "every Sync control starts at the same form-grid x-offset");
+    Require(AllEqual(ColumnWidthsOf(tree, "runtime.sync.form", 0)),
+            "every Sync caption cell has the same form-grid width");
+    Require(ColumnXOffsetsOf(tree, "runtime.sync.form", 1).front() >=
+                MaxRightEdgeOfColumn(tree, "runtime.sync.form", 0) + synth::ui::kSpacing.labelGap,
+            "the Sync control column clears the widest caption cell");
     Require(FindNode(tree, std::string(synth::runtime_ui::NodeIds::kSyncPpqn) + ".caption").text ==
                 "PPQN (1-960)",
             "the Sync PPQN field keeps its user-facing caption outside the text field");
+    const synth::ui::Node& ppqnCaption =
+        FindNode(tree, std::string(synth::runtime_ui::NodeIds::kSyncPpqn) + ".caption");
+    Require(ppqnCaption.textStyle.has_value() &&
+                TextStyleMatches(*ppqnCaption.textStyle, synth::pagestyle::kDefaultTextStyle),
+            "the Sync PPQN caption carries the page text style");
 }
 
 static void TestSyncPageFitsWithinTheRuntimeRoot()
@@ -950,7 +1005,7 @@ static void TestSyncPageFitsWithinTheRuntimeRoot()
     snapshot.validationText = "PPQN must be in the range 1 to 960";
     snapshot.warningText = "96 PPQN is nonstandard";
     const synth::ui::NodeTree tree =
-        synth::runtime_ui::BuildSyncPageTree(snapshot, {0.0f, 0.0f, 780.0f, 585.0f});
+        synth::runtime_ui::BuildSyncPageTree(snapshot, {0.0f, 0.0f, 640.0f, 480.0f});
 
     for (const synth::ui::Node& node : tree.nodes)
     {
@@ -987,6 +1042,11 @@ static void TestAudioSelectorsAreCaptionedWhileADeviceIsSelected()
     const synth::ui::NodeTree tree =
         synth::runtime_ui::BuildAudioPageTree(snapshot, {0.0f, 0.0f, 900.0f, 560.0f});
 
+    const synth::ui::Node& back = FindNode(tree, synth::runtime_ui::NodeIds::kAudioBack);
+    RequireNear(back.bounds.width,
+                synth::runtime_ui::Layout::kBackButtonWidth,
+                0.0001f,
+                "Audio Back button keeps the recovered compact page width");
     Require(FindNode(tree, std::string(synth::runtime_ui::NodeIds::kAudioOutput) + ".caption").text ==
                 "Output device",
             "the output selector shows a visible caption while a device is selected");
@@ -997,6 +1057,20 @@ static void TestAudioSelectorsAreCaptionedWhileADeviceIsSelected()
             "the output selector caption does not route through ComboBox::label");
     Require(FindNode(tree, synth::runtime_ui::NodeIds::kAudioInput).label.empty(),
             "the input selector caption does not route through ComboBox::label");
+    Require(AllEqual(ColumnXOffsetsOf(tree, "runtime.audio.form", 0)),
+            "every Audio label starts at the same form-grid x-offset");
+    Require(AllEqual(ColumnXOffsetsOf(tree, "runtime.audio.form", 1)),
+            "every Audio control starts at the same form-grid x-offset");
+    Require(AllEqual(ColumnWidthsOf(tree, "runtime.audio.form", 0)),
+            "every Audio caption cell has the same form-grid width");
+    Require(ColumnXOffsetsOf(tree, "runtime.audio.form", 1).front() >=
+                MaxRightEdgeOfColumn(tree, "runtime.audio.form", 0) + synth::ui::kSpacing.labelGap,
+            "the Audio control column clears the widest caption cell");
+    const synth::ui::Node& outputCaption =
+        FindNode(tree, std::string(synth::runtime_ui::NodeIds::kAudioOutput) + ".caption");
+    Require(outputCaption.textStyle.has_value() &&
+                TextStyleMatches(*outputCaption.textStyle, synth::pagestyle::kDefaultTextStyle),
+            "the Audio output caption carries the page text style while selected");
 }
 
 static void TestHiddenInputSelectorLeavesNoOrphanedCaption()

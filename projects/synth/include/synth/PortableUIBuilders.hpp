@@ -454,7 +454,7 @@ public:
         }
         return ComboBox(std::move(id),
                         std::move(label),
-                        vectorOptions,
+                        std::move(vectorOptions),
                         std::move(selectedOption),
                         std::move(action),
                         std::move(style));
@@ -462,7 +462,7 @@ public:
 
     Builder& ComboBox(std::string id,
                       std::string label,
-                      const std::vector<ControlOption>& options,
+                      std::vector<ControlOption> options,
                       std::string selectedOption,
                       Action action,
                       ControlStyle style = {}) {
@@ -470,7 +470,7 @@ public:
         node.id = NodeId(std::move(id));
         node.kind = NodeKind::ComboBox;
         node.label = std::move(label);
-        node.options = options;
+        node.options = std::move(options);
         node.selectedOption = std::move(selectedOption);
         node.action = std::move(action);
         return FinishControl(std::move(node), std::move(style));
@@ -629,7 +629,9 @@ private:
         controlLayout.main = Extent::Weight(1.0f);
         layoutByNodeId_[controlId] = controlLayout;
         scopeStack_.push_back(tree_.nodes.size() - 1);
-        Label(controlId + ".caption", style.caption);
+        ControlStyle captionStyle;
+        captionStyle.textStyle = style.textStyle;
+        Label(controlId + ".caption", style.caption, std::move(captionStyle));
         AppendChild(std::move(node));
         scopeStack_.pop_back();
         return *this;

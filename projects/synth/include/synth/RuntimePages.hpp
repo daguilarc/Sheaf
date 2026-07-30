@@ -348,6 +348,7 @@ inline ui::ControlStyle Button()
     ui::ControlStyle style;
     style.color = pagestyle::kDefaultButton;
     style.textStyle = pagestyle::kDefaultTextStyle;
+    style.layout.cross = ui::Extent::Px(Layout::kBackButtonWidth);
     return style;
 }
 
