@@ -1667,6 +1667,7 @@ class AllHarnessDistributionTests(unittest.TestCase):
                 f"python3 {self.installed_hook.resolve()} --harness codex "
                 "--state-root /stale/state observe"
             ),
+            "timeout": 9,
         }
         before = {"type": "command", "command": "python3 /opt/other/before.py"}
         after = {"type": "command", "command": "python3 /opt/other/after.py"}
@@ -1677,7 +1678,11 @@ class AllHarnessDistributionTests(unittest.TestCase):
             {
                 "hooks": {
                     "PostToolUse": [
-                        {"matcher": "Bash", "hooks": [before, stale_entry, after]},
+                        {
+                            "matcher": "Bash",
+                            "timeout": 5,
+                            "hooks": [before, stale_entry, after],
+                        },
                         unrelated_group,
                         {"hooks": [neighbour, dict(canonical_entry)]},
                         {"hooks": [dict(canonical_entry)]},
@@ -1691,9 +1696,14 @@ class AllHarnessDistributionTests(unittest.TestCase):
         codex = json.loads(self.codex_hooks.read_text(encoding="utf-8"))
         self.assertEqual(
             [
-                # The first xagent entry is rewritten between its neighbours,
-                # and the group keeps its own unrelated keys.
-                {"matcher": "Bash", "hooks": [before, canonical_entry, after]},
+                # The canonical entry takes the first owned group's index in a
+                # group of its own: a host matcher or timeout would apply to
+                # our command and could silently disable observation. The
+                # stale entry's own timeout is normalized away with it.
+                {"hooks": [canonical_entry]},
+                # Its unrelated siblings keep their group keys and their order,
+                # immediately beside it.
+                {"matcher": "Bash", "timeout": 5, "hooks": [before, after]},
                 unrelated_group,
                 # A later duplicate loses only its own entry.
                 {"hooks": [neighbour]},
@@ -1701,6 +1711,12 @@ class AllHarnessDistributionTests(unittest.TestCase):
             ],
             codex["hooks"]["PostToolUse"],
         )
+
+        # The split shape must itself be stable: a reinstall that reshuffled
+        # groups would invalidate Codex's positional trust records.
+        settled = self.codex_hooks.read_text(encoding="utf-8")
+        self.assertEqual("", self.register_hooks())
+        self.assertEqual(settled, self.codex_hooks.read_text(encoding="utf-8"))
 
     def test_hook_registration_removes_only_owned_duplicates(self) -> None:
         duplicate = self.canonical_group("codex", "observe")
