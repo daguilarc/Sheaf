@@ -170,6 +170,20 @@ def write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def write_claude_settings_atomic(path: Path, payload: object) -> None:
+    # Stage, backup, then replace so an interrupted Claude settings write never
+    # leaves a truncated shared file and prior content stays recoverable.
+    #
+    serialized = json.dumps(payload, indent=2) + "\n"
+    staged = path.with_name(f".{path.name}.sheaf-stage")
+    backup = path.with_name(f"{path.name}.sheaf-backup")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staged.write_text(serialized, encoding="utf-8")
+    if path.exists():
+        shutil.copy2(path, backup)
+    os.replace(staged, path)
+
+
 def registry_entry_install_path(entry: object) -> Path | None:
     if not isinstance(entry, list) or not entry:
         return None
@@ -361,7 +375,7 @@ def enable_claude_plugin(home: Path) -> None:
     if not isinstance(enabled, dict):
         raise RuntimeError(f"{path} field 'enabledPlugins' must be an object")
     enabled[CLAUDE_PLUGIN_KEY] = True
-    write_json(path, payload)
+    write_claude_settings_atomic(path, payload)
     print(f"wrote {path}")
 
 

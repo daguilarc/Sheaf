@@ -790,6 +790,104 @@ class InstallSuperpowersTests(unittest.TestCase):
         self.assertNotIn("superpowers@", source)
         self.assertFalse(hasattr(agents_install, "install_superpowers"))
 
+    def test_claude_enable_preserves_xagent_hooks_and_unrelated_settings(self) -> None:
+        settings_path = self.home / ".claude" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        observe = {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": (
+                        "python3 /tmp/controller_stop_hook.py "
+                        "--harness claude --state-root /tmp/state observe"
+                    ),
+                }
+            ]
+        }
+        guard = {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": (
+                        "python3 /tmp/controller_stop_hook.py "
+                        "--harness claude --state-root /tmp/state guard"
+                    ),
+                }
+            ]
+        }
+        before = {
+            "permissions": {"allow": ["Bash"]},
+            "hooks": {"PostToolUse": [observe], "Stop": [guard]},
+            "enabledPlugins": {"keep@me": True},
+            "unrelated": {"nested": 1},
+        }
+        settings_path.write_text(json.dumps(before) + "\n", encoding="utf-8")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            install_superpowers.enable_claude_plugin(self.home)
+
+        after = json.loads(settings_path.read_text(encoding="utf-8"))
+        self.assertEqual(before["permissions"], after["permissions"])
+        self.assertEqual(before["hooks"], after["hooks"])
+        self.assertEqual(before["unrelated"], after["unrelated"])
+        self.assertIs(after["enabledPlugins"]["keep@me"], True)
+        self.assertIs(after["enabledPlugins"]["superpowers@sheaf-managed"], True)
+
+    def test_claude_settings_write_is_atomic_and_backed_up(self) -> None:
+        settings_path = self.home / ".claude" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        prior = {"enabledPlugins": {"keep@me": False}, "theme": "dark"}
+        settings_path.write_text(json.dumps(prior) + "\n", encoding="utf-8")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            install_superpowers.enable_claude_plugin(self.home)
+
+        backup = settings_path.with_name(f"{settings_path.name}.sheaf-backup")
+        staged = settings_path.with_name(f".{settings_path.name}.sheaf-stage")
+        self.assertTrue(backup.is_file())
+        self.assertEqual(prior, json.loads(backup.read_text(encoding="utf-8")))
+        self.assertFalse(staged.exists())
+        after = json.loads(settings_path.read_text(encoding="utf-8"))
+        self.assertEqual("dark", after["theme"])
+        self.assertIs(after["enabledPlugins"]["keep@me"], False)
+        self.assertIs(after["enabledPlugins"]["superpowers@sheaf-managed"], True)
+
+    def test_claude_settings_malformed_json_is_not_replaced(self) -> None:
+        settings_path = self.home / ".claude" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        malformed = "{not-json\n"
+        settings_path.write_text(malformed, encoding="utf-8")
+
+        with self.assertRaises(json.JSONDecodeError):
+            install_superpowers.enable_claude_plugin(self.home)
+
+        self.assertEqual(malformed, settings_path.read_text(encoding="utf-8"))
+        self.assertFalse(
+            settings_path.with_name(f"{settings_path.name}.sheaf-backup").exists()
+        )
+        self.assertFalse(
+            settings_path.with_name(f".{settings_path.name}.sheaf-stage").exists()
+        )
+
+    def test_claude_enabled_plugins_wrong_shape_is_not_replaced(self) -> None:
+        settings_path = self.home / ".claude" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        wrong_shape = {"enabledPlugins": ["superpowers@sheaf-managed"], "keep": True}
+        original = json.dumps(wrong_shape) + "\n"
+        settings_path.write_text(original, encoding="utf-8")
+
+        with self.assertRaises(RuntimeError) as raised:
+            install_superpowers.enable_claude_plugin(self.home)
+
+        self.assertIn("enabledPlugins", str(raised.exception))
+        self.assertEqual(original, settings_path.read_text(encoding="utf-8"))
+        self.assertFalse(
+            settings_path.with_name(f"{settings_path.name}.sheaf-backup").exists()
+        )
+        self.assertFalse(
+            settings_path.with_name(f".{settings_path.name}.sheaf-stage").exists()
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

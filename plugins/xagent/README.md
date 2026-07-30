@@ -54,6 +54,56 @@ For recovery, rerun `make xagent-plugin-install-global`. If the installed
 package is unmarked, inspect it and move it aside manually rather than forcing
 overwrite.
 
+## Controller stop hooks (Claude Code and Codex only)
+
+Top-level Claude Code and Codex controllers register global `PostToolUse`
+observer and `Stop` guard command hooks. Cursor and Pi are not guarded: those
+harnesses get the skill/MCP (or CLI) only, with no stop-hook registration.
+
+| Path | Role |
+| --- | --- |
+| `$HOME/.claude/settings.json` | Claude Code hook groups (`PostToolUse`, `Stop`) |
+| `$CODEX_HOME/hooks.json` | Codex hook groups (`PostToolUse`, `Stop`) |
+| `$HOME/.agents/plugins/data/xagent/controller-stop-hooks/` | Stable per-session state root (outside the replaceable plugin package) |
+
+`CODEX_HOME` defaults to `~/.codex`. Each hook command is an absolute
+`python3 …/controller_stop_hook.py --harness <claude|codex> --state-root <abs> <observe|guard>`
+invocation that owns only its canonical command entry.
+
+Behavior summary:
+
+- One block per actionable pending-state revision: the first Stop with pending
+  work returns top-level `{"decision":"block","reason":…}` naming the exact
+  `xagent_await` run and cursor; an unchanged second Stop for that revision
+  passes.
+- Lock or malformed-state failures are fail-open: the hook exits without
+  blocking and does not delete the sibling lock file.
+- Reinstall is idempotent: repeated global installs leave exactly one
+  canonical xagent observer group and one stop group per harness event, update
+  owned commands in place, and preserve unrelated groups and their relative
+  order.
+- Manual rollback is operator-owned: restore from the installer's sibling
+  `*.xagent-backup` (or edit the JSON) and remove or trust hooks through the
+  harness UI. The installer does not ship an uninstall that rewrites trust.
+- xagent-launched workers are separate top-level sessions. Native-subagent
+  hook events do not mutate the parent controller's pending state; this change
+  does not register `SubagentStop`.
+
+### Codex `/hooks` trust and activation check
+
+Codex command hooks stay inert until their commands are trusted. After install
+or any effective group change that can invalidate positional trust, run
+`/hooks` in Codex, approve the xagent observer and stop commands, then verify
+activation in a disposable `$CODEX_HOME` (never by editing live trust blindly):
+
+1. Dispatch `xagent_start_non_sdd` or an SDD start/follow-up and confirm a
+   pending state file appears under the state root for that session.
+2. First Stop blocks with the exact run id and `after_sequence`.
+3. Unchanged second Stop for the same revision passes.
+4. An attention/cursor advance re-arms a new blockable revision.
+5. Completion or close clears pending state for that run.
+6. Native-subagent PostToolUse events leave the parent session state unchanged.
+
 ## One-time SDD ledger reprovision (schema v2)
 
 The SDD ledger was redesigned as an insert-only per-agent dispatch index at

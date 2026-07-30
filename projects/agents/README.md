@@ -211,6 +211,15 @@ Each managed package carries a `.sheaf-managed` marker with the vendor
 `revision` and `version`. Superpowers Codex hooks stay inside that managed
 Codex plugin; they are not merged into Sheaf-owned `$CODEX_HOME/hooks.json`.
 
+When managed Superpowers enables its Claude plugin, it updates
+`~/.claude/settings.json` with staged atomic replacement
+(`.settings.json.sheaf-stage` → `settings.json`, prior content copied to
+`settings.json.sheaf-backup`). It merges only the
+`enabledPlugins.superpowers@sheaf-managed` entry and preserves canonical
+xagent `PostToolUse`/`Stop` hook groups plus unrelated valid settings.
+Malformed settings JSON or a non-object `enabledPlugins` fails before any
+write.
+
 ### Marketplace Superpowers coexistence
 
 Marketplace or `pi install` Superpowers copies may still exist on the
@@ -238,20 +247,38 @@ foreign copy alongside the managed package. Clean removes only
 sheaf-managed Superpowers packages and registry keys; it never deletes
 foreign marketplace copies.
 
-The Codex hook is a user-global `SessionStart` hook for the `compact` source.
-After Codex compacts a session, it injects a short developer-context reminder:
-if the agent was working from a plan, checklist, or task list, it should review
-that material after compaction. Codex may require reviewing and trusting the
-new command hook through `/hooks` before it runs.
+### Shared Codex `$CODEX_HOME/hooks.json` ownership
 
-Because Codex uses a single user-level `$CODEX_HOME/hooks.json` file, the
-installer treats that file like other managed outputs: it writes the managed
-file when missing or already managed, and it fails on an unmanaged conflicting
-file unless `--force` is passed. If you already maintain personal Codex hooks,
-review and merge the Sheaf hook intentionally before forcing installation.
+The agents installer owns only its post-compaction `SessionStart` group
+(matcher `^compact$`, command
+`python3 <resolved-CODEX_HOME>/hooks/sheaf/session_start_after_compact.py`).
+It does **not** whole-file-own `$CODEX_HOME/hooks.json`.
 
-To explicitly replace unmanaged destination files during install, pass the
-installer flag through make:
+- Install merges that canonical group in place when present, or appends it
+  after existing `SessionStart` groups, preserving unrelated groups and
+  canonical xagent `PostToolUse`/`Stop` groups in relative order.
+- A legacy top-level `_sheaf_agents_managed` marker is removed during
+  install migration; ownership is the group matcher and command, not that
+  marker.
+- Check compares only the managed script and the canonical agents group;
+  xagent and unrelated groups are not treated as stale agents content.
+- Clean removes only the agents group and managed script, rewriting the
+  shared file when foreign content remains and deleting `hooks.json` only
+  when nothing non-agents remains.
+- Invalid JSON or an incompatible hooks shape fails install, check, and
+  clean without replacing or deleting the file. `--force` does **not**
+  authorize destructive replacement of malformed shared hook configuration.
+- After install or clean changes the `SessionStart` group array in a way
+  that can invalidate Codex's positional trust, the installer prints a
+  `/hooks` re-approval notice (symmetric with xagent's Codex trust notice).
+
+The Codex hook injects a short developer-context reminder after compaction:
+if the agent was working from a plan, checklist, or task list, it should
+review that material. Codex may require reviewing and trusting the command
+through `/hooks` before it runs.
+
+`--force` still applies to other unmanaged destination files (skills,
+`AGENTS.md`, and similar). To pass that flag through make:
 
 ```shell
 make agents-install-global AGENTS_INSTALL_FLAGS=--force
