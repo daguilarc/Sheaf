@@ -34,6 +34,67 @@ const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const std::
     return nullptr;
 }
 
+// A resolved tree that renders is one where every node has an extent. A tree
+// whose children all collapsed to nothing at the parent origin satisfies every
+// presence and action assertion in this file, so these three look at geometry.
+bool EveryNodeHasExtent(const synth::ui::NodeTree& tree)
+{
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        if (node.bounds.width <= 0.0f || node.bounds.height <= 0.0f)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool BoundsAre(const synth::ui::Node* node, float x, float y, float width, float height)
+{
+    return node != nullptr && node->bounds.x == x && node->bounds.y == y &&
+           node->bounds.width == width && node->bounds.height == height;
+}
+
+bool StacksInDeclarationOrder(const synth::ui::NodeTree& tree, const std::string& parentId)
+{
+    const synth::ui::Node* parent = FindNodeById(tree, parentId);
+    if (parent == nullptr || parent->children.empty())
+    {
+        return false;
+    }
+    float bottom = 0.0f;
+    for (const synth::ui::NodeId& childId : parent->children)
+    {
+        const synth::ui::Node* child = FindNodeById(tree, childId.value);
+        if (child == nullptr || child->bounds.y < bottom)
+        {
+            return false;
+        }
+        bottom = child->bounds.y + child->bounds.height;
+    }
+    return true;
+}
+
+bool ChildrenFitParent(const synth::ui::NodeTree& tree, const std::string& parentId)
+{
+    const synth::ui::Node* parent = FindNodeById(tree, parentId);
+    if (parent == nullptr || parent->children.empty())
+    {
+        return false;
+    }
+    for (const synth::ui::NodeId& childId : parent->children)
+    {
+        const synth::ui::Node* child = FindNodeById(tree, childId.value);
+        if (child == nullptr || child->bounds.x < 0.0f || child->bounds.y < 0.0f ||
+            child->bounds.x + child->bounds.width > parent->bounds.width ||
+            child->bounds.y + child->bounds.height > parent->bounds.height)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 synth::MidiControllerSlot MakeWrldBldrSlot(const char* name)
 {
     synth::MidiControllerSlot slot;
@@ -368,6 +429,45 @@ void TestWizardSessionRoutesPortableChooserAndForm()
     Require(VisibleTextLower(chooserTree).find("twister-in-a") != std::string::npos &&
                 VisibleTextLower(chooserTree).find("twister-out-b") != std::string::npos,
             "chooser labels expose paired endpoint identifiers");
+
+    // The failure mode this closes: every child resolves to zero extent at the
+    // parent origin and every presence-and-actions assertion above still
+    // passes. That is exactly what the chooser did between the auto-flow
+    // deletion and its conversion onto the library, in both backends, invisibly.
+    Require(EveryNodeHasExtent(chooserTree), "every chooser node resolves to a non-zero extent");
+    const std::string chooserBody =
+        std::string(synth::runtime_ui::NodeIds::kWizardChooser) + ".body";
+    Require(FindNodeById(chooserTree, chooserBody) != nullptr,
+            "the chooser stacks its rows in a container rather than under the root");
+    Require(StacksInDeclarationOrder(chooserTree, chooserBody),
+            "chooser rows stack in declaration order without overlapping");
+    Require(ChildrenFitParent(chooserTree, chooserBody),
+            "chooser rows resolve inside the page they were given");
+    const synth::ui::Node* firstChoice =
+        FindNodeById(chooserTree, synth::runtime_ui::NodeIds::WizardChooserCandidate(first));
+    const synth::ui::Node* secondChoice =
+        FindNodeById(chooserTree, synth::runtime_ui::NodeIds::WizardChooserCandidate(second));
+    Require(firstChoice->bounds.y + firstChoice->bounds.height <= secondChoice->bounds.y,
+            "the first candidate resolves above the second, in discovery order");
+    // Exact geometry the resolver derives from the default 640x480 content
+    // rectangle: page margin 4 and row gap 6 around a 32-high action row, a
+    // 24-high heading, then one full-width 32-high button per candidate. Every
+    // number here comes from a declared extent, not from a producer's arithmetic.
+    Require(BoundsAre(FindNodeById(chooserTree, chooserBody), 0.0f, 0.0f, 640.0f, 480.0f),
+            "the chooser body fills the content rectangle");
+    Require(BoundsAre(FindNodeById(chooserTree, std::string(synth::runtime_ui::NodeIds::kWizardChooser) + ".actions"),
+                      4.0f, 4.0f, 632.0f, 32.0f),
+            "the action row spans the page inside its margin");
+    Require(BoundsAre(FindNodeById(chooserTree, synth::runtime_ui::NodeIds::kWizardBack),
+                      0.0f, 0.0f, 80.0f, 32.0f),
+            "Back keeps its own width at the action row's origin");
+    Require(BoundsAre(FindNodeById(chooserTree, std::string(synth::runtime_ui::NodeIds::kWizardChooser) + ".heading"),
+                      4.0f, 42.0f, 632.0f, 24.0f),
+            "the heading follows the action row by one row gap");
+    Require(BoundsAre(firstChoice, 4.0f, 72.0f, 632.0f, 32.0f) &&
+                BoundsAre(secondChoice, 4.0f, 110.0f, 632.0f, 32.0f),
+            "candidate buttons take the page width and stack one row gap apart");
+
     const synth::ui::Action staleFirstChoice =
         *FindNodeById(chooserTree, synth::runtime_ui::NodeIds::WizardChooserCandidate(first))->action;
     const synth::ui::Action staleSecondChoice =

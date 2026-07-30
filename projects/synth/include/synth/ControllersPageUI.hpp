@@ -10,6 +10,7 @@
 #include "synth/ControllerWizard.hpp"
 #include "synth/MidiReconcile.hpp"
 #include "synth/PortableUI.hpp"
+#include "synth/PortableUIBuilders.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -2155,65 +2156,78 @@ private:
         ++m_treeRevision;
     }
 
+    // The chooser page is built on the component library: one Column stacking
+    // the Back action, the heading, an optional status line, and one button per
+    // candidate. Nothing here carries bounds — every extent is declared and the
+    // resolver derives the geometry from the page extent it is handed, so no
+    // backend has to flow or size any of it (sru-49, sru-50).
+    //
+    // Before this it set bounds on the root and on nothing else, and the
+    // auto-flow cursor both backends have since deleted was the only thing
+    // positioning its children. Task 5.9 rebuilds the whole Controllers page
+    // this way; the chooser is here early because the deletions landed first.
     ui::NodeTree BuildWizardChooserTree() const
     {
-        ui::NodeTree tree;
-        ui::Node root;
-        root.id = NodeIds::kWizardChooser;
-        root.kind = ui::NodeKind::Root;
-        root.bounds = m_contentBounds;
-        tree.nodes.push_back(std::move(root));
-        auto append = [&](ui::Node node) {
-            tree.nodes.front().children.push_back(node.id);
-            tree.nodes.push_back(std::move(node));
-        };
+        ui::LayoutOptions body;
+        body.main = ui::Extent::Weight(1.0f);
+        body.padding = ControllersLayout::kPageMargin;
+        body.gap = ControllersLayout::kRowGap;
 
-        ui::Node back;
-        back.id = NodeIds::kWizardBack;
-        back.kind = ui::NodeKind::Button;
-        back.label = "Back";
-        back.action = ui::Action::Named(Actions::kWizardBack);
-        append(std::move(back));
+        // The Back action keeps its own width instead of stretching over the
+        // page, which is the one thing the chooser needs a Row for.
+        ui::LayoutOptions actionRow;
+        actionRow.main = ui::Extent::Px(ControllersLayout::kBackRowHeight);
+        actionRow.padding = 0.0f;
+        actionRow.gap = ControllersLayout::kRowGap;
 
-        ui::Node heading;
-        heading.id = ui::NodeId(std::string(NodeIds::kWizardChooser) + ".heading");
-        heading.kind = ui::NodeKind::Label;
-        heading.text = "Choose a controller to configure";
-        append(std::move(heading));
+        ui::ControlStyle backButton;
+        backButton.layout.main = ui::Extent::Px(ControllersLayout::kBackButtonWidth);
 
-        if (m_discovery.available.empty())
-        {
-            ui::Node empty;
-            empty.id = NodeIds::kWizardChooserEmpty;
-            empty.kind = ui::NodeKind::StatusText;
-            empty.text = "No recognized unconfigured controller pair is present";
-            append(std::move(empty));
-            return tree;
-        }
+        ui::ControlStyle textRow;
+        textRow.layout.main = ui::Extent::Px(ControllersLayout::kStatusRowHeight);
 
-        if (!m_wizardChooserStatus.empty())
-        {
-            ui::Node status;
-            status.id = ui::NodeId(std::string(NodeIds::kWizardChooser) + ".status");
-            status.kind = ui::NodeKind::StatusText;
-            status.text = m_wizardChooserStatus;
-            append(std::move(status));
-        }
+        // A candidate's label names two endpoints, so it takes the page width
+        // and a full row's height rather than an intrinsic button extent.
+        ui::ControlStyle candidateRow;
+        candidateRow.layout.main = ui::Extent::Px(ControllersLayout::kBackRowHeight);
 
-        for (std::size_t candidateIx = 0; candidateIx < m_discovery.available.size(); ++candidateIx)
-        {
-            const WizardCandidate& candidate = m_discovery.available[candidateIx];
-            ui::Node choice;
-            choice.id = ui::NodeId(NodeIds::WizardChooserCandidate(candidate));
-            choice.kind = ui::NodeKind::Button;
-            choice.label = candidate.displayName + " — " + candidate.input.name + " (" +
-                           candidate.input.identifier + ") / " + candidate.output.name + " (" +
-                           candidate.output.identifier + ")";
-            choice.action = ui::Action::WithValue(Actions::kWizardChoose,
-                                                   NodeIds::WizardCandidateToken(candidate));
-            append(std::move(choice));
-        }
-        return tree;
+        ui::Builder builder;
+        builder.Root(NodeIds::kWizardChooser, m_contentBounds);
+        builder.Column(std::string(NodeIds::kWizardChooser) + ".body", body, [&](ui::Builder& page) {
+            page.Row(std::string(NodeIds::kWizardChooser) + ".actions", actionRow, [&](ui::Builder& row) {
+                row.Button(NodeIds::kWizardBack, "Back", ui::Action::Named(Actions::kWizardBack), backButton);
+            });
+            page.Label(std::string(NodeIds::kWizardChooser) + ".heading",
+                       "Choose a controller to configure",
+                       textRow);
+
+            if (m_discovery.available.empty())
+            {
+                page.StatusText(NodeIds::kWizardChooserEmpty,
+                                "No recognized unconfigured controller pair is present",
+                                textRow);
+                return;
+            }
+
+            if (!m_wizardChooserStatus.empty())
+            {
+                page.StatusText(std::string(NodeIds::kWizardChooser) + ".status",
+                                m_wizardChooserStatus,
+                                textRow);
+            }
+
+            for (const WizardCandidate& candidate : m_discovery.available)
+            {
+                page.Button(NodeIds::WizardChooserCandidate(candidate),
+                            candidate.displayName + " — " + candidate.input.name + " (" +
+                                candidate.input.identifier + ") / " + candidate.output.name + " (" +
+                                candidate.output.identifier + ")",
+                            ui::Action::WithValue(Actions::kWizardChoose,
+                                                  NodeIds::WizardCandidateToken(candidate)),
+                            candidateRow);
+            }
+        });
+        return builder.Build();
     }
 
     ui::NodeTree BuildWizardFormTree()
