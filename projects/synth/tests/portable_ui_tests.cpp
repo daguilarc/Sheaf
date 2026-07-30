@@ -111,9 +111,12 @@ std::string ReadSource(const std::string& repoRelativePath)
     throw std::runtime_error("missing source file: " + repoRelativePath);
 }
 
-bool FunctionBodyContains(const std::string& source, const std::string& functionName, const std::string& needle)
+bool FunctionBodyContains(const std::string& source,
+                          const std::string& functionName,
+                          const std::string& needle,
+                          const std::string& returnType = "ui::NodeTree")
 {
-    const std::string marker = "inline ui::NodeTree " + functionName + "(";
+    const std::string marker = "inline " + returnType + " " + functionName + "(";
     const std::size_t signature = source.find(marker);
     if (signature == std::string::npos)
     {
@@ -343,6 +346,74 @@ void RequireBrowserIsRootlessDescendant(const synth::ui::NodeTree& tree)
         Require(NodeHasChild(browser, firstRow->id), "browser row is a browser child");
         Require(!NodeHasChild(root, firstRow->id), "browser row is not a direct file root child");
     }
+}
+
+bool IsDescendantOf(const synth::ui::NodeTree& tree,
+                    const std::string& nodeId,
+                    const std::string& ancestorId)
+{
+    std::string current = nodeId;
+    for (std::size_t hop = 0; hop < tree.nodes.size(); ++hop)
+    {
+        const synth::ui::Node* parent = nullptr;
+        for (const synth::ui::Node& candidate : tree.nodes)
+        {
+            for (const synth::ui::NodeId& child : candidate.children)
+            {
+                if (child.value == current)
+                {
+                    parent = &candidate;
+                    break;
+                }
+            }
+            if (parent != nullptr)
+            {
+                break;
+            }
+        }
+        if (parent == nullptr)
+        {
+            return false;
+        }
+        if (parent->id.value == ancestorId)
+        {
+            return true;
+        }
+        current = parent->id.value;
+    }
+    return false;
+}
+
+std::string FirstBrowserRowId(const synth::ui::Subtree& subtree)
+{
+    Require(!subtree.tree.nodes.empty(), "the patch browser subtree produces nodes");
+    return subtree.tree.nodes.front().id.value;
+}
+
+bool ActionsMatch(const std::optional<synth::ui::Action>& lhs,
+                  const std::optional<synth::ui::Action>& rhs)
+{
+    if (lhs.has_value() != rhs.has_value())
+    {
+        return false;
+    }
+    return !lhs.has_value() || (lhs->name == rhs->name && lhs->value == rhs->value);
+}
+
+synth::runtime_ui::FilePageSnapshot RepresentativeBrowserState()
+{
+    synth::runtime_ui::FilePageSnapshot snapshot;
+    snapshot.patchNameText = "PatchA";
+    snapshot.hasCurrentPatch = true;
+    snapshot.patchesRoot = "/patches";
+    snapshot.statusText = "Choose a patch name";
+    snapshot.browserOpen = true;
+    snapshot.browserKind = synth::runtime_ui::FileBrowserKind::SaveAs;
+    snapshot.browserSaveName = "PatchA";
+    snapshot.browserEntries.push_back({"Alpha", "Alpha", false});
+    snapshot.browserEntries.push_back({"Beta", "Beta", true});
+    snapshot.browserEntries.push_back({"Gamma", "Gamma", false});
+    return snapshot;
 }
 
 struct TestSurface final : synth::ui::Surface
@@ -1017,18 +1088,6 @@ static void TestSyncPageFitsWithinTheRuntimeRoot()
     }
 }
 
-static void TestSyncAndAudioPagesHaveNoOffsetArithmetic()
-{
-    const std::string source = ReadSource("projects/synth/include/synth/RuntimePages.hpp");
-    for (const std::string& functionName : {"BuildSyncPageTree", "BuildAudioPageTree"})
-    {
-        Require(!FunctionBodyContains(source, functionName, "float y"),
-                "rebuilt page construction declares layout instead of a y cursor");
-        Require(!FunctionBodyContains(source, functionName, "y +="),
-                "rebuilt page construction has no page-level y offset accumulation");
-    }
-}
-
 static void TestAudioSelectorsAreCaptionedWhileADeviceIsSelected()
 {
     synth::runtime_ui::AudioPageSnapshot snapshot;
@@ -1092,6 +1151,337 @@ static void TestHiddenInputSelectorLeavesNoOrphanedCaption()
             "hidden input selector leaves no orphaned control");
 }
 
+static void TestPatchBrowserSplicesAsARootlessSubtree()
+{
+    const synth::runtime_ui::FilePageSnapshot state = RepresentativeBrowserState();
+    const synth::ui::Subtree browser = synth::runtime_ui::BuildPatchBrowserSubtree(state);
+    for (const synth::ui::Node& node : browser.tree.nodes)
+    {
+        Require(node.kind != synth::ui::NodeKind::Root,
+                "the patch browser produces a rootless subtree");
+    }
+
+    const synth::ui::NodeTree page =
+        synth::runtime_ui::BuildFilePageTree(state, {0.0f, 0.0f, 900.0f, 560.0f});
+    Require(CountRootNodes(page) == 1, "the spliced page has exactly one root");
+    Require(IsDescendantOf(page, FirstBrowserRowId(browser), synth::runtime_ui::NodeIds::kFileBrowser),
+            "the spliced nodes appear as descendants of the splice point");
+
+    // The rows the page shows are the subtree's own nodes, in the subtree's own
+    // order, and the page contributes none of its own. Descendancy alone does
+    // not say that -- the construction this replaced also parented its rows to
+    // the browser section -- so the identity comparison below is what fails if
+    // the rows are ever built inline again.
+    std::vector<std::string> splicedIds;
+    for (const synth::ui::Node& node : browser.tree.nodes)
+    {
+        splicedIds.push_back(node.id.value);
+    }
+    std::vector<std::string> placedRowIds;
+    const std::string rowPrefix = synth::runtime_ui::NodeIds::FileBrowserEntry(0).substr(
+        0, synth::runtime_ui::NodeIds::FileBrowserEntry(0).size() - 1);
+    for (const synth::ui::NodeId& child : FindNode(page, synth::runtime_ui::NodeIds::kFileBrowser).children)
+    {
+        if (child.value.rfind(rowPrefix, 0) == 0)
+        {
+            placedRowIds.push_back(child.value);
+        }
+    }
+    Require(placedRowIds == splicedIds,
+            "the browser section's rows are exactly the spliced subtree's forest roots");
+
+    for (const synth::ui::Node& node : browser.tree.nodes)
+    {
+        const synth::ui::Node& placed = FindNode(page, node.id.value);
+        Require(placed.kind == node.kind && placed.label == node.label && placed.text == node.text &&
+                    placed.selected == node.selected && placed.color == node.color &&
+                    ActionsMatch(placed.action, node.action) &&
+                    ActionsMatch(placed.doubleClickAction, node.doubleClickAction),
+                "the spliced rows keep the subtree's own identity and state");
+    }
+
+    // The subtree carries its layout declarations across the splice: without
+    // them the rows would fall back to the default intrinsic extent (0 for a
+    // Button's height along a column) rather than the capped row height.
+    Require(browser.layout.count(synth::runtime_ui::NodeIds::FileBrowserEntry(0)) == 1,
+            "the subtree declares its own row layout");
+    RequireNear(FindNode(page, synth::runtime_ui::NodeIds::FileBrowserEntry(0)).bounds.height,
+                synth::runtime_ui::Layout::kBrowserRowHeight,
+                0.0001f,
+                "the spliced row layout declaration reaches the host resolver");
+}
+
+static void TestSplicedBrowserKeepsEveryEntryAtEveryExtent()
+{
+    // The construction this replaced measured each row against the panel it had
+    // already sized and stopped emitting once they no longer fit, so a narrow
+    // page silently lost entries. A state-only subtree cannot do that: every
+    // entry is present, inside the panel, at every extent the runtime uses.
+    const synth::runtime_ui::FilePageSnapshot state = RepresentativeBrowserState();
+    for (const synth::ui::Bounds area : {synth::ui::Bounds{0.0f, 0.0f, 900.0f, 560.0f},
+                                         synth::ui::Bounds{0.0f, 0.0f, 640.0f, 480.0f},
+                                         synth::ui::Bounds{0.0f, 0.0f, 360.0f, 360.0f}})
+    {
+        const synth::ui::NodeTree tree = synth::runtime_ui::BuildFilePageTree(state, area);
+        for (std::size_t ix = 0; ix < state.browserEntries.size(); ++ix)
+        {
+            const std::string rowId = synth::runtime_ui::NodeIds::FileBrowserEntry(ix);
+            const synth::ui::Node* row = FindNodeById(tree, rowId);
+            Require(row != nullptr, "every browser entry survives at every extent");
+            Require(row->label == state.browserEntries[ix].name, "each row keeps its entry name");
+            Require(row->bounds.height > 0.0f, "each row keeps a visible extent");
+            RequireNodeContainedInParent(tree, rowId);
+        }
+    }
+}
+
+static void TestFilePageFitsWithinTheRuntimeRoot()
+{
+    for (const synth::runtime_ui::FilePageSnapshot& state :
+         {RepresentativeBrowserState(), synth::runtime_ui::FilePageSnapshot{}})
+    {
+        for (const synth::ui::Bounds area : {synth::ui::Bounds{0.0f, 0.0f, 640.0f, 480.0f},
+                                             synth::ui::Bounds{0.0f, 0.0f, 360.0f, 360.0f}})
+        {
+            const synth::ui::NodeTree tree = synth::runtime_ui::BuildFilePageTree(state, area);
+            for (const synth::ui::Node& node : tree.nodes)
+            {
+                if (node.id.value != synth::runtime_ui::NodeIds::kFileRoot)
+                {
+                    RequireNodeContainedInParent(tree, node.id.value);
+                }
+            }
+        }
+    }
+}
+
+static void TestFilePagePinsItsResolvedGeometry()
+{
+    const synth::runtime_ui::FilePageSnapshot state = RepresentativeBrowserState();
+    const synth::ui::NodeTree tree =
+        synth::runtime_ui::BuildFilePageTree(state, {0.0f, 0.0f, 640.0f, 480.0f});
+
+    const synth::ui::Node& header = FindNode(tree, synth::runtime_ui::NodeIds::kFileHeader);
+    const synth::ui::Node& strip = FindNode(tree, synth::runtime_ui::NodeIds::kFileCommandStrip);
+    const synth::ui::Node& browser = FindNode(tree, synth::runtime_ui::NodeIds::kFileBrowser);
+    const synth::ui::Node& back = FindNode(tree, synth::runtime_ui::NodeIds::kFileBack);
+
+    // Page margin: the three page regions share one x and stack by their own
+    // resolved heights, with no producer-side cursor to drift.
+    RequireNear(header.bounds.x, synth::runtime_ui::Layout::kFilePanelPadding, 0.0001f,
+                "the File header sits at the page margin");
+    RequireNear(header.bounds.y, synth::runtime_ui::Layout::kFilePanelPadding, 0.0001f,
+                "the File header starts at the page margin");
+    RequireNear(header.bounds.width, 620.0f, 0.0001f, "the File header fills the page content width");
+    RequireNear(header.bounds.height, 72.0f, 0.0001f,
+                "the File header is as tall as its two text rows, their gap and its padding");
+    RequireNear(strip.bounds.x, synth::runtime_ui::Layout::kFilePanelPadding, 0.0001f,
+                "the File command strip shares the page margin");
+    RequireNear(strip.bounds.y, 86.0f, 0.0001f, "the File command strip follows the header");
+    RequireNear(strip.bounds.height, synth::runtime_ui::Layout::kPatchRowHeight, 0.0001f,
+                "the File command strip keeps the recovered patch row height");
+    RequireNear(browser.bounds.x, synth::runtime_ui::Layout::kFilePanelPadding, 0.0001f,
+                "the File browser shares the page margin");
+    RequireNear(browser.bounds.y, 124.0f, 0.0001f, "the File browser follows the command strip");
+    RequireNear(browser.bounds.height, 346.0f, 0.0001f,
+                "the File browser takes the page's remaining height");
+
+    // The Back button is bounded on both axes and right-aligned in the header
+    // row, which is what an unbounded declaration would silently lose.
+    RequireNear(back.bounds.width, synth::runtime_ui::Layout::kBackButtonWidth, 0.0001f,
+                "the File Back button keeps the recovered compact page width");
+    RequireNear(back.bounds.height, synth::runtime_ui::Layout::kBackRowHeight, 0.0001f,
+                "the File Back button keeps the recovered back row height");
+    RequireNear(back.bounds.x + back.bounds.width,
+                header.bounds.width - synth::ui::kSpacing.padding,
+                0.0001f,
+                "the File Back button is flush with the header's trailing padding");
+
+    // Command strip: five equal buttons capped at the recovered patch width,
+    // packed in declaration order with no overlap.
+    const std::vector<const char*> commandIds{synth::runtime_ui::NodeIds::kFileNew,
+                                              synth::runtime_ui::NodeIds::kFileSave,
+                                              synth::runtime_ui::NodeIds::kFileSaveAs,
+                                              synth::runtime_ui::NodeIds::kFileLoad,
+                                              synth::runtime_ui::NodeIds::kFileRevert};
+    float expectedX = 0.0f;
+    for (const char* id : commandIds)
+    {
+        const synth::ui::Node& button = FindNode(tree, id);
+        RequireNear(button.bounds.width, synth::runtime_ui::Layout::kPatchButtonWidth, 0.0001f,
+                    "each File command button is capped at the recovered patch button width");
+        RequireNear(button.bounds.height, synth::runtime_ui::Layout::kPatchRowHeight, 0.0001f,
+                    "each File command button fills the command strip height");
+        RequireNear(button.bounds.x, expectedX, 0.0001f,
+                    "the File command buttons pack in declaration order");
+        expectedX += button.bounds.width + synth::runtime_ui::Layout::kRowGap;
+    }
+
+    // Browser interior: the panel's own padding places the rows, so a row's x
+    // is the panel padding rather than a surface coordinate.
+    const synth::ui::Node& firstEntry =
+        FindNode(tree, synth::runtime_ui::NodeIds::FileBrowserEntry(0));
+    RequireNear(firstEntry.bounds.x, synth::ui::kSpacing.padding, 0.0001f,
+                "the File browser row x is the panel padding");
+    RequireNear(firstEntry.bounds.y, 108.0f, 0.0001f,
+                "the File browser row y follows the title, name field and status inside the panel");
+    RequireNear(firstEntry.bounds.height, synth::runtime_ui::Layout::kBrowserRowHeight, 0.0001f,
+                "a File browser row is capped at the recovered browser row height");
+    Require(firstEntry.bounds.y < browser.bounds.y,
+            "the File browser row y is inside the browser section, not surface-absolute");
+
+    // Save-name field: the caption is a library-emitted sibling Label, not the
+    // field's own hidden label.
+    const std::string saveNameId = synth::runtime_ui::NodeIds::kFileBrowserSaveName;
+    Require(FindNode(tree, saveNameId + ".caption").text == "Patch name",
+            "the File save-name field keeps its user-facing caption outside the field");
+    Require(FindNode(tree, saveNameId).label.empty(),
+            "the File save-name caption does not route through the field's own label");
+    const synth::ui::Node& saveNameRow = FindNode(tree, saveNameId + ".row");
+    const synth::ui::Node& saveNameCaption = FindNode(tree, saveNameId + ".caption");
+    const synth::ui::Node& saveNameField = FindNode(tree, saveNameId);
+    RequireNear(saveNameCaption.bounds.x, 0.0f, 0.0001f,
+                "the File save-name caption starts at its row's origin");
+    RequireNear(saveNameField.bounds.x,
+                saveNameCaption.bounds.width + synth::ui::kSpacing.labelGap,
+                0.0001f,
+                "the File save-name field clears its caption by the shared label gap");
+    RequireNear(saveNameField.bounds.x + saveNameField.bounds.width, saveNameRow.bounds.width, 0.0001f,
+                "the File save-name field fills the rest of its row");
+}
+
+static void TestFileIdleRegionPinsItsResolvedGeometry()
+{
+    synth::runtime_ui::FilePageSnapshot state;
+    state.patchNameText = "PatchA";
+    state.hasCurrentPatch = true;
+    state.statusText = "Ready";
+    state.versionEntries.push_back({"20240202T020202Z-000.json", "/patches/PatchA/20240202T020202Z-000.json"});
+    state.versionEntries.push_back({"20240101T010101Z-000.json", "/patches/PatchA/20240101T010101Z-000.json"});
+    const synth::ui::NodeTree tree =
+        synth::runtime_ui::BuildFilePageTree(state, {0.0f, 0.0f, 640.0f, 480.0f});
+
+    const synth::ui::Node& idle = FindNode(tree, synth::runtime_ui::NodeIds::kFileIdleRegion);
+    const synth::ui::Node& versions = FindNode(tree, synth::runtime_ui::NodeIds::kFileVersions);
+    const synth::ui::Node& title = FindNode(tree, synth::runtime_ui::NodeIds::kFileVersionsTitle);
+    const synth::ui::Node& newest = FindNode(tree, synth::runtime_ui::NodeIds::FileVersionEntry(0));
+
+    RequireNear(idle.bounds.x, synth::runtime_ui::Layout::kFilePanelPadding, 0.0001f,
+                "the File idle region shares the page margin");
+    RequireNear(idle.bounds.y, 124.0f, 0.0001f, "the File idle region follows the command strip");
+    RequireNear(versions.bounds.x, synth::ui::kSpacing.padding, 0.0001f,
+                "the File versions section x is idle-relative");
+    RequireNear(versions.bounds.y, 44.0f, 0.0001f,
+                "the File versions section follows the idle status line");
+    Require(versions.bounds.y < idle.bounds.y,
+            "the File versions section y is inside the idle region, not surface-absolute");
+    RequireNear(title.bounds.x, 0.0f, 0.0001f, "the File versions title x is versions-relative");
+    RequireNear(title.bounds.y, 0.0f, 0.0001f, "the File versions title y is versions-relative");
+    RequireNear(newest.bounds.height, synth::runtime_ui::Layout::kBrowserRowHeight, 0.0001f,
+                "a File version row is capped at the recovered browser row height");
+    Require(newest.label == "20240202T020202Z-000.json", "the File versions list is newest first");
+    Require(newest.doubleClickAction.has_value() &&
+                newest.doubleClickAction->name == synth::runtime_ui::Actions::kFileConfirmedLoad &&
+                newest.doubleClickAction->value == "/patches/PatchA/20240202T020202Z-000.json",
+            "a File version row loads its own file on double click");
+    Require(!newest.action.has_value(),
+            "a File version row carries no plain click action rather than an empty-named one");
+}
+
+static void TestFilePageCarriesPageColoursAndTextStyles()
+{
+    const synth::runtime_ui::FilePageSnapshot state = RepresentativeBrowserState();
+    const synth::ui::NodeTree tree =
+        synth::runtime_ui::BuildFilePageTree(state, {0.0f, 0.0f, 640.0f, 480.0f});
+
+    Require(FindNode(tree, synth::runtime_ui::NodeIds::kFileSave).color ==
+                std::optional<synth::Color>(synth::pagestyle::kPrimaryButton),
+            "Save is the File page's primary command");
+    Require(FindNode(tree, synth::runtime_ui::NodeIds::kFileLoad).color ==
+                std::optional<synth::Color>(synth::pagestyle::kDefaultButton),
+            "the other File commands carry the default page button colour");
+    const synth::ui::Node& selectedRow =
+        FindNode(tree, synth::runtime_ui::NodeIds::FileBrowserEntry(1));
+    Require(selectedRow.color == std::optional<synth::Color>(synth::pagestyle::kListRowButton),
+            "a browser row carries the list row colour, selected or not");
+    Require(selectedRow.selected, "the selected browser row carries its selection state");
+    Require(!FindNode(tree, synth::runtime_ui::NodeIds::FileBrowserEntry(0)).selected,
+            "an unselected browser row does not");
+
+    const synth::ui::Node& patchName = FindNode(tree, synth::runtime_ui::NodeIds::kFilePatchName);
+    Require(patchName.textStyle.has_value() &&
+                TextStyleMatches(*patchName.textStyle, synth::pagestyle::kTitleTextStyle),
+            "a current patch name renders as a title");
+    synth::runtime_ui::FilePageSnapshot noPatch;
+    const synth::ui::Node& emptyName =
+        FindNode(synth::runtime_ui::BuildFilePageTree(noPatch, {0.0f, 0.0f, 640.0f, 480.0f}),
+                 synth::runtime_ui::NodeIds::kFilePatchName);
+    Require(emptyName.textStyle.has_value() &&
+                TextStyleMatches(*emptyName.textStyle, synth::pagestyle::kMutedTitleTextStyle),
+            "no current patch renders as a muted title");
+
+    synth::runtime_ui::FilePageSnapshot errorState = RepresentativeBrowserState();
+    errorState.statusText = "Patch already exists";
+    const synth::ui::Node& errorStatus =
+        FindNode(synth::runtime_ui::BuildFilePageTree(errorState, {0.0f, 0.0f, 640.0f, 480.0f}),
+                 synth::runtime_ui::NodeIds::kFileStatus);
+    Require(errorStatus.textStyle.has_value() &&
+                TextStyleMatches(*errorStatus.textStyle, synth::pagestyle::kDangerTextStyle),
+            "a File error status renders in the danger text style");
+    const synth::ui::Node& readyStatus = FindNode(tree, synth::runtime_ui::NodeIds::kFileStatus);
+    Require(readyStatus.textStyle.has_value() &&
+                TextStyleMatches(*readyStatus.textStyle, synth::pagestyle::kMutedTextStyle),
+            "an ordinary File status renders in the muted text style");
+
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        Require(node.variant.empty(), "the rebuilt File page sets no retired variant string");
+    }
+}
+
+static void TestFilePanelUnderlaysCoverTheirPanels()
+{
+    const synth::runtime_ui::FilePageSnapshot state = RepresentativeBrowserState();
+    const synth::ui::NodeTree tree =
+        synth::runtime_ui::BuildFilePageTree(state, {0.0f, 0.0f, 640.0f, 480.0f});
+
+    for (const char* panelId : {synth::runtime_ui::NodeIds::kFileHeader,
+                                synth::runtime_ui::NodeIds::kFileBrowser})
+    {
+        const synth::ui::Node& panel = FindNode(tree, panelId);
+        const synth::ui::Node& underlay = FindNode(tree, std::string(panelId) + ".background");
+        Require(underlay.kind == synth::ui::NodeKind::Draw, "a panel underlay is a Draw node");
+        RequireNear(underlay.bounds.x, panel.bounds.x, 0.0001f, "a panel underlay takes its panel's x");
+        RequireNear(underlay.bounds.y, panel.bounds.y, 0.0001f, "a panel underlay takes its panel's y");
+        RequireNear(underlay.bounds.width, panel.bounds.width, 0.0001f,
+                    "a panel underlay takes its panel's width");
+        RequireNear(underlay.bounds.height, panel.bounds.height, 0.0001f,
+                    "a panel underlay takes its panel's height");
+        Require(!underlay.drawCommands.empty(), "a panel underlay paints its resolved extent");
+        for (const synth::ui::DrawCommand& command : underlay.drawCommands)
+        {
+            RequireNear(command.bounds.x, 0.0f, 0.0001f, "underlay draw geometry is node-local");
+            RequireNear(command.bounds.y, 0.0f, 0.0001f, "underlay draw geometry is node-local");
+            RequireNear(command.bounds.width, panel.bounds.width, 0.0001f,
+                        "underlay draw geometry spans the resolved extent");
+        }
+    }
+}
+
+static void TestFilePageHasNoOffsetArithmetic()
+{
+    const std::string source = ReadSource("projects/synth/include/synth/RuntimePages.hpp");
+    for (const std::string& functionName : {"BuildSyncPageTree", "BuildAudioPageTree", "BuildFilePageTree"})
+    {
+        Require(!FunctionBodyContains(source, functionName, "float y"),
+                "rebuilt page construction declares layout instead of a y cursor");
+        Require(!FunctionBodyContains(source, functionName, "y +="),
+                "rebuilt page construction has no page-level y offset accumulation");
+    }
+    Require(!FunctionBodyContains(source, "BuildPatchBrowserSubtree", "bounds", "ui::Subtree"),
+            "the patch browser subtree names no bounds of its own");
+}
+
 int main()
 {
     TestContainersNestToArbitraryDepth();
@@ -1105,9 +1495,16 @@ int main()
     TestComboBoxAcceptsRuntimeOptionVectors();
     TestSyncPageAlignsThroughTheFormGrid();
     TestSyncPageFitsWithinTheRuntimeRoot();
-    TestSyncAndAudioPagesHaveNoOffsetArithmetic();
     TestAudioSelectorsAreCaptionedWhileADeviceIsSelected();
     TestHiddenInputSelectorLeavesNoOrphanedCaption();
+    TestPatchBrowserSplicesAsARootlessSubtree();
+    TestSplicedBrowserKeepsEveryEntryAtEveryExtent();
+    TestFilePageFitsWithinTheRuntimeRoot();
+    TestFilePagePinsItsResolvedGeometry();
+    TestFileIdleRegionPinsItsResolvedGeometry();
+    TestFilePageCarriesPageColoursAndTextStyles();
+    TestFilePanelUnderlaysCoverTheirPanels();
+    TestFilePageHasNoOffsetArithmetic();
 
     TestGangedRandomLfoVisualizer();
     TestScopeWaveformCommandsAreNodeLocal();
@@ -2170,7 +2567,10 @@ int main()
     }
     const synth::ui::Node* newestVersion =
         FindNodeById(versionsTree, synth::runtime_ui::NodeIds::FileVersionEntry(0));
-    Require(newestVersion != nullptr && newestVersion->text.find("20240202") != std::string::npos,
+    // A version row's user-visible string is its `label`: both backends render
+    // a Button's label, and the rebuilt page no longer duplicates it into the
+    // unread `text` field the hand-rolled construction also set.
+    Require(newestVersion != nullptr && newestVersion->label.find("20240202") != std::string::npos,
             "versions list is newest first");
     Require(newestVersion->doubleClickAction.has_value(), "version row exposes double-click load action");
     synth::ui::Action versionAction;

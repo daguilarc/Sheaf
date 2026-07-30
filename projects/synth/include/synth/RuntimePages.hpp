@@ -71,8 +71,9 @@ inline constexpr const char* kFileSave = "runtime.file.save";
 inline constexpr const char* kFileSaveAs = "runtime.file.save_as";
 inline constexpr const char* kFileLoad = "runtime.file.load";
 inline constexpr const char* kFileRevert = "runtime.file.revert";
-inline constexpr const char* kFileBackground = "runtime.file.background";
+inline constexpr const char* kFilePage = "runtime.file.page";
 inline constexpr const char* kFileHeader = "runtime.file.header";
+inline constexpr const char* kFileHeaderText = "runtime.file.header.text";
 inline constexpr const char* kFilePatchRoot = "runtime.file.patch_root";
 inline constexpr const char* kFileCommandStrip = "runtime.file.command_strip";
 inline constexpr const char* kFileIdleRegion = "runtime.file.idle";
@@ -83,6 +84,7 @@ inline constexpr const char* kFileBrowserTitle = "runtime.file.browser.title";
 inline constexpr const char* kFileBrowserCurrentPath = "runtime.file.browser.current_path";
 inline constexpr const char* kFileBrowserSaveName = "runtime.file.browser.save_name";
 inline constexpr const char* kFileBrowserParent = "runtime.file.browser.parent";
+inline constexpr const char* kFileBrowserActions = "runtime.file.browser.actions";
 inline constexpr const char* kFileBrowserConfirm = "runtime.file.browser.confirm";
 inline constexpr const char* kFileBrowserCancel = "runtime.file.browser.cancel";
 inline constexpr const char* kFileVersions = "runtime.file.versions";
@@ -266,6 +268,7 @@ inline constexpr float kPatchNameRowHeight = 28.0f;
 inline constexpr float kBrowserHeaderHeight = 28.0f;
 inline constexpr float kBrowserCommandHeight = 32.0f;
 inline constexpr float kBrowserRowHeight = 30.0f;
+inline constexpr float kBrowserStatusHeight = 24.0f;
 inline constexpr float kBrowserButtonWidth = 78.0f;
 inline constexpr float kBrowserOpenButtonWidth = 58.0f;
 inline constexpr float kFilePanelPadding = 10.0f;
@@ -398,6 +401,102 @@ inline ui::LayoutOptions StatusStackLayout()
     layout.padding = 0.0f;
     layout.gap = Layout::kRowGap;
     return layout;
+}
+
+// A button stacked along a Row's main axis: there `main` is its width and
+// `cross` its height, the transpose of the column-stacked pages' Button().
+inline ui::ControlStyle RowButton(ui::Extent width, ui::Extent height)
+{
+    ui::ControlStyle style;
+    style.color = pagestyle::kDefaultButton;
+    style.textStyle = pagestyle::kDefaultTextStyle;
+    style.layout.main = width;
+    style.layout.cross = height;
+    return style;
+}
+
+inline ui::ControlStyle PrimaryRowButton(ui::Extent width, ui::Extent height)
+{
+    ui::ControlStyle style = RowButton(width, height);
+    style.color = pagestyle::kPrimaryButton;
+    return style;
+}
+
+// One entry in a vertically stacked list panel. Every row takes an equal share
+// of the panel's free space and none grows past the recovered row height, so a
+// list longer than its panel compresses rather than overflowing or losing its
+// tail rows.
+inline ui::ControlStyle ListRow(bool selected)
+{
+    ui::ControlStyle style;
+    style.color = pagestyle::kListRowButton;
+    style.textStyle = pagestyle::kDefaultTextStyle;
+    style.selected = selected;
+    style.layout.main = ui::Extent::Weight(1.0f).Max(Layout::kBrowserRowHeight);
+    return style;
+}
+
+// Text stacked in a panel: same share-and-cap rule as ListRow, so a panel's
+// fixed furniture never pushes its list out of the panel.
+inline ui::ControlStyle PanelText(ui::TextStyle textStyle, float maximumHeight)
+{
+    ui::ControlStyle style;
+    style.textStyle = textStyle;
+    style.layout.main = ui::Extent::Weight(1.0f).Max(maximumHeight);
+    return style;
+}
+
+// The File page's outer column: one margin, one gap, and every region sized by
+// its own content or by what the page has left over.
+inline ui::LayoutOptions PageLayout()
+{
+    ui::LayoutOptions layout;
+    layout.main = ui::Extent::Weight(1.0f);
+    layout.padding = Layout::kFilePanelPadding;
+    layout.gap = Layout::kRowGap;
+    return layout;
+}
+
+inline ui::LayoutOptions PanelLayout(ui::Extent main)
+{
+    ui::LayoutOptions layout;
+    layout.main = main;
+    layout.padding = ui::kSpacing.padding;
+    layout.gap = Layout::kRowGap;
+    return layout;
+}
+
+// A group nested inside a panel: it adds no padding of its own, so its children
+// keep the enclosing panel's inset and separate on the shared row gap.
+inline ui::LayoutOptions PanelGroupLayout(ui::Extent main)
+{
+    ui::LayoutOptions layout;
+    layout.main = main;
+    layout.padding = 0.0f;
+    layout.gap = Layout::kRowGap;
+    return layout;
+}
+
+// A panel's background, declared as the sru-44 underlay of the panel it names.
+// The panel's extent is the resolver's to decide, so the producer anchors to it
+// by id instead of restating it, and the fill is painted from the extent the
+// resolver hands the factory.
+inline ui::LayoutOptions PanelUnderlayLayout(std::string panelId)
+{
+    ui::LayoutOptions layout;
+    layout.overlayOf = std::move(panelId);
+    return layout;
+}
+
+inline ui::Builder::DrawFactory PanelUnderlayFill(Color fill, Color border)
+{
+    return [fill, border](ui::Bounds extent) {
+        return std::vector<ui::DrawCommand>{
+            ui::DrawCommand::FillRoundedRect(extent, pagestyle::kPanelCornerRadius, fill),
+            ui::DrawCommand::StrokeRoundedRect(
+                extent, pagestyle::kPanelCornerRadius, border, pagestyle::kPanelBorderWidth),
+        };
+    };
 }
 
 inline std::vector<ui::ControlOption> ControlOptionsFor(const std::vector<AudioDeviceOption>& options)
@@ -617,372 +716,228 @@ inline ui::NodeTree BuildAudioPageTree(const AudioPageSnapshot& snapshot, ui::Bo
     return builder.Build(area);
 }
 
-inline const char* FileStatusVariant(const std::string& statusText)
+inline bool FileStatusIsError(const std::string& statusText)
 {
-    if (statusText == "Patch root is not configured" ||
-        statusText == "Could not read patch root" ||
-        statusText == "Could not open patch directory" ||
-        statusText == "Patch already exists" ||
-        statusText == "Enter a valid patch name" ||
-        statusText == "Select a patch directory")
+    return statusText == "Patch root is not configured" ||
+           statusText == "Could not read patch root" ||
+           statusText == "Could not open patch directory" ||
+           statusText == "Patch already exists" ||
+           statusText == "Enter a valid patch name" ||
+           statusText == "Select a patch directory";
+}
+
+inline ui::ControlStyle FileStatusStyle(const std::string& statusText, float maximumHeight)
+{
+    return PageControls::PanelText(
+        FileStatusIsError(statusText) ? pagestyle::kDangerTextStyle : pagestyle::kMutedTextStyle,
+        maximumHeight);
+}
+
+inline std::string FilePatchRootText(const FilePageSnapshot& snapshot)
+{
+    return snapshot.patchesRoot.empty() ? "Patch root not configured"
+                                        : "Patch root: " + snapshot.patchesRoot;
+}
+
+// The patch browser's rows, produced on their own from browser state alone and
+// spliced into the page's browser panel. Rootless by construction: the rows are
+// the subtree's forest roots, so they attach to whatever scope splices them and
+// the producer never names a panel extent, a row position, or a row count that
+// fits. How many rows fit is the resolver's business (`PageControls::ListRow`),
+// not this function's.
+inline ui::Subtree BuildPatchBrowserSubtree(const FilePageSnapshot& snapshot)
+{
+    ui::Builder rows;
+    rows.Rootless();
+    if (snapshot.browserEntries.empty())
     {
-        return "danger";
+        rows.StatusText(NodeIds::FileBrowserEntry(0),
+                        "(no patch directories)",
+                        PageControls::PanelText(pagestyle::kMutedTextStyle, Layout::kBrowserRowHeight));
+        return rows.BuildSubtree();
     }
-    return "quiet";
+
+    for (std::size_t ix = 0; ix < snapshot.browserEntries.size(); ++ix)
+    {
+        const FilePageSnapshot::BrowserEntry& entry = snapshot.browserEntries[ix];
+        ui::ControlStyle style = PageControls::ListRow(entry.selected);
+        style.doubleClickAction = ui::Action::WithValue(
+            snapshot.browserKind == FileBrowserKind::SaveAs ? Actions::kFileBrowserOverwriteSaveAs
+                                                            : Actions::kFileBrowserAccept,
+            std::to_string(ix));
+        rows.Button(NodeIds::FileBrowserEntry(ix),
+                    entry.name,
+                    ui::Action::WithValue(Actions::kFileBrowserSelect, std::to_string(ix)),
+                    std::move(style));
+    }
+    return rows.BuildSubtree();
+}
+
+inline ui::Subtree BuildPatchVersionsSubtree(const FilePageSnapshot& snapshot)
+{
+    ui::Builder rows;
+    rows.Rootless();
+    if (snapshot.versionEntries.empty())
+    {
+        rows.StatusText(NodeIds::FileVersionEntry(0),
+                        "No saved versions",
+                        PageControls::PanelText(pagestyle::kMutedTextStyle, Layout::kBrowserRowHeight));
+        return rows.BuildSubtree();
+    }
+
+    for (std::size_t ix = 0; ix < snapshot.versionEntries.size(); ++ix)
+    {
+        const FilePageSnapshot::VersionEntry& entry = snapshot.versionEntries[ix];
+        ui::ControlStyle style = PageControls::ListRow(false);
+        style.doubleClickAction = ui::Action::WithValue(Actions::kFileConfirmedLoad, entry.path);
+        rows.Button(NodeIds::FileVersionEntry(ix), entry.label, std::move(style));
+    }
+    return rows.BuildSubtree();
 }
 
 inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Bounds area)
 {
-    ui::NodeTree tree;
-    ui::Node root;
-    root.id = NodeIds::kFileRoot;
-    root.kind = ui::NodeKind::Root;
-    root.bounds = area;
-    tree.nodes.push_back(root);
+    ui::Builder builder;
+    builder.Root(NodeIds::kFileRoot, area);
+    builder.Column(NodeIds::kFilePage, PageControls::PageLayout(), [&](ui::Builder& page) {
+        page.Draw(std::string(NodeIds::kFileHeader) + ".background",
+                  PageControls::PanelUnderlayLayout(NodeIds::kFileHeader),
+                  PageControls::PanelUnderlayFill(pagestyle::kHeaderPanelFill,
+                                                  pagestyle::kHeaderPanelBorder));
+        page.Row(NodeIds::kFileHeader,
+                 PageControls::PanelLayout(ui::Extent::Intrinsic()),
+                 [&](ui::Builder& header) {
+                     header.Column(NodeIds::kFileHeaderText,
+                                   PageControls::PanelGroupLayout(ui::Extent::Weight(1.0f)),
+                                   [&](ui::Builder& text) {
+                                       text.Label(NodeIds::kFilePatchName,
+                                                  snapshot.patchNameText,
+                                                  PageControls::PanelText(
+                                                      snapshot.hasCurrentPatch
+                                                          ? pagestyle::kTitleTextStyle
+                                                          : pagestyle::kMutedTitleTextStyle,
+                                                      Layout::kPatchNameRowHeight));
+                                       text.StatusText(NodeIds::kFilePatchRoot,
+                                                       FilePatchRootText(snapshot),
+                                                       PageControls::PanelText(
+                                                           pagestyle::kMutedTextStyle,
+                                                           Layout::kPatchNameRowHeight));
+                                   });
+                     header.Button(NodeIds::kFileBack,
+                                   "Back",
+                                   ui::Action::Named(Actions::kFileBack),
+                                   PageControls::RowButton(ui::Extent::Px(Layout::kBackButtonWidth),
+                                                           ui::Extent::Px(Layout::kBackRowHeight)));
+                 });
 
-    auto appendChildTo = [&](std::size_t parentIndex, ui::Node node) -> std::size_t {
-        tree.nodes[parentIndex].children.push_back(node.id);
-        tree.nodes.push_back(std::move(node));
-        return tree.nodes.size() - 1;
-    };
+        page.Row(NodeIds::kFileCommandStrip,
+                 PageControls::PanelGroupLayout(ui::Extent::Intrinsic()),
+                 [&](ui::Builder& strip) {
+                     const ui::Extent width =
+                         ui::Extent::Weight(1.0f).Max(Layout::kPatchButtonWidth);
+                     const ui::Extent height = ui::Extent::Px(Layout::kPatchRowHeight);
+                     strip.Button(NodeIds::kFileNew, "New",
+                                  ui::Action::Named(Actions::kFileNew),
+                                  PageControls::RowButton(width, height));
+                     strip.Button(NodeIds::kFileSave, "Save",
+                                  ui::Action::Named(Actions::kFileSave),
+                                  PageControls::PrimaryRowButton(width, height));
+                     strip.Button(NodeIds::kFileSaveAs, "Save As",
+                                  ui::Action::Named(Actions::kFileSaveAs),
+                                  PageControls::RowButton(width, height));
+                     strip.Button(NodeIds::kFileLoad, "Load",
+                                  ui::Action::Named(Actions::kFileLoad),
+                                  PageControls::RowButton(width, height));
+                     strip.Button(NodeIds::kFileRevert, "Revert",
+                                  ui::Action::Named(Actions::kFileRevert),
+                                  PageControls::RowButton(width, height));
+                 });
 
-    auto appendRootChild = [&](ui::Node node) -> std::size_t {
-        return appendChildTo(0, std::move(node));
-    };
-
-    const float margin = Layout::kFilePanelPadding;
-    const float gap = Layout::kRowGap + 2.0f;
-    const float contentX = margin;
-    const float contentWidth = std::max(0.0f, area.width - margin * 2.0f);
-    const float pageBottom = std::max(0.0f, area.height) - margin;
-
-    ui::Node background;
-    background.id = NodeIds::kFileBackground;
-    background.kind = ui::NodeKind::Draw;
-    background.bounds = {0.0f, 0.0f, area.width, area.height};
-    background.drawCommands = {
-        ui::DrawCommand::Fill(background.bounds, Color::Rgb(18, 20, 22)),
-    };
-    appendRootChild(std::move(background));
-
-    float y = margin;
-
-    ui::Node header;
-    header.id = NodeIds::kFileHeader;
-    header.kind = ui::NodeKind::Section;
-    header.bounds = {contentX, y, contentWidth, 70.0f};
-    header.variant = "panel";
-    const std::size_t headerIndex = appendRootChild(std::move(header));
-
-    ui::Node headerDraw;
-    headerDraw.id = ui::NodeId(std::string(NodeIds::kFileHeader) + ".background");
-    headerDraw.kind = ui::NodeKind::Draw;
-    headerDraw.bounds = {0.0f, 0.0f, tree.nodes[headerIndex].bounds.width, tree.nodes[headerIndex].bounds.height};
-    headerDraw.drawCommands = {
-        ui::DrawCommand::FillRoundedRect(headerDraw.bounds, 6.0f, Color::Rgb(29, 33, 37)),
-        ui::DrawCommand::StrokeRoundedRect(headerDraw.bounds, 6.0f, Color::Rgb(54, 61, 68), 1.0f),
-    };
-    appendChildTo(headerIndex, std::move(headerDraw));
-
-    const float headerPad = contentWidth < 420.0f ? 8.0f : 12.0f;
-    const float backWidth = std::min(Layout::kBackButtonWidth, std::max(58.0f, contentWidth * 0.24f));
-    const float headerTextWidth = std::max(80.0f, contentWidth - backWidth - headerPad * 3.0f);
-
-    ui::Node backButton;
-    backButton.id = NodeIds::kFileBack;
-    backButton.kind = ui::NodeKind::Button;
-    backButton.label = "Back";
-    backButton.variant = "secondary";
-    backButton.bounds = {contentWidth - headerPad - backWidth,
-                         headerPad,
-                         backWidth,
-                         Layout::kBackRowHeight};
-    backButton.action = ui::Action::Named(Actions::kFileBack);
-    appendChildTo(headerIndex, std::move(backButton));
-
-    ui::Node patchName;
-    patchName.id = NodeIds::kFilePatchName;
-    patchName.kind = ui::NodeKind::Label;
-    patchName.text = snapshot.patchNameText;
-    patchName.variant = snapshot.hasCurrentPatch ? "title" : "muted-title";
-    patchName.bounds = {headerPad, headerPad, headerTextWidth, Layout::kPatchNameRowHeight};
-    appendChildTo(headerIndex, std::move(patchName));
-
-    ui::Node patchRoot;
-    patchRoot.id = NodeIds::kFilePatchRoot;
-    patchRoot.kind = ui::NodeKind::StatusText;
-    patchRoot.text = snapshot.patchesRoot.empty() ? "Patch root not configured" : "Patch root: " + snapshot.patchesRoot;
-    patchRoot.variant = "quiet";
-    patchRoot.bounds = {headerPad,
-                        headerPad + Layout::kPatchNameRowHeight,
-                        std::max(80.0f, contentWidth - headerPad * 2.0f),
-                        Layout::kPatchNameRowHeight};
-    appendChildTo(headerIndex, std::move(patchRoot));
-
-    y += tree.nodes[headerIndex].bounds.height + gap;
-
-    ui::Node commandStrip;
-    commandStrip.id = NodeIds::kFileCommandStrip;
-    commandStrip.kind = ui::NodeKind::Row;
-    commandStrip.bounds = {contentX, y, contentWidth, Layout::kPatchRowHeight};
-    commandStrip.variant = "quiet";
-    const std::size_t commandIndex = appendRootChild(std::move(commandStrip));
-
-    const float buttonGap = contentWidth < 420.0f ? 4.0f : 6.0f;
-    const float commandButtonWidth =
-        std::max(52.0f, std::min(Layout::kPatchButtonWidth, (contentWidth - buttonGap * 4.0f) / 5.0f));
-    float buttonX = 0.0f;
-    const auto appendPatchButton = [&](const char* id, const char* label, const char* actionName) {
-        ui::Node button;
-        button.id = ui::NodeId(id);
-        button.kind = ui::NodeKind::Button;
-        button.label = label;
-        button.variant = std::string(actionName) == Actions::kFileSave ? "primary" : "secondary";
-        button.bounds = {buttonX, 0.0f, commandButtonWidth, Layout::kPatchRowHeight};
-        button.action = ui::Action::Named(actionName);
-        appendChildTo(commandIndex, std::move(button));
-        buttonX += commandButtonWidth + buttonGap;
-    };
-
-    appendPatchButton(NodeIds::kFileNew, "New", Actions::kFileNew);
-    appendPatchButton(NodeIds::kFileSave, "Save", Actions::kFileSave);
-    appendPatchButton(NodeIds::kFileSaveAs, "Save As", Actions::kFileSaveAs);
-    appendPatchButton(NodeIds::kFileLoad, "Load", Actions::kFileLoad);
-    appendPatchButton(NodeIds::kFileRevert, "Revert", Actions::kFileRevert);
-
-    y += Layout::kPatchRowHeight + gap;
-
-    if (snapshot.browserOpen)
-    {
-        ui::Node browser;
-        browser.id = NodeIds::kFileBrowser;
-        browser.kind = ui::NodeKind::Section;
-        browser.bounds = {contentX, y, contentWidth, std::max(0.0f, pageBottom - y)};
-        browser.variant = "panel";
-        const std::size_t browserIndex = appendRootChild(std::move(browser));
-
-        ui::Node browserDraw;
-        browserDraw.id = ui::NodeId(std::string(NodeIds::kFileBrowser) + ".background");
-        browserDraw.kind = ui::NodeKind::Draw;
-        browserDraw.bounds = {0.0f, 0.0f, tree.nodes[browserIndex].bounds.width, tree.nodes[browserIndex].bounds.height};
-        browserDraw.drawCommands = {
-            ui::DrawCommand::FillRoundedRect(browserDraw.bounds, 6.0f, Color::Rgb(24, 28, 32)),
-            ui::DrawCommand::StrokeRoundedRect(browserDraw.bounds, 6.0f, Color::Rgb(63, 73, 82), 1.0f),
-        };
-        appendChildTo(browserIndex, std::move(browserDraw));
-
-        const ui::Bounds browserBounds = tree.nodes[browserIndex].bounds;
-        const float browserPad = contentWidth < 420.0f ? 8.0f : 12.0f;
-        const float innerX = browserPad;
-        const float innerWidth = std::max(0.0f, browserBounds.width - browserPad * 2.0f);
-        const float innerRight = innerX + innerWidth;
-        const float browserBottom = browserBounds.height - browserPad;
-        float browserY = browserPad;
-
-        ui::Node title;
-        title.id = NodeIds::kFileBrowserTitle;
-        title.kind = ui::NodeKind::Label;
-        title.text = snapshot.browserKind == FileBrowserKind::SaveAs ? "Save Patch" : "Load Patch";
-        title.variant = "title";
-        title.bounds = {innerX, browserY, innerWidth, Layout::kBrowserHeaderHeight};
-        appendChildTo(browserIndex, std::move(title));
-
-        browserY += Layout::kBrowserHeaderHeight + Layout::kRowGap;
-        if (snapshot.browserKind == FileBrowserKind::SaveAs)
+        if (snapshot.browserOpen)
         {
-            ui::Node saveName;
-            saveName.id = NodeIds::kFileBrowserSaveName;
-            saveName.kind = ui::NodeKind::TextField;
-            saveName.label = "Patch name";
-            saveName.text = snapshot.browserSaveName;
-            saveName.variant = "field";
-            saveName.bounds = {innerX, browserY, innerWidth, Layout::kBrowserCommandHeight};
-            saveName.action = ui::Action::Named(Actions::kFileBrowserSaveName);
-            appendChildTo(browserIndex, std::move(saveName));
-            browserY += Layout::kBrowserCommandHeight + Layout::kRowGap;
+            page.Draw(std::string(NodeIds::kFileBrowser) + ".background",
+                      PageControls::PanelUnderlayLayout(NodeIds::kFileBrowser),
+                      PageControls::PanelUnderlayFill(pagestyle::kBrowserPanelFill,
+                                                      pagestyle::kBrowserPanelBorder));
+            page.Section(NodeIds::kFileBrowser,
+                         PageControls::PanelLayout(ui::Extent::Weight(1.0f)),
+                         [&](ui::Builder& browser) {
+                             browser.Label(NodeIds::kFileBrowserTitle,
+                                           snapshot.browserKind == FileBrowserKind::SaveAs
+                                               ? "Save Patch"
+                                               : "Load Patch",
+                                           PageControls::PanelText(pagestyle::kTitleTextStyle,
+                                                                   Layout::kBrowserHeaderHeight));
+                             if (snapshot.browserKind == FileBrowserKind::SaveAs)
+                             {
+                                 ui::ControlStyle name = PageControls::Field("Patch name");
+                                 name.layout.main =
+                                     ui::Extent::Weight(1.0f).Max(Layout::kBrowserCommandHeight);
+                                 browser.TextField(NodeIds::kFileBrowserSaveName,
+                                                   "",
+                                                   snapshot.browserSaveName,
+                                                   ui::Action::Named(Actions::kFileBrowserSaveName),
+                                                   std::move(name));
+                             }
+                             browser.StatusText(NodeIds::kFileStatus,
+                                                snapshot.statusText,
+                                                FileStatusStyle(snapshot.statusText,
+                                                                Layout::kBrowserStatusHeight));
+                             browser.Splice(BuildPatchBrowserSubtree(snapshot));
+                             browser.Row(NodeIds::kFileBrowserActions,
+                                         PageControls::PanelGroupLayout(ui::Extent::Weight(1.0f).Max(
+                                             Layout::kBrowserCommandHeight)),
+                                         [&](ui::Builder& actions) {
+                                             const ui::Extent width =
+                                                 ui::Extent::Weight(1.0f).Max(Layout::kBrowserButtonWidth);
+                                             const ui::Extent height = ui::Extent::Weight(1.0f);
+                                             actions.Button(NodeIds::kFileBrowserConfirm,
+                                                            snapshot.browserKind == FileBrowserKind::SaveAs
+                                                                ? "Save"
+                                                                : "Load",
+                                                            ui::Action::Named(Actions::kFileBrowserConfirm),
+                                                            PageControls::PrimaryRowButton(width, height));
+                                             actions.Button(NodeIds::kFileBrowserCancel,
+                                                            "Cancel",
+                                                            ui::Action::Named(Actions::kFileBrowserCancel),
+                                                            PageControls::RowButton(width, height));
+                                         });
+                         });
+            return;
         }
 
-        ui::Node status;
-        status.id = NodeIds::kFileStatus;
-        status.kind = ui::NodeKind::StatusText;
-        status.text = snapshot.statusText;
-        status.variant = FileStatusVariant(snapshot.statusText);
-        status.bounds = {innerX, browserY, innerWidth, 24.0f};
-        appendChildTo(browserIndex, std::move(status));
-
-        browserY += 24.0f + Layout::kRowGap;
-        const float actionY = std::max(browserY,
-                                       browserBottom - Layout::kBrowserCommandHeight);
-        const float narrowButtonWidth =
-            std::min(Layout::kBrowserButtonWidth, std::max(62.0f, (innerWidth - Layout::kRowGap) / 2.0f));
-        const float cancelX = innerRight - narrowButtonWidth;
-        const float confirmX = cancelX - Layout::kRowGap - narrowButtonWidth;
-
-        const float listBottom = std::max(browserY, actionY - Layout::kRowGap);
-        if (snapshot.browserEntries.empty())
-        {
-            ui::Node empty;
-            empty.id = ui::NodeId(NodeIds::FileBrowserEntry(0));
-            empty.kind = ui::NodeKind::StatusText;
-            empty.text = "(no patch directories)";
-            empty.variant = "quiet";
-            empty.bounds = {innerX, browserY, innerWidth, std::min(Layout::kBrowserRowHeight, listBottom - browserY)};
-            appendChildTo(browserIndex, std::move(empty));
-        }
-        else
-        {
-            for (std::size_t ix = 0; ix < snapshot.browserEntries.size(); ++ix)
-            {
-                if (browserY + Layout::kBrowserRowHeight > listBottom + 0.5f)
-                {
-                    break;
-                }
-                const FilePageSnapshot::BrowserEntry& entry = snapshot.browserEntries[ix];
-                ui::Node entryButton;
-                entryButton.id = ui::NodeId(NodeIds::FileBrowserEntry(ix));
-                entryButton.kind = ui::NodeKind::Button;
-                entryButton.label = entry.name;
-                entryButton.selected = entry.selected;
-                entryButton.variant = "list-row";
-                entryButton.bounds = {innerX,
-                                      browserY,
-                                      innerWidth,
-                                      Layout::kBrowserRowHeight};
-                entryButton.action = ui::Action::WithValue(Actions::kFileBrowserSelect, std::to_string(ix));
-                entryButton.doubleClickAction = ui::Action::WithValue(
-                    snapshot.browserKind == FileBrowserKind::SaveAs
-                        ? Actions::kFileBrowserOverwriteSaveAs
-                        : Actions::kFileBrowserAccept,
-                    std::to_string(ix));
-                appendChildTo(browserIndex, std::move(entryButton));
-
-                browserY += Layout::kBrowserRowHeight;
-            }
-        }
-
-        ui::Node confirmButton;
-        confirmButton.id = NodeIds::kFileBrowserConfirm;
-        confirmButton.kind = ui::NodeKind::Button;
-        confirmButton.label = snapshot.browserKind == FileBrowserKind::SaveAs ? "Save" : "Load";
-        confirmButton.variant = "primary";
-        confirmButton.bounds = {confirmX, actionY, narrowButtonWidth, Layout::kBrowserCommandHeight};
-        confirmButton.action = ui::Action::Named(Actions::kFileBrowserConfirm);
-        appendChildTo(browserIndex, std::move(confirmButton));
-
-        ui::Node cancelButton;
-        cancelButton.id = NodeIds::kFileBrowserCancel;
-        cancelButton.kind = ui::NodeKind::Button;
-        cancelButton.label = "Cancel";
-        cancelButton.variant = "secondary";
-        cancelButton.bounds = {cancelX, actionY, narrowButtonWidth, Layout::kBrowserCommandHeight};
-        cancelButton.action = ui::Action::Named(Actions::kFileBrowserCancel);
-        appendChildTo(browserIndex, std::move(cancelButton));
-    }
-    else
-    {
-        ui::Node idle;
-        idle.id = NodeIds::kFileIdleRegion;
-        idle.kind = ui::NodeKind::Section;
-        idle.bounds = {contentX, y, contentWidth, std::max(0.0f, pageBottom - y)};
-        idle.variant = "panel";
-        const std::size_t idleIndex = appendRootChild(std::move(idle));
-
-        ui::Node idleDraw;
-        idleDraw.id = ui::NodeId(std::string(NodeIds::kFileIdleRegion) + ".background");
-        idleDraw.kind = ui::NodeKind::Draw;
-        idleDraw.bounds = {0.0f, 0.0f, tree.nodes[idleIndex].bounds.width, tree.nodes[idleIndex].bounds.height};
-        idleDraw.drawCommands = {
-            ui::DrawCommand::FillRoundedRect(idleDraw.bounds, 6.0f, Color::Rgb(23, 26, 29)),
-            ui::DrawCommand::StrokeRoundedRect(idleDraw.bounds, 6.0f, Color::Rgb(48, 55, 62), 1.0f),
-        };
-        appendChildTo(idleIndex, std::move(idleDraw));
-
-        const float idlePad = contentWidth < 420.0f ? 8.0f : 12.0f;
-        ui::Node status;
-        status.id = NodeIds::kFileStatus;
-        status.kind = ui::NodeKind::StatusText;
-        status.text = snapshot.statusText;
-        status.variant = FileStatusVariant(snapshot.statusText);
-        status.bounds = {idlePad,
-                         idlePad,
-                         std::max(0.0f, contentWidth - idlePad * 2.0f),
-                         Layout::kPatchNameRowHeight};
-        appendChildTo(idleIndex, std::move(status));
-
-        float idleY = idlePad + Layout::kPatchNameRowHeight + Layout::kRowGap;
-        const float idleInnerX = idlePad;
-        const float idleInnerWidth = std::max(0.0f, contentWidth - idlePad * 2.0f);
-        if (!snapshot.hasCurrentPatch)
-        {
-            ui::Node emptyState;
-            emptyState.id = ui::NodeId(std::string(NodeIds::kFileIdleRegion) + ".message");
-            emptyState.kind = ui::NodeKind::Label;
-            emptyState.text = "Save or load a patch to begin";
-            emptyState.variant = "muted";
-            emptyState.bounds = {idleInnerX, idleY, idleInnerWidth, Layout::kPatchNameRowHeight};
-            appendChildTo(idleIndex, std::move(emptyState));
-        }
-        else
-        {
-            ui::Node versions;
-            versions.id = NodeIds::kFileVersions;
-            versions.kind = ui::NodeKind::Section;
-            versions.bounds = {idleInnerX,
-                               idleY,
-                               idleInnerWidth,
-                               std::max(0.0f, tree.nodes[idleIndex].bounds.height - idlePad - idleY)};
-            versions.variant = "quiet";
-            const std::size_t versionsIndex = appendChildTo(idleIndex, std::move(versions));
-
-            ui::Node versionsTitle;
-            versionsTitle.id = NodeIds::kFileVersionsTitle;
-            versionsTitle.kind = ui::NodeKind::Label;
-            versionsTitle.text = "Versions";
-            versionsTitle.variant = "title";
-            versionsTitle.bounds = {0.0f, 0.0f, idleInnerWidth, Layout::kPatchNameRowHeight};
-            appendChildTo(versionsIndex, std::move(versionsTitle));
-
-            float versionY = Layout::kPatchNameRowHeight + Layout::kRowGap;
-            const float versionBottom = tree.nodes[versionsIndex].bounds.height;
-            if (snapshot.versionEntries.empty())
-            {
-                ui::Node emptyVersions;
-                emptyVersions.id = ui::NodeId(NodeIds::FileVersionEntry(0));
-                emptyVersions.kind = ui::NodeKind::StatusText;
-                emptyVersions.text = "No saved versions";
-                emptyVersions.variant = "quiet";
-                emptyVersions.bounds = {0.0f,
-                                        versionY,
-                                        idleInnerWidth,
-                                        std::min(Layout::kBrowserRowHeight, std::max(0.0f, versionBottom - versionY))};
-                appendChildTo(versionsIndex, std::move(emptyVersions));
-            }
-            else
-            {
-                for (std::size_t ix = 0; ix < snapshot.versionEntries.size(); ++ix)
-                {
-                    if (versionY + Layout::kBrowserRowHeight > versionBottom + 0.5f)
-                    {
-                        break;
-                    }
-                    const FilePageSnapshot::VersionEntry& entry = snapshot.versionEntries[ix];
-                    ui::Node versionButton;
-                    versionButton.id = ui::NodeId(NodeIds::FileVersionEntry(ix));
-                    versionButton.kind = ui::NodeKind::Button;
-                    versionButton.label = entry.label;
-                    versionButton.text = entry.label;
-                    versionButton.variant = "list-row";
-                    versionButton.bounds = {0.0f, versionY, idleInnerWidth, Layout::kBrowserRowHeight};
-                    versionButton.doubleClickAction =
-                        ui::Action::WithValue(Actions::kFileConfirmedLoad, entry.path);
-                    appendChildTo(versionsIndex, std::move(versionButton));
-                    versionY += Layout::kBrowserRowHeight;
-                }
-            }
-        }
-    }
-
-    return tree;
+        page.Draw(std::string(NodeIds::kFileIdleRegion) + ".background",
+                  PageControls::PanelUnderlayLayout(NodeIds::kFileIdleRegion),
+                  PageControls::PanelUnderlayFill(pagestyle::kIdlePanelFill,
+                                                  pagestyle::kIdlePanelBorder));
+        page.Section(NodeIds::kFileIdleRegion,
+                     PageControls::PanelLayout(ui::Extent::Weight(1.0f)),
+                     [&](ui::Builder& idle) {
+                         idle.StatusText(NodeIds::kFileStatus,
+                                         snapshot.statusText,
+                                         FileStatusStyle(snapshot.statusText,
+                                                         Layout::kPatchNameRowHeight));
+                         if (!snapshot.hasCurrentPatch)
+                         {
+                             idle.Label(std::string(NodeIds::kFileIdleRegion) + ".message",
+                                        "Save or load a patch to begin",
+                                        PageControls::PanelText(pagestyle::kMutedTextStyle,
+                                                                Layout::kPatchNameRowHeight));
+                             return;
+                         }
+                         idle.Section(NodeIds::kFileVersions,
+                                      PageControls::PanelGroupLayout(ui::Extent::Weight(1.0f)),
+                                      [&](ui::Builder& versions) {
+                                          versions.Label(NodeIds::kFileVersionsTitle,
+                                                         "Versions",
+                                                         PageControls::PanelText(
+                                                             pagestyle::kTitleTextStyle,
+                                                             Layout::kPatchNameRowHeight));
+                                          versions.Splice(BuildPatchVersionsSubtree(snapshot));
+                                      });
+                     });
+    });
+    return builder.Build(area);
 }
 
 class PatchBrowserViewModel final

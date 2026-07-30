@@ -315,6 +315,24 @@ public:
         return *this;
     }
 
+    // Opens a ROOTLESS subtree, the production half of the interface Splice
+    // already consumes: the nodes emitted at this level become the subtree's
+    // FOREST ROOTS, which Splice attaches to the host's open scope. A rootless
+    // component names no root and therefore no root extent, so it carries no
+    // surface size and resolves identically wherever it is mounted -- which is
+    // exactly what a spliced page fragment needs and what a Root would force it
+    // to invent. Pair with BuildSubtree(); Build() has nothing to resolve
+    // against and asserts.
+    Builder& Rootless() {
+        Node scope;
+        scope.id = NodeId(kRootlessScopeId);
+        scope.kind = NodeKind::Section;
+        tree_.nodes.push_back(std::move(scope));
+        scopeStack_.assign(1, tree_.nodes.size() - 1);
+        rootless_ = true;
+        return *this;
+    }
+
     // Column and Section both emit NodeKind::Section: the model has no Column
     // kind and adding one would be a wire change this change does not budget
     // for. Stacking direction is a resolver property keyed on LayoutOptions,
@@ -408,6 +426,18 @@ public:
         node.kind = NodeKind::Button;
         node.label = std::move(label);
         node.action = std::move(action);
+        return FinishControl(std::move(node), std::move(style));
+    }
+
+    // The design's extended-parameter-object form, where the style carries the
+    // actions. A control whose only gesture is a double click says so here: the
+    // positional Action above cannot express the absence of a plain click, and
+    // an empty action name is a wire lie, not an absence.
+    Builder& Button(std::string id, std::string label, ControlStyle style) {
+        Node node;
+        node.id = NodeId(std::move(id));
+        node.kind = NodeKind::Button;
+        node.label = std::move(label);
         return FinishControl(std::move(node), std::move(style));
     }
 
@@ -556,6 +586,7 @@ public:
     }
 
     NodeTree Build(Bounds rootExtent) {
+        assert(!rootless_ && "a rootless subtree has no root to resolve against; use BuildSubtree()");
         NodeTree resolved = tree_;
         if (!scopeStack_.empty()) {
             ResolveLayout(resolved, resolved.nodes[scopeStack_.front()].id, rootExtent, layoutByNodeId_, drawFactories_);
@@ -564,10 +595,26 @@ public:
     }
 
     Subtree BuildSubtree() {
-        return Subtree{tree_, layoutByNodeId_, drawFactories_};
+        if (!rootless_) {
+            return Subtree{tree_, layoutByNodeId_, drawFactories_};
+        }
+        // The rootless scope marker is a builder-side handle and never part of
+        // the subtree. Dropping it leaves exactly the nodes it collected, and
+        // because nothing else named them as children they are the forest roots
+        // Splice attaches.
+        Subtree subtree{{}, layoutByNodeId_, drawFactories_};
+        subtree.tree.nodes.reserve(tree_.nodes.size());
+        for (const Node& node : tree_.nodes) {
+            if (node.id.value != kRootlessScopeId) {
+                subtree.tree.nodes.push_back(node);
+            }
+        }
+        return subtree;
     }
 
 private:
+    static constexpr const char* kRootlessScopeId = "synth.ui.rootless-scope";
+
     void ApplyStyle(Node& node, const ControlStyle& s) {
         node.color = s.color;
         node.textStyle = s.textStyle;
@@ -638,6 +685,7 @@ private:
     }
 
     NodeTree tree_;
+    bool rootless_ = false;
     std::vector<std::size_t> scopeStack_;
     std::map<std::string, LayoutOptions> layoutByNodeId_;
     std::map<std::string, DrawFactory> drawFactories_;

@@ -26,6 +26,19 @@ inline constexpr Color kSelectedPanel = Color::Rgb(53, 80, 96);
 inline constexpr Color kListRowPanel = Color::Rgb(34, 39, 44);
 inline constexpr Color kDefaultPanel = Color::Rgb(30, 34, 38);
 
+// File-page panel chrome, recovered from the hand-rolled draw commands the page
+// carried before its rebuild. Each panel is a fill plus a one-pixel border of
+// the matching outline colour.
+inline constexpr Color kHeaderPanelFill = Color::Rgb(29, 33, 37);
+inline constexpr Color kHeaderPanelBorder = Color::Rgb(54, 61, 68);
+inline constexpr Color kBrowserPanelFill = Color::Rgb(24, 28, 32);
+inline constexpr Color kBrowserPanelBorder = Color::Rgb(63, 73, 82);
+inline constexpr Color kIdlePanelFill = Color::Rgb(23, 26, 29);
+inline constexpr Color kIdlePanelBorder = Color::Rgb(48, 55, 62);
+inline constexpr float kPanelCornerRadius = 6.0f;
+inline constexpr float kPanelBorderWidth = 1.0f;
+
+inline constexpr ui::TextStyle kTitleTextStyle{kTitleTextSize, kDefaultText, ui::TextAlign::Left};
 inline constexpr ui::TextStyle kDefaultTextStyle{kDefaultTextSize, kDefaultText, ui::TextAlign::Left};
 inline constexpr ui::TextStyle kDisabledTextStyle{kDefaultTextSize, kDisabledText, ui::TextAlign::Left};
 inline constexpr ui::TextStyle kDangerTextStyle{kDefaultTextSize, kDangerText, ui::TextAlign::Left};
