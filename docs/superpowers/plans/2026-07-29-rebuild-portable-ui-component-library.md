@@ -1093,6 +1093,27 @@ git commit -m "refactor(portable-ui)!: emit node-local draw geometry and parent-
 
 **Second ordering-constraint task.** The current loop adds the sidebar offset to *every* sidebar node. Under parent-relative semantics the sidebar root already carries it, so leaving the loop double-offsets every descendant. **Must land before Tasks 7-8.**
 
+- [ ] **Step 0: Drop the surface-space origin terms from root-level page producers**
+
+Found during Task 4's review, and it must land before Tasks 7-8 because it is part of
+the "no producer left needing rescue" premise those deletions depend on.
+
+`ControllersPageUI.hpp:2326-2327` computes `y = area.y + kPageMargin` and
+`contentX = area.x + kPageMargin`; `BuildSyncPageTree` and `BuildAudioPageTree` do the
+same (`RuntimePages.hpp:452,558`). Every root-level child then re-adds the root's own
+origin. This is invisible in the shell, which always passes an origin-zero area
+(`RuntimeMainComponent.hpp:65-70`) — but `ControllersHarnessApp.cpp:66-71` passes an
+area after `removeFromTop(6)`, so `area.y == 6` and the entire page shifts down 6px
+once translation is strictly parent-relative.
+
+Drop the `area.x` / `area.y` terms so these producers emit root-relative coordinates,
+one line per page. Then add a test that builds one of these pages against a
+**non-origin-zero** area and asserts a root-level child's bounds are unchanged from the
+origin-zero case — that is the assertion that would have caught this.
+
+Run: `make -C projects/synth test 2>&1 | tail -20`
+Expected: PASS, with the new non-origin-zero case failing before the fix.
+
 - [ ] **Step 1: Write the failing test**
 
 ```cpp
