@@ -84,8 +84,12 @@ inline constexpr float kSlotRowWidth = kSlotLabelWidth + kFormGridLabelGap + kSl
 inline constexpr float kButtonFieldsWidth = kMessageWidth + kFieldGap + kArgumentWidth;
 inline constexpr float kButtonRowHeight = kControlHeight + kErrorGap + kErrorHeight;
 inline constexpr float kColumnsTop = kMargin + kControlHeight + kErrorGap + kErrorHeight + kRowGap;
+// A heading plus one row per button: four stacked children, and therefore
+// THREE gaps between them. Counting only two left the last button row's error
+// band six pixels outside the column, where node clipping cut it off in both
+// backends without a word until sru-54 made an unabsorbed overflow a failure.
 inline constexpr float kColumnHeight =
-    kColumnHeaderHeight + kRowsPerColumn * kButtonRowHeight + (kRowsPerColumn - 1) * kRowGap;
+    kColumnHeaderHeight + kRowsPerColumn * kButtonRowHeight + kRowsPerColumn * kRowGap;
 inline constexpr float kFormWidth =
     kMargin * 2.0f + kColumnCount * kColumnWidth + (kColumnCount - 1) * kColumnGap;
 inline constexpr float kFormHeight = kColumnsTop + kColumnHeight + kMargin;

@@ -42,6 +42,7 @@ inline constexpr const char* kAudioBack = "runtime.audio.back";
 inline constexpr const char* kAudioOutput = "runtime.audio.output";
 inline constexpr const char* kAudioInput = "runtime.audio.input";
 inline constexpr const char* kAudioForm = "runtime.audio.form";
+inline constexpr const char* kAudioStatus = "runtime.audio.status";
 inline constexpr const char* kAudioDeviceLine = "runtime.audio.device_line";
 inline constexpr const char* kAudioStatusLine = "runtime.audio.status_line";
 
@@ -397,11 +398,18 @@ inline ui::LayoutOptions FormGridLayout()
     return layout;
 }
 
-inline ui::LayoutOptions StatusStackLayout()
+// The region a config page ends with, and the one that absorbs the surface it
+// is given (sru-54). Everything above it is furniture sized by its own content,
+// so this takes the whole difference between one surface height and another; it
+// scrolls, so a surface too short to hold the lines keeps the last of them
+// reachable instead of cutting it off. This is the File page's shape, which is
+// why a page can no longer be built as a fixed stack that happens to fit.
+inline ui::LayoutOptions StatusStackLayout(float gap)
 {
     ui::LayoutOptions layout;
+    layout.main = ui::Extent::Weight(1.0f);
     layout.padding = 0.0f;
-    layout.gap = Layout::kRowGap;
+    layout.gap = gap;
     return layout;
 }
 
@@ -457,6 +465,18 @@ inline ui::ControlStyle PanelTextRow(ui::TextStyle textStyle, float height)
     ui::ControlStyle style;
     style.textStyle = textStyle;
     style.layout.main = ui::Extent::Px(height);
+    return style;
+}
+
+// A panel whose whole body is one line of text still needs something to absorb
+// the panel's extent (sru-54), and that line is the body: it takes what the
+// furniture leaves, exactly as the versions list does in the other branch of
+// the same region.
+inline ui::ControlStyle PanelTextBody(ui::TextStyle textStyle)
+{
+    ui::ControlStyle style;
+    style.textStyle = textStyle;
+    style.layout.main = ui::Extent::Weight(1.0f);
     return style;
 }
 
@@ -713,37 +733,38 @@ inline ui::NodeTree BuildSyncPageTree(const SyncPageSnapshot& snapshot, ui::Boun
                        ui::Action::Named(Actions::kSyncPpqn),
                        PageControls::Field("PPQN (1-960)"));
     });
-    builder.Column(NodeIds::kSyncStatus, PageControls::StatusStackLayout(), [&](ui::Builder& status) {
-        status.StatusText(NodeIds::kSyncValidation,
-                          snapshot.validationText,
-                          snapshot.validationText.empty() ? PageControls::MutedText()
-                                                          : PageControls::DangerText());
-        status.StatusText(NodeIds::kSyncWarning,
-                          snapshot.warningText,
-                          snapshot.warningText.empty() ? PageControls::MutedText()
-                                                       : PageControls::DangerText());
-        status.StatusText(NodeIds::kSyncBpm,
-                          FormatSyncBpm(snapshot.status.currentBpm),
-                          PageControls::MutedText());
-        status.StatusText(NodeIds::kSyncLock,
-                          "Lock: " + snapshot.status.lockState,
-                          PageControls::MutedText());
-        status.StatusText(NodeIds::kSyncSource,
-                          "Source: " + snapshot.status.sourceName,
-                          PageControls::MutedText());
-        status.StatusText(NodeIds::kSyncOutputLatency,
-                          FormatSyncOutputLatency(snapshot.status.outputLatencyMicros),
-                          PageControls::MutedText());
-        status.StatusText(NodeIds::kSyncIgnoredInput,
-                          "Ignored input: " + std::to_string(snapshot.status.ignoredInputCount),
-                          PageControls::MutedText());
-        status.StatusText(NodeIds::kSyncLateEvents,
-                          "Late events: " + std::to_string(snapshot.status.lateEventCount),
-                          PageControls::MutedText());
-        status.StatusText(NodeIds::kSyncDroppedOutput,
-                          "Dropped output: " + std::to_string(snapshot.status.droppedOutputCount),
-                          PageControls::MutedText());
-    });
+    builder.ScrollArea(
+        NodeIds::kSyncStatus, PageControls::StatusStackLayout(Layout::kRowGap), [&](ui::Builder& status) {
+            status.StatusText(NodeIds::kSyncValidation,
+                              snapshot.validationText,
+                              snapshot.validationText.empty() ? PageControls::MutedText()
+                                                              : PageControls::DangerText());
+            status.StatusText(NodeIds::kSyncWarning,
+                              snapshot.warningText,
+                              snapshot.warningText.empty() ? PageControls::MutedText()
+                                                           : PageControls::DangerText());
+            status.StatusText(NodeIds::kSyncBpm,
+                              FormatSyncBpm(snapshot.status.currentBpm),
+                              PageControls::MutedText());
+            status.StatusText(NodeIds::kSyncLock,
+                              "Lock: " + snapshot.status.lockState,
+                              PageControls::MutedText());
+            status.StatusText(NodeIds::kSyncSource,
+                              "Source: " + snapshot.status.sourceName,
+                              PageControls::MutedText());
+            status.StatusText(NodeIds::kSyncOutputLatency,
+                              FormatSyncOutputLatency(snapshot.status.outputLatencyMicros),
+                              PageControls::MutedText());
+            status.StatusText(NodeIds::kSyncIgnoredInput,
+                              "Ignored input: " + std::to_string(snapshot.status.ignoredInputCount),
+                              PageControls::MutedText());
+            status.StatusText(NodeIds::kSyncLateEvents,
+                              "Late events: " + std::to_string(snapshot.status.lateEventCount),
+                              PageControls::MutedText());
+            status.StatusText(NodeIds::kSyncDroppedOutput,
+                              "Dropped output: " + std::to_string(snapshot.status.droppedOutputCount),
+                              PageControls::MutedText());
+        });
     return builder.Build(area);
 }
 
@@ -769,12 +790,17 @@ inline ui::NodeTree BuildAudioPageTree(const AudioPageSnapshot& snapshot, ui::Bo
                           PageControls::Field("Input device"));
         }
     });
-    builder.Label(NodeIds::kAudioDeviceLine,
-                  snapshot.deviceLineText,
-                  PageControls::MutedText());
-    builder.StatusText(NodeIds::kAudioStatusLine,
-                       snapshot.statusLineText,
-                       PageControls::MutedText());
+    // The two device lines were direct children of the root, which left the page
+    // an intrinsic stack with nothing to absorb the surface it is handed. They
+    // keep abutting exactly as they did -- this region adds no padding and no gap
+    // of its own -- and the region around them now takes the page's slack.
+    builder.ScrollArea(
+        NodeIds::kAudioStatus, PageControls::StatusStackLayout(0.0f), [&](ui::Builder& status) {
+            status.Label(NodeIds::kAudioDeviceLine, snapshot.deviceLineText, PageControls::MutedText());
+            status.StatusText(NodeIds::kAudioStatusLine,
+                              snapshot.statusLineText,
+                              PageControls::MutedText());
+        });
     return builder.Build(area);
 }
 
@@ -1002,8 +1028,7 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
                          {
                              idle.Label(std::string(NodeIds::kFileIdleRegion) + ".message",
                                         "Save or load a patch to begin",
-                                        PageControls::PanelTextRow(pagestyle::kMutedTextStyle,
-                                                                   Layout::kPatchNameRowHeight));
+                                        PageControls::PanelTextBody(pagestyle::kMutedTextStyle));
                              return;
                          }
                          idle.Section(NodeIds::kFileVersions,

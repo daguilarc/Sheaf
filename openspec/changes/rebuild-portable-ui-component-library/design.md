@@ -260,6 +260,27 @@ The library computes each node's **parent-relative** `Bounds` during
      real surface height passed over it. Deterministic order is still what the
      resolver produces; what changed is that producing it is now an error rather
      than an accepted outcome.
+  7. Infeasible minima are only one way to overspend a container, so the gate
+     rule 6 names is general: **any** container whose in-flow children do not
+     fit its stacking axis fails, with a diagnostic naming the container, the
+     axis, the extent available, the extent required, and the first child in
+     declaration order that does not fit. The two ways to absorb are a
+     `ScrollArea`, whose children live in scroll-content space and whose
+     published content extent keeps the tail reachable, and at least one
+     weighted in-flow child. Three properties of the gate are load-bearing.
+     It is judged on the children's **final** bounds, not on the extents
+     allocated to them, because a form grid re-columns its rows after the row
+     itself has placed them and the geometry a backend renders is the geometry
+     that has to fit. It is walked **pre-order from the root**, so the
+     outermost container that cannot hold its content is the one reported: a
+     descendant squeezed by an ancestor's overflow is a symptom, and repairing
+     it would not fix the page. And a `ScrollArea` and a wrapping `Row` are
+     exempt along their own main axis, because both absorb it — what a wrapping
+     row cannot fit across becomes cross-axis extent its parent then has to
+     hold, and is caught there. This is **not** a ban on pixel extents: an item
+     inside a scrolling list legitimately carries its own extent along the
+     scroll axis, because a fraction of the container is circular for a list
+     whose length varies.
 - Padding and inter-child gaps come from the library's shared spacing
   metrics (plain C++ constants), not per-site numbers.
 - A form-grid option on a container aligns descendant label/control columns

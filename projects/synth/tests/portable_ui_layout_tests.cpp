@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -87,6 +88,37 @@ synth::ui::LayoutOptions LayoutMain(synth::ui::Extent e)
 {
     synth::ui::LayoutOptions o;
     o.main = e;
+    return o;
+}
+
+// sru-54 makes the DIAGNOSTIC the deliverable, not the throw: someone hitting
+// this months from now has to be able to repair their layout from the message
+// alone. So these tests read what the resolver said, not merely that it said
+// something.
+std::string ResolutionDiagnostic(const std::function<synth::ui::NodeTree()>& build)
+{
+    try
+    {
+        build();
+    }
+    catch (const std::runtime_error& error)
+    {
+        return error.what();
+    }
+    return {};
+}
+
+bool Mentions(const std::string& diagnostic, const std::string& needle)
+{
+    return diagnostic.find(needle) != std::string::npos;
+}
+
+synth::ui::LayoutOptions StackLayout(synth::ui::Extent main)
+{
+    synth::ui::LayoutOptions o;
+    o.main = main;
+    o.padding = 12.0f;
+    o.gap = 8.0f;
     return o;
 }
 
@@ -176,20 +208,167 @@ void TestUnclampedFractionPinsContentExtentBasis()
             "an unclamped fraction is taken from content extent, not container or post-gap extent");
 }
 
-void TestInfeasibleMinimaOverflowDeterministically()
+void TestInfeasibleMinimaFailLoudlyInDeclarationOrder()
 {
-    synth::ui::Builder b;
-    b.Root("root", {0.0f, 0.0f, 100.0f, 300.0f});
-    b.Row("row", {}, [](synth::ui::Builder& b) {
-        b.Label("a", "a", MainOf(synth::ui::Extent::Weight(1.0f).Min(80.0f)));
-        b.Label("b", "b", MainOf(synth::ui::Extent::Weight(1.0f).Min(80.0f)));
-    });
-    const auto tree = b.Build({0.0f, 0.0f, 100.0f, 300.0f});
-    Require(NearlyEqual(FindNode(tree, "a").bounds.width, 80.0f) &&
-                NearlyEqual(FindNode(tree, "b").bounds.width, 80.0f),
-            "no child shrinks below its minimum");
-    Require(FindNode(tree, "b").bounds.x > FindNode(tree, "a").bounds.x,
-            "they overflow in declaration order rather than being shrunk");
+    // D3 rule 6, as amended by sru-54: no child shrinks below its minimum, and
+    // the container that cannot hold them fails. The earlier disposition let
+    // them "overflow in declaration order so the failure is visible"; node
+    // content clips to its bounds, so it was never visible, it was cut off.
+    // Declaration order survives as the order the diagnostic reports in: the
+    // 100-wide row leaves 76 of content, so the FIRST 80-minimum child is
+    // already past the edge and 12 + 80 + 8 + 80 + 12 is what it would take.
+    const auto build = [] {
+        synth::ui::Builder b;
+        b.Root("root", {0.0f, 0.0f, 100.0f, 300.0f});
+        b.Row("row", {}, [](synth::ui::Builder& b) {
+            b.Label("first", "a", MainOf(synth::ui::Extent::Weight(1.0f).Min(80.0f)));
+            b.Label("second", "b", MainOf(synth::ui::Extent::Weight(1.0f).Min(80.0f)));
+        });
+        return b.Build({0.0f, 0.0f, 100.0f, 300.0f});
+    };
+    const std::string diagnostic = ResolutionDiagnostic(build);
+    Require(!diagnostic.empty(), "minima that cannot fit are a producer defect, not a clipped render");
+    Require(Mentions(diagnostic, "'row'"),
+            "the diagnostic names the container whose minima are infeasible: " + diagnostic);
+    Require(Mentions(diagnostic, "192.00"),
+            "the required extent is the unshrunk minima plus the gap and padding: " + diagnostic);
+    Require(Mentions(diagnostic, "'first'"),
+            "the diagnostic reports in declaration order, so the first child past the edge is named: " +
+                diagnostic);
+    Require(!Mentions(diagnostic, "'second'"),
+            "the diagnostic names the first child that does not fit, not every one after it: " + diagnostic);
+}
+
+void TestUnabsorbedOverflowFailsWithAnActionableDiagnostic()
+{
+    // 12 padding, four 30-high children and three 8 gaps need 168; the stack
+    // has 100. The first child past the 88 content edge is the third, so the
+    // message that names the second or the fourth is the wrong message.
+    const auto build = [] {
+        synth::ui::Builder b;
+        b.Root("root", {0.0f, 0.0f, 400.0f, 100.0f});
+        b.Column("stack", StackLayout(synth::ui::Extent::Weight(1.0f)), [](synth::ui::Builder& b) {
+            for (const char* id : {"top", "middle", "overflowing", "tail"})
+            {
+                b.Label(id, id, MainOf(synth::ui::Extent::Px(30.0f)));
+            }
+        });
+        return b.Build({0.0f, 0.0f, 400.0f, 100.0f});
+    };
+    const std::string diagnostic = ResolutionDiagnostic(build);
+    Require(!diagnostic.empty(),
+            "a container whose in-flow children cannot fit fails instead of clipping them away");
+    Require(Mentions(diagnostic, "'stack'"),
+            "the diagnostic names the container that overflowed: " + diagnostic);
+    Require(Mentions(diagnostic, "vertical"),
+            "the diagnostic names the stacking axis: " + diagnostic);
+    Require(Mentions(diagnostic, "100.00"),
+            "the diagnostic states the extent available: " + diagnostic);
+    Require(Mentions(diagnostic, "168.00"),
+            "the diagnostic states the extent required: " + diagnostic);
+    Require(Mentions(diagnostic, "'overflowing'"),
+            "the diagnostic names the first child that does not fit: " + diagnostic);
+    Require(!Mentions(diagnostic, "'tail'"),
+            "the diagnostic names the FIRST child that does not fit, not the last: " + diagnostic);
+    Require(!Mentions(diagnostic, "'middle'") && !Mentions(diagnostic, "'top'"),
+            "the diagnostic does not name the children that did fit: " + diagnostic);
+    Require(Mentions(diagnostic, "ScrollArea") && Mentions(diagnostic, "weighted"),
+            "the diagnostic names both sanctioned ways to absorb the difference: " + diagnostic);
+}
+
+void TestAnOverflowingRowNamesItsOwnStackingAxis()
+{
+    // Same defect one axis over. A row stacks horizontally, so the axis in the
+    // message is a fact about the container, not a constant.
+    const auto build = [] {
+        synth::ui::Builder b;
+        b.Root("root", {0.0f, 0.0f, 100.0f, 200.0f});
+        b.Row("strip", StackLayout(synth::ui::Extent::Weight(1.0f)), [](synth::ui::Builder& b) {
+            b.Label("first", "first", MainOf(synth::ui::Extent::Px(60.0f)));
+            b.Label("second", "second", MainOf(synth::ui::Extent::Px(60.0f)));
+        });
+        return b.Build({0.0f, 0.0f, 100.0f, 200.0f});
+    };
+    const std::string diagnostic = ResolutionDiagnostic(build);
+    Require(!diagnostic.empty(), "a row that cannot fit its children across fails too");
+    Require(Mentions(diagnostic, "horizontal"),
+            "a row reports the horizontal axis: " + diagnostic);
+    Require(!Mentions(diagnostic, "vertical"),
+            "the axis is read off the container, not fixed at vertical: " + diagnostic);
+    Require(Mentions(diagnostic, "100.00") && Mentions(diagnostic, "152.00"),
+            "the row reports its own width as available and 12 + 60 + 8 + 60 + 12 as required: " +
+                diagnostic);
+    Require(Mentions(diagnostic, "'second'") && !Mentions(diagnostic, "'first'"),
+            "the first child across the edge is the second one declared: " + diagnostic);
+}
+
+void TestAScrollAreaAbsorbsAListTallerThanItsViewport()
+{
+    const auto build = [](float viewportHeight) {
+        synth::ui::Builder b;
+        b.Root("root", {0.0f, 0.0f, 400.0f, viewportHeight});
+        b.ScrollArea("list", StackLayout(synth::ui::Extent::Weight(1.0f)), [](synth::ui::Builder& b) {
+            for (const char* id : {"top", "middle", "overflowing", "tail"})
+            {
+                b.Label(id, id, MainOf(synth::ui::Extent::Px(30.0f)));
+            }
+        });
+        return b.Build({0.0f, 0.0f, 400.0f, viewportHeight});
+    };
+    Require(ResolutionDiagnostic([&] { return build(100.0f); }).empty(),
+            "the same content resolves inside a ScrollArea instead of failing");
+
+    const auto shortViewport = build(100.0f);
+    const synth::ui::Node& list = FindNode(shortViewport, "list");
+    const synth::ui::Node& tail = FindNode(shortViewport, "tail");
+    Require(NearlyEqual(tail.bounds.height, 30.0f),
+            "every item keeps its own extent along the scroll axis rather than being squeezed");
+    Require(tail.bounds.y + tail.bounds.height > list.bounds.height,
+            "the tail really is past the viewport, so this is a scrolling list and not a fitting one");
+    Require(NearlyEqual(list.scrollContentHeight, 168.0f),
+            "the resolver publishes a content extent that contains the last item and the trailing padding");
+    Require(list.scrollContentHeight > list.bounds.height,
+            "the published content extent is the content's, not the viewport's");
+
+    // Same declaration, different viewport, no producer change.
+    const auto tallViewport = build(300.0f);
+    Require(NearlyEqual(FindNode(tallViewport, "tail").bounds.height, 30.0f) &&
+                NearlyEqual(FindNode(tallViewport, "tail").bounds.y,
+                            FindNode(shortViewport, "tail").bounds.y),
+            "the rows land identically at a taller viewport: the ScrollArea absorbed the difference");
+    Require(NearlyEqual(FindNode(tallViewport, "list").scrollContentHeight, 168.0f),
+            "the content extent is a fact about the rows, not about the viewport");
+}
+
+void TestAWeightedChildAbsorbsTheRemainder()
+{
+    const auto build = [](float containerHeight, float furnitureHeight) {
+        synth::ui::Builder b;
+        b.Root("root", {0.0f, 0.0f, 400.0f, containerHeight});
+        b.Column("page", StackLayout(synth::ui::Extent::Weight(1.0f)),
+                 [furnitureHeight](synth::ui::Builder& b) {
+                     b.Label("furniture", "furniture", MainOf(synth::ui::Extent::Px(furnitureHeight)));
+                     b.Label("absorbing", "absorbing", MainOf(synth::ui::Extent::Weight(1.0f)));
+                 });
+        return b.Build({0.0f, 0.0f, 400.0f, containerHeight});
+    };
+    const auto shortPage = build(100.0f, 30.0f);
+    const auto tallPage = build(200.0f, 30.0f);
+    Require(NearlyEqual(FindNode(shortPage, "absorbing").bounds.height, 38.0f),
+            "the weighted child takes 100 less the padding, the furniture and the gap");
+    Require(NearlyEqual(FindNode(tallPage, "absorbing").bounds.height, 138.0f),
+            "the weighted child takes the WHOLE difference when the container grows");
+    Require(NearlyEqual(FindNode(tallPage, "furniture").bounds.height, 30.0f),
+            "the furniture keeps its own extent at either container extent");
+
+    // A weighted sibling is not a licence to overspend: it can absorb slack,
+    // not debt. Without this the failure could be suppressed by declaring one
+    // weighted child anywhere in a container that still cannot fit.
+    const std::string diagnostic = ResolutionDiagnostic([&] { return build(100.0f, 200.0f); });
+    Require(!diagnostic.empty(),
+            "a weighted sibling does not rescue fixed children that already overflow");
+    Require(Mentions(diagnostic, "'furniture'"),
+            "the fixed child that overspent is the one named: " + diagnostic);
 }
 
 void TestInsertingARowShiftsSiblingsByExtentPlusGap()
@@ -889,7 +1068,11 @@ int main()
     TestClampingRedistributionDoesNotRepeat();
     TestFractionIsOfContentExtentNotRemainingSpace();
     TestUnclampedFractionPinsContentExtentBasis();
-    TestInfeasibleMinimaOverflowDeterministically();
+    TestInfeasibleMinimaFailLoudlyInDeclarationOrder();
+    TestUnabsorbedOverflowFailsWithAnActionableDiagnostic();
+    TestAnOverflowingRowNamesItsOwnStackingAxis();
+    TestAScrollAreaAbsorbsAListTallerThanItsViewport();
+    TestAWeightedChildAbsorbsTheRemainder();
     TestInsertingARowShiftsSiblingsByExtentPlusGap();
     TestExplicitlyPositionedChildrenAreOutOfFlow();
     TestInFlowDrawFactoryReceivesItsResolvedExtent();

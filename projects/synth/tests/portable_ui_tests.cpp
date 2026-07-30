@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -1443,6 +1444,217 @@ static void TestFilePageFitsWithinTheRuntimeRoot()
     }
 }
 
+// sru-54: the smallest surface any first-party app declares. `uiHeight` is
+// per-app compile-time config -- braid-4 560, miniapp 560, FakeBrowserApp 480 --
+// so 480 is the floor every page and app has to resolve at.
+constexpr synth::ui::Bounds kSmallestDeclaredSurface{0.0f, 0.0f, 640.0f, 480.0f};
+constexpr synth::ui::Bounds kTallerSurface{0.0f, 0.0f, 640.0f, 560.0f};
+
+std::string ResolutionDiagnostic(const std::function<void()>& build)
+{
+    try
+    {
+        build();
+    }
+    catch (const std::exception& error)
+    {
+        return error.what();
+    }
+    return {};
+}
+
+// Reported with the resolver's own diagnostic, because "the Sync page must
+// resolve at 480" is not a useful failure and "…, but: 'runtime.sync.root' has
+// 480.00 and its in-flow children need 483.18" is.
+void RequireResolves(const std::string& name, const std::function<void()>& build)
+{
+    const std::string diagnostic = ResolutionDiagnostic(build);
+    Require(diagnostic.empty(),
+            (name + " must resolve at the smallest declared surface, but: " + diagnostic).c_str());
+}
+
+// "The page absorbs" is a claim about WHERE the difference goes, not merely
+// that resolution survived: the furniture keeps its own extent at both surface
+// heights and one named region takes the whole 80 between them. A page rebuilt
+// as a fixed stack passes "it resolved" and fails this.
+void RequireRegionAbsorbsTheDifference(const synth::ui::NodeTree& shortSurface,
+                                       const synth::ui::NodeTree& tallSurface,
+                                       const char* absorbingId,
+                                       const std::vector<std::string>& furnitureIds,
+                                       const char* label)
+{
+    const synth::ui::Node& shortRegion = FindNode(shortSurface, absorbingId);
+    const synth::ui::Node& tallRegion = FindNode(tallSurface, absorbingId);
+    RequireNear(tallRegion.bounds.height - shortRegion.bounds.height, 80.0f, 0.01f, label);
+    for (const std::string& furnitureId : furnitureIds)
+    {
+        RequireNear(FindNode(tallSurface, furnitureId.c_str()).bounds.height,
+                    FindNode(shortSurface, furnitureId.c_str()).bounds.height,
+                    0.01f,
+                    "furniture keeps its own extent while the absorbing region takes the difference");
+    }
+}
+
+static void TestEveryRebuiltPageAbsorbsAtTheSmallestDeclaredSurface()
+{
+    synth::runtime_ui::SyncPageSnapshot sync;
+    sync.validationText = "PPQN must be in the range 1 to 960";
+    sync.warningText = "96 PPQN is nonstandard";
+    RequireRegionAbsorbsTheDifference(
+        synth::runtime_ui::BuildSyncPageTree(sync, kSmallestDeclaredSurface),
+        synth::runtime_ui::BuildSyncPageTree(sync, kTallerSurface),
+        synth::runtime_ui::NodeIds::kSyncStatus,
+        {synth::runtime_ui::NodeIds::kSyncBack, synth::runtime_ui::NodeIds::kSyncForm},
+        "the Sync status region absorbs the whole difference between surface heights");
+
+    synth::runtime_ui::AudioPageSnapshot audio;
+    audio.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Output"});
+    audio.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Microphone"});
+    audio.selectedOutputId = "Built-in Output";
+    audio.selectedInputId = "Built-in Microphone";
+    audio.showInputCombo = true;
+    audio.deviceLineText = "Built-in Output: 48000 Hz, 512 frames";
+    audio.statusLineText = "Audio running";
+    RequireRegionAbsorbsTheDifference(
+        synth::runtime_ui::BuildAudioPageTree(audio, kSmallestDeclaredSurface),
+        synth::runtime_ui::BuildAudioPageTree(audio, kTallerSurface),
+        synth::runtime_ui::NodeIds::kAudioStatus,
+        {synth::runtime_ui::NodeIds::kAudioBack, synth::runtime_ui::NodeIds::kAudioForm},
+        "the Audio status region absorbs the whole difference between surface heights");
+
+    const synth::runtime_ui::FilePageSnapshot browserState = LongBrowserState(60);
+    RequireRegionAbsorbsTheDifference(
+        synth::runtime_ui::BuildFilePageTree(browserState, kSmallestDeclaredSurface),
+        synth::runtime_ui::BuildFilePageTree(browserState, kTallerSurface),
+        synth::runtime_ui::NodeIds::kFileBrowser,
+        {synth::runtime_ui::NodeIds::kFileHeader, synth::runtime_ui::NodeIds::kFileCommandStrip},
+        "the File browser panel absorbs the whole difference between surface heights");
+}
+
+static void TestEveryPageAndAppResolvesAtTheSmallestDeclaredSurface()
+{
+    synth::runtime_ui::SyncPageSnapshot sync;
+    sync.validationText = "PPQN must be in the range 1 to 960";
+    sync.warningText = "96 PPQN is nonstandard";
+
+    synth::runtime_ui::AudioPageSnapshot audioWithInput;
+    audioWithInput.outputOptions =
+        synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Output"});
+    audioWithInput.inputOptions =
+        synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Microphone"});
+    audioWithInput.selectedOutputId = "Built-in Output";
+    audioWithInput.selectedInputId = "Built-in Microphone";
+    audioWithInput.showInputCombo = true;
+    audioWithInput.deviceLineText = "Built-in Output: 48000 Hz, 512 frames";
+    audioWithInput.statusLineText = "Audio running";
+
+    std::vector<std::pair<std::string, std::function<void()>>> producers;
+    producers.emplace_back("Sync", [sync] {
+        synth::runtime_ui::BuildSyncPageTree(sync, kSmallestDeclaredSurface);
+    });
+    producers.emplace_back("Sync (no diagnostics)", [] {
+        synth::runtime_ui::BuildSyncPageTree({}, kSmallestDeclaredSurface);
+    });
+    producers.emplace_back("Audio", [audioWithInput] {
+        synth::runtime_ui::BuildAudioPageTree(audioWithInput, kSmallestDeclaredSurface);
+    });
+    producers.emplace_back("Audio (output only)", [] {
+        synth::runtime_ui::BuildAudioPageTree({}, kSmallestDeclaredSurface);
+    });
+    producers.emplace_back("File (idle, no patch)", [] {
+        synth::runtime_ui::BuildFilePageTree({}, kSmallestDeclaredSurface);
+    });
+    producers.emplace_back("File (60 saved versions)", [] {
+        synth::runtime_ui::BuildFilePageTree(LongVersionsState(60), kSmallestDeclaredSurface);
+    });
+    producers.emplace_back("File (60 browser entries)", [] {
+        synth::runtime_ui::BuildFilePageTree(LongBrowserState(60), kSmallestDeclaredSurface);
+    });
+
+    for (const auto& [name, build] : producers)
+    {
+        RequireResolves(name, build);
+    }
+}
+
+static void TestControllersWizardAndBraid4ResolveAtTheSmallestDeclaredSurface()
+{
+    synth::MidiInstrumentConfig instrument;
+    synth::MidiControllerSlot wrldSlot;
+    wrldSlot.name = "wrld";
+    wrldSlot.kind = synth::MidiProfileKind::WrldBldr;
+    wrldSlot.config = synth::WrldBldrDefaultProfileConfig();
+    Require(instrument.AddController(std::move(wrldSlot)), "add wrld controller");
+    synth::MidiConnectionState connection;
+    connection.controllers.push_back({});
+
+    const auto makeSurface = [&instrument, &connection] {
+        synth::runtime_ui::ControllersPageCallbacks callbacks;
+        callbacks.instrumentSnapshot = [&instrument] { return instrument; };
+        callbacks.connectionState = [&connection] { return connection; };
+        auto surface =
+            std::make_unique<synth::runtime_ui::ControllersPageSurface>(std::move(callbacks));
+        surface->SetContentBounds(kSmallestDeclaredSurface);
+        surface->MarkDirty();
+        surface->RefreshOnTick();
+        return surface;
+    };
+
+    const auto candidate = [](const char* suffix) {
+        return synth::WizardCandidate{
+            .wizardId = "com.sheaf.midi-fighter-twister",
+            .displayName = "MIDI Fighter Twister",
+            .kind = synth::MidiProfileKind::MfTwister,
+            .input = {std::string("twister-in") + suffix, "Midi Fighter Twister"},
+            .output = {std::string("twister-out") + suffix, "Midi Fighter Twister"}};
+    };
+
+    const auto controllers = makeSurface();
+    RequireResolves("the Controllers page", [&] { controllers->BuildTree(); });
+
+    // Two candidates open the chooser; one opens the form directly. Both wizard
+    // pages are producers, so both are resolved here.
+    const auto chooser = makeSurface();
+    chooser->SetDiscovery({.available = {candidate("-a"), candidate("-b")}});
+    chooser->DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
+    RequireResolves("the wizard chooser", [&] { chooser->BuildTree(); });
+    Require(FindNodeById(chooser->BuildTree(),
+                         synth::runtime_ui::NodeIds::WizardChooserCandidate(candidate("-a"))) != nullptr,
+            "the chooser really is the page under test");
+
+    const auto form = makeSurface();
+    form->SetDiscovery({.available = {candidate("-a")}});
+    form->DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
+    RequireResolves("the wizard form", [&] { form->BuildTree(); });
+    Require(FindNodeById(form->BuildTree(), synth::runtime_ui::NodeIds::kWizardForm) != nullptr,
+            "the wizard form really is the page under test");
+
+    synth::ParameterManager manager;
+    synth::MessageInBus uiBus(&manager);
+    synth::MidiInstrumentConfig braidInstrument;
+    synth::RuntimeConfig config = synth_braid4::Braid4Core::Config();
+    config.uiWidth = static_cast<int>(kSmallestDeclaredSurface.width);
+    config.uiHeight = static_cast<int>(kSmallestDeclaredSurface.height);
+    synth::AppContext context;
+    context.parameterManager = &manager;
+    context.uiBus = &uiBus;
+    context.instrument = &braidInstrument;
+    context.config = &config;
+    synth_braid4::Braid4Core core;
+    core.Init(&context);
+    core.PrepareToPlay(48000.0, 64);
+    auto uiState = manager.CreateUIState();
+    context.uiState = uiState.get();
+    manager.PopulateUIState(*uiState);
+    synth_braid4::Braid4UiSurface braid;
+    braid.Attach(&context, &core);
+    RequireResolves("Braid 4", [&] { braid.BuildTree(); });
+    RequireNear(FindNode(braid.BuildTree(), synth_braid4::Braid4NodeIds::kRoot).bounds.height,
+                kSmallestDeclaredSurface.height,
+                0.0001f,
+                "Braid 4 really was resolved against the 480-high surface, not its own default");
+}
+
 static void TestFilePagePinsItsResolvedGeometry()
 {
     const synth::runtime_ui::FilePageSnapshot state = RepresentativeBrowserState();
@@ -1779,6 +1991,9 @@ int main()
     TestFilePageCarriesPageColoursAndTextStyles();
     TestFilePanelUnderlaysCoverTheirPanels();
     TestFilePageDelegatesItsListsToSplicedSubtrees();
+    TestEveryRebuiltPageAbsorbsAtTheSmallestDeclaredSurface();
+    TestEveryPageAndAppResolvesAtTheSmallestDeclaredSurface();
+    TestControllersWizardAndBraid4ResolveAtTheSmallestDeclaredSurface();
 
     TestGangedRandomLfoVisualizer();
     TestScopeWaveformCommandsAreNodeLocal();

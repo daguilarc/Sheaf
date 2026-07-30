@@ -7,9 +7,11 @@
 #include <cassert>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <functional>
 #include <map>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -81,6 +83,11 @@ inline float AxisExtent(Bounds bounds, Axis axis)
 inline float CrossExtent(Bounds bounds, Axis axis)
 {
     return axis == Axis::Horizontal ? bounds.height : bounds.width;
+}
+
+inline float AxisOffset(Bounds bounds, Axis axis)
+{
+    return axis == Axis::Horizontal ? bounds.x : bounds.y;
 }
 
 inline float LeafIntrinsicExtent(const Node& node, Axis axis)
@@ -233,6 +240,77 @@ inline std::vector<ResolvedExtent> AllocateExtents(const std::vector<const Node*
     return resolved;
 }
 
+// Float allocation of a container's extent across its children accumulates a
+// little error; three pixels of real overflow is what this has to catch, so a
+// hundredth of a pixel is the right side of both.
+inline constexpr float kOverflowTolerance = 0.01f;
+
+inline std::string FormatExtent(float value)
+{
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%.2f", static_cast<double>(value));
+    return buffer;
+}
+
+// sru-54. A container whose in-flow children cannot fit its stacking axis has
+// no rendering outcome to offer: node content clips to its bounds, so the
+// overflow is not visible, it is cut off. D3 rule 6's earlier disposition
+// blessed that as "visible"; it never was. The resolver is the only layer that
+// still holds the numbers, so it is the layer that fails, and the message
+// carries them rather than leaving them to be reconstructed.
+//
+// Judged on the children's FINAL bounds rather than on the extents allocated to
+// them, because allocation is not the last word on where a child lands: a form
+// grid re-columns its rows after the row itself has placed them, so a row whose
+// allocated cells overrun can still be laid out correctly, and the geometry a
+// backend renders is the geometry that has to fit.
+inline void RequireContainerHoldsItsChildren(const Node& container,
+                                             const LayoutOptions& opts,
+                                             Axis mainAxis,
+                                             const std::vector<const Node*>& inFlow)
+{
+    // The two sanctioned absorbers. A ScrollArea places its children in
+    // scroll-content space and publishes the extent that reaches the tail, so
+    // content past the viewport is reachable rather than lost. A wrapping row
+    // absorbs along its own main axis by breaking lines; what it cannot fit
+    // becomes cross-axis extent, which its parent then has to hold.
+    if (container.kind == NodeKind::ScrollArea)
+    {
+        return;
+    }
+    if (container.kind == NodeKind::Row && opts.wrap)
+    {
+        return;
+    }
+
+    const float available = AxisExtent(container.bounds, mainAxis);
+    const float contentEdge = available - opts.padding;
+    const Node* firstThatDoesNotFit = nullptr;
+    float furthestEdge = opts.padding;
+    for (const Node* child : inFlow)
+    {
+        const float edge = AxisOffset(child->bounds, mainAxis) + AxisExtent(child->bounds, mainAxis);
+        furthestEdge = std::max(furthestEdge, edge);
+        if (firstThatDoesNotFit == nullptr && edge > contentEdge + kOverflowTolerance)
+        {
+            firstThatDoesNotFit = child;
+        }
+    }
+    if (firstThatDoesNotFit == nullptr)
+    {
+        return;
+    }
+
+    throw std::runtime_error(
+        std::string("portable UI container overflows its ") +
+        (mainAxis == Axis::Horizontal ? "horizontal" : "vertical") + " extent: '" +
+        container.id.value + "' has " + FormatExtent(available) + " and its in-flow children need " +
+        FormatExtent(furthestEdge + opts.padding) + "; the first child that does not fit is '" +
+        firstThatDoesNotFit->id.value +
+        "'. Declare a ScrollArea or one weighted in-flow child so the container absorbs its own "
+        "overflow.");
+}
+
 inline float ResolveCrossExtent(const Node& node,
                                 Axis mainAxis,
                                 const LayoutOptions& layout,
@@ -262,6 +340,18 @@ inline float ResolveCrossExtent(const Node& node,
             break;
     }
     return ClampExtent(value, layout.cross);
+}
+
+// Root is the parentless surface extent; applying ordinary container padding
+// here would shrink every page and app implicitly.
+inline LayoutOptions RootLayoutOptions()
+{
+    LayoutOptions options;
+    options.main = Extent::Intrinsic();
+    options.cross = Extent::Weight(1.0f);
+    options.padding = 0.0f;
+    options.gap = 0.0f;
+    return options;
 }
 
 inline std::map<std::string, std::size_t> BuildNodeIndex(const NodeTree& tree)
@@ -473,18 +563,7 @@ struct Resolver {
 
     void ResolveContainer(Node& container, bool isRoot)
     {
-        const LayoutOptions rootLayout{
-            .main = Extent::Intrinsic(),
-            .cross = Extent::Weight(1.0f),
-            // Root is the parentless surface extent; applying ordinary
-            // container padding here would shrink every page/app implicitly.
-            .padding = 0.0f,
-            .gap = 0.0f,
-            .wrap = false,
-            .formGrid = false,
-            .explicitBounds = std::nullopt,
-            .overlayOf = std::nullopt,
-        };
+        const LayoutOptions rootLayout = RootLayoutOptions();
         const LayoutOptions fallback;
         const LayoutOptions& opts = isRoot ? rootLayout : LayoutFor(layoutByNodeId, container.id, fallback);
         const Axis mainAxis = MainAxisFor(container);
@@ -668,6 +747,44 @@ struct Resolver {
         deferredOverlays.clear();
     }
 
+    // sru-54's gate, walked once the whole tree has stopped moving -- after the
+    // deferred overlays and every form grid, so what it judges is the geometry
+    // a backend would render. Pre-order, so the OUTERMOST container that cannot
+    // hold its content is the one reported: a descendant squeezed by an
+    // ancestor's overflow is a symptom, and repairing it would not fix the page.
+    void RequireEveryContainerHoldsItsChildren(const Node& container, bool isRoot)
+    {
+        if (!IsContainer(container.kind))
+        {
+            return;
+        }
+        const LayoutOptions rootLayout = RootLayoutOptions();
+        const LayoutOptions fallback;
+        const LayoutOptions& opts =
+            isRoot ? rootLayout : LayoutFor(layoutByNodeId, container.id, fallback);
+
+        std::vector<const Node*> inFlow;
+        std::vector<const Node*> children;
+        for (const NodeId& childId : container.children)
+        {
+            const Node* child = Find(childId);
+            if (child == nullptr)
+            {
+                continue;
+            }
+            children.push_back(child);
+            if (!IsOutOfFlow(LayoutFor(layoutByNodeId, childId, fallback)))
+            {
+                inFlow.push_back(child);
+            }
+        }
+        RequireContainerHoldsItsChildren(container, opts, MainAxisFor(container), inFlow);
+        for (const Node* child : children)
+        {
+            RequireEveryContainerHoldsItsChildren(*child, false);
+        }
+    }
+
     std::vector<Node*> InFlowChildrenOf(const Node& row)
     {
         const LayoutOptions fallback;
@@ -757,6 +874,7 @@ inline void ResolveLayout(NodeTree& tree,
     root->bounds = rootExtent;
     resolver.ResolveNode(*root, true);
     resolver.ResolveDeferredOverlays();
+    resolver.RequireEveryContainerHoldsItsChildren(*root, true);
 }
 
 }  // namespace synth::ui
