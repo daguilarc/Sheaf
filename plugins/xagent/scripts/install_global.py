@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import shlex
@@ -126,6 +127,236 @@ def register_harness_mcp(*, home: Path) -> None:
         registry["mcpServers"] = servers
         path.parent.mkdir(parents=True, exist_ok=True)
         write_json_atomic(path, registry)
+
+# The controller stop hooks are registered only here, in each harness's own
+# global JSON. The plugin package deliberately ships no discoverable hooks.json
+# or hooks/ component, so this merge is the single registration path.
+#
+# Group shape follows the payloads captured from both harnesses during hook
+# fixture capture: one command entry, no matcher, no timeout. Neither capture
+# established matcher semantics for MCP tool names on either harness, and the
+# hook program validates the normalized tool name itself, so no matcher is
+# claimed here.
+HOOK_SCRIPT_NAME = "controller_stop_hook.py"
+HOOK_STATE_ROOT_RELATIVE = (
+    Path(".agents") / "plugins" / "data" / "xagent" / "controller-stop-hooks"
+)
+HOOK_EVENTS = {"observe": "PostToolUse", "guard": "Stop"}
+CLAUDE_SETTINGS_RELATIVE = Path(".claude") / "settings.json"
+CODEX_HOOKS_NAME = "hooks.json"
+CODEX_TRUST_NOTICE = (
+    "xagent Codex hooks are registered but stay inert until their commands are "
+    "trusted: run /hooks in Codex to review and approve them."
+)
+
+
+def hook_state_root(home: Path) -> Path:
+    """Where the hook program keeps per-session pending-run state.
+
+    Rendered from the installer's resolved home so the hook never has to infer
+    it from its own environment, and kept outside the replaceable plugin
+    package so reinstalling does not discard live controller state.
+    """
+    return (home.expanduser() / HOOK_STATE_ROOT_RELATIVE).resolve()
+
+
+def hook_commands(*, installed_hook: Path, harness: str, state_root: Path) -> dict[str, str]:
+    base = (
+        f"python3 {shlex.quote(str(installed_hook))} "
+        f"--harness {harness} --state-root {shlex.quote(str(state_root))}"
+    )
+    return {mode: f"{base} {mode}" for mode in HOOK_EVENTS}
+
+
+def hook_command_identity(command: object) -> tuple[str, str, str] | None:
+    """Return `(script, harness, mode)` for an xagent hook command.
+
+    Ownership is the canonical command signature itself; neither harness JSON
+    schema has a field we could claim without inventing one.
+    """
+    if not isinstance(command, str):
+        return None
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    if len(tokens) < 2 or tokens[-1] not in HOOK_EVENTS:
+        return None
+    script = next(
+        (token for token in tokens if Path(token).name == HOOK_SCRIPT_NAME),
+        None,
+    )
+    harness = next(
+        (
+            tokens[index + 1]
+            for index, token in enumerate(tokens[:-1])
+            if token == "--harness"
+        ),
+        None,
+    )
+    if script is None or harness is None:
+        return None
+    return script, harness, tokens[-1]
+
+
+def _owns_group(group: object, identity: tuple[str, str, str]) -> bool:
+    if not isinstance(group, dict):
+        return False
+    entries = group.get("hooks")
+    if not isinstance(entries, list):
+        return False
+    return any(
+        isinstance(entry, dict) and hook_command_identity(entry.get("command")) == identity
+        for entry in entries
+    )
+
+
+def _merge_event_groups(
+    groups: list[object],
+    *,
+    identity: tuple[str, str, str],
+    command: str,
+) -> tuple[list[object], bool]:
+    """Update the owned group in place, drop owned duplicates, keep the rest.
+
+    Codex trust is positional, so an owned group keeps its index and unrelated
+    groups are never reordered.
+    """
+    canonical = {"hooks": [{"type": "command", "command": command}]}
+    merged: list[object] = []
+    changed = False
+    kept_owned = False
+    for group in groups:
+        if not _owns_group(group, identity):
+            merged.append(group)
+            continue
+        if kept_owned:
+            changed = True
+            continue
+        kept_owned = True
+        changed = changed or group != canonical
+        merged.append(canonical)
+    if not kept_owned:
+        merged.append(canonical)
+        changed = True
+    return merged, changed
+
+
+def merge_xagent_hook_groups(
+    payload: dict[str, object],
+    *,
+    harness: str,
+    observe_command: str,
+    guard_command: str,
+) -> tuple[dict[str, object], bool]:
+    """Return the merged configuration and whether it differs from `payload`.
+
+    `load_shared_hook_json()` is where a file's whole shape is checked; the
+    checks here are this function's own argument contract, because it is also
+    callable on a payload that never came from disk.
+    """
+    merged = copy.deepcopy(payload)
+    hooks = merged.get("hooks")
+    if hooks is None:
+        hooks = {}
+    if not isinstance(hooks, dict):
+        raise RuntimeError('field "hooks" must be a JSON object')
+
+    changed = False
+    for mode, command in (("observe", observe_command), ("guard", guard_command)):
+        identity = hook_command_identity(command)
+        if identity is None or identity[1:] != (harness, mode):
+            raise RuntimeError(f"not a canonical xagent {mode} command: {command}")
+        event = HOOK_EVENTS[mode]
+        groups = hooks.get(event, [])
+        if not isinstance(groups, list):
+            raise RuntimeError(f'field "hooks.{event}" must be a JSON array')
+        updated, event_changed = _merge_event_groups(
+            groups, identity=identity, command=command
+        )
+        if event_changed:
+            hooks[event] = updated
+            changed = True
+    merged["hooks"] = hooks
+    return merged, changed
+
+
+def load_shared_hook_json(path: Path) -> dict[str, object]:
+    """Read a harness configuration that xagent shares with its owner.
+
+    Absent or empty files start as `{}`; anything whose shape we would have to
+    guess at raises before the caller writes.
+    """
+    if not path.exists():
+        return {}
+    raw = path.read_text(encoding="utf-8").strip()
+    if not raw:
+        return {}
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"{path} must contain valid JSON: {error}") from error
+    if not isinstance(loaded, dict):
+        raise RuntimeError(f"{path} must contain a JSON object")
+    hooks = loaded.get("hooks")
+    if hooks is not None:
+        if not isinstance(hooks, dict):
+            raise RuntimeError(f'{path} field "hooks" must be a JSON object')
+        for event, groups in hooks.items():
+            if not isinstance(groups, list):
+                raise RuntimeError(f'{path} field "hooks.{event}" must be a JSON array')
+    return loaded
+
+
+def register_harness_hooks(
+    *,
+    home: Path,
+    codex_home: Path,
+    installed_hook: Path,
+) -> None:
+    """Register the installed hook program with Claude Code and Codex.
+
+    Both files belong to their harness, and the Codex one is also written by
+    the agents installer, so only the canonical xagent groups are touched.
+    Every target is validated and merged before any of them is written, so a
+    malformed second file cannot leave the first one half-migrated.
+    """
+    home = home.expanduser().resolve()
+    codex_home = codex_home.expanduser().resolve()
+    installed_hook = installed_hook.expanduser().resolve()
+    if not installed_hook.is_file():
+        raise RuntimeError(f"missing installed xagent hook program: {installed_hook}")
+
+    state_root = hook_state_root(home)
+    planned: list[tuple[str, Path, dict[str, object]]] = []
+    for harness, path in (
+        ("claude", home / CLAUDE_SETTINGS_RELATIVE),
+        ("codex", codex_home / CODEX_HOOKS_NAME),
+    ):
+        commands = hook_commands(
+            installed_hook=installed_hook, harness=harness, state_root=state_root
+        )
+        payload = load_shared_hook_json(path)
+        try:
+            merged, changed = merge_xagent_hook_groups(
+                payload,
+                harness=harness,
+                observe_command=commands["observe"],
+                guard_command=commands["guard"],
+            )
+        except RuntimeError as error:
+            raise RuntimeError(f"{path}: {error}") from error
+        if changed:
+            planned.append((harness, path, merged))
+
+    for harness, path, merged in planned:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(path, merged)
+        if harness == "codex":
+            # Removing a duplicate or changing a command shifts the positional
+            # trust records Codex keeps, so re-approval may be required.
+            print(CODEX_TRUST_NOTICE)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HELPER_NAMES = (
@@ -385,6 +616,13 @@ def install_global(
     # controller running there has neither the tools nor the manual.
     install_harness_skill(repo_root=repo_root, home=home)
     register_harness_mcp(home=home)
+    # Only now is the hook program committed at its stable installed path, so
+    # the commands written into global JSON cannot outlive a failed install.
+    register_harness_hooks(
+        home=home,
+        codex_home=codex_home,
+        installed_hook=destination / "scripts" / HOOK_SCRIPT_NAME,
+    )
 
 
 def default_codex_home() -> Path:

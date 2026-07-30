@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -16,6 +17,7 @@ XAGENT_ROOT = REPO_ROOT / "projects" / "xagent"
 ASSET_ROOT = PLUGIN_ROOT / "assets" / "xagent"
 PACKAGE_DIRECTORIES = (".codex-plugin", "skills", "scripts")
 PACKAGE_COMPANION_FILES = (".mcp.json",)
+HOOK_SCRIPT_NAME = "controller_stop_hook.py"
 CLIENT_SERVICE_FILES = frozenset(
     {
         "await_liveness.d.ts",
@@ -205,7 +207,7 @@ def check_tracked_assets_current(*, validate: bool = False) -> None:
         package_root = Path(tempdir) / "package"
         build_package(package_root)
         if validate:
-            validate_launcher(package_root)
+            validate_package(package_root)
         expected = file_snapshot(
             package_root / "assets" / "xagent",
             exclude_prefixes=("node_modules",),
@@ -223,6 +225,32 @@ def check_tracked_assets_current(*, validate: bool = False) -> None:
 def stage_runtime() -> None:
     generate_dispatch_manifest()
     copy_runtime(ASSET_ROOT)
+
+
+def validate_package(plugin_root: Path) -> None:
+    validate_hook_registration(plugin_root)
+    validate_launcher(plugin_root)
+
+
+def validate_hook_registration(plugin_root: Path) -> None:
+    """The controller stop hook ships as a program, never as a registration.
+
+    Codex discovers plugin-root `hooks.json` and `hooks/` components on its
+    own. The installer registers these hooks explicitly in global JSON, so a
+    discoverable component here would be a silent second registration.
+    """
+    hook = plugin_root / "scripts" / HOOK_SCRIPT_NAME
+    if not hook.is_file():
+        raise RuntimeError(f"packaged plugin is missing the controller stop hook: {hook}")
+    for discoverable in (plugin_root / "hooks.json", plugin_root / "hooks"):
+        if discoverable.exists():
+            raise RuntimeError(
+                f"packaged plugin must not register hooks by discovery: {discoverable}"
+            )
+    manifest_path = plugin_root / ".codex-plugin" / "plugin.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if "hooks" in manifest:
+        raise RuntimeError(f"{manifest_path} must not declare a hooks field")
 
 
 def validate_launcher(plugin_root: Path) -> None:
@@ -300,7 +328,7 @@ def main() -> int:
         package_root = args.output.expanduser().resolve()
         build_package(package_root)
         message = f"staged xagent plugin package in {package_root}"
-    validate_launcher(package_root)
+    validate_package(package_root)
     print(message)
     return 0
 

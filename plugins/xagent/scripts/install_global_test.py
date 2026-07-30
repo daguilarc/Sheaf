@@ -7,6 +7,7 @@ import json
 import os
 import re
 import select
+import shlex
 import shutil
 import stat
 import subprocess
@@ -611,7 +612,7 @@ class PackageXagentOutputTests(unittest.TestCase):
                 (destination / "scripts").mkdir()
                 (destination / "scripts" / "xagent").write_text("#!/bin/sh\n", encoding="utf-8")
 
-            def validate_launcher(plugin_root: Path) -> None:
+            def validate_package(plugin_root: Path) -> None:
                 if not plugin_root.exists():
                     raise RuntimeError(f"validated after cleanup: {plugin_root}")
                 validated_roots.append(plugin_root)
@@ -620,9 +621,10 @@ class PackageXagentOutputTests(unittest.TestCase):
                 mock.patch.object(package_xagent, "parse_args", return_value=mock.Mock(check=True, output=None)),
                 mock.patch.object(package_xagent, "ASSET_ROOT", asset_root),
                 mock.patch.object(package_xagent, "build_package", build_package),
-                mock.patch.object(package_xagent, "validate_launcher", validate_launcher),
+                mock.patch.object(package_xagent, "validate_package", validate_package),
             ):
-                self.assertEqual(0, package_xagent.main())
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(0, package_xagent.main())
 
             self.assertEqual(1, len(validated_roots))
 
@@ -651,16 +653,55 @@ class PackageXagentOutputTests(unittest.TestCase):
                 ),
                 mock.patch.object(package_xagent, "ASSET_ROOT", asset_root),
                 mock.patch.object(package_xagent, "build_package", build_package),
-                mock.patch.object(package_xagent, "validate_launcher"),
+                mock.patch.object(package_xagent, "validate_package"),
                 mock.patch.object(
                     package_xagent,
                     "check_tracked_assets_current",
                     check_tracked_assets_current,
                 ),
             ):
-                self.assertEqual(0, package_xagent.main())
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(0, package_xagent.main())
 
             self.assertEqual([True], calls)
+
+    def test_package_validation_requires_the_hook_program_without_discovery(self) -> None:
+        # xhook-8: the hook program must ship under scripts/, and nothing in
+        # the package may register it through Codex component discovery.
+        with tempfile.TemporaryDirectory(prefix="xagent-package-hooks-test-") as tempdir:
+            package_root = Path(tempdir) / "package"
+            manifest_path = package_root / ".codex-plugin" / "plugin.json"
+            manifest_path.parent.mkdir(parents=True)
+            manifest_path.write_text('{"name": "xagent"}\n', encoding="utf-8")
+            hook = package_root / "scripts" / "controller_stop_hook.py"
+            hook.parent.mkdir(parents=True)
+            hook.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+
+            package_xagent.validate_hook_registration(package_root)
+
+            hook.rename(hook.with_name("controller_stop_hook.py.moved"))
+            with self.assertRaisesRegex(RuntimeError, "controller_stop_hook.py"):
+                package_xagent.validate_hook_registration(package_root)
+            hook.with_name("controller_stop_hook.py.moved").rename(hook)
+
+            for discoverable in (package_root / "hooks.json", package_root / "hooks"):
+                if discoverable.name.endswith(".json"):
+                    discoverable.write_text("{}\n", encoding="utf-8")
+                else:
+                    discoverable.mkdir()
+                with self.assertRaisesRegex(RuntimeError, "discovery"):
+                    package_xagent.validate_hook_registration(package_root)
+                if discoverable.is_dir():
+                    discoverable.rmdir()
+                else:
+                    discoverable.unlink()
+
+            manifest_path.write_text(
+                json.dumps({"name": "xagent", "hooks": "./hooks.json"}) + "\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, "hooks"):
+                package_xagent.validate_hook_registration(package_root)
 
     def test_packaged_plugin_declares_http_mcp_without_local_supervisor(self) -> None:
         with tempfile.TemporaryDirectory(prefix="xagent-package-mcp-test-") as tempdir:
@@ -950,17 +991,22 @@ if args == ["plugin", "list"]:
         self.environment.stop()
         self.temporary.cleanup()
 
-    def install(self) -> None:
-        self.install_with_codex(self.bin_root / "codex")
+    def install(self) -> str:
+        return self.install_with_codex(self.bin_root / "codex")
 
-    def install_with_codex(self, codex: Path) -> None:
-        install_global.install_global(
-            repo_root=self.repo_root,
-            home=self.home,
-            codex_home=self.codex_home,
-            codex=str(codex),
-            cachebuster=FIXED_CACHEBUSTER,
-        )
+    def install_with_codex(self, codex: Path) -> str:
+        # Installation prints the Codex trust notice; capturing it keeps the
+        # test output pristine and lets tests assert on the notice.
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            install_global.install_global(
+                repo_root=self.repo_root,
+                home=self.home,
+                codex_home=self.codex_home,
+                codex=str(codex),
+                cachebuster=FIXED_CACHEBUSTER,
+            )
+        return stdout.getvalue()
 
     def test_new_marketplace_defaults_to_personal(self) -> None:
         self.install()
@@ -1151,6 +1197,42 @@ raise SystemExit(f"unexpected fake codex arguments: {args!r}")
         self.assertEqual(before, tree_snapshot(plugin_root))
         self.assertFalse((plugin_root / "assets").exists())
 
+    def test_hooks_are_registered_for_claude_and_codex(self) -> None:
+        # xhook-1: a completed global install must leave both harnesses running
+        # the hook program that the install just committed.
+        self.install()
+
+        installed_hook = self.destination / "scripts" / "controller_stop_hook.py"
+        self.assertTrue(installed_hook.is_file())
+        state_root = (
+            self.home / ".agents" / "plugins" / "data" / "xagent" / "controller-stop-hooks"
+        )
+        for harness, path in (
+            ("claude", self.home / ".claude" / "settings.json"),
+            ("codex", self.codex_home / "hooks.json"),
+        ):
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            observe = payload["hooks"]["PostToolUse"][-1]["hooks"][0]["command"]
+            guard = payload["hooks"]["Stop"][-1]["hooks"][0]["command"]
+            for command, mode in ((observe, "observe"), (guard, "guard")):
+                self.assertIn(str(installed_hook.resolve()), command)
+                self.assertIn(f"--harness {harness}", command)
+                self.assertIn(f"--state-root {state_root.resolve()}", command)
+                self.assertTrue(command.endswith(f" {mode}"), command)
+
+    def test_installed_package_contains_script_but_no_discoverable_plugin_hooks(self) -> None:
+        # xhook-8: global JSON is the only registration path, so the package
+        # must ship the program without any component Codex would discover.
+        self.install()
+
+        self.assertTrue((self.destination / "scripts" / "controller_stop_hook.py").is_file())
+        self.assertFalse((self.destination / "hooks.json").exists())
+        self.assertFalse((self.destination / "hooks").exists())
+        manifest = json.loads(
+            (self.destination / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+        self.assertNotIn("hooks", manifest)
+
     def test_missing_helper_and_failed_codex_command_are_reported(self) -> None:
         (self.helper_root / "validate_plugin.py").unlink()
         stderr = io.StringIO()
@@ -1318,9 +1400,58 @@ class AllHarnessDistributionTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.home = Path(self.temporary.name) / "home"
         self.home.mkdir(parents=True)
+        self.codex_home = Path(self.temporary.name) / "codex-home"
+        self.claude_settings = self.home / ".claude" / "settings.json"
+        self.codex_hooks = self.codex_home / "hooks.json"
+        self.installed_hook = (
+            self.home
+            / ".agents"
+            / "plugins"
+            / "plugins"
+            / "xagent"
+            / "scripts"
+            / "controller_stop_hook.py"
+        )
+        self.installed_hook.parent.mkdir(parents=True)
+        self.installed_hook.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def register_hooks(self) -> str:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            install_global.register_harness_hooks(
+                home=self.home,
+                codex_home=self.codex_home,
+                installed_hook=self.installed_hook,
+            )
+        return stdout.getvalue()
+
+    def expected_command(self, harness: str, mode: str) -> str:
+        state_root = (
+            self.home.resolve()
+            / ".agents"
+            / "plugins"
+            / "data"
+            / "xagent"
+            / "controller-stop-hooks"
+        )
+        return (
+            f"python3 {shlex.quote(str(self.installed_hook.resolve()))} "
+            f"--harness {harness} --state-root {shlex.quote(str(state_root))} {mode}"
+        )
+
+    def canonical_group(self, harness: str, mode: str) -> dict[str, object]:
+        return {
+            "hooks": [
+                {"type": "command", "command": self.expected_command(harness, mode)}
+            ]
+        }
+
+    def write_json(self, path: Path, payload: object) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     def test_skill_is_installed_for_claude_cursor_and_pi(self) -> None:
         install_global.install_harness_skill(repo_root=REPO_ROOT, home=self.home)
@@ -1421,3 +1552,223 @@ class AllHarnessDistributionTests(unittest.TestCase):
         self.assertTrue(backup.is_file(), "the previous contents must be recoverable")
         self.assertEqual(original, json.loads(backup.read_text(encoding="utf-8")))
         self.assertFalse((self.home / ".claude.json.xagent-stage").exists())
+
+    def test_hook_registration_is_idempotent(self) -> None:
+        # xhook-6: repeated installation must leave exactly one canonical
+        # observer group and one canonical stop group per harness.
+        self.register_hooks()
+
+        self.assertEqual(
+            {
+                "hooks": {
+                    "PostToolUse": [self.canonical_group("claude", "observe")],
+                    "Stop": [self.canonical_group("claude", "guard")],
+                }
+            },
+            json.loads(self.claude_settings.read_text(encoding="utf-8")),
+        )
+        self.assertEqual(
+            {
+                "hooks": {
+                    "PostToolUse": [self.canonical_group("codex", "observe")],
+                    "Stop": [self.canonical_group("codex", "guard")],
+                }
+            },
+            json.loads(self.codex_hooks.read_text(encoding="utf-8")),
+        )
+
+        first = self.claude_settings.read_text(encoding="utf-8")
+        self.assertEqual("", self.register_hooks())
+        self.assertEqual(first, self.claude_settings.read_text(encoding="utf-8"))
+        for path in (self.claude_settings, self.codex_hooks):
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(1, len(payload["hooks"]["PostToolUse"]))
+            self.assertEqual(1, len(payload["hooks"]["Stop"]))
+
+    def test_hook_registration_preserves_unrelated_values_and_group_order(self) -> None:
+        unrelated_session_start = {
+            "matcher": "^compact$",
+            "hooks": [{"type": "command", "command": "python3 /opt/other/compact.py"}],
+        }
+        unrelated_post_tool_use = {
+            "hooks": [{"type": "command", "command": "python3 /opt/other/audit.py"}]
+        }
+        self.write_json(
+            self.codex_hooks,
+            {
+                "hooks": {
+                    "SessionStart": [unrelated_session_start],
+                    "PostToolUse": [unrelated_post_tool_use],
+                },
+                "experimental": {"keep": [1, 2, 3]},
+            },
+        )
+        self.write_json(
+            self.claude_settings,
+            {
+                "enabledPlugins": {"xagent@personal": True},
+                "model": "opus",
+                "hooks": {"Stop": [unrelated_post_tool_use]},
+            },
+        )
+
+        self.register_hooks()
+
+        codex = json.loads(self.codex_hooks.read_text(encoding="utf-8"))
+        self.assertEqual({"keep": [1, 2, 3]}, codex["experimental"])
+        self.assertEqual([unrelated_session_start], codex["hooks"]["SessionStart"])
+        self.assertEqual(
+            [unrelated_post_tool_use, self.canonical_group("codex", "observe")],
+            codex["hooks"]["PostToolUse"],
+        )
+        self.assertEqual([self.canonical_group("codex", "guard")], codex["hooks"]["Stop"])
+
+        claude = json.loads(self.claude_settings.read_text(encoding="utf-8"))
+        self.assertEqual({"xagent@personal": True}, claude["enabledPlugins"])
+        self.assertEqual("opus", claude["model"])
+        self.assertEqual(
+            [unrelated_post_tool_use, self.canonical_group("claude", "guard")],
+            claude["hooks"]["Stop"],
+        )
+
+    def test_hook_registration_updates_owned_groups_in_place(self) -> None:
+        # Codex trust is positional, so a stale xagent command must be
+        # rewritten where it already sits rather than appended after it.
+        stale = {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": (
+                        f"python3 {self.installed_hook.resolve()} --harness codex "
+                        "--state-root /stale/state observe"
+                    ),
+                }
+            ]
+        }
+        trailing = {"hooks": [{"type": "command", "command": "python3 /opt/other/audit.py"}]}
+        self.write_json(self.codex_hooks, {"hooks": {"PostToolUse": [stale, trailing]}})
+
+        self.register_hooks()
+
+        codex = json.loads(self.codex_hooks.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [self.canonical_group("codex", "observe"), trailing],
+            codex["hooks"]["PostToolUse"],
+        )
+
+    def test_hook_registration_removes_only_owned_duplicates(self) -> None:
+        duplicate = self.canonical_group("codex", "observe")
+        other_harness = {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": self.expected_command("claude", "observe"),
+                }
+            ]
+        }
+        unrelated = {"hooks": [{"type": "command", "command": "python3 /opt/other/audit.py"}]}
+        self.write_json(
+            self.codex_hooks,
+            {
+                "hooks": {
+                    "PostToolUse": [
+                        duplicate,
+                        unrelated,
+                        other_harness,
+                        self.canonical_group("codex", "observe"),
+                    ]
+                }
+            },
+        )
+
+        self.register_hooks()
+
+        codex = json.loads(self.codex_hooks.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [self.canonical_group("codex", "observe"), unrelated, other_harness],
+            codex["hooks"]["PostToolUse"],
+        )
+
+    def test_hook_registration_rejects_malformed_json_and_hooks_shapes(self) -> None:
+        for payload_text in (
+            "{not json",
+            json.dumps(["not", "an", "object"]),
+            json.dumps({"hooks": ["not an object"]}),
+            json.dumps({"hooks": {"Stop": {"not": "an array"}}}),
+        ):
+            with self.subTest(payload=payload_text):
+                self.claude_settings.parent.mkdir(parents=True, exist_ok=True)
+                self.claude_settings.write_text(payload_text, encoding="utf-8")
+
+                with self.assertRaises(RuntimeError) as caught:
+                    self.register_hooks()
+
+                self.assertIn(str(self.claude_settings), str(caught.exception))
+                self.assertEqual(
+                    payload_text, self.claude_settings.read_text(encoding="utf-8")
+                )
+                self.assertFalse(
+                    self.codex_hooks.exists(),
+                    "no target may be written when another target is malformed",
+                )
+
+    def test_hook_registration_writes_atomic_backup(self) -> None:
+        original = {"model": "opus", "hooks": {"Stop": []}}
+        self.write_json(self.claude_settings, original)
+
+        self.register_hooks()
+
+        backup = self.claude_settings.with_name("settings.json.xagent-backup")
+        self.assertTrue(backup.is_file(), "the previous contents must be recoverable")
+        self.assertEqual(original, json.loads(backup.read_text(encoding="utf-8")))
+        self.assertFalse(self.claude_settings.with_name(".settings.json.xagent-stage").exists())
+
+    def test_codex_effective_change_prints_trust_notice(self) -> None:
+        first = self.register_hooks()
+        self.assertIn("/hooks", first)
+        self.assertIn("codex", first.lower())
+
+        self.assertEqual("", self.register_hooks())
+
+        # A Claude-only change must not claim that Codex needs re-approval.
+        self.claude_settings.unlink()
+        self.assertEqual("", self.register_hooks())
+        self.assertTrue(self.claude_settings.is_file())
+
+    def test_legacy_agents_marker_is_tolerated(self) -> None:
+        # The agents installer still writes a whole-file marker; xagent must
+        # preserve it until that installer migrates to group ownership.
+        agents_group = {
+            "matcher": "^compact$",
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": "python3 /codex/hooks/sheaf/session_start_after_compact.py",
+                    "statusMessage": "Loading post-compaction reminder",
+                    "timeout": 5,
+                }
+            ],
+        }
+        marker = "sheaf-agents-managed: DO NOT EDIT; source=projects/agents/global/codex/hooks/hooks.json"
+        self.write_json(
+            self.codex_hooks,
+            {"hooks": {"SessionStart": [agents_group]}, "_sheaf_agents_managed": marker},
+        )
+
+        self.register_hooks()
+
+        codex = json.loads(self.codex_hooks.read_text(encoding="utf-8"))
+        self.assertEqual(marker, codex["_sheaf_agents_managed"])
+        self.assertEqual([agents_group], codex["hooks"]["SessionStart"])
+        self.assertEqual(
+            [self.canonical_group("codex", "observe")], codex["hooks"]["PostToolUse"]
+        )
+
+    def test_hook_registration_requires_the_installed_program(self) -> None:
+        self.installed_hook.unlink()
+
+        with self.assertRaisesRegex(RuntimeError, "controller_stop_hook.py"):
+            self.register_hooks()
+
+        self.assertFalse(self.claude_settings.exists())
+        self.assertFalse(self.codex_hooks.exists())
