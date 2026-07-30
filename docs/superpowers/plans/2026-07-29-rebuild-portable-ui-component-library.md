@@ -77,6 +77,12 @@ struct LayoutOptions {
     // Set => this node is explicitly positioned and OUT OF FLOW.
     // Out-of-flow is a positioning mode, never a property of a node kind.
     std::optional<Bounds> explicitBounds{};
+    // Alternative out-of-flow mode (added in Task 6, ratified into sru-44):
+    // name the IN-FLOW sibling this node overlays and resolve to its bounds.
+    // Required for the sru-25 visualizer underlay, whose target is a
+    // resolver-sized grid cell the producer has no bounds for. A target that
+    // is not in flow collapses this node to empty bounds.
+    std::optional<std::string> overlayOf{};
 };
 
 }  // namespace synth::ui
@@ -132,6 +138,8 @@ public:
 
     // In-flow Draw: the resolver invokes `factory` with the resolved extent.
     Builder& Draw(std::string id, LayoutOptions opts, DrawFactory factory);
+    // Same, taking a full ControlStyle (added in Task 6; Task 14 uses this form).
+    Builder& Draw(std::string id, DrawFactory factory, ControlStyle style);
 
     NodeTree Build(Bounds rootExtent);
 };
