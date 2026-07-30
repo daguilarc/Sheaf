@@ -287,6 +287,27 @@ The library computes each node's **parent-relative** `Bounds` during
   the tree leaves the producer — and no backend is involved. This is what lets
   Braid 4 hand a scope grid to a slot and have it fill whatever the slot turns
   out to be, at any root extent.
+- **There are two out-of-flow modes, not one** (found while building the
+  standard layout in tasks 3.14-3.16; an earlier draft of this document had
+  only the first). Explicit bounds cover the case where the producer knows the
+  geometry. They cannot cover an **overlay**, and this document names overlays
+  — the sru-25 visualizer underlays — as the very reason out-of-flow exists.
+  The contradiction is exact: an underlay must cover the encoder above it
+  precisely, but once that encoder is an in-flow grid cell the producer no
+  longer knows its extent, so it has no explicit bounds to declare. The
+  in-flow `Draw` command factory does not help, because it yields commands,
+  not a second node's geometry.
+
+  So a `LayoutOptions` may instead name the in-flow **sibling** it overlays.
+  Such a child is out of flow on the same terms as an explicitly positioned
+  one — it consumes no stacking space and its stacked siblings resolve as if
+  it were absent — and it resolves, after its siblings, to exactly the target's
+  resolved bounds. Anchoring to the target by id rather than adding a
+  fill-the-parent mode keeps the encoder grid's node shape exactly as it is
+  today (underlay and encoder as siblings), where fill-the-parent would have
+  required a wrapper container per cell and sixteen extra hosted components
+  per app. An overlay naming a node that is not an in-flow sibling collapses
+  to nothing rather than guessing a position.
 - Resolution is local by construction: a container resolves its children
   against its own extent and never consults an ancestor, so a resolved
   subtree is identical wherever it is mounted. Position independence is the

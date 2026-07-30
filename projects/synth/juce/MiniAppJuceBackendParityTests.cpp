@@ -43,6 +43,37 @@ const synth::ui::Node* FindNodeById(const synth::ui::NodeTree& tree, const char*
     return nullptr;
 }
 
+// Node bounds are parent-relative, so a claim about where two nodes sit
+// relative to each other is a claim about their bounds folded over their
+// ancestor origins.
+synth::ui::Bounds SurfaceBoundsOf(const synth::ui::NodeTree& tree, const std::string& id)
+{
+    const auto parentOf = [&tree](const std::string& wanted) -> std::string {
+        for (const synth::ui::Node& node : tree.nodes)
+        {
+            for (const synth::ui::NodeId& child : node.children)
+            {
+                if (child.value == wanted)
+                {
+                    return node.id.value;
+                }
+            }
+        }
+        return {};
+    };
+    const synth::ui::Node* node = FindNodeById(tree, id.c_str());
+    Require(node != nullptr, "surface bounds for a node that exists");
+    synth::ui::Bounds bounds = node->bounds;
+    for (std::string parent = parentOf(id); !parent.empty(); parent = parentOf(parent))
+    {
+        const synth::ui::Node* parentNode = FindNodeById(tree, parent.c_str());
+        Require(parentNode != nullptr, "surface bounds walks a complete ancestor chain");
+        bounds.x += parentNode->bounds.x;
+        bounds.y += parentNode->bounds.y;
+    }
+    return bounds;
+}
+
 struct StaticSurface final : synth::ui::Surface
 {
     synth::ui::NodeTree BuildTree() override
@@ -159,14 +190,16 @@ int main()
             "JUCE receives both MiniApp waveform panels");
     Require(FindNodeById(tree, "miniapp.ganged_random_lfo.round") == nullptr,
             "removed MiniApp main panel is absent");
-    Require(vcoPanel->bounds.y + vcoPanel->bounds.height <= lfoPanel->bounds.y,
+    Require(SurfaceBoundsOf(tree, vcoPanel->id.value).y + vcoPanel->bounds.height <=
+                SurfaceBoundsOf(tree, lfoPanel->id.value).y,
             "JUCE tree preserves vertical scope ordering");
     juce::Image panelImage(juce::Image::ARGB, config.uiWidth, config.uiHeight, true);
     juce::Graphics panelGraphics(panelImage);
     for (const synth::ui::Node* panel : {vcoPanel, lfoPanel})
     {
         Require(!panel->drawCommands.empty(), "each MiniApp scope supplies portable draw commands");
-        const juce::Rectangle<float> panelBounds = synth_juce::UiToJuceRectF(panel->bounds);
+        const juce::Rectangle<float> panelBounds =
+            synth_juce::UiToJuceRectF(SurfaceBoundsOf(tree, panel->id.value));
         const bool panelCommandsAreLocal =
             synth_juce::DrawCommandsLookLocal(panel->drawCommands, panelBounds);
         for (const auto& command : panel->drawCommands)
@@ -179,43 +212,38 @@ int main()
         }
     }
 
-    const synth::ui::Bounds rootBounds = synth_miniapp::MiniAppPageLayout::RootBounds(&context);
-    const synth::ui::Bounds encoderArea =
-        synth_miniapp::MiniAppPageLayout::EncoderArea(synth_miniapp::MiniAppPageLayout::ContentArea(rootBounds));
     const synth::ui::Node* encoderNode = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::Encoder(0).c_str());
     const synth::ui::Node* encoderFifteenNode =
         FindNodeById(tree, synth_miniapp::MiniAppNodeIds::Encoder(15).c_str());
     Require(encoderNode != nullptr, "encoder node for layout parity");
     Require(encoderFifteenNode != nullptr, "encoder fifteen node for layout parity");
-    Require(vcoPanel->bounds.x + vcoPanel->bounds.width <= encoderNode->bounds.x &&
-                lfoPanel->bounds.x + lfoPanel->bounds.width <= encoderFifteenNode->bounds.x,
+    Require(SurfaceBoundsOf(tree, vcoPanel->id.value).x + vcoPanel->bounds.width <=
+                    SurfaceBoundsOf(tree, encoderNode->id.value).x &&
+                SurfaceBoundsOf(tree, lfoPanel->id.value).x + lfoPanel->bounds.width <=
+                    SurfaceBoundsOf(tree, encoderFifteenNode->id.value).x,
             "scope stack remains left of encoder grid");
-    RequireNear(encoderNode->bounds.x,
-                synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 0).x,
-                0.0001f,
-                "encoder zero x through backend tree");
-    RequireNear(encoderNode->bounds.y,
-                synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 0).y,
-                0.0001f,
-                "encoder zero y through backend tree");
-    const synth::ui::Bounds expectedEncoderFifteen =
-        synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 15);
-    RequireNear(encoderFifteenNode->bounds.x,
-                expectedEncoderFifteen.x,
-                0.0001f,
-                "encoder fifteen x through backend tree");
-    RequireNear(encoderFifteenNode->bounds.y,
-                expectedEncoderFifteen.y,
-                0.0001f,
-                "encoder fifteen y through backend tree");
-    RequireNear(encoderFifteenNode->bounds.width,
-                expectedEncoderFifteen.width,
-                0.0001f,
-                "encoder fifteen width through backend tree");
-    RequireNear(encoderFifteenNode->bounds.height,
-                expectedEncoderFifteen.height,
-                0.0001f,
-                "encoder fifteen height through backend tree");
+
+    // The encoder grid's geometry is resolved, not hand-computed. At the
+    // default 900x560 surface the standard layout gives the encoder region
+    // 462 wide, which the grid divides into four columns over three 8 gaps.
+    const synth::ui::Node* encoderRegion = FindNodeById(tree, "miniapp.encoders");
+    Require(encoderRegion != nullptr, "the encoder region resolves");
+    RequireNear(encoderRegion->bounds.width, 462.0f, 0.01f, "encoder region width");
+    const float expectedCellWidth = (462.0f - 8.0f * 3.0f) * 0.25f;
+    RequireNear(encoderNode->bounds.width, expectedCellWidth, 0.01f, "encoder zero width");
+    RequireNear(encoderFifteenNode->bounds.width, expectedCellWidth, 0.01f, "encoder fifteen width");
+    RequireNear(encoderFifteenNode->bounds.height, encoderNode->bounds.height, 0.0001f,
+                "every encoder cell shares one height");
+    const synth::ui::Bounds encoderZeroSurface = SurfaceBoundsOf(tree, encoderNode->id.value);
+    const synth::ui::Bounds encoderFifteenSurface = SurfaceBoundsOf(tree, encoderFifteenNode->id.value);
+    RequireNear(encoderFifteenSurface.x,
+                encoderZeroSurface.x + 3.0f * (expectedCellWidth + 8.0f),
+                0.01f,
+                "encoder fifteen sits three columns right of encoder zero");
+    RequireNear(encoderFifteenSurface.y,
+                encoderZeroSurface.y + 3.0f * (encoderNode->bounds.height + 8.0f),
+                0.01f,
+                "encoder fifteen sits three rows below encoder zero");
 
     StaticSurface paintedGridSurface;
     paintedGridSurface.tree = tree;
@@ -244,7 +272,8 @@ int main()
         const std::string encoderId = synth_miniapp::MiniAppNodeIds::Encoder(encoderIx);
         const synth::ui::Node* node = FindNodeById(tree, encoderId.c_str());
         Require(node != nullptr, "each MiniApp encoder remains in the portable tree");
-        const juce::Rectangle<int> expectedBounds = synth_juce::UiToJuceRect(node->bounds);
+        const juce::Rectangle<int> expectedBounds =
+            synth_juce::UiToJuceRect(SurfaceBoundsOf(tree, encoderId));
         Require(paintedGridComponent.SurfaceBoundsForNode(encoderId) == expectedBounds,
                 "each hosted MiniApp encoder retains its pre-change surface bounds");
         RequireDrawStartsInsideResolvedBounds(paintedGridImage,
@@ -253,11 +282,11 @@ int main()
     }
     const juce::Image renderedComponent = RenderComponent(component);
     RequireDrawStartsInsideResolvedBounds(renderedComponent,
-                                           synth_juce::UiToJuceRect(vcoPanel->bounds),
-                                           "VCO scope paints at its unchanged resolved origin");
+                                           synth_juce::UiToJuceRect(SurfaceBoundsOf(tree, vcoPanel->id.value)),
+                                           "VCO scope paints at its resolved origin");
     RequireDrawStartsInsideResolvedBounds(renderedComponent,
-                                           synth_juce::UiToJuceRect(lfoPanel->bounds),
-                                           "LFO scope paints at its unchanged resolved origin");
+                                           synth_juce::UiToJuceRect(SurfaceBoundsOf(tree, lfoPanel->id.value)),
+                                           "LFO scope paints at its resolved origin");
 
     auto* startButton = dynamic_cast<juce::TextButton*>(component.FindByNodeId(synth_miniapp::MiniAppNodeIds::kStart));
     Require(startButton != nullptr, "start node is a TextButton");

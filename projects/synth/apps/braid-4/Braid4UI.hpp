@@ -8,6 +8,7 @@
 
 #include "synth/PortableUI.hpp"
 #include "synth/PortableUIBuilders.hpp"
+#include "synth/PortableUIStandardLayout.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -31,68 +32,50 @@ public:
     synth::ui::NodeTree BuildTree() override
     {
         const synth::ui::Bounds rootBounds = Braid4PageLayout::RootBounds(context_);
-        const synth::ui::Bounds content = Braid4PageLayout::ContentArea(rootBounds);
-
-        synth::ui::Builder builder;
-        builder.Root(Braid4NodeIds::kRoot, rootBounds);
-        builder.Draw(Braid4NodeIds::kBackground, rootBounds, BuildBraid4BackgroundCommands(rootBounds));
-        builder.Label(Braid4NodeIds::kTitle, "Braid 4");
-
-        for (std::size_t scopeIx = 0; scopeIx < Braid4PageLayout::kScopeCount; ++scopeIx)
-        {
-            const synth::ui::Bounds vcoBounds = Braid4PageLayout::ScopeBounds(content, scopeIx);
-            builder.Draw(Braid4NodeIds::VcoScope(scopeIx),
-                         vcoBounds,
-                         core_ != nullptr ? BuildBraid4ScopeCommands(ScopeDrawStateFromCore(*core_, scopeIx), vcoBounds)
-                                          : BuildBraid4ScopeCommands({}, vcoBounds));
-
-            const synth::ui::Bounds lfoBounds = Braid4PageLayout::LfoScopeBounds(content, scopeIx);
-            builder.Draw(Braid4NodeIds::LfoScope(scopeIx),
-                         lfoBounds,
-                         core_ != nullptr ? BuildBraid4ScopeCommands(LfoScopeDrawStateFromCore(*core_, scopeIx), lfoBounds)
-                                          : BuildBraid4ScopeCommands({}, lfoBounds));
-        }
-
         const Braid4UiSnapshot snapshot = SnapshotUiState(context_);
-        const synth::ui::Bounds encoderArea = Braid4PageLayout::EncoderArea(content);
         const bool showingModulationView =
             context_ != nullptr && context_->uiState != nullptr && context_->uiState->slotCapacity > 0 &&
             context_->uiState->slots[0].showingModulationView.load(std::memory_order_relaxed);
-        for (std::size_t ix = 0; ix < Braid4EncoderGridLayout::kEncoderCount; ++ix)
-        {
-            synth::ui::EncoderDrawState state =
-                ix < snapshot.encoders.size() ? snapshot.encoders[ix] : synth::ui::EncoderDrawState{};
-            if (showingModulationView && !state.connected)
-            {
-                continue;
-            }
-            const synth::ui::Bounds encoderBounds = Braid4EncoderGridLayout::BoundsForIndex(encoderArea, ix);
-            synth::ui::Visualizer* visualizer = nullptr;
-            if (context_ != nullptr && context_->uiState != nullptr && context_->uiState->slotCapacity > 0)
-            {
-                const synth::BankSlot::UIState& slotState = context_->uiState->slots[0];
-                if (ix < slotState.cellCapacity)
-                {
-                    visualizer = slotState.cells[ix].visualizer.load(std::memory_order_relaxed);
-                }
-            }
-            state.hasVisualizerUnderlay = visualizer != nullptr && visualizer->Visible();
-            const std::string encoderId = Braid4NodeIds::Encoder(ix);
-            if (visualizer != nullptr && visualizer->Visible())
-            {
-                visualizer->SetBounds(encoderBounds);
-                builder.Visualizer(encoderId + ".visualizer", visualizer);
-            }
-            builder.DrawInteractive(
-                encoderId,
-                encoderBounds,
-                synth::ui::BuildEncoderDrawCommands(state, encoderBounds),
-                synth::ui::Action::WithValue(Braid4Actions::kEncoderDrag, FormatEncoderGestureValue(0, ix, 0.0f)),
-                synth::ui::Action::WithValue(Braid4Actions::kEncoderPush, FormatEncoderGestureValue(0, ix, 0.0f)));
-        }
 
-        AppendBraid4Controls(builder, snapshot);
-        return builder.Build();
+        synth::ui::StandardAppLayout layout;
+        layout.idPrefix = "braid4";
+        layout.title = "Braid 4";
+        layout.upperVisualizer = [this](synth::ui::Builder& builder) {
+            Braid4ScopeGridLayout::Emit(
+                builder, "braid4.scope.vco.grid", [this](synth::ui::Builder& builder, std::size_t ix) {
+                    EmitScopeCell(builder, Braid4NodeIds::VcoScope(ix), [this, ix] {
+                        return core_ != nullptr ? ScopeDrawStateFromCore(*core_, ix) : Braid4ScopeDrawState{};
+                    });
+                });
+        };
+        layout.lowerVisualizer = [this](synth::ui::Builder& builder) {
+            Braid4ScopeGridLayout::Emit(
+                builder, "braid4.scope.lfo.grid", [this](synth::ui::Builder& builder, std::size_t ix) {
+                    EmitScopeCell(builder, Braid4NodeIds::LfoScope(ix), [this, ix] {
+                        return core_ != nullptr ? LfoScopeDrawStateFromCore(*core_, ix) : Braid4ScopeDrawState{};
+                    });
+                });
+        };
+        layout.encoders = [this, &snapshot, showingModulationView](synth::ui::Builder& builder) {
+            Braid4EncoderGridLayout::Emit(
+                builder, "braid4.encoders.grid",
+                [this, &snapshot, showingModulationView](synth::ui::Builder& builder, std::size_t ix) {
+                    EmitEncoderCell(builder, snapshot, showingModulationView, ix);
+                });
+        };
+        layout.widgetBay = [&snapshot](synth::ui::Builder& builder) {
+            AppendBraid4Controls(builder, snapshot);
+        };
+
+        synth::ui::Builder builder;
+        builder.Root(Braid4NodeIds::kRoot, rootBounds);
+        synth::ui::LayoutOptions background;
+        background.explicitBounds = synth::ui::Bounds{0.0f, 0.0f, rootBounds.width, rootBounds.height};
+        builder.Draw(Braid4NodeIds::kBackground, background, [](synth::ui::Bounds extent) {
+            return BuildBraid4BackgroundCommands(extent);
+        });
+        layout.Emit(builder);
+        return builder.Build(rootBounds);
     }
 
     void SetActionHandler(ActionHandler handler) override
@@ -110,6 +93,73 @@ public:
     }
 
 private:
+    static void EmitScopeCell(synth::ui::Builder& builder,
+                              const std::string& id,
+                              const std::function<Braid4ScopeDrawState()>& state)
+    {
+        builder.Draw(id, Braid4CellLayout(), [state](synth::ui::Bounds extent) {
+            return BuildBraid4ScopeCommands(state(), extent);
+        });
+    }
+
+    void EmitEncoderCell(synth::ui::Builder& builder,
+                         const Braid4UiSnapshot& snapshot,
+                         bool showingModulationView,
+                         std::size_t ix)
+    {
+        synth::ui::EncoderDrawState state =
+            ix < snapshot.encoders.size() ? snapshot.encoders[ix] : synth::ui::EncoderDrawState{};
+        // A disconnected cell in the modulation view still holds its place in
+        // the grid, so its neighbours never move; it paints nothing and
+        // dispatches nothing, exactly as it did when it was left out entirely.
+        const bool hidden = showingModulationView && !state.connected;
+
+        synth::ui::Visualizer* visualizer = nullptr;
+        if (!hidden && context_ != nullptr && context_->uiState != nullptr &&
+            context_->uiState->slotCapacity > 0)
+        {
+            const synth::BankSlot::UIState& slotState = context_->uiState->slots[0];
+            if (ix < slotState.cellCapacity)
+            {
+                visualizer = slotState.cells[ix].visualizer.load(std::memory_order_relaxed);
+            }
+        }
+        state.hasVisualizerUnderlay = visualizer != nullptr && visualizer->Visible();
+
+        const std::string encoderId = Braid4NodeIds::Encoder(ix);
+        if (visualizer != nullptr && visualizer->Visible())
+        {
+            // The underlay covers exactly the encoder it sits beneath, whatever
+            // extent the grid resolves that cell to (sru-25).
+            synth::ui::ControlStyle underlay;
+            underlay.layout.overlayOf = encoderId;
+            builder.Draw(
+                encoderId + ".visualizer",
+                [visualizer](synth::ui::Bounds extent) {
+                    visualizer->SetBounds(extent);
+                    return visualizer->Draw();
+                },
+                underlay);
+        }
+
+        synth::ui::ControlStyle cell;
+        cell.layout = Braid4CellLayout();
+        if (!hidden)
+        {
+            cell.pointerDragAction = synth::ui::Action::WithValue(
+                Braid4Actions::kEncoderDrag, FormatEncoderGestureValue(0, ix, 0.0f));
+            cell.doubleClickAction = synth::ui::Action::WithValue(
+                Braid4Actions::kEncoderPush, FormatEncoderGestureValue(0, ix, 0.0f));
+        }
+        builder.Draw(
+            encoderId,
+            [state, hidden](synth::ui::Bounds extent) {
+                return hidden ? std::vector<synth::ui::DrawCommand>{}
+                              : synth::ui::BuildEncoderDrawCommands(state, extent);
+            },
+            cell);
+    }
+
     void HandleAction(const synth::ui::Action& action)
     {
         DispatchBraid4Action(context_,

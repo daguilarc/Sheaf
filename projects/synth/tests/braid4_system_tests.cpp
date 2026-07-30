@@ -18,6 +18,7 @@
 #include <cstddef>
 #include <exception>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <optional>
@@ -395,9 +396,92 @@ void RequireNodeId(const synth::ui::NodeTree& tree, const char* id) {
     REQUIRE_TRUE(FindNodeById(tree, id) != nullptr);
 }
 
+std::optional<std::string> ParentIdOf(const synth::ui::NodeTree& tree, const std::string& id) {
+    for (const synth::ui::Node& node : tree.nodes) {
+        for (const synth::ui::NodeId& child : node.children) {
+            if (child.value == id) {
+                return node.id.value;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+// Node bounds are parent-relative, so a claim about where two nodes sit
+// relative to each other is a claim about their bounds folded over their
+// ancestor origins.
+synth::ui::Bounds SurfaceBoundsOf(const synth::ui::NodeTree& tree, const std::string& id) {
+    const synth::ui::Node* node = FindNodeById(tree, id);
+    REQUIRE_TRUE(node != nullptr);
+    synth::ui::Bounds bounds = node->bounds;
+    std::optional<std::string> parent = ParentIdOf(tree, id);
+    while (parent.has_value()) {
+        const synth::ui::Node* parentNode = FindNodeById(tree, *parent);
+        REQUIRE_TRUE(parentNode != nullptr);
+        bounds.x += parentNode->bounds.x;
+        bounds.y += parentNode->bounds.y;
+        parent = ParentIdOf(tree, *parent);
+    }
+    return bounds;
+}
+
+bool IsDescendantOf(const synth::ui::NodeTree& tree, const std::string& id, const std::string& ancestorId) {
+    std::optional<std::string> parent = ParentIdOf(tree, id);
+    while (parent.has_value()) {
+        if (*parent == ancestorId) {
+            return true;
+        }
+        parent = ParentIdOf(tree, *parent);
+    }
+    return false;
+}
+
+bool BoundsOverlap(synth::ui::Bounds a, synth::ui::Bounds b) {
+    return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+bool NoTwoNodesOverlap(const synth::ui::NodeTree& tree, const std::vector<std::string>& ids) {
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        for (std::size_t j = i + 1; j < ids.size(); ++j) {
+            if (BoundsOverlap(SurfaceBoundsOf(tree, ids[i]), SurfaceBoundsOf(tree, ids[j]))) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// The test binary runs from projects/synth while the plan names repository
+// relative paths; a path that exists in neither is an error, never a silent
+// pass.
+bool SourceContains(const std::string& repoRelativePath, const std::string& needle) {
+    for (const std::string& candidate : {repoRelativePath, "../../" + repoRelativePath}) {
+        std::ifstream stream(candidate);
+        if (stream) {
+            std::ostringstream contents;
+            contents << stream.rdbuf();
+            return contents.str().find(needle) != std::string::npos;
+        }
+    }
+    throw std::runtime_error("missing source file: " + repoRelativePath);
+}
+
 void RequireAction(const std::optional<synth::ui::Action>& action, const char* expectedName) {
     REQUIRE_TRUE(action.has_value());
     REQUIRE_TRUE(action->name == expectedName);
+}
+
+// A context-free surface build: the layout claims below are about the
+// resolver, not about any particular engine state.
+synth::ui::NodeTree BuildBraid4TreeAt(float width, float height) {
+    synth::RuntimeConfig config = synth_braid4::Braid4Core::Config();
+    config.uiWidth = static_cast<int>(width);
+    config.uiHeight = static_cast<int>(height);
+    synth::AppContext context;
+    context.config = &config;
+    synth_braid4::Braid4UiSurface surface;
+    surface.Attach(&context, nullptr);
+    return surface.BuildTree();
 }
 
 bool PopNextMessage(synth::MessageInBus& uiBus, synth::MessageIn& message) {
@@ -1197,13 +1281,15 @@ TEST_CASE(portable_surface_exposes_braid_main_screen_and_routes_actions) {
         REQUIRE_TRUE(vcoScope != nullptr);
         REQUIRE_TRUE(vcoScope->kind == synth::ui::NodeKind::Draw);
         REQUIRE_TRUE(!vcoScope->drawCommands.empty());
-        lastVcoY = std::max(lastVcoY, vcoScope->bounds.y + vcoScope->bounds.height);
+        const synth::ui::Bounds vcoSurface =
+            SurfaceBoundsOf(braidTree, "braid4.scope.vco." + std::to_string(scopeIx));
+        lastVcoY = std::max(lastVcoY, vcoSurface.y + vcoSurface.height);
 
         const synth::ui::Node* lfoScope = FindNodeById(braidTree, "braid4.scope.lfo." + std::to_string(scopeIx));
         REQUIRE_TRUE(lfoScope != nullptr);
         REQUIRE_TRUE(lfoScope->kind == synth::ui::NodeKind::Draw);
         REQUIRE_TRUE(!lfoScope->drawCommands.empty());
-        firstLfoY = std::min(firstLfoY, lfoScope->bounds.y);
+        firstLfoY = std::min(firstLfoY, SurfaceBoundsOf(braidTree, lfoScope->id.value).y);
     }
     REQUIRE_TRUE(firstLfoY > lastVcoY);
     for (std::size_t encoderIx = 0; encoderIx < 16; ++encoderIx) {
@@ -1717,6 +1803,81 @@ TEST_CASE(runs_finite_non_silent_stereo_audio_after_decimation) {
 
     rig.RunBlocks(4);
     REQUIRE_TRUE(OutputHasNonSilentFiniteStereo(rig.Output()));
+}
+
+TEST_CASE(braid4_composes_the_standard_application_layout) {
+    const synth::ui::NodeTree tree = BuildBraid4TreeAt(900.0f, 560.0f);
+    for (const char* suffix : {".title", ".body", ".visualizers", ".slot.upper", ".slot.lower",
+                               ".encoders", ".bay"}) {
+        RequireNodeId(tree, (std::string("braid4") + suffix).c_str());
+    }
+
+    // The shared proportions, now resolved rather than hand-computed:
+    // contentWidth = 900 - 2*16 = 868, 868 * 0.46 = 399.28 capped at 390, and
+    // the encoder region takes what is left after one 14 gap, capped at 462.
+    REQUIRE_NEAR(FindNodeById(tree, "braid4.visualizers")->bounds.width, 390.0f, 0.01);
+    REQUIRE_NEAR(FindNodeById(tree, "braid4.encoders")->bounds.width, 462.0f, 0.01);
+    REQUIRE_NEAR(FindNodeById(tree, "braid4.title")->bounds.height, 30.0f, 0.01);
+    REQUIRE_TRUE(SurfaceBoundsOf(tree, "braid4.visualizers").x <
+                 SurfaceBoundsOf(tree, "braid4.encoders").x);
+
+    REQUIRE_TRUE(!SourceContains("projects/synth/apps/braid-4/Braid4UiModel.hpp", "ScopeStackArea"));
+    REQUIRE_TRUE(!SourceContains("projects/synth/apps/braid-4/Braid4UiModel.hpp", "BoundsForIndex"));
+    REQUIRE_TRUE(!SourceContains("projects/synth/apps/braid-4/Braid4UiModel.hpp", "EncoderArea"));
+}
+
+TEST_CASE(braid4_every_control_resolves_inside_the_widget_bay) {
+    const synth::ui::NodeTree tree = BuildBraid4TreeAt(900.0f, 560.0f);
+    const std::vector<std::string> controls = {
+        synth_braid4::Braid4NodeIds::kBankBraid,   synth_braid4::Braid4NodeIds::kBankMatrix,
+        synth_braid4::Braid4NodeIds::kBankLfo,     synth_braid4::Braid4NodeIds::kBankLfoMatrix,
+        synth_braid4::Braid4NodeIds::SceneButton(0), synth_braid4::Braid4NodeIds::SceneButton(1),
+        synth_braid4::Braid4NodeIds::kSceneBlend,
+    };
+    for (const std::string& id : controls) {
+        REQUIRE_TRUE(IsDescendantOf(tree, id, "braid4.bay"));
+    }
+    REQUIRE_TRUE(NoTwoNodesOverlap(tree, controls));
+    REQUIRE_TRUE(FindNodeById(tree, "braid4.bay")->bounds.height > 0.0f);
+}
+
+TEST_CASE(braid4_every_scope_stays_individually_bounded) {
+    // sru-21: every scope remains individually addressable and independently
+    // bounded. The grid is an app-side component; the standard layout knows
+    // nothing of it.
+    const synth::ui::NodeTree tree = BuildBraid4TreeAt(900.0f, 560.0f);
+    std::vector<std::string> scopes;
+    for (std::size_t scopeIx = 0; scopeIx < synth_braid4::Braid4ScopeGridLayout::kScopeCount; ++scopeIx) {
+        scopes.push_back(synth_braid4::Braid4NodeIds::VcoScope(scopeIx));
+        scopes.push_back(synth_braid4::Braid4NodeIds::LfoScope(scopeIx));
+    }
+    REQUIRE_TRUE(!scopes.empty());
+    for (const std::string& id : scopes) {
+        const synth::ui::Node* scope = FindNodeById(tree, id);
+        REQUIRE_TRUE(scope != nullptr);
+        REQUIRE_TRUE(scope->bounds.width > 0.0f && scope->bounds.height > 0.0f);
+        REQUIRE_TRUE(IsDescendantOf(tree, id, "braid4.visualizers"));
+    }
+    REQUIRE_TRUE(NoTwoNodesOverlap(tree, scopes));
+
+    std::vector<std::string> encoders;
+    for (std::size_t ix = 0; ix < synth_braid4::Braid4EncoderGridLayout::kEncoderCount; ++ix) {
+        encoders.push_back(synth_braid4::Braid4NodeIds::Encoder(ix));
+        REQUIRE_TRUE(IsDescendantOf(tree, encoders.back(), "braid4.encoders"));
+    }
+    REQUIRE_TRUE(NoTwoNodesOverlap(tree, encoders));
+}
+
+TEST_CASE(braid4_regions_redistribute_at_a_different_root_extent) {
+    const synth::ui::NodeTree narrow = BuildBraid4TreeAt(700.0f, 560.0f);
+    const synth::ui::NodeTree wide = BuildBraid4TreeAt(1400.0f, 560.0f);
+    // 700 - 2*16 = 668 content; 668 * 0.46 = 307.28 is below the 390 cap.
+    REQUIRE_NEAR(FindNodeById(narrow, "braid4.visualizers")->bounds.width, 307.28f, 0.01);
+    REQUIRE_NEAR(FindNodeById(wide, "braid4.visualizers")->bounds.width, 390.0f, 0.01);
+    REQUIRE_TRUE(FindNodeById(wide, "braid4.encoders")->bounds.width >
+                 FindNodeById(narrow, "braid4.encoders")->bounds.width);
+    REQUIRE_TRUE(FindNodeById(wide, "braid4.encoder.15")->bounds.width >
+                 FindNodeById(narrow, "braid4.encoder.15")->bounds.width);
 }
 
 int main() {

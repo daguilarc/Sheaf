@@ -146,18 +146,61 @@ int main() {
                     synth::ui::waveform_detail::x_NumPoints - 1, 10, 10.0),
                 "full-span transfer does not split path");
 
-    // MiniApp derives all four rows and columns from the available encoder area.
+    // MiniApp's encoder grid declares four rows of four and the resolver
+    // divides whatever region it is given; resolved against a 410x330 region
+    // the cells are the same 96.5 x 76.5 the retired arithmetic produced.
     RequireTrue(synth_miniapp::EncoderGridLayout::kEncoderCount == 16,
                 "MiniApp encoder grid exposes sixteen cells");
-    const synth::ui::Bounds encoderArea{10.0f, 20.0f, 410.0f, 330.0f};
-    RequireBounds(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 0),
-                  synth::ui::Bounds{10.0f, 20.0f, 96.5f, 76.5f}, "encoder zero bounds");
-    RequireBounds(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 3),
-                  synth::ui::Bounds{323.5f, 20.0f, 96.5f, 76.5f}, "encoder three bounds");
-    RequireBounds(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 12),
-                  synth::ui::Bounds{10.0f, 273.5f, 96.5f, 76.5f}, "encoder twelve bounds");
-    RequireBounds(synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, 15),
-                  synth::ui::Bounds{323.5f, 273.5f, 96.5f, 76.5f}, "encoder fifteen bounds");
+    synth::ui::Builder gridBuilder;
+    gridBuilder.Root("grid.root", {0.0f, 0.0f, 410.0f, 330.0f});
+    synth::ui::LayoutOptions gridRegion;
+    gridRegion.main = synth::ui::Extent::Weight(1.0f);
+    gridRegion.padding = 0.0f;
+    gridBuilder.Section("grid.region", gridRegion, [](synth::ui::Builder& builder) {
+        synth_miniapp::EncoderGridLayout::Emit(
+            builder, "grid", [](synth::ui::Builder& builder, std::size_t ix) {
+                builder.Draw("grid.cell." + std::to_string(ix),
+                             synth_miniapp::EncoderGridLayout::CellLayout(),
+                             [](synth::ui::Bounds) { return std::vector<synth::ui::DrawCommand>{}; });
+            });
+    });
+    const synth::ui::NodeTree gridTree = gridBuilder.Build({0.0f, 0.0f, 410.0f, 330.0f});
+    // Bounds are parent-relative, so the grid's geometry is the cell folded
+    // over its row and column origins.
+    const auto surfaceBounds = [&gridTree](const std::string& id) {
+        const auto find = [&gridTree](const std::string& wanted) -> const synth::ui::Node* {
+            for (const synth::ui::Node& node : gridTree.nodes) {
+                if (node.id.value == wanted) {
+                    return &node;
+                }
+            }
+            throw std::runtime_error("missing node " + wanted);
+        };
+        const auto parentOf = [&gridTree](const std::string& wanted) -> std::string {
+            for (const synth::ui::Node& node : gridTree.nodes) {
+                for (const synth::ui::NodeId& child : node.children) {
+                    if (child.value == wanted) {
+                        return node.id.value;
+                    }
+                }
+            }
+            return {};
+        };
+        synth::ui::Bounds bounds = find(id)->bounds;
+        for (std::string parent = parentOf(id); !parent.empty(); parent = parentOf(parent)) {
+            bounds.x += find(parent)->bounds.x;
+            bounds.y += find(parent)->bounds.y;
+        }
+        return bounds;
+    };
+    RequireBounds(surfaceBounds("grid.cell.0"), synth::ui::Bounds{0.0f, 0.0f, 96.5f, 76.5f},
+                  "encoder zero bounds");
+    RequireBounds(surfaceBounds("grid.cell.3"), synth::ui::Bounds{313.5f, 0.0f, 96.5f, 76.5f},
+                  "encoder three bounds");
+    RequireBounds(surfaceBounds("grid.cell.12"), synth::ui::Bounds{0.0f, 253.5f, 96.5f, 76.5f},
+                  "encoder twelve bounds");
+    RequireBounds(surfaceBounds("grid.cell.15"), synth::ui::Bounds{313.5f, 253.5f, 96.5f, 76.5f},
+                  "encoder fifteen bounds");
 
     synth::ui::EncoderDrawState encoderState;
     encoderState.connected = true;

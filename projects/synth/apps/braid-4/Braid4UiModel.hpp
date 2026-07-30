@@ -67,37 +67,78 @@ inline constexpr const char* kEncoderPush = "braid4.encoder.push";
 
 }  // namespace Braid4Actions
 
+// A cell grid is an app-side component: it declares rows and cells and the
+// resolver decides every extent from the region it is given, so no cell
+// geometry is computed here (sru-53).
+inline void EmitBraid4CellGrid(synth::ui::Builder& builder,
+                               const std::string& id,
+                               std::size_t cellCount,
+                               std::size_t columns,
+                               float gap,
+                               const std::function<void(synth::ui::Builder&, std::size_t)>& emitCell)
+{
+    synth::ui::LayoutOptions grid;
+    grid.main = synth::ui::Extent::Weight(1.0f);
+    grid.padding = 0.0f;
+    grid.gap = gap;
+
+    builder.Column(id, grid, [&](synth::ui::Builder& builder) {
+        for (std::size_t index = 0; index < cellCount; index += columns)
+        {
+            builder.Row(id + ".row." + std::to_string(index / columns),
+                        grid,
+                        [&](synth::ui::Builder& builder) {
+                            for (std::size_t column = 0; column < columns && index + column < cellCount;
+                                 ++column)
+                            {
+                                emitCell(builder, index + column);
+                            }
+                        });
+        }
+    });
+}
+
+inline synth::ui::LayoutOptions Braid4CellLayout()
+{
+    synth::ui::LayoutOptions cell;
+    cell.main = synth::ui::Extent::Weight(1.0f);
+    return cell;
+}
+
 struct Braid4EncoderGridLayout
 {
     static constexpr std::size_t kEncoderCount = 16;
+    static constexpr std::size_t kColumns = 4;
     static constexpr float kGap = 8.0f;
 
-    static synth::ui::Bounds BoundsForIndex(synth::ui::Bounds area, std::size_t index)
+    static void Emit(synth::ui::Builder& builder,
+                     const std::string& id,
+                     const std::function<void(synth::ui::Builder&, std::size_t)>& emitCell)
     {
-        const std::size_t row = index / 4;
-        const std::size_t column = index % 4;
-        const float cellWidth = (area.width - kGap * 3.0f) * 0.25f;
-        const float cellHeight = (area.height - kGap * 3.0f) * 0.25f;
-        return {
-            area.x + static_cast<float>(column) * (cellWidth + kGap),
-            area.y + static_cast<float>(row) * (cellHeight + kGap),
-            cellWidth,
-            cellHeight,
-        };
+        EmitBraid4CellGrid(builder, id, kEncoderCount, kColumns, kGap, emitCell);
     }
 };
 
-struct Braid4PageLayout
+struct Braid4ScopeGridLayout
 {
     static constexpr std::size_t kScopeCount = 4;
+    static constexpr std::size_t kColumns = 2;
+    static constexpr float kGap = 14.0f;
+
+    static void Emit(synth::ui::Builder& builder,
+                     const std::string& id,
+                     const std::function<void(synth::ui::Builder&, std::size_t)>& emitCell)
+    {
+        EmitBraid4CellGrid(builder, id, kScopeCount, kColumns, kGap, emitCell);
+    }
+};
+
+// Only the surface extent survives: every region inside it is now resolved by
+// the standard application layout (sru-53).
+struct Braid4PageLayout
+{
     static constexpr float kDefaultWidth = 900.0f;
     static constexpr float kDefaultHeight = 560.0f;
-    static constexpr float kMargin = 16.0f;
-    static constexpr float kTitleHeight = 30.0f;
-    static constexpr float kSceneStripHeight = 44.0f;
-    static constexpr float kGap = 14.0f;
-    static constexpr float kScopeGridWidth = 390.0f;
-    static constexpr float kEncoderGridWidth = 462.0f;
 
     static synth::ui::Bounds RootBounds(const synth::AppContext* context)
     {
@@ -108,100 +149,6 @@ struct Braid4PageLayout
                                  ? static_cast<float>(context->config->uiHeight)
                                  : kDefaultHeight;
         return {0.0f, 0.0f, width, height};
-    }
-
-    static synth::ui::Bounds ContentArea(synth::ui::Bounds rootBounds)
-    {
-        return {
-            kMargin,
-            kMargin,
-            std::max(0.0f, rootBounds.width - kMargin * 2.0f),
-            std::max(0.0f, rootBounds.height - kMargin * 2.0f),
-        };
-    }
-
-    static synth::ui::Bounds SceneStripArea(synth::ui::Bounds content)
-    {
-        return {
-            content.x,
-            content.y + content.height - kSceneStripHeight,
-            content.width,
-            kSceneStripHeight,
-        };
-    }
-
-    static synth::ui::Bounds ScopeStackArea(synth::ui::Bounds content)
-    {
-        return {
-            content.x,
-            content.y + kTitleHeight + kGap,
-            std::min(kScopeGridWidth, content.width * 0.46f),
-            std::max(0.0f, content.height - kTitleHeight - kSceneStripHeight - kGap * 2.0f),
-        };
-    }
-
-    static synth::ui::Bounds ScopeGridArea(synth::ui::Bounds content)
-    {
-        return ScopeStackArea(content);
-    }
-
-    static synth::ui::Bounds VcoScopeGridArea(synth::ui::Bounds content)
-    {
-        const synth::ui::Bounds stack = ScopeStackArea(content);
-        return {stack.x, stack.y, stack.width, std::max(0.0f, (stack.height - kGap) * 0.5f)};
-    }
-
-    static synth::ui::Bounds LfoScopeGridArea(synth::ui::Bounds content)
-    {
-        const synth::ui::Bounds vco = VcoScopeGridArea(content);
-        return {vco.x, vco.y + vco.height + kGap, vco.width, vco.height};
-    }
-
-    static synth::ui::Bounds EncoderArea(synth::ui::Bounds content)
-    {
-        const synth::ui::Bounds scopeArea = ScopeGridArea(content);
-        const float x = scopeArea.x + scopeArea.width + kGap;
-        return {
-            x,
-            scopeArea.y,
-            std::max(0.0f, std::min(kEncoderGridWidth, content.x + content.width - x)),
-            scopeArea.height,
-        };
-    }
-
-    static synth::ui::Bounds ScopeBounds(synth::ui::Bounds content, std::size_t index)
-    {
-        const synth::ui::Bounds area = VcoScopeGridArea(content);
-        const std::size_t row = index / 2;
-        const std::size_t column = index % 2;
-        const float cellWidth = (area.width - kGap) * 0.5f;
-        const float cellHeight = (area.height - kGap) * 0.5f;
-        return {
-            area.x + static_cast<float>(column) * (cellWidth + kGap),
-            area.y + static_cast<float>(row) * (cellHeight + kGap),
-            cellWidth,
-            cellHeight,
-        };
-    }
-
-    static synth::ui::Bounds LfoScopeBounds(synth::ui::Bounds content, std::size_t index)
-    {
-        const synth::ui::Bounds area = LfoScopeGridArea(content);
-        const std::size_t row = index / 2;
-        const std::size_t column = index % 2;
-        const float cellWidth = (area.width - kGap) * 0.5f;
-        const float cellHeight = (area.height - kGap) * 0.5f;
-        return {
-            area.x + static_cast<float>(column) * (cellWidth + kGap),
-            area.y + static_cast<float>(row) * (cellHeight + kGap),
-            cellWidth,
-            cellHeight,
-        };
-    }
-
-    static bool NeedsScrolling(synth::ui::Bounds rootBounds)
-    {
-        return rootBounds.width < kDefaultWidth || rootBounds.height < kDefaultHeight;
     }
 };
 
@@ -383,7 +330,9 @@ inline std::string SceneButtonLabel(std::size_t sceneIx, std::size_t leftScene, 
     return label;
 }
 
-inline void AppendBraid4Controls(synth::ui::Builder& builder, const Braid4UiSnapshot& snapshot)
+inline constexpr const char* kBayControlsId = "braid4.bay.controls";
+
+inline void AppendBraid4BayControls(synth::ui::Builder& builder, const Braid4UiSnapshot& snapshot)
 {
     builder.Button(Braid4NodeIds::kBankBraid,
                    snapshot.selectedBank == 0 ? "Braid Bank *" : "Braid Bank",
@@ -410,6 +359,19 @@ inline void AppendBraid4Controls(synth::ui::Builder& builder, const Braid4UiSnap
                    1.0f,
                    0.001f,
                    synth::ui::Action::Named(Braid4Actions::kSceneBlend));
+}
+
+// Every semantic control Braid 4 presents outside its scope slots and encoder
+// region lives in the widget bay, on one wrapping row that flows onto as many
+// lines as its extent needs (sru-53).
+inline void AppendBraid4Controls(synth::ui::Builder& builder, const Braid4UiSnapshot& snapshot)
+{
+    synth::ui::LayoutOptions controls;
+    controls.padding = 0.0f;
+    controls.wrap = true;
+    builder.Row(kBayControlsId, controls, [&snapshot](synth::ui::Builder& builder) {
+        AppendBraid4BayControls(builder, snapshot);
+    });
 }
 
 inline bool DispatchBraid4Action(synth::AppContext* context,

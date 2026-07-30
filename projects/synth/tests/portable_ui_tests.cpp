@@ -115,6 +115,28 @@ bool BoundsInside(synth::ui::Bounds inner, synth::ui::Bounds outer)
            inner.y + inner.height <= outer.y + outer.height;
 }
 
+// Bounds are parent-relative, so containment is a claim about a node against
+// its own parent's box, not against the surface.
+void RequireNodeContainedInParent(const synth::ui::NodeTree& tree, const std::string& id)
+{
+    const synth::ui::Node* node = FindNodeById(tree, id);
+    Require(node != nullptr, ("missing node " + id).c_str());
+    for (const synth::ui::Node& candidate : tree.nodes)
+    {
+        for (const synth::ui::NodeId& child : candidate.children)
+        {
+            if (child.value != id)
+            {
+                continue;
+            }
+            Require(BoundsInside(node->bounds, {0.0f, 0.0f, candidate.bounds.width, candidate.bounds.height}),
+                    ("node " + id + " stays inside its parent").c_str());
+            return;
+        }
+    }
+    Require(false, ("node " + id + " has no parent").c_str());
+}
+
 void RequireWaveformGeometryInside(const std::vector<synth::ui::DrawCommand>& commands,
                                    synth::ui::Bounds bounds,
                                    const char* label)
@@ -576,10 +598,25 @@ void TestBraid4StandardModulationViewsRemainPortable()
     const synth::ui::NodeTree monoTree = surface.BuildTree();
     Require(FindNodeById(monoTree, "braid4.encoder.0.visualizer") != nullptr,
             "Braid4 mono standard random source has a portable underlay");
-    Require(FindNodeById(monoTree, "braid4.encoder.11") == nullptr,
-            "Braid4 mono disconnected constant position has no encoder cell");
+    // The disconnected position used to be left out of the tree entirely. Now
+    // that the encoder region is a resolver-driven grid, dropping a cell would
+    // widen its neighbours and move every encoder after it, so the cell keeps
+    // its place and is inert instead: nothing painted, nothing dispatched.
+    const synth::ui::Node* disconnected = FindNodeById(monoTree, "braid4.encoder.11");
+    Require(disconnected != nullptr,
+            "Braid4 mono disconnected constant position keeps its grid cell");
+    Require(disconnected->drawCommands.empty(),
+            "Braid4 mono disconnected constant position paints nothing");
+    Require(!disconnected->pointerDragAction.has_value() && !disconnected->doubleClickAction.has_value() &&
+                !disconnected->action.has_value(),
+            "Braid4 mono disconnected constant position dispatches nothing");
     Require(FindNodeById(monoTree, "braid4.encoder.11.visualizer") == nullptr,
             "Braid4 mono disconnected constant position has no visualizer");
+    const synth::ui::Node* connectedNeighbour = FindNodeById(monoTree, "braid4.encoder.14");
+    Require(connectedNeighbour != nullptr &&
+                connectedNeighbour->bounds.x == FindNodeById(quadTree, "braid4.encoder.14")->bounds.x &&
+                connectedNeighbour->bounds.y == FindNodeById(quadTree, "braid4.encoder.14")->bounds.y,
+            "an inert cell holds its place, so its neighbours never move");
     Require(!core.MonoGroup()->GetModulators().Metadata(11).connected,
             "Braid4 mono constant source stays disconnected");
     Require(core.MonoGroup()->GetModulators().Metadata(11).visualizer == nullptr,
@@ -1281,23 +1318,28 @@ int main()
     RequireNear(braidRoot.width, 900.0f, 0.0001f, "braid4 default width");
     RequireNear(braidRoot.height, 560.0f, 0.0001f, "braid4 default height");
 
-    const synth::ui::Bounds braidContent = synth_braid4::Braid4PageLayout::ContentArea(braidRoot);
-    for (std::size_t scopeIx = 0; scopeIx < synth_braid4::Braid4PageLayout::kScopeCount; ++scopeIx)
+    // Braid 4 no longer computes region or cell geometry: every one of these
+    // bounds is resolved by the standard application layout, so the claim to
+    // pin is that the resolved tree contains each node inside its parent.
+    synth_braid4::Braid4UiSurface braidSurface;
+    braidSurface.Attach(nullptr, nullptr);
+    const synth::ui::NodeTree braidTree = braidSurface.BuildTree();
+    for (std::size_t scopeIx = 0; scopeIx < synth_braid4::Braid4ScopeGridLayout::kScopeCount; ++scopeIx)
     {
-        Require(BoundsInside(synth_braid4::Braid4PageLayout::ScopeBounds(braidContent, scopeIx), braidRoot),
-                "braid4 2x2 scope bounds stay inside default root");
+        RequireNodeContainedInParent(braidTree, synth_braid4::Braid4NodeIds::VcoScope(scopeIx));
+        RequireNodeContainedInParent(braidTree, synth_braid4::Braid4NodeIds::LfoScope(scopeIx));
     }
     for (std::size_t encoderIx = 0; encoderIx < synth_braid4::Braid4EncoderGridLayout::kEncoderCount; ++encoderIx)
     {
-        Require(BoundsInside(synth_braid4::Braid4EncoderGridLayout::BoundsForIndex(
-                                 synth_braid4::Braid4PageLayout::EncoderArea(braidContent), encoderIx),
-                             braidRoot),
-                "braid4 4x4 encoder bounds stay inside default root");
+        RequireNodeContainedInParent(braidTree, synth_braid4::Braid4NodeIds::Encoder(encoderIx));
     }
-    Require(BoundsInside(synth_braid4::Braid4PageLayout::SceneStripArea(braidContent), braidRoot),
-            "braid4 scene strip stays inside default root");
-    Require(!synth_braid4::Braid4PageLayout::NeedsScrolling(braidRoot),
-            "braid4 default layout does not need scrolling");
+    for (const char* region : {"braid4.title", "braid4.body", "braid4.visualizers", "braid4.slot.upper",
+                               "braid4.slot.lower", "braid4.encoders", "braid4.bay"})
+    {
+        RequireNodeContainedInParent(braidTree, region);
+    }
+    Require(BoundsInside(FindNodeById(braidTree, "braid4.page")->bounds, braidRoot),
+            "braid4 page stays inside the default root extent");
 
     const auto disconnectedEncoderCommands = synth::ui::BuildEncoderDrawCommands(
         synth::ui::EncoderDrawState{.connected = false},

@@ -1,10 +1,14 @@
 #include "synth/PortableUIBuilders.hpp"
 #include "synth/PortableUIMetrics.hpp"
+#include "synth/PortableUIStandardLayout.hpp"
 
 #include <cmath>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef JUCE_MAJOR_VERSION
@@ -19,6 +23,34 @@ void Require(bool condition, const char* label)
     {
         throw std::runtime_error(label);
     }
+}
+
+void Require(bool condition, const std::string& label)
+{
+    Require(condition, label.c_str());
+}
+
+// The test binary runs from projects/synth, while the plan names repository
+// relative paths. Try both, and fail loudly on a path that exists in neither
+// so a typo can never make a source assertion pass vacuously.
+std::string ReadSource(const std::string& repoRelativePath)
+{
+    for (const std::string& candidate : {repoRelativePath, "../../" + repoRelativePath})
+    {
+        std::ifstream stream(candidate);
+        if (stream)
+        {
+            std::ostringstream contents;
+            contents << stream.rdbuf();
+            return contents.str();
+        }
+    }
+    throw std::runtime_error("missing source file: " + repoRelativePath);
+}
+
+bool SourceContains(const std::string& repoRelativePath, const std::string& needle)
+{
+    return ReadSource(repoRelativePath).find(needle) != std::string::npos;
 }
 
 const synth::ui::Node& FindNode(const synth::ui::NodeTree& tree, const char* id)
@@ -480,6 +512,228 @@ void TestSectionAndScrollAreaStackChildrenVertically()
             "ScrollArea stacks children vertically");
 }
 
+void TestWrappingRowLineBreakHeightIsPinned()
+{
+    // The line-break computation was previously pinned only relationally, so a
+    // wrong break would have gone undetected. The column's 12 padding leaves
+    // the unpadded row 176 wide, which holds two 80-wide children per line
+    // (80 + 8 + 80 = 168 <= 176) and breaks before the third. Two lines of
+    // 22-high labels separated by one 8 gap.
+    synth::ui::LayoutOptions row;
+    row.wrap = true;
+    row.padding = 0.0f;
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 200.0f, 300.0f});
+    b.Column("col", {}, [row](synth::ui::Builder& b) {
+        b.Row("wrapped", row, [](synth::ui::Builder& b) {
+            for (int i = 0; i < 4; ++i)
+            {
+                b.Label("w" + std::to_string(i), "x", MainOf(synth::ui::Extent::Px(80.0f)));
+            }
+        });
+    });
+    const auto tree = b.Build({0.0f, 0.0f, 200.0f, 300.0f});
+    Require(NearlyEqual(FindNode(tree, "wrapped").bounds.height, 22.0f + 8.0f + 22.0f),
+            "a wrapping row reserves exactly its computed line count");
+    Require(NearlyEqual(FindNode(tree, "w1").bounds.y, FindNode(tree, "w0").bounds.y),
+            "the first two children share the first line");
+    Require(NearlyEqual(FindNode(tree, "w2").bounds.y, FindNode(tree, "w0").bounds.y + 22.0f + 8.0f),
+            "the third child starts the second line one gap below the first");
+}
+
+void TestIntrinsicColumnReservesAWrappingRowsGrownExtent()
+{
+    // A wrapping row measured from two levels up: the intrinsic column must
+    // measure it at the width it will actually resolve to, not at its
+    // unwrapped natural width, or the grandparent under-reserves.
+    synth::ui::LayoutOptions wrapping;
+    wrapping.wrap = true;
+    wrapping.padding = 0.0f;
+    synth::ui::LayoutOptions intrinsicColumn;
+    intrinsicColumn.main = synth::ui::Extent::Intrinsic();
+    intrinsicColumn.padding = 0.0f;
+
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 200.0f, 300.0f});
+    b.Column("outer", {}, [&](synth::ui::Builder& b) {
+        b.Column("bay", intrinsicColumn, [&](synth::ui::Builder& b) {
+            b.Row("wrapped", wrapping, [](synth::ui::Builder& b) {
+                for (int i = 0; i < 4; ++i)
+                {
+                    b.Label("w" + std::to_string(i), "x", MainOf(synth::ui::Extent::Px(80.0f)));
+                }
+            });
+        });
+        b.Label("after", "after", MainOf(synth::ui::Extent::Px(20.0f)));
+    });
+    const auto tree = b.Build({0.0f, 0.0f, 200.0f, 300.0f});
+    const auto& bay = FindNode(tree, "bay");
+    const auto& wrapped = FindNode(tree, "wrapped");
+    Require(NearlyEqual(bay.bounds.height, wrapped.bounds.height),
+            "the intrinsic column reserves the wrapping row's grown extent");
+    Require(FindNode(tree, "after").bounds.y >= bay.bounds.y + bay.bounds.height + synth::ui::kSpacing.gap,
+            "a trailing sibling of the column clears every wrapped line");
+}
+
+void TestOverlayChildTakesItsTargetsResolvedBounds()
+{
+    const auto build = [](bool overlay) {
+        synth::ui::Builder b;
+        b.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+        b.Row("row", {}, [overlay](synth::ui::Builder& b) {
+            b.Label("first", "first", MainOf(synth::ui::Extent::Px(60.0f)));
+            if (overlay)
+            {
+                synth::ui::LayoutOptions o;
+                o.overlayOf = "second";
+                b.Draw("underlay", o, [](synth::ui::Bounds extent) {
+                    return std::vector<synth::ui::DrawCommand>{
+                        synth::ui::DrawCommand::Fill(extent, synth::Color::Rgb(7, 8, 9))};
+                });
+            }
+            b.Label("second", "second", MainOf(synth::ui::Extent::Px(90.0f)));
+        });
+        return b.Build({0.0f, 0.0f, 400.0f, 300.0f});
+    };
+    const auto with = build(true);
+    const auto& underlay = FindNode(with, "underlay");
+    const auto& second = FindNode(with, "second");
+    Require(NearlyEqual(underlay.bounds.x, second.bounds.x) &&
+                NearlyEqual(underlay.bounds.y, second.bounds.y) &&
+                NearlyEqual(underlay.bounds.width, second.bounds.width) &&
+                NearlyEqual(underlay.bounds.height, second.bounds.height),
+            "an overlay child resolves to exactly its target sibling's bounds");
+    Require(NearlyEqual(second.bounds.x, FindNode(build(false), "second").bounds.x),
+            "the overlay consumes no stacking space, so its siblings resolve as if it were absent");
+    Require(underlay.drawCommands.size() == 1 &&
+                NearlyEqual(underlay.drawCommands[0].bounds.width, second.bounds.width),
+            "the overlay's draw factory receives its resolved node-local extent");
+}
+
+synth::ui::NodeTree BuildStandardLayoutWith(float width,
+                                            float height,
+                                            synth::ui::Builder::Children upper,
+                                            synth::ui::Builder::Children bay)
+{
+    synth::ui::StandardAppLayout layout;
+    layout.idPrefix = "app";
+    layout.title = "App";
+    layout.upperVisualizer = std::move(upper);
+    layout.widgetBay = std::move(bay);
+
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, width, height});
+    layout.Emit(b);
+    return b.Build({0.0f, 0.0f, width, height});
+}
+
+synth::ui::Builder::Children StandardBayContent()
+{
+    return [](synth::ui::Builder& b) {
+        b.Button("app.bay.one", "One", synth::ui::Action::Named("one"));
+        b.Button("app.bay.two", "Two", synth::ui::Action::Named("two"));
+    };
+}
+
+synth::ui::NodeTree BuildStandardLayout(float width, float height, synth::ui::Builder::Children upper)
+{
+    return BuildStandardLayoutWith(width, height, std::move(upper), StandardBayContent());
+}
+
+synth::ui::NodeTree BuildStandardLayoutAt(float width, float height)
+{
+    return BuildStandardLayoutWith(width, height, {}, StandardBayContent());
+}
+
+synth::ui::NodeTree BuildStandardLayoutWithBay()
+{
+    return BuildStandardLayoutWith(900.0f, 560.0f, {}, StandardBayContent());
+}
+
+synth::ui::NodeTree BuildStandardLayoutWithoutBay()
+{
+    return BuildStandardLayoutWith(900.0f, 560.0f, {}, {});
+}
+
+void TestSlotsAcceptArbitraryComponents()
+{
+    const auto fill = [](const char* id) {
+        return [id](synth::ui::Builder& b) {
+            b.Draw(id, LayoutMain(synth::ui::Extent::Weight(1.0f)), [](synth::ui::Bounds e) {
+                return std::vector<synth::ui::DrawCommand>{
+                    synth::ui::DrawCommand::Fill(e, synth::Color::Rgb(1, 1, 1))};
+            });
+        };
+    };
+    const auto grid = [&fill](synth::ui::Builder& b) {
+        b.Row("cells", LayoutMain(synth::ui::Extent::Weight(1.0f)), [&fill](synth::ui::Builder& b) {
+            fill("cell0")(b);
+            fill("cell1")(b);
+        });
+    };
+    for (const auto& upper : {synth::ui::Builder::Children(grid),
+                              synth::ui::Builder::Children(fill("wave"))})
+    {
+        const auto tree = BuildStandardLayout(900.0f, 560.0f, upper);
+        Require(FindNode(tree, "app.slot.upper").bounds.width > 0.0f,
+                "the upper slot resolves whatever component it is given");
+    }
+    // The slot names are part of the declared interface; what must not appear
+    // is any knowledge of what a slot is filled with.
+    for (const char* forbidden : {"cellCount", "cellWidth", "kEncoderCount", "kScopeCount",
+                                  "BoundsForIndex"})
+    {
+        Require(!SourceContains("projects/synth/include/synth/PortableUIStandardLayout.hpp", forbidden),
+                std::string("the standard layout contains no '") + forbidden + "' logic");
+    }
+}
+
+void TestStandardLayoutProportionsMatchBothApps()
+{
+    const auto tree = BuildStandardLayoutAt(900.0f, 560.0f);
+    // contentWidth = 900 - 2*16 = 868; 868 * 0.46 = 399.28, capped at 390.
+    Require(NearlyEqual(FindNode(tree, "app.visualizers").bounds.width, 390.0f),
+            "the visualizer stack takes min(390, contentWidth * 0.46)");
+    Require(NearlyEqual(FindNode(tree, "app.encoders").bounds.width, 462.0f),
+            "the encoder region takes min(462, remainder)");
+    Require(NearlyEqual(FindNode(tree, "app.title").bounds.height, 30.0f),
+            "the title row is 30 high");
+    Require(FindNode(tree, "app.visualizers").bounds.x < FindNode(tree, "app.encoders").bounds.x,
+            "the visualizer stack is on the LEFT, encoders to its right");
+    Require(FindNode(tree, "app.slot.upper").bounds.y < FindNode(tree, "app.slot.lower").bounds.y,
+            "the visualizer column stacks the upper slot above the lower");
+}
+
+void TestEmptyWidgetBayCollapses()
+{
+    const auto with = BuildStandardLayoutWithBay();
+    const auto without = BuildStandardLayoutWithoutBay();
+    Require(NearlyEqual(FindNode(without, "app.bay").bounds.height, 0.0f),
+            "an unsupplied widget bay occupies no space and renders no chrome");
+    Require(FindNode(without, "app.bay").children.empty(),
+            "an unsupplied widget bay renders no placeholder content");
+    Require(FindNode(without, "app.visualizers").bounds.height >
+                FindNode(with, "app.visualizers").bounds.height,
+            "the regions above take the collapsed bay's extent");
+}
+
+void TestStandardLayoutRedistributesAtDifferentExtents()
+{
+    const auto narrow = BuildStandardLayoutAt(700.0f, 560.0f);
+    const auto wide = BuildStandardLayoutAt(1400.0f, 560.0f);
+    Require(FindNode(wide, "app.encoders").bounds.width >=
+                FindNode(narrow, "app.encoders").bounds.width,
+            "regions redistribute through the ordinary resolver at a wider extent");
+    Require(NearlyEqual(FindNode(wide, "app.visualizers").bounds.width, 390.0f),
+            "the capped stack stays at its maximum inside a real composition");
+    // 700 - 2*16 = 668 content; 668 * 0.46 = 307.28 is below the cap, and the
+    // encoder region takes what is left after one 14 gap.
+    Require(NearlyEqual(FindNode(narrow, "app.visualizers").bounds.width, 307.28f),
+            "below the cap the stack is exactly the content-width fraction");
+    Require(NearlyEqual(FindNode(narrow, "app.encoders").bounds.width, 668.0f - 14.0f - 307.28f),
+            "the encoder region takes the remainder after the gap, as both apps did");
+}
+
 }  // namespace
 
 int main()
@@ -505,5 +759,12 @@ int main()
     TestTextReservationIsDeterministicAndBackendFree();
     TestWrappingRowFlowsOntoAdditionalLines();
     TestWrappingRowReservesGrownExtentInParentFlow();
+    TestWrappingRowLineBreakHeightIsPinned();
+    TestIntrinsicColumnReservesAWrappingRowsGrownExtent();
+    TestOverlayChildTakesItsTargetsResolvedBounds();
     TestSectionAndScrollAreaStackChildrenVertically();
+    TestSlotsAcceptArbitraryComponents();
+    TestStandardLayoutProportionsMatchBothApps();
+    TestEmptyWidgetBayCollapses();
+    TestStandardLayoutRedistributesAtDifferentExtents();
 }

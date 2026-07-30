@@ -368,6 +368,89 @@ bool BoundsInside(synth::ui::Bounds inner, synth::ui::Bounds outer) {
            inner.y + inner.height <= outer.y + outer.height;
 }
 
+std::optional<std::string> ParentIdOf(const synth::ui::NodeTree& tree, const std::string& id) {
+    for (const synth::ui::Node& node : tree.nodes) {
+        for (const synth::ui::NodeId& child : node.children) {
+            if (child.value == id) {
+                return node.id.value;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+// Node bounds are parent-relative, so a claim about where two nodes sit
+// relative to each other is a claim about their bounds folded over their
+// ancestor origins.
+synth::ui::Bounds SurfaceBoundsOf(const synth::ui::NodeTree& tree, const std::string& id) {
+    const synth::ui::Node* node = FindNodeById(tree, id);
+    REQUIRE_TRUE(node != nullptr);
+    synth::ui::Bounds bounds = node->bounds;
+    std::optional<std::string> parent = ParentIdOf(tree, id);
+    while (parent.has_value()) {
+        const synth::ui::Node* parentNode = FindNodeById(tree, *parent);
+        REQUIRE_TRUE(parentNode != nullptr);
+        bounds.x += parentNode->bounds.x;
+        bounds.y += parentNode->bounds.y;
+        parent = ParentIdOf(tree, *parent);
+    }
+    return bounds;
+}
+
+bool IsDescendantOf(const synth::ui::NodeTree& tree, const std::string& id, const std::string& ancestorId) {
+    std::optional<std::string> parent = ParentIdOf(tree, id);
+    while (parent.has_value()) {
+        if (*parent == ancestorId) {
+            return true;
+        }
+        parent = ParentIdOf(tree, *parent);
+    }
+    return false;
+}
+
+bool BoundsOverlap(synth::ui::Bounds a, synth::ui::Bounds b) {
+    return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+bool NoTwoNodesOverlap(const synth::ui::NodeTree& tree, const std::vector<std::string>& ids) {
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        for (std::size_t j = i + 1; j < ids.size(); ++j) {
+            if (BoundsOverlap(SurfaceBoundsOf(tree, ids[i]), SurfaceBoundsOf(tree, ids[j]))) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// The test binary runs from projects/synth while the plan names repository
+// relative paths; a path that exists in neither is an error, never a silent
+// pass.
+bool SourceContains(const std::string& repoRelativePath, const std::string& needle) {
+    for (const std::string& candidate : {repoRelativePath, "../../" + repoRelativePath}) {
+        std::ifstream stream(candidate);
+        if (stream) {
+            std::ostringstream contents;
+            contents << stream.rdbuf();
+            return contents.str().find(needle) != std::string::npos;
+        }
+    }
+    throw std::runtime_error("missing source file: " + repoRelativePath);
+}
+
+// A context-free surface build: the layout claims below are about the
+// resolver, not about any particular engine state.
+synth::ui::NodeTree BuildMiniAppTreeAt(float width, float height) {
+    synth::RuntimeConfig config = synth_miniapp::MiniAppCore::Config();
+    config.uiWidth = static_cast<int>(width);
+    config.uiHeight = static_cast<int>(height);
+    synth::AppContext context;
+    context.config = &config;
+    synth_miniapp::MiniAppUiSurface surface;
+    surface.Attach(&context, nullptr);
+    return surface.BuildTree();
+}
+
 struct TestVisualizer final : synth::ui::Visualizer
 {
     std::vector<synth::ui::DrawCommand> DrawVisible() const override
@@ -684,28 +767,38 @@ TEST_CASE(miniapp_main_layout_draws_bounded_scope_stack_and_complete_encoder_gri
         const synth::ui::NodeTree tree = surface.BuildTree();
 
         const synth::ui::Bounds root = synth_miniapp::MiniAppPageLayout::RootBounds(&context);
-        std::array<const synth::ui::Node*, 16> encoders{};
+        std::array<synth::ui::Bounds, 16> encoders{};
         for (std::size_t ix = 0; ix < encoders.size(); ++ix) {
-            encoders[ix] = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::Encoder(ix));
-            REQUIRE_TRUE(encoders[ix] != nullptr);
-            REQUIRE_TRUE(BoundsInside(encoders[ix]->bounds, root));
+            const std::string encoderId = synth_miniapp::MiniAppNodeIds::Encoder(ix);
+            REQUIRE_TRUE(FindNodeById(tree, encoderId) != nullptr);
+            encoders[ix] = SurfaceBoundsOf(tree, encoderId);
+            REQUIRE_TRUE(BoundsInside(encoders[ix], root));
         }
-        REQUIRE_TRUE(encoders[0]->bounds.y == encoders[3]->bounds.y);
-        REQUIRE_TRUE(encoders[0]->bounds.x < encoders[3]->bounds.x);
-        REQUIRE_TRUE(encoders[0]->bounds.x == encoders[12]->bounds.x);
-        REQUIRE_TRUE(encoders[0]->bounds.y < encoders[12]->bounds.y);
-        REQUIRE_TRUE(encoders[3]->bounds.x == encoders[15]->bounds.x);
-        REQUIRE_TRUE(encoders[12]->bounds.y == encoders[15]->bounds.y);
+        REQUIRE_TRUE(encoders[0].y == encoders[3].y);
+        REQUIRE_TRUE(encoders[0].x < encoders[3].x);
+        REQUIRE_TRUE(encoders[0].x == encoders[12].x);
+        REQUIRE_TRUE(encoders[0].y < encoders[12].y);
+        REQUIRE_TRUE(encoders[3].x == encoders[15].x);
+        REQUIRE_TRUE(encoders[12].y == encoders[15].y);
 
-        const synth::ui::Node* vco = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kVcoScope);
-        const synth::ui::Node* lfo = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kLfoScope);
-        REQUIRE_TRUE(vco != nullptr);
-        REQUIRE_TRUE(lfo != nullptr);
-        REQUIRE_TRUE(BoundsInside(vco->bounds, root));
-        REQUIRE_TRUE(BoundsInside(lfo->bounds, root));
-        REQUIRE_TRUE(vco->bounds.y + vco->bounds.height <= lfo->bounds.y);
-        REQUIRE_TRUE(vco->bounds.x + vco->bounds.width <= encoders[0]->bounds.x);
-        REQUIRE_TRUE(lfo->bounds.x + lfo->bounds.width <= encoders[12]->bounds.x);
+        REQUIRE_TRUE(FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kVcoScope) != nullptr);
+        REQUIRE_TRUE(FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kLfoScope) != nullptr);
+        const synth::ui::Bounds vco = SurfaceBoundsOf(tree, synth_miniapp::MiniAppNodeIds::kVcoScope);
+        const synth::ui::Bounds lfo = SurfaceBoundsOf(tree, synth_miniapp::MiniAppNodeIds::kLfoScope);
+        REQUIRE_TRUE(BoundsInside(vco, root));
+        REQUIRE_TRUE(BoundsInside(lfo, root));
+        REQUIRE_TRUE(vco.y + vco.height <= lfo.y);
+        REQUIRE_TRUE(vco.x + vco.width <= encoders[0].x);
+        REQUIRE_TRUE(lfo.x + lfo.width <= encoders[12].x);
+
+        // The slot component fills whatever extent the slot resolved to, at
+        // either root extent, without the app computing the region.
+        const synth::ui::Node* vcoNode = FindNodeById(tree, synth_miniapp::MiniAppNodeIds::kVcoScope);
+        REQUIRE_TRUE(!vcoNode->drawCommands.empty());
+        RequireNear(vcoNode->drawCommands.front().bounds.width, vcoNode->bounds.width, 0.0001f,
+                    "vco waveform fills its slot width");
+        RequireNear(vcoNode->drawCommands.front().bounds.height, vcoNode->bounds.height, 0.0001f,
+                    "vco waveform fills its slot height");
         REQUIRE_TRUE(FindNodeById(tree, "miniapp.ganged_random_lfo.round") == nullptr);
     };
 
@@ -719,9 +812,20 @@ TEST_CASE(miniapp_main_layout_draws_bounded_scope_stack_and_complete_encoder_gri
     const std::string underlayId = synth_miniapp::MiniAppNodeIds::Encoder(0) + ".visualizer";
     const synth::ui::Node* underlay = FindNodeById(modulationTree, underlayId);
     REQUIRE_TRUE(underlay != nullptr);
+    // The underlay covers exactly the encoder it sits beneath, and the retained
+    // visualizer is handed that cell's NODE-LOCAL extent: draw geometry is
+    // node-local (sru-46), so a visualizer's own origin is always (0, 0).
+    const synth::ui::Node* underlaidEncoder =
+        FindNodeById(modulationTree, synth_miniapp::MiniAppNodeIds::Encoder(0));
+    REQUIRE_TRUE(underlaidEncoder != nullptr);
+    REQUIRE_TRUE(underlay->bounds.x == underlaidEncoder->bounds.x);
+    REQUIRE_TRUE(underlay->bounds.y == underlaidEncoder->bounds.y);
+    REQUIRE_TRUE(underlay->bounds.width == underlaidEncoder->bounds.width);
+    REQUIRE_TRUE(underlay->bounds.height == underlaidEncoder->bounds.height);
+    REQUIRE_TRUE(underlay->bounds.width > 0.0f && underlay->bounds.height > 0.0f);
     const auto& retained = rig.Application().StandardModulatorsInstance().RandomVisualizer(0);
-    REQUIRE_TRUE(retained.GetBounds().x == underlay->bounds.x);
-    REQUIRE_TRUE(retained.GetBounds().y == underlay->bounds.y);
+    REQUIRE_TRUE(retained.GetBounds().x == 0.0f);
+    REQUIRE_TRUE(retained.GetBounds().y == 0.0f);
     REQUIRE_TRUE(retained.GetBounds().width == underlay->bounds.width);
     REQUIRE_TRUE(retained.GetBounds().height == underlay->bounds.height);
 }
@@ -736,22 +840,41 @@ TEST_CASE(miniapp_ui_model_exposes_layout_scene_labels_and_dispatch) {
     REQUIRE_TRUE(synth_miniapp::SceneButtonLabel(1, 0, 1) == std::string("S2 R"));
     REQUIRE_TRUE(synth_miniapp::SceneButtonLabel(2, 2, 2) == std::string("S3 L R"));
 
+    // The grid no longer computes cell geometry: it declares four rows of four
+    // and the resolver divides the region it is given. Resolved against a
+    // 410x330 region with the grid's 8 gaps, the cells are the same
+    // 96.5 x 76.5 the retired arithmetic produced, at the same offsets.
     REQUIRE_TRUE(synth_miniapp::EncoderGridLayout::kEncoderCount == 16);
-    const synth::ui::Bounds encoderArea{10.0f, 20.0f, 410.0f, 330.0f};
-    const std::array<std::size_t, 4> cornerIndexes{0, 3, 12, 15};
-    const std::array<synth::ui::Bounds, 4> expectedCorners{{
-        {10.0f, 20.0f, 96.5f, 76.5f},
-        {323.5f, 20.0f, 96.5f, 76.5f},
-        {10.0f, 273.5f, 96.5f, 76.5f},
-        {323.5f, 273.5f, 96.5f, 76.5f},
-    }};
-    for (std::size_t ix = 0; ix < cornerIndexes.size(); ++ix) {
-        const synth::ui::Bounds actual =
-            synth_miniapp::EncoderGridLayout::BoundsForIndex(encoderArea, cornerIndexes[ix]);
-        RequireNear(actual.x, expectedCorners[ix].x, 0.0001f, "encoder corner x");
-        RequireNear(actual.y, expectedCorners[ix].y, 0.0001f, "encoder corner y");
-        RequireNear(actual.width, expectedCorners[ix].width, 0.0001f, "encoder corner width");
-        RequireNear(actual.height, expectedCorners[ix].height, 0.0001f, "encoder corner height");
+    {
+        synth::ui::Builder builder;
+        builder.Root("grid.root", {0.0f, 0.0f, 410.0f, 330.0f});
+        synth::ui::LayoutOptions region;
+        region.main = synth::ui::Extent::Weight(1.0f);
+        region.padding = 0.0f;
+        builder.Section("grid.region", region, [](synth::ui::Builder& builder) {
+            synth_miniapp::EncoderGridLayout::Emit(
+                builder, "grid", [](synth::ui::Builder& builder, std::size_t ix) {
+                    builder.Draw("grid.cell." + std::to_string(ix),
+                                 synth_miniapp::EncoderGridLayout::CellLayout(),
+                                 [](synth::ui::Bounds) { return std::vector<synth::ui::DrawCommand>{}; });
+                });
+        });
+        const synth::ui::NodeTree gridTree = builder.Build({0.0f, 0.0f, 410.0f, 330.0f});
+        const std::array<std::size_t, 4> cornerIndexes{0, 3, 12, 15};
+        const std::array<synth::ui::Bounds, 4> expectedCorners{{
+            {0.0f, 0.0f, 96.5f, 76.5f},
+            {313.5f, 0.0f, 96.5f, 76.5f},
+            {0.0f, 253.5f, 96.5f, 76.5f},
+            {313.5f, 253.5f, 96.5f, 76.5f},
+        }};
+        for (std::size_t ix = 0; ix < cornerIndexes.size(); ++ix) {
+            const synth::ui::Bounds actual =
+                SurfaceBoundsOf(gridTree, "grid.cell." + std::to_string(cornerIndexes[ix]));
+            RequireNear(actual.x, expectedCorners[ix].x, 0.0001f, "encoder corner x");
+            RequireNear(actual.y, expectedCorners[ix].y, 0.0001f, "encoder corner y");
+            RequireNear(actual.width, expectedCorners[ix].width, 0.0001f, "encoder corner width");
+            RequireNear(actual.height, expectedCorners[ix].height, 0.0001f, "encoder corner height");
+        }
     }
 
     synth::ParameterManager manager;
@@ -2055,6 +2178,76 @@ TEST_CASE(miniapp_rig_no_nan_across_extended_run) {
     rig.RunSeconds(0.5);
 
     REQUIRE_TRUE(!rig.SawNaN());
+}
+
+TEST_CASE(miniapp_composes_the_standard_application_layout) {
+    const synth::ui::NodeTree tree = BuildMiniAppTreeAt(900.0f, 560.0f);
+    for (const char* suffix : {".title", ".body", ".visualizers", ".slot.upper", ".slot.lower",
+                               ".encoders", ".bay"}) {
+        REQUIRE_TRUE(FindNodeById(tree, std::string("miniapp") + suffix) != nullptr);
+    }
+
+    // The shared proportions, now resolved rather than hand-computed:
+    // contentWidth = 900 - 2*16 = 868, 868 * 0.46 = 399.28 capped at 390, and
+    // the encoder region takes what is left after one 14 gap, capped at 462.
+    RequireNear(FindNodeById(tree, "miniapp.visualizers")->bounds.width, 390.0f, 0.01f,
+                "visualizer stack width");
+    RequireNear(FindNodeById(tree, "miniapp.encoders")->bounds.width, 462.0f, 0.01f,
+                "encoder region width");
+    RequireNear(FindNodeById(tree, "miniapp.title")->bounds.height, 30.0f, 0.01f, "title height");
+    REQUIRE_TRUE(SurfaceBoundsOf(tree, "miniapp.visualizers").x <
+                 SurfaceBoundsOf(tree, "miniapp.encoders").x);
+    REQUIRE_TRUE(IsDescendantOf(tree, synth_miniapp::MiniAppNodeIds::kVcoScope, "miniapp.slot.upper"));
+    REQUIRE_TRUE(IsDescendantOf(tree, synth_miniapp::MiniAppNodeIds::kLfoScope, "miniapp.slot.lower"));
+
+    REQUIRE_TRUE(!SourceContains("projects/synth/apps/miniapp/MiniAppUiModel.hpp", "ScopeStackArea"));
+    REQUIRE_TRUE(!SourceContains("projects/synth/apps/miniapp/MiniAppUiModel.hpp", "BoundsForIndex"));
+    REQUIRE_TRUE(!SourceContains("projects/synth/apps/miniapp/MiniAppUiModel.hpp", "EncoderArea"));
+}
+
+TEST_CASE(miniapp_every_control_resolves_inside_the_widget_bay) {
+    const synth::ui::NodeTree tree = BuildMiniAppTreeAt(900.0f, 560.0f);
+    const std::vector<std::string> controls = {
+        synth_miniapp::MiniAppNodeIds::kBankVco,       synth_miniapp::MiniAppNodeIds::kBankLfo,
+        synth_miniapp::MiniAppNodeIds::kGestureToggle, synth_miniapp::MiniAppNodeIds::kReset,
+        synth_miniapp::MiniAppNodeIds::kRandom,        synth_miniapp::MiniAppNodeIds::kRandomMod,
+        synth_miniapp::MiniAppNodeIds::SceneButton(0), synth_miniapp::MiniAppNodeIds::SceneButton(1),
+        synth_miniapp::MiniAppNodeIds::SceneButton(2), synth_miniapp::MiniAppNodeIds::kStart,
+        synth_miniapp::MiniAppNodeIds::kStop,          synth_miniapp::MiniAppNodeIds::kGestureValue,
+        synth_miniapp::MiniAppNodeIds::kSceneBlend,
+    };
+    for (const std::string& id : controls) {
+        REQUIRE_TRUE(IsDescendantOf(tree, id, "miniapp.bay"));
+    }
+    REQUIRE_TRUE(NoTwoNodesOverlap(tree, controls));
+    // Mini App now has a populated widget bay it did not have before, and its
+    // visualizer stack no longer runs the full content height.
+    REQUIRE_TRUE(FindNodeById(tree, "miniapp.bay")->bounds.height > 0.0f);
+    REQUIRE_TRUE(SurfaceBoundsOf(tree, "miniapp.visualizers").y +
+                     FindNodeById(tree, "miniapp.visualizers")->bounds.height <=
+                 SurfaceBoundsOf(tree, "miniapp.bay").y);
+
+    std::vector<std::string> encoders;
+    for (std::size_t ix = 0; ix < synth_miniapp::EncoderGridLayout::kEncoderCount; ++ix) {
+        encoders.push_back(synth_miniapp::MiniAppNodeIds::Encoder(ix));
+        REQUIRE_TRUE(IsDescendantOf(tree, encoders.back(), "miniapp.encoders"));
+    }
+    REQUIRE_TRUE(NoTwoNodesOverlap(tree, encoders));
+}
+
+TEST_CASE(miniapp_regions_redistribute_at_a_different_root_extent) {
+    const synth::ui::NodeTree narrow = BuildMiniAppTreeAt(700.0f, 560.0f);
+    const synth::ui::NodeTree wide = BuildMiniAppTreeAt(1400.0f, 560.0f);
+    // 700 - 2*16 = 668 content; 668 * 0.46 = 307.28 is below the 390 cap.
+    RequireNear(FindNodeById(narrow, "miniapp.visualizers")->bounds.width, 307.28f, 0.01f,
+                "narrow stack width");
+    RequireNear(FindNodeById(wide, "miniapp.visualizers")->bounds.width, 390.0f, 0.01f,
+                "wide stack width");
+    REQUIRE_TRUE(FindNodeById(wide, "miniapp.encoders")->bounds.width >
+                 FindNodeById(narrow, "miniapp.encoders")->bounds.width);
+    const synth::ui::Node* wideScope = FindNodeById(wide, synth_miniapp::MiniAppNodeIds::kVcoScope);
+    const synth::ui::Node* narrowScope = FindNodeById(narrow, synth_miniapp::MiniAppNodeIds::kVcoScope);
+    REQUIRE_TRUE(wideScope->bounds.width > narrowScope->bounds.width);
 }
 
 int main() {

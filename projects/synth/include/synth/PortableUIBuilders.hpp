@@ -491,14 +491,24 @@ public:
     }
 
     Builder& Draw(std::string id, LayoutOptions opts, DrawFactory factory) {
+        ControlStyle style;
+        style.layout = std::move(opts);
+        return Draw(std::move(id), std::move(factory), std::move(style));
+    }
+
+    // The in-flow Draw an app reaches for when the canvas is also interactive:
+    // the factory supplies the commands from the resolved extent, the style
+    // supplies the layout declaration and the actions.
+    Builder& Draw(std::string id, DrawFactory factory, ControlStyle style) {
         Node node;
         node.id = NodeId(std::move(id));
         node.kind = NodeKind::Draw;
-        if (opts.explicitBounds.has_value()) {
-            node.bounds = *opts.explicitBounds;
+        if (style.layout.explicitBounds.has_value()) {
+            node.bounds = *style.layout.explicitBounds;
         }
+        ApplyStyle(node, style);
         const std::string key = node.id.value;
-        layoutByNodeId_[key] = opts;
+        layoutByNodeId_[key] = std::move(style.layout);
         drawFactories_[key] = std::move(factory);
         AppendChild(std::move(node));
         return *this;

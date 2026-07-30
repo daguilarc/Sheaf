@@ -11,6 +11,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace synth::ui {
@@ -57,6 +58,15 @@ struct LayoutOptions {
     // Set => this node is explicitly positioned and OUT OF FLOW.
     // Out-of-flow is a positioning mode, never a property of a node kind.
     std::optional<Bounds> explicitBounds{};
+    // Set => this node is OUT OF FLOW and resolves to the bounds of the named
+    // in-flow SIBLING, whatever the resolver decides those are. This is the
+    // second out-of-flow mode, and it exists because the first one cannot
+    // express the overlays the model already promises: an sru-25 visualizer
+    // underlay must cover exactly the encoder above it, but once the encoder
+    // is an in-flow grid cell the producer no longer knows its extent, so it
+    // has no explicit bounds to declare. Anchoring to the target by id keeps
+    // that arithmetic out of the producer without a wrapper container.
+    std::optional<std::string> overlayOf{};
 };
 
 namespace layout_detail {
@@ -85,6 +95,13 @@ inline const LayoutOptions& LayoutFor(const std::map<std::string, LayoutOptions>
 {
     const auto found = layoutByNodeId.find(id.value);
     return found == layoutByNodeId.end() ? fallback : found->second;
+}
+
+// Both positioning modes take the node out of flow: it consumes no stacking
+// space and its stacked siblings resolve exactly as if it were absent.
+inline bool IsOutOfFlow(const LayoutOptions& layout)
+{
+    return layout.explicitBounds.has_value() || layout.overlayOf.has_value();
 }
 
 inline bool IsContainer(NodeKind kind)
@@ -293,7 +310,10 @@ struct Resolver {
         node.drawCommands = found->second(Bounds{0.0f, 0.0f, node.bounds.width, node.bounds.height});
     }
 
-    float IntrinsicFromExtent(const Node& node, const Extent& extent, Axis axis)
+    float IntrinsicFromExtent(const Node& node,
+                              const Extent& extent,
+                              Axis axis,
+                              std::optional<float> knownCrossExtent = std::nullopt)
     {
         switch (extent.mode)
         {
@@ -301,10 +321,10 @@ struct Resolver {
                 return ClampExtent(extent.value, extent);
             case Extent::Mode::Fraction:
             case Extent::Mode::Weighted:
-                return ClampExtent(IntrinsicForNode(node, axis), extent);
+                return ClampExtent(IntrinsicForNode(node, axis, knownCrossExtent), extent);
             case Extent::Mode::Intrinsic:
             default:
-                return ClampExtent(IntrinsicForNode(node, axis), extent);
+                return ClampExtent(IntrinsicForNode(node, axis, knownCrossExtent), extent);
         }
     }
 
@@ -318,7 +338,7 @@ struct Resolver {
         for (const NodeId& childId : row.children)
         {
             const LayoutOptions childLayout = LayoutFor(layoutByNodeId, childId, fallback);
-            if (childLayout.explicitBounds.has_value())
+            if (IsOutOfFlow(childLayout))
             {
                 continue;
             }
@@ -391,10 +411,14 @@ struct Resolver {
         float result = 0.0f;
         std::size_t inFlowCount = 0;
 
+        const auto intrinsicForNode = [this](const Node& child, Axis childAxis) {
+            return IntrinsicForNode(child, childAxis);
+        };
+
         for (const NodeId& childId : node.children)
         {
             const LayoutOptions childLayout = LayoutFor(layoutByNodeId, childId, fallback);
-            if (childLayout.explicitBounds.has_value())
+            if (IsOutOfFlow(childLayout))
             {
                 continue;
             }
@@ -405,7 +429,17 @@ struct Resolver {
             }
             if (axis == mainAxis)
             {
-                result += IntrinsicFromExtent(*child, childLayout.main, axis);
+                // A child's own extent along this node's cross axis is what a
+                // wrapping descendant needs in order to break its lines, so it
+                // is threaded down rather than recomputed from the descendant's
+                // unwrapped natural extent two levels below.
+                std::optional<float> childCrossExtent;
+                if (knownCrossExtent.has_value())
+                {
+                    childCrossExtent = ResolveCrossExtent(
+                        *child, mainAxis, childLayout, *knownCrossExtent, opts.padding, intrinsicForNode);
+                }
+                result += IntrinsicFromExtent(*child, childLayout.main, axis, childCrossExtent);
                 ++inFlowCount;
             }
             else
@@ -443,6 +477,7 @@ struct Resolver {
             .wrap = false,
             .formGrid = false,
             .explicitBounds = std::nullopt,
+            .overlayOf = std::nullopt,
         };
         const LayoutOptions fallback;
         const LayoutOptions& opts = isRoot ? rootLayout : LayoutFor(layoutByNodeId, container.id, fallback);
@@ -452,6 +487,7 @@ struct Resolver {
         std::vector<const Node*> inFlowConst;
         std::vector<LayoutOptions> childLayouts;
         std::vector<Node*> outOfFlow;
+        std::vector<std::pair<Node*, NodeId>> overlays;
 
         for (const NodeId& childId : container.children)
         {
@@ -461,6 +497,11 @@ struct Resolver {
                 continue;
             }
             LayoutOptions childLayout = LayoutFor(layoutByNodeId, childId, fallback);
+            if (childLayout.overlayOf.has_value())
+            {
+                overlays.emplace_back(child, NodeId(*childLayout.overlayOf));
+                continue;
+            }
             if (childLayout.explicitBounds.has_value())
             {
                 child->bounds = *childLayout.explicitBounds;
@@ -533,6 +574,20 @@ struct Resolver {
             ResolveNode(*child, false);
         }
 
+        // Overlays resolve last so their target has already been placed. An
+        // overlay naming a node that is not an in-flow sibling collapses to
+        // nothing rather than guessing a position.
+        for (const auto& [child, targetId] : overlays)
+        {
+            const Node* target = Find(targetId);
+            const bool targetIsSibling =
+                target != nullptr &&
+                std::find(container.children.begin(), container.children.end(), targetId) !=
+                    container.children.end();
+            child->bounds = targetIsSibling ? target->bounds : Bounds{};
+            ResolveNode(*child, false);
+        }
+
         if (opts.formGrid)
         {
             ApplyFormGrid(container);
@@ -546,7 +601,7 @@ struct Resolver {
         for (const NodeId& childId : row.children)
         {
             const LayoutOptions& layout = LayoutFor(layoutByNodeId, childId, fallback);
-            if (layout.explicitBounds.has_value())
+            if (IsOutOfFlow(layout))
             {
                 continue;
             }

@@ -73,33 +73,51 @@ inline constexpr const char* kEncoderPush = "miniapp.encoder.push";
 
 }  // namespace MiniAppActions
 
+// The encoder grid is an app-side component. It declares rows and cells and
+// the resolver decides every extent from the region it is given, so no cell
+// geometry is computed here (sru-53).
 struct EncoderGridLayout
 {
     static constexpr std::size_t kEncoderCount = 16;
+    static constexpr std::size_t kColumns = 4;
     static constexpr float kGap = 8.0f;
 
-    static synth::ui::Bounds BoundsForIndex(synth::ui::Bounds area, std::size_t index)
+    static synth::ui::LayoutOptions CellLayout()
     {
-        const std::size_t row = index / 4;
-        const std::size_t column = index % 4;
-        const float cellWidth = std::max(0.0f, (area.width - kGap * 3.0f) * 0.25f);
-        const float cellHeight = std::max(0.0f, (area.height - kGap * 3.0f) * 0.25f);
-        return {
-            area.x + static_cast<float>(column) * (cellWidth + kGap),
-            area.y + static_cast<float>(row) * (cellHeight + kGap),
-            cellWidth,
-            cellHeight,
-        };
+        synth::ui::LayoutOptions cell;
+        cell.main = synth::ui::Extent::Weight(1.0f);
+        return cell;
+    }
+
+    static void Emit(synth::ui::Builder& builder,
+                     const std::string& id,
+                     const std::function<void(synth::ui::Builder&, std::size_t)>& emitCell)
+    {
+        synth::ui::LayoutOptions grid;
+        grid.main = synth::ui::Extent::Weight(1.0f);
+        grid.padding = 0.0f;
+        grid.gap = kGap;
+
+        builder.Column(id, grid, [&](synth::ui::Builder& builder) {
+            for (std::size_t index = 0; index < kEncoderCount; index += kColumns)
+            {
+                builder.Row(id + ".row." + std::to_string(index / kColumns),
+                            grid,
+                            [&](synth::ui::Builder& builder) {
+                                for (std::size_t column = 0; column < kColumns; ++column)
+                                {
+                                    emitCell(builder, index + column);
+                                }
+                            });
+            }
+        });
     }
 };
 
+// Only the surface extent survives: every region inside it is now resolved by
+// the standard application layout (sru-53).
 struct MiniAppPageLayout
 {
-    static constexpr float kContentMargin = 16.0f;
-    static constexpr float kTitleHeight = 30.0f;
-    static constexpr float kGap = 14.0f;
-    static constexpr float kScopeStackWidth = 390.0f;
-    static constexpr float kEncoderGridWidth = 462.0f;
     static constexpr float kDefaultWidth = 900.0f;
     static constexpr float kDefaultHeight = 560.0f;
 
@@ -112,55 +130,6 @@ struct MiniAppPageLayout
                                  ? static_cast<float>(context->config->uiHeight)
                                  : kDefaultHeight;
         return {0.0f, 0.0f, width, height};
-    }
-
-    static synth::ui::Bounds ContentArea(synth::ui::Bounds rootBounds)
-    {
-        return {
-            kContentMargin,
-            kContentMargin,
-            std::max(0.0f, rootBounds.width - kContentMargin * 2.0f),
-            std::max(0.0f, rootBounds.height - kContentMargin * 2.0f)
-        };
-    }
-
-    static synth::ui::Bounds ScopeStackArea(synth::ui::Bounds content)
-    {
-        return {
-            content.x,
-            content.y + kTitleHeight + kGap,
-            std::max(0.0f, std::min(kScopeStackWidth, content.width * 0.46f)),
-            std::max(0.0f, content.height - kTitleHeight - kGap),
-        };
-    }
-
-    static synth::ui::Bounds VcoScopeBounds(synth::ui::Bounds content)
-    {
-        const synth::ui::Bounds stack = ScopeStackArea(content);
-        return {
-            stack.x,
-            stack.y,
-            stack.width,
-            std::max(0.0f, (stack.height - kGap) * 0.5f),
-        };
-    }
-
-    static synth::ui::Bounds LfoScopeBounds(synth::ui::Bounds content)
-    {
-        const synth::ui::Bounds vco = VcoScopeBounds(content);
-        return {vco.x, vco.y + vco.height + kGap, vco.width, vco.height};
-    }
-
-    static synth::ui::Bounds EncoderArea(synth::ui::Bounds content)
-    {
-        const synth::ui::Bounds scopeStack = ScopeStackArea(content);
-        const float x = scopeStack.x + scopeStack.width + kGap;
-        return {
-            x,
-            scopeStack.y,
-            std::max(0.0f, std::min(kEncoderGridWidth, content.x + content.width - x)),
-            scopeStack.height,
-        };
     }
 };
 
@@ -259,7 +228,9 @@ inline LfoWaveformDrawState LfoWaveformDrawStateFromCore(const MiniAppCore& core
     return state;
 }
 
-inline void AppendMiniAppControls(synth::ui::Builder& builder, const MiniAppUiSnapshot& snapshot)
+inline constexpr const char* kBayControlsId = "miniapp.bay.controls";
+
+inline void AppendMiniAppBayControls(synth::ui::Builder& builder, const MiniAppUiSnapshot& snapshot)
 {
     builder.Button(MiniAppNodeIds::kBankVco,
                    "VCO",
@@ -308,6 +279,19 @@ inline void AppendMiniAppControls(synth::ui::Builder& builder, const MiniAppUiSn
                    1.0f,
                    0.001f,
                    synth::ui::Action::Named(MiniAppActions::kSceneBlend));
+}
+
+// Every semantic control Mini App presents outside its visualizer slots and
+// encoder region lives in the widget bay, on one wrapping row that flows onto
+// as many lines as its extent needs (sru-53).
+inline void AppendMiniAppControls(synth::ui::Builder& builder, const MiniAppUiSnapshot& snapshot)
+{
+    synth::ui::LayoutOptions controls;
+    controls.padding = 0.0f;
+    controls.wrap = true;
+    builder.Row(kBayControlsId, controls, [&snapshot](synth::ui::Builder& builder) {
+        AppendMiniAppBayControls(builder, snapshot);
+    });
 }
 
 inline std::size_t ParseSize(const std::string& value, std::size_t fallback)
