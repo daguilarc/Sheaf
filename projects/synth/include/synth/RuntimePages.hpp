@@ -84,11 +84,13 @@ inline constexpr const char* kFileBrowserTitle = "runtime.file.browser.title";
 inline constexpr const char* kFileBrowserCurrentPath = "runtime.file.browser.current_path";
 inline constexpr const char* kFileBrowserSaveName = "runtime.file.browser.save_name";
 inline constexpr const char* kFileBrowserParent = "runtime.file.browser.parent";
+inline constexpr const char* kFileBrowserList = "runtime.file.browser.list";
 inline constexpr const char* kFileBrowserActions = "runtime.file.browser.actions";
 inline constexpr const char* kFileBrowserConfirm = "runtime.file.browser.confirm";
 inline constexpr const char* kFileBrowserCancel = "runtime.file.browser.cancel";
 inline constexpr const char* kFileVersions = "runtime.file.versions";
 inline constexpr const char* kFileVersionsTitle = "runtime.file.versions.title";
+inline constexpr const char* kFileVersionsList = "runtime.file.versions.list";
 
 inline std::string FileBrowserEntry(std::size_t entryIx)
 {
@@ -422,28 +424,88 @@ inline ui::ControlStyle PrimaryRowButton(ui::Extent width, ui::Extent height)
     return style;
 }
 
-// One entry in a vertically stacked list panel. Every row takes an equal share
-// of the panel's free space and none grows past the recovered row height, so a
-// list longer than its panel compresses rather than overflowing or losing its
-// tail rows.
+// One entry in a scrollable list. Its height is the recovered row height, full
+// stop: a row that shares out the panel's free space instead shrinks as the
+// list grows, and a directory of any real size then renders as unreadable
+// slivers. Rows past the viewport are reached by scrolling, which is what the
+// enclosing ScrollArea is for.
 inline ui::ControlStyle ListRow(bool selected)
 {
     ui::ControlStyle style;
     style.color = pagestyle::kListRowButton;
     style.textStyle = pagestyle::kDefaultTextStyle;
     style.selected = selected;
-    style.layout.main = ui::Extent::Weight(1.0f).Max(Layout::kBrowserRowHeight);
+    style.layout.main = ui::Extent::Px(Layout::kBrowserRowHeight);
     return style;
 }
 
-// Text stacked in a panel: same share-and-cap rule as ListRow, so a panel's
-// fixed furniture never pushes its list out of the panel.
-inline ui::ControlStyle PanelText(ui::TextStyle textStyle, float maximumHeight)
+// Text sized by its own metrics, for a region that should be as tall as the
+// text it holds.
+inline ui::ControlStyle PanelText(ui::TextStyle textStyle)
 {
     ui::ControlStyle style;
     style.textStyle = textStyle;
-    style.layout.main = ui::Extent::Weight(1.0f).Max(maximumHeight);
+    style.layout.main = ui::Extent::Intrinsic();
     return style;
+}
+
+// A list panel's furniture: a fixed row height, so the scrolling region beside
+// it absorbs every change in the panel's extent and the furniture never
+// competes with the rows for space.
+inline ui::ControlStyle PanelTextRow(ui::TextStyle textStyle, float height)
+{
+    ui::ControlStyle style;
+    style.textStyle = textStyle;
+    style.layout.main = ui::Extent::Px(height);
+    return style;
+}
+
+// The scrolling region of a list panel: it takes whatever the furniture leaves,
+// its rows abut as the recovered layout's rows did, and the resolver publishes
+// the content extent both backends scroll over.
+inline ui::LayoutOptions ListLayout()
+{
+    ui::LayoutOptions layout;
+    layout.main = ui::Extent::Weight(1.0f);
+    layout.padding = 0.0f;
+    layout.gap = 0.0f;
+    return layout;
+}
+
+struct ListRowSpec
+{
+    std::string id;
+    std::string label;
+    bool selected = false;
+    std::optional<ui::Action> action{};
+    std::optional<ui::Action> doubleClickAction{};
+};
+
+// The rows of a list panel, as a component (design.md D2: a component is any
+// callable taking the builder). The patch browser and the versions list differ
+// only in their action wiring and their empty text, so the row shape itself
+// lives here once rather than once per list.
+inline ui::Builder::Children ListRows(std::vector<ListRowSpec> rows,
+                                      std::string emptyRowId,
+                                      std::string emptyText)
+{
+    return [rows = std::move(rows), emptyRowId = std::move(emptyRowId),
+            emptyText = std::move(emptyText)](ui::Builder& list) {
+        if (rows.empty())
+        {
+            list.StatusText(emptyRowId,
+                            emptyText,
+                            PanelTextRow(pagestyle::kMutedTextStyle, Layout::kBrowserRowHeight));
+            return;
+        }
+        for (const ListRowSpec& row : rows)
+        {
+            ui::ControlStyle style = ListRow(row.selected);
+            style.action = row.action;
+            style.doubleClickAction = row.doubleClickAction;
+            list.Button(row.id, row.label, std::move(style));
+        }
+    };
 }
 
 // The File page's outer column: one margin, one gap, and every region sized by
@@ -726,11 +788,11 @@ inline bool FileStatusIsError(const std::string& statusText)
            statusText == "Select a patch directory";
 }
 
-inline ui::ControlStyle FileStatusStyle(const std::string& statusText, float maximumHeight)
+inline ui::ControlStyle FileStatusStyle(const std::string& statusText, float height)
 {
-    return PageControls::PanelText(
+    return PageControls::PanelTextRow(
         FileStatusIsError(statusText) ? pagestyle::kDangerTextStyle : pagestyle::kMutedTextStyle,
-        maximumHeight);
+        height);
 }
 
 inline std::string FilePatchRootText(const FilePageSnapshot& snapshot)
@@ -739,60 +801,120 @@ inline std::string FilePatchRootText(const FilePageSnapshot& snapshot)
                                         : "Patch root: " + snapshot.patchesRoot;
 }
 
-// The patch browser's rows, produced on their own from browser state alone and
-// spliced into the page's browser panel. Rootless by construction: the rows are
-// the subtree's forest roots, so they attach to whatever scope splices them and
-// the producer never names a panel extent, a row position, or a row count that
-// fits. How many rows fit is the resolver's business (`PageControls::ListRow`),
-// not this function's.
-inline ui::Subtree BuildPatchBrowserSubtree(const FilePageSnapshot& snapshot)
+inline std::vector<PageControls::ListRowSpec> PatchBrowserRows(const FilePageSnapshot& snapshot)
 {
-    ui::Builder rows;
-    rows.Rootless();
-    if (snapshot.browserEntries.empty())
-    {
-        rows.StatusText(NodeIds::FileBrowserEntry(0),
-                        "(no patch directories)",
-                        PageControls::PanelText(pagestyle::kMutedTextStyle, Layout::kBrowserRowHeight));
-        return rows.BuildSubtree();
-    }
-
+    std::vector<PageControls::ListRowSpec> rows;
+    rows.reserve(snapshot.browserEntries.size());
     for (std::size_t ix = 0; ix < snapshot.browserEntries.size(); ++ix)
     {
         const FilePageSnapshot::BrowserEntry& entry = snapshot.browserEntries[ix];
-        ui::ControlStyle style = PageControls::ListRow(entry.selected);
-        style.doubleClickAction = ui::Action::WithValue(
-            snapshot.browserKind == FileBrowserKind::SaveAs ? Actions::kFileBrowserOverwriteSaveAs
-                                                            : Actions::kFileBrowserAccept,
-            std::to_string(ix));
-        rows.Button(NodeIds::FileBrowserEntry(ix),
-                    entry.name,
-                    ui::Action::WithValue(Actions::kFileBrowserSelect, std::to_string(ix)),
-                    std::move(style));
+        rows.push_back(PageControls::ListRowSpec{
+            .id = NodeIds::FileBrowserEntry(ix),
+            .label = entry.name,
+            .selected = entry.selected,
+            .action = ui::Action::WithValue(Actions::kFileBrowserSelect, std::to_string(ix)),
+            .doubleClickAction = ui::Action::WithValue(
+                snapshot.browserKind == FileBrowserKind::SaveAs ? Actions::kFileBrowserOverwriteSaveAs
+                                                                : Actions::kFileBrowserAccept,
+                std::to_string(ix)),
+        });
     }
-    return rows.BuildSubtree();
+    return rows;
 }
 
-inline ui::Subtree BuildPatchVersionsSubtree(const FilePageSnapshot& snapshot)
+inline std::vector<PageControls::ListRowSpec> PatchVersionRows(const FilePageSnapshot& snapshot)
 {
-    ui::Builder rows;
-    rows.Rootless();
-    if (snapshot.versionEntries.empty())
-    {
-        rows.StatusText(NodeIds::FileVersionEntry(0),
-                        "No saved versions",
-                        PageControls::PanelText(pagestyle::kMutedTextStyle, Layout::kBrowserRowHeight));
-        return rows.BuildSubtree();
-    }
-
+    std::vector<PageControls::ListRowSpec> rows;
+    rows.reserve(snapshot.versionEntries.size());
     for (std::size_t ix = 0; ix < snapshot.versionEntries.size(); ++ix)
     {
         const FilePageSnapshot::VersionEntry& entry = snapshot.versionEntries[ix];
-        ui::ControlStyle style = PageControls::ListRow(false);
-        style.doubleClickAction = ui::Action::WithValue(Actions::kFileConfirmedLoad, entry.path);
-        rows.Button(NodeIds::FileVersionEntry(ix), entry.label, std::move(style));
+        // No plain click action: selecting a version means nothing, so the row
+        // says so rather than carrying an empty-named one.
+        rows.push_back(PageControls::ListRowSpec{
+            .id = NodeIds::FileVersionEntry(ix),
+            .label = entry.label,
+            .doubleClickAction = ui::Action::WithValue(Actions::kFileConfirmedLoad, entry.path),
+        });
     }
-    return rows.BuildSubtree();
+    return rows;
+}
+
+// The whole patch-browser viewer, which is what sru-16 asks for: the flat
+// directory rows with their stable identities, selection and double-click
+// accept actions, the Save As name entry, the status text, the empty state, and
+// the confirm/cancel actions. The host page contributes the panel these land in
+// and the splice, and nothing else.
+//
+// Rootless by construction: these regions are the subtree's forest roots, so
+// they attach to whatever scope splices them, and the producer names no extent,
+// no position, and no row count that fits. How much of a long list is on screen
+// is the ScrollArea's business, not this function's.
+inline ui::Subtree BuildPatchBrowserSubtree(const FilePageSnapshot& snapshot)
+{
+    const bool saving = snapshot.browserKind == FileBrowserKind::SaveAs;
+    ui::Builder viewer;
+    viewer.Rootless();
+    viewer.Label(NodeIds::kFileBrowserTitle,
+                 saving ? "Save Patch" : "Load Patch",
+                 PageControls::PanelTextRow(pagestyle::kTitleTextStyle, Layout::kBrowserHeaderHeight));
+    if (saving)
+    {
+        ui::ControlStyle name = PageControls::Field("Patch name");
+        name.layout.main = ui::Extent::Px(Layout::kBrowserCommandHeight);
+        viewer.TextField(NodeIds::kFileBrowserSaveName,
+                         "",
+                         snapshot.browserSaveName,
+                         ui::Action::Named(Actions::kFileBrowserSaveName),
+                         std::move(name));
+    }
+    viewer.StatusText(NodeIds::kFileStatus,
+                      snapshot.statusText,
+                      FileStatusStyle(snapshot.statusText, Layout::kBrowserStatusHeight));
+    viewer.ScrollArea(NodeIds::kFileBrowserList,
+                      PageControls::ListLayout(),
+                      PageControls::ListRows(PatchBrowserRows(snapshot),
+                                             NodeIds::FileBrowserEntry(0),
+                                             "(no patch directories)"));
+    // Confirm and cancel pack from the left of an in-flow row at the foot of
+    // the viewer, where the recovered construction right-aligned them against a
+    // hand-computed bottom edge. The in-flow placement is deliberate, not a
+    // side effect: the scrolling region above absorbs the panel's slack, so
+    // this row lands on the panel's bottom padding with no producer arithmetic.
+    viewer.Row(NodeIds::kFileBrowserActions,
+               PageControls::PanelGroupLayout(ui::Extent::Px(Layout::kBrowserCommandHeight)),
+               [saving](ui::Builder& actions) {
+                   const ui::Extent width =
+                       ui::Extent::Weight(1.0f).Max(Layout::kBrowserButtonWidth);
+                   const ui::Extent height = ui::Extent::Weight(1.0f);
+                   actions.Button(NodeIds::kFileBrowserConfirm,
+                                  saving ? "Save" : "Load",
+                                  ui::Action::Named(Actions::kFileBrowserConfirm),
+                                  PageControls::PrimaryRowButton(width, height));
+                   actions.Button(NodeIds::kFileBrowserCancel,
+                                  "Cancel",
+                                  ui::Action::Named(Actions::kFileBrowserCancel),
+                                  PageControls::RowButton(width, height));
+               });
+    return viewer.BuildSubtree();
+}
+
+// The saved-version viewer, produced the same way and for the same reason: it
+// is the page's second unbounded row list, its rows carry a double-click load
+// and nothing else, and it must stay readable at every length too.
+inline ui::Subtree BuildPatchVersionsSubtree(const FilePageSnapshot& snapshot)
+{
+    ui::Builder versions;
+    versions.Rootless();
+    versions.Label(NodeIds::kFileVersionsTitle,
+                   "Versions",
+                   PageControls::PanelTextRow(pagestyle::kTitleTextStyle, Layout::kPatchNameRowHeight));
+    versions.ScrollArea(NodeIds::kFileVersionsList,
+                        PageControls::ListLayout(),
+                        PageControls::ListRows(PatchVersionRows(snapshot),
+                                               NodeIds::FileVersionEntry(0),
+                                               "No saved versions"));
+    return versions.BuildSubtree();
 }
 
 inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Bounds area)
@@ -815,13 +937,11 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
                                                   PageControls::PanelText(
                                                       snapshot.hasCurrentPatch
                                                           ? pagestyle::kTitleTextStyle
-                                                          : pagestyle::kMutedTitleTextStyle,
-                                                      Layout::kPatchNameRowHeight));
+                                                          : pagestyle::kMutedTitleTextStyle));
                                        text.StatusText(NodeIds::kFilePatchRoot,
                                                        FilePatchRootText(snapshot),
                                                        PageControls::PanelText(
-                                                           pagestyle::kMutedTextStyle,
-                                                           Layout::kPatchNameRowHeight));
+                                                           pagestyle::kMutedTextStyle));
                                    });
                      header.Button(NodeIds::kFileBack,
                                    "Back",
@@ -862,46 +982,7 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
             page.Section(NodeIds::kFileBrowser,
                          PageControls::PanelLayout(ui::Extent::Weight(1.0f)),
                          [&](ui::Builder& browser) {
-                             browser.Label(NodeIds::kFileBrowserTitle,
-                                           snapshot.browserKind == FileBrowserKind::SaveAs
-                                               ? "Save Patch"
-                                               : "Load Patch",
-                                           PageControls::PanelText(pagestyle::kTitleTextStyle,
-                                                                   Layout::kBrowserHeaderHeight));
-                             if (snapshot.browserKind == FileBrowserKind::SaveAs)
-                             {
-                                 ui::ControlStyle name = PageControls::Field("Patch name");
-                                 name.layout.main =
-                                     ui::Extent::Weight(1.0f).Max(Layout::kBrowserCommandHeight);
-                                 browser.TextField(NodeIds::kFileBrowserSaveName,
-                                                   "",
-                                                   snapshot.browserSaveName,
-                                                   ui::Action::Named(Actions::kFileBrowserSaveName),
-                                                   std::move(name));
-                             }
-                             browser.StatusText(NodeIds::kFileStatus,
-                                                snapshot.statusText,
-                                                FileStatusStyle(snapshot.statusText,
-                                                                Layout::kBrowserStatusHeight));
                              browser.Splice(BuildPatchBrowserSubtree(snapshot));
-                             browser.Row(NodeIds::kFileBrowserActions,
-                                         PageControls::PanelGroupLayout(ui::Extent::Weight(1.0f).Max(
-                                             Layout::kBrowserCommandHeight)),
-                                         [&](ui::Builder& actions) {
-                                             const ui::Extent width =
-                                                 ui::Extent::Weight(1.0f).Max(Layout::kBrowserButtonWidth);
-                                             const ui::Extent height = ui::Extent::Weight(1.0f);
-                                             actions.Button(NodeIds::kFileBrowserConfirm,
-                                                            snapshot.browserKind == FileBrowserKind::SaveAs
-                                                                ? "Save"
-                                                                : "Load",
-                                                            ui::Action::Named(Actions::kFileBrowserConfirm),
-                                                            PageControls::PrimaryRowButton(width, height));
-                                             actions.Button(NodeIds::kFileBrowserCancel,
-                                                            "Cancel",
-                                                            ui::Action::Named(Actions::kFileBrowserCancel),
-                                                            PageControls::RowButton(width, height));
-                                         });
                          });
             return;
         }
@@ -921,18 +1002,13 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
                          {
                              idle.Label(std::string(NodeIds::kFileIdleRegion) + ".message",
                                         "Save or load a patch to begin",
-                                        PageControls::PanelText(pagestyle::kMutedTextStyle,
-                                                                Layout::kPatchNameRowHeight));
+                                        PageControls::PanelTextRow(pagestyle::kMutedTextStyle,
+                                                                   Layout::kPatchNameRowHeight));
                              return;
                          }
                          idle.Section(NodeIds::kFileVersions,
                                       PageControls::PanelGroupLayout(ui::Extent::Weight(1.0f)),
                                       [&](ui::Builder& versions) {
-                                          versions.Label(NodeIds::kFileVersionsTitle,
-                                                         "Versions",
-                                                         PageControls::PanelText(
-                                                             pagestyle::kTitleTextStyle,
-                                                             Layout::kPatchNameRowHeight));
                                           versions.Splice(BuildPatchVersionsSubtree(snapshot));
                                       });
                      });

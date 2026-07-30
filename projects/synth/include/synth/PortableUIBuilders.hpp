@@ -328,8 +328,11 @@ public:
         scope.id = NodeId(kRootlessScopeId);
         scope.kind = NodeKind::Section;
         tree_.nodes.push_back(std::move(scope));
-        scopeStack_.assign(1, tree_.nodes.size() - 1);
-        rootless_ = true;
+        // Remembered by INDEX, not by id: a producer is free to emit a node
+        // whose id happens to match the marker's, and matching by id would
+        // delete it without a word.
+        rootlessScopeIndex_ = tree_.nodes.size() - 1;
+        scopeStack_.assign(1, *rootlessScopeIndex_);
         return *this;
     }
 
@@ -586,7 +589,8 @@ public:
     }
 
     NodeTree Build(Bounds rootExtent) {
-        assert(!rootless_ && "a rootless subtree has no root to resolve against; use BuildSubtree()");
+        assert(!rootlessScopeIndex_.has_value() &&
+               "a rootless subtree has no root to resolve against; use BuildSubtree()");
         NodeTree resolved = tree_;
         if (!scopeStack_.empty()) {
             ResolveLayout(resolved, resolved.nodes[scopeStack_.front()].id, rootExtent, layoutByNodeId_, drawFactories_);
@@ -595,18 +599,18 @@ public:
     }
 
     Subtree BuildSubtree() {
-        if (!rootless_) {
+        if (!rootlessScopeIndex_.has_value()) {
             return Subtree{tree_, layoutByNodeId_, drawFactories_};
         }
         // The rootless scope marker is a builder-side handle and never part of
-        // the subtree. Dropping it leaves exactly the nodes it collected, and
-        // because nothing else named them as children they are the forest roots
-        // Splice attaches.
+        // the subtree. Dropping that ONE node leaves exactly the nodes it
+        // collected, and because nothing else named them as children they are
+        // the forest roots Splice attaches.
         Subtree subtree{{}, layoutByNodeId_, drawFactories_};
-        subtree.tree.nodes.reserve(tree_.nodes.size());
-        for (const Node& node : tree_.nodes) {
-            if (node.id.value != kRootlessScopeId) {
-                subtree.tree.nodes.push_back(node);
+        subtree.tree.nodes.reserve(tree_.nodes.size() - 1);
+        for (std::size_t i = 0; i < tree_.nodes.size(); ++i) {
+            if (i != *rootlessScopeIndex_) {
+                subtree.tree.nodes.push_back(tree_.nodes[i]);
             }
         }
         return subtree;
@@ -685,7 +689,7 @@ private:
     }
 
     NodeTree tree_;
-    bool rootless_ = false;
+    std::optional<std::size_t> rootlessScopeIndex_{};
     std::vector<std::size_t> scopeStack_;
     std::map<std::string, LayoutOptions> layoutByNodeId_;
     std::map<std::string, DrawFactory> drawFactories_;

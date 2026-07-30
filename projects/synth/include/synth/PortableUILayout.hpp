@@ -606,6 +606,37 @@ struct Resolver {
         {
             ApplyFormGrid(container);
         }
+
+        if (container.kind == NodeKind::ScrollArea)
+        {
+            SetScrollContentExtent(container, opts.padding);
+        }
+    }
+
+    // A ScrollArea's children are placed in scroll-CONTENT space, so how far
+    // that space reaches is a fact about the resolved children -- the only
+    // layer that knows it. Leaving it to the producer would mean re-deriving
+    // row heights and gaps by hand, and leaving it unset makes both backends
+    // clamp the content to the viewport (`max(bounds, declared)`), which is
+    // exactly a list whose tail is unreachable.
+    void SetScrollContentExtent(Node& container, float padding)
+    {
+        float right = 0.0f;
+        float bottom = 0.0f;
+        bool hasChild = false;
+        for (const NodeId& childId : container.children)
+        {
+            const Node* child = Find(childId);
+            if (child == nullptr)
+            {
+                continue;
+            }
+            hasChild = true;
+            right = std::max(right, child->bounds.x + child->bounds.width);
+            bottom = std::max(bottom, child->bounds.y + child->bounds.height);
+        }
+        container.scrollContentWidth = hasChild ? right + padding : 0.0f;
+        container.scrollContentHeight = hasChild ? bottom + padding : 0.0f;
     }
 
     // A form grid moves and resizes its cells after their own container has

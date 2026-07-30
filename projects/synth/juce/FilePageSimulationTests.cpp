@@ -71,9 +71,51 @@ bool BoundsContain(const synth::ui::Bounds& outer, const synth::ui::Bounds& inne
            inner.y + inner.height <= outer.y + outer.height + kEpsilon;
 }
 
+// A ScrollArea's children are placed in scroll-CONTENT space (sru-46), so the
+// extent that must contain them is the content extent the resolver published --
+// which is exactly what both backends size their content surface to
+// (`max(bounds, declared)`). Measuring them against the viewport box instead
+// would assert that a scrolling list never scrolls.
 synth::ui::Bounds ParentExtent(const synth::ui::Node& parent)
 {
+    if (parent.kind == synth::ui::NodeKind::ScrollArea)
+    {
+        return {0.0f,
+                0.0f,
+                std::max(parent.bounds.width, parent.scrollContentWidth),
+                std::max(parent.bounds.height, parent.scrollContentHeight)};
+    }
     return {0.0f, 0.0f, parent.bounds.width, parent.bounds.height};
+}
+
+// Whether the node sits inside a scrolling region. Surface-absolute checks --
+// against the root, and against the rendered JUCE parent -- do not apply to
+// such a node: the viewport clips it on purpose, and that is the feature.
+// Its containment is asserted against the scroll content extent above instead.
+bool IsInsideScrollArea(const synth::ui::NodeTree& tree,
+                        const std::unordered_map<std::string, std::string>& parents,
+                        const synth::ui::Node& node)
+{
+    std::string current = node.id.value;
+    for (std::size_t hop = 0; hop < tree.nodes.size(); ++hop)
+    {
+        const auto parentIt = parents.find(current);
+        if (parentIt == parents.end())
+        {
+            return false;
+        }
+        const synth::ui::Node* parent = FindNode(tree, synth::ui::NodeId(parentIt->second));
+        if (parent == nullptr)
+        {
+            return false;
+        }
+        if (parent->kind == synth::ui::NodeKind::ScrollArea)
+        {
+            return true;
+        }
+        current = parent->id.value;
+    }
+    return false;
 }
 
 synth::ui::Bounds SurfaceBoundsOfNode(const synth::ui::NodeTree& tree,
@@ -194,6 +236,34 @@ void VerifyDispatchedPathsStayUnderRoot(const std::vector<synth::ui::Action>& di
     }
 }
 
+// The scroll-content exemption above is paid for here: a row is never allowed
+// to shrink to fit, and the list always declares a content extent that reaches
+// its last row. Those are the two ways a scrolling list can go wrong quietly.
+void RequireBrowserListStaysUsable(const synth::ui::NodeTree& tree,
+                                   int step,
+                                   const std::string& actionDescription)
+{
+    const synth::ui::Node* list = FindNode(tree, synth::runtime_ui::NodeIds::kFileBrowserList);
+    if (list == nullptr)
+    {
+        return;
+    }
+    float lowest = 0.0f;
+    for (const synth::ui::NodeId& rowId : list->children)
+    {
+        const synth::ui::Node* row = FindNode(tree, rowId);
+        Require(row != nullptr, "step " + std::to_string(step) + " missing browser row after " +
+                                    actionDescription);
+        Require(std::abs(row->bounds.height - synth::runtime_ui::Layout::kBrowserRowHeight) < 0.001f,
+                "step " + std::to_string(step) + " browser row " + rowId.value +
+                    " lost the recovered row height after " + actionDescription);
+        lowest = std::max(lowest, row->bounds.y + row->bounds.height);
+    }
+    Require(lowest <= std::max(list->bounds.height, list->scrollContentHeight) + 0.001f,
+            "step " + std::to_string(step) + " browser list tail is outside its scroll content after " +
+                actionDescription);
+}
+
 void VerifyTreeAndRenderer(synth::runtime_ui::FilePageSurface& surface,
                            synth_juce::PortableComponent& renderer,
                            int step,
@@ -226,6 +296,7 @@ void VerifyTreeAndRenderer(synth::runtime_ui::FilePageSurface& surface,
 
     renderer.RefreshFromSurface();
     const auto parents = BuildParentMap(tree);
+    RequireBrowserListStaysUsable(tree, step, actionDescription);
     for (const synth::ui::Node& node : tree.nodes)
     {
         if (!IsRenderedNode(node))
@@ -239,12 +310,16 @@ void VerifyTreeAndRenderer(synth::runtime_ui::FilePageSurface& surface,
                     actionDescription);
         Require(ComponentIsExpectedBroadKind(node, *component),
                 "step " + std::to_string(step) + " component broad kind mismatch for " + node.id.value);
-        Require(renderer.getLocalBounds().contains(SurfaceBoundsOf(renderer, *component)),
-                "step " + std::to_string(step) + " component escapes root " + node.id.value + " after " +
-                    actionDescription);
-        Require(BoundsContain(root->bounds, SurfaceBoundsOfNode(tree, parents, node)),
-                "step " + std::to_string(step) + " semantic node escapes root " + node.id.value + " after " +
-                    actionDescription);
+        const bool scrolled = IsInsideScrollArea(tree, parents, node);
+        if (!scrolled)
+        {
+            Require(renderer.getLocalBounds().contains(SurfaceBoundsOf(renderer, *component)),
+                    "step " + std::to_string(step) + " component escapes root " + node.id.value + " after " +
+                        actionDescription);
+            Require(BoundsContain(root->bounds, SurfaceBoundsOfNode(tree, parents, node)),
+                    "step " + std::to_string(step) + " semantic node escapes root " + node.id.value +
+                        " after " + actionDescription);
+        }
 
         const auto parentIt = parents.find(node.id.value);
         if (parentIt == parents.end())
@@ -260,10 +335,13 @@ void VerifyTreeAndRenderer(synth::runtime_ui::FilePageSurface& surface,
         juce::Component* parentComponent = renderer.FindByNodeId(parentNode->id.value);
         Require(parentComponent != nullptr,
                 "step " + std::to_string(step) + " missing parent component " + parentNode->id.value);
-        Require(SurfaceBoundsOf(renderer, *parentComponent)
-                    .contains(SurfaceBoundsOf(renderer, *component)),
-                "step " + std::to_string(step) + " component escapes semantic parent " + node.id.value +
-                    " after " + actionDescription);
+        if (!scrolled)
+        {
+            Require(SurfaceBoundsOf(renderer, *parentComponent)
+                        .contains(SurfaceBoundsOf(renderer, *component)),
+                    "step " + std::to_string(step) + " component escapes semantic parent " + node.id.value +
+                        " after " + actionDescription);
+        }
         Require(BoundsContain(ParentExtent(*parentNode), node.bounds),
                 "step " + std::to_string(step) + " semantic child escapes parent " + node.id.value + " after " +
                     actionDescription);
