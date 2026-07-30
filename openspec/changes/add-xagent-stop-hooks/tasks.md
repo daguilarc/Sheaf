@@ -15,7 +15,7 @@
 ## 3. Agents Installer Coexistence
 
 - [ ] 3.1 Add failing agents-installer tests for canonical command/matcher ownership, legacy whole-file marker migration, preserving xagent Codex groups during install/check/clean, append/in-place and unrelated-order behavior, deleting `hooks.json` only when empty, rejecting malformed shared JSON even with `--force`, symmetric Codex trust notices, converging in either installer order, and preserving Claude xagent hooks during managed Superpowers enablement.
-- [ ] 3.2 Refactor `projects/agents/scripts/install.py` `$CODEX_HOME/hooks.json` handling to recognize the canonical agents group, merge/check/clean only that group, migrate the legacy top-level marker, preserve valid canonical xagent and unrelated groups, and report re-approval after effective positional changes.
+- [x] 3.2 Refactor `projects/agents/scripts/install.py` `$CODEX_HOME/hooks.json` handling to recognize the canonical agents group, merge/check/clean only that group, migrate the legacy top-level marker, preserve valid canonical xagent and unrelated groups, and report re-approval after effective positional changes.
 - [ ] 3.3 Refactor only the Claude settings merge in `projects/agents/scripts/install_superpowers.py` to use staged atomic replacement with a recoverable sibling backup, preserving xagent Claude hooks and unrelated settings.
 
 ## 4. Documentation and Verification
