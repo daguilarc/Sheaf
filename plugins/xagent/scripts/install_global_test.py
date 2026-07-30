@@ -1656,6 +1656,52 @@ class AllHarnessDistributionTests(unittest.TestCase):
             codex["hooks"]["PostToolUse"],
         )
 
+    def test_hook_registration_preserves_unrelated_entries_in_mixed_groups(self) -> None:
+        # A harness group is a list of commands, and only our own entry in it
+        # is ours. Updating or de-duplicating must never take a neighbouring
+        # command down with it.
+        canonical_entry = {"type": "command", "command": self.expected_command("codex", "observe")}
+        stale_entry = {
+            "type": "command",
+            "command": (
+                f"python3 {self.installed_hook.resolve()} --harness codex "
+                "--state-root /stale/state observe"
+            ),
+        }
+        before = {"type": "command", "command": "python3 /opt/other/before.py"}
+        after = {"type": "command", "command": "python3 /opt/other/after.py"}
+        neighbour = {"type": "command", "command": "python3 /opt/other/neighbour.py"}
+        unrelated_group = {"hooks": [{"type": "command", "command": "python3 /opt/other/audit.py"}]}
+        self.write_json(
+            self.codex_hooks,
+            {
+                "hooks": {
+                    "PostToolUse": [
+                        {"matcher": "Bash", "hooks": [before, stale_entry, after]},
+                        unrelated_group,
+                        {"hooks": [neighbour, dict(canonical_entry)]},
+                        {"hooks": [dict(canonical_entry)]},
+                    ]
+                }
+            },
+        )
+
+        self.register_hooks()
+
+        codex = json.loads(self.codex_hooks.read_text(encoding="utf-8"))
+        self.assertEqual(
+            [
+                # The first xagent entry is rewritten between its neighbours,
+                # and the group keeps its own unrelated keys.
+                {"matcher": "Bash", "hooks": [before, canonical_entry, after]},
+                unrelated_group,
+                # A later duplicate loses only its own entry.
+                {"hooks": [neighbour]},
+                # A group that held nothing but a duplicate goes away.
+            ],
+            codex["hooks"]["PostToolUse"],
+        )
+
     def test_hook_registration_removes_only_owned_duplicates(self) -> None:
         duplicate = self.canonical_group("codex", "observe")
         other_harness = {
@@ -1690,15 +1736,25 @@ class AllHarnessDistributionTests(unittest.TestCase):
         )
 
     def test_hook_registration_rejects_malformed_json_and_hooks_shapes(self) -> None:
+        # Only a missing file or a missing "hooks" key means absence. An
+        # existing file we cannot read as a configuration is malformed, and
+        # replacing it would destroy whatever the user meant to have there.
         for payload_text in (
             "{not json",
+            "",
+            "  \n\t\n",
             json.dumps(["not", "an", "object"]),
+            json.dumps({"hooks": None}),
             json.dumps({"hooks": ["not an object"]}),
+            json.dumps({"hooks": {"Stop": None}}),
             json.dumps({"hooks": {"Stop": {"not": "an array"}}}),
         ):
             with self.subTest(payload=payload_text):
                 self.claude_settings.parent.mkdir(parents=True, exist_ok=True)
                 self.claude_settings.write_text(payload_text, encoding="utf-8")
+                backup = self.claude_settings.with_name("settings.json.xagent-backup")
+                backup.unlink(missing_ok=True)
+                self.codex_hooks.unlink(missing_ok=True)
 
                 with self.assertRaises(RuntimeError) as caught:
                     self.register_hooks()
@@ -1707,6 +1763,7 @@ class AllHarnessDistributionTests(unittest.TestCase):
                 self.assertEqual(
                     payload_text, self.claude_settings.read_text(encoding="utf-8")
                 )
+                self.assertFalse(backup.exists(), "a rejected file must not be replaced")
                 self.assertFalse(
                     self.codex_hooks.exists(),
                     "no target may be written when another target is malformed",

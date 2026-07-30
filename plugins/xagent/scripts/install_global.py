@@ -199,16 +199,18 @@ def hook_command_identity(command: object) -> tuple[str, str, str] | None:
     return script, harness, tokens[-1]
 
 
-def _owns_group(group: object, identity: tuple[str, str, str]) -> bool:
-    if not isinstance(group, dict):
-        return False
-    entries = group.get("hooks")
-    if not isinstance(entries, list):
-        return False
-    return any(
-        isinstance(entry, dict) and hook_command_identity(entry.get("command")) == identity
-        for entry in entries
+def _owns_entry(entry: object, identity: tuple[str, str, str]) -> bool:
+    return (
+        isinstance(entry, dict)
+        and hook_command_identity(entry.get("command")) == identity
     )
+
+
+def _group_entries(group: object) -> list[object] | None:
+    if not isinstance(group, dict):
+        return None
+    entries = group.get("hooks")
+    return entries if isinstance(entries, list) else None
 
 
 def _merge_event_groups(
@@ -217,29 +219,37 @@ def _merge_event_groups(
     identity: tuple[str, str, str],
     command: str,
 ) -> tuple[list[object], bool]:
-    """Update the owned group in place, drop owned duplicates, keep the rest.
+    """Update the owned command in place, drop owned duplicates, keep the rest.
 
-    Codex trust is positional, so an owned group keeps its index and unrelated
-    groups are never reordered.
+    Ownership is per command entry, not per group: a harness group is a list of
+    commands and only our own entry in it is ours, so neighbouring commands and
+    the group's own keys survive both the update and the de-duplication. Codex
+    trust is positional, so nothing is reordered and the owned entry keeps its
+    index within its group.
     """
-    canonical = {"hooks": [{"type": "command", "command": command}]}
+    canonical = {"type": "command", "command": command}
     merged: list[object] = []
-    changed = False
     kept_owned = False
     for group in groups:
-        if not _owns_group(group, identity):
+        entries = _group_entries(group)
+        if entries is None or not any(_owns_entry(entry, identity) for entry in entries):
             merged.append(group)
             continue
-        if kept_owned:
-            changed = True
+        kept: list[object] = []
+        for entry in entries:
+            if not _owns_entry(entry, identity):
+                kept.append(entry)
+            elif not kept_owned:
+                kept_owned = True
+                kept.append(dict(canonical))
+        if not kept:
+            # The group held nothing but a duplicate of our own command.
             continue
-        kept_owned = True
-        changed = changed or group != canonical
-        merged.append(canonical)
+        assert isinstance(group, dict)
+        merged.append({**group, "hooks": kept})
     if not kept_owned:
-        merged.append(canonical)
-        changed = True
-    return merged, changed
+        merged.append({"hooks": [dict(canonical)]})
+    return merged, merged != groups
 
 
 def merge_xagent_hook_groups(
@@ -256,9 +266,8 @@ def merge_xagent_hook_groups(
     callable on a payload that never came from disk.
     """
     merged = copy.deepcopy(payload)
-    hooks = merged.get("hooks")
-    if hooks is None:
-        hooks = {}
+    # Only a missing key means absence; an explicit null is malformed.
+    hooks = merged["hooks"] if "hooks" in merged else {}
     if not isinstance(hooks, dict):
         raise RuntimeError('field "hooks" must be a JSON object')
 
@@ -268,7 +277,7 @@ def merge_xagent_hook_groups(
         if identity is None or identity[1:] != (harness, mode):
             raise RuntimeError(f"not a canonical xagent {mode} command: {command}")
         event = HOOK_EVENTS[mode]
-        groups = hooks.get(event, [])
+        groups = hooks[event] if event in hooks else []
         if not isinstance(groups, list):
             raise RuntimeError(f'field "hooks.{event}" must be a JSON array')
         updated, event_changed = _merge_event_groups(
@@ -284,22 +293,25 @@ def merge_xagent_hook_groups(
 def load_shared_hook_json(path: Path) -> dict[str, object]:
     """Read a harness configuration that xagent shares with its owner.
 
-    Absent or empty files start as `{}`; anything whose shape we would have to
-    guess at raises before the caller writes.
+    Only a missing file means absence. An existing file we cannot read as a
+    configuration — empty, unparseable, or carrying an incompatible `hooks`
+    shape, including an explicit null — is malformed and raises before the
+    caller writes, because replacing it would discard whatever the user meant
+    to have there.
     """
     if not path.exists():
         return {}
-    raw = path.read_text(encoding="utf-8").strip()
-    if not raw:
-        return {}
+    raw = path.read_text(encoding="utf-8")
+    if not raw.strip():
+        raise RuntimeError(f"{path} is empty; remove it or restore its JSON object")
     try:
         loaded = json.loads(raw)
     except json.JSONDecodeError as error:
         raise RuntimeError(f"{path} must contain valid JSON: {error}") from error
     if not isinstance(loaded, dict):
         raise RuntimeError(f"{path} must contain a JSON object")
-    hooks = loaded.get("hooks")
-    if hooks is not None:
+    if "hooks" in loaded:
+        hooks = loaded["hooks"]
         if not isinstance(hooks, dict):
             raise RuntimeError(f'{path} field "hooks" must be a JSON object')
         for event, groups in hooks.items():
