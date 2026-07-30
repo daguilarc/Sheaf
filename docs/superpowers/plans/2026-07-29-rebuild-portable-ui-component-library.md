@@ -4,7 +4,7 @@
 
 **Goal:** Replace the portable UI layer's two disjoint authoring paths, backend-side layout engine, and guessed coordinate spaces with one hierarchical component library that resolves all layout producer-side into parent-relative coordinates, carries colour and text style directly on nodes, and leaves both backends as dumb renderers.
 
-**Architecture:** A JUCE-free component library gains lambda-scoped container components and a build-time layout resolver that computes every node's parent-relative `Bounds` from declarative extents, using a library-owned metrics contract instead of any backend measurement. `Bounds` changes meaning from surface-absolute to parent-relative and `Draw` geometry becomes node-local, carried across a single command-buffer version bump (1 → 2) with no backwards compatibility. Both backends lose four things each: the draw-geometry coordinate classifier, the node-bounds parent-local classifier, the auto-flow cursor with its default-size table, and the hardcoded per-variant colour constants. The config pages and both first-party apps are then rebuilt on the library, and "looks better" is verified by named criteria, Playwright structural assertions, and human-gated screenshot baselines.
+**Architecture:** A JUCE-free component library gains lambda-scoped container components and a build-time layout resolver that computes every node's parent-relative `Bounds` from declarative extents, using a library-owned metrics contract instead of any backend measurement. `Bounds` changes meaning from surface-absolute to parent-relative and `Draw` geometry becomes node-local, carried across a single command-buffer version bump (1 → 2) with no backwards compatibility. Both backends lose four things each: the draw-geometry coordinate classifier, the node-bounds parent-local classifier, the auto-flow cursor with its default-size table, and the hardcoded per-variant colour constants. The config pages and both first-party apps are then rebuilt on the library, and "looks better" is verified by named criteria and Playwright structural assertions, with the final aesthetic agreed once in a working session with the product owner rather than pinned as a screenshot regression test.
 
 **Tech Stack:** C++20 (`-std=c++20 -Wall -Wextra -Wpedantic`), JUCE (desktop backend), TypeScript + Emscripten Wasm (browser backend), Playwright (Chromium), plain assertion-style C++ test binaries built by `projects/synth/Makefile`.
 
@@ -2033,7 +2033,88 @@ git commit -m "feat(controllers-page): rebuild the page and wizard on the compon
 
 ---
 
-## Task 14: Named visual criteria and structural assertions
+## Task 14: Unabsorbed overflow becomes a hard failure, and every page absorbs
+
+**OpenSpec:** 2.5b, 2.5c · **Requirements:** sru-54
+
+**Files:**
+- Modify: `projects/synth/include/synth/PortableUILayout.hpp` (the resolver)
+- Modify: `projects/synth/include/synth/RuntimePages.hpp` (Sync and Audio absorbing regions)
+- Modify: whatever else the new failure surfaces — pages, both apps, the wizard
+- Modify: `openspec/changes/rebuild-portable-ui-component-library/design.md` (D3 rule 6 is already amended; keep it consistent)
+- Test: `projects/synth/tests/portable_ui_layout_tests.cpp`, `projects/synth/tests/portable_ui_tests.cpp`
+
+**Interfaces:**
+- Consumes: the resolver and `ScrollArea` from Tasks 1-2, the File page's absorbing shape from Task 12.
+- Produces: a resolver that refuses to produce a silently-clipped tree, and pages that cannot be built as fixed stacks.
+
+The bug this closes: Sync and Audio are intrinsic-by-default stacks with nothing to absorb slack, so the Sync page overflowed its 640x480 surface by 3.18px and a containment test pinned at 780x585 passed over it. D3 rule 6 blessed that as "visible" overflow; node content clips to its bounds, so it was cut off instead.
+
+**This is not a ban on pixel extents, and do not turn it into one.** Sync and Audio use two `Extent::Px` between them — a pixel ban would not have caught this. An item inside a scrolling list legitimately carries its own extent along the scroll axis, because a fraction of the container is circular for a list whose length varies.
+
+- [ ] **Step 1: Write the failing tests**
+
+The diagnostic is the deliverable, so assert its content, not just that it throws. A container that overflows with nothing absorbing must name the container id, the axis, the extent available, the extent required, and the id of the first child that does not fit. Cover: a plain `Column` that overflows fails; the same content inside a `ScrollArea` resolves and publishes a content extent containing the last child; the same content with one weighted sibling resolves; and every rebuilt page and app resolves at 480px tall (`FakeBrowserApp`'s declared height, the floor across first-party surfaces).
+
+- [ ] **Step 2: Run to verify they fail, then implement the failure**
+
+Fail where the resolver already knows the numbers, so the message can be specific. Match the existing diagnostic idiom in the codebase rather than inventing a second one — `PortableJuceBackend.hpp` already throws with a named contract violation for multiply-parented nodes; read that first.
+
+- [ ] **Step 3: Give Sync and Audio an absorbing region**
+
+Copy the File page's shape: furniture that fits, plus one region that absorbs the difference. Do not reach for a smaller constant.
+
+- [ ] **Step 4: Fix whatever else the new failure surfaces**
+
+Run every suite. Any producer that now fails to resolve is a real defect this requirement exists to find — including in the apps and the wizard. Report each one and what absorbed it.
+
+- [ ] **Step 5: Run everything and commit**
+
+---
+
+## Task 15: Container fill and border, and retiring the underlays
+
+**OpenSpec:** 2.5a · **Requirements:** sru-55, sru-45
+
+**Files:**
+- Modify: `projects/synth/include/synth/PortableUI.hpp` (border fields on `Node`)
+- Modify: `projects/synth/include/synth/PortableUIBuilders.hpp` (container overloads taking appearance)
+- Modify: `include/synth/browser/BrowserCommandBuffer.hpp` + `browser/src/protocol.ts` (encode/decode)
+- Modify: `projects/synth/juce/PortableJuceBackend.hpp`, `projects/synth/browser/src/ui.ts` (render fill + border)
+- Modify: `projects/synth/include/synth/RuntimePages.hpp` (retire `PanelUnderlayFill`)
+- Test: `portable_ui_tests.cpp`, `browser_command_buffer_tests.cpp`, both backend suites
+
+**Interfaces:**
+- Consumes: `Node::color` and the per-kind colour table (Tasks 1, 3, 7, 8).
+- Produces: containers that carry their own appearance, and one fewer mechanism in the page layer.
+
+Two pieces of very different size. **The fill is nearly free** — `Node::color` exists, crosses the wire, and both backends already paint container fills, pinned in both suites — so it needs only the builder overload. **The border is a v2 schema amendment**: colour, width, and corner radius, none of which exist on `Node`. It is affordable only because v2 has not been published yet, and it **must land before Task 18's whole-catalog publication** or it becomes the second wire migration this change front-loaded OQ1 and OQ5 to avoid.
+
+- [ ] **Step 1: Write the failing tests**
+
+A container carrying a fill paints its whole area including padding and inter-child gaps — the thing no child's colour can paint, and the reason this requirement exists. A container carrying a border paints it at the declared width, colour, and radius. Absent values keep each backend's default look. Round-trip both through the wire. Assert in both backends.
+
+- [ ] **Step 2: Extend the model and the wire**
+
+Add the border fields with explicit presence flags, matching how `color` and `textStyle` are carried. Keep the strict version-equality check; this is still version 2, amended before publication, not version 3.
+
+- [ ] **Step 3: Add the container appearance overloads**
+
+`Column`, `Row`, `Section`, `ScrollArea`, and `Root` gain a form that accepts appearance alongside `LayoutOptions`. Preserve every existing caller.
+
+- [ ] **Step 4: Render in both backends**
+
+Honour the per-kind meaning already pinned by the parity suite. A carried value beats every backend constant.
+
+- [ ] **Step 5: Retire the File page underlays**
+
+`PanelUnderlayFill` and `PanelUnderlayLayout` exist because a container could not carry a fill or a border. With radius included they have no remaining job — delete them and declare the appearance on the panels themselves. Confirm the sru-25 visualizer underlays, which are genuine overlays, are untouched.
+
+- [ ] **Step 6: Run everything and commit**
+
+---
+
+## Task 16: Named visual criteria and structural assertions
 
 **OpenSpec:** 1.4, 6.1, 6.2, 6.3 · **Requirements:** sru-48, sru-50
 
@@ -2048,7 +2129,11 @@ git commit -m "feat(controllers-page): rebuild the page and wizard on the compon
 
 - [ ] **Step 1: Fix and record the verification environment**
 
-sru-48 requires one named reference viewport, device scale factor, and deterministic fixture state under which every criterion is evaluated and every screenshot captured. Read `projects/synth/browser/playwright.config.*` for the existing viewport, then pin all three and record them in `tasks.md` under task 1.4. Without this, different implementers produce incompatible baselines and CI reports environment drift as visual regression.
+sru-48 requires a device scale factor and a deterministic fixture state under which every criterion is evaluated. Read `projects/synth/browser/playwright.config.*` for the existing viewport, then pin them and record them in `tasks.md` under task 1.4.
+
+**Pin the scale factor at 1** — evaluate with the viewport at least as large as the surface — because the browser's shrink-only `surfaceScale` otherwise makes every measured rectangle a scaled one, which muddies text-fit and contrast checks. **Name the fixture state concretely**: which page is in which state, how many controllers, how many patch entries, wizard open or closed. Tasks 12 and 13 both showed list length changes layout materially, so choose lengths that exercise the scrolling path rather than the three-item happy case.
+
+Since sru-54 makes a page that cannot fit its surface fail at resolution, and since no screenshot is pinned as a baseline, the viewport dimensions are a framing choice rather than a correctness gate — a containment criterion now holds at any extent.
 
 - [ ] **Step 2: Write the criteria checklist constant**
 
@@ -2199,65 +2284,53 @@ git commit -m "test(visual): add named criteria and structural assertions (sru-4
 
 ---
 
-## Task 15: The screenshot loop, human sign-off, and baseline CI
+## Task 17: The appearance loop and the collaborative final review
 
-**OpenSpec:** 6.4, 6.5, 6.6 · **Requirements:** sru-48
+**OpenSpec:** 6.4, 6.5, 6.5a · **Requirements:** sru-48 (as amended 2026-07-30)
 
 **Files:**
-- Modify: `projects/synth/browser/tests/` (loop and baseline comparison), `projects/synth/Makefile`
-- Create: `projects/synth/browser/tests/screenshots/` baselines (committed **only** after sign-off)
-- Modify: `openspec/changes/rebuild-portable-ui-component-library/tasks.md` (record the sign-off)
+- Modify: `projects/synth/include/synth/RuntimePageStyle.hpp`, producer layout declarations
+- Create: `projects/synth/browser/tests/screenshots/` — **working artifacts, not baselines**
+- Modify: `openspec/changes/rebuild-portable-ui-component-library/tasks.md` (record what was decided)
 
 **Interfaces:**
-- Consumes: the criteria and assertions (Task 14), every rebuilt surface (Tasks 6, 11-13).
-- Produces: approved baselines and a CI gate.
+- Consumes: the criteria and assertions (Task 16), every rebuilt surface (Tasks 6, 11-15).
+- Produces: a final agreed appearance. **No baselines and no CI gate.**
 
-**This task contains a human gate. Do not commit baselines without recorded sign-off.**
+**sru-48 was amended: appearance is agreed once with a human and is not pinned as a regression test.** OpenSpec 6.6 — the pixel-diff CI gate and the baseline-update-with-sign-off procedure — is deleted. Screenshots exist to inform the loop and the review; nothing later compares against them. The durable regression surface is Task 16's structural criteria, which hold at any extent rather than at one pinned pixel grid.
+
+**This task ends in a working session with the human, not a sign-off form.** Do not try to finish it alone.
 
 - [ ] **Step 1: Run the iteration loop per surface**
 
-For each config page (Sync, Audio, File, Controllers) and each app surface (Braid 4, Mini App): build → render in the browser backend at Task 14's fixed viewport, scale factor, and fixture state → capture under `projects/synth/browser/tests/screenshots/` → evaluate against `VISUAL_CRITERIA` → adjust colours in `RuntimePageStyle.hpp` or layout declarations in the producer → repeat.
+For each config page (Sync, Audio, File, Controllers) and each app surface (Braid 4, Mini App): build → render in the browser backend at the scale factor and fixture state fixed in task 1.4 → capture under `projects/synth/browser/tests/screenshots/` → evaluate against `VISUAL_CRITERIA` → adjust colours in `RuntimePageStyle.hpp` or layout declarations in the producer → repeat.
 
 Iterate until **every machine-checkable criterion passes**. Adjust producers, never the criteria.
 
-- [ ] **Step 2: Present the sign-off package and STOP**
-
-For each surface, present: the final screenshot; the criteria results, including any criterion that is human-judged rather than machine-checked; and the content-audit removal list from Tasks 11-13 with each string's category.
-
-Then **wait for explicit approval**. Do not proceed without it.
-
-- [ ] **Step 3: Spot-check JUCE text fit**
+- [ ] **Step 2: Spot-check JUCE text fit**
 
 The one thing headless assertions cannot fully cover (design.md D4): render each surface in the JUCE backend and confirm no string is truncated inside its reservation. The metric is deliberately conservative, so ellipsis should be the exception. **If truncation is common, the metric in `PortableUIMetrics.hpp` is too tight — widen it and re-run Step 1** rather than accepting the truncation.
 
-- [ ] **Step 4: Commit the baselines and record the sign-off**
+- [ ] **Step 3: Bring it to the human and finish it together**
 
-Only after approval:
+Present, per surface: the current screenshot; the criteria results, naming any criterion that is human-judged rather than machine-checked; the content-audit removal lists from Tasks 11-13; and OpenSpec 6.5a's two open appearance choices — the Controllers mapping `Toggle` now carrying the field background rather than the button fill, and the empty 42px band under a single-field group header.
 
-```bash
-git add projects/synth/browser/tests/screenshots/
-git commit -m "test(visual): commit approved screenshot baselines (sru-48)"
-```
+Then work through the aesthetic **with** them and apply what is agreed. This is a pairing step: expect several rounds of "move that, recolour this", and expect judgement calls that no criterion covers.
 
-Record who approved, when, and which surfaces, in `tasks.md` under task 6.5.
+- [ ] **Step 4: Record what was decided and commit**
 
-- [ ] **Step 5: Wire baseline comparison into CI**
+Write down what was agreed and why, in `tasks.md` under 6.5 — the decisions, not a sign-off record. Commit the producer and style changes.
 
-Add baseline comparison to the browser test target with a **stated pixel-diff tolerance** — write the number down, do not leave it implicit. An unapproved render diff must fail. Document the baseline-update-with-sign-off procedure in a README beside the suite: an intended visual change is expressed by updating the baseline in the same commit with renewed sign-off, so unapproved pixel drift is a regression by definition.
-
-Run: `make synth-browser-test 2>&1 | tail -30`
-Expected: PASS against the committed baselines.
-
-- [ ] **Step 6: Commit**
+**Do not commit the screenshots as baselines, do not add a pixel-diff comparison, and do not add anything to a test target that can fail on a rendered-appearance difference.**
 
 ```bash
-git add projects/synth/Makefile projects/synth/browser/tests/ openspec/changes/rebuild-portable-ui-component-library/tasks.md
-git commit -m "test(visual): gate CI on approved screenshot baselines (sru-48)"
+git add projects/synth/include/synth/RuntimePageStyle.hpp projects/synth/include/synth/ openspec/changes/rebuild-portable-ui-component-library/tasks.md
+git commit -m "feat(runtime-pages): apply the agreed final appearance (sru-48)"
 ```
 
 ---
 
-## Task 16: Cleanup, layering enforcement, documentation, and publication
+## Task 18: Cleanup, layering enforcement, documentation, and publication
 
 **OpenSpec:** 7.1 through 7.6 · **Requirements:** sru-43, sru-46, sru-49, sru-51, sbap-3
 
