@@ -95,6 +95,10 @@ bool IsSidebarDescendant(const synth::ui::NodeTree& tree, const synth::ui::NodeI
 
 bool IsDeliberatelyZeroExtent(const synth::ui::Node& node)
 {
+    // TODO(tasks 11-13): return true for nodes the layout resolver intentionally
+    // collapses to zero extent (for example an empty widget bay), so
+    // TestSubtreesArriveFullyResolved does not treat that as a missing layout.
+    //
     (void)node;
     return false;
 }
@@ -286,17 +290,15 @@ struct Fixture
     MainComponent component{app, services};
 };
 
-synth::ui::NodeTree BuildCompositeTree(float width, float height)
+synth::ui::NodeTree BuildCompositeTree()
 {
-    Require(NearlyEqual(width, 900.0f) && NearlyEqual(height, 560.0f),
-            "BuildCompositeTree matches FakeApp configured size");
     Fixture fixture;
     return fixture.component.BuildTree();
 }
 
 void TestPlacingASubtreeRootPlacesEveryDescendant()
 {
-    const synth::ui::NodeTree composite = BuildCompositeTree(900.0f, 560.0f);
+    const synth::ui::NodeTree composite = BuildCompositeTree();
     Require(NearlyEqual(FindNode(composite, "runtime.main.root").bounds.width, 996.0f),
             "runtime chrome is additive: 900 + 96");
     Require(NearlyEqual(FindNode(composite, "runtime.sidebar.root").bounds.x, 900.0f),
@@ -314,7 +316,7 @@ void TestPlacingASubtreeRootPlacesEveryDescendant()
 
 void TestSubtreesArriveFullyResolved()
 {
-    const synth::ui::NodeTree composite = BuildCompositeTree(900.0f, 560.0f);
+    const synth::ui::NodeTree composite = BuildCompositeTree();
     for (const synth::ui::Node& node : composite.nodes)
     {
         if (node.kind == synth::ui::NodeKind::Root)

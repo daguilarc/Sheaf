@@ -795,14 +795,14 @@ test("keeps scroll descendants out of the outer surface extent", async ({ page }
   expect(layout.deepVisible).toBeTruthy();
 });
 
-test("keeps absolute surface bounds while nesting composite roots", async ({ page }) => {
+test("places nested sidebar descendants from parent-relative bounds", async ({ page }) => {
   const compositeFrame = makeCommandBuffer([
     { id: "main", kind: NodeKind.Root, bounds: [0, 0, 996, 200], children: ["app", "sidebar"] },
     { id: "app", kind: NodeKind.Root, bounds: [0, 0, 900, 200], children: ["app-status", "app-button"] },
     { id: "app-status", kind: NodeKind.StatusText, text: "x".repeat(160) },
     { id: "app-button", kind: NodeKind.Button, label: "Next" },
     { id: "sidebar", kind: NodeKind.Root, bounds: [900, 0, 96, 200], children: ["side-button"] },
-    { id: "side-button", kind: NodeKind.Button, bounds: [900, 0, 96, 28], label: "Side" },
+    { id: "side-button", kind: NodeKind.Button, bounds: [0, 0, 96, 28], label: "Side" },
   ]);
   await page.goto("http://127.0.0.1:4173/public/index.html");
   const layout = await page.evaluate(async (bytes) => {

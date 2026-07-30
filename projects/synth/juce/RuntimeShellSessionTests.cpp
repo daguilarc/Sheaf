@@ -159,6 +159,9 @@ int main() {
             "app encoder is discoverable through the shared renderer");
     Require(renderer.FindByNodeId(synth::runtime_ui::NodeIds::kSidebarAudio) != nullptr,
             "audio sidebar control is discoverable through the shared renderer");
+    Require(renderer.SurfaceBoundsForNode(synth::runtime_ui::NodeIds::kSidebarAudio).getX() ==
+                config.uiWidth,
+            "sidebar descendants resolve at the sidebar root's offset, not twice it");
 
     synth::ui::Surface* appSurface = &session.GetRuntime().AppSurface();
     auto* audioButton = dynamic_cast<juce::TextButton*>(

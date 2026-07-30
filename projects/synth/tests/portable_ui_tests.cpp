@@ -1517,8 +1517,9 @@ int main()
                     syncBackZero->bounds.width == syncBackShifted->bounds.width &&
                     syncBackZero->bounds.height == syncBackShifted->bounds.height,
                 "sync root-level children are root-relative, not area-origin absolute");
-        Require(syncSendZero->bounds.y == syncSendShifted->bounds.y &&
-                    syncSendZero->bounds.height == syncSendShifted->bounds.height,
+        Require(syncSendZero->bounds.y == syncSendShifted->bounds.y,
+                "sync send-clock y is root-relative");
+        Require(syncSendZero->bounds.height == syncSendShifted->bounds.height,
                 "sync remaining-height allocation ignores the area origin");
 
         synth::MidiInstrumentConfig controllerInstrument;
@@ -1532,11 +1533,8 @@ int main()
         };
         synth::runtime_ui::ControllersPageSurface controllersSurface(std::move(controllerCallbacks));
         controllersSurface.SetContentBounds(originZero);
-        controllersSurface.MarkDirty();
-        controllersSurface.RefreshOnTick();
         const synth::ui::NodeTree controllersOriginZero = controllersSurface.BuildTree();
         controllersSurface.SetContentBounds(shifted);
-        controllersSurface.MarkDirty();
         const synth::ui::NodeTree controllersShifted = controllersSurface.BuildTree();
         const synth::ui::Node* controllersBackZero =
             FindNodeById(controllersOriginZero, synth::runtime_ui::NodeIds::kBack);
@@ -1554,9 +1552,10 @@ int main()
                     controllersBackZero->bounds.width == controllersBackShifted->bounds.width &&
                     controllersBackZero->bounds.height == controllersBackShifted->bounds.height,
                 "controllers root-level children are root-relative, not area-origin absolute");
-        Require(controllersScrollZero->bounds.y == controllersScrollShifted->bounds.y &&
-                    controllersScrollZero->bounds.height == controllersScrollShifted->bounds.height,
-                "controllers scroll extent ignores the area origin");
+        Require(controllersScrollZero->bounds.y == controllersScrollShifted->bounds.y,
+                "controllers scroll y is root-relative");
+        Require(controllersScrollZero->bounds.height == controllersScrollShifted->bounds.height,
+                "controllers scrollBottom ignores the area origin");
     }
 
     synth::runtime_ui::FilePageSnapshot fileSnapshot;
