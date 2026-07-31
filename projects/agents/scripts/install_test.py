@@ -165,6 +165,100 @@ class CodexHookOutputTests(unittest.TestCase):
                 merged["hooks"]["SessionStart"],
             )
 
+    def owned_entry(self, output: install.CodexHookSharedOutput) -> dict[str, object]:
+        return copy.deepcopy(output.desired_group["hooks"][0])
+
+    def mixed_group(self, output: install.CodexHookSharedOutput) -> dict[str, object]:
+        # A user's own compact hook sharing the group that holds ours. Only the
+        # single entry carrying our command is ours; the group is not.
+        sibling = {"type": "command", "command": "python3 /opt/other/sibling.py"}
+        stale_owned = {**self.owned_entry(output), "statusMessage": "stale"}
+        return {
+            "matcher": "^compact$",
+            "timeout": 42,
+            "hooks": [sibling, stale_owned],
+        }
+
+    def test_install_lifts_owned_entry_out_of_mixed_compact_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            output = self.shared_output(codex_home)
+            before = self.foreign_group("python3 /opt/other/before.py")
+            mixed = self.mixed_group(output)
+            duplicate = {"matcher": "^compact$", "hooks": [self.owned_entry(output)]}
+            unmatched = {"matcher": "^startup$", "hooks": [self.owned_entry(output)]}
+            self.write_json(
+                output.config_path,
+                {"hooks": {"SessionStart": [before, mixed, duplicate, unmatched]}},
+            )
+
+            self.assertEqual(0, install.install_codex_hook_shared(output))
+
+            merged = self.read_json(output.config_path)
+            self.assertEqual(
+                [
+                    before,
+                    output.desired_group,
+                    {
+                        "matcher": "^compact$",
+                        "timeout": 42,
+                        "hooks": [mixed["hooks"][0]],
+                    },
+                    unmatched,
+                ],
+                merged["hooks"]["SessionStart"],
+            )
+            self.assertEqual(0, install.check_codex_hook_shared(output))
+
+    def test_check_rejects_an_owned_entry_beside_the_canonical_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            output = self.shared_output(codex_home)
+            self.assertEqual(0, install.install_codex_hook_shared(output))
+            config = self.read_json(output.config_path)
+            config["hooks"]["SessionStart"] = [
+                output.desired_group,
+                self.mixed_group(output),
+            ]
+            self.write_json(output.config_path, config)
+
+            self.assertEqual(1, install.check_codex_hook_shared(output))
+
+    def test_clean_removes_owned_entries_from_mixed_compact_groups(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            codex_home = (Path(tempdir) / "codex-home").resolve()
+            output = self.shared_output(codex_home)
+            before = self.foreign_group("python3 /opt/other/before.py")
+            mixed = self.mixed_group(output)
+            self.write_json(
+                output.config_path,
+                {
+                    "hooks": {
+                        "SessionStart": [before, mixed, output.desired_group],
+                    }
+                },
+            )
+            output.script_output.path.parent.mkdir(parents=True, exist_ok=True)
+            output.script_output.path.write_text(
+                output.script_output.content, encoding="utf-8"
+            )
+
+            self.assertEqual(0, install.clean_codex_hook_shared(output))
+
+            cleaned = self.read_json(output.config_path)
+            self.assertEqual(
+                [
+                    before,
+                    {
+                        "matcher": "^compact$",
+                        "timeout": 42,
+                        "hooks": [mixed["hooks"][0]],
+                    },
+                ],
+                cleaned["hooks"]["SessionStart"],
+            )
+            self.assertFalse(output.script_output.path.exists())
+
     def test_install_migrates_legacy_whole_file_marker(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             codex_home = (Path(tempdir) / "codex-home").resolve()

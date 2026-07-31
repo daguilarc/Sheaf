@@ -18,6 +18,7 @@ import fcntl
 
 STATE_SCHEMA_VERSION = 1
 LOCK_TIMEOUT_SECONDS = 1.0
+MCP_NAMESPACE_PREFIX = "mcp__xagent__"
 TERMINAL_PHASES = frozenset({"completed", "failed", "cancelled", "abandoned"})
 START_TOOLS = frozenset(
     {
@@ -50,12 +51,18 @@ class LockUnavailable(Exception):
 
 
 def normalize_tool_name(raw_name: object) -> str | None:
+    """Return the xagent tool a hook payload names, or `None`.
+
+    The installed observer groups carry no matcher, so every tool result
+    reaches this program. Only the undecorated name and the captured
+    `mcp__xagent__` decoration are ours: a same-named tool from another MCP
+    server is a different run space, and accepting it would strand the
+    controller on an await for a run xagent has never heard of.
+    """
     if not isinstance(raw_name, str):
         return None
-    for tool_name in SUPPORTED_TOOLS:
-        if raw_name == tool_name or raw_name.endswith(f"__{tool_name}"):
-            return tool_name
-    return None
+    tool_name = raw_name.removeprefix(MCP_NAMESPACE_PREFIX)
+    return tool_name if tool_name in SUPPORTED_TOOLS else None
 
 
 def _decoded_success_object(raw_text: str) -> dict[str, object] | None:

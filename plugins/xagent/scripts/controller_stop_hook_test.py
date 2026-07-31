@@ -129,6 +129,35 @@ class PayloadContractTests(unittest.TestCase):
 
             self.assertEqual([], state_files(Path(tempdir)))
 
+    def test_only_the_xagent_mcp_namespace_is_an_xagent_tool(self):
+        self.assertEqual("xagent_message", hook.normalize_tool_name("xagent_message"))
+        self.assertEqual(
+            "xagent_message",
+            hook.normalize_tool_name("mcp__xagent__xagent_message"),
+        )
+        self.assertIsNone(hook.normalize_tool_name("mcp__other_server__xagent_message"))
+        self.assertIsNone(hook.normalize_tool_name("other__xagent_close"))
+        self.assertIsNone(hook.normalize_tool_name("mcp__xagent__xagent_unknown"))
+
+    def test_foreign_mcp_namespace_never_creates_pending_state(self):
+        # Installed observer groups carry no matcher, so every tool result
+        # reaches the hook; a same-named tool from another MCP server is not
+        # an xagent run and must not strand the controller on an await.
+        with tempfile.TemporaryDirectory() as tempdir:
+            root = Path(tempdir)
+
+            hook.observe(
+                response_payload(
+                    tool_name="mcp__other_server__xagent_message",
+                    result={"run_id": "foreign-run", "sequence": 3},
+                ),
+                "claude",
+                root,
+            )
+
+            self.assertEqual([], state_files(root))
+            self.assertIsNone(hook.guard(stop_payload(), "claude", root))
+
 
 class ObserverStateTests(unittest.TestCase):
     def test_start_followup_message_interrupt_await_and_close_transitions(self):

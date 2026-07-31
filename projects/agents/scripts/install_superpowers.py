@@ -772,12 +772,20 @@ def clean_claude_registry(home: Path) -> None:
 
 
 def clean_claude_enabled(home: Path) -> None:
+    # Settings we cannot read as the documented shape are incompatible, not
+    # absent: cleaning must fail before touching the file rather than leave a
+    # user's own configuration silently unchanged or replaced.
+    #
     path = claude_settings_path(home)
     if not path.is_file():
         return
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    enabled = payload.get("enabledPlugins")
-    if not isinstance(enabled, dict) or CLAUDE_PLUGIN_KEY not in enabled:
+    payload = load_json_object(path, {})
+    if "enabledPlugins" not in payload:
+        return
+    enabled = payload["enabledPlugins"]
+    if not isinstance(enabled, dict):
+        raise RuntimeError(f"{path} field 'enabledPlugins' must be an object")
+    if CLAUDE_PLUGIN_KEY not in enabled:
         return
     del enabled[CLAUDE_PLUGIN_KEY]
     write_claude_settings_atomic(path, payload)

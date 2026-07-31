@@ -347,22 +347,59 @@ def write_json_atomic(path: Path, payload: object) -> None:
     os.replace(staged, path)
 
 
-def codex_group_command(group: dict[str, object]) -> object:
-    hooks = group.get("hooks")
-    if not isinstance(hooks, list) or len(hooks) != 1:
+def codex_compact_group_entries(group: object) -> list[object] | None:
+    if not isinstance(group, dict) or group.get("matcher") != "^compact$":
         return None
-    entry = hooks[0]
-    if not isinstance(entry, dict):
-        return None
-    return entry.get("command")
+    entries = group.get("hooks")
+    return entries if isinstance(entries, list) else None
 
 
-def codex_group_is_owned(group: object, installed_script: Path) -> bool:
+def codex_entry_is_owned(entry: object, installed_script: Path) -> bool:
     return (
-        isinstance(group, dict)
-        and group.get("matcher") == "^compact$"
-        and codex_group_command(group) == codex_hook_command(installed_script)
+        isinstance(entry, dict)
+        and entry.get("command") == codex_hook_command(installed_script)
     )
+
+
+def codex_group_owns_entry(group: object, installed_script: Path) -> bool:
+    """Whether a `^compact$` group carries our own hook command.
+
+    Ownership is per entry, not per group: a Codex hook group is a list of
+    commands, and a user may legitimately put their own compact command beside
+    ours. Treating a mixed group as foreign would append a second copy of our
+    command; treating it as wholly ours would delete their command.
+    """
+    entries = codex_compact_group_entries(group)
+    return entries is not None and any(
+        codex_entry_is_owned(entry, installed_script) for entry in entries
+    )
+
+
+def codex_group_is_canonical(group: object, installed_script: Path) -> bool:
+    entries = codex_compact_group_entries(group)
+    return (
+        entries is not None
+        and len(entries) == 1
+        and codex_entry_is_owned(entries[0], installed_script)
+    )
+
+
+def codex_group_without_owned_entries(
+    group: object,
+    installed_script: Path,
+) -> dict[str, object] | None:
+    """The owning group's siblings, keeping its own group-level properties.
+
+    Returns `None` when the group held nothing but our command.
+    """
+    entries = codex_compact_group_entries(group)
+    assert entries is not None and isinstance(group, dict)
+    remainder = [
+        entry for entry in entries if not codex_entry_is_owned(entry, installed_script)
+    ]
+    if not remainder:
+        return None
+    return {**group, "hooks": remainder}
 
 
 def validate_agents_codex_group_merge_shape(
@@ -371,7 +408,7 @@ def validate_agents_codex_group_merge_shape(
     installed_script: Path,
 ) -> None:
     validate_shared_hook_payload(Path("Codex hooks payload"), existing)
-    if not codex_group_is_owned(desired_group, installed_script):
+    if not codex_group_is_canonical(desired_group, installed_script):
         raise RuntimeError("desired Codex agents hook group is not canonical")
 
 
@@ -395,15 +432,22 @@ def merge_agents_codex_group(
     if not isinstance(session_start, list):
         raise RuntimeError('field "hooks.SessionStart" must be a JSON array')
 
+    # Our command is lifted into one clean canonical group at the first owning
+    # group's position, and that group's remaining siblings stay immediately
+    # beside it with their own group-level properties. Codex trust is
+    # positional, so nothing else moves.
     updated_groups: list[object] = []
     kept_owned = False
     for group in session_start:
-        if not codex_group_is_owned(group, installed_script):
+        if not codex_group_owns_entry(group, installed_script):
             updated_groups.append(group)
             continue
         if not kept_owned:
             updated_groups.append(copy.deepcopy(desired_group))
             kept_owned = True
+        siblings = codex_group_without_owned_entries(group, installed_script)
+        if siblings is not None:
+            updated_groups.append(siblings)
 
     if not kept_owned:
         updated_groups.append(copy.deepcopy(desired_group))
@@ -428,18 +472,13 @@ def shared_hook_has_canonical_group(
     desired_group: dict[str, object],
     installed_script: Path,
 ) -> bool:
-    hooks = payload.get("hooks")
-    if not isinstance(hooks, dict):
-        return False
-    groups = hooks.get("SessionStart")
-    if not isinstance(groups, list):
-        return False
-    owned = [
+    owning = [
         group
-        for group in groups
-        if codex_group_is_owned(group, installed_script)
+        for group in session_start_groups(payload)
+        if codex_group_owns_entry(group, installed_script)
     ]
-    return owned == [desired_group]
+    # Exactly one clean canonical group, and no other entry of ours anywhere.
+    return owning == [desired_group]
 
 
 def prune_empty_shared_hook_payload(payload: dict[str, object]) -> dict[str, object]:
@@ -531,11 +570,17 @@ def clean_codex_hook_shared(output: CodexHookSharedOutput) -> int:
     if isinstance(hooks, dict):
         groups = hooks.get("SessionStart")
         if isinstance(groups, list):
-            kept_groups = [
-                group
-                for group in groups
-                if not codex_group_is_owned(group, output.script_output.path)
-            ]
+            kept_groups: list[object] = []
+            for group in groups:
+                if not codex_group_owns_entry(group, output.script_output.path):
+                    kept_groups.append(group)
+                    continue
+                siblings = codex_group_without_owned_entries(
+                    group,
+                    output.script_output.path,
+                )
+                if siblings is not None:
+                    kept_groups.append(siblings)
             if kept_groups != groups:
                 hooks["SessionStart"] = kept_groups
                 changed_group_array = True

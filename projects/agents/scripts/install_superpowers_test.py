@@ -940,6 +940,69 @@ class InstallSuperpowersTests(unittest.TestCase):
         self.assertEqual(prior, json.loads(backup.read_text(encoding="utf-8")))
         self.assertFalse(staged.exists())
 
+    def clean_main(self) -> tuple[int, str]:
+        errors = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(
+            errors
+        ):
+            status = install_superpowers.main(
+                [
+                    "clean",
+                    "--home",
+                    str(self.home),
+                    "--codex-home",
+                    str(self.codex_home),
+                ]
+            )
+        return status, errors.getvalue()
+
+    def assert_settings_untouched(self, settings_path: Path, original: str) -> None:
+        self.assertEqual(original, settings_path.read_text(encoding="utf-8"))
+        self.assertFalse(
+            settings_path.with_name(f"{settings_path.name}.sheaf-backup").exists()
+        )
+        self.assertFalse(
+            settings_path.with_name(f".{settings_path.name}.sheaf-stage").exists()
+        )
+
+    def test_claude_clean_fails_on_malformed_settings_without_replacement(self) -> None:
+        settings_path = self.home / ".claude" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        malformed = "{not-json\n"
+        settings_path.write_text(malformed, encoding="utf-8")
+
+        status, _ = self.clean_main()
+
+        self.assertEqual(1, status)
+        self.assert_settings_untouched(settings_path, malformed)
+
+    def test_claude_clean_fails_on_wrong_shape_enabled_plugins(self) -> None:
+        settings_path = self.home / ".claude" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        original = (
+            json.dumps({"enabledPlugins": ["superpowers@sheaf-managed"], "keep": True})
+            + "\n"
+        )
+        settings_path.write_text(original, encoding="utf-8")
+
+        status, errors = self.clean_main()
+
+        self.assertEqual(1, status)
+        self.assertIn("enabledPlugins", errors)
+        self.assert_settings_untouched(settings_path, original)
+
+    def test_claude_clean_fails_on_non_object_settings(self) -> None:
+        settings_path = self.home / ".claude" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        original = '["superpowers@sheaf-managed"]\n'
+        settings_path.write_text(original, encoding="utf-8")
+
+        status, errors = self.clean_main()
+
+        self.assertEqual(1, status)
+        self.assertIn("JSON object", errors)
+        self.assert_settings_untouched(settings_path, original)
+
 
 if __name__ == "__main__":
     unittest.main()
