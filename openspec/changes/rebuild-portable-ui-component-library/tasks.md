@@ -132,7 +132,7 @@ Order: 3.1 → 3.2 → 3.2a → 3.3 → 3.4 → 3.4a → 3.13 → 3.14 → 3.15 
     | like-type controls share column positions | `controls in the same form-grid column share an x-position and a width` (Sync) | `ColumnAlignment` on the Sync **and** Audio grids, at three surface extents |
     | all spacing drawn from the shared spacing metrics | `every gap and padding is a shared spacing-metric value` | `SpacingConformance`, allowed set built from the C++ constants themselves |
     | every form control has a visible caption | `every form control has a visible caption` | `UncaptionedFormControls` |
-    | no overlapping nodes and no container overflow on either axis | `no node overflows its parent's containing rectangle on either axis`, `no two siblings overlap, and an underlay covers exactly the node it names` | `ContainmentViolations`, `SiblingOverlapViolations`, `UnderlayViolations` |
+    | no overlapping nodes and no container overflow on either axis | `no node overflows its parent's containing rectangle on either axis`, `no two siblings overlap, and these pages emit no underlay` in the browser, with underlay-to-target congruence pinned headlessly | `ContainmentViolations`, `SiblingOverlapViolations`, `UnderlayViolations` |
     | every text element renders within its allocated extent | `every text element fits its allocated extent` | — (needs real rendering) |
     | text contrast meets WCAG AA 4.5:1 | `text contrast meets WCAG AA 4.5:1` | — (needs computed style) |
     | no text conveys no information to the user | `no text element renders an empty string` | `EmptyTextNodes`; the non-empty-but-uninformative half is a 6.5 judgement |

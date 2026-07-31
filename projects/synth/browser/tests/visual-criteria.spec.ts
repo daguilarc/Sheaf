@@ -616,8 +616,9 @@ test.describe("sru-48 named visual criteria", () => {
               //  - an underlay against THE ONE SIBLING IT NAMES.
               //
               // An underlay is still compared against every other sibling, so
-              // one that drifted onto its neighbour fails here as well as
-              // failing the congruence pin below. Before this, matching either
+              // one that drifted onto its neighbour fails here. Congruence with
+              // the named target is pinned headlessly, not in this file — see
+              // the comment above this test. Before this, matching either
               // id against the out-of-flow list skipped every pair involving a
               // `.visualizer`, which is a far broader exemption than the
               // comment above it claimed.
