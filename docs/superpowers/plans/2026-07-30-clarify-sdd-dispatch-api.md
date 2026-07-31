@@ -4,13 +4,13 @@
 
 **Goal:** Make every advertised `xagent_sdd_start` / `xagent_sdd_followup` field description true against the prompt that consumes it, give every field one name for one function, and make renderer argument faults name the caller's own field.
 
-**Architecture:** The renderer (`dispatch-prompt`) already owns a correct contract for four of the six prompt variants; it gains explicit direction metadata, a versioned `--describe-slots` dump, and a coded JSON trailer for argument faults. The facade (`tool_schemas.ts`, `sdd_prompt.ts`, `sdd_manager.ts`) stops restating that contract in prose and instead derives its advertised descriptions from a **dispatch field manifest** joining the renderer's dump with a service-owned declaration for the two service-formatted variants (`fixer`, follow-up `fix`). Field names are split by direction so no name means two things.
+**Architecture:** The renderer (`dispatch-prompt`) already owns a correct contract for five of the seven public dispatch variants; it gains explicit direction metadata, a versioned `--describe-slots` dump, and a coded JSON trailer for argument faults. The facade (`tool_schemas.ts`, `sdd_prompt.ts`, `sdd_manager.ts`) stops restating that contract in prose and instead derives its advertised descriptions from a **dispatch field manifest** joining the renderer's dump with a service-owned declaration for the two service-formatted variants (`fixer`, follow-up `fix`). Field names are split by direction so no name means two things.
 
 **Tech Stack:** Python 3 (renderer, `unittest` + `subprocess`), TypeScript strict + Zod (service), `node --test` (service tests), OpenSpec, Superpowers.
 
 ## Global Constraints
 
-- All work happens in the worktree at `/Users/joyo/Sheaf/.claude/worktrees/dazzling-montalcini-2603a4` on branch `claude/hello-ffa06c`. Base commit: `4a93c914`.
+- All work happens in the worktree at `/Users/joyo/Sheaf/.claude/worktrees/dazzling-montalcini-2603a4` on branch `claude/hello-ffa06c`. Base commit: `1301bd0e`.
 - Every task must leave the tree compiling and its tests green. TypeScript is `strict`.
 - Code style in `projects/xagent/src/service/`: Allman braces in `sdd_manager.ts`, K&R elsewhere — match the file you are editing. Module-private constants are prefixed `x_`. Exported store/manager functions are `PascalCase`.
 - The renderer is Python 3 with no third-party dependencies. Keep it dependency-free.
@@ -81,7 +81,10 @@ class DescribeSlotsTests(unittest.TestCase):
         self.assertEqual(by_option["--report"]["direction"], "reads")
         self.assertFalse(by_option["--report"]["has_fallback"])
         self.assertEqual(
-            by_option["--diff"]["derivation"], "review-<base>..<head>.diff"
+            by_option["--diff"]["derivation"],
+            {"kind": "plan_workspace",
+             "pattern": "review-{short(base)}..{short(head)}.diff",
+             "requires_existing": True},
         )
         self.assertTrue(by_option["--constraints"]["has_fallback"])
 ```
@@ -546,9 +549,11 @@ Depends on Task 1 (`--describe-slots`, the fault trailer) and Task 2 (the field 
 - Consumes: Task 1's `--describe-slots` JSON and stderr trailer; Task 2's field names.
 - Produces:
   - `DISPATCH_VARIANTS`: the closed registry, exactly `["implementer", "reviewer:task", "reviewer:branch", "fixer", "re-reviewer", "followup:fix", "followup:re-review"]`.
-  - `ManifestEntry = { variant: string; field: string; source: "renderer" | "service"; rendererOption: string | null; surfaceKind: "path" | "text"; direction: "reads" | "writes" | null; transport: "path_substituted" | "inlined_contents" | "not_applicable"; requiredCondition: "always" | "unless-derivable" | "optional"; derivation: Derivation | null }`.
+  - `REGISTRY: Record<Variant, readonly string[]>` — the matrix: each variant mapped to its in-scope public fields. `OPERATIONAL_FIELDS` is exactly `role`, `kind`, `cwd`, `model`, `harness`, `effort`, `policy`, `note`, `run_id`, and is subtracted before any comparison.
+  - `ManifestEntry = { variant: string; field: string | null; source: "renderer" | "service"; rendererOption: string | null; provenance: "caller_input" | "ledger" | "derived"; surfaceKind: "path" | "text"; direction: "reads" | "writes" | null; transport: "path_substituted" | "inlined_contents" | "not_applicable"; requiredCondition: "always" | "unless-derivable" | "optional"; derivation: Derivation | null }`. Entries are keyed by `(variant, rendererOption, provenance)` — one per **reachable** provenance, so `--diff` on a task-scoped reviewer has both a `caller_input` and a `derived` entry. Only `caller_input` entries carry a non-null `field`.
   - `DispatchManifest(): ManifestEntry[]` — **synchronous**, reading the checked-in generated JSON. No subprocess at runtime.
-  - `SurfaceFieldFor(variant: string, rendererOption: string): string | null` — **synchronous**; null when the facade never sends that option, which the caller turns into `sdd_renderer_failed`.
+  - `CallerInputProjection(): Array<{variant: string, field: string}>` — the `caller_input` entries reduced to variant/field pairs. This is what equals `REGISTRY`; the full manifest is a superset.
+  - `SurfaceFieldFor(variant: string, rendererOption: string): string | null` — **synchronous**; null for an option the facade never sends *and* for `ledger`/`derived` options, which the caller routes to `sdd_stored_artifact_missing` or `sdd_renderer_failed` respectively.
 
 - [ ] **Step 1: Write the failing manifest-coverage test**
 
@@ -560,11 +565,30 @@ import assert from "node:assert/strict";
 import { LoadDispatchManifest, SurfaceFieldFor } from "../src/service/dispatch_manifest.ts";
 import { XagentSddStartAdvertisedSchema } from "../src/service/tool_schemas.ts";
 
-test("the manifest exactly equals the variant registry", () => {
-  const manifest = DispatchManifest();
-  const covered = new Set(manifest.map((e) => e.variant));
-  assert.deepEqual([...covered].sort(), [...DISPATCH_VARIANTS].sort(),
-    "manifest variants must equal the registry — neither subset nor superset");
+test("the caller-input projection exactly equals the registry matrix", () => {
+  const projection = CallerInputProjection()
+    .map((e) => `${e.variant}\u0000${e.field}`).sort();
+  const expected = Object.entries(REGISTRY)
+    .flatMap(([v, fields]) => fields.map((f) => `${v}\u0000${f}`)).sort();
+  assert.deepEqual(projection, expected,
+    "projection must equal the matrix — neither subset nor superset");
+});
+
+test("schema-accepted pairs, less operational fields, equal the registry", () => {
+  // Equality #2. The subtraction is required: the registry holds in-scope
+  // fields only, so an unfiltered comparison can never succeed.
+  const accepted = AcceptedPairsFromSchemas()
+    .filter((e) => !OPERATIONAL_FIELDS.includes(e.field));
+  assert.deepEqual(
+    accepted.map((e) => `${e.variant}\u0000${e.field}`).sort(),
+    Object.entries(REGISTRY).flatMap(([v, fs]) => fs.map((f) => `${v}\u0000${f}`)).sort());
+});
+
+test("an option reachable two ways has an entry per provenance", () => {
+  const diff = DispatchManifest().filter(
+    (e) => e.variant === "reviewer:task" && e.rendererOption === "--diff");
+  assert.deepEqual(diff.map((e) => e.provenance).sort(), ["caller_input", "derived"]);
+  assert.equal(diff.find((e) => e.provenance === "derived")?.field, null);
 });
 
 test("a variant reusing only existing fields still fails until registered", () => {
@@ -603,11 +627,15 @@ test("one renderer option maps to the variant's own surface field", () => {
   assert.equal(SurfaceFieldFor("re-reviewer", "--report"), "fixer_report");
 });
 
-test("non-artifact options resolve too, so every trailer has a field", () => {
+test("non-artifact caller options resolve, ledger options do not", () => {
   assert.equal(SurfaceFieldFor("implementer", "--name"), "name");
   assert.equal(SurfaceFieldFor("reviewer:task", "--base"), "base");
   assert.equal(SurfaceFieldFor("implementer", "--task"), "task");
-  // An option the facade never sends has no surface field.
+  // Sourced from the sdd_agents row, not from the caller — no public field
+  // to blame, so these route to sdd_stored_artifact_missing instead.
+  assert.equal(SurfaceFieldFor("followup:re-review", "--brief"), null);
+  assert.equal(SurfaceFieldFor("followup:re-review", "--plan"), null);
+  // An option the facade never sends.
   assert.equal(SurfaceFieldFor("implementer", "--out"), null);
 });
 
