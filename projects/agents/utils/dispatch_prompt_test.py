@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
@@ -232,6 +233,8 @@ class DispatchPromptTestCase(unittest.TestCase):
         )
         return report
 
+
+class DispatchPromptTests(DispatchPromptTestCase):
     # ------------------------------------------------------------ resolution
 
     def test_selects_highest_installed_version(self) -> None:
@@ -716,6 +719,123 @@ class RealTemplatesTestCase(unittest.TestCase):
             "Cannot verify from diff",
         ):
             self.assertIn(sentence, text, "upstream template changed; update the manifest")
+
+
+class DescribeSlotsTests(DispatchPromptTestCase):
+    def test_describe_slots_needs_no_plan(self):
+        result = self.run_util("--describe-slots")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        doc = json.loads(result.stdout)
+        self.assertEqual(doc["schema_version"], 1)
+
+    def test_every_template_and_slot_appears(self):
+        doc = json.loads(self.run_util("--describe-slots").stdout)
+        self.assertEqual(
+            set(doc["templates"]),
+            {"implementer", "task-reviewer", "re-review", "code-reviewer"},
+        )
+        options = {s["option"] for s in doc["templates"]["task-reviewer"]}
+        self.assertIn("--brief", options)
+        self.assertIn("--report", options)
+        self.assertIn("--diff", options)
+
+    def test_directions_are_declared_only_for_artifact_slots(self):
+        doc = json.loads(self.run_util("--describe-slots").stdout)
+        by_option = {
+            s["option"]: s for s in doc["templates"]["implementer"]
+        }
+        self.assertEqual(by_option["--brief"]["direction"], "reads")
+        self.assertEqual(by_option["--report"]["direction"], "writes")
+        self.assertIsNone(by_option["--context"]["direction"])
+        self.assertIsNone(by_option["--name"]["direction"])
+
+    def test_reviewer_report_reads_and_diff_derives(self):
+        doc = json.loads(self.run_util("--describe-slots").stdout)
+        by_option = {s["option"]: s for s in doc["templates"]["task-reviewer"]}
+        self.assertEqual(by_option["--report"]["direction"], "reads")
+        self.assertFalse(by_option["--report"]["has_fallback"])
+        self.assertEqual(
+            by_option["--diff"]["derivation"],
+            {
+                "kind": "plan_workspace",
+                "pattern": "review-{short(base)}..{short(head)}.diff",
+                "requires_existing": True,
+            },
+        )
+        self.assertTrue(by_option["--constraints"]["has_fallback"])
+
+    def test_described_diff_pattern_matches_what_supplied_looks_for(self) -> None:
+        self.seed_report()
+        doc = json.loads(self.run_util("--describe-slots").stdout)
+        entry = next(s for s in doc["templates"]["task-reviewer"]
+                     if s["option"] == "--diff")
+        sha = self.short()
+        resolved = (entry["derivation"]["pattern"]
+                    .replace("{short(base)}", sha)
+                    .replace("{short(head)}", sha))
+        self.assertTrue((self.workspace / resolved).is_file())
+
+
+class FaultTrailerTests(DispatchPromptTestCase):
+    def trailer(self, result) -> dict:
+        lines = [line for line in result.stderr.splitlines() if line.strip()]
+        self.assertTrue(lines, "expected stderr output")
+        return json.loads(lines[-1])
+
+    def test_no_such_file_names_option_and_path(self) -> None:
+        self.seed_report()
+        missing = str(self.repo / "absent.md")
+        result = self.reviewer("--brief", missing)
+        self.assertEqual(result.returncode, 2)
+        body = self.trailer(result)
+        self.assertEqual(body["error"], "no_such_file")
+        self.assertEqual(body["option"], "--brief")
+        self.assertEqual(body["path"], missing)
+
+    def test_empty_file_is_distinct(self) -> None:
+        self.seed_report()
+        empty = self.repo / "empty.md"
+        empty.write_text("", encoding="utf-8")
+        body = self.trailer(self.reviewer("--brief", str(empty)))
+        self.assertEqual(body["error"], "empty_file")
+
+    def test_not_accepted_names_template(self) -> None:
+        self.seed_report()
+        body = self.trailer(self.reviewer("--dir", str(self.repo)))
+        self.assertEqual(body["error"], "not_accepted")
+        self.assertEqual(body["option"], "--dir")
+        self.assertEqual(body["template"], "task-reviewer")
+
+    def test_required_missing_when_no_derivation(self) -> None:
+        # No seed_report(), so neither the report nor the diff can be derived.
+        body = self.trailer(self.reviewer())
+        self.assertEqual(body["error"], "required_missing")
+        self.assertIn(body["option"], {"--report", "--diff"})
+        self.assertEqual(body["template"], "task-reviewer")
+
+    def test_parent_missing_for_a_write_slot(self) -> None:
+        result = self.run_util(
+            "implementer", "--plan", str(self.plan), "--task", "1",
+            "--name", "Thing", "--brief", str(self.brief),
+            "--report", str(self.repo / "nodir" / "r.md"),
+            root=str(self.roots / "6.2.0" / "skills"),
+        )
+        self.assertEqual(self.trailer(result)["error"], "parent_missing")
+
+    def test_trailer_never_carries_file_contents(self) -> None:
+        # self.brief holds BRIEF-BODY-SENTINEL; a constraints file is inlined.
+        constraints = self.repo / "constraints.md"
+        constraints.write_text("CONSTRAINTS-BODY-SENTINEL\n", encoding="utf-8")
+        result = self.reviewer("--constraints", str(constraints))
+        self.assertNotIn("BRIEF-BODY-SENTINEL", result.stderr)
+        self.assertNotIn("CONSTRAINTS-BODY-SENTINEL", result.stderr)
+
+    def test_non_argument_failure_emits_no_trailer(self) -> None:
+        result = self.reviewer(root=str(self.tmp / "no-such-root"))
+        self.assertEqual(result.returncode, 2)
+        lines = [line for line in result.stderr.splitlines() if line.strip()]
+        with self.assertRaises(json.JSONDecodeError):
+            json.loads(lines[-1])
 
 
 if __name__ == "__main__":

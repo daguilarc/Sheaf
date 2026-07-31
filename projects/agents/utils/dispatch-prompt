@@ -16,6 +16,7 @@ See --help for the per-template option set.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -50,6 +51,19 @@ TEMPLATES_ROOT_ENV = "SUPERPOWERS_TEMPLATES_ROOT"
 # supply it; a non-required slot must still be satisfied by a derivation or by
 # `fallback`, because a surviving "[TOKEN]" in a delivered prompt is noise the
 # subagent has to interpret.
+
+# Direction is declared only for slots whose value is a caller-supplied
+# filesystem path. `text` and `literal` carry inline values, so they have no
+# direction and requiring one would force an invented semantic (dpr-5).
+DIRECTIONS: dict[str, str | None] = {
+    "path": "reads",
+    "filetext": "reads",
+    "path_out": "writes",
+    "text": None,
+    "literal": None,
+}
+
+
 @dataclass(frozen=True)
 class Slot:
     token: str
@@ -57,6 +71,15 @@ class Slot:
     kind: str
     required: bool = False
     fallback: str | None = None
+    # The conventional plan-workspace filename `_supplied` can satisfy this
+    # slot with when the caller omits it. A fallback-less slot with a
+    # derivation is renderable without the caller supplying anything, so
+    # fallback absence alone does not mean "the caller must provide this".
+    derivation: dict | None = None
+
+    @property
+    def direction(self) -> str | None:
+        return DIRECTIONS[self.kind]
 
 
 @dataclass(frozen=True)
@@ -72,6 +95,21 @@ class Template:
     wants_shas: bool = False
 
 
+def workspace_derivation(pattern: str, *, requires_existing: bool = True) -> dict:
+    """A file `_supplied` looks for in the plan's SDD workspace (dpr-11).
+
+    `{task}` is the task number; `{short(base)}` and `{short(head)}` are
+    `git rev-parse --short` of those revisions, falling back to the first
+    seven characters — see `short_sha`.
+    """
+    return {"kind": "plan_workspace", "pattern": pattern,
+            "requires_existing": requires_existing}
+
+
+REPO_ROOT_DERIVATION = {"kind": "repo_root"}
+REVIEW_DIFF_PATTERN = "review-{short(base)}..{short(head)}.diff"
+
+
 TEMPLATES: dict[str, Template] = {
     "implementer": Template(
         skill="subagent-driven-development",
@@ -85,9 +123,16 @@ TEMPLATES: dict[str, Template] = {
                 "text",
                 fallback="No additional context beyond the task brief.",
             ),
-            Slot("[directory]", "--dir", "literal"),
+            Slot("[directory]", "--dir", "literal", derivation=REPO_ROOT_DERIVATION),
             # The implementer WRITES its report, so this path need not exist yet.
-            Slot("[REPORT_FILE]", "--report", "path_out"),
+            Slot(
+                "[REPORT_FILE]",
+                "--report",
+                "path_out",
+                derivation=workspace_derivation(
+                    "task-{task}-report.md", requires_existing=False
+                ),
+            ),
         ),
         task_token=True,
     ),
@@ -101,11 +146,22 @@ TEMPLATES: dict[str, Template] = {
                 "--constraints",
                 "filetext",
                 fallback="None beyond the task brief.",
+                derivation=workspace_derivation("global-constraints.md"),
             ),
-            Slot("[REPORT_FILE]", "--report", "path"),
+            Slot(
+                "[REPORT_FILE]",
+                "--report",
+                "path",
+                derivation=workspace_derivation("task-{task}-report.md"),
+            ),
             Slot("[BASE_SHA]", "--base", "literal", required=True),
             Slot("[HEAD_SHA]", "--head", "literal", required=True),
-            Slot("[DIFF_FILE]", "--diff", "path"),
+            Slot(
+                "[DIFF_FILE]",
+                "--diff",
+                "path",
+                derivation=workspace_derivation(REVIEW_DIFF_PATTERN),
+            ),
         ),
         wants_shas=True,
     ),
@@ -115,10 +171,20 @@ TEMPLATES: dict[str, Template] = {
         slots=(
             Slot("[BRIEF_FILE]", "--brief", "path", required=True),
             Slot("[FINDINGS]", "--findings", "filetext", required=True),
-            Slot("[REPORT_FILE]", "--report", "path"),
+            Slot(
+                "[REPORT_FILE]",
+                "--report",
+                "path",
+                derivation=workspace_derivation("task-{task}-report.md"),
+            ),
             Slot("[FIX_BASE_SHA]", "--base", "literal", required=True),
             Slot("[HEAD_SHA]", "--head", "literal", required=True),
-            Slot("[DIFF_FILE]", "--diff", "path"),
+            Slot(
+                "[DIFF_FILE]",
+                "--diff",
+                "path",
+                derivation=workspace_derivation(REVIEW_DIFF_PATTERN),
+            ),
         ),
         rounds=True,
         wants_shas=True,
@@ -148,6 +214,28 @@ SLOT_OPTIONS = {slot.option for template in TEMPLATES.values() for slot in templ
 
 class Fail(Exception):
     """A user-facing failure. Nothing is written when this is raised."""
+
+    def __init__(self, message: str, *, error: str | None = None,
+                 option: str | None = None, path: str | None = None,
+                 template: str | None = None) -> None:
+        super().__init__(message)
+        # Only enumerated argument faults carry a code; template-resolution
+        # and drift failures deliberately do not, so an embedder classifying
+        # by trailer treats them as unrecognized (dpr-10).
+        self.error = error
+        self.option = option
+        self.path = path
+        self.template = template
+
+    def trailer(self) -> str | None:
+        if self.error is None:
+            return None
+        body: dict[str, str] = {"error": self.error, "option": self.option or ""}
+        if self.path is not None:
+            body["path"] = self.path
+        if self.template is not None:
+            body["template"] = self.template
+        return json.dumps(body, sort_keys=True)
 
 
 # ---------------------------------------------------------------- resolution
@@ -284,10 +372,12 @@ def extract_prompt_body(text: str, source: Path) -> str:
 def read_file(path_str: str, option: str) -> tuple[Path, str]:
     path = Path(path_str).expanduser()
     if not path.is_file():
-        raise Fail(f"{option}: no such file: {path}")
+        raise Fail(f"{option}: no such file: {path}",
+                   error="no_such_file", option=option, path=path_str)
     content = path.read_text(encoding="utf-8")
     if not content.strip():
-        raise Fail(f"{option}: file is empty: {path}")
+        raise Fail(f"{option}: file is empty: {path}",
+                   error="empty_file", option=option, path=path_str)
     return path, content
 
 
@@ -298,7 +388,12 @@ def slot_value(slot: Slot, raw: str) -> str:
     if slot.kind == "path_out":
         path = Path(raw).expanduser()
         if not path.parent.is_dir():
-            raise Fail(f"{slot.option}: parent directory does not exist: {path.parent}")
+            raise Fail(
+                f"{slot.option}: parent directory does not exist: {path.parent}",
+                error="parent_missing",
+                option=slot.option,
+                path=raw,
+            )
         return str(path.resolve())
     if slot.kind == "filetext":
         _, content = read_file(raw, slot.option)
@@ -366,7 +461,10 @@ def render(template: Template, name: str, args: argparse.Namespace) -> tuple[str
                 )
                 raise Fail(
                     f"{slot.option} is required for the {name} template{detail} "
-                    "(no value supplied and none could be derived)"
+                    "(no value supplied and none could be derived)",
+                    error="required_missing",
+                    option=slot.option,
+                    template=name,
                 )
             values[slot.token] = slot.fallback
             continue
@@ -450,19 +548,47 @@ def write_atomic(path: Path, content: str) -> None:
 # ---------------------------------------------------------------------- main
 
 
+DESCRIBE_SCHEMA_VERSION = 1
+
+
+def describe_slots() -> str:
+    """A machine-readable slot table so embedders describe, never restate (dpr-11)."""
+    return json.dumps(
+        {
+            "schema_version": DESCRIBE_SCHEMA_VERSION,
+            "templates": {
+                name: [
+                    {
+                        "option": slot.option,
+                        "token": slot.token,
+                        "kind": slot.kind,
+                        "direction": slot.direction,
+                        "has_fallback": slot.fallback is not None,
+                        "derivation": slot.derivation,
+                    }
+                    for slot in template.slots
+                ]
+                for name, template in TEMPLATES.items()
+            },
+        },
+        indent=2,
+        sort_keys=True,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dispatch-prompt",
         description="Render a Superpowers subagent prompt template to a file.",
     )
-    parser.add_argument("template", choices=sorted(TEMPLATES), help="template role name")
-    parser.add_argument("--plan", required=True, help="implementation plan file")
+    parser.add_argument("template", nargs="?", choices=sorted(TEMPLATES), help="template role name")
+    parser.add_argument("--plan", required=False, help="implementation plan file")
     parser.add_argument("--task", help="task number (task-scoped templates)")
     parser.add_argument("--round", help="fix round number (re-review)")
     parser.add_argument("--name", help="task name (implementer)")
-    parser.add_argument("--brief", help="task brief FILE — required, substituted as a path")
-    parser.add_argument("--report", help="implementer report file")
-    parser.add_argument("--constraints", help="global constraints file (contents inlined)")
+    parser.add_argument("--brief", help="task or review brief FILE — must exist, substituted as a path")
+    parser.add_argument("--report", help="implementer/fixer report FILE to READ (task-reviewer, re-review); WRITE destination (implementer)")
+    parser.add_argument("--constraints", help="global constraints file (contents inlined); defaults to the workspace file")
     parser.add_argument("--findings", help="findings file (contents inlined)")
     parser.add_argument("--context", help="scene-setting text, or @FILE")
     parser.add_argument("--description", help="what was built, or @FILE")
@@ -470,14 +596,28 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dir", help="working directory for the subagent")
     parser.add_argument("--base", help="base commit")
     parser.add_argument("--head", help="head commit")
-    parser.add_argument("--diff", help="review package diff file")
+    parser.add_argument("--diff", help="review package diff FILE — required for task-reviewer and re-review unless derivable")
     parser.add_argument("--out", help="explicit output path")
     parser.add_argument("--templates-root", help="override the Superpowers skills root")
+    parser.add_argument("--describe-slots", action="store_true",
+                        help="print the machine-readable slot table and exit")
     return parser
 
 
 def main(argv: list[str]) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.describe_slots:
+        print(describe_slots())
+        return 0
+
+    if args.template is None:
+        print("dispatch-prompt: a template name is required", file=sys.stderr)
+        return 2
+    if args.plan is None:
+        print("dispatch-prompt: --plan is required", file=sys.stderr)
+        return 2
+
     template = TEMPLATES[args.template]
 
     try:
@@ -499,7 +639,10 @@ def main(argv: list[str]) -> int:
             if getattr(args, attr, None) is not None and option not in allowed:
                 raise Fail(
                     f"{option} is not accepted by the {args.template} template "
-                    "(it has no matching placeholder)"
+                    "(it has no matching placeholder)",
+                    error="not_accepted",
+                    option=option,
+                    template=args.template,
                 )
 
         body, default_out = render(template, args.template, args)
@@ -508,6 +651,9 @@ def main(argv: list[str]) -> int:
         write_atomic(out, body)
     except Fail as exc:
         print(f"dispatch-prompt: {exc}", file=sys.stderr)
+        trailer = exc.trailer()
+        if trailer is not None:
+            print(trailer, file=sys.stderr)
         return 2
 
     print(out.resolve())
