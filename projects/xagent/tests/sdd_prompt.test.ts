@@ -15,7 +15,7 @@ import {
 } from "../src/service/sdd_prompt.js";
 import { generateRunId } from "../src/logs.js";
 import {
-  AgentIdSchema,
+  RunIdSchema,
   FixFollowupSchema,
   ImplementerStartSchema,
   ReReviewFollowupSchema,
@@ -311,8 +311,8 @@ function validImplementerStart(overrides: Record<string, unknown> = {}): Record<
     task: 1,
     name: "Versioned SQLite SDD Ledger",
     brief: "/tmp/task-1-brief.md",
-    report: "/tmp/task-1-report.md",
-    agent: "grok-4.5",
+    report_out: "/tmp/task-1-report.md",
+    model: "grok-4.5",
     harness: "cursor",
     effort: "high",
     ...overrides,
@@ -323,11 +323,11 @@ test("XagentSddStartInputSchema accepts a valid implementer start payload", () =
   const parsed = XagentSddStartInputSchema.parse(validImplementerStart());
   assert.equal(parsed.role, "implementer");
   assert.equal(parsed.task, 1);
-  assert.equal(parsed.agent, "grok-4.5");
+  assert.equal(parsed.model, "grok-4.5");
 });
 
-test("XagentSddStartInputSchema rejects empty agent and unknown harness, effort, or role", () => {
-  assert.equal(XagentSddStartInputSchema.safeParse(validImplementerStart({ agent: "" })).success, false);
+test("XagentSddStartInputSchema rejects empty model and unknown harness, effort, or role", () => {
+  assert.equal(XagentSddStartInputSchema.safeParse(validImplementerStart({ model: "" })).success, false);
   assert.equal(XagentSddStartInputSchema.safeParse(validImplementerStart({ harness: "unknown" })).success, false);
   assert.equal(XagentSddStartInputSchema.safeParse(validImplementerStart({ effort: "turbo" })).success, false);
   assert.equal(XagentSddStartInputSchema.safeParse(validImplementerStart({ role: "boss" })).success, false);
@@ -343,10 +343,10 @@ test("XagentSddStartInputSchema rejects missing task for task roles and task-les
       cwd: "/tmp/worktree",
       plan: "/tmp/plan.md",
       brief: "/tmp/brief.md",
-      report: "/tmp/report.md",
+      implementer_report: "/tmp/report.md",
       base: "HEAD~1",
       head: "HEAD",
-      agent: "opus",
+      model: "opus",
       harness: "claude_code",
       effort: "high",
     }).success,
@@ -361,7 +361,7 @@ test("XagentSddStartInputSchema rejects missing task for task roles and task-les
       brief: "/tmp/review-brief.md",
       base: "HEAD~1",
       head: "HEAD",
-      agent: "opus",
+      model: "opus",
       harness: "claude_code",
       effort: "high",
     }).success,
@@ -377,10 +377,10 @@ test("XagentSddStartInputSchema rejects unknown fields and invalid task shapes",
 
 test("ImplementerStartSchema requires an absolute report path", () => {
   const missingReport = { ...validImplementerStart() };
-  delete (missingReport as { report?: string }).report;
+  delete (missingReport as { report_out?: string }).report_out;
   assert.equal(ImplementerStartSchema.safeParse(missingReport).success, false);
   assert.equal(
-    ImplementerStartSchema.safeParse(validImplementerStart({ report: "relative/report.md" })).success,
+    ImplementerStartSchema.safeParse(validImplementerStart({ report_out: "relative/report.md" })).success,
     false,
   );
 });
@@ -394,7 +394,7 @@ test("reviewer without a task requires brief and description", () => {
     description: "Whole-branch review scope",
     base: "HEAD~1",
     head: "HEAD",
-    agent: "opus",
+    model: "opus",
     harness: "claude_code",
     effort: "high",
   });
@@ -408,7 +408,7 @@ test("reviewer without a task requires brief and description", () => {
       plan: "/tmp/plan.md",
       base: "HEAD~1",
       head: "HEAD",
-      agent: "opus",
+      model: "opus",
       harness: "claude_code",
       effort: "high",
     }).success,
@@ -423,7 +423,7 @@ test("reviewer without a task requires brief and description", () => {
       description: "",
       base: "HEAD~1",
       head: "HEAD",
-      agent: "opus",
+      model: "opus",
       harness: "claude_code",
       effort: "high",
     }).success,
@@ -435,28 +435,28 @@ test("SDD schemas reject relative and traversal artifact paths", () => {
   assert.equal(XagentSddStartInputSchema.safeParse(validImplementerStart({ brief: "task-1-brief.md" })).success, false);
   assert.equal(XagentSddStartInputSchema.safeParse(validImplementerStart({ plan: "plan.md" })).success, false);
   assert.equal(
-    XagentSddStartInputSchema.safeParse(validImplementerStart({ report: "/tmp/../secret/report.md" })).success,
+    XagentSddStartInputSchema.safeParse(validImplementerStart({ report_out: "/tmp/../secret/report.md" })).success,
     false,
   );
   assert.equal(
     FixFollowupSchema.safeParse({
       kind: "fix",
-      agent_id: sampleAgentId,
+      run_id: sampleAgentId,
       round: 1,
       findings: "findings.md",
       findings_text: "Important finding\n",
       tests: ["projects/xagent/tests/sdd_store.test.ts"],
-      report: "/tmp/report.md",
+      report_out: "/tmp/report.md",
     }).success,
     false,
   );
   assert.equal(
     ReReviewFollowupSchema.safeParse({
       kind: "re-review",
-      agent_id: sampleAgentId,
+      run_id: sampleAgentId,
       round: 1,
       findings: "../findings.md",
-      report: "/tmp/report.md",
+      fixer_report: "/tmp/report.md",
       base: "HEAD~1",
       head: "HEAD",
     }).success,
@@ -467,32 +467,32 @@ test("SDD schemas reject relative and traversal artifact paths", () => {
 test("XagentSddFollowupInputSchema validates fix and re-review payloads", () => {
   const fix = XagentSddFollowupInputSchema.parse({
     kind: "fix",
-    agent_id: sampleAgentId,
+    run_id: sampleAgentId,
     round: 1,
     findings: "/tmp/findings.md",
     findings_text: "Important finding\n",
     tests: ["projects/xagent/tests/sdd_store.test.ts"],
-    report: "/tmp/report.md",
+    report_out: "/tmp/report.md",
   });
   assert.equal(fix.kind, "fix");
 
   const rereview = XagentSddFollowupInputSchema.parse({
     kind: "re-review",
-    agent_id: sampleAgentId,
+    run_id: sampleAgentId,
     round: 2,
     findings: "/tmp/findings.md",
-    report: "/tmp/report.md",
+    fixer_report: "/tmp/report.md",
     base: "HEAD~1",
     head: "HEAD",
   });
   assert.equal(rereview.kind, "re-review");
 });
 
-test("AgentIdSchema accepts generateRunId output and rejects invalid ids", () => {
+test("RunIdSchema accepts generateRunId output and rejects invalid ids", () => {
   const generated = generateRunId(new Date("2026-07-26T00:00:00.000Z"));
-  assert.equal(AgentIdSchema.safeParse(generated).success, true);
-  assert.equal(AgentIdSchema.safeParse("not-a-run").success, false);
-  assert.equal(AgentIdSchema.safeParse(sampleAgentId).success, true);
+  assert.equal(RunIdSchema.safeParse(generated).success, true);
+  assert.equal(RunIdSchema.safeParse("not-a-run").success, false);
+  assert.equal(RunIdSchema.safeParse(sampleAgentId).success, true);
 });
 
 test("FormatFixFollowup emits the golden fix clauses with verbatim findings", () => {
@@ -530,7 +530,7 @@ test("RenderSddPrompt invokes only the trusted script through python3 with calle
     task: 1,
     name: "Versioned SQLite SDD Ledger",
     brief: fixture.brief,
-    report: fixture.report,
+    reportOut: fixture.report,
     templatesRoot: fixture.templatesRoot,
   });
 
@@ -733,7 +733,7 @@ test("RenderSddPrompt renders all roles without residual placeholders and return
         task: 1,
         name: "Versioned SQLite SDD Ledger",
         brief: fixture.brief,
-        report: fixture.report,
+        reportOut: fixture.report,
         context: "Scene-setting for the implementer task.",
         templatesRoot: fixture.templatesRoot,
       },
@@ -749,7 +749,7 @@ test("RenderSddPrompt renders all roles without residual placeholders and return
         plan: fixture.plan,
         task: 1,
         brief: fixture.brief,
-        report: fixture.report,
+        implementerReport: fixture.report,
         constraints: fixture.constraints,
         base: "HEAD",
         head: "HEAD",
@@ -769,7 +769,7 @@ test("RenderSddPrompt renders all roles without residual placeholders and return
         round: 1,
         brief: fixture.brief,
         findings: fixture.findings,
-        report: fixture.report,
+        fixerReport: fixture.report,
         base: "HEAD",
         head: "HEAD",
         diff: fixture.brief,

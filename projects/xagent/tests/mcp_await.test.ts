@@ -71,7 +71,7 @@ test("awaiting an SDD run delivers report text from the event log with no ledger
   });
   try {
     const started = await service.startSddImplementer();
-    const result = await service.await(started.agent_id, started.sequence, 30);
+    const result = await service.await(started.run_id, started.sequence, 30);
     assert.equal(result.event, "turn.completed");
     assert.equal(typeof (result as { report?: { text: string } }).report?.text, "string");
   } finally {
@@ -612,13 +612,13 @@ test("worker-facing prompt text rejects embedded controller run ids", () => {
     role: "implementer",
     cwd: "/tmp/worktree",
     plan: "/tmp/plan.md",
-    agent: "grok-4.5",
+    model: "grok-4.5",
     harness: "cursor",
     effort: "high",
     task: 4,
     name: "Superpowers managed plugins",
     brief: "/tmp/brief.md",
-    report: "/tmp/report.md",
+    report_out: "/tmp/report.md",
     context: "Keep the reviewer session xrun_20260727192847117_b30af348 open for re-review.",
   });
   assert.equal(leaked.success, false);
@@ -631,13 +631,13 @@ test("worker-facing prompt text rejects embedded controller run ids", () => {
     role: "implementer",
     cwd: "/tmp/worktree",
     plan: "/tmp/plan.md",
-    agent: "grok-4.5",
+    model: "grok-4.5",
     harness: "cursor",
     effort: "high",
     task: 4,
     name: "Superpowers managed plugins",
     brief: "/tmp/brief.md",
-    report: "/tmp/report.md",
+    report_out: "/tmp/report.md",
     context: "Task 3 is complete. Implement Task 4 only.",
   });
   assert.equal(clean.success, true);
@@ -646,23 +646,23 @@ test("worker-facing prompt text rejects embedded controller run ids", () => {
 test("fix follow-up findings text rejects embedded controller run ids", () => {
   const leaked = FixFollowupSchema.safeParse({
     kind: "fix",
-    agent_id: "xrun_20260726000000000_00000001",
+    run_id: "xrun_20260726000000000_00000001",
     round: 1,
     findings: "/tmp/findings.md",
     findings_text: "Resume against xrun_20260727192847117_b30af348 when done.",
     tests: ["npm test"],
-    report: "/tmp/report.md",
+    report_out: "/tmp/report.md",
   });
   assert.equal(leaked.success, false);
 
   const clean = FixFollowupSchema.safeParse({
     kind: "fix",
-    agent_id: "xrun_20260726000000000_00000001",
+    run_id: "xrun_20260726000000000_00000001",
     round: 1,
     findings: "/tmp/findings.md",
     findings_text: "Important #1: the marker must follow the frontmatter.",
     tests: ["npm test"],
-    report: "/tmp/report.md",
+    report_out: "/tmp/report.md",
   });
   assert.equal(clean.success, true);
 });
@@ -674,13 +674,13 @@ test("the run-id guard exempts backtick-quoted ids and covers message and prompt
       role: "implementer",
       cwd: "/tmp/worktree",
       plan: "/tmp/plan.md",
-      agent: "grok-4.5",
+      model: "grok-4.5",
       harness: "cursor",
       effort: "high",
       task: 4,
       name: "Superpowers managed plugins",
       brief: "/tmp/brief.md",
-      report: "/tmp/report.md",
+      report_out: "/tmp/report.md",
       note: "A cancelled sibling `xrun_20260727192847117_b30af348` left work in the tree.",
     }).success,
     true,

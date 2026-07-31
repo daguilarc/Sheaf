@@ -34,14 +34,16 @@ import {
 } from "./tool_schemas.js";
 
 export type XagentSddStartResult = {
-  readonly agent_id: string;
+  readonly run_id: string;
   readonly sequence: number;
-  readonly prompt_path: string;
-  readonly renderer_path: string;
+  readonly brief_path: string;
+  readonly report_out_path?: string;
+  readonly prompt_path?: string;
+  readonly renderer_path?: string;
 };
 
 export type XagentSddFollowupResult = {
-  readonly agent_id: string;
+  readonly run_id: string;
   readonly sequence: number;
 };
 
@@ -172,7 +174,7 @@ function BuildRenderInput(
       task: input.task,
       name: input.name,
       brief: input.brief,
-      report: input.report,
+      reportOut: input.report_out,
       ...(input.context === undefined ? {} : { context: input.context }),
     };
   }
@@ -203,11 +205,11 @@ function BuildRenderInput(
         head: input.head,
       };
     }
-    if (input.report === undefined)
+    if (input.implementer_report === undefined)
     {
       throw StructuredFailure({
         error: "invalid_tool_input",
-        message: "reviewer with a task requires report",
+        message: "reviewer with a task requires implementer_report",
       });
     }
     return {
@@ -217,7 +219,7 @@ function BuildRenderInput(
       plan: input.plan,
       task: input.task,
       brief: input.brief,
-      report: input.report,
+      implementerReport: input.implementer_report,
       base: input.base,
       head: input.head,
       ...(input.constraints === undefined ? {} : { constraints: input.constraints }),
@@ -233,7 +235,7 @@ function BuildRenderInput(
     round: input.round,
     brief: input.brief,
     findings: input.findings,
-    report: input.report,
+    fixerReport: input.fixer_report,
     base: input.base,
     head: input.head,
     ...(input.diff === undefined ? {} : { diff: input.diff }),
@@ -290,7 +292,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         findingsPath: input.findings,
         findingsText: input.findings_text,
         tests: input.tests,
-        reportPath: input.report,
+        reportPath: input.report_out,
       });
     }
     else
@@ -301,7 +303,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       rendererPath = rendered.metadata.rendererPath;
     }
 
-    const agentId = runManager.allocateRunId();
+    const runId = runManager.allocateRunId();
 
     // The row is written before the run exists. If anything after this throws,
     // the row stands as an immutable dispatch-failure tombstone: v1's
@@ -310,7 +312,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     try
     {
       store.Insert({
-        agentId,
+        agentId: runId,
         planPath: input.plan,
         ...(input.task === undefined ? {} : { task: input.task }),
         role: input.role,
@@ -334,24 +336,24 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     try
     {
       await runManager.create({
-        runId: agentId,
+        runId,
         harness: input.harness,
         mode: "subagent",
         cwd,
-        model: input.agent,
+        model: input.model,
         thinkingLevel: input.effort,
         ...(input.policy === undefined ? {} : { policy: input.policy }),
       });
       created = true;
-      await runManager.start(agentId);
+      await runManager.start(runId);
       // Snapshot the ready-state cursor before the turn starts so a controller
       // awaiting from the returned sequence observes running through
       // completion, matching startRun / messageRun.
       //
-      const inspection = runManager.inspect(agentId);
+      const inspection = runManager.inspect(runId);
       if (inspection === undefined)
       {
-        throw new Error(`SDD run disappeared after start: ${agentId}`);
+        throw new Error(`SDD run disappeared after start: ${runId}`);
       }
       const startSequence = inspection.sequence;
       // Supervisor.submit resolves at turn completion, not acceptance. Detach
@@ -359,17 +361,36 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       // startRun — so MCP clients are not held past their timeout.
       //
       const submitPromise = runManager.submit(
-        agentId,
+        runId,
         AppendControllerNote(promptText, input.note),
       );
       void submitPromise.catch(() => {});
-      await waitForTurnRunning(runManager, agentId, submitPromise);
-      return {
-        agent_id: agentId,
+      await waitForTurnRunning(runManager, runId, submitPromise);
+      const reportOutPath = input.role === "implementer" || input.role === "fixer"
+        ? input.report_out
+        : undefined;
+      const result: {
+        run_id: string;
+        sequence: number;
+        brief_path: string;
+        report_out_path?: string;
+        prompt_path?: string;
+        renderer_path?: string;
+      } = {
+        run_id: runId,
         sequence: startSequence,
-        prompt_path: promptPath,
-        renderer_path: rendererPath,
+        brief_path: input.brief,
       };
+      if (reportOutPath !== undefined)
+      {
+        result.report_out_path = reportOutPath;
+      }
+      if (promptPath !== "")
+      {
+        result.prompt_path = promptPath;
+        result.renderer_path = rendererPath;
+      }
+      return result;
     }
     catch (error)
     {
@@ -379,7 +400,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       //
       if (created)
       {
-        await runManager.close(agentId).catch(() => {});
+        await runManager.close(runId).catch(() => {});
       }
       throw error;
     }
@@ -387,13 +408,13 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
 
   async function Followup(input: XagentSddFollowupInput): Promise<XagentSddFollowupResult>
   {
-    const agent = store.Get(input.agent_id);
+    const agent = store.Get(input.run_id);
     if (agent === undefined)
     {
       throw StructuredFailure({
         error: "unknown_sdd_agent",
-        message: `Unknown SDD agent: ${input.agent_id}`,
-        details: { agent_id: input.agent_id },
+        message: `Unknown SDD agent: ${input.run_id}`,
+        details: { run_id: input.run_id },
       });
     }
     if (!RoleAllowsFollowup(agent.role, input.kind))
@@ -401,7 +422,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       throw StructuredFailure({
         error: "sdd_followup_role_mismatch",
         message: `Follow-up kind ${input.kind} is not valid for role ${agent.role}.`,
-        details: { agent_id: input.agent_id, role: agent.role, kind: input.kind },
+        details: { run_id: input.run_id, role: agent.role, kind: input.kind },
       });
     }
     // Liveness is a run-manager fact, never a ledger fact: v1's
@@ -410,8 +431,8 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     // returns an object for every phase, so phase must be checked here or the
     // controller gets a bare supervisor Error instead of a recovery signpost.
     //
-    const inspection = runManager.has(input.agent_id)
-      ? runManager.inspect(input.agent_id)
+    const inspection = runManager.has(input.run_id)
+      ? runManager.inspect(input.run_id)
       : undefined;
     if (
       inspection === undefined
@@ -421,10 +442,10 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       throw StructuredFailure({
         error: "sdd_agent_not_live",
         message:
-          `SDD agent ${input.agent_id} is not live; dispatch a fresh `
+          `SDD agent ${input.run_id} is not live; dispatch a fresh `
           + `${RecoveryRoleFor(agent.role)} for the same plan and task.`,
         details: {
-          agent_id: input.agent_id,
+          run_id: input.run_id,
           role: agent.role,
           plan_path: agent.plan_path,
           task: agent.task,
@@ -443,10 +464,10 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       throw StructuredFailure({
         error: "sdd_agent_busy",
         message:
-          `SDD agent ${input.agent_id} is mid-turn; await its completion `
+          `SDD agent ${input.run_id} is mid-turn; await its completion `
           + "before submitting another follow-up.",
         details: {
-          agent_id: input.agent_id,
+          run_id: input.run_id,
           phase: inspection.phase,
           // xagent_await, not xagent_sdd_await: Task 4 deleted the SDD await
           // facade. Naming a tool the server does not register is the same
@@ -467,7 +488,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         findingsPath: input.findings,
         findingsText: input.findings_text,
         tests: input.tests,
-        reportPath: input.report,
+        reportPath: input.report_out,
       });
     }
     else
@@ -478,7 +499,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
           error: "sdd_followup_task_required",
           message: "Re-review requires a task-scoped reviewer agent.",
           details: {
-            agent_id: input.agent_id,
+            run_id: input.run_id,
             role: agent.role,
             kind: input.kind,
           },
@@ -494,7 +515,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         round: input.round,
         brief: agent.brief_path,
         findings: input.findings,
-        report: input.report,
+        fixerReport: input.fixer_report,
         base: input.base,
         head: input.head,
         ...(input.diff === undefined ? {} : { diff: input.diff }),
@@ -506,12 +527,12 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     //
     const startSequence = inspection.sequence;
     const submitPromise = runManager.submit(
-      input.agent_id,
+      input.run_id,
       AppendControllerNote(promptText, input.note),
     );
     void submitPromise.catch(() => {});
-    await waitForTurnRunning(runManager, input.agent_id, submitPromise);
-    return { agent_id: input.agent_id, sequence: startSequence };
+    await waitForTurnRunning(runManager, input.run_id, submitPromise);
+    return { run_id: input.run_id, sequence: startSequence };
   }
 
   return {

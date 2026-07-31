@@ -57,10 +57,10 @@ function WorkerFacingText(label: string) {
   });
 }
 
-export const AgentIdSchema = z
+export const RunIdSchema = z
   .string()
   .min(1)
-  .regex(x_GeneratedAgentIdPattern, "agent_id must be a generated xagent run id");
+  .regex(x_GeneratedAgentIdPattern, "run_id must be a generated xagent run id");
 
 const WatchdogPolicySchema = z
   .object({
@@ -117,7 +117,7 @@ const SddAssignmentFields = {
   note: NoteSchema,
   cwd: CwdSchema,
   plan: SddArtifactPathSchema,
-  agent: z.string().min(1),
+  model: z.string().min(1),
   harness: z.enum(harnessNames),
   effort: z.enum(thinkingLevels),
   policy: SupervisionPolicySchema.optional(),
@@ -130,7 +130,7 @@ export const ImplementerStartSchema = z
     task: z.number().int().positive(),
     name: WorkerFacingText("name"),
     brief: SddArtifactPathSchema,
-    report: SddArtifactPathSchema,
+    report_out: SddArtifactPathSchema,
     context: WorkerFacingText("context").optional(),
   })
   .strict();
@@ -141,7 +141,7 @@ export const ImplementerStartSchema = z
 function ReviewerRefinement(
   value: {
     readonly task?: number;
-    readonly report?: string;
+    readonly implementer_report?: string;
     readonly constraints?: string;
     readonly diff?: string;
     readonly description?: string;
@@ -155,7 +155,7 @@ function ReviewerRefinement(
         message: "reviewer without a task requires description (whole-branch review)",
       });
     }
-    for (const field of ["report", "constraints", "diff"] as const) {
+    for (const field of ["implementer_report", "constraints", "diff"] as const) {
       if (value[field] !== undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -165,10 +165,10 @@ function ReviewerRefinement(
     }
     return;
   }
-  if (value.report === undefined) {
+  if (value.implementer_report === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "reviewer with a task requires report",
+      message: "reviewer with a task requires implementer_report",
     });
   }
   if (value.description !== undefined) {
@@ -187,7 +187,7 @@ const ReviewerStartObject = z
     brief: SddArtifactPathSchema,
     base: z.string().min(1),
     head: z.string().min(1),
-    report: SddArtifactPathSchema.optional(),
+    implementer_report: SddArtifactPathSchema.optional(),
     constraints: SddArtifactPathSchema.optional(),
     diff: SddArtifactPathSchema.optional(),
     description: WorkerFacingText("description").optional(),
@@ -205,7 +205,7 @@ export const FixerStartSchema = z
     findings: SddArtifactPathSchema,
     findings_text: WorkerFacingText("findings_text"),
     tests: z.array(z.string().min(1)).min(1),
-    report: SddArtifactPathSchema,
+    report_out: SddArtifactPathSchema,
     round: z.number().int().positive().default(1),
   })
   .strict();
@@ -217,7 +217,7 @@ export const ReReviewerStartSchema = z
     task: z.number().int().positive(),
     brief: SddArtifactPathSchema,
     findings: SddArtifactPathSchema,
-    report: SddArtifactPathSchema,
+    fixer_report: SddArtifactPathSchema,
     base: z.string().min(1),
     head: z.string().min(1),
     diff: SddArtifactPathSchema.optional(),
@@ -241,12 +241,12 @@ export const XagentSddStartInputSchema = z
 export const FixFollowupSchema = z
   .object({
     kind: z.literal("fix"),
-    agent_id: AgentIdSchema,
+    run_id: RunIdSchema,
     round: z.number().int().positive(),
     findings: SddArtifactPathSchema,
     findings_text: WorkerFacingText("findings_text"),
     tests: z.array(z.string().min(1)).min(1),
-    report: SddArtifactPathSchema,
+    report_out: SddArtifactPathSchema,
     note: NoteSchema,
   })
   .strict();
@@ -254,10 +254,10 @@ export const FixFollowupSchema = z
 export const ReReviewFollowupSchema = z
   .object({
     kind: z.literal("re-review"),
-    agent_id: AgentIdSchema,
+    run_id: RunIdSchema,
     round: z.number().int().positive(),
     findings: SddArtifactPathSchema,
-    report: SddArtifactPathSchema,
+    fixer_report: SddArtifactPathSchema,
     base: z.string().min(1),
     head: z.string().min(1),
     diff: SddArtifactPathSchema.optional(),
@@ -290,6 +290,13 @@ export const XagentSddFollowupInputSchema = z.discriminatedUnion("kind", [
 // hides capability the service would have served, with no way for the caller
 // to discover the mistake. Only the second direction is a defect.
 //
+// `.passthrough()` is load-bearing. The MCP SDK validates call arguments
+// against the registered (advertised) schema before the handler runs and
+// would otherwise strip retired keys (`agent`, `report`, `agent_id`) and any
+// other undeclared field. Passthrough keeps unknown keys for the handler's
+// strict union parse, while tools/list still advertises only the shape
+// properties below.
+//
 function AdvertisedFor(roles: string, detail: string): string {
   return `${detail} (required for: ${roles})`;
 }
@@ -299,7 +306,7 @@ export const XagentSddStartAdvertisedSchema = z.object({
     .describe("Which SDD role to dispatch; selects the required fields below."),
   cwd: CwdSchema.describe("Absolute path to the worktree the agent works in."),
   plan: SddArtifactPathSchema.describe("Absolute path to the Superpowers plan."),
-  agent: z.string().min(1).describe("Provider model name, e.g. grok-4.5 or opus."),
+  model: z.string().min(1).describe("Provider model name, e.g. grok-4.5 or opus."),
   harness: z.enum(harnessNames).describe("Provider harness to run the agent under."),
   effort: z.enum(thinkingLevels).describe("Reasoning effort for the dispatched agent."),
   policy: SupervisionPolicySchema.optional().describe("Optional supervision policy overrides."),
@@ -312,8 +319,12 @@ export const XagentSddStartAdvertisedSchema = z.object({
     .describe(AdvertisedFor("implementer", "Human-readable task name.")),
   brief: SddArtifactPathSchema.optional()
     .describe(AdvertisedFor("implementer, reviewer, fixer, re-reviewer", "Absolute path to the task or review brief.")),
-  report: SddArtifactPathSchema.optional()
-    .describe(AdvertisedFor("implementer, reviewer (task-scoped), fixer, re-reviewer", "Absolute path the agent writes its report to.")),
+  report_out: SddArtifactPathSchema.optional()
+    .describe(AdvertisedFor("implementer, fixer", "Absolute path the agent writes its report to.")),
+  implementer_report: SddArtifactPathSchema.optional()
+    .describe(AdvertisedFor("reviewer (task-scoped)", "Absolute path to the implementer's existing report the reviewer reads.")),
+  fixer_report: SddArtifactPathSchema.optional()
+    .describe(AdvertisedFor("re-reviewer", "Absolute path to the fixer's existing report the re-reviewer reads.")),
   context: WorkerFacingText("context").optional()
     .describe("Optional scene-setting for an implementer."),
   description: WorkerFacingText("description").optional()
@@ -334,15 +345,18 @@ export const XagentSddStartAdvertisedSchema = z.object({
     .describe(AdvertisedFor("fixer", "Commands that must pass before the fix is done.")),
   round: z.number().int().positive().optional()
     .describe("Optional fix or re-review round number for fixer and re-reviewer; defaults to 1."),
-});
+}).passthrough();
 
 export const XagentSddFollowupAdvertisedSchema = z.object({
   kind: z.enum(["fix", "re-review"])
     .describe("Which continuation to render; selects the required fields below."),
-  agent_id: AgentIdSchema.describe("The live SDD agent to continue."),
+  run_id: RunIdSchema.describe("The live SDD run to continue."),
   round: z.number().int().positive().describe("Fix or re-review round number; render-only."),
   findings: SddArtifactPathSchema.describe("Absolute path to the findings file."),
-  report: SddArtifactPathSchema.describe("Absolute path the agent appends its report to."),
+  report_out: SddArtifactPathSchema.optional()
+    .describe(AdvertisedFor("fix", "Absolute path the agent appends its fix report to.")),
+  fixer_report: SddArtifactPathSchema.optional()
+    .describe(AdvertisedFor("re-review", "Absolute path to the fixer's existing report the re-review reads.")),
   note: NoteSchema.describe("Free text appended verbatim to the rendered prompt."),
   findings_text: WorkerFacingText("findings_text").optional()
     .describe(AdvertisedFor("fix", "The findings, inline.")),
@@ -354,7 +368,7 @@ export const XagentSddFollowupAdvertisedSchema = z.object({
     .describe(AdvertisedFor("re-review", "Head git ref for the re-review diff.")),
   diff: SddArtifactPathSchema.optional()
     .describe("Optional precomputed diff file."),
-});
+}).passthrough();
 
 export const XagentStartInputSchema = z
   .object({

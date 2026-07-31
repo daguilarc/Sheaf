@@ -105,30 +105,30 @@ export type NormalizedLogEvent = {
 export type StartedMcpService = {
   startRun(prompt: string): Promise<{ run_id: string; sequence: number }>;
   startSddImplementer(options?: { readonly task?: number }): Promise<{
-    agent_id: string;
+    run_id: string;
     sequence: number;
   }>;
   startSddFixer(options?: { readonly task?: number }): Promise<{
-    agent_id: string;
+    run_id: string;
     sequence: number;
   }>;
   sddFollowup(input: {
     readonly kind: "fix";
-    readonly agent_id: string;
+    readonly run_id: string;
     readonly round: number;
     readonly findings: string;
     readonly findings_text: string;
     readonly tests: readonly string[];
-    readonly report: string;
-  }): Promise<{ agent_id: string; sequence: number }>;
+    readonly report_out: string;
+  }): Promise<{ run_id: string; sequence: number }>;
   sddFollowupResult(input: {
     readonly kind: "fix";
-    readonly agent_id: string;
+    readonly run_id: string;
     readonly round: number;
     readonly findings: string;
     readonly findings_text: string;
     readonly tests: readonly string[];
-    readonly report: string;
+    readonly report_out: string;
   }): Promise<ToolCallResult>;
   listRuns(): Promise<Record<string, unknown>>;
   await(
@@ -442,16 +442,16 @@ export async function startMcpService(
         role: "implementer",
         cwd,
         plan: planPath,
-        agent: "fake-model",
+        model: "fake-model",
         harness: "codex",
         effort: "high",
         task,
         name: "await-no-ledger-write",
         brief: briefPath,
-        report: reportPath,
+        report_out: reportPath,
       });
       return {
-        agent_id: String(body.agent_id),
+        run_id: String(body.run_id),
         sequence: Number(body.sequence),
       };
     },
@@ -466,7 +466,7 @@ export async function startMcpService(
         role: "fixer",
         cwd,
         plan: planPath,
-        agent: "fake-model",
+        model: "fake-model",
         harness: "codex",
         effort: "high",
         task,
@@ -474,10 +474,10 @@ export async function startMcpService(
         findings: findingsPath,
         findings_text: "Finding 1: the gate is missing.",
         tests: ["npm test"],
-        report: reportPath,
+        report_out: reportPath,
       });
       return {
-        agent_id: String(body.agent_id),
+        run_id: String(body.run_id),
         sequence: Number(body.sequence),
       };
     },
@@ -486,33 +486,33 @@ export async function startMcpService(
       await EnsureArtifact(input.findings, `${input.findings_text}\n`);
       const body = await CallToolOrThrow("xagent_sdd_followup", {
         kind: input.kind,
-        agent_id: input.agent_id,
+        run_id: input.run_id,
         round: input.round,
         findings: input.findings,
         findings_text: input.findings_text,
         tests: [...input.tests],
-        report: input.report,
+        report_out: input.report_out,
       });
       return {
-        agent_id: String(body.agent_id),
+        run_id: String(body.run_id),
         sequence: Number(body.sequence),
       };
     },
     async sddFollowupResult(input)
     {
       await EnsureArtifact(input.findings, `${input.findings_text}\n`);
-      if (!existsSync(input.report))
+      if (!existsSync(input.report_out))
       {
-        await EnsureArtifact(input.report, "");
+        await EnsureArtifact(input.report_out, "");
       }
       return CallTool("xagent_sdd_followup", {
         kind: input.kind,
-        agent_id: input.agent_id,
+        run_id: input.run_id,
         round: input.round,
         findings: input.findings,
         findings_text: input.findings_text,
         tests: [...input.tests],
-        report: input.report,
+        report_out: input.report_out,
       });
     },
     async listRuns()

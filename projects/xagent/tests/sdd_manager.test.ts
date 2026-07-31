@@ -5,6 +5,7 @@ import {
   CreateSddManager,
   type SddManagerDeps,
   type SddRunManagerPort,
+  type XagentSddStartResult,
 } from "../src/service/sdd_manager.js";
 import {
   type InsertSddAgentInput,
@@ -330,13 +331,13 @@ function ImplementerStartInput(overrides: Partial<XagentSddStartInput> = {}): Xa
     role: "implementer",
     cwd: x_Cwd,
     plan: x_PlanPath,
-    agent: "grok-4.5",
+    model: "grok-4.5",
     harness: "cursor",
     effort: "high",
     task: 3,
     name: "sdd-start-followup",
     brief: x_BriefPath,
-    report: x_ReportPath,
+    report_out: x_ReportPath,
     ...overrides,
   } as XagentSddStartInput;
 }
@@ -402,8 +403,8 @@ test("start canonicalizes cwd, inserts the row before creating the run, then ren
 
   const result = await manager.Start({
     role: "implementer", cwd: x_Cwd, plan: x_PlanPath,
-    agent: "grok-4.5", harness: "cursor", effort: "high",
-    task: 3, name: "Ledger v2 store", brief: x_BriefPath, report: x_ReportPath,
+    model: "grok-4.5", harness: "cursor", effort: "high",
+    task: 3, name: "Ledger v2 store", brief: x_BriefPath, report_out: x_ReportPath,
   });
 
   // waitForTurnRunning polls inspect after submit; require the create/start
@@ -429,7 +430,7 @@ test("start canonicalizes cwd, inserts the row before creating the run, then ren
     searchFrom = idx + 1;
   }
   assert.deepEqual(store.inserted[0], {
-    agentId: result.agent_id,
+    agentId: result.run_id,
     planPath: x_PlanPath,
     task: 3,
     role: "implementer",
@@ -438,8 +439,75 @@ test("start canonicalizes cwd, inserts the row before creating the run, then ren
     cwd: x_CanonicalCwd,
   });
   assert.deepEqual(Object.keys(result).sort(), [
-    "agent_id", "prompt_path", "renderer_path", "sequence",
+    "brief_path", "prompt_path", "renderer_path", "report_out_path", "run_id", "sequence",
   ]);
+});
+
+test("start results use run_id and role-specific report_out_path / renderer keys", async () =>
+{
+  async function StartRole(
+    input: XagentSddStartInput,
+  ): Promise<XagentSddStartResult>
+  {
+    const recorder = CreateOrderRecorder();
+    const manager = CreateSddManager({
+      ...CreateDeps(recorder),
+      store: CreateFakeAgentStore(recorder, undefined),
+      runManager: CreateFakeRunManager(recorder),
+    });
+    return manager.Start(input);
+  }
+
+  const implementer = await StartRole({
+    role: "implementer", cwd: x_Cwd, plan: x_PlanPath,
+    model: "grok-4.5", harness: "cursor", effort: "high",
+    task: 3, name: "x", brief: x_BriefPath, report_out: x_ReportPath,
+  });
+  assert.equal(implementer.run_id, x_AgentId);
+  assert.equal(implementer.brief_path, x_BriefPath);
+  assert.equal(implementer.report_out_path, x_ReportPath);
+  assert.ok("prompt_path" in implementer);
+  assert.ok("renderer_path" in implementer);
+  assert.ok(!("agent_id" in implementer));
+
+  const fixer = await StartRole({
+    role: "fixer", cwd: x_Cwd, plan: x_PlanPath,
+    model: "grok-4.5", harness: "cursor", effort: "high",
+    task: 3, brief: x_BriefPath, findings: "/tmp/f.md",
+    findings_text: "one finding", tests: ["npm test"], report_out: x_ReportPath,
+    round: 1,
+  });
+  assert.equal(fixer.run_id, x_AgentId);
+  assert.equal(fixer.brief_path, x_BriefPath);
+  assert.equal(fixer.report_out_path, x_ReportPath);
+  assert.ok(!("prompt_path" in fixer));
+  assert.ok(!("renderer_path" in fixer));
+  assert.ok(!("agent_id" in fixer));
+
+  const reviewer = await StartRole({
+    role: "reviewer", cwd: x_Cwd, plan: x_PlanPath,
+    model: "opus", harness: "claude_code", effort: "high",
+    task: 3, brief: x_BriefPath, implementer_report: x_ReportPath,
+    base: "main", head: "HEAD",
+  });
+  assert.equal(reviewer.run_id, x_AgentId);
+  assert.equal(reviewer.brief_path, x_BriefPath);
+  assert.ok(!("report_out_path" in reviewer));
+  assert.ok("prompt_path" in reviewer);
+  assert.ok(!("agent_id" in reviewer));
+
+  const reReviewer = await StartRole({
+    role: "re-reviewer", cwd: x_Cwd, plan: x_PlanPath,
+    model: "opus", harness: "claude_code", effort: "high",
+    task: 3, brief: x_BriefPath, findings: "/tmp/f.md",
+    fixer_report: x_ReportPath, base: "main", head: "HEAD",
+    round: 1,
+  });
+  assert.equal(reReviewer.run_id, x_AgentId);
+  assert.equal(reReviewer.brief_path, x_BriefPath);
+  assert.ok(!("report_out_path" in reReviewer));
+  assert.ok("prompt_path" in reReviewer);
+  assert.ok(!("agent_id" in reReviewer));
 });
 
 test("an invalid cwd creates no ledger row and no run", async () =>
@@ -458,8 +526,8 @@ test("an invalid cwd creates no ledger row and no run", async () =>
   });
   await assert.rejects(() => manager.Start({
     role: "implementer", cwd: "relative/path", plan: x_PlanPath,
-    agent: "grok-4.5", harness: "cursor", effort: "high",
-    task: 3, name: "x", brief: x_BriefPath, report: x_ReportPath,
+    model: "grok-4.5", harness: "cursor", effort: "high",
+    task: 3, name: "x", brief: x_BriefPath, report_out: x_ReportPath,
   }));
   assert.equal(store.inserted.length, 0);
   assert.equal(runManager.created.length, 0);
@@ -473,8 +541,8 @@ test("a failure after the insert leaves the row untouched as a tombstone", async
   const manager = CreateSddManager({ ...CreateDeps(recorder), store, runManager });
   await assert.rejects(() => manager.Start({
     role: "implementer", cwd: x_Cwd, plan: x_PlanPath,
-    agent: "grok-4.5", harness: "cursor", effort: "high",
-    task: 3, name: "x", brief: x_BriefPath, report: x_ReportPath,
+    model: "grok-4.5", harness: "cursor", effort: "high",
+    task: 3, name: "x", brief: x_BriefPath, report_out: x_ReportPath,
   }));
   assert.equal(store.inserted.length, 1);
   assert.deepEqual(runManager.closed, [x_AgentId]);
@@ -489,8 +557,8 @@ test("a create failure after the insert closes no run and leaves the tombstone",
   const manager = CreateSddManager({ ...CreateDeps(recorder), store, runManager });
   await assert.rejects(() => manager.Start({
     role: "implementer", cwd: x_Cwd, plan: x_PlanPath,
-    agent: "grok-4.5", harness: "cursor", effort: "high",
-    task: 3, name: "x", brief: x_BriefPath, report: x_ReportPath,
+    model: "grok-4.5", harness: "cursor", effort: "high",
+    task: 3, name: "x", brief: x_BriefPath, report_out: x_ReportPath,
   }));
   assert.equal(store.inserted.length, 1);
   assert.equal(runManager.closed.length, 0);
@@ -513,14 +581,14 @@ test("reviewer template selection follows task presence", async () =>
 
   await manager.Start({
     role: "reviewer", cwd: x_Cwd, plan: x_PlanPath,
-    agent: "opus", harness: "claude_code", effort: "high",
-    task: 3, brief: x_BriefPath, report: x_ReportPath, base: "main", head: "HEAD",
+    model: "opus", harness: "claude_code", effort: "high",
+    task: 3, brief: x_BriefPath, implementer_report: x_ReportPath, base: "main", head: "HEAD",
   });
   assert.equal(rendered[0]!.role, "task-reviewer");
 
   await manager.Start({
     role: "reviewer", cwd: x_Cwd, plan: x_PlanPath,
-    agent: "opus", harness: "claude_code", effort: "high",
+    model: "opus", harness: "claude_code", effort: "high",
     brief: x_BriefPath, base: "main", head: "HEAD",
     description: "Branch adds the v2 ledger.",
   });
@@ -535,16 +603,17 @@ test("a fixer renders the fix template and never an assignment name", async () =
   const manager = CreateSddManager({ ...CreateDeps(recorder), store, runManager });
   const result = await manager.Start({
     role: "fixer", cwd: x_Cwd, plan: x_PlanPath,
-    agent: "grok-4.5", harness: "cursor", effort: "high",
+    model: "grok-4.5", harness: "cursor", effort: "high",
     task: 3, brief: x_BriefPath, findings: "/tmp/f.md",
-    findings_text: "one finding", tests: ["npm test"], report: x_ReportPath, round: 2,
+    findings_text: "one finding", tests: ["npm test"], report_out: x_ReportPath, round: 2,
   });
   const submitted = runManager.submitted[0]!.text;
   assert.match(submitted, /^You are a fixer for task 3 of plan /);
   assert.match(submitted, /Fix round 2\./);
   assert.ok(!submitted.includes("Fix Round 2\""));
   assert.equal(store.inserted[0]!.role, "fixer");
-  assert.equal(result.prompt_path, "");
+  assert.ok(!("prompt_path" in result));
+  assert.ok(!("renderer_path" in result));
 });
 
 test("a re-reviewer reuses the re-review renderer role", async () =>
@@ -563,8 +632,8 @@ test("a re-reviewer reuses the re-review renderer role", async () =>
   });
   await manager.Start({
     role: "re-reviewer", cwd: x_Cwd, plan: x_PlanPath,
-    agent: "opus", harness: "claude_code", effort: "high",
-    task: 3, brief: x_BriefPath, findings: "/tmp/f.md", report: x_ReportPath,
+    model: "opus", harness: "claude_code", effort: "high",
+    task: 3, brief: x_BriefPath, findings: "/tmp/f.md", fixer_report: x_ReportPath,
     base: "main", head: "HEAD", round: 2,
   });
   assert.equal(rendered[0]!.role, "re-review");
@@ -633,16 +702,16 @@ test("a fix followup renders and submits with zero ledger writes", async () =>
 
   const result = await manager.Followup({
     kind: "fix",
-    agent_id: x_AgentId,
+    run_id: x_AgentId,
     round: 2,
     findings: "/tmp/sdd/task-3-findings.md",
     findings_text: "one finding",
     tests: ["npm test"],
-    report: "/tmp/sdd/task-3-report.md",
+    report_out: "/tmp/sdd/task-3-report.md",
   });
 
-  assert.deepEqual(Object.keys(result).sort(), ["agent_id", "sequence"]);
-  assert.equal(result.agent_id, x_AgentId);
+  assert.deepEqual(Object.keys(result).sort(), ["run_id", "sequence"]);
+  assert.equal(result.run_id, x_AgentId);
   assert.equal(result.sequence, 7);
   assert.equal(formatted[0]!.briefPath, x_BriefPath);
   assert.equal(formatted[0]!.reportPath, "/tmp/sdd/task-3-report.md");
@@ -663,8 +732,8 @@ test("an unknown agent id is rejected before anything is submitted", async () =>
   });
   await assert.rejects(
     () => manager.Followup({
-      kind: "fix", agent_id: x_AgentId, round: 1,
-      findings: "/tmp/f.md", findings_text: "x", tests: ["npm test"], report: "/tmp/r.md",
+      kind: "fix", run_id: x_AgentId, round: 1,
+      findings: "/tmp/f.md", findings_text: "x", tests: ["npm test"], report_out: "/tmp/r.md",
     }),
     (error: unknown) =>
     {
@@ -687,15 +756,15 @@ test("a dead agent gets sdd_agent_not_live naming the fresh-agent recovery", asy
   const manager = CreateSddManager({ ...CreateDeps(), store, runManager });
   await assert.rejects(
     () => manager.Followup({
-      kind: "fix", agent_id: x_AgentId, round: 1,
-      findings: "/tmp/f.md", findings_text: "x", tests: ["npm test"], report: "/tmp/r.md",
+      kind: "fix", run_id: x_AgentId, round: 1,
+      findings: "/tmp/f.md", findings_text: "x", tests: ["npm test"], report_out: "/tmp/r.md",
     }),
     (error: unknown) =>
     {
       const structured = structuredErrorFromUnknown(error);
       assert.equal(structured.error, "sdd_agent_not_live");
       assert.deepEqual(structured.details, {
-        agent_id: x_AgentId,
+        run_id: x_AgentId,
         role: "implementer",
         plan_path: x_PlanPath,
         task: 3,
@@ -722,15 +791,15 @@ test("a tracked terminal agent gets sdd_agent_not_live before submit", async () 
     const manager = CreateSddManager({ ...CreateDeps(), store, runManager });
     await assert.rejects(
       () => manager.Followup({
-        kind: "fix", agent_id: x_AgentId, round: 1,
-        findings: "/tmp/f.md", findings_text: "x", tests: ["npm test"], report: "/tmp/r.md",
+        kind: "fix", run_id: x_AgentId, round: 1,
+        findings: "/tmp/f.md", findings_text: "x", tests: ["npm test"], report_out: "/tmp/r.md",
       }),
       (error: unknown) =>
       {
         const structured = structuredErrorFromUnknown(error);
         assert.equal(structured.error, "sdd_agent_not_live");
         assert.deepEqual(structured.details, {
-          agent_id: x_AgentId,
+          run_id: x_AgentId,
           role: "implementer",
           plan_path: x_PlanPath,
           task: 3,
@@ -758,15 +827,15 @@ test("a busy agent is rejected with sdd_agent_busy before submit", async () =>
     const manager = CreateSddManager({ ...CreateDeps(), store, runManager });
     await assert.rejects(
       () => manager.Followup({
-        kind: "fix", agent_id: x_AgentId, round: 1,
-        findings: "/tmp/f.md", findings_text: "x", tests: ["npm test"], report: "/tmp/r.md",
+        kind: "fix", run_id: x_AgentId, round: 1,
+        findings: "/tmp/f.md", findings_text: "x", tests: ["npm test"], report_out: "/tmp/r.md",
       }),
       (error: unknown) =>
       {
         const structured = structuredErrorFromUnknown(error);
         assert.equal(structured.error, "sdd_agent_busy");
         assert.deepEqual(structured.details, {
-          agent_id: x_AgentId,
+          run_id: x_AgentId,
           phase,
           recovery: { tool: "xagent_await" },
         });
@@ -798,19 +867,19 @@ test("kind must match the immutable start role", async () =>
     const input = kind === "fix"
       ? {
           kind: "fix" as const,
-          agent_id: x_AgentId,
+          run_id: x_AgentId,
           round: 1,
           findings: "/tmp/f.md",
           findings_text: "x",
           tests: ["npm test"],
-          report: "/tmp/r.md",
+          report_out: "/tmp/r.md",
         }
       : {
           kind: "re-review" as const,
-          agent_id: x_AgentId,
+          run_id: x_AgentId,
           round: 1,
           findings: "/tmp/f.md",
-          report: "/tmp/r.md",
+          fixer_report: "/tmp/r.md",
           base: "main",
           head: "HEAD",
         };
@@ -858,10 +927,10 @@ test("re-review rejects a task-less reviewer before rendering", async () =>
   await assert.rejects(
     () => manager.Followup({
       kind: "re-review",
-      agent_id: x_AgentId,
+      run_id: x_AgentId,
       round: 1,
       findings: "/tmp/f.md",
-      report: "/tmp/r.md",
+      fixer_report: "/tmp/r.md",
       base: "main",
       head: "HEAD",
     }),
@@ -870,7 +939,7 @@ test("re-review rejects a task-less reviewer before rendering", async () =>
       const structured = structuredErrorFromUnknown(error);
       assert.equal(structured.error, "sdd_followup_task_required");
       assert.deepEqual(structured.details, {
-        agent_id: x_AgentId,
+        run_id: x_AgentId,
         role: "reviewer",
         kind: "re-review",
       });
@@ -894,8 +963,8 @@ test("double-calling a followup leaves the ledger untouched and rejects the busy
     ...CreateDeps(), store, runManager,
   });
   const input = {
-    kind: "re-review" as const, agent_id: x_AgentId, round: 1,
-    findings: "/tmp/f.md", report: "/tmp/r.md", base: "main", head: "HEAD",
+    kind: "re-review" as const, run_id: x_AgentId, round: 1,
+    findings: "/tmp/f.md", fixer_report: "/tmp/r.md", base: "main", head: "HEAD",
   };
   await manager.Followup(input);
   assert.equal(store.inserted.length, 0);
@@ -944,12 +1013,12 @@ test("Followup fix rejects when findings file is missing or empty", async () =>
   await assert.rejects(
     () => missingManager.Followup({
       kind: "fix",
-      agent_id: x_AgentId,
+      run_id: x_AgentId,
       round: 1,
       findings: x_FindingsPath,
       findings_text: x_FindingsText,
       tests: ["dist/tests/sdd_manager.test.js"],
-      report: x_ReportPath,
+      report_out: x_ReportPath,
     }),
     (error: unknown) =>
     {
@@ -977,12 +1046,12 @@ test("Followup fix rejects when findings file is missing or empty", async () =>
   await assert.rejects(
     () => emptyManager.Followup({
       kind: "fix",
-      agent_id: x_AgentId,
+      run_id: x_AgentId,
       round: 1,
       findings: x_FindingsPath,
       findings_text: x_FindingsText,
       tests: ["dist/tests/sdd_manager.test.js"],
-      report: x_ReportPath,
+      report_out: x_ReportPath,
     }),
     (error: unknown) =>
     {
@@ -1018,12 +1087,12 @@ test("a controller note is appended to a fix follow-up", async () =>
 
   await manager.Followup({
     kind: "fix",
-    agent_id: x_AgentId,
+    run_id: x_AgentId,
     round: 1,
     findings: x_FindingsPath,
     findings_text: x_FindingsText,
     tests: ["dist/tests/sdd_manager.test.js"],
-    report: x_ReportPath,
+    report_out: x_ReportPath,
     note,
   });
 
@@ -1055,7 +1124,7 @@ test("Start returns once the turn is running without waiting for submit to finis
   {
     return;
   }
-  assert.equal(started.result.agent_id, x_AgentId);
+  assert.equal(started.result.run_id, x_AgentId);
   // Pre-submit ready cursor, not the advanced running cursor.
   //
   assert.equal(started.result.sequence, 7);
@@ -1089,12 +1158,12 @@ test("Followup returns once the turn is running without waiting for submit to fi
   const followed = await Promise.race([
     manager.Followup({
       kind: "fix",
-      agent_id: x_AgentId,
+      run_id: x_AgentId,
       round: 2,
       findings: "/tmp/sdd/task-3-findings.md",
       findings_text: "one finding",
       tests: ["npm test"],
-      report: "/tmp/sdd/task-3-report.md",
+      report_out: "/tmp/sdd/task-3-report.md",
     }).then((result) => ({ kind: "result" as const, result })),
     new Promise<{ kind: "timeout" }>((resolve) =>
     {
@@ -1107,7 +1176,7 @@ test("Followup returns once the turn is running without waiting for submit to fi
   {
     return;
   }
-  assert.equal(followed.result.agent_id, x_AgentId);
+  assert.equal(followed.result.run_id, x_AgentId);
   assert.equal(followed.result.sequence, 7);
   assert.equal(runManager.phase, "running");
   assert.equal(runManager.submitSettled, false);

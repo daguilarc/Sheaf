@@ -36,7 +36,7 @@ export type RenderSddPromptInput =
       readonly task: number;
       readonly name: string;
       readonly brief: string;
-      readonly report?: string;
+      readonly reportOut?: string;
       readonly context?: string;
       readonly templatesRoot?: string;
     }
@@ -47,7 +47,7 @@ export type RenderSddPromptInput =
       readonly plan: string;
       readonly task: number;
       readonly brief: string;
-      readonly report: string;
+      readonly implementerReport: string;
       readonly base: string;
       readonly head: string;
       readonly constraints?: string;
@@ -63,7 +63,7 @@ export type RenderSddPromptInput =
       readonly round: number;
       readonly brief: string;
       readonly findings: string;
-      readonly report: string;
+      readonly fixerReport: string;
       readonly base: string;
       readonly head: string;
       readonly diff?: string;
@@ -160,8 +160,8 @@ function BuildDispatchArgs(input: RenderSddPromptInput): string[] {
       args.push("--task", String(input.task));
       args.push("--name", input.name);
       args.push("--brief", input.brief);
-      if (input.report !== undefined) {
-        args.push("--report", input.report);
+      if (input.reportOut !== undefined) {
+        args.push("--report", input.reportOut);
       }
       if (input.context !== undefined) {
         args.push("--context", input.context);
@@ -170,7 +170,7 @@ function BuildDispatchArgs(input: RenderSddPromptInput): string[] {
     case "task-reviewer":
       args.push("--task", String(input.task));
       args.push("--brief", input.brief);
-      args.push("--report", input.report);
+      args.push("--report", input.implementerReport);
       args.push("--base", input.base);
       args.push("--head", input.head);
       if (input.constraints !== undefined) {
@@ -185,7 +185,7 @@ function BuildDispatchArgs(input: RenderSddPromptInput): string[] {
       args.push("--round", String(input.round));
       args.push("--brief", input.brief);
       args.push("--findings", input.findings);
-      args.push("--report", input.report);
+      args.push("--report", input.fixerReport);
       args.push("--base", input.base);
       args.push("--head", input.head);
       if (input.diff !== undefined) {
@@ -215,10 +215,11 @@ function ResolveBriefPath(input: RenderSddPromptInput): string | undefined {
 function ResolveReportPath(input: RenderSddPromptInput): string | undefined {
   switch (input.role) {
     case "implementer":
-      return input.report;
+      return input.reportOut;
     case "task-reviewer":
+      return input.implementerReport;
     case "re-review":
-      return input.report;
+      return input.fixerReport;
     case "code-reviewer":
       return undefined;
   }

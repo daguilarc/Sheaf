@@ -298,7 +298,7 @@ test("xagent_list defaults its paging arguments and rejects unknown ones", () =>
 const x_AdvertisedAssignment = {
   cwd: "/private/tmp/worktree",
   plan: "/tmp/plans/2026-07-28-redesign-sdd-ledger.md",
-  agent: "grok-4.5",
+  model: "grok-4.5",
   harness: "cursor",
   effort: "high",
 } as const;
@@ -309,11 +309,11 @@ const x_ValidStartPayloads: ReadonlyArray<Record<string, unknown>> = [
   {
     role: "implementer", ...x_AdvertisedAssignment, task: 4,
     name: "Ledger v2 store", brief: "/tmp/sdd/task-4-brief.md",
-    report: "/tmp/sdd/task-4-report.md",
+    report_out: "/tmp/sdd/task-4-report.md",
   },
   {
     role: "reviewer", ...x_AdvertisedAssignment, task: 4,
-    brief: "/tmp/sdd/task-4-brief.md", report: "/tmp/sdd/task-4-report.md",
+    brief: "/tmp/sdd/task-4-brief.md", implementer_report: "/tmp/sdd/task-4-report.md",
     base: "main", head: "HEAD",
   },
   {
@@ -327,26 +327,26 @@ const x_ValidStartPayloads: ReadonlyArray<Record<string, unknown>> = [
     findings: "/tmp/sdd/task-4-findings.md",
     findings_text: "one finding",
     tests: ["npm test"],
-    report: "/tmp/sdd/task-4-report.md",
+    report_out: "/tmp/sdd/task-4-report.md",
   },
   {
     role: "re-reviewer", ...x_AdvertisedAssignment, task: 4,
     brief: "/tmp/sdd/task-4-brief.md",
     findings: "/tmp/sdd/task-4-findings.md",
-    report: "/tmp/sdd/task-4-report.md",
+    fixer_report: "/tmp/sdd/task-4-report.md",
     base: "main", head: "HEAD",
   },
 ];
 
 const x_ValidFollowupPayloads: ReadonlyArray<Record<string, unknown>> = [
   {
-    kind: "fix", agent_id: "xrun_20260728000000000_0000abcd", round: 2,
+    kind: "fix", run_id: "xrun_20260728000000000_0000abcd", round: 2,
     findings: "/tmp/sdd/task-4-findings.md", findings_text: "one finding",
-    tests: ["npm test"], report: "/tmp/sdd/task-4-report.md",
+    tests: ["npm test"], report_out: "/tmp/sdd/task-4-report.md",
   },
   {
-    kind: "re-review", agent_id: "xrun_20260728000000000_0000abcd", round: 2,
-    findings: "/tmp/sdd/task-4-findings.md", report: "/tmp/sdd/task-4-report.md",
+    kind: "re-review", run_id: "xrun_20260728000000000_0000abcd", round: 2,
+    findings: "/tmp/sdd/task-4-findings.md", fixer_report: "/tmp/sdd/task-4-report.md",
     base: "main", head: "HEAD",
   },
 ];
@@ -599,7 +599,7 @@ test("xagent_await still honours an unadvertised deadline_seconds over MCP", asy
 const x_Assignment = {
   cwd: "/private/tmp/worktree",
   plan: "/tmp/plans/2026-07-28-redesign-sdd-ledger.md",
-  agent: "grok-4.5",
+  model: "grok-4.5",
   harness: "cursor",
   effort: "high",
 };
@@ -625,11 +625,11 @@ function AssertReviewerCases(
   }
 }
 
-test("reviewer with a task requires report and forbids description", () => {
+test("reviewer with a task requires implementer_report and forbids description", () => {
   const withTask = {
     role: "reviewer" as const, ...x_Assignment, task: 4,
     brief: "/tmp/sdd/task-4-review-brief.md",
-    report: "/tmp/sdd/task-4-report.md",
+    implementer_report: "/tmp/sdd/task-4-report.md",
     base: "main", head: "HEAD",
   };
   const cases: ReadonlyArray<{ payload: Record<string, unknown>; ok: boolean }> = [
@@ -644,7 +644,7 @@ test("reviewer with a task requires report and forbids description", () => {
     {
       payload: {
         role: "reviewer", ...x_Assignment, task: 4,
-        brief: "/tmp/b.md", report: "/tmp/r.md", base: "main", head: "HEAD",
+        brief: "/tmp/b.md", implementer_report: "/tmp/r.md", base: "main", head: "HEAD",
         description: "whole branch",
       },
       ok: false,
@@ -677,7 +677,7 @@ test("reviewer without a task requires description and forbids task-scoped field
       ok: false,
     },
     {
-      payload: { ...wholeBranch, report: "/tmp/r.md" },
+      payload: { ...wholeBranch, implementer_report: "/tmp/r.md" },
       ok: false,
     },
     {
@@ -695,7 +695,7 @@ test("reviewer without a task requires description and forbids task-scoped field
 test("v1 role names and the review_brief field name are rejected", () => {
   assert.equal(XagentSddStartInputSchema.safeParse({
     role: "task-reviewer", ...x_Assignment, task: 4,
-    brief: "/tmp/b.md", report: "/tmp/r.md", base: "main", head: "HEAD",
+    brief: "/tmp/b.md", implementer_report: "/tmp/r.md", base: "main", head: "HEAD",
   }).success, false);
   assert.equal(XagentSddStartInputSchema.safeParse({
     role: "code-reviewer", ...x_Assignment,
@@ -709,14 +709,14 @@ test("v1 role names and the review_brief field name are rejected", () => {
   }
 });
 
-test("fixer requires task, brief, findings, tests, and report and rejects name", () => {
+test("fixer requires task, brief, findings, tests, and report_out and rejects name", () => {
   const valid = {
     role: "fixer" as const, ...x_Assignment, task: 4,
     brief: "/tmp/sdd/task-4-brief.md",
     findings: "/tmp/sdd/task-4-findings.md",
     findings_text: "Two open findings.",
     tests: ["npm test"],
-    report: "/tmp/sdd/task-4-report.md",
+    report_out: "/tmp/sdd/task-4-report.md",
   };
   assert.equal(FixerStartSchema.safeParse(valid).success, true);
   assert.equal(FixerStartSchema.parse(valid).round, 1);
@@ -731,7 +731,7 @@ test("re-reviewer requires the original review brief", () => {
     role: "re-reviewer" as const, ...x_Assignment, task: 4,
     brief: "/tmp/sdd/task-4-review-brief.md",
     findings: "/tmp/sdd/task-4-findings.md",
-    report: "/tmp/sdd/task-4-report.md",
+    fixer_report: "/tmp/sdd/task-4-report.md",
     base: "main", head: "HEAD",
   };
   assert.equal(ReReviewerStartSchema.safeParse(valid).success, true);
@@ -751,7 +751,7 @@ test("worker-facing text on v2 roles still rejects controller run ids", () => {
     role: "fixer", ...x_Assignment, task: 4,
     brief: "/tmp/b.md", findings: "/tmp/f.md",
     findings_text: "see xrun_20260728000000000_0000abcd",
-    tests: ["npm test"], report: "/tmp/r.md",
+    tests: ["npm test"], report_out: "/tmp/r.md",
   }).success, false);
   for (const [, schema] of x_ReviewerSchemas) {
     assert.equal(schema.safeParse({
@@ -762,30 +762,30 @@ test("worker-facing text on v2 roles still rejects controller run ids", () => {
   }
 });
 
-test("v2 followup shapes require report and keep round render-only", () => {
+test("v2 followup shapes require report_out or fixer_report and keep round render-only", () => {
   const fix = {
     kind: "fix" as const,
-    agent_id: "xrun_20260728000000000_0000abcd",
+    run_id: "xrun_20260728000000000_0000abcd",
     round: 2,
     findings: "/tmp/f.md",
     findings_text: "one finding",
     tests: ["npm test"],
-    report: "/tmp/r.md",
+    report_out: "/tmp/r.md",
   };
   assert.equal(FixFollowupSchema.safeParse(fix).success, true);
-  const { report, ...withoutReport } = fix;
+  const { report_out, ...withoutReport } = fix;
   assert.equal(FixFollowupSchema.safeParse(withoutReport).success, false);
 
   const reReview = {
     kind: "re-review" as const,
-    agent_id: "xrun_20260728000000000_0000abcd",
+    run_id: "xrun_20260728000000000_0000abcd",
     round: 2,
     findings: "/tmp/f.md",
-    report: "/tmp/r.md",
+    fixer_report: "/tmp/r.md",
     base: "main", head: "HEAD",
   };
   assert.equal(ReReviewFollowupSchema.safeParse(reReview).success, true);
-  const { report: r2, ...reReviewWithoutReport } = reReview;
+  const { fixer_report: r2, ...reReviewWithoutReport } = reReview;
   assert.equal(ReReviewFollowupSchema.safeParse(reReviewWithoutReport).success, false);
 });
 
@@ -809,13 +809,13 @@ test("xagent_list carries the v2 sdd identity block", async () => {
           role: "implementer",
           cwd,
           plan: planPath,
-          agent: "fake-model",
+          model: "fake-model",
           harness: "codex",
           effort: "high",
           task: 4,
           name: "list-identity",
           brief: briefPath,
-          report: reportPath,
+          report_out: reportPath,
         },
       }),
     );
@@ -826,7 +826,7 @@ test("xagent_list carries the v2 sdd identity block", async () => {
       await client.callTool({ name: "xagent_list", arguments: {} }),
     ));
     const runs = body.runs as Array<Record<string, unknown>>;
-    const row = runs.find((entry) => entry.run_id === started.agent_id)!;
+    const row = runs.find((entry) => entry.run_id === started.run_id)!;
     assert.deepEqual(Object.keys(row.sdd as object).sort(), [
       "brief_path", "cwd", "dispatched_at", "plan", "role", "task",
     ]);
@@ -887,6 +887,50 @@ test("a ledger row with no run record is a tombstone entry", async () => {
     assert.deepEqual(Object.keys(tombstone).sort(), ["run_id", "run_missing", "sdd"]);
     assert.equal(tombstone.run_missing, true);
     assert.equal((tombstone.sdd as { role: string }).role, "fixer");
+  }, {
+    createSddManager: ({ runManager, repoRoot, logRoot }) =>
+      CreateTestSddManager(runManager, repoRoot, logRoot),
+  });
+});
+
+// Retired names must reach the strict union. Without .passthrough() on the
+// advertised schema the MCP SDK strips undeclared keys before the handler
+// runs, and a leftover agent/report/agent_id would vanish into a successful
+// dispatch.
+//
+test("retired field names are rejected, not stripped", async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), "xagent-mcp-retired-"));
+  const planPath = path.join(cwd, "plan.md");
+  const briefPath = path.join(cwd, "brief.md");
+  const reportPath = path.join(cwd, "report.md");
+  await writeFile(planPath, "# plan\n", "utf8");
+  await writeFile(briefPath, "Implement the rename.\n", "utf8");
+  await writeFile(reportPath, "", "utf8");
+
+  await withMcpService(async ({ client }) => {
+    for (const retired of ["agent", "report", "agent_id"]) {
+      const response = asToolCallResult(await client.callTool({
+        name: "xagent_sdd_start",
+        arguments: {
+          role: "implementer",
+          cwd,
+          plan: planPath,
+          task: 1,
+          name: "n",
+          brief: briefPath,
+          report_out: reportPath,
+          model: "opus",
+          harness: "claude_code",
+          effort: "high",
+          [retired]: "leftover",
+        },
+      }));
+      assert.match(
+        JSON.stringify(response),
+        /invalid_tool_input|unrecognized/i,
+        `${retired} must be rejected, not silently stripped`,
+      );
+    }
   }, {
     createSddManager: ({ runManager, repoRoot, logRoot }) =>
       CreateTestSddManager(runManager, repoRoot, logRoot),

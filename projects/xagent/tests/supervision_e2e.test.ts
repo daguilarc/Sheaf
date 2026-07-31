@@ -688,12 +688,12 @@ test("a service restart leaves the ledger byte-identical and steers the controll
     try {
       const result = await second.sddFollowupResult({
         kind: "fix",
-        agent_id: implementer.agent_id,
+        run_id: implementer.run_id,
         round: 1,
         findings: second.artifact("task-4-findings.md"),
         findings_text: "x",
         tests: ["npm test"],
-        report: second.artifact("task-4-report.md"),
+        report_out: second.artifact("task-4-report.md"),
       });
       assert.equal(result.isError, true);
       const body = structuredToolBody(result);

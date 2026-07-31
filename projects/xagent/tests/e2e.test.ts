@@ -156,7 +156,7 @@ test("two agents, four submissions, two immutable rows, reports only in the log"
     //
     const implementer = await service.startSddImplementer({ task: 4 });
     const fixer = await service.startSddFixer({ task: 4 });
-    assert.notEqual(implementer.agent_id, fixer.agent_id);
+    assert.notEqual(implementer.run_id, fixer.run_id);
 
     // Same path startSddImplementer wrote; overwrite before await so a
     // regression that re-reads the report file would surface the disk text.
@@ -165,7 +165,7 @@ test("two agents, four submissions, two immutable rows, reports only in the log"
     await writeFile(implementerReportPath, x_MutableArtifactText, "utf8");
 
     const implementerFirst = await service.awaitTurn(
-      implementer.agent_id,
+      implementer.run_id,
       implementer.sequence,
     );
     assert.equal(implementerFirst.event, "turn.completed");
@@ -182,18 +182,18 @@ test("two agents, four submissions, two immutable rows, reports only in the log"
       "the report file must remain the distinctive disk artifact",
     );
 
-    await service.awaitTurn(fixer.agent_id, fixer.sequence);
+    await service.awaitTurn(fixer.run_id, fixer.sequence);
 
     const fix = await service.sddFollowup({
       kind: "fix",
-      agent_id: implementer.agent_id,
+      run_id: implementer.run_id,
       round: 1,
       findings: service.artifact("task-4-findings.md"),
       findings_text: "Finding 1: the gate is missing.",
       tests: ["npm test"],
-      report: implementerReportPath,
+      report_out: implementerReportPath,
     });
-    const implementerFix = await service.awaitTurn(implementer.agent_id, fix.sequence);
+    const implementerFix = await service.awaitTurn(implementer.run_id, fix.sequence);
     assert.equal(implementerFix.event, "turn.completed");
     assert.match(
       (implementerFix.report as { text: string }).text,
@@ -207,9 +207,9 @@ test("two agents, four submissions, two immutable rows, reports only in the log"
     // xsvc-5: generic await/message/close serve SDD-owned runs identically.
     //
     const nudgeText = "controller nudge after the fix turn";
-    const nudged = await service.message(implementer.agent_id, nudgeText);
+    const nudged = await service.message(implementer.run_id, nudgeText);
     const implementerNudge = await service.awaitTurn(
-      implementer.agent_id,
+      implementer.run_id,
       nudged.sequence,
     );
     assert.equal(implementerNudge.event, "turn.completed");
@@ -218,15 +218,15 @@ test("two agents, four submissions, two immutable rows, reports only in the log"
       `fake response to ${nudgeText}`,
     );
 
-    await service.closeRun(implementer.agent_id);
+    await service.closeRun(implementer.run_id);
     const afterClose = await service.sddFollowupResult({
       kind: "fix",
-      agent_id: implementer.agent_id,
+      run_id: implementer.run_id,
       round: 2,
       findings: service.artifact("task-4-findings-after-close.md"),
       findings_text: "must not land on a closed agent",
       tests: ["npm test"],
-      report: implementerReportPath,
+      report_out: implementerReportPath,
     });
     assert.equal(afterClose.isError, true);
     assert.equal(structuredToolBody(afterClose).error, "sdd_agent_not_live");
@@ -237,8 +237,8 @@ test("two agents, four submissions, two immutable rows, reports only in the log"
     assert.deepEqual(rows.map((row) => row.task), [4, 4]);
     assert.equal(rows[0]!.plan_path, rows[1]!.plan_path);
 
-    const implementerEvents = await service.normalizedEvents(implementer.agent_id);
-    const fixerEvents = await service.normalizedEvents(fixer.agent_id);
+    const implementerEvents = await service.normalizedEvents(implementer.run_id);
+    const fixerEvents = await service.normalizedEvents(fixer.run_id);
     assert.equal(
       implementerEvents.filter((event) => event.type === "turn.submitted").length,
       3,
