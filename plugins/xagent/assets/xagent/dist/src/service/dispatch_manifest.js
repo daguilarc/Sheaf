@@ -104,7 +104,7 @@ export const x_ServiceEntries = [
     {
         variant: "fixer", field: "round", source: "service", rendererOption: null,
         provenance: "caller_input", surfaceKind: "text", direction: null,
-        transport: "not_applicable", requiredCondition: "always", derivation: null,
+        transport: "not_applicable", requiredCondition: "optional", derivation: null,
     },
     {
         variant: "followup:fix", field: "findings", source: "service", rendererOption: null,
@@ -240,8 +240,20 @@ function FieldIsUnconditionallyRequired(variant, field) {
     return x_UnionAlwaysRequired[variant]?.has(field) === true;
 }
 function IntersectRequiredCondition(variant, field, fromRenderer) {
+    // Ledger/derived entries carry no surface field; keep the renderer condition.
+    //
+    if (field === null) {
+        return fromRenderer;
+    }
     if (FieldIsUnconditionallyRequired(variant, field)) {
         return "always";
+    }
+    // The union does not require this field. A renderer-side "always" for a
+    // synthesized option (e.g. re-reviewer --round, which has a Zod default)
+    // must not outrank the schema.
+    //
+    if (fromRenderer === "always") {
+        return "optional";
     }
     return fromRenderer;
 }

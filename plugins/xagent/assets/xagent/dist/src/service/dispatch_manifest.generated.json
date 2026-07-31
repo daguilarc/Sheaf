@@ -382,7 +382,7 @@
       "surfaceKind": "text",
       "direction": null,
       "transport": "not_applicable",
-      "requiredCondition": "always",
+      "requiredCondition": "optional",
       "derivation": null
     },
     {
@@ -634,7 +634,7 @@
       "surfaceKind": "text",
       "direction": null,
       "transport": "not_applicable",
-      "requiredCondition": "always",
+      "requiredCondition": "optional",
       "derivation": null
     },
     {

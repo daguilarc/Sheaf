@@ -236,6 +236,7 @@ export declare const ImplementerStartSchema: z.ZodObject<{
 export declare const x_ReviewerBranchForbiddenFields: readonly ["implementer_report", "constraints", "diff"];
 export declare const x_ReviewerTaskForbiddenFields: readonly ["description"];
 export declare const x_ReviewerTaskRequiredFields: readonly ["implementer_report"];
+export declare const x_ReviewerBranchRequiredFields: readonly ["description"];
 export declare const ReviewerStartObject: z.ZodObject<{
     task: z.ZodOptional<z.ZodNumber>;
     brief: z.ZodEffects<z.ZodString, string, string>;

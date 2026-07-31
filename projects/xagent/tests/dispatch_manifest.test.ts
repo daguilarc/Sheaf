@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import type { z } from "zod";
 
 import {
   CallerInputProjection,
@@ -8,6 +9,7 @@ import {
   OPERATIONAL_FIELDS,
   REGISTRY,
   SurfaceFieldFor,
+  type DispatchVariant,
 } from "../src/service/dispatch_manifest.js";
 import {
   FixFollowupSchema,
@@ -17,27 +19,44 @@ import {
   ReReviewerStartSchema,
   ReviewerStartObject,
   XagentSddFollowupAdvertisedSchema,
+  XagentSddFollowupInputSchema,
   XagentSddStartAdvertisedSchema,
+  XagentSddStartInputSchema,
   x_ReviewerBranchForbiddenFields,
+  x_ReviewerBranchRequiredFields,
   x_ReviewerTaskForbiddenFields,
+  x_ReviewerTaskRequiredFields,
 } from "../src/service/tool_schemas.js";
 
-// Equality #1: variants the union, reviewer refinement, and follow-up kinds
-// actually recognize. Read role/kind literals from the schemas so a fifth
-// start role cannot slip through while registry and manifest stay equal.
+// Equality #1: membership comes from the union option lists themselves, so a
+// fifth start role added only to the discriminatedUnion fails this test.
 //
 function RecognizedDispatchVariants(): string[] {
-  const variants: string[] = [
-    ImplementerStartSchema.shape.role.value,
-    FixerStartSchema.shape.role.value,
-    ReReviewerStartSchema.shape.role.value,
-  ];
-  assert.equal(ReviewerStartObject.shape.role.value, "reviewer");
-  // Task presence is the refinement's split into two public variants.
-  //
-  variants.push("reviewer:task", "reviewer:branch");
-  variants.push(`followup:${FixFollowupSchema.shape.kind.value}`);
-  variants.push(`followup:${ReReviewFollowupSchema.shape.kind.value}`);
+  const startOptions = (
+    XagentSddStartInputSchema as unknown as {
+      _def: { schema: { options: ReadonlyArray<{ shape: { role: { value: string } } }> } };
+    }
+  )._def.schema.options;
+  const variants: string[] = [];
+  for (const option of startOptions) {
+    const role = option.shape.role.value;
+    if (role === "reviewer") {
+      // Task presence is the refinement's split into two public variants.
+      //
+      variants.push("reviewer:task", "reviewer:branch");
+    }
+    else {
+      variants.push(role);
+    }
+  }
+  const followupOptions = (
+    XagentSddFollowupInputSchema as unknown as {
+      options: ReadonlyArray<{ shape: { kind: { value: string } } }>;
+    }
+  ).options;
+  for (const option of followupOptions) {
+    variants.push(`followup:${option.shape.kind.value}`);
+  }
   return variants.sort();
 }
 
@@ -79,6 +98,72 @@ function AcceptedPairsFromSchemas(): Array<{ variant: string; field: string }> {
   return pairs;
 }
 
+function ZodFieldIsOptional(schema: z.ZodTypeAny): boolean {
+  const typeName = (schema as { _def: { typeName: string } })._def.typeName;
+  return typeName === "ZodOptional" || typeName === "ZodDefault";
+}
+
+function NonOperationalRequiredKeys(
+  shape: Record<string, z.ZodTypeAny>,
+): string[] {
+  return Object.entries(shape)
+    .filter(([key, schema]) => (
+      !ZodFieldIsOptional(schema) && !OPERATIONAL_FIELDS.includes(key)
+    ))
+    .map(([key]) => key);
+}
+
+// Schema-side always-required set per variant. Compared to what the manifest
+// marks `always`, so x_UnionAlwaysRequired cannot drift from the union.
+//
+function SchemaAlwaysRequiredFields(variant: DispatchVariant): string[] {
+  switch (variant) {
+    case "implementer":
+      return NonOperationalRequiredKeys(ImplementerStartSchema.shape).sort();
+    case "reviewer:task":
+      return [...new Set([
+        ...NonOperationalRequiredKeys(ReviewerStartObject.shape),
+        // Task presence selects this branch; the shape marks it optional.
+        //
+        "task",
+        ...x_ReviewerTaskRequiredFields,
+      ])]
+        .filter((field) => !(x_ReviewerTaskForbiddenFields as readonly string[]).includes(field))
+        .sort();
+    case "reviewer:branch":
+      return [...new Set([
+        ...NonOperationalRequiredKeys(ReviewerStartObject.shape),
+        ...x_ReviewerBranchRequiredFields,
+      ])]
+        .filter((field) => (
+          field !== "task"
+          && !(x_ReviewerBranchForbiddenFields as readonly string[]).includes(field)
+        ))
+        .sort();
+    case "fixer":
+      return NonOperationalRequiredKeys(FixerStartSchema.shape).sort();
+    case "re-reviewer":
+      return NonOperationalRequiredKeys(ReReviewerStartSchema.shape).sort();
+    case "followup:fix":
+      return NonOperationalRequiredKeys(FixFollowupSchema.shape).sort();
+    case "followup:re-review":
+      return NonOperationalRequiredKeys(ReReviewFollowupSchema.shape).sort();
+  }
+}
+
+function ManifestAlwaysRequiredFields(variant: string): string[] {
+  return [...new Set(
+    DispatchManifest()
+      .filter((entry) => (
+        entry.variant === variant
+        && entry.provenance === "caller_input"
+        && entry.field !== null
+        && entry.requiredCondition === "always"
+      ))
+      .map((entry) => entry.field as string),
+  )].sort();
+}
+
 function FieldDescription(field: string): string {
   const startShape = XagentSddStartAdvertisedSchema.shape as Record<
     string,
@@ -92,6 +177,20 @@ function FieldDescription(field: string): string {
 }
 
 test("recognized routes equal the registry variant keys", () => {
+  // Membership tracks the union option count: reviewer expands one role into
+  // two variants, so recognized length is startOptions + 1 + followupOptions.
+  //
+  const startCount = (
+    XagentSddStartInputSchema as unknown as { _def: { schema: { options: unknown[] } } }
+  )._def.schema.options.length;
+  const followupCount = (
+    XagentSddFollowupInputSchema as unknown as { options: unknown[] }
+  ).options.length;
+  assert.equal(
+    RecognizedDispatchVariants().length,
+    startCount + 1 + followupCount,
+    "route count must track union option membership",
+  );
   assert.deepEqual(
     RecognizedDispatchVariants(),
     [...DISPATCH_VARIANTS].sort(),
@@ -136,25 +235,34 @@ test("manifest variants exactly equal the registry keys", () => {
   );
 });
 
-test("union-required report fields are always and have no derived provenance", () => {
-  for (const [variant, field] of [
-    ["implementer", "report_out"],
-    ["reviewer:task", "implementer_report"],
-    ["re-reviewer", "fixer_report"],
-    ["followup:re-review", "fixer_report"],
-  ] as const) {
-    const caller = DispatchManifest().find(
-      (e) => e.variant === variant && e.field === field,
+test("manifest always-required fields equal the schemas", () => {
+  for (const variant of DISPATCH_VARIANTS) {
+    const fromSchema = SchemaAlwaysRequiredFields(variant);
+    const fromManifest = ManifestAlwaysRequiredFields(variant);
+    assert.deepEqual(
+      fromManifest,
+      fromSchema,
+      `${variant}: manifest always-required must equal schema requiredness`,
     );
-    assert.equal(caller?.requiredCondition, "always", `${variant} ${field}`);
-    const derivedReport = DispatchManifest().filter(
-      (e) => (
-        e.variant === variant
-        && e.rendererOption === "--report"
-        && e.provenance === "derived"
-      ),
-    );
-    assert.equal(derivedReport.length, 0, `${variant} must not emit derived --report`);
+    // A union-required --report surface field cannot have a derived provenance.
+    //
+    for (const field of fromSchema) {
+      const entry = DispatchManifest().find(
+        (e) => e.variant === variant && e.field === field,
+      );
+      if (entry?.rendererOption !== "--report") {
+        continue;
+      }
+      assert.equal(
+        DispatchManifest().filter((e) => (
+          e.variant === variant
+          && e.rendererOption === "--report"
+          && e.provenance === "derived"
+        )).length,
+        0,
+        `${variant} must not emit derived --report for always-required ${field}`,
+      );
+    }
   }
 });
 

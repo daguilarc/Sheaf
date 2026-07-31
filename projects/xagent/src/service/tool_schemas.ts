@@ -155,6 +155,10 @@ export const x_ReviewerTaskForbiddenFields = ["description"] as const;
 //
 export const x_ReviewerTaskRequiredFields = ["implementer_report"] as const;
 
+// Required by the refinement when task is absent (whole-branch review).
+//
+export const x_ReviewerBranchRequiredFields = ["description"] as const;
+
 function ReviewerRefinement(
   value: {
     readonly task?: number;
@@ -166,11 +170,13 @@ function ReviewerRefinement(
   ctx: z.RefinementCtx,
 ): void {
   if (value.task === undefined) {
-    if (value.description === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "reviewer without a task requires description (whole-branch review)",
-      });
+    for (const field of x_ReviewerBranchRequiredFields) {
+      if (value[field] === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `reviewer without a task requires ${field} (whole-branch review)`,
+        });
+      }
     }
     for (const field of x_ReviewerBranchForbiddenFields) {
       if (value[field] !== undefined) {

@@ -130,13 +130,18 @@ export const x_ReviewerTaskForbiddenFields = ["description"];
 // shape marks the field optional (whole-branch reviewers omit it).
 //
 export const x_ReviewerTaskRequiredFields = ["implementer_report"];
+// Required by the refinement when task is absent (whole-branch review).
+//
+export const x_ReviewerBranchRequiredFields = ["description"];
 function ReviewerRefinement(value, ctx) {
     if (value.task === undefined) {
-        if (value.description === undefined) {
-            ctx.addIssue({
-                code: z.ZodIssueCode.custom,
-                message: "reviewer without a task requires description (whole-branch review)",
-            });
+        for (const field of x_ReviewerBranchRequiredFields) {
+            if (value[field] === undefined) {
+                ctx.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: `reviewer without a task requires ${field} (whole-branch review)`,
+                });
+            }
         }
         for (const field of x_ReviewerBranchForbiddenFields) {
             if (value[field] !== undefined) {
