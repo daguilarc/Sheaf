@@ -36,7 +36,7 @@ pre-plan coordination and Superpowers SDD task execution:
   Do not discard an implementer after its first report or a reviewer after
   its first verdict: while the agent is live, send small fixes back via
   `xagent_sdd_followup` and re-reviews via `xagent_sdd_followup` on the same
-  `agent_id` (pre-plan helpers stay resumable via `xagent_await` /
+  `run_id` (pre-plan helpers stay resumable via `xagent_await` /
   `xagent_message` on the same run). When followup returns
   `sdd_agent_not_live`, start a fresh `fixer` or `re-reviewer` for the same
   plan and task instead — that is recovery, not optional churn. Start fresh
@@ -74,8 +74,8 @@ ledger.
   or MCP inspect checks happen only after attention, a long wait deadline, or
   an explicit user status request — never as a fixed-frequency polling loop.
 - **Child messaging stays sparse.** Dispatch instructs children to message the
-  controller only for required input, an unresolved blocker, or final
-  completion. Routine tool progress stays in the child thread or activity UI.
+  controller only for required input, an unresolved blocker, or final completion.
+  Routine tool progress stays in the child thread or activity UI.
 - **Multiple agents complete independently.** When one running agent
   completes or needs attention, handle that event and enter another long event
   wait for the remaining agents without inserting unchanged `list_agents`
@@ -90,15 +90,17 @@ Once a written Superpowers plan exists, every implementer, task reviewer, fix,
 re-review, and final whole-branch reviewer turn MUST use the xagent SDD MCP
 facade for dispatch. The facade renders each turn through the trusted
 `dispatch-prompt` executable in the service checkout; controllers pass brief,
-report, and assignment metadata — never the rendered prompt body.
+direction-named report paths, and assignment metadata — never the rendered
+prompt body.
 
 `xagent_sdd_await` and `xagent_sdd_close` are deleted. During this ledger redesign
 a late watchdog event after `turn.completed` left a live healthy agent
 permanently unreachable: the v1 turn row stayed `running`, followup pointed at
 await, the SDD await returned without resolving it, and message named the await
-that had just failed. Controllers now use `xagent_await` / `xagent_close` with
-`run_id` (the returned `agent_id`), and `xagent_message` is legal on SDD runs.
-`deadline_seconds` is no longer an agent-facing await input.
+that had just failed. Controllers use `xagent_await` / `xagent_close` with the
+`run_id` returned by the dispatch tools — the same name, unchanged — and
+`xagent_message` is legal on SDD runs. `deadline_seconds` is no longer an
+agent-facing await input.
 
 Required SDD flow per turn:
 
@@ -116,18 +118,27 @@ xagent_sdd_start
   set: `implementer`, `reviewer` (with `task` for a task review, without for a
   whole-branch review), `fixer`, and `re-reviewer`. The role is the role the
   agent *starts* as and never changes. Pass the complete brief, plan path,
-  assignment metadata, and report path where the role requires it. Record the
-  returned `agent_id` and `sequence`. The returned `sequence` is the pre-turn
-  supervision cursor; it is not a provider JSONL position. Pass it to
-  `xagent_await` as `after_sequence` with `run_id` set to that `agent_id`.
+  assignment metadata, and the direction-named report path the role requires:
+  `report_out` for `implementer` and `fixer` (path the agent writes);
+  `implementer_report` for a task-scoped `reviewer` (implementer's existing
+  report it reads); `fixer_report` for a `re-reviewer` (fixer's existing
+  report it reads). A whole-branch `reviewer` takes no report path. For a
+  task-scoped `reviewer` or a `re-reviewer`, pass `diff` unless the plan
+  workspace already holds the derivable `review-<base>..<head>.diff`. Pass
+  `model` for the provider model. Record the returned `run_id` and
+  `sequence`. The returned `sequence` is the pre-turn supervision cursor; it
+  is not a provider JSONL position. Pass it to `xagent_await` as
+  `after_sequence` with that same `run_id`.
 - **Followup is a same-agent convenience.** Call `xagent_sdd_followup` with the
-  existing implementer or fixer `agent_id` for fixes and the existing reviewer
-  or re-reviewer `agent_id` for re-reviews. It renders and submits, writes
-  nothing to the ledger, returns `{ agent_id, sequence }`, and requires a
-  `report` path. Do not start a fresh agent merely to send that follow-up while
-  the agent is live. A whole-branch `reviewer` (no `task`) is single-turn
-  (`xagent_sdd_start` → await → `xagent_close`) with no follow-up; a new
-  whole-branch review round means a new `xagent_sdd_start`.
+  existing implementer or fixer `run_id` for fixes and the existing reviewer
+  or re-reviewer `run_id` for re-reviews. It renders and submits, writes
+  nothing to the ledger, and returns `{ run_id, sequence }`. Kind `fix`
+  requires `report_out`; kind `re-review` requires `fixer_report` and, like a
+  task-scoped review start, `diff` unless the derivable review-package file
+  already exists in the plan workspace. Do not start a fresh agent merely to
+  send that follow-up while the agent is live. A whole-branch `reviewer` (no
+  `task`) is single-turn (`xagent_sdd_start` → await → `xagent_close`) with no
+  follow-up; a new whole-branch review round means a new `xagent_sdd_start`.
 - **Recover dead agents with a fresh start.** When followup returns
   `sdd_agent_not_live`, dispatch `xagent_sdd_start` with role `fixer` (for a
   dead `implementer`/`fixer`) or `re-reviewer` (for a dead `reviewer`/

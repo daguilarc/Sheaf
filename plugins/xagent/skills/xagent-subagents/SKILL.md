@@ -51,9 +51,9 @@ event once landed after `turn.completed`, the v1 turn row stayed `running`,
 followup said "await it", that SDD await returned without resolving it, and
 message said "await it before messaging" — naming the tool that had just
 failed. The agent was alive, idle, and permanently unreachable, with no repair
-tool. Controllers now use `xagent_await` / `xagent_close` with `run_id` (the
-same value returned as `agent_id`), not a separate SDD await keyed on
-`agent_id`. `deadline_seconds` is no longer an agent-facing await input.
+tool. Controllers use `xagent_await` / `xagent_close` with the `run_id`
+returned by the dispatch tools — the same name the generic lifecycle tools
+take, unchanged. `deadline_seconds` is no longer an agent-facing await input.
 
 For every implementer, reviewer, fixer, re-reviewer, and whole-branch reviewer
 turn, use:
@@ -72,22 +72,30 @@ xagent_sdd_start
 (with `task` for a task review, without for a whole-branch review), `fixer`,
 and `re-reviewer`. The role is the role the agent *starts* as and never
 changes — a later fix follow-up on an implementer does not rewrite the ledger
-row to `fixer`. The start call renders the role prompt through the trusted
-`dispatch-prompt` executable in the service checkout, inserts one immutable
-`sdd_agents` row, and returns `agent_id`, `sequence`, `renderer_path`, and
-artifact paths once the turn is durably started (not when it completes —
-awaiting completion is `xagent_await`'s job). Record the returned `agent_id`
-(use it as `run_id` for generic tools) and `sequence` cursor. The returned
-`sequence` is the pre-turn supervision cursor; it is not a provider JSONL position.
-Pass it to `xagent_await` as `after_sequence`.
+row to `fixer`. Pass `model` (not a retired `agent` field) for the provider
+model. Report paths are named by direction: `report_out` for `implementer`
+and `fixer` (the path the agent writes); `implementer_report` for a
+task-scoped `reviewer` (the implementer's existing report it reads);
+`fixer_report` for a `re-reviewer` (the fixer's existing report it reads).
+A whole-branch `reviewer` takes no report path. The start call renders the
+role prompt through the trusted `dispatch-prompt` executable in the service
+checkout, inserts one immutable `sdd_agents` row, and returns `run_id`,
+`sequence`, `brief_path`, and — when the role writes a report —
+`report_out_path`, plus `prompt_path` / `renderer_path` when the role uses
+them (fixer omits those two). The call returns once the turn is durably
+started, not when it completes — awaiting completion is `xagent_await`'s job.
+Record the returned `run_id` and `sequence` cursor. The returned `sequence`
+is the pre-turn supervision cursor; it is not a provider JSONL position.
+Pass it to `xagent_await` as `after_sequence` with that same `run_id`.
 
 `xagent_sdd_followup` is a same-agent convenience: it renders and submits, writes
-nothing to the ledger, and returns `{ agent_id, sequence }`. Its `report` path
-is a required input. While the agent is live, use followup for fix or re-review
-rounds — do not start a fresh agent merely to send that follow-up. A whole-branch
-`reviewer` (no `task`) is single-turn: `xagent_sdd_start` → await →
-`xagent_close`; a later whole-branch review round means a new
-`xagent_sdd_start`.
+nothing to the ledger, and returns `{ run_id, sequence }`. Kind `fix`
+requires `report_out` (the path the agent appends to); kind `re-review`
+requires `fixer_report` (the fixer's existing report it reads). While the agent
+is live, use followup for fix or re-review rounds — do not start a fresh agent
+merely to send that follow-up. A whole-branch `reviewer` (no `task`) is
+single-turn: `xagent_sdd_start` → await → `xagent_close`; a later whole-branch
+review round means a new `xagent_sdd_start`.
 
 ### Recovery when the agent is not live
 
@@ -122,7 +130,7 @@ how you dispatch work: a fix or re-review round must go through
 `xagent_sdd_followup` (or a fresh `fixer` / `re-reviewer` start when the agent
 is not live).
 
-`<log_root>/<agent_id>/` is the only copy of that agent's reports and submitted
+`<log_root>/<run_id>/` is the only copy of that agent's reports and submitted
 prompts. Deleting a run directory referenced by the ledger destroys evidence;
 treat ledger-referenced run directories as evidence, not cache.
 

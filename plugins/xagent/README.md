@@ -71,6 +71,6 @@ A service that finds a ledger whose `user_version` is not 2 refuses to start the
 SDD manager and names the files to delete, stating that v1 data is not migrated.
 
 **Run directories are the system of record.** Reports and submitted prompts for
-SDD agents live only in `<log_root>/<agent_id>/normalized.jsonl`. Any cleanup,
+SDD agents live only in `<log_root>/<run_id>/normalized.jsonl`. Any cleanup,
 retention, or garbage-collection tooling must treat a run directory whose
-`agent_id` appears in `sdd_agents` as evidence, not cache.
+`run_id` appears in `sdd_agents.agent_id` as evidence, not cache.
