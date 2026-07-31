@@ -79,7 +79,8 @@ that `brief` and `findings` also carry two functions, since a task reviewer's
 contents-inlined (`--requirements @FILE`), and `findings` splits the same way
 between `fixer` and `re-review`. The owner ruled that the principle keys on
 logical purpose. xsdd-9 now says so explicitly, and xsvc-17's "direction" is
-narrowed to read-versus-write on caller-supplied paths.
+narrowed to the artifact's lifecycle — read versus write — rather than its
+transport (see D11).
 
 The reasoning: a caller supplying "the findings for this task" supplies the same
 artifact regardless of how the prompt ingests it, and no controller has ever
@@ -88,7 +89,8 @@ intended to be written where an existing file was required. Transport is
 described in the field description; direction is enforced by name.
 
 *Consequence:* `brief` and `findings` keep single names, and the tool-surface
-test asserts direction only on artifact-bearing path fields.
+test asserts direction only on artifact-bearing path fields, whatever slot kind
+the renderer uses to deliver them.
 
 **D5 — Make the renderer boundary visible instead of moving it.** `diff` is
 required by the task-review and re-review templates and advertised optional.
@@ -137,6 +139,12 @@ The reverse mapping matters as much as the code: the renderer only ever knows
 to translate through the same manifest xsvc-17 describes the schema from, so the
 error names the caller's field.
 
+But only where the caller supplied one. A `followup:re-review` sources its plan,
+task, and brief from the ledger row, so those options have no public field to
+name; blaming the caller for them would be a lie in the other direction. Manifest
+entries therefore carry provenance, and a fault on a `ledger` option returns
+`sdd_stored_artifact_missing` with a fresh-start recovery instead.
+
 **D8 — Preserve unknown keys on both advertised dispatch schemas.** The SDK
 validates against the advertised schema before the handler runs, and a plain
 `z.object` strips undeclared keys — so a retired `agent` or `report` sent
@@ -152,8 +160,9 @@ refinement. So a coverage check against the advertised field set cannot notice a
 new variant that reuses only existing fields. xsvc-17 therefore declares seven
 variants explicitly — `implementer`, `reviewer:task`, `reviewer:branch`,
 `fixer`, `re-reviewer`, `followup:fix`, `followup:re-review` — and requires the
-manifest's `(variant, field)` pairs to *equal* the registry's, not merely cover
-it. A mutation test adds a field-reusing variant and asserts the suite fails
+manifest's **caller-input projection** to *equal* the registry matrix, not merely
+cover it — the full manifest is a superset, carrying ledger- and derived-source
+entries that have no public field. A mutation test adds a field-reusing variant and asserts the suite fails
 until it is registered.
 
 **D10 — The manifest is a generated, checked-in artifact, not a startup
@@ -166,13 +175,16 @@ build failure instead, matching how `package_xagent.py --check` already gates th
 shipped plugin. A test-only comparison was rejected: it would leave production
 descriptions independently authored, which is precisely what xsvc-17 forbids.
 
-**D11 — Direction is a property of the surface field; transport is a property of
-the slot.** A whole-branch reviewer's `brief` is a path the agent reads,
-delivered through the renderer's `--requirements` *text* slot, which dpr-5
-correctly gives no direction. Recording `direction: reads` alongside
-`transport: inlined_contents` lets both statements be true at once. Without the
-split, the narrowed direction rule and dpr-5 contradict each other on the one
-field that most needed describing.
+**D11 — Direction is artifact lifecycle; transport is a property of the slot.**
+An earlier draft defined direction as what the dispatched agent does with the
+path. That is false for a whole-branch reviewer: the renderer inlines
+`--requirements` and the agent never receives the path at all, so `reads` would
+have been untrue for the one field that most needed describing. Direction now
+means the artifact's lifecycle — `reads` is an existing file the dispatch
+pipeline consumes, by renderer or agent or both; `writes` is an agent output
+destination. Recording `direction: reads` alongside
+`transport: inlined_contents` lets both statements be true at once, and `plan`
+falls out as `reads` rather than needing a special case.
 
 ## Risks / Trade-offs
 

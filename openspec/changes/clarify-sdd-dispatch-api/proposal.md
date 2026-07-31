@@ -77,6 +77,12 @@ the change is complete)
   critically — maps the renderer option back to the **caller's own field name**,
   which is role-dependent: one `--report` backs three differently named surface
   fields.
+- Not every prompt argument comes from the caller. A `followup:re-review` reads
+  its plan, task, and brief from the ledger row, so manifest entries carry a
+  `provenance` of `caller_input`, `ledger`, or `derived`. Only caller-input
+  faults return `sdd_renderer_bad_input`; a deleted or emptied stored brief
+  returns the new `sdd_stored_artifact_missing` with a fresh-start recovery,
+  rather than blaming the caller for a field it never sent.
 
 **Enforcement that actually enforces**
 
@@ -106,8 +112,9 @@ None.
 - `xagent-service`: xsvc-11 and xsvc-12 restated in the new field vocabulary;
   xsvc-15 extended to preserve unknown keys so the union can reject retired
   names; new xsvc-17 (descriptions derived from a two-source dispatch field
-  manifest) and xsvc-18 (coded `sdd_renderer_bad_input` with role-aware
-  reverse mapping to surface field names).
+  manifest) and xsvc-18 (coded `sdd_renderer_bad_input` with variant-aware
+  reverse mapping, plus `sdd_stored_artifact_missing` for ledger-sourced
+  artifacts).
 - `xagent-sdd-workflow`: xsdd-1 and xsdd-6 restated for `run_id`; xsdd-2 gains
   the field vocabulary, the per-role result payload, and the `diff` condition;
   xsdd-3 gains the same for follow-ups; new xsdd-9 defines "one name, one

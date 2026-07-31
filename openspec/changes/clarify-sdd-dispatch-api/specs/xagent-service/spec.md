@@ -37,7 +37,7 @@ THE assignment field naming a provider model SHALL be `model`, matching `xagent_
 
 ### Requirement: xsvc-12 — SDD continuation: demoted `xagent_sdd_followup`
 
-WHEN `xagent_sdd_followup` is called with kind `fix` or `re-review`, THE xagent service SHALL accept as input for `fix`: `run_id`, `round`, `findings`, `findings_text`, `tests`, `report_out`, `note?`, and for `re-review`: `run_id`, `round`, `findings`, `fixer_report`, `base`, `head`, `diff?`, `note?` — where the report field is a required tool input (the v2 ledger stores no report path) named for the direction its kind applies to it, the brief is sourced from the target agent's own `sdd_agents` row and never from input, and `round` parameterizes only the rendered text, recorded nowhere but the resulting `turn.submitted` event; THE service SHALL render the continuation and submit it to the same live agent without writing the ledger, returning `{ run_id, sequence }` with no v1 `turn_number` field, validating only that an `sdd_agents` row exists (else `unknown_sdd_agent`), that the run is live in the run manager, and that the kind matches the agent's immutable start role (`fix` for `implementer` or `fixer`; `re-review` for `reviewer` or `re-reviewer`, else `sdd_followup_role_mismatch`); WHEN the run is not live, THE service SHALL return a structured `sdd_agent_not_live` error — replacing v1's `sdd_session_terminal` — whose details name the fresh-agent recovery: the role to dispatch for the same `plan_path` and `task`.
+WHEN `xagent_sdd_followup` is called with kind `fix` or `re-review`, THE xagent service SHALL accept as input for `fix`: `run_id`, `round`, `findings`, `findings_text`, `tests`, `report_out`, `note?`, and for `re-review`: `run_id`, `round`, `findings`, `fixer_report`, `base`, `head`, `diff?`, `note?` — where the report field is a required tool input (the v2 ledger stores no report path) named for the direction its kind applies to it, the brief is sourced from the target agent's own `sdd_agents` row and never from input, and `round` parameterizes only the rendered text, recorded nowhere but the resulting `turn.submitted` event; THE service SHALL render the continuation and submit it to the same live agent without writing the ledger, returning `{ run_id, sequence }` with no v1 `turn_number` field, validating only that an `sdd_agents` row exists (else `unknown_sdd_agent`), that the run is live in the run manager, and that the kind matches the agent's immutable start role (`fix` for `implementer` or `fixer`; `re-review` for `reviewer` or `re-reviewer`, else `sdd_followup_role_mismatch`); WHEN the run is not live, THE service SHALL return a structured `sdd_agent_not_live` error — replacing v1's `sdd_session_terminal` — whose details name the fresh-agent recovery: the role to dispatch for the same `plan` and `task`, naming the plan as `plan` rather than the internal ledger column name.
 
 WHERE kind `re-review` renders the upstream re-review template, `diff` SHALL be required unless the conventional review-package file is derivable in the plan workspace, on the same terms as a task-scoped `reviewer` start.
 
@@ -137,16 +137,22 @@ WHEN an MCP client reads the advertised `xagent_sdd_start` or `xagent_sdd_follow
 THE suite SHALL assert three independent equalities, because each closes a different seam:
 
 1. The variants the union, the reviewer refinement, and the dispatch router actually recognize SHALL equal the registry's variant keys. Without this, a new route can be added while registry and manifest stay equal to each other and both stay wrong.
-2. The public `(variant, field)` pairs the schemas actually accept SHALL equal the registry matrix.
-3. The manifest's caller-input pairs SHALL equal the registry's in-scope pairs.
+2. The public `(variant, field)` pairs the schemas actually accept, **less the operational exclusion set**, SHALL equal the registry matrix. The subtraction is required, not optional: the registry holds in-scope fields only, so comparing it against the unfiltered accepted set can never succeed.
+3. The manifest's **caller-input projection** SHALL equal the registry matrix.
 
-**In-scope and operational fields.** An in-scope field is one the caller supplies that reaches a renderer argument or a service-formatted prompt. THE operational exclusion set SHALL be exactly `role`, `kind`, `cwd`, `model`, `harness`, `effort`, `policy`, `note`, and `run_id` — routing, transport, and supervision inputs that no prompt consumes. Every other public field is in scope, artifact-bearing or not.
+**In-scope and operational fields.** An in-scope field is one the caller supplies that reaches a role prompt as a named contract value. THE operational exclusion set SHALL be exactly `role`, `kind`, `cwd`, `model`, `harness`, `effort`, `policy`, `note`, and `run_id`.
+
+Most of those are routing, transport, or supervision inputs no prompt consumes. `note` is excluded for a different reason and SHALL be documented as such: the service appends it verbatim to every rendered prompt regardless of role, so it is a generic post-render annotation rather than part of any role's field contract. It has no per-variant direction, derivation, or required condition to describe, which is precisely what the manifest exists to record.
 
 **Artifact fields.** An artifact field is an in-scope field whose value is a filesystem path: `plan`, `brief`, `report_out`, `implementer_report`, `fixer_report`, `constraints`, `diff`, and `findings`. Non-artifact in-scope fields — `task`, `name`, `context`, `description`, `base`, `head`, `round`, `tests`, `findings_text` — SHALL appear with a null direction, because dpr-10 can name their renderer options in a fault trailer.
 
 **Manifest entries.** Each entry SHALL carry: `variant`; `field`; `source`; `renderer_option` or an explicit service-formatted marker; **`provenance`**; `surface_kind`; `direction`; `transport`; `required_condition`; and `derivation`.
 
-**Provenance.** THE `provenance` SHALL be `caller_input`, `ledger`, or `derived`. Not every renderer argument comes from the caller: a `followup:re-review` sources `--plan`, `--task`, and `--brief` from the target agent's `sdd_agents` row, and the follow-up schema deliberately exposes none of them. Only `caller_input` entries SHALL be compared against the registry matrix, and only they SHALL carry a surface field. A `ledger` or `derived` entry SHALL carry a null surface field, so the manifest can be simultaneously equal to the public surface and complete over renderer arguments.
+**Provenance.** THE `provenance` SHALL be `caller_input`, `ledger`, or `derived`. Not every renderer argument comes from the caller: a `followup:re-review` sources `--plan`, `--task`, and `--brief` from the target agent's `sdd_agents` row, and the follow-up schema deliberately exposes none of them.
+
+THE manifest SHALL be keyed by `(variant, renderer_option, provenance)`, and SHALL carry one entry for **every reachable provenance** of each option. An option reachable two ways gets two entries: `--diff` and `--constraints` on a task-scoped reviewer are `caller_input` when supplied and `derived` when satisfied from the plan workspace, and both paths must be describable — the first to advertise the field, the second to classify a fault on the derived value. A singular provenance per option cannot express this, and an implementation that recorded only the caller path would misclassify a derived-value fault.
+
+THE **caller-input projection** — the entries whose provenance is `caller_input`, reduced to `(variant, field)` — is what equals the registry matrix. The full manifest is a superset of that projection, covering every renderer and service prompt argument whatever its source. Only `caller_input` entries SHALL carry a surface field; `ledger` and `derived` entries SHALL carry null, so the manifest is simultaneously exactly equal to the public surface under projection and complete over prompt arguments.
 
 **Direction is artifact lifecycle, not who does the reading.** `reads` SHALL mean the supplied path must identify an existing file consumed by the dispatch pipeline — by the renderer, by the agent, or by both. `writes` SHALL mean the path is an agent output destination. Direction SHALL NOT be defined as what the dispatched agent does with the path: for a whole-branch reviewer the renderer inlines `--requirements` and the agent never receives the path at all, so an agent-centred definition would make `reads` untrue for the one field that most needed describing. `transport` carries the orthogonal fact dpr-5 declares on the slot, so `reviewer:branch`'s `brief` records `direction: reads` with `transport: inlined_contents` and both are true. `plan` is `reads` under this definition — it must exist, and the pipeline consumes it to locate the workspace. Fields whose surface value is inline text SHALL carry a null direction.
 
@@ -213,13 +219,13 @@ THE suite SHALL assert three independent equalities, because each closes a diffe
 
 #### Scenario: Non-artifact fields need no direction
 
-- **WHEN** the suite inspects `context`, `description`, `findings_text`, `note`, `base`, `head`, `task`, or `round`
+- **WHEN** the suite inspects `context`, `description`, `findings_text`, `base`, `head`, `task`, or `round`
 - **THEN** it requires no direction for them
 - **AND** their presence with a null direction is not a failure
 
 ### Requirement: xsvc-18 — MCP: renderer argument failures are structured, coded, and named in surface vocabulary
 
-WHEN `dispatch-prompt` exits non-zero having emitted an allowlisted argument-fault trailer (dpr-10), THE xagent service SHALL return a structured `sdd_renderer_bad_input` error whose details carry the fixed `reason` code and the **corresponding surface field** for the variant being dispatched, and SHALL continue to withhold raw renderer stderr, which can echo brief and plan body text. THE service SHALL return the opaque `sdd_renderer_failed` for any non-zero exit whose trailer is absent, unparseable, carries a reason outside the allowlist, or names a renderer option the facade never sends.
+WHEN `dispatch-prompt` exits non-zero having emitted an allowlisted argument-fault trailer (dpr-10) **whose option resolves to a manifest entry with provenance `caller_input`**, THE xagent service SHALL return a structured `sdd_renderer_bad_input` error whose details carry the fixed `reason` code and the **corresponding surface field** for the variant being dispatched, and SHALL continue to withhold raw renderer stderr, which can echo brief and plan body text. Faults on `ledger` and `derived` options are covered separately below and SHALL NOT return this error. THE service SHALL return the opaque `sdd_renderer_failed` for any non-zero exit whose trailer is absent, unparseable, carries a reason outside the allowlist, or names a renderer option the facade never sends.
 
 THE allowlisted reason codes SHALL be exactly: `no_such_file`, `empty_file`, `parent_missing`, `not_accepted`, and `required_missing`.
 
@@ -227,7 +233,13 @@ THE public `details` shape SHALL be exactly `{ reason, field }` for `required_mi
 
 THE service SHALL translate the renderer option to the surface field through the same dispatch field manifest xsvc-17 describes the schema from. The mapping is variant-aware, because one renderer option serves differently named surface fields: `--report` backs `report_out` for an `implementer`, `implementer_report` for `reviewer:task`, and `fixer_report` for `re-reviewer`. Returning the raw renderer flag SHALL be a defect: it reintroduces the retired ambiguous vocabulary and does not identify the caller's own field. The manifest covers every renderer option the facade sends, including the non-artifact ones dpr-10 can name — `--name`, `--base`, `--head`, `--task`, `--round` — so every trailer arising from caller input has a surface field to report.
 
-**Ledger-sourced faults are not bad caller input.** WHERE the faulting option's manifest entry has provenance `ledger` — a `followup:re-review` whose stored `plan` or `brief` has been deleted, emptied, or moved since dispatch — THE service SHALL NOT return `sdd_renderer_bad_input`, because the caller supplied no such field and naming one would blame it for a value it never sent. THE service SHALL instead return a structured `sdd_stored_artifact_missing` error naming the stored artifact and the fresh-start recovery: `xagent_sdd_start` with role `re-reviewer` for the same plan and task, supplying the brief again. An option with provenance `derived` and no surface field SHALL fall back to `sdd_renderer_failed`.
+**Ledger-sourced faults are not bad caller input.** WHERE the faulting option's manifest entry has provenance `ledger` — a `followup:re-review` whose stored `plan` or `brief` has moved, been deleted, or been emptied since dispatch — THE service SHALL NOT return `sdd_renderer_bad_input`, because the caller supplied no such field and naming one would blame it for a value it never sent. THE service SHALL instead return `sdd_stored_artifact_missing` with details exactly:
+
+`{ run_id, artifact: "plan" | "brief", path, plan, task, recovery: { tool: "xagent_sdd_start", role: "re-reviewer" } }`
+
+— naming the plan as `plan`, never `plan_path`, since the recovery call takes `plan`. An option with provenance `derived` SHALL fall back to `sdd_renderer_failed`: a derived value the caller never chose is a workspace-state fault, not an input the caller can correct by re-sending it.
+
+THE stored-artifact condition SHALL be limited to what the renderer actually validates. `--brief` is a `reads` slot, so a deleted **or empty** stored brief faults. `--plan` is checked for existence only, so a deleted stored plan faults and an empty one does not. Requiring an empty-plan fault would mean adding plan-content validation that no requirement asks for.
 
 An option name and a caller-supplied path are already in the caller's own request, so returning them discloses nothing the caller did not send. Withholding them forced two controllers to reproduce the renderer invocation by hand to learn which flag was wrong, and one escalated on a misdiagnosis.
 
@@ -246,8 +258,9 @@ An option name and a caller-supplied path are already in the caller's own reques
 
 - **WHEN** a `followup:re-review` renders and the `brief` stored in the agent's `sdd_agents` row has been deleted or emptied since dispatch
 - **THEN** the service returns `sdd_stored_artifact_missing`, not `sdd_renderer_bad_input`
-- **AND** the details name the stored artifact and the fresh-start recovery
+- **AND** the details are exactly `{ run_id, artifact, path, plan, task, recovery }` with the plan named `plan`
 - **AND** no field the caller never sent is named as bad input
+- **AND** a deleted stored plan faults the same way, while an empty stored plan does not, matching what the renderer validates
 
 #### Scenario: Non-artifact options also resolve to a surface field
 
@@ -261,10 +274,11 @@ An option name and a caller-supplied path are already in the caller's own reques
 - **THEN** details carry exactly `reason` and `field`
 - **AND** when the reason is a path fault, details carry exactly `reason`, `field`, and `path`
 
-#### Scenario: Every allowlisted reason classifies
+#### Scenario: Every allowlisted reason classifies for caller input
 
-- **WHEN** the renderer emits each of `no_such_file`, `empty_file`, `parent_missing`, `not_accepted`, and `required_missing`
+- **WHEN** the renderer emits each of `no_such_file`, `empty_file`, `parent_missing`, `not_accepted`, and `required_missing` for an option whose manifest entry has provenance `caller_input`
 - **THEN** each returns `sdd_renderer_bad_input` carrying that reason code
+- **AND** the same reason on a `ledger` option returns `sdd_stored_artifact_missing` instead
 
 #### Scenario: Unrecognized renderer failures stay opaque
 
