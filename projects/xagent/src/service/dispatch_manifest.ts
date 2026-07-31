@@ -261,6 +261,51 @@ function RequiredCondition(
   return "always";
 }
 
+// Surface fields the union or reviewer refinement require unconditionally.
+// A renderer derivation cannot make these omittable on the public surface —
+// intersecting here keeps requiredCondition honest (xsvc-17).
+//
+const x_UnionAlwaysRequired: Readonly<Record<string, ReadonlySet<string>>> = {
+  "implementer": new Set(["plan", "task", "name", "brief", "report_out"]),
+  "reviewer:task": new Set([
+    "plan", "task", "brief", "base", "head", "implementer_report",
+  ]),
+  "reviewer:branch": new Set(["plan", "brief", "base", "head", "description"]),
+  "fixer": new Set([
+    "plan", "task", "brief", "findings", "findings_text", "tests", "report_out",
+  ]),
+  "re-reviewer": new Set([
+    "plan", "task", "brief", "findings", "fixer_report", "base", "head",
+  ]),
+  "followup:fix": new Set([
+    "findings", "findings_text", "tests", "report_out", "round",
+  ]),
+  "followup:re-review": new Set([
+    "findings", "fixer_report", "base", "head", "round",
+  ]),
+};
+
+function FieldIsUnconditionallyRequired(
+  variant: string,
+  field: string | null,
+): boolean {
+  if (field === null) {
+    return false;
+  }
+  return x_UnionAlwaysRequired[variant]?.has(field) === true;
+}
+
+function IntersectRequiredCondition(
+  variant: string,
+  field: string | null,
+  fromRenderer: ManifestEntry["requiredCondition"],
+): ManifestEntry["requiredCondition"] {
+  if (FieldIsUnconditionallyRequired(variant, field)) {
+    return "always";
+  }
+  return fromRenderer;
+}
+
 function TransportFor(
   variant: string,
   option: string,
@@ -367,6 +412,7 @@ function BuildEntry(args: {
     : null;
   const derivation = args.slot === null ? null : NormalizeDerivation(args.slot.derivation);
   const hasFallback = args.slot?.has_fallback === true;
+  const fromRenderer = RequiredCondition(hasFallback, derivation);
   return {
     variant: args.variant,
     field,
@@ -376,7 +422,7 @@ function BuildEntry(args: {
     surfaceKind: SurfaceKindFor(field, args.option),
     direction: DirectionFor(args.variant, args.option, field, args.slot),
     transport: TransportFor(args.variant, args.option, args.slot?.kind ?? null),
-    requiredCondition: RequiredCondition(hasFallback, derivation),
+    requiredCondition: IntersectRequiredCondition(args.variant, field, fromRenderer),
     derivation,
   };
 }
@@ -406,7 +452,16 @@ export function JoinDescribeSlots(doc: DescribeSlotsDoc): ManifestEntry[] {
       const slot = byOption.get(option) ?? null;
       const primary = ProvenanceFor(variant, option);
       entries.push(BuildEntry({ variant, option, provenance: primary, slot }));
-      if (slot !== null && slot.derivation !== null && primary === "caller_input") {
+      // Derived provenance is only reachable when the caller can omit the
+      // surface field. A union-required field is never omitted, so a derived
+      // entry would describe an unreachable path (xsvc-17).
+      //
+      if (
+        slot !== null
+        && slot.derivation !== null
+        && primary === "caller_input"
+        && !FieldIsUnconditionallyRequired(variant, optionFields[option] ?? null)
+      ) {
         entries.push(BuildEntry({
           variant,
           option,

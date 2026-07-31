@@ -11,7 +11,7 @@ export declare class ToolValidationError extends Error {
     constructor(structured: StructuredToolError);
 }
 export declare const CwdSchema: z.ZodString;
-export declare const AgentIdSchema: z.ZodString;
+export declare const RunIdSchema: z.ZodString;
 export declare const SupervisionPolicySchema: z.ZodObject<{
     silenceTimeoutMs: z.ZodNumber;
     hardDeadlineMs: z.ZodOptional<z.ZodNumber>;
@@ -90,12 +90,12 @@ export declare const ImplementerStartSchema: z.ZodObject<{
     task: z.ZodNumber;
     name: z.ZodEffects<z.ZodString, string, string>;
     brief: z.ZodEffects<z.ZodString, string, string>;
-    report: z.ZodEffects<z.ZodString, string, string>;
+    report_out: z.ZodEffects<z.ZodString, string, string>;
     context: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
-    agent: z.ZodString;
+    model: z.ZodString;
     harness: z.ZodEnum<["codex", "pi", "cursor", "claude_code"]>;
     effort: z.ZodEnum<["low", "medium", "high", "xhigh"]>;
     policy: z.ZodOptional<z.ZodObject<{
@@ -174,17 +174,15 @@ export declare const ImplementerStartSchema: z.ZodObject<{
     role: z.ZodLiteral<"implementer">;
 }, "strict", z.ZodTypeAny, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "implementer";
     name: string;
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
-    note?: string | undefined;
-    context?: string | undefined;
+    plan: string;
+    brief: string;
+    report_out: string;
+    task: number;
     policy?: {
         watchdog: {
             suspicionWindowMs?: number | undefined;
@@ -202,19 +200,19 @@ export declare const ImplementerStartSchema: z.ZodObject<{
         silenceTimeoutMs: number;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
+    context?: string | undefined;
 }, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "implementer";
     name: string;
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
-    note?: string | undefined;
-    context?: string | undefined;
+    plan: string;
+    brief: string;
+    report_out: string;
+    task: number;
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
@@ -232,20 +230,25 @@ export declare const ImplementerStartSchema: z.ZodObject<{
         } | undefined;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
+    context?: string | undefined;
 }>;
-export declare const ReviewerStartSchema: z.ZodEffects<z.ZodObject<{
+export declare const x_ReviewerBranchForbiddenFields: readonly ["implementer_report", "constraints", "diff"];
+export declare const x_ReviewerTaskForbiddenFields: readonly ["description"];
+export declare const x_ReviewerTaskRequiredFields: readonly ["implementer_report"];
+export declare const ReviewerStartObject: z.ZodObject<{
     task: z.ZodOptional<z.ZodNumber>;
     brief: z.ZodEffects<z.ZodString, string, string>;
     base: z.ZodString;
     head: z.ZodString;
-    report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    implementer_report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     constraints: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     diff: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     description: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
-    agent: z.ZodString;
+    model: z.ZodString;
     harness: z.ZodEnum<["codex", "pi", "cursor", "claude_code"]>;
     effort: z.ZodEnum<["low", "medium", "high", "xhigh"]>;
     policy: z.ZodOptional<z.ZodObject<{
@@ -324,17 +327,14 @@ export declare const ReviewerStartSchema: z.ZodEffects<z.ZodObject<{
     role: z.ZodLiteral<"reviewer">;
 }, "strict", z.ZodTypeAny, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "reviewer";
     cwd: string;
-    brief: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
     base: string;
     head: string;
-    note?: string | undefined;
-    task?: number | undefined;
-    report?: string | undefined;
     policy?: {
         watchdog: {
             suspicionWindowMs?: number | undefined;
@@ -352,22 +352,22 @@ export declare const ReviewerStartSchema: z.ZodEffects<z.ZodObject<{
         silenceTimeoutMs: number;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
+    implementer_report?: string | undefined;
     constraints?: string | undefined;
     diff?: string | undefined;
+    task?: number | undefined;
     description?: string | undefined;
 }, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "reviewer";
     cwd: string;
-    brief: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
     base: string;
     head: string;
-    note?: string | undefined;
-    task?: number | undefined;
-    report?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
@@ -385,22 +385,178 @@ export declare const ReviewerStartSchema: z.ZodEffects<z.ZodObject<{
         } | undefined;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
+    implementer_report?: string | undefined;
     constraints?: string | undefined;
     diff?: string | undefined;
+    task?: number | undefined;
+    description?: string | undefined;
+}>;
+export declare const ReviewerStartSchema: z.ZodEffects<z.ZodObject<{
+    task: z.ZodOptional<z.ZodNumber>;
+    brief: z.ZodEffects<z.ZodString, string, string>;
+    base: z.ZodString;
+    head: z.ZodString;
+    implementer_report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    constraints: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    diff: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    description: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    cwd: z.ZodString;
+    plan: z.ZodEffects<z.ZodString, string, string>;
+    model: z.ZodString;
+    harness: z.ZodEnum<["codex", "pi", "cursor", "claude_code"]>;
+    effort: z.ZodEnum<["low", "medium", "high", "xhigh"]>;
+    policy: z.ZodOptional<z.ZodObject<{
+        silenceTimeoutMs: z.ZodNumber;
+        hardDeadlineMs: z.ZodOptional<z.ZodNumber>;
+        watchdog: z.ZodDefault<z.ZodObject<{
+            inputLimitBytes: z.ZodOptional<z.ZodNumber>;
+            outputLimitBytes: z.ZodOptional<z.ZodNumber>;
+            suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
+            repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
+            repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
+            cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
+            minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
+            maximumCalls: z.ZodOptional<z.ZodNumber>;
+            confidenceFloor: z.ZodOptional<z.ZodNumber>;
+            timeoutMs: z.ZodOptional<z.ZodNumber>;
+            maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
+        }, "strict", z.ZodTypeAny, {
+            suspicionWindowMs?: number | undefined;
+            repeatedToolThreshold?: number | undefined;
+            repeatedFailureThreshold?: number | undefined;
+            inputLimitBytes?: number | undefined;
+            cadenceMs?: number[] | undefined;
+            minimumIntervalMs?: number | undefined;
+            maximumCalls?: number | undefined;
+            outputLimitBytes?: number | undefined;
+            timeoutMs?: number | undefined;
+            maxBudgetUsd?: number | undefined;
+            confidenceFloor?: number | undefined;
+        }, {
+            suspicionWindowMs?: number | undefined;
+            repeatedToolThreshold?: number | undefined;
+            repeatedFailureThreshold?: number | undefined;
+            inputLimitBytes?: number | undefined;
+            cadenceMs?: number[] | undefined;
+            minimumIntervalMs?: number | undefined;
+            maximumCalls?: number | undefined;
+            outputLimitBytes?: number | undefined;
+            timeoutMs?: number | undefined;
+            maxBudgetUsd?: number | undefined;
+            confidenceFloor?: number | undefined;
+        }>>;
+    }, "strict", z.ZodTypeAny, {
+        watchdog: {
+            suspicionWindowMs?: number | undefined;
+            repeatedToolThreshold?: number | undefined;
+            repeatedFailureThreshold?: number | undefined;
+            inputLimitBytes?: number | undefined;
+            cadenceMs?: number[] | undefined;
+            minimumIntervalMs?: number | undefined;
+            maximumCalls?: number | undefined;
+            outputLimitBytes?: number | undefined;
+            timeoutMs?: number | undefined;
+            maxBudgetUsd?: number | undefined;
+            confidenceFloor?: number | undefined;
+        };
+        silenceTimeoutMs: number;
+        hardDeadlineMs?: number | undefined;
+    }, {
+        silenceTimeoutMs: number;
+        watchdog?: {
+            suspicionWindowMs?: number | undefined;
+            repeatedToolThreshold?: number | undefined;
+            repeatedFailureThreshold?: number | undefined;
+            inputLimitBytes?: number | undefined;
+            cadenceMs?: number[] | undefined;
+            minimumIntervalMs?: number | undefined;
+            maximumCalls?: number | undefined;
+            outputLimitBytes?: number | undefined;
+            timeoutMs?: number | undefined;
+            maxBudgetUsd?: number | undefined;
+            confidenceFloor?: number | undefined;
+        } | undefined;
+        hardDeadlineMs?: number | undefined;
+    }>>;
+    role: z.ZodLiteral<"reviewer">;
+}, "strict", z.ZodTypeAny, {
+    harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
+    role: "reviewer";
+    cwd: string;
+    effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
+    base: string;
+    head: string;
+    policy?: {
+        watchdog: {
+            suspicionWindowMs?: number | undefined;
+            repeatedToolThreshold?: number | undefined;
+            repeatedFailureThreshold?: number | undefined;
+            inputLimitBytes?: number | undefined;
+            cadenceMs?: number[] | undefined;
+            minimumIntervalMs?: number | undefined;
+            maximumCalls?: number | undefined;
+            outputLimitBytes?: number | undefined;
+            timeoutMs?: number | undefined;
+            maxBudgetUsd?: number | undefined;
+            confidenceFloor?: number | undefined;
+        };
+        silenceTimeoutMs: number;
+        hardDeadlineMs?: number | undefined;
+    } | undefined;
+    note?: string | undefined;
+    implementer_report?: string | undefined;
+    constraints?: string | undefined;
+    diff?: string | undefined;
+    task?: number | undefined;
+    description?: string | undefined;
+}, {
+    harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
+    role: "reviewer";
+    cwd: string;
+    effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
+    base: string;
+    head: string;
+    policy?: {
+        silenceTimeoutMs: number;
+        watchdog?: {
+            suspicionWindowMs?: number | undefined;
+            repeatedToolThreshold?: number | undefined;
+            repeatedFailureThreshold?: number | undefined;
+            inputLimitBytes?: number | undefined;
+            cadenceMs?: number[] | undefined;
+            minimumIntervalMs?: number | undefined;
+            maximumCalls?: number | undefined;
+            outputLimitBytes?: number | undefined;
+            timeoutMs?: number | undefined;
+            maxBudgetUsd?: number | undefined;
+            confidenceFloor?: number | undefined;
+        } | undefined;
+        hardDeadlineMs?: number | undefined;
+    } | undefined;
+    note?: string | undefined;
+    implementer_report?: string | undefined;
+    constraints?: string | undefined;
+    diff?: string | undefined;
+    task?: number | undefined;
     description?: string | undefined;
 }>, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "reviewer";
     cwd: string;
-    brief: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
     base: string;
     head: string;
-    note?: string | undefined;
-    task?: number | undefined;
-    report?: string | undefined;
     policy?: {
         watchdog: {
             suspicionWindowMs?: number | undefined;
@@ -418,22 +574,22 @@ export declare const ReviewerStartSchema: z.ZodEffects<z.ZodObject<{
         silenceTimeoutMs: number;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
+    implementer_report?: string | undefined;
     constraints?: string | undefined;
     diff?: string | undefined;
+    task?: number | undefined;
     description?: string | undefined;
 }, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "reviewer";
     cwd: string;
-    brief: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
     base: string;
     head: string;
-    note?: string | undefined;
-    task?: number | undefined;
-    report?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
@@ -451,8 +607,11 @@ export declare const ReviewerStartSchema: z.ZodEffects<z.ZodObject<{
         } | undefined;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
+    implementer_report?: string | undefined;
     constraints?: string | undefined;
     diff?: string | undefined;
+    task?: number | undefined;
     description?: string | undefined;
 }>;
 export declare const FixerStartSchema: z.ZodObject<{
@@ -461,12 +620,12 @@ export declare const FixerStartSchema: z.ZodObject<{
     findings: z.ZodEffects<z.ZodString, string, string>;
     findings_text: z.ZodEffects<z.ZodString, string, string>;
     tests: z.ZodArray<z.ZodString, "many">;
-    report: z.ZodEffects<z.ZodString, string, string>;
+    report_out: z.ZodEffects<z.ZodString, string, string>;
     round: z.ZodDefault<z.ZodNumber>;
     note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
-    agent: z.ZodString;
+    model: z.ZodString;
     harness: z.ZodEnum<["codex", "pi", "cursor", "claude_code"]>;
     effort: z.ZodEnum<["low", "medium", "high", "xhigh"]>;
     policy: z.ZodOptional<z.ZodObject<{
@@ -545,19 +704,18 @@ export declare const FixerStartSchema: z.ZodObject<{
     role: z.ZodLiteral<"fixer">;
 }, "strict", z.ZodTypeAny, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "fixer";
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
+    report_out: string;
     findings: string;
+    task: number;
     findings_text: string;
     tests: string[];
     round: number;
-    note?: string | undefined;
     policy?: {
         watchdog: {
             suspicionWindowMs?: number | undefined;
@@ -575,20 +733,20 @@ export declare const FixerStartSchema: z.ZodObject<{
         silenceTimeoutMs: number;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
 }, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "fixer";
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
+    report_out: string;
     findings: string;
+    task: number;
     findings_text: string;
     tests: string[];
-    note?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
@@ -606,13 +764,14 @@ export declare const FixerStartSchema: z.ZodObject<{
         } | undefined;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
     round?: number | undefined;
 }>;
 export declare const ReReviewerStartSchema: z.ZodObject<{
     task: z.ZodNumber;
     brief: z.ZodEffects<z.ZodString, string, string>;
     findings: z.ZodEffects<z.ZodString, string, string>;
-    report: z.ZodEffects<z.ZodString, string, string>;
+    fixer_report: z.ZodEffects<z.ZodString, string, string>;
     base: z.ZodString;
     head: z.ZodString;
     diff: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
@@ -620,7 +779,7 @@ export declare const ReReviewerStartSchema: z.ZodObject<{
     note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
-    agent: z.ZodString;
+    model: z.ZodString;
     harness: z.ZodEnum<["codex", "pi", "cursor", "claude_code"]>;
     effort: z.ZodEnum<["low", "medium", "high", "xhigh"]>;
     policy: z.ZodOptional<z.ZodObject<{
@@ -699,19 +858,18 @@ export declare const ReReviewerStartSchema: z.ZodObject<{
     role: z.ZodLiteral<"re-reviewer">;
 }, "strict", z.ZodTypeAny, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "re-reviewer";
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
+    fixer_report: string;
+    findings: string;
+    task: number;
     base: string;
     head: string;
-    findings: string;
     round: number;
-    note?: string | undefined;
     policy?: {
         watchdog: {
             suspicionWindowMs?: number | undefined;
@@ -729,21 +887,21 @@ export declare const ReReviewerStartSchema: z.ZodObject<{
         silenceTimeoutMs: number;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
     diff?: string | undefined;
 }, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "re-reviewer";
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
+    fixer_report: string;
+    findings: string;
+    task: number;
     base: string;
     head: string;
-    findings: string;
-    note?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
@@ -761,6 +919,7 @@ export declare const ReReviewerStartSchema: z.ZodObject<{
         } | undefined;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
     diff?: string | undefined;
     round?: number | undefined;
 }>;
@@ -768,12 +927,12 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     task: z.ZodNumber;
     name: z.ZodEffects<z.ZodString, string, string>;
     brief: z.ZodEffects<z.ZodString, string, string>;
-    report: z.ZodEffects<z.ZodString, string, string>;
+    report_out: z.ZodEffects<z.ZodString, string, string>;
     context: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
-    agent: z.ZodString;
+    model: z.ZodString;
     harness: z.ZodEnum<["codex", "pi", "cursor", "claude_code"]>;
     effort: z.ZodEnum<["low", "medium", "high", "xhigh"]>;
     policy: z.ZodOptional<z.ZodObject<{
@@ -852,17 +1011,15 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     role: z.ZodLiteral<"implementer">;
 }, "strict", z.ZodTypeAny, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "implementer";
     name: string;
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
-    note?: string | undefined;
-    context?: string | undefined;
+    plan: string;
+    brief: string;
+    report_out: string;
+    task: number;
     policy?: {
         watchdog: {
             suspicionWindowMs?: number | undefined;
@@ -880,19 +1037,19 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         silenceTimeoutMs: number;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
+    context?: string | undefined;
 }, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "implementer";
     name: string;
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
-    note?: string | undefined;
-    context?: string | undefined;
+    plan: string;
+    brief: string;
+    report_out: string;
+    task: number;
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
@@ -910,19 +1067,21 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         } | undefined;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
+    context?: string | undefined;
 }>, z.ZodObject<{
     task: z.ZodOptional<z.ZodNumber>;
     brief: z.ZodEffects<z.ZodString, string, string>;
     base: z.ZodString;
     head: z.ZodString;
-    report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    implementer_report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     constraints: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     diff: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     description: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
-    agent: z.ZodString;
+    model: z.ZodString;
     harness: z.ZodEnum<["codex", "pi", "cursor", "claude_code"]>;
     effort: z.ZodEnum<["low", "medium", "high", "xhigh"]>;
     policy: z.ZodOptional<z.ZodObject<{
@@ -1001,17 +1160,14 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     role: z.ZodLiteral<"reviewer">;
 }, "strict", z.ZodTypeAny, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "reviewer";
     cwd: string;
-    brief: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
     base: string;
     head: string;
-    note?: string | undefined;
-    task?: number | undefined;
-    report?: string | undefined;
     policy?: {
         watchdog: {
             suspicionWindowMs?: number | undefined;
@@ -1029,22 +1185,22 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         silenceTimeoutMs: number;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
+    implementer_report?: string | undefined;
     constraints?: string | undefined;
     diff?: string | undefined;
+    task?: number | undefined;
     description?: string | undefined;
 }, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "reviewer";
     cwd: string;
-    brief: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
     base: string;
     head: string;
-    note?: string | undefined;
-    task?: number | undefined;
-    report?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
@@ -1062,8 +1218,11 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         } | undefined;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
+    implementer_report?: string | undefined;
     constraints?: string | undefined;
     diff?: string | undefined;
+    task?: number | undefined;
     description?: string | undefined;
 }>, z.ZodObject<{
     task: z.ZodNumber;
@@ -1071,12 +1230,12 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     findings: z.ZodEffects<z.ZodString, string, string>;
     findings_text: z.ZodEffects<z.ZodString, string, string>;
     tests: z.ZodArray<z.ZodString, "many">;
-    report: z.ZodEffects<z.ZodString, string, string>;
+    report_out: z.ZodEffects<z.ZodString, string, string>;
     round: z.ZodDefault<z.ZodNumber>;
     note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
-    agent: z.ZodString;
+    model: z.ZodString;
     harness: z.ZodEnum<["codex", "pi", "cursor", "claude_code"]>;
     effort: z.ZodEnum<["low", "medium", "high", "xhigh"]>;
     policy: z.ZodOptional<z.ZodObject<{
@@ -1155,19 +1314,18 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     role: z.ZodLiteral<"fixer">;
 }, "strict", z.ZodTypeAny, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "fixer";
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
+    report_out: string;
     findings: string;
+    task: number;
     findings_text: string;
     tests: string[];
     round: number;
-    note?: string | undefined;
     policy?: {
         watchdog: {
             suspicionWindowMs?: number | undefined;
@@ -1185,20 +1343,20 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         silenceTimeoutMs: number;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
 }, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "fixer";
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
+    report_out: string;
     findings: string;
+    task: number;
     findings_text: string;
     tests: string[];
-    note?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
@@ -1216,12 +1374,13 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         } | undefined;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
     round?: number | undefined;
 }>, z.ZodObject<{
     task: z.ZodNumber;
     brief: z.ZodEffects<z.ZodString, string, string>;
     findings: z.ZodEffects<z.ZodString, string, string>;
-    report: z.ZodEffects<z.ZodString, string, string>;
+    fixer_report: z.ZodEffects<z.ZodString, string, string>;
     base: z.ZodString;
     head: z.ZodString;
     diff: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
@@ -1229,7 +1388,7 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
-    agent: z.ZodString;
+    model: z.ZodString;
     harness: z.ZodEnum<["codex", "pi", "cursor", "claude_code"]>;
     effort: z.ZodEnum<["low", "medium", "high", "xhigh"]>;
     policy: z.ZodOptional<z.ZodObject<{
@@ -1308,19 +1467,18 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     role: z.ZodLiteral<"re-reviewer">;
 }, "strict", z.ZodTypeAny, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "re-reviewer";
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
+    fixer_report: string;
+    findings: string;
+    task: number;
     base: string;
     head: string;
-    findings: string;
     round: number;
-    note?: string | undefined;
     policy?: {
         watchdog: {
             suspicionWindowMs?: number | undefined;
@@ -1338,21 +1496,21 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         silenceTimeoutMs: number;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
     diff?: string | undefined;
 }, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "re-reviewer";
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
+    fixer_report: string;
+    findings: string;
+    task: number;
     base: string;
     head: string;
-    findings: string;
-    note?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
@@ -1370,51 +1528,49 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         } | undefined;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
     diff?: string | undefined;
     round?: number | undefined;
 }>]>, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "implementer";
     name: string;
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
+    report_out: string;
+    task: number;
+    policy?: {
+        watchdog: {
+            suspicionWindowMs?: number | undefined;
+            repeatedToolThreshold?: number | undefined;
+            repeatedFailureThreshold?: number | undefined;
+            inputLimitBytes?: number | undefined;
+            cadenceMs?: number[] | undefined;
+            minimumIntervalMs?: number | undefined;
+            maximumCalls?: number | undefined;
+            outputLimitBytes?: number | undefined;
+            timeoutMs?: number | undefined;
+            maxBudgetUsd?: number | undefined;
+            confidenceFloor?: number | undefined;
+        };
+        silenceTimeoutMs: number;
+        hardDeadlineMs?: number | undefined;
+    } | undefined;
     note?: string | undefined;
     context?: string | undefined;
-    policy?: {
-        watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
-            inputLimitBytes?: number | undefined;
-            cadenceMs?: number[] | undefined;
-            minimumIntervalMs?: number | undefined;
-            maximumCalls?: number | undefined;
-            outputLimitBytes?: number | undefined;
-            timeoutMs?: number | undefined;
-            maxBudgetUsd?: number | undefined;
-            confidenceFloor?: number | undefined;
-        };
-        silenceTimeoutMs: number;
-        hardDeadlineMs?: number | undefined;
-    } | undefined;
 } | {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "reviewer";
     cwd: string;
-    brief: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
     base: string;
     head: string;
-    note?: string | undefined;
-    task?: number | undefined;
-    report?: string | undefined;
     policy?: {
         watchdog: {
             suspicionWindowMs?: number | undefined;
@@ -1432,24 +1588,26 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         silenceTimeoutMs: number;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
+    implementer_report?: string | undefined;
     constraints?: string | undefined;
     diff?: string | undefined;
+    task?: number | undefined;
     description?: string | undefined;
 } | {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "fixer";
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
+    report_out: string;
     findings: string;
+    task: number;
     findings_text: string;
     tests: string[];
     round: number;
-    note?: string | undefined;
     policy?: {
         watchdog: {
             suspicionWindowMs?: number | undefined;
@@ -1467,21 +1625,21 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         silenceTimeoutMs: number;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
 } | {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "re-reviewer";
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
+    fixer_report: string;
+    findings: string;
+    task: number;
     base: string;
     head: string;
-    findings: string;
     round: number;
-    note?: string | undefined;
     policy?: {
         watchdog: {
             suspicionWindowMs?: number | undefined;
@@ -1499,50 +1657,48 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         silenceTimeoutMs: number;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
     diff?: string | undefined;
 }, {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "implementer";
     name: string;
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
+    report_out: string;
+    task: number;
+    policy?: {
+        silenceTimeoutMs: number;
+        watchdog?: {
+            suspicionWindowMs?: number | undefined;
+            repeatedToolThreshold?: number | undefined;
+            repeatedFailureThreshold?: number | undefined;
+            inputLimitBytes?: number | undefined;
+            cadenceMs?: number[] | undefined;
+            minimumIntervalMs?: number | undefined;
+            maximumCalls?: number | undefined;
+            outputLimitBytes?: number | undefined;
+            timeoutMs?: number | undefined;
+            maxBudgetUsd?: number | undefined;
+            confidenceFloor?: number | undefined;
+        } | undefined;
+        hardDeadlineMs?: number | undefined;
+    } | undefined;
     note?: string | undefined;
     context?: string | undefined;
-    policy?: {
-        silenceTimeoutMs: number;
-        watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
-            inputLimitBytes?: number | undefined;
-            cadenceMs?: number[] | undefined;
-            minimumIntervalMs?: number | undefined;
-            maximumCalls?: number | undefined;
-            outputLimitBytes?: number | undefined;
-            timeoutMs?: number | undefined;
-            maxBudgetUsd?: number | undefined;
-            confidenceFloor?: number | undefined;
-        } | undefined;
-        hardDeadlineMs?: number | undefined;
-    } | undefined;
 } | {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "reviewer";
     cwd: string;
-    brief: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
     base: string;
     head: string;
-    note?: string | undefined;
-    task?: number | undefined;
-    report?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
@@ -1560,23 +1716,25 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         } | undefined;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
+    implementer_report?: string | undefined;
     constraints?: string | undefined;
     diff?: string | undefined;
+    task?: number | undefined;
     description?: string | undefined;
 } | {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "fixer";
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
+    report_out: string;
     findings: string;
+    task: number;
     findings_text: string;
     tests: string[];
-    note?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
@@ -1594,21 +1752,21 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         } | undefined;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
     round?: number | undefined;
 } | {
     harness: "codex" | "pi" | "cursor" | "claude_code";
+    model: string;
     role: "re-reviewer";
     cwd: string;
-    task: number;
-    brief: string;
-    report: string;
-    plan: string;
-    agent: string;
     effort: "low" | "medium" | "high" | "xhigh";
+    plan: string;
+    brief: string;
+    fixer_report: string;
+    findings: string;
+    task: number;
     base: string;
     head: string;
-    findings: string;
-    note?: string | undefined;
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
@@ -1626,123 +1784,124 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         } | undefined;
         hardDeadlineMs?: number | undefined;
     } | undefined;
+    note?: string | undefined;
     diff?: string | undefined;
     round?: number | undefined;
 }>;
 export declare const FixFollowupSchema: z.ZodObject<{
     kind: z.ZodLiteral<"fix">;
-    agent_id: z.ZodString;
+    run_id: z.ZodString;
     round: z.ZodNumber;
     findings: z.ZodEffects<z.ZodString, string, string>;
     findings_text: z.ZodEffects<z.ZodString, string, string>;
     tests: z.ZodArray<z.ZodString, "many">;
-    report: z.ZodEffects<z.ZodString, string, string>;
+    report_out: z.ZodEffects<z.ZodString, string, string>;
     note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
 }, "strict", z.ZodTypeAny, {
+    run_id: string;
     kind: "fix";
-    report: string;
+    report_out: string;
     findings: string;
     findings_text: string;
     tests: string[];
     round: number;
-    agent_id: string;
     note?: string | undefined;
 }, {
+    run_id: string;
     kind: "fix";
-    report: string;
+    report_out: string;
     findings: string;
     findings_text: string;
     tests: string[];
     round: number;
-    agent_id: string;
     note?: string | undefined;
 }>;
 export declare const ReReviewFollowupSchema: z.ZodObject<{
     kind: z.ZodLiteral<"re-review">;
-    agent_id: z.ZodString;
+    run_id: z.ZodString;
     round: z.ZodNumber;
     findings: z.ZodEffects<z.ZodString, string, string>;
-    report: z.ZodEffects<z.ZodString, string, string>;
+    fixer_report: z.ZodEffects<z.ZodString, string, string>;
     base: z.ZodString;
     head: z.ZodString;
     diff: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
 }, "strict", z.ZodTypeAny, {
+    run_id: string;
     kind: "re-review";
-    report: string;
+    fixer_report: string;
+    findings: string;
     base: string;
     head: string;
-    findings: string;
     round: number;
-    agent_id: string;
     note?: string | undefined;
     diff?: string | undefined;
 }, {
+    run_id: string;
     kind: "re-review";
-    report: string;
+    fixer_report: string;
+    findings: string;
     base: string;
     head: string;
-    findings: string;
     round: number;
-    agent_id: string;
     note?: string | undefined;
     diff?: string | undefined;
 }>;
 export declare const XagentSddFollowupInputSchema: z.ZodDiscriminatedUnion<"kind", [z.ZodObject<{
     kind: z.ZodLiteral<"fix">;
-    agent_id: z.ZodString;
+    run_id: z.ZodString;
     round: z.ZodNumber;
     findings: z.ZodEffects<z.ZodString, string, string>;
     findings_text: z.ZodEffects<z.ZodString, string, string>;
     tests: z.ZodArray<z.ZodString, "many">;
-    report: z.ZodEffects<z.ZodString, string, string>;
+    report_out: z.ZodEffects<z.ZodString, string, string>;
     note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
 }, "strict", z.ZodTypeAny, {
+    run_id: string;
     kind: "fix";
-    report: string;
+    report_out: string;
     findings: string;
     findings_text: string;
     tests: string[];
     round: number;
-    agent_id: string;
     note?: string | undefined;
 }, {
+    run_id: string;
     kind: "fix";
-    report: string;
+    report_out: string;
     findings: string;
     findings_text: string;
     tests: string[];
     round: number;
-    agent_id: string;
     note?: string | undefined;
 }>, z.ZodObject<{
     kind: z.ZodLiteral<"re-review">;
-    agent_id: z.ZodString;
+    run_id: z.ZodString;
     round: z.ZodNumber;
     findings: z.ZodEffects<z.ZodString, string, string>;
-    report: z.ZodEffects<z.ZodString, string, string>;
+    fixer_report: z.ZodEffects<z.ZodString, string, string>;
     base: z.ZodString;
     head: z.ZodString;
     diff: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
 }, "strict", z.ZodTypeAny, {
+    run_id: string;
     kind: "re-review";
-    report: string;
+    fixer_report: string;
+    findings: string;
     base: string;
     head: string;
-    findings: string;
     round: number;
-    agent_id: string;
     note?: string | undefined;
     diff?: string | undefined;
 }, {
+    run_id: string;
     kind: "re-review";
-    report: string;
+    fixer_report: string;
+    findings: string;
     base: string;
     head: string;
-    findings: string;
     round: number;
-    agent_id: string;
     note?: string | undefined;
     diff?: string | undefined;
 }>]>;
@@ -1750,7 +1909,7 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
     role: z.ZodEnum<["implementer", "reviewer", "fixer", "re-reviewer"]>;
     cwd: z.ZodString;
     plan: z.ZodEffects<z.ZodString, string, string>;
-    agent: z.ZodString;
+    model: z.ZodString;
     harness: z.ZodEnum<["codex", "pi", "cursor", "claude_code"]>;
     effort: z.ZodEnum<["low", "medium", "high", "xhigh"]>;
     policy: z.ZodOptional<z.ZodObject<{
@@ -1830,7 +1989,9 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
     task: z.ZodOptional<z.ZodNumber>;
     name: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     brief: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
-    report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    report_out: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    implementer_report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    fixer_report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     context: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     description: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     base: z.ZodOptional<z.ZodString>;
@@ -1841,20 +2002,54 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
     findings_text: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     tests: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
     round: z.ZodOptional<z.ZodNumber>;
-}, "strip", z.ZodTypeAny, {
-    harness: "codex" | "pi" | "cursor" | "claude_code";
-    role: "implementer" | "reviewer" | "fixer" | "re-reviewer";
-    cwd: string;
-    plan: string;
-    agent: string;
-    effort: "low" | "medium" | "high" | "xhigh";
-    name?: string | undefined;
-    note?: string | undefined;
-    task?: number | undefined;
-    brief?: string | undefined;
-    report?: string | undefined;
-    context?: string | undefined;
-    policy?: {
+}, "passthrough", z.ZodTypeAny, z.objectOutputType<{
+    role: z.ZodEnum<["implementer", "reviewer", "fixer", "re-reviewer"]>;
+    cwd: z.ZodString;
+    plan: z.ZodEffects<z.ZodString, string, string>;
+    model: z.ZodString;
+    harness: z.ZodEnum<["codex", "pi", "cursor", "claude_code"]>;
+    effort: z.ZodEnum<["low", "medium", "high", "xhigh"]>;
+    policy: z.ZodOptional<z.ZodObject<{
+        silenceTimeoutMs: z.ZodNumber;
+        hardDeadlineMs: z.ZodOptional<z.ZodNumber>;
+        watchdog: z.ZodDefault<z.ZodObject<{
+            inputLimitBytes: z.ZodOptional<z.ZodNumber>;
+            outputLimitBytes: z.ZodOptional<z.ZodNumber>;
+            suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
+            repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
+            repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
+            cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
+            minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
+            maximumCalls: z.ZodOptional<z.ZodNumber>;
+            confidenceFloor: z.ZodOptional<z.ZodNumber>;
+            timeoutMs: z.ZodOptional<z.ZodNumber>;
+            maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
+        }, "strict", z.ZodTypeAny, {
+            suspicionWindowMs?: number | undefined;
+            repeatedToolThreshold?: number | undefined;
+            repeatedFailureThreshold?: number | undefined;
+            inputLimitBytes?: number | undefined;
+            cadenceMs?: number[] | undefined;
+            minimumIntervalMs?: number | undefined;
+            maximumCalls?: number | undefined;
+            outputLimitBytes?: number | undefined;
+            timeoutMs?: number | undefined;
+            maxBudgetUsd?: number | undefined;
+            confidenceFloor?: number | undefined;
+        }, {
+            suspicionWindowMs?: number | undefined;
+            repeatedToolThreshold?: number | undefined;
+            repeatedFailureThreshold?: number | undefined;
+            inputLimitBytes?: number | undefined;
+            cadenceMs?: number[] | undefined;
+            minimumIntervalMs?: number | undefined;
+            maximumCalls?: number | undefined;
+            outputLimitBytes?: number | undefined;
+            timeoutMs?: number | undefined;
+            maxBudgetUsd?: number | undefined;
+            confidenceFloor?: number | undefined;
+        }>>;
+    }, "strict", z.ZodTypeAny, {
         watchdog: {
             suspicionWindowMs?: number | undefined;
             repeatedToolThreshold?: number | undefined;
@@ -1870,30 +2065,7 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
         };
         silenceTimeoutMs: number;
         hardDeadlineMs?: number | undefined;
-    } | undefined;
-    constraints?: string | undefined;
-    diff?: string | undefined;
-    base?: string | undefined;
-    head?: string | undefined;
-    description?: string | undefined;
-    findings?: string | undefined;
-    findings_text?: string | undefined;
-    tests?: string[] | undefined;
-    round?: number | undefined;
-}, {
-    harness: "codex" | "pi" | "cursor" | "claude_code";
-    role: "implementer" | "reviewer" | "fixer" | "re-reviewer";
-    cwd: string;
-    plan: string;
-    agent: string;
-    effort: "low" | "medium" | "high" | "xhigh";
-    name?: string | undefined;
-    note?: string | undefined;
-    task?: number | undefined;
-    brief?: string | undefined;
-    report?: string | undefined;
-    context?: string | undefined;
-    policy?: {
+    }, {
         silenceTimeoutMs: number;
         watchdog?: {
             suspicionWindowMs?: number | undefined;
@@ -1909,54 +2081,162 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
             confidenceFloor?: number | undefined;
         } | undefined;
         hardDeadlineMs?: number | undefined;
-    } | undefined;
-    constraints?: string | undefined;
-    diff?: string | undefined;
-    base?: string | undefined;
-    head?: string | undefined;
-    description?: string | undefined;
-    findings?: string | undefined;
-    findings_text?: string | undefined;
-    tests?: string[] | undefined;
-    round?: number | undefined;
-}>;
+    }>>;
+    note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    task: z.ZodOptional<z.ZodNumber>;
+    name: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    brief: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    report_out: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    implementer_report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    fixer_report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    context: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    description: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    base: z.ZodOptional<z.ZodString>;
+    head: z.ZodOptional<z.ZodString>;
+    constraints: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    diff: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    findings: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    findings_text: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    tests: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+    round: z.ZodOptional<z.ZodNumber>;
+}, z.ZodTypeAny, "passthrough">, z.objectInputType<{
+    role: z.ZodEnum<["implementer", "reviewer", "fixer", "re-reviewer"]>;
+    cwd: z.ZodString;
+    plan: z.ZodEffects<z.ZodString, string, string>;
+    model: z.ZodString;
+    harness: z.ZodEnum<["codex", "pi", "cursor", "claude_code"]>;
+    effort: z.ZodEnum<["low", "medium", "high", "xhigh"]>;
+    policy: z.ZodOptional<z.ZodObject<{
+        silenceTimeoutMs: z.ZodNumber;
+        hardDeadlineMs: z.ZodOptional<z.ZodNumber>;
+        watchdog: z.ZodDefault<z.ZodObject<{
+            inputLimitBytes: z.ZodOptional<z.ZodNumber>;
+            outputLimitBytes: z.ZodOptional<z.ZodNumber>;
+            suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
+            repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
+            repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
+            cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
+            minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
+            maximumCalls: z.ZodOptional<z.ZodNumber>;
+            confidenceFloor: z.ZodOptional<z.ZodNumber>;
+            timeoutMs: z.ZodOptional<z.ZodNumber>;
+            maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
+        }, "strict", z.ZodTypeAny, {
+            suspicionWindowMs?: number | undefined;
+            repeatedToolThreshold?: number | undefined;
+            repeatedFailureThreshold?: number | undefined;
+            inputLimitBytes?: number | undefined;
+            cadenceMs?: number[] | undefined;
+            minimumIntervalMs?: number | undefined;
+            maximumCalls?: number | undefined;
+            outputLimitBytes?: number | undefined;
+            timeoutMs?: number | undefined;
+            maxBudgetUsd?: number | undefined;
+            confidenceFloor?: number | undefined;
+        }, {
+            suspicionWindowMs?: number | undefined;
+            repeatedToolThreshold?: number | undefined;
+            repeatedFailureThreshold?: number | undefined;
+            inputLimitBytes?: number | undefined;
+            cadenceMs?: number[] | undefined;
+            minimumIntervalMs?: number | undefined;
+            maximumCalls?: number | undefined;
+            outputLimitBytes?: number | undefined;
+            timeoutMs?: number | undefined;
+            maxBudgetUsd?: number | undefined;
+            confidenceFloor?: number | undefined;
+        }>>;
+    }, "strict", z.ZodTypeAny, {
+        watchdog: {
+            suspicionWindowMs?: number | undefined;
+            repeatedToolThreshold?: number | undefined;
+            repeatedFailureThreshold?: number | undefined;
+            inputLimitBytes?: number | undefined;
+            cadenceMs?: number[] | undefined;
+            minimumIntervalMs?: number | undefined;
+            maximumCalls?: number | undefined;
+            outputLimitBytes?: number | undefined;
+            timeoutMs?: number | undefined;
+            maxBudgetUsd?: number | undefined;
+            confidenceFloor?: number | undefined;
+        };
+        silenceTimeoutMs: number;
+        hardDeadlineMs?: number | undefined;
+    }, {
+        silenceTimeoutMs: number;
+        watchdog?: {
+            suspicionWindowMs?: number | undefined;
+            repeatedToolThreshold?: number | undefined;
+            repeatedFailureThreshold?: number | undefined;
+            inputLimitBytes?: number | undefined;
+            cadenceMs?: number[] | undefined;
+            minimumIntervalMs?: number | undefined;
+            maximumCalls?: number | undefined;
+            outputLimitBytes?: number | undefined;
+            timeoutMs?: number | undefined;
+            maxBudgetUsd?: number | undefined;
+            confidenceFloor?: number | undefined;
+        } | undefined;
+        hardDeadlineMs?: number | undefined;
+    }>>;
+    note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    task: z.ZodOptional<z.ZodNumber>;
+    name: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    brief: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    report_out: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    implementer_report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    fixer_report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    context: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    description: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    base: z.ZodOptional<z.ZodString>;
+    head: z.ZodOptional<z.ZodString>;
+    constraints: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    diff: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    findings: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    findings_text: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    tests: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+    round: z.ZodOptional<z.ZodNumber>;
+}, z.ZodTypeAny, "passthrough">>;
 export declare const XagentSddFollowupAdvertisedSchema: z.ZodObject<{
     kind: z.ZodEnum<["fix", "re-review"]>;
-    agent_id: z.ZodString;
+    run_id: z.ZodString;
     round: z.ZodNumber;
     findings: z.ZodEffects<z.ZodString, string, string>;
-    report: z.ZodEffects<z.ZodString, string, string>;
+    report_out: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    fixer_report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     findings_text: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
     tests: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
     base: z.ZodOptional<z.ZodString>;
     head: z.ZodOptional<z.ZodString>;
     diff: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
-}, "strip", z.ZodTypeAny, {
-    kind: "fix" | "re-review";
-    report: string;
-    findings: string;
-    round: number;
-    agent_id: string;
-    note?: string | undefined;
-    diff?: string | undefined;
-    base?: string | undefined;
-    head?: string | undefined;
-    findings_text?: string | undefined;
-    tests?: string[] | undefined;
-}, {
-    kind: "fix" | "re-review";
-    report: string;
-    findings: string;
-    round: number;
-    agent_id: string;
-    note?: string | undefined;
-    diff?: string | undefined;
-    base?: string | undefined;
-    head?: string | undefined;
-    findings_text?: string | undefined;
-    tests?: string[] | undefined;
-}>;
+}, "passthrough", z.ZodTypeAny, z.objectOutputType<{
+    kind: z.ZodEnum<["fix", "re-review"]>;
+    run_id: z.ZodString;
+    round: z.ZodNumber;
+    findings: z.ZodEffects<z.ZodString, string, string>;
+    report_out: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    fixer_report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    findings_text: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    tests: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+    base: z.ZodOptional<z.ZodString>;
+    head: z.ZodOptional<z.ZodString>;
+    diff: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+}, z.ZodTypeAny, "passthrough">, z.objectInputType<{
+    kind: z.ZodEnum<["fix", "re-review"]>;
+    run_id: z.ZodString;
+    round: z.ZodNumber;
+    findings: z.ZodEffects<z.ZodString, string, string>;
+    report_out: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    fixer_report: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    note: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    findings_text: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+    tests: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+    base: z.ZodOptional<z.ZodString>;
+    head: z.ZodOptional<z.ZodString>;
+    diff: z.ZodOptional<z.ZodEffects<z.ZodString, string, string>>;
+}, z.ZodTypeAny, "passthrough">>;
 export declare const XagentStartInputSchema: z.ZodObject<{
     cwd: z.ZodString;
     prompt: z.ZodEffects<z.ZodString, string, string>;

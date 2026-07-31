@@ -15,36 +15,51 @@ import {
   ImplementerStartSchema,
   ReReviewFollowupSchema,
   ReReviewerStartSchema,
+  ReviewerStartObject,
   XagentSddFollowupAdvertisedSchema,
   XagentSddStartAdvertisedSchema,
+  x_ReviewerBranchForbiddenFields,
+  x_ReviewerTaskForbiddenFields,
 } from "../src/service/tool_schemas.js";
 
+// Equality #1: variants the union, reviewer refinement, and follow-up kinds
+// actually recognize. Read role/kind literals from the schemas so a fifth
+// start role cannot slip through while registry and manifest stay equal.
+//
+function RecognizedDispatchVariants(): string[] {
+  const variants: string[] = [
+    ImplementerStartSchema.shape.role.value,
+    FixerStartSchema.shape.role.value,
+    ReReviewerStartSchema.shape.role.value,
+  ];
+  assert.equal(ReviewerStartObject.shape.role.value, "reviewer");
+  // Task presence is the refinement's split into two public variants.
+  //
+  variants.push("reviewer:task", "reviewer:branch");
+  variants.push(`followup:${FixFollowupSchema.shape.kind.value}`);
+  variants.push(`followup:${ReReviewFollowupSchema.shape.kind.value}`);
+  return variants.sort();
+}
+
 // Equality #2 input: every (variant, field) pair the schemas accept. Reviewer
-// task vs branch splits live in the refinement, not the flat object shape.
+// task vs branch splits use the refinement's own forbidden-field lists.
 //
 function AcceptedPairsFromSchemas(): Array<{ variant: string; field: string }> {
   const pairs: Array<{ variant: string; field: string }> = [];
   for (const field of Object.keys(ImplementerStartSchema.shape)) {
     pairs.push({ variant: "implementer", field });
   }
-  const reviewerFields = [
-    "role", "note", "cwd", "plan", "model", "harness", "effort", "policy",
-    "task", "brief", "base", "head", "implementer_report", "constraints",
-    "diff", "description",
-  ];
+  const reviewerFields = Object.keys(ReviewerStartObject.shape);
+  const taskForbidden = new Set<string>(x_ReviewerTaskForbiddenFields);
+  const branchForbidden = new Set<string>(x_ReviewerBranchForbiddenFields);
   for (const field of reviewerFields) {
-    if (field === "description") {
+    if (taskForbidden.has(field)) {
       continue;
     }
     pairs.push({ variant: "reviewer:task", field });
   }
   for (const field of reviewerFields) {
-    if (
-      field === "task"
-      || field === "implementer_report"
-      || field === "constraints"
-      || field === "diff"
-    ) {
+    if (field === "task" || branchForbidden.has(field)) {
       continue;
     }
     pairs.push({ variant: "reviewer:branch", field });
@@ -63,6 +78,26 @@ function AcceptedPairsFromSchemas(): Array<{ variant: string; field: string }> {
   }
   return pairs;
 }
+
+function FieldDescription(field: string): string {
+  const startShape = XagentSddStartAdvertisedSchema.shape as Record<
+    string,
+    { description?: string }
+  >;
+  const followupShape = XagentSddFollowupAdvertisedSchema.shape as Record<
+    string,
+    { description?: string }
+  >;
+  return startShape[field]?.description ?? followupShape[field]?.description ?? "";
+}
+
+test("recognized routes equal the registry variant keys", () => {
+  assert.deepEqual(
+    RecognizedDispatchVariants(),
+    [...DISPATCH_VARIANTS].sort(),
+    "union/refinement/follow-up routes must equal DISPATCH_VARIANTS",
+  );
+});
 
 test("the caller-input projection exactly equals the registry matrix", () => {
   const projection = CallerInputProjection()
@@ -91,24 +126,36 @@ test("an option reachable two ways has an entry per provenance", () => {
   assert.equal(diff.find((e) => e.provenance === "derived")?.field, null);
 });
 
-test("a variant reusing only existing fields still fails until registered", () => {
-  // The mutation guard: the advertised field set is flat, so a new variant
-  // that reuses `brief` and `report_out` changes nothing observable there.
+test("manifest variants exactly equal the registry keys", () => {
+  // Real coverage of the closed set: every registered variant appears, and
+  // nothing else. Unregistered routes are caught by equality #1 above.
   //
-  const manifest = DispatchManifest().concat([{
-    variant: "reviewer:security",
-    field: "brief",
-    source: "service",
-    rendererOption: null,
-    provenance: "caller_input",
-    surfaceKind: "path",
-    direction: "reads",
-    transport: "path_substituted",
-    requiredCondition: "always",
-    derivation: null,
-  }]);
-  const covered = new Set(manifest.map((e) => e.variant));
-  assert.notDeepEqual([...covered].sort(), [...DISPATCH_VARIANTS].sort());
+  assert.deepEqual(
+    [...new Set(DispatchManifest().map((e) => e.variant))].sort(),
+    [...DISPATCH_VARIANTS].sort(),
+  );
+});
+
+test("union-required report fields are always and have no derived provenance", () => {
+  for (const [variant, field] of [
+    ["implementer", "report_out"],
+    ["reviewer:task", "implementer_report"],
+    ["re-reviewer", "fixer_report"],
+    ["followup:re-review", "fixer_report"],
+  ] as const) {
+    const caller = DispatchManifest().find(
+      (e) => e.variant === variant && e.field === field,
+    );
+    assert.equal(caller?.requiredCondition, "always", `${variant} ${field}`);
+    const derivedReport = DispatchManifest().filter(
+      (e) => (
+        e.variant === variant
+        && e.rendererOption === "--report"
+        && e.provenance === "derived"
+      ),
+    );
+    assert.equal(derivedReport.length, 0, `${variant} must not emit derived --report`);
+  }
 });
 
 test("service-formatted variants are covered by the service source", () => {
@@ -150,19 +197,40 @@ test("non-artifact caller options resolve, ledger options do not", () => {
 });
 
 test("advertised descriptions agree with the manifest", () => {
-  const startShape = XagentSddStartAdvertisedSchema.shape;
-  const followupShape = XagentSddFollowupAdvertisedSchema.shape;
   for (const entry of DispatchManifest().filter(
-    (e) => e.field !== null && e.direction !== null,
+    (e) => e.field !== null && e.direction !== null && e.provenance === "caller_input",
   )) {
     const field = entry.field as string;
-    const described =
-      (startShape as Record<string, { description?: string }>)[field]?.description
-      ?? (followupShape as Record<string, { description?: string }>)[field]?.description
-      ?? "";
+    const described = FieldDescription(field);
     const expected = entry.direction === "writes" ? /writes/i : /reads|must already exist/i;
     assert.match(described, expected,
       `${field} (${entry.variant}) is ${entry.direction} but described as "${described}"`);
+    if (entry.requiredCondition === "unless-derivable") {
+      assert.ok(
+        entry.derivation !== null,
+        `${field} (${entry.variant}) is unless-derivable without a derivation`,
+      );
+      const pattern = entry.derivation.kind === "plan_workspace"
+        ? entry.derivation.pattern
+        : null;
+      assert.ok(
+        /required unless|unless the plan workspace/i.test(described),
+        `${field} (${entry.variant}) is unless-derivable but described as optional: "${described}"`,
+      );
+      if (pattern !== null) {
+        assert.ok(
+          described.includes(pattern),
+          `${field} description must name derivation pattern ${pattern}`,
+        );
+      }
+    }
+    else if (entry.requiredCondition === "always") {
+      assert.doesNotMatch(
+        described,
+        /\boptional\b/i,
+        `${field} (${entry.variant}) is always but described as optional: "${described}"`,
+      );
+    }
   }
 });
 

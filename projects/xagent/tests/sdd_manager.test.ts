@@ -1490,3 +1490,102 @@ test("task-scoped reviewer without diff or derivable file is rejected before dis
   assert.equal(runManager.created.length, 0);
   assert.ok(!recorder.Names().includes("renderPrompt"));
 });
+
+test("re-reviewer without diff or derivable file is rejected before dispatch", async () =>
+{
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, undefined);
+  const runManager = CreateFakeRunManager(recorder);
+  const manager = CreateSddManager({
+    ...CreateDeps(recorder),
+    store,
+    runManager,
+    accessFile: async () =>
+    {
+      throw new Error("missing");
+    },
+    shortSha: async (_cwd, rev) => rev.slice(0, 7),
+    gitRepoRoot: async () => "/tmp/worktree",
+  });
+  await assert.rejects(
+    () => manager.Start({
+      role: "re-reviewer",
+      cwd: x_Cwd,
+      plan: x_PlanPath,
+      model: "opus",
+      harness: "claude_code",
+      effort: "high",
+      task: 3,
+      brief: x_BriefPath,
+      findings: "/tmp/f.md",
+      fixer_report: x_ReportPath,
+      base: "main",
+      head: "HEAD",
+      round: 1,
+    }),
+    (error: unknown) =>
+    {
+      const structured = structuredErrorFromUnknown(error);
+      assert.equal(structured.error, "invalid_tool_input");
+      assert.equal(
+        (structured.details as { field?: string } | undefined)?.field,
+        "diff",
+      );
+      return true;
+    },
+  );
+  assert.equal(store.inserted.length, 0);
+  assert.equal(runManager.created.length, 0);
+  assert.ok(!recorder.Names().includes("renderPrompt"));
+});
+
+test("follow-up re-review without diff or derivable file submits nothing", async () =>
+{
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, {
+    agent_id: x_AgentId,
+    plan_path: x_PlanPath,
+    task: 3,
+    role: "reviewer",
+    brief_path: x_BriefPath,
+    brief_text: x_BriefText,
+    cwd: x_CanonicalCwd,
+    dispatched_at: "2026-07-28T10:00:00.000Z",
+  });
+  const runManager = CreateFakeRunManager(recorder);
+  const manager = CreateSddManager({
+    ...CreateDeps(recorder),
+    store,
+    runManager,
+    accessFile: async () =>
+    {
+      throw new Error("missing");
+    },
+    shortSha: async (_cwd, rev) => rev.slice(0, 7),
+    gitRepoRoot: async () => "/tmp/worktree",
+  });
+  await assert.rejects(
+    () => manager.Followup({
+      kind: "re-review",
+      run_id: x_AgentId,
+      round: 1,
+      findings: "/tmp/f.md",
+      fixer_report: "/tmp/r.md",
+      base: "main",
+      head: "HEAD",
+    }),
+    (error: unknown) =>
+    {
+      const structured = structuredErrorFromUnknown(error);
+      assert.equal(structured.error, "invalid_tool_input");
+      assert.equal(
+        (structured.details as { field?: string } | undefined)?.field,
+        "diff",
+      );
+      return true;
+    },
+  );
+  assert.equal(store.inserted.length, 0);
+  assert.equal(runManager.submitted.length, 0);
+  assert.ok(!recorder.Names().includes("renderPrompt"));
+});

@@ -429,20 +429,20 @@ const started = await client.callTool({{
     role: "implementer",
     cwd: {str(cwd)!r},
     plan: {str(plan_path)!r},
-    agent: "fake-model",
+    model: "fake-model",
     harness: "codex",
     effort: "high",
     task: 1,
     name: "packaged-sdd-smoke",
     brief: {str(brief_path)!r},
-    report: {str(report_path)!r},
+    report_out: {str(report_path)!r},
   }},
 }});
 const startBody = started.structuredContent ?? started.content?.[0]?.text;
 const startParsed = typeof startBody === "string" ? JSON.parse(startBody) : startBody;
-const agentId = startParsed.agent_id;
-if (typeof agentId !== "string" || agentId.length === 0) {{
-  throw new Error(`xagent_sdd_start did not return an agent_id: ${{JSON.stringify(startParsed)}}`);
+const runId = startParsed.run_id;
+if (typeof runId !== "string" || runId.length === 0) {{
+  throw new Error(`xagent_sdd_start did not return a run_id: ${{JSON.stringify(startParsed)}}`);
 }}
 if (typeof startParsed.sequence !== "number") {{
   throw new Error(`xagent_sdd_start did not return a sequence: ${{JSON.stringify(startParsed)}}`);
@@ -451,7 +451,7 @@ if (typeof startParsed.sequence !== "number") {{
 const database = new Database(join({str(log_root)!r}, "sdd.sqlite"), {{ readonly: true }});
 const row = database.prepare(
   "SELECT role, task FROM sdd_agents WHERE agent_id = ?",
-).get(agentId);
+).get(runId);
 database.close();
 if (row?.role !== "implementer" || row?.task !== 1) {{
   throw new Error(`expected immutable sdd_agents row: ${{JSON.stringify(row)}}`);
@@ -461,7 +461,7 @@ const expectedReport = "packaged sanitized SDD report";
 const awaited = await client.callTool({{
   name: "xagent_await",
   arguments: {{
-    run_id: agentId,
+    run_id: runId,
     after_sequence: startParsed.sequence,
   }},
 }});
@@ -474,9 +474,9 @@ if (awaitParsed.report?.text !== expectedReport) {{
   throw new Error(`unexpected SDD report: ${{JSON.stringify(awaitParsed.report)}}`);
 }}
 
-await client.callTool({{ name: "xagent_close", arguments: {{ run_id: agentId }} }});
+await client.callTool({{ name: "xagent_close", arguments: {{ run_id: runId }} }});
 await client.close();
-console.log(JSON.stringify({{ event: awaitParsed.event, agent_id: agentId }}));
+console.log(JSON.stringify({{ event: awaitParsed.event, run_id: runId }}));
 """
     result = subprocess.run(
         ["node", "--input-type=module", "-e", probe],

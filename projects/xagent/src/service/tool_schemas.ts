@@ -139,6 +139,22 @@ export const ImplementerStartSchema = z
 // v2 start roles. Task 6 cuts the tool surface over to this union in the same
 // commit that rewrites Start — never before it.
 //
+// Forbidden on the opposite reviewer branch — single source for the refinement
+// and for equality #2's AcceptedPairsFromSchemas partition.
+//
+export const x_ReviewerBranchForbiddenFields = [
+  "implementer_report",
+  "constraints",
+  "diff",
+] as const;
+
+export const x_ReviewerTaskForbiddenFields = ["description"] as const;
+
+// Required by the refinement when task is present, even though the object
+// shape marks the field optional (whole-branch reviewers omit it).
+//
+export const x_ReviewerTaskRequiredFields = ["implementer_report"] as const;
+
 function ReviewerRefinement(
   value: {
     readonly task?: number;
@@ -156,7 +172,7 @@ function ReviewerRefinement(
         message: "reviewer without a task requires description (whole-branch review)",
       });
     }
-    for (const field of ["implementer_report", "constraints", "diff"] as const) {
+    for (const field of x_ReviewerBranchForbiddenFields) {
       if (value[field] !== undefined) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -166,21 +182,25 @@ function ReviewerRefinement(
     }
     return;
   }
-  if (value.implementer_report === undefined) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "reviewer with a task requires implementer_report",
-    });
+  for (const field of x_ReviewerTaskRequiredFields) {
+    if (value[field] === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `reviewer with a task requires ${field}`,
+      });
+    }
   }
-  if (value.description !== undefined) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "reviewer with a task must not set description",
-    });
+  for (const field of x_ReviewerTaskForbiddenFields) {
+    if (value[field] !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `reviewer with a task must not set ${field}`,
+      });
+    }
   }
 }
 
-const ReviewerStartObject = z
+export const ReviewerStartObject = z
   .object({
     role: z.literal("reviewer"),
     ...SddAssignmentFields,

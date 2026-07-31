@@ -8,7 +8,8 @@
     "xagent": "./dist/src/main.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && cp src/service/dispatch_manifest.generated.json dist/src/service/",
+    "generate:dispatch-manifest": "npx tsx scripts/generate_dispatch_manifest.ts",
     "start": "node dist/src/main.js",
     "service-run": "node dist/src/service_main.js",
     "test": "npm run build && node --test dist/tests/*.test.js",

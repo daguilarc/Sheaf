@@ -30,6 +30,11 @@ CLIENT_SERVICE_FILES = frozenset(
         "config.d.ts.map",
         "config.js",
         "config.js.map",
+        "dispatch_manifest.d.ts",
+        "dispatch_manifest.d.ts.map",
+        "dispatch_manifest.generated.json",
+        "dispatch_manifest.js",
+        "dispatch_manifest.js.map",
         "tool_schemas.d.ts",
         "tool_schemas.d.ts.map",
         "tool_schemas.js",
@@ -168,15 +173,28 @@ def describe_snapshot_drift(
 
 
 def check_dispatch_manifest() -> None:
+    script = XAGENT_ROOT / "scripts" / "generate_dispatch_manifest.ts"
+    if not script.is_file():
+        raise RuntimeError(
+            f"dispatch manifest generator missing at {script}; "
+            "cannot verify the checked-in manifest"
+        )
     run(
-        ["npx", "tsx", "scripts/generate_dispatch_manifest.ts", "--check"],
+        ["npx", "tsx", str(script), "--check"],
         cwd=XAGENT_ROOT,
     )
 
 
 def generate_dispatch_manifest() -> None:
+    # Install/package smoke fixtures copy only dist/ + package.json into a
+    # scratch repo. There is no TypeScript source or generator there — the
+    # checked-in JSON already shipped in dist is the artifact to package.
+    #
+    script = XAGENT_ROOT / "scripts" / "generate_dispatch_manifest.ts"
+    if not script.is_file():
+        return
     run(
-        ["npx", "tsx", "scripts/generate_dispatch_manifest.ts"],
+        ["npx", "tsx", str(script)],
         cwd=XAGENT_ROOT,
     )
 
