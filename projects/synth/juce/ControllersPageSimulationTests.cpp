@@ -107,29 +107,100 @@ std::set<std::string> OutOfFlowIds(const synth::ui::NodeTree& tree)
 // rendered), and their tables have no column headings. Each is a recorded
 // Task 17 appearance question (tasks.md 6.5b), not a licence: a NEW uncaptioned
 // control anywhere else on the page fails.
-std::set<std::string> UncaptionedResiduals(const synth::ui::NodeTree& tree)
+// The simulation adds, removes, renames and blacklists controllers, so the id
+// set changes every step and cannot be written out once. It is still derived
+// control by control rather than by suffix: for each controller row the
+// simulation has produced, the four cell ids that row is known to publish are
+// named through `NodeIds`, and the wizard's are enumerated per button. A
+// control that is NOT one of those -- a new field, a renamed one, anything the
+// page grows -- is examined and must carry a caption.
+//
+// That is the difference from a suffix match, and it is the whole point: a
+// pattern would have silently absorbed whatever arrived next. `residualsMatched`
+// below then proves the list was used rather than sitting inert.
+std::map<std::string, std::string> UncaptionedResiduals(const synth::ui::NodeTree& tree)
 {
-    static const std::array<const char*, 6> kSuffixes{
-        ".input", ".output", ".variant", ".rename_draft", ".message", ".argument"};
-    std::set<std::string> ids{synth::runtime_ui::NodeIds::kAddName,
-                              synth::runtime_ui::NodeIds::kAddKind,
-                              "controller-wizard.twister.encoder-slot"};
-    for (const synth::ui::Node& node : tree.nodes)
+    std::map<std::string, std::string> exceptions;
+    const auto except = [&exceptions](std::string id, std::string reason) {
+        exceptions.emplace(std::move(id), std::move(reason));
+    };
+    const auto present = [&tree](const std::string& id) {
+        return FindNode(tree, synth::ui::NodeId(id)) != nullptr;
+    };
+
+    if (present(synth::runtime_ui::NodeIds::kAddName))
     {
-        if (node.id.value.find(".field.") != std::string::npos)
+        except(synth::runtime_ui::NodeIds::kAddName,
+               "add-row name field; the add row publishes no column headings");
+    }
+    if (present(synth::runtime_ui::NodeIds::kAddKind))
+    {
+        except(synth::runtime_ui::NodeIds::kAddKind,
+               "add-row kind selector; same, via the retired ComboBox::label");
+    }
+    for (std::size_t ix = 0; present(synth::runtime_ui::NodeIds::ControllerRow(ix)); ++ix)
+    {
+        const std::string row = "controller row " + std::to_string(ix);
+        for (const auto& [id, what] :
+             {std::pair{synth::runtime_ui::NodeIds::ControllerInput(ix), "MIDI input selector"},
+              std::pair{synth::runtime_ui::NodeIds::ControllerOutput(ix), "MIDI output selector"},
+              std::pair{synth::runtime_ui::NodeIds::ControllerVariant(ix), "profile variant selector"},
+              std::pair{synth::runtime_ui::NodeIds::ControllerRenameDraft(ix), "rename field"}})
         {
-            ids.insert(node.id.value);
-            continue;
-        }
-        for (const char* suffix : kSuffixes)
-        {
-            if (EndsWith(node.id.value, suffix))
+            if (present(id))
             {
-                ids.insert(node.id.value);
+                except(id, row + " " + what + "; a table cell whose column has no heading");
             }
         }
     }
-    return ids;
+    for (int button = 0; button < 6; ++button)
+    {
+        const std::string base =
+            "controller-wizard.twister.button." + std::to_string(button) + ".";
+        for (const char* field : {"message", "argument"})
+        {
+            if (present(base + field))
+            {
+                except(base + field,
+                       "Twister button " + std::to_string(button + 1) + " " + field +
+                           " cell; its column carries no heading");
+            }
+        }
+    }
+    if (present("controller-wizard.twister.encoder-slot"))
+    {
+        except("controller-wizard.twister.encoder-slot",
+               "encoder-slot field; its adjacent Label is not a '<id>.caption' sibling");
+    }
+
+    // Mapping cells are excused by their section's COLUMN HEADINGS, so the
+    // headings have to exist. A section that lost them fails instead of
+    // inheriting the exclusion.
+    std::set<std::string> headedBodies;
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        const std::string& id = node.id.value;
+        const std::size_t header = id.find(".header.");
+        if (header != std::string::npos && EndsWith(id, ".caption"))
+        {
+            headedBodies.insert(id.substr(0, header));
+        }
+    }
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        const std::string& id = node.id.value;
+        if (!synth::ui::criteria::IsFormControl(node.kind) ||
+            id.find(".mapping.") == std::string::npos || id.find(".field.") == std::string::npos)
+        {
+            continue;
+        }
+        const std::string body = id.substr(0, id.find(".mapping."));
+        Require(headedBodies.count(body) != 0,
+                "mapping section " + body + " publishes no column headings, so its cells cannot "
+                                            "be excused from carrying captions");
+        except(id, "mapping table cell in " + body + "; identified by that section's headings");
+    }
+    return exceptions;
 }
 
 // The Controllers page and its wizard draw spacing from two named tables plus
@@ -152,6 +223,27 @@ const std::vector<float>& ControllersPageSpacing()
     return values;
 }
 
+// Run-level anti-vacuity totals for the caption criterion, asserted in `main`
+// once every simulation has finished.
+//
+// `examined > 0` is deliberately NOT among them, and the reason is a finding
+// rather than a convenience: **the Controllers page has no conforming form
+// control at all.** Every combo box, text field and toggle it renders -- the
+// row endpoint selectors, the rename field, the add row, and every mapping cell
+// -- is one of the named uncaptioned exceptions under tasks.md 6.5b. Requiring
+// one examined control would not be a stricter test, it would be a permanently
+// red one, and the page passing it is the product decision task 6.5 exists to
+// make. (Asserting it was how this was established: the requirement was added,
+// the whole 250-step run reported zero, and that is not a defect in the walk.)
+//
+// So the guard is on SUBJECTS instead of on conformers. `formControlsSeen`
+// proves the criterion had something to look at, and `residualsMatched` proves
+// the exception list was the thing excusing them rather than the criterion
+// quietly finding nothing. A control that is not on the list is still examined
+// and must still carry a caption, which is what stops the exceptions growing.
+std::size_t g_captionFormControlsSeen = 0;
+std::size_t g_captionResidualsMatched = 0;
+
 void VerifyNamedVisualCriteria(const synth::ui::NodeTree& tree, const std::string& context)
 {
     const std::set<std::string> outOfFlow = OutOfFlowIds(tree);
@@ -170,9 +262,19 @@ void VerifyNamedVisualCriteria(const synth::ui::NodeTree& tree, const std::strin
     Require(spacing.violations.empty(), context + " spacing: " + criteria::Join(spacing.violations));
     Require(!spacing.observed.empty(), context + " spacing: nothing was measured");
 
-    const std::vector<std::string> uncaptioned =
-        criteria::UncaptionedFormControls(tree, UncaptionedResiduals(tree));
-    Require(uncaptioned.empty(), context + " caption: " + criteria::Join(uncaptioned));
+    const std::map<std::string, std::string> exceptions = UncaptionedResiduals(tree);
+    const criteria::CaptionReport captions = criteria::UncaptionedFormControls(tree, exceptions);
+    Require(captions.violations.empty(), context + " caption: " + criteria::Join(captions.violations));
+    // Every named exception was derived from a control this tree actually
+    // contains, so all of them must have matched. A shortfall means an id
+    // convention moved under the derivation and the list is quietly waiving
+    // nothing while real controls go unexamined.
+    Require(captions.residualsMatched == exceptions.size(),
+            context + " caption: " + std::to_string(exceptions.size()) +
+                " exceptions were derived but only " + std::to_string(captions.residualsMatched) +
+                " matched a control");
+    g_captionFormControlsSeen += captions.examined + captions.residualsMatched;
+    g_captionResidualsMatched += captions.residualsMatched;
 
     const std::vector<std::string> silent = criteria::EmptyTextNodes(tree);
     Require(silent.empty(), context + " empty text: " + criteria::Join(silent));
@@ -1343,6 +1445,16 @@ int main()
     RunManualRecordSimulation();
     RunIncompatibleReconfigureSimulation();
     RunControllerWizardRefusalSimulation();
+
+    // The caption criterion had real subjects across the whole run, and its
+    // exception list was the thing excusing them. Without these an id-convention
+    // change could leave every step looking at nothing and every step passing.
+    // See the note beside the counters for why the floor is on subjects rather
+    // than on conforming controls.
+    Require(g_captionFormControlsSeen > 0,
+            "the caption criterion saw no form control at all in the entire simulation");
+    Require(g_captionResidualsMatched > 0,
+            "no named caption exception matched anywhere in the simulation, so the list is stale");
 
     std::cout << "ControllersPageSimulationTests passed seed=0x" << std::hex << kSeed << "\n";
     return 0;

@@ -1971,9 +1971,22 @@ struct CriteriaSurface {
     // intersect a sibling.
     std::set<std::string> containmentExempt;
     std::set<std::string> overlapExempt;
-    // Form controls with no rendered caption today. Each one is a Task 17
-    // appearance question, recorded in tasks.md under 6.5b.
-    std::set<std::string> uncaptioned;
+    // Form controls with no visible caption today, each named individually with
+    // the reason it has none. A PRODUCT decision for task 6.5, not a residual
+    // the suite has blessed; tasks.md 6.5b carries the same list.
+    std::map<std::string, std::string> uncaptioned;
+    // The exact number of form controls this fixture puts on the surface.
+    //
+    // This is the anti-vacuity guard, and it is deliberately a total rather
+    // than `examined > 0`. On the Controllers page and the wizard form EVERY
+    // form control is a table cell, so `examined > 0` is unsatisfiable there
+    // without contriving the fixture -- while the risk it stands for, a new
+    // uncaptioned control slipping in under an exception, is caught here
+    // directly and by name: add a control and the total moves, so the test
+    // fails and prints both numbers. Surfaces that do carry captioned controls
+    // additionally get `examined > 0` for free, since their total exceeds their
+    // exception list.
+    std::size_t expectedFormControls = 0;
     // Containers declaring `formGrid`, with the row and column counts the named
     // fixture puts in them. Stated rather than discovered: an alignment check
     // that compares whatever it happens to find passes on an empty grid, which
@@ -2008,9 +2021,24 @@ void RequireSurfaceMeetsTheNamedCriteria(const CriteriaSurface& surface)
     Require(!spacing.observed.empty(),
             (prefix + "the spacing check found no gap or padding to measure").c_str());
 
-    const std::vector<std::string> uncaptioned =
+    const criteria::CaptionReport captions =
         criteria::UncaptionedFormControls(surface.tree, surface.uncaptioned);
-    Require(uncaptioned.empty(), (prefix + criteria::Join(uncaptioned)).c_str());
+    Require(captions.violations.empty(), (prefix + criteria::Join(captions.violations)).c_str());
+    // A named exception that matches nothing is a stale entry pointing at a
+    // control that has been renamed or removed, and it would sit here forever
+    // waiving something that no longer exists.
+    Require(captions.residualsMatched == surface.uncaptioned.size(),
+            (prefix + "the caption exception list names " +
+             std::to_string(surface.uncaptioned.size()) + " controls but only " +
+             std::to_string(captions.residualsMatched) + " are on this surface")
+                .c_str());
+    Require(captions.examined + captions.residualsMatched == surface.expectedFormControls,
+            (prefix + "this surface carries " +
+             std::to_string(captions.examined + captions.residualsMatched) +
+             " form controls, not the " + std::to_string(surface.expectedFormControls) +
+             " the fixture declares -- a control was added, removed or renamed, and if it is new "
+             "it has not been looked at")
+                .c_str());
 
     const std::vector<std::string> silent = criteria::EmptyTextNodes(surface.tree);
     Require(silent.empty(), (prefix + criteria::Join(silent)).c_str());
@@ -2110,33 +2138,118 @@ std::set<std::string> ControllerStatusDotIds(std::size_t controllers)
     return ids;
 }
 
-std::set<std::string> ControllerUncaptionedIds(std::size_t controllers)
+// ---------------------------------------------------------------------------
+// The caption exceptions, one control at a time with one reason each.
+//
+// These are NOT residuals the suite has decided are acceptable. sru-48 requires
+// every form control to carry a visible caption, and each control below fails
+// that today. They are recorded here, individually and with a stated reason,
+// because whether a table cell should gain a caption or its table should gain a
+// column heading is a PRODUCT decision -- and task 6.5 is the pairing session
+// where a human makes it. tasks.md 6.5b carries the same list for that
+// conversation.
+//
+// The shape matters as much as the content: an id-to-reason map cannot grow by
+// a new control happening to match a pattern, and `residualsMatched` makes an
+// entry that no longer names anything visible too.
+// ---------------------------------------------------------------------------
+
+void Except(std::map<std::string, std::string>& into, std::string id, std::string reason)
 {
-    // Endpoint selectors and the rename field are table CELLS, identified by
-    // their column rather than by a caption -- except the Controllers list has
-    // no column headings, so today they are identified by nothing a backend
-    // renders (design.md OQ5 retired `ComboBox::label`, and `TextField::label`
-    // was never rendered either). Recorded for Task 17 in tasks.md under 6.5b.
-    std::set<std::string> ids{synth::runtime_ui::NodeIds::kAddName,
-                              synth::runtime_ui::NodeIds::kAddKind};
-    for (std::size_t ix = 0; ix < controllers; ++ix)
-    {
-        ids.insert(synth::runtime_ui::NodeIds::ControllerInput(ix));
-        ids.insert(synth::runtime_ui::NodeIds::ControllerOutput(ix));
-        ids.insert(synth::runtime_ui::NodeIds::ControllerRenameDraft(ix));
-    }
-    return ids;
+    into.emplace(std::move(id), std::move(reason));
 }
 
-std::set<std::string> WizardFormUncaptionedIds()
+// 12 rows x {input, output, rename_draft}, the two add-row fields, and the 13
+// mapping cells row 0's expanded encoders section publishes. Stated so a new
+// control cannot arrive unexamined under an exception.
+// A mapping table's cells are identified by their COLUMN HEADING rather than by
+// a per-cell caption, and a caption on every cell would repeat the heading on
+// every row. That is a design, not a residual -- but it is only a design while
+// the headings are actually there, so this derives the cells from the tree and
+// refuses to except a single one unless the section really does publish
+// headings. A section that lost its headings would fail rather than inherit the
+// exclusion.
+std::map<std::string, std::string> MappingCellExceptions(const synth::ui::NodeTree& tree)
 {
-    std::set<std::string> ids{"controller-wizard.twister.encoder-slot"};
+    std::map<std::string, std::string> exceptions;
+    std::set<std::string> headedBodies;
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        const std::string& id = node.id.value;
+        const std::size_t header = id.find(".header.");
+        if (header != std::string::npos && id.size() > 8 &&
+            id.compare(id.size() - 8, 8, ".caption") == 0)
+        {
+            headedBodies.insert(id.substr(0, header));
+        }
+    }
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        if (!synth::ui::criteria::IsFormControl(node.kind))
+        {
+            continue;
+        }
+        const std::string& id = node.id.value;
+        const std::size_t mapping = id.find(".mapping.");
+        if (mapping == std::string::npos || id.find(".field.") == std::string::npos)
+        {
+            continue;
+        }
+        const std::string body = id.substr(0, mapping);
+        Require(headedBodies.count(body) != 0,
+                ("mapping section " + body +
+                 " publishes no column headings, so its cells cannot be excused from carrying "
+                 "captions")
+                    .c_str());
+        Except(exceptions, id,
+               "mapping table cell in " + body +
+                   "; identified by that section's column headings rather than a per-cell caption");
+    }
+    return exceptions;
+}
+
+constexpr std::size_t kFixtureControllerExpectedControls = 12 * 3 + 2 + 13;
+
+std::map<std::string, std::string> ControllerCaptionExceptions(std::size_t controllers,
+                                                               const synth::ui::NodeTree& tree)
+{
+    std::map<std::string, std::string> exceptions = MappingCellExceptions(tree);
+    Except(exceptions, synth::runtime_ui::NodeIds::kAddName,
+           "add-row name field; the add row has no column headings and the field carries its "
+           "prompt only in TextField::label, which no backend renders");
+    Except(exceptions, synth::runtime_ui::NodeIds::kAddKind,
+           "add-row kind selector; same as the name field, via the retired ComboBox::label "
+           "(design.md OQ5)");
+    for (std::size_t ix = 0; ix < controllers; ++ix)
+    {
+        const std::string row = "controller row " + std::to_string(ix);
+        Except(exceptions, synth::runtime_ui::NodeIds::ControllerInput(ix),
+               row + " MIDI input selector; a table cell whose column has no heading");
+        Except(exceptions, synth::runtime_ui::NodeIds::ControllerOutput(ix),
+               row + " MIDI output selector; a table cell whose column has no heading");
+        Except(exceptions, synth::runtime_ui::NodeIds::ControllerRenameDraft(ix),
+               row + " rename field; appears only while renaming, where the adjacent Rename "
+                     "button is the only thing naming it");
+    }
+    return exceptions;
+}
+
+std::map<std::string, std::string> WizardFormCaptionExceptions()
+{
+    std::map<std::string, std::string> exceptions;
+    Except(exceptions, "controller-wizard.twister.encoder-slot",
+           "encoder-slot field; the row's own Label node sits beside it but is not a "
+           "'<id>.caption' sibling, so the caption convention does not see it");
     for (int ix = 0; ix < 6; ++ix)
     {
-        ids.insert("controller-wizard.twister.button." + std::to_string(ix) + ".message");
-        ids.insert("controller-wizard.twister.button." + std::to_string(ix) + ".argument");
+        const std::string button = "Twister button " + std::to_string(ix + 1);
+        Except(exceptions, "controller-wizard.twister.button." + std::to_string(ix) + ".message",
+               button + " message selector; the column heading 'Left (CC 8-10)' / "
+                        "'Right (CC 11-13)' names the group but no heading names this column");
+        Except(exceptions, "controller-wizard.twister.button." + std::to_string(ix) + ".argument",
+               button + " argument field; same column-heading gap as its message selector");
     }
-    return ids;
+    return exceptions;
 }
 
 // Braid 4 needs a live core, parameter manager and UI state before its surface
@@ -2230,22 +2343,27 @@ std::vector<CriteriaSurface> BuildFixtureSurfaces(synth::ui::Bounds area)
     surfaces.push_back({.name = "Sync",
                         .tree = synth::runtime_ui::BuildSyncPageTree(FixtureSyncState(), area),
                         .spacing = &ConfigPageSpacing(),
+                        .expectedFormControls = 5,  // four toggles and the PPQN field
                         .formGrids = {{synth::runtime_ui::NodeIds::kSyncForm, 5, 2}}});
     surfaces.push_back({.name = "Audio",
                         .tree = synth::runtime_ui::BuildAudioPageTree(FixtureAudioState(), area),
                         .spacing = &ConfigPageSpacing(),
+                        .expectedFormControls = 2,  // the output and input selectors
                         .formGrids = {{synth::runtime_ui::NodeIds::kAudioForm, 2, 2}}});
     surfaces.push_back({.name = "File (browser, 24 entries)",
                         .tree = synth::runtime_ui::BuildFilePageTree(
                             LongBrowserState(kFixtureListEntryCount), area),
-                        .spacing = &ConfigPageSpacing()});
+                        .spacing = &ConfigPageSpacing(),
+                        .expectedFormControls = 1});  // the patch-name field
     surfaces.push_back({.name = "File (24 saved versions)",
                         .tree = synth::runtime_ui::BuildFilePageTree(
                             LongVersionsState(kFixtureListEntryCount), area),
-                        .spacing = &ConfigPageSpacing()});
+                        .spacing = &ConfigPageSpacing(),
+                        .expectedFormControls = 0});  // the versions panel carries no form control
     surfaces.push_back({.name = "File (idle)",
                         .tree = synth::runtime_ui::BuildFilePageTree({}, area),
-                        .spacing = &ConfigPageSpacing()});
+                        .spacing = &ConfigPageSpacing(),
+                        .expectedFormControls = 0});  // the idle panel carries no form control
     return surfaces;
 }
 
@@ -2266,6 +2384,18 @@ static void TestNamedVisualCriteriaHoldOnEveryPageAndApp()
         }
 
         ControllersFixture controllers(area, kFixtureControllerCount);
+        // Row 0 is expanded so the fixture reaches the mapping section. Without
+        // it every form control the Controllers page renders is one of the
+        // named caption exceptions below, and the caption criterion examines
+        // NOTHING on its most control-dense page -- the `.output` failure in a
+        // different costume. It also puts the mapping table, its group headers
+        // and its per-field cells under every other criterion.
+        controllers.surface->DispatchAction(synth::ui::Action::WithValue(
+            synth::runtime_ui::Actions::kToggleConfig, "0"));
+        controllers.surface->DispatchAction(synth::ui::Action::WithValue(
+            synth::runtime_ui::Actions::kToggleSection, "0:encoders"));
+        controllers.surface->MarkDirty();
+        controllers.surface->RefreshOnTick();
         std::vector<synth::WizardCandidate> candidates;
         for (std::size_t ix = 0; ix < kFixtureCandidateCount; ++ix)
         {
@@ -2277,7 +2407,9 @@ static void TestNamedVisualCriteriaHoldOnEveryPageAndApp()
              .tree = controllers.surface->BuildTree(),
              .spacing = &ControllersSpacing(),
              .outOfFlow = ControllerStatusDotIds(kFixtureControllerCount),
-             .uncaptioned = ControllerUncaptionedIds(kFixtureControllerCount)});
+             .uncaptioned = ControllerCaptionExceptions(kFixtureControllerCount,
+                                                        controllers.surface->BuildTree()),
+             .expectedFormControls = kFixtureControllerExpectedControls});
 
         controllers.surface->DispatchAction(
             synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
@@ -2303,14 +2435,13 @@ static void TestNamedVisualCriteriaHoldOnEveryPageAndApp()
             {.name = "wizard form",
              .tree = wizardForm,
              .spacing = &WizardFormSpacing(),
-             // DISCLOSED DEFECT, not a preference: `TwisterFormLayout` sizes the
-             // form body at 8 + 316 + 16 + 316 + 8 = 664, so on any surface
-             // narrower than that -- including the 640 FakeBrowserApp declares
-             // and every sru-54 test uses -- the second column's argument fields
-             // are clipped by 24px. Recorded in tasks.md under 6.2a; task 7.1
-             // already owns removing that arithmetic.
-             .containmentExempt = {"controller-wizard.twister.body"},
-             .uncaptioned = WizardFormUncaptionedIds()});
+             // No containment exemption. `TwisterFormLayout` still asks for a
+             // 684-wide body on a 640 surface, but the page now hosts the
+             // spliced form in a `ScrollArea`, so that width is absorbed as
+             // scroll content instead of overhanging the page and being clipped
+             // away. `TestTheWizardFormIsReachableRatherThanClipped` pins it.
+             .uncaptioned = WizardFormCaptionExceptions(),
+             .expectedFormControls = 13});
     }
 
     // Braid 4 at the floor every surface must survive, and at the extent it
@@ -2328,7 +2459,10 @@ static void TestNamedVisualCriteriaHoldOnEveryPageAndApp()
              .outOfFlow = {synth_braid4::Braid4NodeIds::kBackground},
              // The scene-blend slider renders no label of its own in either
              // backend. Recorded for Task 17 in tasks.md under 6.5b.
-             .uncaptioned = {"braid4.scene.blend"}});
+             .uncaptioned = {{"braid4.scene.blend",
+                              "scene blend slider; carries its name in Node::label, which no "
+                              "backend paints for a Slider"}},
+             .expectedFormControls = 1});
 
         // Mini App on the same standard layout, with a live sru-25 underlay on
         // encoder 0. Its `.visualizer` node is NOT exempted from the overlap
@@ -2347,8 +2481,15 @@ static void TestNamedVisualCriteriaHoldOnEveryPageAndApp()
              // Both Mini App sliders carry their name in `Node::label`, which
              // no backend renders for a `Slider` — the same residual as Braid
              // 4's scene blend, one control wider. tasks.md 6.5b.
-             .uncaptioned = {synth_miniapp::MiniAppNodeIds::kSceneBlend,
-                             synth_miniapp::MiniAppNodeIds::kGestureValue}});
+             .uncaptioned = {{synth_miniapp::MiniAppNodeIds::kSceneBlend,
+                              "scene blend slider; carries \"Blend\" in Node::label, which no "
+                              "backend paints for a Slider"},
+                             {synth_miniapp::MiniAppNodeIds::kGestureValue,
+                              "gesture slider; carries \"Gesture\" in Node::label, same gap"}},
+             // Two sliders plus four toggles that render their own labels, so
+             // this surface also gets `examined > 0` on the strength of the
+             // controls that DO conform.
+             .expectedFormControls = 6});
     }
 }
 
@@ -2360,6 +2501,116 @@ static void TestNamedVisualCriteriaHoldOnEveryPageAndApp()
 // pins. What follows is the treatment the others already have -- what each
 // surface's absorbing region actually DOES with the difference between two
 // surface heights, and what the furniture around it keeps.
+// sru-48's checklist is the contract, and it exists twice: `NamedCriteria()`
+// here and `VISUAL_CRITERIA` in `browser/tests/visual-criteria.spec.ts`. Two
+// copies of a contract drift, and a criterion silently present in one half and
+// absent from the other is precisely how this suite stops meaning what it says.
+// `VisualCriteria.hpp` has documented this test as existing since the criteria
+// were written; it did not, and in the meantime the two halves were found
+// encoding different overlap contracts.
+//
+// So it is a real cross-check rather than a restated constant: it PARSES the
+// spec file. TypeScript cannot be linked against, and a hand-copied duplicate
+// of the seven strings would drift exactly as the originals do.
+static void TestTheNamedCriteriaAreTheOnesThePlaywrightSuiteNames()
+{
+    const std::string spec =
+        synth::test::ReadSourceFile("projects/synth/browser/tests/visual-criteria.spec.ts");
+    const std::string marker = "export const VISUAL_CRITERIA = [";
+    const std::size_t start = spec.find(marker);
+    Require(start != std::string::npos,
+            "the Playwright suite still declares an exported VISUAL_CRITERIA checklist");
+    const std::size_t end = spec.find("] as const;", start);
+    Require(end != std::string::npos, "the VISUAL_CRITERIA literal is terminated");
+
+    std::vector<std::string> declared;
+    const std::string body = spec.substr(start + marker.size(), end - start - marker.size());
+    for (std::size_t ix = 0; ix < body.size(); ++ix)
+    {
+        if (body[ix] != '"')
+        {
+            continue;
+        }
+        const std::size_t close = body.find('"', ix + 1);
+        Require(close != std::string::npos, "every VISUAL_CRITERIA entry is a closed string");
+        declared.push_back(body.substr(ix + 1, close - ix - 1));
+        ix = close;
+    }
+
+    const std::vector<std::string>& named = synth::ui::criteria::NamedCriteria();
+    Require(declared.size() == named.size(),
+            ("the two checklists name a different number of criteria: Playwright " +
+             std::to_string(declared.size()) + " vs headless " + std::to_string(named.size()))
+                .c_str());
+    Require(!named.empty(), "the checklist is not empty, so this comparison examined something");
+    for (std::size_t ix = 0; ix < named.size(); ++ix)
+    {
+        Require(declared[ix] == named[ix],
+                ("criterion " + std::to_string(ix) + " differs between the halves: Playwright \"" +
+                 declared[ix] + "\" vs headless \"" + named[ix] + "\"")
+                    .c_str());
+    }
+}
+
+// A wizard declares its own form width, and the host page cannot re-measure a
+// third-party one. `TwisterFormLayout` asked for 664 against the page's 640-wide
+// body, so before the page hosted the spliced form in a `ScrollArea` the form
+// overhung its parent by 28px and both backends clipped the right column's
+// argument fields away silently. sru-54's gate is the STACKING axis, so a
+// cross-axis overrun of a fixed-extent child went straight past it; the
+// containment criterion is what found it.
+//
+// The form is 684 wide today, not 664: widening `kMessageWidth` so the message
+// selectors stopped clipping their own text made the overhang bigger. This test
+// therefore pins the mechanism rather than either number.
+//
+// This pins the repair positively rather than trusting containment's absence of
+// a violation: the scroll region publishes a content width that covers the
+// form's whole declared width, and the fields that were being cut off are
+// inside it.
+static void TestTheWizardFormIsReachableRatherThanClipped()
+{
+    ControllersFixture controllers(kSmallestDeclaredSurface, 0);
+    const synth::WizardCandidate candidate = FixtureCandidate("-0");
+    controllers.surface->SetDiscovery({.available = {candidate}});
+    controllers.surface->DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
+    const synth::ui::NodeTree tree = controllers.surface->BuildTree();
+
+    const std::string scrollId = std::string(synth::runtime_ui::NodeIds::kWizardForm) + ".scroll";
+    const synth::ui::Node& scroll = FindNode(tree, scrollId.c_str());
+    const synth::ui::Node& formBody = FindNode(tree, "controller-wizard.twister.body");
+
+    // The premise: the form really is wider than the region showing it, so this
+    // test is about a form that does not fit rather than one that happens to.
+    Require(formBody.bounds.width > scroll.bounds.width,
+            "the Twister form really is wider than the surface the page can give it");
+    RequireNear(scroll.scrollContentWidth,
+                formBody.bounds.x + formBody.bounds.width,
+                0.01f,
+                "the scroll region publishes a content width reaching the form's right edge, so "
+                "the whole form is reachable rather than clipped");
+    Require(scroll.bounds.x + scroll.bounds.width <=
+                FindNode(tree, std::string(synth::runtime_ui::NodeIds::kWizardForm) + ".body")
+                        .bounds.width +
+                    0.01f,
+            "and the region itself stays inside the page, so nothing overhangs the surface");
+
+    // The specific controls the old overhang cut off: the right column's
+    // argument fields sat past the page's right edge and were unreachable.
+    for (int buttonIx = 3; buttonIx < 6; ++buttonIx)
+    {
+        const synth::ui::Node& argument =
+            FindNode(tree,
+                     ("controller-wizard.twister.button." + std::to_string(buttonIx) + ".argument")
+                         .c_str());
+        const synth::ui::Node* row =
+            FindNodeById(tree, "controller-wizard.twister.button." + std::to_string(buttonIx));
+        Require(row != nullptr && argument.bounds.width > 0.0f,
+                "every right-column argument field resolves to a real extent");
+    }
+}
+
 static void TestControllersChooserAndBraid4PinTheirAbsorbingRegions()
 {
     // --- Controllers: a ScrollArea absorbs, and the list stays scrollable. ---
@@ -2845,6 +3096,8 @@ int main()
     TestEveryPageAndAppResolvesAtTheSmallestDeclaredSurface();
     TestControllersWizardAndBraid4ResolveAtTheSmallestDeclaredSurface();
     TestNamedVisualCriteriaHoldOnEveryPageAndApp();
+    TestTheNamedCriteriaAreTheOnesThePlaywrightSuiteNames();
+    TestTheWizardFormIsReachableRatherThanClipped();
     TestControllersChooserAndBraid4PinTheirAbsorbingRegions();
 
     TestGangedRandomLfoVisualizer();

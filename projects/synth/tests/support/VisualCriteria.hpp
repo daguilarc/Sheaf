@@ -32,9 +32,10 @@
 namespace synth::ui::criteria {
 
 // The named criteria, verbatim in both halves of the suite. The browser spec's
-// VISUAL_CRITERIA constant carries the same seven strings in the same order,
-// and `TestTheNamedCriteriaAreTheOnesThePlaywrightSuiteNames` pins that they
-// agree, so neither list can drift into naming a criterion the other does not.
+// `VISUAL_CRITERIA` constant carries the same seven strings in the same order,
+// and `TestTheNamedCriteriaAreTheOnesThePlaywrightSuiteNames` in
+// `portable_ui_tests.cpp` pins that they agree by PARSING the spec file, so
+// neither list can drift into naming a criterion the other does not.
 inline const std::vector<std::string>& NamedCriteria()
 {
     static const std::vector<std::string> criteria{
@@ -507,17 +508,35 @@ inline bool IsFormControl(NodeKind kind)
            kind == NodeKind::Slider;
 }
 
-inline std::vector<std::string> UncaptionedFormControls(const NodeTree& tree,
-                                                        const std::set<std::string>& exemptIds = {})
+// The exceptions are a MAP FROM ID TO REASON, not a set of patterns. Every
+// entry is one control a human named and justified, so the list cannot grow by
+// a new control happening to match a suffix -- which is what the Playwright
+// half's `.output` class did before it was found swallowing a conforming
+// control. `residualsMatched` lets a caller require the list was actually used,
+// so a stale entry naming a control that no longer exists is visible too.
+struct CaptionReport {
+    std::vector<std::string> violations;
+    std::size_t examined = 0;         // form controls that had to carry a caption
+    std::size_t residualsMatched = 0; // named exceptions actually present in this tree
+};
+
+inline CaptionReport UncaptionedFormControls(const NodeTree& tree,
+                                             const std::map<std::string, std::string>& exceptions = {})
 {
     const Index index(tree);
-    std::vector<std::string> violations;
+    CaptionReport report;
     for (const Node& node : tree.nodes)
     {
-        if (!IsFormControl(node.kind) || exemptIds.count(node.id.value) != 0)
+        if (!IsFormControl(node.kind))
         {
             continue;
         }
+        if (exceptions.count(node.id.value) != 0)
+        {
+            ++report.residualsMatched;
+            continue;
+        }
+        ++report.examined;
         if (index.Find(node.id.value + ".caption") != nullptr)
         {
             continue;
@@ -526,9 +545,9 @@ inline std::vector<std::string> UncaptionedFormControls(const NodeTree& tree,
         {
             continue;
         }
-        violations.push_back(node.id.value + " has no rendered caption");
+        report.violations.push_back(node.id.value + " has no rendered caption");
     }
-    return violations;
+    return report;
 }
 
 // sru-48: no text conveys no information to the user. The machine-checkable

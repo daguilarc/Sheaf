@@ -2254,10 +2254,40 @@ private:
         messageStyle.textStyle = pagestyle::kMutedTextStyle;
         messageStyle.layout.main = ui::Extent::Px(ControllersLayout::kStatusRowHeight);
 
+        // The spliced form declares its own width, and a wizard is free to
+        // declare one wider than the host surface. `TwisterFormLayout` asked
+        // for 664 against this page's 640-wide body, so before this region
+        // existed the form overhung its parent by 28px and both backends
+        // clipped the right column's argument fields away with no diagnostic.
+        // sru-54 did not catch it because its gate is the STACKING axis and
+        // this is a cross-axis overrun of a fixed-extent child. (The form is
+        // 684 wide now -- widening `kMessageWidth` to stop the message
+        // selectors clipping their own text made the overhang larger, not
+        // smaller, which is exactly why the host cannot rely on a form's
+        // declared width being one it can show.)
+        //
+        // A `ScrollArea` is one of sru-54's two sanctioned absorbing
+        // mechanisms, and the resolver publishes its content extent from the
+        // children it just placed -- on both axes -- so the whole form stays
+        // reachable at any surface a host declares, including one narrower than
+        // 640. This is the host's obligation and it holds for third-party
+        // wizards too, which the page cannot re-measure. Task 7.1 separately
+        // removes `TwisterFormLayout`'s arithmetic so the Twister form stops
+        // needing to scroll at all; this region is what makes any form safe
+        // meanwhile.
+        ui::LayoutOptions formScroll;
+        formScroll.main = ui::Extent::Weight(1.0f);
+        formScroll.padding = 0.0f;
+        formScroll.gap = 0.0f;
+
         ui::Builder builder;
         builder.Root(NodeIds::kWizardForm, m_contentBounds);
         builder.Column(std::string(NodeIds::kWizardForm) + ".body", body, [&](ui::Builder& page) {
-            page.Splice(m_wizardSession->form->BuildSubtree());
+            page.ScrollArea(std::string(NodeIds::kWizardForm) + ".scroll",
+                            formScroll,
+                            [&](ui::Builder& scroll) {
+                                scroll.Splice(m_wizardSession->form->BuildSubtree());
+                            });
             page.Row(std::string(NodeIds::kWizardForm) + ".actions", actionsRow, [&](ui::Builder& row) {
                 row.Button(NodeIds::kWizardBack,
                            "Back",

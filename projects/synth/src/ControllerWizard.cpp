@@ -67,7 +67,14 @@ inline constexpr float kSlotWidth = 160.0f;
 inline constexpr float kSlotLabelWidth = 90.0f;
 inline constexpr float kFormGridLabelGap = 8.0f;
 inline constexpr float kButtonLabelWidth = 70.0f;
-inline constexpr float kMessageWidth = 150.0f;
+// Wide enough for the longest message label the choice catalog offers. At 150
+// the browser's `<select>` reported a 156px content width in a 150px box, so
+// every one of the six message selectors rendered its longest options
+// truncated -- found the first time the text-fit criterion was extended to
+// ComboBox and TextField, which render their value text in the element the
+// backend sized. 160 matches `kSlotWidth` rather than being a fresh magic
+// number, and task 7.1 replaces the whole table with library reservations.
+inline constexpr float kMessageWidth = 160.0f;
 inline constexpr float kArgumentWidth = 80.0f;
 inline constexpr float kColumnHeaderHeight = 22.0f;
 inline constexpr float kColumnGap = 16.0f;

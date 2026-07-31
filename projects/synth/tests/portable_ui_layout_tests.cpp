@@ -1316,16 +1316,28 @@ void TestCaptionCheckSeesThroughAnUnrenderedLabel()
     synth::ui::NodeTree tree = b.Build({0.0f, 0.0f, 300.0f, 200.0f});
     MutableNode(tree, "labelled_only").label = "Input device";
 
-    const std::vector<std::string> violations = criteria::UncaptionedFormControls(tree);
-    Require(violations.size() == 1, "the captioned combo passes and the label-only combo does not");
-    Require(Mentions(violations.front(), "labelled_only"),
+    const criteria::CaptionReport report = criteria::UncaptionedFormControls(tree);
+    Require(report.violations.size() == 1,
+            "the captioned combo passes and the label-only combo does not");
+    Require(Mentions(report.violations.front(), "labelled_only"),
             "the caption violation names the control the user cannot identify");
+    Require(report.examined == 2 && report.residualsMatched == 0,
+            "both combos were examined and neither was excused");
+
+    // The exception map excuses exactly the control it names, and says so: with
+    // the offender listed the check comes back clean AND reports one residual
+    // matched, so a caller can tell "excused" apart from "nothing to see".
+    const criteria::CaptionReport excused =
+        criteria::UncaptionedFormControls(tree, {{"labelled_only", "a product decision for 6.5"}});
+    Require(excused.violations.empty() && excused.residualsMatched == 1 && excused.examined == 1,
+            "a named exception excuses its own control and nothing else");
 
     // A toggle DOES render its own label, so a non-empty one identifies it.
     synth::ui::Builder t;
     t.Root("root", {0.0f, 0.0f, 300.0f, 200.0f});
     t.Toggle("toggle", "Send clock", false, synth::ui::Action::Named("toggle"), {});
-    Require(criteria::UncaptionedFormControls(t.Build({0.0f, 0.0f, 300.0f, 200.0f})).empty(),
+    Require(criteria::UncaptionedFormControls(t.Build({0.0f, 0.0f, 300.0f, 200.0f}))
+                .violations.empty(),
             "a toggle rendering its own label needs no separate caption node");
 }
 
