@@ -1,59 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { installTwisterPair, removeTwisterPair, TWISTER_DEVICE_NAME } from "./helpers/fake-midi.js";
-
-type FrameNode = {
-  id: string;
-  children: string[];
-  pointerDragAction?: { name: string; value: string };
-  doubleClickAction?: { name: string; value: string };
-};
-
-type FrameObservation = { nodes: FrameNode[] };
+import { installRealFakeApp, stopRealFakeApp, synthNode, type FrameObservation } from "./helpers/fake-app.js";
 
 const fakeAcceptance = { shell: false, sync: false, gestures: false, narrow: false };
 
-async function builtFakeCatalogApp() {
-  const { createHash } = await (new Function("return import('node:crypto')")() as Promise<{
-    createHash(name: string): { update(bytes: Uint8Array): { digest(encoding: "hex"): string } };
-  }>);
-  const { readFile } = await (new Function("return import('node:fs/promises')")() as Promise<{
-    readFile(path: URL): Promise<Uint8Array>;
-  }>);
-  const buildId = "fake-browser-app-build-1";
-  const packageRoot = `packages/fake-browser-app/${buildId}`;
-  const emissionRoot = "fixture-apps/fake-browser-app";
-  const files = await Promise.all([
-    ["fake-browser-app.js", "text/javascript"],
-    ["fake-browser-app.wasm", "application/wasm"],
-  ].map(async ([name, mediaType]) => {
-    const bytes = await readFile(new URL(`../dist/wasm/${emissionRoot}/${name}`, import.meta.url));
-    return {
-      path: `${packageRoot}/${name}`,
-      url: `http://127.0.0.1:4174/dist/wasm/${emissionRoot}/${name}`,
-      mediaType,
-      size: bytes.byteLength,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-    };
-  }));
-  return {
-    globalId: "test/fake-browser-app",
-    catalogUrl: "https://test.example/catalog.json",
-    publisher: { id: "test", name: "Generic Test Publisher" },
-    appId: "fake-browser-app",
-    displayName: "Generic Fake App",
-    author: "Sheaf Tests",
-    category: "Instrument",
-    buildId,
-    browser: {
-      abiVersion: 2,
-      uiProtocolVersion: 2,
-      runtimeConfigVersion: 1,
-      entry: `${packageRoot}/fake-browser-app.js`,
-      entryUrl: files[0].url,
-      files,
-    },
-  };
-}
 
 test.afterAll(async () => {
   if (!Object.values(fakeAcceptance).every(Boolean)) return;
@@ -65,200 +15,6 @@ test.afterAll(async () => {
   await writeFile(gateFile, "passed\n");
 });
 
-async function installRealFakeApp(page: Page): Promise<void> {
-  const application = await builtFakeCatalogApp();
-  await page.route("**/dist/src/main.js*", (route) => {
-    if (new URL(route.request().url()).search) return route.continue();
-    return route.fulfill({ status: 200, contentType: "application/javascript", body: "" });
-  });
-  await page.goto("http://127.0.0.1:4174/public/index.html");
-  await page.evaluate(async (application) => {
-    const controllerWizardMidi = (window as any).__controllerWizardMidi ??= {
-      access: { inputs: new Map(), outputs: new Map(), onstatechange: null },
-    };
-    const root = document.querySelector<HTMLElement>("#synth-root")!;
-    root.dataset.synthAuto = "false";
-    root.dataset.synthLauncher = "false";
-    const main = await (new Function("return import('/dist/src/main.js?task4-fake')")() as Promise<any>);
-    const worker = await (new Function("return import('/dist/src/worker.js?task4-fake')")() as Promise<any>);
-    const packageLoader = await (new Function("return import('/dist/src/package-loader.js?task4-fake')")() as Promise<any>);
-    const { decodeCommandBuffer } = await (new Function("return import('/dist/src/protocol.js')")() as Promise<any>);
-    const { materializePackage } = await (new Function("return import('/dist/src/package-loader.js')")() as Promise<any>);
-    const { ActivationLease } = await (new Function("return import('/dist/src/activation.js')")() as Promise<any>);
-    const observations = {
-      commands: [] as Array<Record<string, unknown> & { type: string; name?: string; value?: string }>,
-      responses: [] as Array<{ type: string; error?: string }>,
-      frames: [] as FrameObservation[],
-      terminated: false,
-    };
-    const resources = {
-      contexts: 0,
-      resumes: 0,
-      closes: 0,
-      midiRequests: 0,
-      runtimeClients: 0,
-      nodeConnects: 0,
-      nodeDisconnects: 0,
-      materializations: 0,
-      packageDisposals: 0,
-    };
-
-    const createObservedRuntimeClient = () => {
-      const statusHandlers = new Set<(response: any) => void>();
-      const runtime = new worker.BrowserRuntimeWorker(async (materialized: any) => {
-        const imported = await (new Function("url", "return import(url)")(materialized.entryUrl) as Promise<any>);
-        const factory = imported.default ?? imported.createSynthBrowserModule;
-        if (!factory) throw new Error("runtime module does not export an Emscripten factory");
-        const module = await factory({
-          locateFile(requestedPath: string) {
-            const normalized = packageLoader.normalizeMaterializedPath(
-              requestedPath,
-              `Emscripten requested path ${String(requestedPath)}`,
-            );
-            const url = materialized.locateFile[normalized];
-            if (typeof url !== "string" || url.length === 0)
-              throw new Error(`Emscripten requested unmapped package path ${requestedPath}; file was not materialized`);
-            return url;
-          },
-          mainScriptUrlOrBlob: materialized.mainScriptUrlOrBlob,
-        });
-        const idbfs = module.IDBFS ?? module.FS.filesystems?.IDBFS;
-        if (!idbfs) throw new Error("runtime module does not include IDBFS");
-        (window as any).__task4FakeRuntimeFs = module.FS;
-        return {
-          ...worker.emscriptenRuntimeFacade(module),
-          filesystem: {
-            filesystems: { IDBFS: idbfs },
-            mkdir: (path: string) => module.FS.mkdir(path),
-            mount: (type: unknown, options: object, path: string) => module.FS.mount(type, options, path),
-            syncfs: (populate: boolean, complete: (error?: Error) => void) => module.FS.syncfs(populate, complete),
-          },
-        };
-      }, undefined, (response: any) => statusHandlers.forEach((handler) => handler(response)));
-      let queue: Promise<void> = Promise.resolve();
-      const request = (command: any) => {
-        const run = () => runtime.handle(command);
-        const response = queue.then(run, run);
-        queue = response.then(() => {}, () => {});
-        return response;
-      };
-      return {
-        request,
-        startAudioWorklet: async (context?: AudioContext) => {
-          const response = await runtime.startAudioWorklet(context);
-          if (response.type === "ok") return { started: true };
-          return { started: false, diagnostic: response.type === "error" ? response.error : "audio-worklet-start-failed" };
-        },
-        onStatus: (handler: (response: any) => void) => { statusHandlers.add(handler); },
-        terminate: async () => { await request({ type: "destroy" }); },
-      };
-    };
-    const client = createObservedRuntimeClient();
-    const observingClient = {
-      ...client,
-      async request(command: { type: string; name?: string; value?: string }) {
-        observations.commands.push({ ...command });
-        const response = await client.request(command);
-        observations.responses.push({ type: response.type, error: response.type === "error" ? response.error : undefined });
-        if (response.type === "ui-frame") {
-          const frame = decodeCommandBuffer(Uint8Array.from(response.frame).buffer);
-          observations.frames.push({ nodes: frame.nodes });
-        }
-        return response;
-      },
-      onStatus: client.onStatus,
-      terminate: async () => {
-        observations.terminated = true;
-        await client.terminate?.();
-      },
-    };
-
-    const NativeAudioWorkletNode = globalThis.AudioWorkletNode;
-    Object.defineProperty(globalThis, "AudioWorkletNode", {
-      configurable: true,
-      value: new Proxy(NativeAudioWorkletNode, {
-        construct(target, argumentsList, newTarget) {
-          const node = Reflect.construct(target, argumentsList, newTarget) as AudioWorkletNode;
-          const instrumented = node as any;
-          const nativeConnect = instrumented.connect.bind(node);
-          const nativeDisconnect = instrumented.disconnect.bind(node);
-          instrumented.connect = (...args: unknown[]) => {
-            resources.nodeConnects += 1;
-            return nativeConnect(...args);
-          };
-          instrumented.disconnect = (...args: unknown[]) => {
-            resources.nodeDisconnects += 1;
-            return nativeDisconnect(...args);
-          };
-          return node;
-        },
-      }),
-    });
-    await main.installSheafPatchLauncher(root, {
-      client: { loadSources: async () => ({ apps: [application], diagnostics: [], duplicateDiagnostics: [] }) },
-      runtimeClientFactory: () => { resources.runtimeClients += 1; return observingClient; },
-      activationLeaseFactory: () => {
-        if (resources.contexts !== 0) throw new Error("second AudioContext");
-        const context = new AudioContext();
-        resources.contexts += 1;
-        const nativeResume = context.resume.bind(context);
-        const nativeClose = context.close.bind(context);
-        context.resume = async () => {
-          resources.resumes += 1;
-          await nativeResume();
-        };
-        context.close = async () => {
-          resources.closes += 1;
-          await nativeClose();
-        };
-        return ActivationLease.acquire({
-          audioContextFactory: () => context,
-          requestMIDIAccess: async () => {
-            resources.midiRequests += 1;
-            return controllerWizardMidi.access;
-          },
-        });
-      },
-      materializePackage: async (app: unknown) => {
-        resources.materializations += 1;
-        const packageLease = await materializePackage(app);
-        let disposed = false;
-        return {
-          ...packageLease,
-          dispose() {
-            if (disposed) return;
-            disposed = true;
-            resources.packageDisposals += 1;
-            packageLease.dispose();
-          },
-        };
-      },
-      frameIntervalMs: 60_000,
-    });
-    (window as any).__task4Fake = { observations, resources };
-  }, application);
-  await page.getByRole("button", { name: /launch generic fake app/i }).click();
-  await expect(page.locator('[data-synth-node-id="fake-browser-root"]')).toBeVisible();
-}
-
-async function stopRealFakeApp(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    const state = (window as any).__task4Fake;
-    if (!state) return;
-    dispatchEvent(new Event("pagehide"));
-    const deadline = performance.now() + 5_000;
-    while (performance.now() < deadline &&
-           (!state.observations.terminated || state.resources.closes !== 1 ||
-            state.resources.nodeDisconnects !== 1 || state.resources.packageDisposals !== 1)) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    if (!state.observations.terminated) throw new Error("SynthBrowserApp.stop() did not terminate the runtime client");
-    if (state.resources.closes !== 1 || state.resources.nodeDisconnects !== 1 || state.resources.packageDisposals !== 1)
-      throw new Error(`runtime resources were not released exactly once: ${JSON.stringify(state.resources)}`);
-    delete (window as any).__task4Fake;
-    delete (window as any).__task4FakeRuntimeFs;
-  });
-}
 
 test.afterEach(async ({ page }) => {
   await stopRealFakeApp(page);
@@ -312,10 +68,6 @@ const TWISTER_WIZARD_CHOICES = [
   "Clock",
   "Scene Select",
 ] as const;
-
-function synthNode(id: string): string {
-  return `[data-synth-node-id="${id}"]`;
-}
 
 // The wizard form owns its own node namespace; the Controllers page renames
 // only its root. These are the ids the MF Twister form actually publishes.
@@ -946,7 +698,12 @@ test("real fake-app WASM stages, validates, saves, and reopens Sync", async ({ p
   await ppqn.fill("96x");
   await expect(page.locator('[data-synth-node-id="runtime.sync.validation"]')).toContainText("1 to 960");
   await ppqn.fill("96");
-  await expect(page.locator('[data-synth-node-id="runtime.sync.validation"]')).toHaveText("");
+  // A cleared validation error removes the node rather than emptying it. The
+  // page used to emit the band unconditionally and only swap its text style,
+  // which left a full-width strip painting no glyphs -- sru-48's "no text
+  // conveys no information" criterion, fixed in task 6.2. Asserting absence is
+  // stronger than asserting emptiness: an empty band would fail this too.
+  await expect(page.locator('[data-synth-node-id="runtime.sync.validation"]')).toHaveCount(0);
   await expect(page.locator('[data-synth-node-id="runtime.sync.warning"]')).toContainText("nonstandard");
   await expect(page.locator('[data-synth-node-id="runtime.sync.bpm"]')).toContainText("Current BPM: 120.00");
   await expect(page.locator('[data-synth-node-id="runtime.sync.lock"]')).toContainText("Internal");

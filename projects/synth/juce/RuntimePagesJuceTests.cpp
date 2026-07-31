@@ -192,9 +192,38 @@ int main()
     ppqnEditor->onReturnKey();
     Require(syncSurface.StagedConfiguration().ppqn == 48,
             "JUCE Sync editor dispatches the portable PPQN action");
-    for (const char* statusId : {synth::runtime_ui::NodeIds::kSyncValidation,
-                                 synth::runtime_ui::NodeIds::kSyncWarning,
-                                 synth::runtime_ui::NodeIds::kSyncBpm,
+    // The two diagnostic lines are emitted only when they have something to
+    // say (sru-48, task 6.2), so they are checked in the states that produce
+    // them rather than in the always-on list below. Asserting presence AND
+    // absence pins the new contract in JUCE, not just the Label mapping.
+    // A standard PPQN first, so neither diagnostic has anything to say and the
+    // absence assertions below mean something.
+    syncSurface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kSyncPpqn, "24"));
+    syncRenderer.RefreshFromSurface();
+    Require(syncRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncValidation) == nullptr &&
+                syncRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncWarning) == nullptr,
+            "neither Sync diagnostic is emitted while a standard PPQN is staged");
+    syncSurface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kSyncPpqn, "96x"));
+    syncRenderer.RefreshFromSurface();
+    Require(dynamic_cast<juce::Label*>(
+                syncRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncValidation)) != nullptr,
+            "Sync validation renders as Label while the staged PPQN is invalid");
+    Require(syncRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncWarning) == nullptr,
+            "an unparseable entry leaves the staged value alone, so it raises no warning");
+    syncSurface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kSyncPpqn, "96"));
+    syncRenderer.RefreshFromSurface();
+    Require(dynamic_cast<juce::Label*>(
+                syncRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncWarning)) != nullptr,
+            "Sync warning renders as Label while the staged PPQN is nonstandard");
+    Require(syncRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSyncValidation) == nullptr,
+            "Sync validation is removed once the staged PPQN parses");
+    syncSurface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kSyncPpqn, "48"));
+    syncRenderer.RefreshFromSurface();
+    for (const char* statusId : {synth::runtime_ui::NodeIds::kSyncBpm,
                                  synth::runtime_ui::NodeIds::kSyncLock,
                                  synth::runtime_ui::NodeIds::kSyncSource,
                                  synth::runtime_ui::NodeIds::kSyncOutputLatency,

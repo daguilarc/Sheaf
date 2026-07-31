@@ -723,14 +723,24 @@ inline ui::NodeTree BuildSyncPageTree(const SyncPageSnapshot& snapshot, ui::Boun
     });
     builder.ScrollArea(
         NodeIds::kSyncStatus, PageControls::StatusStackLayout(Layout::kRowGap), [&](ui::Builder& status) {
-            status.StatusText(NodeIds::kSyncValidation,
-                              snapshot.validationText,
-                              snapshot.validationText.empty() ? PageControls::MutedText()
-                                                              : PageControls::DangerText());
-            status.StatusText(NodeIds::kSyncWarning,
-                              snapshot.warningText,
-                              snapshot.warningText.empty() ? PageControls::MutedText()
-                                                           : PageControls::DangerText());
+            // Same as the Audio device lines: a diagnostic with nothing to
+            // report is not emitted. Both already branched on `.empty()`, but
+            // only to pick a text style -- the node was still emitted, so a
+            // page with no validation error and no warning reserved two
+            // full-width bands that painted nothing. With the empty case gone
+            // the muted branch goes with it: these lines are only ever danger.
+            if (!snapshot.validationText.empty())
+            {
+                status.StatusText(NodeIds::kSyncValidation,
+                                  snapshot.validationText,
+                                  PageControls::DangerText());
+            }
+            if (!snapshot.warningText.empty())
+            {
+                status.StatusText(NodeIds::kSyncWarning,
+                                  snapshot.warningText,
+                                  PageControls::DangerText());
+            }
             status.StatusText(NodeIds::kSyncBpm,
                               FormatSyncBpm(snapshot.status.currentBpm),
                               PageControls::MutedText());
@@ -784,10 +794,22 @@ inline ui::NodeTree BuildAudioPageTree(const AudioPageSnapshot& snapshot, ui::Bo
     // of its own -- and the region around them now takes the page's slack.
     builder.ScrollArea(
         NodeIds::kAudioStatus, PageControls::StatusStackLayout(0.0f), [&](ui::Builder& status) {
-            status.Label(NodeIds::kAudioDeviceLine, snapshot.deviceLineText, PageControls::MutedText());
-            status.StatusText(NodeIds::kAudioStatusLine,
-                              snapshot.statusLineText,
-                              PageControls::MutedText());
+            // A line with nothing to say is not emitted at all. Both were
+            // unconditional, so before an audio device is negotiated the page
+            // reserved two full-width bands that painted no glyphs -- furniture
+            // the user cannot read, which is sru-48's "no text conveys no
+            // information" criterion. Absence is the honest rendering; the
+            // region below them absorbs the freed extent either way.
+            if (!snapshot.deviceLineText.empty())
+            {
+                status.Label(NodeIds::kAudioDeviceLine, snapshot.deviceLineText, PageControls::MutedText());
+            }
+            if (!snapshot.statusLineText.empty())
+            {
+                status.StatusText(NodeIds::kAudioStatusLine,
+                                  snapshot.statusLineText,
+                                  PageControls::MutedText());
+            }
         });
     return builder.Build(area);
 }

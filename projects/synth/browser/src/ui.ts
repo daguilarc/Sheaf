@@ -97,6 +97,12 @@ export class BrowserUiBackend {
     // with zero extent (sprs-6). The backend never flows or sizes it.
     element.style.width = `${node.bounds.width}px`;
     element.style.height = `${node.bounds.height}px`;
+    // The resolved width, published so a control's own chrome can be capped
+    // against it in the stylesheet rather than expanding the element past the
+    // extent the library resolved. This carries no appearance decision: the
+    // padding and border values stay in the stylesheet, and this is the number
+    // the line above already wrote.
+    element.style.setProperty("--synth-node-width", `${node.bounds.width}px`);
     // `box-sizing: border-box` floors a used size at border plus padding, so a
     // zero-extent `<button>` would still render 26x2 pixels of its own chrome,
     // and an unsized `<select>` child would spill out of a zero-extent box.

@@ -2,6 +2,8 @@
 #include "synth/PortableUIMetrics.hpp"
 #include "synth/PortableUIStandardLayout.hpp"
 
+#include "support/VisualCriteria.hpp"
+
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -1089,6 +1091,256 @@ void TestStandardLayoutRedistributesAtDifferentExtents()
             "the encoder region takes the remainder after the gap, as both apps did");
 }
 
+// ---------------------------------------------------------------------------
+// sru-48 named visual criteria: the checks themselves (task 6.1-6.3).
+//
+// `tests/support/VisualCriteria.hpp` is the headless half of the criteria, and
+// `portable_ui_tests.cpp` runs it over every real page and app. What it cannot
+// do there is prove a check would ever FAIL: every first-party surface is
+// expected to conform, so a predicate that returned an empty list
+// unconditionally would sit green over all of them. These tests are the
+// mutation evidence, in the suite rather than in a report: each one builds a
+// tree that violates exactly one criterion and requires the corresponding
+// check to name it, and requires the conforming twin to come back clean.
+// ---------------------------------------------------------------------------
+
+namespace criteria = synth::ui::criteria;
+
+// The stacked column every negative case below mutates: three 20-high labels in
+// a 200x200 container on the library's own 12 padding and 8 gap.
+synth::ui::NodeTree BuildConformingColumn()
+{
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 200.0f, 200.0f});
+    synth::ui::LayoutOptions column = StackLayout(synth::ui::Extent::Px(140.0f));
+    b.Column("column", column, [](synth::ui::Builder& b) {
+        b.Label("first", "first", MainOf(synth::ui::Extent::Px(20.0f)));
+        b.Label("second", "second", MainOf(synth::ui::Extent::Px(20.0f)));
+        b.Label("third", "third", MainOf(synth::ui::Extent::Px(20.0f)));
+    });
+    return b.Build({0.0f, 0.0f, 200.0f, 200.0f});
+}
+
+synth::ui::Node& MutableNode(synth::ui::NodeTree& tree, const char* id)
+{
+    for (synth::ui::Node& node : tree.nodes)
+    {
+        if (node.id == synth::ui::NodeId(id))
+        {
+            return node;
+        }
+    }
+    throw std::runtime_error(std::string("missing node: ") + id);
+}
+
+const std::vector<float>& LibrarySpacingValues()
+{
+    static const std::vector<float> values{0.0f,
+                                           synth::ui::kSpacing.gap,
+                                           synth::ui::kSpacing.padding,
+                                           synth::ui::kSpacing.labelGap};
+    return values;
+}
+
+void TestContainmentCheckCatchesAChildPushedOutOfItsParent()
+{
+    const synth::ui::NodeTree conforming = BuildConformingColumn();
+    Require(criteria::ContainmentViolations(conforming).empty(),
+            "a well-formed column has every child inside its parent");
+
+    synth::ui::NodeTree overflowing = conforming;
+    // One pixel past the column's bottom inside edge, which is the smallest
+    // difference the check is allowed to miss and does not.
+    synth::ui::Node& third = MutableNode(overflowing, "third");
+    third.bounds.y = FindNode(conforming, "column").bounds.height - third.bounds.height + 1.0f;
+    const std::vector<std::string> violations = criteria::ContainmentViolations(overflowing);
+    Require(violations.size() == 1, "a child pushed one pixel past its parent is one violation");
+    Require(Mentions(violations.front(), "third") && Mentions(violations.front(), "column"),
+            "the containment violation names both the child and the parent it left");
+
+    // The same child moved one pixel the other way is still inside, so the
+    // check is measuring the edge and not merely "the last child moved".
+    synth::ui::NodeTree contained = conforming;
+    MutableNode(contained, "third").bounds.y =
+        FindNode(conforming, "column").bounds.height - third.bounds.height - 1.0f;
+    Require(criteria::ContainmentViolations(contained).empty(),
+            "a child one pixel inside the parent edge is contained");
+}
+
+void TestContainmentUsesTheScrollContentRectangleNotTheViewport()
+{
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 200.0f, 200.0f});
+    b.ScrollArea("scroll", LayoutMain(synth::ui::Extent::Px(60.0f)), [](synth::ui::Builder& b) {
+        for (int ix = 0; ix < 6; ++ix)
+        {
+            b.Label("row." + std::to_string(ix), "row", MainOf(synth::ui::Extent::Px(30.0f)));
+        }
+    });
+    const synth::ui::NodeTree tree = b.Build({0.0f, 0.0f, 200.0f, 200.0f});
+    const synth::ui::Node& scroll = FindNode(tree, "scroll");
+    const synth::ui::Node& last = FindNode(tree, "row.5");
+    Require(last.bounds.y + last.bounds.height > scroll.bounds.height,
+            "the fixture really does put its tail below the visible viewport");
+    Require(criteria::ContainmentViolations(tree).empty(),
+            "a row below the viewport is contained by the scroll-content rectangle, not overflowing");
+
+    // ... and the content rectangle is a real bound, not an escape hatch: a row
+    // past the published content extent is still a violation.
+    synth::ui::NodeTree beyond = tree;
+    MutableNode(beyond, "row.5").bounds.y = scroll.scrollContentHeight + 1.0f;
+    Require(criteria::ContainmentViolations(beyond).size() == 1,
+            "a row past the published scroll-content extent overflows");
+}
+
+void TestOverlapCheckCatchesTwoSiblingsSharingSpace()
+{
+    const synth::ui::NodeTree conforming = BuildConformingColumn();
+    Require(criteria::SiblingOverlapViolations(conforming).empty(),
+            "stacked siblings separated by a gap do not intersect");
+
+    synth::ui::NodeTree overlapping = conforming;
+    MutableNode(overlapping, "second").bounds.y = FindNode(conforming, "first").bounds.y + 1.0f;
+    const std::vector<std::string> violations = criteria::SiblingOverlapViolations(overlapping);
+    Require(violations.size() == 1, "two siblings sharing space are one violation");
+    Require(Mentions(violations.front(), "first") && Mentions(violations.front(), "second"),
+            "the overlap violation names both siblings");
+
+    // Abutting is not overlapping: a zero gap between two stacked children is a
+    // layout choice the pages make, and reading it as an intersection would
+    // make the criterion unusable.
+    synth::ui::NodeTree abutting = conforming;
+    MutableNode(abutting, "second").bounds.y =
+        FindNode(conforming, "first").bounds.y + FindNode(conforming, "first").bounds.height;
+    Require(criteria::SiblingOverlapViolations(abutting).empty(),
+            "two children that abut exactly do not intersect");
+}
+
+void TestAnUnderlayIsPinnedToItsTargetRatherThanExemptedFromOverlap()
+{
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 200.0f, 200.0f});
+    b.Row("row", LayoutMain(synth::ui::Extent::Px(60.0f)), [](synth::ui::Builder& b) {
+        synth::ui::ControlStyle underlay;
+        underlay.layout.overlayOf = "cell.1";
+        b.Draw("cell.1.visualizer", [](synth::ui::Bounds) { return std::vector<synth::ui::DrawCommand>{}; },
+               underlay);
+        b.Draw("cell.0", LayoutMain(synth::ui::Extent::Weight(1.0f)),
+               [](synth::ui::Bounds) { return std::vector<synth::ui::DrawCommand>{}; });
+        b.Draw("cell.1", LayoutMain(synth::ui::Extent::Weight(1.0f)),
+               [](synth::ui::Bounds) { return std::vector<synth::ui::DrawCommand>{}; });
+    });
+    const synth::ui::NodeTree tree = b.Build({0.0f, 0.0f, 200.0f, 200.0f});
+    Require(criteria::SameRectangle(FindNode(tree, "cell.1.visualizer").bounds,
+                                    FindNode(tree, "cell.1").bounds),
+            "the fixture really is an sru-25 underlay resolved onto its encoder");
+    Require(criteria::SiblingOverlapViolations(tree).empty(),
+            "an underlay congruent with the one cell it names is not an overlap violation");
+    Require(criteria::UnderlayViolations(tree).empty(), "and it satisfies the underlay pin");
+
+    // The exemption is not a licence to sit anywhere: an underlay dragged onto
+    // its neighbour fails the underlay pin AND the overlap check, because it
+    // now intersects a sibling it does not name.
+    synth::ui::NodeTree drifted = tree;
+    MutableNode(drifted, "cell.1.visualizer").bounds = FindNode(tree, "cell.0").bounds;
+    Require(criteria::UnderlayViolations(drifted).size() == 1,
+            "an underlay that is not congruent with its target is named");
+    Require(criteria::SiblingOverlapViolations(drifted).size() == 1,
+            "and intersecting the wrong sibling is still an overlap violation");
+}
+
+void TestSpacingCheckCatchesAGapOutsideTheSharedMetrics()
+{
+    const synth::ui::NodeTree conforming = BuildConformingColumn();
+    const criteria::SpacingReport clean =
+        criteria::SpacingConformance(conforming, LibrarySpacingValues());
+    Require(clean.violations.empty(), "a column on the library gap conforms");
+    Require(clean.observed.count(synth::ui::kSpacing.gap) == 1,
+            "the conforming fixture really was measured, and its gap really is the shared one");
+
+    synth::ui::NodeTree drifted = conforming;
+    MutableNode(drifted, "third").bounds.y += 3.0f;
+    const criteria::SpacingReport report =
+        criteria::SpacingConformance(drifted, LibrarySpacingValues());
+    Require(report.violations.size() == 1, "one hand-inserted three-pixel gap is one violation");
+    Require(Mentions(report.violations.front(), "third") &&
+                Mentions(report.violations.front(), "11.00"),
+            "the spacing violation names the offending child and the measured gap");
+}
+
+void TestColumnAlignmentCheckCatchesAControlLeavingItsColumn()
+{
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 300.0f, 200.0f});
+    synth::ui::LayoutOptions grid;
+    grid.formGrid = true;
+    b.Column("form", grid, [](synth::ui::Builder& b) {
+        for (int ix = 0; ix < 3; ++ix)
+        {
+            synth::ui::ControlStyle style;
+            style.caption = ix == 1 ? "A much longer caption" : "Short";
+            b.Toggle("toggle." + std::to_string(ix), "", false,
+                     synth::ui::Action::Named("toggle"), style);
+        }
+    });
+    const synth::ui::NodeTree tree = b.Build({0.0f, 0.0f, 300.0f, 200.0f});
+    const criteria::ColumnReport clean = criteria::ColumnAlignment(tree, "form");
+    Require(clean.violations.empty(), "a form grid aligns its rows' columns");
+    Require(clean.comparedRows == 3 && clean.comparedColumns == 2,
+            "the alignment check really compared three rows across two columns");
+
+    synth::ui::NodeTree misaligned = tree;
+    MutableNode(misaligned, "toggle.2").bounds.x += 4.0f;
+    const criteria::ColumnReport report = criteria::ColumnAlignment(misaligned, "form");
+    Require(report.violations.size() == 1, "one control leaving its column is one violation");
+    Require(Mentions(report.violations.front(), "toggle.2") &&
+                Mentions(report.violations.front(), "toggle.0"),
+            "the alignment violation names the stray control and the column it left");
+}
+
+void TestCaptionCheckSeesThroughAnUnrenderedLabel()
+{
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 300.0f, 200.0f});
+    synth::ui::LayoutOptions grid;
+    grid.formGrid = true;
+    b.Column("form", grid, [](synth::ui::Builder& b) {
+        synth::ui::ControlStyle captioned;
+        captioned.caption = "Output device";
+        b.ComboBox("captioned", "", {{"a", "A"}}, "a", synth::ui::Action::Named("pick"), captioned);
+        // design.md OQ5: a combo box's own label renders nothing in either
+        // backend, so this control is unlabelled on screen however the string
+        // reads in the tree.
+        b.ComboBox("labelled_only", "", {{"a", "A"}}, "a", synth::ui::Action::Named("pick"), {});
+    });
+    synth::ui::NodeTree tree = b.Build({0.0f, 0.0f, 300.0f, 200.0f});
+    MutableNode(tree, "labelled_only").label = "Input device";
+
+    const std::vector<std::string> violations = criteria::UncaptionedFormControls(tree);
+    Require(violations.size() == 1, "the captioned combo passes and the label-only combo does not");
+    Require(Mentions(violations.front(), "labelled_only"),
+            "the caption violation names the control the user cannot identify");
+
+    // A toggle DOES render its own label, so a non-empty one identifies it.
+    synth::ui::Builder t;
+    t.Root("root", {0.0f, 0.0f, 300.0f, 200.0f});
+    t.Toggle("toggle", "Send clock", false, synth::ui::Action::Named("toggle"), {});
+    Require(criteria::UncaptionedFormControls(t.Build({0.0f, 0.0f, 300.0f, 200.0f})).empty(),
+            "a toggle rendering its own label needs no separate caption node");
+}
+
+void TestEmptyTextCheckCatchesAReservedBandThatSaysNothing()
+{
+    synth::ui::Builder b;
+    b.Root("root", {0.0f, 0.0f, 200.0f, 200.0f});
+    b.Label("speaks", "Current BPM: 120.00", MainOf(synth::ui::Extent::Px(20.0f)));
+    b.StatusText("silent", "", MainOf(synth::ui::Extent::Px(20.0f)));
+    const synth::ui::NodeTree tree = b.Build({0.0f, 0.0f, 200.0f, 200.0f});
+    const std::vector<std::string> violations = criteria::EmptyTextNodes(tree);
+    Require(violations.size() == 1, "a reserved band rendering no text is one violation");
+    Require(Mentions(violations.front(), "silent"), "the empty-text violation names the silent node");
+}
+
 }  // namespace
 
 int main()
@@ -1130,4 +1382,12 @@ int main()
     TestStandardLayoutProportionsMatchBothApps();
     TestEmptyWidgetBayCollapses();
     TestStandardLayoutRedistributesAtDifferentExtents();
+    TestContainmentCheckCatchesAChildPushedOutOfItsParent();
+    TestContainmentUsesTheScrollContentRectangleNotTheViewport();
+    TestOverlapCheckCatchesTwoSiblingsSharingSpace();
+    TestAnUnderlayIsPinnedToItsTargetRatherThanExemptedFromOverlap();
+    TestSpacingCheckCatchesAGapOutsideTheSharedMetrics();
+    TestColumnAlignmentCheckCatchesAControlLeavingItsColumn();
+    TestCaptionCheckSeesThroughAnUnrenderedLabel();
+    TestEmptyTextCheckCatchesAReservedBandThatSaysNothing();
 }

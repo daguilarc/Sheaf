@@ -69,7 +69,15 @@ body {
 }
 
 #synth-root button {
-  padding: 0 12px;
+  /* Under `box-sizing: border-box` the used width is floored at border plus
+     padding, so a flat `0 12px` made every button at least 26px wide however
+     narrow an extent the library resolved for it -- the 24px Controllers
+     disclosure rendered 26px and ate 2px of the row's 4px gap. The floor is
+     capped against the node's own resolved width, which `ui.ts` publishes as
+     `--synth-node-width`, so the chrome shrinks to fit rather than the element
+     growing. Both chrome constants stay here; the backend contributes only the
+     extent it was already given. */
+  padding: 0 max(0px, min(12px, calc((var(--synth-node-width, 9999px) - 2px) / 2)));
   cursor: pointer;
 }
 

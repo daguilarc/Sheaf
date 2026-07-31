@@ -11,6 +11,7 @@
 #include "synth/StandardModulators.hpp"
 
 #include "support/SourceScan.hpp"
+#include "support/VisualCriteria.hpp"
 
 #include <algorithm>
 #include <array>
@@ -32,6 +33,8 @@
 #include "../apps/braid-4/Braid4UI.hpp"
 #include "../apps/braid-4/Braid4UiModel.hpp"
 #include "../apps/miniapp/MiniAppDraw.hpp"
+#include "../apps/miniapp/MiniAppUI.hpp"
+#include "../apps/miniapp/MiniAppUiModel.hpp"
 
 #ifdef JUCE_MAJOR_VERSION
 #error "portable UI tests must not see JUCE"
@@ -1872,6 +1875,640 @@ static void TestControllersWizardAndBraid4ResolveAtTheSmallestDeclaredSurface()
                 "Braid 4 really was resolved against the 480-high surface, not its own default");
 }
 
+// ---------------------------------------------------------------------------
+// sru-48 named visual criteria over every real surface (tasks 6.1-6.3), and
+// task 6.2a's absorbing-region pins for the three surfaces that had only
+// "it resolved".
+//
+// The fixture state below is task 1.4's, named once and used by both halves of
+// the criteria suite. Lengths are chosen to exercise the scrolling path rather
+// than the three-item happy case, because tasks 5.6 and 5.9 both showed list
+// length changing layout materially.
+// ---------------------------------------------------------------------------
+
+namespace criteria = synth::ui::criteria;
+
+// 12 controllers put 598 of scroll content behind a 404 viewport at the 480
+// floor; 3 would fit and prove nothing about scrolling.
+constexpr std::size_t kFixtureControllerCount = 12;
+// Two candidates open the CHOOSER; one opens the form directly.
+constexpr std::size_t kFixtureCandidateCount = 2;
+// Long enough to exceed the File panel's list viewport at either surface.
+constexpr std::size_t kFixtureListEntryCount = 24;
+
+// Spacing vocabularies, built from the CONSTANTS each producer declares rather
+// than from a measured run, so editing a constant moves the allowed value with
+// it while a number chosen at a call site still fails. They are deliberately
+// per-producer and not one union: a config-page gap appearing inside an app is
+// a defect the union would bless.
+std::vector<float> SharedSpacing(std::vector<float> producerValues)
+{
+    // Zero is a deliberate "no spacing" and is not a magic number.
+    std::vector<float> values{0.0f,
+                              synth::ui::kSpacing.gap,
+                              synth::ui::kSpacing.padding,
+                              synth::ui::kSpacing.labelGap};
+    values.insert(values.end(), producerValues.begin(), producerValues.end());
+    return values;
+}
+
+const std::vector<float>& ConfigPageSpacing()
+{
+    static const std::vector<float> values = SharedSpacing({synth::runtime_ui::Layout::kPageMargin,
+                                                            synth::runtime_ui::Layout::kRowGap,
+                                                            synth::runtime_ui::Layout::kFilePanelPadding});
+    return values;
+}
+
+const std::vector<float>& ControllersSpacing()
+{
+    static const std::vector<float> values =
+        SharedSpacing({synth::runtime_ui::ControllersLayout::kPageMargin,
+                       synth::runtime_ui::ControllersLayout::kRowGap,
+                       synth::runtime_ui::ControllersLayout::kEndpointBoxGap,
+                       synth::runtime_ui::ControllersLayout::kAvailableControlGap,
+                       synth::runtime_ui::ControllersLayout::kLifecycleControlGap});
+    return values;
+}
+
+const std::vector<float>& StandardAppSpacing()
+{
+    static const std::vector<float> values =
+        SharedSpacing({synth::ui::kStandardApp.margin,
+                       synth::ui::kStandardApp.gap,
+                       synth_braid4::Braid4EncoderGridLayout::kGap,
+                       synth_braid4::Braid4ScopeGridLayout::kGap});
+    return values;
+}
+
+// The wizard form's own spacing table, `TwisterFormLayout`, is private to
+// `src/ControllerWizard.cpp` and cannot be named from a test. Its values are
+// restated here rather than reached, which is weaker than every other entry in
+// this file -- and it is the one table task 7.1 already commits to deleting as
+// producer-side layout arithmetic sru-53 bans. The outer wizard page furniture
+// is the Controllers page's, so those constants ARE named.
+const std::vector<float>& WizardFormSpacing()
+{
+    static const std::vector<float> values =
+        SharedSpacing({synth::runtime_ui::ControllersLayout::kPageMargin,
+                       synth::runtime_ui::ControllersLayout::kRowGap,
+                       8.0f,     // TwisterFormLayout::kMargin / kFieldGap / kFormGridLabelGap
+                       16.0f});  // TwisterFormLayout::kColumnGap
+    return values;
+}
+
+// A surface under test, with the exemptions it needs stated one by one. Every
+// entry in an exemption list is a disclosed residual, not a class of escape:
+// adding a node to one is a deliberate edit a reviewer can see.
+struct CriteriaSurface {
+    std::string name;
+    synth::ui::NodeTree tree;
+    const std::vector<float>* spacing = nullptr;
+    // Nodes the producer positions out of flow. They consume no stacking space,
+    // so a gap measured against them is meaningless.
+    std::set<std::string> outOfFlow;
+    // Nodes whose rectangle is deliberately allowed to leave its parent or to
+    // intersect a sibling.
+    std::set<std::string> containmentExempt;
+    std::set<std::string> overlapExempt;
+    // Form controls with no rendered caption today. Each one is a Task 17
+    // appearance question, recorded in tasks.md under 6.5b.
+    std::set<std::string> uncaptioned;
+    // Containers declaring `formGrid`, with the row and column counts the named
+    // fixture puts in them. Stated rather than discovered: an alignment check
+    // that compares whatever it happens to find passes on an empty grid, which
+    // is exactly how this criterion goes quiet.
+    struct FormGrid {
+        std::string containerId;
+        std::size_t rows = 0;
+        std::size_t columns = 0;
+    };
+    std::vector<FormGrid> formGrids;
+};
+
+void RequireSurfaceMeetsTheNamedCriteria(const CriteriaSurface& surface)
+{
+    const std::string prefix = surface.name + ": ";
+    const std::vector<std::string> containment =
+        criteria::ContainmentViolations(surface.tree, surface.containmentExempt);
+    Require(containment.empty(), (prefix + criteria::Join(containment)).c_str());
+
+    std::set<std::string> overlapExempt = surface.overlapExempt;
+    overlapExempt.insert(surface.outOfFlow.begin(), surface.outOfFlow.end());
+    const std::vector<std::string> overlaps =
+        criteria::SiblingOverlapViolations(surface.tree, overlapExempt);
+    Require(overlaps.empty(), (prefix + criteria::Join(overlaps)).c_str());
+
+    const std::vector<std::string> underlays = criteria::UnderlayViolations(surface.tree);
+    Require(underlays.empty(), (prefix + criteria::Join(underlays)).c_str());
+
+    const criteria::SpacingReport spacing =
+        criteria::SpacingConformance(surface.tree, *surface.spacing, surface.outOfFlow);
+    Require(spacing.violations.empty(), (prefix + criteria::Join(spacing.violations)).c_str());
+    Require(!spacing.observed.empty(),
+            (prefix + "the spacing check found no gap or padding to measure").c_str());
+
+    const std::vector<std::string> uncaptioned =
+        criteria::UncaptionedFormControls(surface.tree, surface.uncaptioned);
+    Require(uncaptioned.empty(), (prefix + criteria::Join(uncaptioned)).c_str());
+
+    const std::vector<std::string> silent = criteria::EmptyTextNodes(surface.tree);
+    Require(silent.empty(), (prefix + criteria::Join(silent)).c_str());
+
+    // "Like-type controls share column positions" is the first named criterion,
+    // and the Playwright half can only evaluate it on Sync: the Audio form's
+    // second row is the input selector, which the shell emits only when the
+    // host offers an input device. Here the fixture decides, so both config
+    // pages are checked at every surface extent -- and the declared row and
+    // column counts make a silently empty comparison a failure rather than a
+    // pass.
+    for (const CriteriaSurface::FormGrid& grid : surface.formGrids)
+    {
+        const criteria::ColumnReport report = criteria::ColumnAlignment(surface.tree, grid.containerId);
+        Require(report.violations.empty(), (prefix + criteria::Join(report.violations)).c_str());
+        Require(report.comparedRows == grid.rows,
+                (prefix + grid.containerId + " compared " + std::to_string(report.comparedRows) +
+                 " rows, not the " + std::to_string(grid.rows) + " the fixture declares")
+                    .c_str());
+        Require(report.comparedColumns == grid.columns,
+                (prefix + grid.containerId + " compared " + std::to_string(report.comparedColumns) +
+                 " columns, not the " + std::to_string(grid.columns) + " the fixture declares")
+                    .c_str());
+    }
+}
+
+synth::runtime_ui::SyncPageSnapshot FixtureSyncState()
+{
+    synth::runtime_ui::SyncPageSnapshot snapshot;
+    snapshot.validationText = "PPQN must be in the range 1 to 960";
+    snapshot.warningText = "96 PPQN is nonstandard";
+    return snapshot;
+}
+
+synth::runtime_ui::AudioPageSnapshot FixtureAudioState()
+{
+    synth::runtime_ui::AudioPageSnapshot snapshot;
+    snapshot.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Output"});
+    snapshot.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Microphone"});
+    snapshot.selectedOutputId = "Built-in Output";
+    snapshot.selectedInputId = "Built-in Microphone";
+    snapshot.showInputCombo = true;
+    snapshot.deviceLineText = "Built-in Output: 48000 Hz, 512 frames";
+    snapshot.statusLineText = "Audio running";
+    return snapshot;
+}
+
+synth::WizardCandidate FixtureCandidate(const char* suffix)
+{
+    return synth::WizardCandidate{
+        .wizardId = "com.sheaf.midi-fighter-twister",
+        .displayName = "MIDI Fighter Twister",
+        .kind = synth::MidiProfileKind::MfTwister,
+        .input = {std::string("twister-in") + suffix, "Midi Fighter Twister"},
+        .output = {std::string("twister-out") + suffix, "Midi Fighter Twister"}};
+}
+
+struct ControllersFixture {
+    synth::MidiInstrumentConfig instrument;
+    synth::MidiConnectionState connection;
+    std::unique_ptr<synth::runtime_ui::ControllersPageSurface> surface;
+
+    explicit ControllersFixture(synth::ui::Bounds area, std::size_t controllers)
+    {
+        for (std::size_t ix = 0; ix < controllers; ++ix)
+        {
+            synth::MidiControllerSlot slot;
+            slot.name = "controller-" + std::to_string(ix);
+            slot.kind = synth::MidiProfileKind::WrldBldr;
+            slot.config = synth::WrldBldrDefaultProfileConfig();
+            Require(instrument.AddController(std::move(slot)), "fixture adds its controllers");
+            connection.controllers.push_back({});
+        }
+        synth::runtime_ui::ControllersPageCallbacks callbacks;
+        callbacks.instrumentSnapshot = [this] { return instrument; };
+        callbacks.connectionState = [this] { return connection; };
+        surface =
+            std::make_unique<synth::runtime_ui::ControllersPageSurface>(std::move(callbacks));
+        surface->SetContentBounds(area);
+        surface->MarkDirty();
+        surface->RefreshOnTick();
+    }
+};
+
+std::set<std::string> ControllerStatusDotIds(std::size_t controllers)
+{
+    // Each row's status dots are an explicitly bounded Draw the producer
+    // hand-centres inside its cell (`(kControllerHeaderHeight - 8) / 2`), so it
+    // is out of flow and contributes no stacking gap. The arithmetic itself is
+    // the sru-47/sru-53 residual recorded in tasks.md under 6.5b: the library
+    // has no cross-axis alignment for a producer to declare instead.
+    std::set<std::string> ids;
+    for (std::size_t ix = 0; ix < controllers; ++ix)
+    {
+        ids.insert(synth::runtime_ui::NodeIds::ControllerStatusDots(ix));
+    }
+    return ids;
+}
+
+std::set<std::string> ControllerUncaptionedIds(std::size_t controllers)
+{
+    // Endpoint selectors and the rename field are table CELLS, identified by
+    // their column rather than by a caption -- except the Controllers list has
+    // no column headings, so today they are identified by nothing a backend
+    // renders (design.md OQ5 retired `ComboBox::label`, and `TextField::label`
+    // was never rendered either). Recorded for Task 17 in tasks.md under 6.5b.
+    std::set<std::string> ids{synth::runtime_ui::NodeIds::kAddName,
+                              synth::runtime_ui::NodeIds::kAddKind};
+    for (std::size_t ix = 0; ix < controllers; ++ix)
+    {
+        ids.insert(synth::runtime_ui::NodeIds::ControllerInput(ix));
+        ids.insert(synth::runtime_ui::NodeIds::ControllerOutput(ix));
+        ids.insert(synth::runtime_ui::NodeIds::ControllerRenameDraft(ix));
+    }
+    return ids;
+}
+
+std::set<std::string> WizardFormUncaptionedIds()
+{
+    std::set<std::string> ids{"controller-wizard.twister.encoder-slot"};
+    for (int ix = 0; ix < 6; ++ix)
+    {
+        ids.insert("controller-wizard.twister.button." + std::to_string(ix) + ".message");
+        ids.insert("controller-wizard.twister.button." + std::to_string(ix) + ".argument");
+    }
+    return ids;
+}
+
+// Braid 4 needs a live core, parameter manager and UI state before its surface
+// resolves, and the surface holds pointers into all three, so they are held
+// together and destroyed in one place.
+struct Braid4Fixture {
+    synth::ParameterManager manager;
+    synth::MessageInBus uiBus{&manager};
+    synth::MidiInstrumentConfig instrument;
+    synth::RuntimeConfig config = synth_braid4::Braid4Core::Config();
+    synth::AppContext context;
+    synth_braid4::Braid4Core core;
+    std::unique_ptr<synth::ParameterManager::UIState> uiState;
+    synth_braid4::Braid4UiSurface surface;
+
+    Braid4Fixture(float width, float height)
+    {
+        config.uiWidth = static_cast<int>(width);
+        config.uiHeight = static_cast<int>(height);
+        context.parameterManager = &manager;
+        context.uiBus = &uiBus;
+        context.instrument = &instrument;
+        context.config = &config;
+        core.Init(&context);
+        core.PrepareToPlay(48000.0, 64);
+        uiState = manager.CreateUIState();
+        context.uiState = uiState.get();
+        manager.PopulateUIState(*uiState);
+        surface.Attach(&context, &core);
+    }
+};
+
+// A visible visualizer, so the criteria set contains at least one tree that
+// actually CARRIES an sru-25 underlay. Without one, `UnderlayViolations` would
+// return empty over every first-party surface for the uninteresting reason
+// that no surface has an underlay, and the overlap criterion's only exception
+// would be untested against real producer output.
+struct CriteriaVisualizer final : synth::ui::Visualizer {
+    std::vector<synth::ui::DrawCommand> DrawVisible() const override
+    {
+        const synth::ui::Bounds bounds = GetBounds();
+        return {synth::ui::DrawCommand::Fill({0.0f, 0.0f, bounds.width, bounds.height},
+                                             synth::Color::Cyan)};
+    }
+};
+
+// Mini App is the plan's second rebuilt app and shares Braid 4's standard
+// layout, so it gets the same criteria treatment rather than being covered by
+// implication. It is built with a live UI state and one visible modulation
+// visualizer on encoder 0, which is the state that emits the underlay.
+struct MiniAppFixture {
+    synth::ParameterManager manager;
+    synth::MessageInBus uiBus{&manager};
+    synth::MidiInstrumentConfig instrument;
+    synth::GridManager gridManager;
+    synth::RuntimeConfig config = synth_miniapp::MiniAppCore::Config();
+    synth::AppContext context;
+    synth_miniapp::MiniAppCore core;
+    std::unique_ptr<synth::ParameterManager::UIState> uiState;
+    CriteriaVisualizer visualizer;
+    synth_miniapp::MiniAppUiSurface surface;
+
+    MiniAppFixture(float width, float height)
+    {
+        config.uiWidth = static_cast<int>(width);
+        config.uiHeight = static_cast<int>(height);
+        context.parameterManager = &manager;
+        context.uiBus = &uiBus;
+        context.instrument = &instrument;
+        context.config = &config;
+        context.gridManager = &gridManager;
+        core.Init(&context);
+        core.PrepareToPlay(48000.0, 64);
+        uiState = manager.CreateUIState();
+        context.uiState = uiState.get();
+        manager.PopulateUIState(*uiState);
+        Require(uiState->slotCapacity > 0 && uiState->slots[0].cellCapacity > 0,
+                "the Mini App fixture really has an encoder cell to hang a visualizer on");
+        uiState->slots[0].cells[0].visualizer.store(&visualizer, std::memory_order_relaxed);
+        surface.Attach(&context, &core);
+    }
+};
+
+std::vector<CriteriaSurface> BuildFixtureSurfaces(synth::ui::Bounds area)
+{
+    std::vector<CriteriaSurface> surfaces;
+
+    // Sync: four toggles and the PPQN field, each a caption cell and a control
+    // cell. Audio: the output selector plus the input selector the named
+    // fixture turns on, same two columns.
+    surfaces.push_back({.name = "Sync",
+                        .tree = synth::runtime_ui::BuildSyncPageTree(FixtureSyncState(), area),
+                        .spacing = &ConfigPageSpacing(),
+                        .formGrids = {{synth::runtime_ui::NodeIds::kSyncForm, 5, 2}}});
+    surfaces.push_back({.name = "Audio",
+                        .tree = synth::runtime_ui::BuildAudioPageTree(FixtureAudioState(), area),
+                        .spacing = &ConfigPageSpacing(),
+                        .formGrids = {{synth::runtime_ui::NodeIds::kAudioForm, 2, 2}}});
+    surfaces.push_back({.name = "File (browser, 24 entries)",
+                        .tree = synth::runtime_ui::BuildFilePageTree(
+                            LongBrowserState(kFixtureListEntryCount), area),
+                        .spacing = &ConfigPageSpacing()});
+    surfaces.push_back({.name = "File (24 saved versions)",
+                        .tree = synth::runtime_ui::BuildFilePageTree(
+                            LongVersionsState(kFixtureListEntryCount), area),
+                        .spacing = &ConfigPageSpacing()});
+    surfaces.push_back({.name = "File (idle)",
+                        .tree = synth::runtime_ui::BuildFilePageTree({}, area),
+                        .spacing = &ConfigPageSpacing()});
+    return surfaces;
+}
+
+static void TestNamedVisualCriteriaHoldOnEveryPageAndApp()
+{
+    // Evaluated at EVERY surface a first-party app declares, not at one
+    // comfortable extent: 640x480 is FakeBrowserApp's, 640x560 pairs the
+    // narrow width with the tall height, and 900x560 is what Braid 4 and Mini
+    // App declare, which is the extent the config pages actually get inside
+    // those two apps. A containment or alignment claim checked at one extent is
+    // how a 3.18px Sync overflow survived a green test.
+    for (const synth::ui::Bounds area :
+         {kSmallestDeclaredSurface, kTallerSurface, synth::ui::Bounds{0.0f, 0.0f, 900.0f, 560.0f}})
+    {
+        for (const CriteriaSurface& surface : BuildFixtureSurfaces(area))
+        {
+            RequireSurfaceMeetsTheNamedCriteria(surface);
+        }
+
+        ControllersFixture controllers(area, kFixtureControllerCount);
+        std::vector<synth::WizardCandidate> candidates;
+        for (std::size_t ix = 0; ix < kFixtureCandidateCount; ++ix)
+        {
+            candidates.push_back(FixtureCandidate(("-" + std::to_string(ix)).c_str()));
+        }
+        controllers.surface->SetDiscovery({.available = candidates});
+        RequireSurfaceMeetsTheNamedCriteria(
+            {.name = "Controllers (12 controllers, 2 available)",
+             .tree = controllers.surface->BuildTree(),
+             .spacing = &ControllersSpacing(),
+             .outOfFlow = ControllerStatusDotIds(kFixtureControllerCount),
+             .uncaptioned = ControllerUncaptionedIds(kFixtureControllerCount)});
+
+        controllers.surface->DispatchAction(
+            synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
+        const synth::ui::NodeTree chooser = controllers.surface->BuildTree();
+        for (const synth::WizardCandidate& candidate : candidates)
+        {
+            Require(FindNodeById(chooser,
+                                 synth::runtime_ui::NodeIds::WizardChooserCandidate(candidate)) != nullptr,
+                    "the chooser really is the surface under test, with every candidate on it");
+        }
+        RequireSurfaceMeetsTheNamedCriteria(
+            {.name = "wizard chooser (2 candidates)",
+             .tree = chooser,
+             .spacing = &ControllersSpacing()});
+
+        controllers.surface->DispatchAction(synth::ui::Action::WithValue(
+            synth::runtime_ui::Actions::kWizardChoose,
+            synth::runtime_ui::NodeIds::WizardCandidateToken(candidates.front())));
+        const synth::ui::NodeTree wizardForm = controllers.surface->BuildTree();
+        Require(FindNodeById(wizardForm, synth::runtime_ui::NodeIds::kWizardForm) != nullptr,
+                "the wizard form really is the surface under test");
+        RequireSurfaceMeetsTheNamedCriteria(
+            {.name = "wizard form",
+             .tree = wizardForm,
+             .spacing = &WizardFormSpacing(),
+             // DISCLOSED DEFECT, not a preference: `TwisterFormLayout` sizes the
+             // form body at 8 + 316 + 16 + 316 + 8 = 664, so on any surface
+             // narrower than that -- including the 640 FakeBrowserApp declares
+             // and every sru-54 test uses -- the second column's argument fields
+             // are clipped by 24px. Recorded in tasks.md under 6.2a; task 7.1
+             // already owns removing that arithmetic.
+             .containmentExempt = {"controller-wizard.twister.body"},
+             .uncaptioned = WizardFormUncaptionedIds()});
+    }
+
+    // Braid 4 at the floor every surface must survive, and at the extent it
+    // declares for itself.
+    for (const synth::ui::Bounds area :
+         {kSmallestDeclaredSurface, synth::ui::Bounds{0.0f, 0.0f, 900.0f, 560.0f}})
+    {
+        Braid4Fixture braid(area.width, area.height);
+        RequireSurfaceMeetsTheNamedCriteria(
+            {.name = "Braid 4",
+             .tree = braid.surface.BuildTree(),
+             .spacing = &StandardAppSpacing(),
+             // The full-surface background painter is an explicitly bounded
+             // out-of-flow Draw covering the whole root.
+             .outOfFlow = {synth_braid4::Braid4NodeIds::kBackground},
+             // The scene-blend slider renders no label of its own in either
+             // backend. Recorded for Task 17 in tasks.md under 6.5b.
+             .uncaptioned = {"braid4.scene.blend"}});
+
+        // Mini App on the same standard layout, with a live sru-25 underlay on
+        // encoder 0. Its `.visualizer` node is NOT exempted from the overlap
+        // check: `UnderlayViolations` pins it congruent with the encoder it
+        // names, and the overlap check still fails it against any other
+        // sibling. That is the whole exception, on real producer output.
+        MiniAppFixture mini(area.width, area.height);
+        const synth::ui::NodeTree miniTree = mini.surface.BuildTree();
+        const std::string underlayId = synth_miniapp::MiniAppNodeIds::Encoder(0) + ".visualizer";
+        Require(FindNodeById(miniTree, underlayId) != nullptr,
+                "the Mini App fixture really does emit the sru-25 underlay the exception is for");
+        RequireSurfaceMeetsTheNamedCriteria(
+            {.name = "Mini App (encoder 0 modulated)",
+             .tree = miniTree,
+             .spacing = &StandardAppSpacing(),
+             // Both Mini App sliders carry their name in `Node::label`, which
+             // no backend renders for a `Slider` — the same residual as Braid
+             // 4's scene blend, one control wider. tasks.md 6.5b.
+             .uncaptioned = {synth_miniapp::MiniAppNodeIds::kSceneBlend,
+                             synth_miniapp::MiniAppNodeIds::kGestureValue}});
+    }
+}
+
+// Task 6.2a. `TestEveryPageAndAppResolvesAtTheSmallestDeclaredSurface` and its
+// wizard/Braid 4 twin prove these three surfaces RESOLVE at the 480 floor and,
+// for the Controllers page, the chooser and Braid 4, nothing more: deleting
+// sru-54's overflow gate entirely would leave all three green, because only
+// Sync, Audio, the File page and the wizard column carry positive geometry
+// pins. What follows is the treatment the others already have -- what each
+// surface's absorbing region actually DOES with the difference between two
+// surface heights, and what the furniture around it keeps.
+static void TestControllersChooserAndBraid4PinTheirAbsorbingRegions()
+{
+    // --- Controllers: a ScrollArea absorbs, and the list stays scrollable. ---
+    ControllersFixture shortControllers(kSmallestDeclaredSurface, kFixtureControllerCount);
+    ControllersFixture tallControllers(kTallerSurface, kFixtureControllerCount);
+    const synth::ui::NodeTree controllersAtFloor = shortControllers.surface->BuildTree();
+    const synth::ui::NodeTree controllersTall = tallControllers.surface->BuildTree();
+    RequireRegionAbsorbsTheDifference(controllersAtFloor,
+                                      controllersTall,
+                                      synth::runtime_ui::NodeIds::kScroll,
+                                      {std::string(synth::runtime_ui::NodeIds::kRoot) + ".actions",
+                                       synth::runtime_ui::NodeIds::kStatus,
+                                       synth::runtime_ui::NodeIds::ControllerRow(0),
+                                       synth::runtime_ui::NodeIds::ControllerRow(
+                                           kFixtureControllerCount - 1)},
+                                      "the Controllers scroll area absorbs the whole difference "
+                                      "between surface heights");
+
+    const synth::ui::Node& scroll = FindNode(controllersAtFloor, synth::runtime_ui::NodeIds::kScroll);
+    const synth::ui::Node& addRow = FindNode(controllersAtFloor, synth::runtime_ui::NodeIds::kAddRow);
+    // Absorbing is only half the claim. The other half is that the rows kept
+    // their own extent instead of being squeezed to fit, and that the tail the
+    // viewport cannot show is inside the content extent the resolver published
+    // -- which is exactly what both backends size their scroll surface to.
+    for (std::size_t ix = 0; ix < kFixtureControllerCount; ++ix)
+    {
+        RequireNear(FindNode(controllersAtFloor,
+                             synth::runtime_ui::NodeIds::ControllerRow(ix).c_str()).bounds.height,
+                    synth::runtime_ui::ControllersLayout::kControllerHeaderHeight,
+                    0.01f,
+                    "every controller row keeps its declared height however long the list is");
+    }
+    Require(addRow.bounds.y + addRow.bounds.height > scroll.bounds.height,
+            "the 12-controller fixture really does put its tail below the visible viewport");
+    RequireNear(scroll.scrollContentHeight,
+                addRow.bounds.y + addRow.bounds.height,
+                0.01f,
+                "the published scroll content ends exactly at the last row, so the tail is reachable "
+                "and no dead space follows it");
+    RequireNear(FindNode(controllersTall, synth::runtime_ui::NodeIds::kScroll).scrollContentHeight,
+                scroll.scrollContentHeight,
+                0.01f,
+                "the content extent follows the list, not the surface: a taller window scrolls less, "
+                "it does not grow the list");
+
+    // --- The wizard chooser: its body absorbs, its candidates keep their rows. ---
+    ControllersFixture shortChooser(kSmallestDeclaredSurface, 0);
+    ControllersFixture tallChooser(kTallerSurface, 0);
+    std::vector<synth::WizardCandidate> candidates;
+    for (std::size_t ix = 0; ix < kFixtureCandidateCount; ++ix)
+    {
+        candidates.push_back(FixtureCandidate(("-" + std::to_string(ix)).c_str()));
+    }
+    for (ControllersFixture* fixture : {&shortChooser, &tallChooser})
+    {
+        fixture->surface->SetDiscovery({.available = candidates});
+        fixture->surface->DispatchAction(
+            synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
+    }
+    const std::string chooserBody = std::string(synth::runtime_ui::NodeIds::kWizardChooser) + ".body";
+    const synth::ui::NodeTree chooserAtFloor = shortChooser.surface->BuildTree();
+    RequireRegionAbsorbsTheDifference(
+        chooserAtFloor,
+        tallChooser.surface->BuildTree(),
+        chooserBody,
+        {std::string(synth::runtime_ui::NodeIds::kWizardChooser) + ".actions",
+         std::string(synth::runtime_ui::NodeIds::kWizardChooser) + ".heading",
+         synth::runtime_ui::NodeIds::WizardChooserCandidate(candidates.front()),
+         synth::runtime_ui::NodeIds::WizardChooserCandidate(candidates.back())},
+        "the wizard chooser's body absorbs the whole difference between surface heights");
+
+    const synth::ui::Node& firstCandidate =
+        FindNode(chooserAtFloor,
+                 synth::runtime_ui::NodeIds::WizardChooserCandidate(candidates.front()).c_str());
+    const synth::ui::Node& lastCandidate =
+        FindNode(chooserAtFloor,
+                 synth::runtime_ui::NodeIds::WizardChooserCandidate(candidates.back()).c_str());
+    const synth::ui::Node& chooserHeading =
+        FindNode(chooserAtFloor,
+                 (std::string(synth::runtime_ui::NodeIds::kWizardChooser) + ".heading").c_str());
+    RequireNear(firstCandidate.bounds.height,
+                synth::runtime_ui::ControllersLayout::kBackRowHeight,
+                0.01f,
+                "a chooser candidate keeps a full row's height rather than an intrinsic sliver");
+    RequireNear(firstCandidate.bounds.y - (chooserHeading.bounds.y + chooserHeading.bounds.height),
+                synth::runtime_ui::ControllersLayout::kRowGap,
+                0.01f,
+                "the first candidate follows the heading by the chooser's own row gap");
+    RequireNear(lastCandidate.bounds.y,
+                firstCandidate.bounds.y +
+                    static_cast<float>(kFixtureCandidateCount - 1) *
+                        (synth::runtime_ui::ControllersLayout::kBackRowHeight +
+                         synth::runtime_ui::ControllersLayout::kRowGap),
+                0.01f,
+                "candidates stack one declared row and one row gap apart, in discovery order");
+    Require(lastCandidate.bounds.y + lastCandidate.bounds.height <=
+                FindNode(chooserAtFloor, chooserBody).bounds.height,
+            "every candidate of the named fixture is inside the body at the 480 floor");
+
+    // --- Braid 4: the body absorbs, the title and bay keep their extents. ---
+    Braid4Fixture shortBraid(640.0f, kSmallestDeclaredSurface.height);
+    Braid4Fixture tallBraid(640.0f, kTallerSurface.height);
+    const synth::ui::NodeTree braidAtFloor = shortBraid.surface.BuildTree();
+    RequireRegionAbsorbsTheDifference(braidAtFloor,
+                                      tallBraid.surface.BuildTree(),
+                                      "braid4.body",
+                                      {synth_braid4::Braid4NodeIds::kTitle, "braid4.bay"},
+                                      "Braid 4's body absorbs the whole difference between surface "
+                                      "heights while the title row and widget bay keep theirs");
+
+    const synth::ui::Node& braidBody = FindNode(braidAtFloor, "braid4.body");
+    const synth::ui::Node& visualizers = FindNode(braidAtFloor, "braid4.visualizers");
+    const synth::ui::Node& encoders = FindNode(braidAtFloor, "braid4.encoders");
+    RequireNear(visualizers.bounds.height, braidBody.bounds.height, 0.01f,
+                "the visualizer stack takes the absorbing body's full height");
+    RequireNear(encoders.bounds.height, braidBody.bounds.height, 0.01f,
+                "and so does the encoder region beside it");
+    RequireNear(encoders.bounds.x,
+                visualizers.bounds.width + synth::ui::kStandardApp.gap,
+                0.01f,
+                "the encoder region starts one standard-layout gap after the stack, with no "
+                "producer-side arithmetic between them");
+    RequireNear(encoders.bounds.width,
+                braidBody.bounds.width - visualizers.bounds.width - synth::ui::kStandardApp.gap,
+                0.01f,
+                "and takes exactly the remainder of the body");
+
+    // Every scope and encoder cell has a real extent inside its grid at the
+    // floor. "Braid 4 resolved" is satisfied by sixteen zero-extent encoders.
+    for (std::size_t ix = 0; ix < synth_braid4::Braid4EncoderGridLayout::kEncoderCount; ++ix)
+    {
+        const synth::ui::Node& cell =
+            FindNode(braidAtFloor, synth_braid4::Braid4NodeIds::Encoder(ix).c_str());
+        Require(cell.bounds.width > 0.0f && cell.bounds.height > 0.0f,
+                "every Braid 4 encoder cell resolves to a real extent at the 480 floor");
+    }
+    for (std::size_t ix = 0; ix < synth_braid4::Braid4ScopeGridLayout::kScopeCount; ++ix)
+    {
+        const synth::ui::Node& vco =
+            FindNode(braidAtFloor, synth_braid4::Braid4NodeIds::VcoScope(ix).c_str());
+        const synth::ui::Node& lfo =
+            FindNode(braidAtFloor, synth_braid4::Braid4NodeIds::LfoScope(ix).c_str());
+        Require(vco.bounds.width > 0.0f && vco.bounds.height > 0.0f,
+                "every Braid 4 VCO scope cell resolves to a real extent at the 480 floor");
+        Require(lfo.bounds.width > 0.0f && lfo.bounds.height > 0.0f,
+                "every Braid 4 LFO scope cell resolves to a real extent at the 480 floor");
+    }
+}
+
 static void TestFilePagePinsItsResolvedGeometry()
 {
     const synth::runtime_ui::FilePageSnapshot state = RepresentativeBrowserState();
@@ -2207,6 +2844,8 @@ int main()
     TestEveryRebuiltPageAbsorbsAtTheSmallestDeclaredSurface();
     TestEveryPageAndAppResolvesAtTheSmallestDeclaredSurface();
     TestControllersWizardAndBraid4ResolveAtTheSmallestDeclaredSurface();
+    TestNamedVisualCriteriaHoldOnEveryPageAndApp();
+    TestControllersChooserAndBraid4PinTheirAbsorbingRegions();
 
     TestGangedRandomLfoVisualizer();
     TestScopeWaveformCommandsAreNodeLocal();

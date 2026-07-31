@@ -3,10 +3,13 @@
 
 #include "synth/ControllersPageUI.hpp"
 
+#include "../tests/support/VisualCriteria.hpp"
+
 #include <algorithm>
 #include <array>
 #include <iostream>
 #include <random>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -57,12 +60,133 @@ std::string Describe(const synth::ui::Action& action)
     return action.name + "(" + action.value + ")";
 }
 
+// sru-48's structural criteria over the RESOLVED portable tree (task 6.3).
+// This is JUCE's half of the criteria: bounds are in the tree, so containment,
+// sibling overlap and spacing conformance are assertable without rendering,
+// and the simulation walks 250 randomly chosen states of the surface rather
+// than one hand-built snapshot. `VerifyTreeAndRenderer` already checks the
+// rendered components against their parents; these check the tree the backend
+// was handed, which is where a layout defect actually lives.
+namespace criteria = synth::ui::criteria;
+
+bool EndsWith(const std::string& value, const std::string& suffix)
+{
+    return value.size() >= suffix.size() &&
+           value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+// The one node class the Controllers page positions out of flow: each row's
+// status dots are an explicitly bounded Draw hand-centred inside its cell, so
+// they consume no stacking space and a gap measured against them is
+// meaningless. Matched by suffix rather than enumerated because the simulation
+// adds and removes controllers, so the id set changes every step.
+std::set<std::string> OutOfFlowIds(const synth::ui::NodeTree& tree)
+{
+    std::set<std::string> ids;
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        if (EndsWith(node.id.value, ".status_dots"))
+        {
+            ids.insert(node.id.value);
+        }
+    }
+    return ids;
+}
+
+// Form controls that carry no caption node, in two groups.
+//
+// The mapping-table cells (`...mapping.N.field.M`) are the DESIGNED case: a
+// mapping section emits a group header whose captions label the columns, so a
+// caption per cell would repeat the heading on every row. They are excluded on
+// that basis, not as a residual.
+//
+// The rest are the residual: controller-row endpoint selectors, the rename and
+// add fields, the variant selector, and the wizard's message/argument cells all
+// carry their only identifying string in a field neither backend renders
+// (design.md OQ5 retired `ComboBox::label`; `TextField::label` was never
+// rendered), and their tables have no column headings. Each is a recorded
+// Task 17 appearance question (tasks.md 6.5b), not a licence: a NEW uncaptioned
+// control anywhere else on the page fails.
+std::set<std::string> UncaptionedResiduals(const synth::ui::NodeTree& tree)
+{
+    static const std::array<const char*, 6> kSuffixes{
+        ".input", ".output", ".variant", ".rename_draft", ".message", ".argument"};
+    std::set<std::string> ids{synth::runtime_ui::NodeIds::kAddName,
+                              synth::runtime_ui::NodeIds::kAddKind,
+                              "controller-wizard.twister.encoder-slot"};
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        if (node.id.value.find(".field.") != std::string::npos)
+        {
+            ids.insert(node.id.value);
+            continue;
+        }
+        for (const char* suffix : kSuffixes)
+        {
+            if (EndsWith(node.id.value, suffix))
+            {
+                ids.insert(node.id.value);
+            }
+        }
+    }
+    return ids;
+}
+
+// The Controllers page and its wizard draw spacing from two named tables plus
+// the library's own. `TwisterFormLayout`'s 8 and 16 are restated rather than
+// named because that table is private to `src/ControllerWizard.cpp`; task 7.1
+// deletes it as the producer-side arithmetic sru-53 bans.
+const std::vector<float>& ControllersPageSpacing()
+{
+    static const std::vector<float> values{0.0f,
+                                           synth::ui::kSpacing.gap,
+                                           synth::ui::kSpacing.padding,
+                                           synth::ui::kSpacing.labelGap,
+                                           synth::runtime_ui::ControllersLayout::kPageMargin,
+                                           synth::runtime_ui::ControllersLayout::kRowGap,
+                                           synth::runtime_ui::ControllersLayout::kEndpointBoxGap,
+                                           synth::runtime_ui::ControllersLayout::kAvailableControlGap,
+                                           synth::runtime_ui::ControllersLayout::kLifecycleControlGap,
+                                           8.0f,
+                                           16.0f};
+    return values;
+}
+
+void VerifyNamedVisualCriteria(const synth::ui::NodeTree& tree, const std::string& context)
+{
+    const std::set<std::string> outOfFlow = OutOfFlowIds(tree);
+
+    const std::vector<std::string> containment = criteria::ContainmentViolations(tree);
+    Require(containment.empty(), context + " containment: " + criteria::Join(containment));
+
+    const std::vector<std::string> overlaps = criteria::SiblingOverlapViolations(tree, outOfFlow);
+    Require(overlaps.empty(), context + " overlap: " + criteria::Join(overlaps));
+
+    const std::vector<std::string> underlays = criteria::UnderlayViolations(tree);
+    Require(underlays.empty(), context + " underlay: " + criteria::Join(underlays));
+
+    const criteria::SpacingReport spacing =
+        criteria::SpacingConformance(tree, ControllersPageSpacing(), outOfFlow);
+    Require(spacing.violations.empty(), context + " spacing: " + criteria::Join(spacing.violations));
+    Require(!spacing.observed.empty(), context + " spacing: nothing was measured");
+
+    const std::vector<std::string> uncaptioned =
+        criteria::UncaptionedFormControls(tree, UncaptionedResiduals(tree));
+    Require(uncaptioned.empty(), context + " caption: " + criteria::Join(uncaptioned));
+
+    const std::vector<std::string> silent = criteria::EmptyTextNodes(tree);
+    Require(silent.empty(), context + " empty text: " + criteria::Join(silent));
+}
+
 void VerifyTreeAndRenderer(const synth::ui::NodeTree& tree,
                            synth_juce::PortableComponent& renderer,
                            const synth_runtime::test::ControllersHarnessFixture& fixture,
                            int step,
                            const std::string& actionDescription)
 {
+    VerifyNamedVisualCriteria(tree,
+                              "step " + std::to_string(step) + " after " + actionDescription);
+
     for (std::size_t ix = 0; ix < fixture.state.instrument.controllers.size(); ++ix)
     {
         Require(FindNode(tree, synth::ui::NodeId(synth::runtime_ui::NodeIds::ControllerRow(ix))) != nullptr,
