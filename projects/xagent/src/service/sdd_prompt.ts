@@ -172,7 +172,11 @@ function DispatchVariantFor(input: RenderSddPromptInput): string {
   }
 }
 
-function BuildDispatchArgs(input: RenderSddPromptInput): {
+// Exported so the fourth equality can bind x_OptionFields to what the facade
+// actually emits. An option added here without updating the map silently
+// degrades dpr-10 classification to sdd_renderer_failed (xsvc-18).
+//
+export function BuildDispatchArgs(input: RenderSddPromptInput): {
   readonly args: string[];
   readonly suppliedOptions: Set<string>;
 } {

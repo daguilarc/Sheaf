@@ -9,8 +9,10 @@ import {
   OPERATIONAL_FIELDS,
   REGISTRY,
   SurfaceFieldFor,
+  x_OptionFields,
   type DispatchVariant,
 } from "../src/service/dispatch_manifest.js";
+import { BuildDispatchArgs, type RenderSddPromptInput } from "../src/service/sdd_prompt.js";
 import {
   FixFollowupSchema,
   FixerStartSchema,
@@ -164,7 +166,7 @@ function ManifestAlwaysRequiredFields(variant: string): string[] {
   )].sort();
 }
 
-function FieldDescription(field: string): string {
+function FieldDescription(field: string, tool: "start" | "followup" = "start"): string {
   const startShape = XagentSddStartAdvertisedSchema.shape as Record<
     string,
     { description?: string }
@@ -173,7 +175,149 @@ function FieldDescription(field: string): string {
     string,
     { description?: string }
   >;
+  if (tool === "followup") {
+    return followupShape[field]?.description ?? "";
+  }
   return startShape[field]?.description ?? followupShape[field]?.description ?? "";
+}
+
+function RequiredForClause(described: string): string | null {
+  const prefix = "(required for: ";
+  const start = described.indexOf(prefix);
+  if (start < 0) {
+    return null;
+  }
+  const from = start + prefix.length;
+  // Labels may themselves contain parentheses (task-scoped); the clause is
+  // always the trailing parenthetical, so take through the final ')'.
+  //
+  const end = described.lastIndexOf(")");
+  if (end <= from) {
+    return null;
+  }
+  return described.slice(from, end);
+}
+
+function ExpectedRolesForField(field: string, tool: "start" | "followup"): string {
+  const labels: string[] = [];
+  for (const variant of DISPATCH_VARIANTS) {
+    if (!(REGISTRY[variant] as readonly string[]).includes(field)) {
+      continue;
+    }
+    if (tool === "start") {
+      switch (variant) {
+        case "implementer":
+          labels.push("implementer");
+          break;
+        case "reviewer:task":
+          labels.push("reviewer (task-scoped)");
+          break;
+        case "reviewer:branch":
+          labels.push("reviewer (whole-branch)");
+          break;
+        case "fixer":
+          labels.push("fixer");
+          break;
+        case "re-reviewer":
+          labels.push("re-reviewer");
+          break;
+        default:
+          break;
+      }
+    }
+    else if (variant === "followup:fix") {
+      labels.push("fix");
+    }
+    else if (variant === "followup:re-review") {
+      labels.push("re-review");
+    }
+  }
+  const hasTask = labels.includes("reviewer (task-scoped)");
+  const hasBranch = labels.includes("reviewer (whole-branch)");
+  if (hasTask && hasBranch) {
+    const collapsed: string[] = [];
+    let inserted = false;
+    for (const label of labels) {
+      if (label === "reviewer (task-scoped)" || label === "reviewer (whole-branch)") {
+        if (!inserted) {
+          collapsed.push("reviewer");
+          inserted = true;
+        }
+        continue;
+      }
+      collapsed.push(label);
+    }
+    return collapsed.join(", ");
+  }
+  return labels.join(", ");
+}
+
+function FullRenderInputFor(variant: string): RenderSddPromptInput {
+  const base = { repoRoot: "/repo", cwd: "/cwd", plan: "/tmp/plan.md" };
+  switch (variant) {
+    case "implementer":
+      return {
+        role: "implementer",
+        ...base,
+        task: 1,
+        name: "n",
+        brief: "/tmp/brief.md",
+        reportOut: "/tmp/report.md",
+        context: "scene",
+      };
+    case "reviewer:task":
+      return {
+        role: "task-reviewer",
+        ...base,
+        task: 1,
+        brief: "/tmp/brief.md",
+        implementerReport: "/tmp/report.md",
+        base: "main",
+        head: "HEAD",
+        constraints: "/tmp/constraints.md",
+        diff: "/tmp/diff.md",
+      };
+    case "reviewer:branch":
+      return {
+        role: "code-reviewer",
+        ...base,
+        reviewBrief: "/tmp/brief.md",
+        description: "branch does X",
+        base: "main",
+        head: "HEAD",
+      };
+    case "re-reviewer":
+      return {
+        role: "re-review",
+        ...base,
+        task: 1,
+        round: 1,
+        brief: "/tmp/brief.md",
+        findings: "/tmp/findings.md",
+        fixerReport: "/tmp/fixer.md",
+        base: "main",
+        head: "HEAD",
+        diff: "/tmp/diff.md",
+        dispatchVariant: "re-reviewer",
+      };
+    case "followup:re-review":
+      return {
+        role: "re-review",
+        ...base,
+        task: 1,
+        round: 1,
+        brief: "/tmp/brief.md",
+        findings: "/tmp/findings.md",
+        fixerReport: "/tmp/fixer.md",
+        base: "main",
+        head: "HEAD",
+        diff: "/tmp/diff.md",
+        dispatchVariant: "followup:re-review",
+        runId: "xrun_20260727000000000_abcdef12",
+      };
+    default:
+      throw new Error(`no render input for ${variant}`);
+  }
 }
 
 test("recognized routes equal the registry variant keys", () => {
@@ -310,9 +454,18 @@ test("advertised descriptions agree with the manifest", () => {
   )) {
     const field = entry.field as string;
     const described = FieldDescription(field);
-    const expected = entry.direction === "writes" ? /writes/i : /reads|must already exist/i;
-    assert.match(described, expected,
-      `${field} (${entry.variant}) is ${entry.direction} but described as "${described}"`);
+    if (entry.direction === "writes") {
+      assert.match(described, /writes/i,
+        `${field} (${entry.variant}) is writes but described as "${described}"`);
+      assert.doesNotMatch(described, /\breads\b/i,
+        `${field} (${entry.variant}) is writes but also claims reads: "${described}"`);
+    }
+    else {
+      assert.match(described, /reads|must already exist/i,
+        `${field} (${entry.variant}) is reads but described as "${described}"`);
+      assert.doesNotMatch(described, /\bwrites\b/i,
+        `${field} (${entry.variant}) is reads but also claims writes: "${described}"`);
+    }
     if (entry.requiredCondition === "unless-derivable") {
       assert.ok(
         entry.derivation !== null,
@@ -326,9 +479,16 @@ test("advertised descriptions agree with the manifest", () => {
         `${field} (${entry.variant}) is unless-derivable but described as optional: "${described}"`,
       );
       if (pattern !== null) {
+        const humanized = pattern
+          .replaceAll("{short(base)}", "<short base sha>")
+          .replaceAll("{short(head)}", "<short head sha>");
         assert.ok(
-          described.includes(pattern),
-          `${field} description must name derivation pattern ${pattern}`,
+          described.includes(humanized),
+          `${field} description must name humanized derivation pattern ${humanized}`,
+        );
+        assert.ok(
+          !described.includes("{short("),
+          `${field} description must not leak renderer templating syntax`,
         );
       }
     }
@@ -337,6 +497,57 @@ test("advertised descriptions agree with the manifest", () => {
         described,
         /\boptional\b/i,
         `${field} (${entry.variant}) is always but described as optional: "${described}"`,
+      );
+    }
+  }
+});
+
+test("advertised (required for:) clauses derive from the registry per tool", () => {
+  for (const field of ["task", "brief", "diff", "report_out", "fixer_report", "base"]) {
+    const startDesc = FieldDescription(field, "start");
+    if (startDesc.includes("(required for:")) {
+      assert.equal(
+        RequiredForClause(startDesc),
+        ExpectedRolesForField(field, "start"),
+        `start ${field} roles must equal registry projection`,
+      );
+    }
+    const followupDesc = FieldDescription(field, "followup");
+    if (followupDesc.includes("(required for:")) {
+      assert.equal(
+        RequiredForClause(followupDesc),
+        ExpectedRolesForField(field, "followup"),
+        `followup ${field} roles must equal registry projection`,
+      );
+      assert.doesNotMatch(
+        RequiredForClause(followupDesc) ?? "",
+        /reviewer \(task-scoped\)|implementer|fixer(?!-report)|re-reviewer/,
+        `followup ${field} must not name start roles`,
+      );
+    }
+  }
+  assert.equal(
+    RequiredForClause(FieldDescription("diff", "start")),
+    "reviewer (task-scoped), re-reviewer",
+  );
+  assert.equal(
+    RequiredForClause(FieldDescription("diff", "followup")),
+    "re-review",
+  );
+});
+
+test("BuildDispatchArgs supplied options are covered by x_OptionFields", () => {
+  // Fourth equality: every option the facade emits (with all optionals
+  // supplied) must appear in x_OptionFields, or dpr-10 trailers naming it
+  // fall through to opaque sdd_renderer_failed.
+  //
+  for (const variant of Object.keys(x_OptionFields)) {
+    const { suppliedOptions } = BuildDispatchArgs(FullRenderInputFor(variant));
+    const declared = new Set(Object.keys(x_OptionFields[variant]!));
+    for (const option of suppliedOptions) {
+      assert.ok(
+        declared.has(option),
+        `${variant}: BuildDispatchArgs emits ${option} but x_OptionFields does not list it`,
       );
     }
   }

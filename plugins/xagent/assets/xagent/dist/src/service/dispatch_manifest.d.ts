@@ -43,14 +43,11 @@ export type GeneratedManifest = {
     readonly entries: ManifestEntry[];
 };
 export declare function DispatchManifest(): ManifestEntry[];
-export declare function LoadDispatchManifest(): ManifestEntry[];
 export declare function CallerInputProjection(): Array<{
     variant: string;
     field: string;
 }>;
 export declare function SurfaceFieldFor(variant: string, rendererOption: string): string | null;
-export declare function ManifestEntryFor(variant: string, rendererOption: string, provenance: ManifestEntry["provenance"]): ManifestEntry | undefined;
 export declare function ResolveFaultProvenance(variant: string, rendererOption: string, callerSuppliedOptions: ReadonlySet<string>): ManifestEntry["provenance"] | null;
 export declare function DiffDerivationPattern(variant: string): string | null;
-export declare function ResetDispatchManifestCacheForTests(): void;
 //# sourceMappingURL=dispatch_manifest.d.ts.map

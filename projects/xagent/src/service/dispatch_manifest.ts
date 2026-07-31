@@ -512,10 +512,6 @@ export function DispatchManifest(): ManifestEntry[] {
   return x_Cached;
 }
 
-export function LoadDispatchManifest(): ManifestEntry[] {
-  return DispatchManifest();
-}
-
 export function CallerInputProjection(): Array<{ variant: string; field: string }> {
   return DispatchManifest()
     .filter((entry) => entry.provenance === "caller_input" && entry.field !== null)
@@ -535,20 +531,6 @@ export function SurfaceFieldFor(variant: string, rendererOption: string): string
     ),
   );
   return caller?.field ?? null;
-}
-
-export function ManifestEntryFor(
-  variant: string,
-  rendererOption: string,
-  provenance: ManifestEntry["provenance"],
-): ManifestEntry | undefined {
-  return DispatchManifest().find(
-    (entry) => (
-      entry.variant === variant
-      && entry.rendererOption === rendererOption
-      && entry.provenance === provenance
-    ),
-  );
 }
 
 export function ResolveFaultProvenance(
@@ -590,8 +572,4 @@ export function DiffDerivationPattern(variant: string): string | null {
     return null;
   }
   return entry.derivation.pattern;
-}
-
-export function ResetDispatchManifestCacheForTests(): void {
-  x_Cached = undefined;
 }

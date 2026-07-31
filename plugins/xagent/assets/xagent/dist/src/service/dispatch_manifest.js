@@ -411,9 +411,6 @@ export function DispatchManifest() {
     x_Cached = raw.entries;
     return x_Cached;
 }
-export function LoadDispatchManifest() {
-    return DispatchManifest();
-}
 export function CallerInputProjection() {
     return DispatchManifest()
         .filter((entry) => entry.provenance === "caller_input" && entry.field !== null)
@@ -428,11 +425,6 @@ export function SurfaceFieldFor(variant, rendererOption) {
         && entry.rendererOption === rendererOption
         && entry.provenance === "caller_input"));
     return caller?.field ?? null;
-}
-export function ManifestEntryFor(variant, rendererOption, provenance) {
-    return DispatchManifest().find((entry) => (entry.variant === variant
-        && entry.rendererOption === rendererOption
-        && entry.provenance === provenance));
 }
 export function ResolveFaultProvenance(variant, rendererOption, callerSuppliedOptions) {
     const entries = DispatchManifest().filter((entry) => entry.variant === variant && entry.rendererOption === rendererOption);
@@ -462,8 +454,5 @@ export function DiffDerivationPattern(variant) {
         return null;
     }
     return entry.derivation.pattern;
-}
-export function ResetDispatchManifestCacheForTests() {
-    x_Cached = undefined;
 }
 //# sourceMappingURL=dispatch_manifest.js.map

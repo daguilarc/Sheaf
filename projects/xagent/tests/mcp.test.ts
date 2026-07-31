@@ -970,7 +970,7 @@ test("retired field names are rejected, not stripped", async () => {
         );
         assert.match(
           body,
-          new RegExp(retired),
+          new RegExp(`Unrecognized key.*'${retired}'`),
           `${tool}: error must name retired field ${retired}`,
         );
       }

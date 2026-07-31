@@ -1,7 +1,7 @@
 import { z } from "zod";
 import path from "node:path";
 import { harnessNames, outputModes, thinkingLevels } from "../events.js";
-import { DispatchManifest } from "./dispatch_manifest.js";
+import { DISPATCH_VARIANTS, DispatchManifest, REGISTRY, } from "./dispatch_manifest.js";
 export const x_DefaultAwaitDeadlineSeconds = 7000;
 export const x_MaxAwaitDeadlineSeconds = 7000;
 export class ToolValidationError extends Error {
@@ -280,15 +280,82 @@ export const XagentSddFollowupInputSchema = z.discriminatedUnion("kind", [
 // strict union parse, while tools/list still advertises only the shape
 // properties below.
 //
-function AdvertisedFor(roles, detail) {
-    return `${detail} (required for: ${roles})`;
+function VariantAdvertisementLabel(variant, tool) {
+    if (tool === "start") {
+        switch (variant) {
+            case "implementer":
+                return "implementer";
+            case "reviewer:task":
+                return "reviewer (task-scoped)";
+            case "reviewer:branch":
+                return "reviewer (whole-branch)";
+            case "fixer":
+                return "fixer";
+            case "re-reviewer":
+                return "re-reviewer";
+            case "followup:fix":
+            case "followup:re-review":
+                return null;
+        }
+    }
+    if (variant === "followup:fix") {
+        return "fix";
+    }
+    if (variant === "followup:re-review") {
+        return "re-review";
+    }
+    return null;
 }
-function DiffAdvertisement() {
+function CollapseReviewerLabels(labels) {
+    const hasTask = labels.includes("reviewer (task-scoped)");
+    const hasBranch = labels.includes("reviewer (whole-branch)");
+    if (!hasTask || !hasBranch) {
+        return [...labels];
+    }
+    const collapsed = [];
+    let inserted = false;
+    for (const label of labels) {
+        if (label === "reviewer (task-scoped)" || label === "reviewer (whole-branch)") {
+            if (!inserted) {
+                collapsed.push("reviewer");
+                inserted = true;
+            }
+            continue;
+        }
+        collapsed.push(label);
+    }
+    return collapsed;
+}
+function RolesForField(field, tool) {
+    const labels = [];
+    for (const variant of DISPATCH_VARIANTS) {
+        if (!REGISTRY[variant].includes(field)) {
+            continue;
+        }
+        const label = VariantAdvertisementLabel(variant, tool);
+        if (label !== null) {
+            labels.push(label);
+        }
+    }
+    return CollapseReviewerLabels(labels).join(", ");
+}
+function AdvertisedFor(field, tool, detail) {
+    return `${detail} (required for: ${RolesForField(field, tool)})`;
+}
+function HumanizeDerivationPattern(pattern) {
+    return pattern
+        .replaceAll("{short(base)}", "<short base sha>")
+        .replaceAll("{short(head)}", "<short head sha>");
+}
+function DiffAdvertisement(tool) {
     const entry = DispatchManifest().find((e) => e.field === "diff" && e.requiredCondition === "unless-derivable");
-    const pattern = entry?.derivation?.kind === "plan_workspace"
+    const rawPattern = entry?.derivation?.kind === "plan_workspace"
         ? entry.derivation.pattern
-        : "review-<base>..<head>.diff";
-    return AdvertisedFor("reviewer (task-scoped), re-reviewer, re-review", "Absolute path to the review-package diff the dispatch pipeline READS. "
+        : "review-<short base sha>..<short head sha>.diff";
+    const pattern = entry?.derivation?.kind === "plan_workspace"
+        ? HumanizeDerivationPattern(rawPattern)
+        : rawPattern;
+    return AdvertisedFor("diff", tool, "Absolute path to the review-package diff the dispatch pipeline READS. "
         + "REQUIRED unless the plan workspace already holds "
         + `${pattern}.`);
 }
@@ -303,38 +370,38 @@ export const XagentSddStartAdvertisedSchema = z.object({
     policy: SupervisionPolicySchema.optional().describe("Optional supervision policy overrides."),
     note: NoteSchema.describe("Free text appended verbatim to the rendered prompt, for anything the templates have no slot for."),
     task: z.number().int().positive().optional()
-        .describe(AdvertisedFor("implementer, reviewer (task-scoped), fixer, re-reviewer", "Plan task number.")),
+        .describe(AdvertisedFor("task", "start", "Plan task number.")),
     name: WorkerFacingText("name").optional()
-        .describe(AdvertisedFor("implementer", "Human-readable task name.")),
+        .describe(AdvertisedFor("name", "start", "Human-readable task name.")),
     brief: SddArtifactPathSchema.optional()
-        .describe(AdvertisedFor("implementer, reviewer, fixer, re-reviewer", "Absolute path to the assignment document the agent READS. A task-scoped "
+        .describe(AdvertisedFor("brief", "start", "Absolute path to the assignment document the agent READS. A task-scoped "
         + "reviewer receives its path; a whole-branch reviewer has its contents "
         + "inlined into the prompt.")),
     report_out: SddArtifactPathSchema.optional()
-        .describe(AdvertisedFor("implementer, fixer", "Absolute path the agent WRITES its report to; it need not exist yet.")),
+        .describe(AdvertisedFor("report_out", "start", "Absolute path the agent WRITES its report to; it need not exist yet.")),
     implementer_report: SddArtifactPathSchema.optional()
-        .describe(AdvertisedFor("reviewer (task-scoped)", "Absolute path to the implementer's EXISTING report, which the reviewer READS. "
+        .describe(AdvertisedFor("implementer_report", "start", "Absolute path to the implementer's EXISTING report, which the reviewer READS. "
         + "Not the reviewer's own output path.")),
     fixer_report: SddArtifactPathSchema.optional()
-        .describe(AdvertisedFor("re-reviewer", "Absolute path to the fixer's EXISTING report, which the re-reviewer READS.")),
+        .describe(AdvertisedFor("fixer_report", "start", "Absolute path to the fixer's EXISTING report, which the re-reviewer READS.")),
     context: WorkerFacingText("context").optional()
         .describe("Optional scene-setting for an implementer."),
     description: WorkerFacingText("description").optional()
-        .describe(AdvertisedFor("reviewer (whole-branch)", "What the branch under review does.")),
+        .describe(AdvertisedFor("description", "start", "What the branch under review does.")),
     base: z.string().min(1).optional()
-        .describe(AdvertisedFor("reviewer, re-reviewer", "Base git ref for the review diff.")),
+        .describe(AdvertisedFor("base", "start", "Base git ref for the review diff.")),
     head: z.string().min(1).optional()
-        .describe(AdvertisedFor("reviewer, re-reviewer", "Head git ref for the review diff.")),
+        .describe(AdvertisedFor("head", "start", "Head git ref for the review diff.")),
     constraints: SddArtifactPathSchema.optional()
-        .describe(AdvertisedFor("reviewer (task-scoped)", "Absolute path to the global constraints file the reviewer READS when present.")),
+        .describe(AdvertisedFor("constraints", "start", "Absolute path to the global constraints file the reviewer READS when present.")),
     diff: SddArtifactPathSchema.optional()
-        .describe(DiffAdvertisement()),
+        .describe(DiffAdvertisement("start")),
     findings: SddArtifactPathSchema.optional()
-        .describe(AdvertisedFor("fixer, re-reviewer", "Absolute path to the findings file the agent READS; contents are inlined into the prompt.")),
+        .describe(AdvertisedFor("findings", "start", "Absolute path to the findings file the agent READS; contents are inlined into the prompt.")),
     findings_text: WorkerFacingText("findings_text").optional()
-        .describe(AdvertisedFor("fixer", "The findings, inline.")),
+        .describe(AdvertisedFor("findings_text", "start", "The findings, inline.")),
     tests: z.array(z.string().min(1)).min(1).optional()
-        .describe(AdvertisedFor("fixer", "Commands that must pass before the fix is done.")),
+        .describe(AdvertisedFor("tests", "start", "Commands that must pass before the fix is done.")),
     round: z.number().int().positive().optional()
         .describe("Optional fix or re-review round number for fixer and re-reviewer; defaults to 1."),
 }).passthrough();
@@ -345,20 +412,20 @@ export const XagentSddFollowupAdvertisedSchema = z.object({
     round: z.number().int().positive().describe("Fix or re-review round number; render-only."),
     findings: SddArtifactPathSchema.describe("Absolute path to the findings file the agent READS; contents are inlined into the prompt."),
     report_out: SddArtifactPathSchema.optional()
-        .describe(AdvertisedFor("fix", "Absolute path the agent WRITES its fix report to; it need not exist yet.")),
+        .describe(AdvertisedFor("report_out", "followup", "Absolute path the agent WRITES its fix report to; it need not exist yet.")),
     fixer_report: SddArtifactPathSchema.optional()
-        .describe(AdvertisedFor("re-review", "Absolute path to the fixer's EXISTING report, which the re-review READS.")),
+        .describe(AdvertisedFor("fixer_report", "followup", "Absolute path to the fixer's EXISTING report, which the re-review READS.")),
     note: NoteSchema.describe("Free text appended verbatim to the rendered prompt."),
     findings_text: WorkerFacingText("findings_text").optional()
-        .describe(AdvertisedFor("fix", "The findings, inline.")),
+        .describe(AdvertisedFor("findings_text", "followup", "The findings, inline.")),
     tests: z.array(z.string().min(1)).min(1).optional()
-        .describe(AdvertisedFor("fix", "Commands that must pass before the fix is done.")),
+        .describe(AdvertisedFor("tests", "followup", "Commands that must pass before the fix is done.")),
     base: z.string().min(1).optional()
-        .describe(AdvertisedFor("re-review", "Base git ref for the re-review diff.")),
+        .describe(AdvertisedFor("base", "followup", "Base git ref for the re-review diff.")),
     head: z.string().min(1).optional()
-        .describe(AdvertisedFor("re-review", "Head git ref for the re-review diff.")),
+        .describe(AdvertisedFor("head", "followup", "Head git ref for the re-review diff.")),
     diff: SddArtifactPathSchema.optional()
-        .describe(DiffAdvertisement()),
+        .describe(DiffAdvertisement("followup")),
 }).passthrough();
 export const XagentStartInputSchema = z
     .object({

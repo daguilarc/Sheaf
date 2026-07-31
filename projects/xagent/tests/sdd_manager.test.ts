@@ -1,4 +1,10 @@
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 import test from "node:test";
 
 import {
@@ -32,6 +38,8 @@ import {
   ToolValidationError,
   structuredErrorFromUnknown,
 } from "../src/service/tool_schemas.js";
+
+const execFileAsync = promisify(execFile);
 
 const x_AgentId = "xrun_20260727000000000_abcdef12";
 const x_PlanPath = "/tmp/plans/2026-07-26-xagent-sdd-mode.md";
@@ -445,7 +453,7 @@ test("start canonicalizes cwd, inserts the row before creating the run, then ren
     planPath: x_PlanPath,
     task: 3,
     role: "implementer",
-    briefPath: x_BriefPath,
+    briefPath: x_ResolvedBriefPath,
     briefText: x_BriefText,
     cwd: x_CanonicalCwd,
   });
@@ -1588,4 +1596,107 @@ test("follow-up re-review without diff or derivable file submits nothing", async
   assert.equal(store.inserted.length, 0);
   assert.equal(runManager.submitted.length, 0);
   assert.ok(!recorder.Names().includes("renderPrompt"));
+});
+
+test("start and list agree on brief_path", async () =>
+{
+  const recorder = CreateOrderRecorder();
+  let stored: SddAgentRecord | undefined;
+  const store: SddAgentStore = {
+    Insert(input: InsertSddAgentInput): void
+    {
+      recorder.Record("store.Insert", input);
+      stored = {
+        agent_id: input.agentId,
+        plan_path: input.planPath,
+        task: input.task ?? null,
+        role: input.role,
+        brief_path: input.briefPath,
+        brief_text: input.briefText,
+        cwd: input.cwd,
+        dispatched_at: "2026-07-27T00:00:00.000Z",
+      };
+    },
+    Get(agentId: string): SddAgentRecord | undefined
+    {
+      return stored?.agent_id === agentId ? stored : undefined;
+    },
+    ListAll(): readonly SddAgentRecord[]
+    {
+      return stored === undefined ? [] : [stored];
+    },
+    IsSddAgent(agentId: string): boolean
+    {
+      return stored?.agent_id === agentId;
+    },
+    Close(): void
+    {
+    },
+  };
+  const runManager = CreateFakeRunManager(recorder);
+  const manager = CreateSddManager({ ...CreateDeps(recorder), store, runManager });
+  const started = await manager.Start(ImplementerStartInput());
+  const listed = await manager.ListGeneric({ live_only: false, limit: 50 });
+  const entry = listed.runs.find((row) => row.run_id === started.run_id);
+  assert.ok(entry !== undefined && "sdd" in entry && entry.sdd !== undefined);
+  assert.equal(entry.sdd.brief_path, started.brief_path);
+  assert.equal(started.brief_path, x_ResolvedBriefPath);
+  assert.equal(stored?.brief_path, x_ResolvedBriefPath);
+});
+
+test("task-scoped reviewer accepts when the plan-workspace diff exists", async () =>
+{
+  const root = await mkdtemp(path.join(tmpdir(), "sdd-diff-accept-"));
+  await execFileAsync("git", ["init", "-q"], { cwd: root });
+  await execFileAsync("git", ["config", "user.email", "t@example.com"], { cwd: root });
+  await execFileAsync("git", ["config", "user.name", "t"], { cwd: root });
+  await writeFile(path.join(root, "seed.txt"), "seed\n", "utf8");
+  await execFileAsync("git", ["add", "-A"], { cwd: root });
+  await execFileAsync("git", ["commit", "-qm", "seed"], { cwd: root });
+  const shortSha = (
+    await execFileAsync("git", ["rev-parse", "--short", "HEAD"], { cwd: root })
+  ).stdout.trim();
+  const planPath = path.join(root, "my-plan.md");
+  const briefPath = path.join(root, "brief.md");
+  const reportPath = path.join(root, "report.md");
+  await writeFile(planPath, "# Plan\n\n## Task 1: Thing\n\nDo it.\n", "utf8");
+  await writeFile(briefPath, "BRIEF\n", "utf8");
+  await writeFile(reportPath, "Implementer report.\n", "utf8");
+  const workspace = path.join(root, ".superpowers", "sdd", "my-plan");
+  await mkdir(workspace, { recursive: true });
+  await writeFile(
+    path.join(workspace, `review-${shortSha}..${shortSha}.diff`),
+    "# Review package\n",
+    "utf8",
+  );
+  const cwd = realpathSync(root);
+
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, undefined);
+  const runManager = CreateFakeRunManager(recorder);
+  const manager = CreateSddManager({
+    ...CreateDeps(recorder),
+    store,
+    runManager,
+    canonicalizeCwd: async () => cwd,
+    // Real accessFile / shortSha / gitRepoRoot — the accept path under test.
+    //
+  });
+
+  const result = await manager.Start({
+    role: "reviewer",
+    cwd,
+    plan: planPath,
+    model: "opus",
+    harness: "claude_code",
+    effort: "high",
+    task: 1,
+    brief: briefPath,
+    implementer_report: reportPath,
+    base: "HEAD",
+    head: "HEAD",
+  });
+  assert.equal(store.inserted.length, 1);
+  assert.equal(result.run_id, x_AgentId);
+  assert.ok(recorder.Names().includes("renderPrompt"));
 });

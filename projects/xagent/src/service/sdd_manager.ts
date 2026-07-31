@@ -322,16 +322,38 @@ async function DefaultShortSha(cwd: string, rev: string): Promise<string>
 
 async function DefaultGitRepoRoot(cwd: string): Promise<string>
 {
-  const result = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
-    cwd,
-    encoding: "utf8",
+  try
+  {
+    const result = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
+      cwd,
+      encoding: "utf8",
+    });
+    const trimmed = result.stdout.trim();
+    if (trimmed !== "")
+    {
+      return trimmed;
+    }
+  }
+  catch
+  {
+    // Fall through to a structured error; raw execFile throws are not a
+    // controller-facing surface.
+    //
+  }
+  throw StructuredFailure({
+    error: "invalid_working_directory",
+    message:
+      "working directory is not inside a git repository; cannot resolve the plan workspace",
+    details: { cwd },
   });
-  return result.stdout.trim();
 }
 
 function PlanWorkspacePath(repoRoot: string, planPath: string): string
 {
-  const slug = path.basename(planPath, path.extname(planPath));
+  // Match the renderer: strip only a trailing .md, not any extension.
+  //
+  const base = path.basename(planPath);
+  const slug = base.endsWith(".md") ? base.slice(0, -3) : base;
   return path.join(repoRoot, ".superpowers", "sdd", slug);
 }
 
@@ -412,6 +434,10 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     //
     const cwd = await canonicalizeCwd(input.cwd);
     const briefText = await ReadRequiredText(read, input.brief, "SDD brief");
+    // Resolve brief before the ledger write so start and list agree under the
+    // same key (xsdd-9). Same precedent as cwd: canonicalize before Insert.
+    //
+    const briefPath = await resolveArtifactPath(input.brief);
 
     let promptText = "";
     let promptPath = "";
@@ -428,7 +454,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         planPath: input.plan,
         task: input.task,
         round: input.round,
-        briefPath: input.brief,
+        briefPath,
         findingsPath: input.findings,
         findingsText: input.findings_text,
         tests: input.tests,
@@ -478,7 +504,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         planPath: input.plan,
         ...(input.task === undefined ? {} : { task: input.task }),
         role: input.role,
-        briefPath: input.brief,
+        briefPath,
         briefText,
         cwd,
       });
@@ -531,7 +557,6 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       const reportOutPath = input.role === "implementer" || input.role === "fixer"
         ? input.report_out
         : undefined;
-      const briefPath = await resolveArtifactPath(input.brief);
       const result: {
         run_id: string;
         sequence: number;
