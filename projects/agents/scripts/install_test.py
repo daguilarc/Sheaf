@@ -1095,6 +1095,7 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
         provider_section = extract_markdown_section(content, "Provider and model rules")
         pre_plan_section = extract_markdown_section(content, "Pre-plan coordination")
         sdd_section = extract_markdown_section(content, "Superpowers SDD task execution")
+        normalized_pre_plan_section = " ".join(pre_plan_section.split())
 
         self.assertNotIn(
             "native subagent mechanism",
@@ -1117,8 +1118,11 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
 
         assert_all_present(
             self,
-            pre_plan_section,
+            normalized_pre_plan_section,
             (
+                "all pre-plan work uses xagent",
+                "same-provider included",
+                "not used for pre-plan coordination",
                 "blocker",
                 "final completion",
                 "required input",
@@ -1128,7 +1132,6 @@ class DistributedSkillSemanticsTests(unittest.TestCase):
                 "xagent_start_non_sdd",
                 "xagent_await",
                 "report.text",
-                "native",
                 "broken agentic infrastructure",
                 "xagent_message",
                 "xagent supervise",
