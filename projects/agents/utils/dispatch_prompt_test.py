@@ -837,6 +837,99 @@ class FaultTrailerTests(DispatchPromptTestCase):
         with self.assertRaises(json.JSONDecodeError):
             json.loads(lines[-1])
 
+    def test_no_such_plan_file_is_coded(self) -> None:
+        missing = str(self.repo / "absent-plan.md")
+        result = self.run_util(
+            "task-reviewer",
+            "--plan",
+            missing,
+            "--task",
+            "1",
+            "--brief",
+            str(self.brief),
+            "--base",
+            "HEAD",
+            "--head",
+            "HEAD",
+            root=str(self.roots / "6.2.0" / "skills"),
+        )
+        self.assertEqual(result.returncode, 2)
+        body = self.trailer(result)
+        self.assertEqual(body["error"], "no_such_file")
+        self.assertEqual(body["option"], "--plan")
+        self.assertEqual(body["path"], missing)
+
+    def test_missing_plan_is_required_missing(self) -> None:
+        result = self.run_util(
+            "task-reviewer",
+            "--task",
+            "1",
+            "--brief",
+            str(self.brief),
+            "--base",
+            "HEAD",
+            "--head",
+            "HEAD",
+            root=str(self.roots / "6.2.0" / "skills"),
+        )
+        self.assertEqual(result.returncode, 2)
+        body = self.trailer(result)
+        self.assertEqual(body["error"], "required_missing")
+        self.assertEqual(body["option"], "--plan")
+        self.assertEqual(body["template"], "task-reviewer")
+
+    def test_missing_task_is_required_missing(self) -> None:
+        result = self.run_util(
+            "task-reviewer",
+            "--plan",
+            str(self.plan),
+            "--brief",
+            str(self.brief),
+            "--base",
+            "HEAD",
+            "--head",
+            "HEAD",
+            root=str(self.roots / "6.2.0" / "skills"),
+        )
+        self.assertEqual(result.returncode, 2)
+        body = self.trailer(result)
+        self.assertEqual(body["error"], "required_missing")
+        self.assertEqual(body["option"], "--task")
+        self.assertEqual(body["template"], "task-reviewer")
+
+    def test_missing_round_is_required_missing(self) -> None:
+        self.seed_report()
+        findings = self.repo / "findings.md"
+        findings.write_text("- finding\n", encoding="utf-8")
+        result = self.run_util(
+            "re-review",
+            "--plan",
+            str(self.plan),
+            "--task",
+            "1",
+            "--brief",
+            str(self.brief),
+            "--findings",
+            str(findings),
+            "--base",
+            "HEAD",
+            "--head",
+            "HEAD",
+            root=str(self.roots / "6.2.0" / "skills"),
+        )
+        self.assertEqual(result.returncode, 2)
+        body = self.trailer(result)
+        self.assertEqual(body["error"], "required_missing")
+        self.assertEqual(body["option"], "--round")
+        self.assertEqual(body["template"], "re-review")
+
+    def test_missing_template_name_is_required_missing(self) -> None:
+        result = self.run_util("--plan", str(self.plan))
+        self.assertEqual(result.returncode, 2)
+        body = self.trailer(result)
+        self.assertEqual(body["error"], "required_missing")
+        self.assertEqual(body["option"], "template")
+
 
 if __name__ == "__main__":
     unittest.main()

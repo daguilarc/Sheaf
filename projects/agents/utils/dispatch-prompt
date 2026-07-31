@@ -309,7 +309,12 @@ def repo_root() -> Path:
 def plan_workspace(plan: Path) -> Path:
     """Mirror sdd-workspace: <repo-root>/.superpowers/sdd/<plan-basename>/."""
     if not plan.is_file():
-        raise Fail(f"no such plan file: {plan}")
+        raise Fail(
+            f"no such plan file: {plan}",
+            error="no_such_file",
+            option="--plan",
+            path=str(plan),
+        )
     slug = plan.name[:-3] if plan.name.endswith(".md") else plan.name
     if not slug or slug in {".", ".."}:
         raise Fail(f"cannot derive a workspace name from: {plan}")
@@ -611,20 +616,37 @@ def main(argv: list[str]) -> int:
         print(describe_slots())
         return 0
 
-    if args.template is None:
-        print("dispatch-prompt: a template name is required", file=sys.stderr)
-        return 2
-    if args.plan is None:
-        print("dispatch-prompt: --plan is required", file=sys.stderr)
-        return 2
-
-    template = TEMPLATES[args.template]
-
     try:
+        if args.template is None:
+            raise Fail(
+                "a template name is required",
+                error="required_missing",
+                option="template",
+            )
+        if args.plan is None:
+            raise Fail(
+                "--plan is required",
+                error="required_missing",
+                option="--plan",
+                template=args.template,
+            )
+
+        template = TEMPLATES[args.template]
+
         if template.task_scoped and args.task is None:
-            raise Fail(f"--task is required for the {args.template} template")
+            raise Fail(
+                f"--task is required for the {args.template} template",
+                error="required_missing",
+                option="--task",
+                template=args.template,
+            )
         if template.rounds and args.round is None:
-            raise Fail(f"--round is required for the {args.template} template")
+            raise Fail(
+                f"--round is required for the {args.template} template",
+                error="required_missing",
+                option="--round",
+                template=args.template,
+            )
 
         # Reject options this template has no slot for. Silently ignoring them
         # would let a caller believe it passed a brief or findings that never
