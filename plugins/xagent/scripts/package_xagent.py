@@ -102,6 +102,7 @@ def copy_packaged_dependencies(asset_root: Path) -> None:
 
 
 def build_package(destination: Path) -> None:
+    generate_dispatch_manifest()
     destination = destination.resolve()
     if destination.exists():
         if not destination.is_dir():
@@ -166,7 +167,22 @@ def describe_snapshot_drift(
     return lines
 
 
+def check_dispatch_manifest() -> None:
+    run(
+        ["npx", "tsx", "scripts/generate_dispatch_manifest.ts", "--check"],
+        cwd=XAGENT_ROOT,
+    )
+
+
+def generate_dispatch_manifest() -> None:
+    run(
+        ["npx", "tsx", "scripts/generate_dispatch_manifest.ts"],
+        cwd=XAGENT_ROOT,
+    )
+
+
 def check_tracked_assets_current(*, validate: bool = False) -> None:
+    check_dispatch_manifest()
     with tempfile.TemporaryDirectory(prefix="xagent-plugin-check-") as tempdir:
         package_root = Path(tempdir) / "package"
         build_package(package_root)
@@ -187,6 +203,7 @@ def check_tracked_assets_current(*, validate: bool = False) -> None:
 
 
 def stage_runtime() -> None:
+    generate_dispatch_manifest()
     copy_runtime(ASSET_ROOT)
 
 

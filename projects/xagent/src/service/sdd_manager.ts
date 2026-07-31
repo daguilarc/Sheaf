@@ -1,5 +1,7 @@
-import { readFile, realpath } from "node:fs/promises";
+import { access, readFile, realpath } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import path from "node:path";
+import { promisify } from "node:util";
 
 import {
   FormatFixDispatch,
@@ -10,6 +12,7 @@ import {
   type RenderedSddPrompt,
   type RenderSddPromptInput,
 } from "./sdd_prompt.js";
+import { DiffDerivationPattern } from "./dispatch_manifest.js";
 import type {
   SddAgentRecord,
   SddAgentStore,
@@ -32,6 +35,8 @@ import {
   type XagentSddFollowupInput,
   type XagentSddStartInput,
 } from "./tool_schemas.js";
+
+const execFileAsync = promisify(execFile);
 
 export type XagentSddStartResult = {
   readonly run_id: string;
@@ -74,6 +79,9 @@ export type SddManagerDeps = {
   readonly renderPrompt?: (input: RenderSddPromptInput) => Promise<RenderedSddPrompt>;
   readonly formatFix?: (input: FormatFixFollowupInput) => string;
   readonly formatFixDispatch?: (input: FormatFixDispatchInput) => string;
+  readonly accessFile?: (filePath: string) => Promise<void>;
+  readonly shortSha?: (cwd: string, rev: string) => Promise<string>;
+  readonly gitRepoRoot?: (cwd: string) => Promise<string>;
 };
 
 function DerivePlanName(planPath: string): string
@@ -290,6 +298,54 @@ function RecoveryRoleFor(role: SddStartRole): "fixer" | "re-reviewer"
   return role === "implementer" || role === "fixer" ? "fixer" : "re-reviewer";
 }
 
+async function DefaultShortSha(cwd: string, rev: string): Promise<string>
+{
+  try
+  {
+    const result = await execFileAsync("git", ["rev-parse", "--short", rev], {
+      cwd,
+      encoding: "utf8",
+    });
+    const trimmed = result.stdout.trim();
+    if (trimmed !== "")
+    {
+      return trimmed;
+    }
+  }
+  catch
+  {
+    // Fall through to the seven-character prefix, matching the renderer.
+    //
+  }
+  return rev.slice(0, 7);
+}
+
+async function DefaultGitRepoRoot(cwd: string): Promise<string>
+{
+  const result = await execFileAsync("git", ["rev-parse", "--show-toplevel"], {
+    cwd,
+    encoding: "utf8",
+  });
+  return result.stdout.trim();
+}
+
+function PlanWorkspacePath(repoRoot: string, planPath: string): string
+{
+  const slug = path.basename(planPath, path.extname(planPath));
+  return path.join(repoRoot, ".superpowers", "sdd", slug);
+}
+
+function ExpandDiffPattern(
+  pattern: string,
+  shortBase: string,
+  shortHead: string,
+): string
+{
+  return pattern
+    .replaceAll("{short(base)}", shortBase)
+    .replaceAll("{short(head)}", shortHead);
+}
+
 export function CreateSddManager(deps: SddManagerDeps): SddManager
 {
   const store = deps.store;
@@ -300,6 +356,55 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
   const renderPrompt = deps.renderPrompt ?? ((input: RenderSddPromptInput) => RenderSddPrompt(input));
   const formatFix = deps.formatFix ?? FormatFixFollowup;
   const formatFixDispatch = deps.formatFixDispatch ?? FormatFixDispatch;
+  const accessFile = deps.accessFile ?? ((filePath: string) => access(filePath));
+  const shortSha = deps.shortSha ?? DefaultShortSha;
+  const gitRepoRoot = deps.gitRepoRoot ?? DefaultGitRepoRoot;
+
+  async function RequireDiffOrDerivable(args: {
+    readonly cwd: string;
+    readonly plan: string;
+    readonly base: string;
+    readonly head: string;
+    readonly diff?: string;
+    readonly variant: string;
+  }): Promise<void>
+  {
+    if (args.diff !== undefined)
+    {
+      return;
+    }
+    const pattern = DiffDerivationPattern(args.variant);
+    if (pattern === null)
+    {
+      throw StructuredFailure({
+        error: "invalid_tool_input",
+        message: "diff is required for this dispatch variant.",
+        details: { field: "diff" },
+      });
+    }
+    const repoRoot = await gitRepoRoot(args.cwd);
+    const workspace = PlanWorkspacePath(repoRoot, args.plan);
+    const fileName = ExpandDiffPattern(
+      pattern,
+      await shortSha(args.cwd, args.base),
+      await shortSha(args.cwd, args.head),
+    );
+    const derivedPath = path.join(workspace, fileName);
+    try
+    {
+      await accessFile(derivedPath);
+    }
+    catch
+    {
+      throw StructuredFailure({
+        error: "invalid_tool_input",
+        message:
+          "diff is required unless the plan workspace already holds the "
+          + `derivable review-package file (${fileName}).`,
+        details: { field: "diff", path: derivedPath },
+      });
+    }
+  }
 
   async function Start(input: XagentSddStartInput): Promise<XagentSddStartResult>
   {
@@ -332,6 +437,28 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
     }
     else
     {
+      if (input.role === "reviewer" && input.task !== undefined)
+      {
+        await RequireDiffOrDerivable({
+          cwd,
+          plan: input.plan,
+          base: input.base,
+          head: input.head,
+          diff: input.diff,
+          variant: "reviewer:task",
+        });
+      }
+      else if (input.role === "re-reviewer")
+      {
+        await RequireDiffOrDerivable({
+          cwd,
+          plan: input.plan,
+          base: input.base,
+          head: input.head,
+          diff: input.diff,
+          variant: "re-reviewer",
+        });
+      }
       const rendered = await renderPrompt(BuildRenderInput(input, deps.repoRoot, cwd));
       promptText = rendered.prompt.text;
       promptPath = rendered.metadata.promptPath;
@@ -542,6 +669,14 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         });
       }
       await ReadRequiredText(read, input.findings, "SDD findings");
+      await RequireDiffOrDerivable({
+        cwd: agent.cwd,
+        plan: agent.plan_path,
+        base: input.base,
+        head: input.head,
+        diff: input.diff,
+        variant: "followup:re-review",
+      });
       const rendered = await renderPrompt({
         role: "re-review",
         repoRoot: deps.repoRoot,
@@ -554,6 +689,8 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         fixerReport: input.fixer_report,
         base: input.base,
         head: input.head,
+        dispatchVariant: "followup:re-review",
+        runId: input.run_id,
         ...(input.diff === undefined ? {} : { diff: input.diff }),
       });
       promptText = rendered.prompt.text;

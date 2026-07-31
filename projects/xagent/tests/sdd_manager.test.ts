@@ -499,7 +499,7 @@ test("start results use run_id and role-specific report_out_path / renderer keys
     role: "reviewer", cwd: x_Cwd, plan: x_PlanPath,
     model: "opus", harness: "claude_code", effort: "high",
     task: 3, brief: x_BriefPath, implementer_report: x_ReportPath,
-    base: "main", head: "HEAD",
+    base: "main", head: "HEAD", diff: "/tmp/sdd/review.diff",
   });
   assert.equal(reviewer.run_id, x_AgentId);
   assert.equal(reviewer.brief_path, x_ResolvedBriefPath);
@@ -512,7 +512,7 @@ test("start results use run_id and role-specific report_out_path / renderer keys
     model: "opus", harness: "claude_code", effort: "high",
     task: 3, brief: x_BriefPath, findings: "/tmp/f.md",
     fixer_report: x_ReportPath, base: "main", head: "HEAD",
-    round: 1,
+    round: 1, diff: "/tmp/sdd/review.diff",
   });
   assert.equal(reReviewer.run_id, x_AgentId);
   assert.equal(reReviewer.brief_path, x_ResolvedBriefPath);
@@ -594,6 +594,7 @@ test("reviewer template selection follows task presence", async () =>
     role: "reviewer", cwd: x_Cwd, plan: x_PlanPath,
     model: "opus", harness: "claude_code", effort: "high",
     task: 3, brief: x_BriefPath, implementer_report: x_ReportPath, base: "main", head: "HEAD",
+    diff: "/tmp/sdd/review.diff",
   });
   assert.equal(rendered[0]!.role, "task-reviewer");
 
@@ -645,7 +646,7 @@ test("a re-reviewer reuses the re-review renderer role", async () =>
     role: "re-reviewer", cwd: x_Cwd, plan: x_PlanPath,
     model: "opus", harness: "claude_code", effort: "high",
     task: 3, brief: x_BriefPath, findings: "/tmp/f.md", fixer_report: x_ReportPath,
-    base: "main", head: "HEAD", round: 2,
+    base: "main", head: "HEAD", round: 2, diff: "/tmp/sdd/review.diff",
   });
   assert.equal(rendered[0]!.role, "re-review");
   assert.equal((rendered[0] as { round: number }).round, 2);
@@ -893,6 +894,7 @@ test("kind must match the immutable start role", async () =>
           fixer_report: "/tmp/r.md",
           base: "main",
           head: "HEAD",
+          diff: "/tmp/sdd/review.diff",
         };
     if (allowed)
     {
@@ -976,6 +978,7 @@ test("double-calling a followup leaves the ledger untouched and rejects the busy
   const input = {
     kind: "re-review" as const, run_id: x_AgentId, round: 1,
     findings: "/tmp/f.md", fixer_report: "/tmp/r.md", base: "main", head: "HEAD",
+    diff: "/tmp/sdd/review.diff",
   };
   await manager.Followup(input);
   assert.equal(store.inserted.length, 0);
@@ -1440,4 +1443,50 @@ test("a completed SDD run is not a tombstone under live_only", async () =>
     false,
     "a run record must never be stamped run_missing",
   );
+});
+
+test("task-scoped reviewer without diff or derivable file is rejected before dispatch", async () =>
+{
+  const recorder = CreateOrderRecorder();
+  const store = CreateFakeAgentStore(recorder, undefined);
+  const runManager = CreateFakeRunManager(recorder);
+  const manager = CreateSddManager({
+    ...CreateDeps(recorder),
+    store,
+    runManager,
+    accessFile: async () =>
+    {
+      throw new Error("missing");
+    },
+    shortSha: async (_cwd, rev) => rev.slice(0, 7),
+    gitRepoRoot: async () => "/tmp/worktree",
+  });
+  await assert.rejects(
+    () => manager.Start({
+      role: "reviewer",
+      cwd: x_Cwd,
+      plan: x_PlanPath,
+      model: "opus",
+      harness: "claude_code",
+      effort: "high",
+      task: 3,
+      brief: x_BriefPath,
+      implementer_report: x_ReportPath,
+      base: "main",
+      head: "HEAD",
+    }),
+    (error: unknown) =>
+    {
+      const structured = structuredErrorFromUnknown(error);
+      assert.equal(structured.error, "invalid_tool_input");
+      assert.equal(
+        (structured.details as { field?: string } | undefined)?.field,
+        "diff",
+      );
+      return true;
+    },
+  );
+  assert.equal(store.inserted.length, 0);
+  assert.equal(runManager.created.length, 0);
+  assert.ok(!recorder.Names().includes("renderPrompt"));
 });

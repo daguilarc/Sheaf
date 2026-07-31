@@ -3,6 +3,11 @@ import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
+import {
+  ResolveFaultProvenance,
+  SurfaceFieldFor,
+} from "./dispatch_manifest.js";
+
 const execFileAsync = promisify(execFile);
 
 export type SddPromptFailure = {
@@ -68,6 +73,11 @@ export type RenderSddPromptInput =
       readonly head: string;
       readonly diff?: string;
       readonly templatesRoot?: string;
+      // Distinguishes a fresh re-reviewer start from a follow-up continuation
+      // so trailer classification can apply ledger provenance (xsvc-18).
+      //
+      readonly dispatchVariant?: "re-reviewer" | "followup:re-review";
+      readonly runId?: string;
     }
   | {
       readonly role: "code-reviewer";
@@ -149,8 +159,25 @@ async function ResolveRendererPath(
   return rendererPath;
 }
 
-function BuildDispatchArgs(input: RenderSddPromptInput): string[] {
+function DispatchVariantFor(input: RenderSddPromptInput): string {
+  switch (input.role) {
+    case "implementer":
+      return "implementer";
+    case "task-reviewer":
+      return "reviewer:task";
+    case "code-reviewer":
+      return "reviewer:branch";
+    case "re-review":
+      return input.dispatchVariant ?? "re-reviewer";
+  }
+}
+
+function BuildDispatchArgs(input: RenderSddPromptInput): {
+  readonly args: string[];
+  readonly suppliedOptions: Set<string>;
+} {
   const args = [input.role, "--plan", input.plan];
+  const suppliedOptions = new Set<string>(["--plan"]);
   if (input.templatesRoot !== undefined) {
     args.push("--templates-root", input.templatesRoot);
   }
@@ -158,47 +185,165 @@ function BuildDispatchArgs(input: RenderSddPromptInput): string[] {
   switch (input.role) {
     case "implementer":
       args.push("--task", String(input.task));
+      suppliedOptions.add("--task");
       args.push("--name", input.name);
+      suppliedOptions.add("--name");
       args.push("--brief", input.brief);
+      suppliedOptions.add("--brief");
       if (input.reportOut !== undefined) {
         args.push("--report", input.reportOut);
+        suppliedOptions.add("--report");
       }
       if (input.context !== undefined) {
         args.push("--context", input.context);
+        suppliedOptions.add("--context");
       }
-      return args;
+      return { args, suppliedOptions };
     case "task-reviewer":
       args.push("--task", String(input.task));
+      suppliedOptions.add("--task");
       args.push("--brief", input.brief);
+      suppliedOptions.add("--brief");
       args.push("--report", input.implementerReport);
+      suppliedOptions.add("--report");
       args.push("--base", input.base);
+      suppliedOptions.add("--base");
       args.push("--head", input.head);
+      suppliedOptions.add("--head");
       if (input.constraints !== undefined) {
         args.push("--constraints", input.constraints);
+        suppliedOptions.add("--constraints");
       }
       if (input.diff !== undefined) {
         args.push("--diff", input.diff);
+        suppliedOptions.add("--diff");
       }
-      return args;
+      return { args, suppliedOptions };
     case "re-review":
       args.push("--task", String(input.task));
+      suppliedOptions.add("--task");
       args.push("--round", String(input.round));
+      suppliedOptions.add("--round");
       args.push("--brief", input.brief);
+      suppliedOptions.add("--brief");
       args.push("--findings", input.findings);
+      suppliedOptions.add("--findings");
       args.push("--report", input.fixerReport);
+      suppliedOptions.add("--report");
       args.push("--base", input.base);
+      suppliedOptions.add("--base");
       args.push("--head", input.head);
+      suppliedOptions.add("--head");
       if (input.diff !== undefined) {
         args.push("--diff", input.diff);
+        suppliedOptions.add("--diff");
       }
-      return args;
+      // Follow-up re-review sources plan/task/brief from the ledger row.
+      //
+      if (input.dispatchVariant === "followup:re-review") {
+        suppliedOptions.delete("--plan");
+        suppliedOptions.delete("--task");
+        suppliedOptions.delete("--brief");
+      }
+      return { args, suppliedOptions };
     case "code-reviewer":
       args.push("--description", input.description);
+      suppliedOptions.add("--description");
       args.push("--requirements", `@${input.reviewBrief}`);
+      suppliedOptions.add("--requirements");
       args.push("--base", input.base);
+      suppliedOptions.add("--base");
       args.push("--head", input.head);
-      return args;
+      suppliedOptions.add("--head");
+      return { args, suppliedOptions };
   }
+}
+
+const x_RendererFaultCodes = new Set([
+  "no_such_file",
+  "empty_file",
+  "parent_missing",
+  "not_accepted",
+  "required_missing",
+]);
+
+const x_PathFaults = new Set(["no_such_file", "empty_file", "parent_missing"]);
+
+function LedgerArtifactFor(option: string): "plan" | "brief" | null {
+  if (option === "--plan") {
+    return "plan";
+  }
+  if (option === "--brief") {
+    return "brief";
+  }
+  return null;
+}
+
+function ClassifyRendererFault(
+  stderr: string,
+  input: RenderSddPromptInput,
+  suppliedOptions: ReadonlySet<string>,
+): SddPromptError | null {
+  const lines = stderr.split(/\r?\n/).filter((line) => line.trim() !== "");
+  const last = lines.at(-1);
+  if (last === undefined) {
+    return null;
+  }
+  let body: { error?: string; option?: string; path?: string };
+  try {
+    body = JSON.parse(last) as { error?: string; option?: string; path?: string };
+  }
+  catch {
+    return null;
+  }
+  if (body.error === undefined || !x_RendererFaultCodes.has(body.error)) {
+    return null;
+  }
+  const option = body.option ?? "";
+  const variant = DispatchVariantFor(input);
+  const provenance = ResolveFaultProvenance(variant, option, suppliedOptions);
+  if (provenance === null) {
+    return null;
+  }
+  if (provenance === "derived") {
+    return null;
+  }
+  if (provenance === "ledger") {
+    if (input.role !== "re-review" || input.runId === undefined) {
+      return null;
+    }
+    const artifact = LedgerArtifactFor(option);
+    if (artifact === null) {
+      return null;
+    }
+    return new SddPromptError({
+      error: "sdd_stored_artifact_missing",
+      message: "A stored SDD artifact required for this follow-up is missing.",
+      details: {
+        run_id: input.runId,
+        artifact,
+        path: body.path ?? (artifact === "plan" ? input.plan : input.brief),
+        plan: input.plan,
+        task: input.task,
+        recovery: { tool: "xagent_sdd_start", role: "re-reviewer" },
+      },
+    });
+  }
+  // The renderer only knows --report; the caller sent implementer_report.
+  // A null field means an option the facade never sends — stay opaque rather
+  // than leak renderer vocabulary (xsvc-18).
+  //
+  const field = SurfaceFieldFor(variant, option);
+  if (field === null) {
+    return null;
+  }
+  return new SddPromptError({
+    error: "sdd_renderer_bad_input",
+    message: "dispatch-prompt rejected an input argument.",
+    details: x_PathFaults.has(body.error) && body.path !== undefined
+      ? { reason: body.error, field, path: body.path }
+      : { reason: body.error, field },
+  });
 }
 
 function ResolveBriefPath(input: RenderSddPromptInput): string | undefined {
@@ -283,7 +428,7 @@ export async function RenderSddPrompt(
 
   const rendererPath = await ResolveRendererPath(input, checkAccess);
 
-  const args = BuildDispatchArgs(input);
+  const { args, suppliedOptions } = BuildDispatchArgs(input);
   let stdout = "";
   try {
     const result = await exec(pythonExecutable, [rendererPath, ...args], {
@@ -316,6 +461,10 @@ export async function RenderSddPrompt(
           "Superpowers templates are not installed where dispatch-prompt looks. "
           + "Reinstall the Superpowers package or set SUPERPOWERS_TEMPLATES_ROOT.",
       });
+    }
+    const classified = ClassifyRendererFault(stderr, input, suppliedOptions);
+    if (classified !== null) {
+      throw classified;
     }
     throw new SddPromptError({
       error: "sdd_renderer_failed",

@@ -922,3 +922,266 @@ test("FormatFixDispatch is the same-agent fix text plus a plan/task/role header"
   );
   assert.ok(dispatch.endsWith(continuation));
 });
+
+test("renderer argument-fault trailers classify to surface fields and withhold stderr", async () => {
+  const fixture = await createFixture();
+  const secret = "BRIEF-BODY-SECRET-SHOULD-NOT-LEAK";
+
+  async function RejectWithTrailer(args: {
+    readonly role: "implementer" | "task-reviewer" | "re-review";
+    readonly trailer: Record<string, string>;
+    readonly dispatchVariant?: "re-reviewer" | "followup:re-review";
+    readonly runId?: string;
+  }): Promise<SddPromptError> {
+    const baseInput = args.role === "implementer"
+      ? {
+          role: "implementer" as const,
+          repoRoot: fixture.trustedRepoRoot,
+          cwd: fixture.callerCwd,
+          plan: fixture.plan,
+          task: 1,
+          name: "Thing",
+          brief: fixture.brief,
+          reportOut: fixture.report,
+          templatesRoot: fixture.templatesRoot,
+        }
+      : args.role === "task-reviewer"
+      ? {
+          role: "task-reviewer" as const,
+          repoRoot: fixture.trustedRepoRoot,
+          cwd: fixture.callerCwd,
+          plan: fixture.plan,
+          task: 1,
+          brief: fixture.brief,
+          implementerReport: fixture.report,
+          base: "HEAD",
+          head: "HEAD",
+          diff: path.join(fixture.callerCwd, "supplied.diff"),
+          templatesRoot: fixture.templatesRoot,
+        }
+      : {
+          role: "re-review" as const,
+          repoRoot: fixture.trustedRepoRoot,
+          cwd: fixture.callerCwd,
+          plan: fixture.plan,
+          task: 1,
+          round: 1,
+          brief: fixture.brief,
+          findings: fixture.findings,
+          fixerReport: fixture.report,
+          base: "HEAD",
+          head: "HEAD",
+          diff: path.join(fixture.callerCwd, "supplied.diff"),
+          templatesRoot: fixture.templatesRoot,
+          ...(args.dispatchVariant === undefined
+            ? {}
+            : { dispatchVariant: args.dispatchVariant }),
+          ...(args.runId === undefined ? {} : { runId: args.runId }),
+        };
+
+    try {
+      await RenderSddPrompt(baseInput, {
+        execFile: async () => {
+          const error = new Error("renderer failed") as Error & {
+            code?: number;
+            stderr?: string;
+          };
+          error.code = 2;
+          error.stderr =
+            `human noise mentioning ${secret}\n${JSON.stringify(args.trailer)}\n`;
+          throw error;
+        },
+      });
+      throw new Error("expected RenderSddPrompt to reject");
+    }
+    catch (error) {
+      assert.ok(error instanceof SddPromptError);
+      assert.doesNotMatch(JSON.stringify(error.structured), new RegExp(secret));
+      assert.doesNotMatch(error.message, new RegExp(secret));
+      return error;
+    }
+  }
+
+  for (const reason of [
+    "no_such_file",
+    "empty_file",
+    "parent_missing",
+    "not_accepted",
+    "required_missing",
+  ] as const) {
+    const trailer: Record<string, string> = {
+      error: reason,
+      option: "--report",
+    };
+    if (reason === "no_such_file" || reason === "empty_file" || reason === "parent_missing") {
+      trailer.path = "/tmp/missing-report.md";
+    }
+    const implementer = await RejectWithTrailer({
+      role: "implementer",
+      trailer,
+    });
+    assert.equal(implementer.structured.error, "sdd_renderer_bad_input");
+    assert.equal(
+      (implementer.structured.details as { field: string }).field,
+      "report_out",
+    );
+    assert.equal(
+      (implementer.structured.details as { reason: string }).reason,
+      reason,
+    );
+
+    const reviewer = await RejectWithTrailer({
+      role: "task-reviewer",
+      trailer,
+    });
+    assert.equal(
+      (reviewer.structured.details as { field: string }).field,
+      "implementer_report",
+    );
+
+    const reReviewer = await RejectWithTrailer({
+      role: "re-review",
+      trailer,
+    });
+    assert.equal(
+      (reReviewer.structured.details as { field: string }).field,
+      "fixer_report",
+    );
+  }
+
+  const nonAllowlisted = await RejectWithTrailer({
+    role: "implementer",
+    trailer: { error: "template_drift", option: "--report" },
+  });
+  assert.equal(nonAllowlisted.structured.error, "sdd_renderer_failed");
+
+  try {
+    await RenderSddPrompt(
+      {
+        role: "implementer",
+        repoRoot: fixture.trustedRepoRoot,
+        cwd: fixture.callerCwd,
+        plan: fixture.plan,
+        task: 1,
+        name: "Thing",
+        brief: fixture.brief,
+        reportOut: fixture.report,
+        templatesRoot: fixture.templatesRoot,
+      },
+      {
+        execFile: async () => {
+          const error = new Error("renderer failed") as Error & {
+            code?: number;
+            stderr?: string;
+          };
+          error.code = 2;
+          error.stderr = `noise ${secret}\nnot-json-trailer\n`;
+          throw error;
+        },
+      },
+    );
+    assert.fail("expected opaque failure");
+  }
+  catch (error) {
+    assert.ok(error instanceof SddPromptError);
+    assert.equal(error.structured.error, "sdd_renderer_failed");
+    assert.doesNotMatch(JSON.stringify(error.structured), new RegExp(secret));
+  }
+
+  const unknownOption = await RejectWithTrailer({
+    role: "implementer",
+    trailer: { error: "no_such_file", option: "--out", path: "/tmp/x" },
+  });
+  assert.equal(unknownOption.structured.error, "sdd_renderer_failed");
+
+  const ledgerBrief = await RejectWithTrailer({
+    role: "re-review",
+    dispatchVariant: "followup:re-review",
+    runId: sampleAgentId,
+    trailer: {
+      error: "no_such_file",
+      option: "--brief",
+      path: fixture.brief,
+    },
+  });
+  assert.equal(ledgerBrief.structured.error, "sdd_stored_artifact_missing");
+  assert.deepEqual(ledgerBrief.structured.details, {
+    run_id: sampleAgentId,
+    artifact: "brief",
+    path: fixture.brief,
+    plan: fixture.plan,
+    task: 1,
+    recovery: { tool: "xagent_sdd_start", role: "re-reviewer" },
+  });
+
+  const ledgerPlan = await RejectWithTrailer({
+    role: "re-review",
+    dispatchVariant: "followup:re-review",
+    runId: sampleAgentId,
+    trailer: {
+      error: "no_such_file",
+      option: "--plan",
+      path: fixture.plan,
+    },
+  });
+  assert.equal(ledgerPlan.structured.error, "sdd_stored_artifact_missing");
+  assert.equal(
+    (ledgerPlan.structured.details as { artifact: string }).artifact,
+    "plan",
+  );
+
+  const derivedDiff = await RejectWithTrailer({
+    role: "task-reviewer",
+    trailer: {
+      error: "no_such_file",
+      option: "--diff",
+      path: "/tmp/derived.diff",
+    },
+  });
+  // task-reviewer input includes diff, so this is caller_input.
+  //
+  assert.equal(derivedDiff.structured.error, "sdd_renderer_bad_input");
+  assert.equal(
+    (derivedDiff.structured.details as { field: string }).field,
+    "diff",
+  );
+
+  // Omit diff so the faulting option is treated as derived → opaque.
+  //
+  try {
+    await RenderSddPrompt(
+      {
+        role: "task-reviewer",
+        repoRoot: fixture.trustedRepoRoot,
+        cwd: fixture.callerCwd,
+        plan: fixture.plan,
+        task: 1,
+        brief: fixture.brief,
+        implementerReport: fixture.report,
+        base: "HEAD",
+        head: "HEAD",
+        templatesRoot: fixture.templatesRoot,
+      },
+      {
+        execFile: async () => {
+          const error = new Error("renderer failed") as Error & {
+            code?: number;
+            stderr?: string;
+          };
+          error.code = 2;
+          error.stderr = `${JSON.stringify({
+            error: "no_such_file",
+            option: "--diff",
+            path: "/tmp/derived.diff",
+          })}\n`;
+          throw error;
+        },
+      },
+    );
+    assert.fail("expected opaque derived failure");
+  }
+  catch (error) {
+    assert.ok(error instanceof SddPromptError);
+    assert.equal(error.structured.error, "sdd_renderer_failed");
+  }
+});
