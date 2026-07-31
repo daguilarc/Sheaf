@@ -15,6 +15,17 @@
       "includeDirs": [
         "tests/fixtures/cpp"
       ]
+    },
+    {
+      "appId": "tall-fake-browser-app",
+      "displayName": "Tall Generic Fake App",
+      "author": "Sheaf Tests",
+      "category": "Instrument",
+      "header": "FakeBrowserApp.hpp",
+      "cppType": "synth_browser::test::TallFakeBrowserApp",
+      "includeDirs": [
+        "tests/fixtures/cpp"
+      ]
     }
   ]
 }

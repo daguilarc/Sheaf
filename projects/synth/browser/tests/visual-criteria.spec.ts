@@ -15,7 +15,7 @@
 // the durable regression surface precisely because they are structural and hold
 // at any extent.
 import { expect, test, type Page } from "@playwright/test";
-import { installRealFakeApp, stopRealFakeApp, synthNode } from "./helpers/fake-app.js";
+import { FIXTURE_APPS, installRealFakeApp, stopRealFakeApp, synthNode } from "./helpers/fake-app.js";
 import { installTwisterPair } from "./helpers/fake-midi.js";
 
 // ---------------------------------------------------------------------------
@@ -122,13 +122,14 @@ function controllerCaptionExceptions(rows: number): CaptionException[] {
   return exceptions;
 }
 
-// Sliders that carry their name in `Node::label`, which no backend paints for a
-// `Slider`. Same product question as the table cells; tasks.md 6.5b.
-const APP_CAPTION_EXCEPTIONS: CaptionException[] = [
-  { id: "braid4.scene.blend", reason: "Braid 4 scene blend slider; name lives in Node::label" },
-  { id: "miniapp.scene.blend", reason: "Mini App scene blend slider; name lives in Node::label" },
-  { id: "miniapp.gesture.value", reason: "Mini App gesture slider; name lives in Node::label" },
-];
+// Braid 4's and Mini App's slider exceptions (`braid4.scene.blend`,
+// `miniapp.scene.blend`, `miniapp.gesture.value`) are deliberately NOT listed
+// here. Neither app is reachable from this harness, so every one of those
+// entries would be unmatchable on every surface this suite drives -- a
+// permanently stale list, which is exactly what the equality pin below exists
+// to catch. They are named, with reasons, in the headless half
+// (`portable_ui_tests.cpp`) where the surfaces actually exist, and in
+// tasks.md 6.5b for the product owner.
 
 // The ONLY blanket out-of-flow class. A Controllers row's status dots are an
 // explicitly bounded `Draw` the producer hand-centres inside its cell, so they
@@ -261,41 +262,55 @@ async function installCriteriaHelpers(page: Page): Promise<void> {
     const describeRect = (rect: DOMRect) =>
       `(${rect.left.toFixed(2)},${rect.top.toFixed(2)} ${rect.width.toFixed(2)}x${rect.height.toFixed(2)})`;
 
-    // The COMPOSITED foreground colour, not the computed one.
+    // What the eye actually sees, composited the way the browser paints it.
     //
     // `getComputedStyle(el).color` reports the author's colour before the
     // element's own `opacity` and before every ancestor's. A disabled control
     // renders at `opacity: 0.58` (`synth-browser.css`), so reading `color`
-    // alone approves text the eye sees at well under the reported ratio. Both
-    // the foreground's own alpha and the cumulative opacity chain are composited
-    // against the effective background here, which is what WCAG measures.
+    // alone approves text nobody can read at the ratio reported.
+    //
+    // ROUND 2 GOT THE COMPOSITING WRONG in a way worth recording, because it
+    // looked right. It faded the FOREGROUND by the cumulative opacity but
+    // measured it against the element's own background left at FULL strength --
+    // and its background search started at the element itself, so a control
+    // with an opaque field background was compared against a colour that is not
+    // on screen. CSS group opacity does not work that way: it fades the
+    // element's background and its glyphs TOGETHER onto whatever is behind the
+    // element. Both must fade, or the ratio describes a rendering that never
+    // happened.
     const parseColour = (value: string) => {
       const parts = value.match(/[\d.]+/g);
       if (!parts) return null;
       const [r, g, b, a] = parts.map(Number);
       return { r, g, b, a: a === undefined ? 1 : a };
     };
-    const cumulativeOpacity = (el: HTMLElement) => {
-      let opacity = 1;
-      for (let node: HTMLElement | null = el; node; node = node.parentElement) {
-        const own = Number(getComputedStyle(node).opacity);
-        if (!Number.isNaN(own)) opacity *= own;
-      }
-      return opacity;
+    const opacityOf = (el: HTMLElement) => {
+      const own = Number(getComputedStyle(el).opacity);
+      return Number.isNaN(own) ? 1 : own;
     };
-    const effectiveBackground = (el: HTMLElement) => {
-      for (let node: HTMLElement | null = el; node; node = node.parentElement) {
-        const colour = parseColour(getComputedStyle(node).backgroundColor);
-        if (colour && colour.a >= 1) return colour;
+    // The opaque colour BEHIND this element's own opacity group. Strictly
+    // ancestors -- the element's own background is not its own backdrop, which
+    // is the bug above. An ancestor that is itself faded or translucent cannot
+    // serve either, so the walk continues past it and accumulates its opacity,
+    // since that opacity fades this element's group too.
+    const backdropBehind = (el: HTMLElement) => {
+      let outerOpacity = 1;
+      for (let node = el.parentElement; node; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        const colour = parseColour(style.backgroundColor);
+        const opacity = opacityOf(node);
+        if (colour && colour.a >= 1 && opacity >= 1) return { backdrop: colour, outerOpacity };
+        outerOpacity *= opacity;
       }
-      return { r: 255, g: 255, b: 255, a: 1 };
+      // The document canvas, which is white unless something opaque was found.
+      return { backdrop: { r: 255, g: 255, b: 255, a: 1 }, outerOpacity };
     };
-    const composite = (fg: { r: number; g: number; b: number; a: number },
-                       bg: { r: number; g: number; b: number; a: number },
+    const composite = (over: { r: number; g: number; b: number },
+                       under: { r: number; g: number; b: number },
                        alpha: number) => ({
-      r: fg.r * alpha + bg.r * (1 - alpha),
-      g: fg.g * alpha + bg.g * (1 - alpha),
-      b: fg.b * alpha + bg.b * (1 - alpha),
+      r: over.r * alpha + under.r * (1 - alpha),
+      g: over.g * alpha + under.g * (1 - alpha),
+      b: over.b * alpha + under.b * (1 - alpha),
       a: 1,
     });
     const channel = (value: number) => {
@@ -304,20 +319,37 @@ async function installCriteriaHelpers(page: Page): Promise<void> {
     };
     const luminance = (c: { r: number; g: number; b: number }) =>
       0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b);
+    const describeColour = (c: { r: number; g: number; b: number }) =>
+      `rgb(${c.r.toFixed(0)}, ${c.g.toFixed(0)}, ${c.b.toFixed(0)})`;
     const contrastRatio = (el: HTMLElement) => {
-      const foreground = parseColour(getComputedStyle(el).color);
+      const style = getComputedStyle(el);
+      const foreground = parseColour(style.color);
       if (!foreground) return null;
-      const background = effectiveBackground(el);
-      const alpha = Math.max(0, Math.min(1, foreground.a * cumulativeOpacity(el)));
-      if (alpha === 0) return null;
-      const painted = composite(foreground, background, alpha);
-      const a = luminance(painted);
-      const b = luminance(background);
+      const ownBackground = parseColour(style.backgroundColor) ?? { r: 0, g: 0, b: 0, a: 0 };
+      const { backdrop, outerOpacity } = backdropBehind(el);
+
+      // Paint the element at full strength first: its own background onto the
+      // backdrop, then its glyphs onto that.
+      const paintedBackground = composite(ownBackground, backdrop, ownBackground.a);
+      const paintedForeground = composite(foreground, paintedBackground, foreground.a);
+
+      // Then fade the whole group -- background and glyphs alike -- onto the
+      // backdrop. This is the step round 2 applied to the foreground only.
+      const groupOpacity = Math.max(0, Math.min(1, opacityOf(el) * outerOpacity));
+      if (groupOpacity === 0) return null;
+      const shownForeground = composite(paintedForeground, backdrop, groupOpacity);
+      const shownBackground = composite(paintedBackground, backdrop, groupOpacity);
+
+      const a = luminance(shownForeground);
+      const b = luminance(shownBackground);
       return {
         ratio: (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05),
-        painted: `rgb(${painted.r.toFixed(0)}, ${painted.g.toFixed(0)}, ${painted.b.toFixed(0)})`,
-        background: `rgb(${background.r}, ${background.g}, ${background.b})`,
-        alpha,
+        painted: describeColour(shownForeground),
+        // The background AS SHOWN, which is what the ratio was measured
+        // against. When the element is faded this is deliberately not the
+        // element's declared background colour.
+        background: describeColour(shownBackground),
+        alpha: groupOpacity * foreground.a,
       };
     };
 
@@ -546,7 +578,19 @@ test.describe("sru-48 named visual criteria", () => {
     await expect(tail).toBeInViewport();
   });
 
-  test("no two siblings overlap, and an underlay covers exactly the node it names", async ({ page }) => {
+  // The title says what this test actually establishes. It checks sibling
+  // overlap on the four runtime pages, pins the sidebar badge inside the node it
+  // annotates, and pins that these pages emit NO sru-25 underlay at all.
+  //
+  // It does NOT check underlay congruence in the browser, because no surface
+  // reachable from this harness renders one -- underlays live in Braid 4 and
+  // Mini App, which the fixture app does not emit and whose first-party launch
+  // path is one of the six documented pre-existing Playwright failures.
+  // Browser-rendered underlay congruence is therefore not covered here at all;
+  // congruence is covered headlessly, with mutation evidence in both directions,
+  // by `TestAnUnderlayIsPinnedToItsTargetRatherThanExemptedFromOverlap` in
+  // `portable_ui_layout_tests.cpp`.
+  test("no two siblings overlap, and these pages emit no underlay", async ({ page }) => {
     await seedControllers(page, FIXTURE_CONTROLLER_COUNT);
     for (const surface of ALL_SURFACES) {
       await openSurface(page, surface);
@@ -588,11 +632,6 @@ test.describe("sru-48 named visual criteria", () => {
             }
           }
         }
-        // The sru-25 underlays are the only declared overlays in a first-party
-        // tree. If one is ever rendered here it is pinned to its target rather
-        // than waved through -- but the runtime shell's four pages emit none,
-        // so `underlaysSeen` is reported and asserted below rather than this
-        // loop quietly finding nothing and the test reading as green.
         // A named badge is exempt against its target and nothing else, so what
         // it is doing has to be pinned rather than assumed: it must sit inside
         // the node it annotates. The sidebar badge renders only while MIDI
@@ -612,39 +651,26 @@ test.describe("sru-48 named visual criteria", () => {
               a.top < b.top - TOLERANCE || a.bottom > b.bottom + TOLERANCE)
             violations.push(`${nodeId(el)} ${describeRect(a)} is not inside the node it badges, ${targetId} ${describeRect(b)}`);
         }
-        let underlaysSeen = 0;
-        for (const el of nodes()) {
-          const targetId = underlayTargetOf(nodeId(el));
-          if (!targetId) continue;
-          underlaysSeen += 1;
-          const target = document.querySelector<HTMLElement>(`[data-node-id="${targetId}"]`);
-          if (!target) { violations.push(`${nodeId(el)} overlays no node named ${targetId}`); continue; }
-          const a = el.getBoundingClientRect();
-          const b = target.getBoundingClientRect();
-          if (Math.abs(a.left - b.left) > TOLERANCE || Math.abs(a.top - b.top) > TOLERANCE ||
-              Math.abs(a.width - b.width) > TOLERANCE || Math.abs(a.height - b.height) > TOLERANCE)
-            violations.push(`${nodeId(el)} ${describeRect(a)} is not congruent with ${targetId} ${describeRect(b)}`);
-        }
+        // Underlays are COUNTED, not checked for congruence. There is no
+        // congruence branch here on purpose: no surface this harness can reach
+        // renders an underlay, so such a branch would be unreachable code
+        // dressed as coverage -- which is what it was before. The count is the
+        // live assertion, and it is pinned at zero below.
+        const underlaysSeen = nodes().filter((el) => underlayTargetOf(nodeId(el)) !== "").length;
         return { violations, comparedPairs, underlaysSeen, badgesSeen };
       }, OUT_OF_FLOW_SUFFIXES as unknown as string[]);
 
       expect(report.violations, `${surface}: ${report.violations.join("; ")}`).toEqual([]);
       expect(report.comparedPairs, `${surface}: overlap compared no sibling pairs`).toBeGreaterThan(3);
-      // An underlay only exists inside Braid 4 and Mini App, and neither is
-      // reachable from this harness: the fixture app emits none, and the
-      // first-party launch path is one of the six documented pre-existing
-      // Playwright failures. So the congruence claim is made and PROVEN VACUOUS
-      // here rather than left to look like coverage -- the real one, with
-      // mutation evidence in both directions, is
-      // `TestAnUnderlayIsPinnedToItsTargetRatherThanExemptedFromOverlap` in
-      // `portable_ui_layout_tests.cpp`, over a tree that actually has one.
-      //
-      // The day a runtime page does render an underlay, this flips and the
-      // congruence branch above becomes live coverage that must be reasoned
-      // about rather than inherited.
+      // This is a statement of fact about these pages, not a congruence check:
+      // they emit no sru-25 underlay. Asserting it keeps the fact honest instead
+      // of letting an empty subject set read as coverage. The day a runtime page
+      // does render one, this fails and asks for browser congruence coverage to
+      // be written -- which is a decision for whoever adds that underlay, not
+      // something to inherit from unreachable code sitting here.
       expect(report.underlaysSeen,
-        `${surface}: a runtime page now renders an sru-25 underlay -- the congruence check above ` +
-        `is no longer vacuous, so replace this pin with a real assertion on it`).toBe(0);
+        `${surface}: a runtime page now renders an sru-25 underlay -- browser congruence coverage ` +
+        `does not exist for it, so write it and replace this pin`).toBe(0);
       // Same treatment for the badge. No MIDI is installed in this test, so
       // discovery has no candidate and the sidebar warning does not render. The
       // live badge pin is in the wizard test, which does install one; if a badge
@@ -752,10 +778,15 @@ test.describe("sru-48 named visual criteria", () => {
 
   test("every form control has a visible caption", async ({ page }) => {
     await seedControllers(page, FIXTURE_CONTROLLER_COUNT);
-    const exceptions = [...controllerCaptionExceptions(FIXTURE_CONTROLLER_COUNT),
-                        ...APP_CAPTION_EXCEPTIONS];
     for (const surface of ALL_SURFACES) {
       await openSurface(page, surface);
+      // PER SURFACE, so that every entry must match on the surface it names.
+      // A single flat list across all four pages cannot be pinned for equality:
+      // most entries would be absent on most pages, which is how a stale entry
+      // survives forever.
+      const exceptions = surface === "controllers"
+        ? controllerCaptionExceptions(FIXTURE_CONTROLLER_COUNT)
+        : [];
       const report = await page.evaluate((excepted: string[]) => {
         const { nodes, nodeId } = window.__visualCriteria;
         const violations: string[] = [];
@@ -781,6 +812,16 @@ test.describe("sru-48 named visual criteria", () => {
       }, exceptions.map((exception) => exception.id));
 
       expect(report.violations, `${surface}: uncaptioned ${report.violations.join("; ")}`).toEqual([]);
+      // EQUALITY, mirroring `RequireSurfaceMeetsTheNamedCriteria` in the
+      // headless half: every named exception must be present on this surface.
+      // `> 0` was not enough -- it lets an entry naming a control that has been
+      // renamed or removed sit in the list forever, waiving something that no
+      // longer exists, which is how an exception list rots into a permanent
+      // waiver.
+      expect(report.residualsMatched,
+        `${surface}: the caption exception list names ${exceptions.length} controls but ` +
+        `${report.residualsMatched} are on this surface -- an entry is stale`)
+        .toBe(exceptions.length);
       // Every surface that declares form controls must have looked at
       // something. `controllers` is the one page where every control is a
       // table cell and therefore excepted, so its floor is on the exceptions
@@ -789,8 +830,6 @@ test.describe("sru-48 named visual criteria", () => {
       if (report.total > 0 && surface !== "controllers")
         expect(report.examined, `${surface}: caption check examined no form control`).toBeGreaterThan(0);
       if (surface === "controllers") {
-        expect(report.residualsMatched,
-          "controllers: no named caption exception matched, so the list is stale").toBeGreaterThan(0);
         // 12 rows x {input, output, rename_draft} plus the two add-row fields.
         // A control the page grows moves this number and fails here by name,
         // which is what the old suffix class could not do.
@@ -897,14 +936,45 @@ test.describe("sru-48 named visual criteria", () => {
     expect(contrast.before, "the unmodified label passes today").toBeGreaterThanOrEqual(4.5);
     expect(contrast.afterColour, "a near-background colour must fail").toBeLessThan(4.5);
     expect(contrast.afterOpacity, "a passing colour faded to 15% opacity must also fail").toBeLessThan(4.5);
+
+    // The case the two mutations above structurally CANNOT reach, and the one
+    // this check exists for: an element with its OWN OPAQUE BACKGROUND, faded.
+    // A label has a transparent background, so its backdrop is an ancestor's
+    // either way and the round-2 compositing agreed with the correct one by
+    // accident. Give it an opaque background and the two models diverge: the
+    // old one measured glyphs against that background at full strength, which
+    // is a rendering the browser never produces.
+    const faded = await page.evaluate(() => {
+      const { nodes, contrastRatio } = window.__visualCriteria;
+      const label = nodes().find((el) => el.dataset.nodeKind === "label" && !!el.textContent?.trim());
+      if (!label) return null;
+      const saved = { background: label.style.backgroundColor, colour: label.style.color, opacity: label.style.opacity };
+      // Opaque field-like background with strong text on it: at full strength
+      // this passes comfortably.
+      label.style.backgroundColor = "rgb(255, 255, 255)";
+      label.style.color = "rgb(0, 0, 0)";
+      const opaque = contrastRatio(label)!;
+      // Now fade the group. Both the white background and the black glyphs
+      // collapse toward the backdrop together, so the ratio goes to ~1:1.
+      label.style.opacity = "0.05";
+      const dimmed = contrastRatio(label)!;
+      Object.assign(label.style, {
+        backgroundColor: saved.background, color: saved.colour, opacity: saved.opacity,
+      });
+      return { opaque, dimmed };
+    });
+    expect(faded, "sync must render a label to fade").not.toBeNull();
+    expect(faded!.opaque.ratio, "black on an opaque white background passes at full strength")
+      .toBeGreaterThanOrEqual(4.5);
+    expect(faded!.dimmed.ratio, "the same element at 5% opacity must fail").toBeLessThan(4.5);
+    // And the fix itself, pinned directly rather than only through the ratio:
+    // the background the ratio was measured against is the FADED one, not the
+    // element's declared white. Round 2 reported "rgb(255, 255, 255)" here.
+    expect(faded!.dimmed.background,
+      "the measured background must be the composited one, not the element's declared background")
+      .not.toBe("rgb(255, 255, 255)");
   });
 
-  // sru-48 asks for a rendered re-render at a second root extent, asserting
-  // weighted children redistribute while fixed and intrinsic ones hold. The
-  // headless half proves the resolver does this; what only the browser can show
-  // is that the DOM the backend built actually followed. Every other
-  // browser-only criterion is evaluated at one extent, which is exactly why
-  // this one is not.
   // Sync's validation error and warning are named states in task 1.4's fixture
   // and were previously evaluated only headlessly, even though the browser can
   // reach them: they are a consequence of what is typed into the PPQN field, not
@@ -1000,41 +1070,80 @@ test.describe("sru-48 named visual criteria", () => {
     await expect(argument).toBeInViewport();
   });
 
-  test("a second root extent redistributes weighted children in the rendered DOM", async ({ page }) => {
-    await openSurface(page, "sync");
-    const measure = async () => page.evaluate(() => {
+  // sru-48 asks for a rendered re-render at a second root extent, asserting
+  // weighted children redistribute while fixed and intrinsic ones hold. The
+  // headless half proves the resolver does this; what only the browser can show
+  // is that the DOM the backend built actually followed.
+  //
+  // ROUND 2 GOT THIS WRONG, and the way it was wrong is worth keeping written
+  // down. It resized the VIEWPORT and compared before and after. But a page's
+  // content bounds are set once, in `RuntimeMainComponent`'s constructor, from
+  // `App::Config().uiHeight` -- a per-app compile-time declaration -- and
+  // `fitSurface` applies only a shrink-only *width* scale on top. So the
+  // resolver never saw a second extent, every measurement was identical, and
+  // the test asserted `0 ≈ 0`. It could not fail.
+  //
+  // The root extent is varied the one way this shell allows: a second fixture
+  // app declaring `uiHeight = 720` instead of 480, compiled from the same
+  // header. Same page producer, same backend, two genuinely different root
+  // extents, both rendered. The premise assertions below fail loudly if that
+  // ever stops being true, rather than degrading to a comparison of a layout
+  // with itself.
+  test("a second root extent redistributes weighted children in the rendered DOM", async ({ page, browser }) => {
+    const measure = async (target: Page) => target.evaluate(() => {
       const rect = (id: string) => {
         const el = document.querySelector<HTMLElement>(`[data-node-id="${id}"]`);
         return el ? el.getBoundingClientRect() : null;
       };
-      const status = rect("runtime.sync.status");
-      const back = rect("runtime.sync.back");
-      const form = rect("runtime.sync.form");
-      const root = rect("runtime.sync.root");
       return {
-        rootHeight: root?.height ?? 0,
-        weighted: status?.height ?? 0,   // the absorbing region
-        fixedButton: back?.height ?? 0,  // Extent::Px, must not move
-        intrinsicForm: form?.height ?? 0 // intrinsic stack, must not move
+        rootHeight: rect("runtime.sync.root")?.height ?? 0,
+        weighted: rect("runtime.sync.status")?.height ?? 0,   // the absorbing region
+        fixedButton: rect("runtime.sync.back")?.height ?? 0,  // Extent::Px, must not move
+        intrinsicForm: rect("runtime.sync.form")?.height ?? 0, // intrinsic stack, must not move
       };
     });
 
-    const narrow = await measure();
-    // The surface height comes from the app's declared `uiHeight`, so the root
-    // extent is changed the only way a real host can change it: a taller
-    // window, re-fitted and re-rendered.
-    await page.setViewportSize({ width: VERIFICATION_VIEWPORT.width, height: VERIFICATION_VIEWPORT.height + 400 });
-    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    const wide = await measure();
-    await page.setViewportSize({ ...VERIFICATION_VIEWPORT });
+    // The standard 480-high fixture is already installed by `beforeEach`.
+    await openSurface(page, "sync");
+    const short = await measure(page);
 
-    expect(narrow.rootHeight, "the narrow measurement rendered a real surface").toBeGreaterThan(0);
-    // A viewport change must not resize a fixed or intrinsic child: if it does,
-    // something outside the library is sizing them.
-    expect(wide.fixedButton).toBeCloseTo(narrow.fixedButton, 1);
-    expect(wide.intrinsicForm).toBeCloseTo(narrow.intrinsicForm, 1);
-    // ... and the absorbing region is the only thing that may move, in step
-    // with whatever the root did.
-    expect(wide.weighted - narrow.weighted).toBeCloseTo(wide.rootHeight - narrow.rootHeight, 1);
+    // The 720-high fixture gets its OWN context rather than being installed
+    // over the running one: `installRealFakeApp` builds a whole launcher and
+    // runtime client per page, and the teardown contract in `stopRealFakeApp`
+    // is per-app. Two contexts keeps each app's lifecycle intact and still
+    // measures the same producer through the same backend.
+    const tallContext = await browser.newContext({
+      viewport: { ...VERIFICATION_VIEWPORT },
+      deviceScaleFactor: 1,
+    });
+    const tallPage = await tallContext.newPage();
+    let tall: Awaited<ReturnType<typeof measure>>;
+    try {
+      await installCriteriaHelpers(tallPage);
+      await installRealFakeApp(tallPage, FIXTURE_APPS.tall);
+      await openSurface(tallPage, "sync");
+      tall = await measure(tallPage);
+      await stopRealFakeApp(tallPage);
+    } finally {
+      await tallContext.close();
+    }
+
+    // The premise, asserted rather than assumed: two DIFFERENT root extents were
+    // actually rendered, and they differ by exactly what the two apps declare.
+    // Without this the rest degrades into `0 ≈ 0`, which is precisely how the
+    // round-2 version of this test passed while proving nothing.
+    expect(short.rootHeight, "the short surface rendered").toBeGreaterThan(0);
+    expect(tall.rootHeight - short.rootHeight,
+      `the two fixture apps must resolve at different root extents, got ${short.rootHeight} and ${tall.rootHeight}`)
+      .toBeCloseTo(FIXTURE_APPS.tall.uiHeight - FIXTURE_APPS.standard.uiHeight, 1);
+
+    // A different root extent must not resize a fixed or intrinsic child: if it
+    // does, something outside the library is sizing them.
+    expect(tall.fixedButton, "the fixed-extent Back button held its height").toBeCloseTo(short.fixedButton, 1);
+    expect(tall.intrinsicForm, "the intrinsic form held its height").toBeCloseTo(short.intrinsicForm, 1);
+    // The weighted region grows, and it absorbs the WHOLE difference -- nothing
+    // else moved and nothing was left unallocated.
+    expect(tall.weighted, "the absorbing region grew").toBeGreaterThan(short.weighted);
+    expect(tall.weighted - short.weighted).toBeCloseTo(tall.rootHeight - short.rootHeight, 1);
   });
 });
