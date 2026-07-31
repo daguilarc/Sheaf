@@ -896,41 +896,91 @@ test("a ledger row with no run record is a tombstone entry", async () => {
 // Retired names must reach the strict union. Without .passthrough() on the
 // advertised schema the MCP SDK strips undeclared keys before the handler
 // runs, and a leftover agent/report/agent_id would vanish into a successful
-// dispatch.
+// dispatch. Covers both dispatch tools (xsvc-11).
 //
 test("retired field names are rejected, not stripped", async () => {
   const cwd = await mkdtemp(path.join(tmpdir(), "xagent-mcp-retired-"));
   const planPath = path.join(cwd, "plan.md");
   const briefPath = path.join(cwd, "brief.md");
   const reportPath = path.join(cwd, "report.md");
+  const findingsPath = path.join(cwd, "findings.md");
   await writeFile(planPath, "# plan\n", "utf8");
   await writeFile(briefPath, "Implement the rename.\n", "utf8");
   await writeFile(reportPath, "", "utf8");
+  await writeFile(findingsPath, "Finding 1.\n", "utf8");
 
   await withMcpService(async ({ client }) => {
-    for (const retired of ["agent", "report", "agent_id"]) {
-      const response = asToolCallResult(await client.callTool({
-        name: "xagent_sdd_start",
-        arguments: {
-          role: "implementer",
-          cwd,
-          plan: planPath,
-          task: 1,
-          name: "n",
-          brief: briefPath,
-          report_out: reportPath,
-          model: "opus",
-          harness: "claude_code",
-          effort: "high",
-          [retired]: "leftover",
-        },
-      }));
-      assert.match(
-        JSON.stringify(response),
-        /invalid_tool_input|unrecognized/i,
-        `${retired} must be rejected, not silently stripped`,
-      );
+    const startBase = {
+      role: "implementer",
+      cwd,
+      plan: planPath,
+      task: 1,
+      name: "n",
+      brief: briefPath,
+      report_out: reportPath,
+      model: "opus",
+      harness: "claude_code",
+      effort: "high",
+    };
+
+    const controlStart = asToolCallResult(await client.callTool({
+      name: "xagent_sdd_start",
+      arguments: startBase,
+    }));
+    assertToolSucceeded(controlStart);
+    const started = structuredToolBody(controlStart);
+    const runId = String(started.run_id);
+    const afterSequence = Number(started.sequence);
+
+    // Drain the first turn so follow-up is accepted in ready.
+    //
+    const awaited = asToolCallResult(await client.callTool({
+      name: "xagent_await",
+      arguments: { run_id: runId, after_sequence: afterSequence, deadline_seconds: 30 },
+    }));
+    assertToolSucceeded(awaited);
+
+    const followupBase = {
+      kind: "fix",
+      run_id: runId,
+      round: 1,
+      findings: findingsPath,
+      findings_text: "Finding 1.",
+      tests: ["npm test"],
+      report_out: reportPath,
+    };
+
+    for (const [tool, base] of [
+      ["xagent_sdd_start", startBase],
+      ["xagent_sdd_followup", followupBase],
+    ] as const) {
+      for (const retired of ["agent", "report", "agent_id"]) {
+        const response = asToolCallResult(await client.callTool({
+          name: tool,
+          arguments: {
+            ...base,
+            [retired]: "leftover",
+          },
+        }));
+        const body = JSON.stringify(response);
+        assert.match(
+          body,
+          /invalid_tool_input|unrecognized/i,
+          `${tool}: ${retired} must be rejected, not silently stripped`,
+        );
+        assert.match(
+          body,
+          new RegExp(retired),
+          `${tool}: error must name retired field ${retired}`,
+        );
+      }
     }
+
+    const controlFollowup = asToolCallResult(await client.callTool({
+      name: "xagent_sdd_followup",
+      arguments: followupBase,
+    }));
+    assertToolSucceeded(controlFollowup);
   }, {
     createSddManager: ({ runManager, repoRoot, logRoot }) =>
       CreateTestSddManager(runManager, repoRoot, logRoot),

@@ -40,6 +40,8 @@ const x_ReportPath = "/tmp/sdd/task-3-report.md";
 const x_PromptPath = "/tmp/sdd/dispatch-implementer-task-3.md";
 const x_Cwd = "/tmp/worktree";
 const x_CanonicalCwd = "/private/tmp/worktree";
+const x_ResolvedBriefPath = "/private/tmp/sdd/task-3-brief.md";
+const x_ResolvedReportPath = "/private/tmp/sdd/task-3-report.md";
 const x_BriefText = "Implement SDD start and follow-up.\n";
 const x_PromptText = "Rendered implementer prompt pointing at the brief.\n";
 const x_FindingsPath = "/tmp/sdd/task-3-findings.md";
@@ -295,6 +297,15 @@ function CreateDeps(
       }
       return x_CanonicalCwd;
     },
+    async resolveArtifactPath(filePath: string): Promise<string>
+    {
+      recorder?.Record("resolveArtifactPath", filePath);
+      if (filePath.startsWith("/tmp/"))
+      {
+        return `/private${filePath}`;
+      }
+      return filePath;
+    },
     async readFile(filePath: string): Promise<string>
     {
       recorder?.Record("readFile", filePath);
@@ -464,8 +475,8 @@ test("start results use run_id and role-specific report_out_path / renderer keys
     task: 3, name: "x", brief: x_BriefPath, report_out: x_ReportPath,
   });
   assert.equal(implementer.run_id, x_AgentId);
-  assert.equal(implementer.brief_path, x_BriefPath);
-  assert.equal(implementer.report_out_path, x_ReportPath);
+  assert.equal(implementer.brief_path, x_ResolvedBriefPath);
+  assert.equal(implementer.report_out_path, x_ResolvedReportPath);
   assert.ok("prompt_path" in implementer);
   assert.ok("renderer_path" in implementer);
   assert.ok(!("agent_id" in implementer));
@@ -478,8 +489,8 @@ test("start results use run_id and role-specific report_out_path / renderer keys
     round: 1,
   });
   assert.equal(fixer.run_id, x_AgentId);
-  assert.equal(fixer.brief_path, x_BriefPath);
-  assert.equal(fixer.report_out_path, x_ReportPath);
+  assert.equal(fixer.brief_path, x_ResolvedBriefPath);
+  assert.equal(fixer.report_out_path, x_ResolvedReportPath);
   assert.ok(!("prompt_path" in fixer));
   assert.ok(!("renderer_path" in fixer));
   assert.ok(!("agent_id" in fixer));
@@ -491,7 +502,7 @@ test("start results use run_id and role-specific report_out_path / renderer keys
     base: "main", head: "HEAD",
   });
   assert.equal(reviewer.run_id, x_AgentId);
-  assert.equal(reviewer.brief_path, x_BriefPath);
+  assert.equal(reviewer.brief_path, x_ResolvedBriefPath);
   assert.ok(!("report_out_path" in reviewer));
   assert.ok("prompt_path" in reviewer);
   assert.ok(!("agent_id" in reviewer));
@@ -504,7 +515,7 @@ test("start results use run_id and role-specific report_out_path / renderer keys
     round: 1,
   });
   assert.equal(reReviewer.run_id, x_AgentId);
-  assert.equal(reReviewer.brief_path, x_BriefPath);
+  assert.equal(reReviewer.brief_path, x_ResolvedBriefPath);
   assert.ok(!("report_out_path" in reReviewer));
   assert.ok("prompt_path" in reReviewer);
   assert.ok(!("agent_id" in reReviewer));
@@ -766,7 +777,7 @@ test("a dead agent gets sdd_agent_not_live naming the fresh-agent recovery", asy
       assert.deepEqual(structured.details, {
         run_id: x_AgentId,
         role: "implementer",
-        plan_path: x_PlanPath,
+        plan: x_PlanPath,
         task: 3,
         recovery: { tool: "xagent_sdd_start", role: "fixer" },
       });
@@ -801,7 +812,7 @@ test("a tracked terminal agent gets sdd_agent_not_live before submit", async () 
         assert.deepEqual(structured.details, {
           run_id: x_AgentId,
           role: "implementer",
-          plan_path: x_PlanPath,
+          plan: x_PlanPath,
           task: 3,
           recovery: { tool: "xagent_sdd_start", role: "fixer" },
         });

@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -69,6 +69,7 @@ export type SddManagerDeps = {
   readonly runManager: SddRunManagerPort;
   readonly repoRoot: string;
   readonly canonicalizeCwd?: (cwd: string) => Promise<string>;
+  readonly resolveArtifactPath?: (filePath: string) => Promise<string>;
   readonly readFile?: (filePath: string) => Promise<string>;
   readonly renderPrompt?: (input: RenderSddPromptInput) => Promise<RenderedSddPrompt>;
   readonly formatFix?: (input: FormatFixFollowupInput) => string;
@@ -126,6 +127,39 @@ function PersistenceFailed(message: string, details?: unknown): ToolValidationEr
     message,
     ...(details === undefined ? {} : { details }),
   });
+}
+
+// Same realpath basis as canonicalizeWorkingDirectory. report_out need not
+// exist yet, so missing paths resolve through the nearest existing ancestor.
+//
+async function ResolveArtifactPath(filePath: string): Promise<string>
+{
+  try
+  {
+    return await realpath(filePath);
+  }
+  catch
+  {
+    const segments: string[] = [];
+    let current = path.resolve(filePath);
+    for (;;)
+    {
+      const parent = path.dirname(current);
+      segments.unshift(path.basename(current));
+      if (parent === current)
+      {
+        return path.resolve(filePath);
+      }
+      try
+      {
+        return path.join(await realpath(parent), ...segments);
+      }
+      catch
+      {
+        current = parent;
+      }
+    }
+  }
 }
 
 async function ReadRequiredText(
@@ -261,6 +295,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
   const store = deps.store;
   const runManager = deps.runManager;
   const canonicalizeCwd = deps.canonicalizeCwd ?? canonicalizeWorkingDirectory;
+  const resolveArtifactPath = deps.resolveArtifactPath ?? ResolveArtifactPath;
   const read = deps.readFile ?? ((filePath: string) => readFile(filePath, "utf8"));
   const renderPrompt = deps.renderPrompt ?? ((input: RenderSddPromptInput) => RenderSddPrompt(input));
   const formatFix = deps.formatFix ?? FormatFixFollowup;
@@ -369,6 +404,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       const reportOutPath = input.role === "implementer" || input.role === "fixer"
         ? input.report_out
         : undefined;
+      const briefPath = await resolveArtifactPath(input.brief);
       const result: {
         run_id: string;
         sequence: number;
@@ -379,11 +415,11 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
       } = {
         run_id: runId,
         sequence: startSequence,
-        brief_path: input.brief,
+        brief_path: briefPath,
       };
       if (reportOutPath !== undefined)
       {
-        result.report_out_path = reportOutPath;
+        result.report_out_path = await resolveArtifactPath(reportOutPath);
       }
       if (promptPath !== "")
       {
@@ -447,7 +483,7 @@ export function CreateSddManager(deps: SddManagerDeps): SddManager
         details: {
           run_id: input.run_id,
           role: agent.role,
-          plan_path: agent.plan_path,
+          plan: agent.plan_path,
           task: agent.task,
           recovery: { tool: "xagent_sdd_start", role: RecoveryRoleFor(agent.role) },
         },
