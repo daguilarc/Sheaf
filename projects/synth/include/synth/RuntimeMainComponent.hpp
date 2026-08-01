@@ -125,6 +125,7 @@ public:
         root.id = "runtime.main.root";
         root.kind = ui::NodeKind::Root;
         root.bounds = IntrinsicBounds();
+        RequireCompositionHolds(root.bounds, contentTree.nodes.front(), sidebarTree.nodes.front());
         root.children = {contentTree.nodes.front().id, sidebarTree.nodes.front().id};
 
         ui::NodeTree result;
@@ -217,6 +218,43 @@ public:
     }
 
 private:
+    // The composition contract (task 7.1). The shell PLACES two already-resolved
+    // subtree roots rather than resolving them, which is legitimate under
+    // design.md D6 -- but it also means sru-54's overflow gate never sees this
+    // composition, because the resolver is never invoked on it. The residual
+    // that leaves is concrete: the composite root's height follows the app's
+    // declared `uiHeight` while the sidebar is a fixed five-row 200px column, so
+    // an app declaring `uiHeight < 200` overruns the window with nothing to
+    // catch it. This is that catch, stated as a precondition on the app's
+    // declaration rather than as a silent clip.
+    static void RequireCompositionHolds(ui::Bounds rootBounds,
+                                        const ui::Node& content,
+                                        const ui::Node& sidebar)
+    {
+        const auto fits = [](const ui::Bounds& child, const ui::Bounds& parent) {
+            return child.x >= -0.01f && child.y >= -0.01f &&
+                   child.x + child.width <= parent.width + 0.01f &&
+                   child.y + child.height <= parent.height + 0.01f;
+        };
+        for (const ui::Node* placed : {&content, &sidebar})
+        {
+            if (fits(placed->bounds, rootBounds))
+            {
+                continue;
+            }
+            throw std::invalid_argument(
+                std::string("runtime shell composition does not fit its surface: '") +
+                placed->id.value + "' is " + std::to_string(static_cast<int>(placed->bounds.width)) +
+                "x" + std::to_string(static_cast<int>(placed->bounds.height)) + " at (" +
+                std::to_string(static_cast<int>(placed->bounds.x)) + ", " +
+                std::to_string(static_cast<int>(placed->bounds.y)) + ") inside a " +
+                std::to_string(static_cast<int>(rootBounds.width)) + "x" +
+                std::to_string(static_cast<int>(rootBounds.height)) +
+                " surface. The application's declared uiWidth/uiHeight is the surface, and it must "
+                "be at least as tall as the runtime sidebar.");
+        }
+    }
+
     static bool IsOneOf(std::string_view action,
                         std::initializer_list<std::string_view> candidates)
     {

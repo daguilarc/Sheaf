@@ -74,7 +74,17 @@ inline std::string StripComments(const std::string& source)
     return stripped;
 }
 
-inline bool SourceContainsFieldByFieldNodeInit(const std::filesystem::path& path)
+// True when a source builds a `ui::Node` VALUE by hand: a local declaration
+// followed by field assignments, a braced initializer, or any copy-initialized
+// local. That is broader than "field-by-field assignment", which is what this
+// predicate used to be named -- `ui::Node n = *found;` is a plain copy and it
+// reports true. The breadth is deliberate rather than accidental, and renaming
+// is the fix task 7.1 chose over narrowing: sru-43's inspection asks whether a
+// producer hand-assembles nodes at all, and a local node value copied out of a
+// tree, mutated, and pushed back is hand assembly however it was initialized.
+// A `ui::Node` function parameter, reference, or container element is NOT
+// flagged: those consume nodes rather than construct them.
+inline bool SourceAssemblesUiNodeByHand(const std::filesystem::path& path)
 {
     const std::string source = StripComments(ReadSourceFile(path));
     const std::regex declaration(

@@ -1139,28 +1139,62 @@ void TestNoHandRolledControllerNodesSurvive()
         out << "// ui::Node commented; commented.kind = synth::ui::NodeKind::Root;\n"
                "void clean() {}\n";
     }
-    Require(!synth::test::SourceContainsFieldByFieldNodeInit(temp),
+    Require(!synth::test::SourceAssemblesUiNodeByHand(temp),
             "source scan ignores commented node examples");
     {
         std::ofstream out(temp);
         out << "void brace() { ui::Node node{}; }\n";
     }
-    Require(synth::test::SourceContainsFieldByFieldNodeInit(temp),
+    Require(synth::test::SourceAssemblesUiNodeByHand(temp),
             "source scan catches brace-initialized ui::Node construction");
     {
         std::ofstream out(temp);
         out << "void copy() { synth::ui::Node node = synth::ui::Node{}; }\n";
     }
-    Require(synth::test::SourceContainsFieldByFieldNodeInit(temp),
+    Require(synth::test::SourceAssemblesUiNodeByHand(temp),
             "source scan catches copy-initialized ui::Node construction");
+    {
+        // A plain copy out of a tree is hand assembly too, and the predicate is
+        // named for that breadth rather than pretending to be narrower than it
+        // is (task 7.1). This pins the case that used to make its old name a
+        // lie.
+        std::ofstream out(temp);
+        out << "void alias(const std::vector<ui::Node>& nodes) { ui::Node node = nodes.front(); }\n";
+    }
+    Require(synth::test::SourceAssemblesUiNodeByHand(temp),
+            "source scan catches a ui::Node copied out of a tree into a local");
+    {
+        // The other half of the contract, and the one that keeps the scan from
+        // condemning every consumer: taking a node by parameter or reference,
+        // or holding a container of them, is not assembling one.
+        std::ofstream out(temp);
+        out << "void consume(const ui::Node& node, std::vector<synth::ui::Node>& out) {\n"
+               "    out.push_back(node);\n"
+               "}\n"
+               "float widthOf(synth::ui::Node node) { return node.bounds.width; }\n";
+    }
+    Require(!synth::test::SourceAssemblesUiNodeByHand(temp),
+            "source scan does not flag ui::Node parameters, references, or containers");
 
+    // sru-43's inspection over every runtime producer source, not just the two
+    // this suite grew up with. `RuntimePages.hpp` joined the set in task 7.1
+    // when `BuildSidebarTree` moved onto the library; it was the last runtime
+    // page code hand-rolling nodes.
     for (const char* file : {"projects/synth/include/synth/ControllersPageUI.hpp",
+                             "projects/synth/include/synth/RuntimePages.hpp",
                              "projects/synth/src/ControllerWizard.cpp"})
     {
-        Require(!synth::test::SourceContainsFieldByFieldNodeInit(file),
-                (std::string(file) +
-                 " no longer initializes ui::Node structs field-by-field").c_str());
+        Require(!synth::test::SourceAssemblesUiNodeByHand(file),
+                (std::string(file) + " no longer assembles ui::Node values by hand").c_str());
     }
+    // Anti-vacuity for the sweep above: a predicate that had quietly started
+    // returning false for everything would pass all three. The shell is the one
+    // place that legitimately hand-places already-resolved subtree roots (D6,
+    // and confirmed in 7.1's review), so it is the fixture that proves the
+    // predicate still fires on real repository source.
+    Require(synth::test::SourceAssemblesUiNodeByHand(
+                "projects/synth/include/synth/RuntimeMainComponent.hpp"),
+            "the shell's deliberate composition root keeps the sru-43 scan honest");
 }
 
 void TestControllersSectionsNestThroughLibraryContainers()

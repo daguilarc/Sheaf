@@ -290,6 +290,26 @@ struct Fixture
     MainComponent component{app, services};
 };
 
+// An application declaring a surface shorter than the runtime sidebar. 160 is
+// below the sidebar's five fixed 40px rows, which is the exact residual task
+// 7.1 recorded: the shell PLACES already-resolved subtree roots rather than
+// resolving them, so sru-54's overflow gate never sees this composition and
+// nothing used to catch an app that overran the window.
+struct ShortSurfaceApp
+{
+    static synth::RuntimeConfig Config()
+    {
+        return synth::RuntimeConfig{.appName = "ShortSurfaceApp", .uiWidth = 900, .uiHeight = 160};
+    }
+
+    void Init(synth::AppContext*) {}
+    void ProcessBlock(synth::AudioBlock&) {}
+
+    synth::ui::Surface& PortableSurface() { return surface; }
+
+    FakeAppSurface surface{};
+};
+
 synth::ui::NodeTree BuildCompositeTree()
 {
     Fixture fixture;
@@ -700,6 +720,36 @@ void RequireInvalidTree(synth::ui::NodeTree tree, const char* expectedMessage)
     throw std::runtime_error("invalid tree was accepted");
 }
 
+void TestRejectsASurfaceTooShortForTheRuntimeSidebar()
+{
+    ShortSurfaceApp app;
+    app.surface.tree.nodes.front().bounds = {0.0f, 0.0f, 900.0f, 160.0f};
+    FakeServices services;
+    synth::runtime_ui::RuntimeMainComponent<ShortSurfaceApp, FakeServices> component{app, services};
+
+    bool threw = false;
+    std::string message;
+    try
+    {
+        component.BuildTree();
+    }
+    catch (const std::invalid_argument& error)
+    {
+        threw = true;
+        message = error.what();
+    }
+    Require(threw, "a surface shorter than the sidebar fails composition rather than overrunning");
+    Require(message.find("runtime.sidebar.root") != std::string::npos,
+            "the diagnostic names the subtree root that does not fit");
+    Require(message.find("uiWidth/uiHeight") != std::string::npos,
+            "the diagnostic names the declaration the host has to change");
+
+    // The other direction, so the check is a bound rather than a blanket: the
+    // ordinary 900x560 surface composes without complaint.
+    Fixture ordinary;
+    ordinary.component.BuildTree();
+}
+
 void TestRejectsRootSizeMismatch()
 {
     synth::ui::NodeTree tree = MakeValidAppTree();
@@ -825,6 +875,8 @@ int main()
         TestSidebarWarningReflectsControllersDiscoverySnapshot);
     Run("TestWizardDiscoveryCacheRecomputesOnlyForCachedSnapshotChanges",
         TestWizardDiscoveryCacheRecomputesOnlyForCachedSnapshotChanges);
+    Run("TestRejectsASurfaceTooShortForTheRuntimeSidebar",
+        TestRejectsASurfaceTooShortForTheRuntimeSidebar);
     Run("TestRejectsRootSizeMismatch", TestRejectsRootSizeMismatch);
     Run("TestRejectsDuplicateNodeIds", TestRejectsDuplicateNodeIds);
     Run("TestRejectsUnknownChild", TestRejectsUnknownChild);

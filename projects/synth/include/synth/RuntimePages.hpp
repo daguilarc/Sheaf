@@ -263,8 +263,11 @@ inline constexpr float kPageMargin = 4.0f;
 inline constexpr float kBackRowHeight = 32.0f;
 inline constexpr float kBackButtonWidth = 80.0f;
 inline constexpr float kRowGap = 4.0f;
-inline constexpr float kComboRowHeight = 32.0f;
 inline constexpr float kStatusRowHeight = 32.0f;
+// The sidebar's MIDI-warning badge: an out-of-flow overlay pinned to the
+// trailing edge of the Controllers button it annotates.
+inline constexpr float kWarningBadgeWidth = 18.0f;
+inline constexpr float kWarningBadgeTrailingInset = 22.0f;
 inline constexpr float kPatchButtonWidth = 82.0f;
 inline constexpr float kPatchRowHeight = 34.0f;
 inline constexpr float kPatchNameRowHeight = 28.0f;
@@ -273,7 +276,6 @@ inline constexpr float kBrowserCommandHeight = 32.0f;
 inline constexpr float kBrowserRowHeight = 30.0f;
 inline constexpr float kBrowserStatusHeight = 24.0f;
 inline constexpr float kBrowserButtonWidth = 78.0f;
-inline constexpr float kBrowserOpenButtonWidth = 58.0f;
 inline constexpr float kFilePanelPadding = 10.0f;
 
 inline ui::Bounds SidebarRootBounds()
@@ -349,18 +351,30 @@ inline ui::LayoutOptions CompactFormRowLayout()
     return layout;
 }
 
-inline ui::ControlStyle Button()
+// The colour pair a config page's clickable controls share, and nothing else.
+// Layout is each caller's own: `Toggle()` used to copy a fully formed
+// `Button()` and then replace `style.layout` wholesale, which silently
+// discarded the compact Back-button width `Button()` declared. It was correct
+// only because the replacement was total -- a later edit that merged layouts
+// instead would have shrunk every Sync toggle row to 80px.
+inline ui::ControlStyle ButtonAppearance()
 {
     ui::ControlStyle style;
     style.color = pagestyle::kDefaultButton;
     style.textStyle = pagestyle::kDefaultTextStyle;
+    return style;
+}
+
+inline ui::ControlStyle BackButton()
+{
+    ui::ControlStyle style = ButtonAppearance();
     style.layout.cross = ui::Extent::Px(Layout::kBackButtonWidth);
     return style;
 }
 
 inline ui::ControlStyle Toggle(std::string caption)
 {
-    ui::ControlStyle style = Button();
+    ui::ControlStyle style = ButtonAppearance();
     style.caption = std::move(caption);
     style.layout = CompactFormRowLayout();
     return style;
@@ -582,86 +596,61 @@ inline std::vector<ui::ControlOption> ControlOptionsFor(const std::vector<AudioD
 
 }  // namespace PageControls
 
+// The sidebar is a resolved subtree like every other producer's, not a
+// hand-assembled one. It used to set every `ui::Node` field by field and stack
+// its rows by multiplying the row height by their index, which is exactly what
+// sru-43 forbids and sru-53 calls producer-side layout arithmetic; the resolver
+// stacks five declared rows to the same geometry with neither.
 inline ui::NodeTree BuildSidebarTree(const SidebarSnapshot& snapshot)
 {
     const ui::Bounds rootBounds = Layout::SidebarRootBounds();
-    ui::NodeTree tree;
-    ui::Node root;
-    root.id = NodeIds::kSidebarRoot;
-    root.kind = ui::NodeKind::Root;
-    root.bounds = rootBounds;
-    tree.nodes.push_back(root);
 
-    auto appendChild = [&](ui::Node node) {
-        tree.nodes.front().children.push_back(node.id);
-        tree.nodes.push_back(std::move(node));
+    const auto sidebarRow = [] {
+        ui::ControlStyle style;
+        style.layout.main = ui::Extent::Px(Layout::kSidebarButtonHeight);
+        return style;
     };
+    // The Controllers entry is a row rather than a bare button so its warning
+    // badge can be an sru-44 out-of-flow overlay declared in the row's own
+    // space. As a direct child of the root it would have had to restate the
+    // button's stacking position, which is the arithmetic this rebuild removes.
+    ui::LayoutOptions controllersRow;
+    controllersRow.main = ui::Extent::Px(Layout::kSidebarButtonHeight);
+    controllersRow.padding = 0.0f;
+    controllersRow.gap = 0.0f;
 
-    ui::Node audioButton;
-    audioButton.id = NodeIds::kSidebarAudio;
-    audioButton.kind = ui::NodeKind::Button;
-    audioButton.label = "Audio";
-    audioButton.bounds = {0.0f, 0.0f, Layout::kSidebarWidth, Layout::kSidebarButtonHeight};
-    audioButton.action = ui::Action::Named(Actions::kSidebarAudio);
-    appendChild(std::move(audioButton));
-
-    ui::Node controllersButton;
-    controllersButton.id = NodeIds::kSidebarControllers;
-    controllersButton.kind = ui::NodeKind::Button;
-    controllersButton.label = "Controllers";
-    controllersButton.bounds = {0.0f,
-                                Layout::kSidebarButtonHeight,
-                                Layout::kSidebarWidth,
-                                Layout::kSidebarButtonHeight};
-    controllersButton.action = ui::Action::Named(Actions::kSidebarControllers);
-    appendChild(std::move(controllersButton));
-
-    if (snapshot.controllersWarning)
-    {
-        ui::Node controllersWarning;
-        controllersWarning.id = NodeIds::kSidebarControllersWarning;
-        controllersWarning.kind = ui::NodeKind::StatusText;
-        controllersWarning.text = "!";
-        controllersWarning.bounds = {Layout::kSidebarWidth - 22.0f,
-                                     Layout::kSidebarButtonHeight,
-                                     18.0f,
-                                     Layout::kSidebarButtonHeight};
-        appendChild(std::move(controllersWarning));
-    }
-
-    ui::Node syncButton;
-    syncButton.id = NodeIds::kSidebarSync;
-    syncButton.kind = ui::NodeKind::Button;
-    syncButton.label = "Sync";
-    syncButton.bounds = {0.0f,
-                         Layout::kSidebarButtonHeight * 2.0f,
-                         Layout::kSidebarWidth,
-                         Layout::kSidebarButtonHeight};
-    syncButton.action = ui::Action::Named(Actions::kSidebarSync);
-    appendChild(std::move(syncButton));
-
-    ui::Node fileButton;
-    fileButton.id = NodeIds::kSidebarFile;
-    fileButton.kind = ui::NodeKind::Button;
-    fileButton.label = "File";
-    fileButton.bounds = {0.0f,
-                         Layout::kSidebarButtonHeight * 3.0f,
-                         Layout::kSidebarWidth,
-                         Layout::kSidebarButtonHeight};
-    fileButton.action = ui::Action::Named(Actions::kSidebarFile);
-    appendChild(std::move(fileButton));
-
-    ui::Node deadlineLabel;
-    deadlineLabel.id = NodeIds::kSidebarDeadline;
-    deadlineLabel.kind = ui::NodeKind::StatusText;
-    deadlineLabel.text = Layout::FormatDeadlineText(snapshot.deadlinePercent);
-    deadlineLabel.bounds = {0.0f,
-                            Layout::kSidebarButtonHeight * 4.0f,
-                            Layout::kSidebarWidth,
-                            Layout::kSidebarButtonHeight};
-    appendChild(std::move(deadlineLabel));
-
-    return tree;
+    ui::Builder builder;
+    builder.Root(NodeIds::kSidebarRoot, rootBounds);
+    builder.Button(NodeIds::kSidebarAudio, "Audio", ui::Action::Named(Actions::kSidebarAudio),
+                   sidebarRow());
+    builder.Row(std::string(NodeIds::kSidebarControllers) + ".row",
+                controllersRow,
+                [&](ui::Builder& row) {
+                    ui::ControlStyle button;
+                    button.layout.main = ui::Extent::Weight(1.0f);
+                    row.Button(NodeIds::kSidebarControllers,
+                               "Controllers",
+                               ui::Action::Named(Actions::kSidebarControllers),
+                               button);
+                    if (snapshot.controllersWarning)
+                    {
+                        ui::ControlStyle badge;
+                        badge.layout.explicitBounds =
+                            ui::Bounds{Layout::kSidebarWidth - Layout::kWarningBadgeTrailingInset,
+                                       0.0f,
+                                       Layout::kWarningBadgeWidth,
+                                       Layout::kSidebarButtonHeight};
+                        row.StatusText(NodeIds::kSidebarControllersWarning, "!", badge);
+                    }
+                });
+    builder.Button(NodeIds::kSidebarSync, "Sync", ui::Action::Named(Actions::kSidebarSync),
+                   sidebarRow());
+    builder.Button(NodeIds::kSidebarFile, "File", ui::Action::Named(Actions::kSidebarFile),
+                   sidebarRow());
+    builder.StatusText(NodeIds::kSidebarDeadline,
+                       Layout::FormatDeadlineText(snapshot.deadlinePercent),
+                       sidebarRow());
+    return builder.Build(rootBounds);
 }
 
 struct SyncPageSnapshot
@@ -693,7 +682,7 @@ inline ui::NodeTree BuildSyncPageTree(const SyncPageSnapshot& snapshot, ui::Boun
 {
     ui::Builder builder;
     builder.Root(NodeIds::kSyncRoot, area);
-    builder.Button(NodeIds::kSyncBack, "Back", ui::Action::Named(Actions::kSyncBack), PageControls::Button());
+    builder.Button(NodeIds::kSyncBack, "Back", ui::Action::Named(Actions::kSyncBack), PageControls::BackButton());
     builder.Column(NodeIds::kSyncForm, PageControls::FormGridLayout(), [&](ui::Builder& form) {
         form.Toggle(NodeIds::kSyncSendClock,
                     "",
@@ -770,7 +759,7 @@ inline ui::NodeTree BuildAudioPageTree(const AudioPageSnapshot& snapshot, ui::Bo
 {
     ui::Builder builder;
     builder.Root(NodeIds::kAudioRoot, area);
-    builder.Button(NodeIds::kAudioBack, "Back", ui::Action::Named(Actions::kAudioBack), PageControls::Button());
+    builder.Button(NodeIds::kAudioBack, "Back", ui::Action::Named(Actions::kAudioBack), PageControls::BackButton());
     builder.Column(NodeIds::kAudioForm, PageControls::FormGridLayout(), [&](ui::Builder& form) {
         form.ComboBox(NodeIds::kAudioOutput,
                       "",

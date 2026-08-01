@@ -174,6 +174,27 @@ bool AllEqual(const std::vector<float>& offsets)
     });
 }
 
+// The x-offset shared by every cell in a form-grid column, with the emptiness
+// stated rather than assumed. Callers used to take `.front()` on the vector
+// above, which is safe only because a preceding `AllEqual` Require aborts first
+// -- `AllEqual` returns false on an empty vector. That was undocumented,
+// order-dependent, and one reordered assertion away from a crash (task 7.1).
+float SharedColumnXOffsetOf(const synth::ui::NodeTree& tree, const char* formId, std::size_t column)
+{
+    const std::vector<float> offsets = ColumnXOffsetsOf(tree, formId, column);
+    if (offsets.empty())
+    {
+        throw std::runtime_error(std::string("form '") + formId + "' has no column " +
+                                 std::to_string(column) + " cells to compare");
+    }
+    if (!AllEqual(offsets))
+    {
+        throw std::runtime_error(std::string("form '") + formId + "' column " +
+                                 std::to_string(column) + " cells do not share an x-offset");
+    }
+    return offsets.front();
+}
+
 float MaxRightEdgeOfColumn(const synth::ui::NodeTree& tree, const char* formId, std::size_t column)
 {
     const synth::ui::Node& form = FindNode(tree, formId);
@@ -1224,7 +1245,7 @@ static void TestSyncPageAlignsThroughTheFormGrid()
             "every Sync control starts at the same form-grid x-offset");
     Require(AllEqual(ColumnWidthsOf(tree, "runtime.sync.form", 0)),
             "every Sync caption cell has the same form-grid width");
-    Require(ColumnXOffsetsOf(tree, "runtime.sync.form", 1).front() >=
+    Require(SharedColumnXOffsetOf(tree, "runtime.sync.form", 1) >=
                 MaxRightEdgeOfColumn(tree, "runtime.sync.form", 0) + synth::ui::kSpacing.labelGap,
             "the Sync control column clears the widest caption cell");
     Require(FindNode(tree, std::string(synth::runtime_ui::NodeIds::kSyncPpqn) + ".caption").text ==
@@ -1289,7 +1310,7 @@ static void TestAudioSelectorsAreCaptionedWhileADeviceIsSelected()
             "every Audio control starts at the same form-grid x-offset");
     Require(AllEqual(ColumnWidthsOf(tree, "runtime.audio.form", 0)),
             "every Audio caption cell has the same form-grid width");
-    Require(ColumnXOffsetsOf(tree, "runtime.audio.form", 1).front() >=
+    Require(SharedColumnXOffsetOf(tree, "runtime.audio.form", 1) >=
                 MaxRightEdgeOfColumn(tree, "runtime.audio.form", 0) + synth::ui::kSpacing.labelGap,
             "the Audio control column clears the widest caption cell");
     const synth::ui::Node& outputCaption =
@@ -3724,12 +3745,19 @@ int main()
             "sidebar deadline node");
     const synth::ui::Node* deadlineNode = FindNodeById(sidebarTree, synth::runtime_ui::NodeIds::kSidebarDeadline);
     Require(deadlineNode->text == "12.5%", "deadline readout text");
+    // Re-pinned, not loosened, when the sidebar moved onto the library (7.1):
+    // the Controllers entry is now a row so its warning badge can be an
+    // out-of-flow overlay in the row's own space, so the root's second child is
+    // that row rather than the button. Everything else is identical, and the
+    // resolved geometry below is pinned exactly where the hand-assembled
+    // version put it.
     Require(sidebarTree.nodes.front().children.size() == 5,
             "sidebar contains Audio, Controllers, Sync, File, deadline");
     Require(sidebarTree.nodes.front().children[0] ==
                 synth::ui::NodeId(synth::runtime_ui::NodeIds::kSidebarAudio) &&
                 sidebarTree.nodes.front().children[1] ==
-                synth::ui::NodeId(synth::runtime_ui::NodeIds::kSidebarControllers) &&
+                synth::ui::NodeId(std::string(synth::runtime_ui::NodeIds::kSidebarControllers) +
+                                  ".row") &&
                 sidebarTree.nodes.front().children[2] ==
                 synth::ui::NodeId(synth::runtime_ui::NodeIds::kSidebarSync) &&
                 sidebarTree.nodes.front().children[3] ==
@@ -3739,6 +3767,71 @@ int main()
             "sidebar order is fixed");
     Require(sidebarTree.nodes.front().bounds.height == 200.0f,
             "sidebar root is five fixed 40 px rows high");
+    {
+        // The resolver stacks the five rows exactly where the hand-rolled
+        // `kSidebarButtonHeight * index` arithmetic did. This is the assertion
+        // that makes the rebuild a no-op on screen rather than a claim that it
+        // is one.
+        const char* const stacked[] = {synth::runtime_ui::NodeIds::kSidebarAudio,
+                                       nullptr,
+                                       synth::runtime_ui::NodeIds::kSidebarSync,
+                                       synth::runtime_ui::NodeIds::kSidebarFile,
+                                       synth::runtime_ui::NodeIds::kSidebarDeadline};
+        for (std::size_t rowIx = 0; rowIx < 5; ++rowIx)
+        {
+            const std::string id =
+                stacked[rowIx] != nullptr
+                    ? std::string(stacked[rowIx])
+                    : std::string(synth::runtime_ui::NodeIds::kSidebarControllers) + ".row";
+            const synth::ui::Node* row = FindNodeById(sidebarTree, id.c_str());
+            Require(row != nullptr, "every sidebar row resolves");
+            RequireNear(row->bounds.x, 0.0f, 0.0001f, "sidebar rows are flush left");
+            RequireNear(row->bounds.y,
+                        synth::runtime_ui::Layout::kSidebarButtonHeight *
+                            static_cast<float>(rowIx),
+                        0.0001f,
+                        "sidebar rows stack one button height apart");
+            RequireNear(row->bounds.width,
+                        synth::runtime_ui::Layout::kSidebarWidth,
+                        0.0001f,
+                        "sidebar rows are the full sidebar width");
+            RequireNear(row->bounds.height,
+                        synth::runtime_ui::Layout::kSidebarButtonHeight,
+                        0.0001f,
+                        "sidebar rows are one button height tall");
+        }
+        const synth::ui::Node* controllersButton =
+            FindNodeById(sidebarTree, synth::runtime_ui::NodeIds::kSidebarControllers);
+        Require(controllersButton != nullptr, "the Controllers button resolves inside its row");
+        RequireNear(controllersButton->bounds.width,
+                    synth::runtime_ui::Layout::kSidebarWidth,
+                    0.0001f,
+                    "the Controllers button still fills its row, badge or no badge");
+
+        synth::runtime_ui::SidebarSnapshot warned;
+        warned.controllersWarning = true;
+        const synth::ui::NodeTree warnedTree = synth::runtime_ui::BuildSidebarTree(warned);
+        const synth::ui::Node* badge =
+            FindNodeById(warnedTree, synth::runtime_ui::NodeIds::kSidebarControllersWarning);
+        Require(badge != nullptr, "the warning badge is emitted when discovery has a candidate");
+        RequireNear(badge->bounds.x,
+                    synth::runtime_ui::Layout::kSidebarWidth -
+                        synth::runtime_ui::Layout::kWarningBadgeTrailingInset,
+                    0.0001f,
+                    "the badge keeps its trailing-edge inset");
+        RequireNear(badge->bounds.y, 0.0f, 0.0001f,
+                    "the badge is positioned in its row's space, not the root's");
+        const synth::ui::Node* warnedRow = FindNodeById(
+            warnedTree,
+            (std::string(synth::runtime_ui::NodeIds::kSidebarControllers) + ".row").c_str());
+        Require(warnedRow != nullptr, "the Controllers row survives the badge");
+        RequireNear(warnedRow->bounds.y,
+                    synth::runtime_ui::Layout::kSidebarButtonHeight,
+                    0.0001f,
+                    "an out-of-flow badge consumes no stacking space");
+        Require(badge->bounds.x + badge->bounds.width <= warnedRow->bounds.width + 0.0001f,
+                "the badge sits inside the button it annotates");
+    }
 
     synth::runtime_ui::AudioPageSnapshot audioSnapshot;
     audioSnapshot.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Speakers", "Headphones"});
