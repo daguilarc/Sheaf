@@ -213,6 +213,19 @@ enum class NodeKind {
 // container fill, which is what lets a real panel replace a rounded Draw
 // underlay.
 //
+// `variant` is RETIRED and the residual set is EMPTY (design.md OQ1, task 1.2,
+// completed in task 7.2). Every one of the nine strings the field ever carried
+// -- `panel`, `quiet`, `title`, `muted-title`, `muted`, `primary`, `secondary`,
+// `list-row`, `field` -- decided appearance and nothing else: glyph colour,
+// control fill, label font size, or container background fill. All four are now
+// carried directly by `color`, `textStyle`, `selected`, and the border fields
+// above. There is no interaction-semantics residual to pin and no replacement
+// field: the JUCE backend has no hover code at all, and the fill that
+// `SemanticPanelComponent::SetSemantics` used to pick is now the carried
+// `color`. So the model has no `variant` member, the version-2 command buffer
+// neither encodes nor decodes one, and neither backend has a per-variant colour
+// table -- which `scripts/check_ui_boundary.sh` enforces so none can come back.
+//
 // A caption is NOT a field. The component library emits a caption as an
 // ordinary sibling `Label` node in the control's form-grid row, with a stable
 // id derived from the control's own id -- `<controlId>.caption` inside a
@@ -244,21 +257,6 @@ struct Node {
     float scrollContentHeight = 0.0f;
     std::vector<ControlOption> options;
     std::string selectedOption;
-    // RETIRED (design.md OQ1). Every `variant` string carried appearance and
-    // nothing else -- glyph colour, control fill, label font size, container
-    // background fill -- all of which `color`/`textStyle`/`selected` now carry
-    // directly. There is no interaction-semantics residual: the JUCE backend
-    // has no hover code at all, and `SemanticPanelComponent::SetSemantics`
-    // decides only which fill to paint. So `variant` is NOT part of the
-    // version-2 wire schema; the command buffer neither encodes nor decodes
-    // it, and no new producer may set it.
-    //
-    // The field itself survives only until the config pages are rebuilt on the
-    // component library (tasks 5.2-5.9a) and task 7.2 deletes it together with
-    // the backend's per-variant colour branches. Until then it keeps the
-    // unconverted `RuntimePages.hpp` producers compiling and the JUCE backend
-    // painting exactly as it does today; the browser backend never read it.
-    std::string variant;
     // Direct appearance properties (sru-45); see the contract above this
     // struct for the per-kind meaning of `color`. Optional with explicit wire
     // presence flags: absent decodes as absent, never as a sentinel value a

@@ -403,7 +403,7 @@ synth::ui::NodeTree CanvasTree(synth::ui::ControlStyle style)
     synth::ui::Builder builder;
     builder.Root("root", kGestureRootBounds)
         .Draw("canvas", kGestureBounds, std::vector<synth::ui::DrawCommand>{}, std::move(style));
-    return builder.Build();
+    return builder.Build(kGestureRootBounds);
 }
 
 // The Button counterpart of `CanvasTree`, for the parity assertions.
@@ -413,7 +413,7 @@ synth::ui::NodeTree ButtonTree(synth::ui::Action action, synth::ui::ControlStyle
     synth::ui::Builder builder;
     builder.Root("root", kGestureRootBounds)
         .Button("btn", "Btn", std::move(action), std::move(style));
-    return builder.Build();
+    return builder.Build(kGestureRootBounds);
 }
 
 void TestDrawClickOnlyDispatchesOnce()
@@ -494,8 +494,8 @@ void TestInertDrawInterceptsNothing()
               kGestureBounds,
               std::vector<synth::ui::DrawCommand>{},
               {.action = synth::ui::Action::Named("encoder.click")})
-        .Draw("underlay", kGestureBounds, std::vector<synth::ui::DrawCommand>{});
-    GestureFixture fixture(builder.Build());
+        .Draw("underlay", kGestureBounds, std::vector<synth::ui::DrawCommand>{}, {});
+    GestureFixture fixture(builder.Build(kGestureRootBounds));
 
     juce::Component* underlay = fixture.Component().FindByNodeId("underlay");
     Require(underlay != nullptr, "the inert underlay is rendered");
@@ -650,14 +650,14 @@ int main()
              .kind = synth::ui::NodeKind::Button,
              .bounds = {0.0f, 0.0f, 80.0f, 24.0f},
              .label = "Styled",
-             .variant = "primary",
              .color = synth::Color::Rgb(0, 200, 0)},
         };
         synth_juce::PortableComponent component(colourSurface);
         component.setSize(400, 300);
         component.RefreshFromSurface();
         Require(FillColourOf(component, "styled") == juce::Colour::fromRGB(0, 200, 0),
-                "the carried colour decides the button fill, not the variant constant");
+                "the carried colour decides the button fill, and no per-variant "
+                "colour table remains to compete with it");
     }
 
     {
@@ -747,17 +747,17 @@ int main()
     RecordingSurface surface;
     synth::ui::Builder builder;
     builder.Root("root", synth::ui::Bounds{0.0f, 0.0f, 320.0f, 240.0f})
-        .Button("start", "Start", synth::ui::Action::Named("start"))
+        .Button("start", "Start", synth::ui::Action::Named("start"), {})
         .ComboBox("device",
                   "Device",
                   {{"a", "Built In"}, {"b", "External"}},
                   "a",
-                  synth::ui::Action::Named("device.select"))
+                  synth::ui::Action::Named("device.select"), {})
         .Draw("scope",
               synth::ui::Bounds{8.0f, 8.0f, 64.0f, 48.0f},
               {synth::ui::DrawCommand::Fill(synth::Color::Rgb(1, 2, 3)),
-               synth::ui::DrawCommand::Line({0.0f, 0.0f}, {64.0f, 48.0f}, synth::Color::Rgb(4, 5, 6), 1.0f)});
-    surface.tree = builder.Build();
+               synth::ui::DrawCommand::Line({0.0f, 0.0f}, {64.0f, 48.0f}, synth::Color::Rgb(4, 5, 6), 1.0f)}, {});
+    surface.tree = builder.Build(synth::ui::Bounds{0.0f, 0.0f, 320.0f, 240.0f});
 
     synth_juce::PortableComponent component(surface);
     component.setSize(320, 240);
@@ -799,16 +799,16 @@ int main()
     {
         synth::ui::Builder changedBuilder;
         changedBuilder.Root("root", synth::ui::Bounds{0.0f, 0.0f, 320.0f, 240.0f})
-            .Button("start", "Launch", synth::ui::Action::Named("start.changed"))
+            .Button("start", "Launch", synth::ui::Action::Named("start.changed"), {})
             .ComboBox("device",
                       "Device",
                       {{"a2", "Built In 2"}, {"b2", "External 2"}},
                       "a2",
-                      synth::ui::Action::Named("device.select.changed"))
+                      synth::ui::Action::Named("device.select.changed"), {})
             .Draw("scope",
                   synth::ui::Bounds{8.0f, 8.0f, 64.0f, 48.0f},
-                  {synth::ui::DrawCommand::Fill(synth::Color::Rgb(7, 8, 9))});
-        surface.tree = changedBuilder.Build();
+                  {synth::ui::DrawCommand::Fill(synth::Color::Rgb(7, 8, 9))}, {});
+        surface.tree = changedBuilder.Build(synth::ui::Bounds{0.0f, 0.0f, 320.0f, 240.0f});
     }
     component.RefreshFromSurface();
     Require(surface.dispatchCount == 1, "refresh after mutation does not dispatch actions");
@@ -836,23 +836,23 @@ int main()
                       "Input",
                       {{"a2", "Built In 2"}, {"b2", "External 2"}},
                       "a2",
-                      synth::ui::Action::WithValue("controller.input", "controller:input"))
+                      synth::ui::Action::WithValue("controller.input", "controller:input"), {})
             .TextField("value.text",
                        "Mapping",
                        "63",
-                       synth::ui::Action::WithValue("controller.mapping", "controller:mapping:0"))
+                       synth::ui::Action::WithValue("controller.mapping", "controller:mapping:0"), {})
             .Toggle("value.toggle",
                     "Enabled",
                     false,
-                    synth::ui::Action::WithValue("controller.mapping", "controller:mapping:1"))
+                    synth::ui::Action::WithValue("controller.mapping", "controller:mapping:1"), {})
             .Slider("value.slider",
                     "Depth",
                     0.0f,
                     0.0f,
                     1.0f,
                     0.01f,
-                    synth::ui::Action::WithValue("controller.depth", "controller:depth"));
-        valueSurface.tree = valueBuilder.Build();
+                    synth::ui::Action::WithValue("controller.depth", "controller:depth"), {});
+        valueSurface.tree = valueBuilder.Build(synth::ui::Bounds{0.0f, 0.0f, 320.0f, 240.0f});
 
         synth_juce::PortableComponent valueComponent(valueSurface);
         valueComponent.setSize(320, 240);
@@ -896,19 +896,19 @@ int main()
             .Root("app.root", synth::ui::Bounds{0.0f, 0.0f, 900.0f, 240.0f})
             .Draw("app.draw",
                   synth::ui::Bounds{0.0f, 0.0f, 900.0f, 40.0f},
-                  {synth::ui::DrawCommand::Fill(synth::Color::Rgb(1, 2, 3))});
+                  {synth::ui::DrawCommand::Fill(synth::Color::Rgb(1, 2, 3))}, {});
         for (int index = 0; index < 12; ++index)
         {
             compositeBuilder.Button("app.control." + std::to_string(index),
                                     "App",
-                                    synth::ui::Action::Named("app.control"));
+                                    synth::ui::Action::Named("app.control"), {});
         }
         compositeBuilder.Root("runtime.sidebar.root", synth::ui::Bounds{900.0f, 0.0f, 96.0f, 240.0f})
             .Draw("runtime.sidebar.draw",
                   synth::ui::Bounds{0.0f, 0.0f, 96.0f, 120.0f},
-                  {synth::ui::DrawCommand::Fill(synth::Color::Rgb(4, 5, 6))})
-            .Button("runtime.sidebar.control", "Side", synth::ui::Action::Named("runtime.sidebar"));
-        compositeSurface.tree = compositeBuilder.Build();
+                  {synth::ui::DrawCommand::Fill(synth::Color::Rgb(4, 5, 6))}, {})
+            .Button("runtime.sidebar.control", "Side", synth::ui::Action::Named("runtime.sidebar"), {});
+        compositeSurface.tree = compositeBuilder.Build(synth::ui::Bounds{900.0f, 0.0f, 96.0f, 240.0f});
         compositeSurface.tree.nodes.front().children = {
             synth::ui::NodeId("app.root"), synth::ui::NodeId("runtime.sidebar.root")};
 
@@ -1223,8 +1223,10 @@ int main()
             .DrawInteractive("encoder",
                              synth::ui::Bounds{16.0f, 24.0f, 80.0f, 80.0f},
                              {},
-                             synth::ui::Action::WithValue("encoder.drag", "stale"));
-        dragSurface.tree = dragBuilder.Build();
+                             synth::ui::Action::WithValue("encoder.drag", "stale"),
+                             std::nullopt,
+                             {});
+        dragSurface.tree = dragBuilder.Build(synth::ui::Bounds{0.0f, 0.0f, 320.0f, 240.0f});
 
         synth_juce::PortableComponent dragComponent(dragSurface);
         dragComponent.setSize(320, 240);

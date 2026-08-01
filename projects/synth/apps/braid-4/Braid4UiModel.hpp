@@ -336,21 +336,21 @@ inline void AppendBraid4BayControls(synth::ui::Builder& builder, const Braid4UiS
 {
     builder.Button(Braid4NodeIds::kBankBraid,
                    snapshot.selectedBank == 0 ? "Braid Bank *" : "Braid Bank",
-                   synth::ui::Action::WithValue(Braid4Actions::kBankSelect, "0"));
+                   synth::ui::Action::WithValue(Braid4Actions::kBankSelect, "0"), {});
     builder.Button(Braid4NodeIds::kBankMatrix,
                    snapshot.selectedBank == 1 ? "Matrix Bank *" : "Matrix Bank",
-                   synth::ui::Action::WithValue(Braid4Actions::kBankSelect, "1"));
+                   synth::ui::Action::WithValue(Braid4Actions::kBankSelect, "1"), {});
     builder.Button(Braid4NodeIds::kBankLfo,
                    snapshot.selectedBank == 2 ? "LFO Bank *" : "LFO Bank",
-                   synth::ui::Action::WithValue(Braid4Actions::kBankSelect, "2"));
+                   synth::ui::Action::WithValue(Braid4Actions::kBankSelect, "2"), {});
     builder.Button(Braid4NodeIds::kBankLfoMatrix,
                    snapshot.selectedBank == 3 ? "LFO Matrix *" : "LFO Matrix",
-                   synth::ui::Action::WithValue(Braid4Actions::kBankSelect, "3"));
+                   synth::ui::Action::WithValue(Braid4Actions::kBankSelect, "3"), {});
     for (std::size_t sceneIx = 0; sceneIx < 2; ++sceneIx)
     {
         builder.Button(Braid4NodeIds::SceneButton(sceneIx),
                        SceneButtonLabel(sceneIx, snapshot.leftScene, snapshot.rightScene),
-                       synth::ui::Action::WithValue(Braid4Actions::kSceneSelect, std::to_string(sceneIx)));
+                       synth::ui::Action::WithValue(Braid4Actions::kSceneSelect, std::to_string(sceneIx)), {});
     }
     synth::ui::ControlStyle sceneBlendStyle;
     sceneBlendStyle.caption = "Scene Blend";

@@ -2226,7 +2226,7 @@ private:
                             candidateRow);
             }
         });
-        return builder.Build();
+        return builder.Build(m_contentBounds);
     }
 
     ui::NodeTree BuildWizardFormTree()
@@ -2923,7 +2923,7 @@ private:
                                                     ui::DrawCommand::FillEllipse(
                                                         {14.0f, 0.0f, 8.0f, 8.0f},
                                                         ControllersLayout::EndpointStatusColor(
-                                                            rowVm.outputStatus))});
+                                                            rowVm.outputStatus))}, {});
                                            });
 
                                        std::string selectedInput;

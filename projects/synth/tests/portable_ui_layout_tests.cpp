@@ -451,12 +451,12 @@ void TestFormGridAlignsLabelAndControlColumns()
     b.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
     b.Column("form", grid, [](synth::ui::Builder& b) {
         b.Row("r1", {}, [](synth::ui::Builder& b) {
-            b.Label("r1.label", "Tempo");
-            b.ComboBox("r1.control", "", {}, "", synth::ui::Action::Named("a"));
+            b.Label("r1.label", "Tempo", {});
+            b.ComboBox("r1.control", "", {}, "", synth::ui::Action::Named("a"), {});
         });
         b.Row("r2", {}, [](synth::ui::Builder& b) {
-            b.Label("r2.label", "A considerably longer caption");
-            b.ComboBox("r2.control", "", {}, "", synth::ui::Action::Named("b"));
+            b.Label("r2.label", "A considerably longer caption", {});
+            b.ComboBox("r2.control", "", {}, "", synth::ui::Action::Named("b"), {});
         });
     });
     const auto tree = b.Build({0.0f, 0.0f, 400.0f, 300.0f});
@@ -481,12 +481,12 @@ void TestFormGridUsesRowLocalPadding()
     b.Root("root", {0.0f, 0.0f, 420.0f, 300.0f});
     b.Column("form", grid, [&row](synth::ui::Builder& b) {
         b.Row("r1", row, [](synth::ui::Builder& b) {
-            b.Label("r1.label", "Short");
-            b.ComboBox("r1.control", "", {}, "", synth::ui::Action::Named("a"));
+            b.Label("r1.label", "Short", {});
+            b.ComboBox("r1.control", "", {}, "", synth::ui::Action::Named("a"), {});
         });
         b.Row("r2", row, [](synth::ui::Builder& b) {
-            b.Label("r2.label", "Longer label");
-            b.ComboBox("r2.control", "", {}, "", synth::ui::Action::Named("b"));
+            b.Label("r2.label", "Longer label", {});
+            b.ComboBox("r2.control", "", {}, "", synth::ui::Action::Named("b"), {});
         });
     });
     const auto tree = b.Build({0.0f, 0.0f, 420.0f, 300.0f});
@@ -629,8 +629,8 @@ void TestTextReservationIsDeterministicAndBackendFree()
     synth::ui::Builder b;
     b.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
     b.Row("row", {}, [](synth::ui::Builder& b) {
-        b.Label("short", "ab");
-        b.Label("long", "abcdefghij");
+        b.Label("short", "ab", {});
+        b.Label("long", "abcdefghij", {});
     });
     const auto tree = b.Build({0.0f, 0.0f, 400.0f, 300.0f});
     Require(NearlyEqual(FindNode(tree, "short").bounds.width,
@@ -932,18 +932,18 @@ void TestOverlayTracksATargetTheFormGridMoves()
     b.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
     b.Column("form", grid, [](synth::ui::Builder& b) {
         b.Row("r1", {}, [](synth::ui::Builder& b) {
-            b.Label("r1.label", "Tempo");
+            b.Label("r1.label", "Tempo", {});
             synth::ui::LayoutOptions o;
             o.overlayOf = "r1.control";
             b.Draw("r1.underlay", o, [](synth::ui::Bounds extent) {
                 return std::vector<synth::ui::DrawCommand>{
                     synth::ui::DrawCommand::Fill(extent, synth::Color::Rgb(1, 2, 3))};
             });
-            b.ComboBox("r1.control", "", {}, "", synth::ui::Action::Named("a"));
+            b.ComboBox("r1.control", "", {}, "", synth::ui::Action::Named("a"), {});
         });
         b.Row("r2", {}, [](synth::ui::Builder& b) {
-            b.Label("r2.label", "A considerably longer caption");
-            b.ComboBox("r2.control", "", {}, "", synth::ui::Action::Named("b"));
+            b.Label("r2.label", "A considerably longer caption", {});
+            b.ComboBox("r2.control", "", {}, "", synth::ui::Action::Named("b"), {});
         });
     });
     const auto tree = b.Build({0.0f, 0.0f, 400.0f, 300.0f});
@@ -978,8 +978,8 @@ synth::ui::NodeTree BuildStandardLayoutWith(float width,
 synth::ui::Builder::Children StandardBayContent()
 {
     return [](synth::ui::Builder& b) {
-        b.Button("app.bay.one", "One", synth::ui::Action::Named("one"));
-        b.Button("app.bay.two", "Two", synth::ui::Action::Named("two"));
+        b.Button("app.bay.one", "One", synth::ui::Action::Named("one"), {});
+        b.Button("app.bay.two", "Two", synth::ui::Action::Named("two"), {});
     };
 }
 

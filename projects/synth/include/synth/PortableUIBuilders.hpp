@@ -437,7 +437,7 @@ public:
         return Splice(Subtree{std::move(tree), {}, {}});
     }
 
-    Builder& Label(std::string id, std::string text, ControlStyle style = {}) {
+    Builder& Label(std::string id, std::string text, ControlStyle style) {
         Node node;
         node.id = NodeId(std::move(id));
         node.kind = NodeKind::Label;
@@ -445,7 +445,7 @@ public:
         return FinishControl(std::move(node), std::move(style));
     }
 
-    Builder& StatusText(std::string id, std::string text, ControlStyle style = {}) {
+    Builder& StatusText(std::string id, std::string text, ControlStyle style) {
         Node node;
         node.id = NodeId(std::move(id));
         node.kind = NodeKind::StatusText;
@@ -453,7 +453,7 @@ public:
         return FinishControl(std::move(node), std::move(style));
     }
 
-    Builder& Button(std::string id, std::string label, Action action, ControlStyle style = {}) {
+    Builder& Button(std::string id, std::string label, Action action, ControlStyle style) {
         Node node;
         node.id = NodeId(std::move(id));
         node.kind = NodeKind::Button;
@@ -474,7 +474,7 @@ public:
         return FinishControl(std::move(node), std::move(style));
     }
 
-    Builder& Toggle(std::string id, std::string label, bool checked, Action action, ControlStyle style = {}) {
+    Builder& Toggle(std::string id, std::string label, bool checked, Action action, ControlStyle style) {
         Node node;
         node.id = NodeId(std::move(id));
         node.kind = NodeKind::Toggle;
@@ -491,7 +491,7 @@ public:
                     float maxValue,
                     float step,
                     Action action,
-                    ControlStyle style = {}) {
+                    ControlStyle style) {
         Node node;
         node.id = NodeId(std::move(id));
         node.kind = NodeKind::Slider;
@@ -509,7 +509,7 @@ public:
                       std::initializer_list<std::pair<std::string, std::string>> options,
                       std::string selectedOption,
                       Action action,
-                      ControlStyle style = {}) {
+                      ControlStyle style) {
         std::vector<ControlOption> vectorOptions;
         vectorOptions.reserve(options.size());
         for (const auto& option : options) {
@@ -528,7 +528,7 @@ public:
                       std::vector<ControlOption> options,
                       std::string selectedOption,
                       Action action,
-                      ControlStyle style = {}) {
+                      ControlStyle style) {
         Node node;
         node.id = NodeId(std::move(id));
         node.kind = NodeKind::ComboBox;
@@ -539,7 +539,7 @@ public:
         return FinishControl(std::move(node), std::move(style));
     }
 
-    Builder& TextField(std::string id, std::string label, std::string text, Action action, ControlStyle style = {}) {
+    Builder& TextField(std::string id, std::string label, std::string text, Action action, ControlStyle style) {
         Node node;
         node.id = NodeId(std::move(id));
         node.kind = NodeKind::TextField;
@@ -549,18 +549,18 @@ public:
         return FinishControl(std::move(node), std::move(style));
     }
 
-    Builder& Visualizer(std::string id, synth::ui::Visualizer* visualizer, ControlStyle style = {}) {
+    Builder& Visualizer(std::string id, synth::ui::Visualizer* visualizer, ControlStyle style) {
         if (visualizer == nullptr || !visualizer->Visible()) {
             return *this;
         }
         return Draw(std::move(id), visualizer->GetBounds(), visualizer->Draw(), std::move(style));
     }
 
-    Builder& Draw(std::string id, Bounds bounds, std::initializer_list<DrawCommand> commands, ControlStyle style = {}) {
+    Builder& Draw(std::string id, Bounds bounds, std::initializer_list<DrawCommand> commands, ControlStyle style) {
         return Draw(std::move(id), bounds, std::vector<DrawCommand>(commands.begin(), commands.end()), std::move(style));
     }
 
-    Builder& Draw(std::string id, Bounds bounds, std::vector<DrawCommand> commands, ControlStyle style = {}) {
+    Builder& Draw(std::string id, Bounds bounds, std::vector<DrawCommand> commands, ControlStyle style) {
         Node node;
         node.id = NodeId(std::move(id));
         node.kind = NodeKind::Draw;
@@ -598,8 +598,8 @@ public:
                              Bounds bounds,
                              std::vector<DrawCommand> commands,
                              Action pointerDragAction,
-                             std::optional<Action> doubleClickAction = std::nullopt,
-                             ControlStyle style = {}) {
+                             std::optional<Action> doubleClickAction,
+                             ControlStyle style) {
         Node node;
         node.id = NodeId(std::move(id));
         node.kind = NodeKind::Draw;
@@ -611,13 +611,10 @@ public:
         return FinishControl(std::move(node), std::move(style));
     }
 
-    NodeTree Build() {
-        if (scopeStack_.empty()) {
-            return tree_;
-        }
-        return Build(tree_.nodes[scopeStack_.front()].bounds);
-    }
-
+    // The root extent is always an argument. There is no no-argument overload
+    // reading it back off the Root node: that was the migration shim, and it
+    // let a producer resolve against a surface size it had already baked into
+    // its own tree, which is the compiled-in surface size sru-50 forbids.
     NodeTree Build(Bounds rootExtent) {
         assert(!rootlessScopeIndex_.has_value() &&
                "a rootless subtree has no root to resolve against; use BuildSubtree()");

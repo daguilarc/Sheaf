@@ -234,36 +234,36 @@ inline void AppendMiniAppBayControls(synth::ui::Builder& builder, const MiniAppU
 {
     builder.Button(MiniAppNodeIds::kBankVco,
                    "VCO",
-                   synth::ui::Action::WithValue(MiniAppActions::kBankSelect, "0"));
+                   synth::ui::Action::WithValue(MiniAppActions::kBankSelect, "0"), {});
     builder.Button(MiniAppNodeIds::kBankLfo,
                    "LFO",
-                   synth::ui::Action::WithValue(MiniAppActions::kBankSelect, "1"));
+                   synth::ui::Action::WithValue(MiniAppActions::kBankSelect, "1"), {});
     builder.Toggle(MiniAppNodeIds::kGestureToggle,
                    "Gesture",
                    snapshot.gestureSelected,
-                   synth::ui::Action::Named(MiniAppActions::kGestureToggle));
+                   synth::ui::Action::Named(MiniAppActions::kGestureToggle), {});
     builder.Toggle(MiniAppNodeIds::kReset,
                    "Reset",
                    snapshot.modifiers.resetHeld,
-                   synth::ui::Action::Named(MiniAppActions::kReset));
+                   synth::ui::Action::Named(MiniAppActions::kReset), {});
     builder.Toggle(MiniAppNodeIds::kRandom,
                    "Random",
                    snapshot.modifiers.randomHeld,
-                   synth::ui::Action::Named(MiniAppActions::kRandom));
+                   synth::ui::Action::Named(MiniAppActions::kRandom), {});
     builder.Toggle(MiniAppNodeIds::kRandomMod,
                    "Random Mod",
                    snapshot.modifiers.randomModHeld,
-                   synth::ui::Action::Named(MiniAppActions::kRandomMod));
+                   synth::ui::Action::Named(MiniAppActions::kRandomMod), {});
 
     for (std::size_t sceneIx = 0; sceneIx < kSceneCount; ++sceneIx)
     {
         builder.Button(MiniAppNodeIds::SceneButton(sceneIx),
                        SceneButtonLabel(sceneIx, snapshot.leftScene, snapshot.rightScene),
-                       synth::ui::Action::WithValue(MiniAppActions::kSceneSelect, std::to_string(sceneIx)));
+                       synth::ui::Action::WithValue(MiniAppActions::kSceneSelect, std::to_string(sceneIx)), {});
     }
 
-    builder.Button(MiniAppNodeIds::kStart, "Start", synth::ui::Action::Named(MiniAppActions::kStart));
-    builder.Button(MiniAppNodeIds::kStop, "Stop", synth::ui::Action::Named(MiniAppActions::kStop));
+    builder.Button(MiniAppNodeIds::kStart, "Start", synth::ui::Action::Named(MiniAppActions::kStart), {});
+    builder.Button(MiniAppNodeIds::kStop, "Stop", synth::ui::Action::Named(MiniAppActions::kStop), {});
 
     synth::ui::ControlStyle gestureStyle;
     gestureStyle.caption = "Gesture";

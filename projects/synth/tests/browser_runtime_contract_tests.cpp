@@ -102,8 +102,8 @@ public:
         builder.Root("contract.app.root", {0.0f, 0.0f, 640.0f, 480.0f})
             .Button("contract.app.button",
                     "Apply",
-                    synth::ui::Action::Named("contract.app.apply"));
-        return builder.Build();
+                    synth::ui::Action::Named("contract.app.apply"), {});
+        return builder.Build({0.0f, 0.0f, 640.0f, 480.0f});
     }
 
     void SetActionHandler(ActionHandler handler) override

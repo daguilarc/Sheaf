@@ -904,10 +904,10 @@ static void TestContainersNestToArbitraryDepth()
     builder.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
     builder.Section("sect", {}, [](synth::ui::Builder& b) {
         b.ScrollArea("scroll", {}, [](synth::ui::Builder& b) {
-            b.Row("row", {}, [](synth::ui::Builder& b) { b.Label("leaf", "hello"); });
+            b.Row("row", {}, [](synth::ui::Builder& b) { b.Label("leaf", "hello", {}); });
         });
     });
-    const synth::ui::NodeTree tree = builder.Build();
+    const synth::ui::NodeTree tree = builder.Build({0.0f, 0.0f, 400.0f, 300.0f});
     Require(FindNode(tree, "root").children[0].value == "sect", "root holds the section");
     Require(FindNode(tree, "sect").kind == synth::ui::NodeKind::Section, "sect is a Section");
     Require(FindNode(tree, "sect").children[0].value == "scroll", "section holds the scroll area");
@@ -921,8 +921,8 @@ struct CaptionedRow {
     std::string id, caption;
     void operator()(synth::ui::Builder& b) const {
         b.Row(id, {}, [this](synth::ui::Builder& b) {
-            b.Label(id + ".caption", caption);
-            b.Button(id + ".action", "Go", synth::ui::Action::Named("go"));
+            b.Label(id + ".caption", caption, {});
+            b.Button(id + ".action", "Go", synth::ui::Action::Named("go"), {});
         });
     }
 };
@@ -935,7 +935,7 @@ static void TestComponentsComposeComponents()
         CaptionedRow{"first", "First"}(b);
         CaptionedRow{"second", "Second"}(b);
     });
-    const synth::ui::NodeTree tree = builder.Build();
+    const synth::ui::NodeTree tree = builder.Build({0.0f, 0.0f, 400.0f, 300.0f});
     Require(FindNode(tree, "col").children.size() == 2, "column holds both rows");
     Require(FindNode(tree, "first.caption").text == "First", "each invocation emits in place");
     Require(FindNode(tree, "first").children.size() == 2, "with distinct stable ids");
@@ -945,13 +945,13 @@ static void TestSpliceGraftsWithoutNestedRoot()
 {
     synth::ui::Builder inner;
     inner.Root("inner.root", {0.0f, 0.0f, 100.0f, 50.0f});
-    inner.Label("inner.label", "spliced");
+    inner.Label("inner.label", "spliced", {});
 
     synth::ui::Builder outer;
     outer.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
-    outer.Section("host", {}, [&inner](synth::ui::Builder& b) { b.Splice(inner.Build()); });
+    outer.Section("host", {}, [&inner](synth::ui::Builder& b) { b.Splice(inner.Build({0.0f, 0.0f, 100.0f, 50.0f})); });
 
-    const synth::ui::NodeTree tree = outer.Build();
+    const synth::ui::NodeTree tree = outer.Build({0.0f, 0.0f, 400.0f, 300.0f});
     std::size_t roots = 0;
     for (const auto& n : tree.nodes) { if (n.kind == synth::ui::NodeKind::Root) ++roots; }
     Require(roots == 1, "exactly one Root survives the splice");
@@ -981,7 +981,7 @@ static void TestRootlessSpliceAttachesForestRoots()
         b.Splice(std::move(browser));
     });
 
-    const synth::ui::NodeTree tree = outer.Build();
+    const synth::ui::NodeTree tree = outer.Build({0.0f, 0.0f, 400.0f, 300.0f});
     std::size_t roots = 0;
     for (const auto& n : tree.nodes) {
         if (n.kind == synth::ui::NodeKind::Root) {
@@ -1003,8 +1003,8 @@ static void TestRootlessScopeMarkerNeverEatsAProducerNode()
     // by id would delete it without a word.
     synth::ui::Builder rows;
     rows.Rootless();
-    rows.Label("synth.ui.rootless-scope", "a producer may use any id it likes");
-    rows.Label("second", "and still gets its siblings");
+    rows.Label("synth.ui.rootless-scope", "a producer may use any id it likes", {});
+    rows.Label("second", "and still gets its siblings", {});
     const synth::ui::Subtree subtree = rows.BuildSubtree();
     Require(subtree.tree.nodes.size() == 2, "only the scope marker itself is dropped");
     Require(subtree.tree.nodes.front().id.value == "synth.ui.rootless-scope" &&
@@ -1014,7 +1014,7 @@ static void TestRootlessScopeMarkerNeverEatsAProducerNode()
     synth::ui::Builder outer;
     outer.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
     outer.Section("host", {}, [&subtree](synth::ui::Builder& b) { b.Splice(subtree); });
-    const synth::ui::NodeTree tree = outer.Build();
+    const synth::ui::NodeTree tree = outer.Build({0.0f, 0.0f, 400.0f, 300.0f});
     Require(FindNode(tree, "host").children.size() == 2,
             "both forest roots of a rootless subtree attach to the splice point");
 }
@@ -1028,7 +1028,7 @@ static void TestSpliceMergesLayoutDeclarations()
     synth::ui::Builder inner;
     inner.Root("inner.root", {0.0f, 0.0f, 100.0f, 50.0f});
     inner.Column("form", opts, [](synth::ui::Builder& b) {
-        b.Label("field", "x");
+        b.Label("field", "x", {});
     });
 
     synth::ui::Builder outer;
@@ -1056,7 +1056,7 @@ static void TestConstructionExpressesFullControlState()
     builder.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
     builder.Button("green", "Go", synth::ui::Action::Named("go"), style);
 
-    const synth::ui::NodeTree tree = builder.Build();
+    const synth::ui::NodeTree tree = builder.Build({0.0f, 0.0f, 400.0f, 300.0f});
     const synth::ui::Node& n = FindNode(tree, "green");
     // Color stores channels as r/g/b (plan text said green; the field is g).
     //
@@ -1110,16 +1110,16 @@ static void TestContainerConstructionCarriesAppearance()
     synth::ui::Builder builder;
     builder.Root("root", {0.0f, 0.0f, 200.0f, 120.0f}, rootStyle);
     builder.Section("panel", panelLayout, panelStyle, [&rowStyle, &rowLayout, &scrollStyle, &scrollLayout](synth::ui::Builder& panel) {
-        panel.Label("top", "Top");
+        panel.Label("top", "Top", {});
         panel.Row("row", rowLayout, rowStyle, [](synth::ui::Builder& row) {
-            row.Label("row.child", "Row");
+            row.Label("row.child", "Row", {});
         });
         panel.ScrollArea("scroll", scrollLayout, scrollStyle, [](synth::ui::Builder& scroll) {
-            scroll.Label("scroll.child", "Scroll");
+            scroll.Label("scroll.child", "Scroll", {});
         });
     });
 
-    const synth::ui::NodeTree tree = builder.Build();
+    const synth::ui::NodeTree tree = builder.Build({0.0f, 0.0f, 200.0f, 120.0f});
     const synth::ui::Node& root = FindNode(tree, "root");
     const synth::ui::Node& panel = FindNode(tree, "panel");
     const synth::ui::Node& row = FindNode(tree, "row");
@@ -1149,8 +1149,8 @@ static void TestUnstyledNodesCarryNothing()
 {
     synth::ui::Builder builder;
     builder.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
-    builder.Button("plain", "Plain", synth::ui::Action::Named("go"));
-    const synth::ui::NodeTree tree = builder.Build();
+    builder.Button("plain", "Plain", synth::ui::Action::Named("go"), {});
+    const synth::ui::NodeTree tree = builder.Build({0.0f, 0.0f, 400.0f, 300.0f});
     const synth::ui::Node& n = FindNode(tree, "plain");
     Require(!n.color.has_value() && !n.textStyle.has_value(),
             "an unstyled control carries nothing, so each backend uses its default look");
@@ -1168,7 +1168,7 @@ static void TestCaptionIsAnEmittedLabelNodeNotAField()
     builder.Column("form", grid, [&style](synth::ui::Builder& b) {
         b.ComboBox("device", "", {}, "", synth::ui::Action::Named("pick"), style);
     });
-    const synth::ui::NodeTree tree = builder.Build();
+    const synth::ui::NodeTree tree = builder.Build({0.0f, 0.0f, 400.0f, 300.0f});
     Require(FindNode(tree, "device.caption").kind == synth::ui::NodeKind::Label,
             "a caption is an ordinary Label node in the control's row");
     Require(FindNode(tree, "device.caption").text == "Output device", "carrying its text");
@@ -1191,9 +1191,9 @@ static void TestComboBoxAcceptsRuntimeOptionVectors()
     builder.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
     const std::vector<synth::ui::ControlOption> options = {{"system_default", "System Default"},
                                                            {"speakers", "Speakers"}};
-    builder.ComboBox("device", "", options, "speakers", synth::ui::Action::Named("pick"));
+    builder.ComboBox("device", "", options, "speakers", synth::ui::Action::Named("pick"), {});
 
-    const synth::ui::NodeTree tree = builder.Build();
+    const synth::ui::NodeTree tree = builder.Build({0.0f, 0.0f, 400.0f, 300.0f});
     const synth::ui::Node& combo = FindNode(tree, "device");
     Require(combo.options.size() == 2 && combo.options[1].id == "speakers" &&
                 combo.options[1].label == "Speakers",
@@ -2950,11 +2950,6 @@ static void TestFilePageCarriesPageColoursAndTextStyles()
     Require(readyStatus.textStyle.has_value() &&
                 TextStyleMatches(*readyStatus.textStyle, synth::pagestyle::kMutedTextStyle),
             "an ordinary File status renders in the muted text style");
-
-    for (const synth::ui::Node& node : tree.nodes)
-    {
-        Require(node.variant.empty(), "the rebuilt File page sets no retired variant string");
-    }
 }
 
 static void TestFilePanelsCarryAppearanceWithoutUnderlays()
@@ -3134,8 +3129,8 @@ int main()
     visualizer.SetVisible(true);
     synth::ui::Builder visualizerBuilder;
     visualizerBuilder.Root("viz.root", {0.0f, 0.0f, 100.0f, 100.0f})
-        .Visualizer("viz.node", &visualizer);
-    const synth::ui::NodeTree visualizerTree = visualizerBuilder.Build();
+        .Visualizer("viz.node", &visualizer, {});
+    const synth::ui::NodeTree visualizerTree = visualizerBuilder.Build({0.0f, 0.0f, 100.0f, 100.0f});
     const synth::ui::Node* visualizerNode = FindNodeById(visualizerTree, "viz.node");
     Require(visualizerNode != nullptr, "visible visualizer node exists");
     Require(visualizerNode->kind == synth::ui::NodeKind::Draw, "visualizer node is a draw node");
@@ -3144,8 +3139,8 @@ int main()
     visualizer.SetVisible(false);
     synth::ui::Builder hiddenBuilder;
     hiddenBuilder.Root("viz.hidden.root", {0.0f, 0.0f, 100.0f, 100.0f})
-        .Visualizer("viz.hidden.node", &visualizer);
-    Require(FindNodeById(hiddenBuilder.Build(), "viz.hidden.node") == nullptr, "hidden visualizer node absent");
+        .Visualizer("viz.hidden.node", &visualizer, {});
+    Require(FindNodeById(hiddenBuilder.Build({0.0f, 0.0f, 100.0f, 100.0f}), "viz.hidden.node") == nullptr, "hidden visualizer node absent");
 
     {
         const std::array<float, 4> values{0.0f, 2.0f / 3.0f, 1.0f / 3.0f, 1.0f};
@@ -3230,12 +3225,12 @@ int main()
         synth::ui::Visualizer* const stableAddress = &stackingVisualizer;
         synth::ui::Builder builder;
         builder.Root("constant.stack.root", {0.0f, 0.0f, 100.0f, 100.0f})
-            .Visualizer("constant.stack.visualizer", &stackingVisualizer)
+            .Visualizer("constant.stack.visualizer", &stackingVisualizer, {})
             .DrawInteractive("constant.stack.encoder", stackBounds,
                              {synth::ui::DrawCommand::StrokeEllipse(
                                  stackBounds, synth::Color::White, 1.0f)},
-                             synth::ui::Action::Named("drag"));
-        const synth::ui::NodeTree tree = builder.Build();
+                             synth::ui::Action::Named("drag"), std::nullopt, {});
+        const synth::ui::NodeTree tree = builder.Build({0.0f, 0.0f, 100.0f, 100.0f});
         const synth::ui::Node* root = FindNodeById(tree, "constant.stack.root");
         const synth::ui::Node* node = FindNodeById(tree, "constant.stack.visualizer");
         Require(stableAddress == static_cast<synth::ui::Visualizer*>(&stackingVisualizer),
@@ -3253,8 +3248,8 @@ int main()
         stackingVisualizer.SetVisible(false);
         synth::ui::Builder hiddenBuilder;
         hiddenBuilder.Root("constant.hidden.root", {0.0f, 0.0f, 100.0f, 100.0f})
-            .Visualizer("constant.hidden.visualizer", &stackingVisualizer);
-        Require(FindNodeById(hiddenBuilder.Build(), "constant.hidden.visualizer") == nullptr,
+            .Visualizer("constant.hidden.visualizer", &stackingVisualizer, {});
+        Require(FindNodeById(hiddenBuilder.Build({0.0f, 0.0f, 100.0f, 100.0f}), "constant.hidden.visualizer") == nullptr,
                 "hidden constant visualizer emits no builder node");
     }
 
@@ -3366,12 +3361,12 @@ int main()
         synth::ui::Visualizer* const stableAddress = &visualizer;
         synth::ui::Builder builder;
         builder.Root("noise.stack.root", {0.0f, 0.0f, 100.0f, 100.0f})
-            .Visualizer("noise.stack.visualizer", &visualizer)
+            .Visualizer("noise.stack.visualizer", &visualizer, {})
             .DrawInteractive("noise.stack.encoder", bounds,
                              {synth::ui::DrawCommand::StrokeEllipse(
                                  {0.0f, 0.0f, bounds.width, bounds.height}, synth::Color::White, 1.0f)},
-                             synth::ui::Action::Named("drag"));
-        const synth::ui::NodeTree tree = builder.Build();
+                             synth::ui::Action::Named("drag"), std::nullopt, {});
+        const synth::ui::NodeTree tree = builder.Build({0.0f, 0.0f, 100.0f, 100.0f});
         Require(stableAddress == static_cast<synth::ui::Visualizer*>(&visualizer),
                 "noise visualizer remains address-stable through builder composition");
         const synth::ui::Node* root = FindNodeById(tree, "noise.stack.root");
@@ -3391,8 +3386,8 @@ int main()
         visualizer.SetVisible(false);
         synth::ui::Builder hiddenBuilder;
         hiddenBuilder.Root("noise.hidden.root", {0.0f, 0.0f, 100.0f, 100.0f})
-            .Visualizer("noise.hidden.visualizer", &visualizer);
-        Require(FindNodeById(hiddenBuilder.Build(), "noise.hidden.visualizer") == nullptr,
+            .Visualizer("noise.hidden.visualizer", &visualizer, {});
+        Require(FindNodeById(hiddenBuilder.Build({0.0f, 0.0f, 100.0f, 100.0f}), "noise.hidden.visualizer") == nullptr,
                 "hidden noise visualizer emits no builder node");
     }
 
@@ -3670,18 +3665,18 @@ int main()
 
     synth::ui::Builder builder;
     builder.Root("root", synth::ui::Bounds{0.0f, 0.0f, 640.0f, 480.0f})
-        .Label("title", "Synth Params")
-        .Button("start", "Start", synth::ui::Action::Named("start"))
-        .Toggle("gesture", "Gesture", true, synth::ui::Action::Named("gesture.toggle"))
-        .Slider("blend", "Blend", 0.25f, 0.0f, 1.0f, 0.001f, synth::ui::Action::Named("blend.set"))
+        .Label("title", "Synth Params", {})
+        .Button("start", "Start", synth::ui::Action::Named("start"), {})
+        .Toggle("gesture", "Gesture", true, synth::ui::Action::Named("gesture.toggle"), {})
+        .Slider("blend", "Blend", 0.25f, 0.0f, 1.0f, 0.001f, synth::ui::Action::Named("blend.set"), {})
         .ComboBox("device", "Device", {{"a", "Built In"}, {"b", "External"}}, "a",
-                  synth::ui::Action::Named("device.select"))
-        .TextField("value", "Value", "64", synth::ui::Action::Named("value.commit"))
+                  synth::ui::Action::Named("device.select"), {})
+        .TextField("value", "Value", "64", synth::ui::Action::Named("value.commit"), {})
         .Draw("scope", synth::ui::Bounds{10.0f, 10.0f, 100.0f, 80.0f},
               {synth::ui::DrawCommand::Fill(synth::Color::Rgb(24, 26, 28)),
-               synth::ui::DrawCommand::Line({0.0f, 0.0f}, {100.0f, 80.0f}, synth::Color::Rgb(255, 255, 255), 1.0f)});
+               synth::ui::DrawCommand::Line({0.0f, 0.0f}, {100.0f, 80.0f}, synth::Color::Rgb(255, 255, 255), 1.0f)}, {});
 
-    const synth::ui::NodeTree tree = builder.Build();
+    const synth::ui::NodeTree tree = builder.Build(synth::ui::Bounds{0.0f, 0.0f, 640.0f, 480.0f});
     Require(tree.nodes.size() == 8, "tree should contain root plus seven children");
     Require(tree.nodes[0].id == synth::ui::NodeId("root"), "root id");
     Require(tree.nodes[7].drawCommands.size() == 2, "draw commands");
@@ -3690,7 +3685,7 @@ int main()
     stackingVisualizer.SetBounds({20.0f, 20.0f, 64.0f, 64.0f});
     synth::ui::Builder stackingBuilder;
     stackingBuilder.Root("stack.root", {0.0f, 0.0f, 120.0f, 120.0f})
-        .Visualizer("stack.encoder.0.visualizer", &stackingVisualizer)
+        .Visualizer("stack.encoder.0.visualizer", &stackingVisualizer, {})
         .DrawInteractive("stack.encoder.0",
                          stackingVisualizer.GetBounds(),
                          {synth::ui::DrawCommand::StrokeEllipse(
@@ -3701,8 +3696,8 @@ int main()
                              synth::Color::White,
                              1.0f)},
                          synth::ui::Action::Named("drag"),
-                         synth::ui::Action::Named("push"));
-    const synth::ui::NodeTree stackingTree = stackingBuilder.Build();
+                         synth::ui::Action::Named("push"), {});
+    const synth::ui::NodeTree stackingTree = stackingBuilder.Build({0.0f, 0.0f, 120.0f, 120.0f});
     const synth::ui::Node* stackingRoot = FindNodeById(stackingTree, "stack.root");
     Require(stackingRoot != nullptr, "stacking root exists");
     Require(stackingRoot->children.size() == 2, "visualizer and encoder both appended");

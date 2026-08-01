@@ -46,6 +46,12 @@ concept CarriesPlaceholder = requires(T record) { record.placeholder; };
 
 static_assert(!CarriesVariant<synth_browser::DecodedNode>,
               "version 2 carries no variant string on the wire");
+// Task 7.2 finished the retirement at the source: the model itself has no
+// `variant` member, so no producer can set one and no codec can read one. This
+// is the assertion that makes the runtime sweep below a check on the CODEC
+// rather than on the producers -- the tokens have no way in from the model.
+static_assert(!CarriesVariant<synth::ui::Node>,
+              "the model carries no retired variant string either");
 static_assert(!CarriesPlaceholder<synth_browser::DecodedNode>,
               "version 2 carries no combo-box placeholder on the wire");
 static_assert(!CarriesPlaceholder<synth::ui::Node>,
@@ -511,14 +517,29 @@ void TestVariantCarriesNoAppearanceStrings()
     row.id = synth::ui::NodeId("row");
     row.kind = synth::ui::NodeKind::Section;
     row.bounds = {0, 0, 400, 40};
-    row.variant = "list-row";
-    root.variant = "panel";
+    // The two lines that used to sit here set `variant` on these nodes. They
+    // cannot be written any more, which is the point: with the model field
+    // deleted the only remaining way a retired appearance token could reach the
+    // wire is the codec inventing one, and that is what the sweep below checks.
+    root.color = synth::Color::Rgb(18, 20, 22);
+    row.color = synth::Color::Rgb(30, 32, 34);
+    row.selected = true;
     tree.nodes.push_back(root);
     tree.nodes.push_back(row);
 
     const auto encoded = synth_browser::SerializeNodeTree(tree);
     const auto decoded = synth_browser::DecodeCommandBuffer(encoded.bytes);
-    for (const char* retired : {"danger", "primary", "muted", "muted-title", "list-row", "panel"})
+    // Anti-vacuity: a codec that interned nothing at all would satisfy the
+    // sweep below while saying nothing, so require the table to hold the ids
+    // this tree really carries before believing what it does not hold.
+    Require(std::find(decoded.strings.begin(), decoded.strings.end(), "root") !=
+                    decoded.strings.end() &&
+                std::find(decoded.strings.begin(), decoded.strings.end(), "row") !=
+                    decoded.strings.end(),
+            "the decoded string table holds the ids this tree carries");
+    for (const char* retired :
+         {"danger", "primary", "quiet", "secondary", "field", "title", "muted", "muted-title",
+          "list-row", "panel"})
     {
         Require(std::find(decoded.strings.begin(), decoded.strings.end(), retired) ==
                     decoded.strings.end(),

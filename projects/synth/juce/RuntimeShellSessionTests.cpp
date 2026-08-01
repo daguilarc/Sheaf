@@ -73,8 +73,10 @@ struct WideDrawSurface final : synth::ui::Surface {
             .DrawInteractive("wide.draw",
                              {0.0f, 0.0f, 900.0f, 120.0f},
                              {},
-                             synth::ui::Action::Named("wide.drag"));
-        return builder.Build();
+                             synth::ui::Action::Named("wide.drag"),
+                             std::nullopt,
+                             {});
+        return builder.Build({0.0f, 0.0f, 900.0f, 240.0f});
     }
 
     void SetActionHandler(ActionHandler handler) override { actionHandler = std::move(handler); }
