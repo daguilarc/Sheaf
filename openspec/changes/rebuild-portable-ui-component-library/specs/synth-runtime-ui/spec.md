@@ -220,15 +220,15 @@ WHEN the rebuilt pages' appearance is verified, THE synth project SHALL define n
 - **THEN** each text element's computed colour is checked against its effective background for the stated minimum contrast
 - **AND** a failing pair names the element and the computed colours
 
-#### Scenario: Baselines gate on a human
+#### Scenario: The final appearance is agreed with a human, not pinned
 - **WHEN** the visual iteration loop concludes for a page
-- **THEN** its screenshots become baselines only after recorded human sign-off
-- **AND** CI thereafter compares renders against the approved baselines
+- **THEN** its appearance is reviewed with a human and adjusted to a final agreed result
+- **AND** no screenshot is committed as a baseline and no later render is compared against one
 
-#### Scenario: Unapproved drift is a regression
-- **WHEN** a later change alters a page's rendering without updating its baseline
-- **THEN** the Playwright comparison fails
-- **AND** an intended change passes only by updating the baseline with renewed sign-off in the same change
+#### Scenario: Appearance drift is caught structurally or not at all
+- **WHEN** a later change alters a page's rendering
+- **THEN** it fails only if it breaks one of the named machine-checkable criteria, which hold at any extent
+- **AND** a rendered-appearance difference that satisfies every criterion is not by itself a failure
 
 ### Requirement: sru-49 — Portable UI: backends are dumb renderers
 WHEN a backend renders a portable tree, THE backend SHALL receive a fully resolved tree and paint it without performing layout, inferring coordinate space, supplying default sizes, or deciding appearance — every position, extent, and carried style it needs is on the node — and THE runtime UI layer SHALL remove from both backends both coordinate-space classifier families (the draw-geometry classifier and the node-bounds parent-local classifier), the auto-flow layout cursor with its per-kind default-size table and lowest-Draw starting-y scan, and the hardcoded per-variant colour constants as appearance policy; backend responsibilities SHALL be limited to toolkit realization, input translation into portable actions, scroll view transforms, the existing uniform surface scaling, interaction-state presentation derived from carried properties, and fitting text within the extent already resolved for it — a purely local decision requiring no knowledge of the surrounding tree, which each backend SHALL make for itself by shrinking, truncating, or clipping so that text never overflows its node's bounds.

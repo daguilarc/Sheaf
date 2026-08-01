@@ -926,10 +926,17 @@ labels duplicating adjacent labels, placeholder strings leaking into the UI
 — is removed, with the removals listed for human review in the sign-off
 gate (D13).
 
-### D13: "Looks better" is verified by named criteria, structural assertions, and a human-gated screenshot baseline
+### D13: "Looks better" is verified by named criteria and structural assertions, with the final look agreed once with a human
 
-Three layers, because screenshots alone cannot distinguish regression from
-intended change and criteria alone cannot catch what they do not name:
+**Amended 2026-07-30.** This section originally specified a third layer — a
+human-gated screenshot baseline with CI pixel comparison. The product owner
+removed it: appearance is driven to a good state, agreed once in a working
+session, and never pinned as a regression test. The structural criteria are the
+durable surface precisely because they hold at any extent, where a baseline holds
+at one pixel grid. Screenshots remain working artifacts that inform the loop and
+the review, and none is committed.
+
+Two layers, because criteria alone cannot catch what they do not name:
 
 1. **Named visual criteria**, stated in the spec (sru-48) and enumerated in
    the tasks: like-type controls share column positions; all spacing on the
@@ -945,14 +952,15 @@ intended change and criteria alone cannot catch what they do not name:
    contrast checks, and an extent spot-check (render at two root extents, assert
    weighted redistribution). These run in CI like any other test and fail
    on regression without any image diffing.
-3. **Screenshot baselines with a human gate.** The iteration loop: build →
+3. **An iteration loop ending in one agreed look — not a baseline.** Build →
    render each config page in the browser backend → capture screenshots →
    evaluate against the criteria → adjust colours/layout → repeat. When the
-   criteria pass and the human approves the look, screenshots are committed
-   as baselines. Thereafter CI compares against approved baselines; an
-   intended visual change is expressed by updating the baseline in the same
-   commit with the human's sign-off, so an unapproved pixel drift is a
-   regression by definition.
+   criteria pass, the appearance is reviewed with the human and adjusted to a
+   final agreed result. **The screenshots are working artifacts and stop
+   there**: none is committed as a baseline, nothing compares against them
+   later, and no CI target can fail on a rendered-appearance difference. Layers
+   1 and 2 are the durable regression surface, because they hold at any extent
+   where a baseline holds at one pixel grid.
 
 JUCE gets the structural subset through the existing simulation suites
 (bounds are in the portable tree, so column alignment and containment are
