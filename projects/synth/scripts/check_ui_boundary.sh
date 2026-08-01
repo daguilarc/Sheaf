@@ -153,15 +153,23 @@ PAGE_PRODUCER_HEADERS=(
 # headers. All first-party app headers are scanned by default; only named
 # non-producer or host-only headers are excluded, and every exclusion carries its
 # reason here.
+# Paths, not bare basenames: an unanchored `!Launcher.hpp` would also skip a
+# future `apps/newapp/Launcher.hpp`, which is the same evasion shape this scan
+# was widened to close, one size down.
 APP_PRODUCER_EXCLUDED=(
-    # DSP/application state cores; they do not build portable UI trees.
-    '-g!Braid4Core.hpp'
-    '-g!MiniAppCore.hpp'
+    # JUCE-touching, so it cannot be a JUCE-free producer at all: scanning it
+    # would fail rule 5's standalone compile rather than tighten anything. Note
+    # this is NOT "it builds no UI" -- it does include PortableScopeVisualizer.
+    '-g!apps/miniapp/MiniAppCore.hpp'
+    # No JUCE, no portable include, no builder use -- nothing for any rule to
+    # find. Excluded to keep the list symmetric with its sibling; scanning it
+    # would simply pass.
+    '-g!apps/braid-4/Braid4Core.hpp'
     # Registration manifests; they expose app metadata and launch glue, not UI.
-    '-g!Braid4Registration.hpp'
-    '-g!MiniAppRegistration.hpp'
+    '-g!apps/braid-4/Braid4Registration.hpp'
+    '-g!apps/miniapp/MiniAppRegistration.hpp'
     # Desktop launcher host; it is explicitly JUCE-owned, not a portable producer.
-    '-g!Launcher.hpp'
+    '-g!apps/sheaf-patch/Launcher.hpp'
 )
 APP_PRODUCER_HEADERS=()
 while IFS= read -r discovered; do
@@ -281,7 +289,9 @@ run_scanner_self_test() {
 # regex, so this check cannot use scan() directly. Keep the scanner itself under
 # the same self-test discipline: it must see allowed portable includes, reject a
 # forbidden DSP include, and ignore a commented-out forbidden include.
-LIBRARY_INCLUDE_PATTERN='^[[:space:]]*#include[[:space:]]*[<"][^">]+\.hpp[">]'
+# `.h` as well as `.hpp`: a library header including "synth/Foo.h" would
+# otherwise escape a rule whose whole point is not having gaps.
+LIBRARY_INCLUDE_PATTERN='^[[:space:]]*#include[[:space:]]*[<"][^">]+\.hp?p?[">]'
 
 library_header_include_lines() {
     strip_comment_lines "$1" | rg -n "$LIBRARY_INCLUDE_PATTERN" || true
@@ -330,13 +340,25 @@ run_library_include_self_test() {
         printf '%s\n' "$violations" | sed 's/^/    /' >&2
     fi
 
+    # Every include FORM the pattern and allowlist were widened to accept, so
+    # that widening cannot silently regress: quoted synth-prefixed, bare,
+    # angle-bracketed, relative, and a `.h` rather than `.hpp`. Each must still
+    # be rejected -- proving the allowlist resolves the name, not the spelling.
     bad="$compile_dir/library-bad.hpp"
-    printf '#include "synth/DspScope.hpp"\n' >"$bad"
-    violations="$(library_include_violations "$bad")"
-    if [ -z "$violations" ]; then
-        fail "check_ui_boundary.sh self-test: library include scanner missed a forbidden synth include"
-        printf '    sample: #include "synth/DspScope.hpp"\n' >&2
-    fi
+    for forbidden in \
+        '#include "synth/DspScope.hpp"' \
+        '#include "DspScope.hpp"' \
+        '#include <synth/DspScope.hpp>' \
+        '#include "../DspScope.hpp"' \
+        '#include "synth/DspScope.h"'
+    do
+        printf '%s\n' "$forbidden" >"$bad"
+        violations="$(library_include_violations "$bad")"
+        if [ -z "$violations" ]; then
+            fail "check_ui_boundary.sh self-test: library include scanner missed a forbidden synth include"
+            printf '    sample: %s\n' "$forbidden" >&2
+        fi
+    done
 
     commented="$compile_dir/library-commented.hpp"
     printf '// #include "synth/DspScope.hpp"\n' >"$commented"
