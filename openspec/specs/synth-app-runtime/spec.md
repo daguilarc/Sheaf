@@ -510,7 +510,7 @@ WHEN the Sheaf Patch registry is built, THE synth application runtime SHALL incl
 - **THEN** Sheaf Patch includes Braid 4
 - **AND** no standalone Braid 4 `Main.cpp`, executable, or app-bundle target is required
 
-### Requirement: sar-24 — Apps: build-time external application injection
+### Requirement: sar-26 — Apps: build-time external application injection
 WHEN the Sheaf Patch executable is built, THE synth application runtime SHALL support adding one out-of-tree synth application to the launcher registry through build configuration alone, SHALL require the injecting build to supply that application's include directory, header, application type, registration factory, and header dependency list together, and SHALL produce an unchanged Sheaf Patch build when no external application is configured. The external application SHALL reach the registry through the same manifest contract, typed launch binding, and generic session ownership as in-tree registrations, and the launcher SHALL NOT gain app-specific knowledge of it.
 
 #### Scenario: Unconfigured build is unchanged
