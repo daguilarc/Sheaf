@@ -523,28 +523,29 @@ int main()
     // At 900x560: the page margin puts content at 16 with 868 across; the
     // title takes 30 and a 14 gap, so the body starts at y=60; the stack takes
     // 390 and the encoder region 462, starting at x = 16 + 390 + 14 = 420;
-    // the bay leaves the region 406 high, which four rows over three 8 gaps
-    // divide into 95.5, and 462 divides the same way into 109.5.
+    // the captioned slider rows in the bay leave the region 382 high, which
+    // four rows over three 8 gaps divide into 89.5, and 462 divides the same
+    // way into 109.5.
     const synth::ui::Bounds encoderZeroSurface = SurfaceBoundsOf(tree, encoderNode->id.value);
     const synth::ui::Bounds encoderFifteenSurface = SurfaceBoundsOf(tree, encoderFifteenNode->id.value);
-    RequireExactBounds(encoderZeroSurface, {420.0f, 60.0f, 109.5f, 95.5f}, "encoder zero surface bounds");
-    RequireExactBounds(encoderFifteenSurface, {772.5f, 370.5f, 109.5f, 95.5f},
+    RequireExactBounds(encoderZeroSurface, {420.0f, 60.0f, 109.5f, 89.5f}, "encoder zero surface bounds");
+    RequireExactBounds(encoderFifteenSurface, {772.5f, 352.5f, 109.5f, 89.5f},
                        "encoder fifteen surface bounds");
-    RequireExactBounds(SurfaceBoundsOf(tree, "miniapp.encoders"), {420.0f, 60.0f, 462.0f, 406.0f},
+    RequireExactBounds(SurfaceBoundsOf(tree, "miniapp.encoders"), {420.0f, 60.0f, 462.0f, 382.0f},
                        "encoder region surface bounds");
-    RequireExactBounds(SurfaceBoundsOf(tree, vcoPanel->id.value), {16.0f, 60.0f, 390.0f, 196.0f},
+    RequireExactBounds(SurfaceBoundsOf(tree, vcoPanel->id.value), {16.0f, 60.0f, 390.0f, 184.0f},
                        "VCO scope surface bounds");
-    RequireExactBounds(SurfaceBoundsOf(tree, lfoPanel->id.value), {16.0f, 270.0f, 390.0f, 196.0f},
+    RequireExactBounds(SurfaceBoundsOf(tree, lfoPanel->id.value), {16.0f, 258.0f, 390.0f, 184.0f},
                        "LFO scope surface bounds");
 
     // And the backend must arrive at those same numbers by its own fold, which
     // is the parity claim: pin them against the literals, not against the tree
     // the expectations were read out of.
     Require(component.SurfaceBoundsForNode(synth_miniapp::MiniAppNodeIds::Encoder(0)) ==
-                juce::Rectangle<int>(420, 60, 110, 96),
+                juce::Rectangle<int>(420, 60, 110, 90),
             "the JUCE host folds encoder zero to the same surface bounds");
     Require(component.SurfaceBoundsForNode(synth_miniapp::MiniAppNodeIds::Encoder(15)) ==
-                juce::Rectangle<int>(773, 371, 110, 96),
+                juce::Rectangle<int>(773, 353, 110, 90),
             "the JUCE host folds encoder fifteen to the same surface bounds");
 
     StaticSurface paintedGridSurface;

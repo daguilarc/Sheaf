@@ -2234,24 +2234,6 @@ std::map<std::string, std::string> ControllerCaptionExceptions(std::size_t contr
     return exceptions;
 }
 
-std::map<std::string, std::string> WizardFormCaptionExceptions()
-{
-    std::map<std::string, std::string> exceptions;
-    Except(exceptions, "controller-wizard.twister.encoder-slot",
-           "encoder-slot field; the row's own Label node sits beside it but is not a "
-           "'<id>.caption' sibling, so the caption convention does not see it");
-    for (int ix = 0; ix < 6; ++ix)
-    {
-        const std::string button = "Twister button " + std::to_string(ix + 1);
-        Except(exceptions, "controller-wizard.twister.button." + std::to_string(ix) + ".message",
-               button + " message selector; the column heading 'Left (CC 8-10)' / "
-                        "'Right (CC 11-13)' names the group but no heading names this column");
-        Except(exceptions, "controller-wizard.twister.button." + std::to_string(ix) + ".argument",
-               button + " argument field; same column-heading gap as its message selector");
-    }
-    return exceptions;
-}
-
 // Braid 4 needs a live core, parameter manager and UI state before its surface
 // resolves, and the surface holds pointers into all three, so they are held
 // together and destroyed in one place.
@@ -2440,7 +2422,6 @@ static void TestNamedVisualCriteriaHoldOnEveryPageAndApp()
              // spliced form in a `ScrollArea`, so that width is absorbed as
              // scroll content instead of overhanging the page and being clipped
              // away. `TestTheWizardFormIsReachableRatherThanClipped` pins it.
-             .uncaptioned = WizardFormCaptionExceptions(),
              .expectedFormControls = 13});
     }
 
@@ -2457,11 +2438,6 @@ static void TestNamedVisualCriteriaHoldOnEveryPageAndApp()
              // The full-surface background painter is an explicitly bounded
              // out-of-flow Draw covering the whole root.
              .outOfFlow = {synth_braid4::Braid4NodeIds::kBackground},
-             // The scene-blend slider renders no label of its own in either
-             // backend. Recorded for Task 17 in tasks.md under 6.5b.
-             .uncaptioned = {{"braid4.scene.blend",
-                              "scene blend slider; carries its name in Node::label, which no "
-                              "backend paints for a Slider"}},
              .expectedFormControls = 1});
 
         // Mini App on the same standard layout, with a live sru-25 underlay on
@@ -2478,14 +2454,6 @@ static void TestNamedVisualCriteriaHoldOnEveryPageAndApp()
             {.name = "Mini App (encoder 0 modulated)",
              .tree = miniTree,
              .spacing = &StandardAppSpacing(),
-             // Both Mini App sliders carry their name in `Node::label`, which
-             // no backend renders for a `Slider` — the same residual as Braid
-             // 4's scene blend, one control wider. tasks.md 6.5b.
-             .uncaptioned = {{synth_miniapp::MiniAppNodeIds::kSceneBlend,
-                              "scene blend slider; carries \"Blend\" in Node::label, which no "
-                              "backend paints for a Slider"},
-                             {synth_miniapp::MiniAppNodeIds::kGestureValue,
-                              "gesture slider; carries \"Gesture\" in Node::label, same gap"}},
              // Two sliders plus four toggles that render their own labels, so
              // this surface also gets `examined > 0` on the strength of the
              // controls that DO conform.
@@ -4240,6 +4208,24 @@ int main()
     controllersSurface.MarkDirty();
     controllersSurface.RefreshOnTick();
     Require(controllersSurface.BuildTree().nodes.size() >= 4, "controllers surface builds semantic tree");
+    controllersSurface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kToggleConfig, "0"));
+    controllersSurface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kToggleSection, "0:encoders"));
+    controllersSurface.MarkDirty();
+    controllersSurface.RefreshOnTick();
+    const synth::ui::NodeTree controllersExpandedTree = controllersSurface.BuildTree();
+    for (const synth::ui::Node& node : controllersExpandedTree.nodes)
+    {
+        const std::string& id = node.id.value;
+        if (node.kind == synth::ui::NodeKind::Row &&
+            id.find(".header.") != std::string::npos &&
+            id.find(".caption") == std::string::npos)
+        {
+            Require(!node.children.empty(),
+                    ("controllers group header row " + id + " must not reserve an empty band").c_str());
+        }
+    }
 
     synth::WizardCandidate twisterCandidate{
         .wizardId = "com.sheaf.midi-fighter-twister",

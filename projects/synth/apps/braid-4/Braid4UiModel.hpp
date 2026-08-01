@@ -352,13 +352,16 @@ inline void AppendBraid4BayControls(synth::ui::Builder& builder, const Braid4UiS
                        SceneButtonLabel(sceneIx, snapshot.leftScene, snapshot.rightScene),
                        synth::ui::Action::WithValue(Braid4Actions::kSceneSelect, std::to_string(sceneIx)));
     }
+    synth::ui::ControlStyle sceneBlendStyle;
+    sceneBlendStyle.caption = "Scene Blend";
     builder.Slider(Braid4NodeIds::kSceneBlend,
-                   "Scene Blend",
+                   "",
                    snapshot.sceneBlend,
                    0.0f,
                    1.0f,
                    0.001f,
-                   synth::ui::Action::Named(Braid4Actions::kSceneBlend));
+                   synth::ui::Action::Named(Braid4Actions::kSceneBlend),
+                   sceneBlendStyle);
 }
 
 // Every semantic control Braid 4 presents outside its scope slots and encoder

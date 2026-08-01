@@ -265,20 +265,26 @@ inline void AppendMiniAppBayControls(synth::ui::Builder& builder, const MiniAppU
     builder.Button(MiniAppNodeIds::kStart, "Start", synth::ui::Action::Named(MiniAppActions::kStart));
     builder.Button(MiniAppNodeIds::kStop, "Stop", synth::ui::Action::Named(MiniAppActions::kStop));
 
+    synth::ui::ControlStyle gestureStyle;
+    gestureStyle.caption = "Gesture";
     builder.Slider(MiniAppNodeIds::kGestureValue,
-                   "Gesture",
+                   "",
                    snapshot.gestureValue,
                    0.0f,
                    1.0f,
                    0.001f,
-                   synth::ui::Action::Named(MiniAppActions::kGestureValue));
+                   synth::ui::Action::Named(MiniAppActions::kGestureValue),
+                   gestureStyle);
+    synth::ui::ControlStyle sceneBlendStyle;
+    sceneBlendStyle.caption = "Blend";
     builder.Slider(MiniAppNodeIds::kSceneBlend,
-                   "Blend",
+                   "",
                    snapshot.sceneBlend,
                    0.0f,
                    1.0f,
                    0.001f,
-                   synth::ui::Action::Named(MiniAppActions::kSceneBlend));
+                   synth::ui::Action::Named(MiniAppActions::kSceneBlend),
+                   sceneBlendStyle);
 }
 
 // Every semantic control Mini App presents outside its visualizer slots and

@@ -291,15 +291,25 @@ TEST_CASE(MfTwisterConfigFormPlacesSixButtonsInTwoColumnsOfThree) {
     std::vector<synth::ui::Bounds> message;
     for (std::size_t buttonIx = 0; buttonIx < synth::MfTwisterConfigForm::kButtonCount; ++buttonIx) {
         const synth::ui::Bounds labelBounds = FormBounds(tree, TwisterButtonField(buttonIx, "label"));
+        const synth::ui::Bounds messageCaptionBounds =
+            FormBounds(tree, TwisterButtonField(buttonIx, "message") + ".caption");
         const synth::ui::Bounds messageBounds = FormBounds(tree, TwisterButtonField(buttonIx, "message"));
+        const synth::ui::Bounds argumentCaptionBounds =
+            FormBounds(tree, TwisterButtonField(buttonIx, "argument") + ".caption");
         const synth::ui::Bounds argumentBounds = FormBounds(tree, TwisterButtonField(buttonIx, "argument"));
         REQUIRE_TRUE(labelBounds.width > 0.0f && labelBounds.height > 0.0f);
+        REQUIRE_TRUE(messageCaptionBounds.width > 0.0f && messageCaptionBounds.height > 0.0f);
         REQUIRE_TRUE(messageBounds.width > 0.0f && messageBounds.height > 0.0f);
+        REQUIRE_TRUE(argumentCaptionBounds.width > 0.0f && argumentCaptionBounds.height > 0.0f);
         REQUIRE_TRUE(argumentBounds.width > 0.0f && argumentBounds.height > 0.0f);
         REQUIRE_TRUE(messageBounds.x >= labelBounds.x + labelBounds.width);
         REQUIRE_TRUE(argumentBounds.x >= messageBounds.x + messageBounds.width);
+        REQUIRE_TRUE(messageCaptionBounds.x == messageBounds.x);
+        REQUIRE_TRUE(argumentCaptionBounds.x == argumentBounds.x);
+        REQUIRE_TRUE(argumentCaptionBounds.y == messageCaptionBounds.y);
+        REQUIRE_TRUE(labelBounds.y == messageCaptionBounds.y);
+        REQUIRE_TRUE(messageBounds.y > messageCaptionBounds.y);
         REQUIRE_TRUE(argumentBounds.y == messageBounds.y);
-        REQUIRE_TRUE(labelBounds.y == messageBounds.y);
         message.push_back(messageBounds);
     }
 

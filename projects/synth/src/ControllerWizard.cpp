@@ -67,6 +67,9 @@ inline constexpr float kSlotWidth = 160.0f;
 inline constexpr float kSlotLabelWidth = 90.0f;
 inline constexpr float kFormGridLabelGap = 8.0f;
 inline constexpr float kButtonLabelWidth = 70.0f;
+inline constexpr float kFieldCaptionHeight = 14.0f;
+inline constexpr float kFieldCaptionGap = 4.0f;
+inline constexpr float kFieldStackHeight = kFieldCaptionHeight + kFieldCaptionGap + kControlHeight;
 // Wide enough for the longest message label the choice catalog offers. At 150
 // the browser's `<select>` reported a 156px content width in a 150px box, so
 // every one of the six message selectors rendered its longest options
@@ -89,7 +92,7 @@ inline constexpr float kArgumentX = kMessageX + kMessageWidth + kFieldGap;
 inline constexpr float kColumnWidth = kArgumentX + kArgumentWidth;
 inline constexpr float kSlotRowWidth = kSlotLabelWidth + kFormGridLabelGap + kSlotWidth;
 inline constexpr float kButtonFieldsWidth = kMessageWidth + kFieldGap + kArgumentWidth;
-inline constexpr float kButtonRowHeight = kControlHeight + kErrorGap + kErrorHeight;
+inline constexpr float kButtonRowHeight = kFieldStackHeight + kErrorGap + kErrorHeight;
 inline constexpr float kColumnsTop = kMargin + kControlHeight + kErrorGap + kErrorHeight + kRowGap;
 // A heading plus one row per button: four stacked children, and therefore
 // THREE gaps between them. Counting only two left the last button row's error
@@ -411,6 +414,22 @@ ui::Subtree MfTwisterConfigForm::BuildSubtree() {
         style.color = pagestyle::kDefaultPanel;
         return style;
     };
+    const auto fixedVerticalField = [&](float width, float height, bool enabled = true) {
+        ui::ControlStyle style;
+        style.enabled = enabled;
+        style.color = pagestyle::kDefaultPanel;
+        style.layout.main = ui::Extent::Px(height);
+        style.layout.cross = ui::Extent::Px(width);
+        return style;
+    };
+    const auto fieldCell = [](float width) {
+        ui::LayoutOptions layout;
+        layout.main = ui::Extent::Px(width);
+        layout.cross = ui::Extent::Weight(1.0f);
+        layout.padding = 0.0f;
+        layout.gap = Layout::kFieldCaptionGap;
+        return layout;
+    };
     const auto textRow = [](float height) {
         ui::ControlStyle style;
         style.layout.main = ui::Extent::Px(height);
@@ -440,7 +459,7 @@ ui::Subtree MfTwisterConfigForm::BuildSubtree() {
 
     ui::LayoutOptions buttonFieldsRow;
     buttonFieldsRow.main = ui::Extent::Px(Layout::kButtonFieldsWidth);
-    buttonFieldsRow.cross = ui::Extent::Px(Layout::kControlHeight);
+    buttonFieldsRow.cross = ui::Extent::Px(Layout::kFieldStackHeight);
     buttonFieldsRow.padding = 0.0f;
     buttonFieldsRow.gap = Layout::kFieldGap;
 
@@ -449,7 +468,7 @@ ui::Subtree MfTwisterConfigForm::BuildSubtree() {
     builder.Rootless();
     builder.Column(std::string(kMfTwisterFormRootId) + ".body", body, [&](ui::Builder& form) {
         form.Row(std::string(kMfTwisterFormRootId) + ".slot", slotRow, [&](ui::Builder& row) {
-            row.Label(std::string(kMfTwisterFormRootId) + ".encoder-slot.label",
+            row.Label(std::string(kMfTwisterFormRootId) + ".encoder-slot.caption",
                       "Encoder Slot",
                       fixedControl(Layout::kSlotLabelWidth, Layout::kControlHeight));
             row.TextField(slotId,
@@ -531,15 +550,26 @@ ui::Subtree MfTwisterConfigForm::BuildSubtree() {
                                                                          const std::string messageId =
                                                                              ButtonFieldId(buttonIx,
                                                                                            "message");
-                                                                         fields.ComboBox(
-                                                                             messageId,
-                                                                             "Message",
-                                                                             std::move(options),
-                                                                             MessageOptionId(button.message),
-                                                                             ui::Action::Named(messageId),
-                                                                             fixedField(
-                                                                                 Layout::kMessageWidth,
-                                                                                 Layout::kControlHeight));
+                                                                         fields.Column(
+                                                                             messageId + ".cell",
+                                                                             fieldCell(Layout::kMessageWidth),
+                                                                             [&](ui::Builder& fieldCell) {
+                                                                                 fieldCell.Label(
+                                                                                     messageId + ".caption",
+                                                                                     "Message",
+                                                                                     textRow(Layout::
+                                                                                                 kFieldCaptionHeight));
+                                                                                 fieldCell.ComboBox(
+                                                                                     messageId,
+                                                                                     "",
+                                                                                     std::move(options),
+                                                                                     MessageOptionId(
+                                                                                         button.message),
+                                                                                     ui::Action::Named(messageId),
+                                                                                     fixedVerticalField(
+                                                                                         Layout::kMessageWidth,
+                                                                                         Layout::kControlHeight));
+                                                                             });
 
                                                                          const std::string argumentId =
                                                                              ButtonFieldId(buttonIx,
@@ -547,15 +577,25 @@ ui::Subtree MfTwisterConfigForm::BuildSubtree() {
                                                                          const bool argumentEnabled =
                                                                              TwisterArgumentEnabled(
                                                                                  button.message);
-                                                                         fields.TextField(
-                                                                             argumentId,
-                                                                             "Argument",
-                                                                             button.argumentText,
-                                                                             ui::Action::Named(argumentId),
-                                                                             fixedField(
-                                                                                 Layout::kArgumentWidth,
-                                                                                 Layout::kControlHeight,
-                                                                                 argumentEnabled));
+                                                                         fields.Column(
+                                                                             argumentId + ".cell",
+                                                                             fieldCell(Layout::kArgumentWidth),
+                                                                             [&](ui::Builder& fieldCell) {
+                                                                                 fieldCell.Label(
+                                                                                     argumentId + ".caption",
+                                                                                     "Argument",
+                                                                                     textRow(Layout::
+                                                                                                 kFieldCaptionHeight));
+                                                                                 fieldCell.TextField(
+                                                                                     argumentId,
+                                                                                     "",
+                                                                                     button.argumentText,
+                                                                                     ui::Action::Named(argumentId),
+                                                                                     fixedVerticalField(
+                                                                                         Layout::kArgumentWidth,
+                                                                                         Layout::kControlHeight,
+                                                                                         argumentEnabled));
+                                                                             });
                                                                      });
                                                                  const std::string argumentId =
                                                                      ButtonFieldId(buttonIx, "argument");
@@ -568,7 +608,7 @@ ui::Subtree MfTwisterConfigForm::BuildSubtree() {
                                                                          textRow(Layout::kErrorHeight);
                                                                      errorStyle.layout.explicitBounds = {
                                                                          0.0f,
-                                                                         Layout::kControlHeight +
+                                                                         Layout::kFieldStackHeight +
                                                                              Layout::kErrorGap,
                                                                          Layout::kColumnWidth,
                                                                          Layout::kErrorHeight};

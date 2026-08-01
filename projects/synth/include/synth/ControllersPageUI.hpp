@@ -2695,53 +2695,61 @@ private:
                                                  bool isFirstHeaderForGroup,
                                                  MidiMappingRowVM::Kind kind) {
                     const std::string headerId = NodeIds::GroupHeader(controllerIx, section, headerIx);
+                    const bool showColumnLabels = fields.size() > 1;
+                    const bool showAddControls =
+                        isFirstHeaderForGroup && vm.GroupSupportsAdd(controllerIx, section, group);
+                    const bool showBlockControl =
+                        showAddControls && vm.GroupSupportsBlocks(controllerIx, section, group);
                     body.Label(headerId + ".caption",
                                ControllersLayout::RowGroupCaption(group, kind),
                                labelStyle(ControllersLayout::kStatusRowHeight));
-                    body.Row(headerId,
-                             rowLayout(ControllersLayout::kGroupHeaderHeight,
-                                       sectionWidth,
-                                       0.0f),
-                             [&](ui::Builder& header) {
-                                 const bool showColumnLabels = fields.size() > 1;
-                                 for (std::size_t fieldIx = 0;
-                                      showColumnLabels && fieldIx < fields.size();
-                                      ++fieldIx)
-                                 {
-                                     const MidiMappingRowVM::Field field = fields[fieldIx];
-                                     header.Label(
-                                         NodeIds::GroupColumnLabel(
-                                             controllerIx, section, headerIx, fieldIx),
-                                         FieldShortLabel(field),
-                                         labelStyle(static_cast<float>(
-                                             ControllersLayout::FieldEditorWidth(field))));
-                                 }
-                                 if (isFirstHeaderForGroup &&
-                                     vm.GroupSupportsAdd(controllerIx, section, group))
-                                 {
-                                     header.Button(
-                                         NodeIds::GroupAddSingle(controllerIx, section, headerIx),
-                                         "Add",
-                                         ui::Action::WithValue(
-                                             Actions::kAddSingle,
-                                             std::to_string(controllerIx) + ":" +
-                                                 ControllersLayout::SectionToken(section) + ":" +
-                                                 ControllersLayout::RowGroupToken(group)),
-                                         button(ControllersLayout::kAddButtonWidth, 28.0f));
-                                     if (vm.GroupSupportsBlocks(controllerIx, section, group))
+                    if (showColumnLabels || showAddControls)
+                    {
+                        body.Row(headerId,
+                                 rowLayout(ControllersLayout::kGroupHeaderHeight,
+                                           sectionWidth,
+                                           0.0f),
+                                 [&](ui::Builder& header) {
+                                     for (std::size_t fieldIx = 0; fieldIx < fields.size(); ++fieldIx)
+                                     {
+                                         if (!showColumnLabels)
+                                         {
+                                             break;
+                                         }
+                                         const MidiMappingRowVM::Field field = fields[fieldIx];
+                                         header.Label(
+                                             NodeIds::GroupColumnLabel(
+                                                 controllerIx, section, headerIx, fieldIx),
+                                             FieldShortLabel(field),
+                                             labelStyle(static_cast<float>(
+                                                 ControllersLayout::FieldEditorWidth(field))));
+                                     }
+                                     if (showAddControls)
                                      {
                                          header.Button(
-                                             NodeIds::GroupAddBlock(controllerIx, section, headerIx),
-                                             "Block",
+                                             NodeIds::GroupAddSingle(controllerIx, section, headerIx),
+                                             "Add",
                                              ui::Action::WithValue(
-                                                 Actions::kAddBlock,
+                                                 Actions::kAddSingle,
                                                  std::to_string(controllerIx) + ":" +
                                                      ControllersLayout::SectionToken(section) + ":" +
                                                      ControllersLayout::RowGroupToken(group)),
                                              button(ControllersLayout::kAddButtonWidth, 28.0f));
+                                         if (showBlockControl)
+                                         {
+                                             header.Button(
+                                                 NodeIds::GroupAddBlock(controllerIx, section, headerIx),
+                                                 "Block",
+                                                 ui::Action::WithValue(
+                                                     Actions::kAddBlock,
+                                                     std::to_string(controllerIx) + ":" +
+                                                         ControllersLayout::SectionToken(section) + ":" +
+                                                         ControllersLayout::RowGroupToken(group)),
+                                                 button(ControllersLayout::kAddButtonWidth, 28.0f));
+                                         }
                                      }
-                                 }
-                             });
+                                 });
+                    }
                     ++headerIx;
                 };
 

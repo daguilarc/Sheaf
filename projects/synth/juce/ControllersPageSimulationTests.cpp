@@ -153,26 +153,6 @@ std::map<std::string, std::string> UncaptionedResiduals(const synth::ui::NodeTre
             }
         }
     }
-    for (int button = 0; button < 6; ++button)
-    {
-        const std::string base =
-            "controller-wizard.twister.button." + std::to_string(button) + ".";
-        for (const char* field : {"message", "argument"})
-        {
-            if (present(base + field))
-            {
-                except(base + field,
-                       "Twister button " + std::to_string(button + 1) + " " + field +
-                           " cell; its column carries no heading");
-            }
-        }
-    }
-    if (present("controller-wizard.twister.encoder-slot"))
-    {
-        except("controller-wizard.twister.encoder-slot",
-               "encoder-slot field; its adjacent Label is not a '<id>.caption' sibling");
-    }
-
     // Mapping cells are excused by their section's COLUMN HEADINGS, so the
     // headings have to exist. A section that lost them fails instead of
     // inheriting the exclusion.
