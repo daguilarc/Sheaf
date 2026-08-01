@@ -80,7 +80,7 @@ BACKEND_EXCLUDED_FROM_PRODUCER_SCAN=(
 discover_backend_sources() {
     # macOS still ships bash 3.2, so no `mapfile` and no array element prefixing.
     rg --files juce browser/src \
-        -g '*.hpp' -g '*.cpp' -g '*.mm' -g '*.ts' \
+        -g '*.hpp' -g '*.cpp' -g '*.mm' -g '*.ts' -g '*.mjs' -g '*.js' \
         "${BACKEND_EXCLUDED_FROM_ALL[@]}" "$@" | sort
 }
 
@@ -117,6 +117,10 @@ PRODUCER_HEADERS=(
     include/synth/RuntimePages.hpp
     include/synth/ControllersPageUI.hpp
     include/synth/ControllerWizard.hpp
+    # The wizard's tree is built here, not in its header: this is a producer in
+    # every sense the scan cares about, and it was omitted while its header was
+    # listed.
+    src/ControllerWizard.cpp
     include/synth/RuntimeMainComponent.hpp
     apps/braid-4/Braid4UiModel.hpp
     apps/miniapp/MiniAppUiModel.hpp
