@@ -59,10 +59,29 @@ fail() {
 #                              and name retired symbols in re-pin assertions
 #   ControllersHarnessApp.cpp  developer harness, not shipped
 #   ControllersPageHarness.hpp developer harness, not shipped
+# Discovery takes EVERY file under the backend roots and removes named
+# non-backend files here. It is deliberately not a list of extensions to
+# include: an allowlist of extensions is the same evasion as an allowlist of
+# files, one level down, and this gate has now been caught by that shape twice.
+# A new `.h`, `.cc`, `.mts` or `.tsx` holding reintroduced policy is discovered
+# automatically; only the names below are trusted, and each says why.
 BACKEND_EXCLUDED_FROM_ALL=(
     '-g!*Tests.cpp'
     '-g!ControllersHarnessApp.cpp'
     '-g!ControllersPageHarness.hpp'
+    # Build and publish tooling. These are Node scripts that run at build time,
+    # never shipped runtime modules, and `check:generic-runtime` is the scan
+    # that holds them to sbap-4. They legitimately mention identifiers the
+    # policy scans look for, so scanning them here produces false failures.
+    '-g!app-build-manifest.mjs'
+    '-g!build-browser-apps.mjs'
+    '-g!build-first-party-catalog.mjs'
+    '-g!package-app.mjs'
+    '-g!package-contract.mjs'
+    '-g!publish-site.mjs'
+    '-g!static-server.mjs'
+    '-g!validate-deployed-catalog.mjs'
+    '-g!wasm-exports.mjs'
 )
 
 # Additionally excluded from the PRODUCER-include scan only.
@@ -80,7 +99,6 @@ BACKEND_EXCLUDED_FROM_PRODUCER_SCAN=(
 discover_backend_sources() {
     # macOS still ships bash 3.2, so no `mapfile` and no array element prefixing.
     rg --files juce browser/src \
-        -g '*.hpp' -g '*.cpp' -g '*.mm' -g '*.ts' -g '*.mjs' -g '*.js' \
         "${BACKEND_EXCLUDED_FROM_ALL[@]}" "$@" | sort
 }
 
