@@ -515,6 +515,8 @@ void TestCaptionedControlRowOccupiesTheParentFlowSlot()
     synth::ui::ControlStyle style;
     style.caption = "Device";
     style.layout.main = synth::ui::Extent::Px(34.0f);
+    style.layout.padding = 19.0f;
+    style.layout.gap = 31.0f;
     synth::ui::Builder b;
     b.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
     b.Column("form", {}, [&style](synth::ui::Builder& b) {
@@ -522,9 +524,17 @@ void TestCaptionedControlRowOccupiesTheParentFlowSlot()
         b.Label("after", "after", MainOf(synth::ui::Extent::Px(20.0f)));
     });
     const auto tree = b.Build({0.0f, 0.0f, 400.0f, 300.0f});
+    const synth::ui::Node& row = FindNode(tree, "device.row");
+    const synth::ui::Node& caption = FindNode(tree, "device.caption");
+    const synth::ui::Node& control = FindNode(tree, "device");
     Require(NearlyEqual(FindNode(tree, "device.row").bounds.height, 34.0f),
             "the author's layout applies to the implicit caption row");
-    Require(NearlyEqual(FindNode(tree, "after").bounds.y - FindNode(tree, "device.row").bounds.y,
+    Require(NearlyEqual(caption.bounds.x, 0.0f) && NearlyEqual(caption.bounds.y, 0.0f),
+            "the implicit caption row resolves with zero padding");
+    Require(NearlyEqual(control.bounds.x - (caption.bounds.x + caption.bounds.width),
+                        synth::ui::kSpacing.labelGap),
+            "the implicit caption row resolves with the library label gap");
+    Require(NearlyEqual(FindNode(tree, "after").bounds.y - row.bounds.y,
                         34.0f + synth::ui::kSpacing.gap),
             "the captioned row, not the inner control, advances parent flow");
 }

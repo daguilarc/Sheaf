@@ -444,8 +444,10 @@ private:
             row.bounds = *style.layout.explicitBounds;
         }
         AppendChild(std::move(row));
-        // Author's layout applies to the flow slot occupant — the .row wrapper.
-        //
+        // Author extents and explicit bounds apply to the flow-slot occupant --
+        // the .row wrapper. The implicit caption row itself is structural: it
+        // always uses no padding and the library label gap so captioned controls
+        // keep the same declared height as uncaptioned controls.
         LayoutOptions rowLayout = style.layout;
         rowLayout.padding = 0.0f;
         rowLayout.gap = kSpacing.labelGap;

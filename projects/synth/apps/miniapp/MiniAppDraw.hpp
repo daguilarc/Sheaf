@@ -3,6 +3,7 @@
 // JUCE-free portable command builders for miniapp waveform widgets.
 
 #include "synth/DspOscillators.hpp"
+#include "synth/DspScope.hpp"
 #include "synth/PortableUI.hpp"
 #include "synth/PortableScopeVisualizer.hpp"
 

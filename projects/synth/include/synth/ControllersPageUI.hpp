@@ -453,11 +453,9 @@ inline constexpr float kAddRowHeight = 40.0f;
 inline constexpr float kBaseEditorWidth = 90.0f;
 inline constexpr float kDeleteButtonWidth = 22.0f;
 inline constexpr float kAddButtonWidth = 62.0f;
-inline constexpr float kVariantBoxWidth = 140.0f;
 inline constexpr float kVariantFieldWidth = 200.0f;
 inline constexpr float kStatusDotsWidth = 32.0f;
 inline constexpr float kHeaderControlsX = 256.0f;
-inline constexpr float kEndpointBoxWidth = 160.0f;
 inline constexpr float kEndpointFieldWidth = 220.0f;
 inline constexpr float kEndpointBoxGap = 8.0f;
 // Available-controller row columns: the recognized controller's descriptor

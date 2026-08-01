@@ -143,19 +143,30 @@ PAGE_PRODUCER_HEADERS=(
     # listed.
     src/ControllerWizard.cpp
     include/synth/RuntimeMainComponent.hpp
+    # Producer-side scope drawing adapter: it intentionally depends on DSP
+    # scope types while emitting portable UI draw commands.
+    include/synth/PortableScopeVisualizer.hpp
 )
 
-# App producer headers are discovered by convention. The previous hand-list
-# named `Braid4UiModel.hpp` and `MiniAppUiModel.hpp` while the actual
-# `BuildTree()` producers lived in the adjacent `Braid4UI.hpp` and
-# `MiniAppUI.hpp`; this is the same omission shape that already missed
-# `src/ControllerWizard.cpp`. A first-party app header matching either
-# `*UI.hpp` or `*UiModel.hpp` is scanned by default, and removing one from
-# discovery requires changing the convention here.
+# App producer headers are discovered by convention. The previous hand-lists
+# missed `src/ControllerWizard.cpp`, then the app UI headers, then the draw
+# headers. All first-party app headers are scanned by default; only named
+# non-producer or host-only headers are excluded, and every exclusion carries its
+# reason here.
+APP_PRODUCER_EXCLUDED=(
+    # DSP/application state cores; they do not build portable UI trees.
+    '-g!Braid4Core.hpp'
+    '-g!MiniAppCore.hpp'
+    # Registration manifests; they expose app metadata and launch glue, not UI.
+    '-g!Braid4Registration.hpp'
+    '-g!MiniAppRegistration.hpp'
+    # Desktop launcher host; it is explicitly JUCE-owned, not a portable producer.
+    '-g!Launcher.hpp'
+)
 APP_PRODUCER_HEADERS=()
 while IFS= read -r discovered; do
     APP_PRODUCER_HEADERS+=("$discovered")
-done < <(rg --files apps/braid-4 apps/miniapp -g '*UI.hpp' -g '*UiModel.hpp' | sort)
+done < <(rg --files apps -g '*.hpp' "${APP_PRODUCER_EXCLUDED[@]}" | sort)
 
 PRODUCER_HEADERS=("${PAGE_PRODUCER_HEADERS[@]}" "${APP_PRODUCER_HEADERS[@]}")
 
@@ -167,11 +178,11 @@ for path in "${CODEC_SOURCES[@]}" "${LIBRARY_HEADERS[@]}" "${PAGE_PRODUCER_HEADE
     fi
 done
 
-APP_PRODUCER_DISCOVERY_FLOOR=4
+APP_PRODUCER_DISCOVERY_FLOOR=8
 if [ "${#APP_PRODUCER_HEADERS[@]}" -lt "$APP_PRODUCER_DISCOVERY_FLOOR" ]; then
     fail "check_ui_boundary.sh: app producer discovery found only ${#APP_PRODUCER_HEADERS[@]} headers; expected at least $APP_PRODUCER_DISCOVERY_FLOOR"
 fi
-for required in apps/braid-4/Braid4UI.hpp apps/miniapp/MiniAppUI.hpp; do
+for required in apps/braid-4/Braid4UI.hpp apps/miniapp/MiniAppUI.hpp apps/braid-4/Braid4Draw.hpp apps/miniapp/MiniAppDraw.hpp; do
     found=0
     for path in "${APP_PRODUCER_HEADERS[@]}"; do
         [ "$path" = "$required" ] && found=1
@@ -266,6 +277,76 @@ run_scanner_self_test() {
     done
 }
 
+# Library-header includes are an allowlist rather than a single banned-symbol
+# regex, so this check cannot use scan() directly. Keep the scanner itself under
+# the same self-test discipline: it must see allowed portable includes, reject a
+# forbidden DSP include, and ignore a commented-out forbidden include.
+LIBRARY_INCLUDE_PATTERN='^[[:space:]]*#include[[:space:]]*[<"][^">]+\.hpp[">]'
+
+library_header_include_lines() {
+    strip_comment_lines "$1" | rg -n "$LIBRARY_INCLUDE_PATTERN" || true
+}
+
+library_include_allowed() {
+    case "$1" in
+        Color.hpp|synth/Color.hpp|\
+        PortableUI.hpp|synth/PortableUI.hpp|\
+        PortableUIBuilders.hpp|synth/PortableUIBuilders.hpp|\
+        PortableUILayout.hpp|synth/PortableUILayout.hpp|\
+        PortableUIMetrics.hpp|synth/PortableUIMetrics.hpp|\
+        PortableUIStandardLayout.hpp|synth/PortableUIStandardLayout.hpp)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+library_include_violations() {
+    local path="$1" line match include
+    while IFS=: read -r line match; do
+        [ -n "${line:-}" ] || continue
+        include="$(printf '%s\n' "$match" | sed -E 's/^[[:space:]]*#include[[:space:]]*[<"]([^">]+)[">].*/\1/')"
+        if ! library_include_allowed "$include"; then
+            printf '%s:%s:%s\n' "$path" "$line" "$match"
+        fi
+    done < <(library_header_include_lines "$path")
+}
+
+run_library_include_self_test() {
+    local good bad commented hit violations
+
+    good="$compile_dir/library-good.hpp"
+    printf '#include "synth/PortableUI.hpp"\n#include <synth/PortableUILayout.hpp>\n' >"$good"
+    hit="$(library_header_include_lines "$good")"
+    if [ -z "$hit" ]; then
+        fail "check_ui_boundary.sh self-test: library include scanner saw no allowed portable include"
+        printf '    pattern: %s\n' "$LIBRARY_INCLUDE_PATTERN" >&2
+    fi
+    violations="$(library_include_violations "$good")"
+    if [ -n "$violations" ]; then
+        fail "check_ui_boundary.sh self-test: library include scanner rejected allowed portable includes"
+        printf '%s\n' "$violations" | sed 's/^/    /' >&2
+    fi
+
+    bad="$compile_dir/library-bad.hpp"
+    printf '#include "synth/DspScope.hpp"\n' >"$bad"
+    violations="$(library_include_violations "$bad")"
+    if [ -z "$violations" ]; then
+        fail "check_ui_boundary.sh self-test: library include scanner missed a forbidden synth include"
+        printf '    sample: #include "synth/DspScope.hpp"\n' >&2
+    fi
+
+    commented="$compile_dir/library-commented.hpp"
+    printf '// #include "synth/DspScope.hpp"\n' >"$commented"
+    violations="$(library_include_violations "$commented")"
+    if [ -n "$violations" ]; then
+        fail "check_ui_boundary.sh self-test: library include scanner fired on a whole-line comment"
+        printf '%s\n' "$violations" | sed 's/^/    /' >&2
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # 1. JUCE boundary.
 # ---------------------------------------------------------------------------
@@ -356,20 +437,13 @@ scan 'a wire codec includes a library, page, or app header (sru-51)' \
 # ---------------------------------------------------------------------------
 
 library_include_failed=0
-while IFS=: read -r path line match; do
-    [ -n "${path:-}" ] || continue
-    include="${match#*\"synth/}"
-    include="${include%%\"*}"
-    case "$include" in
-        Color.hpp|PortableUI.hpp|PortableUIBuilders.hpp|PortableUILayout.hpp|PortableUIMetrics.hpp|PortableUIStandardLayout.hpp)
-            ;;
-        *)
-            printf 'a component-library header includes a non-model header (sru-51): %s:%s:%s\n' \
-                "$path" "$line" "$match" >&2
-            library_include_failed=1
-            ;;
-    esac
-done < <(rg -n '#include[[:space:]]+"synth/[^"]+"' "${LIBRARY_HEADERS[@]}" || true)
+for path in "${LIBRARY_HEADERS[@]}"; do
+    while IFS= read -r violation; do
+        [ -n "${violation:-}" ] || continue
+        printf 'a component-library header includes a non-model header (sru-51): %s\n' "$violation" >&2
+        library_include_failed=1
+    done < <(library_include_violations "$path")
+done
 
 if [ "$library_include_failed" -ne 0 ]; then
     printf '\nComponent-library headers may include only the portable UI model and library peers.\n' >&2
@@ -466,6 +540,7 @@ for header in "${LIBRARY_HEADERS[@]}" "${PRODUCER_HEADERS[@]}"; do
 done
 
 run_scanner_self_test
+run_library_include_self_test
 
 if [ "$failed" -ne 0 ]; then
     exit 1
