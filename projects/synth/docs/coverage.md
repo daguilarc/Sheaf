@@ -1,17 +1,17 @@
 # Spec Coverage
 
-Last audit: controller configuration wizard (baked registry, candidate discovery, MF Twister form/generation, Active/Blacklisted disposition, and browser/JUCE parity), 2026-07-26. Prior audit: master-clock/MIDI-sync acceptance traces, host scheduling contracts, Sync runtime UI, standard modulators, fifteen-source application adoption, sparse modulation processing, absolute encoder mode, exact parameter projection, causal absolute encoder feedback synchronization, generic JUCE hierarchy/scrolling/production Controllers migration, runtime button grids, and Braid 4 oscillator-owned parameter-cache filtering, 2026-07-20
+Last audit: portable UI component library (single hierarchical authoring library, declarative build-time layout with library-owned metrics, direct colour and text style, parent-relative version-2 wire, rebuilt configuration pages, named visual criteria, dumb renderers, extent-driven layout, enforced layering, Draw click actions, the standard application layout, absorbed overflow, and container fill and border), 2026-07-31. Prior audit: controller configuration wizard (baked registry, candidate discovery, MF Twister form/generation, Active/Blacklisted disposition, and browser/JUCE parity), 2026-07-26. Prior audit: master-clock/MIDI-sync acceptance traces, host scheduling contracts, Sync runtime UI, standard modulators, fifteen-source application adoption, sparse modulation processing, absolute encoder mode, exact parameter projection, causal absolute encoder feedback synchronization, generic JUCE hierarchy/scrolling/production Controllers migration, runtime button grids, and Braid 4 oscillator-owned parameter-cache filtering, 2026-07-20
 
 | Requirement | Status | Primary exact coverage |
 |---|---|---|
 | `sprs-1` | covered | `runtime_main_component_tests`, `browser_runtime_contract_tests`, `runtime_shell_session_tests`, fake-app/miniapp Playwright, generic-runtime scan |
-| `sprs-2` | covered | component validation/geometry tests, JUCE nested-root tests, browser layout tests, desktop/narrow Playwright |
+| `sprs-2` (modified) | covered | shell composition-contract and root-validation cases in `runtime_main_component_tests`, `RuntimeShellSessionTests` additive-width and unclipped-draw cases, `places nested sidebar descendants from parent-relative bounds` |
 | `sprs-3` | covered | browser service/audio/MIDI contract tests, retained JUCE runtime-page executables, browser page Playwright |
 | `sprs-4` | covered | browser pointer backend tests, fake-app and miniapp real-mouse Playwright, JUCE parity executable |
 | `sprs-5` | covered | browser isolated rounded-arc test, encoder geometry executable, real-miniapp Canvas/screenshots |
-| `sprs-6` | covered | browser resolved-layout tests plus fake-app and miniapp desktop/narrow Playwright |
+| `sprs-6` (modified) | covered | `ui-backend.spec.ts` parent-relative placement, no-rescue, resolved-host-height and surface-scale cases plus fake-app and miniapp desktop/narrow Playwright |
 | `sprs-7` | covered | C++, JUCE, TypeScript/Chromium, real-WASM audio/MIDI/gesture/static-site acceptance |
-| `sprs-9` | covered | generic JUCE semantic hierarchy, nested-root geometry, retained editor/reparent, and nested draw cases |
+| `sprs-9` (modified) | covered | `PortableJuceBackendTests` semantic-host, ancestor-fold, no-rescue, node-local draw and retained-editor cases |
 | `sprs-10` | covered | generic JUCE viewport/content extent, two-axis reachability, retained position, and clamp cases |
 | `sprs-11` | covered | real runtime-shell Controllers navigation/reachability plus seeded generic Controllers simulation and harness build |
 | `sru-1` (modified) | covered | shared component navigation, JUCE shared renderer, browser page replacement/restore and narrow layout |
@@ -119,6 +119,19 @@ Last audit: controller configuration wizard (baked registry, candidate discovery
 | `sru-32` | covered | `controllers_page_ui_tests` session/chooser/submit/ignore cases, `TestThreeClickWizardSubmitCommitsThenSaves`, JUCE wizard parity simulation, fake-app three-click Playwright |
 | `sru-33` | covered | `portable_ui_tests` wizard-session composition, `ControllersPageSimulationTests` parity simulations, fake-app Playwright, `check-ui-boundary` and `check:generic-runtime` |
 | `sru-34` | covered | `TestDisabledSemanticNodesCarryEnabledState`, `ui-backend.spec.ts` disabled-control cases, `PortableJuceBackendTests` disabled semantic controls |
+| `sru-43` | covered | `portable_ui_layout_tests` nesting/splice/insertion cases, `controllers_page_ui_tests` `SourceAssemblesUiNodeByHand` sweep over every producer source, `check-ui-boundary` |
+| `sru-44` | covered | `portable_ui_layout_tests` allocation, clamping, fraction, out-of-flow, overlay, wrapping, form-grid and metrics cases |
+| `sru-45` | covered | `portable_ui_tests` per-kind colour/text-style cases, `PortableJuceBackendTests` carried-colour/derived-state cases, `ui-backend.spec.ts` carried-colour and derivation cases, `browser_command_buffer_tests` presence-flag round trips |
+| `sru-46` | covered | `browser_command_buffer_tests` version-2 round trips and mismatch, `browser_runtime_contract_tests`, `PortableJuceBackendTests` fold/overhang/no-rescue cases, `ui-backend.spec.ts` parent-relative cases |
+| `sru-47` | covered | `portable_ui_tests` Sync/Audio/File/Controllers geometry and appearance pins, `controllers_page_ui_tests`, `FilePageSimulationTests`, `ControllersPageSimulationTests`, `fake-app.e2e.spec.ts` |
+| `sru-48` | covered | `visual-criteria.spec.ts` (eleven criteria plus anti-vacuity pins), `tests/support/VisualCriteria.hpp` consumed by `portable_ui_tests`, `portable_ui_layout_tests` mutation cases, and `ControllersPageSimulationTests` |
+| `sru-49` | covered | `PortableJuceBackendTests` and `ui-backend.spec.ts` geometry property loops, `check-ui-boundary` deleted-policy-symbol scans |
+| `sru-50` | covered | `TestExtentDrivenRedistribution`, `TestStandardLayoutRedistributesAtDifferentExtents`, `a second root extent redistributes weighted children in the rendered DOM` |
+| `sru-51` | covered | `check-ui-boundary` (backend/codec include scans, deleted-symbol scans, standalone JUCE-free header compiles, and its own scanner self-test) plus `check:generic-runtime` |
+| `sru-52` | covered | `PortableJuceBackendTests` and `ui-backend.spec.ts` click/drag/double-click/disabled/inert Draw cases with exact ordered action lists |
+| `sru-53` | covered | `portable_ui_layout_tests` standard-layout cases, `braid4_system_tests`, `miniapp_system_tests`, `MiniAppJuceBackendParityTests` |
+| `sru-54` | covered | `portable_ui_layout_tests` overflow-diagnostic and absorber cases, `portable_ui_tests` per-surface absorbing-region pins at the 480px floor and a taller surface |
+| `sru-55` | covered | `portable_ui_tests` File-panel fill/border/radius pins, `browser_command_buffer_tests` border presence flags, `PortableJuceBackendTests` container-fill cases, `renders a container fill and rounded border across padding and gaps` |
 
 ## Requirement Mappings
 
@@ -165,21 +178,33 @@ Last audit: controller configuration wizard (baked registry, candidate discovery
   `browser worker contains no concrete application branch`, together with
   [`check-generic-runtime.mjs`](../browser/tests/check-generic-runtime.mjs).
 
-### `sprs-2` - Additive Layout And Root Validation
+### `sprs-2` (modified) - Additive Layout And Root Validation
+
+Restated by this change: the shell hands each backend a fully resolved tree and
+PLACES already-resolved subtree roots rather than translating every descendant.
+There is no per-descendant offset loop and no auto-flow anywhere in the path.
 
 - [`runtime_main_component_tests.cpp`](../tests/runtime_main_component_tests.cpp):
-  `TestCompositeBoundsPreserveAppAndAddSidebar`,
+  `TestPlacingASubtreeRootPlacesEveryDescendant` and
+  `TestSubtreesArriveFullyResolved` pin the placement contract;
+  `TestRejectsASurfaceTooShortForTheRuntimeSidebar` pins the composition
+  precondition, because the shell never invokes the resolver on its own
+  composition and so sru-54's gate cannot see it; and
   `TestRejectsRootSizeMismatch`, `TestRejectsDuplicateNodeIds`,
   `TestRejectsUnknownChild`, `TestRejectsCycle`,
   `TestRejectsAppRuntimeNamespace`, `TestRejectsDisconnectedGraph`, and
-  `TestRejectsMultiplyParentedDiamondGraph`.
-- [`PortableJuceBackendTests.cpp`](../juce/PortableJuceBackendTests.cpp): the
-  `portable_juce_backend_tests` nested app/sidebar root auto-flow assertions.
+  `TestRejectsMultiplyParentedDiamondGraph` pin root validation.
+- [`PortableJuceBackendTests.cpp`](../juce/PortableJuceBackendTests.cpp):
+  `TestComposedSubtreeRootsFoldWithOneOffset` covers the composite app/sidebar
+  surface, including that an unbounded app control is not wrapped by a backend
+  cursor.
 - [`RuntimeShellSessionTests.cpp`](../juce/RuntimeShellSessionTests.cpp): the
   additive shell-width and unclipped 900-pixel app-draw assertions.
+- [`portable_ui_tests.cpp`](../tests/portable_ui_tests.cpp): the sidebar
+  subtree's resolved row geometry, its out-of-flow warning badge, and the pin
+  that the badge consumes no stacking space.
 - [`ui-backend.spec.ts`](../browser/tests/ui-backend.spec.ts):
-  `flows unbounded controls after explicit draw content`,
-  `places nested sidebar descendants from parent-relative bounds`, and
+  `places nested sidebar descendants from parent-relative bounds` and
   `reports stable generic errors for malformed node trees`.
 - [`fake-app.e2e.spec.ts`](../browser/tests/fake-app.e2e.spec.ts):
   `real fake-app shared shell remains non-overlapping at narrow width`.
@@ -244,16 +269,28 @@ Last audit: controller configuration wizard (baked registry, candidate discovery
   verifies all seven encoder canvases retain nontrivial pixels, and the desktop
   and narrow smoke tests write the reviewed runtime-shell screenshots.
 
-### `sprs-6` - One Resolved Browser Coordinate System
+### `sprs-6` (modified) - One Resolved Browser Coordinate System
+
+Restated by this change: the browser backend positions every child from its
+wire bounds directly. The parent-origin subtraction, the auto-flow cursor, the
+default-size table and both coordinate classifiers are gone, and
+`check-ui-boundary` fails if any of them reappears.
 
 - [`ui-backend.spec.ts`](../browser/tests/ui-backend.spec.ts):
-  `auto-sized controls contain long generic labels`,
-  `sizes long status text within its nearest root before placing the next control`,
-  `includes auto-flow below a declared root in the resolved host height`,
+  `offsets a child by its wire bounds with no parent subtraction`,
+  `keeps an overhanging child parent-relative`,
+  `does not flow a node without resolved bounds`,
+  `does not flow unbounded controls after explicit draw content`,
+  `derives the host height from the resolved root extent, not from content`,
+  `renders every representative node at the fold of its ancestor origins`,
   `keeps scroll descendants out of the outer surface extent`,
   `places nested sidebar descendants from parent-relative bounds`,
-  `keeps the scale transform only on the current parentless root`, and
-  `fits a fixed portable surface into a narrow browser viewport`.
+  `keeps the scale transform only on the current parentless root`,
+  `clips a long toggle label inside its resolved extent`,
+  `fits long status text inside its resolved extent without moving the next control`,
+  and `fits a fixed portable surface into a narrow browser viewport`. Text
+  fitting is the only appearance decision the backend still makes, and these
+  three cases are what pin it to fitting inside an extent the library resolved.
 - [`fake-app.e2e.spec.ts`](../browser/tests/fake-app.e2e.spec.ts):
   `real fake-app WASM renders and refreshes the shared runtime shell` and
   `real fake-app shared shell remains non-overlapping at narrow width`.
@@ -286,30 +323,37 @@ Last audit: controller configuration wizard (baked registry, candidate discovery
 - UI and visuals: the exact fake-app and miniapp gesture, page, desktop, and
   narrow tests listed under `sprs-1`, `sprs-2`, `sprs-4`, `sprs-5`, and `sprs-6`.
 
-### `sprs-9` - Hierarchical Generic JUCE Backend
+### `sprs-9` (modified) - Hierarchical Generic JUCE Backend
 
-- [`PortableJuceBackendTests.cpp`](../juce/PortableJuceBackendTests.cpp): the
-  `portable_juce_backend_tests` cases named by the exact assertions
-  `row A is hosted by its semantic section`,
-  `parent-local row fields occupy distinct surface rows`,
-  `absolute sidebar offset is applied exactly once`,
-  `root-flow bounds survive translation into the semantic host`,
-  `draw node is hosted by its semantic row`, and
-  `focused text field is retained after moving semantic parents` cover retained
-  semantic hosts, parent-local resolution, nested roots, nested drawing, and
-  stable editor reparenting. The rendered-image assertions
-  `surface-space draw commands paint once inside a nested hosted component`,
-  `node-local draw commands paint once inside a nested hosted component`,
-  `a surface-space line is classified as one command, not one endpoint at a time`,
-  `one surface-space command classifies the complete draw-node buffer`, and
-  `fractional node dimensions classify against portable precision`
-  cover the shared node-level draw-coordinate contract.
+Restated by this change: the JUCE backend paints `Draw` commands node-local in
+component space and translates node bounds unconditionally. The draw-geometry
+classifier, the node-bounds classifier, the auto-flow engine and the per-variant
+colour table are gone, and `check-ui-boundary` fails if any of them reappears.
+
+- [`PortableJuceBackendTests.cpp`](../juce/PortableJuceBackendTests.cpp), which
+  is now 27 named cases behind a dispatching `main()` so per-case failure
+  evidence is obtainable without scaffolding:
+  `TestRenderedPositionFoldsAncestorOriginsAndScrollOffset` walks every node of
+  a representative tree and requires its rendered position to equal its wire
+  bounds folded over its ancestor origins plus the scroll offset;
+  `TestOverhangingChildBoundsFoldWithoutReclassification` and
+  `TestNodeWithoutResolvedBoundsIsNotRescued` pin the two cases a classifier
+  used to rescue; `TestDrawCommandsPaintNodeLocal` covers the node-local draw
+  contract including fractional node dimensions;
+  `TestRetainedControlsFollowSemanticReparenting` and
+  `TestRetainedControlsFollowThePortableTreeNotTheirOwnState` cover retained
+  semantic hosts and stable editor reparenting; and
+  `TestContainerNodesRenderAsPanelsAndPaintNoLabel` covers container hosting.
 - [`ui-backend.spec.ts`](../browser/tests/ui-backend.spec.ts):
-  `paints surface-space draw commands into positioned canvases`,
-  `classifies both endpoints of a line in one coordinate space`, and
-  `classifies a complete draw-node buffer in one coordinate space`, plus
-  `ignores geometry-free commands when classifying a draw-node buffer`, pin
-  the same generic normalization in the browser backend.
+  `paints node-local draw commands into positioned canvases`,
+  `paints line endpoints in node-local coordinates`,
+  `paints every command in a draw-node buffer with node-local geometry`,
+  `paints a geometry-free command without displacing the rest of the buffer`,
+  and `paints an overhanging draw buffer node-locally with no classifier
+  fallback` pin the same node-level contract in the browser backend.
+- [`MiniAppJuceBackendParityTests.cpp`](../juce/MiniAppJuceBackendParityTests.cpp)
+  and `matches JUCE backend geometry and carried style assignments` pin that the
+  two backends agree on geometry and on carried style assignment.
 
 ### `sprs-10` - Real Generic JUCE Scroll Areas
 
@@ -1483,6 +1527,224 @@ Last audit: controller configuration wizard (baked registry, candidate discovery
   `MfTwisterConfigFormBuildsClosedSixButtonSurfaceAndRoutesPortableActions` in
   the portable tree, `RunControllerWizardRefusalSimulation` in JUCE, and the
   Playwright three-click case in Chrome.
+
+## Portable UI Component Library Requirement Mappings
+
+Added by the `rebuild-portable-ui-component-library` change. `sru-43`–`sru-55`
+are new; `sprs-2`, `sprs-6`, and `sprs-9` are restated above.
+
+### The version-2 UI wire format
+
+Version 2 is a **hard break**. Both ends check `kCommandBufferVersion` /
+`COMMAND_BUFFER_VERSION` for strict equality; there is no version-1 fallback and
+no negotiation. Four things changed from version 1:
+
+1. **Node bounds are parent-relative.** A node's `Bounds` are in its parent's
+   space, the single parentless root's bounds are surface coordinates, and a
+   `ScrollArea`'s children are relative to the scroll-*content* origin.
+2. **`Draw` geometry is node-local**, against the owning node's own
+   `(0, 0, width, height)` box, clipped to the node's bounds.
+3. **`Node::color` and `Node::textStyle` cross the wire** behind explicit
+   presence bytes, with the per-kind meaning of `color` fixed by `sru-45`. The
+   `sru-55` container border — `borderColor`, `borderWidth`, `cornerRadius` —
+   crosses the same way. A missing field is missing, never a sentinel a producer
+   could also have chosen.
+4. **`variant` is gone**, and so is the model field behind it. The residual set
+   is empty: every one of the nine strings it carried decided appearance, and
+   `color`/`textStyle`/`selected` carry all of it directly.
+
+Every artifact that advertises the UI protocol version moves together and now
+reads `2`: `kCommandBufferVersion` in
+[`BrowserCommandBuffer.hpp`](../include/synth/browser/BrowserCommandBuffer.hpp),
+`COMMAND_BUFFER_VERSION` in [`protocol.ts`](../browser/src/protocol.ts),
+`synth_browser_ui_protocol_version()` in
+[`BrowserRuntimeAbi.cpp`](../browser/cpp/BrowserRuntimeAbi.cpp), each Wasm
+package's exported copy of it, and the wording in
+[`catalog-schema-v1.md`](../browser/docs/catalog-schema-v1.md).
+
+Covered by: `browser_command_buffer_tests` version-2 round trips, presence-flag
+cases, and the retired-token sweep; `TestVersionMismatchFailsLoudly` and
+`a version-mismatched buffer fails loudly and renders no frame`;
+`browser_runtime_contract_tests` protocol-version assertions; and the publisher's
+per-package protocol-version assertion, which reads the value out of each built
+`.wasm` rather than trusting build order.
+
+### `sru-43` - Single Hierarchical Authoring Library
+
+- [`portable_ui_layout_tests.cpp`](../tests/portable_ui_layout_tests.cpp):
+  nesting depth, component composition through callables,
+  `TestInsertingARowShiftsSiblingsByExtentPlusGap`,
+  `TestComponentResolvesIdenticallyUnderDifferentParents`, and the splice cases.
+- [`controllers_page_ui_tests.cpp`](../tests/controllers_page_ui_tests.cpp): the
+  grep-backed inspection. `SourceAssemblesUiNodeByHand` is run over
+  `ControllersPageUI.hpp`, `RuntimePages.hpp`, and `ControllerWizard.cpp`, with
+  both directions of the predicate pinned and an anti-vacuity fixture
+  (`RuntimeMainComponent.hpp`, the one file that legitimately hand-places
+  already-resolved subtree roots) proving the scan still fires.
+- `check-ui-boundary` compiles every library and producer header standalone.
+
+### `sru-44` - Declarative Build-time Layout With Library-owned Metrics
+
+- [`portable_ui_layout_tests.cpp`](../tests/portable_ui_layout_tests.cpp):
+  `TestWeightsDivideRemainingSpaceDeterministically`,
+  `TestMaximumClampsAndRedistributesOnce`,
+  `TestClampingRedistributionDoesNotRepeat`,
+  `TestFractionIsOfContentExtentNotRemainingSpace`,
+  `TestUnclampedFractionPinsContentExtentBasis`,
+  `TestInfeasibleMinimaFailLoudlyInDeclarationOrder`,
+  `TestExplicitlyPositionedChildrenAreOutOfFlow`,
+  `TestOverlayChildTakesItsTargetsResolvedBounds`,
+  `TestOverlayRejectsATargetThatIsNotInFlow`,
+  `TestOverlayInsideAnOverlayContainerResolves`,
+  `TestOverlayTracksATargetTheFormGridMoves`,
+  `TestFormGridAlignsLabelAndControlColumns`,
+  `TestWrappingRowFlowsOntoAdditionalLines`,
+  `TestInFlowDrawFactoryReceivesItsResolvedExtent`, and
+  `TestTextReservationIsDeterministicAndBackendFree`.
+
+### `sru-45` - Direct Colour And Text Style On Components
+
+- [`portable_ui_tests.cpp`](../tests/portable_ui_tests.cpp): the per-kind colour
+  meaning table, `TestUnstyledNodesCarryNothing`, and
+  `TestCaptionIsAnEmittedLabelNodeNotAField`.
+- [`PortableJuceBackendTests.cpp`](../juce/PortableJuceBackendTests.cpp):
+  `TestCarriedColourDecidesTheButtonFill`,
+  `TestCarriedTextStyleDecidesGlyphColour`,
+  `TestSelectedPresentationDerivesFromTheCarriedColour`, and
+  `TestDisabledAndContainerPresentationDeriveFromTheCarriedColour`.
+- [`ui-backend.spec.ts`](../browser/tests/ui-backend.spec.ts):
+  `renders one carried colour on the surface each node kind assigns it`,
+  `derives selected and disabled presentation from the carried colour`,
+  `derives hover and pressed presentation from the carried colour`, and
+  `reads a checked toggle as selected when deriving its carried accent`.
+
+### `sru-46` - Hierarchical Parent-relative Coordinates
+
+Covered by the version-2 wire section above plus the `sprs-6` and `sprs-9`
+sections, which pin the two backends' halves of the same contract.
+
+### `sru-47` - Configuration Pages Rebuilt On The Component Library
+
+- [`portable_ui_tests.cpp`](../tests/portable_ui_tests.cpp):
+  `TestSyncPageAlignsThroughTheFormGrid`, `TestSyncPageFitsWithinTheRuntimeRoot`,
+  `TestAudioSelectorsAreCaptionedWhileADeviceIsSelected`,
+  `TestHiddenInputSelectorLeavesNoOrphanedCaption`,
+  `TestFilePagePinsItsResolvedGeometry`,
+  `TestFileIdleRegionPinsItsResolvedGeometry`,
+  `TestFilePageCarriesPageColoursAndTextStyles`,
+  `TestFilePanelsCarryAppearanceWithoutUnderlays`, and
+  `TestFilePageDelegatesItsListsToSplicedSubtrees`.
+- [`controller_wizard_tests.cpp`](../tests/controller_wizard_tests.cpp):
+  `MfTwisterConfigFormResolvesItsExtentsFromItsDeclarationsAlone` pins the wizard
+  form's extents now that they come from its declarations rather than from a
+  producer-side table.
+- [`FilePageSimulationTests.cpp`](../juce/FilePageSimulationTests.cpp) and
+  [`ControllersPageSimulationTests.cpp`](../juce/ControllersPageSimulationTests.cpp)
+  keep the model-based simulations green over the rebuilt pages.
+
+### `sru-48` - Named Visual Criteria With A Playwright Verification Loop
+
+- [`visual-criteria.spec.ts`](../browser/tests/visual-criteria.spec.ts) drives the
+  real runtime shell over the fixture app's Wasm and evaluates all seven named
+  criteria, each with an anti-vacuity count.
+- [`VisualCriteria.hpp`](../tests/support/VisualCriteria.hpp) is the headless
+  half, consumed by `portable_ui_tests` (every surface at three extents),
+  `portable_ui_layout_tests` (one mutation case per criterion, plus a conforming
+  twin), and `ControllersPageSimulationTests` (250 random Controllers states).
+- `TestTheNamedCriteriaAreTheOnesThePlaywrightSuiteNames` parses the Playwright
+  file's exported checklist and requires it to match the C++ list entry for
+  entry, so the two halves cannot drift.
+- Screenshot baselines were dropped from this requirement: appearance is agreed
+  once with a human and is not pinned as a regression test. The machine-checkable
+  criteria are the durable surface and they hold at any extent.
+
+### `sru-49` - Backends Are Dumb Renderers
+
+- The geometry property loops:
+  `TestRenderedPositionFoldsAncestorOriginsAndScrollOffset` in JUCE and
+  `renders every representative node at the fold of its ancestor origins` in the
+  browser, both including the no-bounds-not-rescued case.
+- `check-ui-boundary` fails if the auto-flow cursor, the default-size table,
+  either coordinate classifier family, or the per-variant colour table reappears
+  in a backend, and self-tests each of those patterns against a sample it must
+  catch and a commented twin it must not.
+
+### `sru-50` - Extent-driven Layout
+
+- `TestExtentDrivenRedistribution` and
+  `TestStandardLayoutRedistributesAtDifferentExtents` re-resolve the same
+  producer code at two root extents.
+- `a second root extent redistributes weighted children in the rendered DOM`
+  does the same through the real backend, using a second fixture app that
+  declares `uiHeight = 720`, because resizing the viewport re-resolves nothing.
+- `Builder::Build` takes the root extent as an argument with no overload that
+  reads it back off the tree, so no resolution path depends on a compiled-in
+  surface size.
+
+### `sru-51` - Enforced Layering
+
+- [`check_ui_boundary.sh`](../scripts/check_ui_boundary.sh), run by
+  `make -C projects/synth check-ui-boundary` and as a prerequisite of
+  `make -C projects/synth test`.
+- `check:generic-runtime` keeps first-party app knowledge out of the generic
+  browser runtime.
+
+### `sru-52` - Draw Node Click Actions
+
+- [`PortableJuceBackendTests.cpp`](../juce/PortableJuceBackendTests.cpp):
+  `TestDrawClickOnlyDispatchesOnce`, `TestClickSequenceMatchesButtonExactly`,
+  `TestDragDispatchesNoClick`,
+  `TestClickAfterADragOnTheSameNodeStillDispatches`,
+  `TestDisabledDrawDispatchesNothing`, `TestInertDrawInterceptsNothing`,
+  `TestReleaseOutsideTheNodeIsNoClick`, and
+  `TestDoubleClickSequenceMatchesButtonExactly`.
+- The browser twins of the same eight cases in
+  [`ui-backend.spec.ts`](../browser/tests/ui-backend.spec.ts), including real
+  mouse double-clicks. Both suites pin the gesture sequence as an exact ordered
+  action list with per-action counts for a `Draw` node and a `Button` node
+  carrying the same actions.
+
+### `sru-53` - Standard Synth Application Layout
+
+- [`portable_ui_layout_tests.cpp`](../tests/portable_ui_layout_tests.cpp):
+  `TestSlotsAcceptArbitraryComponents`,
+  `TestStandardLayoutProportionsMatchBothApps`, `TestEmptyWidgetBayCollapses`,
+  and `TestStandardLayoutRedistributesAtDifferentExtents`.
+- [`braid4_system_tests.cpp`](../tests/braid4_system_tests.cpp) and
+  [`miniapp_system_tests.cpp`](../tests/miniapp_system_tests.cpp): both apps
+  compose the standard layout, every control resolves inside a declared region,
+  and every scope stays individually bounded.
+
+### `sru-54` - Every Container Absorbs Its Overflow Or Fails Loudly
+
+- [`portable_ui_layout_tests.cpp`](../tests/portable_ui_layout_tests.cpp):
+  `TestUnabsorbedOverflowFailsWithAnActionableDiagnostic`,
+  `TestAnOverflowingRowNamesItsOwnStackingAxis`,
+  `TestAScrollAreaAbsorbsAListTallerThanItsViewport`,
+  `TestAWeightedChildAbsorbsTheRemainder`, and
+  `TestAWrappingRowStillFailsOnAChildWiderThanTheRow`.
+- [`portable_ui_tests.cpp`](../tests/portable_ui_tests.cpp):
+  `TestEveryPageAndAppResolvesAtTheSmallestDeclaredSurface`,
+  `TestEveryRebuiltPageAbsorbsAtTheSmallestDeclaredSurface`,
+  `TestControllersChooserAndBraid4PinTheirAbsorbingRegions`, and
+  `TestTheWizardFormIsReachableRatherThanClipped`. Each pins what the absorbing
+  region actually does at the 480px floor and at a taller surface, not merely
+  that resolution succeeded.
+
+### `sru-55` - Container Background And Border
+
+- [`portable_ui_tests.cpp`](../tests/portable_ui_tests.cpp):
+  `TestFilePanelsCarryAppearanceWithoutUnderlays` — the File page's panels carry
+  fill, border colour, border width, and corner radius directly, and the
+  `PanelUnderlayFill` workaround is gone.
+- [`browser_command_buffer_tests.cpp`](../tests/browser_command_buffer_tests.cpp):
+  the three border fields round-trip behind their own presence bytes.
+- `renders a container fill and rounded border across padding and gaps` in the
+  browser and the container-fill cases in
+  [`PortableJuceBackendTests.cpp`](../juce/PortableJuceBackendTests.cpp), with
+  JUCE clamping the radius to half the shorter side and stroking an inset path
+  so the declared outer radius matches the browser's inset shadow.
+
 
 ## Known Gaps
 
