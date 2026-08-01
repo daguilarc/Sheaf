@@ -381,6 +381,58 @@ TEST_CASE(MfTwisterConfigFormResolvesItsExtentsFromItsDeclarationsAlone) {
     REQUIRE_TRUE(tree.nodes.front().bounds.width == 1024.0f);
     REQUIRE_TRUE(tree.nodes.front().bounds.height == 768.0f);
     REQUIRE_TRUE(body->bounds.width < tree.nodes.front().bounds.width);
+
+    // THE WARNED STATE, which is the whole reason `kColumnWidth` and
+    // `kButtonRowHeight` survived task 7.1's cleanup. The inline argument error
+    // is out of flow and its row reserves a fixed band for it. Make it in-flow
+    // and its intrinsic cross extent propagates into every ancestor's: the
+    // message reserves 424px against a 326px column, so the column would widen
+    // by a third and shove the second column sideways the moment a field went
+    // invalid. Nothing above this point would notice, because everything above
+    // it renders a valid form.
+    //
+    // So: show the error, and require every extent to be the number it was.
+    // The argument field is only enabled -- and therefore only validated -- for
+    // the messages that take one, so the message is switched first; with the
+    // default `HoldReset` there is no error node to show and this pin would
+    // have measured the clean form twice.
+    form.buttons[0].message = synth::UISystemMessage::SceneSelect;
+    form.buttons[0].argumentText = "1x";
+    const synth::ui::NodeTree warned = form.BuildTree();
+
+    const synth::ui::Node* warnedError =
+        FindNodeById(warned, "controller-wizard.twister.button.0.argument.error");
+    REQUIRE_TRUE(warnedError != nullptr);
+    REQUIRE_TRUE(warnedError->bounds.width > 0.0f && warnedError->bounds.height > 0.0f);
+
+    const synth::ui::Node* warnedBody = FindNodeById(warned, "controller-wizard.twister.body");
+    REQUIRE_TRUE(warnedBody != nullptr);
+    REQUIRE_TRUE(warnedBody->bounds.width == 684.0f);
+    REQUIRE_TRUE(warnedBody->bounds.height == 294.0f);
+
+    const synth::ui::Node* warnedColumns = FindNodeById(warned, "controller-wizard.twister.columns");
+    REQUIRE_TRUE(warnedColumns != nullptr);
+    REQUIRE_TRUE(warnedColumns->bounds.width == 668.0f);
+
+    for (const char* columnId : {"controller-wizard.twister.column.0",
+                                 "controller-wizard.twister.column.1"}) {
+        const synth::ui::Node* warnedColumn = FindNodeById(warned, columnId);
+        REQUIRE_TRUE(warnedColumn != nullptr);
+        REQUIRE_TRUE(warnedColumn->bounds.width == 326.0f);
+        REQUIRE_TRUE(warnedColumn->bounds.height == 244.0f);
+    }
+
+    // The second column has not moved, which is the visible symptom an in-flow
+    // error would produce first.
+    REQUIRE_TRUE(FindNodeById(warned, "controller-wizard.twister.column.1")->bounds.x ==
+                 FindNodeById(tree, "controller-wizard.twister.column.1")->bounds.x);
+
+    // And the reserved band is doing its job: the error is inside the row that
+    // reserved it, rather than overhanging into the row below.
+    const synth::ui::Node* warnedRow = FindNodeById(warned, "controller-wizard.twister.button.0");
+    REQUIRE_TRUE(warnedRow != nullptr);
+    REQUIRE_TRUE(warnedRow->bounds.height == 68.0f);
+    REQUIRE_TRUE(warnedError->bounds.y + warnedError->bounds.height <= warnedRow->bounds.height);
 }
 
 TEST_CASE(MfTwisterConfigFormBuildsRootlessSubtreeForWizardHosts) {

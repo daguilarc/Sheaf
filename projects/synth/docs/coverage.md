@@ -119,7 +119,7 @@ Last audit: portable UI component library (single hierarchical authoring library
 | `sru-32` | covered | `controllers_page_ui_tests` session/chooser/submit/ignore cases, `TestThreeClickWizardSubmitCommitsThenSaves`, JUCE wizard parity simulation, fake-app three-click Playwright |
 | `sru-33` | covered | `portable_ui_tests` wizard-session composition, `ControllersPageSimulationTests` parity simulations, fake-app Playwright, `check-ui-boundary` and `check:generic-runtime` |
 | `sru-34` | covered | `TestDisabledSemanticNodesCarryEnabledState`, `ui-backend.spec.ts` disabled-control cases, `PortableJuceBackendTests` disabled semantic controls |
-| `sru-43` | covered | `portable_ui_layout_tests` nesting/splice/insertion cases, `controllers_page_ui_tests` `SourceAssemblesUiNodeByHand` sweep over every producer source, `check-ui-boundary` |
+| `sru-43` | covered | `portable_ui_layout_tests` nesting/splice/insertion cases, and `controllers_page_ui_tests`' `SourceAssemblesUiNodeByHand` sweep over every producer source — which is the durable form of the requirement's grep-backed inspection scenario |
 | `sru-44` | covered | `portable_ui_layout_tests` allocation, clamping, fraction, out-of-flow, overlay, wrapping, form-grid and metrics cases |
 | `sru-45` | covered | `portable_ui_tests` per-kind colour/text-style cases, `PortableJuceBackendTests` carried-colour/derived-state cases, `ui-backend.spec.ts` carried-colour and derivation cases, `browser_command_buffer_tests` presence-flag round trips |
 | `sru-46` | covered | `browser_command_buffer_tests` version-2 round trips and mismatch, `browser_runtime_contract_tests`, `PortableJuceBackendTests` fold/overhang/no-rescue cases, `ui-backend.spec.ts` parent-relative cases |
@@ -1580,8 +1580,9 @@ per-package protocol-version assertion, which reads the value out of each built
   `ControllersPageUI.hpp`, `RuntimePages.hpp`, and `ControllerWizard.cpp`, with
   both directions of the predicate pinned and an anti-vacuity fixture
   (`RuntimeMainComponent.hpp`, the one file that legitimately hand-places
-  already-resolved subtree roots) proving the scan still fires.
-- `check-ui-boundary` compiles every library and producer header standalone.
+  already-resolved subtree roots) proving the scan still fires. **This is the
+  requirement's inspection scenario**; `check-ui-boundary` does not scan for
+  hand-rolled node assembly and is not what covers sru-43.
 
 ### `sru-44` - Declarative Build-time Layout With Library-owned Metrics
 

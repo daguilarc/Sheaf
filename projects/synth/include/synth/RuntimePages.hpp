@@ -263,7 +263,6 @@ inline constexpr float kPageMargin = 4.0f;
 inline constexpr float kBackRowHeight = 32.0f;
 inline constexpr float kBackButtonWidth = 80.0f;
 inline constexpr float kRowGap = 4.0f;
-inline constexpr float kStatusRowHeight = 32.0f;
 // The sidebar's MIDI-warning badge: an out-of-flow overlay pinned to the
 // trailing edge of the Controllers button it annotates.
 inline constexpr float kWarningBadgeWidth = 18.0f;

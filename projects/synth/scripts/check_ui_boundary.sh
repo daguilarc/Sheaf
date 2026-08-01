@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # sru-51's layering inspection.
 #
-# Five checks, each of which exists because something real was separated or
+# Six checks, each of which exists because something real was separated or
 # deleted and must not come back:
 #
 #   1. JUCE stays under projects/synth/juce and the named desktop host files.
@@ -10,10 +10,13 @@
 #      which is the whole thing sru-51 separates.
 #   3. A wire codec includes no library, page, or app header. The codec knows the
 #      MODEL and nothing above it, which is why `Node` carries no LayoutOptions.
-#   4. No deleted policy symbol reappears in a backend: the auto-flow cursor, the
-#      default-size table, BOTH coordinate classifier families, and the
-#      per-variant colour table. These went in tasks 3.5-3.8 and 7.2, and a
-#      deletion that is only asserted is a deletion that comes back.
+#   3a. A producer includes no wire codec and no backend -- the same boundary
+#      looked at from above, which checks 2 and 3 both miss.
+#   4. No deleted policy symbol reappears ANYWHERE in a backend tree: the
+#      auto-flow cursor, the default-size table, BOTH coordinate classifier
+#      families, and the per-variant colour table. These went in tasks 3.5-3.8
+#      and 7.2, and a deletion that is only asserted is a deletion that comes
+#      back -- under a new name, or in a new file beside the one being watched.
 #   5. Every library and producer header compiles alone against `include/` with
 #      no JUCE include path, so a stray JUCE include is a compile error rather
 #      than a convention.
@@ -34,16 +37,62 @@ fail() {
 }
 
 # ---------------------------------------------------------------------------
-# The file sets this inspection is about. Every path is checked for existence
-# before it is scanned: a renamed or moved file must break this script loudly
-# rather than quietly reduce its coverage to nothing.
+# The file sets this inspection is about.
+#
+# The backend set is DISCOVERED, not allowlisted, and that distinction is the
+# whole point. An earlier version of this script named two files -- the JUCE
+# renderer header and `ui.ts` -- so every deleted-symbol scan ran over those two
+# alone. Reintroducing `FlowCursor` in a new `juce/PortableJuceFlow.hpp`, or a
+# default-size table in a new `browser/src/ui-layout.ts`, and including it from
+# the endpoint would have left the endpoint clean and this script green: "looks
+# deleted, actually moved", inside the gate built to stop exactly that. It was
+# green for the right reason only by accident of the JUCE backend being
+# header-only and browser rendering being one file.
+#
+# So the backend is every source in its tree, and what is EXCLUDED is enumerated
+# with a reason. A new file is scanned by default; removing it from coverage is
+# a visible edit here rather than an omission nobody notices.
 # ---------------------------------------------------------------------------
 
-# The two dumb renderers.
-BACKEND_SOURCES=(
-    juce/PortableJuceBackend.hpp
-    browser/src/ui.ts
+# Excluded from every backend scan.
+#   *Tests.cpp                 test binaries: they build trees with the builder
+#                              and name retired symbols in re-pin assertions
+#   ControllersHarnessApp.cpp  developer harness, not shipped
+#   ControllersPageHarness.hpp developer harness, not shipped
+BACKEND_EXCLUDED_FROM_ALL=(
+    '-g!*Tests.cpp'
+    '-g!ControllersHarnessApp.cpp'
+    '-g!ControllersPageHarness.hpp'
 )
+
+# Additionally excluded from the PRODUCER-include scan only.
+#   RuntimePagesJuce.hpp       the JUCE host wiring behind the runtime pages --
+#                              audio device enumeration, file dialogs. It is a
+#                              host, not a renderer, and knowing the pages is
+#                              its job. Every other scan still covers it.
+BACKEND_EXCLUDED_FROM_PRODUCER_SCAN=(
+    '-g!RuntimePagesJuce.hpp'
+)
+
+# `browser/src/*.mjs` is deliberately out of the backend set: those are build and
+# publish tooling rather than shipped runtime modules, and `check:generic-runtime`
+# is the scan that holds them to sbap-4's generic-source rule.
+discover_backend_sources() {
+    # macOS still ships bash 3.2, so no `mapfile` and no array element prefixing.
+    rg --files juce browser/src \
+        -g '*.hpp' -g '*.cpp' -g '*.mm' -g '*.ts' \
+        "${BACKEND_EXCLUDED_FROM_ALL[@]}" "$@" | sort
+}
+
+BACKEND_SOURCES=()
+while IFS= read -r discovered; do
+    BACKEND_SOURCES+=("$discovered")
+done < <(discover_backend_sources)
+
+BACKEND_SOURCES_FOR_PRODUCER_SCAN=()
+while IFS= read -r discovered; do
+    BACKEND_SOURCES_FOR_PRODUCER_SCAN+=("$discovered")
+done < <(discover_backend_sources "${BACKEND_EXCLUDED_FROM_PRODUCER_SCAN[@]}")
 
 # The two ends of the version-2 wire.
 CODEC_SOURCES=(
@@ -61,23 +110,46 @@ LIBRARY_HEADERS=(
 )
 
 # The producers built on it: the page style table, the runtime pages, the
-# Controllers page, the wizard, and both first-party apps' UI models.
+# Controllers page, the wizard, the SHELL that composes them, and both
+# first-party apps' UI models.
 PRODUCER_HEADERS=(
     include/synth/RuntimePageStyle.hpp
     include/synth/RuntimePages.hpp
     include/synth/ControllersPageUI.hpp
     include/synth/ControllerWizard.hpp
+    include/synth/RuntimeMainComponent.hpp
     apps/braid-4/Braid4UiModel.hpp
     apps/miniapp/MiniAppUiModel.hpp
 )
 
-for path in "${BACKEND_SOURCES[@]}" "${CODEC_SOURCES[@]}" "${LIBRARY_HEADERS[@]}" "${PRODUCER_HEADERS[@]}"; do
+# Every enumerated path must exist: a renamed or moved file must break this
+# script loudly rather than quietly reduce its coverage to nothing.
+for path in "${CODEC_SOURCES[@]}" "${LIBRARY_HEADERS[@]}" "${PRODUCER_HEADERS[@]}"; do
     if [ ! -f "$path" ]; then
         fail "check_ui_boundary.sh: inspected file is missing: $path"
     fi
 done
+
+# The discovered set gets the same treatment in the only form that makes sense
+# for a discovered set: it must be non-trivial and must still contain the two
+# renderers this change rewrote. Discovery that silently found nothing -- a moved
+# directory, a changed glob -- would otherwise pass every scan below.
+BACKEND_DISCOVERY_FLOOR=6
+if [ "${#BACKEND_SOURCES[@]}" -lt "$BACKEND_DISCOVERY_FLOOR" ]; then
+    fail "check_ui_boundary.sh: backend discovery found only ${#BACKEND_SOURCES[@]} sources; expected at least $BACKEND_DISCOVERY_FLOOR"
+fi
+for required in juce/PortableJuceBackend.hpp browser/src/ui.ts; do
+    found=0
+    for path in "${BACKEND_SOURCES[@]}"; do
+        [ "$path" = "$required" ] && found=1
+    done
+    if [ "$found" -eq 0 ]; then
+        fail "check_ui_boundary.sh: backend discovery did not find $required"
+    fi
+done
+
 if [ "$failed" -ne 0 ]; then
-    printf '\nEvery inspected path must exist. A moved or renamed file silently shrinks this\ninspection, so it is an error rather than a skipped check.\n' >&2
+    printf '\nEvery inspected path must exist and backend discovery must reach both renderers.\nA moved or renamed file silently shrinks this inspection, so it is an error\nrather than a skipped check.\n' >&2
     exit 1
 fi
 
@@ -212,7 +284,7 @@ scan 'a backend includes a component-library header (sru-51)' \
 register_sample 'import { x } from "./RuntimePages.js";'
 scan 'a backend includes a producer header (sru-51)' \
     '(#include|from|import).*(RuntimePages|RuntimePageStyle|ControllersPageUI|ControllerWizard|RuntimeMainComponent|Braid4|MiniApp)' \
-    "${BACKEND_SOURCES[@]}"
+    "${BACKEND_SOURCES_FOR_PRODUCER_SCAN[@]}"
 
 # ---------------------------------------------------------------------------
 # 3. A wire codec includes no library, page, or app header.
@@ -222,6 +294,21 @@ register_sample '#include "synth/ControllersPageUI.hpp"'
 scan 'a wire codec includes a library, page, or app header (sru-51)' \
     '(#include|from|import).*(PortableUIBuilders|PortableUILayout|PortableUIMetrics|PortableUIStandardLayout|RuntimePages|RuntimePageStyle|ControllersPageUI|ControllerWizard|RuntimeMainComponent|Braid4|MiniApp)' \
     "${CODEC_SOURCES[@]}"
+
+# ---------------------------------------------------------------------------
+# 3a. A producer includes no wire codec and no backend.
+#
+# The other direction of the same boundary, and it was missing: checks 2 and 3
+# both look downward from the backend and the codec, so nothing stopped a page
+# from reaching for `BrowserCommandBuffer.hpp` and encoding its own frame, or
+# from including a renderer and making a rendering decision. A producer knows
+# the model and the library; the wire and the renderers are below it.
+# ---------------------------------------------------------------------------
+
+register_sample '#include "synth/browser/BrowserCommandBuffer.hpp"'
+scan 'a producer includes a wire codec or a backend (sru-51)' \
+    '(#include|from|import).*(BrowserCommandBuffer|PortableJuceBackend|protocol\.js|src/ui\.js|\./ui)' \
+    "${PRODUCER_HEADERS[@]}"
 
 # ---------------------------------------------------------------------------
 # 4. No deleted policy symbol reappears in a backend.
@@ -267,9 +354,12 @@ register_sample '    const juce::Colour fill = ColourForVariant(node.variant);'
 scan 'the retired per-variant colour table reappears in a backend (sru-51)' \
     '\bvariant' \
     "${BACKEND_SOURCES[@]}"
-register_sample '    if (token == "muted-title") { return kTitleColour; }'
+# Both quote styles: `ui.ts` already mixes them, so a TypeScript
+# reintroduction as `'primary'` would have walked straight past a
+# double-quote-only pattern.
+register_sample "    if (token === 'muted-title') { return kTitleColour; }"
 scan 'a retired appearance-variant token reappears in a backend (sru-51)' \
-    '"(danger|primary|quiet|secondary|muted|muted-title|title|list-row|panel|field)"' \
+    '['"'"'"](danger|primary|quiet|secondary|muted|muted-title|title|list-row|panel|field)['"'"'"]' \
     "${BACKEND_SOURCES[@]}"
 
 # ---------------------------------------------------------------------------
