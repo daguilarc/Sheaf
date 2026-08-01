@@ -2431,3 +2431,45 @@ git commit -m "refactor(portable-ui): delete shims, enforce layering, and docume
 | 7.1–7.6 | 16 |
 
 **Execution order is the task order above.** Tasks 4, 5, and 6 must complete before Tasks 7 and 8 — see the Ordering Constraint section.
+
+## Task 19: Finish the OQ5 retirement, and make the layering gate see its own layer
+
+**OpenSpec:** 2.5d, 7.1 (reopened), 7.2 (reopened), 7.3 · **Requirements:** sru-51, sru-45, design.md D11, OQ5
+
+**Files:**
+- Modify: `projects/synth/include/synth/PortableUIBuilders.hpp` (drop `ComboBox`'s `label`; stop including synth DSP)
+- Create: `projects/synth/include/synth/PortableScopeVisualizer.hpp` (the extracted scope adapter)
+- Modify: `projects/synth/juce/PortableJuceBackend.hpp` (delete `setTextWhenNothingSelected`)
+- Modify: `projects/synth/include/synth/ControllersPageUI.hpp` (the producers passing a combo label)
+- Modify: `projects/synth/scripts/check_ui_boundary.sh` (library-include rule; the two app producers)
+- Modify: `projects/synth/apps/miniapp/MiniAppCore.hpp` and the one test consuming `ScopeVisualizer`
+
+Three findings from a cross-provider review after Task 18, all the same species: cleanup that was claimed complete, and a gate too narrow to notice.
+
+- [ ] **Step 1: Finish OQ5's retirement (7.1, 7.2)**
+
+`Builder::ComboBox` still takes and stores `std::string label`, and `PortableJuceBackend.hpp` still calls `setTextWhenNothingSelected(node.label)` — so JUCE renders a field the browser ignores. That is the backend-specific trap OQ5 was resolved to remove, and the reason captions became library-emitted `Label` nodes. Drop the parameter, the storage, and the backend call together.
+
+Then handle each producer that passed one — `"Input"`, `"Output"`, `"Variant"`, `"Kind"` in the Controllers page — as a judgement per call site: a sibling caption, or deliberately uncaptioned where 6.5's accepted column-heading model applies. **Do not blanket-apply either answer**; 6.5 accepted column headings only for controls structurally inside a headed grid.
+
+- [ ] **Step 2: Make the library model-only (2.5d)**
+
+`PortableUIBuilders.hpp` includes `synth/DspScope.hpp` and `synth/ParameterModulation.hpp`. The second is unused — delete it. The first is load-bearing for `BuildScopePolylines`, the `ScopeWriter`/`ScopeReader` adapter and a `LayerState` template, all synth-domain DSP in the header every library consumer compiles against, against D11.
+
+Extract them into `PortableScopeVisualizer.hpp` on the producer side and repoint the two real consumers (`MiniAppCore.hpp` and the test). The builder should end up depending on `PortableUI.hpp` and the layout layer, nothing else.
+
+- [ ] **Step 3: Teach the gate to see its own layer, and the app producers (7.3)**
+
+The inspection scans backends for authoring includes and producers for codec/backend includes, but never checks that **library** headers include only the model — which is exactly why Step 2's violation survived it. Add that rule.
+
+It also lists `Braid4UiModel.hpp` and `MiniAppUiModel.hpp` as the app producers while `BuildTree` lives in `Braid4UI.hpp` and `MiniAppUI.hpp`, which are unlisted, so both first-party app surfaces can include a codec or backend and pass. Add them — and prefer a guarded convention over another hand-list, since this is the third time a hand-list has been the hole.
+
+- [ ] **Step 4: Prove each rule fails**
+
+For every rule added, plant the violation, show the gate red naming the file, remove it, show green. A gate asserted rather than proven is what produced all three of these findings.
+
+- [ ] **Step 5: Run everything and commit**
+
+`make synth-test`, `make synth-browser-test` (after `browser-apps`), `make -C projects/synth/apps/miniapp test`, `make -C projects/synth check-ui-boundary`.
+
+---
