@@ -1,6 +1,7 @@
 #include "synth/AppConcepts.hpp"
 #include "synth/PortableUI.hpp"
 #include "synth/PortableUIBuilders.hpp"
+#include "synth/PortableScopeVisualizer.hpp"
 #include "synth/RuntimePages.hpp"
 #include "synth/ControllersPageUI.hpp"
 #include "synth/ConstantBarVisualizer.hpp"
@@ -1187,7 +1188,7 @@ static void TestCaptionIsAnEmittedLabelNodeNotAField()
     synth::ui::Builder builder;
     builder.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
     builder.Column("form", grid, [&style](synth::ui::Builder& b) {
-        b.ComboBox("device", "", {}, "", synth::ui::Action::Named("pick"), style);
+        b.ComboBox("device", {}, "", synth::ui::Action::Named("pick"), style);
     });
     const synth::ui::NodeTree tree = builder.Build({0.0f, 0.0f, 400.0f, 300.0f});
     Require(FindNode(tree, "device.caption").kind == synth::ui::NodeKind::Label,
@@ -1212,7 +1213,7 @@ static void TestComboBoxAcceptsRuntimeOptionVectors()
     builder.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
     const std::vector<synth::ui::ControlOption> options = {{"system_default", "System Default"},
                                                            {"speakers", "Speakers"}};
-    builder.ComboBox("device", "", options, "speakers", synth::ui::Action::Named("pick"), {});
+    builder.ComboBox("device", options, "speakers", synth::ui::Action::Named("pick"), {});
 
     const synth::ui::NodeTree tree = builder.Build({0.0f, 0.0f, 400.0f, 300.0f});
     const synth::ui::Node& combo = FindNode(tree, "device");
@@ -2298,16 +2299,9 @@ std::map<std::string, std::string> ControllerCaptionExceptions(std::size_t contr
     Except(exceptions, synth::runtime_ui::NodeIds::kAddName,
            "add-row name field; the add row has no column headings and the field carries its "
            "prompt only in TextField::label, which no backend renders");
-    Except(exceptions, synth::runtime_ui::NodeIds::kAddKind,
-           "add-row kind selector; same as the name field, via the retired ComboBox::label "
-           "(design.md OQ5)");
     for (std::size_t ix = 0; ix < controllers; ++ix)
     {
         const std::string row = "controller row " + std::to_string(ix);
-        Except(exceptions, synth::runtime_ui::NodeIds::ControllerInput(ix),
-               row + " MIDI input selector; a table cell whose column has no heading");
-        Except(exceptions, synth::runtime_ui::NodeIds::ControllerOutput(ix),
-               row + " MIDI output selector; a table cell whose column has no heading");
         Except(exceptions, synth::runtime_ui::NodeIds::ControllerRenameDraft(ix),
                row + " rename field; appears only while renaming, where the adjacent Rename "
                      "button is the only thing naming it");
@@ -3750,7 +3744,7 @@ int main()
         .Button("start", "Start", synth::ui::Action::Named("start"), {})
         .Toggle("gesture", "Gesture", true, synth::ui::Action::Named("gesture.toggle"), {})
         .Slider("blend", "Blend", 0.25f, 0.0f, 1.0f, 0.001f, synth::ui::Action::Named("blend.set"), {})
-        .ComboBox("device", "Device", {{"a", "Built In"}, {"b", "External"}}, "a",
+        .ComboBox("device", {{"a", "Built In"}, {"b", "External"}}, "a",
                   synth::ui::Action::Named("device.select"), {})
         .TextField("value", "Value", "64", synth::ui::Action::Named("value.commit"), {})
         .Draw("scope", synth::ui::Bounds{10.0f, 10.0f, 100.0f, 80.0f},

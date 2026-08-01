@@ -589,7 +589,6 @@ ui::Subtree MfTwisterConfigForm::BuildSubtree() {
                                                                                                  kFieldCaptionHeight));
                                                                                  fieldCell.ComboBox(
                                                                                      messageId,
-                                                                                     "",
                                                                                      std::move(options),
                                                                                      MessageOptionId(
                                                                                          button.message),

@@ -756,7 +756,6 @@ synth::ui::Builder builder;
 builder.Root("root", synth::ui::Bounds{0.0f, 0.0f, 320.0f, 240.0f})
     .Button("start", "Start", synth::ui::Action::Named("start"), {})
     .ComboBox("device",
-              "Device",
               {{"a", "Built In"}, {"b", "External"}},
               "a",
               synth::ui::Action::Named("device.select"), {})
@@ -808,7 +807,6 @@ Require(surface.lastAction.name == "start", "dispatched action name");
     changedBuilder.Root("root", synth::ui::Bounds{0.0f, 0.0f, 320.0f, 240.0f})
         .Button("start", "Launch", synth::ui::Action::Named("start.changed"), {})
         .ComboBox("device",
-                  "Device",
                   {{"a2", "Built In 2"}, {"b2", "External 2"}},
                   "a2",
                   synth::ui::Action::Named("device.select.changed"), {})
@@ -840,7 +838,6 @@ Require(surface.lastAction.value == "b2", "combo dispatches refreshed option id"
     synth::ui::Builder valueBuilder;
     valueBuilder.Root("value.root", synth::ui::Bounds{0.0f, 0.0f, 320.0f, 240.0f})
         .ComboBox("value.combo",
-                  "Input",
                   {{"a2", "Built In 2"}, {"b2", "External 2"}},
                   "a2",
                   synth::ui::Action::WithValue("controller.input", "controller:input"), {})

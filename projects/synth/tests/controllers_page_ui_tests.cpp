@@ -1526,45 +1526,73 @@ int main()
         FindNodeById(initialTree, synth::runtime_ui::NodeIds::kAddName);
     const synth::ui::Node* addKind =
         FindNodeById(initialTree, synth::runtime_ui::NodeIds::kAddKind);
+    const synth::ui::Node* addKindCaption =
+        FindNodeById(initialTree, std::string(synth::runtime_ui::NodeIds::kAddKind) + ".caption");
     Require(addName != nullptr && addName->action.has_value() &&
                 addName->action->name == "runtime.controllers.add_name_draft",
             "add controller name edits dispatch a portable draft action");
     Require(addKind != nullptr && addKind->action.has_value() &&
                 addKind->action->name == "runtime.controllers.add_kind_draft",
             "add controller kind edits dispatch a portable draft action");
+    Require(addKindCaption != nullptr && addKindCaption->text == "Kind",
+            "add controller kind selector has a visible caption");
     const synth::ui::Node* wrldInput =
         FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerInput(0));
+    const synth::ui::Node* wrldInputRow =
+        FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerInput(0) + ".row");
     const synth::ui::Node* padsInput =
         FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerInput(1));
+    const synth::ui::Node* padsInputRow =
+        FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerInput(1) + ".row");
     const synth::ui::Node* wrldOutput =
         FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerOutput(0));
+    const synth::ui::Node* wrldOutputRow =
+        FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerOutput(0) + ".row");
     const synth::ui::Node* wrldDots =
         FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerStatusDots(0));
     const synth::ui::Node* padsOutput =
         FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerOutput(1));
+    const synth::ui::Node* padsOutputRow =
+        FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerOutput(1) + ".row");
     const synth::ui::Node* padsVariant =
         FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerVariant(1));
+    const synth::ui::Node* padsVariantRow =
+        FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerVariant(1) + ".row");
     const synth::ui::Node* scrollNode = FindNodeById(initialTree, synth::runtime_ui::NodeIds::kScroll);
     Require(wrldInput != nullptr && padsInput != nullptr && wrldOutput != nullptr && padsOutput != nullptr,
             "controller device controls render");
+    Require(wrldInputRow != nullptr && padsInputRow != nullptr && wrldOutputRow != nullptr &&
+                padsOutputRow != nullptr && padsVariantRow != nullptr,
+            "captioned endpoint selectors render their flow-slot rows");
     Require(wrldDots != nullptr, "controller status dots render");
     Require(padsVariant != nullptr, "launchpad variant selector renders");
     Require(scrollNode != nullptr, "scroll area node still present");
     Require(wrldInput->bounds.x == padsInput->bounds.x, "launchpad input aligns with other controller inputs");
     Require(wrldOutput->bounds.x == padsOutput->bounds.x, "launchpad output aligns with other controller outputs");
-    Require(wrldOutput->bounds.x == wrldInput->bounds.x + wrldInput->bounds.width +
-                                      synth::runtime_ui::ControllersLayout::kEndpointBoxGap,
-            "input and output selectors keep endpoint spacing");
-    Require(padsVariant->bounds.x > padsOutput->bounds.x + padsOutput->bounds.width,
-            "launchpad variant sits to the right of output");
-    Require(padsVariant->bounds.x == padsOutput->bounds.x + padsOutput->bounds.width +
-                                      synth::runtime_ui::ControllersLayout::kEndpointBoxGap,
-            "output and variant selectors keep endpoint spacing");
+    Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerInput(0) + ".caption")->text == "Input",
+            "input selector caption is visible text");
+    Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerOutput(0) + ".caption")->text == "Output",
+            "output selector caption is visible text");
+    Require(FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerVariant(1) + ".caption")->text ==
+                "Variant",
+            "variant selector caption is visible text");
+    Require(wrldInputRow->bounds.x == padsInputRow->bounds.x,
+            "captioned launchpad input aligns with other controller input flow slots");
+    Require(wrldOutputRow->bounds.x == padsOutputRow->bounds.x,
+            "captioned launchpad output aligns with other controller output flow slots");
+    Require(wrldOutputRow->bounds.x == wrldInputRow->bounds.x + wrldInputRow->bounds.width +
+                                         synth::runtime_ui::ControllersLayout::kEndpointBoxGap,
+            "input and output selector flow slots keep endpoint spacing");
+    Require(padsVariantRow->bounds.x > padsOutputRow->bounds.x + padsOutputRow->bounds.width,
+            "launchpad variant flow slot sits to the right of output");
+    Require(padsVariantRow->bounds.x == padsOutputRow->bounds.x + padsOutputRow->bounds.width +
+                                        synth::runtime_ui::ControllersLayout::kEndpointBoxGap,
+            "output and variant selector flow slots keep endpoint spacing");
     Require(wrldDots->bounds.y ==
                 (synth::runtime_ui::ControllersLayout::kControllerHeaderHeight - wrldDots->bounds.height) /
                     2.0f,
             "status dots are vertically centered in the controller row");
-    Require(scrollNode->scrollContentWidth >= padsVariant->bounds.x + padsVariant->bounds.width,
+    Require(scrollNode->scrollContentWidth >= padsVariantRow->bounds.x + padsVariantRow->bounds.width,
             "scroll content reserves launchpad variant width");
 
     surface.DispatchAction(

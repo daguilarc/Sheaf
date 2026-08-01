@@ -761,7 +761,6 @@ inline ui::NodeTree BuildAudioPageTree(const AudioPageSnapshot& snapshot, ui::Bo
     builder.Button(NodeIds::kAudioBack, "Back", ui::Action::Named(Actions::kAudioBack), PageControls::BackButton());
     builder.Column(NodeIds::kAudioForm, PageControls::FormGridLayout(), [&](ui::Builder& form) {
         form.ComboBox(NodeIds::kAudioOutput,
-                      "",
                       PageControls::ControlOptionsFor(snapshot.outputOptions),
                       snapshot.selectedOutputId,
                       ui::Action::Named(Actions::kAudioOutputSelect),
@@ -769,7 +768,6 @@ inline ui::NodeTree BuildAudioPageTree(const AudioPageSnapshot& snapshot, ui::Bo
         if (snapshot.showInputCombo)
         {
             form.ComboBox(NodeIds::kAudioInput,
-                          "",
                           PageControls::ControlOptionsFor(snapshot.inputOptions),
                           snapshot.selectedInputId,
                           ui::Action::Named(Actions::kAudioInputSelect),

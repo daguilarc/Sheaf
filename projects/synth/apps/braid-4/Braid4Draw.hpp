@@ -3,7 +3,7 @@
 // JUCE-free draw helpers for the Braid 4 portable surface.
 
 #include "synth/PortableUI.hpp"
-#include "synth/PortableUIBuilders.hpp"
+#include "synth/PortableScopeVisualizer.hpp"
 
 #include <algorithm>
 #include <cstddef>

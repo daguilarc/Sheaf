@@ -26,6 +26,7 @@
 #include "synth/MidiController.hpp"
 #include "synth/Modules.hpp"
 #include "synth/ParameterModulation.hpp"
+#include "synth/PortableScopeVisualizer.hpp"
 #include "synth/StandardModulators.hpp"
 
 #include <array>

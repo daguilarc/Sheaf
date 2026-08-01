@@ -454,9 +454,11 @@ inline constexpr float kBaseEditorWidth = 90.0f;
 inline constexpr float kDeleteButtonWidth = 22.0f;
 inline constexpr float kAddButtonWidth = 62.0f;
 inline constexpr float kVariantBoxWidth = 140.0f;
+inline constexpr float kVariantFieldWidth = 200.0f;
 inline constexpr float kStatusDotsWidth = 32.0f;
 inline constexpr float kHeaderControlsX = 256.0f;
 inline constexpr float kEndpointBoxWidth = 160.0f;
+inline constexpr float kEndpointFieldWidth = 220.0f;
 inline constexpr float kEndpointBoxGap = 8.0f;
 // Available-controller row columns: the recognized controller's descriptor
 // display name, then its paired endpoint names, then the two lifecycle actions.
@@ -487,8 +489,8 @@ inline constexpr float kBlacklistedLifecycleWidth =
     kLifecycleControlGap + kLifecycleConfigureWidth + kLifecycleControlGap +
     kLifecycleRemoveWidth;
 inline constexpr float kActiveControllerHeaderWidth =
-    kHeaderControlsX + kStatusDotsWidth + kLifecycleControlGap + kEndpointBoxWidth +
-    kEndpointBoxGap + kEndpointBoxWidth + kEndpointBoxGap + kVariantBoxWidth +
+    kHeaderControlsX + kStatusDotsWidth + kLifecycleControlGap + kEndpointFieldWidth +
+    kEndpointBoxGap + kEndpointFieldWidth + kEndpointBoxGap + kVariantFieldWidth +
     kEndpointBoxGap + kActiveLifecycleWidth;
 inline constexpr float kBlacklistedControllerHeaderWidth =
     kControllerNameWidth + kLifecycleControlGap + kControllerKindWidth +
@@ -2495,7 +2497,6 @@ private:
                 }
                 const int current = vm.UISystemMessageIndex(controllerIx, section, mappingRowIx);
                 mappingRow.ComboBox(NodeIds::MappingField(controllerIx, section, mappingRowIx, field),
-                                    "",
                                     std::move(options),
                                     current >= 0 ? std::to_string(current) : "0",
                                     ui::Action::WithValue(
@@ -2522,7 +2523,6 @@ private:
                     selected = std::to_string(static_cast<int>(current));
                 }
                 mappingRow.ComboBox(NodeIds::MappingField(controllerIx, section, mappingRowIx, field),
-                                    "",
                                     std::move(options),
                                     selected,
                                     ui::Action::WithValue(
@@ -2554,7 +2554,6 @@ private:
                     }
                 }
                 mappingRow.ComboBox(NodeIds::MappingField(controllerIx, section, mappingRowIx, field),
-                                    "",
                                     std::move(options),
                                     selected,
                                     ui::Action::WithValue(
@@ -2576,7 +2575,6 @@ private:
                 }
                 const int current = vm.BlockMessageTypeIndex(controllerIx, section, mappingRowIx);
                 mappingRow.ComboBox(NodeIds::MappingField(controllerIx, section, mappingRowIx, field),
-                                    "",
                                     std::move(options),
                                     current >= 0 ? std::to_string(current) : "0",
                                     ui::Action::WithValue(
@@ -2887,11 +2885,11 @@ private:
                            const float endpointClusterWidth =
                                ControllersLayout::kStatusDotsWidth +
                                ControllersLayout::kEndpointBoxGap +
-                               ControllersLayout::kEndpointBoxWidth +
+                               ControllersLayout::kEndpointFieldWidth +
                                ControllersLayout::kEndpointBoxGap +
-                               ControllersLayout::kEndpointBoxWidth +
+                               ControllersLayout::kEndpointFieldWidth +
                                (hasVariant ? ControllersLayout::kEndpointBoxGap +
-                                                 ControllersLayout::kVariantBoxWidth
+                                                 ControllersLayout::kVariantFieldWidth
                                            : 0.0f);
                            row.Row(NodeIds::ControllerRow(controllerIx) + ".endpoints",
                                    layout(ui::Extent::Px(endpointClusterWidth),
@@ -2927,9 +2925,11 @@ private:
                                            });
 
                                        std::string selectedInput;
+                                       ui::ControlStyle inputStyle =
+                                           fieldControl(ControllersLayout::kEndpointFieldWidth);
+                                       inputStyle.caption = "Input";
                                        endpoints.ComboBox(
                                            NodeIds::ControllerInput(controllerIx),
-                                           "Input",
                                            ControllersLayout::BuildEndpointOptions(
                                                devices.inputs,
                                                rowVm.inputStatus,
@@ -2940,12 +2940,14 @@ private:
                                            ui::Action::WithValue(
                                                Actions::kEndpointSelect,
                                                std::to_string(controllerIx) + ":input"),
-                                           fieldControl(ControllersLayout::kEndpointBoxWidth));
+                                           inputStyle);
 
                                        std::string selectedOutput;
+                                       ui::ControlStyle outputStyle =
+                                           fieldControl(ControllersLayout::kEndpointFieldWidth);
+                                       outputStyle.caption = "Output";
                                        endpoints.ComboBox(
                                            NodeIds::ControllerOutput(controllerIx),
-                                           "Output",
                                            ControllersLayout::BuildEndpointOptions(
                                                devices.outputs,
                                                rowVm.outputStatus,
@@ -2956,13 +2958,15 @@ private:
                                            ui::Action::WithValue(
                                                Actions::kEndpointSelect,
                                                std::to_string(controllerIx) + ":output"),
-                                           fieldControl(ControllersLayout::kEndpointBoxWidth));
+                                           outputStyle);
                                        if (hasVariant)
                                        {
                                            std::string selectedVariant;
+                                           ui::ControlStyle variantStyle =
+                                               fieldControl(ControllersLayout::kVariantFieldWidth);
+                                           variantStyle.caption = "Variant";
                                            endpoints.ComboBox(
                                                NodeIds::ControllerVariant(controllerIx),
-                                               "Variant",
                                                ControllersLayout::BuildLaunchpadVariantOptions(
                                                    vm.LaunchpadVariantIndex(controllerIx),
                                                    selectedVariant),
@@ -2970,7 +2974,7 @@ private:
                                                ui::Action::WithValue(
                                                    Actions::kVariantSelect,
                                                    std::to_string(controllerIx)),
-                                               fieldControl(ControllersLayout::kVariantBoxWidth));
+                                               variantStyle);
                                        }
                                    });
                            row.TextField(
@@ -3074,13 +3078,15 @@ private:
                                              addControllerName,
                                              ui::Action::Named(Actions::kAddNameDraft),
                                              fieldControl(180.0f, ControllersLayout::kAddRowHeight));
+                               ui::ControlStyle addKindStyle =
+                                   fieldControl(190.0f, ControllersLayout::kAddRowHeight);
+                               addKindStyle.caption = "Kind";
                                row.ComboBox(NodeIds::kAddKind,
-                                            "Kind",
                                             ControllersLayout::BuildAddControllerKindOptions(),
                                             addControllerKindId.empty() ? "wrldbldr"
                                                                         : addControllerKindId,
                                             ui::Action::Named(Actions::kAddKindDraft),
-                                            fieldControl(140.0f, ControllersLayout::kAddRowHeight));
+                                            addKindStyle);
                                row.Button(NodeIds::kAddButton,
                                           "Add",
                                           ui::Action::Named(Actions::kAddController),

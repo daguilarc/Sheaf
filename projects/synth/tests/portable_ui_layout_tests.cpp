@@ -452,11 +452,11 @@ void TestFormGridAlignsLabelAndControlColumns()
     b.Column("form", grid, [](synth::ui::Builder& b) {
         b.Row("r1", {}, [](synth::ui::Builder& b) {
             b.Label("r1.label", "Tempo", {});
-            b.ComboBox("r1.control", "", {}, "", synth::ui::Action::Named("a"), {});
+            b.ComboBox("r1.control", {}, "", synth::ui::Action::Named("a"), {});
         });
         b.Row("r2", {}, [](synth::ui::Builder& b) {
             b.Label("r2.label", "A considerably longer caption", {});
-            b.ComboBox("r2.control", "", {}, "", synth::ui::Action::Named("b"), {});
+            b.ComboBox("r2.control", {}, "", synth::ui::Action::Named("b"), {});
         });
     });
     const auto tree = b.Build({0.0f, 0.0f, 400.0f, 300.0f});
@@ -482,11 +482,11 @@ void TestFormGridUsesRowLocalPadding()
     b.Column("form", grid, [&row](synth::ui::Builder& b) {
         b.Row("r1", row, [](synth::ui::Builder& b) {
             b.Label("r1.label", "Short", {});
-            b.ComboBox("r1.control", "", {}, "", synth::ui::Action::Named("a"), {});
+            b.ComboBox("r1.control", {}, "", synth::ui::Action::Named("a"), {});
         });
         b.Row("r2", row, [](synth::ui::Builder& b) {
             b.Label("r2.label", "Longer label", {});
-            b.ComboBox("r2.control", "", {}, "", synth::ui::Action::Named("b"), {});
+            b.ComboBox("r2.control", {}, "", synth::ui::Action::Named("b"), {});
         });
     });
     const auto tree = b.Build({0.0f, 0.0f, 420.0f, 300.0f});
@@ -518,7 +518,7 @@ void TestCaptionedControlRowOccupiesTheParentFlowSlot()
     synth::ui::Builder b;
     b.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
     b.Column("form", {}, [&style](synth::ui::Builder& b) {
-        b.ComboBox("device", "", {}, "", synth::ui::Action::Named("pick"), style);
+        b.ComboBox("device", {}, "", synth::ui::Action::Named("pick"), style);
         b.Label("after", "after", MainOf(synth::ui::Extent::Px(20.0f)));
     });
     const auto tree = b.Build({0.0f, 0.0f, 400.0f, 300.0f});
@@ -540,8 +540,8 @@ void TestCaptionedAndUncaptionedControlsHonorTheSameDeclaredExtent()
     synth::ui::Builder b;
     b.Root("root", {0.0f, 0.0f, 420.0f, 300.0f});
     b.Column("form", {}, [&](synth::ui::Builder& b) {
-        b.ComboBox("captioned", "", {}, "", synth::ui::Action::Named("captioned"), captioned);
-        b.ComboBox("plain", "", {}, "", synth::ui::Action::Named("plain"), plain);
+        b.ComboBox("captioned", {}, "", synth::ui::Action::Named("captioned"), captioned);
+        b.ComboBox("plain", {}, "", synth::ui::Action::Named("plain"), plain);
     });
     const auto tree = b.Build({0.0f, 0.0f, 420.0f, 300.0f});
     Require(NearlyEqual(FindNode(tree, "captioned.row").bounds.height, FindNode(tree, "plain").bounds.height),
@@ -939,11 +939,11 @@ void TestOverlayTracksATargetTheFormGridMoves()
                 return std::vector<synth::ui::DrawCommand>{
                     synth::ui::DrawCommand::Fill(extent, synth::Color::Rgb(1, 2, 3))};
             });
-            b.ComboBox("r1.control", "", {}, "", synth::ui::Action::Named("a"), {});
+            b.ComboBox("r1.control", {}, "", synth::ui::Action::Named("a"), {});
         });
         b.Row("r2", {}, [](synth::ui::Builder& b) {
             b.Label("r2.label", "A considerably longer caption", {});
-            b.ComboBox("r2.control", "", {}, "", synth::ui::Action::Named("b"), {});
+            b.ComboBox("r2.control", {}, "", synth::ui::Action::Named("b"), {});
         });
     });
     const auto tree = b.Build({0.0f, 0.0f, 400.0f, 300.0f});
@@ -1307,11 +1307,11 @@ void TestCaptionCheckSeesThroughAnUnrenderedLabel()
     b.Column("form", grid, [](synth::ui::Builder& b) {
         synth::ui::ControlStyle captioned;
         captioned.caption = "Output device";
-        b.ComboBox("captioned", "", {{"a", "A"}}, "a", synth::ui::Action::Named("pick"), captioned);
+        b.ComboBox("captioned", {{"a", "A"}}, "a", synth::ui::Action::Named("pick"), captioned);
         // design.md OQ5: a combo box's own label renders nothing in either
         // backend, so this control is unlabelled on screen however the string
         // reads in the tree.
-        b.ComboBox("labelled_only", "", {{"a", "A"}}, "a", synth::ui::Action::Named("pick"), {});
+        b.ComboBox("labelled_only", {{"a", "A"}}, "a", synth::ui::Action::Named("pick"), {});
     });
     synth::ui::NodeTree tree = b.Build({0.0f, 0.0f, 300.0f, 200.0f});
     MutableNode(tree, "labelled_only").label = "Input device";

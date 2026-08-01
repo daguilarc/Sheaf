@@ -10,7 +10,9 @@
 #      which is the whole thing sru-51 separates.
 #   3. A wire codec includes no library, page, or app header. The codec knows the
 #      MODEL and nothing above it, which is why `Node` carries no LayoutOptions.
-#   3a. A producer includes no wire codec and no backend -- the same boundary
+#   3a. The component library includes only model/library headers; no producer,
+#      DSP-domain, wire, or backend header can sit in the authoring layer.
+#   3b. A producer includes no wire codec and no backend -- the same boundary
 #      looked at from above, which checks 2 and 3 both miss.
 #   4. No deleted policy symbol reappears ANYWHERE in a backend tree: the
 #      auto-flow cursor, the default-size table, BOTH coordinate classifier
@@ -129,10 +131,9 @@ LIBRARY_HEADERS=(
     include/synth/PortableUIStandardLayout.hpp
 )
 
-# The producers built on it: the page style table, the runtime pages, the
-# Controllers page, the wizard, the SHELL that composes them, and both
-# first-party apps' UI models.
-PRODUCER_HEADERS=(
+# The page producers built on it: the page style table, the runtime pages, the
+# Controllers page, the wizard, and the SHELL that composes them.
+PAGE_PRODUCER_HEADERS=(
     include/synth/RuntimePageStyle.hpp
     include/synth/RuntimePages.hpp
     include/synth/ControllersPageUI.hpp
@@ -142,15 +143,41 @@ PRODUCER_HEADERS=(
     # listed.
     src/ControllerWizard.cpp
     include/synth/RuntimeMainComponent.hpp
-    apps/braid-4/Braid4UiModel.hpp
-    apps/miniapp/MiniAppUiModel.hpp
 )
+
+# App producer headers are discovered by convention. The previous hand-list
+# named `Braid4UiModel.hpp` and `MiniAppUiModel.hpp` while the actual
+# `BuildTree()` producers lived in the adjacent `Braid4UI.hpp` and
+# `MiniAppUI.hpp`; this is the same omission shape that already missed
+# `src/ControllerWizard.cpp`. A first-party app header matching either
+# `*UI.hpp` or `*UiModel.hpp` is scanned by default, and removing one from
+# discovery requires changing the convention here.
+APP_PRODUCER_HEADERS=()
+while IFS= read -r discovered; do
+    APP_PRODUCER_HEADERS+=("$discovered")
+done < <(rg --files apps/braid-4 apps/miniapp -g '*UI.hpp' -g '*UiModel.hpp' | sort)
+
+PRODUCER_HEADERS=("${PAGE_PRODUCER_HEADERS[@]}" "${APP_PRODUCER_HEADERS[@]}")
 
 # Every enumerated path must exist: a renamed or moved file must break this
 # script loudly rather than quietly reduce its coverage to nothing.
-for path in "${CODEC_SOURCES[@]}" "${LIBRARY_HEADERS[@]}" "${PRODUCER_HEADERS[@]}"; do
+for path in "${CODEC_SOURCES[@]}" "${LIBRARY_HEADERS[@]}" "${PAGE_PRODUCER_HEADERS[@]}"; do
     if [ ! -f "$path" ]; then
         fail "check_ui_boundary.sh: inspected file is missing: $path"
+    fi
+done
+
+APP_PRODUCER_DISCOVERY_FLOOR=4
+if [ "${#APP_PRODUCER_HEADERS[@]}" -lt "$APP_PRODUCER_DISCOVERY_FLOOR" ]; then
+    fail "check_ui_boundary.sh: app producer discovery found only ${#APP_PRODUCER_HEADERS[@]} headers; expected at least $APP_PRODUCER_DISCOVERY_FLOOR"
+fi
+for required in apps/braid-4/Braid4UI.hpp apps/miniapp/MiniAppUI.hpp; do
+    found=0
+    for path in "${APP_PRODUCER_HEADERS[@]}"; do
+        [ "$path" = "$required" ] && found=1
+    done
+    if [ "$found" -eq 0 ]; then
+        fail "check_ui_boundary.sh: app producer discovery did not find $required"
     fi
 done
 
@@ -173,7 +200,7 @@ for required in juce/PortableJuceBackend.hpp browser/src/ui.ts; do
 done
 
 if [ "$failed" -ne 0 ]; then
-    printf '\nEvery inspected path must exist and backend discovery must reach both renderers.\nA moved or renamed file silently shrinks this inspection, so it is an error\nrather than a skipped check.\n' >&2
+    printf '\nEvery inspected path must exist, backend discovery must reach both renderers,\nand app producer discovery must reach both first-party app UI surfaces.\nA moved or renamed file silently shrinks this inspection, so it is an error\nrather than a skipped check.\n' >&2
     exit 1
 fi
 
@@ -320,7 +347,37 @@ scan 'a wire codec includes a library, page, or app header (sru-51)' \
     "${CODEC_SOURCES[@]}"
 
 # ---------------------------------------------------------------------------
-# 3a. A producer includes no wire codec and no backend.
+# 3a. The component library includes only the model and library peers.
+#
+# This is the layer that 7.3 did not scan at all: `PortableUIBuilders.hpp`
+# included `DspScope.hpp`, so every component-library consumer compiled synth
+# DSP into the authoring layer. The backend and producer scans cannot see this
+# direction; the library has to police its own imports.
+# ---------------------------------------------------------------------------
+
+library_include_failed=0
+while IFS=: read -r path line match; do
+    [ -n "${path:-}" ] || continue
+    include="${match#*\"synth/}"
+    include="${include%%\"*}"
+    case "$include" in
+        Color.hpp|PortableUI.hpp|PortableUIBuilders.hpp|PortableUILayout.hpp|PortableUIMetrics.hpp|PortableUIStandardLayout.hpp)
+            ;;
+        *)
+            printf 'a component-library header includes a non-model header (sru-51): %s:%s:%s\n' \
+                "$path" "$line" "$match" >&2
+            library_include_failed=1
+            ;;
+    esac
+done < <(rg -n '#include[[:space:]]+"synth/[^"]+"' "${LIBRARY_HEADERS[@]}" || true)
+
+if [ "$library_include_failed" -ne 0 ]; then
+    printf '\nComponent-library headers may include only the portable UI model and library peers.\n' >&2
+    failed=1
+fi
+
+# ---------------------------------------------------------------------------
+# 3b. A producer includes no wire codec and no backend.
 #
 # The other direction of the same boundary, and it was missing: checks 2 and 3
 # both look downward from the backend and the codec, so nothing stopped a page

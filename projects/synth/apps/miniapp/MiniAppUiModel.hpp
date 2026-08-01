@@ -11,6 +11,7 @@
 #include "synth/ParameterModulation.hpp"
 #include "synth/PortableUI.hpp"
 #include "synth/PortableUIBuilders.hpp"
+#include "synth/PortableScopeVisualizer.hpp"
 
 #include <algorithm>
 #include <cmath>

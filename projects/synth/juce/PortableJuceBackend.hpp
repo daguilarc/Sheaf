@@ -1180,10 +1180,6 @@ private:
             case synth::ui::NodeKind::ComboBox:
             {
                 auto combo = std::make_unique<juce::ComboBox>();
-                if (!node.label.empty())
-                {
-                    combo->setTextWhenNothingSelected(node.label);
-                }
                 int selectedIndex = -1;
                 for (int ix = 0; ix < static_cast<int>(node.options.size()); ++ix)
                 {
