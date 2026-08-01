@@ -2020,9 +2020,69 @@ struct CriteriaSurface {
     std::vector<FormGrid> formGrids;
 };
 
+// The three cross-backend residuals disclosed during 2.5a and left unpinned by
+// 3.11-3.12, ADJUDICATED in task 7.1 rather than inherited.
+//
+// All three are real, none is reachable by any producer, and all three are
+// ACCEPTED rather than fixed -- fixing any of them means changing one backend's
+// rendering, which needs its own justification and its own appearance decision
+// after a product owner has already signed off. What is NOT accepted is leaving
+// them floating, because two of the three are one ordinary producer declaration
+// away from being live:
+//
+//   (i)  JUCE paints a ScrollArea's border in `paintOverChildren` while the
+//        browser's inset `box-shadow` paints beneath content, so a scrolled
+//        child would cover the border in the browser and not in JUCE. Reachable
+//        by any producer that puts a border on a ScrollArea.
+//   (ii) Neither backend clips a rounded ScrollArea's scrolled children to the
+//        radius path; only the surface radius is pinned. Reachable by any
+//        producer that puts a corner radius on a ScrollArea.
+//   (iii) When a declared radius is below half the border width, JUCE's centred
+//        stroke floors the path radius at 0 so the outer radius becomes w/2,
+//        where the browser rounds at the declared radius. A hairline, inherent
+//        to expressing a border as a centred stroke, and accepted permanently.
+//
+// So this is a tripwire on the PRECONDITION, not a waiver: it asserts that no
+// first-party surface declares the shapes that would make a divergence visible.
+// The day a producer declares one, this fails and asks for the decision to be
+// made, instead of the divergence shipping unnoticed.
+void RequireNoProducerReachesAnUnpinnedBackendDivergence(const CriteriaSurface& surface)
+{
+    const std::string prefix = surface.name + ": ";
+    for (const synth::ui::Node& node : surface.tree.nodes)
+    {
+        if (node.kind == synth::ui::NodeKind::ScrollArea)
+        {
+            Require(!node.borderColor.has_value() && !node.borderWidth.has_value(),
+                    (prefix + "'" + node.id.value +
+                     "' declares a ScrollArea border. JUCE paints it over its children and the "
+                     "browser paints it under them; decide which is right before shipping it "
+                     "(residual (i), recorded under tasks.md 3.11)")
+                        .c_str());
+            Require(!node.cornerRadius.has_value(),
+                    (prefix + "'" + node.id.value +
+                     "' declares a ScrollArea corner radius. Neither backend clips scrolled "
+                     "children to the radius path; decide what a rounded scroll area should do "
+                     "before shipping it (residual (ii), recorded under tasks.md 3.11)")
+                        .c_str());
+        }
+        if (node.cornerRadius.has_value() && node.borderWidth.has_value())
+        {
+            Require(*node.cornerRadius >= *node.borderWidth * 0.5f,
+                    (prefix + "'" + node.id.value +
+                     "' declares a corner radius below half its border width. JUCE's centred "
+                     "stroke floors the path radius at zero there and the browser does not, so "
+                     "the two outer radii diverge by a hairline (residual (iii), recorded under "
+                     "tasks.md 3.11)")
+                        .c_str());
+        }
+    }
+}
+
 void RequireSurfaceMeetsTheNamedCriteria(const CriteriaSurface& surface)
 {
     const std::string prefix = surface.name + ": ";
+    RequireNoProducerReachesAnUnpinnedBackendDivergence(surface);
     const std::vector<std::string> containment =
         criteria::ContainmentViolations(surface.tree, surface.containmentExempt);
     Require(containment.empty(), (prefix + criteria::Join(containment)).c_str());

@@ -24,19 +24,20 @@ public:
     {
         synth::ui::Builder builder;
         builder.Root("fake-browser-root", {0.0f, 0.0f, 640.0f, height_})
-            .Button("fake-browser-button", "Trigger", synth::ui::Action::Named("fake.trigger"))
+            .Button("fake-browser-button", "Trigger", synth::ui::Action::Named("fake.trigger"), {})
             .Slider("fake-browser-slider", "Level", 0.5f, 0.0f, 1.0f, 0.001f,
-                    synth::ui::Action::Named("fake.level"))
+                    synth::ui::Action::Named("fake.level"), {})
             .DrawInteractive(
                 "fake-browser-draw", {24.0f, 120.0f, 320.0f, 120.0f},
                 {synth::ui::DrawCommand::Fill(synth::Color::Rgb(20, 24, 32)),
                  synth::ui::DrawCommand::Line({0.0f, 60.0f}, {320.0f, 60.0f},
                                               synth::Color::Rgb(96, 220, 180), 2.0f)},
                 synth::ui::Action::WithValue("fake.drag", "axis:0"),
-                synth::ui::Action::Named("fake.double_click"))
+                synth::ui::Action::Named("fake.double_click"),
+                {})
             .StatusText("fake-browser-action-status",
-                        "Actions: " + std::to_string(actionCount_) + " " + lastActionName_);
-        return builder.Build();
+                        "Actions: " + std::to_string(actionCount_) + " " + lastActionName_, {});
+        return builder.Build({0.0f, 0.0f, 640.0f, height_});
     }
 
     void SetActionHandler(ActionHandler handler) override

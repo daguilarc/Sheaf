@@ -6,6 +6,8 @@ import path from "node:path";
 import test from "node:test";
 
 import { readAppBuildManifest } from "../src/app-build-manifest.mjs";
+import { COMMAND_BUFFER_VERSION } from "../src/protocol.js";
+import { readExportedI32Constant } from "../src/wasm-exports.mjs";
 import { buildFirstPartyCatalog } from "../src/build-first-party-catalog.mjs";
 import {
   browserRuntimeModules,
@@ -33,12 +35,68 @@ const artifactRoles = Object.freeze({
   }),
 });
 
+
+// A real (tiny) WebAssembly module exporting `synth_browser_ui_protocol_version`
+// as a constant-returning function, so the publisher's per-package version
+// assertion has something to read. The fixtures used to be eight arbitrary
+// bytes, which meant nothing exercised that assertion at all -- and it is the
+// one check standing between a stale Wasm build and a published catalog of apps
+// the shell cannot decode (tasks.md 7.5a).
+function leb128(value) {
+  const bytes = [];
+  let more = true;
+  let current = value;
+  while (more) {
+    let byte = current & 0x7f;
+    current >>= 7;
+    if ((current === 0 && (byte & 0x40) === 0) || (current === -1 && (byte & 0x40) !== 0)) more = false;
+    else byte |= 0x80;
+    bytes.push(byte);
+  }
+  return bytes;
+}
+
+function uleb128(value) {
+  const bytes = [];
+  let current = value;
+  do {
+    let byte = current & 0x7f;
+    current >>>= 7;
+    if (current !== 0) byte |= 0x80;
+    bytes.push(byte);
+  } while (current !== 0);
+  return bytes;
+}
+
+function wasmSection(id, payload) {
+  return [id, ...uleb128(payload.length), ...payload];
+}
+
+function wasmString(text) {
+  const bytes = [...Buffer.from(text, "utf8")];
+  return [...uleb128(bytes.length), ...bytes];
+}
+
+function fixtureWasm({ uiProtocolVersion = 2, salt = "" } = {}) {
+  const exportName = "synth_browser_ui_protocol_version";
+  const typeSection = wasmSection(1, [0x01, 0x60, 0x00, 0x01, 0x7f]);
+  const functionSection = wasmSection(3, [0x01, 0x00]);
+  const exportSection = wasmSection(7, [0x01, ...wasmString(exportName), 0x00, 0x00]);
+  const body = [0x00, 0x41, ...leb128(uiProtocolVersion), 0x0b];
+  const codeSection = wasmSection(10, [0x01, ...uleb128(body.length), ...body]);
+  const customSection = salt === "" ? [] : wasmSection(0, [...wasmString("salt"), ...Buffer.from(salt, "utf8")]);
+  return Buffer.from([
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    ...typeSection, ...functionSection, ...exportSection, ...codeSection, ...customSection,
+  ]);
+}
+
 const emittedFiles = Object.freeze({
-  "apps/alpha/engine.wasm": Buffer.from([0, 97, 115, 109, 1, 0, 0, 1]),
+  "apps/alpha/engine.wasm": fixtureWasm({ salt: "alpha" }),
   "apps/alpha/entry.mjs": "export default async options => ({ app: 'alpha', options });\n",
   "apps/beta/loader.js": "export default async options => ({ app: 'beta', options });\n",
   "apps/beta/pthread.js": "postMessage('pthread');\n",
-  "apps/beta/runtime.wasm": Buffer.from([0, 97, 115, 109, 1, 0, 0, 2]),
+  "apps/beta/runtime.wasm": fixtureWasm({ salt: "beta" }),
   "apps/beta/wasm-worker.mjs": "postMessage('wasm-worker');\n",
   "apps/beta/worklet.js": "registerProcessor('fixture', class {});\n",
 });
@@ -80,7 +138,7 @@ test("assembles a deterministic complete multi-app catalog from the exact matchi
   }
 
   await writeFile(path.join(browserRoot, "dist", "wasm", "apps", "beta", "runtime.wasm"),
-    Buffer.from([0, 97, 115, 109, 1, 0, 0, 3]));
+    fixtureWasm({ salt: "beta-rebuilt" }));
   const changed = await buildFirstPartyCatalog({ browserRoot, outputRoot: path.join(root, "catalog-changed") });
   assert.equal(changed.packageRecords[0].buildId, first.packageRecords[0].buildId);
   assert.notEqual(changed.packageRecords[1].buildId, first.packageRecords[1].buildId);
@@ -270,6 +328,56 @@ test("site validation rejects changed bytes in either immutable package", async 
   await writeFile(path.join(publishRoot, "catalogs", "sheaf", file.path), "changed bytes\n");
 
   await assert.rejects(validatePublishedSite({ publishRoot }), /beta.*(?:size|SHA-256)|(?:size|SHA-256).*beta/i);
+});
+
+// tasks.md 7.5 and 7.5a. 7.5 asks the whole-catalog publication to confirm a
+// stale-version package fails with the explicit version error, and 7.5a asks the
+// assertion to read the artifact rather than trust build order. These three
+// cases are that pair, one direction each.
+test("refuses to publish a package compiled against a stale UI protocol version", async () => {
+  const { browserRoot, publishRoot } = await createPublishFixture("stale-ui-protocol");
+  await writeFile(path.join(browserRoot, "dist", "wasm", "apps", "beta", "runtime.wasm"),
+    fixtureWasm({ uiProtocolVersion: 1, salt: "beta" }));
+
+  await assert.rejects(
+    publishSite({ browserRoot, publishRoot }),
+    /beta.*UI protocol version 1|UI protocol version 1.*beta/i,
+  );
+  await assert.rejects(stat(path.join(publishRoot, "catalogs")), { code: "ENOENT" });
+});
+
+test("refuses to publish a package whose module advertises no UI protocol version", async () => {
+  const { browserRoot, publishRoot } = await createPublishFixture("absent-ui-protocol");
+  await writeFile(path.join(browserRoot, "dist", "wasm", "apps", "alpha", "engine.wasm"),
+    Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]));
+
+  await assert.rejects(
+    publishSite({ browserRoot, publishRoot }),
+    /alpha.*exports no synth_browser_ui_protocol_version/i,
+  );
+});
+
+test("publishes when every package module reports the runtime's own UI protocol version", async () => {
+  const { browserRoot, publishRoot } = await createPublishFixture("matching-ui-protocol");
+  const { catalog } = await publishSite({ browserRoot, publishRoot })
+    .then(() => validatePublishedSite({ publishRoot }));
+
+  // Anti-vacuity: the assertion above passes trivially if the catalog has no
+  // apps, or if their declared version were something other than the version
+  // this runtime speaks.
+  assert.equal(catalog.apps.length, 2);
+  for (const app of catalog.apps) {
+    assert.equal(app.browser.uiProtocolVersion, COMMAND_BUFFER_VERSION);
+    const wasmFiles = app.browser.files.filter(({ mediaType }) => mediaType === "application/wasm");
+    assert.equal(wasmFiles.length, 1, app.appId);
+    const bytes = new Uint8Array(await readFile(
+      path.join(publishRoot, "catalogs", catalog.publisher.id, wasmFiles[0].path)));
+    assert.equal(
+      readExportedI32Constant(bytes, "synth_browser_ui_protocol_version"),
+      COMMAND_BUFFER_VERSION,
+      app.appId,
+    );
+  }
 });
 
 async function createPublishFixture(name) {

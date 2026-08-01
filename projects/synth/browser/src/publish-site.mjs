@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 
 import { buildFirstPartyCatalog, CANONICAL_CATALOG_PATH } from "./build-first-party-catalog.mjs";
 import { parseCatalog, parseCatalogSources } from "./catalog.js";
+import { COMMAND_BUFFER_VERSION } from "./protocol.js";
+import { readExportedI32Constant } from "./wasm-exports.mjs";
 
 export const browserRuntimeModules = Object.freeze([
   "activation.js",
@@ -135,6 +137,55 @@ function rollbackHtml(catalog, app) {
 `;
 }
 
+// tasks.md 7.5a. A whole-catalog publication ships apps the shipped runtime has
+// to be able to decode, and the only thing that decides that is the version
+// compiled into each module -- not the catalog metadata, which is written from
+// the manifest and would happily describe a stale build as current. Version 2
+// made this concrete: a stale package's encoder met the amended decoder and
+// threw `invalid presence flag`, and nothing upstream of the browser noticed.
+//
+// So every published `.wasm` is read. At least one module per app must export
+// the accessor (an app whose packages all stopped exporting it would otherwise
+// satisfy an "every exported value is 2" check by exporting none), and every
+// value found must equal both the catalog's declared version and the version
+// this runtime's own decoder implements.
+async function assertPackageUiProtocolVersion(publishRoot, catalog, app) {
+  const wasmFiles = app.browser.files.filter(({ mediaType }) => mediaType === "application/wasm");
+  let found = 0;
+  for (const file of wasmFiles) {
+    const relativePath = `catalogs/${catalog.publisher.id}/${file.path}`;
+    const bytes = new Uint8Array(await readFile(path.join(publishRoot, relativePath)));
+    let version;
+    try {
+      version = readExportedI32Constant(bytes, "synth_browser_ui_protocol_version");
+    } catch (error) {
+      throw new Error(
+        `Package ${app.appId} module ${file.path} does not expose a readable UI protocol version: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    if (version === undefined) continue;
+    ++found;
+    if (version !== app.browser.uiProtocolVersion)
+      throw new Error(
+        `Package ${app.appId} module ${file.path} was compiled against UI protocol version ${version}, ` +
+        `but its catalog record declares ${app.browser.uiProtocolVersion}. Rebuild the app packages ` +
+        `(make -C projects/synth/browser browser-apps) before publishing.`,
+      );
+    if (version !== COMMAND_BUFFER_VERSION)
+      throw new Error(
+        `Package ${app.appId} module ${file.path} was compiled against UI protocol version ${version}, ` +
+        `but this runtime speaks version ${COMMAND_BUFFER_VERSION}. Publishing it would ship an app the ` +
+        `shell rejects with no rendered frame.`,
+      );
+  }
+  if (found === 0)
+    throw new Error(
+      `Package ${app.appId} exports no synth_browser_ui_protocol_version from any of its ` +
+      `${wasmFiles.length} WebAssembly module(s); its UI protocol version cannot be verified.`,
+    );
+}
+
 export async function validatePublishedSite({ publishRoot, catalogSource } = {}) {
   for (const relativePath of [
     "index.html",
@@ -197,6 +248,7 @@ export async function validatePublishedSite({ publishRoot, catalogSource } = {})
       if (file.mediaType === "text/javascript" && !/\.(?:m?js)$/.test(relativePath))
         throw new Error(`Package file ${file.path} has inconsistent JavaScript media type`);
     }
+    await assertPackageUiProtocolVersion(publishRoot, catalog, app);
   }
   const packageRoot = path.join(publishRoot, "catalogs", catalog.publisher.id, "packages");
   const actualPackageFiles = (await inventoryFiles(packageRoot)).map((relativePath) => `packages/${relativePath}`);
