@@ -10,8 +10,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
 from pathlib import Path
+
+from vendor_manifest import loads as load_vendor_manifest
 
 
 REQUIRED_PIN_FIELDS = ("url", "revision", "version", "retrieved_at")
@@ -36,7 +37,7 @@ def vendor_tool_dir(repo_root: Path, tool: str) -> Path:
 
 
 def parse_vendor_toml(path: Path) -> dict[str, str]:
-    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    raw = load_vendor_manifest(path.read_text(encoding="utf-8"), source=path)
     missing = [field for field in REQUIRED_PIN_FIELDS if field not in raw]
     if missing:
         raise ValueError(
@@ -61,13 +62,13 @@ def write_vendor_toml(
     missing = [field for field in REQUIRED_PIN_FIELDS if field not in pin]
     if missing:
         raise ValueError(f"missing required pin fields: {', '.join(missing)}")
-    lines = [f'{field} = "{pin[field]}"' for field in REQUIRED_PIN_FIELDS]
+    lines = [
+        f"{field} = {json.dumps(pin[field])}" for field in REQUIRED_PIN_FIELDS
+    ]
     if tools is not None:
-        rendered = ", ".join(f'"{item}"' for item in tools)
-        lines.append(f"tools = [{rendered}]")
+        lines.append(f"tools = {json.dumps(tools)}")
     if workflows is not None:
-        rendered = ", ".join(f'"{item}"' for item in workflows)
-        lines.append(f"workflows = [{rendered}]")
+        lines.append(f"workflows = {json.dumps(workflows)}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -75,7 +76,7 @@ def write_vendor_toml(
 def read_openspec_generation_extras(path: Path) -> tuple[list[str], list[str]]:
     if not path.is_file():
         raise ValueError(f"missing OpenSpec VENDOR.toml: {path}")
-    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    raw = load_vendor_manifest(path.read_text(encoding="utf-8"), source=path)
     tools = raw.get("tools")
     workflows = raw.get("workflows")
     if not isinstance(tools, list) or not tools:

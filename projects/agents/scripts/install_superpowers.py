@@ -8,7 +8,6 @@ import json
 import os
 import shutil
 import sys
-import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
@@ -20,6 +19,7 @@ from managed_package import (
     managed_marker_content,
     package_is_managed,
 )
+from vendor_manifest import loads as load_vendor_manifest
 
 
 PLUGIN_NAME = "superpowers"
@@ -51,7 +51,7 @@ def read_vendor_pin(repo_root: Path) -> dict[str, str]:
     path = repo_root / VENDOR_REL / "VENDOR.toml"
     if not path.is_file():
         raise ValueError(f"missing Superpowers vendor pin: {path}")
-    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    raw = load_vendor_manifest(path.read_text(encoding="utf-8"), source=path)
     missing = [field for field in REQUIRED_PIN_FIELDS if field not in raw]
     if missing:
         raise ValueError(

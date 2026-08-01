@@ -12,7 +12,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +22,7 @@ from managed_package import (
     managed_marker_content,
     package_is_managed,
 )
+from vendor_manifest import loads as load_vendor_manifest
 
 
 SUPPORTED_TARGETS = ("claude", "cursor", "pi", "codex")
@@ -780,7 +780,7 @@ def read_openspec_vendor_pin(repo_root: Path) -> dict[str, object]:
     path = openspec_vendor_dir(repo_root) / "VENDOR.toml"
     if not path.exists():
         raise ValueError(f"missing OpenSpec vendor pin: {path}")
-    raw = tomllib.loads(path.read_text(encoding="utf-8"))
+    raw = load_vendor_manifest(path.read_text(encoding="utf-8"), source=path)
     required = ("url", "revision", "version", "retrieved_at")
     missing = [field for field in required if field not in raw]
     if missing:

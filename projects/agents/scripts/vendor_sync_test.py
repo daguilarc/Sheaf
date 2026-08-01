@@ -12,6 +12,9 @@ from unittest import mock
 SCRIPT_DIR = Path(__file__).resolve().parent
 MODULE_PATH = SCRIPT_DIR / "vendor_sync.py"
 
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 spec = importlib.util.spec_from_file_location("agents_vendor_sync", MODULE_PATH)
 assert spec is not None
 vendor_sync = importlib.util.module_from_spec(spec)
@@ -41,6 +44,29 @@ def commit_all(repo_root: Path, message: str) -> None:
 
 
 class ParseVendorTomlTests(unittest.TestCase):
+    def test_entrypoints_import_without_tomllib_or_tomli(self) -> None:
+        blocker = """
+import sys
+
+class BlockTomlImports:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname in {"tomllib", "tomli"}:
+            raise ModuleNotFoundError(fullname)
+        return None
+
+sys.meta_path.insert(0, BlockTomlImports())
+sys.path.insert(0, __SCRIPTS_DIR__)
+import install
+import install_superpowers
+import vendor_sync
+""".replace("__SCRIPTS_DIR__", repr(str(SCRIPT_DIR)))
+        completed = subprocess.run(
+            [sys.executable, "-I", "-c", blocker],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(0, completed.returncode, completed.stderr)
+
     def test_parse_vendor_toml_requires_required_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             path = Path(tempdir) / "VENDOR.toml"

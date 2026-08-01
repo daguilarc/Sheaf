@@ -10,7 +10,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -41,8 +40,9 @@ spec.loader.exec_module(install)
 
 
 def openspec_vendor_version() -> str:
-    raw = tomllib.loads(OPENSPEC_VENDOR_TOML.read_text(encoding="utf-8"))
-    return str(raw["version"])
+    return install.openspec_pin_field(
+        install.read_openspec_vendor_pin(REPO_ROOT), "version"
+    )
 
 
 def hook_outputs(outputs: list[object], codex_home: Path) -> list[object]:
@@ -945,7 +945,7 @@ def assert_transport_guidance_scoped(
     ]
     for phrase in forbidden_phrases:
         lowered_phrase = phrase.lower()
-        for heading, section in zip(protected_headings, protected_parts, strict=True):
+        for heading, section in zip(protected_headings, protected_parts):
             test_case.assertTrue(
                 phrase_occurs_only_in_prohibition_context(section, phrase),
                 (
