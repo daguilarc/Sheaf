@@ -1,48 +1,33 @@
-import type { AdapterEvent } from "../adapters/types.js";
-export type PriorWatchdogVerdict = {
-    readonly verdict: "healthy" | "derailed" | "uncertain";
-    readonly confidence: number;
-    readonly reason_code: string;
-};
-export type EvidenceSuspicionSignal = "repeated_tool_fingerprint" | "repeated_failure_fingerprint";
-export type EvidenceFingerprint = {
-    readonly fingerprint: string;
-    readonly count: number;
-};
-export type SemanticEvidenceInput = {
+import type { HarnessName } from "../events.js";
+export type ProviderJsonEvidenceInput = {
     readonly original_prompt: string;
-    readonly recent_events: readonly Record<string, unknown>[];
-    readonly tool_fingerprints: readonly EvidenceFingerprint[];
-    readonly failure_fingerprints: readonly EvidenceFingerprint[];
+    readonly harness: HarnessName;
+    readonly recent_provider_json: readonly unknown[];
     readonly elapsed_ms: number;
-    readonly previous_verdict?: PriorWatchdogVerdict;
-    readonly suspicion_signals: readonly EvidenceSuspicionSignal[];
     readonly truncated: boolean;
 };
-export type SemanticEvidenceSnapshot = SemanticEvidenceInput & {
+export type ProviderJsonEvidenceSnapshot = ProviderJsonEvidenceInput & {
     readonly input_bytes: number;
 };
-export type SemanticEvidenceWindowOptions = {
-    readonly repoRoot: string;
+export type ProviderJsonEvidenceWindowOptions = {
+    readonly harness: HarnessName;
     readonly originalPrompt: string;
     readonly clock?: () => Date;
-    readonly previousVerdict?: PriorWatchdogVerdict;
     readonly maxInputBytes?: number;
-    readonly suspicionWindowMs?: number;
-    readonly repeatedToolThreshold?: number;
-    readonly repeatedFailureThreshold?: number;
+    readonly maxStringBytes?: number;
 };
-export declare class SemanticEvidenceWindow {
+export declare class ProviderJsonEvidenceWindow {
     #private;
-    constructor(options: SemanticEvidenceWindowOptions);
-    record(event: AdapterEvent): void;
-    recordPreviousVerdict(verdict: PriorWatchdogVerdict): void;
-    snapshot(): SemanticEvidenceSnapshot;
+    constructor(options: ProviderJsonEvidenceWindowOptions);
+    record(payload: unknown): void;
+    snapshot(): ProviderJsonEvidenceSnapshot;
 }
-export declare function validateSemanticEvidencePolicy(options: {
+export declare function validateProviderJsonEvidencePolicy(options: {
     readonly maxInputBytes?: number;
-    readonly suspicionWindowMs?: number;
-    readonly repeatedToolThreshold?: number;
-    readonly repeatedFailureThreshold?: number;
+    readonly maxStringBytes?: number;
 }): void;
+export declare function boundProviderValue(value: unknown, maxStringBytes: number): {
+    readonly value: unknown;
+    readonly truncated: boolean;
+};
 //# sourceMappingURL=evidence.d.ts.map

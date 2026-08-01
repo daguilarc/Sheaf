@@ -49,9 +49,6 @@ const WatchdogPolicySchema = z
     .object({
     inputLimitBytes: z.number().int().positive().optional(),
     outputLimitBytes: z.number().int().positive().optional(),
-    suspicionWindowMs: z.number().int().positive().optional(),
-    repeatedToolThreshold: z.number().int().positive().optional(),
-    repeatedFailureThreshold: z.number().int().positive().optional(),
     cadenceMs: z.array(z.number().int().positive()).optional(),
     minimumIntervalMs: z.number().int().positive().optional(),
     maximumCalls: z.number().int().positive().optional(),

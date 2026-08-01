@@ -1,5 +1,5 @@
 import type { HarnessAdapter, HarnessStartOptions } from "../adapters/types.js";
-import { type SemanticEvidenceSnapshot } from "./evidence.js";
+import { type ProviderJsonEvidenceSnapshot } from "./evidence.js";
 import type { AwaitResult, SupervisionEvent, SupervisionEventSink, SupervisionMetadataSink, SupervisionPolicy, SupervisionScheduler, SupervisorInspection, WatchdogClassifier, WatchdogTelemetrySink } from "./types.js";
 export type SupervisorOptions = {
     readonly runId: string;
@@ -19,7 +19,7 @@ export declare class Supervisor {
     constructor(options: SupervisorOptions);
     inspect(): SupervisorInspection;
     isVouching(): boolean;
-    evidenceSnapshot(): SemanticEvidenceSnapshot | undefined;
+    evidenceSnapshot(): ProviderJsonEvidenceSnapshot | undefined;
     start(): Promise<void>;
     submit(text: string): Promise<void>;
     awaitEvent(afterSequence: number, deadlineMs: number, signal?: AbortSignal): Promise<AwaitResult>;

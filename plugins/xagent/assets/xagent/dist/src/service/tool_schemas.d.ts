@@ -18,9 +18,6 @@ export declare const SupervisionPolicySchema: z.ZodObject<{
     watchdog: z.ZodDefault<z.ZodObject<{
         inputLimitBytes: z.ZodOptional<z.ZodNumber>;
         outputLimitBytes: z.ZodOptional<z.ZodNumber>;
-        suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
-        repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
-        repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
         cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
         minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
         maximumCalls: z.ZodOptional<z.ZodNumber>;
@@ -28,9 +25,6 @@ export declare const SupervisionPolicySchema: z.ZodObject<{
         timeoutMs: z.ZodOptional<z.ZodNumber>;
         maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
     }, "strict", z.ZodTypeAny, {
-        suspicionWindowMs?: number | undefined;
-        repeatedToolThreshold?: number | undefined;
-        repeatedFailureThreshold?: number | undefined;
         inputLimitBytes?: number | undefined;
         cadenceMs?: number[] | undefined;
         minimumIntervalMs?: number | undefined;
@@ -40,9 +34,6 @@ export declare const SupervisionPolicySchema: z.ZodObject<{
         maxBudgetUsd?: number | undefined;
         confidenceFloor?: number | undefined;
     }, {
-        suspicionWindowMs?: number | undefined;
-        repeatedToolThreshold?: number | undefined;
-        repeatedFailureThreshold?: number | undefined;
         inputLimitBytes?: number | undefined;
         cadenceMs?: number[] | undefined;
         minimumIntervalMs?: number | undefined;
@@ -54,9 +45,6 @@ export declare const SupervisionPolicySchema: z.ZodObject<{
     }>>;
 }, "strict", z.ZodTypeAny, {
     watchdog: {
-        suspicionWindowMs?: number | undefined;
-        repeatedToolThreshold?: number | undefined;
-        repeatedFailureThreshold?: number | undefined;
         inputLimitBytes?: number | undefined;
         cadenceMs?: number[] | undefined;
         minimumIntervalMs?: number | undefined;
@@ -71,9 +59,6 @@ export declare const SupervisionPolicySchema: z.ZodObject<{
 }, {
     silenceTimeoutMs: number;
     watchdog?: {
-        suspicionWindowMs?: number | undefined;
-        repeatedToolThreshold?: number | undefined;
-        repeatedFailureThreshold?: number | undefined;
         inputLimitBytes?: number | undefined;
         cadenceMs?: number[] | undefined;
         minimumIntervalMs?: number | undefined;
@@ -104,9 +89,6 @@ export declare const ImplementerStartSchema: z.ZodObject<{
         watchdog: z.ZodDefault<z.ZodObject<{
             inputLimitBytes: z.ZodOptional<z.ZodNumber>;
             outputLimitBytes: z.ZodOptional<z.ZodNumber>;
-            suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
-            repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
-            repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
             cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
             minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
             maximumCalls: z.ZodOptional<z.ZodNumber>;
@@ -114,9 +96,6 @@ export declare const ImplementerStartSchema: z.ZodObject<{
             timeoutMs: z.ZodOptional<z.ZodNumber>;
             maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
         }, "strict", z.ZodTypeAny, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -126,9 +105,6 @@ export declare const ImplementerStartSchema: z.ZodObject<{
             maxBudgetUsd?: number | undefined;
             confidenceFloor?: number | undefined;
         }, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -140,9 +116,6 @@ export declare const ImplementerStartSchema: z.ZodObject<{
         }>>;
     }, "strict", z.ZodTypeAny, {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -157,9 +130,6 @@ export declare const ImplementerStartSchema: z.ZodObject<{
     }, {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -185,9 +155,6 @@ export declare const ImplementerStartSchema: z.ZodObject<{
     task: number;
     policy?: {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -216,9 +183,6 @@ export declare const ImplementerStartSchema: z.ZodObject<{
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -258,9 +222,6 @@ export declare const ReviewerStartObject: z.ZodObject<{
         watchdog: z.ZodDefault<z.ZodObject<{
             inputLimitBytes: z.ZodOptional<z.ZodNumber>;
             outputLimitBytes: z.ZodOptional<z.ZodNumber>;
-            suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
-            repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
-            repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
             cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
             minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
             maximumCalls: z.ZodOptional<z.ZodNumber>;
@@ -268,9 +229,6 @@ export declare const ReviewerStartObject: z.ZodObject<{
             timeoutMs: z.ZodOptional<z.ZodNumber>;
             maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
         }, "strict", z.ZodTypeAny, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -280,9 +238,6 @@ export declare const ReviewerStartObject: z.ZodObject<{
             maxBudgetUsd?: number | undefined;
             confidenceFloor?: number | undefined;
         }, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -294,9 +249,6 @@ export declare const ReviewerStartObject: z.ZodObject<{
         }>>;
     }, "strict", z.ZodTypeAny, {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -311,9 +263,6 @@ export declare const ReviewerStartObject: z.ZodObject<{
     }, {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -338,9 +287,6 @@ export declare const ReviewerStartObject: z.ZodObject<{
     head: string;
     policy?: {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -372,9 +318,6 @@ export declare const ReviewerStartObject: z.ZodObject<{
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -414,9 +357,6 @@ export declare const ReviewerStartSchema: z.ZodEffects<z.ZodObject<{
         watchdog: z.ZodDefault<z.ZodObject<{
             inputLimitBytes: z.ZodOptional<z.ZodNumber>;
             outputLimitBytes: z.ZodOptional<z.ZodNumber>;
-            suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
-            repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
-            repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
             cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
             minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
             maximumCalls: z.ZodOptional<z.ZodNumber>;
@@ -424,9 +364,6 @@ export declare const ReviewerStartSchema: z.ZodEffects<z.ZodObject<{
             timeoutMs: z.ZodOptional<z.ZodNumber>;
             maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
         }, "strict", z.ZodTypeAny, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -436,9 +373,6 @@ export declare const ReviewerStartSchema: z.ZodEffects<z.ZodObject<{
             maxBudgetUsd?: number | undefined;
             confidenceFloor?: number | undefined;
         }, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -450,9 +384,6 @@ export declare const ReviewerStartSchema: z.ZodEffects<z.ZodObject<{
         }>>;
     }, "strict", z.ZodTypeAny, {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -467,9 +398,6 @@ export declare const ReviewerStartSchema: z.ZodEffects<z.ZodObject<{
     }, {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -494,9 +422,6 @@ export declare const ReviewerStartSchema: z.ZodEffects<z.ZodObject<{
     head: string;
     policy?: {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -528,9 +453,6 @@ export declare const ReviewerStartSchema: z.ZodEffects<z.ZodObject<{
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -560,9 +482,6 @@ export declare const ReviewerStartSchema: z.ZodEffects<z.ZodObject<{
     head: string;
     policy?: {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -594,9 +513,6 @@ export declare const ReviewerStartSchema: z.ZodEffects<z.ZodObject<{
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -635,9 +551,6 @@ export declare const FixerStartSchema: z.ZodObject<{
         watchdog: z.ZodDefault<z.ZodObject<{
             inputLimitBytes: z.ZodOptional<z.ZodNumber>;
             outputLimitBytes: z.ZodOptional<z.ZodNumber>;
-            suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
-            repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
-            repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
             cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
             minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
             maximumCalls: z.ZodOptional<z.ZodNumber>;
@@ -645,9 +558,6 @@ export declare const FixerStartSchema: z.ZodObject<{
             timeoutMs: z.ZodOptional<z.ZodNumber>;
             maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
         }, "strict", z.ZodTypeAny, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -657,9 +567,6 @@ export declare const FixerStartSchema: z.ZodObject<{
             maxBudgetUsd?: number | undefined;
             confidenceFloor?: number | undefined;
         }, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -671,9 +578,6 @@ export declare const FixerStartSchema: z.ZodObject<{
         }>>;
     }, "strict", z.ZodTypeAny, {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -688,9 +592,6 @@ export declare const FixerStartSchema: z.ZodObject<{
     }, {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -719,9 +620,6 @@ export declare const FixerStartSchema: z.ZodObject<{
     round: number;
     policy?: {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -751,9 +649,6 @@ export declare const FixerStartSchema: z.ZodObject<{
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -789,9 +684,6 @@ export declare const ReReviewerStartSchema: z.ZodObject<{
         watchdog: z.ZodDefault<z.ZodObject<{
             inputLimitBytes: z.ZodOptional<z.ZodNumber>;
             outputLimitBytes: z.ZodOptional<z.ZodNumber>;
-            suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
-            repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
-            repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
             cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
             minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
             maximumCalls: z.ZodOptional<z.ZodNumber>;
@@ -799,9 +691,6 @@ export declare const ReReviewerStartSchema: z.ZodObject<{
             timeoutMs: z.ZodOptional<z.ZodNumber>;
             maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
         }, "strict", z.ZodTypeAny, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -811,9 +700,6 @@ export declare const ReReviewerStartSchema: z.ZodObject<{
             maxBudgetUsd?: number | undefined;
             confidenceFloor?: number | undefined;
         }, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -825,9 +711,6 @@ export declare const ReReviewerStartSchema: z.ZodObject<{
         }>>;
     }, "strict", z.ZodTypeAny, {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -842,9 +725,6 @@ export declare const ReReviewerStartSchema: z.ZodObject<{
     }, {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -873,9 +753,6 @@ export declare const ReReviewerStartSchema: z.ZodObject<{
     round: number;
     policy?: {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -906,9 +783,6 @@ export declare const ReReviewerStartSchema: z.ZodObject<{
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -942,9 +816,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         watchdog: z.ZodDefault<z.ZodObject<{
             inputLimitBytes: z.ZodOptional<z.ZodNumber>;
             outputLimitBytes: z.ZodOptional<z.ZodNumber>;
-            suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
-            repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
-            repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
             cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
             minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
             maximumCalls: z.ZodOptional<z.ZodNumber>;
@@ -952,9 +823,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
             timeoutMs: z.ZodOptional<z.ZodNumber>;
             maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
         }, "strict", z.ZodTypeAny, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -964,9 +832,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
             maxBudgetUsd?: number | undefined;
             confidenceFloor?: number | undefined;
         }, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -978,9 +843,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         }>>;
     }, "strict", z.ZodTypeAny, {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -995,9 +857,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     }, {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1023,9 +882,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     task: number;
     policy?: {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1054,9 +910,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1091,9 +944,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         watchdog: z.ZodDefault<z.ZodObject<{
             inputLimitBytes: z.ZodOptional<z.ZodNumber>;
             outputLimitBytes: z.ZodOptional<z.ZodNumber>;
-            suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
-            repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
-            repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
             cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
             minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
             maximumCalls: z.ZodOptional<z.ZodNumber>;
@@ -1101,9 +951,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
             timeoutMs: z.ZodOptional<z.ZodNumber>;
             maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
         }, "strict", z.ZodTypeAny, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1113,9 +960,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
             maxBudgetUsd?: number | undefined;
             confidenceFloor?: number | undefined;
         }, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1127,9 +971,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         }>>;
     }, "strict", z.ZodTypeAny, {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1144,9 +985,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     }, {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1171,9 +1009,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     head: string;
     policy?: {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1205,9 +1040,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1245,9 +1077,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         watchdog: z.ZodDefault<z.ZodObject<{
             inputLimitBytes: z.ZodOptional<z.ZodNumber>;
             outputLimitBytes: z.ZodOptional<z.ZodNumber>;
-            suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
-            repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
-            repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
             cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
             minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
             maximumCalls: z.ZodOptional<z.ZodNumber>;
@@ -1255,9 +1084,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
             timeoutMs: z.ZodOptional<z.ZodNumber>;
             maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
         }, "strict", z.ZodTypeAny, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1267,9 +1093,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
             maxBudgetUsd?: number | undefined;
             confidenceFloor?: number | undefined;
         }, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1281,9 +1104,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         }>>;
     }, "strict", z.ZodTypeAny, {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1298,9 +1118,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     }, {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1329,9 +1146,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     round: number;
     policy?: {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1361,9 +1175,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1398,9 +1209,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         watchdog: z.ZodDefault<z.ZodObject<{
             inputLimitBytes: z.ZodOptional<z.ZodNumber>;
             outputLimitBytes: z.ZodOptional<z.ZodNumber>;
-            suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
-            repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
-            repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
             cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
             minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
             maximumCalls: z.ZodOptional<z.ZodNumber>;
@@ -1408,9 +1216,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
             timeoutMs: z.ZodOptional<z.ZodNumber>;
             maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
         }, "strict", z.ZodTypeAny, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1420,9 +1225,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
             maxBudgetUsd?: number | undefined;
             confidenceFloor?: number | undefined;
         }, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1434,9 +1236,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
         }>>;
     }, "strict", z.ZodTypeAny, {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1451,9 +1250,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     }, {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1482,9 +1278,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     round: number;
     policy?: {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1515,9 +1308,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1545,9 +1335,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     task: number;
     policy?: {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1574,9 +1361,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     head: string;
     policy?: {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1611,9 +1395,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     round: number;
     policy?: {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1643,9 +1424,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     round: number;
     policy?: {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1674,9 +1452,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1703,9 +1478,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1739,9 +1511,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1771,9 +1540,6 @@ export declare const XagentSddStartInputSchema: z.ZodEffects<z.ZodDiscriminatedU
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1919,9 +1685,6 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
         watchdog: z.ZodDefault<z.ZodObject<{
             inputLimitBytes: z.ZodOptional<z.ZodNumber>;
             outputLimitBytes: z.ZodOptional<z.ZodNumber>;
-            suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
-            repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
-            repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
             cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
             minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
             maximumCalls: z.ZodOptional<z.ZodNumber>;
@@ -1929,9 +1692,6 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
             timeoutMs: z.ZodOptional<z.ZodNumber>;
             maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
         }, "strict", z.ZodTypeAny, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1941,9 +1701,6 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
             maxBudgetUsd?: number | undefined;
             confidenceFloor?: number | undefined;
         }, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1955,9 +1712,6 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
         }>>;
     }, "strict", z.ZodTypeAny, {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -1972,9 +1726,6 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
     }, {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -2016,9 +1767,6 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
         watchdog: z.ZodDefault<z.ZodObject<{
             inputLimitBytes: z.ZodOptional<z.ZodNumber>;
             outputLimitBytes: z.ZodOptional<z.ZodNumber>;
-            suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
-            repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
-            repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
             cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
             minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
             maximumCalls: z.ZodOptional<z.ZodNumber>;
@@ -2026,9 +1774,6 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
             timeoutMs: z.ZodOptional<z.ZodNumber>;
             maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
         }, "strict", z.ZodTypeAny, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -2038,9 +1783,6 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
             maxBudgetUsd?: number | undefined;
             confidenceFloor?: number | undefined;
         }, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -2052,9 +1794,6 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
         }>>;
     }, "strict", z.ZodTypeAny, {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -2069,9 +1808,6 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
     }, {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -2113,9 +1849,6 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
         watchdog: z.ZodDefault<z.ZodObject<{
             inputLimitBytes: z.ZodOptional<z.ZodNumber>;
             outputLimitBytes: z.ZodOptional<z.ZodNumber>;
-            suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
-            repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
-            repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
             cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
             minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
             maximumCalls: z.ZodOptional<z.ZodNumber>;
@@ -2123,9 +1856,6 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
             timeoutMs: z.ZodOptional<z.ZodNumber>;
             maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
         }, "strict", z.ZodTypeAny, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -2135,9 +1865,6 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
             maxBudgetUsd?: number | undefined;
             confidenceFloor?: number | undefined;
         }, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -2149,9 +1876,6 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
         }>>;
     }, "strict", z.ZodTypeAny, {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -2166,9 +1890,6 @@ export declare const XagentSddStartAdvertisedSchema: z.ZodObject<{
     }, {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -2253,9 +1974,6 @@ export declare const XagentStartInputSchema: z.ZodObject<{
         watchdog: z.ZodDefault<z.ZodObject<{
             inputLimitBytes: z.ZodOptional<z.ZodNumber>;
             outputLimitBytes: z.ZodOptional<z.ZodNumber>;
-            suspicionWindowMs: z.ZodOptional<z.ZodNumber>;
-            repeatedToolThreshold: z.ZodOptional<z.ZodNumber>;
-            repeatedFailureThreshold: z.ZodOptional<z.ZodNumber>;
             cadenceMs: z.ZodOptional<z.ZodArray<z.ZodNumber, "many">>;
             minimumIntervalMs: z.ZodOptional<z.ZodNumber>;
             maximumCalls: z.ZodOptional<z.ZodNumber>;
@@ -2263,9 +1981,6 @@ export declare const XagentStartInputSchema: z.ZodObject<{
             timeoutMs: z.ZodOptional<z.ZodNumber>;
             maxBudgetUsd: z.ZodOptional<z.ZodNumber>;
         }, "strict", z.ZodTypeAny, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -2275,9 +1990,6 @@ export declare const XagentStartInputSchema: z.ZodObject<{
             maxBudgetUsd?: number | undefined;
             confidenceFloor?: number | undefined;
         }, {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -2289,9 +2001,6 @@ export declare const XagentStartInputSchema: z.ZodObject<{
         }>>;
     }, "strict", z.ZodTypeAny, {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -2306,9 +2015,6 @@ export declare const XagentStartInputSchema: z.ZodObject<{
     }, {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -2330,9 +2036,6 @@ export declare const XagentStartInputSchema: z.ZodObject<{
     provider_thread_id?: string | undefined;
     policy?: {
         watchdog: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;
@@ -2357,9 +2060,6 @@ export declare const XagentStartInputSchema: z.ZodObject<{
     policy?: {
         silenceTimeoutMs: number;
         watchdog?: {
-            suspicionWindowMs?: number | undefined;
-            repeatedToolThreshold?: number | undefined;
-            repeatedFailureThreshold?: number | undefined;
             inputLimitBytes?: number | undefined;
             cadenceMs?: number[] | undefined;
             minimumIntervalMs?: number | undefined;

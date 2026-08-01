@@ -1,4 +1,5 @@
 import type { AdapterEvent, AdapterTurnContext, HarnessAdapter, HarnessCapabilities, HarnessSession, HarnessStartOptions, OwnedProcessIdentity } from "./types.js";
+import type { HarnessName } from "../events.js";
 export type FakeHarnessAdapterOptions = {
     readonly includeToolEvents?: boolean;
     readonly includeRawProvider?: boolean;
@@ -9,7 +10,7 @@ export type FakeHarnessAdapterOptions = {
 };
 export declare class FakeHarnessAdapter implements HarnessAdapter {
     options: FakeHarnessAdapterOptions;
-    readonly harness = "codex";
+    readonly harness: HarnessName;
     readonly capabilities: HarnessCapabilities;
     readonly submittedTexts: string[];
     readonly submittedContexts: AdapterTurnContext[];
