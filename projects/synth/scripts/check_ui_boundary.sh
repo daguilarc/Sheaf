@@ -93,9 +93,11 @@ BACKEND_EXCLUDED_FROM_PRODUCER_SCAN=(
     '-g!RuntimePagesJuce.hpp'
 )
 
-# `browser/src/*.mjs` is deliberately out of the backend set: those are build and
-# publish tooling rather than shipped runtime modules, and `check:generic-runtime`
-# is the scan that holds them to sbap-4's generic-source rule.
+# The NINE NAMED build and publish scripts above are out of the backend set:
+# they are tooling rather than shipped runtime modules, and `check:generic-runtime`
+# is the scan that holds them to sbap-4's generic-source rule. Any OTHER `.mjs`
+# under `browser/src` is discovered and scanned like any backend file — that is
+# the point of excluding by name rather than by extension.
 discover_backend_sources() {
     # macOS still ships bash 3.2, so no `mapfile` and no array element prefixing.
     rg --files juce browser/src \
