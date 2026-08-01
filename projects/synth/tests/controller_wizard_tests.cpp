@@ -338,6 +338,51 @@ TEST_CASE(MfTwisterConfigFormPlacesSixButtonsInTwoColumnsOfThree) {
     REQUIRE_TRUE(tree.nodes.front().bounds.height >= message[2].y + message[2].height);
 }
 
+// Task 7.1 replaced every container extent this form used to compute with
+// `Extent::Intrinsic()`. These are the numbers that arithmetic produced, pinned
+// as literals so the swap is provably a no-op on screen rather than a claim
+// that it is one -- and so a later change to a declared leaf extent has to be a
+// decision rather than a silent reflow of the product owner's signed-off
+// appearance.
+TEST_CASE(MfTwisterConfigFormResolvesItsExtentsFromItsDeclarationsAlone) {
+    synth::MfTwisterConfigForm form;
+    const synth::ui::NodeTree tree = form.BuildTree();
+
+    const synth::ui::Node* body = FindNodeById(tree, "controller-wizard.twister.body");
+    REQUIRE_TRUE(body != nullptr);
+    REQUIRE_TRUE(body->bounds.width == 684.0f);
+    REQUIRE_TRUE(body->bounds.height == 294.0f);
+
+    const synth::ui::Node* columns = FindNodeById(tree, "controller-wizard.twister.columns");
+    REQUIRE_TRUE(columns != nullptr);
+    REQUIRE_TRUE(columns->bounds.width == 668.0f);
+    REQUIRE_TRUE(columns->bounds.height == 244.0f);
+
+    for (const char* columnId : {"controller-wizard.twister.column.0",
+                                 "controller-wizard.twister.column.1"}) {
+        const synth::ui::Node* column = FindNodeById(tree, columnId);
+        REQUIRE_TRUE(column != nullptr);
+        REQUIRE_TRUE(column->bounds.width == 326.0f);
+        REQUIRE_TRUE(column->bounds.height == 244.0f);
+    }
+
+    const synth::ui::Node* slotRow = FindNodeById(tree, "controller-wizard.twister.slot");
+    REQUIRE_TRUE(slotRow != nullptr);
+    REQUIRE_TRUE(slotRow->bounds.width == 258.0f);
+
+    const synth::ui::Node* fields = FindNodeById(tree, "controller-wizard.twister.button.0.fields");
+    REQUIRE_TRUE(fields != nullptr);
+    REQUIRE_TRUE(fields->bounds.width == 248.0f);
+    REQUIRE_TRUE(fields->bounds.height == 46.0f);
+
+    // The standalone preview surface is a surface the form is rendered INTO,
+    // never a size it derives: the body keeps its own measurements inside it,
+    // and the leftover is the preview's, not the form's.
+    REQUIRE_TRUE(tree.nodes.front().bounds.width == 1024.0f);
+    REQUIRE_TRUE(tree.nodes.front().bounds.height == 768.0f);
+    REQUIRE_TRUE(body->bounds.width < tree.nodes.front().bounds.width);
+}
+
 TEST_CASE(MfTwisterConfigFormBuildsRootlessSubtreeForWizardHosts) {
     synth::MfTwisterConfigForm form;
     const synth::ui::Subtree subtree = form.BuildSubtree();

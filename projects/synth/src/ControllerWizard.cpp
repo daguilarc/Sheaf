@@ -65,10 +65,10 @@ inline constexpr float kFieldGap = 8.0f;
 inline constexpr float kRowGap = 6.0f;
 inline constexpr float kSlotWidth = 160.0f;
 inline constexpr float kSlotLabelWidth = 90.0f;
-inline constexpr float kFormGridLabelGap = 8.0f;
 inline constexpr float kButtonLabelWidth = 70.0f;
 inline constexpr float kFieldCaptionHeight = 14.0f;
 inline constexpr float kFieldCaptionGap = 4.0f;
+// DERIVED, and deliberately still here. See the note below the table.
 inline constexpr float kFieldStackHeight = kFieldCaptionHeight + kFieldCaptionGap + kControlHeight;
 // Wide enough for the longest message label the choice catalog offers. At 150
 // the browser's `<select>` reported a 156px content width in a 150px box, so
@@ -76,7 +76,9 @@ inline constexpr float kFieldStackHeight = kFieldCaptionHeight + kFieldCaptionGa
 // truncated -- found the first time the text-fit criterion was extended to
 // ComboBox and TextField, which render their value text in the element the
 // backend sized. 160 matches `kSlotWidth` rather than being a fresh magic
-// number, and task 7.1 replaces the whole table with library reservations.
+// number. It survives task 7.1 as a DECLARED extent, which sru-54's resolution
+// explicitly does not ban -- what 7.1 removed is the arithmetic that derived
+// container extents from constants like this one.
 inline constexpr float kMessageWidth = 160.0f;
 inline constexpr float kArgumentWidth = 80.0f;
 inline constexpr float kColumnHeaderHeight = 22.0f;
@@ -87,22 +89,45 @@ inline constexpr std::size_t kRowsPerColumn = 3;
 // Each button row is: side-button name, message dropdown, argument field. No
 // backend paints a container node's own label, so the row and column names are
 // rendered nodes rather than Row/Section labels.
-inline constexpr float kMessageX = kButtonLabelWidth + kFieldGap;
-inline constexpr float kArgumentX = kMessageX + kMessageWidth + kFieldGap;
-inline constexpr float kColumnWidth = kArgumentX + kArgumentWidth;
-inline constexpr float kSlotRowWidth = kSlotLabelWidth + kFormGridLabelGap + kSlotWidth;
-inline constexpr float kButtonFieldsWidth = kMessageWidth + kFieldGap + kArgumentWidth;
+//
+// The two DERIVED constants below, and why they survived task 7.1's cleanup.
+//
+// Every container extent this form used to compute -- the slot row's width, the
+// button fields' width and height, a column's width and height, the form's own
+// width and height, the top of the columns -- is gone, replaced by
+// `Extent::Intrinsic()`. The resolver sums the same children and reaches the
+// same numbers, so the form resolves byte-identically without the producer
+// restating any of it.
+//
+// What could not follow is the inline argument error. It is an sru-44
+// out-of-flow node, which is a sanctioned positioning mode, but its declared
+// position is derived from its siblings' extents and its row reserves a fixed
+// band for it. Making it an ordinary in-flow child removes both derivations at
+// once -- and cannot be done with the library as it stands. An in-flow node's
+// intrinsic cross extent propagates into every ancestor's, and the message
+// "Argument must be a non-negative base-10 integer" reserves 424px against a
+// 326px column, so an intrinsic column would widen by a third the moment a
+// validation error appeared, shoving the second column sideways. Capping it
+// with `Extent::Max` does not help: the clamp applies to the resolved extent as
+// well as the intrinsic one, so the cap that keeps the column steady is the
+// same cap that truncates the message. What is missing is a way for a producer
+// to say "this text does not drive my container's intrinsic extent" -- an
+// intrinsic-only cap, or text wrapping. That is a library facility, and adding
+// one is outside this change; it is reported as a design gap instead.
+inline constexpr float kColumnWidth =
+    kButtonLabelWidth + kFieldGap + kMessageWidth + kFieldGap + kArgumentWidth;
 inline constexpr float kButtonRowHeight = kFieldStackHeight + kErrorGap + kErrorHeight;
-inline constexpr float kColumnsTop = kMargin + kControlHeight + kErrorGap + kErrorHeight + kRowGap;
-// A heading plus one row per button: four stacked children, and therefore
-// THREE gaps between them. Counting only two left the last button row's error
-// band six pixels outside the column, where node clipping cut it off in both
-// backends without a word until sru-54 made an unabsorbed overflow a failure.
-inline constexpr float kColumnHeight =
-    kColumnHeaderHeight + kRowsPerColumn * kButtonRowHeight + kRowsPerColumn * kRowGap;
-inline constexpr float kFormWidth =
-    kMargin * 2.0f + kColumnCount * kColumnWidth + (kColumnCount - 1) * kColumnGap;
-inline constexpr float kFormHeight = kColumnsTop + kColumnHeight + kMargin;
+
+// A standalone preview surface for `BuildTree()`, which the `ui::Surface`
+// interface requires and only the form's own tests use; hosts splice
+// `BuildSubtree()` instead. It is a surface the form is rendered INTO, not a
+// size the form derives: every extent inside is intrinsic, so the body keeps
+// its own measurements whatever this is, and a form that outgrew it would fail
+// sru-54's gate loudly rather than clip. The library has no "resolve to the
+// root's intrinsic extent" entry point, which is why a number appears here at
+// all.
+inline constexpr float kPreviewSurfaceWidth = 1024.0f;
+inline constexpr float kPreviewSurfaceHeight = 768.0f;
 
 }  // namespace TwisterFormLayout
 
@@ -393,9 +418,12 @@ ui::Subtree MfTwisterConfigForm::BuildSubtree() {
         layout.gap = Layout::kFieldGap;
         return layout;
     };
-    const auto fixedColumn = [](float width) {
+    // The column is as wide as the button rows it stacks -- the resolver sums
+    // them. It used to declare `kColumnWidth` and the constant had to be kept
+    // in step with the fields by hand.
+    const auto formColumn = [] {
         ui::LayoutOptions layout;
-        layout.main = ui::Extent::Px(width);
+        layout.main = ui::Extent::Intrinsic();
         layout.cross = ui::Extent::Weight(1.0f);
         layout.padding = 0.0f;
         layout.gap = Layout::kRowGap;
@@ -437,29 +465,29 @@ ui::Subtree MfTwisterConfigForm::BuildSubtree() {
     };
     ui::LayoutOptions body;
     body.main = ui::Extent::Intrinsic();
-    body.cross = ui::Extent::Px(Layout::kFormWidth);
+    body.cross = ui::Extent::Intrinsic();
     body.padding = Layout::kMargin;
     body.gap = Layout::kRowGap;
     body.formGrid = true;
 
     ui::LayoutOptions slotRow = fixedRow(Layout::kControlHeight);
-    slotRow.cross = ui::Extent::Px(Layout::kSlotRowWidth);
+    slotRow.cross = ui::Extent::Intrinsic();
 
     ui::LayoutOptions columnsRow;
-    columnsRow.main = ui::Extent::Px(Layout::kColumnHeight);
-    columnsRow.cross = ui::Extent::Px(Layout::kFormWidth - Layout::kMargin * 2.0f);
+    columnsRow.main = ui::Extent::Intrinsic();
+    columnsRow.cross = ui::Extent::Intrinsic();
     columnsRow.padding = 0.0f;
     columnsRow.gap = Layout::kColumnGap;
 
     ui::LayoutOptions columnsWrapper;
-    columnsWrapper.main = ui::Extent::Px(Layout::kColumnHeight);
-    columnsWrapper.cross = ui::Extent::Px(Layout::kFormWidth - Layout::kMargin * 2.0f);
+    columnsWrapper.main = ui::Extent::Intrinsic();
+    columnsWrapper.cross = ui::Extent::Intrinsic();
     columnsWrapper.padding = 0.0f;
     columnsWrapper.gap = 0.0f;
 
     ui::LayoutOptions buttonFieldsRow;
-    buttonFieldsRow.main = ui::Extent::Px(Layout::kButtonFieldsWidth);
-    buttonFieldsRow.cross = ui::Extent::Px(Layout::kFieldStackHeight);
+    buttonFieldsRow.main = ui::Extent::Intrinsic();
+    buttonFieldsRow.cross = ui::Extent::Intrinsic();
     buttonFieldsRow.padding = 0.0f;
     buttonFieldsRow.gap = Layout::kFieldGap;
 
@@ -495,7 +523,7 @@ ui::Subtree MfTwisterConfigForm::BuildSubtree() {
                                              columns.Section(
                                                  std::string(kMfTwisterFormRootId) + ".column." +
                                                      std::to_string(column),
-                                                 fixedColumn(Layout::kColumnWidth),
+                                                 formColumn(),
                                                  [&](ui::Builder& columnBuilder) {
                                                      columnBuilder.Label(
                                                          std::string(kMfTwisterFormRootId) +
@@ -629,11 +657,12 @@ ui::Subtree MfTwisterConfigForm::BuildSubtree() {
 
 ui::NodeTree MfTwisterConfigForm::BuildTree() {
     namespace Layout = TwisterFormLayout;
+    const ui::Bounds preview{
+        0.0f, 0.0f, Layout::kPreviewSurfaceWidth, Layout::kPreviewSurfaceHeight};
     ui::Builder builder;
-    builder.Root(std::string(kMfTwisterFormRootId),
-                 {0.0f, 0.0f, Layout::kFormWidth, Layout::kFormHeight});
+    builder.Root(std::string(kMfTwisterFormRootId), preview);
     builder.Splice(BuildSubtree());
-    return builder.Build({0.0f, 0.0f, Layout::kFormWidth, Layout::kFormHeight});
+    return builder.Build(preview);
 }
 
 void MfTwisterConfigForm::SetActionHandler(ActionHandler handler) {
