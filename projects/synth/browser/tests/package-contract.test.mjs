@@ -83,7 +83,7 @@ test("assembles identical emitted files into byte-for-byte stable immutable pack
       abiVersion: one.browser.abiVersion,
       uiProtocolVersion: one.browser.uiProtocolVersion,
       runtimeConfigVersion: one.browser.runtimeConfigVersion,
-    }, { abiVersion: 2, uiProtocolVersion: 2, runtimeConfigVersion: 1 });
+    }, { abiVersion: 3, uiProtocolVersion: 2, runtimeConfigVersion: 1 });
     assert.equal(one.browser.entry, `packages/test-app/${one.buildId}/app.js`);
     assert.deepEqual(one.browser.files.map(({ path: filePath }) => filePath), [
       `packages/test-app/${one.buildId}/app.js`,

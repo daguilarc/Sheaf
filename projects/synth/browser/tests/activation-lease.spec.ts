@@ -11,7 +11,7 @@ const launcherApp = {
   category: "Instrument",
   buildId: "portable-app-build-1",
   browser: {
-    abiVersion: 2,
+    abiVersion: 3,
     uiProtocolVersion: 2,
     runtimeConfigVersion: 1,
     entry: "packages/portable-app/portable-app-build-1/app.js",
@@ -231,7 +231,7 @@ test("launcher acquires once before package work and forwards one materialized p
   expect(result.events).toEqual(["lease:acquire", "package:begin", "package:ready", "runtime:install"]);
   expect(result.moduleIsMaterialized).toBe(true);
   expect(result.leasePresent).toBe(true);
-  expect(result.versions).toEqual({ abiVersion: 2, uiProtocolVersion: 2, runtimeConfigVersion: 1 });
+  expect(result.versions).toEqual({ abiVersion: 3, uiProtocolVersion: 2, runtimeConfigVersion: 1 });
   expect(result.launcherPresent).toBe(true);
 });
 

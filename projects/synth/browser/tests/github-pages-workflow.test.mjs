@@ -65,7 +65,7 @@ async function deployedFixture(t, options = {}) {
       category: "Instrument",
       buildId,
       browser: {
-        abiVersion: 2,
+        abiVersion: 3,
         uiProtocolVersion: 2,
         runtimeConfigVersion: 1,
         entry: files[0].path,

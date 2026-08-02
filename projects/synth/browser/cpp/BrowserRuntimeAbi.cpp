@@ -13,7 +13,7 @@ synth_browser::RuntimeAbi* RuntimeFor(synth_browser_runtime* handle)
 
 extern "C" std::uint32_t synth_browser_abi_version()
 {
-    return 2;
+    return 3;
 }
 
 // Every Wasm package exports this independently of the shell bundle, so it must
@@ -47,6 +47,11 @@ extern "C" std::size_t synth_browser_audio_output_channels(synth_browser_runtime
     return RuntimeFor(runtime) == nullptr ? 0 : RuntimeFor(runtime)->AudioOutputChannels();
 }
 
+extern "C" std::size_t synth_browser_audio_input_channels(synth_browser_runtime* runtime)
+{
+    return RuntimeFor(runtime) == nullptr ? 0 : RuntimeFor(runtime)->AudioInputChannels();
+}
+
 extern "C" int synth_browser_prepare(synth_browser_runtime* runtime, double sampleRate, std::size_t blockSize)
 {
     return RuntimeFor(runtime) == nullptr ? -1 : RuntimeFor(runtime)->Prepare(sampleRate, blockSize);
@@ -65,6 +70,29 @@ extern "C" int synth_browser_start_audio_worklet(synth_browser_runtime* runtime,
     return RuntimeFor(runtime) == nullptr
                ? -1
                : RuntimeFor(runtime)->StartAudioWorklet(audioContextHandle);
+}
+
+extern "C" int synth_browser_set_audio_input_source(synth_browser_runtime* runtime,
+                                                     std::uint32_t sourceHandle,
+                                                     std::uint32_t physicalChannels,
+                                                     std::uint32_t statusCode)
+{
+    return RuntimeFor(runtime) == nullptr
+               ? -1
+               : RuntimeFor(runtime)->SetAudioInputSource(sourceHandle, physicalChannels, statusCode);
+}
+
+extern "C" int synth_browser_clear_audio_input_source(synth_browser_runtime* runtime,
+                                                       std::uint32_t statusCode)
+{
+    return RuntimeFor(runtime) == nullptr
+               ? -1
+               : RuntimeFor(runtime)->ClearAudioInputSource(statusCode);
+}
+
+extern "C" int synth_browser_consume_audio_input_retry(synth_browser_runtime* runtime)
+{
+    return RuntimeFor(runtime) == nullptr ? 0 : RuntimeFor(runtime)->ConsumeAudioInputRetry();
 }
 
 extern "C" int synth_browser_set_timestamp_epoch_offset(

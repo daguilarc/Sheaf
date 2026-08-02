@@ -15,7 +15,7 @@ The catalog contract and publisher procedures are in
 One catalog-selection gesture creates and resumes the host `AudioContext`
 before package work begins. Once the verified package module is initialized,
 the generic facade registers that *same* context through the module-local
-`emscriptenRegisterAudioObject` export and invokes the ABI-v2 native
+`emscriptenRegisterAudioObject` export and invokes the ABI-v3 native
 `_synth_browser_start_audio_worklet` export. Native Emscripten
 AudioWorklet callbacks execute the C++ `Runtime<App>::Process` path against
 the instance already used for UI, MIDI, patches, and controllers.
@@ -45,8 +45,9 @@ grow memory.
   `text/javascript`, and serve publisher catalog/package responses with
   `Access-Control-Allow-Origin: *`. Persistence is browser IDBFS/IndexedDB
   under `/data`.
-- Browser audio exposes only `System Default` (`system_default`). Named output
-  selection and audio input are unsupported.
+- Browser audio exposes only `System Default` (`system_default`) for output.
+  Named output selection remains unsupported; native audio input is supplied by
+  the browser AudioWorklet ABI.
 
 ## Build and test
 

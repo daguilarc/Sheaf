@@ -27,6 +27,8 @@ const EXPORTED_FUNCTIONS = [
   "_synth_browser_runtime_config_version", "_synth_browser_create", "_synth_browser_initialize",
   "_synth_browser_audio_output_channels", "_synth_browser_prepare", "_synth_browser_process",
   "_synth_browser_start_audio_worklet", "_synth_browser_set_timestamp_epoch_offset",
+  "_synth_browser_audio_input_channels", "_synth_browser_set_audio_input_source",
+  "_synth_browser_clear_audio_input_source", "_synth_browser_consume_audio_input_retry",
   "_synth_browser_audio_worklet_block_count",
   "_synth_browser_audio_worklet_peak_microunits", "_synth_browser_audio_worklet_deadline_microunits",
   "_synth_browser_message_tick", "_synth_browser_build_ui_frame", "_synth_browser_dispatch_action",

@@ -30,6 +30,120 @@ using EMSCRIPTEN_WEBAUDIO_T = int;
 
 namespace synth_browser {
 
+static constexpr std::size_t kMaxBrowserInputChannels = 32;
+static constexpr std::size_t kMaxBrowserOutputChannels = 32;
+
+enum class BrowserAudioInputStatus : std::uint32_t {
+    NotRequested,
+    Requesting,
+    Online,
+    PermissionDenied,
+    ApiUnavailable,
+    PrerequisiteBlocked,
+    StreamEnded,
+    ChannelCountUnreported
+};
+
+struct BrowserAudioSampleFrameDescriptor {
+    int numberOfChannels = 0;
+    int samplesPerChannel = 0;
+    float* data = nullptr;
+};
+
+inline bool BrowserAudioInputStatusCodeValid(std::uint32_t statusCode) noexcept
+{
+    switch (static_cast<BrowserAudioInputStatus>(statusCode)) {
+        case BrowserAudioInputStatus::NotRequested:
+        case BrowserAudioInputStatus::Requesting:
+        case BrowserAudioInputStatus::Online:
+        case BrowserAudioInputStatus::PermissionDenied:
+        case BrowserAudioInputStatus::ApiUnavailable:
+        case BrowserAudioInputStatus::PrerequisiteBlocked:
+        case BrowserAudioInputStatus::StreamEnded:
+        case BrowserAudioInputStatus::ChannelCountUnreported:
+            return true;
+    }
+    return false;
+}
+
+inline void SilenceBrowserAudioOutput(BrowserAudioSampleFrameDescriptor* outputs,
+                                      int numOutputs) noexcept
+{
+    if (numOutputs <= 0 || outputs == nullptr) {
+        return;
+    }
+    for (int outputIndex = 0; outputIndex < numOutputs; ++outputIndex) {
+        BrowserAudioSampleFrameDescriptor& output = outputs[outputIndex];
+        if (output.data == nullptr || output.numberOfChannels <= 0 ||
+            output.samplesPerChannel <= 0) {
+            continue;
+        }
+        std::fill_n(output.data,
+                    static_cast<std::size_t>(output.numberOfChannels) *
+                        static_cast<std::size_t>(output.samplesPerChannel),
+                    0.0f);
+    }
+}
+
+template <typename ProcessBlock>
+bool AdaptBrowserAudioWorkletPlanarBlock(
+    int numInputs,
+    const BrowserAudioSampleFrameDescriptor* inputs,
+    int numOutputs,
+    BrowserAudioSampleFrameDescriptor* outputs,
+    std::size_t requestedInputChannels,
+    std::size_t publishedPhysicalInputChannels,
+    std::size_t expectedOutputChannels,
+    std::uint64_t timestampMicros,
+    ProcessBlock&& processBlock)
+{
+    if (numOutputs <= 0 || outputs == nullptr || outputs[0].data == nullptr) {
+        return false;
+    }
+    BrowserAudioSampleFrameDescriptor& output = outputs[0];
+    if (output.numberOfChannels <= 0 || output.samplesPerChannel <= 0 ||
+        expectedOutputChannels == 0 || expectedOutputChannels > kMaxBrowserOutputChannels ||
+        static_cast<std::size_t>(output.numberOfChannels) != expectedOutputChannels) {
+        SilenceBrowserAudioOutput(outputs, numOutputs);
+        return false;
+    }
+
+    std::array<float*, kMaxBrowserOutputChannels> outputPointers{};
+    for (int channel = 0; channel < output.numberOfChannels; ++channel) {
+        outputPointers[static_cast<std::size_t>(channel)] =
+            output.data + (channel * output.samplesPerChannel);
+    }
+
+    std::array<const float*, kMaxBrowserInputChannels> inputPointers{};
+    const std::size_t requestedInputs =
+        std::min(requestedInputChannels, kMaxBrowserInputChannels);
+    const std::size_t physicalInputs =
+        std::min(publishedPhysicalInputChannels, kMaxBrowserInputChannels);
+    std::size_t inputBusChannels = 0;
+    if (numInputs > 0 && inputs != nullptr && inputs[0].data != nullptr &&
+        inputs[0].numberOfChannels > 0 &&
+        inputs[0].samplesPerChannel >= output.samplesPerChannel) {
+        inputBusChannels = std::min(static_cast<std::size_t>(inputs[0].numberOfChannels),
+                                    kMaxBrowserInputChannels);
+    }
+    const std::size_t activeInputs =
+        std::min(std::min(inputBusChannels, physicalInputs), requestedInputs);
+    for (std::size_t channel = 0; channel < activeInputs; ++channel) {
+        inputPointers[channel] = inputs[0].data +
+                                 (channel * static_cast<std::size_t>(inputs[0].samplesPerChannel));
+    }
+
+    synth::AudioBlock block;
+    block.inputs = activeInputs == 0 ? nullptr : inputPointers.data();
+    block.outputs = outputPointers.data();
+    block.numInputChannels = static_cast<int>(activeInputs);
+    block.numOutputChannels = output.numberOfChannels;
+    block.numFrames = static_cast<std::size_t>(output.samplesPerChannel);
+    block.numRequestedInputChannels = static_cast<int>(requestedInputs);
+    std::forward<ProcessBlock>(processBlock)(block, timestampMicros);
+    return true;
+}
+
 class AudioWorkletDeadlineMeter final {
 public:
     void RecordCallbackMicros(std::uint64_t elapsedMicros, std::uint64_t blockMicros)
@@ -136,6 +250,7 @@ public:
 
     bool IsRunning() const { return started_.load(std::memory_order_acquire); }
     std::size_t AudioOutputChannels() const { return engine_.Config().numAudioOutputs; }
+    std::size_t AudioInputChannels() const { return requestedAudioInputChannels_; }
     bool RetainAfterStopForAudioWorklet() const
     {
 #ifdef __EMSCRIPTEN__
@@ -168,8 +283,15 @@ public:
 
     bool StartAudioWorklet(EMSCRIPTEN_WEBAUDIO_T suppliedContext = 0)
     {
-#ifdef __EMSCRIPTEN__
         RequireStarted();
+        if (!AudioWorkletConfigurationSupported()) {
+            return false;
+        }
+        if (AudioInputChannels() > 0 &&
+            audioInputSourceHandle_.load(std::memory_order_acquire) == 0) {
+            audioInputRetryPending_.store(true, std::memory_order_release);
+        }
+#ifdef __EMSCRIPTEN__
         if (audioContext_ != 0) {
             return true;
         }
@@ -217,6 +339,67 @@ public:
 #endif
     }
 
+    bool SetAudioInputSource(std::uint32_t sourceHandle,
+                             std::uint32_t physicalChannels,
+                             std::uint32_t statusCode)
+    {
+        if (!BrowserAudioInputStatusCodeValid(statusCode)) {
+            return false;
+        }
+        if (sourceHandle == 0 || physicalChannels == 0 ||
+            physicalChannels > kMaxBrowserInputChannels) {
+            return false;
+        }
+#ifdef __EMSCRIPTEN__
+        const std::uint32_t previous =
+            audioInputSourceHandle_.load(std::memory_order_acquire);
+        if (audioNode_ != 0 && previous != 0 && previous != sourceHandle) {
+            DisconnectAudioInputSource(static_cast<EMSCRIPTEN_WEBAUDIO_T>(previous));
+        }
+#endif
+        audioInputSourceHandle_.store(sourceHandle, std::memory_order_release);
+        audioInputStatusCode_.store(statusCode, std::memory_order_release);
+        audioInputPhysicalChannels_.store(physicalChannels, std::memory_order_release);
+        audioInputRetryPending_.store(false, std::memory_order_release);
+#ifdef __EMSCRIPTEN__
+        if (audioNode_ != 0 && previous != sourceHandle) {
+            emscripten_audio_node_connect(
+                static_cast<EMSCRIPTEN_WEBAUDIO_T>(sourceHandle),
+                audioNode_,
+                0,
+                0);
+        }
+#endif
+        return true;
+    }
+
+    bool ClearAudioInputSource(std::uint32_t statusCode)
+    {
+        if (!BrowserAudioInputStatusCodeValid(statusCode)) {
+            return false;
+        }
+        audioInputPhysicalChannels_.store(0, std::memory_order_release);
+        audioInputStatusCode_.store(statusCode, std::memory_order_release);
+        const std::uint32_t previous =
+            audioInputSourceHandle_.exchange(0, std::memory_order_acq_rel);
+        if (AudioInputChannels() > 0) {
+            audioInputRetryPending_.store(true, std::memory_order_release);
+        }
+#ifdef __EMSCRIPTEN__
+        if (previous != 0 && audioNode_ != 0) {
+            DisconnectAudioInputSource(static_cast<EMSCRIPTEN_WEBAUDIO_T>(previous));
+        }
+#else
+        (void)previous;
+#endif
+        return true;
+    }
+
+    int ConsumeAudioInputRetry()
+    {
+        return audioInputRetryPending_.exchange(false, std::memory_order_acq_rel) ? 1 : 0;
+    }
+
     std::uint32_t AudioWorkletBlockCount() const
     {
         return audioWorkletBlockCount_.load(std::memory_order_acquire);
@@ -249,7 +432,44 @@ public:
         block.outputs = outputs;
         block.numOutputChannels = outputs == nullptr ? 0 : outputChannels;
         block.numFrames = frames;
+        block.numRequestedInputChannels = static_cast<int>(
+            std::min(AudioInputChannels(), kMaxBrowserInputChannels));
         engine_.ProcessBlock(block, timestampMicros);
+    }
+
+    bool ProcessAudioWorkletPlanarBlock(
+        int numInputs,
+        const BrowserAudioSampleFrameDescriptor* inputs,
+        int numOutputs,
+        BrowserAudioSampleFrameDescriptor* outputs,
+        std::uint64_t timestampMicros) noexcept
+    {
+        if (!started_.load(std::memory_order_acquire)) {
+            SilenceBrowserAudioOutput(outputs, numOutputs);
+            return false;
+        }
+        try {
+            timestampMicros_.store(timestampMicros, std::memory_order_relaxed);
+            const bool processed = AdaptBrowserAudioWorkletPlanarBlock(
+                numInputs,
+                inputs,
+                numOutputs,
+                outputs,
+                AudioInputChannels(),
+                audioInputPhysicalChannels_.load(std::memory_order_acquire),
+                AudioOutputChannels(),
+                timestampMicros,
+                [this](synth::AudioBlock& block, std::uint64_t timestamp) {
+                    engine_.ProcessBlock(block, timestamp);
+                });
+            if (processed) {
+                audioWorkletBlockCount_.fetch_add(1, std::memory_order_acq_rel);
+                PublishAudioWorkletPeak(outputs, numOutputs);
+            }
+        } catch (const std::exception&) {
+            SilenceBrowserAudioOutput(outputs, numOutputs);
+        }
+        return true;
     }
 
     void MessageTick(std::uint64_t timestampMicros)
@@ -320,6 +540,13 @@ public:
     }
 
 private:
+    static std::size_t StaticAudioInputChannels()
+    {
+        const synth::RuntimeConfig config = App::Config();
+        return config.numAudioInputs > 0 ? static_cast<std::size_t>(config.numAudioInputs)
+                                         : std::size_t{0};
+    }
+
     static std::uint64_t ApplyTimestampEpochOffset(
         std::uint64_t timestampMicros,
         std::int64_t offsetMicros) noexcept
@@ -341,6 +568,42 @@ private:
         }
     }
 
+    bool AudioWorkletConfigurationSupported() const
+    {
+        const std::size_t outputs = AudioOutputChannels();
+        return outputs > 0 && outputs <= kMaxBrowserOutputChannels &&
+               AudioInputChannels() <= kMaxBrowserInputChannels;
+    }
+
+    void PublishAudioWorkletPeak(const BrowserAudioSampleFrameDescriptor* outputs,
+                                 int numOutputs) noexcept
+    {
+        if (numOutputs <= 0 || outputs == nullptr) {
+            return;
+        }
+        float peak = 0.0f;
+        for (int outputIndex = 0; outputIndex < numOutputs; ++outputIndex) {
+            const BrowserAudioSampleFrameDescriptor& output = outputs[outputIndex];
+            if (output.data == nullptr || output.numberOfChannels <= 0 ||
+                output.samplesPerChannel <= 0) {
+                continue;
+            }
+            for (int channel = 0; channel < output.numberOfChannels; ++channel) {
+                const float* samples = output.data + (channel * output.samplesPerChannel);
+                for (int frame = 0; frame < output.samplesPerChannel; ++frame) {
+                    peak = std::max(peak, std::abs(samples[frame]));
+                }
+            }
+        }
+        const auto peakMicrounits = static_cast<std::uint32_t>(
+            std::min(1'000'000.0f, peak * 1'000'000.0f));
+        std::uint32_t current = audioWorkletPeakMicrounits_.load(std::memory_order_acquire);
+        while (peakMicrounits > current &&
+               !audioWorkletPeakMicrounits_.compare_exchange_weak(
+                   current, peakMicrounits, std::memory_order_acq_rel, std::memory_order_acquire)) {
+        }
+    }
+
     void RequireNotStarted() const
     {
         if (started_.load(std::memory_order_acquire) || stopped_.load(std::memory_order_acquire)) {
@@ -349,8 +612,6 @@ private:
     }
 
 #ifdef __EMSCRIPTEN__
-    static constexpr std::size_t kMaxBrowserOutputChannels = 32;
-
     static void AudioWorkletThreadInitialized(EMSCRIPTEN_WEBAUDIO_T audioContext, bool success, void* userData)
     {
         auto* runtime = static_cast<Runtime*>(userData);
@@ -375,17 +636,23 @@ private:
             return;
         }
         const auto channels = static_cast<int>(runtime->AudioOutputChannels());
-        if (channels <= 0 || static_cast<std::size_t>(channels) > kMaxBrowserOutputChannels) {
+        const auto inputChannels = runtime->AudioInputChannels();
+        if (channels <= 0 || static_cast<std::size_t>(channels) > kMaxBrowserOutputChannels ||
+            inputChannels > kMaxBrowserInputChannels) {
             return;
         }
         runtime->audioOutputChannelCounts_[0] = channels;
         EmscriptenAudioWorkletNodeCreateOptions nodeOptions{
-            .numberOfInputs = 0,
+            .numberOfInputs = inputChannels == 0 ? 0 : 1,
             .numberOfOutputs = 1,
             .outputChannelCounts = runtime->audioOutputChannelCounts_.data(),
-            .channelCount = static_cast<unsigned long>(channels),
+            .channelCount = static_cast<unsigned long>(inputChannels == 0
+                                                           ? static_cast<std::size_t>(channels)
+                                                           : inputChannels),
             .channelCountMode = WEBAUDIO_CHANNEL_COUNT_MODE_EXPLICIT,
-            .channelInterpretation = WEBAUDIO_CHANNEL_INTERPRETATION_SPEAKERS,
+            .channelInterpretation = inputChannels == 0
+                                         ? WEBAUDIO_CHANNEL_INTERPRETATION_SPEAKERS
+                                         : WEBAUDIO_CHANNEL_INTERPRETATION_DISCRETE,
         };
         runtime->audioNode_ = emscripten_create_wasm_audio_worklet_node(audioContext,
                                                                         "sheaf-synth-audio",
@@ -393,13 +660,14 @@ private:
                                                                         &Runtime::ProcessAudioWorklet,
                                                                         userData);
         if (runtime->audioNode_ != 0) {
+            runtime->ConnectAudioInputSourceIfReady();
             emscripten_audio_node_connect(runtime->audioNode_, audioContext, 0, 0);
             emscripten_resume_audio_context_sync(audioContext);
         }
     }
 
-    static bool ProcessAudioWorklet(int,
-                                    const AudioSampleFrame*,
+    static bool ProcessAudioWorklet(int numInputs,
+                                    const AudioSampleFrame* inputs,
                                     int numOutputs,
                                     AudioSampleFrame* outputs,
                                     int,
@@ -410,55 +678,73 @@ private:
         if (runtime == nullptr || !runtime->started_.load(std::memory_order_acquire)) {
             return false;
         }
-        if (numOutputs <= 0 || outputs == nullptr || outputs[0].data == nullptr) {
-            return true;
+        BrowserAudioSampleFrameDescriptor inputDescriptors[1]{};
+        const BrowserAudioSampleFrameDescriptor* inputDescriptorPointer = nullptr;
+        int adaptedInputs = 0;
+        if (numInputs > 0 && inputs != nullptr) {
+            inputDescriptors[0] = {
+                .numberOfChannels = inputs[0].numberOfChannels,
+                .samplesPerChannel = inputs[0].samplesPerChannel,
+                .data = inputs[0].data,
+            };
+            inputDescriptorPointer = inputDescriptors;
+            adaptedInputs = 1;
         }
-        AudioSampleFrame& output = outputs[0];
-        if (output.numberOfChannels <= 0 ||
-            static_cast<std::size_t>(output.numberOfChannels) > kMaxBrowserOutputChannels ||
-            output.samplesPerChannel <= 0) {
-            return true;
-        }
-        std::array<float*, kMaxBrowserOutputChannels> channelPointers{};
-        for (int channel = 0; channel < output.numberOfChannels; ++channel) {
-            channelPointers[static_cast<std::size_t>(channel)] =
-                output.data + (channel * output.samplesPerChannel);
+        BrowserAudioSampleFrameDescriptor outputDescriptors[1]{};
+        BrowserAudioSampleFrameDescriptor* outputDescriptorPointer = nullptr;
+        int adaptedOutputs = 0;
+        if (numOutputs > 0 && outputs != nullptr) {
+            outputDescriptors[0] = {
+                .numberOfChannels = outputs[0].numberOfChannels,
+                .samplesPerChannel = outputs[0].samplesPerChannel,
+                .data = outputs[0].data,
+            };
+            outputDescriptorPointer = outputDescriptors;
+            adaptedOutputs = 1;
         }
         const std::uint64_t timestamp = runtime->audioCallbackTimestampMicros_.fetch_add(
             runtime->audioCallbackBlockMicros_.load(std::memory_order_acquire),
             std::memory_order_acq_rel);
-        try {
-            const double callbackStartMs = emscripten_get_now();
-            runtime->Process(channelPointers.data(),
-                             static_cast<std::size_t>(output.numberOfChannels),
-                             static_cast<std::size_t>(output.samplesPerChannel),
-                             timestamp);
-            const double elapsedMicros = std::max(0.0, (emscripten_get_now() - callbackStartMs) * 1000.0);
-            const auto blockMicros = runtime->audioCallbackBlockMicros_.load(std::memory_order_acquire);
-            runtime->audioWorkletDeadlineMeter_.RecordCallbackMicros(
-                static_cast<std::uint64_t>(std::llround(elapsedMicros)),
-                blockMicros);
-            runtime->audioWorkletBlockCount_.fetch_add(1, std::memory_order_acq_rel);
-            float peak = 0.0f;
-            for (int channel = 0; channel < output.numberOfChannels; ++channel) {
-                const float* samples = channelPointers[static_cast<std::size_t>(channel)];
-                for (int frame = 0; frame < output.samplesPerChannel; ++frame) {
-                    peak = std::max(peak, std::abs(samples[frame]));
+        const double callbackStartMs = emscripten_get_now();
+        const bool keepAlive = runtime->ProcessAudioWorkletPlanarBlock(
+            adaptedInputs,
+            inputDescriptorPointer,
+            adaptedOutputs,
+            outputDescriptorPointer,
+            timestamp);
+        const double elapsedMicros = std::max(0.0, (emscripten_get_now() - callbackStartMs) * 1000.0);
+        const auto blockMicros = runtime->audioCallbackBlockMicros_.load(std::memory_order_acquire);
+        runtime->audioWorkletDeadlineMeter_.RecordCallbackMicros(
+            static_cast<std::uint64_t>(std::llround(elapsedMicros)),
+            blockMicros);
+        return keepAlive;
+    }
+
+    void ConnectAudioInputSourceIfReady()
+    {
+        const std::uint32_t sourceHandle =
+            audioInputSourceHandle_.load(std::memory_order_acquire);
+        if (sourceHandle != 0 && audioNode_ != 0) {
+            emscripten_audio_node_connect(
+                static_cast<EMSCRIPTEN_WEBAUDIO_T>(sourceHandle),
+                audioNode_,
+                0,
+                0);
+        }
+    }
+
+    void DisconnectAudioInputSource(EMSCRIPTEN_WEBAUDIO_T sourceHandle)
+    {
+        EM_ASM({
+            const source = emscriptenGetAudioObject($0);
+            const destination = emscriptenGetAudioObject($1);
+            if (source && destination) {
+                try {
+                    source.disconnect(destination);
+                } catch (error) {
                 }
             }
-            const auto peakMicrounits = static_cast<std::uint32_t>(
-                std::min(1'000'000.0f, peak * 1'000'000.0f));
-            std::uint32_t current = runtime->audioWorkletPeakMicrounits_.load(std::memory_order_acquire);
-            while (peakMicrounits > current &&
-                   !runtime->audioWorkletPeakMicrounits_.compare_exchange_weak(
-                       current, peakMicrounits, std::memory_order_acq_rel, std::memory_order_acquire)) {
-            }
-        } catch (const std::exception&) {
-            for (int channel = 0; channel < output.numberOfChannels; ++channel) {
-                std::fill_n(channelPointers[static_cast<std::size_t>(channel)], output.samplesPerChannel, 0.0f);
-            }
-        }
-        return true;
+        }, sourceHandle, audioNode_);
     }
 #endif
 
@@ -468,7 +754,13 @@ private:
     std::atomic<std::uint64_t> audioCallbackBlockMicros_{0};
     std::atomic<std::uint32_t> audioWorkletBlockCount_{0};
     std::atomic<std::uint32_t> audioWorkletPeakMicrounits_{0};
+    std::atomic<std::uint32_t> audioInputSourceHandle_{0};
+    std::atomic<std::uint32_t> audioInputPhysicalChannels_{0};
+    std::atomic<std::uint32_t> audioInputStatusCode_{
+        static_cast<std::uint32_t>(BrowserAudioInputStatus::NotRequested)};
+    std::atomic<bool> audioInputRetryPending_{false};
     AudioWorkletDeadlineMeter audioWorkletDeadlineMeter_;
+    const std::size_t requestedAudioInputChannels_ = StaticAudioInputChannels();
     synth::Engine<App> engine_;
     BrowserMidiBridge<synth::Engine<App>> midiBridge_;
     BrowserRuntimeMainServices<App> services_;
@@ -536,6 +828,7 @@ class RuntimeAbi {
 public:
     virtual ~RuntimeAbi() = default;
     virtual std::size_t AudioOutputChannels() const = 0;
+    virtual std::size_t AudioInputChannels() const = 0;
     virtual int Initialize(const char* publisherId, const char* appId,
                            std::uint32_t runtimeConfigVersion) = 0;
     virtual int Prepare(double sampleRate, std::size_t blockSize) = 0;
@@ -545,6 +838,11 @@ public:
     virtual std::uint32_t AudioWorkletBlockCount() const = 0;
     virtual std::uint32_t AudioWorkletPeakMicrounits() const = 0;
     virtual std::uint32_t AudioWorkletDeadlineMicrounits() const = 0;
+    virtual int SetAudioInputSource(std::uint32_t sourceHandle,
+                                    std::uint32_t physicalChannels,
+                                    std::uint32_t statusCode) = 0;
+    virtual int ClearAudioInputSource(std::uint32_t statusCode) = 0;
+    virtual int ConsumeAudioInputRetry() = 0;
     virtual int SetTimestampEpochOffsetMicros(std::int64_t offsetMicros) = 0;
     virtual int MessageTick(std::uint64_t timestampMicros) = 0;
     virtual const std::uint8_t* BuildUiFrame(std::size_t* size) = 0;
@@ -563,6 +861,7 @@ template <synth::SynthApplication App>
 class RuntimeAbiAdapter final : public RuntimeAbi {
 public:
     std::size_t AudioOutputChannels() const override { return runtime_.AudioOutputChannels(); }
+    std::size_t AudioInputChannels() const override { return runtime_.AudioInputChannels(); }
 
     int Initialize(const char* publisherId, const char* appId,
                    std::uint32_t runtimeConfigVersion) override
@@ -616,6 +915,23 @@ public:
     std::uint32_t AudioWorkletDeadlineMicrounits() const override
     {
         return runtime_.AudioWorkletDeadlineMicrounits();
+    }
+
+    int SetAudioInputSource(std::uint32_t sourceHandle,
+                            std::uint32_t physicalChannels,
+                            std::uint32_t statusCode) override
+    {
+        return runtime_.SetAudioInputSource(sourceHandle, physicalChannels, statusCode) ? 0 : -1;
+    }
+
+    int ClearAudioInputSource(std::uint32_t statusCode) override
+    {
+        return runtime_.ClearAudioInputSource(statusCode) ? 0 : -1;
+    }
+
+    int ConsumeAudioInputRetry() override
+    {
+        return runtime_.ConsumeAudioInputRetry();
     }
 
     int SetTimestampEpochOffsetMicros(std::int64_t offsetMicros) override
@@ -807,11 +1123,19 @@ synth_browser_runtime* synth_browser_create();
 int synth_browser_initialize(synth_browser_runtime* runtime, const char* publisherId,
                              const char* appId, std::uint32_t runtimeConfigVersion);
 std::size_t synth_browser_audio_output_channels(synth_browser_runtime* runtime);
+std::size_t synth_browser_audio_input_channels(synth_browser_runtime* runtime);
 int synth_browser_prepare(synth_browser_runtime* runtime, double sampleRate, std::size_t blockSize);
 int synth_browser_process(synth_browser_runtime* runtime, float** outputs, std::size_t outputChannels,
                           std::size_t frames, std::uint64_t timestampMicros);
 int synth_browser_start_audio_worklet(synth_browser_runtime* runtime,
                                       std::uint32_t audioContextHandle);
+int synth_browser_set_audio_input_source(synth_browser_runtime* runtime,
+                                         std::uint32_t sourceHandle,
+                                         std::uint32_t physicalChannels,
+                                         std::uint32_t statusCode);
+int synth_browser_clear_audio_input_source(synth_browser_runtime* runtime,
+                                           std::uint32_t statusCode);
+int synth_browser_consume_audio_input_retry(synth_browser_runtime* runtime);
 int synth_browser_set_timestamp_epoch_offset(
     synth_browser_runtime* runtime, std::int64_t offsetMicros);
 std::uint32_t synth_browser_audio_worklet_block_count(synth_browser_runtime* runtime);

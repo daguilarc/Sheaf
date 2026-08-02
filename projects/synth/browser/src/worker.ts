@@ -52,11 +52,15 @@ export interface RuntimeModuleFacade {
   create(): number;
   setTimestampEpochOffset?(handle: number, offsetMicros: number): number;
   audioOutputChannels(handle: number): number;
+  audioInputChannels?(handle: number): number;
   initialize(handle: number, identity: BrowserRuntimeIdentity): number;
   prepare(handle: number, sampleRate: number, blockSize: number): number;
   process(handle: number, frames: number, timestampMicros: number): number;
   startAudioWorklet?(handle: number, context?: AudioContext): number;
   audioWorkletStats?(handle: number): { blocks: number; peakMicrounits: number; deadlineMicrounits: number };
+  setAudioInputSource?(handle: number, source: AudioNode, physicalChannels: number, statusCode: number): number;
+  clearAudioInputSource?(handle: number, statusCode: number): number;
+  consumeAudioInputRetry?(handle: number): boolean;
   messageTick(handle: number, timestampMicros: number): number;
   buildUiFrame(handle: number): ArrayBuffer;
   dispatchAction(handle: number, name: string, value: string): number;
@@ -111,13 +115,14 @@ type EmscriptenModule = {
   _free(pointer: number): void;
   lengthBytesUTF8(value: string): number;
   stringToUTF8(value: string, pointer: number, maxBytesToWrite: number): void;
-  emscriptenRegisterAudioObject?(context: AudioContext): number;
+  emscriptenRegisterAudioObject?(object: AudioContext | AudioNode): number;
   _synth_browser_abi_version(): number;
   _synth_browser_ui_protocol_version(): number;
   _synth_browser_runtime_config_version(): number;
   _synth_browser_create(): number;
   _synth_browser_set_timestamp_epoch_offset(handle: number, offsetMicros: bigint): number;
   _synth_browser_audio_output_channels(handle: number): number;
+  _synth_browser_audio_input_channels(handle: number): number;
   _synth_browser_initialize(
     handle: number,
     publisherId: number,
@@ -127,6 +132,9 @@ type EmscriptenModule = {
   _synth_browser_prepare(handle: number, sampleRate: number, blockSize: number): number;
   _synth_browser_process(handle: number, outputs: number, outputChannels: number, frames: number, timestampMicros: bigint): number;
   _synth_browser_start_audio_worklet?(handle: number, audioContextHandle: number): number;
+  _synth_browser_set_audio_input_source?(handle: number, sourceHandle: number, physicalChannels: number, statusCode: number): number;
+  _synth_browser_clear_audio_input_source?(handle: number, statusCode: number): number;
+  _synth_browser_consume_audio_input_retry?(handle: number): number;
   _synth_browser_audio_worklet_block_count?(handle: number): number;
   _synth_browser_audio_worklet_peak_microunits?(handle: number): number;
   _synth_browser_audio_worklet_deadline_microunits?(handle: number): number;
@@ -178,6 +186,8 @@ const MIDI_ENDPOINT_SIZE = 20;
 const MIDI_ACTION_SIZE = 24;
 const MIDI_OUTPUT_SIZE = 24;
 const MIDI_DIAGNOSTICS_SIZE = 24;
+const MAX_BROWSER_AUDIO_INPUT_CHANNELS = 32;
+const MAX_BROWSER_AUDIO_INPUT_STATUS_CODE = 7;
 const MIDI_ACTION_TYPES: MidiAction["type"][] = ["open-input", "open-output", "close-input", "close-output", "update-input-ref", "update-output-ref", "resync"];
 
 function decodeUtf8(module: EmscriptenModule, pointer: number, size: number): string {
@@ -189,6 +199,14 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
     throw new Error("runtime module does not expose AudioContext registration");
   if (typeof module._synth_browser_start_audio_worklet !== "function")
     throw new Error("runtime module does not expose native AudioWorklet startup");
+  if (typeof module._synth_browser_audio_input_channels !== "function")
+    throw new Error("runtime module does not expose audio input channels");
+  if (typeof module._synth_browser_set_audio_input_source !== "function")
+    throw new Error("runtime module does not expose audio input source registration");
+  if (typeof module._synth_browser_clear_audio_input_source !== "function")
+    throw new Error("runtime module does not expose audio input source clear");
+  if (typeof module._synth_browser_consume_audio_input_retry !== "function")
+    throw new Error("runtime module does not expose audio input retry");
   return {
     abiVersion: module._synth_browser_abi_version(),
     uiProtocolVersion: module._synth_browser_ui_protocol_version(),
@@ -197,6 +215,7 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
     setTimestampEpochOffset: (handle, offsetMicros) =>
       module._synth_browser_set_timestamp_epoch_offset(handle, BigInt(offsetMicros)),
     audioOutputChannels: (handle) => module._synth_browser_audio_output_channels(handle),
+    audioInputChannels: (handle) => module._synth_browser_audio_input_channels(handle),
     initialize: (handle, identity) => withUtf8(module, identity.publisherId, (publisherId) =>
       withUtf8(module, identity.appId, (appId) =>
         module._synth_browser_initialize(handle, publisherId, appId, identity.runtimeConfigVersion))),
@@ -208,6 +227,25 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
         throw new Error("runtime module failed to register AudioContext");
       return module._synth_browser_start_audio_worklet!(handle, audioContextHandle);
     },
+    setAudioInputSource: (handle, source, physicalChannels, statusCode) => {
+      if (!Number.isInteger(physicalChannels) || physicalChannels <= 0 ||
+          physicalChannels > MAX_BROWSER_AUDIO_INPUT_CHANNELS)
+        throw new Error("audio input physical channel count must be between 1 and 32");
+      if (!Number.isInteger(statusCode) || statusCode < 0 ||
+          statusCode > MAX_BROWSER_AUDIO_INPUT_STATUS_CODE)
+        throw new Error("audio input status code must be an integer between 0 and 7");
+      const sourceHandle = module.emscriptenRegisterAudioObject!(source);
+      if (!Number.isInteger(sourceHandle) || sourceHandle <= 0)
+        throw new Error("runtime module failed to register audio input source");
+      return module._synth_browser_set_audio_input_source!(handle, sourceHandle, physicalChannels, statusCode);
+    },
+    clearAudioInputSource: (handle, statusCode) => {
+      if (!Number.isInteger(statusCode) || statusCode < 0 ||
+          statusCode > MAX_BROWSER_AUDIO_INPUT_STATUS_CODE)
+        throw new Error("audio input status code must be an integer between 0 and 7");
+      return module._synth_browser_clear_audio_input_source!(handle, statusCode);
+    },
+    consumeAudioInputRetry: (handle) => module._synth_browser_consume_audio_input_retry!(handle) !== 0,
     audioWorkletStats: module._synth_browser_audio_worklet_block_count &&
       module._synth_browser_audio_worklet_peak_microunits &&
       module._synth_browser_audio_worklet_deadline_microunits

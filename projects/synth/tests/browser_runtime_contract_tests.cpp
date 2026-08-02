@@ -184,6 +184,109 @@ public:
     int preparedBlockSize = 0;
 };
 
+template <int InputChannels>
+class InputCountApp
+{
+public:
+    static synth::RuntimeConfig Config()
+    {
+        synth::RuntimeConfig config;
+        config.appName = "InputCountApp";
+        config.numAudioInputs = InputChannels;
+        config.numAudioOutputs = 2;
+        config.uiWidth = 640;
+        config.uiHeight = 480;
+        return config;
+    }
+
+    void Init(synth::AppContext*) {}
+    void ProcessBlock(synth::AudioBlock&) {}
+    synth::ui::Surface& PortableSurface() { return surface; }
+
+    ContractSurface surface;
+};
+
+struct BrowserCallbackObservation
+{
+    std::size_t frames = 0;
+    std::size_t requestedInputs = 0;
+    std::size_t activeInputs = 0;
+    std::uint64_t startSample = 0;
+    float firstInput = 0.0f;
+    float missingInput = 0.0f;
+};
+
+class BrowserCallbackProbeApp
+{
+public:
+    static synth::RuntimeConfig Config()
+    {
+        synth::RuntimeConfig config;
+        config.appName = "BrowserCallbackProbeApp";
+        config.numAudioInputs = 4;
+        config.numAudioOutputs = 2;
+        config.uiWidth = 640;
+        config.uiHeight = 480;
+        return config;
+    }
+
+    void Init(synth::AppContext*) {}
+    void PrepareToPlay(double, int) {}
+    synth::ui::Surface& PortableSurface() { return surface; }
+
+    void ProcessBlock(synth::AudioBlock& block)
+    {
+        const auto input = block.InputView();
+        observations.push_back({
+            .frames = block.numFrames,
+            .requestedInputs = input.RequestedChannelCount(),
+            .activeInputs = input.ActiveChannelCount(),
+            .startSample = block.startSample,
+            .firstInput = input.SampleOrSilence(0, 0),
+            .missingInput = input.SampleOrSilence(3, 0),
+        });
+        for (std::size_t frame = 0; frame < block.numFrames; ++frame)
+        {
+            const float left = input.SampleOrSilence(0, frame) + input.SampleOrSilence(1, frame);
+            const float right = input.SampleOrSilence(3, frame);
+            if (block.numOutputChannels > 0 && block.outputs != nullptr && block.outputs[0] != nullptr)
+            {
+                block.outputs[0][frame] = left;
+            }
+            if (block.numOutputChannels > 1 && block.outputs != nullptr && block.outputs[1] != nullptr)
+            {
+                block.outputs[1][frame] = right;
+            }
+        }
+    }
+
+    ContractSurface surface;
+    std::vector<BrowserCallbackObservation> observations;
+};
+
+class ThrowingBrowserCallbackApp
+{
+public:
+    static synth::RuntimeConfig Config()
+    {
+        synth::RuntimeConfig config;
+        config.appName = "ThrowingBrowserCallbackApp";
+        config.numAudioInputs = 1;
+        config.numAudioOutputs = 1;
+        return config;
+    }
+
+    void Init(synth::AppContext*) {}
+    synth::ui::Surface& PortableSurface() { return surface; }
+
+    void ProcessBlock(synth::AudioBlock&)
+    {
+        throw std::runtime_error("intentional test failure");
+    }
+
+    ContractSurface surface;
+};
+
 class MissingSurface
 {
 public:
@@ -885,8 +988,8 @@ void TestAudioWorkletDeadlineMeterAveragesQuantizedTimerSamples()
 
 void TestBrowserContractVersionsAreReadableBeforeRuntimeCreation()
 {
-    Require(synth_browser_abi_version() == 2,
-            "browser ABI version is available before runtime creation");
+    Require(synth_browser_abi_version() == 3,
+            "browser ABI v3 version is available before runtime creation");
     Require(synth_browser_ui_protocol_version() == 2,
             "browser UI protocol version is available before runtime creation");
     Require(synth_browser_ui_protocol_version() == synth_browser::kCommandBufferVersion,
@@ -895,10 +998,41 @@ void TestBrowserContractVersionsAreReadableBeforeRuntimeCreation()
             "browser runtime-config version is available before runtime creation");
 }
 
+void TestBrowserRuntimeDiscoversRequestedAudioInputChannels()
+{
+    synth_browser::RuntimeAbiAdapter<InputCountApp<0>> zero;
+    synth_browser::RuntimeAbiAdapter<InputCountApp<4>> four;
+    synth_browser::RuntimeAbiAdapter<InputCountApp<32>> thirtyTwo;
+
+    Require(zero.AudioInputChannels() == 0,
+            "browser ABI reports zero requested audio inputs");
+    Require(four.AudioInputChannels() == 4,
+            "browser ABI reports four requested audio inputs");
+    Require(thirtyTwo.AudioInputChannels() == 32,
+            "browser ABI reports the maximum requested audio inputs");
+}
+
+void TestBrowserRuntimeRejectsUnsupportedAudioInputCountsBeforeCapture()
+{
+    synth_browser::RuntimeAbiAdapter<InputCountApp<33>> tooMany;
+    Require(tooMany.AudioInputChannels() == 33,
+            "browser ABI exposes an unsupported requested input count for diagnosis");
+    Require(tooMany.Initialize("sheaf", "too-many-inputs", 1) == 0,
+            "oversized browser input test app initializes before audio capture");
+    Require(tooMany.SetAudioInputSource(
+                19,
+                33,
+                static_cast<std::uint32_t>(synth_browser::BrowserAudioInputStatus::Online)) == -1,
+            "browser ABI rejects a source with more physical inputs than the native input ceiling");
+    Require(tooMany.StartAudioWorklet(0) == -1,
+            "browser ABI rejects oversized requested inputs before worklet startup");
+}
+
 class AudioContextHandleCapture final : public synth_browser::RuntimeAbi
 {
 public:
     std::size_t AudioOutputChannels() const override { return 0; }
+    std::size_t AudioInputChannels() const override { return 4; }
     int Initialize(const char*, const char*, std::uint32_t) override { return 0; }
     int Prepare(double, std::size_t) override { return 0; }
     int Process(float**, std::size_t, std::size_t, std::uint64_t) override { return 0; }
@@ -910,6 +1044,23 @@ public:
     std::uint32_t AudioWorkletBlockCount() const override { return 0; }
     std::uint32_t AudioWorkletPeakMicrounits() const override { return 0; }
     std::uint32_t AudioWorkletDeadlineMicrounits() const override { return 0; }
+    int SetAudioInputSource(std::uint32_t sourceHandle,
+                            std::uint32_t physicalChannels,
+                            std::uint32_t statusCode) override
+    {
+        observedSources.push_back({sourceHandle, physicalChannels, statusCode});
+        return 0;
+    }
+    int ClearAudioInputSource(std::uint32_t statusCode) override
+    {
+        observedClears.push_back(statusCode);
+        return 0;
+    }
+    int ConsumeAudioInputRetry() override
+    {
+        ++retryConsumeCount;
+        return 1;
+    }
     int SetTimestampEpochOffsetMicros(std::int64_t) override { return 0; }
     int MessageTick(std::uint64_t) override { return 0; }
     const std::uint8_t* BuildUiFrame(std::size_t*) override { return nullptr; }
@@ -923,6 +1074,15 @@ public:
     void Destroy() override {}
 
     std::vector<std::uint32_t> observedHandles;
+    struct Source
+    {
+        std::uint32_t handle = 0;
+        std::uint32_t physicalChannels = 0;
+        std::uint32_t statusCode = 0;
+    };
+    std::vector<Source> observedSources;
+    std::vector<std::uint32_t> observedClears;
+    int retryConsumeCount = 0;
 };
 
 void TestBrowserAbiPreservesSuppliedAudioContextHandleAndDirectZero()
@@ -935,6 +1095,183 @@ void TestBrowserAbiPreservesSuppliedAudioContextHandleAndDirectZero()
             "supplied-context audio startup reaches the ABI");
     Require(capture.observedHandles == std::vector<std::uint32_t>{0, 73},
             "browser ABI preserves direct zero and the supplied context handle");
+}
+
+void TestBrowserAbiCarriesAudioInputSourceLifecycle()
+{
+    AudioContextHandleCapture capture;
+    auto* runtime = reinterpret_cast<synth_browser_runtime*>(&capture);
+    Require(synth_browser_audio_input_channels(runtime) == 4,
+            "browser ABI reports requested audio inputs through the C facade");
+    Require(synth_browser_set_audio_input_source(
+                runtime,
+                91,
+                4,
+                static_cast<std::uint32_t>(synth_browser::BrowserAudioInputStatus::Online)) == 0,
+            "browser ABI forwards an online native input source");
+    Require(synth_browser_clear_audio_input_source(
+                runtime,
+                static_cast<std::uint32_t>(synth_browser::BrowserAudioInputStatus::StreamEnded)) == 0,
+            "browser ABI forwards input source clear status");
+    Require(synth_browser_consume_audio_input_retry(runtime) == 1 &&
+                capture.retryConsumeCount == 1,
+            "browser ABI forwards audio input retry consumption");
+    Require(capture.observedSources.size() == 1 &&
+                capture.observedSources[0].handle == 91 &&
+                capture.observedSources[0].physicalChannels == 4 &&
+                capture.observedSources[0].statusCode ==
+                    static_cast<std::uint32_t>(synth_browser::BrowserAudioInputStatus::Online),
+            "browser ABI preserves source handle, physical channel count, and status");
+    Require(capture.observedClears ==
+                std::vector<std::uint32_t>{
+                    static_cast<std::uint32_t>(synth_browser::BrowserAudioInputStatus::StreamEnded)},
+            "browser ABI preserves clear status");
+}
+
+void TestBrowserAudioWorkletAdaptsPlanarInputAndOutput()
+{
+    synth_browser::Runtime<BrowserCallbackProbeApp> runtime;
+    runtime.Start();
+    runtime.Prepare(48000.0, 3);
+    Require(runtime.SetAudioInputSource(
+                71,
+                4,
+                static_cast<std::uint32_t>(synth_browser::BrowserAudioInputStatus::Online)),
+            "browser runtime accepts a four-channel native source");
+
+    float input[12] = {
+        0.10f, 0.20f, 0.30f,
+        1.00f, 2.00f, 3.00f,
+        9.00f, 9.00f, 9.00f,
+        0.01f, 0.02f, 0.03f,
+    };
+    float output[6] = {};
+    const synth_browser::BrowserAudioSampleFrameDescriptor inputs[] = {
+        {.numberOfChannels = 4, .samplesPerChannel = 3, .data = input},
+    };
+    synth_browser::BrowserAudioSampleFrameDescriptor outputs[] = {
+        {.numberOfChannels = 2, .samplesPerChannel = 3, .data = output},
+    };
+
+    Require(runtime.ProcessAudioWorkletPlanarBlock(1, inputs, 1, outputs, 1000),
+            "browser runtime processes one planar AudioWorklet block");
+    const BrowserCallbackObservation& observation =
+        runtime.Engine().Application().observations.back();
+    Require(observation.frames == 3,
+            "browser callback uses the actual output frame count");
+    Require(observation.requestedInputs == 4 && observation.activeInputs == 4,
+            "browser callback reports requested and active input channels together");
+    Require(output[0] == 1.10f && output[1] == 2.20f && output[2] == 3.30f,
+            "browser callback maps planar input channels to output channel zero");
+    Require(output[3] == 0.01f && output[4] == 0.02f && output[5] == 0.03f,
+            "browser callback maps planar input channel three to output channel one");
+    runtime.Stop();
+}
+
+void TestBrowserAudioWorkletInputClampingClearingAndStartSamples()
+{
+    synth_browser::Runtime<BrowserCallbackProbeApp> runtime;
+    runtime.Start();
+    runtime.Prepare(48000.0, 5);
+
+    float input[30] = {
+        0.10f, 0.20f, 0.30f, 0.40f, 0.50f,
+        1.00f, 2.00f, 3.00f, 4.00f, 5.00f,
+        7.00f, 7.00f, 7.00f, 7.00f, 7.00f,
+        0.01f, 0.02f, 0.03f, 0.04f, 0.05f,
+        8.00f, 8.00f, 8.00f, 8.00f, 8.00f,
+        9.00f, 9.00f, 9.00f, 9.00f, 9.00f,
+    };
+    float output[10] = {};
+    const synth_browser::BrowserAudioSampleFrameDescriptor inputs[] = {
+        {.numberOfChannels = 6, .samplesPerChannel = 5, .data = input},
+    };
+    synth_browser::BrowserAudioSampleFrameDescriptor outputs[] = {
+        {.numberOfChannels = 2, .samplesPerChannel = 5, .data = output},
+    };
+
+    Require(runtime.SetAudioInputSource(
+                72,
+                2,
+                static_cast<std::uint32_t>(synth_browser::BrowserAudioInputStatus::Online)),
+            "browser runtime accepts a short physical input source");
+    Require(runtime.ProcessAudioWorkletPlanarBlock(1, inputs, 1, outputs, 2000),
+            "browser runtime processes a physically clamped input block");
+    Require(runtime.Engine().Application().observations.back().activeInputs == 2,
+            "browser callback clamps active inputs to the published physical count");
+    Require(output[5] == 0.0f,
+            "browser callback supplies silence for requested channels beyond the physical source");
+
+    Require(runtime.SetAudioInputSource(
+                73,
+                32,
+                static_cast<std::uint32_t>(synth_browser::BrowserAudioInputStatus::Online)),
+            "browser runtime accepts the maximum physical input source");
+    Require(runtime.ProcessAudioWorkletPlanarBlock(1, inputs, 1, outputs, 3000),
+            "browser runtime processes a requested-count clamped input block");
+    Require(runtime.Engine().Application().observations.back().activeInputs == 4,
+            "browser callback clamps active inputs to the app request");
+    Require(runtime.Engine().Application().observations.back().startSample == 5,
+            "browser callback advances startSample by the first output frame count");
+
+    Require(runtime.ClearAudioInputSource(
+                static_cast<std::uint32_t>(synth_browser::BrowserAudioInputStatus::StreamEnded)),
+            "browser runtime clears a stale native input source");
+    Require(runtime.ProcessAudioWorkletPlanarBlock(1, inputs, 1, outputs, 4000),
+            "browser runtime processes safely after input source clear");
+    const BrowserCallbackObservation& cleared =
+        runtime.Engine().Application().observations.back();
+    Require(cleared.requestedInputs == 4 && cleared.activeInputs == 0,
+            "browser callback preserves requested count but clears active input count");
+    Require(cleared.startSample == 10,
+            "browser callback keeps monotonic startSample after clear");
+    Require(output[0] == 0.0f && output[5] == 0.0f,
+            "browser callback produces silence after clearing stale input");
+    runtime.Stop();
+}
+
+void TestBrowserAudioWorkletTreatsNullInputAsSafeSilence()
+{
+    synth_browser::Runtime<BrowserCallbackProbeApp> runtime;
+    runtime.Start();
+    runtime.Prepare(48000.0, 2);
+    Require(runtime.SetAudioInputSource(
+                74,
+                4,
+                static_cast<std::uint32_t>(synth_browser::BrowserAudioInputStatus::Online)),
+            "browser runtime accepts a source before null-input callback");
+
+    float output[4] = {5.0f, 5.0f, 5.0f, 5.0f};
+    synth_browser::BrowserAudioSampleFrameDescriptor outputs[] = {
+        {.numberOfChannels = 2, .samplesPerChannel = 2, .data = output},
+    };
+    Require(runtime.ProcessAudioWorkletPlanarBlock(1, nullptr, 1, outputs, 5000),
+            "browser runtime processes a null input descriptor as silence");
+    const BrowserCallbackObservation& observation =
+        runtime.Engine().Application().observations.back();
+    Require(observation.requestedInputs == 4 && observation.activeInputs == 0,
+            "browser callback reports no active channels for null input");
+    Require(output[0] == 0.0f && output[1] == 0.0f &&
+                output[2] == 0.0f && output[3] == 0.0f,
+            "browser callback overwrites prior output with safe silence for null input");
+    runtime.Stop();
+}
+
+void TestBrowserAudioWorkletSilencesOutputWhenProcessingFails()
+{
+    synth_browser::Runtime<ThrowingBrowserCallbackApp> runtime;
+    runtime.Start();
+    runtime.Prepare(48000.0, 3);
+    float output[3] = {9.0f, 8.0f, 7.0f};
+    synth_browser::BrowserAudioSampleFrameDescriptor outputs[] = {
+        {.numberOfChannels = 1, .samplesPerChannel = 3, .data = output},
+    };
+
+    Require(runtime.ProcessAudioWorkletPlanarBlock(0, nullptr, 1, outputs, 6000),
+            "browser runtime keeps the AudioWorklet alive after process failure");
+    Require(output[0] == 0.0f && output[1] == 0.0f && output[2] == 0.0f,
+            "browser runtime silences output after process failure");
+    runtime.Stop();
 }
 
 void TestNativeAudioCallbackRemainsTheSoleProcessImplementation()
@@ -959,8 +1296,10 @@ void TestNativeAudioCallbackRemainsTheSoleProcessImplementation()
     const auto first = source.find(callback);
     Require(first != std::string::npos && source.find(callback, first + callback.size()) == std::string::npos,
             "ProcessAudioWorklet remains the sole native callback implementation");
-    Require(source.find("runtime->Process(channelPointers.data()", first) != std::string::npos,
-            "ProcessAudioWorklet still delegates DSP to Runtime::Process");
+    Require(source.find("runtime->ProcessAudioWorkletPlanarBlock(", first) != std::string::npos,
+            "ProcessAudioWorklet delegates DSP through the native planar input adapter");
+    Require(source.find("AdaptBrowserAudioWorkletPlanarBlock(") != std::string::npos,
+            "browser native input adapter remains available to JUCE-free tests");
 }
 
 void TestBrowserRuntimeAdapterRejectsIncompatibleRuntimeConfigVersion()
@@ -1057,11 +1396,20 @@ void TestMidiDiagnosticsDescriptorAndTimestampEpochOffsetContract()
 int main()
 {
     static_assert(synth::SynthApplication<ValidApp>);
+    static_assert(synth::SynthApplication<InputCountApp<4>>);
+    static_assert(synth::SynthApplication<BrowserCallbackProbeApp>);
     static_assert(synth_browser::BrowserApplication<ValidApp>);
     static_assert(!synth_browser::BrowserApplication<MissingSurface>);
     static_assert(!synth::SynthApplication<MissingSurface>);
     TestBrowserContractVersionsAreReadableBeforeRuntimeCreation();
+    TestBrowserRuntimeDiscoversRequestedAudioInputChannels();
+    TestBrowserRuntimeRejectsUnsupportedAudioInputCountsBeforeCapture();
     TestBrowserAbiPreservesSuppliedAudioContextHandleAndDirectZero();
+    TestBrowserAbiCarriesAudioInputSourceLifecycle();
+    TestBrowserAudioWorkletAdaptsPlanarInputAndOutput();
+    TestBrowserAudioWorkletInputClampingClearingAndStartSamples();
+    TestBrowserAudioWorkletTreatsNullInputAsSafeSilence();
+    TestBrowserAudioWorkletSilencesOutputWhenProcessingFails();
     TestNativeAudioCallbackRemainsTheSoleProcessImplementation();
     TestBrowserRuntimeAdapterRejectsIncompatibleRuntimeConfigVersion();
     TestBrowserPersistenceIdentityDerivesSharedAndIsolatedRoots();

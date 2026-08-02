@@ -37,7 +37,7 @@ npm --prefix projects/synth/browser run publish:site
 
 The builder sorts valid records by app ID, generates a transient binding under
 `dist/generated/browser-apps/` that invokes `SYNTH_BROWSER_APP(<cppType>)`, and
-compiles all records through the same ABI-v2 runtime, exports, workers/worklet
+compiles all records through the same ABI-v3 runtime, exports, workers/worklet
 policy, and memory flags. Do not add an entry `.cpp`, Make target, package
 branch, deployment branch, or custom audio integration for an app.
 

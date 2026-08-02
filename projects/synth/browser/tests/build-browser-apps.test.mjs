@@ -77,6 +77,14 @@ test("builds every record through one argument-vector compiler policy and writes
     assert.ok(args.includes("-lidbfs.js"));
     assert.ok(args.some((arg) => arg.includes("emscriptenRegisterAudioObject")));
     assert.ok(args.some((arg) => arg.includes("_synth_browser_start_audio_worklet")));
+    for (const inputExport of [
+      "_synth_browser_audio_input_channels",
+      "_synth_browser_set_audio_input_source",
+      "_synth_browser_clear_audio_input_source",
+      "_synth_browser_consume_audio_input_retry",
+    ]) {
+      assert.ok(args.some((arg) => arg.includes(inputExport)), `missing browser audio input export ${inputExport}`);
+    }
     assert.match(outputPath(args), new RegExp(
       `dist\\/wasm\\/\\.apps\\.stage-[^/]+\\/${appId}\\/${appId}\\.js$`,
     ));
