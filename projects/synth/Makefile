@@ -135,7 +135,7 @@ $(INSTRUMENT_TEST_BIN): tests/instrument_tests.cpp $(LIB) include/synth/MidiCont
 $(CONTRACT_TEST_BIN): tests/contract_tests.cpp $(LIB) include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AppRegistry.hpp include/synth/MasterClock.hpp include/synth/PatchBrowser.hpp include/synth/RuntimePagePolicy.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
-$(AUDIO_INPUT_TEST_BIN): tests/audio_input_tests.cpp $(LIB) include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/Engine.hpp include/synth/MasterClock.hpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/RuntimeUIState.hpp include/synth/ButtonGrid.hpp include/synth/PatchPersistence.hpp include/synth/Json.hpp
+$(AUDIO_INPUT_TEST_BIN): tests/audio_input_tests.cpp tests/support/SynthRig.hpp $(LIB) include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/Engine.hpp include/synth/PortableUI.hpp include/synth/MasterClock.hpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/RuntimeUIState.hpp include/synth/ButtonGrid.hpp include/synth/PatchPersistence.hpp include/synth/Json.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 $(LOGGING_TEST_BIN): tests/logging_tests.cpp $(LIB) include/synth/AsyncLogger.hpp include/synth/CircularQueue.hpp include/synth/ThreadId.hpp

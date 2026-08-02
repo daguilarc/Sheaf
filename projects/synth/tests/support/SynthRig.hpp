@@ -240,6 +240,61 @@ public:
     void ClearOutput() { capturedOutput_.clear(); }
     void ClearNaN() { sawNaN_ = false; }
 
+    std::size_t NumInputChannels() const noexcept {
+        return static_cast<std::size_t>(std::max(0, numInputChannels_));
+    }
+
+    std::size_t InputBlockSize() const noexcept { return blockSize_; }
+
+    void ClearAudioInputs() noexcept {
+        for (auto& channel : inputBuffers_) {
+            std::fill(channel.begin(), channel.end(), 0.0f);
+        }
+    }
+
+    bool SetInputSample(std::size_t channel, std::size_t frame, float value) noexcept {
+        if (channel >= NumInputChannels() || frame >= blockSize_) {
+            return false;
+        }
+        inputBuffers_[channel][frame] = value;
+        return true;
+    }
+
+    bool SetInputChannel(std::size_t channel, std::span<const float> samples) noexcept {
+        if (channel >= NumInputChannels() || samples.size() != blockSize_) {
+            return false;
+        }
+        std::copy(samples.begin(), samples.end(), inputBuffers_[channel].begin());
+        return true;
+    }
+
+    bool SetInputFrame(std::size_t frame, std::span<const float> channels) noexcept {
+        if (frame >= blockSize_ || channels.size() != NumInputChannels()) {
+            return false;
+        }
+        for (std::size_t channel = 0; channel < channels.size(); ++channel) {
+            inputBuffers_[channel][frame] = channels[channel];
+        }
+        return true;
+    }
+
+    bool SetInputBlock(std::span<const std::span<const float>> channels) noexcept {
+        if (channels.size() != NumInputChannels()) {
+            return false;
+        }
+        for (const auto& channel : channels) {
+            if (channel.size() != blockSize_) {
+                return false;
+            }
+        }
+        for (std::size_t channel = 0; channel < channels.size(); ++channel) {
+            std::copy(channels[channel].begin(),
+                      channels[channel].end(),
+                      inputBuffers_[channel].begin());
+        }
+        return true;
+    }
+
     App& Application() { return engine_.Application(); }
     synth::Engine<App>& Engine() { return engine_; }
     bool SetSyncConfig(const synth::SyncConfig& config) {
@@ -456,6 +511,7 @@ private:
         block.numInputChannels = numInputChannels_;
         block.numOutputChannels = numOutputChannels_;
         block.numFrames = blockSize_;
+        block.numRequestedInputChannels = numInputChannels_;
 
         engine_.ProcessBlock(block, timestamp);
 

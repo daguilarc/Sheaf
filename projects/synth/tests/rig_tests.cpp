@@ -13,6 +13,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <array>
+#include <span>
 #include <vector>
 
 namespace {
@@ -418,6 +420,22 @@ TEST_CASE(rig_run_samples_and_seconds_convert_to_blocks) {
     rig.RunSamples(1);  // rounds up to one block
     const auto oneBlock = rig.Output().size();
     REQUIRE_TRUE(oneBlock == static_cast<std::size_t>(RigTestApp::Config().preferredBlockSize));
+}
+
+TEST_CASE(rig_zero_input_rejects_injection_helpers) {
+    synth_rig::SynthRig<RigTestApp> rig;
+    REQUIRE_TRUE(rig.NumInputChannels() == 0);
+    REQUIRE_TRUE(rig.InputBlockSize() ==
+                 static_cast<std::size_t>(RigTestApp::Config().preferredBlockSize));
+    REQUIRE_TRUE(!rig.SetInputSample(0, 0, 1.0f));
+    REQUIRE_TRUE(!rig.SetInputChannel(0, std::array<float, 32>{}));
+    REQUIRE_TRUE(!rig.SetInputFrame(0, std::array<float, 1>{1.0f}));
+    const std::span<const float> emptyBlock[1] = {std::span<const float>{}};
+    REQUIRE_TRUE(!rig.SetInputBlock(emptyBlock));
+    rig.ClearAudioInputs();
+    rig.RunSamples(1);
+    REQUIRE_TRUE(rig.Output().size() ==
+                 static_cast<std::size_t>(RigTestApp::Config().preferredBlockSize));
 }
 
 TEST_CASE(rig_nan_flag_is_sticky) {
