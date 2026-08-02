@@ -241,7 +241,7 @@ public:
     void ClearNaN() { sawNaN_ = false; }
 
     std::size_t NumInputChannels() const noexcept {
-        return static_cast<std::size_t>(std::max(0, numInputChannels_));
+        return inputBuffers_.size();
     }
 
     std::size_t InputBlockSize() const noexcept { return blockSize_; }

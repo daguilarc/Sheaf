@@ -9,19 +9,63 @@
 #endif
 
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
-#include <fstream>
+#include <cstdlib>
 #include <iostream>
-#include <iterator>
+#include <new>
 #include <span>
 #include <stdexcept>
-#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+namespace audio_input_allocation_probe {
+
+std::atomic<bool> enabled{false};
+std::atomic<std::size_t> count{0};
+
+}  // namespace audio_input_allocation_probe
+
+void* operator new(std::size_t size)
+{
+    if (audio_input_allocation_probe::enabled.load(std::memory_order_relaxed))
+    {
+        audio_input_allocation_probe::count.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (void* memory = std::malloc(size))
+    {
+        return memory;
+    }
+    throw std::bad_alloc();
+}
+
+void* operator new[](std::size_t size)
+{
+    return ::operator new(size);
+}
+
+void operator delete(void* memory) noexcept
+{
+    std::free(memory);
+}
+
+void operator delete[](void* memory) noexcept
+{
+    std::free(memory);
+}
+
+void operator delete(void* memory, std::size_t) noexcept
+{
+    std::free(memory);
+}
+
+void operator delete[](void* memory, std::size_t) noexcept
+{
+    std::free(memory);
+}
 
 namespace {
 
@@ -258,16 +302,20 @@ struct InputProbeSurface final : synth::ui::Surface
 
 struct InputProbeApp
 {
+    static constexpr int kNumAudioInputs = 4;
+    static constexpr int kNumAudioOutputs = 2;
+    static constexpr int kPreferredBlockSize = 4;
+
     InputProbeSurface surface;
 
     static synth::RuntimeConfig Config()
     {
         synth::RuntimeConfig config;
         config.appName = "InputProbeApp";
-        config.numAudioInputs = 4;
-        config.numAudioOutputs = 2;
+        config.numAudioInputs = kNumAudioInputs;
+        config.numAudioOutputs = kNumAudioOutputs;
         config.preferredSampleRate = 48000.0;
-        config.preferredBlockSize = 4;
+        config.preferredBlockSize = kPreferredBlockSize;
         return config;
     }
 
@@ -280,17 +328,20 @@ struct InputProbeApp
 
     void ProcessBlock(synth::AudioBlock& block)
     {
-        if (block.numRequestedInputChannels != Config().numAudioInputs ||
-            block.numInputChannels != Config().numAudioInputs ||
+        if (block.numRequestedInputChannels != kNumAudioInputs ||
+            block.numInputChannels != kNumAudioInputs ||
             block.inputs == nullptr)
         {
-            throw std::runtime_error("InputProbeApp expected rig-declared four-channel input storage");
+            Require(false, "InputProbeApp expected rig-declared four-channel input storage");
+            return;
         }
 
         const auto view = block.InputView();
-        if (view.RequestedChannelCount() != 4 || view.ActiveChannelCount() != 4)
+        if (view.RequestedChannelCount() != static_cast<std::size_t>(kNumAudioInputs) ||
+            view.ActiveChannelCount() != static_cast<std::size_t>(kNumAudioInputs))
         {
-            throw std::runtime_error("InputProbeApp expected matching requested/active input counts");
+            Require(false, "InputProbeApp expected matching requested/active input counts");
+            return;
         }
         const std::span<const float> channel0 = view.Channel(0);
 
@@ -319,9 +370,26 @@ void RequireNear(float actual, float expected, float tolerance, const char* labe
     Require(std::fabs(actual - expected) <= tolerance, label);
 }
 
+using ProbeRig = synth_rig::SynthRig<InputProbeApp>;
+
+void RequireProbeMatchesSnapshot(ProbeRig& rig,
+                                 const std::vector<ProbeRig::OutputFrame>& snapshot,
+                                 const char* label)
+{
+    rig.ClearOutput();
+    rig.RunBlocks(1);
+    Require(rig.Output().size() == snapshot.size(), "post-rejection run still captures one block");
+    bool unchanged = rig.Output().size() == snapshot.size();
+    for (std::size_t frame = 0; unchanged && frame < snapshot.size(); ++frame)
+    {
+        unchanged = rig.Output()[frame].channels == snapshot[frame].channels;
+    }
+    Require(unchanged, label);
+}
+
 void TestRigSilentUntilInjection()
 {
-    synth_rig::SynthRig<InputProbeApp> rig;
+    ProbeRig rig;
     Require(rig.NumInputChannels() == 4, "input probe rig reports four input channels");
     Require(rig.InputBlockSize() == 4, "input probe rig uses configured four-frame blocks");
 
@@ -337,7 +405,7 @@ void TestRigSilentUntilInjection()
 
 void TestInjectedChannelsReachProbeDsp()
 {
-    synth_rig::SynthRig<InputProbeApp> rig;
+    ProbeRig rig;
     const float channel0[4] = {0.10f, 0.20f, 0.30f, 0.40f};
     const float channel1[4] = {0.01f, 0.02f, 0.03f, 0.04f};
     const float channel2[4] = {9.0f, 9.0f, 9.0f, 9.0f};
@@ -358,15 +426,11 @@ void TestInjectedChannelsReachProbeDsp()
         RequireNear(rig.Output()[frame].channels[1], difference, 1e-6f,
                     "probe out1 is explicit difference of Channel/Frame/SampleOrSilence reads");
     }
-
-    // Unused channel 2 stayed nonzero in storage; output never incorporated it.
-    //
-    Require(channel2[0] == 9.0f, "unused injected channel remains caller-owned data");
 }
 
 void TestSampleChannelAndFrameInjectionOrdering()
 {
-    synth_rig::SynthRig<InputProbeApp> rig;
+    ProbeRig rig;
     rig.ClearAudioInputs();
 
     Require(rig.SetInputSample(0, 2, 0.5f), "SetInputSample accepts in-range channel/frame");
@@ -390,7 +454,7 @@ void TestSampleChannelAndFrameInjectionOrdering()
 
 void TestUnusedInputIsNotMonitored()
 {
-    synth_rig::SynthRig<InputProbeApp> rig;
+    ProbeRig rig;
     const float silent[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     const float loudUnused[4] = {1.0f, -1.0f, 0.5f, -0.5f};
     Require(rig.SetInputChannel(0, silent), "silence on read channel 0");
@@ -409,7 +473,7 @@ void TestUnusedInputIsNotMonitored()
 
 void TestTransactionalRejectionLeavesStorageUnchanged()
 {
-    synth_rig::SynthRig<InputProbeApp> rig;
+    ProbeRig rig;
     const float channel0[4] = {0.2f, 0.4f, 0.6f, 0.8f};
     const float channel1[4] = {0.05f, 0.05f, 0.05f, 0.05f};
     const float channel2[4] = {3.0f, 3.0f, 3.0f, 3.0f};
@@ -419,42 +483,64 @@ void TestTransactionalRejectionLeavesStorageUnchanged()
 
     rig.ClearOutput();
     rig.RunBlocks(1);
-    const std::vector<synth_rig::SynthRig<InputProbeApp>::OutputFrame> snapshot = rig.Output();
+    const std::vector<ProbeRig::OutputFrame> snapshot = rig.Output();
     Require(snapshot.size() == 4, "snapshot captures one full configured block");
 
+    // Poison values differ from seeded storage on probe-observed channels 0/1/3.
+    // Invalid short/long spans sit after valid poison prefixes so a validate-as-copy
+    // implementation would visibly corrupt observed probe output.
+    //
+    const float poison0[4] = {0.91f, 0.92f, 0.93f, 0.94f};
+    const float poison1[4] = {0.81f, 0.82f, 0.83f, 0.84f};
+    const float poison3[4] = {0.61f, 0.62f, 0.63f, 0.64f};
     const float shortChannel[2] = {1.0f, 2.0f};
     const float longChannel[5] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
     const float threeFrameChannels[3] = {1.0f, 2.0f, 3.0f};
     const float fiveChannels[5] = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};
-    const std::span<const float> shortBlock[4] = {shortChannel, channel1, channel2, channel3};
-    const std::span<const float> longBlock[4] = {longChannel, channel1, channel2, channel3};
-    const std::span<const float> wrongCount[3] = {channel0, channel1, channel2};
+    const std::span<const float> shortBlock[4] = {poison0, poison1, shortChannel, poison3};
+    const std::span<const float> longBlock[4] = {poison0, poison1, longChannel, poison3};
+    const std::span<const float> wrongCount[3] = {poison0, poison1, poison3};
 
     Require(!rig.SetInputSample(4, 0, 1.0f), "out-of-range channel sample injection is rejected");
-    Require(!rig.SetInputSample(0, 4, 1.0f), "out-of-range frame sample injection is rejected");
-    Require(!rig.SetInputChannel(4, channel0), "out-of-range channel write is rejected");
-    Require(!rig.SetInputChannel(0, shortChannel), "short channel write is rejected");
-    Require(!rig.SetInputChannel(0, longChannel), "long channel write is rejected");
-    Require(!rig.SetInputFrame(4, channel0), "out-of-range frame write is rejected");
-    Require(!rig.SetInputFrame(0, threeFrameChannels), "short frame write is rejected");
-    Require(!rig.SetInputFrame(0, fiveChannels), "long/malformed frame shape is rejected");
-    Require(!rig.SetInputBlock(shortBlock), "short-channel block shape is rejected");
-    Require(!rig.SetInputBlock(longBlock), "long-channel block shape is rejected");
-    Require(!rig.SetInputBlock(wrongCount), "wrong channel-count block shape is rejected");
+    RequireProbeMatchesSnapshot(rig, snapshot, "out-of-range sample leaves prior storage unchanged");
 
-    rig.ClearOutput();
-    rig.RunBlocks(1);
-    Require(rig.Output().size() == snapshot.size(), "post-rejection run still captures one block");
-    for (std::size_t frame = 0; frame < snapshot.size(); ++frame)
-    {
-        Require(rig.Output()[frame].channels == snapshot[frame].channels,
-                "rejected injections leave prior input storage unchanged");
-    }
+    Require(!rig.SetInputSample(0, 4, 1.0f), "out-of-range frame sample injection is rejected");
+    RequireProbeMatchesSnapshot(rig, snapshot, "out-of-range frame sample leaves prior storage unchanged");
+
+    Require(!rig.SetInputChannel(4, channel0), "out-of-range channel write is rejected");
+    RequireProbeMatchesSnapshot(rig, snapshot, "out-of-range channel write leaves prior storage unchanged");
+
+    Require(!rig.SetInputChannel(0, shortChannel), "short channel write is rejected");
+    RequireProbeMatchesSnapshot(rig, snapshot, "short channel write leaves prior storage unchanged");
+
+    Require(!rig.SetInputChannel(0, longChannel), "long channel write is rejected");
+    RequireProbeMatchesSnapshot(rig, snapshot, "long channel write leaves prior storage unchanged");
+
+    Require(!rig.SetInputFrame(4, channel0), "out-of-range frame write is rejected");
+    RequireProbeMatchesSnapshot(rig, snapshot, "out-of-range frame write leaves prior storage unchanged");
+
+    Require(!rig.SetInputFrame(0, threeFrameChannels), "short frame write is rejected");
+    RequireProbeMatchesSnapshot(rig, snapshot, "short frame write leaves prior storage unchanged");
+
+    Require(!rig.SetInputFrame(0, fiveChannels), "long/malformed frame shape is rejected");
+    RequireProbeMatchesSnapshot(rig, snapshot, "malformed frame shape leaves prior storage unchanged");
+
+    Require(!rig.SetInputBlock(shortBlock), "short-channel block shape is rejected");
+    RequireProbeMatchesSnapshot(rig, snapshot,
+                                "short block with leading poison leaves prior storage unchanged");
+
+    Require(!rig.SetInputBlock(longBlock), "long-channel block shape is rejected");
+    RequireProbeMatchesSnapshot(rig, snapshot,
+                                "long block with leading poison leaves prior storage unchanged");
+
+    Require(!rig.SetInputBlock(wrongCount), "wrong channel-count block shape is rejected");
+    RequireProbeMatchesSnapshot(rig, snapshot,
+                                "wrong-count poison block leaves prior storage unchanged");
 }
 
 void TestRunSamplesRoundsUpToWholeBlock()
 {
-    synth_rig::SynthRig<InputProbeApp> rig;
+    ProbeRig rig;
     rig.ClearAudioInputs();
     Require(rig.SetInputSample(0, 0, 0.5f), "seed one sample before RunSamples");
     rig.ClearOutput();
@@ -463,90 +549,43 @@ void TestRunSamplesRoundsUpToWholeBlock()
             "RunSamples(1) still captures one full configured block");
 }
 
-std::string LoadSynthRigSource()
+void TestInjectionAddsNoAllocationBeyondCapture()
 {
-    const std::filesystem::path candidates[] = {
-        "tests/support/SynthRig.hpp",
-        "projects/synth/tests/support/SynthRig.hpp",
-    };
-    for (const auto& candidate : candidates)
-    {
-        std::ifstream input(candidate);
-        if (input)
-        {
-            return std::string(std::istreambuf_iterator<char>(input),
-                               std::istreambuf_iterator<char>());
-        }
-    }
-    return {};
-}
+    ProbeRig silentRig;
+    ProbeRig injectedRig;
+    const float channel0[4] = {0.10f, 0.20f, 0.30f, 0.40f};
+    const float channel1[4] = {0.01f, 0.02f, 0.03f, 0.04f};
+    const float channel2[4] = {9.0f, 9.0f, 9.0f, 9.0f};
+    const float channel3[4] = {0.001f, 0.002f, 0.003f, 0.004f};
+    const std::span<const float> channels[4] = {channel0, channel1, channel2, channel3};
+    Require(injectedRig.SetInputBlock(channels), "seed injected rig before allocation probe");
 
-std::string MethodBody(const std::string& source, const std::string& signature)
-{
-    const auto start = source.find(signature);
-    if (start == std::string::npos)
-    {
-        return {};
-    }
-    const auto brace = source.find('{', start);
-    if (brace == std::string::npos)
-    {
-        return {};
-    }
-    int depth = 0;
-    for (std::size_t i = brace; i < source.size(); ++i)
-    {
-        if (source[i] == '{')
-        {
-            ++depth;
-        }
-        else if (source[i] == '}')
-        {
-            --depth;
-            if (depth == 0)
-            {
-                return source.substr(brace, i - brace + 1);
-            }
-        }
-    }
-    return {};
-}
+    constexpr std::size_t kBlocks = 3;
 
-void TestPumpMethodsDoNotGrowInputStorage()
-{
-    const std::string source = LoadSynthRigSource();
-    Require(!source.empty(), "SynthRig.hpp source is available for pump assertions");
+    silentRig.ClearOutput();
+    audio_input_allocation_probe::count.store(0, std::memory_order_relaxed);
+    audio_input_allocation_probe::enabled.store(true, std::memory_order_release);
+    silentRig.RunBlocks(kBlocks);
+    audio_input_allocation_probe::enabled.store(false, std::memory_order_release);
+    const std::size_t silentAllocs =
+        audio_input_allocation_probe::count.load(std::memory_order_relaxed);
 
-    const char* signatures[] = {
-        "void RunOneBlockAt(std::uint64_t timestamp)",
-        "void RunBlocks(std::size_t count)",
-        "void RunSamples(std::size_t count)",
-        "void RunSeconds(double seconds)",
-    };
-    for (const char* signature : signatures)
-    {
-        const std::string body = MethodBody(source, signature);
-        Require(!body.empty(), "pump method body is locatable in SynthRig.hpp");
-        Require(body.find("inputBuffers_.resize") == std::string::npos,
-                "pump methods do not resize inputBuffers_");
-        Require(body.find("inputBuffers_.assign") == std::string::npos,
-                "pump methods do not assign inputBuffers_");
-        Require(body.find("inputPointers_.resize") == std::string::npos,
-                "pump methods do not resize inputPointers_");
-        Require(body.find("inputPointers_.assign") == std::string::npos,
-                "pump methods do not assign inputPointers_");
-        Require(body.find("std::vector<") == std::string::npos,
-                "pump methods do not construct new vector storage");
-        Require(body.find(".resize(") == std::string::npos,
-                "pump methods do not call resize");
-        Require(body.find(".assign(") == std::string::npos,
-                "pump methods do not call assign");
-    }
+    injectedRig.ClearOutput();
+    audio_input_allocation_probe::count.store(0, std::memory_order_relaxed);
+    audio_input_allocation_probe::enabled.store(true, std::memory_order_release);
+    injectedRig.RunBlocks(kBlocks);
+    audio_input_allocation_probe::enabled.store(false, std::memory_order_release);
+    const std::size_t injectedAllocs =
+        audio_input_allocation_probe::count.load(std::memory_order_relaxed);
+
+    Require(silentAllocs == injectedAllocs,
+            "injected input adds no allocations beyond the shared capture path");
+    Require(silentAllocs > 0, "allocation probe observes the pre-existing capture path");
 }
 
 void TestClearAudioInputsRestoresSilence()
 {
-    synth_rig::SynthRig<InputProbeApp> rig;
+    ProbeRig rig;
     const float channel0[4] = {0.3f, 0.3f, 0.3f, 0.3f};
     Require(rig.SetInputChannel(0, channel0), "seed channel before clear");
     rig.ClearAudioInputs();
@@ -563,24 +602,32 @@ void TestClearAudioInputsRestoresSilence()
 
 int main()
 {
-    TestNegativeInputCountThrows();
-    TestSeventeenChannelConfigValidates();
-    TestZeroInputViewIsEmpty();
-    TestViewsAreTriviallyCopyableAndBounded();
-    TestPlanarChannelAndFrameEquivalence();
-    TestMissingRequestedChannelIsSilence();
-    TestInvalidFrameIsSilence();
-    TestCountedNullPointerIsSafeSilence();
-    TestExcessActualChannelsAreClamped();
-    TestNegativeActualCountClampsToZero();
-    TestEngineInitializeRejectsNegativeInputs();
-    TestRigSilentUntilInjection();
-    TestInjectedChannelsReachProbeDsp();
-    TestSampleChannelAndFrameInjectionOrdering();
-    TestUnusedInputIsNotMonitored();
-    TestTransactionalRejectionLeavesStorageUnchanged();
-    TestRunSamplesRoundsUpToWholeBlock();
-    TestPumpMethodsDoNotGrowInputStorage();
-    TestClearAudioInputsRestoresSilence();
-    return g_failures == 0 ? 0 : 1;
+    try
+    {
+        TestNegativeInputCountThrows();
+        TestSeventeenChannelConfigValidates();
+        TestZeroInputViewIsEmpty();
+        TestViewsAreTriviallyCopyableAndBounded();
+        TestPlanarChannelAndFrameEquivalence();
+        TestMissingRequestedChannelIsSilence();
+        TestInvalidFrameIsSilence();
+        TestCountedNullPointerIsSafeSilence();
+        TestExcessActualChannelsAreClamped();
+        TestNegativeActualCountClampsToZero();
+        TestEngineInitializeRejectsNegativeInputs();
+        TestRigSilentUntilInjection();
+        TestInjectedChannelsReachProbeDsp();
+        TestSampleChannelAndFrameInjectionOrdering();
+        TestUnusedInputIsNotMonitored();
+        TestTransactionalRejectionLeavesStorageUnchanged();
+        TestRunSamplesRoundsUpToWholeBlock();
+        TestInjectionAddsNoAllocationBeyondCapture();
+        TestClearAudioInputsRestoresSilence();
+        return g_failures == 0 ? 0 : 1;
+    }
+    catch (const std::exception& ex)
+    {
+        std::cerr << "[FAIL] uncaught exception: " << ex.what() << "\n";
+        return 1;
+    }
 }

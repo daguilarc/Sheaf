@@ -4,17 +4,17 @@
 #error "synth rig tests must not see JUCE headers"
 #endif
 
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <iostream>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <array>
-#include <span>
 #include <vector>
 
 namespace {
