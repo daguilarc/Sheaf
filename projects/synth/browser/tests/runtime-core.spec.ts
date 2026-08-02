@@ -243,11 +243,13 @@ test("registers a native AudioNode input source with a positive physical channel
       rejectedClearStatus = (error as Error).message;
     }
     const setResult = facade.setAudioInputSource(41, audioNode, 4, 2);
+    const repeatSetResult = facade.setAudioInputSource(41, audioNode, 4, 2);
     const clearResult = facade.clearAudioInputSource(41, 6);
     const retry = facade.consumeAudioInputRetry(41);
     return {
       inputChannels,
       setResult,
+      repeatSetResult,
       clearResult,
       retry,
       rejectedZero,
@@ -261,6 +263,7 @@ test("registers a native AudioNode input source with a positive physical channel
   expect(result).toEqual({
     inputChannels: 4,
     setResult: 0,
+    repeatSetResult: 0,
     clearResult: 0,
     retry: true,
     rejectedZero: expect.stringMatching(/physical.*between 1 and 32/i),
@@ -269,6 +272,7 @@ test("registers a native AudioNode input source with a positive physical channel
     rejectedClearStatus: expect.stringMatching(/status.*between 0 and 7/i),
     calls: [
       ["register", true],
+      ["set", 41, 96, 4, 2],
       ["set", 41, 96, 4, 2],
       ["clear", 41, 6],
       ["retry", 41],

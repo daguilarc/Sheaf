@@ -207,6 +207,7 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
     throw new Error("runtime module does not expose audio input source clear");
   if (typeof module._synth_browser_consume_audio_input_retry !== "function")
     throw new Error("runtime module does not expose audio input retry");
+  const audioInputSourceHandles = new WeakMap<AudioNode, number>();
   return {
     abiVersion: module._synth_browser_abi_version(),
     uiProtocolVersion: module._synth_browser_ui_protocol_version(),
@@ -234,9 +235,13 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
       if (!Number.isInteger(statusCode) || statusCode < 0 ||
           statusCode > MAX_BROWSER_AUDIO_INPUT_STATUS_CODE)
         throw new Error("audio input status code must be an integer between 0 and 7");
-      const sourceHandle = module.emscriptenRegisterAudioObject!(source);
-      if (!Number.isInteger(sourceHandle) || sourceHandle <= 0)
-        throw new Error("runtime module failed to register audio input source");
+      let sourceHandle = audioInputSourceHandles.get(source);
+      if (sourceHandle === undefined) {
+        sourceHandle = module.emscriptenRegisterAudioObject!(source);
+        if (!Number.isInteger(sourceHandle) || sourceHandle <= 0)
+          throw new Error("runtime module failed to register audio input source");
+        audioInputSourceHandles.set(source, sourceHandle);
+      }
       return module._synth_browser_set_audio_input_source!(handle, sourceHandle, physicalChannels, statusCode);
     },
     clearAudioInputSource: (handle, statusCode) => {

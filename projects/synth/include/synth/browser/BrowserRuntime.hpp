@@ -251,6 +251,12 @@ public:
     bool IsRunning() const { return started_.load(std::memory_order_acquire); }
     std::size_t AudioOutputChannels() const { return engine_.Config().numAudioOutputs; }
     std::size_t AudioInputChannels() const { return requestedAudioInputChannels_; }
+    bool AudioWorkletConfigurationSupported() const
+    {
+        const std::size_t outputs = AudioOutputChannels();
+        return outputs > 0 && outputs <= kMaxBrowserOutputChannels &&
+               AudioInputChannels() <= kMaxBrowserInputChannels;
+    }
     bool RetainAfterStopForAudioWorklet() const
     {
 #ifdef __EMSCRIPTEN__
@@ -353,15 +359,15 @@ public:
 #ifdef __EMSCRIPTEN__
         const std::uint32_t previous =
             audioInputSourceHandle_.load(std::memory_order_acquire);
-        if (audioNode_ != 0 && previous != 0 && previous != sourceHandle) {
-            DisconnectAudioInputSource(static_cast<EMSCRIPTEN_WEBAUDIO_T>(previous));
-        }
 #endif
         audioInputSourceHandle_.store(sourceHandle, std::memory_order_release);
         audioInputStatusCode_.store(statusCode, std::memory_order_release);
         audioInputPhysicalChannels_.store(physicalChannels, std::memory_order_release);
         audioInputRetryPending_.store(false, std::memory_order_release);
 #ifdef __EMSCRIPTEN__
+        if (audioNode_ != 0 && previous != 0 && previous != sourceHandle) {
+            DisconnectAudioInputSource(static_cast<EMSCRIPTEN_WEBAUDIO_T>(previous));
+        }
         if (audioNode_ != 0 && previous != sourceHandle) {
             emscripten_audio_node_connect(
                 static_cast<EMSCRIPTEN_WEBAUDIO_T>(sourceHandle),
@@ -568,13 +574,6 @@ private:
         }
     }
 
-    bool AudioWorkletConfigurationSupported() const
-    {
-        const std::size_t outputs = AudioOutputChannels();
-        return outputs > 0 && outputs <= kMaxBrowserOutputChannels &&
-               AudioInputChannels() <= kMaxBrowserInputChannels;
-    }
-
     void PublishAudioWorkletPeak(const BrowserAudioSampleFrameDescriptor* outputs,
                                  int numOutputs) noexcept
     {
@@ -736,13 +735,19 @@ private:
     void DisconnectAudioInputSource(EMSCRIPTEN_WEBAUDIO_T sourceHandle)
     {
         EM_ASM({
+            if (typeof emscriptenGetAudioObject !== "function") {
+                throw new Error("emscriptenGetAudioObject is unavailable during audio input disconnect");
+            }
             const source = emscriptenGetAudioObject($0);
             const destination = emscriptenGetAudioObject($1);
-            if (source && destination) {
-                try {
-                    source.disconnect(destination);
-                } catch (error) {
-                }
+            if (!source || !destination) {
+                throw new Error("audio input disconnect object lookup failed");
+            }
+            try {
+                source.disconnect(destination);
+            } catch (error) {
+                if (error && error.name === "InvalidAccessError") return;
+                throw error;
             }
         }, sourceHandle, audioNode_);
     }

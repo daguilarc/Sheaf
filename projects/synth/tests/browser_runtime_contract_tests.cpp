@@ -11,6 +11,7 @@
 #endif
 
 #include <cstddef>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -33,6 +34,11 @@ void Require(bool condition, const char* label)
     {
         throw std::runtime_error(label);
     }
+}
+
+bool NearlyEqual(float left, float right)
+{
+    return std::fabs(left - right) <= 0.0001f;
 }
 
 const synth_browser::DecodedNode* FindNode(
@@ -1014,6 +1020,13 @@ void TestBrowserRuntimeDiscoversRequestedAudioInputChannels()
 
 void TestBrowserRuntimeRejectsUnsupportedAudioInputCountsBeforeCapture()
 {
+    synth_browser::Runtime<InputCountApp<32>> supported;
+    synth_browser::Runtime<InputCountApp<33>> unsupported;
+    Require(supported.AudioWorkletConfigurationSupported(),
+            "browser AudioWorklet host limit accepts exactly thirty-two requested inputs");
+    Require(!unsupported.AudioWorkletConfigurationSupported(),
+            "browser AudioWorklet host limit rejects thirty-three requested inputs");
+
     synth_browser::RuntimeAbiAdapter<InputCountApp<33>> tooMany;
     Require(tooMany.AudioInputChannels() == 33,
             "browser ABI exposes an unsupported requested input count for diagnosis");
@@ -1161,10 +1174,53 @@ void TestBrowserAudioWorkletAdaptsPlanarInputAndOutput()
             "browser callback uses the actual output frame count");
     Require(observation.requestedInputs == 4 && observation.activeInputs == 4,
             "browser callback reports requested and active input channels together");
-    Require(output[0] == 1.10f && output[1] == 2.20f && output[2] == 3.30f,
+    Require(NearlyEqual(output[0], 1.10f) &&
+                NearlyEqual(output[1], 2.20f) &&
+                NearlyEqual(output[2], 3.30f),
             "browser callback maps planar input channels to output channel zero");
-    Require(output[3] == 0.01f && output[4] == 0.02f && output[5] == 0.03f,
+    Require(NearlyEqual(output[3], 0.01f) &&
+                NearlyEqual(output[4], 0.02f) &&
+                NearlyEqual(output[5], 0.03f),
             "browser callback maps planar input channel three to output channel one");
+    runtime.Stop();
+}
+
+void TestBrowserAudioWorkletUsesDescriptorFramesIndependentOfPreparedBlockSize()
+{
+    synth_browser::Runtime<BrowserCallbackProbeApp> runtime;
+    runtime.Start();
+    runtime.Prepare(48000.0, 128);
+    Require(runtime.SetAudioInputSource(
+                75,
+                4,
+                static_cast<std::uint32_t>(synth_browser::BrowserAudioInputStatus::Online)),
+            "browser runtime accepts a source before short descriptor callbacks");
+
+    float input[256] = {};
+    float output[128] = {};
+    const synth_browser::BrowserAudioSampleFrameDescriptor inputs[] = {
+        {.numberOfChannels = 4, .samplesPerChannel = 64, .data = input},
+    };
+    synth_browser::BrowserAudioSampleFrameDescriptor outputs[] = {
+        {.numberOfChannels = 2, .samplesPerChannel = 64, .data = output},
+    };
+
+    Require(runtime.ProcessAudioWorkletPlanarBlock(1, inputs, 1, outputs, 2100),
+            "browser runtime processes the first short descriptor block");
+    Require(runtime.ProcessAudioWorkletPlanarBlock(1, inputs, 1, outputs, 2200),
+            "browser runtime processes the second short descriptor block");
+    Require(runtime.ProcessAudioWorkletPlanarBlock(1, inputs, 1, outputs, 2300),
+            "browser runtime processes the third short descriptor block");
+
+    const auto& observations = runtime.Engine().Application().observations;
+    Require(observations.size() == 3,
+            "browser callback records every short descriptor block");
+    Require(observations[0].frames == 64 && observations[1].frames == 64 &&
+                observations[2].frames == 64,
+            "browser callback uses descriptor frame counts instead of prepared block size");
+    Require(observations[0].startSample == 0 && observations[1].startSample == 64 &&
+                observations[2].startSample == 128,
+            "browser callback advances startSample by each descriptor frame count");
     runtime.Stop();
 }
 
@@ -1199,7 +1255,7 @@ void TestBrowserAudioWorkletInputClampingClearingAndStartSamples()
             "browser runtime processes a physically clamped input block");
     Require(runtime.Engine().Application().observations.back().activeInputs == 2,
             "browser callback clamps active inputs to the published physical count");
-    Require(output[5] == 0.0f,
+    Require(NearlyEqual(output[5], 0.0f),
             "browser callback supplies silence for requested channels beyond the physical source");
 
     Require(runtime.SetAudioInputSource(
@@ -1225,7 +1281,7 @@ void TestBrowserAudioWorkletInputClampingClearingAndStartSamples()
             "browser callback preserves requested count but clears active input count");
     Require(cleared.startSample == 10,
             "browser callback keeps monotonic startSample after clear");
-    Require(output[0] == 0.0f && output[5] == 0.0f,
+    Require(NearlyEqual(output[0], 0.0f) && NearlyEqual(output[5], 0.0f),
             "browser callback produces silence after clearing stale input");
     runtime.Stop();
 }
@@ -1407,6 +1463,7 @@ int main()
     TestBrowserAbiPreservesSuppliedAudioContextHandleAndDirectZero();
     TestBrowserAbiCarriesAudioInputSourceLifecycle();
     TestBrowserAudioWorkletAdaptsPlanarInputAndOutput();
+    TestBrowserAudioWorkletUsesDescriptorFramesIndependentOfPreparedBlockSize();
     TestBrowserAudioWorkletInputClampingClearingAndStartSamples();
     TestBrowserAudioWorkletTreatsNullInputAsSafeSilence();
     TestBrowserAudioWorkletSilencesOutputWhenProcessingFails();
