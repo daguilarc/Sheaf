@@ -623,6 +623,24 @@ logs, allocates, or formats strings. Input and output device selections persist
 independently in `config.json`, and an absent persisted device leaves the
 currently open device alone rather than failing startup.
 
+The Audio page's `System Default` input option is an empty host-neutral device
+name, and that empty name is what persists. JUCE reads an empty
+`AudioDeviceSetup::inputDeviceName` as "no input device wanted", so the runtime
+resolves it to the concrete native default input device before applying the
+setup — exactly as it already does for the output side — and leaves the
+persisted name empty. A zero-input application is deliberately excluded from
+that resolution: its empty name genuinely means no input device.
+
+Opening a device can fail even when it is enumerated (already in use,
+microphone permission denied), and JUCE deletes the current device — output
+included — when it does. Every returned input or initialization error is
+published through the status line rather than only logged, and the runtime then
+recovers a live output-only device from the last known-good setup, so output,
+UI frames, persistence, and MIDI keep running while the diagnostic reports
+`Input requested N / active 0` alongside the error. Recovery deliberately does
+not restore the previous input device: re-selecting an input is a user action,
+and nothing retries capture from the audio callback.
+
 macOS bundles built from `runtime/juce_build.mk` carry
 `NSMicrophoneUsageDescription`, which macOS requires before it will show the
 microphone prompt for an app that does open an input device. Sheaf's desktop

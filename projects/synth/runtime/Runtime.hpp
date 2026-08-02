@@ -246,10 +246,22 @@ public:
         // unsized.
         midiConnections_->StartupReconcile();
 
+        // An input-inclusive initialisation that fails leaves the host with no
+        // device at all, output included, and the returned error is the only
+        // notice. Publish it, then retry output-only so independent output
+        // still runs while the input diagnostic honestly reports `active 0`.
         const juce::String initialiseError =
             deviceManager_.initialiseWithDefaultDevices(config.numAudioInputs, config.numAudioOutputs);
         if (initialiseError.isNotEmpty()) {
             INFO("Audio device initialise FAILED: %s", initialiseError.toRawUTF8());
+            SetAudioStatus(initialiseError);
+            if (config.numAudioInputs > 0) {
+                const juce::String outputOnlyError =
+                    deviceManager_.initialiseWithDefaultDevices(0, config.numAudioOutputs);
+                if (outputOnlyError.isNotEmpty()) {
+                    INFO("Audio device output-only initialise FAILED: %s", outputOnlyError.toRawUTF8());
+                }
+            }
         }
 
         // Prefer the persisted output device over the platform default, but
@@ -276,11 +288,9 @@ public:
             if (wantedInputName.isNotEmpty() && IsEnumeratedInputDevice(wantedInputName)) {
                 juce::AudioDeviceManager::AudioDeviceSetup setup = deviceManager_.getAudioDeviceSetup();
                 setup.inputDeviceName = wantedInputName;
-                const juce::String setupError = deviceManager_.setAudioDeviceSetup(setup, true);
-                if (setupError.isNotEmpty()) {
-                    INFO("Audio input device startup switch FAILED: %s", setupError.toRawUTF8());
+                if (ApplyInputDeviceSetup(setup, "startup")) {
+                    ApplyPreferredRateAndBlockSize();
                 }
-                ApplyPreferredRateAndBlockSize();
             } else {
                 if (wantedInputName.isNotEmpty()) {
                     const juce::String message = "audio input device not found: " + wantedInputName;
@@ -426,15 +436,12 @@ public:
     // with the same absent-device handling (an inputName not currently
     // enumerated is not applied; the status label reports it, matching
     // SwitchOutputDevice/OnEngineAudioDeviceChanged's "absent -> keep
-    // current, no failure" contract). Unlike SwitchOutputDevice's "" ->
-    // System Default resolution, an empty inputDeviceName does not need
-    // special-casing here: setAudioDeviceSetup only deletes the current
-    // device when BOTH inputDeviceName AND outputDeviceName are empty (see
-    // its own implementation), and outputDeviceName here always carries
-    // forward whatever the current setup already has (read via
-    // getAudioDeviceSetup() below), so it's never simultaneously empty
-    // except in the same already-handled "no device wanted" case
-    // SwitchOutputDevice's own doc comment describes.
+    // current, no failure" contract). "System Default" (the empty
+    // host-neutral name) needs exactly the same concrete-name resolution
+    // SwitchOutputDevice performs for outputs: the persisted name stays empty,
+    // but AudioDeviceSetup reads an empty inputDeviceName as "no input device
+    // at all", so passing it through would silently stop capture for an app
+    // that asked for input -- see ResolveInputDeviceName.
     void ApplyAudioDeviceInputSelection(const juce::String& inputName) {
         synth::AudioDeviceState newState = engine_.AudioDeviceSnapshot();
         newState.inputDeviceName = inputName.toStdString();
@@ -449,10 +456,10 @@ public:
         }
 
         juce::AudioDeviceManager::AudioDeviceSetup setup = deviceManager_.getAudioDeviceSetup();
-        setup.inputDeviceName = inputName;
-        const juce::String setupError = deviceManager_.setAudioDeviceSetup(setup, true);
-        if (setupError.isNotEmpty()) {
-            INFO("Audio input device switch (selection) FAILED: %s", setupError.toRawUTF8());
+        setup.inputDeviceName = ResolveInputDeviceName(inputName);
+        if (!ApplyInputDeviceSetup(setup, "selection")) {
+            SyncAudioSelection();
+            return;
         }
         ApplyPreferredRateAndBlockSize();
         SetAudioStatus(inputName.isEmpty() ? "Audio In: System Default" : "Audio In: " + inputName);
@@ -604,6 +611,81 @@ private:
     bool IsEnumeratedInputDevice(const juce::String& name) const {
         juce::AudioIODeviceType* deviceType = deviceManager_.getCurrentDeviceTypeObject();
         return deviceType != nullptr && deviceType->getDeviceNames(true).contains(name);
+    }
+
+    // Input-side counterpart of SwitchOutputDevice's "System Default"
+    // resolution. The portable Audio page's System Default option is an empty
+    // host-neutral device name, and that empty name is what persists in
+    // config.json -- but AudioDeviceSetup reads an empty inputDeviceName as
+    // "no input device wanted" and opens the device with no capture at all, so
+    // handing "" straight to setAudioDeviceSetup would silently disable input
+    // for an application that requested it. Resolve it to the concrete native
+    // default input device name instead, exactly as SwitchOutputDevice does
+    // for the output side, and leave the persisted name alone.
+    //
+    // A zero-input application is left untouched: its "" genuinely means "no
+    // input device", and resolving it would open a capture path (and raise the
+    // macOS microphone prompt) that the application never asked for.
+    juce::String ResolveInputDeviceName(const juce::String& inputName) const {
+        if (inputName.isNotEmpty() || requestedInputChannels_ <= 0) {
+            return inputName;
+        }
+        juce::AudioIODeviceType* deviceType = deviceManager_.getCurrentDeviceTypeObject();
+        if (deviceType == nullptr) {
+            return inputName;
+        }
+        const juce::StringArray names = deviceType->getDeviceNames(true);
+        const int defaultIx = deviceType->getDefaultDeviceIndex(true);
+        if (defaultIx >= 0 && defaultIx < names.size()) {
+            return names[defaultIx];
+        }
+        return inputName;
+    }
+
+    // Applies an AudioDeviceSetup that changes the input device, and owns the
+    // failure path. JUCE stops and deletes the current device before it opens
+    // the requested one and deletes it again if the open fails, so a failed
+    // input switch leaves the host with NO device at all -- output included --
+    // and the returned error string is the only notice anyone gets. Publish
+    // that error through the status line (rather than only INFO-logging it and
+    // then reporting a success that did not happen), then recover a live
+    // device so independent output keeps running.
+    //
+    // Recovery re-applies the last setup JUCE reported as current with its
+    // input device dropped: that keeps the known-good output device and leaves
+    // the input diagnostic honestly reporting `active 0` instead of silently
+    // reverting to a capture the user did not ask for. Re-selecting an input
+    // device is a user action; nothing here retries, and nothing on this path
+    // is reachable from the audio callback.
+    //
+    // Returns true when the requested setup applied, false when it failed (in
+    // which case recovery has already run and the caller must not report
+    // success).
+    bool ApplyInputDeviceSetup(const juce::AudioDeviceManager::AudioDeviceSetup& setup,
+                               const char* reason) {
+        const juce::AudioDeviceManager::AudioDeviceSetup lastKnownGood =
+            deviceManager_.getAudioDeviceSetup();
+        const juce::String setupError = deviceManager_.setAudioDeviceSetup(setup, true);
+        if (setupError.isEmpty()) {
+            return true;
+        }
+        INFO("Audio input device switch (%s) FAILED: %s", reason, setupError.toRawUTF8());
+        SetAudioStatus(setupError);
+        RecoverOutputOnlyDevice(lastKnownGood, reason);
+        return false;
+    }
+
+    // Restores output after a failed input setup, from the setup that was
+    // current before it. See ApplyInputDeviceSetup for why the input device is
+    // dropped rather than restored.
+    void RecoverOutputOnlyDevice(juce::AudioDeviceManager::AudioDeviceSetup lastKnownGood,
+                                 const char* reason) {
+        lastKnownGood.inputDeviceName = juce::String();
+        const juce::String recoveryError = deviceManager_.setAudioDeviceSetup(lastKnownGood, true);
+        if (recoveryError.isNotEmpty()) {
+            INFO("Audio device output-only recovery (%s) FAILED: %s", reason,
+                 recoveryError.toRawUTF8());
+        }
     }
 
     // Mutates the current AudioDeviceSetup's sampleRate/bufferSize to
@@ -805,13 +887,15 @@ private:
         if (inputName.isEmpty() || IsEnumeratedInputDevice(inputName)) {
             if (deviceManager_.getCurrentAudioDevice() != nullptr) {
                 juce::AudioDeviceManager::AudioDeviceSetup setup = deviceManager_.getAudioDeviceSetup();
-                if (setup.inputDeviceName != inputName) {
-                    setup.inputDeviceName = inputName;
-                    const juce::String setupError = deviceManager_.setAudioDeviceSetup(setup, true);
-                    if (setupError.isNotEmpty()) {
-                        INFO("Audio input device switch (patch) FAILED: %s", setupError.toRawUTF8());
+                // Same System Default resolution as the combo path: the
+                // persisted empty name must not reach the setup verbatim for an
+                // input-capable app. See ResolveInputDeviceName.
+                const juce::String resolvedInputName = ResolveInputDeviceName(inputName);
+                if (setup.inputDeviceName != resolvedInputName) {
+                    setup.inputDeviceName = resolvedInputName;
+                    if (ApplyInputDeviceSetup(setup, "patch")) {
+                        ApplyPreferredRateAndBlockSize();
                     }
-                    ApplyPreferredRateAndBlockSize();
                 }
             }
         } else if (deviceManager_.getCurrentAudioDevice() != nullptr) {

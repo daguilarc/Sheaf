@@ -147,7 +147,9 @@ struct ObservedInput {
     int prepareCount = 0;
     int numRequestedInputChannels = -1;
     int numInputChannels = -1;
+    int numOutputChannels = -1;
     bool inputsNull = true;
+    std::size_t numFrames = 0;
     std::size_t requestedChannelCount = 0;
     std::size_t activeChannelCount = 0;
     bool viewEmpty = true;
@@ -182,7 +184,9 @@ struct InputProbeApp final {
         ++observed.blockCount;
         observed.numRequestedInputChannels = block.numRequestedInputChannels;
         observed.numInputChannels = block.numInputChannels;
+        observed.numOutputChannels = block.numOutputChannels;
         observed.inputsNull = block.inputs == nullptr;
+        observed.numFrames = block.numFrames;
 
         const synth::AudioInputView view = block.InputView();
         observed.requestedChannelCount = view.RequestedChannelCount();
@@ -539,20 +543,36 @@ void CheckDeviceSwitchLifecycle(const std::filesystem::path& parent) {
     host.Start();
 
     const int blocksBeforeSwitch = host.Observed().blockCount;
-    const int preparesBeforeSwitch = host.Observed().prepareCount;
+    const int preparesBeforeOutputSwitch = host.Observed().prepareCount;
     host.DeviceType().ClearLifecycle();
     host.Get().ApplyAudioDeviceSelection("Fake Out B");
 
-    const std::vector<std::string> expectedLifecycle{
-        "Fake Out A:stop", "Fake Out A:destroy", "Fake Out B:open", "Fake Out B:start"};
-    Require(host.DeviceType().Lifecycle() == expectedLifecycle,
+    const std::vector<std::string> expectedOutputSwitch{
+        "Fake Out A+Fake In A:stop", "Fake Out A+Fake In A:destroy",
+        "Fake Out B+Fake In A:open", "Fake Out B+Fake In A:start"};
+    Require(host.DeviceType().Lifecycle() == expectedOutputSwitch,
             "an output device switch stops and destroys the old device before starting the new one");
-    Require(host.Observed().prepareCount == preparesBeforeSwitch + 1,
-            "the engine is re-prepared exactly once across the switch");
+    Require(host.Observed().prepareCount == preparesBeforeOutputSwitch + 1,
+            "the engine is re-prepared exactly once across the output switch");
     Require(host.Observed().blockCount == blocksBeforeSwitch,
-            "no block is delegated while the device is being switched");
+            "no block is delegated while the output device is being switched");
 
+    // The input-switch path is a distinct call site and must follow the same
+    // stop/re-prepare/restart ordering, with no block delegated in between.
+    const int preparesBeforeInputSwitch = host.Observed().prepareCount;
+    host.DeviceType().ClearLifecycle();
     host.Get().ApplyAudioDeviceInputSelection("Fake In B");
+
+    const std::vector<std::string> expectedInputSwitch{
+        "Fake Out B+Fake In A:stop", "Fake Out B+Fake In A:destroy",
+        "Fake Out B+Fake In B:open", "Fake Out B+Fake In B:start"};
+    Require(host.DeviceType().Lifecycle() == expectedInputSwitch,
+            "an input device switch stops and destroys the old device before starting the new one");
+    Require(host.Observed().prepareCount == preparesBeforeInputSwitch + 1,
+            "the engine is re-prepared exactly once across the input switch");
+    Require(host.Observed().blockCount == blocksBeforeSwitch,
+            "no block is delegated while the input device is being switched");
+
     const synth::AudioDeviceState state = host.Get().GetEngine().AudioDeviceSnapshot();
     Require(state.outputDeviceName == "Fake Out B" && state.inputDeviceName == "Fake In B",
             "input and output device names are recorded independently");
@@ -574,6 +594,89 @@ void CheckDeviceSwitchLifecycle(const std::filesystem::path& parent) {
     Require(host.Observed().blockCount == blocksBeforeSwitch + 1 &&
                 host.Observed().numInputChannels == 2,
             "the switched device delegates blocks with the negotiated input shape");
+    Require(host.Observed().numFrames == 8 && host.Observed().numOutputChannels == 2,
+            "a device switch leaves the delegated frame count and output shape unchanged");
+}
+
+// Portable "System Default" input is an empty host-neutral name, but an empty
+// AudioDeviceSetup::inputDeviceName is how JUCE says "no input device at all".
+// The host must resolve a concrete native default for the setup while the
+// persisted name stays empty (sru-3, sar-30).
+void CheckSystemDefaultInputSelection(const std::filesystem::path& parent) {
+    FakeDeviceRuntime<InputProbeApp<2>> host(FreshRoot(parent, "system-default-input"), 2, 2);
+    host.Start();
+
+    host.Get().ApplyAudioDeviceInputSelection("Fake In B");
+    Require(host.Get().DeviceManager().getAudioDeviceSetup().inputDeviceName == "Fake In B",
+            "a named input selection reaches the device setup verbatim");
+
+    host.Get().ApplyAudioDeviceInputSelection("");
+    Require(host.Get().GetEngine().AudioDeviceSnapshot().inputDeviceName.empty(),
+            "System Default input persists the empty host-neutral name");
+    Require(host.Get().DeviceManager().getAudioDeviceSetup().inputDeviceName == "Fake In A",
+            "System Default input resolves to the concrete native default input device");
+    Require(host.Status() == "Input requested 2 / active 2 - Audio In: System Default",
+            "System Default input keeps a nonzero active count");
+
+    DeviceBlockSpec spec;
+    spec.inputChannels = {11.0f, 12.0f};
+    DeviceBlockBuffers buffers(spec);
+    host.RunBlock(buffers);
+
+    const ObservedInput& observed = host.Observed();
+    Require(observed.numInputChannels == 2 && observed.activeChannelCount == 2,
+            "System Default input keeps capture active");
+    Require(observed.firstFrameOrSilence[0] == 11.0f && observed.firstFrameOrSilence[1] == 12.0f,
+            "System Default input still delivers device samples");
+}
+
+// A device that is enumerated but fails to open (already in use, permission
+// denied) leaves JUCE with no device at all, output included. The host must
+// publish the returned error and recover a live output-only device while the
+// diagnostic honestly reports active 0 (sar-31, sru-3).
+void CheckInputDeviceOpenFailure(const std::filesystem::path& parent) {
+    FakeDeviceRuntime<InputProbeApp<2>> host(FreshRoot(parent, "input-open-failure"), 2, 2);
+    host.DeviceType().FailOpenForInputDevice("Fake In B");
+    host.Start();
+    Require(host.Status() == "Input requested 2 / active 2",
+            "startup succeeds on the working default input device");
+
+    const std::string expectedStatus =
+        "Input requested 2 / active 0 - Fake input device open failed: Fake In B";
+    const int blocksBeforeFailure = host.Observed().blockCount;
+    host.Get().ApplyAudioDeviceInputSelection("Fake In B");
+
+    Require(host.Status() == expectedStatus,
+            "a failed input open publishes its exact returned diagnostic with a zero active count");
+    Require(host.Get().DeviceManager().getCurrentAudioDevice() != nullptr,
+            "a failed input open recovers a live audio device rather than leaving none");
+    const juce::AudioDeviceManager::AudioDeviceSetup setup =
+        host.Get().DeviceManager().getAudioDeviceSetup();
+    Require(setup.inputDeviceName.isEmpty(), "recovery falls back to an output-only setup");
+    Require(setup.outputDeviceName == "Fake Out A",
+            "recovery keeps the prior known-good output device");
+    Require(host.Observed().blockCount == blocksBeforeFailure,
+            "no block is delegated while the failure is being recovered");
+
+    // The recovered device has no input channels, so its driver delivers none.
+    DeviceBlockSpec spec;
+    spec.numOutputChannels = 2;
+    DeviceBlockBuffers buffers(spec);
+    host.RunBlock(buffers);
+
+    const ObservedInput& observed = host.Observed();
+    Require(observed.numRequestedInputChannels == 2, "the request survives a failed input open");
+    Require(observed.numInputChannels == 0 && observed.inputsNull && observed.viewEmpty,
+            "a failed input open leaves zero active input channels and null input storage");
+    Require(observed.firstFrameOrSilence[0] == 0.0f && observed.firstFrameOrSilence[1] == 0.0f,
+            "safe access returns silence for every requested channel after a failed open");
+    Require(observed.numFrames == 8 && observed.numOutputChannels == 2,
+            "a failed input open leaves the delegated frame count and output shape unchanged");
+    Require(observed.outputChannel0Frame0 == kOutputMarker &&
+                observed.outputChannel1Frame0 == kOutputMarker + 1.0f,
+            "output continues after a failed input open");
+    Require(host.Status() == expectedStatus,
+            "the failure diagnostic survives subsequent blocks");
 }
 
 // A negative input request is rejected before any device is opened (sar-31).
@@ -601,6 +704,8 @@ void CheckJuceAudioInputNegotiation() {
     CheckCountedNullChannel(parent);
     CheckMissingPersistedInputDevice(parent);
     CheckDeviceSwitchLifecycle(parent);
+    CheckSystemDefaultInputSelection(parent);
+    CheckInputDeviceOpenFailure(parent);
     CheckNegativeInputRequestRejected(parent);
 
     std::filesystem::remove_all(parent);

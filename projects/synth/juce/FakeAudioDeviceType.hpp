@@ -3,8 +3,8 @@
 // synth_juce::FakeAudioDeviceType — a test-only juce::AudioIODeviceType whose
 // devices are entirely synthetic, so JUCE runtime tests can exercise audio
 // device negotiation (input/output channel counts, device switching, callback
-// shape) without touching developer hardware and without a running message
-// loop.
+// shape, open failure) without touching developer hardware and without a
+// running message loop.
 //
 // Hermetic-by-construction: juce::AudioDeviceManager only creates the real
 // platform device types when its type list is still empty
@@ -13,14 +13,25 @@
 // BEFORE Runtime::Start() leaves CoreAudio out of the list entirely and the
 // manager picks this type as current (pickCurrentDeviceTypeWithDevices).
 //
+// Each device remembers the selected input and output device names
+// independently, so a duplex pair reports the right index in each direction
+// (getIndexOfDevice) and a lifecycle entry names both halves of the pair --
+// which is what lets a test tell an input-only switch apart from an
+// output-only one.
+//
 // The test drives audio by hand: FakeAudioDevice::start() records the callback
 // the device manager installs, and RunBlock() invokes it with whatever channel
 // pointers, channel counts, and frame count the scenario needs — including
 // counts above/below the negotiated shape and null pointers inside the counted
 // prefix, none of which real hardware lets a test produce on demand.
 //
-// Lifecycle() returns the ordered open/start/stop/close/destroy trace across
-// every device this type has created, so tests can assert the
+// FailOpenForInputDevice() makes any device selected with that input name fail
+// to open, the way a device that is enumerated but unavailable (already in use,
+// microphone permission denied) does. JUCE deletes the current device when an
+// open fails, so this is how a test reaches the host's recovery path.
+//
+// Lifecycle() returns the ordered open/open-failed/start/stop/close/destroy
+// trace across every device this type has created, so tests can assert the
 // stop/reprepare/restart ordering a device switch is required to follow.
 
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -36,7 +47,8 @@ class FakeAudioDeviceType;
 class FakeAudioDevice final : public juce::AudioIODevice {
 public:
     FakeAudioDevice(FakeAudioDeviceType& owner,
-                    const juce::String& deviceName,
+                    juce::String outputDeviceName,
+                    juce::String inputDeviceName,
                     int maxInputChannels,
                     int maxOutputChannels);
 
@@ -59,7 +71,7 @@ public:
     void stop() override;
     bool isPlaying() override { return callback_ != nullptr; }
 
-    juce::String getLastError() override { return {}; }
+    juce::String getLastError() override { return lastError_; }
     int getCurrentBufferSizeSamples() override { return bufferSize_; }
     double getCurrentSampleRate() override { return sampleRate_; }
     int getCurrentBitDepth() override { return 32; }
@@ -67,6 +79,19 @@ public:
     juce::BigInteger getActiveInputChannels() const override { return activeInputChannels_; }
     int getOutputLatencyInSamples() override { return 0; }
     int getInputLatencyInSamples() override { return 0; }
+
+    // The device names this device was created for, each empty when that
+    // direction was not selected. Kept separately from getName() (which JUCE
+    // treats as one name for the whole device) so both directions resolve.
+    const juce::String& SelectedOutputName() const { return outputDeviceName_; }
+    const juce::String& SelectedInputName() const { return inputDeviceName_; }
+
+    // "<output>+<input>", with "(none)" for an unselected direction. The tag
+    // every lifecycle entry carries.
+    juce::String Label() const {
+        return (outputDeviceName_.isEmpty() ? juce::String("(none)") : outputDeviceName_) + "+" +
+               (inputDeviceName_.isEmpty() ? juce::String("(none)") : inputDeviceName_);
+    }
 
     // Delivers one device block to whatever callback the device manager
     // installed, exactly as a driver thread would. `inputs` may contain null
@@ -92,6 +117,8 @@ private:
     static juce::BigInteger ClampChannels(const juce::BigInteger& requested, int limit);
 
     FakeAudioDeviceType& owner_;
+    juce::String outputDeviceName_;
+    juce::String inputDeviceName_;
     int maxInputChannels_ = 0;
     int maxOutputChannels_ = 0;
     juce::BigInteger activeInputChannels_;
@@ -99,6 +126,7 @@ private:
     double sampleRate_ = 48000.0;
     int bufferSize_ = 256;
     bool open_ = false;
+    juce::String lastError_;
     juce::AudioIODeviceCallback* callback_ = nullptr;
 };
 
@@ -125,18 +153,21 @@ public:
     int getDefaultDeviceIndex(bool) const override { return 0; }
 
     int getIndexOfDevice(juce::AudioIODevice* device, bool asInput) const override {
-        return device == nullptr ? -1 : getDeviceNames(asInput).indexOf(device->getName());
+        auto* fake = dynamic_cast<FakeAudioDevice*>(device);
+        if (fake == nullptr) {
+            return -1;
+        }
+        return getDeviceNames(asInput).indexOf(asInput ? fake->SelectedInputName()
+                                                       : fake->SelectedOutputName());
     }
 
     bool hasSeparateInputsAndOutputs() const override { return true; }
 
     juce::AudioIODevice* createDevice(const juce::String& outputDeviceName,
                                       const juce::String& inputDeviceName) override {
-        const juce::String deviceName =
-            outputDeviceName.isNotEmpty() ? outputDeviceName : inputDeviceName;
         const int inputs = inputDeviceName.isNotEmpty() ? maxInputChannels_ : 0;
         const int outputs = outputDeviceName.isNotEmpty() ? maxOutputChannels_ : 0;
-        auto* device = new FakeAudioDevice(*this, deviceName, inputs, outputs);
+        auto* device = new FakeAudioDevice(*this, outputDeviceName, inputDeviceName, inputs, outputs);
         current_ = device;
         return device;
     }
@@ -146,13 +177,27 @@ public:
     // destroyed immediately and clear themselves from here as they go.
     FakeAudioDevice* CurrentDevice() const { return current_; }
 
-    // Ordered open/start/stop/close/destroy trace across every device this
-    // type has created, each entry tagged with the device name.
+    // Ordered lifecycle trace across every device this type has created, each
+    // entry tagged with FakeAudioDevice::Label().
     const std::vector<std::string>& Lifecycle() const { return lifecycle_; }
     void ClearLifecycle() { lifecycle_.clear(); }
 
-    void RecordLifecycle(const juce::String& deviceName, const char* event) {
-        lifecycle_.push_back(deviceName.toStdString() + ":" + event);
+    void RecordLifecycle(const juce::String& label, const char* event) {
+        lifecycle_.push_back(label.toStdString() + ":" + event);
+    }
+
+    // Any device selected with this input device name fails to open, with
+    // OpenFailureMessage(name) as the returned error.
+    void FailOpenForInputDevice(const juce::String& inputDeviceName) {
+        failingInputDeviceNames_.add(inputDeviceName);
+    }
+
+    bool OpenFailsForInputDevice(const juce::String& inputDeviceName) const {
+        return inputDeviceName.isNotEmpty() && failingInputDeviceNames_.contains(inputDeviceName);
+    }
+
+    static juce::String OpenFailureMessage(const juce::String& inputDeviceName) {
+        return "Fake input device open failed: " + inputDeviceName;
     }
 
     void OnDeviceDestroyed(FakeAudioDevice* device) {
@@ -166,21 +211,26 @@ private:
     juce::StringArray outputDeviceNames_;
     int maxInputChannels_ = 0;
     int maxOutputChannels_ = 0;
+    juce::StringArray failingInputDeviceNames_;
     FakeAudioDevice* current_ = nullptr;
     std::vector<std::string> lifecycle_;
 };
 
 inline FakeAudioDevice::FakeAudioDevice(FakeAudioDeviceType& owner,
-                                        const juce::String& deviceName,
+                                        juce::String outputDeviceName,
+                                        juce::String inputDeviceName,
                                         int maxInputChannels,
                                         int maxOutputChannels)
-    : juce::AudioIODevice(deviceName, FakeAudioDeviceType::kTypeName)
+    : juce::AudioIODevice(outputDeviceName.isNotEmpty() ? outputDeviceName : inputDeviceName,
+                          FakeAudioDeviceType::kTypeName)
     , owner_(owner)
+    , outputDeviceName_(std::move(outputDeviceName))
+    , inputDeviceName_(std::move(inputDeviceName))
     , maxInputChannels_(maxInputChannels)
     , maxOutputChannels_(maxOutputChannels) {}
 
 inline FakeAudioDevice::~FakeAudioDevice() {
-    owner_.RecordLifecycle(getName(), "destroy");
+    owner_.RecordLifecycle(Label(), "destroy");
     owner_.OnDeviceDestroyed(this);
 }
 
@@ -197,12 +247,18 @@ inline juce::String FakeAudioDevice::open(const juce::BigInteger& inputChannels,
                                           const juce::BigInteger& outputChannels,
                                           double sampleRate,
                                           int bufferSizeSamples) {
+    if (owner_.OpenFailsForInputDevice(inputDeviceName_)) {
+        lastError_ = FakeAudioDeviceType::OpenFailureMessage(inputDeviceName_);
+        owner_.RecordLifecycle(Label(), "open-failed");
+        return lastError_;
+    }
+    lastError_.clear();
     activeInputChannels_ = ClampChannels(inputChannels, maxInputChannels_);
     activeOutputChannels_ = ClampChannels(outputChannels, maxOutputChannels_);
     sampleRate_ = sampleRate > 0.0 ? sampleRate : 48000.0;
     bufferSize_ = bufferSizeSamples > 0 ? bufferSizeSamples : getDefaultBufferSize();
     open_ = true;
-    owner_.RecordLifecycle(getName(), "open");
+    owner_.RecordLifecycle(Label(), "open");
     return {};
 }
 
@@ -212,7 +268,7 @@ inline void FakeAudioDevice::close() {
         return;
     }
     open_ = false;
-    owner_.RecordLifecycle(getName(), "close");
+    owner_.RecordLifecycle(Label(), "close");
 }
 
 inline void FakeAudioDevice::start(juce::AudioIODeviceCallback* callback) {
@@ -220,7 +276,7 @@ inline void FakeAudioDevice::start(juce::AudioIODeviceCallback* callback) {
         return;
     }
     callback_ = callback;
-    owner_.RecordLifecycle(getName(), "start");
+    owner_.RecordLifecycle(Label(), "start");
     callback_->audioDeviceAboutToStart(this);
 }
 
@@ -230,7 +286,7 @@ inline void FakeAudioDevice::stop() {
         return;
     }
     callback_ = nullptr;
-    owner_.RecordLifecycle(getName(), "stop");
+    owner_.RecordLifecycle(Label(), "stop");
     callback->audioDeviceStopped();
 }
 
