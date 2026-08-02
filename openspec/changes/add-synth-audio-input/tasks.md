@@ -1,7 +1,7 @@
 ## 1. Specification Dependency And Contract Baseline
 
 - [x] 1.1 Before source implementation, reconcile the completed `add-browser-wasm-runtime` change with the shipped callback-only audio path: replace stale worker/ring and worker-negotiated-block language in `sbw-4`, `sbw-8`, and its host-callback requirement; renumber its `sar-22..25` to `sar-27..30` and `sru-21..23` to `sru-56..58` without forward-porting this change's input-aware catalog behavior; strictly validate it; archive it to establish the base `synth-browser-wasm-runtime` capability; then validate main specs and this change with its new requirements fixed at `sar-31` and `sar-32`.
-- [ ] 1.2 Add failing JUCE-free validation tests proving negative input counts throw `std::invalid_argument` before initialization, JUCE accepts a 17-channel representable request, and the browser accepts 32 but rejects 33 with an explicit startup diagnostic.
+- [x] 1.2 Add failing JUCE-free validation tests proving negative input counts throw `std::invalid_argument` before initialization, JUCE accepts a 17-channel representable request, and the browser accepts 32 but rejects 33 with an explicit startup diagnostic.
 - [x] 1.3 Add failing input-view behavior tests for active-count clamping, exact zero-input null/empty state, channel/frame sample equivalence, strict bounds/preconditions, null-channel safety, and missing-channel or invalid-frame safe silence.
 - [x] 1.4 Implement shared runtime-config validation and additive `AudioBlock::InputView()` block/frame accessors while retaining existing public input/output fields and performing no allocation or sample copy.
 - [x] 1.5 Add source-boundary and compile-time coverage proving the input views remain JUCE-free, trivially copyable, bounded-size/non-owning, documented as callback-lifetime-only, and usable by both core-only and full `SynthApplication` types.
@@ -21,12 +21,12 @@
 
 ## 4. Browser ABI And Native AudioWorklet
 
-- [ ] 4.1 Add failing C++ browser-runtime tests for requested-input discovery, zero-input null handling, 32-channel acceptance/33-channel rejection, and monotonic sample advancement by the actual callback frame count.
-- [ ] 4.2 Add failing native callback tests for planar input/output processing, active-count clamping to `min(bus, published physical, requested)`, null/missing-input silence, and stale-count clearing after capture loss.
-- [ ] 4.3 Extend the browser runtime facade and Wasm ABI with requested-input discovery, published physical-channel state, and optional registered input-source startup data carrying both node handle and positive physical channel count; bump/validate the relevant ABI contract and update export/scaffold/fake-module coverage.
-- [ ] 4.4 Extend `Runtime<App>::Process` and the native Emscripten callback to construct one complete `AudioBlock` from actual input/output `AudioSampleFrame` values using preallocated 32-channel pointer storage, atomic physical-count reads, and no realtime allocation.
-- [ ] 4.5 Create the native AudioWorklet node with zero input buses for zero-input apps or `numberOfInputs=1`, `channelCount=N`, explicit count mode, and discrete interpretation for input-capable apps; connect the registered media source only after node creation succeeds and retain unchanged output bus/destination wiring.
-- [ ] 4.6 Add callback failure and capture-loss handling that clears stale physical/input visibility, silences output only for processing failures, updates diagnostics outside browser control APIs, and keeps the engine/output callback live.
+- [x] 4.1 Add failing C++ browser-runtime tests for requested-input discovery, zero-input null handling, 32-channel acceptance/33-channel rejection, and monotonic sample advancement by the actual callback frame count.
+- [x] 4.2 Add failing native callback tests for planar input/output processing, active-count clamping to `min(bus, published physical, requested)`, null/missing-input silence, and stale-count clearing after capture loss.
+- [x] 4.3 Extend the browser runtime facade and Wasm ABI with requested-input discovery, published physical-channel state, and optional registered input-source startup data carrying both node handle and positive physical channel count; bump/validate the relevant ABI contract and update export/scaffold/fake-module coverage.
+- [x] 4.4 Extend `Runtime<App>::Process` and the native Emscripten callback to construct one complete `AudioBlock` from actual input/output `AudioSampleFrame` values using preallocated 32-channel pointer storage, atomic physical-count reads, and no realtime allocation.
+- [x] 4.5 Create the native AudioWorklet node with zero input buses for zero-input apps or `numberOfInputs=1`, `channelCount=N`, explicit count mode, and discrete interpretation for input-capable apps; connect the registered media source only after node creation succeeds and retain unchanged output bus/destination wiring.
+- [x] 4.6 Add callback failure and capture-loss handling that clears stale physical/input visibility, silences output only for processing failures, updates diagnostics outside browser control APIs, and keeps the engine/output callback live.
 
 ## 5. Browser Capture, Audio Page, And Lifecycle
 
