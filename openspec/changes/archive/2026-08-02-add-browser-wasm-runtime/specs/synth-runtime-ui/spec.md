@@ -1,6 +1,6 @@
 ## ADDED Requirements
 
-### Requirement: sru-21 — Portable UI: browser command-buffer serialization
+### Requirement: sru-56 — Portable UI: browser command-buffer serialization
 WHEN a portable UI surface is rendered by the browser backend, THE runtime UI layer SHALL provide a JUCE-free serialization boundary that converts the current `NodeTree` into a browser-consumable command buffer containing stable node identities, hierarchy, bounds, semantic control records, actions, scroll extents, string-table entries, and draw-command records; the serialization boundary SHALL be testable without JUCE, DOM, Canvas, or application-specific browser code.
 
 #### Scenario: Representative tree serializes without host APIs
@@ -13,7 +13,7 @@ WHEN a portable UI surface is rendered by the browser backend, THE runtime UI la
 - **THEN** the serialized records preserve the same node identity
 - **AND** the browser backend can update the existing browser-side control rather than recreating it solely because its value changed
 
-### Requirement: sru-22 — Portable UI: browser backend rendering and dispatch
+### Requirement: sru-57 — Portable UI: browser backend rendering and dispatch
 WHEN the browser backend receives a portable UI command buffer, THE backend SHALL render semantic controls as browser controls or browser-owned equivalents, render draw-command nodes through a batched canvas-oriented renderer, preserve scroll viewport and content-extent semantics, and translate browser input events into portable `Action` dispatches without requiring application-specific DOM or HTML.
 
 #### Scenario: Semantic controls render from node kind
@@ -37,7 +37,7 @@ WHEN the browser backend receives a portable UI command buffer, THE backend SHAL
 - **AND** encoder/rotary drag actions preserve the existing replacement-delta semantics expected by portable controls, including replacement of the suffix after the final colon in action values
 - **AND** double-click dispatch preserves portable push actions for rows and draw nodes that define them
 
-### Requirement: sru-23 — Portable UI: no app-specific browser fallback
+### Requirement: sru-58 — Portable UI: no app-specific browser fallback
 WHEN browser UI support is added for a synth application, THE runtime UI layer SHALL use the same portable tree, command-buffer serializer, and browser backend for all synth applications; it SHALL NOT provide hand-written browser HTML, app-specific DOM layout, or app-specific fallback controls for the miniapp or any other concrete app.
 
 #### Scenario: Miniapp uses generic portable backend

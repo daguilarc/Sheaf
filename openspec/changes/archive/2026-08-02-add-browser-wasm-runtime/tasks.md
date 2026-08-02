@@ -35,11 +35,11 @@
 ## 5. Web Audio Bridge
 
 - [x] 5.1 Add the main-thread audio startup flow using user activation, `AudioContext`, AudioWorklet module installation, and AudioWorkletNode graph connection.
-- [x] 5.2 Implement the AudioWorklet/worker `SharedArrayBuffer` ring-buffer bridge for input/output samples, state words, render requests, underflow reporting, and shutdown; fail clearly when cross-origin isolation is unavailable.
-- [x] 5.3 Adapt worker-rendered audio blocks into `synth::AudioBlock`, prepare the engine from `AudioContext.sampleRate` plus the worker-negotiated render block size, and use actual AudioWorklet array lengths only for ring-buffer copy/fill.
+- [x] 5.2 Implement native Emscripten Wasm AudioWorklet startup with launch-owned `AudioContext` registration, processor/node creation, zero input buses, callback progress diagnostics, and clear failure when cross-origin isolation or native worklet support is unavailable.
+- [x] 5.3 Adapt native AudioWorklet output frames into `synth::AudioBlock`, prepare the engine from `AudioContext.sampleRate` plus the actual render quantum, and invoke `Runtime<App>::Process` exactly once per callback without a JavaScript/worker sample ring.
 - [x] 5.4 Implement the browser audio-device catalog as a generic host provider with exactly one selectable "System Default" option (`system_default`) persisted as the existing empty output-device name, with no `setSinkId()` or named-output enumeration.
-- [x] 5.5 Report browser audio input as unsupported when an app requests inputs, keep browser Audio page snapshots with `showInputCombo == false` and empty `inputOptions`, and avoid `getUserMedia()` in this change.
-- [x] 5.6 Add Playwright Chrome tests proving the fake app opens, starts audio after activation, produces finite non-silent output, handles actual worklet array lengths through the ring buffer, exposes only System Default audio output, and reports underflow/security failures.
+- [x] 5.5 Keep browser audio output-only in this base, keep browser Audio page snapshots with `showInputCombo == false` and empty `inputOptions`, expose only the System Default output catalog, and avoid `getUserMedia()` in this change.
+- [x] 5.6 Add Playwright Chrome tests proving the fake app opens, starts audio after activation, produces finite non-silent output through the native callback, handles actual worklet callback frame counts, exposes only System Default audio output, and reports callback-start/security failures.
 
 ## 6. Web MIDI Bridge
 

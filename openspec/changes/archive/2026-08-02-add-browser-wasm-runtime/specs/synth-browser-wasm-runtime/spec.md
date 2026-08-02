@@ -38,43 +38,39 @@ WHEN a synth application runs in Chrome through the browser runtime, THE browser
 - **AND** it SHALL NOT add the app-specific branch to the browser runtime or backend
 
 ### Requirement: sbw-4 — Audio: Web Audio and AudioWorklet bridge
-WHEN browser audio is started, THE browser runtime SHALL create or resume an `AudioContext` from a user activation, install an `AudioWorkletProcessor`, connect it to the default output graph, prepare the engine with the `AudioContext` sample rate and a worker-negotiated engine render block size, and deliver output through preallocated `SharedArrayBuffer` ring buffers where the worker invokes the engine block pump exactly once per engine-rendered worker block and the AudioWorklet copies/fills using the actual array length for each `process()` callback; THE browser audio-device provider SHALL expose the existing runtime Audio page to exactly one "System Default" output option with option id `system_default` and an empty persisted output-device name, and browser audio input SHALL be reported unsupported in this change.
+WHEN browser audio is started on a launch path initiated by user activation, THE browser runtime SHALL create or resume the launch-owned `AudioContext`, register that context with the package's Emscripten module, prepare the engine with the `AudioContext` sample rate and actual render quantum, install one native Wasm `AudioWorkletProcessor`, connect its output to `AudioContext.destination`, and invoke the shared engine block pump exactly once per native callback through `ProcessAudioWorklet -> Runtime<App>::Process`; THE browser audio-device provider SHALL expose the existing runtime Audio page to exactly one "System Default" output option with option id `system_default` and an empty persisted output-device name, and this base SHALL create zero worklet input buses, hide browser input controls, and avoid capture APIs.
 
 #### Scenario: User activation starts audio
 - **WHEN** the user activates the browser runtime start action
 - **THEN** the browser shell creates or resumes the `AudioContext`
 - **AND** audio does not attempt to autoplay before that activation
 
-#### Scenario: Worklet block size is not assumed
-- **WHEN** the `AudioWorkletProcessor.process()` callback receives input and output arrays
-- **THEN** the browser audio bridge uses the actual array length as the copy/fill frame count for the ring buffers
-- **AND** it does not assume that frame count is the engine `ProcessBlock` size
+#### Scenario: Native callback block size is not assumed
+- **WHEN** the native AudioWorklet callback receives an output `AudioSampleFrame`
+- **THEN** the browser runtime uses `samplesPerChannel` as the engine block frame count
+- **AND** it does not assume a compile-time block size
 
-#### Scenario: Engine block size is worker negotiated
-- **WHEN** the browser Worker renders ahead for the AudioWorklet
-- **THEN** the engine receives JUCE-free `AudioBlock` values sized to the worker-negotiated render block
-- **AND** monotonic sample position advances by the engine-rendered worker block size
+#### Scenario: Native callback pumps one engine block
+- **WHEN** `ProcessAudioWorklet` receives a valid output frame
+- **THEN** it builds bounded output channel pointers and calls `Runtime<App>::Process` exactly once
+- **AND** the engine receives a JUCE-free output `AudioBlock` sized to the callback's actual frame count
+- **AND** monotonic sample position advances by the processed frame count
 
 #### Scenario: Render path avoids browser API calls
 - **WHEN** an audio render quantum is processed
-- **THEN** the AudioWorklet path exchanges samples and state through preallocated buffers
-- **AND** it does not touch DOM APIs, IndexedDB, Web MIDI device objects, or UI command-buffer construction
+- **THEN** the native callback performs bounded pointer adaptation, engine processing, deadline/peak metering, and failure-to-silence handling only
+- **AND** it does not touch DOM APIs, IndexedDB, Web MIDI device objects, UI command-buffer construction, or JavaScript DSP/sample transport
 
 #### Scenario: Audio page exposes default output
 - **WHEN** the browser runtime Audio page asks the host for output device choices
 - **THEN** the browser host returns exactly one selectable output labeled "System Default" with option id `system_default`
 - **AND** selecting it writes the existing empty persisted output-device name through the generic audio selection path
 
-#### Scenario: Browser audio input is skipped
+#### Scenario: Browser capture path is omitted
 - **WHEN** the browser runtime builds its Audio page snapshot
 - **THEN** the browser host sets `showInputCombo` to false
 - **AND** `inputOptions` is empty
 - **AND** it does not call `getUserMedia()` or add microphone/input routing
-
-#### Scenario: Runtime input request reports unsupported
-- **WHEN** an application's `RuntimeConfig` requests audio inputs in the browser runtime
-- **THEN** the browser host reports audio input as unsupported for this change
-- **AND** it still does not call `getUserMedia()`
 
 ### Requirement: sbw-5 — MIDI: Web MIDI sysex multi-device bridge
 WHEN browser MIDI support is enabled, THE browser runtime SHALL request MIDI access through `navigator.requestMIDIAccess({ sysex: true })`, enumerate multiple `MIDIInput` and `MIDIOutput` ports, map selected ports to the existing runtime MIDI instrument/controller configuration per controller slot, forward incoming MIDI bytes including sysex into the engine's existing MIDI input processor chain, send engine-produced MIDI output bytes including sysex through the selected `MIDIOutput` ports, and maintain desktop-equivalent polling/reconnect semantics without application-specific routing code.
@@ -145,10 +141,10 @@ WHEN the browser runtime starts, THE browser host SHALL mount or provide an app-
 - **AND** browser storage keys or paths do not expose arbitrary host filesystem access
 
 ### Requirement: sbw-8 — Deployment: Chrome security gates
-WHEN the browser runtime is served for Chrome, THE deployed page SHALL run in a secure context, SHALL require cross-origin isolation for the `SharedArrayBuffer` audio bridge, SHALL fail with an explicit diagnostic when required browser APIs are unavailable, and SHALL document the HTTP headers and permissions policies required for Web Audio, Web MIDI with sysex, System-Default-only audio selection, and persistent storage.
+WHEN the browser runtime is served for Chrome, THE deployed page SHALL run in a secure context, SHALL require cross-origin isolation for Emscripten pthread/Wasm worker support, SHALL fail with an explicit diagnostic when required browser APIs are unavailable, and SHALL document the HTTP headers and permissions policies required for Web Audio, Web MIDI with sysex, System-Default-only audio selection, and persistent storage.
 
-#### Scenario: Shared memory gate is explicit
-- **WHEN** the browser runtime starts and shared buffers are required but `crossOriginIsolated` is false
+#### Scenario: Cross-origin isolation gate is explicit
+- **WHEN** the browser runtime starts and Emscripten pthread/Wasm worker support requires cross-origin isolation but `crossOriginIsolated` is false
 - **THEN** startup fails before audio starts with a diagnostic naming the missing cross-origin isolation requirement
 
 #### Scenario: Web MIDI secure-context gate is explicit

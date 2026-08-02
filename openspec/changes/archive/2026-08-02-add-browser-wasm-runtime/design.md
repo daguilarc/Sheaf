@@ -28,9 +28,11 @@ Chrome is the primary target. The relevant platform constraints are:
   offers the existing single "System Default" entry, with option id
   `system_default` and the empty persisted output-device name, so application
   and runtime page logic do not change.
-- Shared memory between the AudioWorklet and Worker uses
-  `SharedArrayBuffer`, so deployment requires secure context plus
-  cross-origin isolation and must serve COOP/COEP-compatible headers.
+- The shipped audio path uses Emscripten's native Wasm AudioWorklet callback
+  over the same `synth_browser::Runtime<App>` instance used for UI, MIDI,
+  patches, and controllers. Deployment still requires secure context plus
+  cross-origin isolation for Emscripten pthread/Wasm worker support and must
+  serve COOP/COEP-compatible headers.
 - IndexedDB/IDBFS is the browser persistence fit for the existing patch/config
   file model: Emscripten's IDBFS exposes synchronous POSIX-like file calls to
   C++ while persisting asynchronously to IndexedDB through `FS.syncfs`.
@@ -74,10 +76,9 @@ and report the missing generic boundary rather than adding a special case.
   contract target.
 - No new application contract that lets browser-only apps bypass the existing
   `SynthApplication` shape.
-- No browser audio input support in this change. If an app requests inputs, the
-  browser runtime reports input unsupported rather than changing the app
-  contract; audio input can be added after the library-level input path is
-  complete.
+- No browser audio input support in this change. The browser runtime creates no
+  capture path, keeps the Audio page output-only, and avoids `getUserMedia()`;
+  audio input can be added after the library-level input path is complete.
 - No named browser output-device picker in this change; the browser audio
   provider exposes only the existing "System Default" output option.
 - No backend service for the browser runtime. Local development and Playwright
@@ -113,57 +114,55 @@ engine, app context, portable surface, MIDI profile factory, or runtime page
 model, that is a design failure to report, not permission to special-case the
 miniapp.
 
-### D3 — Use a Dedicated Worker as the engine owner and AudioWorklet as the device callback
+### D3 — Use native Wasm AudioWorklet callbacks over the shared runtime instance
 
-Use a main-thread launcher for permissions and DOM, an AudioWorkletProcessor for
-the Web Audio render callback, and a Dedicated Worker owning the WASM module and
-`synth_browser::Runtime<App>`. The AudioWorklet exchanges input/output audio
-through preallocated `SharedArrayBuffer` ring buffers and state words; the
-worker renders ahead by invoking `Engine<App>::ProcessBlock` with the negotiated
-sample rate, block size, and monotonic sample index.
+Use a main-thread launcher for permissions and DOM, register the launch-owned
+`AudioContext` with the Emscripten module, and start a native Wasm
+AudioWorkletProcessor over the already-initialized
+`synth_browser::Runtime<App>`. The Emscripten callback
+`ProcessAudioWorklet` adapts the callback's `AudioSampleFrame` output buffers
+into bounded channel pointers and invokes `Runtime<App>::Process`, which
+delegates to the shared `Engine<App>::ProcessBlock` path used by UI, MIDI,
+patches, and controllers.
 
-This matches Chrome's documented AudioWorklet + SharedArrayBuffer + Worker
-pattern for bringing existing C/C++ audio software to the browser. It also keeps
-DOM, Web MIDI, persistence sync, UI tree building, and most JS APIs out of the
-AudioWorkletGlobalScope. The cost is one buffering layer and the need for
-cross-origin isolation. That trade-off is acceptable for a Chrome-first synth
-runtime because it preserves the existing engine as the single stateful runtime
-instance.
+This keeps DOM, Web MIDI, persistence sync, UI tree building, and JS control
+APIs out of the realtime callback while avoiding a separate JavaScript audio
+sample transport. The callback path is deliberately output-only in this base:
+the native node is created with zero input buses, the host does not request
+capture, and the app-facing Audio page stays on the existing output selection
+model.
 
-Alternative considered: instantiate the WASM runtime directly inside the
-AudioWorkletProcessor. That minimizes buffering latency, but then UI tree
-building, patch/config IO, and MIDI output handling would either need to run in
-the worklet's constrained global scope or duplicate state outside it.
+Alternative considered: use a JavaScript Worker plus shared sample rings between
+the worker and AudioWorklet. That was removed from the shipped base because the
+native callback can already pump the shared runtime instance with less latency,
+less synchronization, and no second audio transport.
 
-### D4 — Treat browser audio as negotiated worker blocks and expose only System Default
+### D4 — Treat browser audio as native callback quanta and expose only System Default
 
-The browser runtime prepares the engine from `audioContext.sampleRate` and a
-worker-negotiated render-ahead block size. The AudioWorklet still reads the
-actual channel array lengths on every `process()` callback, but that frame count
-governs only the copy/fill between Web Audio buffers and the preallocated
-`SharedArrayBuffer` ring buffers, plus underflow/status accounting. It is not
-assumed to be the engine's `ProcessBlock` size.
+The browser runtime prepares the engine from `audioContext.sampleRate` and the
+actual Web Audio render quantum reported by Emscripten for the context. Every
+native AudioWorklet callback uses the callback's `samplesPerChannel` as the
+block frame count passed through `Runtime<App>::Process` and then
+`Engine<App>::ProcessBlock`. No compile-time block size is assumed.
 
-The worker invokes `Engine<App>::ProcessBlock` exactly once for each negotiated
-worker render block it produces and passes a monotonic wall-clock timestamp for
-message-bus scheduling, matching the JUCE runtime's timestamp role. The engine
-itself owns sample-position advancement from `block.numFrames`; the worker must
-not separately mutate or double-advance the engine sample counter. The worker
-writes the rendered frames into the output ring buffer, and the AudioWorklet
-consumes from that ring buffer into whatever output array size Chrome supplies
-for the current render quantum, then connects to `audioContext.destination`.
+`ProcessAudioWorklet` invokes the shared runtime exactly once for each callback
+and passes a monotonic wall-clock timestamp for message-bus scheduling, matching
+the JUCE runtime's timestamp role. The engine owns sample-position advancement
+from `block.numFrames`; the callback must not separately mutate or
+double-advance the engine sample counter. The native node writes the rendered
+output directly into Web Audio's output frame and connects to
+`audioContext.destination`.
 
 The browser audio-device provider backs the existing Audio page with exactly one
 output choice: "System Default", option id `system_default`, persisted as the
 existing empty output-device name. This lets existing app/page logic keep
-calling the same audio-device selection path without exposing unsupported named
-browser output devices. Audio input is skipped for this change: browser audio
-snapshots keep `showInputCombo` false and `inputOptions` empty, and if
-`RuntimeConfig` requests input channels, the browser runtime reports a clear
-unsupported-input status and does not call `getUserMedia()`.
+calling the same audio-device selection path without exposing named browser
+output devices. Audio input is omitted for this change: browser audio snapshots
+keep `showInputCombo` false and `inputOptions` empty, the native node has zero
+input buses, and the host does not call `getUserMedia()`.
 
-The worker must preserve the existing engine ordering: drain patch/UI/MIDI
-messages, run optional frame hook, call `ProcessBlock` once per rendered block,
+The runtime must preserve the existing engine ordering: drain patch/UI/MIDI
+messages, run optional frame hook, call `ProcessBlock` once per callback block,
 and publish UI state at the configured frame cadence.
 
 ### D5 — Main thread owns sysex Web MIDI permissions and multi-device ports
@@ -292,13 +291,14 @@ Verification should prove the generic host, not just the miniapp:
 
 ## Risks / Trade-offs
 
-- [SharedArrayBuffer requires cross-origin isolation] -> Make Chrome
+- [Emscripten worker support requires cross-origin isolation] -> Make Chrome
   deployment headers part of the spec and fail clearly when
   `crossOriginIsolated` is false.
-- [Worker render-ahead can underrun] -> Use preallocated ring buffers, explicit
-  underflow counters, and browser tests that assert recovery/status reporting.
+- [Native AudioWorklet callback can miss its deadline] -> Publish callback
+  deadline/peak metrics, fail closed when callback startup makes no progress,
+  and verify finite non-silent output through browser tests.
 - [AudioWorklet block size assumptions break later] -> Always derive frame count
-  from the arrays passed to `process()`.
+  from the actual native callback frame shape.
 - [Web MIDI sysex permission denied or blocked by policy] -> Treat MIDI as
   offline while audio/UI continue running; show generic status through runtime
   pages, including that sysex permission was required.
@@ -327,7 +327,7 @@ Verification should prove the generic host, not just the miniapp:
    harness over synthetic trees.
 3. Add the browser runtime shell around `synth::Engine<App>` with IDBFS-backed
    data paths and message-side ticking.
-4. Add the AudioWorklet/worker shared-buffer bridge and verify a fake app can
+4. Add the native Wasm AudioWorklet callback bridge and verify a fake app can
    produce non-silent finite output in Chrome.
 5. Add the sysex Web MIDI multi-device bridge, poll/reconnect manager, and
    runtime page status/device enumeration plumbing.

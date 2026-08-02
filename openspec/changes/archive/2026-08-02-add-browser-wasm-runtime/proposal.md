@@ -65,5 +65,5 @@ with Web Audio and Web MIDI replacing JUCE device ownership.
 - Tooling: Emscripten/LLVM WebAssembly build rules, Playwright browser test
   harnesses, and Chrome-focused smoke/integration tests.
 - Security/deployment: secure context requirements for Web MIDI and sysex
-  permission; mandatory cross-origin isolation for the
-  `SharedArrayBuffer`/WASM shared-memory audio bridge.
+  permission; mandatory cross-origin isolation for Emscripten pthread/Wasm
+  worker support.
