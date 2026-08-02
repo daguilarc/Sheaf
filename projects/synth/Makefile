@@ -11,6 +11,7 @@ MASTER_CLOCK_TEST_BIN := $(BUILD_DIR)/master_clock_tests
 MODULE_TEST_BIN := $(BUILD_DIR)/module_tests
 INSTRUMENT_TEST_BIN := $(BUILD_DIR)/instrument_tests
 CONTRACT_TEST_BIN := $(BUILD_DIR)/contract_tests
+AUDIO_INPUT_TEST_BIN := $(BUILD_DIR)/audio_input_tests
 LOGGING_TEST_BIN := $(BUILD_DIR)/logging_tests
 ENGINE_TEST_BIN := $(BUILD_DIR)/engine_tests
 RIG_TEST_BIN := $(BUILD_DIR)/rig_tests
@@ -43,7 +44,7 @@ APPS_DIR := apps
 MINIAPP_DIR := $(APPS_DIR)/miniapp
 SHEAF_PATCH_DIR := $(APPS_DIR)/sheaf-patch
 
-.PHONY: all build test dsp_tests master_clock_tests contract_tests engine_tests controller_wizard_tests check-ui-boundary miniapp sheaf-patch apps browser browser-apps browser-fixture-app browser-apps-run browser-apps-smoke browser-unit-test browser-command-buffer-test browser-audio-device-test browser-midi-bridge-test clean
+.PHONY: all build test dsp_tests master_clock_tests contract_tests audio_input_tests engine_tests controller_wizard_tests check-ui-boundary miniapp sheaf-patch apps browser browser-apps browser-fixture-app browser-apps-run browser-apps-smoke browser-unit-test browser-command-buffer-test browser-audio-device-test browser-midi-bridge-test clean
 
 all: build test
 
@@ -116,6 +117,9 @@ master_clock_tests: $(MASTER_CLOCK_TEST_BIN)
 contract_tests: $(CONTRACT_TEST_BIN)
 	$(CONTRACT_TEST_BIN)
 
+audio_input_tests: $(AUDIO_INPUT_TEST_BIN)
+	$(AUDIO_INPUT_TEST_BIN)
+
 engine_tests: $(ENGINE_TEST_BIN)
 	$(ENGINE_TEST_BIN)
 
@@ -129,6 +133,9 @@ $(INSTRUMENT_TEST_BIN): tests/instrument_tests.cpp $(LIB) include/synth/MidiCont
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 $(CONTRACT_TEST_BIN): tests/contract_tests.cpp $(LIB) include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/AppRegistry.hpp include/synth/MasterClock.hpp include/synth/PatchBrowser.hpp include/synth/RuntimePagePolicy.hpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
+
+$(AUDIO_INPUT_TEST_BIN): tests/audio_input_tests.cpp $(LIB) include/synth/AppContext.hpp include/synth/AppConcepts.hpp include/synth/Engine.hpp include/synth/MasterClock.hpp include/synth/MidiController.hpp include/synth/ParameterModulation.hpp include/synth/RuntimeUIState.hpp include/synth/ButtonGrid.hpp include/synth/PatchPersistence.hpp include/synth/Json.hpp
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< $(LIB) -o $@
 
 $(LOGGING_TEST_BIN): tests/logging_tests.cpp $(LIB) include/synth/AsyncLogger.hpp include/synth/CircularQueue.hpp include/synth/ThreadId.hpp
@@ -216,7 +223,7 @@ browser-audio-device-test: $(BROWSER_AUDIO_DEVICE_TEST_BIN)
 browser-midi-bridge-test: $(BROWSER_MIDI_BRIDGE_TEST_BIN)
 	$(BROWSER_MIDI_BRIDGE_TEST_BIN)
 
-test: check-ui-boundary $(TEST_BIN) $(BUTTON_GRID_TEST_BIN) $(DSP_TEST_BIN) $(MASTER_CLOCK_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(BRAID4_SYSTEM_TEST_BIN) $(BRAID4_DEADLINE_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN) $(MIDI_SENDER_TEST_BIN) $(VIEWMODEL_TEST_BIN) $(BLOCKS_TEST_BIN) $(PORTABLE_UI_TEST_BIN) $(PORTABLE_UI_LAYOUT_TEST_BIN) $(RUNTIME_MAIN_COMPONENT_TEST_BIN) $(RUNTIME_FILE_SERVICE_TEST_BIN) $(CONTROLLERS_PAGE_UI_TEST_BIN) $(BROWSER_COMMAND_BUFFER_TEST_BIN) $(BROWSER_AUDIO_DEVICE_TEST_BIN) $(CONTROLLER_WIZARD_TEST_BIN)
+test: check-ui-boundary $(TEST_BIN) $(BUTTON_GRID_TEST_BIN) $(DSP_TEST_BIN) $(MASTER_CLOCK_TEST_BIN) $(MODULE_TEST_BIN) $(INSTRUMENT_TEST_BIN) $(CONTRACT_TEST_BIN) $(AUDIO_INPUT_TEST_BIN) $(LOGGING_TEST_BIN) $(ENGINE_TEST_BIN) $(RIG_TEST_BIN) $(MINIAPP_SYSTEM_TEST_BIN) $(BRAID4_SYSTEM_TEST_BIN) $(BRAID4_DEADLINE_TEST_BIN) $(RECONCILE_TEST_BIN) $(RECONCILE_EXECUTOR_TEST_BIN) $(POLLER_TEST_BIN) $(MIDI_SENDER_TEST_BIN) $(VIEWMODEL_TEST_BIN) $(BLOCKS_TEST_BIN) $(PORTABLE_UI_TEST_BIN) $(PORTABLE_UI_LAYOUT_TEST_BIN) $(RUNTIME_MAIN_COMPONENT_TEST_BIN) $(RUNTIME_FILE_SERVICE_TEST_BIN) $(CONTROLLERS_PAGE_UI_TEST_BIN) $(BROWSER_COMMAND_BUFFER_TEST_BIN) $(BROWSER_AUDIO_DEVICE_TEST_BIN) $(CONTROLLER_WIZARD_TEST_BIN)
 	$(TEST_BIN)
 	$(BUTTON_GRID_TEST_BIN)
 	$(DSP_TEST_BIN)
@@ -224,6 +231,7 @@ test: check-ui-boundary $(TEST_BIN) $(BUTTON_GRID_TEST_BIN) $(DSP_TEST_BIN) $(MA
 	$(MODULE_TEST_BIN)
 	$(INSTRUMENT_TEST_BIN)
 	$(CONTRACT_TEST_BIN)
+	$(AUDIO_INPUT_TEST_BIN)
 	$(LOGGING_TEST_BIN)
 	$(ENGINE_TEST_BIN)
 	$(RIG_TEST_BIN)

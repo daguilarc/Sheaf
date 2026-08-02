@@ -9,11 +9,15 @@
 #include "synth/ParameterModulation.hpp"
 #include "synth/PatchPersistence.hpp"
 
+#include <algorithm>
 #include <atomic>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <span>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -34,6 +38,16 @@ struct RuntimeConfig {
     int uiHeight = 560;
     int uiFrameHz = 30;
 };
+
+// Shared JUCE-free validation for RuntimeConfig requests. Throws
+// std::invalid_argument for a negative input count before engine or device
+// startup. Hosts translate that failure into an explicit startup diagnostic.
+//
+inline void ValidateRuntimeConfig(const RuntimeConfig& config) {
+    if (config.numAudioInputs < 0) {
+        throw std::invalid_argument("RuntimeConfig::numAudioInputs must be nonnegative");
+    }
+}
 
 // Runtime-owned persistent data paths (sar-17). Applications do not choose
 // production persistence roots; hosts resolve and inject these paths.
@@ -67,6 +81,95 @@ struct RuntimeDataPaths {
 
 // Non-owning view of one audio device block (sar-6). Channel counts are the
 // device's actual counts, which may differ from the RuntimeConfig request.
+// AudioInputView / AudioInputFrameView are callback-lifetime-only: they are
+// trivially copyable non-owning views and must not be retained after the
+// ProcessBlock callback returns.
+class AudioInputFrameView {
+public:
+    AudioInputFrameView() = default;
+
+    AudioInputFrameView(const float* const* inputs,
+                        std::size_t requestedChannelCount,
+                        std::size_t activeChannelCount,
+                        std::size_t frameIndex) noexcept
+        : inputs_(inputs)
+        , requestedChannelCount_(requestedChannelCount)
+        , activeChannelCount_(activeChannelCount)
+        , frameIndex_(frameIndex) {}
+
+    std::size_t RequestedChannelCount() const noexcept { return requestedChannelCount_; }
+    std::size_t ActiveChannelCount() const noexcept { return activeChannelCount_; }
+    std::size_t FrameIndex() const noexcept { return frameIndex_; }
+
+    bool HasActiveChannel(std::size_t channel) const noexcept {
+        return channel < activeChannelCount_ && inputs_ != nullptr && inputs_[channel] != nullptr;
+    }
+
+    float Sample(std::size_t channel) const noexcept {
+        assert(HasActiveChannel(channel));
+        return inputs_[channel][frameIndex_];
+    }
+
+    float SampleOrSilence(std::size_t channel) const noexcept {
+        if (!HasActiveChannel(channel)) {
+            return 0.0f;
+        }
+        return inputs_[channel][frameIndex_];
+    }
+
+private:
+    const float* const* inputs_ = nullptr;
+    std::size_t requestedChannelCount_ = 0;
+    std::size_t activeChannelCount_ = 0;
+    std::size_t frameIndex_ = 0;
+};
+
+class AudioInputView {
+public:
+    AudioInputView() = default;
+
+    AudioInputView(const float* const* inputs,
+                   std::size_t requestedChannelCount,
+                   std::size_t activeChannelCount,
+                   std::size_t frameCount) noexcept
+        : inputs_(inputs)
+        , requestedChannelCount_(requestedChannelCount)
+        , activeChannelCount_(activeChannelCount)
+        , frameCount_(frameCount) {}
+
+    std::size_t RequestedChannelCount() const noexcept { return requestedChannelCount_; }
+    std::size_t ActiveChannelCount() const noexcept { return activeChannelCount_; }
+    std::size_t FrameCount() const noexcept { return frameCount_; }
+    bool Empty() const noexcept { return activeChannelCount_ == 0; }
+
+    bool HasActiveChannel(std::size_t channel) const noexcept {
+        return channel < activeChannelCount_ && inputs_ != nullptr && inputs_[channel] != nullptr;
+    }
+
+    std::span<const float> Channel(std::size_t channel) const noexcept {
+        assert(HasActiveChannel(channel));
+        return std::span<const float>(inputs_[channel], frameCount_);
+    }
+
+    AudioInputFrameView Frame(std::size_t frame) const noexcept {
+        assert(frame < frameCount_);
+        return AudioInputFrameView(inputs_, requestedChannelCount_, activeChannelCount_, frame);
+    }
+
+    float SampleOrSilence(std::size_t channel, std::size_t frame) const noexcept {
+        if (frame >= frameCount_ || !HasActiveChannel(channel)) {
+            return 0.0f;
+        }
+        return inputs_[channel][frame];
+    }
+
+private:
+    const float* const* inputs_ = nullptr;
+    std::size_t requestedChannelCount_ = 0;
+    std::size_t activeChannelCount_ = 0;
+    std::size_t frameCount_ = 0;
+};
+
 struct AudioBlock {
     const float* const* inputs = nullptr;
     float* const* outputs = nullptr;
@@ -82,6 +185,19 @@ struct AudioBlock {
     // must null-check and must not retain it as an immutable snapshot beyond
     // this callback: the next successful commit replaces the pointed-to plan.
     const ClockBlockPlan* clockPlan = nullptr;
+    // Application-requested logical input count for this block. Hosts set this
+    // explicitly from immutable RuntimeConfig; InputView() clamps actual
+    // numInputChannels defensively into [0, requested].
+    int numRequestedInputChannels = 0;
+
+    AudioInputView InputView() const noexcept {
+        const int requested = std::max(0, numRequestedInputChannels);
+        const int clampedActual = std::clamp(numInputChannels, 0, requested);
+        return AudioInputView(inputs,
+                              static_cast<std::size_t>(requested),
+                              static_cast<std::size_t>(clampedActual),
+                              numFrames);
+    }
 };
 
 // Non-owning pointers to every framework object an application may touch

@@ -256,6 +256,8 @@ TEST_CASE(audio_block_is_a_plain_view) {
     REQUIRE_TRUE(block.numOutputChannels == 2);
     REQUIRE_TRUE(block.numFrames == 4);
     REQUIRE_TRUE(block.clockPlan == nullptr);
+    REQUIRE_TRUE(block.numRequestedInputChannels == 0);
+    REQUIRE_TRUE(block.InputView().Empty());
     REQUIRE_NEAR(block.outputs[0][3], 0.3f, 1e-6f);
 }
 

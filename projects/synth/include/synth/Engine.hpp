@@ -189,7 +189,8 @@ public:
     Engine& operator=(Engine&&) = delete;
 
     // Full pre-audio lifecycle (sar-5, binding order):
-    //   1. store config_ = App::Config()
+    //   1. store config_ = App::Config() after ValidateRuntimeConfig rejects
+    //      negative input counts before any other engine state mutation
     //   2. wire context (constructor already wired the stable pointers; config_
     //      is filled in here since it depends on the application)
     //   3. AsyncLogQueue::s_instance.SetSampleCounterSource(&sampleCounter_)
@@ -220,7 +221,9 @@ public:
     //      patchManager_.ProcessResponses(). A missing/empty patchesRoot, or a
     //      startup patch that fails to apply, is skipped silently.
     void Initialize() {
-        config_ = App::Config();
+        RuntimeConfig config = App::Config();
+        ValidateRuntimeConfig(config);
+        config_ = std::move(config);
         context_.config = &config_;
 
         AsyncLogQueue::s_instance.SetSampleCounterSource(&sampleCounter_);
