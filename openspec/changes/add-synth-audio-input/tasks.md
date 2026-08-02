@@ -4,13 +4,13 @@
 - [ ] 1.2 Add failing JUCE-free validation tests proving negative input counts throw `std::invalid_argument` before initialization, JUCE accepts a 17-channel representable request, and the browser accepts 32 but rejects 33 with an explicit startup diagnostic.
 - [x] 1.3 Add failing input-view behavior tests for active-count clamping, exact zero-input null/empty state, channel/frame sample equivalence, strict bounds/preconditions, null-channel safety, and missing-channel or invalid-frame safe silence.
 - [x] 1.4 Implement shared runtime-config validation and additive `AudioBlock::InputView()` block/frame accessors while retaining existing public input/output fields and performing no allocation or sample copy.
-- [ ] 1.5 Add source-boundary and compile-time coverage proving the input views remain JUCE-free, trivially copyable, bounded-size/non-owning, documented as callback-lifetime-only, and usable by both core-only and full `SynthApplication` types.
+- [x] 1.5 Add source-boundary and compile-time coverage proving the input views remain JUCE-free, trivially copyable, bounded-size/non-owning, documented as callback-lifetime-only, and usable by both core-only and full `SynthApplication` types.
 
 ## 2. Headless Input Injection
 
-- [ ] 2.1 Add failing `SynthRig` tests for default silent declared inputs, validated channel/sample/frame/block injection, rejected shape mutations with no partial write, preserved whole-block `RunSamples` semantics, and distinct multichannel ordering through the production engine pump.
-- [ ] 2.2 Add deterministic transactional injection and clear helpers to the rig's existing preallocated planar input storage, preserving no allocation during `RunBlocks`, `RunSamples`, or `RunSeconds`.
-- [ ] 2.3 Add a generic JUCE-free input probe application that requests multiple channels, exercises both block and frame access, explicitly transforms selected input into output, and proves that unused input is not implicitly monitored.
+- [x] 2.1 Add failing `SynthRig` tests for default silent declared inputs, validated channel/sample/frame/block injection, rejected shape mutations with no partial write, preserved whole-block `RunSamples` semantics, and distinct multichannel ordering through the production engine pump.
+- [x] 2.2 Add deterministic transactional injection and clear helpers to the rig's existing preallocated planar input storage, preserving no allocation during `RunBlocks`, `RunSamples`, or `RunSeconds`.
+- [x] 2.3 Add a generic JUCE-free input probe application that requests multiple channels, exercises both block and frame access, explicitly transforms selected input into output, and proves that unused input is not implicitly monitored.
 
 ## 3. JUCE Desktop Host
 
