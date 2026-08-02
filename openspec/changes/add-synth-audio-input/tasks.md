@@ -14,10 +14,10 @@
 
 ## 3. JUCE Desktop Host
 
-- [ ] 3.1 Add failing JUCE runtime tests for zero-input startup, a 17-channel requested input count, actual-count clamping, null counted-channel handling, requested-versus-active status, input-device selector visibility, missing-device/permission continuation, and input/output isolation.
-- [ ] 3.2 Update the JUCE runtime to validate and request the application input count, forward at most that many actual callback pointers, preserve actual count negotiation across device switches, and publish clear requested/active input diagnostics.
-- [ ] 3.3 Verify input selection and runtime-configuration restore continue to reopen only host devices, reprepare the engine before callbacks resume, and leave application code free of JUCE types.
-- [ ] 3.4 Add and verify `NSMicrophoneUsageDescription` for input-capable macOS bundles and the audio-input entitlement where the distribution sandbox/signing profile requires it; document that zero-input applications do not open input or trigger the system prompt.
+- [x] 3.1 Add failing JUCE runtime tests for zero-input startup, a 17-channel requested input count, actual-count clamping, null counted-channel handling, requested-versus-active status, input-device selector visibility, missing-device/permission continuation, and input/output isolation.
+- [x] 3.2 Update the JUCE runtime to validate and request the application input count, forward at most that many actual callback pointers, preserve actual count negotiation across device switches, and publish clear requested/active input diagnostics.
+- [x] 3.3 Verify input selection and runtime-configuration restore continue to reopen only host devices, reprepare the engine before callbacks resume, and leave application code free of JUCE types.
+- [x] 3.4 Add and verify `NSMicrophoneUsageDescription` for input-capable macOS bundles and the audio-input entitlement where the distribution sandbox/signing profile requires it; document that zero-input applications do not open input or trigger the system prompt.
 
 ## 4. Browser ABI And Native AudioWorklet
 
