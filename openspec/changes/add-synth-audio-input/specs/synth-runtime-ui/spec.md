@@ -1,15 +1,16 @@
 ## MODIFIED Requirements
 
 ### Requirement: sru-3 — Audio page: interface selection
-WHEN the Audio page is open, THE runtime library SHALL let the user choose the audio output device and, when the application's config requests inputs, the input device from the host-provided choices with a system-default entry; SHALL apply selection through the runtime's audio device switching; SHALL display the current output and negotiated status; and for input-capable applications SHALL display input permission/availability plus requested and active channel counts in the existing status line and expose `Retry Input` while browser capture is offline.
+WHEN the Audio page is open, THE runtime library SHALL let the user choose the audio output device and, when the application's config requests inputs, the input device from the host-provided choices with a system-default entry; SHALL apply selection through the runtime's audio device switching (sar-15); SHALL display the current output and negotiated status; and for input-capable applications SHALL display input permission/availability plus requested and active channel counts in the existing status line and expose `Retry Input` while browser capture is offline.
 
 #### Scenario: Output selection applies
 - **WHEN** the user selects an output device on the Audio page
 - **THEN** the runtime switches to that device and the page reflects it as current
 
-#### Scenario: Zero-input page stays output-only
+#### Scenario: Input row only when requested
 - **WHEN** the application's config declares zero audio inputs
-- **THEN** the Audio page shows no input selector, input status, or retry action
+- **THEN** the Audio page shows no input device selector
+- **AND** the page shows no input status or retry action
 
 #### Scenario: Browser input status is explicit
 - **WHEN** a browser-hosted application requests `N > 0` inputs

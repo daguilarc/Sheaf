@@ -8,14 +8,6 @@ This change crosses the JUCE-free application contract, JUCE runtime, browser ac
 
 The completed `add-browser-wasm-runtime` change has been reconciled and archived as the output-only browser runtime base. This change is logically downstream of that work and carries the input-aware deltas separately.
 
-### D0 — Reconcile and archive the browser-runtime base first
-
-Before source implementation for this change begins, the completed `add-browser-wasm-runtime` change will be corrected to describe the shipped native callback-only AudioWorklet architecture, renumbered so all of its requirement IDs are unique, strictly validated, and archived to establish `synth-browser-wasm-runtime` as a base capability. Its `synth-app-runtime` requirements become `sar-27` through `sar-30`, and its `synth-runtime-ui` requirements become `sru-56` through `sru-58`. This change then uses `sar-31` and `sar-32` for its new application-runtime requirements and modifies the archived `sar-30` device-catalog contract.
-
-The base reconciliation removes stale architecture language and renumbers requirements only. It does not forward-port input-aware catalog behavior; the `sar-30` modification in this change is the single source of truth for that behavior.
-
-This is a hard sequencing precondition rather than a final cleanup step: implementation tasks after 1.1 do not begin until the base archive succeeds and the composed main specs validate.
-
 ## Goals / Non-Goals
 
 **Goals:**
@@ -38,6 +30,14 @@ This is a hard sequencing precondition rather than a final cleanup step: impleme
 - Do not change the app-owned output-buffer writing contract.
 
 ## Decisions
+
+### D0 — Reconcile and archive the browser-runtime base first
+
+Before source implementation for this change begins, the completed `add-browser-wasm-runtime` change will be corrected to describe the shipped native callback-only AudioWorklet architecture, renumbered so all of its requirement IDs are unique, strictly validated, and archived to establish `synth-browser-wasm-runtime` as a base capability. Its `synth-app-runtime` requirements become `sar-27` through `sar-30`, and its `synth-runtime-ui` requirements become `sru-56` through `sru-58`. This change then uses `sar-31` and `sar-32` for its new application-runtime requirements and modifies the archived `sar-30` device-catalog contract.
+
+The base reconciliation removes stale architecture language and renumbers requirements only. It does not forward-port input-aware catalog behavior; the `sar-30` modification in this change is the single source of truth for that behavior.
+
+This is a hard sequencing precondition rather than a final cleanup step: implementation tasks after 1.1 do not begin until the base archive succeeds and the composed main specs validate.
 
 ### D1 — Keep the application-declared count dynamic and host-neutral
 
