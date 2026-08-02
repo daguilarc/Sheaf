@@ -85,6 +85,8 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -164,6 +166,7 @@ public:
     const synth::RuntimeDataPaths& DataPaths() const { return dataPaths_; }
 
     // Startup ordering (binding, per Task 2/3/4 briefs):
+    //   0. synth::ValidateRuntimeConfig(App::Config()) before anything else
     //   1. resolve/create runtime data paths and configure log directory
     //   2a. wire engine_.SetAudioDeviceChangedCallback to
     //       OnEngineAudioDeviceChanged for future runtime-config-initiated
@@ -177,9 +180,19 @@ public:
     //      (runtime configuration seeds this value before device open)
     //   7. Prepare the engine via audioDeviceAboutToStart and register the
     //      audio callback
-    //   8. start the UI timer
+    //   8. publish the initial requested/active input diagnostic
+    //   9. start the UI timer
     void Start() {
         const synth::RuntimeConfig appConfig = App::Config();
+
+        // Shared JUCE-free validation (sar-31), ahead of the log directory,
+        // the MIDI sender, and any audio device: a negative input request must
+        // never reach device negotiation. engine_.Initialize() validates the
+        // same config again; this call is what makes the rejection precede
+        // every host-side startup step rather than only the engine's.
+        synth::ValidateRuntimeConfig(appConfig);
+        requestedInputChannels_ = appConfig.numAudioInputs;
+
         dataPaths_ = dataPathsOverride_.has_value() ? *dataPathsOverride_ : DefaultDataPathsForApp(appConfig);
         synth::AsyncLogQueue::s_instance.ConfigureLogDirectory(dataPaths_.logsRoot.string().c_str());
         std::error_code ec;
@@ -293,8 +306,16 @@ public:
 
         // addAudioCallback() invokes audioDeviceAboutToStart(currentDevice)
         // synchronously here (the device is already open), which is what
-        // actually calls engine_.Prepare() with the negotiated rate/block.
+        // actually calls engine_.Prepare() with the negotiated rate/block and
+        // records the device's negotiated active input count.
         deviceManager_.addAudioCallback(this);
+
+        // Only now is the negotiated active input count known, so this is the
+        // first point at which the requested/active diagnostic can be honest.
+        // For an input-capable app it is published unconditionally (the page
+        // must show it even on a clean startup); for a zero-input app it is a
+        // no-op, so nothing claims an input path that was never opened.
+        PublishPendingInputStatus();
 
         startTimerHz(config.uiFrameHz > 0 ? config.uiFrameHz : 30);
     }
@@ -326,7 +347,17 @@ public:
     // this on construction and clears it (via an empty std::function) from
     // its destructor, so Runtime never calls into a destroyed page -- see
     // AudioConfigPage.hpp.
-    void SetAudioStatusHook(std::function<void(const juce::String&)> hook) { audioStatusHook_ = std::move(hook); }
+    //
+    // Installing a sink immediately republishes the current status line. A
+    // page installed mid-session has missed every line published before it
+    // existed -- MainPane and its pages are constructed after Start() returns,
+    // so without this the input-capable app's startup `Input requested N /
+    // active M` diagnostic would never reach a page at all, and a page rebuilt
+    // later would open blank until something happened to change.
+    void SetAudioStatusHook(std::function<void(const juce::String&)> hook) {
+        audioStatusHook_ = std::move(hook);
+        PublishAudioStatus();
+    }
 
     // Installs AudioConfigPage's re-sync hook (Task 3 of Plan 4): invoked
     // whenever Runtime has changed the audio device state out from under a
@@ -444,6 +475,23 @@ public:
     // with the engine's UI-state refresh.
     void SetRepaintHook(std::function<void()> hook) { repaintHook_ = std::move(hook); }
 
+    // Message thread, once per UI timer tick (see timerCallback below).
+    // Re-renders the audio status line when the active input count has moved
+    // since the last publication -- a device shortfall, a capture loss, or a
+    // permission denial all surface as a changed count. The audio callback
+    // itself only stores an int (no logging, no allocation, no string work);
+    // every count change is coalesced into whatever this next tick observes.
+    // A zero-input application publishes nothing at all.
+    void PublishPendingInputStatus() {
+        if (requestedInputChannels_ <= 0) {
+            return;
+        }
+        if (ActiveInputChannels() == publishedActiveInputChannels_) {
+            return;
+        }
+        PublishAudioStatus();
+    }
+
     synth::RuntimeConfigFileStatus SaveRuntimeConfiguration() {
         return engine_.SaveRuntimeConfiguration();
     }
@@ -485,16 +533,36 @@ public:
     }
 
 private:
+    // The input channel count the host most recently negotiated or delivered,
+    // already clamped into [0, requestedInputChannels_]. Written by the audio
+    // callback and the device start/stop callbacks; readable from any thread.
+    int ActiveInputChannels() const { return activeInputChannels_.load(std::memory_order_relaxed); }
+
+    // The application's requested input count is the ceiling on the logical
+    // input shape it ever sees (sar-6, sar-31). A device that hands us more
+    // channels than the app asked for is truncated to the requested prefix, so
+    // changing hardware never silently widens the app's input shape; a device
+    // that hands us fewer reports its actual count, and the requested-but-
+    // absent channels read as silence through AudioInputView rather than
+    // through host-allocated scratch buffers. Null pointers inside the counted
+    // prefix are passed through at their own logical positions -- compacting
+    // them would renumber every channel after the gap. Nothing here allocates,
+    // logs, or renders text: the audio thread only stores the active count for
+    // the message thread's PublishPendingInputStatus() to render.
     void audioDeviceIOCallbackWithContext(const float* const* inputChannelData, int numInputChannels,
                                           float* const* outputChannelData, int numOutputChannels, int numSamples,
                                           const juce::AudioIODeviceCallbackContext&) override {
         synth::ScopedThreadId tag(synth::ThreadId::Audio);
+        const int requestedInputChannels = requestedInputChannels_;
+        const int activeInputChannels = std::clamp(numInputChannels, 0, requestedInputChannels);
+        activeInputChannels_.store(activeInputChannels, std::memory_order_relaxed);
         synth::AudioBlock block{
-            .inputs = inputChannelData,
+            .inputs = activeInputChannels > 0 ? inputChannelData : nullptr,
             .outputs = outputChannelData,
-            .numInputChannels = numInputChannels,
+            .numInputChannels = activeInputChannels,
             .numOutputChannels = numOutputChannels,
             .numFrames = static_cast<std::size_t>(numSamples),
+            .numRequestedInputChannels = requestedInputChannels,
         };
         engine_.ProcessBlock(block, NowMicros());
     }
@@ -506,11 +574,20 @@ private:
             engine_.Prepare(sampleRate, blockSize);
             int numInputChannels = device->getActiveInputChannels().countNumberOfSetBits();
             int numOutputChannels = device->getActiveOutputChannels().countNumberOfSetBits();
+            // The negotiated count, clamped the same way the callback clamps
+            // the delivered count, so the diagnostic is accurate from the
+            // moment a device opens rather than only after its first block.
+            activeInputChannels_.store(std::clamp(numInputChannels, 0, requestedInputChannels_),
+                                       std::memory_order_relaxed);
             INFO("Audio prepared: %.0f Hz, %d frames, %d in / %d out", sampleRate, blockSize, numInputChannels, numOutputChannels);
         }
     }
 
-    void audioDeviceStopped() override {}
+    // A stopped device has no active input. The count is only stored here; a
+    // stop that is immediately followed by a restart (every device switch)
+    // therefore never publishes a transient "active 0" -- the next tick sees
+    // the restarted device's count instead.
+    void audioDeviceStopped() override { activeInputChannels_.store(0, std::memory_order_relaxed); }
 
     // True when `name` is one of deviceManager_.getCurrentDeviceTypeObject()'s
     // enumerated output device names. Guards both the startup-preference path
@@ -625,10 +702,53 @@ private:
     // page is currently alive and has installed one; a no-op otherwise (e.g.
     // before any page has been shown, or while none is constructed). See
     // SetAudioStatusHook's doc comment.
+    //
+    // `text` is remembered as the current diagnostic detail so a later
+    // count-driven republication (PublishPendingInputStatus) can re-render the
+    // same line with the new counts instead of dropping what it said.
     void SetAudioStatus(const juce::String& text) {
-        if (audioStatusHook_) {
-            audioStatusHook_(text);
+        audioStatusDetail_ = text;
+        PublishAudioStatus();
+    }
+
+    // Renders and pushes the current status line, and records the active input
+    // count it rendered so PublishPendingInputStatus only fires on a change.
+    // Message thread.
+    //
+    // With no sink installed, or with nothing to say, this records nothing:
+    // publishedActiveInputChannels_ must not advance past a count no page ever
+    // saw, or the next sink to appear would sit blank until the count moved
+    // again.
+    void PublishAudioStatus() {
+        if (!audioStatusHook_) {
+            return;
         }
+        const int activeInputChannels = ActiveInputChannels();
+        const juce::String text = ComposeAudioStatus(activeInputChannels);
+        if (text.isEmpty()) {
+            return;
+        }
+        publishedActiveInputChannels_ = activeInputChannels;
+        audioStatusHook_(text);
+    }
+
+    // For an input-capable application the status line always leads with the
+    // stable `Input requested N / active M` text (sru-3), with whatever device
+    // or permission diagnostic is current appended after it -- a missing input
+    // device, a failed setup, or a plain selection acknowledgement never
+    // displaces the requested/active counts, and none of them stops output.
+    // A zero-input application is unchanged: its status line is exactly the
+    // diagnostic text, with no input claim attached.
+    juce::String ComposeAudioStatus(int activeInputChannels) const {
+        if (requestedInputChannels_ <= 0) {
+            return audioStatusDetail_;
+        }
+        juce::String text = "Input requested " + juce::String(requestedInputChannels_) + " / active " +
+                            juce::String(activeInputChannels);
+        if (audioStatusDetail_.isNotEmpty()) {
+            text += " - " + audioStatusDetail_;
+        }
+        return text;
     }
 
     // Forwards to audioSyncHook_ (AudioConfigPage's re-sync hook), same
@@ -718,6 +838,9 @@ private:
     void timerCallback() override {
         engine_.MessageThreadTick();
         midiConnections_->OnTimerTick();
+        // Before the repaint hook, so a page refreshed by this same tick shows
+        // the input diagnostic this tick published.
+        PublishPendingInputStatus();
         if (repaintHook_) {
             repaintHook_();
         }
@@ -773,6 +896,24 @@ private:
     // one, which SetAudioStatus()/SyncAudioSelection() tolerate as a no-op.
     std::function<void(const juce::String&)> audioStatusHook_;
     std::function<void()> audioSyncHook_;
+
+    // The application's validated input request (sar-31). Written once, by
+    // Start(), before any audio callback can be registered; read from the
+    // audio thread thereafter, which is why it needs no synchronization of
+    // its own.
+    int requestedInputChannels_ = 0;
+
+    // The host-observed active input count, already clamped into
+    // [0, requestedInputChannels_]. Written by the audio callback and by the
+    // device start/stop callbacks, read by the message thread's status
+    // publication -- the whole audio-thread side of the input diagnostic.
+    std::atomic<int> activeInputChannels_{0};
+
+    // Message thread only. The active count the status line currently shows
+    // (-1 before anything has been published), and the diagnostic detail
+    // ComposeAudioStatus appends to it. See PublishPendingInputStatus.
+    int publishedActiveInputChannels_ = -1;
+    juce::String audioStatusDetail_;
 };
 
 }  // namespace synth_runtime

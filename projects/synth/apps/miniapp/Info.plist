@@ -21,6 +21,8 @@
   <string>1</string>
   <key>LSMinimumSystemVersion</key>
   <string>11.0</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Audio input is used only by synth applications that explicitly request it.</string>
   <key>NSHighResolutionCapable</key>
   <true/>
 </dict>

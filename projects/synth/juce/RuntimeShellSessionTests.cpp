@@ -1,3 +1,5 @@
+#include "FakeAudioDeviceType.hpp"
+#include "JuceRuntimeMainServices.hpp"
 #include "MiniApp.hpp"
 #include "MiniAppUiModel.hpp"
 #include "HostDataPaths.hpp"
@@ -12,10 +14,14 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <array>
+#include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -103,6 +109,502 @@ struct WideDrawApp final {
 
     WideDrawSurface surface;
 };
+
+// --- JUCE audio input negotiation (sar-31, sar-6, sru-3) -------------------
+//
+// Every scenario below drives a synth_juce::FakeAudioDeviceType instead of the
+// developer's real hardware (see FakeAudioDeviceType.hpp for why that is
+// hermetic), so a test can hand the runtime device blocks no real driver would
+// produce on demand: more channels than the app requested, fewer than the app
+// requested, and a null pointer inside the counted prefix.
+
+struct EmptySurface final : synth::ui::Surface {
+    synth::ui::NodeTree BuildTree() override {
+        synth::ui::Builder builder;
+        builder.Root("input.probe.root", {0.0f, 0.0f, 320.0f, 160.0f});
+        return builder.Build({0.0f, 0.0f, 320.0f, 160.0f});
+    }
+
+    void SetActionHandler(ActionHandler) override {}
+    void DispatchAction(const synth::ui::Action&) override {}
+};
+
+// The largest requested input count any scenario below uses. Fixed-size
+// observation storage keeps the probe app's ProcessBlock allocation-free.
+inline constexpr std::size_t kMaxProbeChannels = 32;
+
+// The constant the probe app writes into every output sample. Output is
+// determined solely by the application's own writes, so a scenario can prove
+// the host neither monitors input into output nor stops output when input is
+// missing.
+inline constexpr float kOutputMarker = 0.125f;
+
+// What the runtime actually delegated, recorded from inside the application's
+// own ProcessBlock so assertions read the delegated contract rather than a
+// JUCE-side proxy for it.
+struct ObservedInput {
+    int blockCount = 0;
+    int prepareCount = 0;
+    int numRequestedInputChannels = -1;
+    int numInputChannels = -1;
+    bool inputsNull = true;
+    std::size_t requestedChannelCount = 0;
+    std::size_t activeChannelCount = 0;
+    bool viewEmpty = true;
+    std::array<bool, kMaxProbeChannels> hasActiveChannel{};
+    std::array<float, kMaxProbeChannels> firstFrameOrSilence{};
+    std::array<float, kMaxProbeChannels> secondFrameOrSilence{};
+    std::array<float, kMaxProbeChannels> frameViewOrSilence{};
+    float outputChannel0Frame0 = 0.0f;
+    float outputChannel1Frame0 = 0.0f;
+};
+
+template <int RequestedInputs>
+struct InputProbeApp final {
+    static synth::RuntimeConfig Config() {
+        synth::RuntimeConfig config;
+        config.appName = "RuntimeInputProbe";
+        config.numAudioInputs = RequestedInputs;
+        config.numAudioOutputs = 2;
+        config.preferredSampleRate = 48000.0;
+        config.preferredBlockSize = 256;
+        config.uiWidth = 320;
+        config.uiHeight = 160;
+        config.uiFrameHz = 30;
+        return config;
+    }
+
+    void Init(synth::AppContext*) {}
+
+    void PrepareToPlay(double, int) { ++observed.prepareCount; }
+
+    void ProcessBlock(synth::AudioBlock& block) {
+        ++observed.blockCount;
+        observed.numRequestedInputChannels = block.numRequestedInputChannels;
+        observed.numInputChannels = block.numInputChannels;
+        observed.inputsNull = block.inputs == nullptr;
+
+        const synth::AudioInputView view = block.InputView();
+        observed.requestedChannelCount = view.RequestedChannelCount();
+        observed.activeChannelCount = view.ActiveChannelCount();
+        observed.viewEmpty = view.Empty();
+        observed.hasActiveChannel.fill(false);
+        observed.firstFrameOrSilence.fill(0.0f);
+        observed.secondFrameOrSilence.fill(0.0f);
+        observed.frameViewOrSilence.fill(0.0f);
+        const synth::AudioInputFrameView frame = block.numFrames > 0 ? view.Frame(0)
+                                                                     : synth::AudioInputFrameView();
+        for (std::size_t channel = 0;
+             channel < view.RequestedChannelCount() && channel < kMaxProbeChannels; ++channel) {
+            observed.hasActiveChannel[channel] = view.HasActiveChannel(channel);
+            observed.firstFrameOrSilence[channel] = view.SampleOrSilence(channel, 0);
+            observed.secondFrameOrSilence[channel] = view.SampleOrSilence(channel, 1);
+            observed.frameViewOrSilence[channel] = frame.SampleOrSilence(channel);
+        }
+
+        // Output is written by the application alone. Nothing here reads the
+        // input view into the output, so nonzero output after a block with
+        // nonzero input proves the host added no monitoring path of its own.
+        for (int channel = 0; channel < block.numOutputChannels; ++channel) {
+            for (std::size_t sample = 0; sample < block.numFrames; ++sample) {
+                block.outputs[channel][sample] = kOutputMarker + static_cast<float>(channel);
+            }
+        }
+        if (block.numOutputChannels > 0 && block.numFrames > 0) {
+            observed.outputChannel0Frame0 = block.outputs[0][0];
+        }
+        if (block.numOutputChannels > 1 && block.numFrames > 0) {
+            observed.outputChannel1Frame0 = block.outputs[1][0];
+        }
+    }
+
+    synth::ui::Surface& PortableSurface() { return surface; }
+
+    EmptySurface surface;
+    ObservedInput observed;
+};
+
+// One device block's planar storage. `inputChannels` carries one entry per
+// device input channel: a value for a channel the driver supplies (sample
+// (channel, frame) reads value + frame, so channels and frames are
+// distinguishable in one assertion) or nullopt for a null pointer the runtime
+// must pass through without compacting.
+struct DeviceBlockSpec {
+    std::vector<std::optional<float>> inputChannels;
+    int numOutputChannels = 2;
+    std::size_t numFrames = 8;
+};
+
+class DeviceBlockBuffers {
+public:
+    explicit DeviceBlockBuffers(const DeviceBlockSpec& spec) : numFrames_(spec.numFrames) {
+        inputStorage_.resize(spec.inputChannels.size());
+        for (std::size_t channel = 0; channel < spec.inputChannels.size(); ++channel) {
+            if (!spec.inputChannels[channel].has_value()) {
+                continue;
+            }
+            inputStorage_[channel].resize(numFrames_);
+            for (std::size_t sample = 0; sample < numFrames_; ++sample) {
+                inputStorage_[channel][sample] =
+                    *spec.inputChannels[channel] + static_cast<float>(sample);
+            }
+        }
+        outputStorage_.assign(static_cast<std::size_t>(spec.numOutputChannels),
+                              std::vector<float>(numFrames_, 0.0f));
+
+        inputPointers_.reserve(spec.inputChannels.size());
+        for (std::size_t channel = 0; channel < spec.inputChannels.size(); ++channel) {
+            inputPointers_.push_back(spec.inputChannels[channel].has_value()
+                                         ? inputStorage_[channel].data()
+                                         : nullptr);
+        }
+        outputPointers_.reserve(outputStorage_.size());
+        for (std::vector<float>& channel : outputStorage_) {
+            outputPointers_.push_back(channel.data());
+        }
+    }
+
+    const float* const* Inputs() const {
+        return inputPointers_.empty() ? nullptr : inputPointers_.data();
+    }
+    int NumInputChannels() const { return static_cast<int>(inputPointers_.size()); }
+    float* const* Outputs() { return outputPointers_.empty() ? nullptr : outputPointers_.data(); }
+    int NumOutputChannels() const { return static_cast<int>(outputPointers_.size()); }
+    int NumFrames() const { return static_cast<int>(numFrames_); }
+
+private:
+    std::size_t numFrames_ = 0;
+    std::vector<std::vector<float>> inputStorage_;
+    std::vector<std::vector<float>> outputStorage_;
+    std::vector<const float*> inputPointers_;
+    std::vector<float*> outputPointers_;
+};
+
+// A started Runtime<App> whose only audio device type is synthetic.
+template <typename App>
+class FakeDeviceRuntime {
+public:
+    FakeDeviceRuntime(const std::filesystem::path& root, int maxInputChannels, int maxOutputChannels) {
+        runtime_.SetRuntimeDataPathsOverride(synth::RuntimeDataPaths::FromRoots(
+            root, root / "patches", root / "logs", root / "config"));
+        auto deviceType = std::make_unique<synth_juce::FakeAudioDeviceType>(
+            juce::StringArray{"Fake In A", "Fake In B"},
+            juce::StringArray{"Fake Out A", "Fake Out B"},
+            maxInputChannels,
+            maxOutputChannels);
+        deviceType_ = deviceType.get();
+        runtime_.DeviceManager().addAudioDeviceType(std::move(deviceType));
+        InstallStatusHook();
+    }
+
+    ~FakeDeviceRuntime() { runtime_.SetAudioStatusHook({}); }
+
+    FakeDeviceRuntime(const FakeDeviceRuntime&) = delete;
+    FakeDeviceRuntime& operator=(const FakeDeviceRuntime&) = delete;
+
+    void Start() { runtime_.Start(); }
+
+    synth_runtime::Runtime<App>& Get() { return runtime_; }
+    synth_juce::FakeAudioDeviceType& DeviceType() { return *deviceType_; }
+    ObservedInput& Observed() { return runtime_.GetEngine().Application().observed; }
+    const std::string& Status() const { return status_; }
+
+    // Delivers one device block and then runs the runtime's message-thread
+    // diagnostic publication step, which the UI timer owns in production.
+    void RunBlock(DeviceBlockBuffers& buffers) {
+        synth_juce::FakeAudioDevice* device = deviceType_->CurrentDevice();
+        Require(device != nullptr, "fake device is open before a block is delivered");
+        device->RunBlock(buffers.Inputs(), buffers.NumInputChannels(), buffers.Outputs(),
+                         buffers.NumOutputChannels(), buffers.NumFrames());
+        runtime_.PublishPendingInputStatus();
+    }
+
+    // Reads the Audio page snapshot through the same services object MainPane
+    // uses, then reinstalls this harness's status hook: the services object
+    // installs its own on construction and clears it on destruction, which
+    // would otherwise leave the runtime with no status sink at all.
+    bool ShowsInputCombo() {
+        bool showsInputCombo = false;
+        {
+            synth_runtime::JuceRuntimeMainServices<App> services(runtime_);
+            synth::runtime_ui::AudioPageSnapshot snapshot;
+            services.RefreshAudio(snapshot);
+            showsInputCombo = snapshot.showInputCombo;
+        }
+        InstallStatusHook();
+        return showsInputCombo;
+    }
+
+    // Tears the status sink down and installs a fresh one, the way a rebuilt
+    // Audio page does, and reports what that new sink was handed.
+    std::string StatusAfterFreshHook() {
+        runtime_.SetAudioStatusHook({});
+        status_.clear();
+        InstallStatusHook();
+        return status_;
+    }
+
+private:
+    void InstallStatusHook() {
+        runtime_.SetAudioStatusHook([this](const juce::String& text) { status_ = text.toStdString(); });
+    }
+
+    synth_runtime::Runtime<App> runtime_;
+    synth_juce::FakeAudioDeviceType* deviceType_ = nullptr;
+    std::string status_;
+};
+
+std::filesystem::path FreshRoot(const std::filesystem::path& parent, const char* name) {
+    const std::filesystem::path root = parent / name;
+    std::filesystem::remove_all(root);
+    return root;
+}
+
+// A zero-input application opens no input path, receives a null input block,
+// and shows no input selector -- whatever the device offers (sar-31).
+void CheckZeroInputApplication(const std::filesystem::path& parent) {
+    FakeDeviceRuntime<InputProbeApp<0>> host(FreshRoot(parent, "zero-input"), 2, 2);
+    host.Start();
+
+    Require(host.Get().DeviceManager().getAudioDeviceSetup().inputDeviceName.isEmpty(),
+            "zero-input application opens no input device");
+    Require(!host.ShowsInputCombo(), "zero-input application hides the input selector");
+    Require(host.Status().find("Input requested") == std::string::npos,
+            "zero-input application publishes no requested/active input diagnostic");
+
+    // The device offers two input channels anyway: none of them may reach the
+    // application's block.
+    DeviceBlockSpec spec;
+    spec.inputChannels = {1.0f, 2.0f};
+    DeviceBlockBuffers buffers(spec);
+    host.RunBlock(buffers);
+
+    const ObservedInput& observed = host.Observed();
+    Require(observed.blockCount == 1, "zero-input application still receives its output block");
+    Require(observed.numRequestedInputChannels == 0, "zero-input block requests zero input channels");
+    Require(observed.numInputChannels == 0, "zero-input block exposes zero active input channels");
+    Require(observed.inputsNull, "zero-input block exposes null input storage");
+    Require(observed.viewEmpty, "zero-input block exposes an empty input view");
+    Require(observed.outputChannel0Frame0 == kOutputMarker &&
+                observed.outputChannel1Frame0 == kOutputMarker + 1.0f,
+            "zero-input application output is unaffected by the device's input channels");
+}
+
+// A 17-channel request is accepted without a framework ceiling; the host
+// reports the shortfall and keeps output running (sar-31, sru-3).
+void CheckShortfallRequest(const std::filesystem::path& parent) {
+    FakeDeviceRuntime<InputProbeApp<17>> host(FreshRoot(parent, "seventeen-input"), 4, 2);
+    host.Start();
+
+    Require(host.Get().DeviceManager().getAudioDeviceSetup().inputDeviceName == "Fake In A",
+            "input-capable application opens the default input device");
+    Require(host.ShowsInputCombo(), "input-capable application shows the input selector");
+    Require(host.Status() == "Input requested 17 / active 4",
+            "startup publishes the negotiated requested/active input diagnostic");
+    // MainPane and its Audio page are constructed after Start() returns, so a
+    // status sink installed later must be handed the current diagnostic rather
+    // than waiting for the next active-count change.
+    Require(host.StatusAfterFreshHook() == "Input requested 17 / active 4",
+            "a status sink installed after startup receives the current input diagnostic");
+
+    DeviceBlockSpec spec;
+    spec.inputChannels = {10.0f, 20.0f, 30.0f, 40.0f};
+    DeviceBlockBuffers buffers(spec);
+    host.RunBlock(buffers);
+
+    const ObservedInput& observed = host.Observed();
+    Require(observed.numRequestedInputChannels == 17, "17-channel request reaches the block verbatim");
+    Require(observed.numInputChannels == 4, "block reports the device's actual input channel count");
+    Require(observed.requestedChannelCount == 17 && observed.activeChannelCount == 4,
+            "input view separates the request from the active count");
+    Require(observed.hasActiveChannel[3] && !observed.hasActiveChannel[4],
+            "channels beyond the active count are inactive");
+    Require(observed.firstFrameOrSilence[3] == 40.0f && observed.firstFrameOrSilence[4] == 0.0f,
+            "safe access returns device samples below the active count and silence above it");
+    Require(observed.firstFrameOrSilence[16] == 0.0f,
+            "the last requested channel reads as silence when the device does not supply it");
+    Require(host.Status() == "Input requested 17 / active 4",
+            "a matching callback shape leaves the diagnostic unchanged");
+    Require(observed.outputChannel0Frame0 == kOutputMarker,
+            "an input shortfall does not stop output");
+}
+
+// A device that delivers more channels than requested is clamped to the
+// requested prefix, and one that delivers fewer republishes the diagnostic
+// without stopping output (sar-6, sar-31).
+void CheckCallbackShapeNegotiation(const std::filesystem::path& parent) {
+    FakeDeviceRuntime<InputProbeApp<2>> host(FreshRoot(parent, "two-input"), 2, 2);
+    host.Start();
+    Require(host.Status() == "Input requested 2 / active 2",
+            "a fully satisfied request publishes matching requested/active counts");
+
+    DeviceBlockSpec wide;
+    wide.inputChannels = {1.0f, 2.0f, 3.0f, 4.0f};
+    DeviceBlockBuffers wideBuffers(wide);
+    host.RunBlock(wideBuffers);
+    {
+        const ObservedInput& observed = host.Observed();
+        Require(observed.numInputChannels == 2,
+                "a device callback wider than the request is clamped to the requested prefix");
+        Require(observed.activeChannelCount == 2 && observed.requestedChannelCount == 2,
+                "the clamped view exposes only the requested prefix");
+        Require(observed.firstFrameOrSilence[0] == 1.0f && observed.firstFrameOrSilence[1] == 2.0f,
+                "the clamped prefix keeps the device's leading channels");
+        Require(host.Status() == "Input requested 2 / active 2",
+                "extra device channels do not change the published active count");
+    }
+
+    DeviceBlockSpec narrow;
+    narrow.inputChannels = {7.0f};
+    DeviceBlockBuffers narrowBuffers(narrow);
+    host.RunBlock(narrowBuffers);
+    {
+        const ObservedInput& observed = host.Observed();
+        Require(observed.numInputChannels == 1, "a narrower device callback reports its actual count");
+        Require(observed.hasActiveChannel[0] && !observed.hasActiveChannel[1],
+                "the missing channel is inactive rather than fabricated");
+        Require(observed.firstFrameOrSilence[0] == 7.0f && observed.firstFrameOrSilence[1] == 0.0f,
+                "safe access returns silence for the missing channel");
+        Require(host.Status() == "Input requested 2 / active 1",
+                "a callback shape change republishes the requested/active diagnostic");
+        Require(observed.outputChannel0Frame0 == kOutputMarker &&
+                    observed.outputChannel1Frame0 == kOutputMarker + 1.0f,
+                "a callback shape change does not stop output");
+    }
+}
+
+// A null pointer inside the counted range keeps its logical channel position
+// (sar-31).
+void CheckCountedNullChannel(const std::filesystem::path& parent) {
+    FakeDeviceRuntime<InputProbeApp<3>> host(FreshRoot(parent, "null-channel"), 3, 2);
+    host.Start();
+
+    DeviceBlockSpec spec;
+    spec.inputChannels = {5.0f, std::nullopt, 9.0f};
+    DeviceBlockBuffers buffers(spec);
+    host.RunBlock(buffers);
+
+    const ObservedInput& observed = host.Observed();
+    Require(observed.numInputChannels == 3,
+            "a null counted channel still counts toward the active channel count");
+    Require(observed.hasActiveChannel[0] && !observed.hasActiveChannel[1] && observed.hasActiveChannel[2],
+            "only the null channel is reported unavailable");
+    Require(observed.firstFrameOrSilence[0] == 5.0f && observed.firstFrameOrSilence[1] == 0.0f &&
+                observed.firstFrameOrSilence[2] == 9.0f,
+            "the channel after the null pointer keeps its logical position");
+    Require(observed.secondFrameOrSilence[2] == 10.0f,
+            "frame indexing is unaffected by the null channel");
+    Require(observed.frameViewOrSilence[1] == 0.0f && observed.frameViewOrSilence[2] == 9.0f,
+            "the cross-channel frame view agrees with the channel view");
+}
+
+// A persisted input device that is no longer present leaves output initialized
+// and reports itself alongside the stable input diagnostic (sar-31, sru-3).
+void CheckMissingPersistedInputDevice(const std::filesystem::path& parent) {
+    const std::filesystem::path root = FreshRoot(parent, "missing-input-device");
+    std::filesystem::create_directories(root);
+    synth::AudioDeviceState persisted;
+    persisted.outputDeviceName = "Fake Out B";
+    persisted.inputDeviceName = "Ghost In";
+    Require(synth::SaveRuntimeConfigFile(root / "config", synth::MidiInstrumentConfig{}, persisted,
+                                         synth::SyncConfig{}) == synth::RuntimeConfigFileStatus::Ok,
+            "persisted runtime configuration is written for the missing-input scenario");
+
+    FakeDeviceRuntime<InputProbeApp<2>> host(root, 2, 2);
+    host.Start();
+
+    const juce::AudioDeviceManager::AudioDeviceSetup setup =
+        host.Get().DeviceManager().getAudioDeviceSetup();
+    Require(setup.outputDeviceName == "Fake Out B",
+            "a missing input device leaves the persisted output device selected");
+    Require(setup.inputDeviceName == "Fake In A",
+            "a missing input device leaves the already-open input device alone");
+    Require(host.Get().DeviceManager().getCurrentAudioDevice() != nullptr,
+            "a missing input device leaves the audio device open");
+    Require(host.Status() == "Input requested 2 / active 2 - audio input device not found: Ghost In",
+            "the missing-device diagnostic is appended to the stable input status");
+
+    DeviceBlockSpec spec;
+    spec.inputChannels = {3.0f, 4.0f};
+    DeviceBlockBuffers buffers(spec);
+    host.RunBlock(buffers);
+    Require(host.Observed().outputChannel0Frame0 == kOutputMarker,
+            "output keeps running after a missing input device");
+}
+
+// A device switch stops, re-prepares, and restarts before any further callback,
+// and input and output selections round-trip independently (sar-15, sar-31).
+void CheckDeviceSwitchLifecycle(const std::filesystem::path& parent) {
+    FakeDeviceRuntime<InputProbeApp<2>> host(FreshRoot(parent, "device-switch"), 2, 2);
+    host.Start();
+
+    const int blocksBeforeSwitch = host.Observed().blockCount;
+    const int preparesBeforeSwitch = host.Observed().prepareCount;
+    host.DeviceType().ClearLifecycle();
+    host.Get().ApplyAudioDeviceSelection("Fake Out B");
+
+    const std::vector<std::string> expectedLifecycle{
+        "Fake Out A:stop", "Fake Out A:destroy", "Fake Out B:open", "Fake Out B:start"};
+    Require(host.DeviceType().Lifecycle() == expectedLifecycle,
+            "an output device switch stops and destroys the old device before starting the new one");
+    Require(host.Observed().prepareCount == preparesBeforeSwitch + 1,
+            "the engine is re-prepared exactly once across the switch");
+    Require(host.Observed().blockCount == blocksBeforeSwitch,
+            "no block is delegated while the device is being switched");
+
+    host.Get().ApplyAudioDeviceInputSelection("Fake In B");
+    const synth::AudioDeviceState state = host.Get().GetEngine().AudioDeviceSnapshot();
+    Require(state.outputDeviceName == "Fake Out B" && state.inputDeviceName == "Fake In B",
+            "input and output device names are recorded independently");
+    const juce::AudioDeviceManager::AudioDeviceSetup setup =
+        host.Get().DeviceManager().getAudioDeviceSetup();
+    Require(setup.outputDeviceName == "Fake Out B" && setup.inputDeviceName == "Fake In B",
+            "input selection does not disturb the selected output device");
+
+    host.Get().ApplyAudioDeviceSelection("Fake Out A");
+    const synth::AudioDeviceState afterOutputSwitch = host.Get().GetEngine().AudioDeviceSnapshot();
+    Require(afterOutputSwitch.outputDeviceName == "Fake Out A" &&
+                afterOutputSwitch.inputDeviceName == "Fake In B",
+            "output selection does not disturb the selected input device");
+
+    DeviceBlockSpec spec;
+    spec.inputChannels = {6.0f, 8.0f};
+    DeviceBlockBuffers buffers(spec);
+    host.RunBlock(buffers);
+    Require(host.Observed().blockCount == blocksBeforeSwitch + 1 &&
+                host.Observed().numInputChannels == 2,
+            "the switched device delegates blocks with the negotiated input shape");
+}
+
+// A negative input request is rejected before any device is opened (sar-31).
+void CheckNegativeInputRequestRejected(const std::filesystem::path& parent) {
+    FakeDeviceRuntime<InputProbeApp<-1>> host(FreshRoot(parent, "negative-input"), 2, 2);
+    bool threw = false;
+    try {
+        host.Start();
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "a negative input request throws std::invalid_argument from Start()");
+    Require(host.DeviceType().Lifecycle().empty(),
+            "a negative input request opens no audio device");
+}
+
+void CheckJuceAudioInputNegotiation() {
+    const std::filesystem::path parent =
+        std::filesystem::temp_directory_path() / "sheaf-runtime-audio-input-test";
+    std::filesystem::remove_all(parent);
+
+    CheckZeroInputApplication(parent);
+    CheckShortfallRequest(parent);
+    CheckCallbackShapeNegotiation(parent);
+    CheckCountedNullChannel(parent);
+    CheckMissingPersistedInputDevice(parent);
+    CheckDeviceSwitchLifecycle(parent);
+    CheckNegativeInputRequestRejected(parent);
+
+    std::filesystem::remove_all(parent);
+}
 
 }  // namespace
 
@@ -379,6 +881,8 @@ int main() {
         parent.removeChildComponent(&owner->Component());
         owner.reset();
     }
+
+    CheckJuceAudioInputNegotiation();
 
     return 0;
 }

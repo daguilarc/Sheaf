@@ -580,6 +580,57 @@ Audio, Controllers, and Sync page Back buttons save `config.json` before
 returning to the app view. File page Back only dismisses the File page; patch
 save/load commands are explicit.
 
+### Audio input on the JUCE desktop host
+
+`RuntimeConfig::numAudioInputs` is a request, not a guarantee. `Runtime::Start()`
+runs the shared JUCE-free `synth::ValidateRuntimeConfig` before it touches the
+log directory, the MIDI sender, or any audio device, so a negative request
+throws `std::invalid_argument` ahead of every startup step rather than after a
+device is already open. Any nonnegative count is accepted — the framework
+imposes no channel ceiling of its own — and JUCE negotiates what the selected
+device can actually provide.
+
+Each device block reaches the application clamped to that request:
+`AudioBlock::numRequestedInputChannels` is the app's count and
+`AudioBlock::numInputChannels` is `clamp(actual, 0, requested)`. A device that
+exposes more channels than requested is truncated to the requested prefix, so
+changing hardware never silently widens an app's input shape. A device that
+exposes fewer reports its actual count, and the requested-but-absent channels
+read as silence through `AudioBlock::InputView()` rather than through
+host-allocated scratch buffers. A null channel pointer inside the counted
+prefix keeps its own logical position — nothing is compacted — and
+`AudioInputView::HasActiveChannel` reports it unavailable while
+`SampleOrSilence` returns zero without dereferencing it. The runtime creates no
+input-to-output monitoring path: output is whatever the application writes.
+
+An application declaring zero inputs opens no input path at all. The runtime
+passes `0` as the input channel count to `AudioDeviceManager`, so JUCE selects
+no input device, the Audio page hides the input selector, and macOS never
+raises the microphone permission prompt. Such an application's blocks carry
+`inputs == nullptr`, zero active input channels, and an empty input view.
+Mini App and Braid 4 are both zero-input today.
+
+For input-capable applications the Audio page status line always leads with the
+stable text `Input requested N / active M`, with the current device or
+permission diagnostic appended after it (for example
+`Input requested 2 / active 0 - audio input device not found: Studio In`). A
+missing input device, a denied microphone permission, or a device that stops
+providing input therefore shows up as a falling active count and safe silence,
+while output, UI frames, patch persistence, and MIDI keep running — none of
+those failures stops the output path. The audio callback only stores the
+observed count; the message-thread UI tick renders the text, so no callback
+logs, allocates, or formats strings. Input and output device selections persist
+independently in `config.json`, and an absent persisted device leaves the
+currently open device alone rather than failing startup.
+
+macOS bundles built from `runtime/juce_build.mk` carry
+`NSMicrophoneUsageDescription`, which macOS requires before it will show the
+microphone prompt for an app that does open an input device. Sheaf's desktop
+apps are unsigned local builds with no App Sandbox entitlement file, so no
+`com.apple.security.device.audio-input` entitlement is declared; a future
+sandboxed signing profile has to add it to that profile's entitlements
+alongside the usage description.
+
 Build an app from `projects/synth`:
 
 ```text

@@ -30,7 +30,13 @@ SYNTH_SRC := $(SYNTH_ROOT)/src/ParameterModulation.cpp $(SYNTH_ROOT)/src/ButtonG
 	$(SYNTH_ROOT)/src/Modules.cpp $(SYNTH_ROOT)/src/MidiReconcile.cpp $(SYNTH_ROOT)/src/MidiDevicePoller.cpp $(SYNTH_ROOT)/src/MidiConfigViewModel.cpp $(SYNTH_ROOT)/src/MidiConfigBlocks.cpp
 SYNTH_SRC += $(SYNTH_ROOT)/src/MasterClock.cpp $(SYNTH_ROOT)/src/ControllerWizard.cpp
 SYNTH_RUNTIME_SRC := $(SYNTH_ROOT)/runtime/HostDataPaths.cpp
-SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/AtomicColor.hpp $(SYNTH_ROOT)/include/synth/ButtonGrid.hpp \
+# AppConcepts/AppContext/Engine carry the application-runtime contract every
+# JUCE target compiles against (RuntimeConfig, AudioBlock and its input views,
+# Engine<App>). They were absent from this list, so an edit to the contract
+# itself did not rebuild the apps or the JUCE test binaries that depend on it.
+SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/AppConcepts.hpp $(SYNTH_ROOT)/include/synth/AppContext.hpp \
+	$(SYNTH_ROOT)/include/synth/Engine.hpp \
+	$(SYNTH_ROOT)/include/synth/AtomicColor.hpp $(SYNTH_ROOT)/include/synth/ButtonGrid.hpp \
 	$(SYNTH_ROOT)/include/synth/ParameterModulation.hpp $(SYNTH_ROOT)/include/synth/MidiController.hpp \
 	$(SYNTH_ROOT)/include/synth/Json.hpp \
 	$(SYNTH_ROOT)/include/synth/Modules.hpp \

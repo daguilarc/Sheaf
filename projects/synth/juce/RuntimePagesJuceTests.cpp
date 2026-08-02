@@ -150,6 +150,16 @@ int main()
     Require(deviceLine != nullptr && deviceLine->text == "Speakers: 44100 Hz, 256 frames",
             "audio page state refresh updates device line");
 
+    // sru-3: the requested/active input diagnostic the JUCE runtime publishes
+    // reaches the user through the existing status line, verbatim.
+    audioSnapshot.statusLineText = "Input requested 2 / active 1";
+    audioRenderer.RefreshFromSurface();
+    auto* inputStatusLine = dynamic_cast<juce::Label*>(
+        audioRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kAudioStatusLine));
+    Require(inputStatusLine != nullptr &&
+                inputStatusLine->getText() == juce::String("Input requested 2 / active 1"),
+            "JUCE audio status line renders the requested/active input diagnostic");
+
     synth::runtime_ui::SyncPageSurface syncSurface;
     syncSurface.BeginEdit({.sendClock = true,
                            .receiveClock = false,

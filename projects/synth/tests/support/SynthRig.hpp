@@ -59,6 +59,12 @@ public:
         , scheduledMidiSink_()
         , engine_([this] { return NextTimestamp(); }) {
         const synth::RuntimeConfig config = App::Config();
+        // Before any storage is sized from it (sar-31). engine_.Initialize()
+        // below validates the same config, but the input/output buffers are
+        // allocated first, so a negative numAudioInputs would be cast to a
+        // huge std::size_t and reach the allocator ahead of the engine's own
+        // rejection. The shared validator is the single place that decides.
+        synth::ValidateRuntimeConfig(config);
         numInputChannels_ = config.numAudioInputs;
         numOutputChannels_ = config.numAudioOutputs;
         const int negotiatedBlockSize = audioSettings.blockSize > 0

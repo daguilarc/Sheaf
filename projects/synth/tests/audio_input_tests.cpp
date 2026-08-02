@@ -283,6 +283,15 @@ void TestEngineInitializeRejectsNegativeInputs()
                                  "Engine::Initialize rejects negative input count before mutating state");
 }
 
+void TestRigConstructorRejectsNegativeInputs()
+{
+    // The rig sizes its planar input storage from the config before it calls
+    // engine.Initialize(), so the engine's own rejection is too late: a
+    // negative count would reach the allocator as a huge std::size_t first.
+    RequireThrowsInvalidArgument([] { synth_rig::SynthRig<NegativeInputApp> rig; },
+                                 "SynthRig rejects negative input count before sizing input storage");
+}
+
 // Full SynthApplication probe: four inputs, two outputs. Reads channel 0 via
 // Channel(), channel 1 via Frame(), channel 3 via SampleOrSilence(); leaves
 // channel 2 unread to prove hosts never auto-monitor unused input. Writes
@@ -615,6 +624,7 @@ int main()
         TestExcessActualChannelsAreClamped();
         TestNegativeActualCountClampsToZero();
         TestEngineInitializeRejectsNegativeInputs();
+        TestRigConstructorRejectsNegativeInputs();
         TestRigSilentUntilInjection();
         TestInjectedChannelsReachProbeDsp();
         TestSampleChannelAndFrameInjectionOrdering();
