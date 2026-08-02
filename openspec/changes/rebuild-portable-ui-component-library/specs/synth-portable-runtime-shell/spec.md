@@ -1,3 +1,8 @@
+## RENAMED Requirements
+
+- FROM: `### Requirement: sprs-6 — Browser layout: one resolved surface coordinate system`
+- TO: `### Requirement: sprs-6 — Browser layout: one parent-relative coordinate system`
+
 ## MODIFIED Requirements
 
 ### Requirement: sprs-2 — Layout: app content remains intact beside runtime chrome
