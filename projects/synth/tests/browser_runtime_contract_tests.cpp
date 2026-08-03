@@ -212,6 +212,56 @@ public:
     ContractSurface surface;
 };
 
+template <int InputChannels>
+class RequestedInputCountProbeApp
+{
+public:
+    static synth::RuntimeConfig Config()
+    {
+        synth::RuntimeConfig config;
+        config.appName = "RequestedInputCountProbeApp";
+        config.numAudioInputs = InputChannels;
+        config.numAudioOutputs = 2;
+        config.uiWidth = 640;
+        config.uiHeight = 480;
+        return config;
+    }
+
+    void Init(synth::AppContext*) {}
+    synth::ui::Surface& PortableSurface() { return surface; }
+
+    void ProcessBlock(synth::AudioBlock& block)
+    {
+        observedRequestedInputs = block.numRequestedInputChannels;
+        observedActiveInputs = block.numInputChannels;
+    }
+
+    ContractSurface surface;
+    int observedRequestedInputs = -1;
+    int observedActiveInputs = -1;
+};
+
+class NegativeInputApp
+{
+public:
+    static synth::RuntimeConfig Config()
+    {
+        synth::RuntimeConfig config;
+        config.appName = "NegativeInputApp";
+        config.numAudioInputs = -1;
+        config.numAudioOutputs = 2;
+        config.uiWidth = 640;
+        config.uiHeight = 480;
+        return config;
+    }
+
+    void Init(synth::AppContext*) {}
+    void ProcessBlock(synth::AudioBlock&) {}
+    synth::ui::Surface& PortableSurface() { return surface; }
+
+    ContractSurface surface;
+};
+
 struct BrowserCallbackObservation
 {
     std::size_t frames = 0;
@@ -1041,6 +1091,27 @@ void TestBrowserRuntimeRejectsUnsupportedAudioInputCountsBeforeCapture()
             "browser ABI rejects oversized requested inputs before worklet startup");
 }
 
+void TestBrowserRuntimePreCreationNegativeInputIsZeroUntilInitializeRejects()
+{
+    synth_browser::RuntimeAbiAdapter<NegativeInputApp> negative;
+    Require(negative.AudioInputChannels() == 0,
+            "pre-creation browser ABI clamps a negative app constant to zero");
+    Require(negative.Initialize("sheaf", "negative-inputs", 1) == -1,
+            "shared RuntimeConfig validation rejects the negative input count at initialization");
+}
+
+void TestBrowserRuntimeDirectProcessPublishesImmutableRequestedInputCount()
+{
+    synth_browser::Runtime<RequestedInputCountProbeApp<33>> runtime;
+    runtime.Start();
+    runtime.Process(nullptr, 0, 64, 1);
+
+    Require(runtime.Engine().Application().observedRequestedInputs == 33,
+            "direct browser Process publishes the immutable app input request");
+    Require(runtime.Engine().Application().observedActiveInputs == 0,
+            "direct browser Process separately reports zero active input pointers");
+}
+
 class AudioContextHandleCapture final : public synth_browser::RuntimeAbi
 {
 public:
@@ -1398,6 +1469,140 @@ void TestBrowserRuntimeDefersPreWorkletInputConnectionAndRecoversFromItsFailure(
     Require(runtime.PendingAudioInputSourceHandle() == 0 &&
                 runtime.ConnectedAudioInputSourceHandle() == 0,
             "clearing leaves nothing claimed, pending, or attached");
+}
+
+void TestBrowserRuntimeDeferredAttachFailureKeepsOutputUiAndMidiLive()
+{
+    using synth_browser::BrowserAudioInputConnectResult;
+    using synth_browser::BrowserAudioInputStatus;
+    const auto online = static_cast<std::uint32_t>(BrowserAudioInputStatus::Online);
+
+    bool workletNodeExists = false;
+    std::vector<std::uint32_t> connects;
+    std::vector<std::uint32_t> disconnects;
+
+    synth_browser::Runtime<BrowserCallbackProbeApp> runtime;
+    runtime.SetAudioInputGraphForTesting(
+        [&](std::uint32_t sourceHandle) {
+            connects.push_back(sourceHandle);
+            return workletNodeExists ? BrowserAudioInputConnectResult::Failed
+                                     : BrowserAudioInputConnectResult::Deferred;
+        },
+        [&](std::uint32_t sourceHandle) {
+            disconnects.push_back(sourceHandle);
+            return true;
+        });
+    runtime.Start();
+
+    Require(runtime.SetAudioInputSource(91, 4, online),
+            "pre-worklet capture publishes before native node creation");
+    workletNodeExists = true;
+    Require(!runtime.ResolveDeferredAudioInputConnection(),
+            "persistent deferred attachment failure is reported to the control path");
+
+    const auto state = runtime.AudioInputStateSnapshot();
+    Require(state.activeChannels == 0 && state.status == BrowserAudioInputStatus::ApiUnavailable,
+            "persistent deferred attachment failure rolls active input back to offline");
+    Require(runtime.PendingAudioInputSourceHandle() == 0 &&
+                runtime.ConnectedAudioInputSourceHandle() == 0,
+            "failed deferred attachment leaves no source identity attached or pending");
+    Require(disconnects.empty(),
+            "failed deferred attachment never disconnects a source that was not attached");
+
+    std::array<float, 8> outputs{};
+    synth_browser::BrowserAudioSampleFrameDescriptor outputDescriptor{
+        .numberOfChannels = 2,
+        .samplesPerChannel = 4,
+        .data = outputs.data(),
+    };
+    Require(runtime.ProcessAudioWorkletPlanarBlock(0, nullptr, 1, &outputDescriptor, 10),
+            "worklet callback remains live after deferred input attachment failure");
+    Require(runtime.AudioWorkletBlockCount() == 1,
+            "worklet block count advances after deferred input attachment failure");
+    for (float sample : outputs)
+    {
+        Require(NearlyEqual(sample, 0.0f),
+                "output remains safe silence when failed deferred input is rolled back");
+    }
+
+    runtime.MessageTick(11);
+    const synth_browser::DecodedCommandBuffer frame =
+        synth_browser::DecodeCommandBuffer(runtime.BuildUiFrame().bytes);
+    Require(FindNode(frame, "runtime.main.root") != nullptr,
+            "UI frame building remains live after deferred input attachment failure");
+    runtime.SubmitMidiEndpoints({});
+    (void)runtime.MidiDiagnosticsSnapshot();
+}
+
+void TestBrowserRuntimeSuccessfulDeferredAttachStaysConnectedUntilClear()
+{
+    using synth_browser::BrowserAudioInputConnectResult;
+    using synth_browser::BrowserAudioInputStatus;
+    const auto online = static_cast<std::uint32_t>(BrowserAudioInputStatus::Online);
+    const auto ended = static_cast<std::uint32_t>(BrowserAudioInputStatus::StreamEnded);
+
+    bool workletNodeExists = false;
+    std::vector<std::uint32_t> connects;
+    std::vector<std::uint32_t> disconnects;
+
+    synth_browser::Runtime<BrowserCallbackProbeApp> runtime;
+    runtime.SetAudioInputGraphForTesting(
+        [&](std::uint32_t sourceHandle) {
+            connects.push_back(sourceHandle);
+            return workletNodeExists ? BrowserAudioInputConnectResult::Connected
+                                     : BrowserAudioInputConnectResult::Deferred;
+        },
+        [&](std::uint32_t sourceHandle) {
+            disconnects.push_back(sourceHandle);
+            return true;
+        });
+    runtime.Start();
+
+    Require(runtime.SetAudioInputSource(91, 4, online),
+            "pre-worklet capture publishes before native node creation");
+    workletNodeExists = true;
+    Require(runtime.ResolveDeferredAudioInputConnection(),
+            "deferred attachment succeeds once the native node exists");
+    Require(runtime.ConnectedAudioInputSourceHandle() == 91 &&
+                runtime.PendingAudioInputSourceHandle() == 0,
+            "successful deferred attachment is recorded as connected");
+    Require(runtime.AudioInputStateSnapshot().activeChannels == 4 &&
+                runtime.AudioInputStateSnapshot().status == BrowserAudioInputStatus::Online,
+            "successful deferred attachment keeps the active input claim online");
+    Require(disconnects.empty(),
+            "successful deferred attachment is not spuriously released");
+
+    std::array<float, 16> inputs{};
+    for (std::size_t frame = 0; frame < 4; ++frame)
+    {
+        inputs[frame] = 0.25f;
+        inputs[4 + frame] = 0.5f;
+        inputs[12 + frame] = -0.75f;
+    }
+    std::array<float, 8> outputs{};
+    synth_browser::BrowserAudioSampleFrameDescriptor inputDescriptor{
+        .numberOfChannels = 4,
+        .samplesPerChannel = 4,
+        .data = inputs.data(),
+    };
+    synth_browser::BrowserAudioSampleFrameDescriptor outputDescriptor{
+        .numberOfChannels = 2,
+        .samplesPerChannel = 4,
+        .data = outputs.data(),
+    };
+    Require(runtime.ProcessAudioWorkletPlanarBlock(1, &inputDescriptor, 1, &outputDescriptor, 20),
+            "worklet callback processes a successfully attached deferred source");
+    Require(runtime.AudioWorkletBlockCount() == 1,
+            "worklet block count advances with a successfully attached deferred source");
+    Require(NearlyEqual(outputs[0], 0.75f) && NearlyEqual(outputs[4], -0.75f),
+            "successfully attached deferred source reaches application DSP");
+    Require(disconnects.empty(),
+            "processing a connected deferred source does not release it");
+
+    Require(runtime.ClearAudioInputSource(ended),
+            "clearing the successful deferred source succeeds");
+    Require(disconnects == std::vector<std::uint32_t>{91},
+            "clearing disconnects the successful deferred source exactly once");
 }
 
 // The rule the runtime path depends on, asserted directly: a source that was
@@ -1843,11 +2048,15 @@ int main()
     TestBrowserContractVersionsAreReadableBeforeRuntimeCreation();
     TestBrowserRuntimeDiscoversRequestedAudioInputChannels();
     TestBrowserRuntimeRejectsUnsupportedAudioInputCountsBeforeCapture();
+    TestBrowserRuntimePreCreationNegativeInputIsZeroUntilInitializeRejects();
+    TestBrowserRuntimeDirectProcessPublishesImmutableRequestedInputCount();
     TestBrowserAudioInputPublicationRollsBackFailedGraphReplacement();
     TestBrowserAudioInputPublicationBlocksNewConnectionsUntilTheOldSourceIsGone();
     TestBrowserAudioInputPublicationRollsBackAFailedConnectWithoutBlocking();
     TestBrowserAudioInputPublicationNeverDisconnectsANeverAttachedSource();
     TestBrowserRuntimeDefersPreWorkletInputConnectionAndRecoversFromItsFailure();
+    TestBrowserRuntimeDeferredAttachFailureKeepsOutputUiAndMidiLive();
+    TestBrowserRuntimeSuccessfulDeferredAttachStaysConnectedUntilClear();
     TestBrowserAbiPreservesSuppliedAudioContextHandleAndDirectZero();
     TestBrowserAbiCarriesAudioInputSourceLifecycle();
     TestBrowserAudioWorkletAdaptsPlanarInputAndOutput();

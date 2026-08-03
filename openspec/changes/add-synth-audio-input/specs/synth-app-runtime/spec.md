@@ -53,7 +53,7 @@ WHEN an application declares a `RuntimeConfig::numAudioInputs` value `N`, THE sy
 - **AND** the host creates no direct input-to-output monitoring path
 
 ### Requirement: sar-32 — Test rig: deterministic multichannel audio input
-WHEN JUCE-free system tests exercise an input-capable synth application, THE `SynthRig` SHALL allocate block-sized planar storage for the application's declared input count before processing begins, initialize it to silence, provide validated helpers for deterministic channel, frame, sample, and complete-block injection, and pass the configured input through the production `Engine<App>::ProcessBlock` path without allocating in the block pump.
+WHEN JUCE-free system tests exercise an input-capable synth application, THE `SynthRig` SHALL allocate block-sized planar storage for the application's declared input count before processing begins, initialize it to silence, provide validated helpers for deterministic channel, frame, sample, and complete-block injection without adding allocations beyond the rig's existing capture-vector path, and pass the configured input through the production `Engine<App>::ProcessBlock` path without allocating in the block pump.
 
 #### Scenario: Rig is silent until input is injected
 - **WHEN** an input-capable rig runs before a test supplies samples

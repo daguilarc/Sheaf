@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
+import { findBrowserRoot } from "./helpers/browser-root.mjs";
 
 const browserRoot = await findBrowserRoot();
 const [
@@ -27,21 +28,6 @@ const REQUIRED_ARTIFACTS = Object.freeze({
   wasmWorker: "workers/wasm-worker.js",
   audioWorklet: "worklets/audio.js",
 });
-
-async function findBrowserRoot() {
-  let directory = path.dirname(fileURLToPath(import.meta.url));
-  for (;;) {
-    try {
-      await readFile(path.join(directory, "Makefile"), "utf8");
-      return directory;
-    } catch (error) {
-      if (path.dirname(directory) === directory) {
-        throw error;
-      }
-      directory = path.dirname(directory);
-    }
-  }
-}
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "synth-browser-package-"));

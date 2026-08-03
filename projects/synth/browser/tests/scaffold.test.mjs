@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { findBrowserRoot } from "./helpers/browser-root.mjs";
 
 test("browser scaffold test runner is active", () => {
   assert.equal(typeof globalThis, "object");
@@ -19,6 +19,31 @@ test("playwright configs discover only browser specs through the shared definiti
   assert.match(config, /staticServerCommand:\s*"node src\/static-server\.mjs"/);
   assert.match(rootConfig, /synthBrowserPlaywrightConfig/);
   assert.match(rootConfig, /staticServerCommand:\s*"node projects\/synth\/browser\/src\/static-server\.mjs"/);
+  assert.match(rootConfig, /bare object.*root-level Playwright config/s);
+});
+
+test("node browser tests share one browser-root discovery helper", async () => {
+  const browserRoot = await findBrowserRoot();
+  const forbiddenRootFunction = new RegExp(["async", "function", "findBrowserRoot"].join("\\s+"));
+  for (const relativePath of [
+    "tests/package-contract.test.mjs",
+    "tests/publish-site.test.mjs",
+    "tests/scaffold.test.mjs",
+  ]) {
+    const source = await readFile(path.join(browserRoot, relativePath), "utf8");
+    assert.match(source, /helpers\/browser-root\.mjs/);
+    assert.doesNotMatch(source, forbiddenRootFunction);
+  }
+});
+
+test("native processor creation keeps the live worklet stack after deferred input attach rollback", async () => {
+  const browserRoot = await findBrowserRoot();
+  const runtime = await readFile(path.resolve(browserRoot, "..", "include", "synth", "browser", "BrowserRuntime.hpp"), "utf8");
+  const processorCreated = runtime.match(/static void AudioWorkletProcessorCreated[\s\S]*?static bool ProcessAudioWorklet/)?.[0] ?? "";
+  assert.match(processorCreated, /ResolveDeferredAudioInputConnection/);
+  assert.doesNotMatch(processorCreated, /emscripten_destroy_web_audio_node[\s\S]*ResolveDeferredAudioInputConnection|ResolveDeferredAudioInputConnection[\s\S]*emscripten_destroy_web_audio_node/);
+  assert.doesNotMatch(processorCreated, /audioWorkletStarted_\.store\(false/);
+  assert.match(runtime, /RetainAfterStopForAudioWorklet\(\) const[\s\S]*audioWorkletStarted_\.load/);
 });
 
 test("browser apps and the fixture use the same generic builder with no rollback alias", async () => {
@@ -142,19 +167,4 @@ async function readBuilder() {
 
 async function readBrowserMakefile() {
   return await readFile(path.join(await findBrowserRoot(), "Makefile"), "utf8");
-}
-
-async function findBrowserRoot() {
-  let directory = path.dirname(fileURLToPath(import.meta.url));
-  for (;;) {
-    try {
-      await readFile(path.join(directory, "Makefile"), "utf8");
-      return directory;
-    } catch (error) {
-      if (path.dirname(directory) === directory) {
-        throw error;
-      }
-      directory = path.dirname(directory);
-    }
-  }
 }

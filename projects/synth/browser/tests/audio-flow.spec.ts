@@ -27,6 +27,8 @@ type CaptureScenario = {
   omitAudioContext?: boolean;
   nativeStartFails?: boolean;
   nativeStartFailsAfterRegistration?: boolean;
+  nativeStartWaitsForRegistration?: boolean;
+  deferredAttachmentFailsOnReconcile?: boolean;
   sourceConstructionThrows?: boolean;
   registrationThrows?: boolean;
   endTrackDuringRegistration?: boolean;
@@ -139,6 +141,10 @@ async function runCapture(page: Page, scenario: CaptureScenario, steps: CaptureS
             await new Promise((resolve) => setTimeout(resolve, 0));
           return { started: false, diagnostic: "native-audio-worklet-start-failed" };
         }
+        if (scenario.nativeStartWaitsForRegistration) {
+          for (let turn = 0; turn < 8 && registrations.length === 0; turn++)
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        }
         return scenario.nativeStartFails
           ? { started: false, diagnostic: "native-audio-worklet-start-failed" }
           : { started: true };
@@ -147,6 +153,8 @@ async function runCapture(page: Page, scenario: CaptureScenario, steps: CaptureS
         calls.push(`setAudioInputSource:${physicalChannels}:${statusCode}`);
         if (scenario.endTrackDuringRegistration) tracks[tracks.length - 1].onended();
         if (scenario.registrationThrows) throw new Error("runtime rejected the audio input source");
+        if (scenario.deferredAttachmentFailsOnReconcile && nativeHandles.has(source))
+          throw new Error("runtime rejected the deferred audio input attachment");
         let nativeHandle = nativeHandles.get(source);
         if (nativeHandle === undefined) {
           nativeHandle = ++nextNativeHandle;
@@ -488,6 +496,68 @@ test("releases capture synchronously when the page unloads, before any promise c
   expect(result.inputState.nativeHandle).toBe(0);
 });
 
+test("concurrent stop prevents late startup and capture rejection from overwriting teardown", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4174/public/index.html");
+  const result = await page.evaluate(async () => {
+    const { AudioBridge } = await (new Function("return import('/dist/src/audio.js')")() as Promise<any>);
+    const calls: string[] = [];
+    let resolveStart!: (value: { started: true }) => void;
+    let rejectCapture!: (reason: unknown) => void;
+    const bridge = new AudioBridge({
+      async audioInputChannels() { calls.push("audioInputChannels"); return 2; },
+      async startAudioWorklet() {
+        calls.push("startAudioWorklet");
+        return new Promise((resolve) => { resolveStart = resolve; });
+      },
+      async setAudioInputSource() { calls.push("setAudioInputSource"); return 91; },
+      async clearAudioInputSource(statusCode: number) { calls.push(`clearAudioInputSource:${statusCode}`); },
+      clearAudioInputSourceNow(statusCode: number) { calls.push(`clearAudioInputSourceNow:${statusCode}`); },
+    }, {
+      audioContext: {
+        createMediaStreamSource() {
+          calls.push("createMediaStreamSource");
+          return { disconnect() { calls.push("source:disconnect"); } };
+        },
+      },
+    });
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia() {
+          calls.push("getUserMedia");
+          return new Promise((_resolve, reject) => { rejectCapture = reject; });
+        },
+      },
+    });
+
+    const start = bridge.startFromUserActivation();
+    for (let turn = 0; turn < 4 && !rejectCapture; turn++)
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    bridge.releaseNow();
+    resolveStart({ started: true });
+    rejectCapture(Object.assign(new Error("late denial"), { name: "NotAllowedError" }));
+    const started = await start;
+    await bridge.whenInputSettled();
+    return { started, calls, inputState: bridge.inputState() };
+  });
+
+  expect(result.started).toEqual({ started: false, diagnostic: "audio-bridge-stopped" });
+  expect(result.calls).toEqual([
+    "audioInputChannels",
+    "startAudioWorklet",
+    `clearAudioInputSource:${INPUT_STATUS.requesting}`,
+    "getUserMedia",
+    `clearAudioInputSourceNow:${INPUT_STATUS.notRequested}`,
+  ]);
+  expect(result.inputState).toEqual({
+    requestedChannels: 2,
+    activeChannels: 0,
+    statusCode: INPUT_STATUS.notRequested,
+    diagnostic: "",
+    nativeHandle: 0,
+  });
+});
+
 test("releases the stream when the source node cannot be constructed", async ({ page }) => {
   const result = await runCapture(page, { requestedChannels: 2, trackChannelCount: 2, sourceConstructionThrows: true });
 
@@ -562,6 +632,73 @@ test("releases capture when native AudioWorklet startup fails after input regist
   expect(result.trackStops).toEqual([1]);
   expect(result.sourceDisconnects).toEqual([1]);
   expect(result.inputState.activeChannels).toBe(0);
+});
+
+test("revalidates deferred input after native startup and releases capture on persistent attachment failure", async ({ page }) => {
+  const result = await runCapture(page, {
+    requestedChannels: 2,
+    trackChannelCount: 2,
+    nativeStartWaitsForRegistration: true,
+    deferredAttachmentFailsOnReconcile: true,
+  });
+
+  expect(result.started).toEqual({ started: true });
+  expect(result.nativeStarts).toBe(1);
+  expect(result.constraints).toEqual([{
+    audio: {
+      channelCount: { ideal: 2 },
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+    },
+  }]);
+  expect(result.calls.filter((call) => call === "getUserMedia")).toHaveLength(1);
+  expect(result.calls.slice(result.calls.indexOf(`setAudioInputSource:2:${INPUT_STATUS.online}`))).toEqual([
+    `setAudioInputSource:2:${INPUT_STATUS.online}`,
+    `setAudioInputSource:2:${INPUT_STATUS.online}`,
+    `clearAudioInputSource:${INPUT_STATUS.apiUnavailable}`,
+    "source:disconnect",
+    "track:stop",
+  ]);
+  expect(result.registrations).toEqual([
+    { physicalChannels: 2, statusCode: INPUT_STATUS.online, sourceIx: 0, nativeHandle: 91 },
+  ]);
+  expect(result.inputState).toEqual({
+    requestedChannels: 2,
+    activeChannels: 0,
+    statusCode: INPUT_STATUS.apiUnavailable,
+    diagnostic: "input-registration-failed",
+    nativeHandle: 0,
+  });
+  expect(result.trackStops).toEqual([1]);
+  expect(result.sourceDisconnects).toEqual([1]);
+});
+
+test("successful deferred input reconciliation keeps the same source live", async ({ page }) => {
+  const result = await runCapture(page, {
+    requestedChannels: 2,
+    trackChannelCount: 2,
+    nativeStartWaitsForRegistration: true,
+  });
+
+  expect(result.started).toEqual({ started: true });
+  expect(result.calls.slice(result.calls.indexOf(`setAudioInputSource:2:${INPUT_STATUS.online}`))).toEqual([
+    `setAudioInputSource:2:${INPUT_STATUS.online}`,
+    `setAudioInputSource:2:${INPUT_STATUS.online}`,
+  ]);
+  expect(result.registrations).toEqual([
+    { physicalChannels: 2, statusCode: INPUT_STATUS.online, sourceIx: 0, nativeHandle: 91 },
+    { physicalChannels: 2, statusCode: INPUT_STATUS.online, sourceIx: 0, nativeHandle: 91 },
+  ]);
+  expect(result.inputState).toEqual({
+    requestedChannels: 2,
+    activeChannels: 2,
+    statusCode: INPUT_STATUS.online,
+    diagnostic: "",
+    nativeHandle: 91,
+  });
+  expect(result.trackStops).toEqual([0]);
+  expect(result.sourceDisconnects).toEqual([0]);
 });
 
 test("reports a cross-origin isolation diagnostic before creating audio", async ({ page }) => {

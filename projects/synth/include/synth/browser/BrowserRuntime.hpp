@@ -619,8 +619,7 @@ public:
         block.outputs = outputs;
         block.numOutputChannels = outputs == nullptr ? 0 : outputChannels;
         block.numFrames = frames;
-        block.numRequestedInputChannels = static_cast<int>(
-            std::min(AudioInputChannels(), kMaxBrowserInputChannels));
+        block.numRequestedInputChannels = static_cast<int>(AudioInputChannels());
         engine_.ProcessBlock(block, timestampMicros);
     }
 
@@ -730,6 +729,9 @@ private:
     static std::size_t StaticAudioInputChannels()
     {
         const synth::RuntimeConfig config = App::Config();
+        // Pre-creation browser ABI calls must be infallible. Negative app
+        // constants are reported as zero here; `Initialize()` runs the shared
+        // RuntimeConfig validator and rejects them before startup.
         return config.numAudioInputs > 0 ? static_cast<std::size_t>(config.numAudioInputs)
                                          : std::size_t{0};
     }
@@ -841,15 +843,11 @@ private:
                                                                         userData);
         if (runtime->audioNode_ != 0) {
             // A source claimed before this node existed is attached now. A
-            // failure here publishes an offline claim and rejects startup; the
-            // bridge owns the capture stream and releases it when native
-            // worklet startup fails.
-            if (!runtime->ResolveDeferredAudioInputConnection()) {
-                emscripten_destroy_web_audio_node(runtime->audioNode_);
-                runtime->audioNode_ = 0;
-                runtime->audioWorkletStarted_.store(false, std::memory_order_release);
-                return;
-            }
+            // failure here publishes an offline input claim, but output startup
+            // and the worklet thread stay live. Destroy() uses
+            // audioWorkletStarted_ to retain this Runtime and its inline worklet
+            // stack after thread creation succeeds.
+            (void)runtime->ResolveDeferredAudioInputConnection();
             emscripten_audio_node_connect(runtime->audioNode_, audioContext, 0, 0);
             emscripten_resume_audio_context_sync(audioContext);
         }
@@ -918,9 +916,9 @@ private:
     // graph, so both succeed trivially and the failure stages are covered
     // directly through BrowserAudioInputPublication.
     //
-    // Before the worklet node exists there is nothing to attach to, so both
-    // succeed and the publication's `connectedHandle_` records intent;
-    // AudioWorkletProcessorCreated attaches whatever is claimed by then.
+    // Before the worklet node exists there is nothing to attach to, so connect
+    // defers and the publication's `pendingHandle_` records intent;
+    // AudioWorkletProcessorCreated resolves whatever is pending by then.
     bool DisconnectAudioInputSource(std::uint32_t sourceHandle)
     {
         if (audioInputDisconnectOverride_) {

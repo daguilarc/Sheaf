@@ -41,6 +41,8 @@ export type AudioInputFixture = {
   physicalChannels: number;
   channelValues: readonly number[];
   omitTrackChannelCount?: boolean;
+  forceDeferredAttach?: boolean;
+  failNativeConnect?: boolean;
 };
 
 export type InstallRealFakeAppOptions = {
@@ -137,6 +139,7 @@ export async function installRealFakeApp(
         sourceChannels: number;
         physicalChannels: number;
       }>,
+      inputSourceDisconnects: 0,
       getUserMediaCalls: 0,
       getUserMediaConstraints: [] as unknown[],
       mediaStreamSourceCreations: 0,
@@ -187,6 +190,17 @@ export async function installRealFakeApp(
         throw new Error(`audio input fixture sourceChannels must be a positive integer: ${sourceChannels}`);
       if (fixture.channelValues.length > sourceChannels)
         throw new Error(`audio input fixture has ${fixture.channelValues.length} channel values for ${sourceChannels} source channels`);
+      if (fixture.failNativeConnect) {
+        return {
+          channelCount: sourceChannels,
+          connect() {
+            throw new Error("audio input fixture forced native connect failure");
+          },
+          disconnect() {
+            resources.inputSourceDisconnects += 1;
+          },
+        } as unknown as AudioNode;
+      }
       const merger = new ChannelMergerNode(context, { numberOfInputs: sourceChannels });
       if (fixture.omitTrackChannelCount) {
         const fallbackChannelCount = Math.max(1, fixture.physicalChannels);
@@ -204,21 +218,31 @@ export async function installRealFakeApp(
       const nativeConnect = merger.connect.bind(merger) as (...args: unknown[]) => AudioNode;
       const instrumentedMerger = merger as unknown as {
         connect: (...args: unknown[]) => AudioNode;
+        disconnect: (...args: unknown[]) => void;
       };
       instrumentedMerger.connect = (...args: unknown[]) => {
         const destination = args[0];
-        resources.inputSourceConnections.push({
-          destination: nativeWorkletNodes.has(destination as AudioNode)
+        const destinationKind: "native-worklet" | "audio-context-destination" | "other" =
+          nativeWorkletNodes.has(destination as AudioNode)
             ? "native-worklet"
             : audioContextDestinations.has(destination as AudioNode)
               ? "audio-context-destination"
-              : "other",
+              : "other";
+        const connection = {
+          destination: destinationKind,
           outputIndex: typeof args[1] === "number" ? args[1] : 0,
           inputIndex: typeof args[2] === "number" ? args[2] : 0,
           sourceChannels,
           physicalChannels: fixture.physicalChannels,
-        });
-        return nativeConnect(...args);
+        };
+        const connected = nativeConnect(...args);
+        resources.inputSourceConnections.push(connection);
+        return connected;
+      };
+      const nativeDisconnect = merger.disconnect.bind(merger) as (...args: unknown[]) => void;
+      instrumentedMerger.disconnect = (...args: unknown[]) => {
+        resources.inputSourceDisconnects += 1;
+        return nativeDisconnect(...args);
       };
 
       const constants = fixture.channelValues.map((value, channel) => {
@@ -275,6 +299,11 @@ export async function installRealFakeApp(
       return {
         request,
         startAudioWorklet: async (context?: AudioContext) => {
+          if (audioInputFixture?.forceDeferredAttach) {
+            const deadline = performance.now() + 2_000;
+            while (performance.now() < deadline && resources.inputSourceRegistrations.length === 0)
+              await new Promise((resolve) => setTimeout(resolve, 0));
+          }
           const response = await runtime.startAudioWorklet(context);
           if (response.type === "ok") return { started: true };
           return { started: false, diagnostic: response.type === "error" ? response.error : "audio-worklet-start-failed" };
@@ -411,10 +440,11 @@ export async function installRealFakeApp(
 export async function stopRealFakeApp(page: Page): Promise<{
   expectedInputTrackStops: number;
   inputTrackStops: number;
+  inputSourceDisconnects: number;
 }> {
   return await page.evaluate(async () => {
     const state = (window as any).__task4Fake;
-    if (!state) return { expectedInputTrackStops: 0, inputTrackStops: 0 };
+    if (!state) return { expectedInputTrackStops: 0, inputTrackStops: 0, inputSourceDisconnects: 0 };
     dispatchEvent(new Event("pagehide"));
     const deadline = performance.now() + 5_000;
     while (performance.now() < deadline &&
@@ -427,9 +457,11 @@ export async function stopRealFakeApp(page: Page): Promise<{
       throw new Error(`runtime resources were not released exactly once: ${JSON.stringify(state.resources)}`);
     if (state.resources.inputTrackStops !== state.resources.expectedInputTrackStops)
       throw new Error(`audio input tracks were not stopped exactly once: ${JSON.stringify(state.resources)}`);
+    await state.audioInput?.closeForeignContexts?.();
     const teardown = {
       expectedInputTrackStops: state.resources.expectedInputTrackStops,
       inputTrackStops: state.resources.inputTrackStops,
+      inputSourceDisconnects: state.resources.inputSourceDisconnects,
     };
     delete (window as any).__task4Fake;
     delete (window as any).__task4FakeRuntimeFs;

@@ -128,11 +128,15 @@ export class AudioBridge {
     if (this.requestedInputChannels > 0)
       void this.serializeInputWork(() => this.acquireInput());
     const result = await this.worker.startAudioWorklet(this.options.audioContext);
+    if (this.stopped)
+      return { started: false, diagnostic: "audio-bridge-stopped" };
     this.started = result.started;
     if (!result.started) {
       this.releaseNow();
       return result;
     }
+    if (this.input)
+      void this.serializeInputWork(() => this.reconcileInputAfterWorkletStart());
     return result;
   }
 
@@ -226,6 +230,7 @@ export class AudioBridge {
     try {
       stream = await mediaDevices.getUserMedia(captureConstraints(this.requestedInputChannels));
     } catch (error) {
+      if (this.stopped) return;
       const failure = classifyCaptureFailure(error);
       await this.releaseInput(failure.statusCode, failure.diagnostic);
       return;
@@ -288,6 +293,28 @@ export class AudioBridge {
         source?.disconnect();
         stopStream(stream);
       }
+    }
+  }
+
+  private async reconcileInputAfterWorkletStart(): Promise<void> {
+    if (this.stopped || !this.input) return;
+    const input = this.input;
+    const registerSource = this.worker.setAudioInputSource?.bind(this.worker);
+    if (!registerSource) {
+      await this.releaseInput(AudioInputStatusCode.apiUnavailable, "input-registration-unavailable");
+      return;
+    }
+    try {
+      const nativeHandle = await registerSource(input.node, input.physicalChannels, this.inputStatusCode);
+      if (this.stopped) {
+        await this.releaseInput(AudioInputStatusCode.notRequested, "");
+        return;
+      }
+      if (this.input === input)
+        input.nativeHandle = nativeHandle;
+    } catch {
+      if (!this.stopped && this.input === input)
+        await this.releaseInput(AudioInputStatusCode.apiUnavailable, "input-registration-failed");
     }
   }
 

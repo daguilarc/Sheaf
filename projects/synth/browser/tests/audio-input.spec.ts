@@ -108,26 +108,31 @@ async function expectGrantedInputAcquisition(
 ): Promise<void> {
   await expect.poll(async () => {
     const resources = await audioResources(page);
+    const registrations = resources.inputSourceRegistrations.map((registration: { physicalChannels: number; statusCode: number; nativeHandle: number }) => ({
+      physicalChannels: registration.physicalChannels,
+      statusCode: registration.statusCode,
+      nativeHandlePositive: registration.nativeHandle > 0,
+    }));
     return {
       getUserMediaCalls: resources.getUserMediaCalls,
       getUserMediaConstraints: resources.getUserMediaConstraints,
       mediaStreamSourceCreations: resources.mediaStreamSourceCreations,
-      registrations: resources.inputSourceRegistrations.map((registration: { physicalChannels: number; statusCode: number; nativeHandle: number }) => ({
-        physicalChannels: registration.physicalChannels,
-        statusCode: registration.statusCode,
-        nativeHandlePositive: registration.nativeHandle > 0,
-      })),
+      registrationCount: registrations.length,
+      registrations,
+      distinctNativeHandles: new Set(resources.inputSourceRegistrations.map((registration: { nativeHandle: number }) => registration.nativeHandle)).size,
       connections: resources.inputSourceConnections,
     };
   }, { timeout: 5_000 }).toEqual({
     getUserMediaCalls: 1,
     getUserMediaConstraints: [PINNED_CAPTURE_CONSTRAINTS],
     mediaStreamSourceCreations: 1,
-    registrations: [{
+    registrationCount: expect.any(Number),
+    registrations: expect.arrayContaining([{
       physicalChannels: expected.physicalChannels,
       statusCode: expected.statusCode ?? AUDIO_INPUT_STATUS.online,
       nativeHandlePositive: true,
-    }],
+    }]),
+    distinctNativeHandles: 1,
     connections: [{
       destination: "native-worklet",
       outputIndex: 0,
@@ -136,6 +141,13 @@ async function expectGrantedInputAcquisition(
       physicalChannels: expected.physicalChannels,
     }],
   });
+  const acquiredResources = await audioResources(page);
+  expect(acquiredResources.inputSourceRegistrations.length).toBeGreaterThanOrEqual(1);
+  for (const registration of acquiredResources.inputSourceRegistrations) {
+    expect(registration.physicalChannels).toBe(expected.physicalChannels);
+    expect(registration.statusCode).toBe(expected.statusCode ?? AUDIO_INPUT_STATUS.online);
+    expect(registration.nativeHandle).toBe(acquiredResources.inputSourceRegistrations[0].nativeHandle);
+  }
   const resources = await audioResources(page);
   expect(resources.inputSourceConnections).not.toEqual(expect.arrayContaining([
     expect.objectContaining({ destination: "audio-context-destination" }),
@@ -294,6 +306,74 @@ test("unreported shortfall keeps deterministic input and non-audio runtime funct
   });
   await expectNativePeak(page, expectedProbePeakMicrounits(values, 2));
   await expectRuntimeFunctionsLive(page);
+});
+
+test("persistent deferred source attach failure releases capture while output, UI, and MIDI stay live", async ({ page }) => {
+  await installRealFakeApp(page, AUDIO_INPUT_PROBE, {
+    audioInput: {
+      capture: "deterministic",
+      sourceChannels: 4,
+      physicalChannels: 4,
+      channelValues: INPUT_VALUES.quadOut0Dominant,
+      forceDeferredAttach: true,
+      failNativeConnect: true,
+    },
+  });
+
+  await expectAudioStatus(page, "Input requested 4 / active 0 - microphone capture unavailable");
+  await expectExactNativePeak(page, 0);
+  await expectRuntimeFunctionsLive(page);
+  await expect.poll(async () => {
+    const resources = await audioResources(page);
+    return {
+      getUserMediaCalls: resources.getUserMediaCalls,
+      mediaStreamSourceCreations: resources.mediaStreamSourceCreations,
+      registrationAttempts: resources.inputSourceRegistrations.length,
+      connections: resources.inputSourceConnections,
+      sourceDisconnects: resources.inputSourceDisconnects,
+      trackStops: resources.inputTrackStops,
+    };
+  }, { timeout: 5_000 }).toEqual({
+    getUserMediaCalls: 1,
+    mediaStreamSourceCreations: 1,
+    registrationAttempts: 1,
+    connections: [],
+    sourceDisconnects: 1,
+    trackStops: 1,
+  });
+});
+
+test("successful deferred source attach remains connected and is not spuriously released", async ({ page }) => {
+  const values = INPUT_VALUES.quadOut1Dominant;
+  await installRealFakeApp(page, AUDIO_INPUT_PROBE, {
+    audioInput: {
+      capture: "deterministic",
+      sourceChannels: 4,
+      physicalChannels: 4,
+      channelValues: values,
+      forceDeferredAttach: true,
+    },
+  });
+
+  await expectAudioStatus(page, "Input requested 4 / active 4");
+  await expectNativePeak(page, expectedProbePeakMicrounits(values, 4));
+  await expectRuntimeFunctionsLive(page);
+  const resources = await audioResources(page);
+  expect(resources.getUserMediaCalls).toBe(1);
+  expect(resources.inputSourceRegistrations).toEqual([
+    expect.objectContaining({ physicalChannels: 4, statusCode: AUDIO_INPUT_STATUS.online }),
+    expect.objectContaining({ physicalChannels: 4, statusCode: AUDIO_INPUT_STATUS.online }),
+  ]);
+  expect(new Set(resources.inputSourceRegistrations.map((registration: { nativeHandle: number }) => registration.nativeHandle)).size).toBe(1);
+  expect(resources.inputSourceConnections).toEqual([{
+    destination: "native-worklet",
+    outputIndex: 0,
+    inputIndex: 0,
+    sourceChannels: 4,
+    physicalChannels: 4,
+  }]);
+  expect(resources.inputSourceDisconnects).toBe(0);
+  expect(resources.inputTrackStops).toBe(0);
 });
 
 test("stream termination clears active input while output, UI, persistence, and MIDI stay live", async ({ page }) => {

@@ -4,7 +4,8 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
+import { findBrowserRoot } from "./helpers/browser-root.mjs";
 
 const browserRoot = await findBrowserRoot();
 const [
@@ -110,19 +111,6 @@ const emittedFiles = Object.freeze({
   "apps/beta/wasm-worker.mjs": "postMessage('wasm-worker');\n",
   "apps/beta/worklet.js": "registerProcessor('fixture', class {});\n",
 });
-
-async function findBrowserRoot() {
-  let directory = path.dirname(fileURLToPath(import.meta.url));
-  for (;;) {
-    try {
-      await readFile(path.join(directory, "Makefile"), "utf8");
-      return directory;
-    } catch (error) {
-      if (path.dirname(directory) === directory) throw error;
-      directory = path.dirname(directory);
-    }
-  }
-}
 
 test("assembles a deterministic complete multi-app catalog from the exact matching emission report", async () => {
   const { browserRoot, root } = await createPublishFixture("catalog");
