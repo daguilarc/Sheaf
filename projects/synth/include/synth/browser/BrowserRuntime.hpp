@@ -43,14 +43,21 @@ struct BrowserAudioSampleFrameDescriptor {
     float* data = nullptr;
 };
 
+enum class BrowserAudioInputConnectResult {
+    Connected,  // the source is attached to the worklet input bus
+    Deferred,   // there is no worklet node yet; attach it when one is created
+    Failed
+};
+
 // The audio input claim the realtime callback and the Audio page both read.
 //
-// Two pieces of state, deliberately separate. `sourceHandle_` plus its count and
-// status are the CLAIM: what the callback reads and the Audio page reports.
-// `connectedHandle_` is what the publication has handed to the Web Audio graph
-// and believes is still attached to the worklet input bus. They diverge exactly
-// when a graph operation fails, and keeping them separate is what makes the
-// failure recoverable.
+// Three pieces of state, deliberately separate. `sourceHandle_` plus its count
+// and status are the CLAIM: what the callback reads and the Audio page reports.
+// `connectedHandle_` is the source the publication has CONFIRMED attached to the
+// worklet input bus. `pendingHandle_` is a claimed source whose attachment was
+// deferred because no worklet node existed yet -- claimed, but demonstrably not
+// in the graph. Keeping the last two apart is what makes graph failures
+// recoverable, because they call for opposite cleanup.
 //
 // Publication is ordered against the graph and is transactional. The count is
 // stored BEFORE the source is connected, so the first callback after a
@@ -59,7 +66,7 @@ struct BrowserAudioSampleFrameDescriptor {
 // read a count for a source that is already gone. That ordering is only sound if
 // a graph operation that fails takes the claim down with it.
 //
-// The two failure stages are not the same failure:
+// The failure stages are not the same failure:
 //
 //  - A failed DISCONNECT leaves the previous source attached. Forgetting it
 //    would let the next publication connect a second source beside it and the
@@ -68,6 +75,10 @@ struct BrowserAudioSampleFrameDescriptor {
 //  - A failed CONNECT happens after the previous source is already detached, so
 //    nothing is attached, `connectedHandle_` is 0, and the next publication has
 //    nothing to clean up first.
+//  - A failed DEFERRED attachment never reached the graph at all. Disconnecting
+//    it would ask the host to detach something that was never attached, and a
+//    lookup failure there would retain an identity that blocks every later
+//    publication forever. So the intent is simply dropped with the claim.
 //
 // Clearing needs no rollback -- cleared is the safe direction -- but a failed
 // disconnect is still reported and still remembered.
@@ -88,18 +99,24 @@ public:
         return statusCode_.load(std::memory_order_acquire);
     }
 
-    // The source the publication has handed to the graph, which is also the
-    // source a failed disconnect is still blocked on.
+    // The source the publication has confirmed attached to the graph, which is
+    // also the source a failed disconnect is still blocked on.
     std::uint32_t ConnectedSourceHandle() const
     {
         return connectedHandle_.load(std::memory_order_acquire);
     }
 
+    // The claimed source still waiting for a worklet node to attach it to.
+    std::uint32_t PendingSourceHandle() const
+    {
+        return pendingHandle_.load(std::memory_order_acquire);
+    }
+
     // `disconnect(handle)` detaches the attached source and `connect(handle)`
-    // attaches the new one; each returns false if the graph operation could not
-    // be performed. Neither is called when the attached source is already the
-    // one being published: re-registering a live source must not tear its
-    // connection down and build it again.
+    // attaches the new one, reporting whether it attached, could not attach yet,
+    // or failed. Neither is called when the source being published is already
+    // the attached or pending one: re-registering a live source must not tear
+    // its connection down and build it again, and must not attach it twice.
     template <typename Disconnect, typename Connect>
     bool Publish(std::uint32_t sourceHandle,
                  std::uint32_t physicalChannels,
@@ -108,10 +125,11 @@ public:
                  Connect&& connect)
     {
         const std::uint32_t attached = connectedHandle_.load(std::memory_order_acquire);
+        const std::uint32_t pending = pendingHandle_.load(std::memory_order_acquire);
         sourceHandle_.store(sourceHandle, std::memory_order_release);
         statusCode_.store(statusCode, std::memory_order_release);
         physicalChannels_.store(physicalChannels, std::memory_order_release);
-        if (attached == sourceHandle) {
+        if (attached == sourceHandle || (attached == 0 && pending == sourceHandle)) {
             return true;
         }
         if (attached != 0) {
@@ -122,24 +140,55 @@ public:
             }
             connectedHandle_.store(0, std::memory_order_release);
         }
-        if (!connect(sourceHandle)) {
+        // A superseded pending source was never in the graph, so it is dropped
+        // rather than disconnected.
+        pendingHandle_.store(0, std::memory_order_release);
+        const BrowserAudioInputConnectResult result = connect(sourceHandle);
+        if (result == BrowserAudioInputConnectResult::Failed) {
             // Nothing is attached, so nothing is blocked -- only the claim goes.
             RollBack();
             return false;
+        }
+        if (result == BrowserAudioInputConnectResult::Deferred) {
+            pendingHandle_.store(sourceHandle, std::memory_order_release);
+            return true;
         }
         connectedHandle_.store(sourceHandle, std::memory_order_release);
         return true;
     }
 
+    // Attaches the source whose connection was deferred, once a worklet node
+    // exists. Success promotes it from pending to connected. Failure drops the
+    // claim and the intent outright -- the source never reached the graph, so
+    // there is nothing to detach and nothing that may block a later source.
+    template <typename Connect>
+    bool ResolvePendingConnection(Connect&& connect)
+    {
+        const std::uint32_t pending = pendingHandle_.load(std::memory_order_acquire);
+        if (pending == 0) {
+            return true;
+        }
+        if (!connect(pending)) {
+            pendingHandle_.store(0, std::memory_order_release);
+            RollBack();
+            return false;
+        }
+        pendingHandle_.store(0, std::memory_order_release);
+        connectedHandle_.store(pending, std::memory_order_release);
+        return true;
+    }
+
     // `disconnect(handle)` removes the attached source from the graph and
     // returns false if it could not, in which case its identity is retained so a
-    // later publication still cleans it up before connecting anything.
+    // later publication still cleans it up before connecting anything. A merely
+    // pending source is dropped without a disconnect.
     template <typename Disconnect>
     bool Clear(std::uint32_t statusCode, Disconnect&& disconnect)
     {
         physicalChannels_.store(0, std::memory_order_release);
         statusCode_.store(statusCode, std::memory_order_release);
         sourceHandle_.store(0, std::memory_order_release);
+        pendingHandle_.store(0, std::memory_order_release);
         const std::uint32_t attached = connectedHandle_.load(std::memory_order_acquire);
         if (attached == 0) {
             return true;
@@ -165,6 +214,7 @@ private:
     std::atomic<std::uint32_t> statusCode_{
         static_cast<std::uint32_t>(BrowserAudioInputStatus::NotRequested)};
     std::atomic<std::uint32_t> connectedHandle_{0};
+    std::atomic<std::uint32_t> pendingHandle_{0};
 };
 
 inline void SilenceBrowserAudioOutput(BrowserAudioSampleFrameDescriptor* outputs,
@@ -474,6 +524,32 @@ public:
         });
     }
 
+    // Attaches a source whose connection was deferred because no worklet node
+    // existed when it was published. The Emscripten build calls this from
+    // `AudioWorkletProcessorCreated`; it is public so the native contract test
+    // can drive the same sequence, where a build with no Web Audio graph makes
+    // the deferred attachment genuinely fail.
+    bool ResolveDeferredAudioInputConnection()
+    {
+        return audioInput_.ResolvePendingConnection([this](std::uint32_t sourceHandle) {
+            return ConnectAudioInputSource(sourceHandle) ==
+                   BrowserAudioInputConnectResult::Connected;
+        });
+    }
+
+    // The source confirmed attached to the worklet input bus, and the claimed
+    // source still waiting for a node to attach it to. Exactly one of them is
+    // nonzero at a time, and both are zero once capture is offline.
+    std::uint32_t ConnectedAudioInputSourceHandle() const
+    {
+        return audioInput_.ConnectedSourceHandle();
+    }
+
+    std::uint32_t PendingAudioInputSourceHandle() const
+    {
+        return audioInput_.PendingSourceHandle();
+    }
+
     // What the Audio page currently knows about capture. The physical count is
     // already clamped to the application request, so a device that supplies more
     // channels than the application addresses never inflates the reported active
@@ -749,7 +825,10 @@ private:
                                                                         &Runtime::ProcessAudioWorklet,
                                                                         userData);
         if (runtime->audioNode_ != 0) {
-            runtime->ConnectAudioInputSourceIfReady();
+            // A source claimed before this node existed is attached now. A
+            // failure here publishes an offline claim; it never asks the host to
+            // detach a source that was never attached.
+            (void)runtime->ResolveDeferredAudioInputConnection();
             emscripten_audio_node_connect(runtime->audioNode_, audioContext, 0, 0);
             emscripten_resume_audio_context_sync(audioContext);
         }
@@ -809,19 +888,6 @@ private:
         return keepAlive;
     }
 
-    void ConnectAudioInputSourceIfReady()
-    {
-        const std::uint32_t sourceHandle = audioInput_.SourceHandle();
-        if (sourceHandle == 0 || audioNode_ == 0) {
-            return;
-        }
-        if (!ConnectAudioInputSource(sourceHandle)) {
-            // The node exists but the claimed source could not be attached to
-            // it, so the claim is false and has to go.
-            (void)ClearAudioInputSource(
-                static_cast<std::uint32_t>(BrowserAudioInputStatus::ApiUnavailable));
-        }
-    }
 #endif
 
     // The Web Audio graph work behind the transactional publication. Both report
@@ -860,11 +926,14 @@ private:
 #endif
     }
 
-    bool ConnectAudioInputSource(std::uint32_t sourceHandle)
+    // Deferred rather than connected while there is no worklet node: the source
+    // is claimed but demonstrably not in the graph, and saying otherwise is what
+    // would later ask the host to detach something it never attached.
+    BrowserAudioInputConnectResult ConnectAudioInputSource(std::uint32_t sourceHandle)
     {
 #ifdef __EMSCRIPTEN__
         if (audioNode_ == 0) {
-            return true;
+            return BrowserAudioInputConnectResult::Deferred;
         }
         return EM_ASM_INT({
             if (typeof emscriptenGetAudioObject !== "function") return 1;
@@ -877,10 +946,14 @@ private:
                 return 3;
             }
             return 0;
-        }, sourceHandle, audioNode_) == 0;
+        }, sourceHandle, audioNode_) == 0
+            ? BrowserAudioInputConnectResult::Connected
+            : BrowserAudioInputConnectResult::Failed;
 #else
+        // A native build has no Web Audio graph at all, so a source can only
+        // ever be claimed, never attached.
         (void)sourceHandle;
-        return true;
+        return BrowserAudioInputConnectResult::Deferred;
 #endif
     }
 

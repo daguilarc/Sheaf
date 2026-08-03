@@ -1132,7 +1132,7 @@ void TestBrowserAudioInputPublicationRollsBackFailedGraphReplacement()
     const auto recordConnect = [&](std::uint32_t handle) {
         connects.push_back(handle);
         observedChannelsDuringConnect = publication.PhysicalChannels();
-        return true;
+        return synth_browser::BrowserAudioInputConnectResult::Connected;
     };
 
     Require(publication.Publish(91, 4, online, recordDisconnect, recordConnect),
@@ -1205,7 +1205,7 @@ void TestBrowserAudioInputPublicationBlocksNewConnectionsUntilTheOldSourceIsGone
     std::vector<std::uint32_t> connects;
     const auto connect = [&](std::uint32_t handle) {
         connects.push_back(handle);
-        return true;
+        return synth_browser::BrowserAudioInputConnectResult::Connected;
     };
     const auto disconnectFails = [&](std::uint32_t handle) {
         disconnects.push_back(handle);
@@ -1270,11 +1270,11 @@ void TestBrowserAudioInputPublicationRollsBackAFailedConnectWithoutBlocking()
     };
     const auto connectSucceeds = [&](std::uint32_t handle) {
         connects.push_back(handle);
-        return true;
+        return synth_browser::BrowserAudioInputConnectResult::Connected;
     };
     const auto connectFails = [&](std::uint32_t handle) {
         connects.push_back(handle);
-        return false;
+        return synth_browser::BrowserAudioInputConnectResult::Failed;
     };
 
     Require(publication.Publish(91, 4, online, disconnect, connectSucceeds),
@@ -1301,6 +1301,133 @@ void TestBrowserAudioInputPublicationRollsBackAFailedConnectWithoutBlocking()
             "no stale disconnect is attempted for a source that never attached");
     Require(connects == std::vector<std::uint32_t>{93},
             "exactly one source is connected, so nothing double-sums");
+}
+
+// A source published before the worklet node exists is claimed but NOT attached
+// to anything: `AudioWorkletProcessorCreated` attaches it later. Recording it as
+// connected would make the eventual cleanup try to disconnect a source that was
+// never in the graph, and a lookup failure there would retain its identity and
+// block every later publication. So the pending intent and the confirmed
+// attachment are separate, and a deferred connect that fails drops the intent
+// outright rather than attempting a disconnect.
+//
+// This drives the real runtime: `SetAudioInputSource` before any worklet node,
+// then the same `ResolveDeferredAudioInputConnection` that
+// `AudioWorkletProcessorCreated` calls, then a replacement publication. A native
+// build has no Web Audio graph, so the deferred connect genuinely cannot
+// succeed -- which is exactly the failure stage under test.
+void TestBrowserRuntimeDefersPreWorkletInputConnectionAndRecoversFromItsFailure()
+{
+    using synth_browser::BrowserAudioInputStatus;
+    const auto online = static_cast<std::uint32_t>(BrowserAudioInputStatus::Online);
+
+    synth_browser::Runtime<InputCountApp<4>> runtime;
+    runtime.Start();
+
+    Require(runtime.SetAudioInputSource(91, 4, online),
+            "a source publishes before the worklet node exists");
+    Require(runtime.AudioInputStateSnapshot().activeChannels == 4 &&
+                runtime.AudioInputStateSnapshot().status == BrowserAudioInputStatus::Online,
+            "the pre-worklet publication claims its channels for the callback");
+    Require(runtime.PendingAudioInputSourceHandle() == 91,
+            "the pre-worklet source is pending attachment");
+    Require(runtime.ConnectedAudioInputSourceHandle() == 0,
+            "a pending source is not recorded as attached to the graph");
+
+    Require(!runtime.ResolveDeferredAudioInputConnection(),
+            "a deferred connection that cannot be made reports failure");
+    Require(runtime.AudioInputStateSnapshot().activeChannels == 0 &&
+                runtime.AudioInputStateSnapshot().status ==
+                    BrowserAudioInputStatus::ApiUnavailable,
+            "a failed deferred connection publishes zero active channels and an offline status");
+    Require(runtime.PendingAudioInputSourceHandle() == 0 &&
+                runtime.ConnectedAudioInputSourceHandle() == 0,
+            "a source that never attached leaves no identity behind to clean up");
+
+    Require(runtime.SetAudioInputSource(92, 2, online),
+            "a replacement publishes after a failed deferred connection");
+    Require(runtime.AudioInputStateSnapshot().activeChannels == 2,
+            "the replacement claims its own channels");
+    Require(runtime.PendingAudioInputSourceHandle() == 92 &&
+                runtime.ConnectedAudioInputSourceHandle() == 0,
+            "the replacement is pending its own attachment, not blocked behind the failed one");
+
+    Require(runtime.ClearAudioInputSource(
+                static_cast<std::uint32_t>(BrowserAudioInputStatus::StreamEnded)),
+            "clearing a pending source needs no disconnect and succeeds");
+    Require(runtime.PendingAudioInputSourceHandle() == 0 &&
+                runtime.ConnectedAudioInputSourceHandle() == 0,
+            "clearing drops the pending intent with the claim");
+}
+
+// The rule the runtime path depends on, asserted directly: a source that was
+// only ever pending is never handed to `disconnect`.
+void TestBrowserAudioInputPublicationNeverDisconnectsANeverAttachedSource()
+{
+    using synth_browser::BrowserAudioInputConnectResult;
+    using synth_browser::BrowserAudioInputPublication;
+    using synth_browser::BrowserAudioInputStatus;
+    const auto online = static_cast<std::uint32_t>(BrowserAudioInputStatus::Online);
+    const auto ended = static_cast<std::uint32_t>(BrowserAudioInputStatus::StreamEnded);
+    const auto unavailable = static_cast<std::uint32_t>(BrowserAudioInputStatus::ApiUnavailable);
+
+    BrowserAudioInputPublication publication;
+    std::vector<std::uint32_t> disconnects;
+    // Fails loudly if a never-attached source is ever offered for disconnect.
+    const auto disconnect = [&](std::uint32_t handle) {
+        disconnects.push_back(handle);
+        return false;
+    };
+    const auto deferConnect = [](std::uint32_t) { return BrowserAudioInputConnectResult::Deferred; };
+
+    Require(publication.Publish(91, 4, online, disconnect, deferConnect),
+            "a deferred connection publishes its claim");
+    Require(publication.PendingSourceHandle() == 91 && publication.ConnectedSourceHandle() == 0,
+            "a deferred connection is pending, not attached");
+
+    // A replacement arriving before the deferred one attaches supersedes it.
+    Require(publication.Publish(92, 2, online, disconnect, deferConnect),
+            "a replacement supersedes a pending source");
+    Require(disconnects.empty(),
+            "superseding a never-attached source attempts no disconnect");
+    Require(publication.PendingSourceHandle() == 92, "the replacement is now the pending source");
+
+    // The deferred attachment fails: nothing was ever attached, so nothing is
+    // disconnected and nothing is left blocking the next publication.
+    Require(!publication.ResolvePendingConnection([](std::uint32_t) { return false; }),
+            "a failed deferred attachment reports failure");
+    Require(disconnects.empty(), "a failed deferred attachment attempts no disconnect");
+    Require(publication.SourceHandle() == 0 && publication.PhysicalChannels() == 0 &&
+                publication.StatusCode() == unavailable,
+            "a failed deferred attachment publishes an offline claim");
+    Require(publication.PendingSourceHandle() == 0 && publication.ConnectedSourceHandle() == 0,
+            "a failed deferred attachment leaves no identity behind");
+
+    std::vector<std::uint32_t> connects;
+    Require(publication.Publish(93, 1, online, disconnect, [&](std::uint32_t handle) {
+                connects.push_back(handle);
+                return BrowserAudioInputConnectResult::Connected;
+            }),
+            "the next source connects after a failed deferred attachment");
+    Require(disconnects.empty(), "no stale disconnect is attempted for a never-attached source");
+    Require(connects == std::vector<std::uint32_t>{93},
+            "exactly one source is connected, so nothing double-sums");
+    Require(publication.ConnectedSourceHandle() == 93 && publication.PendingSourceHandle() == 0,
+            "a confirmed attachment is recorded as connected, not pending");
+
+    // Promotion: a deferred source that does attach becomes the connected one.
+    Require(publication.Clear(ended, [](std::uint32_t) { return true; }),
+            "the connected source clears cleanly");
+    Require(publication.Publish(94, 1, online, disconnect, deferConnect),
+            "a further source publishes as pending");
+    Require(publication.ResolvePendingConnection([](std::uint32_t) { return true; }),
+            "a deferred attachment that succeeds is promoted");
+    Require(publication.ConnectedSourceHandle() == 94 && publication.PendingSourceHandle() == 0,
+            "promotion moves the identity from pending to connected");
+    Require(publication.SourceHandle() == 94 && publication.PhysicalChannels() == 1,
+            "promotion leaves the published claim intact");
+    Require(publication.ResolvePendingConnection([](std::uint32_t) { return false; }),
+            "resolving with nothing pending is a no-op success");
 }
 
 void TestBrowserAbiPreservesSuppliedAudioContextHandleAndDirectZero()
@@ -1668,6 +1795,8 @@ int main()
     TestBrowserAudioInputPublicationRollsBackFailedGraphReplacement();
     TestBrowserAudioInputPublicationBlocksNewConnectionsUntilTheOldSourceIsGone();
     TestBrowserAudioInputPublicationRollsBackAFailedConnectWithoutBlocking();
+    TestBrowserAudioInputPublicationNeverDisconnectsANeverAttachedSource();
+    TestBrowserRuntimeDefersPreWorkletInputConnectionAndRecoversFromItsFailure();
     TestBrowserAbiPreservesSuppliedAudioContextHandleAndDirectZero();
     TestBrowserAbiCarriesAudioInputSourceLifecycle();
     TestBrowserAudioWorkletAdaptsPlanarInputAndOutput();
