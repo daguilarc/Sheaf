@@ -148,13 +148,13 @@ async function installInstrumentedLauncher(page: Page): Promise<void> {
                     return channels;
                   };
                 }
-                const nativeSetAudioInputSource = module._synth_browser_set_audio_input_source?.bind(module);
-                if (nativeSetAudioInputSource) {
-                  module._synth_browser_set_audio_input_source = (...args: unknown[]) => {
-                    state.inputSourceRegistrations += 1;
-                    return nativeSetAudioInputSource(...args);
-                  };
-                }
+                if (typeof module._synth_browser_set_audio_input_source !== "function")
+                  throw new Error("missing mandatory ABI-v4 audio input source export");
+                const nativeSetAudioInputSource = module._synth_browser_set_audio_input_source.bind(module);
+                module._synth_browser_set_audio_input_source = (...args: unknown[]) => {
+                  state.inputSourceRegistrations += 1;
+                  return nativeSetAudioInputSource(...args);
+                };
                 return module;
               },
             };
@@ -284,7 +284,7 @@ for (const app of firstPartyApps) {
         }),
       ]));
       expect(observations.audioConfigs).toEqual(expect.arrayContaining([
-        expect.objectContaining({ channels: 2 }),
+        expect.objectContaining({ channels: 2, inputChannels: 0 }),
       ]));
       expect(observations.audioInputChannels).toEqual(expect.arrayContaining([0]));
       expect(observations.getUserMediaCalls).toBe(0);

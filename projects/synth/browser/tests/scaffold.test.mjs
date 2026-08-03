@@ -29,10 +29,38 @@ test("browser apps and the fixture use the same generic builder with no rollback
   await assert.rejects(access(path.join(browserRoot, "cpp", "fake_app_entry.cpp")));
 });
 
-test("the full browser suite builds the isolated real-Wasm fixture before Playwright", async () => {
+test("npm owns the full self-rebuilding browser suite without make recursion", async () => {
   const browserRoot = await findBrowserRoot();
   const packageJson = JSON.parse(await readFile(path.join(browserRoot, "package.json"), "utf8"));
-  assert.match(packageJson.scripts.test, /make browser-fixture-app.*playwright test/);
+  const testScript = packageJson.scripts.test;
+  for (const required of [
+    "npm run build",
+    "npm run check:generic-runtime",
+    "node --test dist/tests/*.test.mjs",
+    "make browser-fixture-app",
+    "make browser-apps",
+    "npm run publish:site",
+    "playwright test",
+  ]) {
+    assert.ok(testScript.includes(required), `npm test must include ${required}`);
+  }
+  assert.ok(testScript.indexOf("make browser-fixture-app") < testScript.indexOf("make browser-apps"));
+  assert.ok(testScript.indexOf("make browser-apps") < testScript.indexOf("npm run publish:site"));
+  assert.ok(testScript.indexOf("npm run publish:site") < testScript.indexOf("playwright test"));
+  assert.doesNotMatch(testScript, /\bmake\s+(?:-C\s+\S+\s+)?test\b/);
+
+  const makefile = await readBrowserMakefile();
+  assert.match(makefile, /^test:\n\tnpm test$/m);
+  const testRecipe = makefile.match(/^test:[\s\S]*?(?=^\S|\z)/m)?.[0] ?? "";
+  assert.doesNotMatch(testRecipe, /\$\(MAKE\)|npx playwright|browser-fixture-app|browser-apps|publish:site/);
+});
+
+test("first-party smoke fails closed when mandatory audio-input ABI interception is unavailable", async () => {
+  const browserRoot = await findBrowserRoot();
+  const smokeSpec = await readFile(path.join(browserRoot, "tests", "first-party-apps-smoke.spec.ts"), "utf8");
+  assert.match(smokeSpec, /missing mandatory ABI-v4 audio input source export/);
+  assert.match(smokeSpec, /typeof module\._synth_browser_set_audio_input_source !== "function"/);
+  assert.doesNotMatch(smokeSpec, /_synth_browser_set_audio_input_source\?\./);
 });
 
 test("emscripten runtime facade exports string and persistence helpers", async () => {

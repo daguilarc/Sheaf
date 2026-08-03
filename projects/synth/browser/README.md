@@ -119,7 +119,9 @@ An application declares how many input channels it addresses through
 ## Build and test
 
 Install dependencies and run the TypeScript, generic-boundary, Node, and
-Playwright suite:
+Playwright suite. `npm test` is the self-rebuilding browser gate: it rebuilds
+the fixture Wasm, first-party Wasm packages, and the published `dist/site`
+before running the complete Playwright suite serially.
 
 ```sh
 npm --prefix projects/synth/browser install

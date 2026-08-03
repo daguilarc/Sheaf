@@ -8,12 +8,31 @@ const AUDIO_INPUT_PROBE = (FIXTURE_APPS as typeof FIXTURE_APPS & {
 }).audioInputProbe;
 
 const INPUT_VALUES = {
-  mono: [0.125, 0.75, 0.875, 0.9375],
-  stereo: [0.125, -0.25, 0.875, 0.9375],
+  singleChannel: [0.125],
+  stereoPair: [0.125, -0.25],
+  fourLiveMonoClamp: [0.125, 0.75, 0.875, 0.9375],
+  fourLiveStereoClamp: [0.125, -0.25, 0.875, 0.9375],
   quadOut0Dominant: [0.25, 0.01, 0.5, 0.02],
   quadOut1Dominant: [0.01, -0.25, 0.02, 0.5],
 } as const;
 
+const AUDIO_INPUT_STATUS = {
+  online: 2,
+  channelCountUnreported: 7,
+} as const;
+
+const PINNED_CAPTURE_CONSTRAINTS = {
+  audio: {
+    channelCount: { ideal: 4 },
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+  },
+} as const;
+
+// 2,000 microunits is 0.002 full-scale. That leaves room for browser
+// AudioWorklet/float scheduling noise while staying far below the separation
+// between the deterministic probe peaks in this file.
 const PEAK_TOLERANCE_MICROUNITS = 2_000;
 
 test.setTimeout(120_000);
@@ -23,7 +42,7 @@ test.afterEach(async ({ page }) => {
 });
 
 function expectedProbePeakMicrounits(values: readonly number[], activeChannels: number): number {
-  const sample = (channel: number) => channel < activeChannels ? values[channel] : 0;
+  const sample = (channel: number) => channel < activeChannels ? (values[channel] ?? 0) : 0;
   const out0 = sample(0) + 0.5 * sample(2);
   const out1 = sample(1) - sample(3);
   return Math.round(Math.max(Math.abs(out0), Math.abs(out1)) * 1_000_000);
@@ -66,11 +85,70 @@ async function expectAudioStatus(page: Page, text: string): Promise<void> {
 }
 
 async function expectNativePeak(page: Page, expectedPeakMicrounits: number): Promise<void> {
-  const stats = await waitForNativeStats(page, (candidate) =>
+  await waitForNativeStats(page, (candidate) =>
+    candidate.blocks > 0 &&
+    Number.isFinite(candidate.deadlineMicrounits) &&
     Math.abs(candidate.peakMicrounits - expectedPeakMicrounits) <= PEAK_TOLERANCE_MICROUNITS);
-  expect(stats.blocks).toBeGreaterThan(0);
-  expect(Math.abs(stats.peakMicrounits - expectedPeakMicrounits)).toBeLessThanOrEqual(PEAK_TOLERANCE_MICROUNITS);
-  expect(Number.isFinite(stats.deadlineMicrounits)).toBe(true);
+}
+
+async function expectExactNativePeak(page: Page, expectedPeakMicrounits: number): Promise<void> {
+  await waitForNativeStats(page, (candidate) =>
+    candidate.blocks > 0 &&
+    Number.isFinite(candidate.deadlineMicrounits) &&
+    candidate.peakMicrounits === expectedPeakMicrounits);
+}
+
+async function audioResources(page: Page): Promise<any> {
+  return page.evaluate(() => (window as any).__task4Fake.resources);
+}
+
+async function expectGrantedInputAcquisition(
+  page: Page,
+  expected: { sourceChannels: number; physicalChannels: number; statusCode?: number },
+): Promise<void> {
+  await expect.poll(async () => {
+    const resources = await audioResources(page);
+    return {
+      getUserMediaCalls: resources.getUserMediaCalls,
+      getUserMediaConstraints: resources.getUserMediaConstraints,
+      mediaStreamSourceCreations: resources.mediaStreamSourceCreations,
+      registrations: resources.inputSourceRegistrations.map((registration: { physicalChannels: number; statusCode: number; nativeHandle: number }) => ({
+        physicalChannels: registration.physicalChannels,
+        statusCode: registration.statusCode,
+        nativeHandlePositive: registration.nativeHandle > 0,
+      })),
+      connections: resources.inputSourceConnections,
+    };
+  }, { timeout: 5_000 }).toEqual({
+    getUserMediaCalls: 1,
+    getUserMediaConstraints: [PINNED_CAPTURE_CONSTRAINTS],
+    mediaStreamSourceCreations: 1,
+    registrations: [{
+      physicalChannels: expected.physicalChannels,
+      statusCode: expected.statusCode ?? AUDIO_INPUT_STATUS.online,
+      nativeHandlePositive: true,
+    }],
+    connections: [{
+      destination: "native-worklet",
+      outputIndex: 0,
+      inputIndex: 0,
+      sourceChannels: expected.sourceChannels,
+      physicalChannels: expected.physicalChannels,
+    }],
+  });
+  const resources = await audioResources(page);
+  expect(resources.inputSourceConnections).not.toEqual(expect.arrayContaining([
+    expect.objectContaining({ destination: "audio-context-destination" }),
+  ]));
+}
+
+async function expectNoInputSourceAcquisition(page: Page): Promise<void> {
+  const resources = await audioResources(page);
+  expect(resources.getUserMediaCalls).toBe(1);
+  expect(resources.getUserMediaConstraints).toEqual([PINNED_CAPTURE_CONSTRAINTS]);
+  expect(resources.mediaStreamSourceCreations).toBe(0);
+  expect(resources.inputSourceRegistrations).toEqual([]);
+  expect(resources.inputSourceConnections).toEqual([]);
 }
 
 async function expectRuntimeFunctionsLive(page: Page): Promise<void> {
@@ -92,28 +170,97 @@ async function expectRuntimeFunctionsLive(page: Page): Promise<void> {
 }
 
 for (const scenario of [
-  { name: "mono", physicalChannels: 1, values: INPUT_VALUES.mono, status: "Input requested 4 / active 1 - input channel shortfall" },
-  { name: "stereo", physicalChannels: 2, values: INPUT_VALUES.stereo, status: "Input requested 4 / active 2 - input channel shortfall" },
-  { name: "quad out0", physicalChannels: 4, values: INPUT_VALUES.quadOut0Dominant, status: "Input requested 4 / active 4" },
-  { name: "quad out1", physicalChannels: 4, values: INPUT_VALUES.quadOut1Dominant, status: "Input requested 4 / active 4" },
+  {
+    name: "one-channel source shape with one published physical channel",
+    sourceChannels: 1,
+    physicalChannels: 1,
+    values: INPUT_VALUES.singleChannel,
+    status: "Input requested 4 / active 1 - input channel shortfall",
+  },
+  {
+    name: "two-channel source shape with two published physical channels",
+    sourceChannels: 2,
+    physicalChannels: 2,
+    values: INPUT_VALUES.stereoPair,
+    status: "Input requested 4 / active 2 - input channel shortfall",
+  },
+  {
+    name: "four-channel source shape with four published physical channels out0",
+    sourceChannels: 4,
+    physicalChannels: 4,
+    values: INPUT_VALUES.quadOut0Dominant,
+    status: "Input requested 4 / active 4",
+  },
+  {
+    name: "four-channel source shape with four published physical channels out1",
+    sourceChannels: 4,
+    physicalChannels: 4,
+    values: INPUT_VALUES.quadOut1Dominant,
+    status: "Input requested 4 / active 4",
+  },
 ] as const) {
-  test(`real Wasm probe transforms ${scenario.name} deterministic registered input`, async ({ page }) => {
+  test(`real Wasm probe transforms ${scenario.name}`, async ({ page }) => {
     await installRealFakeApp(page, AUDIO_INPUT_PROBE, {
       audioInput: {
         capture: "deterministic",
+        sourceChannels: scenario.sourceChannels,
         physicalChannels: scenario.physicalChannels,
         channelValues: scenario.values,
       },
     });
 
     await expectAudioStatus(page, scenario.status);
+    await expectGrantedInputAcquisition(page, scenario);
     await expectNativePeak(page, expectedProbePeakMicrounits(scenario.values, scenario.physicalChannels));
-    const registrations = await page.evaluate(() => (window as any).__task4Fake.resources.inputSourceRegistrations);
-    expect(registrations).toEqual(expect.arrayContaining([
-      expect.objectContaining({ physicalChannels: scenario.physicalChannels, statusCode: 2 }),
-    ]));
   });
 }
+
+for (const scenario of [
+  {
+    name: "four-live-channel source clamped to one published physical channel",
+    sourceChannels: 4,
+    physicalChannels: 1,
+    values: INPUT_VALUES.fourLiveMonoClamp,
+    status: "Input requested 4 / active 1 - input channel shortfall",
+  },
+  {
+    name: "four-live-channel source clamped to two published physical channels",
+    sourceChannels: 4,
+    physicalChannels: 2,
+    values: INPUT_VALUES.fourLiveStereoClamp,
+    status: "Input requested 4 / active 2 - input channel shortfall",
+  },
+] as const) {
+  test(`real Wasm probe honors published physical-count clamp for ${scenario.name}`, async ({ page }) => {
+    await installRealFakeApp(page, AUDIO_INPUT_PROBE, {
+      audioInput: {
+        capture: "deterministic",
+        sourceChannels: scenario.sourceChannels,
+        physicalChannels: scenario.physicalChannels,
+        channelValues: scenario.values,
+      },
+    });
+
+    await expectAudioStatus(page, scenario.status);
+    await expectGrantedInputAcquisition(page, scenario);
+    await expectNativePeak(page, expectedProbePeakMicrounits(scenario.values, scenario.physicalChannels));
+  });
+}
+
+test("literal zero deterministic input remains exactly silent through the real Wasm callback", async ({ page }) => {
+  await installRealFakeApp(page, AUDIO_INPUT_PROBE, {
+    audioInput: {
+      capture: "deterministic",
+      sourceChannels: 1,
+      physicalChannels: 1,
+      channelValues: [0],
+    },
+  });
+
+  await expectAudioStatus(page, "Input requested 4 / active 1 - input channel shortfall");
+  await expectGrantedInputAcquisition(page, { sourceChannels: 1, physicalChannels: 1 });
+  await expectExactNativePeak(page, 0);
+});
 
 test("permission denial keeps the real Wasm runtime live with safe silent input", async ({ page }) => {
   await installRealFakeApp(page, AUDIO_INPUT_PROBE, {
@@ -122,7 +269,8 @@ test("permission denial keeps the real Wasm runtime live with safe silent input"
 
   await expectAudioStatus(page, "Input requested 4 / active 0 - microphone permission denied");
   await expect(page.locator(synthNode("runtime.audio.input.retry"))).toBeVisible();
-  await expectNativePeak(page, 0);
+  await expectNoInputSourceAcquisition(page);
+  await expectExactNativePeak(page, 0);
   await expectRuntimeFunctionsLive(page);
 });
 
@@ -131,6 +279,7 @@ test("unreported shortfall keeps deterministic input and non-audio runtime funct
   await installRealFakeApp(page, AUDIO_INPUT_PROBE, {
     audioInput: {
       capture: "deterministic",
+      sourceChannels: 4,
       physicalChannels: 2,
       channelValues: values,
       omitTrackChannelCount: true,
@@ -138,6 +287,11 @@ test("unreported shortfall keeps deterministic input and non-audio runtime funct
   });
 
   await expectAudioStatus(page, "Input requested 4 / active 2 - microphone channel count unreported, input channel shortfall");
+  await expectGrantedInputAcquisition(page, {
+    sourceChannels: 4,
+    physicalChannels: 2,
+    statusCode: AUDIO_INPUT_STATUS.channelCountUnreported,
+  });
   await expectNativePeak(page, expectedProbePeakMicrounits(values, 2));
   await expectRuntimeFunctionsLive(page);
 });
@@ -145,9 +299,10 @@ test("unreported shortfall keeps deterministic input and non-audio runtime funct
 test("stream termination clears active input while output, UI, persistence, and MIDI stay live", async ({ page }) => {
   const values = INPUT_VALUES.quadOut0Dominant;
   await installRealFakeApp(page, AUDIO_INPUT_PROBE, {
-    audioInput: { capture: "deterministic", physicalChannels: 4, channelValues: values },
+    audioInput: { capture: "deterministic", sourceChannels: 4, physicalChannels: 4, channelValues: values },
   });
   await expectAudioStatus(page, "Input requested 4 / active 4");
+  await expectGrantedInputAcquisition(page, { sourceChannels: 4, physicalChannels: 4 });
   await expectNativePeak(page, expectedProbePeakMicrounits(values, 4));
 
   await page.evaluate(async () => {
@@ -159,4 +314,21 @@ test("stream termination clears active input while output, UI, persistence, and 
   await expectAudioStatus(page, "Input requested 4 / active 0 - microphone stream ended");
   await expect(page.locator(synthNode("runtime.audio.input.retry"))).toBeVisible();
   await expectRuntimeFunctionsLive(page);
+});
+
+test("teardown stops a granted audio input track exactly once", async ({ page }) => {
+  await installRealFakeApp(page, AUDIO_INPUT_PROBE, {
+    audioInput: {
+      capture: "deterministic",
+      sourceChannels: 2,
+      physicalChannels: 2,
+      channelValues: INPUT_VALUES.stereoPair,
+    },
+  });
+
+  await expectAudioStatus(page, "Input requested 4 / active 2 - input channel shortfall");
+  await expectGrantedInputAcquisition(page, { sourceChannels: 2, physicalChannels: 2 });
+  const teardown = await stopRealFakeApp(page);
+  expect(teardown.inputTrackStops).toBe(1);
+  expect(teardown.expectedInputTrackStops).toBe(1);
 });

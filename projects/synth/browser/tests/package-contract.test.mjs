@@ -5,18 +5,20 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { readAppBuildManifest } from "../src/app-build-manifest.mjs";
-import { assemblePackage } from "../src/package-contract.mjs";
-import { SUPPORTED_UI_PROTOCOL_VERSION } from "../src/protocol.js";
+const browserRoot = await findBrowserRoot();
+const [
+  { readAppBuildManifest },
+  { assemblePackage },
+  { SUPPORTED_UI_PROTOCOL_VERSION },
+] = await Promise.all([
+  import(pathToFileURL(path.join(browserRoot, "dist", "src", "app-build-manifest.mjs")).href),
+  import(pathToFileURL(path.join(browserRoot, "dist", "src", "package-contract.mjs")).href),
+  import(pathToFileURL(path.join(browserRoot, "dist", "src", "protocol.js")).href),
+]);
 
 const execFileAsync = promisify(execFile);
-
-// The compiled test lives in `dist/tests/`, so the browser source root — which
-// holds the uncompiled first-party manifest and the C++ ABI source — is two
-// levels up.
-const browserRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 const REQUIRED_ARTIFACTS = Object.freeze({
   entry: "app.js",
@@ -25,6 +27,21 @@ const REQUIRED_ARTIFACTS = Object.freeze({
   wasmWorker: "workers/wasm-worker.js",
   audioWorklet: "worklets/audio.js",
 });
+
+async function findBrowserRoot() {
+  let directory = path.dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    try {
+      await readFile(path.join(directory, "Makefile"), "utf8");
+      return directory;
+    } catch (error) {
+      if (path.dirname(directory) === directory) {
+        throw error;
+      }
+      directory = path.dirname(directory);
+    }
+  }
+}
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "synth-browser-package-"));
@@ -240,7 +257,7 @@ test("package-app command assembles aliased Emscripten roles and prints the cata
       rm(path.join(setup.sourceDirectory, "workers"), { recursive: true }),
       rm(path.join(setup.sourceDirectory, "worklets"), { recursive: true }),
     ]);
-    const command = fileURLToPath(new URL("../src/package-app.mjs", import.meta.url));
+    const command = path.join(browserRoot, "dist", "src", "package-app.mjs");
     const { stdout, stderr } = await execFileAsync(process.execPath, [
       command,
       "--app-id", "cli-app",

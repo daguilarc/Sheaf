@@ -23,13 +23,8 @@ PACKAGE_AUDIO_WORKLET ?= $(PACKAGE_ENTRY)
 build:
 	npm run build
 
-test: build
-	npm run check:generic-runtime
-	node --test dist/tests/*.test.mjs
-	$(MAKE) browser-fixture-app
-	$(MAKE) browser-apps
-	npm run publish:site
-	npx playwright test
+test:
+	npm test
 
 browser-package: build
 	@test -n "$(PACKAGE_APP_ID)" || { echo "PACKAGE_APP_ID is required" >&2; exit 2; }
@@ -52,12 +47,12 @@ browser-apps-run: browser-apps
 	node src/static-server.mjs
 
 browser-audio-input-test: browser-fixture-app
-	npx playwright test tests/audio-input.spec.ts
+	npx playwright test tests/audio-input.spec.ts --workers=1
 
 browser-apps-smoke: browser-fixture-app
 	$(MAKE) browser-apps
 	npm run publish:site
-	npx playwright test tests/audio-input.spec.ts tests/first-party-apps-smoke.spec.ts
+	npx playwright test tests/audio-input.spec.ts tests/first-party-apps-smoke.spec.ts --workers=1
 	npm run check:generic-runtime
 
 $(EM_CACHE):
