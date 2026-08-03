@@ -1,5 +1,5 @@
 export const COMMAND_BUFFER_MAGIC = "SBCB";
-export const SUPPORTED_BROWSER_ABI_VERSION = 3;
+export const SUPPORTED_BROWSER_ABI_VERSION = 4;
 // Version 2 (sru-46): node bounds are parent-relative, `Draw` geometry is
 // node-local, node colour/text style and container border fields cross the
 // wire behind explicit presence bytes, and `variant` is gone. A hard break

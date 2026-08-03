@@ -11,9 +11,13 @@ synth_browser::RuntimeAbi* RuntimeFor(synth_browser_runtime* handle)
 
 }  // namespace
 
+// v4 widened the audio input status range from 0-7 to 0-10 so the browser host
+// can name a missing secure context, a permissions-policy block, and a missing
+// launch-owned AudioContext individually (sbw-10). A v3 module rejects those
+// codes, so the launcher must not be able to hand them to one.
 extern "C" std::uint32_t synth_browser_abi_version()
 {
-    return 3;
+    return 4;
 }
 
 // Every Wasm package exports this independently of the shell bundle, so it must

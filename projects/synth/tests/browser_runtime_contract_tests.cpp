@@ -994,8 +994,8 @@ void TestAudioWorkletDeadlineMeterAveragesQuantizedTimerSamples()
 
 void TestBrowserContractVersionsAreReadableBeforeRuntimeCreation()
 {
-    Require(synth_browser_abi_version() == 3,
-            "browser ABI v3 version is available before runtime creation");
+    Require(synth_browser_abi_version() == 4,
+            "browser ABI v4 version is available before runtime creation");
     Require(synth_browser_ui_protocol_version() == 2,
             "browser UI protocol version is available before runtime creation");
     Require(synth_browser_ui_protocol_version() == synth_browser::kCommandBufferVersion,
@@ -1110,60 +1110,54 @@ void TestBrowserAudioInputPublicationRollsBackFailedGraphReplacement()
     const auto online = static_cast<std::uint32_t>(BrowserAudioInputStatus::Online);
     const auto ended = static_cast<std::uint32_t>(BrowserAudioInputStatus::StreamEnded);
     const auto unavailable = static_cast<std::uint32_t>(BrowserAudioInputStatus::ApiUnavailable);
+    const auto succeed = [](std::uint32_t) { return true; };
 
     BrowserAudioInputPublication publication;
     Require(publication.SourceHandle() == 0 && publication.PhysicalChannels() == 0 &&
                 publication.StatusCode() ==
                     static_cast<std::uint32_t>(BrowserAudioInputStatus::NotRequested),
             "a fresh publication claims no input");
+    Require(publication.ConnectedSourceHandle() == 0,
+            "a fresh publication has nothing attached to the graph");
 
     // The graph operation observes the already-published claim: that is the
     // ordering guarantee, and it must hold on the success path.
-    std::vector<std::pair<std::uint32_t, std::uint32_t>> replacements;
+    std::vector<std::uint32_t> disconnects;
+    std::vector<std::uint32_t> connects;
     std::uint32_t observedChannelsDuringConnect = 0;
-    Require(publication.Publish(91, 4, online, [&](std::uint32_t previous, std::uint32_t next) {
-                replacements.emplace_back(previous, next);
-                observedChannelsDuringConnect = publication.PhysicalChannels();
-                return true;
-            }),
+    const auto recordDisconnect = [&](std::uint32_t handle) {
+        disconnects.push_back(handle);
+        return true;
+    };
+    const auto recordConnect = [&](std::uint32_t handle) {
+        connects.push_back(handle);
+        observedChannelsDuringConnect = publication.PhysicalChannels();
+        return true;
+    };
+
+    Require(publication.Publish(91, 4, online, recordDisconnect, recordConnect),
             "a successful graph replacement keeps the published claim");
     Require(observedChannelsDuringConnect == 4,
             "the physical count is published before the graph is connected");
-    Require(replacements == decltype(replacements){{0, 91}},
-            "the first publication connects the new source with no previous source");
+    Require(disconnects.empty() && connects == std::vector<std::uint32_t>{91},
+            "the first publication connects the new source with nothing to disconnect");
     Require(publication.SourceHandle() == 91 && publication.PhysicalChannels() == 4 &&
-                publication.StatusCode() == online,
-            "a successful publication claims the registered source");
-
-    // A failed replacement must leave nothing claimed and nothing double-summed:
-    // the previous source is gone from the graph, so the claim cannot survive.
-    Require(!publication.Publish(92, 2, online, [&](std::uint32_t previous, std::uint32_t next) {
-                replacements.emplace_back(previous, next);
-                return false;
-            }),
-            "a failed graph replacement reports failure");
-    Require(replacements.size() == 2 && replacements[1] == std::make_pair(91u, 92u),
-            "the failed replacement was attempted against the previous source");
-    Require(publication.SourceHandle() == 0 && publication.PhysicalChannels() == 0 &&
-                publication.StatusCode() == unavailable,
-            "a failed graph replacement rolls back to a cleared, offline claim");
+                publication.StatusCode() == online &&
+                publication.ConnectedSourceHandle() == 91,
+            "a successful publication claims and attaches the registered source");
 
     // Re-publishing the same handle is not a graph change and must not disconnect
     // a live source and reconnect it.
-    Require(publication.Publish(93, 1, online, [](std::uint32_t, std::uint32_t) { return true; }),
-            "a fresh source publishes after a rollback");
-    bool replacedIdenticalHandle = false;
-    Require(publication.Publish(93, 1, online, [&](std::uint32_t, std::uint32_t) {
-                replacedIdenticalHandle = true;
-                return true;
-            }),
+    connects.clear();
+    Require(publication.Publish(91, 2, online, recordDisconnect, recordConnect),
             "re-publishing an unchanged handle succeeds");
-    Require(!replacedIdenticalHandle,
-            "re-publishing an unchanged handle performs no graph replacement");
+    Require(disconnects.empty() && connects.empty(),
+            "re-publishing an unchanged handle performs no graph work");
+    Require(publication.PhysicalChannels() == 2,
+            "re-publishing an unchanged handle still republishes its count");
 
     // Clearing is the safe direction: the claim is dropped before the disconnect
     // is attempted, and a failed disconnect is still reported.
-    std::vector<std::uint32_t> disconnects;
     std::uint32_t observedChannelsDuringDisconnect = 1;
     Require(publication.Clear(ended, [&](std::uint32_t source) {
                 disconnects.push_back(source);
@@ -1171,23 +1165,142 @@ void TestBrowserAudioInputPublicationRollsBackFailedGraphReplacement()
                 return true;
             }),
             "clearing a live source succeeds");
-    Require(disconnects == std::vector<std::uint32_t>{93},
-            "clearing disconnects exactly the claimed source");
+    Require(disconnects == std::vector<std::uint32_t>{91},
+            "clearing disconnects exactly the attached source");
     Require(observedChannelsDuringDisconnect == 0,
             "the active count is cleared before the source is disconnected");
     Require(publication.SourceHandle() == 0 && publication.PhysicalChannels() == 0 &&
-                publication.StatusCode() == ended,
-            "clearing publishes the offline status with no claimed input");
+                publication.StatusCode() == ended && publication.ConnectedSourceHandle() == 0,
+            "clearing publishes the offline status with nothing claimed or attached");
 
-    Require(publication.Publish(94, 1, online, [](std::uint32_t, std::uint32_t) { return true; }),
-            "a source publishes before the failing-disconnect case");
+    Require(publication.Clear(ended, [](std::uint32_t) { return false; }),
+            "clearing an already-cleared publication is a no-op success");
+    Require(publication.Publish(94, 1, online, recordDisconnect, recordConnect),
+            "a source publishes after a clean teardown");
     Require(!publication.Clear(ended, [](std::uint32_t) { return false; }),
             "a failed disconnect is reported through the clear result");
     Require(publication.SourceHandle() == 0 && publication.PhysicalChannels() == 0 &&
                 publication.StatusCode() == ended,
             "a failed disconnect still leaves nothing claimed");
-    Require(publication.Clear(ended, [](std::uint32_t) { return true; }),
-            "clearing an already-cleared publication is a no-op success");
+    Require(publication.ConnectedSourceHandle() == 94,
+            "a failed disconnect keeps the identity of the source still attached");
+    (void)unavailable;
+    (void)succeed;
+}
+
+// A disconnect that fails leaves the previous source attached to the worklet
+// input bus. Forgetting it would let the next publication connect a second
+// source alongside it, and the bus would sum both. So the publication stays
+// blocked on that identity: nothing new is connected until the stuck source is
+// verifiably gone.
+void TestBrowserAudioInputPublicationBlocksNewConnectionsUntilTheOldSourceIsGone()
+{
+    using synth_browser::BrowserAudioInputPublication;
+    using synth_browser::BrowserAudioInputStatus;
+    const auto online = static_cast<std::uint32_t>(BrowserAudioInputStatus::Online);
+    const auto unavailable = static_cast<std::uint32_t>(BrowserAudioInputStatus::ApiUnavailable);
+
+    BrowserAudioInputPublication publication;
+    std::vector<std::uint32_t> disconnects;
+    std::vector<std::uint32_t> connects;
+    const auto connect = [&](std::uint32_t handle) {
+        connects.push_back(handle);
+        return true;
+    };
+    const auto disconnectFails = [&](std::uint32_t handle) {
+        disconnects.push_back(handle);
+        return false;
+    };
+    const auto disconnectSucceeds = [&](std::uint32_t handle) {
+        disconnects.push_back(handle);
+        return true;
+    };
+
+    Require(publication.Publish(91, 4, online, disconnectSucceeds, connect),
+            "the first source attaches");
+    connects.clear();
+    disconnects.clear();
+
+    Require(!publication.Publish(92, 2, online, disconnectFails, connect),
+            "a failed disconnect of the attached source fails the publication");
+    Require(disconnects == std::vector<std::uint32_t>{91},
+            "the failed publication tried to disconnect the attached source");
+    Require(connects.empty(),
+            "a source is never connected while the previous one is still attached");
+    Require(publication.SourceHandle() == 0 && publication.PhysicalChannels() == 0 &&
+                publication.StatusCode() == unavailable,
+            "a blocked publication claims no active input");
+    Require(publication.ConnectedSourceHandle() == 91,
+            "a blocked publication remembers which source is still attached");
+
+    disconnects.clear();
+    Require(!publication.Publish(93, 1, online, disconnectFails, connect),
+            "a second attempt while blocked also fails");
+    Require(disconnects == std::vector<std::uint32_t>{91},
+            "the blocked publication retries the stuck source, not the abandoned one");
+    Require(connects.empty(), "still nothing is connected while the bus is occupied");
+
+    disconnects.clear();
+    Require(publication.Publish(94, 3, online, disconnectSucceeds, connect),
+            "publication resumes once the stuck source is verifiably disconnected");
+    Require(disconnects == std::vector<std::uint32_t>{91},
+            "the stuck source is disconnected exactly once it can be");
+    Require(connects == std::vector<std::uint32_t>{94},
+            "exactly one source is connected, so nothing double-sums");
+    Require(publication.SourceHandle() == 94 && publication.PhysicalChannels() == 3 &&
+                publication.ConnectedSourceHandle() == 94,
+            "the recovered publication claims and attaches the new source");
+}
+
+// A connect that fails is a different stage: the previous source is already
+// gone, so nothing is attached and the next publication has nothing to clean up.
+void TestBrowserAudioInputPublicationRollsBackAFailedConnectWithoutBlocking()
+{
+    using synth_browser::BrowserAudioInputPublication;
+    using synth_browser::BrowserAudioInputStatus;
+    const auto online = static_cast<std::uint32_t>(BrowserAudioInputStatus::Online);
+    const auto unavailable = static_cast<std::uint32_t>(BrowserAudioInputStatus::ApiUnavailable);
+
+    BrowserAudioInputPublication publication;
+    std::vector<std::uint32_t> disconnects;
+    std::vector<std::uint32_t> connects;
+    const auto disconnect = [&](std::uint32_t handle) {
+        disconnects.push_back(handle);
+        return true;
+    };
+    const auto connectSucceeds = [&](std::uint32_t handle) {
+        connects.push_back(handle);
+        return true;
+    };
+    const auto connectFails = [&](std::uint32_t handle) {
+        connects.push_back(handle);
+        return false;
+    };
+
+    Require(publication.Publish(91, 4, online, disconnect, connectSucceeds),
+            "the first source attaches");
+    disconnects.clear();
+    connects.clear();
+
+    Require(!publication.Publish(92, 2, online, disconnect, connectFails),
+            "a failed connect fails the publication");
+    Require(disconnects == std::vector<std::uint32_t>{91},
+            "the previous source was disconnected before the failed connect");
+    Require(connects == std::vector<std::uint32_t>{92}, "the failed connect was attempted once");
+    Require(publication.SourceHandle() == 0 && publication.PhysicalChannels() == 0 &&
+                publication.StatusCode() == unavailable,
+            "a failed connect claims no active input");
+    Require(publication.ConnectedSourceHandle() == 0,
+            "a failed connect leaves nothing attached to clean up");
+
+    disconnects.clear();
+    connects.clear();
+    Require(publication.Publish(93, 1, online, disconnect, connectSucceeds),
+            "the next publication succeeds after a failed connect");
+    Require(disconnects.empty(),
+            "no stale disconnect is attempted for a source that never attached");
+    Require(connects == std::vector<std::uint32_t>{93},
+            "exactly one source is connected, so nothing double-sums");
 }
 
 void TestBrowserAbiPreservesSuppliedAudioContextHandleAndDirectZero()
@@ -1553,6 +1666,8 @@ int main()
     TestBrowserRuntimeDiscoversRequestedAudioInputChannels();
     TestBrowserRuntimeRejectsUnsupportedAudioInputCountsBeforeCapture();
     TestBrowserAudioInputPublicationRollsBackFailedGraphReplacement();
+    TestBrowserAudioInputPublicationBlocksNewConnectionsUntilTheOldSourceIsGone();
+    TestBrowserAudioInputPublicationRollsBackAFailedConnectWithoutBlocking();
     TestBrowserAbiPreservesSuppliedAudioContextHandleAndDirectZero();
     TestBrowserAbiCarriesAudioInputSourceLifecycle();
     TestBrowserAudioWorkletAdaptsPlanarInputAndOutput();

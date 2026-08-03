@@ -240,7 +240,15 @@ export class AudioBridge {
       const derived = reported ?? positiveChannelCount(source.channelCount) ?? 1;
       const physicalChannels = Math.min(derived, this.requestedInputChannels);
       const nativeHandle = await registerSource(source, physicalChannels, statusCode);
-      if (this.stopped) return;
+      // A stop -- including an unload -- can land while this registration is in
+      // flight. `releaseNow()` cleared whatever was published when it ran, not
+      // the claim the call above has just published, so that late claim has to
+      // be taken back down here or the native side keeps a handle and a count
+      // for a source nobody owns any more.
+      if (this.stopped) {
+        await this.releaseInput(AudioInputStatusCode.notRequested, "");
+        return;
+      }
       if (endedDuringAcquisition || track.readyState === "ended") {
         // The registration landed on a source whose track is already gone, so the
         // native claim has to come back down before the source does.

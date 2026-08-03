@@ -11,7 +11,7 @@ const launcherApp = {
   category: "Instrument",
   buildId: "portable-app-build-1",
   browser: {
-    abiVersion: 3,
+    abiVersion: 4,
     uiProtocolVersion: 2,
     runtimeConfigVersion: 1,
     entry: "packages/portable-app/portable-app-build-1/app.js",
@@ -231,7 +231,7 @@ test("launcher acquires once before package work and forwards one materialized p
   expect(result.events).toEqual(["lease:acquire", "package:begin", "package:ready", "runtime:install"]);
   expect(result.moduleIsMaterialized).toBe(true);
   expect(result.leasePresent).toBe(true);
-  expect(result.versions).toEqual({ abiVersion: 3, uiProtocolVersion: 2, runtimeConfigVersion: 1 });
+  expect(result.versions).toEqual({ abiVersion: 4, uiProtocolVersion: 2, runtimeConfigVersion: 1 });
   expect(result.launcherPresent).toBe(true);
 });
 
@@ -490,6 +490,163 @@ test("an input-capable leased app discovers its request after module load, retri
     "terminate",
     "context:close",
   ]);
+});
+
+test("clears a native registration that lands after a dispatched pagehide", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4174/dist/src/main.js");
+  await page.setContent('<main id="synth-root"></main>');
+  const frame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 60], children: ["retry"] },
+    {
+      id: "retry",
+      kind: NodeKind.Button,
+      bounds: [0, 0, 200, 60],
+      label: "Retry Input",
+      action: { name: "audio-input-retry", value: "" },
+    },
+  ]);
+  const result = await page.evaluate(async (bytes) => {
+    const main = await (new Function("return import('/dist/src/main.js')")() as Promise<any>);
+    const { ActivationLease } = await (new Function("return import('/dist/src/activation.js')")() as Promise<any>);
+    const settle = async () => {
+      for (let turn = 0; turn < 8; turn++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const events: string[] = [];
+    const tracks: any[] = [];
+    const sources: any[] = [];
+    // Mirrors the native publication: a registration publishes a handle and a
+    // count, and only a clear takes them back down.
+    let published = { handle: 0, physicalChannels: 0 };
+    let registrations = 0;
+    let releaseRegistration!: () => void;
+    const deferredRegistration = new Promise<void>((resolve) => { releaseRegistration = resolve; });
+    let retryPending = false;
+
+    const context = {
+      sampleRate: 48_000,
+      destination: {},
+      audioWorklet: { addModule: async () => {} },
+      resume: async () => {},
+      close: async () => { events.push("context:close"); },
+      createMediaStreamSource() {
+        const source = {
+          channelCount: 2,
+          disconnects: 0,
+          disconnect() { source.disconnects += 1; events.push("source:disconnect"); },
+        };
+        sources.push(source);
+        events.push("source:create");
+        return source;
+      },
+    };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        async getUserMedia() {
+          events.push("getUserMedia");
+          const track = {
+            stops: 0,
+            readyState: "live",
+            onended: null as null | (() => void),
+            getSettings: () => ({ channelCount: 2 }),
+            stop() { track.stops += 1; track.readyState = "ended"; events.push("track:stop"); },
+          };
+          tracks.push(track);
+          return { getAudioTracks: () => [track], getTracks: () => [track] };
+        },
+      },
+    });
+
+    const lease = ActivationLease.acquire({
+      audioContextFactory: () => context,
+      requestMIDIAccess: async () => ({ inputs: new Map(), outputs: new Map(), onstatechange: null }),
+    });
+    const runtime = {
+      async request(command: any) {
+        if (command.type === "create") return { type: "created", handle: 1 };
+        if (command.type === "audio-config") return { type: "audio-config", channels: 2, inputChannels: 2 };
+        if (command.type === "build-ui-frame") return { type: "ui-frame", frame: bytes };
+        if (command.type === "dispatch-action") return { type: "ui-frame", frame: bytes };
+        if (command.type === "midi-endpoints") return { type: "midi-actions", actions: [] };
+        if (command.type === "drain-midi-output") return { type: "midi-output" };
+        return { type: "ok" };
+      },
+      async startAudioWorklet() { return { started: true }; },
+      async setAudioInputSource(_source: unknown, physicalChannels: number, statusCode: number) {
+        registrations += 1;
+        const handle = 90 + registrations;
+        // The retry's registration is held open across the unload.
+        if (registrations === 2) {
+          events.push("setAudioInputSource:deferred");
+          await deferredRegistration;
+        }
+        events.push(`setAudioInputSource:${physicalChannels}:${statusCode}`);
+        published = { handle, physicalChannels };
+        return handle;
+      },
+      async clearAudioInputSource(statusCode: number) {
+        events.push(`clearAudioInputSource:${statusCode}`);
+        published = { handle: 0, physicalChannels: 0 };
+      },
+      clearAudioInputSourceNow(statusCode: number) {
+        events.push(`clearAudioInputSourceNow:${statusCode}`);
+        published = { handle: 0, physicalChannels: 0 };
+      },
+      async consumeAudioInputRetry() {
+        const pending = retryPending;
+        retryPending = false;
+        return pending;
+      },
+      terminate() { events.push("terminate"); },
+    };
+
+    const app = await main.installSynthBrowserApp(document.querySelector("#synth-root"), {
+      module: { entryUrl: "blob:entry", locateFile: {}, mainScriptUrlOrBlob: "blob:main" },
+      activationLease: lease,
+      runtimeClient: runtime,
+      frameIntervalMs: 60_000,
+    });
+
+    retryPending = true;
+    document.querySelector<HTMLElement>('[data-node-id="retry"]')!.click();
+    await settle();
+    const duringRegistration = { events: [...events], published: { ...published } };
+
+    dispatchEvent(new Event("pagehide"));
+    const afterUnload = { events: [...events], published: { ...published } };
+
+    releaseRegistration();
+    await app.stop();
+    await settle();
+    return {
+      duringRegistration,
+      afterUnload,
+      events,
+      published,
+      trackStops: tracks.map((track: any) => track.stops),
+      sourceDisconnects: sources.map((source: any) => source.disconnects),
+    };
+  }, Array.from(new Uint8Array(frame)));
+
+  // The retry released the established capture and is now parked inside an
+  // awaited registration, with nothing published.
+  expect(result.duringRegistration.events.at(-1)).toBe("setAudioInputSource:deferred");
+  expect(result.duringRegistration.published).toEqual({ handle: 0, physicalChannels: 0 });
+  // Unload clears synchronously, but there is nothing published yet to clear.
+  expect(result.afterUnload.events.at(-1)).toBe("clearAudioInputSourceNow:0");
+  // The registration lands after the unload and publishes a handle and a count;
+  // that late claim has to come back down, and its resources with it.
+  expect(result.events.slice(result.afterUnload.events.length)).toEqual([
+    "setAudioInputSource:2:2",
+    "clearAudioInputSource:0",
+    "source:disconnect",
+    "track:stop",
+    "terminate",
+    "context:close",
+  ]);
+  expect(result.published).toEqual({ handle: 0, physicalChannels: 0 });
+  expect(result.trackStops).toEqual([1, 1]);
+  expect(result.sourceDisconnects).toEqual([1, 1]);
 });
 
 test("successful leased app unload is idempotent and releases one context, MIDI request, runtime, node, and package", async ({ page }) => {

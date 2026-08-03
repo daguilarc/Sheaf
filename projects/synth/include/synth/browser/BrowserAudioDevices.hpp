@@ -18,11 +18,13 @@ namespace synth_browser {
 // `InsecureContext` through `AudioContextUnavailable` were appended after the
 // generic `PrerequisiteBlocked` so sbw-10's "report the missing prerequisite by
 // name" is answered on the Audio page itself rather than only in a JavaScript
-// diagnostic. Appending is deliberately compatible: `negotiateRuntimeVersions`
-// requires the module and the launcher runtime to declare the same browser ABI
-// version, so a module that predates these codes is never handed one. The
-// generic `PrerequisiteBlocked` stays valid for the same reason -- an already
-// shipped code is not withdrawn -- even though the host now names its causes.
+// diagnostic. That widened the accepted status range from 0-7 to 0-10, which a
+// module built against the narrower range rejects, so browser ABI version 3
+// became version 4 -- version equality alone would not have protected an old
+// module, because the launcher would have kept advertising the version the
+// module also declared. The generic `PrerequisiteBlocked` stays valid: an
+// already shipped code is not withdrawn, even though the host now names its
+// causes individually.
 enum class BrowserAudioInputStatus : std::uint32_t {
     NotRequested,
     Requesting,

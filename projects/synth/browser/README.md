@@ -15,7 +15,7 @@ The catalog contract and publisher procedures are in
 One catalog-selection gesture creates and resumes the host `AudioContext`
 before package work begins. Once the verified package module is initialized,
 the generic facade registers that *same* context through the module-local
-`emscriptenRegisterAudioObject` export and invokes the ABI-v3 native
+`emscriptenRegisterAudioObject` export and invokes the ABI-v4 native
 `_synth_browser_start_audio_worklet` export. Native Emscripten
 AudioWorklet callbacks execute the C++ `Runtime<App>::Process` path against
 the instance already used for UI, MIDI, patches, and controllers.
@@ -79,6 +79,11 @@ An application declares how many input channels it addresses through
   setting the host falls back to the source node's channel count, then to one,
   and says so with a distinct `microphone channel count unreported` status. The
   count is always clamped to the application's request.
+- **Capture states are part of the browser ABI.** The published audio input
+  status codes are `0`–`10`. Version 4 widened that range from `0`–`7` to name a
+  missing secure context, a permissions-policy block, and a missing launch-owned
+  `AudioContext` individually, so a package built for ABI v3 is rejected at
+  launch rather than handed a code it would refuse.
 - **The Audio page is the diagnostic surface.** For an input-capable
   application it shows one `System Default` input option and a status line that
   always leads with `Input requested N / active M`, followed by the current

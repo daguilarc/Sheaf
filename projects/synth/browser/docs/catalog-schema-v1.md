@@ -1,6 +1,6 @@
 # Browser catalog schema v1
 
-The launcher accepts schema version `1`, browser ABI version `3`, UI protocol
+The launcher accepts schema version `1`, browser ABI version `4`, UI protocol
 version `2`, and runtime-config version `1`. This is a strict closed JSON
 contract: every object must contain exactly its documented fields; missing or
 unknown fields are rejected before an app is presented.
@@ -29,7 +29,7 @@ catalogs**.
     "category": "Instrument",
     "buildId": "a-content-derived-immutable-id",
     "browser": {
-      "abiVersion": 3,
+      "abiVersion": 4,
       "uiProtocolVersion": 2,
       "runtimeConfigVersion": 1,
       "entry": "packages/tone-grid/a-content-derived-immutable-id/app.js",
@@ -72,7 +72,7 @@ size, and SHA-256, materializes typed object URLs, and maps all Emscripten
 sidecars explicitly. Integrity checks bytes; they are not a code sandbox.
 
 Selection synchronously acquires one host `AudioContext` before package work.
-The ABI-v3 generic module facade registers that same context with its
+The ABI-v4 generic module facade registers that same context with its
 module-local `emscriptenRegisterAudioObject` helper, then starts native Wasm
 AudioWorklet processing. Missing compatible context registration or native
 startup is a launch failure before audio is online. There is no timer, animation

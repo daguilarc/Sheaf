@@ -67,7 +67,7 @@ test("normal generic browser flows make no backend or WebSocket requests beyond 
       filesystems: { IDBFS: "idbfs" }, mkdir() {}, mount() {}, syncfs(_populate: boolean, complete: () => void) { complete(); },
     };
     const worker = new BrowserRuntimeWorker(async () => ({
-      abiVersion: 3, uiProtocolVersion: 2, runtimeConfigVersion: 1,
+      abiVersion: 4, uiProtocolVersion: 2, runtimeConfigVersion: 1,
       filesystem,
       create: () => 1, audioOutputChannels: () => 2, initialize: () => 0, prepare: () => 0, process: () => 0, messageTick: () => 0,
       buildUiFrame: () => new ArrayBuffer(0), dispatchAction: () => 0, submitMidiEndpoints: () => 0,

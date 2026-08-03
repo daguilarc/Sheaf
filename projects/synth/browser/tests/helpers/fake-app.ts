@@ -67,7 +67,7 @@ export async function builtFakeCatalogApp(app: FixtureApp = FIXTURE_APPS.standar
     category: "Instrument",
     buildId,
     browser: {
-      abiVersion: 3,
+      abiVersion: 4,
       uiProtocolVersion: 2,
       runtimeConfigVersion: 1,
       entry: `${packageRoot}/${app.appId}.js`,

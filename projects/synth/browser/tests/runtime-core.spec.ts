@@ -29,7 +29,7 @@ test("routes a portable action through the runtime worker facade without app HTM
     let nextHandle = 1;
     let audioStarted = false;
     const worker = new BrowserRuntimeWorker(async () => ({
-      abiVersion: 3,
+      abiVersion: 4,
       uiProtocolVersion: 2,
       runtimeConfigVersion: 1,
       create() { calls.push(["create"]); return nextHandle++; },
@@ -81,7 +81,7 @@ test("normalizes a distinct worker time origin into the document engine epoch", 
     const { BrowserRuntimeWorker } = await (new Function("return import('/dist/src/worker.js')")() as Promise<any>);
     const offsets: number[] = [];
     const worker = new BrowserRuntimeWorker(async () => ({
-      abiVersion: 3,
+      abiVersion: 4,
       uiProtocolVersion: 2,
       runtimeConfigVersion: 1,
       create: () => 3,
@@ -130,7 +130,7 @@ test("reads Emscripten browser contract versions without creating a runtime", as
     const { emscriptenRuntimeFacade } = await (new Function("return import('/dist/src/worker.js')")() as Promise<any>);
     const calls: string[] = [];
     const facade = emscriptenRuntimeFacade({
-      _synth_browser_abi_version() { calls.push("abiVersion"); return 3; },
+      _synth_browser_abi_version() { calls.push("abiVersion"); return 4; },
       _synth_browser_ui_protocol_version() { calls.push("uiProtocolVersion"); return 2; },
       _synth_browser_runtime_config_version() { calls.push("runtimeConfigVersion"); return 1; },
       _synth_browser_create() { calls.push("create"); return 1; },
@@ -151,7 +151,7 @@ test("reads Emscripten browser contract versions without creating a runtime", as
     };
   });
 
-  expect(result.versions).toEqual({ abiVersion: 3, uiProtocolVersion: 2, runtimeConfigVersion: 1 });
+  expect(result.versions).toEqual({ abiVersion: 4, uiProtocolVersion: 2, runtimeConfigVersion: 1 });
   expect(result.calls).toEqual(["abiVersion", "uiProtocolVersion", "runtimeConfigVersion"]);
 });
 
@@ -164,7 +164,7 @@ test("registers a supplied AudioContext module-locally and preserves direct hand
     const calls: unknown[][] = [];
     const context = { sampleRate: 48_000 };
     const facade = emscriptenRuntimeFacade({
-      _synth_browser_abi_version: () => 3,
+      _synth_browser_abi_version: () => 4,
       _synth_browser_ui_protocol_version: () => 2,
       _synth_browser_runtime_config_version: () => 1,
       emscriptenRegisterAudioObject(received: unknown) { calls.push(["register", received === context]); return 73; },
@@ -198,7 +198,7 @@ test("registers a native AudioNode input source with a positive physical channel
     const calls: unknown[][] = [];
     const audioNode = { channelCount: 4 };
     const facade = emscriptenRuntimeFacade({
-      _synth_browser_abi_version: () => 3,
+      _synth_browser_abi_version: () => 4,
       _synth_browser_ui_protocol_version: () => 2,
       _synth_browser_runtime_config_version: () => 1,
       emscriptenRegisterAudioObject(received: unknown) { calls.push(["register", received === audioNode]); return 96; },
@@ -305,7 +305,7 @@ test("rejects modules missing context registration, native startup, or audio inp
     for (const omitted of ["register", "start", "channels", "set", "clear", "retry"]) {
       try {
         emscriptenRuntimeFacade({
-          _synth_browser_abi_version: () => 3,
+          _synth_browser_abi_version: () => 4,
           _synth_browser_ui_protocol_version: () => 2,
           _synth_browser_runtime_config_version: () => 1,
           emscriptenRegisterAudioObject: omitted === "register" ? undefined : () => 1,
@@ -341,7 +341,7 @@ test("rejects incompatible modules before creation or persistence setup", async 
     const fields = ["abiVersion", "uiProtocolVersion", "runtimeConfigVersion"];
     return await Promise.all(fields.map(async (field) => {
       const calls: string[] = [];
-      const supported = { abiVersion: 3, uiProtocolVersion: 2, runtimeConfigVersion: 1 };
+      const supported = { abiVersion: 4, uiProtocolVersion: 2, runtimeConfigVersion: 1 };
       const versions = { ...supported, [field]: supported[field as keyof typeof supported] === 2 ? 1 : 2 };
       const worker = new BrowserRuntimeWorker(
         async () => ({
@@ -386,7 +386,7 @@ test("main bootstrap composes runtime, UI, audio channels, and actions generical
       module: { entryUrl: "blob:test-app", locateFile: {}, mainScriptUrlOrBlob: "blob:test-app" },
       frameIntervalMs: 100000,
       runtimeModuleLoader: async () => ({
-        abiVersion: 3,
+        abiVersion: 4,
         uiProtocolVersion: 2,
         runtimeConfigVersion: 1,
         filesystem: {
@@ -484,7 +484,7 @@ test("direct runtime installation supersedes delayed launcher auto-boot across f
       category: "Instrument",
       buildId: "portable-app-build-1",
       browser: {
-        abiVersion: 3,
+        abiVersion: 4,
         uiProtocolVersion: 2,
         runtimeConfigVersion: 1,
         entry: "packages/portable-app/portable-app-build-1/app.js",
@@ -520,7 +520,7 @@ test("production bootstrap discovers catalogs without loading an application mod
         category: "Instrument",
         buildId: "portable-app-build-1",
         browser: {
-          abiVersion: 3,
+          abiVersion: 4,
           uiProtocolVersion: 2,
           runtimeConfigVersion: 1,
           entry: "packages/portable-app/portable-app-build-1/app.js",

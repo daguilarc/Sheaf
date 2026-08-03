@@ -45,17 +45,32 @@ struct BrowserAudioSampleFrameDescriptor {
 
 // The audio input claim the realtime callback and the Audio page both read.
 //
-// Publication is ordered against the Web Audio graph and is transactional. The
-// count is stored BEFORE the graph is connected, so the first callback after a
+// Two pieces of state, deliberately separate. `sourceHandle_` plus its count and
+// status are the CLAIM: what the callback reads and the Audio page reports.
+// `connectedHandle_` is what the publication has handed to the Web Audio graph
+// and believes is still attached to the worklet input bus. They diverge exactly
+// when a graph operation fails, and keeping them separate is what makes the
+// failure recoverable.
+//
+// Publication is ordered against the graph and is transactional. The count is
+// stored BEFORE the source is connected, so the first callback after a
 // successful connect already sees the real physical count instead of a stale
 // zero; and it is cleared BEFORE the source is disconnected, so no callback can
 // read a count for a source that is already gone. That ordering is only sound if
-// a graph operation that fails takes the claim down with it, which is what
-// `Publish` rolls back to: a failed connect leaves the previous source
-// disconnected (so nothing double-sums into the input bus) and nothing claimed.
+// a graph operation that fails takes the claim down with it.
+//
+// The two failure stages are not the same failure:
+//
+//  - A failed DISCONNECT leaves the previous source attached. Forgetting it
+//    would let the next publication connect a second source beside it and the
+//    input bus would sum both, so `connectedHandle_` keeps that identity and no
+//    new source is connected until the stuck one is verifiably gone.
+//  - A failed CONNECT happens after the previous source is already detached, so
+//    nothing is attached, `connectedHandle_` is 0, and the next publication has
+//    nothing to clean up first.
 //
 // Clearing needs no rollback -- cleared is the safe direction -- but a failed
-// disconnect is still reported so the host can see it.
+// disconnect is still reported and still remembered.
 class BrowserAudioInputPublication {
 public:
     std::uint32_t SourceHandle() const
@@ -73,50 +88,83 @@ public:
         return statusCode_.load(std::memory_order_acquire);
     }
 
-    // `replaceConnection(previousHandle, nextHandle)` disconnects the previous
-    // source, if any, and connects the next one, returning false if either
-    // graph operation could not be performed. It is not called when the handle
-    // is unchanged: re-registering a live source must not tear its connection
-    // down and build it again.
-    template <typename ReplaceConnection>
+    // The source the publication has handed to the graph, which is also the
+    // source a failed disconnect is still blocked on.
+    std::uint32_t ConnectedSourceHandle() const
+    {
+        return connectedHandle_.load(std::memory_order_acquire);
+    }
+
+    // `disconnect(handle)` detaches the attached source and `connect(handle)`
+    // attaches the new one; each returns false if the graph operation could not
+    // be performed. Neither is called when the attached source is already the
+    // one being published: re-registering a live source must not tear its
+    // connection down and build it again.
+    template <typename Disconnect, typename Connect>
     bool Publish(std::uint32_t sourceHandle,
                  std::uint32_t physicalChannels,
                  std::uint32_t statusCode,
-                 ReplaceConnection&& replaceConnection)
+                 Disconnect&& disconnect,
+                 Connect&& connect)
     {
-        const std::uint32_t previous = sourceHandle_.load(std::memory_order_acquire);
+        const std::uint32_t attached = connectedHandle_.load(std::memory_order_acquire);
         sourceHandle_.store(sourceHandle, std::memory_order_release);
         statusCode_.store(statusCode, std::memory_order_release);
         physicalChannels_.store(physicalChannels, std::memory_order_release);
-        if (previous == sourceHandle) {
+        if (attached == sourceHandle) {
             return true;
         }
-        if (replaceConnection(previous, sourceHandle)) {
-            return true;
+        if (attached != 0) {
+            if (!disconnect(attached)) {
+                // Still attached: refuse to add a second source to the bus.
+                RollBack();
+                return false;
+            }
+            connectedHandle_.store(0, std::memory_order_release);
         }
-        physicalChannels_.store(0, std::memory_order_release);
-        sourceHandle_.store(0, std::memory_order_release);
-        statusCode_.store(static_cast<std::uint32_t>(BrowserAudioInputStatus::ApiUnavailable),
-                          std::memory_order_release);
-        return false;
+        if (!connect(sourceHandle)) {
+            // Nothing is attached, so nothing is blocked -- only the claim goes.
+            RollBack();
+            return false;
+        }
+        connectedHandle_.store(sourceHandle, std::memory_order_release);
+        return true;
     }
 
-    // `disconnect(sourceHandle)` removes the claimed source from the graph and
-    // returns false if it could not.
+    // `disconnect(handle)` removes the attached source from the graph and
+    // returns false if it could not, in which case its identity is retained so a
+    // later publication still cleans it up before connecting anything.
     template <typename Disconnect>
     bool Clear(std::uint32_t statusCode, Disconnect&& disconnect)
     {
         physicalChannels_.store(0, std::memory_order_release);
         statusCode_.store(statusCode, std::memory_order_release);
-        const std::uint32_t previous = sourceHandle_.exchange(0, std::memory_order_acq_rel);
-        return previous == 0 || disconnect(previous);
+        sourceHandle_.store(0, std::memory_order_release);
+        const std::uint32_t attached = connectedHandle_.load(std::memory_order_acquire);
+        if (attached == 0) {
+            return true;
+        }
+        if (!disconnect(attached)) {
+            return false;
+        }
+        connectedHandle_.store(0, std::memory_order_release);
+        return true;
     }
 
 private:
+    void RollBack()
+    {
+        physicalChannels_.store(0, std::memory_order_release);
+        sourceHandle_.store(0, std::memory_order_release);
+        statusCode_.store(static_cast<std::uint32_t>(BrowserAudioInputStatus::ApiUnavailable),
+                          std::memory_order_release);
+    }
+
     std::atomic<std::uint32_t> sourceHandle_{0};
     std::atomic<std::uint32_t> physicalChannels_{0};
     std::atomic<std::uint32_t> statusCode_{
         static_cast<std::uint32_t>(BrowserAudioInputStatus::NotRequested)};
+    std::atomic<std::uint32_t> connectedHandle_{0};
 };
 
 inline void SilenceBrowserAudioOutput(BrowserAudioSampleFrameDescriptor* outputs,
@@ -412,9 +460,8 @@ public:
             sourceHandle,
             physicalChannels,
             statusCode,
-            [this](std::uint32_t previous, std::uint32_t next) {
-                return ReplaceAudioInputConnection(previous, next);
-            });
+            [this](std::uint32_t attached) { return DisconnectAudioInputSource(attached); },
+            [this](std::uint32_t next) { return ConnectAudioInputSource(next); });
     }
 
     bool ClearAudioInputSource(std::uint32_t statusCode)
@@ -779,28 +826,14 @@ private:
 
     // The Web Audio graph work behind the transactional publication. Both report
     // failure instead of throwing: a JavaScript exception raised inside EM_ASM
-    // cannot be caught here, and the publication needs a verdict to roll back on.
-    // On a native build there is no graph, so both succeed trivially and the
-    // failure paths are covered directly through BrowserAudioInputPublication.
-    bool ReplaceAudioInputConnection(std::uint32_t previous, std::uint32_t next)
-    {
-#ifdef __EMSCRIPTEN__
-        // Before the worklet node exists there is nothing to attach to;
-        // AudioWorkletProcessorCreated connects whatever is claimed by then.
-        if (audioNode_ == 0) {
-            return true;
-        }
-        if (previous != 0 && !DisconnectAudioInputSource(previous)) {
-            return false;
-        }
-        return ConnectAudioInputSource(next);
-#else
-        (void)previous;
-        (void)next;
-        return true;
-#endif
-    }
-
+    // cannot be caught here, and the publication needs a verdict to decide
+    // between rolling back and staying blocked. On a native build there is no
+    // graph, so both succeed trivially and the failure stages are covered
+    // directly through BrowserAudioInputPublication.
+    //
+    // Before the worklet node exists there is nothing to attach to, so both
+    // succeed and the publication's `connectedHandle_` records intent;
+    // AudioWorkletProcessorCreated attaches whatever is claimed by then.
     bool DisconnectAudioInputSource(std::uint32_t sourceHandle)
     {
 #ifdef __EMSCRIPTEN__
@@ -830,6 +863,9 @@ private:
     bool ConnectAudioInputSource(std::uint32_t sourceHandle)
     {
 #ifdef __EMSCRIPTEN__
+        if (audioNode_ == 0) {
+            return true;
+        }
         return EM_ASM_INT({
             if (typeof emscriptenGetAudioObject !== "function") return 1;
             const source = emscriptenGetAudioObject($0);
