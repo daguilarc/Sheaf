@@ -26,11 +26,13 @@ public:
 
     BrowserRuntimeMainServices(EngineType& engine,
                                MidiBridge& midiBridge,
-                               std::function<float()> deadlineSampleProvider = {})
+                               std::function<float()> deadlineSampleProvider = {},
+                               std::function<BrowserAudioInputState()> audioInputStateProvider = {})
         : engine_(engine)
         , midiBridge_(midiBridge)
         , fileService_(MakeFileCallbacks())
         , deadlineSampleProvider_(std::move(deadlineSampleProvider))
+        , audioInputStateProvider_(std::move(audioInputStateProvider))
     {
     }
 
@@ -83,7 +85,8 @@ public:
 
     void RefreshAudio(synth::runtime_ui::AudioPageSnapshot& snapshot)
     {
-        snapshot = BuildBrowserAudioSnapshot(engine_.AudioDeviceSnapshot());
+        const BrowserAudioInputState input = AudioInputState();
+        snapshot = BuildBrowserAudioSnapshot(engine_.AudioDeviceSnapshot(), input);
         if (negotiatedSampleRate_.has_value() && negotiatedBlockSize_.has_value())
         {
             snapshot.deviceLineText = synth::runtime_ui::Layout::BuildNegotiatedDeviceLine(
@@ -95,23 +98,54 @@ public:
         {
             snapshot.deviceLineText = "No audio device";
         }
-        if (audioStatus_.has_value())
+        // A live capture diagnostic outranks the last selection acknowledgement:
+        // the acknowledgement is what the user just did, the diagnostic is what
+        // the host can currently deliver. Neither displaces the requested/active
+        // counts (sru-3) -- both compose after them.
+        std::string detail = BrowserAudioInputDetail(input);
+        if (detail.empty() && audioStatus_.has_value())
         {
-            snapshot.statusLineText = *audioStatus_;
+            detail = *audioStatus_;
         }
+        snapshot.statusLineText = ComposeBrowserAudioStatusLine(input, detail);
     }
 
     void DispatchAudio(const synth::ui::Action& action)
     {
-        if (action.name != synth::runtime_ui::Actions::kAudioOutputSelect)
+        // Arming a retry is all this does: reacquisition is the launcher realm's
+        // work, it needs DOM/media APIs this side never touches, and it must not
+        // be initiated by anything but the user (sbw-4).
+        if (action.name == synth::runtime_ui::Actions::kAudioInputRetry)
         {
+            audioInputRetryRequested_ = true;
             return;
         }
 
+        const bool selectsOutput = action.name == synth::runtime_ui::Actions::kAudioOutputSelect;
+        if (!selectsOutput && action.name != synth::runtime_ui::Actions::kAudioInputSelect)
+        {
+            return;
+        }
         synth::AudioDeviceState state = engine_.AudioDeviceSnapshot();
-        state.outputDeviceName = BrowserOutputDeviceName(action.value);
+        // Both selections commit an empty persisted name: System Default is the
+        // only browser choice, and a named id is rejected rather than stored.
+        if (selectsOutput)
+        {
+            state.outputDeviceName = BrowserOutputDeviceName(action.value);
+        }
+        else
+        {
+            state.inputDeviceName = BrowserInputDeviceName(action.value);
+        }
         engine_.SetAudioDeviceFromHost(state);
         audioStatus_ = "Using System Default";
+    }
+
+    bool ConsumeAudioInputRetry()
+    {
+        const bool requested = audioInputRetryRequested_;
+        audioInputRetryRequested_ = false;
+        return requested;
     }
 
     void RefreshFile(synth::runtime_ui::FilePageSnapshot& snapshot)
@@ -196,6 +230,11 @@ public:
     }
 
 private:
+    BrowserAudioInputState AudioInputState() const
+    {
+        return audioInputStateProvider_ ? audioInputStateProvider_() : BrowserAudioInputState{};
+    }
+
     synth::runtime_ui::RuntimeFileCallbacks MakeFileCallbacks()
     {
         synth::runtime_ui::RuntimeFileCallbacks callbacks;
@@ -224,9 +263,11 @@ private:
     MidiBridge& midiBridge_;
     synth::runtime_ui::RuntimeFileService fileService_;
     std::function<float()> deadlineSampleProvider_;
+    std::function<BrowserAudioInputState()> audioInputStateProvider_;
     std::optional<double> negotiatedSampleRate_;
     std::optional<int> negotiatedBlockSize_;
     std::optional<std::string> audioStatus_;
+    bool audioInputRetryRequested_ = false;
     synth::ControllerWizardDiscoveryCache wizardDiscoveryCache_;
     std::uint64_t cachedDeviceListRevision_ = 0;
     bool controllersDirty_ = true;

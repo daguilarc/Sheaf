@@ -39,8 +39,10 @@ grow memory.
   production; loopback is suitable locally.
 - The launcher needs `Cross-Origin-Opener-Policy: same-origin`,
   `Cross-Origin-Embedder-Policy: require-corp`, and
-  `Permissions-Policy: midi=(self)`. Cross-origin isolation is required by the
-  Emscripten worker/audio runtime. Web MIDI requests sysex access.
+  `Permissions-Policy: midi=(self), microphone=(self)`. Cross-origin isolation
+  is required by the Emscripten worker/audio runtime. Web MIDI requests sysex
+  access, and microphone capture is permitted for the launcher's own origin
+  only.
 - Serve `.wasm` as `application/wasm`, package JavaScript as
   `text/javascript`, and serve publisher catalog/package responses with
   `Access-Control-Allow-Origin: *`. Persistence is browser IDBFS/IndexedDB
@@ -48,6 +50,55 @@ grow memory.
 - Browser audio exposes only `System Default` (`system_default`) for output.
   Named output selection remains unsupported; native audio input is supplied by
   the browser AudioWorklet ABI.
+
+## Audio input and capture privacy
+
+An application declares how many input channels it addresses through
+`RuntimeConfig::numAudioInputs`. The browser host accepts 0 through 32.
+
+- **Zero-input applications cost nothing.** Mini App and Braid 4 request no
+  input. Their worklet node is created with zero input buses, and the host never
+  reads `navigator.mediaDevices` or calls `getUserMedia()`, so launching them
+  never shows a microphone prompt.
+- **Capture is requested only from user activation.** An input-capable
+  application discovers its request after its module is loaded and its runtime
+  initialized, on the activation-initiated launch path, and again only when the
+  user presses `Retry Input`. There is no capture on page load, no autoplay
+  path, and no automatic or realtime retry loop.
+- **A secure context is required.** Capture needs HTTPS or loopback plus the
+  same-origin microphone `Permissions-Policy` above. A missing prerequisite is
+  reported by name on the Audio page instead of re-prompting.
+- **Constraints are pinned.** The host requests
+  `{ audio: { channelCount: { ideal: N }, echoCancellation: false,
+  noiseSuppression: false, autoGainControl: false } }`. The count is *ideal*, so
+  a device that supplies fewer channels degrades to a shortfall rather than
+  failing, and browser voice processing cannot silently downmix a multichannel
+  interface.
+- **The active count is published, not guessed.** It comes from
+  `MediaStreamTrack.getSettings().channelCount`; if the browser omits that
+  setting the host falls back to the source node's channel count, then to one,
+  and says so with a distinct `microphone channel count unreported` status. The
+  count is always clamped to the application's request.
+- **The Audio page is the diagnostic surface.** For an input-capable
+  application it shows one `System Default` input option and a status line that
+  always leads with `Input requested N / active M`, followed by the current
+  state: permission denied, capture unavailable, missing prerequisite, stream
+  ended, unreported channel count, or input channel shortfall. `Retry Input`
+  appears only while capture is offline.
+- **Selection is host-neutral.** Selecting `System Default` commits the existing
+  empty persisted input-device name. Browser device IDs are privacy-scoped, so
+  the host neither enumerates nor persists them, and any other input option id
+  is rejected.
+- **Samples are realtime-only.** Captured audio reaches application DSP through
+  a non-owning callback view and nothing else. It is never written to IndexedDB,
+  logs, catalog metadata, or the UI command buffer, and the source is connected
+  only to the native worklet input bus — there is no host-created passthrough to
+  `AudioContext.destination`, so nothing is monitored unless application DSP
+  writes it to output.
+- **Input failure never stops output.** Denial, an ended stream, or a channel
+  shortfall clears the active count, leaves requested-but-inactive channels
+  reading as silence, and keeps the output callback, UI, persistence, and MIDI
+  running.
 
 ## Build and test
 
@@ -86,7 +137,7 @@ Cloudflare Pages is the top-level launcher host. Its artifact includes the
 launcher, generic runtime modules, catalog, immutable packages, per-app
 rollback pages, and `_headers` policy. Cloudflare applies COOP
 (`Cross-Origin-Opener-Policy`), COEP (`Cross-Origin-Embedder-Policy`), and the
-MIDI `Permissions-Policy`. GitHub Pages is publisher-only: its artifact
+MIDI and microphone `Permissions-Policy`. GitHub Pages is publisher-only: its artifact
 contains only the complete `catalogs/` tree and is fetched with CORS by the
 Cloudflare launcher.
 

@@ -134,7 +134,7 @@ export function createStaticServer({ isolated = true, published = false } = {}) 
     if (isolated) {
       headers["Cross-Origin-Opener-Policy"] = "same-origin";
       headers["Cross-Origin-Embedder-Policy"] = "require-corp";
-      headers["Permissions-Policy"] = "midi=(self)";
+      headers["Permissions-Policy"] = "midi=(self), microphone=(self)";
     }
     if (request.method === "OPTIONS") {
       response.writeHead(204, headers).end();

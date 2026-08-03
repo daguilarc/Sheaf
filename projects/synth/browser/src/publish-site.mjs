@@ -27,7 +27,7 @@ export const browserRuntimeModules = Object.freeze([
 export const cloudflareHeaders = `/*
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
-  Permissions-Policy: midi=(self)
+  Permissions-Policy: midi=(self), microphone=(self)
 
 /catalogs/sheaf/packages/*/*/*.wasm
   Content-Type: application/wasm

@@ -14,6 +14,11 @@ import { BrowserRuntimeWorker, loadEmscriptenRuntime } from "./worker.js";
 export type RuntimeClient = {
   request(command: RuntimeCommand): Promise<RuntimeResponse>;
   startAudioWorklet?(context?: AudioContext): Promise<{ started: true } | { started: false; diagnostic: string }>;
+  // Audio input registration passes a live `AudioNode`, so only a client that
+  // shares the launcher realm with the runtime can offer these.
+  setAudioInputSource?(source: AudioNode, physicalChannels: number, statusCode: number): Promise<void>;
+  clearAudioInputSource?(statusCode: number): Promise<void>;
+  consumeAudioInputRetry?(): Promise<boolean>;
   onStatus?(handler: (response: RuntimeResponse) => void): void;
   terminate?(): void | Promise<void>;
 };
@@ -83,12 +88,14 @@ export function createDirectRuntimeClient(loadModule: RuntimeModuleLoader = load
   );
   let queue: Promise<void> = Promise.resolve();
 
-  const request = (command: RuntimeCommand): Promise<RuntimeResponse> => {
-    const run = () => runtime.handle(command);
-    const response = queue.then(run, run);
-    queue = response.then(() => {}, () => {});
-    return response;
+  // Every runtime operation shares one queue: capture registration must not
+  // interleave with a UI dispatch or a message tick already in flight.
+  const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
+    const result = queue.then(operation, operation);
+    queue = result.then(() => {}, () => {});
+    return result;
   };
+  const request = (command: RuntimeCommand): Promise<RuntimeResponse> => enqueue(() => runtime.handle(command));
 
   return {
     request,
@@ -97,6 +104,10 @@ export function createDirectRuntimeClient(loadModule: RuntimeModuleLoader = load
       if (response.type === "ok") return { started: true };
       return { started: false, diagnostic: response.type === "error" ? response.error : "audio-worklet-start-failed" };
     },
+    setAudioInputSource: (source, physicalChannels, statusCode) =>
+      enqueue(() => runtime.setAudioInputSource(source, physicalChannels, statusCode)),
+    clearAudioInputSource: (statusCode) => enqueue(() => runtime.clearAudioInputSource(statusCode)),
+    consumeAudioInputRetry: () => enqueue(() => runtime.consumeAudioInputRetry()),
     onStatus: (handler) => { statusHandlers.add(handler); },
     terminate: async () => { await request({ type: "destroy" }); },
   };
@@ -179,9 +190,17 @@ export class SynthBrowserApp {
     await this.expectOk(await this.runtime.request({ type: "initialize", identity: this.options.runtimeIdentity }));
     const audioConfig = await this.runtime.request({ type: "audio-config" });
     if (audioConfig.type !== "audio-config") throw new Error("runtime did not return audio configuration");
-    const audioWorker: BrowserAudioWorker = {};
+    // The application's input request is discovered here -- after the module is
+    // loaded, the runtime created, and the application initialized -- so capture
+    // can never precede the application that asks for it (sbw-4).
+    const audioWorker: BrowserAudioWorker = { audioInputChannels: async () => audioConfig.inputChannels };
     if (this.runtime.startAudioWorklet)
       audioWorker.startAudioWorklet = (context) => this.runtime.startAudioWorklet!(context);
+    if (this.runtime.setAudioInputSource)
+      audioWorker.setAudioInputSource = (source, physicalChannels, statusCode) =>
+        this.runtime.setAudioInputSource!(source, physicalChannels, statusCode);
+    if (this.runtime.clearAudioInputSource)
+      audioWorker.clearAudioInputSource = (statusCode) => this.runtime.clearAudioInputSource!(statusCode);
     this.audio = new AudioBridge(audioWorker, this.options.audioOptions);
     if (this.options.midiAccess) {
       this.activationStarted = true;
@@ -213,18 +232,24 @@ export class SynthBrowserApp {
     if (this.frameTimer !== undefined) clearInterval(this.frameTimer);
     this.frameTimer = undefined;
     this.ui.dispose();
-    this.audio?.shutdown();
     this.midi.stop();
     this.stopPromise = this.finishStop();
     return this.stopPromise;
   }
 
+  // Capture is released first: clearing the native active count and stopping the
+  // tracks has to happen while the runtime handle is still alive, and the leased
+  // AudioContext the source belongs to is only closed after that.
   private async finishStop(): Promise<void> {
     try {
-      await this.runtime.terminate?.();
+      await this.audio?.stop();
     } finally {
-      this.options.activationLease?.dispose();
-      this.options.disposeModule?.();
+      try {
+        await this.runtime.terminate?.();
+      } finally {
+        this.options.activationLease?.dispose();
+        this.options.disposeModule?.();
+      }
     }
   }
 
@@ -243,6 +268,17 @@ export class SynthBrowserApp {
     const response = await this.runtime.request({ type: "dispatch-action", ...action });
     if (response.type === "ui-frame") this.ui.renderFrame(Uint8Array.from(response.frame).buffer);
     else if (response.type === "error") this.renderStatus({ type: "status", status: response.error });
+    await this.consumeAudioInputRetry();
+  }
+
+  // The runtime arms a retry only from the portable `Retry Input` action, so
+  // capture is re-run exactly when the user asked for it. Losing a stream never
+  // arms one, which is what keeps a denied or ended capture from re-prompting off
+  // the back of an unrelated UI action.
+  private async consumeAudioInputRetry(): Promise<void> {
+    if (this.stopped || !this.audio || !this.runtime.consumeAudioInputRetry) return;
+    if (!(await this.runtime.consumeAudioInputRetry())) return;
+    await this.audio.retryInput();
   }
 
   private requestFrame(): void {

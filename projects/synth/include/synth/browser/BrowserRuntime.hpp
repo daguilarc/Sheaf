@@ -33,38 +33,15 @@ namespace synth_browser {
 static constexpr std::size_t kMaxBrowserInputChannels = 32;
 static constexpr std::size_t kMaxBrowserOutputChannels = 32;
 
-enum class BrowserAudioInputStatus : std::uint32_t {
-    NotRequested,
-    Requesting,
-    Online,
-    PermissionDenied,
-    ApiUnavailable,
-    PrerequisiteBlocked,
-    StreamEnded,
-    ChannelCountUnreported
-};
+// `BrowserAudioInputStatus` and its validity check live in BrowserAudioDevices.hpp
+// beside the Audio page vocabulary that renders them; this header only publishes
+// and forwards the codes.
 
 struct BrowserAudioSampleFrameDescriptor {
     int numberOfChannels = 0;
     int samplesPerChannel = 0;
     float* data = nullptr;
 };
-
-inline bool BrowserAudioInputStatusCodeValid(std::uint32_t statusCode) noexcept
-{
-    switch (static_cast<BrowserAudioInputStatus>(statusCode)) {
-        case BrowserAudioInputStatus::NotRequested:
-        case BrowserAudioInputStatus::Requesting:
-        case BrowserAudioInputStatus::Online:
-        case BrowserAudioInputStatus::PermissionDenied:
-        case BrowserAudioInputStatus::ApiUnavailable:
-        case BrowserAudioInputStatus::PrerequisiteBlocked:
-        case BrowserAudioInputStatus::StreamEnded:
-        case BrowserAudioInputStatus::ChannelCountUnreported:
-            return true;
-    }
-    return false;
-}
 
 inline void SilenceBrowserAudioOutput(BrowserAudioSampleFrameDescriptor* outputs,
                                       int numOutputs) noexcept
@@ -207,7 +184,10 @@ public:
     Runtime()
         : engine_([this] { return timestampMicros_.load(std::memory_order_relaxed); })
         , midiBridge_(engine_)
-        , services_(engine_, midiBridge_, [this] { return AudioWorkletDeadlineSamplePercent(); })
+        , services_(engine_,
+                    midiBridge_,
+                    [this] { return AudioWorkletDeadlineSamplePercent(); },
+                    [this] { return AudioInputStateSnapshot(); })
         , mainComponent_(engine_.Application(), services_)
     {
         engine_.Clock().SetOutputSchedulingHorizonMicros(
@@ -293,10 +273,6 @@ public:
         if (!AudioWorkletConfigurationSupported()) {
             return false;
         }
-        if (AudioInputChannels() > 0 &&
-            audioInputSourceHandle_.load(std::memory_order_acquire) == 0) {
-            audioInputRetryPending_.store(true, std::memory_order_release);
-        }
 #ifdef __EMSCRIPTEN__
         if (audioContext_ != 0) {
             return true;
@@ -363,7 +339,6 @@ public:
         audioInputSourceHandle_.store(sourceHandle, std::memory_order_release);
         audioInputStatusCode_.store(statusCode, std::memory_order_release);
         audioInputPhysicalChannels_.store(physicalChannels, std::memory_order_release);
-        audioInputRetryPending_.store(false, std::memory_order_release);
 #ifdef __EMSCRIPTEN__
         if (audioNode_ != 0 && previous != 0 && previous != sourceHandle) {
             DisconnectAudioInputSource(static_cast<EMSCRIPTEN_WEBAUDIO_T>(previous));
@@ -388,9 +363,6 @@ public:
         audioInputStatusCode_.store(statusCode, std::memory_order_release);
         const std::uint32_t previous =
             audioInputSourceHandle_.exchange(0, std::memory_order_acq_rel);
-        if (AudioInputChannels() > 0) {
-            audioInputRetryPending_.store(true, std::memory_order_release);
-        }
 #ifdef __EMSCRIPTEN__
         if (previous != 0 && audioNode_ != 0) {
             DisconnectAudioInputSource(static_cast<EMSCRIPTEN_WEBAUDIO_T>(previous));
@@ -401,9 +373,28 @@ public:
         return true;
     }
 
+    // What the Audio page currently knows about capture. The physical count is
+    // already clamped to the application request, so a device that supplies more
+    // channels than the application addresses never inflates the reported active
+    // count.
+    BrowserAudioInputState AudioInputStateSnapshot() const
+    {
+        BrowserAudioInputState state;
+        state.requestedChannels = AudioInputChannels();
+        state.activeChannels = std::min<std::size_t>(
+            audioInputPhysicalChannels_.load(std::memory_order_acquire),
+            state.requestedChannels);
+        state.status = static_cast<BrowserAudioInputStatus>(
+            audioInputStatusCode_.load(std::memory_order_acquire));
+        return state;
+    }
+
+    // The only source of a retry is the user pressing `Retry Input` on the Audio
+    // page (sbw-4): capture loss alone never arms one, so a lost stream cannot
+    // re-prompt off the back of an unrelated UI action.
     int ConsumeAudioInputRetry()
     {
-        return audioInputRetryPending_.exchange(false, std::memory_order_acq_rel) ? 1 : 0;
+        return services_.ConsumeAudioInputRetry() ? 1 : 0;
     }
 
     std::uint32_t AudioWorkletBlockCount() const
@@ -763,7 +754,6 @@ private:
     std::atomic<std::uint32_t> audioInputPhysicalChannels_{0};
     std::atomic<std::uint32_t> audioInputStatusCode_{
         static_cast<std::uint32_t>(BrowserAudioInputStatus::NotRequested)};
-    std::atomic<bool> audioInputRetryPending_{false};
     AudioWorkletDeadlineMeter audioWorkletDeadlineMeter_;
     const std::size_t requestedAudioInputChannels_ = StaticAudioInputChannels();
     synth::Engine<App> engine_;

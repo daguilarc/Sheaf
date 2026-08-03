@@ -41,6 +41,7 @@ inline constexpr const char* kAudioRoot = "runtime.audio.root";
 inline constexpr const char* kAudioBack = "runtime.audio.back";
 inline constexpr const char* kAudioOutput = "runtime.audio.output";
 inline constexpr const char* kAudioInput = "runtime.audio.input";
+inline constexpr const char* kAudioInputRetry = "runtime.audio.input.retry";
 inline constexpr const char* kAudioForm = "runtime.audio.form";
 inline constexpr const char* kAudioStatus = "runtime.audio.status";
 inline constexpr const char* kAudioDeviceLine = "runtime.audio.device_line";
@@ -120,6 +121,7 @@ inline constexpr const char* kSidebarFile = "runtime.sidebar.file";
 inline constexpr const char* kAudioBack = "runtime.audio.back";
 inline constexpr const char* kAudioOutputSelect = "runtime.audio.output.select";
 inline constexpr const char* kAudioInputSelect = "runtime.audio.input.select";
+inline constexpr const char* kAudioInputRetry = "runtime.audio.input.retry";
 
 inline constexpr const char* kSyncBack = "runtime.sync.back";
 inline constexpr const char* kSyncSendClock = "runtime.sync.send_clock";
@@ -167,6 +169,10 @@ struct AudioPageSnapshot
     std::string selectedOutputId = kSystemDefaultOptionId;
     std::string selectedInputId = kSystemDefaultOptionId;
     bool showInputCombo = false;
+    // sru-3: only a host whose capture is offline offers the user a way back.
+    // A host that never loses input -- JUCE reopens devices itself -- leaves
+    // this false and the row is not built at all.
+    bool showInputRetry = false;
     std::string deviceLineText;
     std::string statusLineText;
 };
@@ -371,12 +377,22 @@ inline ui::ControlStyle BackButton()
     return style;
 }
 
-inline ui::ControlStyle Toggle(std::string caption)
+// A clickable control that sits inside a form grid: the shared clickable
+// appearance plus a caption cell, so it lines up with the selectors and fields
+// around it instead of spanning both grid columns.
+inline ui::ControlStyle FormButton(std::string caption)
 {
     ui::ControlStyle style = ButtonAppearance();
     style.caption = std::move(caption);
     style.layout = CompactFormRowLayout();
     return style;
+}
+
+// A toggle is drawn as a toggle but styled as the captioned form button it
+// shares a row shape with.
+inline ui::ControlStyle Toggle(std::string caption)
+{
+    return FormButton(std::move(caption));
 }
 
 inline ui::ControlStyle Field(std::string caption)
@@ -772,6 +788,16 @@ inline ui::NodeTree BuildAudioPageTree(const AudioPageSnapshot& snapshot, ui::Bo
                           snapshot.selectedInputId,
                           ui::Action::Named(Actions::kAudioInputSelect),
                           PageControls::Field("Input device"));
+        }
+        // Captioned so the retry row is a form-grid row like the selectors
+        // above it -- an uncaptioned button has no label cell, so the grid
+        // would place it outside the shared caption/control columns.
+        if (snapshot.showInputRetry)
+        {
+            form.Button(NodeIds::kAudioInputRetry,
+                        "Retry Input",
+                        ui::Action::Named(Actions::kAudioInputRetry),
+                        PageControls::FormButton("Input capture"));
         }
     });
     // The two device lines were direct children of the root, which left the page

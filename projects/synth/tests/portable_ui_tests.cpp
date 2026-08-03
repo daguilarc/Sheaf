@@ -1338,6 +1338,60 @@ static void TestHiddenInputSelectorLeavesNoOrphanedCaption()
             "hidden input selector leaves no orphaned caption");
     Require(!HasNode(tree, synth::runtime_ui::NodeIds::kAudioInput),
             "hidden input selector leaves no orphaned control");
+    Require(!HasNode(tree, synth::runtime_ui::NodeIds::kAudioInputRetry),
+            "a page without an input selector offers no input retry");
+}
+
+// sru-3: `Retry Input` exists only while browser capture is offline, and it is a
+// form row like every other Audio control -- an uncaptioned button would sit
+// outside the form grid's label/control columns and break the shared offsets
+// the selectors above it are aligned to.
+static void TestOfflineInputCaptureOffersACaptionedRetryRow()
+{
+    synth::runtime_ui::AudioPageSnapshot snapshot;
+    snapshot.outputOptions = {{"system_default", "System Default"}};
+    snapshot.inputOptions = {{"system_default", "System Default"}};
+    snapshot.showInputCombo = true;
+    snapshot.showInputRetry = true;
+    snapshot.statusLineText = "Input requested 4 / active 0 - microphone permission denied";
+    const synth::ui::NodeTree tree =
+        synth::runtime_ui::BuildAudioPageTree(snapshot, {0.0f, 0.0f, 900.0f, 560.0f});
+
+    const synth::ui::Node& retry = FindNode(tree, synth::runtime_ui::NodeIds::kAudioInputRetry);
+    Require(retry.kind == synth::ui::NodeKind::Button, "Retry Input is a button");
+    Require(retry.label == "Retry Input", "the retry button names the action it performs");
+    Require(retry.action.has_value() &&
+                retry.action->name == synth::runtime_ui::Actions::kAudioInputRetry &&
+                retry.action->value.empty(),
+            "the retry button dispatches the host-neutral retry action");
+    Require(FindNode(tree, std::string(synth::runtime_ui::NodeIds::kAudioInputRetry) + ".caption").text ==
+                "Input capture",
+            "the retry row carries a caption cell like the selectors above it");
+    Require(AllEqual(ColumnXOffsetsOf(tree, "runtime.audio.form", 0)),
+            "the retry row shares the Audio caption column offset");
+    Require(AllEqual(ColumnXOffsetsOf(tree, "runtime.audio.form", 1)),
+            "the retry row shares the Audio control column offset");
+    Require(AllEqual(ColumnWidthsOf(tree, "runtime.audio.form", 0)),
+            "the retry row shares the Audio caption column width");
+}
+
+static void TestLiveInputCaptureHidesTheRetryRow()
+{
+    synth::runtime_ui::AudioPageSnapshot snapshot;
+    snapshot.outputOptions = {{"system_default", "System Default"}};
+    snapshot.inputOptions = {{"system_default", "System Default"}};
+    snapshot.showInputCombo = true;
+    snapshot.showInputRetry = false;
+    snapshot.statusLineText = "Input requested 4 / active 4";
+    const synth::ui::NodeTree tree =
+        synth::runtime_ui::BuildAudioPageTree(snapshot, {0.0f, 0.0f, 900.0f, 560.0f});
+
+    Require(!HasNode(tree, synth::runtime_ui::NodeIds::kAudioInputRetry),
+            "live capture leaves no orphaned retry control");
+    Require(!HasNode(tree, (std::string(synth::runtime_ui::NodeIds::kAudioInputRetry) + ".caption").c_str()),
+            "live capture leaves no orphaned retry caption");
+    Require(HasNode(tree, synth::runtime_ui::NodeIds::kAudioInput),
+            "hiding retry does not hide the input selector");
 }
 
 // A patch root with more directories than the panel can show at the smallest
@@ -3120,6 +3174,8 @@ int main()
     TestSyncPageFitsWithinTheRuntimeRoot();
     TestAudioSelectorsAreCaptionedWhileADeviceIsSelected();
     TestHiddenInputSelectorLeavesNoOrphanedCaption();
+    TestOfflineInputCaptureOffersACaptionedRetryRow();
+    TestLiveInputCaptureHidesTheRetryRow();
     TestPatchBrowserSplicesAsARootlessSubtree();
     TestPatchVersionsSplicesAsARootlessSubtree();
     TestSplicedListsKeepEveryEntryAtEveryExtent();

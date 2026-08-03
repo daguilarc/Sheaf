@@ -333,6 +333,150 @@ test("runtime initialization failure releases consumed activation and materializ
   });
 });
 
+test("an input-capable leased app discovers its request after module load, retries on user demand, and releases capture before the runtime", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4174/dist/src/main.js");
+  await page.setContent('<main id="synth-root"></main>');
+  const frame = makeCommandBuffer([
+    { id: "root", kind: NodeKind.Root, bounds: [0, 0, 200, 60], children: ["retry"] },
+    {
+      id: "retry",
+      kind: NodeKind.Button,
+      bounds: [0, 0, 200, 60],
+      label: "Retry Input",
+      action: { name: "runtime.audio.input.retry", value: "" },
+    },
+  ]);
+  const result = await page.evaluate(async (bytes) => {
+    const main = await (new Function("return import('/dist/src/main.js')")() as Promise<any>);
+    const { ActivationLease } = await (new Function("return import('/dist/src/activation.js')")() as Promise<any>);
+    const events: string[] = [];
+    const tracks: any[] = [];
+    let retryPending = false;
+
+    const context = {
+      sampleRate: 48_000,
+      destination: {},
+      audioWorklet: { addModule: async () => {} },
+      resume: async () => {},
+      close: async () => { events.push("context:close"); },
+      createMediaStreamSource() {
+        events.push("source:create");
+        const source = { channelCount: 2, disconnect() { events.push("source:disconnect"); } };
+        return source;
+      },
+    };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        async getUserMedia(requested: any) {
+          events.push(`getUserMedia:${requested.audio.channelCount.ideal}`);
+          const track = {
+            onended: null as null | (() => void),
+            getSettings: () => ({ channelCount: 2 }),
+            stop() { events.push("track:stop"); },
+          };
+          tracks.push(track);
+          return { getAudioTracks: () => [track], getTracks: () => [track] };
+        },
+      },
+    });
+
+    const lease = ActivationLease.acquire({
+      audioContextFactory: () => context,
+      requestMIDIAccess: async () => ({ inputs: new Map(), outputs: new Map(), onstatechange: null }),
+    });
+    const runtime = {
+      async request(command: any) {
+        if (command.type === "load") { events.push("load"); return { type: "ok" }; }
+        if (command.type === "create") { events.push("create"); return { type: "created", handle: 1 }; }
+        if (command.type === "initialize") { events.push("initialize"); return { type: "ok" }; }
+        if (command.type === "audio-config") { events.push("audio-config"); return { type: "audio-config", channels: 2, inputChannels: 4 }; }
+        if (command.type === "build-ui-frame") return { type: "ui-frame", frame: bytes };
+        if (command.type === "dispatch-action") { events.push(`dispatch:${command.name}`); return { type: "ui-frame", frame: bytes }; }
+        if (command.type === "midi-endpoints") return { type: "midi-actions", actions: [] };
+        if (command.type === "drain-midi-output") return { type: "midi-output" };
+        return { type: "ok" };
+      },
+      async startAudioWorklet(received?: unknown) {
+        if (received !== context) throw new Error("leased context was not passed to native startup");
+        events.push("startAudioWorklet");
+        return { started: true };
+      },
+      async setAudioInputSource(_source: unknown, physicalChannels: number, statusCode: number) {
+        events.push(`setAudioInputSource:${physicalChannels}:${statusCode}`);
+      },
+      async clearAudioInputSource(statusCode: number) { events.push(`clearAudioInputSource:${statusCode}`); },
+      async consumeAudioInputRetry() {
+        const pending = retryPending;
+        retryPending = false;
+        return pending;
+      },
+      terminate() { events.push("terminate"); },
+    };
+
+    const app = await main.installSynthBrowserApp(document.querySelector("#synth-root"), {
+      module: { entryUrl: "blob:entry", locateFile: {}, mainScriptUrlOrBlob: "blob:main" },
+      activationLease: lease,
+      runtimeClient: runtime,
+      frameIntervalMs: 60_000,
+    });
+    const afterStart = [...events];
+
+    const settle = async () => {
+      for (let turn = 0; turn < 8; turn++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const retryButton = document.querySelector<HTMLElement>('[data-node-id="retry"]')!;
+    retryButton.click();
+    await settle();
+    const ignoredRetry = [...events];
+
+    retryPending = true;
+    retryButton.click();
+    await settle();
+    const afterRetry = [...events];
+
+    await app.stop();
+    await app.stop();
+    return { afterStart, ignoredRetry, afterRetry, events, trackCount: tracks.length };
+  }, Array.from(new Uint8Array(frame)));
+
+  // Discovery only happens once the module is loaded, the runtime created, and
+  // the application initialized -- capture never precedes the app that asks for it.
+  expect(result.afterStart).toEqual([
+    "load",
+    "create",
+    "initialize",
+    "audio-config",
+    "clearAudioInputSource:1",
+    "getUserMedia:4",
+    "source:create",
+    "setAudioInputSource:2:2",
+    "startAudioWorklet",
+  ]);
+  // A UI action with no armed retry must not re-prompt.
+  expect(result.ignoredRetry).toEqual([...result.afterStart, "dispatch:runtime.audio.input.retry"]);
+  expect(result.afterRetry).toEqual([
+    ...result.ignoredRetry,
+    "dispatch:runtime.audio.input.retry",
+    "clearAudioInputSource:1",
+    "source:disconnect",
+    "track:stop",
+    "getUserMedia:4",
+    "source:create",
+    "setAudioInputSource:2:2",
+  ]);
+  expect(result.trackCount).toBe(2);
+  // Teardown clears the native active count before the runtime is destroyed and
+  // the leased context is closed, and repeats do nothing.
+  expect(result.events.slice(result.afterRetry.length)).toEqual([
+    "clearAudioInputSource:0",
+    "source:disconnect",
+    "track:stop",
+    "terminate",
+    "context:close",
+  ]);
+});
+
 test("successful leased app unload is idempotent and releases one context, MIDI request, runtime, node, and package", async ({ page }) => {
   await page.goto("http://127.0.0.1:4174/dist/src/main.js");
   await page.setContent('<main id="synth-root"></main>');

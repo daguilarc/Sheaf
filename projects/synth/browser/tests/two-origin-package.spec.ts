@@ -44,7 +44,7 @@ test("starts a generic verified package from the isolated launcher's second orig
   expect(result.catalogAbiVersion).toBe(3);
   expect(result.loaded).toEqual({ type: "ok" });
   expect(result.created).toEqual({ type: "created", handle: 41 });
-  expect(result.audio).toEqual({ type: "audio-config", channels: 2 });
+  expect(result.audio).toEqual({ type: "audio-config", channels: 2, inputChannels: 0 });
   expect(remoteRequests).toEqual([
     "/package-fixture/catalog.json",
     "/package-fixture/remote-fake.js",

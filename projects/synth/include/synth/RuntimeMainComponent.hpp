@@ -282,7 +282,8 @@ private:
         return IsOneOf(action,
                        {Actions::kAudioBack,
                         Actions::kAudioOutputSelect,
-                        Actions::kAudioInputSelect});
+                        Actions::kAudioInputSelect,
+                        Actions::kAudioInputRetry});
     }
 
     static bool IsFileAction(std::string_view action)

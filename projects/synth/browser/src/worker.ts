@@ -33,7 +33,7 @@ export type RuntimeCommand =
 export type RuntimeResponse =
   | { type: "ok" }
   | { type: "created"; handle: number }
-  | { type: "audio-config"; channels: number }
+  | { type: "audio-config"; channels: number; inputChannels: number }
   | { type: "audio-worklet-stats"; blocks: number; peakMicrounits: number; deadlineMicrounits: number }
   | { type: "ui-frame"; frame: number[] }
   | { type: "destroyed" }
@@ -437,6 +437,32 @@ export class BrowserRuntimeWorker {
     }
   }
 
+  // Audio input registration takes a live `AudioNode`, which cannot cross a
+  // worker boundary, so these three are direct main-realm methods rather than
+  // `RuntimeCommand`s -- the same reason `startAudioWorklet` is one. They throw
+  // instead of returning a diagnostic response: their only caller is the
+  // AudioBridge, which classifies the failure into a published capture status.
+  async setAudioInputSource(source: AudioNode, physicalChannels: number, statusCode: number): Promise<void> {
+    const module = this.requireModule();
+    if (!module.setAudioInputSource)
+      throw new Error("runtime does not expose audio input source registration");
+    if (module.setAudioInputSource(this.requireHandle(), source, physicalChannels, statusCode) !== 0)
+      throw new Error("runtime rejected the audio input source");
+  }
+
+  async clearAudioInputSource(statusCode: number): Promise<void> {
+    const module = this.requireModule();
+    if (!module.clearAudioInputSource)
+      throw new Error("runtime does not expose audio input source clear");
+    if (module.clearAudioInputSource(this.requireHandle(), statusCode) !== 0)
+      throw new Error("runtime rejected the audio input status");
+  }
+
+  async consumeAudioInputRetry(): Promise<boolean> {
+    const module = this.requireModule();
+    return module.consumeAudioInputRetry?.(this.requireHandle()) ?? false;
+  }
+
   async handle(command: RuntimeCommand): Promise<RuntimeResponse> {
     try {
       if (this.destroyed) throw new Error("runtime is destroyed");
@@ -490,8 +516,15 @@ export class BrowserRuntimeWorker {
           }
           return this.call((loadedModule, handle) => loadedModule.initialize(handle, identity));
         }
-        case "audio-config":
-          return { type: "audio-config", channels: this.requireModule().audioOutputChannels(this.requireHandle()) };
+        case "audio-config": {
+          const module = this.requireModule();
+          const handle = this.requireHandle();
+          return {
+            type: "audio-config",
+            channels: module.audioOutputChannels(handle),
+            inputChannels: module.audioInputChannels?.(handle) ?? 0,
+          };
+        }
         case "prepare":
           return this.call((module, handle) => module.prepare(handle, command.sampleRate, command.blockSize));
         case "process":
