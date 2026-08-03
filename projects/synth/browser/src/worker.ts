@@ -59,6 +59,9 @@ export interface RuntimeModuleFacade {
   startAudioWorklet?(handle: number, context?: AudioContext): number;
   audioWorkletStats?(handle: number): { blocks: number; peakMicrounits: number; deadlineMicrounits: number };
   setAudioInputSource?(handle: number, source: AudioNode, physicalChannels: number, statusCode: number): number;
+  // The module-local handle `source` is registered under, or 0 if it has never
+  // been registered. Reads the registration cache; it never registers.
+  audioInputSourceHandle?(source: AudioNode): number;
   clearAudioInputSource?(handle: number, statusCode: number): number;
   consumeAudioInputRetry?(handle: number): boolean;
   messageTick(handle: number, timestampMicros: number): number;
@@ -187,7 +190,7 @@ const MIDI_ACTION_SIZE = 24;
 const MIDI_OUTPUT_SIZE = 24;
 const MIDI_DIAGNOSTICS_SIZE = 24;
 const MAX_BROWSER_AUDIO_INPUT_CHANNELS = 32;
-const MAX_BROWSER_AUDIO_INPUT_STATUS_CODE = 7;
+const MAX_BROWSER_AUDIO_INPUT_STATUS_CODE = 10;
 const MIDI_ACTION_TYPES: MidiAction["type"][] = ["open-input", "open-output", "close-input", "close-output", "update-input-ref", "update-output-ref", "resync"];
 
 function decodeUtf8(module: EmscriptenModule, pointer: number, size: number): string {
@@ -234,7 +237,7 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
         throw new Error("audio input physical channel count must be between 1 and 32");
       if (!Number.isInteger(statusCode) || statusCode < 0 ||
           statusCode > MAX_BROWSER_AUDIO_INPUT_STATUS_CODE)
-        throw new Error("audio input status code must be an integer between 0 and 7");
+        throw new Error("audio input status code must be an integer between 0 and 10");
       let sourceHandle = audioInputSourceHandles.get(source);
       if (sourceHandle === undefined) {
         sourceHandle = module.emscriptenRegisterAudioObject!(source);
@@ -244,10 +247,11 @@ export function emscriptenRuntimeFacade(module: EmscriptenModule): RuntimeModule
       }
       return module._synth_browser_set_audio_input_source!(handle, sourceHandle, physicalChannels, statusCode);
     },
+    audioInputSourceHandle: (source) => audioInputSourceHandles.get(source) ?? 0,
     clearAudioInputSource: (handle, statusCode) => {
       if (!Number.isInteger(statusCode) || statusCode < 0 ||
           statusCode > MAX_BROWSER_AUDIO_INPUT_STATUS_CODE)
-        throw new Error("audio input status code must be an integer between 0 and 7");
+        throw new Error("audio input status code must be an integer between 0 and 10");
       return module._synth_browser_clear_audio_input_source!(handle, statusCode);
     },
     consumeAudioInputRetry: (handle) => module._synth_browser_consume_audio_input_retry!(handle) !== 0,
@@ -442,15 +446,25 @@ export class BrowserRuntimeWorker {
   // `RuntimeCommand`s -- the same reason `startAudioWorklet` is one. They throw
   // instead of returning a diagnostic response: their only caller is the
   // AudioBridge, which classifies the failure into a published capture status.
-  async setAudioInputSource(source: AudioNode, physicalChannels: number, statusCode: number): Promise<void> {
+  // Resolves to the module-local handle the source is registered under, read
+  // back from the registration cache rather than registered a second time.
+  async setAudioInputSource(source: AudioNode, physicalChannels: number, statusCode: number): Promise<number> {
     const module = this.requireModule();
     if (!module.setAudioInputSource)
       throw new Error("runtime does not expose audio input source registration");
     if (module.setAudioInputSource(this.requireHandle(), source, physicalChannels, statusCode) !== 0)
       throw new Error("runtime rejected the audio input source");
+    return module.audioInputSourceHandle?.(source) ?? 0;
   }
 
   async clearAudioInputSource(statusCode: number): Promise<void> {
+    this.clearAudioInputSourceSync(statusCode);
+  }
+
+  // The unload-safe clear: no queue, no promise. Publication is a set of atomic
+  // stores plus a graph disconnect, so it is safe to run between any two awaited
+  // runtime operations, which is exactly what an unload handler has to do.
+  clearAudioInputSourceSync(statusCode: number): void {
     const module = this.requireModule();
     if (!module.clearAudioInputSource)
       throw new Error("runtime does not expose audio input source clear");

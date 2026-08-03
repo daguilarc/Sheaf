@@ -1,8 +1,14 @@
 export type BrowserAudioWorker = {
   startAudioWorklet?: (context?: AudioContext) => Promise<AudioBridgeStart>;
   audioInputChannels?: () => Promise<number>;
-  setAudioInputSource?: (source: AudioNode, physicalChannels: number, statusCode: number) => Promise<void>;
+  // Resolves to the module-local native handle the source is registered under,
+  // so the bridge can retain the exact identity the native graph holds.
+  setAudioInputSource?: (source: AudioNode, physicalChannels: number, statusCode: number) => Promise<number>;
   clearAudioInputSource?: (statusCode: number) => Promise<void>;
+  // The unload-safe clear. A page being unloaded is not required to run any
+  // promise continuation, so teardown needs a path that completes before it
+  // returns.
+  clearAudioInputSourceNow?: (statusCode: number) => void;
 };
 
 export type AudioBridgeStart = { started: true } | { started: false; diagnostic: string };
@@ -23,22 +29,34 @@ export const AudioInputStatusCode = {
   prerequisiteBlocked: 5,
   streamEnded: 6,
   channelCountUnreported: 7,
+  insecureContext: 8,
+  permissionsPolicyBlocked: 9,
+  audioContextUnavailable: 10,
 } as const;
 
 export type AudioInputState = {
   requestedChannels: number;
   activeChannels: number;
   statusCode: number;
-  // A stable kebab-case reason for the page-level status text. The Audio page's
-  // own line is composed natively from the published status code; this names the
-  // specific prerequisite or failure behind it.
+  // A stable kebab-case reason. Each missing prerequisite has its own published
+  // status code, so this refines rather than replaces the Audio page's line.
   diagnostic: string;
+  // The module-local handle the current source is registered under, or 0 when
+  // nothing is registered.
+  nativeHandle: number;
 };
 
-// The capture the bridge currently owns. The node's native handle is not held
-// here: registration goes through the module-local handle path in `worker.ts`,
-// which is the only layer that may hand an `AudioNode` to Emscripten.
-type RegisteredAudioInput = { node: AudioNode; stream: MediaStream; physicalChannels: number };
+// The capture the bridge currently owns, including the exact native handle the
+// registration returned. Registration itself stays in `worker.ts`, which owns
+// the module-local object cache and is the only layer that hands an `AudioNode`
+// to Emscripten; the bridge retains the identity that cache minted rather than
+// registering a second time to learn it.
+type RegisteredAudioInput = {
+  node: AudioNode;
+  stream: MediaStream;
+  nativeHandle: number;
+  physicalChannels: number;
+};
 
 const MAX_BROWSER_AUDIO_INPUT_CHANNELS = 32;
 
@@ -61,7 +79,7 @@ function classifyCaptureFailure(error: unknown): { statusCode: number; diagnosti
   if (name === "NotAllowedError" || name === "PermissionDeniedError")
     return { statusCode: AudioInputStatusCode.permissionDenied, diagnostic: "permission-denied" };
   if (name === "SecurityError")
-    return { statusCode: AudioInputStatusCode.prerequisiteBlocked, diagnostic: "capture-blocked" };
+    return { statusCode: AudioInputStatusCode.permissionsPolicyBlocked, diagnostic: "capture-blocked" };
   return {
     statusCode: AudioInputStatusCode.apiUnavailable,
     diagnostic: `capture-failed:${name || "unknown"}`,
@@ -113,14 +131,20 @@ export class AudioBridge {
     await this.serializeInputWork(() => (this.stopped ? Promise.resolve() : this.acquireInput()));
   }
 
-  async stop(): Promise<void> {
-    if (this.stopped) {
-      await this.whenInputSettled();
-      return;
-    }
+  // Unload-safe teardown: everything releasable without yielding happens before
+  // this returns, because a page being unloaded or frozen into the back/forward
+  // cache is not required to run any promise continuation. Idempotent, and an
+  // acquisition still in flight observes `stopped` and releases what it holds.
+  releaseNow(): void {
+    if (this.stopped) return;
     this.stopped = true;
     this.started = false;
-    await this.serializeInputWork(() => this.releaseInput(AudioInputStatusCode.notRequested, ""));
+    this.releaseInputNow(AudioInputStatusCode.notRequested, "");
+  }
+
+  async stop(): Promise<void> {
+    this.releaseNow();
+    await this.whenInputSettled();
   }
 
   inputState(): AudioInputState {
@@ -129,6 +153,7 @@ export class AudioBridge {
       activeChannels: this.input?.physicalChannels ?? 0,
       statusCode: this.inputStatusCode,
       diagnostic: this.inputDiagnostic,
+      nativeHandle: this.input?.nativeHandle ?? 0,
     };
   }
 
@@ -159,17 +184,18 @@ export class AudioBridge {
       await this.releaseInput(AudioInputStatusCode.notRequested, "input-channel-limit-exceeded");
       return;
     }
-    if (!this.worker.setAudioInputSource) {
+    const registerSource = this.worker.setAudioInputSource?.bind(this.worker);
+    if (!registerSource) {
       await this.releaseInput(AudioInputStatusCode.apiUnavailable, "input-registration-unavailable");
       return;
     }
     const context = this.options.audioContext;
     if (!context) {
-      await this.releaseInput(AudioInputStatusCode.prerequisiteBlocked, "audio-context-unavailable");
+      await this.releaseInput(AudioInputStatusCode.audioContextUnavailable, "audio-context-unavailable");
       return;
     }
     if (!globalThis.isSecureContext) {
-      await this.releaseInput(AudioInputStatusCode.prerequisiteBlocked, "insecure-context");
+      await this.releaseInput(AudioInputStatusCode.insecureContext, "insecure-context");
       return;
     }
     const mediaDevices = navigator.mediaDevices;
@@ -187,43 +213,57 @@ export class AudioBridge {
       await this.releaseInput(failure.statusCode, failure.diagnostic);
       return;
     }
-    // A stop or a second retry can win the race against the permission prompt;
-    // the stream it left behind is still ours to release.
-    if (this.stopped) {
-      stopStream(stream);
-      return;
-    }
+    // Provisional ownership starts here: the stream is this bridge's to release
+    // on every path below that does not hand it to `this.input`, and the end
+    // handler is installed before any awaited work so a track that ends while
+    // registration is in flight is observed rather than left falsely online.
     const track = stream.getAudioTracks()[0];
-    if (!track) {
-      stopStream(stream);
-      await this.releaseInput(AudioInputStatusCode.streamEnded, "no-audio-track");
-      return;
-    }
-
-    const source = context.createMediaStreamSource(stream);
-    const reported = positiveChannelCount(track.getSettings?.().channelCount);
-    const statusCode = reported === undefined
-      ? AudioInputStatusCode.channelCountUnreported
-      : AudioInputStatusCode.online;
-    // D5's fallback chain: the track's own setting, else the source node's count,
-    // else one channel. The result is clamped to the request so a device with
-    // more channels than the application addresses never inflates the active count.
-    const derived = reported ?? positiveChannelCount(source.channelCount) ?? 1;
-    const physicalChannels = Math.min(derived, this.requestedInputChannels);
+    let endedDuringAcquisition = false;
+    if (track) track.onended = () => { endedDuringAcquisition = true; };
+    let source: MediaStreamAudioSourceNode | undefined;
+    let acquired: RegisteredAudioInput | undefined;
     try {
-      await this.worker.setAudioInputSource(source, physicalChannels, statusCode);
+      // A stop or a second retry can win the race against the permission prompt.
+      if (this.stopped) return;
+      if (!track) {
+        await this.releaseInput(AudioInputStatusCode.streamEnded, "no-audio-track");
+        return;
+      }
+      source = context.createMediaStreamSource(stream);
+      const reported = positiveChannelCount(track.getSettings?.().channelCount);
+      const statusCode = reported === undefined
+        ? AudioInputStatusCode.channelCountUnreported
+        : AudioInputStatusCode.online;
+      // D5's fallback chain: the track's own setting, else the source node's count,
+      // else one channel. The result is clamped to the request so a device with
+      // more channels than the application addresses never inflates the active count.
+      const derived = reported ?? positiveChannelCount(source.channelCount) ?? 1;
+      const physicalChannels = Math.min(derived, this.requestedInputChannels);
+      const nativeHandle = await registerSource(source, physicalChannels, statusCode);
+      if (this.stopped) return;
+      if (endedDuringAcquisition || track.readyState === "ended") {
+        // The registration landed on a source whose track is already gone, so the
+        // native claim has to come back down before the source does.
+        await this.releaseInput(AudioInputStatusCode.streamEnded, "stream-ended");
+        return;
+      }
+      acquired = { node: source, stream, nativeHandle, physicalChannels };
+      this.input = acquired;
+      this.inputStatusCode = statusCode;
+      this.inputDiagnostic = reported === undefined ? "channel-count-unreported" : "";
+      track.onended = () => {
+        void this.serializeInputWork(() => this.handleStreamEnded(track));
+      };
     } catch {
-      source.disconnect();
-      stopStream(stream);
+      // Source construction or registration threw. The native side may or may
+      // not have taken the source, so drop the claim rather than assume which.
       await this.releaseInput(AudioInputStatusCode.apiUnavailable, "input-registration-failed");
-      return;
+    } finally {
+      if (!acquired) {
+        source?.disconnect();
+        stopStream(stream);
+      }
     }
-    this.input = { node: source, stream, physicalChannels };
-    this.inputStatusCode = statusCode;
-    this.inputDiagnostic = reported === undefined ? "channel-count-unreported" : "";
-    track.onended = () => {
-      void this.serializeInputWork(() => this.handleStreamEnded(track));
-    };
   }
 
   private async handleStreamEnded(track: MediaStreamTrack): Promise<void> {
@@ -235,7 +275,9 @@ export class AudioBridge {
 
   // Clears the native active count first, so no audio callback can read a source
   // that is about to be disconnected, then releases the media resources and
-  // leaves the output callback and AudioContext untouched.
+  // leaves the output callback and AudioContext untouched. Used inside the
+  // capture chain, where awaiting the clear keeps it strictly ordered ahead of
+  // the disconnect.
   private async releaseInput(statusCode: number, diagnostic: string): Promise<void> {
     if (this.requestedInputChannels <= 0) return;
     this.inputStatusCode = statusCode;
@@ -245,6 +287,39 @@ export class AudioBridge {
     } catch {
       // A destroyed or unavailable runtime cannot hold the media resources open.
     }
+    this.releaseCaptureResources();
+  }
+
+  // The same release with the same clear-then-disconnect-then-stop order, done
+  // without yielding. A host that has no synchronous clear still gets the media
+  // released here and the native clear queued behind it -- late, but not lost.
+  private releaseInputNow(statusCode: number, diagnostic: string): void {
+    if (this.requestedInputChannels <= 0) return;
+    this.inputStatusCode = statusCode;
+    this.inputDiagnostic = diagnostic;
+    let cleared = false;
+    try {
+      if (this.worker.clearAudioInputSourceNow) {
+        this.worker.clearAudioInputSourceNow(statusCode);
+        cleared = true;
+      }
+    } catch {
+      // A destroyed or unavailable runtime cannot hold the media resources open.
+      cleared = true;
+    }
+    if (!cleared) {
+      void this.serializeInputWork(async () => {
+        try {
+          await this.worker.clearAudioInputSource?.(statusCode);
+        } catch {
+          // Same: teardown never fails on account of an absent runtime.
+        }
+      });
+    }
+    this.releaseCaptureResources();
+  }
+
+  private releaseCaptureResources(): void {
     const input = this.input;
     if (!input) return;
     this.input = undefined;

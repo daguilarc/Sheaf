@@ -232,18 +232,22 @@ test("registers a native AudioNode input source with a positive physical channel
     }
     let rejectedBadStatus = "";
     try {
-      facade.setAudioInputSource(41, audioNode, 4, 8);
+      facade.setAudioInputSource(41, audioNode, 4, 11);
     } catch (error) {
       rejectedBadStatus = (error as Error).message;
     }
     let rejectedClearStatus = "";
     try {
-      facade.clearAudioInputSource(41, 8);
+      facade.clearAudioInputSource(41, 11);
     } catch (error) {
       rejectedClearStatus = (error as Error).message;
     }
+    const handleBeforeRegistration = facade.audioInputSourceHandle(audioNode);
     const setResult = facade.setAudioInputSource(41, audioNode, 4, 2);
+    const handleAfterRegistration = facade.audioInputSourceHandle(audioNode);
     const repeatSetResult = facade.setAudioInputSource(41, audioNode, 4, 2);
+    const handleAfterRepeat = facade.audioInputSourceHandle(audioNode);
+    const otherNodeHandle = facade.audioInputSourceHandle({} as AudioNode);
     const clearResult = facade.clearAudioInputSource(41, 6);
     const retry = facade.consumeAudioInputRetry(41);
     return {
@@ -252,6 +256,10 @@ test("registers a native AudioNode input source with a positive physical channel
       repeatSetResult,
       clearResult,
       retry,
+      handleBeforeRegistration,
+      handleAfterRegistration,
+      handleAfterRepeat,
+      otherNodeHandle,
       rejectedZero,
       rejectedTooMany,
       rejectedBadStatus,
@@ -268,8 +276,15 @@ test("registers a native AudioNode input source with a positive physical channel
     retry: true,
     rejectedZero: expect.stringMatching(/physical.*between 1 and 32/i),
     rejectedTooMany: expect.stringMatching(/physical.*between 1 and 32/i),
-    rejectedBadStatus: expect.stringMatching(/status.*between 0 and 7/i),
-    rejectedClearStatus: expect.stringMatching(/status.*between 0 and 7/i),
+    rejectedBadStatus: expect.stringMatching(/status.*between 0 and 10/i),
+    rejectedClearStatus: expect.stringMatching(/status.*between 0 and 10/i),
+    // The module-local cache is the single owner of the handle: it is minted on
+    // first registration, read back unchanged afterwards, and never invented for
+    // a node that was never registered.
+    handleBeforeRegistration: 0,
+    handleAfterRegistration: 96,
+    handleAfterRepeat: 96,
+    otherNodeHandle: 0,
     calls: [
       ["register", true],
       ["set", 41, 96, 4, 2],

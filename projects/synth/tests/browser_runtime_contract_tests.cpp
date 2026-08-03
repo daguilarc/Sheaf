@@ -1098,6 +1098,98 @@ public:
     int retryConsumeCount = 0;
 };
 
+// The input claim the realtime callback reads is published before the Web Audio
+// graph is rewired, so the first callback after a successful connect already
+// sees the right count. That ordering is only safe if a failed graph operation
+// rolls the claim back: otherwise the callback and the Audio page would keep
+// claiming active input for a source that is not connected to anything.
+void TestBrowserAudioInputPublicationRollsBackFailedGraphReplacement()
+{
+    using synth_browser::BrowserAudioInputPublication;
+    using synth_browser::BrowserAudioInputStatus;
+    const auto online = static_cast<std::uint32_t>(BrowserAudioInputStatus::Online);
+    const auto ended = static_cast<std::uint32_t>(BrowserAudioInputStatus::StreamEnded);
+    const auto unavailable = static_cast<std::uint32_t>(BrowserAudioInputStatus::ApiUnavailable);
+
+    BrowserAudioInputPublication publication;
+    Require(publication.SourceHandle() == 0 && publication.PhysicalChannels() == 0 &&
+                publication.StatusCode() ==
+                    static_cast<std::uint32_t>(BrowserAudioInputStatus::NotRequested),
+            "a fresh publication claims no input");
+
+    // The graph operation observes the already-published claim: that is the
+    // ordering guarantee, and it must hold on the success path.
+    std::vector<std::pair<std::uint32_t, std::uint32_t>> replacements;
+    std::uint32_t observedChannelsDuringConnect = 0;
+    Require(publication.Publish(91, 4, online, [&](std::uint32_t previous, std::uint32_t next) {
+                replacements.emplace_back(previous, next);
+                observedChannelsDuringConnect = publication.PhysicalChannels();
+                return true;
+            }),
+            "a successful graph replacement keeps the published claim");
+    Require(observedChannelsDuringConnect == 4,
+            "the physical count is published before the graph is connected");
+    Require(replacements == decltype(replacements){{0, 91}},
+            "the first publication connects the new source with no previous source");
+    Require(publication.SourceHandle() == 91 && publication.PhysicalChannels() == 4 &&
+                publication.StatusCode() == online,
+            "a successful publication claims the registered source");
+
+    // A failed replacement must leave nothing claimed and nothing double-summed:
+    // the previous source is gone from the graph, so the claim cannot survive.
+    Require(!publication.Publish(92, 2, online, [&](std::uint32_t previous, std::uint32_t next) {
+                replacements.emplace_back(previous, next);
+                return false;
+            }),
+            "a failed graph replacement reports failure");
+    Require(replacements.size() == 2 && replacements[1] == std::make_pair(91u, 92u),
+            "the failed replacement was attempted against the previous source");
+    Require(publication.SourceHandle() == 0 && publication.PhysicalChannels() == 0 &&
+                publication.StatusCode() == unavailable,
+            "a failed graph replacement rolls back to a cleared, offline claim");
+
+    // Re-publishing the same handle is not a graph change and must not disconnect
+    // a live source and reconnect it.
+    Require(publication.Publish(93, 1, online, [](std::uint32_t, std::uint32_t) { return true; }),
+            "a fresh source publishes after a rollback");
+    bool replacedIdenticalHandle = false;
+    Require(publication.Publish(93, 1, online, [&](std::uint32_t, std::uint32_t) {
+                replacedIdenticalHandle = true;
+                return true;
+            }),
+            "re-publishing an unchanged handle succeeds");
+    Require(!replacedIdenticalHandle,
+            "re-publishing an unchanged handle performs no graph replacement");
+
+    // Clearing is the safe direction: the claim is dropped before the disconnect
+    // is attempted, and a failed disconnect is still reported.
+    std::vector<std::uint32_t> disconnects;
+    std::uint32_t observedChannelsDuringDisconnect = 1;
+    Require(publication.Clear(ended, [&](std::uint32_t source) {
+                disconnects.push_back(source);
+                observedChannelsDuringDisconnect = publication.PhysicalChannels();
+                return true;
+            }),
+            "clearing a live source succeeds");
+    Require(disconnects == std::vector<std::uint32_t>{93},
+            "clearing disconnects exactly the claimed source");
+    Require(observedChannelsDuringDisconnect == 0,
+            "the active count is cleared before the source is disconnected");
+    Require(publication.SourceHandle() == 0 && publication.PhysicalChannels() == 0 &&
+                publication.StatusCode() == ended,
+            "clearing publishes the offline status with no claimed input");
+
+    Require(publication.Publish(94, 1, online, [](std::uint32_t, std::uint32_t) { return true; }),
+            "a source publishes before the failing-disconnect case");
+    Require(!publication.Clear(ended, [](std::uint32_t) { return false; }),
+            "a failed disconnect is reported through the clear result");
+    Require(publication.SourceHandle() == 0 && publication.PhysicalChannels() == 0 &&
+                publication.StatusCode() == ended,
+            "a failed disconnect still leaves nothing claimed");
+    Require(publication.Clear(ended, [](std::uint32_t) { return true; }),
+            "clearing an already-cleared publication is a no-op success");
+}
+
 void TestBrowserAbiPreservesSuppliedAudioContextHandleAndDirectZero()
 {
     AudioContextHandleCapture capture;
@@ -1460,6 +1552,7 @@ int main()
     TestBrowserContractVersionsAreReadableBeforeRuntimeCreation();
     TestBrowserRuntimeDiscoversRequestedAudioInputChannels();
     TestBrowserRuntimeRejectsUnsupportedAudioInputCountsBeforeCapture();
+    TestBrowserAudioInputPublicationRollsBackFailedGraphReplacement();
     TestBrowserAbiPreservesSuppliedAudioContextHandleAndDirectZero();
     TestBrowserAbiCarriesAudioInputSourceLifecycle();
     TestBrowserAudioWorkletAdaptsPlanarInputAndOutput();

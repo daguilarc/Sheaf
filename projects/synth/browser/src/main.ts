@@ -16,8 +16,11 @@ export type RuntimeClient = {
   startAudioWorklet?(context?: AudioContext): Promise<{ started: true } | { started: false; diagnostic: string }>;
   // Audio input registration passes a live `AudioNode`, so only a client that
   // shares the launcher realm with the runtime can offer these.
-  setAudioInputSource?(source: AudioNode, physicalChannels: number, statusCode: number): Promise<void>;
+  setAudioInputSource?(source: AudioNode, physicalChannels: number, statusCode: number): Promise<number>;
   clearAudioInputSource?(statusCode: number): Promise<void>;
+  // Unload-safe clear: completes before it returns, so a `pagehide` handler can
+  // use it. Only a client sharing the launcher realm can offer one.
+  clearAudioInputSourceNow?(statusCode: number): void;
   consumeAudioInputRetry?(): Promise<boolean>;
   onStatus?(handler: (response: RuntimeResponse) => void): void;
   terminate?(): void | Promise<void>;
@@ -107,6 +110,7 @@ export function createDirectRuntimeClient(loadModule: RuntimeModuleLoader = load
     setAudioInputSource: (source, physicalChannels, statusCode) =>
       enqueue(() => runtime.setAudioInputSource(source, physicalChannels, statusCode)),
     clearAudioInputSource: (statusCode) => enqueue(() => runtime.clearAudioInputSource(statusCode)),
+    clearAudioInputSourceNow: (statusCode) => { runtime.clearAudioInputSourceSync(statusCode); },
     consumeAudioInputRetry: () => enqueue(() => runtime.consumeAudioInputRetry()),
     onStatus: (handler) => { statusHandlers.add(handler); },
     terminate: async () => { await request({ type: "destroy" }); },
@@ -201,6 +205,8 @@ export class SynthBrowserApp {
         this.runtime.setAudioInputSource!(source, physicalChannels, statusCode);
     if (this.runtime.clearAudioInputSource)
       audioWorker.clearAudioInputSource = (statusCode) => this.runtime.clearAudioInputSource!(statusCode);
+    if (this.runtime.clearAudioInputSourceNow)
+      audioWorker.clearAudioInputSourceNow = (statusCode) => { this.runtime.clearAudioInputSourceNow!(statusCode); };
     this.audio = new AudioBridge(audioWorker, this.options.audioOptions);
     if (this.options.midiAccess) {
       this.activationStarted = true;
@@ -233,13 +239,18 @@ export class SynthBrowserApp {
     this.frameTimer = undefined;
     this.ui.dispose();
     this.midi.stop();
+    // Capture release is synchronous and happens here rather than in the async
+    // tail: `pagehide` discards this promise, and an unloading page is not
+    // required to run any continuation of it.
+    this.audio?.releaseNow();
     this.stopPromise = this.finishStop();
     return this.stopPromise;
   }
 
-  // Capture is released first: clearing the native active count and stopping the
-  // tracks has to happen while the runtime handle is still alive, and the leased
-  // AudioContext the source belongs to is only closed after that.
+  // `stop()` has already released capture synchronously; this awaits whatever
+  // teardown could only finish asynchronously before the runtime handle is
+  // destroyed, and the leased AudioContext the source belonged to is closed only
+  // after that.
   private async finishStop(): Promise<void> {
     try {
       await this.audio?.stop();

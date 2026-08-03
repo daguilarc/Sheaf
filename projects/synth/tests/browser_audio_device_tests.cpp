@@ -106,8 +106,16 @@ void TestBrowserInputStatesAreDistinctAndRetryableOnlyWhileOffline()
          "Input requested 4 / active 0 - microphone capture unavailable",
          true},
         {InputState(4, 0, BrowserAudioInputStatus::PrerequisiteBlocked),
-         "Input requested 4 / active 0 - microphone requires a secure context and a same-origin "
-         "microphone permissions policy",
+         "Input requested 4 / active 0 - microphone prerequisite unavailable",
+         true},
+        {InputState(4, 0, BrowserAudioInputStatus::InsecureContext),
+         "Input requested 4 / active 0 - microphone requires a secure context",
+         true},
+        {InputState(4, 0, BrowserAudioInputStatus::PermissionsPolicyBlocked),
+         "Input requested 4 / active 0 - microphone blocked by permissions policy",
+         true},
+        {InputState(4, 0, BrowserAudioInputStatus::AudioContextUnavailable),
+         "Input requested 4 / active 0 - microphone requires the launch-owned AudioContext",
          true},
         {InputState(4, 0, BrowserAudioInputStatus::StreamEnded),
          "Input requested 4 / active 0 - microphone stream ended",
@@ -240,6 +248,31 @@ void TestBrowserServicesExposeNegotiatedDefaultAudio()
             "services persist system default as empty output name");
 }
 
+// Regression: the services layer composes its own status line, so a zero-input
+// application must not pick up the "capture not started" detail that an
+// input-capable application in the same state would show.
+void TestZeroInputServicesPublishNoInputStatus()
+{
+    synth::Engine<ServiceApp> engine([] { return std::uint64_t{0}; });
+    synth_browser::BrowserMidiBridge<synth::Engine<ServiceApp>> midiBridge(engine);
+    synth_browser::BrowserRuntimeMainServices<ServiceApp> services(
+        engine, midiBridge, {}, [] { return InputState(0, 0, BrowserAudioInputStatus::NotRequested); });
+
+    synth::runtime_ui::AudioPageSnapshot snapshot;
+    services.RefreshAudio(snapshot);
+    Require(snapshot.statusLineText.empty(),
+            "a zero-input application publishes no input status through services");
+    Require(!snapshot.showInputCombo, "services hide the input selector for a zero-input app");
+    Require(!snapshot.showInputRetry, "services hide Retry Input for a zero-input app");
+
+    services.DispatchAudio(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kAudioOutputSelect,
+        "system_default"));
+    services.RefreshAudio(snapshot);
+    Require(snapshot.statusLineText == "Using System Default",
+            "a zero-input application still shows its output selection acknowledgement");
+}
+
 void TestBrowserServicesPublishCaptureStatusAndUserRetry()
 {
     synth::Engine<ServiceApp> engine([] { return std::uint64_t{0}; });
@@ -304,6 +337,7 @@ int main()
     TestBrowserRejectsNamedInputSelection();
     TestBrowserInputStatesAreDistinctAndRetryableOnlyWhileOffline();
     TestBrowserServicesExposeNegotiatedDefaultAudio();
+    TestZeroInputServicesPublishNoInputStatus();
     TestBrowserServicesPublishCaptureStatusAndUserRetry();
     return 0;
 }

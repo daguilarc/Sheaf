@@ -121,7 +121,10 @@ inline constexpr const char* kSidebarFile = "runtime.sidebar.file";
 inline constexpr const char* kAudioBack = "runtime.audio.back";
 inline constexpr const char* kAudioOutputSelect = "runtime.audio.output.select";
 inline constexpr const char* kAudioInputSelect = "runtime.audio.input.select";
-inline constexpr const char* kAudioInputRetry = "runtime.audio.input.retry";
+// Host-neutral by name as well as by contract: retry is the one Audio action a
+// host implements rather than the page, so it is not namespaced under the page
+// that happens to surface it.
+inline constexpr const char* kAudioInputRetry = "audio-input-retry";
 
 inline constexpr const char* kSyncBack = "runtime.sync.back";
 inline constexpr const char* kSyncSendClock = "runtime.sync.send_clock";

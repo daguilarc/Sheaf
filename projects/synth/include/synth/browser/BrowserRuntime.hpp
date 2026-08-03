@@ -43,6 +43,82 @@ struct BrowserAudioSampleFrameDescriptor {
     float* data = nullptr;
 };
 
+// The audio input claim the realtime callback and the Audio page both read.
+//
+// Publication is ordered against the Web Audio graph and is transactional. The
+// count is stored BEFORE the graph is connected, so the first callback after a
+// successful connect already sees the real physical count instead of a stale
+// zero; and it is cleared BEFORE the source is disconnected, so no callback can
+// read a count for a source that is already gone. That ordering is only sound if
+// a graph operation that fails takes the claim down with it, which is what
+// `Publish` rolls back to: a failed connect leaves the previous source
+// disconnected (so nothing double-sums into the input bus) and nothing claimed.
+//
+// Clearing needs no rollback -- cleared is the safe direction -- but a failed
+// disconnect is still reported so the host can see it.
+class BrowserAudioInputPublication {
+public:
+    std::uint32_t SourceHandle() const
+    {
+        return sourceHandle_.load(std::memory_order_acquire);
+    }
+
+    std::uint32_t PhysicalChannels() const
+    {
+        return physicalChannels_.load(std::memory_order_acquire);
+    }
+
+    std::uint32_t StatusCode() const
+    {
+        return statusCode_.load(std::memory_order_acquire);
+    }
+
+    // `replaceConnection(previousHandle, nextHandle)` disconnects the previous
+    // source, if any, and connects the next one, returning false if either
+    // graph operation could not be performed. It is not called when the handle
+    // is unchanged: re-registering a live source must not tear its connection
+    // down and build it again.
+    template <typename ReplaceConnection>
+    bool Publish(std::uint32_t sourceHandle,
+                 std::uint32_t physicalChannels,
+                 std::uint32_t statusCode,
+                 ReplaceConnection&& replaceConnection)
+    {
+        const std::uint32_t previous = sourceHandle_.load(std::memory_order_acquire);
+        sourceHandle_.store(sourceHandle, std::memory_order_release);
+        statusCode_.store(statusCode, std::memory_order_release);
+        physicalChannels_.store(physicalChannels, std::memory_order_release);
+        if (previous == sourceHandle) {
+            return true;
+        }
+        if (replaceConnection(previous, sourceHandle)) {
+            return true;
+        }
+        physicalChannels_.store(0, std::memory_order_release);
+        sourceHandle_.store(0, std::memory_order_release);
+        statusCode_.store(static_cast<std::uint32_t>(BrowserAudioInputStatus::ApiUnavailable),
+                          std::memory_order_release);
+        return false;
+    }
+
+    // `disconnect(sourceHandle)` removes the claimed source from the graph and
+    // returns false if it could not.
+    template <typename Disconnect>
+    bool Clear(std::uint32_t statusCode, Disconnect&& disconnect)
+    {
+        physicalChannels_.store(0, std::memory_order_release);
+        statusCode_.store(statusCode, std::memory_order_release);
+        const std::uint32_t previous = sourceHandle_.exchange(0, std::memory_order_acq_rel);
+        return previous == 0 || disconnect(previous);
+    }
+
+private:
+    std::atomic<std::uint32_t> sourceHandle_{0};
+    std::atomic<std::uint32_t> physicalChannels_{0};
+    std::atomic<std::uint32_t> statusCode_{
+        static_cast<std::uint32_t>(BrowserAudioInputStatus::NotRequested)};
+};
+
 inline void SilenceBrowserAudioOutput(BrowserAudioSampleFrameDescriptor* outputs,
                                       int numOutputs) noexcept
 {
@@ -332,26 +408,13 @@ public:
             physicalChannels > kMaxBrowserInputChannels) {
             return false;
         }
-#ifdef __EMSCRIPTEN__
-        const std::uint32_t previous =
-            audioInputSourceHandle_.load(std::memory_order_acquire);
-#endif
-        audioInputSourceHandle_.store(sourceHandle, std::memory_order_release);
-        audioInputStatusCode_.store(statusCode, std::memory_order_release);
-        audioInputPhysicalChannels_.store(physicalChannels, std::memory_order_release);
-#ifdef __EMSCRIPTEN__
-        if (audioNode_ != 0 && previous != 0 && previous != sourceHandle) {
-            DisconnectAudioInputSource(static_cast<EMSCRIPTEN_WEBAUDIO_T>(previous));
-        }
-        if (audioNode_ != 0 && previous != sourceHandle) {
-            emscripten_audio_node_connect(
-                static_cast<EMSCRIPTEN_WEBAUDIO_T>(sourceHandle),
-                audioNode_,
-                0,
-                0);
-        }
-#endif
-        return true;
+        return audioInput_.Publish(
+            sourceHandle,
+            physicalChannels,
+            statusCode,
+            [this](std::uint32_t previous, std::uint32_t next) {
+                return ReplaceAudioInputConnection(previous, next);
+            });
     }
 
     bool ClearAudioInputSource(std::uint32_t statusCode)
@@ -359,18 +422,9 @@ public:
         if (!BrowserAudioInputStatusCodeValid(statusCode)) {
             return false;
         }
-        audioInputPhysicalChannels_.store(0, std::memory_order_release);
-        audioInputStatusCode_.store(statusCode, std::memory_order_release);
-        const std::uint32_t previous =
-            audioInputSourceHandle_.exchange(0, std::memory_order_acq_rel);
-#ifdef __EMSCRIPTEN__
-        if (previous != 0 && audioNode_ != 0) {
-            DisconnectAudioInputSource(static_cast<EMSCRIPTEN_WEBAUDIO_T>(previous));
-        }
-#else
-        (void)previous;
-#endif
-        return true;
+        return audioInput_.Clear(statusCode, [this](std::uint32_t previous) {
+            return DisconnectAudioInputSource(previous);
+        });
     }
 
     // What the Audio page currently knows about capture. The physical count is
@@ -381,11 +435,9 @@ public:
     {
         BrowserAudioInputState state;
         state.requestedChannels = AudioInputChannels();
-        state.activeChannels = std::min<std::size_t>(
-            audioInputPhysicalChannels_.load(std::memory_order_acquire),
-            state.requestedChannels);
-        state.status = static_cast<BrowserAudioInputStatus>(
-            audioInputStatusCode_.load(std::memory_order_acquire));
+        state.activeChannels =
+            std::min<std::size_t>(audioInput_.PhysicalChannels(), state.requestedChannels);
+        state.status = static_cast<BrowserAudioInputStatus>(audioInput_.StatusCode());
         return state;
     }
 
@@ -453,7 +505,7 @@ public:
                 numOutputs,
                 outputs,
                 AudioInputChannels(),
-                audioInputPhysicalChannels_.load(std::memory_order_acquire),
+                audioInput_.PhysicalChannels(),
                 AudioOutputChannels(),
                 timestampMicros,
                 [this](synth::AudioBlock& block, std::uint64_t timestamp) {
@@ -712,37 +764,89 @@ private:
 
     void ConnectAudioInputSourceIfReady()
     {
-        const std::uint32_t sourceHandle =
-            audioInputSourceHandle_.load(std::memory_order_acquire);
-        if (sourceHandle != 0 && audioNode_ != 0) {
-            emscripten_audio_node_connect(
-                static_cast<EMSCRIPTEN_WEBAUDIO_T>(sourceHandle),
-                audioNode_,
-                0,
-                0);
+        const std::uint32_t sourceHandle = audioInput_.SourceHandle();
+        if (sourceHandle == 0 || audioNode_ == 0) {
+            return;
+        }
+        if (!ConnectAudioInputSource(sourceHandle)) {
+            // The node exists but the claimed source could not be attached to
+            // it, so the claim is false and has to go.
+            (void)ClearAudioInputSource(
+                static_cast<std::uint32_t>(BrowserAudioInputStatus::ApiUnavailable));
         }
     }
+#endif
 
-    void DisconnectAudioInputSource(EMSCRIPTEN_WEBAUDIO_T sourceHandle)
+    // The Web Audio graph work behind the transactional publication. Both report
+    // failure instead of throwing: a JavaScript exception raised inside EM_ASM
+    // cannot be caught here, and the publication needs a verdict to roll back on.
+    // On a native build there is no graph, so both succeed trivially and the
+    // failure paths are covered directly through BrowserAudioInputPublication.
+    bool ReplaceAudioInputConnection(std::uint32_t previous, std::uint32_t next)
     {
-        EM_ASM({
-            if (typeof emscriptenGetAudioObject !== "function") {
-                throw new Error("emscriptenGetAudioObject is unavailable during audio input disconnect");
-            }
+#ifdef __EMSCRIPTEN__
+        // Before the worklet node exists there is nothing to attach to;
+        // AudioWorkletProcessorCreated connects whatever is claimed by then.
+        if (audioNode_ == 0) {
+            return true;
+        }
+        if (previous != 0 && !DisconnectAudioInputSource(previous)) {
+            return false;
+        }
+        return ConnectAudioInputSource(next);
+#else
+        (void)previous;
+        (void)next;
+        return true;
+#endif
+    }
+
+    bool DisconnectAudioInputSource(std::uint32_t sourceHandle)
+    {
+#ifdef __EMSCRIPTEN__
+        if (audioNode_ == 0) {
+            return true;
+        }
+        return EM_ASM_INT({
+            if (typeof emscriptenGetAudioObject !== "function") return 1;
             const source = emscriptenGetAudioObject($0);
             const destination = emscriptenGetAudioObject($1);
-            if (!source || !destination) {
-                throw new Error("audio input disconnect object lookup failed");
-            }
+            if (!source || !destination) return 2;
             try {
                 source.disconnect(destination);
             } catch (error) {
-                if (error && error.name === "InvalidAccessError") return;
-                throw error;
+                // Already disconnected is the state this asked for.
+                if (error && error.name === "InvalidAccessError") return 0;
+                return 3;
             }
-        }, sourceHandle, audioNode_);
-    }
+            return 0;
+        }, sourceHandle, audioNode_) == 0;
+#else
+        (void)sourceHandle;
+        return true;
 #endif
+    }
+
+    bool ConnectAudioInputSource(std::uint32_t sourceHandle)
+    {
+#ifdef __EMSCRIPTEN__
+        return EM_ASM_INT({
+            if (typeof emscriptenGetAudioObject !== "function") return 1;
+            const source = emscriptenGetAudioObject($0);
+            const destination = emscriptenGetAudioObject($1);
+            if (!source || !destination) return 2;
+            try {
+                source.connect(destination, 0, 0);
+            } catch (error) {
+                return 3;
+            }
+            return 0;
+        }, sourceHandle, audioNode_) == 0;
+#else
+        (void)sourceHandle;
+        return true;
+#endif
+    }
 
     std::atomic<std::uint64_t> timestampMicros_{0};
     std::atomic<std::int64_t> timestampEpochOffsetMicros_{0};
@@ -750,10 +854,7 @@ private:
     std::atomic<std::uint64_t> audioCallbackBlockMicros_{0};
     std::atomic<std::uint32_t> audioWorkletBlockCount_{0};
     std::atomic<std::uint32_t> audioWorkletPeakMicrounits_{0};
-    std::atomic<std::uint32_t> audioInputSourceHandle_{0};
-    std::atomic<std::uint32_t> audioInputPhysicalChannels_{0};
-    std::atomic<std::uint32_t> audioInputStatusCode_{
-        static_cast<std::uint32_t>(BrowserAudioInputStatus::NotRequested)};
+    BrowserAudioInputPublication audioInput_;
     AudioWorkletDeadlineMeter audioWorkletDeadlineMeter_;
     const std::size_t requestedAudioInputChannels_ = StaticAudioInputChannels();
     synth::Engine<App> engine_;

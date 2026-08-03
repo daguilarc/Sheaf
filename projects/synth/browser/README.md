@@ -82,7 +82,8 @@ An application declares how many input channels it addresses through
 - **The Audio page is the diagnostic surface.** For an input-capable
   application it shows one `System Default` input option and a status line that
   always leads with `Input requested N / active M`, followed by the current
-  state: permission denied, capture unavailable, missing prerequisite, stream
+  state: permission denied, capture unavailable, a secure context / permissions
+  policy / launch-owned `AudioContext` prerequisite named individually, stream
   ended, unreported channel count, or input channel shortfall. `Retry Input`
   appears only while capture is offline.
 - **Selection is host-neutral.** Selecting `System Default` commits the existing
@@ -95,10 +96,15 @@ An application declares how many input channels it addresses through
   only to the native worklet input bus — there is no host-created passthrough to
   `AudioContext.destination`, so nothing is monitored unless application DSP
   writes it to output.
-- **Input failure never stops output.** Denial, an ended stream, or a channel
-  shortfall clears the active count, leaves requested-but-inactive channels
-  reading as silence, and keeps the output callback, UI, persistence, and MIDI
-  running.
+- **Input failure never stops output.** Denial or an ended stream clears the
+  active count to zero; a channel shortfall is not a failure and keeps its `M`
+  active channels, with only the missing `N - M` reading as silence. In every
+  case requested-but-inactive channels read as silence and the output callback,
+  UI, persistence, and MIDI keep running.
+- **Unload releases capture without waiting.** A `pagehide` clears the native
+  active count, disconnects the source, and stops every track before the handler
+  returns, because a page being unloaded or frozen into the back/forward cache is
+  not required to run any promise continuation.
 
 ## Build and test
 

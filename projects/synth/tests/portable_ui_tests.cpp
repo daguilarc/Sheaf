@@ -1361,9 +1361,11 @@ static void TestOfflineInputCaptureOffersACaptionedRetryRow()
     Require(retry.kind == synth::ui::NodeKind::Button, "Retry Input is a button");
     Require(retry.label == "Retry Input", "the retry button names the action it performs");
     Require(retry.action.has_value() &&
-                retry.action->name == synth::runtime_ui::Actions::kAudioInputRetry &&
+                retry.action->name == std::string("audio-input-retry") &&
                 retry.action->value.empty(),
-            "the retry button dispatches the host-neutral retry action");
+            "the retry button dispatches the plan's host-neutral retry action name");
+    Require(std::string(synth::runtime_ui::Actions::kAudioInputRetry) == "audio-input-retry",
+            "the portable retry action keeps the interface's exact action name");
     Require(FindNode(tree, std::string(synth::runtime_ui::NodeIds::kAudioInputRetry) + ".caption").text ==
                 "Input capture",
             "the retry row carries a caption cell like the selectors above it");

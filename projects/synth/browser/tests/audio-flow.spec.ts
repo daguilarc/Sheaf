@@ -12,6 +12,9 @@ const INPUT_STATUS = {
   prerequisiteBlocked: 5,
   streamEnded: 6,
   channelCountUnreported: 7,
+  insecureContext: 8,
+  permissionsPolicyBlocked: 9,
+  audioContextUnavailable: 10,
 } as const;
 
 type CaptureScenario = {
@@ -23,21 +26,33 @@ type CaptureScenario = {
   secureContext?: boolean;
   omitAudioContext?: boolean;
   nativeStartFails?: boolean;
+  sourceConstructionThrows?: boolean;
+  registrationThrows?: boolean;
+  endTrackDuringRegistration?: boolean;
 };
 
-type CaptureStep = "retry" | "end-track" | "stop" | "stop-again" | "clear-fails" | "replace";
+type CaptureStep = "retry" | "end-track" | "stop" | "stop-again" | "clear-fails" | "replace" | "release-now";
 
 type CaptureRun = {
   started: { started: boolean; diagnostic?: string };
   constraints: unknown[];
   calls: string[];
-  registrations: Array<{ physicalChannels: number; statusCode: number; sourceIx: number }>;
-  inputState: { requestedChannels: number; activeChannels: number; statusCode: number; diagnostic: string };
+  registrations: Array<{ physicalChannels: number; statusCode: number; sourceIx: number; nativeHandle: number }>;
+  inputState: {
+    requestedChannels: number;
+    activeChannels: number;
+    statusCode: number;
+    diagnostic: string;
+    nativeHandle: number;
+  };
   sourceCount: number;
   sourceDisconnects: number[];
   trackStops: number[];
   nativeStarts: number;
   connectedSources: number;
+  // Everything observable the instant `releaseNow()` returned, before any
+  // promise continuation could run.
+  synchronousRelease?: { calls: string[]; sourceDisconnects: number[]; trackStops: number[] };
 };
 
 // One capture harness for every browser-input scenario: the AudioBridge under
@@ -52,15 +67,21 @@ async function runCapture(page: Page, scenario: CaptureScenario, steps: CaptureS
     const constraints: unknown[] = [];
     const tracks: any[] = [];
     const sources: any[] = [];
-    const registrations: Array<{ physicalChannels: number; statusCode: number; sourceIx: number }> = [];
+    const registrations: Array<{ physicalChannels: number; statusCode: number; sourceIx: number; nativeHandle: number }> = [];
     let nativeStarts = 0;
     let clearFails = false;
+    let synchronousRelease: { calls: string[]; sourceDisconnects: number[]; trackStops: number[] } | undefined;
+    // Stands in for the module-local `emscriptenRegisterAudioObject` cache: one
+    // stable handle per node, minted on first registration.
+    const nativeHandles = new Map<unknown, number>();
+    let nextNativeHandle = 90;
 
     const makeStream = () => {
       const track: any = {
         stops: 0,
         onended: null,
-        stop() { track.stops += 1; calls.push("track:stop"); },
+        readyState: "live",
+        stop() { track.stops += 1; track.readyState = "ended"; calls.push("track:stop"); },
       };
       if (!scenario.omitTrackSettings) {
         track.getSettings = () => (scenario.trackChannelCount === null || scenario.trackChannelCount === undefined
@@ -93,6 +114,7 @@ async function runCapture(page: Page, scenario: CaptureScenario, steps: CaptureS
       sampleRate: 48_000,
       createMediaStreamSource(stream: unknown) {
         calls.push("createMediaStreamSource");
+        if (scenario.sourceConstructionThrows) throw new Error("media stream source construction failed");
         const source: any = {
           stream,
           channelCount: scenario.sourceChannelCount ?? 2,
@@ -117,10 +139,22 @@ async function runCapture(page: Page, scenario: CaptureScenario, steps: CaptureS
       },
       async setAudioInputSource(source: unknown, physicalChannels: number, statusCode: number) {
         calls.push(`setAudioInputSource:${physicalChannels}:${statusCode}`);
-        registrations.push({ physicalChannels, statusCode, sourceIx: sources.indexOf(source) });
+        if (scenario.endTrackDuringRegistration) tracks[tracks.length - 1].onended();
+        if (scenario.registrationThrows) throw new Error("runtime rejected the audio input source");
+        let nativeHandle = nativeHandles.get(source);
+        if (nativeHandle === undefined) {
+          nativeHandle = ++nextNativeHandle;
+          nativeHandles.set(source, nativeHandle);
+        }
+        registrations.push({ physicalChannels, statusCode, sourceIx: sources.indexOf(source), nativeHandle });
+        return nativeHandle;
       },
       async clearAudioInputSource(statusCode: number) {
         calls.push(`clearAudioInputSource:${statusCode}`);
+        if (clearFails) throw new Error("runtime is destroyed");
+      },
+      clearAudioInputSourceNow(statusCode: number) {
+        calls.push(`clearAudioInputSourceNow:${statusCode}`);
         if (clearFails) throw new Error("runtime is destroyed");
       },
     };
@@ -135,6 +169,16 @@ async function runCapture(page: Page, scenario: CaptureScenario, steps: CaptureS
         await bridge.whenInputSettled();
       }
       if (step === "clear-fails") clearFails = true;
+      // Unload gives no chance to await: everything observable has to have
+      // happened by the time `releaseNow()` returns.
+      if (step === "release-now") {
+        bridge.releaseNow();
+        synchronousRelease = {
+          calls: [...calls],
+          sourceDisconnects: sources.map((source: any) => source.disconnects),
+          trackStops: tracks.map((track: any) => track.stops),
+        };
+      }
       if (step === "stop" || step === "stop-again") await bridge.stop();
       // The launcher replacing one application with another on the same page:
       // the outgoing bridge is stopped and a fresh one starts against the same
@@ -156,6 +200,7 @@ async function runCapture(page: Page, scenario: CaptureScenario, steps: CaptureS
       trackStops: tracks.map((track: any) => track.stops),
       nativeStarts,
       connectedSources: sources.filter((source: any) => source.connects > 0).length,
+      synchronousRelease,
     };
   }, { scenario, steps });
 }
@@ -171,6 +216,7 @@ test("never touches the media device API for a zero-input application", async ({
     activeChannels: 0,
     statusCode: INPUT_STATUS.notRequested,
     diagnostic: "",
+    nativeHandle: 0,
   });
 });
 
@@ -193,12 +239,15 @@ test("requests System Default capture with the pinned multichannel constraints b
     `setAudioInputSource:4:${INPUT_STATUS.online}`,
     "startAudioWorklet",
   ]);
-  expect(result.registrations).toEqual([{ physicalChannels: 4, statusCode: INPUT_STATUS.online, sourceIx: 0 }]);
+  expect(result.registrations).toEqual([
+    { physicalChannels: 4, statusCode: INPUT_STATUS.online, sourceIx: 0, nativeHandle: 91 },
+  ]);
   expect(result.inputState).toEqual({
     requestedChannels: 4,
     activeChannels: 4,
     statusCode: INPUT_STATUS.online,
     diagnostic: "",
+    nativeHandle: 91,
   });
   // The native worklet input bus is the only path from capture into the graph.
   expect(result.connectedSources).toBe(0);
@@ -207,19 +256,24 @@ test("requests System Default capture with the pinned multichannel constraints b
 test("clamps a device that supplies more channels than the application requested", async ({ page }) => {
   const result = await runCapture(page, { requestedChannels: 2, trackChannelCount: 6 });
 
-  expect(result.registrations).toEqual([{ physicalChannels: 2, statusCode: INPUT_STATUS.online, sourceIx: 0 }]);
+  expect(result.registrations).toEqual([
+    { physicalChannels: 2, statusCode: INPUT_STATUS.online, sourceIx: 0, nativeHandle: 91 },
+  ]);
   expect(result.inputState.activeChannels).toBe(2);
 });
 
 test("reports a channel shortfall through the published active count", async ({ page }) => {
   const result = await runCapture(page, { requestedChannels: 4, trackChannelCount: 1 });
 
-  expect(result.registrations).toEqual([{ physicalChannels: 1, statusCode: INPUT_STATUS.online, sourceIx: 0 }]);
+  expect(result.registrations).toEqual([
+    { physicalChannels: 1, statusCode: INPUT_STATUS.online, sourceIx: 0, nativeHandle: 91 },
+  ]);
   expect(result.inputState).toEqual({
     requestedChannels: 4,
     activeChannels: 1,
     statusCode: INPUT_STATUS.online,
     diagnostic: "",
+    nativeHandle: 91,
   });
 });
 
@@ -230,12 +284,14 @@ test("falls back to the source node count and a distinct status when the track o
     physicalChannels: 2,
     statusCode: INPUT_STATUS.channelCountUnreported,
     sourceIx: 0,
+    nativeHandle: 91,
   }]);
   expect(result.inputState).toEqual({
     requestedChannels: 4,
     activeChannels: 2,
     statusCode: INPUT_STATUS.channelCountUnreported,
     diagnostic: "channel-count-unreported",
+    nativeHandle: 91,
   });
 });
 
@@ -246,6 +302,7 @@ test("falls back to one channel when neither the track nor the source node repor
     physicalChannels: 1,
     statusCode: INPUT_STATUS.channelCountUnreported,
     sourceIx: 0,
+    nativeHandle: 91,
   }]);
   expect(result.inputState.activeChannels).toBe(1);
 });
@@ -267,10 +324,10 @@ test("keeps output live and distinguishes each offline capture state", async ({ 
     expect(result.inputState.requestedChannels).toBe(4);
   }
   expect(denied.inputState).toMatchObject({ statusCode: INPUT_STATUS.permissionDenied, diagnostic: "permission-denied" });
-  expect(blocked.inputState).toMatchObject({ statusCode: INPUT_STATUS.prerequisiteBlocked, diagnostic: "capture-blocked" });
+  expect(blocked.inputState).toMatchObject({ statusCode: INPUT_STATUS.permissionsPolicyBlocked, diagnostic: "capture-blocked" });
   expect(missingApi.inputState).toMatchObject({ statusCode: INPUT_STATUS.apiUnavailable, diagnostic: "media-devices-unavailable" });
-  expect(insecure.inputState).toMatchObject({ statusCode: INPUT_STATUS.prerequisiteBlocked, diagnostic: "insecure-context" });
-  expect(noContext.inputState).toMatchObject({ statusCode: INPUT_STATUS.prerequisiteBlocked, diagnostic: "audio-context-unavailable" });
+  expect(insecure.inputState).toMatchObject({ statusCode: INPUT_STATUS.insecureContext, diagnostic: "insecure-context" });
+  expect(noContext.inputState).toMatchObject({ statusCode: INPUT_STATUS.audioContextUnavailable, diagnostic: "audio-context-unavailable" });
   expect(unavailable.inputState).toMatchObject({ statusCode: INPUT_STATUS.apiUnavailable, diagnostic: "capture-failed:NotFoundError" });
   expect(noTrack.inputState).toMatchObject({ statusCode: INPUT_STATUS.streamEnded, diagnostic: "no-audio-track" });
   // Neither a missing API, an insecure context, nor a missing AudioContext may
@@ -297,6 +354,7 @@ test("releases an ended stream once, clears the native count first, and leaves o
     activeChannels: 0,
     statusCode: INPUT_STATUS.streamEnded,
     diagnostic: "stream-ended",
+    nativeHandle: 0,
   });
 });
 
@@ -306,15 +364,17 @@ test("retries capture into the existing context and runtime without restarting t
   expect(result.nativeStarts).toBe(1);
   expect(result.sourceCount).toBe(2);
   expect(result.registrations).toEqual([
-    { physicalChannels: 2, statusCode: INPUT_STATUS.online, sourceIx: 0 },
-    { physicalChannels: 2, statusCode: INPUT_STATUS.online, sourceIx: 1 },
+    { physicalChannels: 2, statusCode: INPUT_STATUS.online, sourceIx: 0, nativeHandle: 91 },
+    { physicalChannels: 2, statusCode: INPUT_STATUS.online, sourceIx: 1, nativeHandle: 92 },
   ]);
   expect(result.trackStops).toEqual([1, 0]);
+  // The retained identity is the replacement's, not the released source's.
   expect(result.inputState).toEqual({
     requestedChannels: 2,
     activeChannels: 2,
     statusCode: INPUT_STATUS.online,
     diagnostic: "",
+    nativeHandle: 92,
   });
 });
 
@@ -341,7 +401,7 @@ test("stops every track exactly once across repeated stops", async ({ page }) =>
   expect(result.sourceDisconnects).toEqual([1]);
   expect(result.calls.filter((call) => call.startsWith("clearAudioInputSource"))).toEqual([
     `clearAudioInputSource:${INPUT_STATUS.requesting}`,
-    `clearAudioInputSource:${INPUT_STATUS.notRequested}`,
+    `clearAudioInputSourceNow:${INPUT_STATUS.notRequested}`,
   ]);
 });
 
@@ -353,15 +413,108 @@ test("releases the replaced application's capture exactly once and gives its suc
   expect(result.sourceDisconnects).toEqual([1, 0]);
   expect(result.nativeStarts).toBe(2);
   expect(result.registrations).toEqual([
-    { physicalChannels: 2, statusCode: INPUT_STATUS.online, sourceIx: 0 },
-    { physicalChannels: 2, statusCode: INPUT_STATUS.online, sourceIx: 1 },
+    { physicalChannels: 2, statusCode: INPUT_STATUS.online, sourceIx: 0, nativeHandle: 91 },
+    { physicalChannels: 2, statusCode: INPUT_STATUS.online, sourceIx: 1, nativeHandle: 92 },
   ]);
   expect(result.inputState).toEqual({
     requestedChannels: 2,
     activeChannels: 2,
     statusCode: INPUT_STATUS.online,
     diagnostic: "",
+    nativeHandle: 92,
   });
+});
+
+test("reuses one native handle for a re-registered node and clears the retained identity on release", async ({ page }) => {
+  const reregistered = await runCapture(page, { requestedChannels: 2, trackChannelCount: 2 }, ["retry"]);
+  const released = await runCapture(page, { requestedChannels: 2, trackChannelCount: 2 }, ["stop"]);
+
+  // Each acquisition builds a new source node, so each gets its own handle: the
+  // bridge retains the handle its current registration returned, never a stale one.
+  expect(reregistered.registrations.map((entry) => entry.nativeHandle)).toEqual([91, 92]);
+  expect(reregistered.inputState.nativeHandle).toBe(92);
+  expect(released.inputState.nativeHandle).toBe(0);
+});
+
+test("releases capture synchronously when the page unloads, before any promise continuation runs", async ({ page }) => {
+  const result = await runCapture(page, { requestedChannels: 2, trackChannelCount: 2 }, ["release-now", "stop"]);
+
+  expect(result.synchronousRelease).toEqual({
+    calls: [
+      "audioInputChannels",
+      `clearAudioInputSource:${INPUT_STATUS.requesting}`,
+      "getUserMedia",
+      "createMediaStreamSource",
+      `setAudioInputSource:2:${INPUT_STATUS.online}`,
+      "startAudioWorklet",
+      `clearAudioInputSourceNow:${INPUT_STATUS.notRequested}`,
+      "source:disconnect",
+      "track:stop",
+    ],
+    sourceDisconnects: [1],
+    trackStops: [1],
+  });
+  // A stop that follows the unload release changes nothing.
+  expect(result.trackStops).toEqual([1]);
+  expect(result.sourceDisconnects).toEqual([1]);
+  expect(result.inputState.nativeHandle).toBe(0);
+});
+
+test("releases the stream when the source node cannot be constructed", async ({ page }) => {
+  const result = await runCapture(page, { requestedChannels: 2, trackChannelCount: 2, sourceConstructionThrows: true });
+
+  expect(result.started).toEqual({ started: true });
+  expect(result.trackStops).toEqual([1]);
+  expect(result.registrations).toEqual([]);
+  expect(result.inputState).toMatchObject({
+    activeChannels: 0,
+    statusCode: INPUT_STATUS.apiUnavailable,
+    diagnostic: "input-registration-failed",
+    nativeHandle: 0,
+  });
+});
+
+test("releases the source and stream when native registration throws", async ({ page }) => {
+  const result = await runCapture(page, { requestedChannels: 2, trackChannelCount: 2, registrationThrows: true });
+
+  expect(result.started).toEqual({ started: true });
+  expect(result.sourceDisconnects).toEqual([1]);
+  expect(result.trackStops).toEqual([1]);
+  expect(result.registrations).toEqual([]);
+  expect(result.calls).toContain(`clearAudioInputSource:${INPUT_STATUS.apiUnavailable}`);
+  expect(result.inputState).toMatchObject({
+    activeChannels: 0,
+    statusCode: INPUT_STATUS.apiUnavailable,
+    diagnostic: "input-registration-failed",
+    nativeHandle: 0,
+  });
+});
+
+test("does not stay online when the track ends while registration is awaited", async ({ page }) => {
+  const result = await runCapture(page, {
+    requestedChannels: 2,
+    trackChannelCount: 2,
+    endTrackDuringRegistration: true,
+  });
+
+  expect(result.started).toEqual({ started: true });
+  expect(result.sourceDisconnects).toEqual([1]);
+  expect(result.trackStops).toEqual([1]);
+  expect(result.inputState).toEqual({
+    requestedChannels: 2,
+    activeChannels: 0,
+    statusCode: INPUT_STATUS.streamEnded,
+    diagnostic: "stream-ended",
+    nativeHandle: 0,
+  });
+  // The native claim taken during registration is dropped before the source goes.
+  expect(result.calls.slice(result.calls.indexOf(`setAudioInputSource:2:${INPUT_STATUS.online}`))).toEqual([
+    `setAudioInputSource:2:${INPUT_STATUS.online}`,
+    `clearAudioInputSource:${INPUT_STATUS.streamEnded}`,
+    "source:disconnect",
+    "track:stop",
+    "startAudioWorklet",
+  ]);
 });
 
 test("releases capture when the runtime rejects the teardown clear", async ({ page }) => {

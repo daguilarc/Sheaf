@@ -14,6 +14,15 @@ namespace synth_browser {
 // `synth_browser_set_audio_input_source` / `synth_browser_clear_audio_input_source`.
 // The numeric order IS the ABI status code and is mirrored by
 // `browser/src/audio.ts`, so entries may be appended but never reordered.
+//
+// `InsecureContext` through `AudioContextUnavailable` were appended after the
+// generic `PrerequisiteBlocked` so sbw-10's "report the missing prerequisite by
+// name" is answered on the Audio page itself rather than only in a JavaScript
+// diagnostic. Appending is deliberately compatible: `negotiateRuntimeVersions`
+// requires the module and the launcher runtime to declare the same browser ABI
+// version, so a module that predates these codes is never handed one. The
+// generic `PrerequisiteBlocked` stays valid for the same reason -- an already
+// shipped code is not withdrawn -- even though the host now names its causes.
 enum class BrowserAudioInputStatus : std::uint32_t {
     NotRequested,
     Requesting,
@@ -22,7 +31,10 @@ enum class BrowserAudioInputStatus : std::uint32_t {
     ApiUnavailable,
     PrerequisiteBlocked,
     StreamEnded,
-    ChannelCountUnreported
+    ChannelCountUnreported,
+    InsecureContext,
+    PermissionsPolicyBlocked,
+    AudioContextUnavailable
 };
 
 inline bool BrowserAudioInputStatusCodeValid(std::uint32_t statusCode) noexcept
@@ -37,6 +49,9 @@ inline bool BrowserAudioInputStatusCodeValid(std::uint32_t statusCode) noexcept
         case BrowserAudioInputStatus::PrerequisiteBlocked:
         case BrowserAudioInputStatus::StreamEnded:
         case BrowserAudioInputStatus::ChannelCountUnreported:
+        case BrowserAudioInputStatus::InsecureContext:
+        case BrowserAudioInputStatus::PermissionsPolicyBlocked:
+        case BrowserAudioInputStatus::AudioContextUnavailable:
             return true;
     }
     return false;
@@ -74,6 +89,9 @@ inline bool BrowserAudioInputOffline(BrowserAudioInputStatus status) noexcept
         case BrowserAudioInputStatus::ApiUnavailable:
         case BrowserAudioInputStatus::PrerequisiteBlocked:
         case BrowserAudioInputStatus::StreamEnded:
+        case BrowserAudioInputStatus::InsecureContext:
+        case BrowserAudioInputStatus::PermissionsPolicyBlocked:
+        case BrowserAudioInputStatus::AudioContextUnavailable:
             return true;
         case BrowserAudioInputStatus::Requesting:
         case BrowserAudioInputStatus::Online:
@@ -98,12 +116,17 @@ inline std::string BrowserAudioInputStatusText(BrowserAudioInputStatus status)
         case BrowserAudioInputStatus::ApiUnavailable:
             return "microphone capture unavailable";
         case BrowserAudioInputStatus::PrerequisiteBlocked:
-            return "microphone requires a secure context and a same-origin microphone "
-                   "permissions policy";
+            return "microphone prerequisite unavailable";
         case BrowserAudioInputStatus::StreamEnded:
             return "microphone stream ended";
         case BrowserAudioInputStatus::ChannelCountUnreported:
             return "microphone channel count unreported";
+        case BrowserAudioInputStatus::InsecureContext:
+            return "microphone requires a secure context";
+        case BrowserAudioInputStatus::PermissionsPolicyBlocked:
+            return "microphone blocked by permissions policy";
+        case BrowserAudioInputStatus::AudioContextUnavailable:
+            return "microphone requires the launch-owned AudioContext";
     }
     return {};
 }
@@ -114,6 +137,14 @@ inline std::string BrowserAudioInputStatusText(BrowserAudioInputStatus status)
 // appended rather than folded into a single state.
 inline std::string BrowserAudioInputDetail(const BrowserAudioInputState& input)
 {
+    // An application that asked for no input makes no input claim at all, so it
+    // gets no capture detail either: "capture not started" is only news to an
+    // application that wanted capture. Guarding here keeps the page builder and
+    // the services status line -- which composes this detail itself -- agreed.
+    if (input.requestedChannels == 0)
+    {
+        return {};
+    }
     std::string detail = BrowserAudioInputStatusText(input.status);
     if (BrowserAudioInputCaptureLive(input.status) && input.activeChannels < input.requestedChannels)
     {

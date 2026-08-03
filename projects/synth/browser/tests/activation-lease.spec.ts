@@ -343,7 +343,7 @@ test("an input-capable leased app discovers its request after module load, retri
       kind: NodeKind.Button,
       bounds: [0, 0, 200, 60],
       label: "Retry Input",
-      action: { name: "runtime.audio.input.retry", value: "" },
+      action: { name: "audio-input-retry", value: "" },
     },
   ]);
   const result = await page.evaluate(async (bytes) => {
@@ -372,8 +372,9 @@ test("an input-capable leased app discovers its request after module load, retri
           events.push(`getUserMedia:${requested.audio.channelCount.ideal}`);
           const track = {
             onended: null as null | (() => void),
+            readyState: "live",
             getSettings: () => ({ channelCount: 2 }),
-            stop() { events.push("track:stop"); },
+            stop() { track.readyState = "ended"; events.push("track:stop"); },
           };
           tracks.push(track);
           return { getAudioTracks: () => [track], getTracks: () => [track] };
@@ -404,8 +405,10 @@ test("an input-capable leased app discovers its request after module load, retri
       },
       async setAudioInputSource(_source: unknown, physicalChannels: number, statusCode: number) {
         events.push(`setAudioInputSource:${physicalChannels}:${statusCode}`);
+        return 91;
       },
       async clearAudioInputSource(statusCode: number) { events.push(`clearAudioInputSource:${statusCode}`); },
+      clearAudioInputSourceNow(statusCode: number) { events.push(`clearAudioInputSourceNow:${statusCode}`); },
       async consumeAudioInputRetry() {
         const pending = retryPending;
         retryPending = false;
@@ -435,9 +438,14 @@ test("an input-capable leased app discovers its request after module load, retri
     await settle();
     const afterRetry = [...events];
 
+    // Unload gives no chance to await, so everything observable has to have
+    // happened by the time the dispatched event returns.
+    dispatchEvent(new Event("pagehide"));
+    const synchronousUnload = [...events];
+    dispatchEvent(new Event("pagehide"));
     await app.stop();
     await app.stop();
-    return { afterStart, ignoredRetry, afterRetry, events, trackCount: tracks.length };
+    return { afterStart, ignoredRetry, afterRetry, synchronousUnload, events, trackCount: tracks.length };
   }, Array.from(new Uint8Array(frame)));
 
   // Discovery only happens once the module is loaded, the runtime created, and
@@ -454,10 +462,10 @@ test("an input-capable leased app discovers its request after module load, retri
     "startAudioWorklet",
   ]);
   // A UI action with no armed retry must not re-prompt.
-  expect(result.ignoredRetry).toEqual([...result.afterStart, "dispatch:runtime.audio.input.retry"]);
+  expect(result.ignoredRetry).toEqual([...result.afterStart, "dispatch:audio-input-retry"]);
   expect(result.afterRetry).toEqual([
     ...result.ignoredRetry,
-    "dispatch:runtime.audio.input.retry",
+    "dispatch:audio-input-retry",
     "clearAudioInputSource:1",
     "source:disconnect",
     "track:stop",
@@ -466,10 +474,17 @@ test("an input-capable leased app discovers its request after module load, retri
     "setAudioInputSource:2:2",
   ]);
   expect(result.trackCount).toBe(2);
+  // A dispatched pagehide releases capture synchronously, in the required
+  // clear-native -> disconnect -> track-stop order.
+  expect(result.synchronousUnload.slice(result.afterRetry.length)).toEqual([
+    "clearAudioInputSourceNow:0",
+    "source:disconnect",
+    "track:stop",
+  ]);
   // Teardown clears the native active count before the runtime is destroyed and
   // the leased context is closed, and repeats do nothing.
   expect(result.events.slice(result.afterRetry.length)).toEqual([
-    "clearAudioInputSource:0",
+    "clearAudioInputSourceNow:0",
     "source:disconnect",
     "track:stop",
     "terminate",
