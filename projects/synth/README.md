@@ -602,6 +602,37 @@ prefix keeps its own logical position — nothing is compacted — and
 `AudioInputView::HasActiveChannel` reports it unavailable while
 `SampleOrSilence` returns zero without dereferencing it. The runtime creates no
 input-to-output monitoring path: output is whatever the application writes.
+Browser hosts apply their own platform limit and reject requests above 32
+before prompting for capture or starting audio.
+
+Application DSP reads input through the callback-lifetime view returned by
+`block.InputView()`. Strict accessors (`Channel`, `Frame`, and `Sample`) are for
+channels the host reports as active and non-null; `SampleOrSilence` is the
+defined path for optional channels, shortfalls, counted null pointers, and
+out-of-range frames. Do not retain an `AudioInputView`, `AudioInputFrameView`,
+or `std::span` from `Channel()` after `ProcessBlock` returns.
+
+```cpp
+void ProcessBlock(synth::AudioBlock& block) {
+    const auto input = block.InputView();
+
+    if (input.HasActiveChannel(0)) {
+        const std::span<const float> channel0 = input.Channel(0);
+        const float firstSample = channel0.empty() ? 0.0f : channel0[0];
+        (void) firstSample;
+    }
+
+    for (std::size_t frame = 0; frame < block.numFrames; ++frame) {
+        const auto frameView = input.Frame(frame);
+        const float left = input.SampleOrSilence(0, frame)
+            + 0.5f * input.SampleOrSilence(2, frame);
+        const float right = frameView.SampleOrSilence(1)
+            - frameView.SampleOrSilence(3);
+        if (block.numOutputChannels > 0) block.outputs[0][frame] = left;
+        if (block.numOutputChannels > 1) block.outputs[1][frame] = right;
+    }
+}
+```
 
 An application declaring zero inputs opens no input path at all. The runtime
 passes `0` as the input channel count to `AudioDeviceManager`, so JUCE selects

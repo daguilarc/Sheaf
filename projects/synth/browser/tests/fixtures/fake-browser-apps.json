@@ -6,6 +6,17 @@
   },
   "apps": [
     {
+      "appId": "audio-input-probe-app",
+      "displayName": "Audio Input Probe App",
+      "author": "Sheaf Tests",
+      "category": "Instrument",
+      "header": "AudioInputProbeApp.hpp",
+      "cppType": "synth_browser::test::AudioInputProbeApp",
+      "includeDirs": [
+        "tests/fixtures/cpp"
+      ]
+    },
+    {
       "appId": "fake-browser-app",
       "displayName": "Generic Fake App",
       "author": "Sheaf Tests",

@@ -32,12 +32,28 @@ async function installInstrumentedLauncher(page: Page): Promise<void> {
       commands: [] as string[],
       fallbackMessages: [] as string[],
       audioWorkletNodeNames: [] as string[],
+      audioWorkletNodeOptions: [] as Array<{ numberOfInputs?: number; channelCount?: number; channelCountMode?: string; channelInterpretation?: string }>,
+      audioConfigs: [] as Array<{ channels: number; inputChannels?: number }>,
+      audioInputChannels: [] as number[],
+      getUserMediaCalls: 0,
+      mediaStreamSourceCreations: 0,
+      inputSourceRegistrations: 0,
       memoryAtCallbackStart: 0,
       memoryAfterCallbackProgress: 0,
       module: undefined as any,
       runtime: undefined as any,
     };
     (window as any).__firstPartyAcceptance = observations;
+
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        async getUserMedia() {
+          observations.getUserMediaCalls += 1;
+          throw Object.assign(new Error("zero-input app requested microphone"), { name: "NotAllowedError" });
+        },
+      },
+    });
 
     const nativePostMessage = MessagePort.prototype.postMessage;
     (MessagePort.prototype as any).postMessage = function(message: unknown, options?: StructuredSerializeOptions) {
@@ -56,6 +72,13 @@ async function installInstrumentedLauncher(page: Page): Promise<void> {
       value: new Proxy(NativeAudioWorkletNode, {
         construct(target, argumentsList, newTarget) {
           observations.audioWorkletNodeNames.push(String(argumentsList[1]));
+          const options = argumentsList[2] as AudioWorkletNodeOptions | undefined;
+          observations.audioWorkletNodeOptions.push({
+            numberOfInputs: options?.numberOfInputs,
+            channelCount: options?.channelCount,
+            channelCountMode: options?.channelCountMode,
+            channelInterpretation: options?.channelInterpretation,
+          });
           return Reflect.construct(target, argumentsList, newTarget);
         },
       }),
@@ -79,6 +102,11 @@ async function installInstrumentedLauncher(page: Page): Promise<void> {
         if (state.contexts !== 0) throw new Error("second AudioContext");
         const context = new AudioContext();
         state.contexts += 1;
+        const nativeCreateMediaStreamSource = context.createMediaStreamSource.bind(context);
+        context.createMediaStreamSource = ((...args: Parameters<AudioContext["createMediaStreamSource"]>) => {
+          state.mediaStreamSourceCreations += 1;
+          return nativeCreateMediaStreamSource(...args);
+        }) as AudioContext["createMediaStreamSource"];
         const nativeResume = context.resume.bind(context);
         context.resume = async () => {
           state.resumes += 1;
@@ -112,6 +140,21 @@ async function installInstrumentedLauncher(page: Page): Promise<void> {
                   state.memoryAtCallbackStart = module.HEAPU8.buffer.byteLength;
                   return nativeStart(...args);
                 };
+                const nativeAudioInputChannels = module._synth_browser_audio_input_channels?.bind(module);
+                if (nativeAudioInputChannels) {
+                  module._synth_browser_audio_input_channels = (...args: unknown[]) => {
+                    const channels = nativeAudioInputChannels(...args);
+                    state.audioInputChannels.push(channels);
+                    return channels;
+                  };
+                }
+                const nativeSetAudioInputSource = module._synth_browser_set_audio_input_source?.bind(module);
+                if (nativeSetAudioInputSource) {
+                  module._synth_browser_set_audio_input_source = (...args: unknown[]) => {
+                    state.inputSourceRegistrations += 1;
+                    return nativeSetAudioInputSource(...args);
+                  };
+                }
                 return module;
               },
             };
@@ -120,7 +163,11 @@ async function installInstrumentedLauncher(page: Page): Promise<void> {
           ...runtime,
           async request(command: { type: string }) {
             state.commands.push(command.type);
-            return runtime.request(command);
+            const response = await runtime.request(command);
+            if (command.type === "audio-config" && response.type === "audio-config") {
+              state.audioConfigs.push({ channels: response.channels, inputChannels: response.inputChannels });
+            }
+            return response;
           },
         };
         state.runtime = instrumented;
@@ -229,6 +276,20 @@ for (const app of firstPartyApps) {
       expect(observations.fallbackMessages).toEqual([]);
       expect(observations.audioWorkletNodeNames).toContain("sheaf-synth-audio");
       expect(observations.audioWorkletNodeNames).not.toContain("synth-audio-ring-buffer");
+      expect(observations.audioWorkletNodeOptions).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          numberOfInputs: 0,
+          channelCount: 2,
+          channelCountMode: "explicit",
+        }),
+      ]));
+      expect(observations.audioConfigs).toEqual(expect.arrayContaining([
+        expect.objectContaining({ channels: 2 }),
+      ]));
+      expect(observations.audioInputChannels).toEqual(expect.arrayContaining([0]));
+      expect(observations.getUserMediaCalls).toBe(0);
+      expect(observations.mediaStreamSourceCreations).toBe(0);
+      expect(observations.inputSourceRegistrations).toBe(0);
 
       const packageRequests = requests.filter((pathname) => pathname.includes("/packages/"));
       expect(packageRequests).toEqual(expect.arrayContaining([

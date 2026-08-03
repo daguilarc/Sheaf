@@ -30,9 +30,21 @@ export type { FrameNode, FrameObservation };
 export const FIXTURE_APPS = {
   standard: { appId: "fake-browser-app", displayName: "Generic Fake App", uiHeight: 480 },
   tall: { appId: "tall-fake-browser-app", displayName: "Tall Generic Fake App", uiHeight: 720 },
+  audioInputProbe: { appId: "audio-input-probe-app", displayName: "Audio Input Probe App", uiHeight: 480 },
 } as const;
 
 export type FixtureApp = (typeof FIXTURE_APPS)[keyof typeof FIXTURE_APPS];
+
+export type AudioInputFixture = {
+  capture: "deterministic" | "denied";
+  physicalChannels: number;
+  channelValues: readonly number[];
+  omitTrackChannelCount?: boolean;
+};
+
+export type InstallRealFakeAppOptions = {
+  audioInput?: AudioInputFixture;
+};
 
 export async function builtFakeCatalogApp(app: FixtureApp = FIXTURE_APPS.standard) {
   const { createHash } = await (new Function("return import('node:crypto')")() as Promise<{
@@ -80,6 +92,7 @@ export async function builtFakeCatalogApp(app: FixtureApp = FIXTURE_APPS.standar
 export async function installRealFakeApp(
   page: Page,
   app: FixtureApp = FIXTURE_APPS.standard,
+  options: InstallRealFakeAppOptions = {},
 ): Promise<void> {
   const application = await builtFakeCatalogApp(app);
   await page.route("**/dist/src/main.js*", (route) => {
@@ -87,7 +100,8 @@ export async function installRealFakeApp(
     return route.fulfill({ status: 200, contentType: "application/javascript", body: "" });
   });
   await page.goto("http://127.0.0.1:4174/public/index.html");
-  await page.evaluate(async (application) => {
+  await page.evaluate(async ({ application, options }) => {
+    const audioInputFixture = options.audioInput;
     const controllerWizardMidi = (window as any).__controllerWizardMidi ??= {
       access: { inputs: new Map(), outputs: new Map(), onstatechange: null },
     };
@@ -114,8 +128,95 @@ export async function installRealFakeApp(
       runtimeClients: 0,
       nodeConnects: 0,
       nodeDisconnects: 0,
+      inputSourceConnects: 0,
+      inputSourceDisconnects: 0,
+      inputSourceRegistrations: [] as Array<{ physicalChannels: number; statusCode: number; nativeHandle: number }>,
+      inputSourceClears: [] as number[],
+      getUserMediaCalls: 0,
+      getUserMediaConstraints: [] as unknown[],
+      mediaStreamSourceCreations: 0,
+      inputTrackStops: 0,
+      inputTrackEnds: 0,
+      audioWorkletNodeOptions: [] as Array<{ numberOfInputs?: number; channelCount?: number; channelCountMode?: string; channelInterpretation?: string }>,
       materializations: 0,
       packageDisposals: 0,
+    };
+    const audioInputTracks: Array<{ readyState: string; onended: null | (() => void); stop(): void }> = [];
+    const deterministicSources: Array<{ stop(): void }> = [];
+
+    if (audioInputFixture) {
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: {
+          async getUserMedia(requested: unknown) {
+            resources.getUserMediaCalls += 1;
+            resources.getUserMediaConstraints.push(requested);
+            if (audioInputFixture.capture === "denied") {
+              throw Object.assign(new Error("denied"), { name: "NotAllowedError" });
+            }
+            const track = {
+              readyState: "live",
+              onended: null as null | (() => void),
+              getSettings: () => audioInputFixture.omitTrackChannelCount
+                ? {}
+                : { channelCount: audioInputFixture.physicalChannels },
+              stop() {
+                if (track.readyState === "ended") return;
+                track.readyState = "ended";
+                resources.inputTrackStops += 1;
+              },
+            };
+            audioInputTracks.push(track);
+            return { getAudioTracks: () => [track], getTracks: () => [track] };
+          },
+        },
+      });
+    }
+
+    const createDeterministicInputSource = (context: AudioContext, fixture: AudioInputFixture): AudioNode => {
+      const outputChannels = Math.max(1, fixture.channelValues.length, fixture.physicalChannels);
+      const merger = new ChannelMergerNode(context, { numberOfInputs: outputChannels }) as ChannelMergerNode & {
+        __sheafStopInputFixture?: () => void;
+      };
+      try {
+        Object.defineProperty(merger, "channelCount", {
+          configurable: true,
+          value: Math.max(1, fixture.physicalChannels),
+        });
+      } catch {
+        // Some browsers expose AudioNode.channelCount as a non-configurable
+        // accessor. The native callback still receives the merger's real
+        // channel shape; only the unreported-count fallback loses this override.
+      }
+      const nativeConnect = merger.connect.bind(merger) as (...args: unknown[]) => AudioNode;
+      const nativeDisconnect = merger.disconnect.bind(merger) as (...args: unknown[]) => void;
+      const instrumentedMerger = merger as unknown as {
+        connect: (...args: unknown[]) => AudioNode;
+        disconnect: (...args: unknown[]) => void;
+      };
+      instrumentedMerger.connect = (...args: unknown[]) => {
+        resources.inputSourceConnects += 1;
+        return nativeConnect(...args);
+      };
+      instrumentedMerger.disconnect = (...args: unknown[]) => {
+        resources.inputSourceDisconnects += 1;
+        return nativeDisconnect(...args);
+      };
+
+      const constants = fixture.channelValues.map((value, channel) => {
+        const source = new ConstantSourceNode(context, { offset: value });
+        source.connect(merger, 0, channel);
+        source.start();
+        return source;
+      });
+      merger.__sheafStopInputFixture = () => {
+        for (const source of constants) {
+          try { source.stop(); } catch {}
+          try { source.disconnect(); } catch {}
+        }
+      };
+      deterministicSources.push({ stop: merger.__sheafStopInputFixture });
+      return merger;
     };
 
     const createObservedRuntimeClient = () => {
@@ -151,12 +252,12 @@ export async function installRealFakeApp(
         };
       }, undefined, (response: any) => statusHandlers.forEach((handler) => handler(response)));
       let queue: Promise<void> = Promise.resolve();
-      const request = (command: any) => {
-        const run = () => runtime.handle(command);
+      const enqueue = <T>(run: () => Promise<T>) => {
         const response = queue.then(run, run);
         queue = response.then(() => {}, () => {});
         return response;
       };
+      const request = (command: any): Promise<any> => enqueue(() => runtime.handle(command));
       return {
         request,
         startAudioWorklet: async (context?: AudioContext) => {
@@ -164,6 +265,20 @@ export async function installRealFakeApp(
           if (response.type === "ok") return { started: true };
           return { started: false, diagnostic: response.type === "error" ? response.error : "audio-worklet-start-failed" };
         },
+        setAudioInputSource: async (source: AudioNode, physicalChannels: number, statusCode: number) => {
+          const nativeHandle = await enqueue<number>(() => runtime.setAudioInputSource(source, physicalChannels, statusCode));
+          resources.inputSourceRegistrations.push({ physicalChannels, statusCode, nativeHandle });
+          return nativeHandle;
+        },
+        clearAudioInputSource: async (statusCode: number) => {
+          resources.inputSourceClears.push(statusCode);
+          await enqueue(() => runtime.clearAudioInputSource(statusCode));
+        },
+        clearAudioInputSourceNow: (statusCode: number) => {
+          resources.inputSourceClears.push(statusCode);
+          runtime.clearAudioInputSourceSync(statusCode);
+        },
+        consumeAudioInputRetry: () => enqueue(() => runtime.consumeAudioInputRetry()),
         onStatus: (handler: (response: any) => void) => { statusHandlers.add(handler); },
         terminate: async () => { await request({ type: "destroy" }); },
       };
@@ -194,6 +309,13 @@ export async function installRealFakeApp(
       value: new Proxy(NativeAudioWorkletNode, {
         construct(target, argumentsList, newTarget) {
           const node = Reflect.construct(target, argumentsList, newTarget) as AudioWorkletNode;
+          const nodeOptions = argumentsList[2] as AudioWorkletNodeOptions | undefined;
+          resources.audioWorkletNodeOptions.push({
+            numberOfInputs: nodeOptions?.numberOfInputs,
+            channelCount: nodeOptions?.channelCount,
+            channelCountMode: nodeOptions?.channelCountMode,
+            channelInterpretation: nodeOptions?.channelInterpretation,
+          });
           const instrumented = node as any;
           const nativeConnect = instrumented.connect.bind(node);
           const nativeDisconnect = instrumented.disconnect.bind(node);
@@ -216,6 +338,16 @@ export async function installRealFakeApp(
         if (resources.contexts !== 0) throw new Error("second AudioContext");
         const context = new AudioContext();
         resources.contexts += 1;
+        if (audioInputFixture) {
+          const nativeCreateMediaStreamSource = context.createMediaStreamSource.bind(context);
+          context.createMediaStreamSource = ((stream: MediaStream) => {
+            resources.mediaStreamSourceCreations += 1;
+            if (audioInputFixture.capture === "deterministic") {
+              return createDeterministicInputSource(context, audioInputFixture) as MediaStreamAudioSourceNode;
+            }
+            return nativeCreateMediaStreamSource(stream);
+          }) as AudioContext["createMediaStreamSource"];
+        }
         const nativeResume = context.resume.bind(context);
         const nativeClose = context.close.bind(context);
         context.resume = async () => {
@@ -250,8 +382,22 @@ export async function installRealFakeApp(
       },
       frameIntervalMs: 60_000,
     });
-    (window as any).__task4Fake = { observations, resources };
-  }, application);
+    const audioInput = {
+      async endCurrentTrack() {
+        const track = audioInputTracks.at(-1);
+        if (!track || track.readyState === "ended") return;
+        track.readyState = "ended";
+        resources.inputTrackEnds += 1;
+        track.onended?.();
+        for (let turn = 0; turn < 8; turn += 1)
+          await new Promise((resolve) => setTimeout(resolve, 0));
+      },
+      stopDeterministicSources() {
+        for (const source of deterministicSources) source.stop();
+      },
+    };
+    (window as any).__task4Fake = { observations, resources, runtime: observingClient, audioInput };
+  }, { application, options });
   await page.getByRole("button", { name: new RegExp(`launch ${app.displayName}`, "i") }).click();
   await expect(page.locator('[data-synth-node-id="fake-browser-root"]')).toBeVisible();
 }

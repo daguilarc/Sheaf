@@ -106,6 +106,11 @@ An application declares how many input channels it addresses through
   active channels, with only the missing `N - M` reading as silence. In every
   case requested-but-inactive channels read as silence and the output callback,
   UI, persistence, and MIDI keep running.
+- **Input tests are deterministic.** `tests/audio-input.spec.ts` launches a
+  real Wasm probe app, registers test-only `ChannelMergerNode` sources with an
+  explicit physical channel count, and observes the native AudioWorklet peak
+  published by the same runtime instance. The coverage does not depend on
+  developer hardware, `getUserMedia()` samples, or JavaScript DSP analysis.
 - **Unload releases capture without waiting.** A `pagehide` clears the native
   active count, disconnects the source, and stops every track before the handler
   returns, because a page being unloaded or frozen into the back/forward cache is

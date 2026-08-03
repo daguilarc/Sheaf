@@ -18,13 +18,18 @@ PACKAGE_PTHREAD_WORKER ?= $(PACKAGE_ENTRY)
 PACKAGE_WASM_WORKER ?= $(PACKAGE_ENTRY)
 PACKAGE_AUDIO_WORKLET ?= $(PACKAGE_ENTRY)
 
-.PHONY: build test browser-package browser-apps browser-fixture-app browser-apps-run browser-apps-smoke
+.PHONY: build test browser-package browser-apps browser-fixture-app browser-apps-run browser-audio-input-test browser-apps-smoke
 
 build:
 	npm run build
 
-test:
-	npm test
+test: build
+	npm run check:generic-runtime
+	node --test dist/tests/*.test.mjs
+	$(MAKE) browser-fixture-app
+	$(MAKE) browser-apps
+	npm run publish:site
+	npx playwright test
 
 browser-package: build
 	@test -n "$(PACKAGE_APP_ID)" || { echo "PACKAGE_APP_ID is required" >&2; exit 2; }
@@ -46,8 +51,13 @@ browser-apps-run: browser-apps
 	# request 404s. playwright.config.ts starts it the same way.
 	node src/static-server.mjs
 
+browser-audio-input-test: browser-fixture-app
+	npx playwright test tests/audio-input.spec.ts
+
 browser-apps-smoke: browser-fixture-app
 	$(MAKE) browser-apps
+	npm run publish:site
+	npx playwright test tests/audio-input.spec.ts tests/first-party-apps-smoke.spec.ts
 	npm run check:generic-runtime
 
 $(EM_CACHE):
