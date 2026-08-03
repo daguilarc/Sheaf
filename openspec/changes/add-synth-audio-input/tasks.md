@@ -30,13 +30,13 @@
 
 ## 5. Browser Capture, Audio Page, And Lifecycle
 
-- [ ] 5.1 Add failing TypeScript/browser tests proving zero-input apps never call `getUserMedia()`, while input-capable apps request System Default capture only after the activation-initiated launch path loads the module and reports `N > 0`, using `channelCount: { ideal: N }` with echo cancellation, noise suppression, and automatic gain control disabled.
-- [ ] 5.2 Extend `AudioBridge` and the runtime facade to query the application input request, acquire a `MediaStream`, derive and publish a positive physical count from `MediaStreamTrack.getSettings().channelCount` or the source node's count/one fallback, create/register its `MediaStreamAudioSourceNode`, and pass the registered node plus count into native worklet startup without adding JavaScript DSP or a sample-ring fallback.
-- [ ] 5.3 Implement and test idempotent teardown for media tracks, source nodes, AudioContext registration, failed startup, app replacement, and page unload.
-- [ ] 5.4 Implement and test distinct permission-denied, API-unavailable, insecure/policy-blocked, stream-ended, unreported-channel-count fallback, and requested/active-shortfall states, including stale active-count clearing while output remains live.
-- [ ] 5.5 Add a user-initiated `Retry Input` path that reacquires and reconnects capture to the existing AudioContext/worklet/engine/app instance without any automatic or realtime retry loop.
-- [ ] 5.6 Update browser audio services and the portable Audio page to hide input controls/status/retry for zero-input apps and expose one System Default input plus permission and `requested N / active M` status for input-capable apps; System Default selection commits the empty persisted name, other ids are rejected, and Retry Input appears only while offline.
-- [ ] 5.7 Update published/local hosting headers and documentation with `Permissions-Policy: microphone=(self)`, secure-context requirements, capture privacy guarantees, input shortfall/retry behavior, and the absence of automatic monitoring or named input selection.
+- [x] 5.1 Add failing TypeScript/browser tests proving zero-input apps never call `getUserMedia()`, while input-capable apps request System Default capture only after the activation-initiated launch path loads the module and reports `N > 0`, using `channelCount: { ideal: N }` with echo cancellation, noise suppression, and automatic gain control disabled.
+- [x] 5.2 Extend `AudioBridge` and the runtime facade to query the application input request, acquire a `MediaStream`, derive and publish a positive physical count from `MediaStreamTrack.getSettings().channelCount` or the source node's count/one fallback, create/register its `MediaStreamAudioSourceNode`, and pass the registered node plus count into native worklet startup without adding JavaScript DSP or a sample-ring fallback.
+- [x] 5.3 Implement and test idempotent teardown for media tracks, source nodes, AudioContext registration, failed startup, app replacement, and page unload.
+- [x] 5.4 Implement and test distinct permission-denied, API-unavailable, insecure/policy-blocked, stream-ended, unreported-channel-count fallback, and requested/active-shortfall states, including stale active-count clearing while output remains live.
+- [x] 5.5 Add a user-initiated `Retry Input` path that reacquires and reconnects capture to the existing AudioContext/worklet/engine/app instance without any automatic or realtime retry loop.
+- [x] 5.6 Update browser audio services and the portable Audio page to hide input controls/status/retry for zero-input apps and expose one System Default input plus permission and `requested N / active M` status for input-capable apps; System Default selection commits the empty persisted name, other ids are rejected, and Retry Input appears only while offline.
+- [x] 5.7 Update published/local hosting headers and documentation with `Permissions-Policy: microphone=(self)`, secure-context requirements, capture privacy guarantees, input shortfall/retry behavior, and the absence of automatic monitoring or named input selection.
 
 ## 6. Browser End-To-End Verification
 
