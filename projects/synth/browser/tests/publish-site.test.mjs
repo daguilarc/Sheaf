@@ -4,19 +4,29 @@ import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { readAppBuildManifest } from "../src/app-build-manifest.mjs";
-import { COMMAND_BUFFER_VERSION } from "../src/protocol.js";
-import { readExportedI32Constant } from "../src/wasm-exports.mjs";
-import { buildFirstPartyCatalog } from "../src/build-first-party-catalog.mjs";
-import {
-  browserRuntimeModules,
-  cloudflareHeaders,
-  publishedCatalogSource,
-  publishPublisherArtifact,
-  publishSite,
-  validatePublishedSite,
-} from "../src/publish-site.mjs";
+const browserRoot = await findBrowserRoot();
+const [
+  { readAppBuildManifest },
+  { COMMAND_BUFFER_VERSION },
+  { readExportedI32Constant },
+  { buildFirstPartyCatalog },
+  {
+    browserRuntimeModules,
+    cloudflareHeaders,
+    publishedCatalogSource,
+    publishPublisherArtifact,
+    publishSite,
+    validatePublishedSite,
+  },
+] = await Promise.all([
+  "app-build-manifest.mjs",
+  "protocol.js",
+  "wasm-exports.mjs",
+  "build-first-party-catalog.mjs",
+  "publish-site.mjs",
+].map((moduleName) => import(pathToFileURL(path.join(browserRoot, "dist", "src", moduleName)).href)));
 
 const artifactRoles = Object.freeze({
   alpha: Object.freeze({
@@ -100,6 +110,19 @@ const emittedFiles = Object.freeze({
   "apps/beta/wasm-worker.mjs": "postMessage('wasm-worker');\n",
   "apps/beta/worklet.js": "registerProcessor('fixture', class {});\n",
 });
+
+async function findBrowserRoot() {
+  let directory = path.dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    try {
+      await readFile(path.join(directory, "Makefile"), "utf8");
+      return directory;
+    } catch (error) {
+      if (path.dirname(directory) === directory) throw error;
+      directory = path.dirname(directory);
+    }
+  }
+}
 
 test("assembles a deterministic complete multi-app catalog from the exact matching emission report", async () => {
   const { browserRoot, root } = await createPublishFixture("catalog");
@@ -256,6 +279,7 @@ test("publishes launcher assets, both packages, and one generic rollback page pe
   assert.deepEqual((await readdir(path.join(publishRoot, "dist", "src"))).sort(), [...browserRuntimeModules].sort());
   const headers = await readFile(path.join(publishRoot, "_headers"), "utf8");
   assert.equal(headers, cloudflareHeaders);
+  assert.match(headers, /^  Permissions-Policy: midi=\(self\), microphone=\(self\)$/m);
   assert.match(headers, /packages\/\*\/\*\/\*\.wasm\n\s+Content-Type: application\/wasm/);
   assert.match(headers, /packages\/\*\/\*\/\*\.js\n\s+Content-Type: text\/javascript/);
   assert.doesNotMatch(headers, /direct-miniapp|rollback\/apps\/[a-z0-9-]+/);
@@ -280,6 +304,19 @@ test("publishes a Cloudflare launcher with an explicitly configured remote catal
   );
   const validated = await validatePublishedSite({ publishRoot, catalogSource: publishedCatalogSource });
   assert.deepEqual(validated.catalog.apps.map(({ appId }) => appId), ["alpha", "beta"]);
+});
+
+test("site validation independently requires the production microphone permissions policy", async () => {
+  const { browserRoot, publishRoot } = await createPublishFixture("missing-microphone-policy");
+  await publishSite({ browserRoot, publishRoot });
+  const headersPath = path.join(publishRoot, "_headers");
+  const headers = await readFile(headersPath, "utf8");
+  await writeFile(headersPath, headers.replace("microphone=(self)", "microphone=()"));
+
+  await assert.rejects(
+    validatePublishedSite({ publishRoot }),
+    /Permissions-Policy: midi=\(self\), microphone=\(self\)/,
+  );
 });
 
 test("publishing identical inputs twice produces byte-identical complete trees", async () => {

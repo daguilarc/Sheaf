@@ -8,10 +8,17 @@ test("browser scaffold test runner is active", () => {
   assert.equal(typeof globalThis, "object");
 });
 
-test("playwright discovers only browser specs", async () => {
+test("playwright configs discover only browser specs through the shared definition", async () => {
   const browserRoot = await findBrowserRoot();
   const config = await readFile(path.join(browserRoot, "playwright.config.mjs"), "utf8");
-  assert.match(config, /testMatch:\s*"\*\*\/\*\.spec\.ts"/);
+  const sharedConfig = await readFile(path.join(browserRoot, "playwright.shared-config.mjs"), "utf8");
+  const rootConfig = await readFile(path.resolve(browserRoot, "..", "..", "..", "playwright.config.mjs"), "utf8");
+
+  assert.match(sharedConfig, /testMatch:\s*"\*\*\/\*\.spec\.ts"/);
+  assert.match(config, /synthBrowserPlaywrightConfig/);
+  assert.match(config, /staticServerCommand:\s*"node src\/static-server\.mjs"/);
+  assert.match(rootConfig, /synthBrowserPlaywrightConfig/);
+  assert.match(rootConfig, /staticServerCommand:\s*"node projects\/synth\/browser\/src\/static-server\.mjs"/);
 });
 
 test("browser apps and the fixture use the same generic builder with no rollback alias", async () => {

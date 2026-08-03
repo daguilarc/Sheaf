@@ -22,9 +22,10 @@ namespace synth_browser {
 // module built against the narrower range rejects, so browser ABI version 3
 // became version 4 -- version equality alone would not have protected an old
 // module, because the launcher would have kept advertising the version the
-// module also declared. The generic `PrerequisiteBlocked` stays valid: an
-// already shipped code is not withdrawn, even though the host now names its
-// causes individually.
+// module also declared. The generic `PrerequisiteBlocked` stays valid as a
+// retained ABI value: an already shipped code is not withdrawn, even though the
+// current host names its causes individually and has no producer for the
+// generic value.
 enum class BrowserAudioInputStatus : std::uint32_t {
     NotRequested,
     Requesting,

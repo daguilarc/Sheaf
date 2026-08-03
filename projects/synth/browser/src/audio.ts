@@ -1,3 +1,5 @@
+import { MAX_BROWSER_AUDIO_INPUT_CHANNELS, browserAudioInputLimitDiagnostic } from "./audio-input-limits.js";
+
 export type BrowserAudioWorker = {
   startAudioWorklet?: (context?: AudioContext) => Promise<AudioBridgeStart>;
   audioInputChannels?: () => Promise<number>;
@@ -58,8 +60,6 @@ type RegisteredAudioInput = {
   physicalChannels: number;
 };
 
-const MAX_BROWSER_AUDIO_INPUT_CHANNELS = 32;
-
 // Pinned by sbw-4: an *ideal* channel count so a device that cannot supply the
 // request degrades to a shortfall instead of failing, and voice processing off
 // so the browser does not silently downmix a multichannel interface to mono.
@@ -114,13 +114,25 @@ export class AudioBridge {
     // Discovery first: a zero-input application must reach native startup
     // without the media device API ever being touched (sbw-4).
     this.requestedInputChannels = await this.discoverRequestedInputChannels();
-    // Capture is registered and its physical count published before the worklet
-    // node exists, so the node's first callback already sees the real count.
-    await this.serializeInputWork(() => this.acquireInput());
+    if (this.requestedInputChannels > MAX_BROWSER_AUDIO_INPUT_CHANNELS) {
+      this.inputStatusCode = AudioInputStatusCode.apiUnavailable;
+      this.inputDiagnostic = browserAudioInputLimitDiagnostic(this.requestedInputChannels);
+      return { started: false, diagnostic: this.inputDiagnostic };
+    }
+    // Start the activation-bound capture request, but do not serialize output
+    // startup, first render, or unload handler installation behind a permission
+    // prompt the user may leave open indefinitely. When capture settles, the
+    // native publication still stores the physical count before graph
+    // attachment, so the first callback that can read that source sees the
+    // registered count.
+    if (this.requestedInputChannels > 0)
+      void this.serializeInputWork(() => this.acquireInput());
     const result = await this.worker.startAudioWorklet(this.options.audioContext);
     this.started = result.started;
-    if (!result.started)
-      await this.serializeInputWork(() => this.releaseInput(AudioInputStatusCode.notRequested, ""));
+    if (!result.started) {
+      this.releaseNow();
+      return result;
+    }
     return result;
   }
 
@@ -128,6 +140,7 @@ export class AudioBridge {
   // into the existing AudioContext, worklet node, engine, and application, and
   // is never called from the realtime callback or on a timer.
   async retryInput(): Promise<void> {
+    if (this.requestedInputChannels > MAX_BROWSER_AUDIO_INPUT_CHANNELS) return;
     await this.serializeInputWork(() => (this.stopped ? Promise.resolve() : this.acquireInput()));
   }
 
@@ -177,11 +190,15 @@ export class AudioBridge {
   }
 
   private async acquireInput(): Promise<void> {
+    if (this.stopped) return;
     if (this.requestedInputChannels <= 0) return;
     if (this.requestedInputChannels > MAX_BROWSER_AUDIO_INPUT_CHANNELS) {
       // Native startup rejects this configuration outright; prompting for a
       // microphone the application can never be started with would be gratuitous.
-      await this.releaseInput(AudioInputStatusCode.notRequested, "input-channel-limit-exceeded");
+      await this.releaseInput(
+        AudioInputStatusCode.apiUnavailable,
+        browserAudioInputLimitDiagnostic(this.requestedInputChannels),
+      );
       return;
     }
     const registerSource = this.worker.setAudioInputSource?.bind(this.worker);

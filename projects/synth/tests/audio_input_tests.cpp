@@ -69,6 +69,15 @@ void operator delete[](void* memory, std::size_t) noexcept
 
 namespace {
 
+static_assert(std::is_trivially_copyable_v<synth::AudioInputView>,
+              "AudioInputView is trivially copyable");
+static_assert(std::is_trivially_copyable_v<synth::AudioInputFrameView>,
+              "AudioInputFrameView is trivially copyable");
+static_assert(sizeof(synth::AudioInputView) <= 6 * sizeof(void*),
+              "AudioInputView is bounded by six pointer-sized words");
+static_assert(sizeof(synth::AudioInputFrameView) <= 6 * sizeof(void*),
+              "AudioInputFrameView is bounded by six pointer-sized words");
+
 int g_failures = 0;
 
 void Require(bool condition, const char* label)
@@ -133,13 +142,7 @@ void TestZeroInputViewIsEmpty()
 
 void TestViewsAreTriviallyCopyableAndBounded()
 {
-    Require(std::is_trivially_copyable_v<synth::AudioInputView>, "AudioInputView is trivially copyable");
-    Require(std::is_trivially_copyable_v<synth::AudioInputFrameView>,
-            "AudioInputFrameView is trivially copyable");
-    Require(sizeof(synth::AudioInputView) <= 6 * sizeof(void*),
-            "AudioInputView is bounded by six pointer-sized words");
-    Require(sizeof(synth::AudioInputFrameView) <= 6 * sizeof(void*),
-            "AudioInputFrameView is bounded by six pointer-sized words");
+    Require(true, "AudioInputView and AudioInputFrameView copy/size invariants are static_asserted");
 }
 
 void TestPlanarChannelAndFrameEquivalence()

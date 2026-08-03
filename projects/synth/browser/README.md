@@ -64,7 +64,10 @@ An application declares how many input channels it addresses through
   application discovers its request after its module is loaded and its runtime
   initialized, on the activation-initiated launch path, and again only when the
   user presses `Retry Input`. There is no capture on page load, no autoplay
-  path, and no automatic or realtime retry loop.
+  path, and no automatic or realtime retry loop. An unresolved permission
+  prompt does not block native output startup, the first UI frame, or unload
+  cleanup registration; input remains in the requesting state and reads as safe
+  silence until capture settles.
 - **A secure context is required.** Capture needs HTTPS or loopback plus the
   same-origin microphone `Permissions-Policy` above. A missing prerequisite is
   reported by name on the Audio page instead of re-prompting.
@@ -82,8 +85,10 @@ An application declares how many input channels it addresses through
 - **Capture states are part of the browser ABI.** The published audio input
   status codes are `0`–`10`. Version 4 widened that range from `0`–`7` to name a
   missing secure context, a permissions-policy block, and a missing launch-owned
-  `AudioContext` individually, so a package built for ABI v3 is rejected at
-  launch rather than handed a code it would refuse.
+  `AudioContext` individually. `PrerequisiteBlocked` remains in the ABI for
+  compatibility, but the current browser host has no producer for that generic
+  value. A package built for ABI v3 is rejected at launch rather than handed a
+  code it would refuse.
 - **The Audio page is the diagnostic surface.** For an input-capable
   application it shows one `System Default` input option and a status line that
   always leads with `Input requested N / active M`, followed by the current
@@ -91,6 +96,10 @@ An application declares how many input channels it addresses through
   policy / launch-owned `AudioContext` prerequisite named individually, stream
   ended, unreported channel count, or input channel shortfall. `Retry Input`
   appears only while capture is offline.
+- **The browser platform limit is explicit.** A request above 32 input channels
+  fails launch before capture or native worklet startup with
+  `browser-audio-input-channel-limit-exceeded: requested N, limit 32`; no Audio
+  page retry is offered for an app that cannot start on the browser host.
 - **Selection is host-neutral.** Selecting `System Default` commits the existing
   empty persisted input-device name. Browser device IDs are privacy-scoped, so
   the host neither enumerates nor persists them, and any other input option id

@@ -407,6 +407,7 @@ public:
         if constexpr (HasProcessFrame<App>) {
             app_.ProcessFrame();
         }
+        assert(block.numRequestedInputChannels == config_.numAudioInputs);
         app_.ProcessBlock(block);
 
         if (++blocksSinceUiPublish_ >= uiPublishInterval_) {

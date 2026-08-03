@@ -333,6 +333,84 @@ test("runtime initialization failure releases consumed activation and materializ
   });
 });
 
+test("launcher reports an explicit non-retryable browser input limit diagnostic before capture or worklet startup", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4174/dist/src/main.js");
+  await page.setContent('<main id="synth-root"></main>');
+  const result = await page.evaluate(async (application) => {
+    const main = await (new Function("return import('/dist/src/main.js')")() as Promise<any>);
+    const { ActivationLease } = await (new Function("return import('/dist/src/activation.js')")() as Promise<any>);
+    const events: string[] = [];
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia() {
+          events.push("getUserMedia");
+          throw new Error("capture must not be requested");
+        },
+      },
+    });
+    await main.installSheafPatchLauncher(document.querySelector("#synth-root"), {
+      client: { loadSources: async () => ({ apps: [application], diagnostics: [], duplicateDiagnostics: [] }) },
+      activationLeaseFactory: () => ActivationLease.acquire({
+        audioContextFactory: () => ({
+          sampleRate: 48_000,
+          resume: async () => { events.push("context:resume"); },
+          close: async () => { events.push("context:close"); },
+        }),
+        requestMIDIAccess: async () => ({ inputs: new Map(), outputs: new Map(), onstatechange: null }),
+      }),
+      materializePackage: async () => {
+        let packageDisposed = false;
+        return {
+          entryUrl: "blob:entry",
+          locateFile: {},
+          mainScriptUrlOrBlob: "blob:main",
+          dispose() {
+            if (!packageDisposed) {
+              packageDisposed = true;
+              events.push("package:dispose");
+            }
+          },
+        };
+      },
+      runtimeClientFactory: () => ({
+        async request(command: { type: string }) {
+          if (command.type === "load") { events.push("load"); return { type: "ok" }; }
+          if (command.type === "create") { events.push("create"); return { type: "created", handle: 1 }; }
+          if (command.type === "initialize") { events.push("initialize"); return { type: "ok" }; }
+          if (command.type === "audio-config") { events.push("audio-config"); return { type: "audio-config", channels: 2, inputChannels: 33 }; }
+          if (command.type === "midi-endpoints") return { type: "midi-actions", actions: [] };
+          if (command.type === "drain-midi-output") return { type: "midi-output" };
+          return { type: "ok" };
+        },
+        async startAudioWorklet() { events.push("startAudioWorklet"); return { started: true }; },
+        async consumeAudioInputRetry() { events.push("consumeAudioInputRetry"); return true; },
+        terminate() { events.push("terminate"); },
+      }),
+    });
+    document.querySelector<HTMLButtonElement>(".synth-launcher__launch")!.click();
+    for (let turn = 0; turn < 12; turn++) await new Promise((resolve) => setTimeout(resolve, 0));
+    return {
+      events,
+      error: document.querySelector(".synth-launcher__app-error")?.textContent,
+      retryInputVisible: document.body.textContent?.includes("Retry Input") ?? false,
+    };
+  }, launcherApp);
+
+  expect(result.error).toContain("browser-audio-input-channel-limit-exceeded: requested 33, limit 32");
+  expect(result.retryInputVisible).toBe(false);
+  expect(result.events).toEqual([
+    "context:resume",
+    "load",
+    "create",
+    "initialize",
+    "audio-config",
+    "terminate",
+    "context:close",
+    "package:dispose",
+  ]);
+});
+
 test("an input-capable leased app discovers its request after module load, retries on user demand, and releases capture before the runtime", async ({ page }) => {
   await page.goto("http://127.0.0.1:4174/dist/src/main.js");
   await page.setContent('<main id="synth-root"></main>');
@@ -455,11 +533,11 @@ test("an input-capable leased app discovers its request after module load, retri
     "create",
     "initialize",
     "audio-config",
+    "startAudioWorklet",
     "clearAudioInputSource:1",
     "getUserMedia:4",
     "source:create",
     "setAudioInputSource:2:2",
-    "startAudioWorklet",
   ]);
   // A UI action with no armed retry must not re-prompt.
   expect(result.ignoredRetry).toEqual([...result.afterStart, "dispatch:audio-input-retry"]);
@@ -490,6 +568,147 @@ test("an input-capable leased app discovers its request after module load, retri
     "terminate",
     "context:close",
   ]);
+});
+
+test("pending microphone permission does not block worklet startup, first frame, or unload readiness", async ({ page }) => {
+  await page.goto("http://127.0.0.1:4174/dist/src/main.js");
+  await page.setContent('<main id="synth-root"></main>');
+  const frame = makeCommandBuffer([{ id: "root", kind: NodeKind.Root, bounds: [0, 0, 40, 40] }]);
+  const result = await page.evaluate(async (bytes) => {
+    const main = await (new Function("return import('/dist/src/main.js')")() as Promise<any>);
+    const { ActivationLease } = await (new Function("return import('/dist/src/activation.js')")() as Promise<any>);
+    const events: string[] = [];
+    const tracks: any[] = [];
+    let resolveCapture!: (stream: unknown) => void;
+    const pendingCapture = new Promise((resolve) => { resolveCapture = resolve; });
+    const settle = async () => {
+      for (let turn = 0; turn < 8; turn++) await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+    const waitFor = async (ready: () => boolean, label: string) => {
+      for (let turn = 0; turn < 24; turn++) {
+        if (ready()) return;
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      throw new Error(label);
+    };
+    const makeStream = () => {
+      const track = {
+        stops: 0,
+        readyState: "live",
+        onended: null as null | (() => void),
+        getSettings: () => ({ channelCount: 2 }),
+        stop() { track.stops += 1; track.readyState = "ended"; events.push("track:stop"); },
+      };
+      tracks.push(track);
+      return { getAudioTracks: () => [track], getTracks: () => [track] };
+    };
+
+    const context = {
+      sampleRate: 48_000,
+      destination: {},
+      audioWorklet: { addModule: async () => {} },
+      resume: async () => { events.push("context:resume"); },
+      close: async () => { events.push("context:close"); },
+      createMediaStreamSource() {
+        events.push("source:create");
+        return { channelCount: 2, disconnect() { events.push("source:disconnect"); } };
+      },
+    };
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: {
+        getUserMedia(requested: any) {
+          events.push(`getUserMedia:${requested.audio.channelCount.ideal}`);
+          return pendingCapture;
+        },
+      },
+    });
+
+    const lease = ActivationLease.acquire({
+      audioContextFactory: () => context,
+      requestMIDIAccess: async () => ({ inputs: new Map(), outputs: new Map(), onstatechange: null }),
+    });
+    const runtime = {
+      async request(command: any) {
+        if (command.type === "load") { events.push("load"); return { type: "ok" }; }
+        if (command.type === "create") { events.push("create"); return { type: "created", handle: 1 }; }
+        if (command.type === "initialize") { events.push("initialize"); return { type: "ok" }; }
+        if (command.type === "audio-config") { events.push("audio-config"); return { type: "audio-config", channels: 2, inputChannels: 2 }; }
+        if (command.type === "message-tick") { events.push("message-tick"); return { type: "ok" }; }
+        if (command.type === "build-ui-frame") { events.push("build-ui-frame"); return { type: "ui-frame", frame: bytes }; }
+        if (command.type === "midi-endpoints") return { type: "midi-actions", actions: [] };
+        if (command.type === "drain-midi-output") return { type: "midi-output" };
+        return { type: "ok" };
+      },
+      async startAudioWorklet(received?: unknown) {
+        if (received !== context) throw new Error("leased context was not passed to native startup");
+        events.push("startAudioWorklet");
+        return { started: true };
+      },
+      async setAudioInputSource() { events.push("setAudioInputSource"); return 91; },
+      async clearAudioInputSource(statusCode: number) { events.push(`clearAudioInputSource:${statusCode}`); },
+      clearAudioInputSourceNow(statusCode: number) { events.push(`clearAudioInputSourceNow:${statusCode}`); },
+      terminate() { events.push("terminate"); },
+    };
+
+    let app: any;
+    const installed = main.installSynthBrowserApp(document.querySelector("#synth-root"), {
+      module: { entryUrl: "blob:entry", locateFile: {}, mainScriptUrlOrBlob: "blob:main" },
+      activationLease: lease,
+      runtimeClient: runtime,
+      frameIntervalMs: 60_000,
+    }).then((installedApp: unknown) => {
+      app = installedApp;
+      events.push("app:resolved");
+    });
+    await waitFor(() => events.includes("app:resolved"), "app did not become ready before capture settled");
+    const beforeCaptureSettled = {
+      events: [...events],
+      renderedRoot: Boolean(document.querySelector('[data-node-id="root"]')),
+      status: document.querySelector<HTMLElement>("#synth-root")!.dataset.synthStatus,
+    };
+
+    dispatchEvent(new Event("pagehide"));
+    const afterPagehide = [...events];
+    resolveCapture(makeStream());
+    await installed;
+    await waitFor(() => events.includes("terminate"), "app did not finish teardown after capture resolved");
+    await settle();
+    await app.stop();
+    return {
+      beforeCaptureSettled,
+      afterPagehide,
+      events,
+      trackStops: tracks.map((track) => track.stops),
+    };
+  }, Array.from(new Uint8Array(frame)));
+
+  expect(result.beforeCaptureSettled.events).toEqual([
+    "context:resume",
+    "load",
+    "create",
+    "initialize",
+    "audio-config",
+    "startAudioWorklet",
+    "clearAudioInputSource:1",
+    "getUserMedia:2",
+    "message-tick",
+    "build-ui-frame",
+    "app:resolved",
+  ]);
+  expect(result.beforeCaptureSettled.renderedRoot).toBe(true);
+  expect(result.beforeCaptureSettled.status).toBe("running");
+  expect(result.afterPagehide.slice(result.beforeCaptureSettled.events.length)).toEqual([
+    "clearAudioInputSourceNow:0",
+  ]);
+  expect(result.events.slice(result.afterPagehide.length)).toEqual([
+    "track:stop",
+    "terminate",
+    "context:close",
+  ]);
+  expect(result.events).not.toContain("source:create");
+  expect(result.events).not.toContain("setAudioInputSource");
+  expect(result.trackStops).toEqual([1]);
 });
 
 test("clears a native registration that lands after a dispatched pagehide", async ({ page }) => {

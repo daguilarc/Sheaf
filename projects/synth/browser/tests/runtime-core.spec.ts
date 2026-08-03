@@ -67,12 +67,56 @@ test("routes a portable action through the runtime worker facade without app HTM
   expect(result.calls).toEqual([
     ["create"], ["initialize", 1, { publisherId: "example", appId: "portable-app", runtimeConfigVersion: 1 }],
     ["prepare", 1, 48000, 128], ["process", 1, 128, 10],
+    ["audioInputChannels", 1],
     ["startAudioWorklet", 1, "direct"],
     ["messageTick", 1, 11], ["dispatchAction", 1, "generic.trigger", "pressed"],
     ["buildUiFrame", 1], ["buildUiFrame", 1], ["destroy", 1],
   ]);
   expect(result.rejectedAfterDestroy).toEqual({ type: "error", error: "runtime is destroyed" });
   expect(result.html).not.toMatch(/miniapp|fake-browser/i);
+});
+
+test("rejects browser input requests above the platform limit before native worklet startup", async ({ page }) => {
+  await blockProductAutoBoot(page);
+  await page.goto("http://127.0.0.1:4173/public/index.html");
+  const result = await page.evaluate(async () => {
+    const { BrowserRuntimeWorker } = await (new Function("return import('/dist/src/worker.js')")() as Promise<any>);
+    const calls: string[] = [];
+    let nativeStarted = false;
+    const worker = new BrowserRuntimeWorker(async () => ({
+      abiVersion: 4,
+      uiProtocolVersion: 2,
+      runtimeConfigVersion: 1,
+      create() { calls.push("create"); return 1; },
+      audioOutputChannels() { calls.push("audioOutputChannels"); return 2; },
+      audioInputChannels() { calls.push("audioInputChannels"); return 33; },
+      initialize() { calls.push("initialize"); return 0; },
+      prepare() { calls.push("prepare"); return 0; },
+      process() { calls.push("process"); return 0; },
+      startAudioWorklet() { nativeStarted = true; calls.push("startAudioWorklet"); return 0; },
+      audioWorkletStats() {
+        calls.push("audioWorkletStats");
+        return { blocks: nativeStarted ? 1 : 0, peakMicrounits: 0, deadlineMicrounits: 1 };
+      },
+      messageTick() { calls.push("messageTick"); return 0; },
+      buildUiFrame() { calls.push("buildUiFrame"); return new ArrayBuffer(0); },
+      dispatchAction() { calls.push("dispatchAction"); return 0; },
+      destroy() { calls.push("destroy"); },
+    }));
+
+    await worker.handle({ type: "load", module: { entryUrl: "blob:test", locateFile: {}, mainScriptUrlOrBlob: "blob:test" } });
+    await worker.handle({ type: "create" });
+    const started = await worker.startAudioWorklet();
+    return { started, calls };
+  });
+
+  expect(result).toEqual({
+    started: {
+      type: "error",
+      error: "browser-audio-input-channel-limit-exceeded: requested 33, limit 32",
+    },
+    calls: ["create", "audioInputChannels"],
+  });
 });
 
 test("normalizes a distinct worker time origin into the document engine epoch", async ({ page }) => {

@@ -11,6 +11,7 @@ import { readExportedI32Constant } from "./wasm-exports.mjs";
 
 export const browserRuntimeModules = Object.freeze([
   "activation.js",
+  "audio-input-limits.js",
   "audio.js",
   "catalog-client.js",
   "catalog.js",
@@ -35,6 +36,8 @@ export const cloudflareHeaders = `/*
 /catalogs/sheaf/packages/*/*/*.js
   Content-Type: text/javascript
 `;
+
+const requiredCloudflarePermissionsPolicy = "Permissions-Policy: midi=(self), microphone=(self)";
 
 export const publishedCatalogSource = "https://jvictor0.github.io/Sheaf/catalogs/sheaf/catalog.json";
 
@@ -272,6 +275,8 @@ export async function validatePublishedSite({ publishRoot, catalogSource } = {})
   }
 
   const headers = await readFile(path.join(publishRoot, "_headers"), "utf8");
+  if (!headers.split(/\r?\n/u).some((line) => line.trim() === requiredCloudflarePermissionsPolicy))
+    throw new Error(`Published _headers is missing ${requiredCloudflarePermissionsPolicy}`);
   if (headers !== cloudflareHeaders) throw new Error("Published _headers does not match the Cloudflare runtime policy");
   return Object.freeze({ catalog, apps: catalog.apps });
 }

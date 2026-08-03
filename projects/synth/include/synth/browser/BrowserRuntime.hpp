@@ -841,9 +841,15 @@ private:
                                                                         userData);
         if (runtime->audioNode_ != 0) {
             // A source claimed before this node existed is attached now. A
-            // failure here publishes an offline claim; it never asks the host to
-            // detach a source that was never attached.
-            (void)runtime->ResolveDeferredAudioInputConnection();
+            // failure here publishes an offline claim and rejects startup; the
+            // bridge owns the capture stream and releases it when native
+            // worklet startup fails.
+            if (!runtime->ResolveDeferredAudioInputConnection()) {
+                emscripten_destroy_web_audio_node(runtime->audioNode_);
+                runtime->audioNode_ = 0;
+                runtime->audioWorkletStarted_.store(false, std::memory_order_release);
+                return;
+            }
             emscripten_audio_node_connect(runtime->audioNode_, audioContext, 0, 0);
             emscripten_resume_audio_context_sync(audioContext);
         }

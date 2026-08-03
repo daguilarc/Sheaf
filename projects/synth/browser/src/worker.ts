@@ -3,6 +3,7 @@ import {
   SUPPORTED_RUNTIME_CONFIG_VERSION,
   SUPPORTED_UI_PROTOCOL_VERSION,
 } from "./protocol.js";
+import { MAX_BROWSER_AUDIO_INPUT_CHANNELS, browserAudioInputLimitDiagnostic } from "./audio-input-limits.js";
 import type { MidiAction, MidiEndpoint, MidiOutput, MidiOutputDiagnostics } from "./protocol.js";
 import { validateBrowserRuntimeIdentity } from "./catalog.js";
 import type { BrowserRuntimeIdentity } from "./catalog.js";
@@ -189,7 +190,6 @@ const MIDI_ENDPOINT_SIZE = 20;
 const MIDI_ACTION_SIZE = 24;
 const MIDI_OUTPUT_SIZE = 24;
 const MIDI_DIAGNOSTICS_SIZE = 24;
-const MAX_BROWSER_AUDIO_INPUT_CHANNELS = 32;
 const MAX_BROWSER_AUDIO_INPUT_STATUS_CODE = 10;
 const MIDI_ACTION_TYPES: MidiAction["type"][] = ["open-input", "open-output", "close-input", "close-output", "update-input-ref", "update-output-ref", "resync"];
 
@@ -425,6 +425,9 @@ export class BrowserRuntimeWorker {
         throw new Error("runtime does not expose native AudioWorklet startup");
       if (!module.audioWorkletStats) throw new Error("runtime does not expose AudioWorklet stats");
       const handle = this.requireHandle();
+      const requestedInputChannels = module.audioInputChannels?.(handle) ?? 0;
+      if (requestedInputChannels > MAX_BROWSER_AUDIO_INPUT_CHANNELS)
+        throw new Error(browserAudioInputLimitDiagnostic(requestedInputChannels));
       const initialBlocks = module.audioWorkletStats(handle).blocks;
       if (module.startAudioWorklet(handle, context) !== 0)
         throw new Error("runtime operation failed");

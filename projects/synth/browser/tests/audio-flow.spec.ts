@@ -26,6 +26,7 @@ type CaptureScenario = {
   secureContext?: boolean;
   omitAudioContext?: boolean;
   nativeStartFails?: boolean;
+  nativeStartFailsAfterRegistration?: boolean;
   sourceConstructionThrows?: boolean;
   registrationThrows?: boolean;
   endTrackDuringRegistration?: boolean;
@@ -133,6 +134,11 @@ async function runCapture(page: Page, scenario: CaptureScenario, steps: CaptureS
       async startAudioWorklet() {
         calls.push("startAudioWorklet");
         nativeStarts += 1;
+        if (scenario.nativeStartFailsAfterRegistration) {
+          for (let turn = 0; turn < 8 && registrations.length === 0; turn++)
+            await new Promise((resolve) => setTimeout(resolve, 0));
+          return { started: false, diagnostic: "native-audio-worklet-start-failed" };
+        }
         return scenario.nativeStartFails
           ? { started: false, diagnostic: "native-audio-worklet-start-failed" }
           : { started: true };
@@ -162,6 +168,7 @@ async function runCapture(page: Page, scenario: CaptureScenario, steps: CaptureS
     const options = scenario.omitAudioContext ? {} : { audioContext };
     let bridge = new AudioBridge(worker, options);
     const started = await bridge.startFromUserActivation();
+    await bridge.whenInputSettled();
     for (const step of steps) {
       if (step === "retry") await bridge.retryInput();
       if (step === "end-track") {
@@ -187,6 +194,7 @@ async function runCapture(page: Page, scenario: CaptureScenario, steps: CaptureS
         await bridge.stop();
         bridge = new AudioBridge(worker, options);
         await bridge.startFromUserActivation();
+        await bridge.whenInputSettled();
       }
     }
     return {
@@ -205,6 +213,27 @@ async function runCapture(page: Page, scenario: CaptureScenario, steps: CaptureS
   }, { scenario, steps });
 }
 
+test("rejects an impossible browser input request before capture, native startup, or retry", async ({ page }) => {
+  const result = await runCapture(page, { requestedChannels: 33 }, ["retry"]);
+
+  expect(result.started).toEqual({
+    started: false,
+    diagnostic: "browser-audio-input-channel-limit-exceeded: requested 33, limit 32",
+  });
+  expect(result.calls).toEqual(["audioInputChannels"]);
+  expect(result.constraints).toEqual([]);
+  expect(result.nativeStarts).toBe(0);
+  expect(result.registrations).toEqual([]);
+  expect(result.sourceCount).toBe(0);
+  expect(result.inputState).toEqual({
+    requestedChannels: 33,
+    activeChannels: 0,
+    statusCode: INPUT_STATUS.apiUnavailable,
+    diagnostic: "browser-audio-input-channel-limit-exceeded: requested 33, limit 32",
+    nativeHandle: 0,
+  });
+});
+
 test("never touches the media device API for a zero-input application", async ({ page }) => {
   const result = await runCapture(page, { requestedChannels: 0 }, ["stop"]);
 
@@ -220,7 +249,7 @@ test("never touches the media device API for a zero-input application", async ({
   });
 });
 
-test("requests System Default capture with the pinned multichannel constraints before native startup", async ({ page }) => {
+test("requests System Default capture with the pinned multichannel constraints from activation", async ({ page }) => {
   const result = await runCapture(page, { requestedChannels: 4, trackChannelCount: 4 });
 
   expect(result.constraints).toEqual([{
@@ -233,11 +262,11 @@ test("requests System Default capture with the pinned multichannel constraints b
   }]);
   expect(result.calls).toEqual([
     "audioInputChannels",
+    "startAudioWorklet",
     `clearAudioInputSource:${INPUT_STATUS.requesting}`,
     "getUserMedia",
     "createMediaStreamSource",
     `setAudioInputSource:4:${INPUT_STATUS.online}`,
-    "startAudioWorklet",
   ]);
   expect(result.registrations).toEqual([
     { physicalChannels: 4, statusCode: INPUT_STATUS.online, sourceIx: 0, nativeHandle: 91 },
@@ -340,8 +369,7 @@ test("keeps output live and distinguishes each offline capture state", async ({ 
 test("releases an ended stream once, clears the native count first, and leaves output running", async ({ page }) => {
   const result = await runCapture(page, { requestedChannels: 2, trackChannelCount: 2 }, ["end-track"]);
 
-  expect(result.calls.slice(result.calls.indexOf("startAudioWorklet"))).toEqual([
-    "startAudioWorklet",
+  expect(result.calls.slice(result.calls.indexOf(`clearAudioInputSource:${INPUT_STATUS.streamEnded}`))).toEqual([
     `clearAudioInputSource:${INPUT_STATUS.streamEnded}`,
     "source:disconnect",
     "track:stop",
@@ -442,11 +470,11 @@ test("releases capture synchronously when the page unloads, before any promise c
   expect(result.synchronousRelease).toEqual({
     calls: [
       "audioInputChannels",
+      "startAudioWorklet",
       `clearAudioInputSource:${INPUT_STATUS.requesting}`,
       "getUserMedia",
       "createMediaStreamSource",
       `setAudioInputSource:2:${INPUT_STATUS.online}`,
-      "startAudioWorklet",
       `clearAudioInputSourceNow:${INPUT_STATUS.notRequested}`,
       "source:disconnect",
       "track:stop",
@@ -513,7 +541,6 @@ test("does not stay online when the track ends while registration is awaited", a
     `clearAudioInputSource:${INPUT_STATUS.streamEnded}`,
     "source:disconnect",
     "track:stop",
-    "startAudioWorklet",
   ]);
 });
 
@@ -524,8 +551,12 @@ test("releases capture when the runtime rejects the teardown clear", async ({ pa
   expect(result.sourceDisconnects).toEqual([1]);
 });
 
-test("releases capture when native AudioWorklet startup fails", async ({ page }) => {
-  const result = await runCapture(page, { requestedChannels: 2, trackChannelCount: 2, nativeStartFails: true });
+test("releases capture when native AudioWorklet startup fails after input registration", async ({ page }) => {
+  const result = await runCapture(page, {
+    requestedChannels: 2,
+    trackChannelCount: 2,
+    nativeStartFailsAfterRegistration: true,
+  });
 
   expect(result.started).toEqual({ started: false, diagnostic: "native-audio-worklet-start-failed" });
   expect(result.trackStops).toEqual([1]);
