@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <functional>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -524,11 +525,25 @@ public:
         });
     }
 
+    // Substitutes the two Web Audio graph operations the input publication
+    // drives. Production never calls this: unset means the real Emscripten
+    // calls, so the shipped behaviour is exactly what it would be without this
+    // seam. It exists because a native build has no Web Audio graph at all, so
+    // an attachment there can only ever defer -- the recovery half of the
+    // deferred-attachment sequence (a replacement that actually attaches) would
+    // otherwise be unreachable from the production `Runtime`.
+    void SetAudioInputGraphForTesting(
+        std::function<BrowserAudioInputConnectResult(std::uint32_t)> connect,
+        std::function<bool(std::uint32_t)> disconnect)
+    {
+        audioInputConnectOverride_ = std::move(connect);
+        audioInputDisconnectOverride_ = std::move(disconnect);
+    }
+
     // Attaches a source whose connection was deferred because no worklet node
     // existed when it was published. The Emscripten build calls this from
     // `AudioWorkletProcessorCreated`; it is public so the native contract test
-    // can drive the same sequence, where a build with no Web Audio graph makes
-    // the deferred attachment genuinely fail.
+    // can drive the same sequence.
     bool ResolveDeferredAudioInputConnection()
     {
         return audioInput_.ResolvePendingConnection([this](std::uint32_t sourceHandle) {
@@ -902,6 +917,9 @@ private:
     // AudioWorkletProcessorCreated attaches whatever is claimed by then.
     bool DisconnectAudioInputSource(std::uint32_t sourceHandle)
     {
+        if (audioInputDisconnectOverride_) {
+            return audioInputDisconnectOverride_(sourceHandle);
+        }
 #ifdef __EMSCRIPTEN__
         if (audioNode_ == 0) {
             return true;
@@ -931,6 +949,9 @@ private:
     // would later ask the host to detach something it never attached.
     BrowserAudioInputConnectResult ConnectAudioInputSource(std::uint32_t sourceHandle)
     {
+        if (audioInputConnectOverride_) {
+            return audioInputConnectOverride_(sourceHandle);
+        }
 #ifdef __EMSCRIPTEN__
         if (audioNode_ == 0) {
             return BrowserAudioInputConnectResult::Deferred;
@@ -964,6 +985,9 @@ private:
     std::atomic<std::uint32_t> audioWorkletBlockCount_{0};
     std::atomic<std::uint32_t> audioWorkletPeakMicrounits_{0};
     BrowserAudioInputPublication audioInput_;
+    // Empty in production; see SetAudioInputGraphForTesting.
+    std::function<BrowserAudioInputConnectResult(std::uint32_t)> audioInputConnectOverride_;
+    std::function<bool(std::uint32_t)> audioInputDisconnectOverride_;
     AudioWorkletDeadlineMeter audioWorkletDeadlineMeter_;
     const std::size_t requestedAudioInputChannels_ = StaticAudioInputChannels();
     synth::Engine<App> engine_;

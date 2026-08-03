@@ -1318,10 +1318,36 @@ void TestBrowserAudioInputPublicationRollsBackAFailedConnectWithoutBlocking()
 // succeed -- which is exactly the failure stage under test.
 void TestBrowserRuntimeDefersPreWorkletInputConnectionAndRecoversFromItsFailure()
 {
+    using synth_browser::BrowserAudioInputConnectResult;
     using synth_browser::BrowserAudioInputStatus;
     const auto online = static_cast<std::uint32_t>(BrowserAudioInputStatus::Online);
 
+    // Stands in for the Web Audio graph a native build does not have. Before
+    // `AudioWorkletProcessorCreated` runs there is no node, so every connection
+    // defers; afterwards source 91's attachment fails the way a lost
+    // `emscriptenGetAudioObject` lookup does, and anything else attaches.
+    bool workletNodeExists = false;
+    std::vector<std::uint32_t> connects;
+    std::vector<std::uint32_t> disconnects;
+    int successfulConnections = 0;
+
     synth_browser::Runtime<InputCountApp<4>> runtime;
+    runtime.SetAudioInputGraphForTesting(
+        [&](std::uint32_t sourceHandle) {
+            connects.push_back(sourceHandle);
+            if (!workletNodeExists) {
+                return BrowserAudioInputConnectResult::Deferred;
+            }
+            if (sourceHandle == 91) {
+                return BrowserAudioInputConnectResult::Failed;
+            }
+            ++successfulConnections;
+            return BrowserAudioInputConnectResult::Connected;
+        },
+        [&](std::uint32_t sourceHandle) {
+            disconnects.push_back(sourceHandle);
+            return true;
+        });
     runtime.Start();
 
     Require(runtime.SetAudioInputSource(91, 4, online),
@@ -1334,30 +1360,44 @@ void TestBrowserRuntimeDefersPreWorkletInputConnectionAndRecoversFromItsFailure(
     Require(runtime.ConnectedAudioInputSourceHandle() == 0,
             "a pending source is not recorded as attached to the graph");
 
+    // The worklet node is created, and the deferred attachment of 91 fails.
+    workletNodeExists = true;
     Require(!runtime.ResolveDeferredAudioInputConnection(),
-            "a deferred connection that cannot be made reports failure");
+            "a deferred attachment that cannot be made reports failure");
     Require(runtime.AudioInputStateSnapshot().activeChannels == 0 &&
                 runtime.AudioInputStateSnapshot().status ==
                     BrowserAudioInputStatus::ApiUnavailable,
-            "a failed deferred connection publishes zero active channels and an offline status");
+            "a failed deferred attachment publishes zero active channels and an offline status");
     Require(runtime.PendingAudioInputSourceHandle() == 0 &&
                 runtime.ConnectedAudioInputSourceHandle() == 0,
             "a source that never attached leaves no identity behind to clean up");
+    Require(disconnects.empty(),
+            "the runtime never asks the graph to detach a source it never attached");
 
+    // The replacement attaches for real, through the same production path.
     Require(runtime.SetAudioInputSource(92, 2, online),
-            "a replacement publishes after a failed deferred connection");
-    Require(runtime.AudioInputStateSnapshot().activeChannels == 2,
-            "the replacement claims its own channels");
-    Require(runtime.PendingAudioInputSourceHandle() == 92 &&
-                runtime.ConnectedAudioInputSourceHandle() == 0,
-            "the replacement is pending its own attachment, not blocked behind the failed one");
+            "a replacement publishes after a failed deferred attachment");
+    Require(runtime.ConnectedAudioInputSourceHandle() == 92 &&
+                runtime.PendingAudioInputSourceHandle() == 0,
+            "the replacement is attached, not left pending behind the failed source");
+    Require(runtime.AudioInputStateSnapshot().activeChannels == 2 &&
+                runtime.AudioInputStateSnapshot().status == BrowserAudioInputStatus::Online,
+            "the attached replacement claims its own channels");
+    Require(connects == std::vector<std::uint32_t>{91, 91, 92},
+            "91 was offered before and after node creation, then 92 exactly once");
+    Require(successfulConnections == 1,
+            "exactly one source is ever connected, so nothing double-sums into the bus");
+    Require(disconnects.empty(),
+            "recovery attempts no disconnect of the never-attached source");
 
     Require(runtime.ClearAudioInputSource(
                 static_cast<std::uint32_t>(BrowserAudioInputStatus::StreamEnded)),
-            "clearing a pending source needs no disconnect and succeeds");
+            "clearing the attached replacement succeeds");
+    Require(disconnects == std::vector<std::uint32_t>{92},
+            "clearing detaches exactly the source that was attached");
     Require(runtime.PendingAudioInputSourceHandle() == 0 &&
                 runtime.ConnectedAudioInputSourceHandle() == 0,
-            "clearing drops the pending intent with the claim");
+            "clearing leaves nothing claimed, pending, or attached");
 }
 
 // The rule the runtime path depends on, asserted directly: a source that was
@@ -1428,6 +1468,17 @@ void TestBrowserAudioInputPublicationNeverDisconnectsANeverAttachedSource()
             "promotion leaves the published claim intact");
     Require(publication.ResolvePendingConnection([](std::uint32_t) { return false; }),
             "resolving with nothing pending is a no-op success");
+
+    // Clearing a source that is only pending drops it without a disconnect, so
+    // the fail-loudly disconnect above must still never be reached.
+    BrowserAudioInputPublication pendingOnly;
+    Require(pendingOnly.Publish(95, 1, online, disconnect, deferConnect),
+            "a source publishes as pending");
+    Require(pendingOnly.Clear(ended, disconnect),
+            "clearing a pending source needs no disconnect and succeeds");
+    Require(disconnects.empty(), "clearing a pending source attempts no disconnect");
+    Require(pendingOnly.PendingSourceHandle() == 0 && pendingOnly.ConnectedSourceHandle() == 0,
+            "clearing drops the pending intent with the claim");
 }
 
 void TestBrowserAbiPreservesSuppliedAudioContextHandleAndDirectZero()
