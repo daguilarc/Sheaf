@@ -60,7 +60,7 @@ WHEN the sidebar renders, THE runtime library SHALL show Audio, Controllers, Syn
 - **THEN** candidate availability and the warning marker are recomputed against the cached device snapshot without waiting for another device-list change
 
 ### Requirement: sru-3 — Audio page: interface selection
-WHEN the Audio page is open, THE runtime library SHALL let the user choose the audio output device (and input device when the application's config requests inputs) from the enumerated devices with a system-default entry, SHALL apply the selection through the runtime's audio device switching (sar-15), and SHALL display the current device and negotiated status.
+WHEN the Audio page is open, THE runtime library SHALL let the user choose the audio output device and, when the application's config requests inputs, the input device from the host-provided choices with a system-default entry; SHALL apply selection through the runtime's audio device switching (sar-15); SHALL display the current output and negotiated status; and for input-capable applications SHALL display input permission/availability plus requested and active channel counts in the existing status line and expose `Retry Input` while browser capture is offline.
 
 #### Scenario: Output selection applies
 - **WHEN** the user selects an output device on the Audio page
@@ -69,6 +69,23 @@ WHEN the Audio page is open, THE runtime library SHALL let the user choose the a
 #### Scenario: Input row only when requested
 - **WHEN** the application's config declares zero audio inputs
 - **THEN** the Audio page shows no input device selector
+- **AND** the page shows no input status or retry action
+
+#### Scenario: Browser input status is explicit
+- **WHEN** a browser-hosted application requests `N > 0` inputs
+- **THEN** the page shows the System Default input selector
+- **AND** its status line names the permission/availability state and reports `requested N / active M`
+- **AND** it does not imply that input is monitored to output
+
+#### Scenario: Offline browser input can be retried
+- **WHEN** browser permission is denied, capture is unavailable, or an established stream ends
+- **THEN** the page exposes a `Retry Input` action outside the realtime callback
+- **AND** activating it dispatches the host-neutral retry action while the output page and application remain live
+
+#### Scenario: JUCE input row keeps native choices
+- **WHEN** a JUCE-hosted application requests one or more inputs
+- **THEN** the page continues to show host-enumerated native input choices
+- **AND** the current requested/active diagnostic remains visible through the portable status line
 
 ### Requirement: sru-4 — Controllers page: list, state, and adding
 WHEN the Controllers page is open, THE runtime library SHALL list every active and blacklisted controller record in instrument order, showing its name, hardware kind, and disposition. Active records SHALL also show each endpoint as online, offline, or unconfigured when its stored reference is empty; show the actual input and output choices as the present devices plus the stored reference when absent; preserve the existing low-level mapping editor; and offer Rename and Delete. Active records whose persisted wizard id resolves in the current registry SHALL additionally offer Reconfigure and Blacklist. Blacklisted records SHALL show their stored endpoint labels, expose Rename and Remove from blacklist, expose Configure only when their wizard id resolves in the current registry, and expose no live endpoint selectors or mapping editor. The page SHALL list currently available wizard candidates separately with Configure and Ignore actions, SHALL preserve the add ("+") action that creates a named active controller of a chosen kind seeded from that kind's default profile, and SHALL commit device selections and lifecycle actions through instrument editing and reconciliation rather than opening or closing handlers directly.
