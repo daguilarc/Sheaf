@@ -2,6 +2,7 @@
 #include "Braid4Registration.hpp"
 #include "HostDataPaths.hpp"
 #include "MiniAppRegistration.hpp"
+#include "OneSecondDelayRegistration.hpp"
 #include "Shell.hpp"
 #include "synth/ThreadId.hpp"
 
@@ -40,6 +41,10 @@ public:
             apps.push_back(synth_braid4::MakeBraid4Registration([this](synth::RuntimeDataPaths paths) {
                 LaunchRegisteredApp<synth_braid4::Braid4>(std::move(paths));
             }));
+            apps.push_back(synth_one_second_delay::MakeOneSecondDelayRegistration(
+                [this](synth::RuntimeDataPaths paths) {
+                    LaunchRegisteredApp<synth_one_second_delay::OneSecondDelay>(std::move(paths));
+                }));
 #ifdef SHEAF_PATCH_EXTRA_APP_TYPE
             apps.push_back(SHEAF_PATCH_EXTRA_APP_REGISTRAR([this](synth::RuntimeDataPaths paths) {
                 LaunchRegisteredApp<SHEAF_PATCH_EXTRA_APP_TYPE>(std::move(paths));

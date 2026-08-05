@@ -26,6 +26,17 @@
       "includeDirs": [
         "../apps/braid-4"
       ]
+    },
+    {
+      "appId": "one-second-delay",
+      "displayName": "1 Second Delay",
+      "author": "Sheaf",
+      "category": "effect",
+      "header": "OneSecondDelay.hpp",
+      "cppType": "synth_one_second_delay::OneSecondDelay",
+      "includeDirs": [
+        "../apps/one-second-delay"
+      ]
     }
   ]
 }

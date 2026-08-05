@@ -9,7 +9,8 @@ include $(APP_DIR)/../../runtime/juce_build.mk
 
 MINIAPP_DIR := $(APP_DIR)/../miniapp
 BRAID4_DIR := $(APP_DIR)/../braid-4
-CPPFLAGS += -I$(BRAID4_DIR)
+ONE_SECOND_DELAY_DIR := $(APP_DIR)/../one-second-delay
+CPPFLAGS += -I$(BRAID4_DIR) -I$(ONE_SECOND_DELAY_DIR)
 
 # Optional out-of-tree application. Setting EXTRA_APP_DIR requires all of the
 # other EXTRA_APP_* variables; with none of them set the build is unchanged.
@@ -36,6 +37,8 @@ APP_HEADERS := $(APP_DIR)/Launcher.hpp \
 	$(BRAID4_DIR)/Braid4UiModel.hpp \
 	$(BRAID4_DIR)/Braid4Draw.hpp \
 	$(BRAID4_DIR)/Braid4Core.hpp \
+	$(ONE_SECOND_DELAY_DIR)/OneSecondDelayRegistration.hpp \
+	$(ONE_SECOND_DELAY_DIR)/OneSecondDelay.hpp \
 	$(MINIAPP_DIR)/MiniAppRegistration.hpp \
 	$(MINIAPP_DIR)/MiniApp.hpp \
 	$(MINIAPP_DIR)/MiniAppUI.hpp \
