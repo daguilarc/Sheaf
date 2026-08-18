@@ -92,8 +92,9 @@ omni-rule: implementation/review on the lightest capable model.
 ## 9. sprs-16 — app-supplied audio-page section (#8)
 
 - [ ] 9.1 Optional section builder on `AudioPageSnapshot`
-      (`RuntimePages.hpp:168`); `BuildAudioPageTree` (`:776`) appends beneath
-      device rows.
+      (`RuntimePages.hpp:168`), typed `std::function<ui::Subtree(ui::Bounds)>`
+      (amended in postflight — see design §sprs-16); `BuildAudioPageTree`
+      (`:776`) splices beneath device rows via `Splice(Subtree)`.
 - [ ] 9.2 Tests: default ⇒ byte-identical page tree; supplied builder ⇒
       section present within remaining area.
 

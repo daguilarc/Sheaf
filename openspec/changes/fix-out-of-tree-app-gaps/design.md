@@ -135,9 +135,15 @@ once, globally, instead).
 ## sprs-16/17 (#8) — app-supplied audio section, app sidebar page
 
 - `sprs-16`: `AudioPageSnapshot` (`RuntimePages.hpp:168`) gains an optional
-  `std::function<ui::NodeTree(ui::Bounds)>` section builder;
-  `BuildAudioPageTree(snapshot, area)` (`:776`) appends its tree beneath the
-  device rows within the remaining area. Default empty → byte-identical page.
+  `std::function<ui::Subtree(ui::Bounds)>` section builder;
+  `BuildAudioPageTree(snapshot, area)` (`:776`) splices its subtree beneath
+  the device rows within the remaining area. Default empty → byte-identical
+  page. (Amended 2026-08-18 in postflight: the original `ui::NodeTree`
+  signature routed through `Splice(NodeTree)`, which drops the builder's
+  `LayoutOptions` map — nested containers in an app section would re-resolve
+  with default layout. `ui::Subtree` + `Splice(Subtree)` is the repo's own
+  established graft idiom — `BuildPatchBrowserSubtree`/`Splice(Subtree)`,
+  `RuntimePages.hpp:954/:1082` — and preserves the app's declared layout.)
 - `sprs-17`: one optional app-registered page (id, title, tree builder)
   alongside the closed page set. **The page set has multiple definition
   sites, all of which the registered page must thread (enumerated in
