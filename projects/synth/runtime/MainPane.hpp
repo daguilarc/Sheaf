@@ -8,6 +8,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <algorithm>
+
 namespace synth_runtime {
 
 template <synth::SynthApplication App>
@@ -72,7 +74,28 @@ public:
         // mainComponent_ is held directly (not through a `ui::Surface&`), so
         // this calls its existing public SetContentExtent() setter (task
         // 8.1) with no dynamic_cast/interface needed at this layer.
-        mainComponent_.SetContentExtent(synth_juce::JuceToUiBounds(getLocalBounds().toFloat()));
+        //
+        // Fix round 2 (sprs-13 Task 8 re-review): the pane's own bounds are
+        // the composite footprint (app content + the runtime sidebar strip
+        // placed beside it, RuntimeMainComponent.hpp's BuildTree()), not the
+        // app's content area alone. Offering the full pane width let an
+        // extent-aware app resolve as wide as the whole pane, which then
+        // placed the sidebar at that same width -- past the pane's own
+        // right edge, clipped off-screen. The offered extent is the app
+        // CONTENT area: pane bounds with the sidebar's width subtracted,
+        // height unchanged -- matching liveContentExtent_'s sidebar-free
+        // constructor-time default (RuntimeMainComponent.hpp:64-73) and the
+        // composition's own layout (content root sits at x 0, sidebar root
+        // at x == resolved app width, RuntimeMainComponent.hpp:156). A pane
+        // narrower than the sidebar floors at width 0 rather than going
+        // negative, the same inset-then-floor idiom already used for
+        // exactly this "extent minus a fixed inset" shape elsewhere in this
+        // codebase (e.g. `std::max(0.0f, containerExtent - padding * 2.0f)`,
+        // PortableUILayout.hpp:179/:325/:435) -- not a new clamping rule.
+        synth::ui::Bounds contentExtent = synth_juce::JuceToUiBounds(getLocalBounds().toFloat());
+        contentExtent.width =
+            std::max(0.0f, contentExtent.width - synth::runtime_ui::Layout::kSidebarWidth);
+        mainComponent_.SetContentExtent(contentExtent);
         renderer_.setBounds(getLocalBounds());
         renderer_.RefreshFromSurface();
     }

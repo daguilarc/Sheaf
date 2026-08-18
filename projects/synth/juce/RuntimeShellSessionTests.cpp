@@ -1106,6 +1106,19 @@ int main() {
             "content extent (via MainPane's constructor-time RefreshOnTick), matching "
             "runtime_main_component_tests' unit coverage of the same hook");
 
+    // Fix round 2 (sprs-13 Task 8 re-review): RuntimeShellSession's
+    // constructor sizes the shell to MainPane::IntrinsicBounds() -- the
+    // composite footprint, config.uiWidth(640) + kSidebarWidth(96) = 736
+    // wide, 480 tall (Shell.hpp:86-87). That construction-time resize
+    // already ran through the fixed MainPane::resized(), so the extent
+    // offered to the app by now must already be the CONTENT area (736 - 96
+    // = 640, 480) -- exactly WiringExtentAwareApp's own declared
+    // config.uiWidth/uiHeight -- not the full 736-wide composite pane.
+    Require(wiringSurface->extent.width == 640.0f && wiringSurface->extent.height == 480.0f,
+            "the shell's construction-time resize already offers the app its sidebar-free "
+            "content extent (pane width minus Layout::kSidebarWidth), matching its own "
+            "declared config.uiWidth/uiHeight");
+
     // RuntimeMainComponent::BuildTree() unconditionally re-offers whatever
     // liveContentExtent_ it currently holds to an ExtentAwareSurface app on
     // *every* call (RuntimeMainComponent.hpp:134-137), including the
@@ -1124,10 +1137,18 @@ int main() {
             "the fix, MainPane::resized() never called RuntimeMainComponent::"
             "SetContentExtent(), so the app kept resolving at its original extent regardless "
             "of window size)");
-    Require(wiringSurface->extent.width == 800.0f && wiringSurface->extent.height == 600.0f,
-            "the offered extent is MainPane's own live JUCE bounds (getLocalBounds(), "
-            "converted via synth_juce::JuceToUiBounds), matching what resized() was fixed "
-            "to feed through");
+    // Fix round 2: the offered width is the pane's new width (800) MINUS
+    // the sidebar (96) = 704, not the raw 800 -- otherwise an extent-aware
+    // app would resolve at the full pane width and BuildTree() would place
+    // the sidebar at x 800, past the 800-wide pane's own right edge
+    // (RuntimeMainComponent.hpp:156, sidebar x == resolved app root width).
+    // Height is unaffected: the sidebar sits beside the content, not above
+    // or below it.
+    Require(wiringSurface->extent.width == 704.0f && wiringSurface->extent.height == 600.0f,
+            "the offered extent is MainPane's live JUCE bounds with the sidebar's width "
+            "subtracted (pane 800 wide - Layout::kSidebarWidth 96 = 704), matching the app "
+            "CONTENT area the composition actually places beside the sidebar, not the pane's "
+            "full composite footprint");
 
     {
         auto owner = synth_runtime::MakeRuntimeSessionOwner<synth_miniapp::MiniApp>(paths);
