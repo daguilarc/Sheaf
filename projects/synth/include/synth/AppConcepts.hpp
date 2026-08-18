@@ -1,7 +1,10 @@
 #pragma once
 #include "synth/AppContext.hpp"
 #include "synth/PortableUI.hpp"
+#include "synth/PortableUIBuilders.hpp"
 #include <concepts>
+#include <functional>
+#include <string>
 #include <utility>
 
 namespace synth {
@@ -36,6 +39,38 @@ concept HasPrepareToPlay = requires(T app, double sampleRate, int blockSize) {
 template <typename T>
 concept HasProcessFrame = requires(T app) {
     { app.ProcessFrame() } -> std::same_as<void>;
+};
+
+// Optional UI capability (sprs-17): an app may register exactly one
+// additional sidebar page -- id, title, and a layout-preserving tree
+// builder using the std::function<ui::Subtree(ui::Bounds)> graft idiom Task
+// 9 established for AudioPageSnapshot::appSection (RuntimePages.hpp) and its
+// design amendment (Splice(Subtree), not Splice(NodeTree), so a nested
+// container's declared LayoutOptions survive the splice instead of
+// re-resolving with defaults).
+struct RegisteredPage {
+    std::string id;
+    std::string title;
+    std::function<ui::Subtree(ui::Bounds)> buildTree;
+};
+
+// Detected the same way as HasPrepareToPlay/HasProcessFrame above: every
+// call site that needs this (RuntimeMainComponent<App, Services> holds
+// `App&` directly) has App as a concrete, non-erased template parameter,
+// exactly like Engine<App> does for the hooks above -- so the same
+// compile-time optional-method concept applies here as cleanly as it does
+// to those audio-thread hooks. Two other existing conventions were
+// considered and rejected: ui::ExtentAwareSurface's runtime dynamic_cast
+// idiom (PortableUI.hpp) exists only because THAT seam's accessor
+// (SynthApplication::PortableSurface()) is constrained to return the
+// already-erased `ui::Surface&`, which this seam never does, so the
+// dynamic_cast machinery would add nothing; a RuntimeConfig field
+// (AppContext.hpp) was rejected because the tree builder is a std::function
+// that typically closes over live app state (the app instance itself), not
+// a plain data value a static `App::Config()` accessor can hold.
+template <typename T>
+concept HasRegisteredPage = requires(T app) {
+    { app.RegisteredPage() } -> std::same_as<RegisteredPage>;
 };
 
 }  // namespace synth

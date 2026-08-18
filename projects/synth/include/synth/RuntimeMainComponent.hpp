@@ -25,6 +25,12 @@ enum class RuntimeMainPage
     Controllers,
     Sync,
     File,
+    // sprs-17: the app-registered page. Only ever reached through
+    // HandleSidebarAction's registration-gated branch below, so it exists
+    // as a routable page regardless of whether any app actually registers
+    // one -- the same way the enum itself is unconditional while the
+    // sidebar button that reaches this case is not.
+    AppPage,
 };
 
 template <typename Services>
@@ -72,6 +78,29 @@ public:
         // 8.1/8.2, sprs-13): identical to the legacy, hook-free value.
         liveContentExtent_ = contentBounds;
         syncSurface_.SetContentBounds(contentBounds);
+
+        // sprs-17: an app opts in by defining App::RegisteredPage() (see
+        // HasRegisteredPage, AppConcepts.hpp); App is a concrete, non-erased
+        // template parameter here, so presence/absence of the method is a
+        // compile-time branch, mirroring HasPrepareToPlay/HasProcessFrame's
+        // if-constexpr idiom in Engine.hpp. Everything below is skipped for
+        // an app that never defines the method: hasRegisteredPage_ stays
+        // false, the sidebar snapshot's title stays unset, and the sidebar
+        // and routing are exactly what they were before this task.
+        if constexpr (HasRegisteredPage<App>)
+        {
+            RegisteredPage page = app_.RegisteredPage();
+            appPageSurface_.SetContentBounds(contentBounds);
+            appPageSurface_.SetPage(page);
+            sidebarSurface_.SetRegisteredPageTitle(page.title);
+            hasRegisteredPage_ = true;
+            appPageSurface_.SetActionHandler([this](const ui::Action& action) {
+                if (action.name == Actions::kAppBack)
+                {
+                    ReturnToApplication(RuntimePageKind::None);
+                }
+            });
+        }
 
         sidebarSurface_.SetActionHandler([this](const ui::Action& action) {
             HandleSidebarAction(action);
@@ -230,6 +259,10 @@ public:
         {
             controllersSurface_.DispatchAction(action);
         }
+        else if (IsAppPageAction(action.name))
+        {
+            appPageSurface_.DispatchAction(action);
+        }
         else if (!std::string_view(action.name).starts_with("runtime."))
         {
             app_.PortableSurface().DispatchAction(action);
@@ -343,7 +376,8 @@ private:
                        {Actions::kSidebarAudio,
                         Actions::kSidebarControllers,
                         Actions::kSidebarSync,
-                        Actions::kSidebarFile});
+                        Actions::kSidebarFile,
+                        Actions::kSidebarApp});
     }
 
     static bool IsAudioAction(std::string_view action)
@@ -413,6 +447,18 @@ private:
                         Actions::kWizardIgnore}) ||
                action.starts_with("controller-wizard.") ||
                action.starts_with("runtime.controllers.controller.");
+    }
+
+    // sprs-17: the app-registered page's own reserved action. Actions the
+    // app's own registered-page content emits are not runtime-namespaced
+    // (ValidateApplicationTree's rule applies to the app's whole tree, not
+    // just its main surface) and fall through DispatchAction's final
+    // `!starts_with("runtime.")` branch to app_.PortableSurface() exactly
+    // like an app-supplied audio section's actions already do (sprs-16) --
+    // this predicate exists only for the one action Sheaf itself owns here.
+    static bool IsAppPageAction(std::string_view action)
+    {
+        return action == Actions::kAppBack;
     }
 
     static ui::NodeTree MoveRootFirst(ui::NodeTree tree, std::size_t rootIndex)
@@ -565,6 +611,8 @@ private:
                 return syncSurface_.BuildTree();
             case RuntimeMainPage::File:
                 return fileSurface_.BuildTree();
+            case RuntimeMainPage::AppPage:
+                return appPageSurface_.BuildTree();
             case RuntimeMainPage::Application:
                 break;
         }
@@ -593,6 +641,15 @@ private:
         {
             ShowPage(RuntimeMainPage::File);
         }
+        // sprs-17: gated on hasRegisteredPage_ even though the button (and
+        // therefore this action) only ever exists in the UI when a page is
+        // registered -- "optional means optional, assert don't assume"
+        // (design constraint) applies to a directly dispatched action too,
+        // not only to what the sidebar renders.
+        else if (action.name == Actions::kSidebarApp && hasRegisteredPage_)
+        {
+            ShowPage(RuntimeMainPage::AppPage);
+        }
     }
 
     void ReturnToApplication(RuntimePageKind page)
@@ -613,6 +670,13 @@ private:
     FilePageSurface fileSurface_;
     ControllersPageSurface controllersSurface_;
     SyncPageSurface syncSurface_;
+    // sprs-17: always present so BuildRuntimePageTree()'s switch and
+    // DispatchAction()'s IsAppPageAction branch compile and behave the same
+    // regardless of App -- only the constructor's if-constexpr block (and
+    // hasRegisteredPage_ below) differ between a registering and a
+    // non-registering App.
+    AppRegisteredPageSurface appPageSurface_;
+    bool hasRegisteredPage_ = false;
     ActionHandler actionHandler_;
     ui::Bounds liveContentExtent_;
 };

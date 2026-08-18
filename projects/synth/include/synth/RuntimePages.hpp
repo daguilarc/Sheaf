@@ -3,6 +3,7 @@
 // JUCE-free runtime page models: sidebar, Audio page, and File page semantic
 // trees plus action names and layout helpers (OpenSpec tasks 4.1–4.3).
 
+#include "synth/AppConcepts.hpp"
 #include "synth/PatchBrowser.hpp"
 #include "synth/PortableUI.hpp"
 #include "synth/PortableUIBuilders.hpp"
@@ -36,6 +37,11 @@ inline constexpr const char* kSidebarControllers = "runtime.sidebar.controllers"
 inline constexpr const char* kSidebarControllersWarning = "runtime.sidebar.controllers.warning";
 inline constexpr const char* kSidebarSync = "runtime.sidebar.sync";
 inline constexpr const char* kSidebarFile = "runtime.sidebar.file";
+// sprs-17: the app-registered page's sidebar button. Sheaf owns this id (and
+// the mirrored Actions::kSidebarApp below) the same way it owns every other
+// sidebar entry's id/action pair -- the app's own RegisteredPage::id is a
+// separate, app-chosen identifier that never reaches this constant.
+inline constexpr const char* kSidebarApp = "runtime.sidebar.app";
 inline constexpr const char* kSidebarDeadline = "runtime.sidebar.deadline";
 
 inline constexpr const char* kAudioRoot = "runtime.audio.root";
@@ -114,6 +120,16 @@ inline std::string FileVersionEntry(std::size_t entryIx)
     return "runtime.file.versions.entry." + std::to_string(entryIx);
 }
 
+// sprs-17: the app-registered page's own chrome. Every built-in page
+// hand-rolls its own root/back id (kAudioRoot/kAudioBack, kFileRoot/
+// kFileBack, kSyncRoot/kSyncBack, ControllersPageUI's own kBack) rather than
+// sharing one, so this page's chrome follows the same shape: its own root
+// and back-button ids, plus kAppContent as the mount the app's spliced tree
+// attaches beneath (matching kAudioAppSection's mount-id role above).
+inline constexpr const char* kAppRoot = "runtime.app.root";
+inline constexpr const char* kAppBack = "runtime.app.back";
+inline constexpr const char* kAppContent = "runtime.app.content";
+
 }  // namespace NodeIds
 
 namespace Actions {
@@ -122,6 +138,7 @@ inline constexpr const char* kSidebarAudio = "runtime.sidebar.audio";
 inline constexpr const char* kSidebarControllers = "runtime.sidebar.controllers";
 inline constexpr const char* kSidebarSync = "runtime.sidebar.sync";
 inline constexpr const char* kSidebarFile = "runtime.sidebar.file";
+inline constexpr const char* kSidebarApp = "runtime.sidebar.app";
 
 inline constexpr const char* kAudioBack = "runtime.audio.back";
 inline constexpr const char* kAudioOutputSelect = "runtime.audio.output.select";
@@ -156,12 +173,19 @@ inline constexpr const char* kFileConfirmedSaveAs = "runtime.file.confirmed.save
 inline constexpr const char* kFileConfirmedOverwriteSaveAs = "runtime.file.confirmed.overwrite_save_as";
 inline constexpr const char* kFileConfirmedLoad = "runtime.file.confirmed.load";
 
+inline constexpr const char* kAppBack = "runtime.app.back";
+
 }  // namespace Actions
 
 struct SidebarSnapshot
 {
     float deadlinePercent = 0.0f;
     bool controllersWarning = false;
+    // sprs-17: unset (nullopt) -> no app-page button is built and the
+    // sidebar renders exactly as it did before this field existed. Set ->
+    // its value is the button's label text, and the button is placed after
+    // File (BuildSidebarTree below).
+    std::optional<std::string> registeredPageTitle;
 };
 
 struct AudioDeviceOption
@@ -305,9 +329,14 @@ inline constexpr float kBrowserStatusHeight = 24.0f;
 inline constexpr float kBrowserButtonWidth = 78.0f;
 inline constexpr float kFilePanelPadding = 10.0f;
 
-inline ui::Bounds SidebarRootBounds()
+// sprs-17: five fixed rows (Audio, Controllers, Sync, File, deadline) grow to
+// six when an app registers an extra page, so the extra row has its own
+// stacking space instead of overrunning the fifth row's. `hasRegisteredPage`
+// defaults false so every existing caller keeps today's exact 200px height.
+inline ui::Bounds SidebarRootBounds(bool hasRegisteredPage = false)
 {
-    return {0.0f, 0.0f, kSidebarWidth, kSidebarButtonHeight * 5.0f};
+    const float rowCount = hasRegisteredPage ? 6.0f : 5.0f;
+    return {0.0f, 0.0f, kSidebarWidth, kSidebarButtonHeight * rowCount};
 }
 
 inline std::string FormatDeadlineText(float percent)
@@ -640,7 +669,8 @@ inline std::vector<ui::ControlOption> ControlOptionsFor(const std::vector<AudioD
 // stacks five declared rows to the same geometry with neither.
 inline ui::NodeTree BuildSidebarTree(const SidebarSnapshot& snapshot)
 {
-    const ui::Bounds rootBounds = Layout::SidebarRootBounds();
+    const ui::Bounds rootBounds =
+        Layout::SidebarRootBounds(snapshot.registeredPageTitle.has_value());
 
     const auto sidebarRow = [] {
         ui::ControlStyle style;
@@ -684,6 +714,16 @@ inline ui::NodeTree BuildSidebarTree(const SidebarSnapshot& snapshot)
                    sidebarRow());
     builder.Button(NodeIds::kSidebarFile, "File", ui::Action::Named(Actions::kSidebarFile),
                    sidebarRow());
+    // sprs-17: the app-registered page's button, placed after File and
+    // before the deadline readout -- a page button among page buttons,
+    // ahead of the CPU status line that closes the column regardless of
+    // page count. Absent when no page is registered, so the sidebar is
+    // otherwise byte-identical to before this field existed.
+    if (snapshot.registeredPageTitle.has_value())
+    {
+        builder.Button(NodeIds::kSidebarApp, *snapshot.registeredPageTitle,
+                       ui::Action::Named(Actions::kSidebarApp), sidebarRow());
+    }
     builder.StatusText(NodeIds::kSidebarDeadline,
                        Layout::FormatDeadlineText(snapshot.deadlinePercent),
                        sidebarRow());
@@ -1351,6 +1391,109 @@ private:
     std::string saveName_;
 };
 
+// sprs-17: the app-registered page's own tree. Its Back button matches the
+// style every built-in page's Back button shares (PageControls::BackButton())
+// under its own dedicated id/action, the same "each page hand-rolls its own"
+// convention BuildAudioPageTree/BuildSyncPageTree/BuildFilePageTree already
+// follow -- there is no single shared Back id/action to reuse. The content
+// region below it is measured then filled with the same two-pass idiom
+// BuildAudioPageTreeOnce/BuildAudioPageTree established for an app-supplied
+// section (comment above that function): the resolver, not the producer,
+// determines how much room is left below the Back button (sru-43/sru-53,
+// see BuildSidebarTree's own comment above), so the region is measured with
+// a first pass before the app's builder ever runs, and the app's Subtree is
+// spliced in on a second pass at exactly that measured area. Unlike the
+// audio section (an append beneath existing rows), this page's app content
+// IS the whole remaining page, so `StatusStackLayout(0.0f)` -- weight 1,
+// zero padding, zero gap -- hands the app exactly the leftover area with
+// nothing reserved from it, matching kAudioAppSection's own "confined to
+// exactly the area it was handed" contract.
+inline ui::NodeTree BuildAppPageTreeOnce(const RegisteredPage& page,
+                                         ui::Bounds area,
+                                         const ui::Bounds* contentArea)
+{
+    ui::Builder builder;
+    builder.Root(NodeIds::kAppRoot, area);
+    builder.Button(NodeIds::kAppBack, "Back", ui::Action::Named(Actions::kAppBack),
+                   PageControls::BackButton());
+    builder.Section(NodeIds::kAppContent, PageControls::StatusStackLayout(0.0f),
+                    [&](ui::Builder& content) {
+                        if (contentArea != nullptr)
+                        {
+                            content.Splice(page.buildTree(*contentArea));
+                        }
+                    });
+    return builder.Build(area);
+}
+
+inline ui::NodeTree BuildAppPageTree(const RegisteredPage& page, ui::Bounds area)
+{
+    const ui::NodeTree measured = BuildAppPageTreeOnce(page, area, nullptr);
+    ui::Bounds contentArea{};
+    bool foundContentRegion = false;
+    for (const ui::Node& node : measured.nodes)
+    {
+        if (node.id == ui::NodeId(NodeIds::kAppContent))
+        {
+            contentArea = node.bounds;
+            foundContentRegion = true;
+            break;
+        }
+    }
+    // Matches BuildAudioPageTree's own idiom (comment above it): an
+    // impossible state throws rather than quietly building the app's tree
+    // against a substituted Bounds{}.
+    if (!foundContentRegion)
+    {
+        throw std::invalid_argument(
+            "app page tree is missing the kAppContent node needed to size the registered page");
+    }
+    return BuildAppPageTreeOnce(page, area, &contentArea);
+}
+
+// A thin BuildTree()/DispatchAction() shell, the same shape as
+// AudioPageSurface/SyncPageSurface below: it holds the resolved page data
+// and content bounds, and forwards every dispatched action to whatever
+// handler RuntimeMainComponent installs (there is no page-owned mutable
+// state here the way Sync/File have staged edits, so unlike SyncPageSurface
+// there is nothing for this class to intercept itself).
+class AppRegisteredPageSurface final : public ui::Surface
+{
+public:
+    ui::NodeTree BuildTree() override
+    {
+        return BuildAppPageTree(page_, contentBounds_);
+    }
+
+    void SetActionHandler(ActionHandler handler) override
+    {
+        outerHandler_ = std::move(handler);
+    }
+
+    void DispatchAction(const ui::Action& action) override
+    {
+        if (outerHandler_)
+        {
+            outerHandler_(action);
+        }
+    }
+
+    void SetContentBounds(ui::Bounds bounds)
+    {
+        contentBounds_ = bounds;
+    }
+
+    void SetPage(RegisteredPage page)
+    {
+        page_ = std::move(page);
+    }
+
+private:
+    RegisteredPage page_;
+    ui::Bounds contentBounds_{0.0f, 0.0f, 640.0f, 480.0f};
+    ActionHandler outerHandler_;
+};
+
 class SidebarSurface final : public ui::Surface
 {
 public:
@@ -1380,6 +1523,11 @@ public:
     void SetControllersWarning(bool warning)
     {
         snapshot_.controllersWarning = warning;
+    }
+
+    void SetRegisteredPageTitle(std::optional<std::string> title)
+    {
+        snapshot_.registeredPageTitle = std::move(title);
     }
 
 private:

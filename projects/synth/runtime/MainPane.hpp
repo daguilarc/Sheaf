@@ -25,7 +25,12 @@ public:
         Audio,
         Controllers,
         Sync,
-        File
+        File,
+        // sprs-17: mirrors RuntimeMainComponent's RuntimeMainPage::AppPage
+        // (see ToRuntimeMainPage/FromRuntimeMainPage below) the same way
+        // every other page value does, regardless of whether the wrapped
+        // App actually registers a page.
+        AppPage
     };
 
     explicit MainPane(Runtime<App>& runtime)
@@ -164,6 +169,8 @@ private:
                 return synth::runtime_ui::RuntimeMainPage::Sync;
             case Page::File:
                 return synth::runtime_ui::RuntimeMainPage::File;
+            case Page::AppPage:
+                return synth::runtime_ui::RuntimeMainPage::AppPage;
             case Page::None:
                 return synth::runtime_ui::RuntimeMainPage::Application;
         }
@@ -181,6 +188,8 @@ private:
                 return Page::Sync;
             case synth::runtime_ui::RuntimeMainPage::File:
                 return Page::File;
+            case synth::runtime_ui::RuntimeMainPage::AppPage:
+                return Page::AppPage;
             case synth::runtime_ui::RuntimeMainPage::Application:
                 return Page::None;
         }

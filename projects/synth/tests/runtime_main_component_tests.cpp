@@ -161,6 +161,54 @@ struct FakeApp
     FakeAppSurface surface;
 };
 
+// sprs-17: an app that registers one additional sidebar page. The builder
+// declares a Row with non-default padding and a non-even weight split, the
+// same nested-layout shape Task 9's
+// TestAudioPageAppSectionNestedLayoutSurvivesTheSplice (portable_ui_tests.cpp)
+// uses to prove Splice(Subtree) -- not Splice(NodeTree) -- carries a nested
+// container's declared LayoutOptions through the splice instead of letting
+// them re-resolve at defaults.
+struct RegisteredPageApp
+{
+    static synth::RuntimeConfig Config()
+    {
+        return synth::RuntimeConfig{.appName = "RegisteredPageAppTest", .uiWidth = 900, .uiHeight = 560};
+    }
+
+    void Init(synth::AppContext*) {}
+    void ProcessBlock(synth::AudioBlock&) {}
+
+    synth::ui::Surface& PortableSurface()
+    {
+        return surface;
+    }
+
+    synth::RegisteredPage RegisteredPage()
+    {
+        return synth::RegisteredPage{
+            .id = "app.custom",
+            .title = "Custom",
+            .buildTree = [](synth::ui::Bounds) {
+                synth::ui::Builder appBuilder;
+                appBuilder.Rootless();
+                synth::ui::LayoutOptions rowLayout;
+                rowLayout.padding = 40.0f;  // default LayoutOptions padding is not 40
+                appBuilder.Row("app.custom.row", rowLayout, [](synth::ui::Builder& row) {
+                    synth::ui::ControlStyle heavy;
+                    heavy.layout.main = synth::ui::Extent::Weight(3.0f);
+                    row.Label("app.custom.heavy", "Heavy", heavy);
+                    synth::ui::ControlStyle light;
+                    light.layout.main = synth::ui::Extent::Weight(1.0f);
+                    row.Label("app.custom.light", "Light", light);
+                });
+                return appBuilder.BuildSubtree();
+            },
+        };
+    }
+
+    FakeAppSurface surface;
+};
+
 // Task 8.3 (sprs-13): a surface that additionally implements
 // ui::ExtentAwareSurface and resolves its BuildTree() root against whatever
 // extent it was last offered, instead of a compiled-in size.
@@ -795,6 +843,87 @@ void TestSidebarWarningReflectsControllersDiscoverySnapshot()
             "unclaimed recognized cached pair warns while application is open");
 }
 
+// sprs-17: an app that never defines RegisteredPage() (FakeApp) must produce
+// exactly the sidebar and routing that existed before this task -- "optional
+// means optional, assert don't assume" (design constraint), checked both as
+// a tree shape and as a dispatched-action no-op.
+void TestSidebarWithNoRegistrationHasNoAppButtonAndIgnoresItsAction()
+{
+    Fixture fixture;
+    const synth::ui::NodeTree tree = fixture.component.BuildTree();
+
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kSidebarApp) == nullptr,
+            "no app-page button exists without registration");
+    Require(FindNode(tree, synth::runtime_ui::NodeIds::kSidebarRoot).bounds.height == 200.0f,
+            "the sidebar stays five fixed 40px rows tall without registration");
+    Require(FindNode(tree, synth::runtime_ui::NodeIds::kSidebarRoot).children.size() == 5,
+            "the sidebar contains exactly the four built-in page entries plus the deadline readout");
+
+    fixture.component.DispatchAction(
+        synth::ui::Action::Named(synth::runtime_ui::Actions::kSidebarApp));
+    Require(fixture.component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::Application,
+            "dispatching the app-page action without registration does not navigate");
+}
+
+// sprs-17: an app that does define RegisteredPage() gets a button after
+// File, and selecting it shows the app-built tree spliced with its declared
+// nested layout preserved (Task 9's nested-layout assertion pattern, reused
+// against the whole registered page rather than an audio-page section).
+void TestRegisteredPageButtonRendersAfterFileAndRoutesToSplicedAppTree()
+{
+    RegisteredPageApp app;
+    FakeServices services;
+    synth::runtime_ui::RuntimeMainComponent<RegisteredPageApp, FakeServices> component{app, services};
+
+    const synth::ui::NodeTree tree = component.BuildTree();
+    const synth::ui::Node& sidebarRoot = FindNode(tree, synth::runtime_ui::NodeIds::kSidebarRoot);
+    Require(sidebarRoot.children.size() == 6,
+            "the sidebar gains exactly one more entry when a page is registered");
+    Require(sidebarRoot.children[3] == synth::ui::NodeId(synth::runtime_ui::NodeIds::kSidebarFile) &&
+                sidebarRoot.children[4] == synth::ui::NodeId(synth::runtime_ui::NodeIds::kSidebarApp),
+            "the registered page's button is placed directly after File");
+    Require(FindNode(tree, synth::runtime_ui::NodeIds::kSidebarApp).label == "Custom",
+            "the button's label is the app's registered title");
+
+    component.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kSidebarApp));
+    Require(component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::AppPage,
+            "selecting the button navigates to the registered page");
+
+    const synth::ui::NodeTree onPage = component.BuildTree();
+    Require(onPage.nodes[1].id == synth::ui::NodeId(synth::runtime_ui::NodeIds::kAppRoot),
+            "the app page's own root replaces the app root while it is open");
+
+    const synth::ui::Node& heavy = FindNode(onPage, "app.custom.heavy");
+    const synth::ui::Node& light = FindNode(onPage, "app.custom.light");
+    Require(NearlyEqual(heavy.bounds.x, 40.0f),
+            "the row's explicit 40px padding is honored, not LayoutOptions{}'s default -- proof "
+            "the splice carried the app's declared layout rather than dropping it");
+    Require(heavy.bounds.width > 0.0f && light.bounds.width > 0.0f,
+            "both weighted children resolve to a positive width");
+    Require(NearlyEqual(heavy.bounds.width / light.bounds.width, 3.0f),
+            "the declared 3:1 weight split is honored, not an even default split");
+
+    // Built-in pages remain reachable and unaffected while the app page exists.
+    component.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kSidebarAudio));
+    Require(component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::Audio,
+            "built-in pages remain reachable once an app page is registered");
+    Require(FindNode(component.BuildTree(), synth::runtime_ui::NodeIds::kAudioRoot).id ==
+                synth::ui::NodeId(synth::runtime_ui::NodeIds::kAudioRoot),
+            "the audio page still renders exactly as it did before");
+
+    // Back returns to the application without saving runtime configuration:
+    // the app page is not one of the four RuntimePageKind values
+    // RuntimePageBackSavesConfiguration recognizes (RuntimePagePolicy.hpp),
+    // matching File's own no-save behavior.
+    component.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kSidebarApp));
+    Require(component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::AppPage,
+            "the app page reopens");
+    component.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kAppBack));
+    Require(component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::Application,
+            "the app page's Back button returns to the application");
+    Require(services.saveCount == 0, "leaving the app page does not save runtime configuration");
+}
+
 void TestWizardDiscoveryCacheRecomputesOnlyForCachedSnapshotChanges()
 {
     synth::ControllerWizardDiscoveryCache cache;
@@ -974,6 +1103,9 @@ int main()
 {
     static_assert(synth::SynthApplication<FakeApp>);
     static_assert(synth::SynthApplication<ExtentAwareApp>);
+    static_assert(synth::SynthApplication<RegisteredPageApp>);
+    static_assert(!synth::HasRegisteredPage<FakeApp>, "FakeApp opts out by never defining RegisteredPage()");
+    static_assert(synth::HasRegisteredPage<RegisteredPageApp>);
     static_assert(synth::runtime_ui::RuntimeMainServices<FakeServices>);
 
     Run("TestPlacingASubtreeRootPlacesEveryDescendant",
@@ -997,6 +1129,10 @@ int main()
         TestRefreshUpdatesRuntimePageModelsAndRollingDeadline);
     Run("TestSidebarWarningReflectsControllersDiscoverySnapshot",
         TestSidebarWarningReflectsControllersDiscoverySnapshot);
+    Run("TestSidebarWithNoRegistrationHasNoAppButtonAndIgnoresItsAction",
+        TestSidebarWithNoRegistrationHasNoAppButtonAndIgnoresItsAction);
+    Run("TestRegisteredPageButtonRendersAfterFileAndRoutesToSplicedAppTree",
+        TestRegisteredPageButtonRendersAfterFileAndRoutesToSplicedAppTree);
     Run("TestWizardDiscoveryCacheRecomputesOnlyForCachedSnapshotChanges",
         TestWizardDiscoveryCacheRecomputesOnlyForCachedSnapshotChanges);
     Run("TestRejectsASurfaceTooShortForTheRuntimeSidebar",
