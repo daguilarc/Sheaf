@@ -1002,6 +1002,22 @@ private:
     std::chrono::steady_clock::time_point startTime_;
     synth_juce::RuntimeMidiEpoch midiEpoch_;
     juce::AudioDeviceManager deviceManager_;
+
+    // Shutdown ordering (binding, review fix on sar-33): declared before
+    // engine_ so it is destroyed AFTER engine_ -- member destruction runs in
+    // the reverse of declaration order, so a member declared earlier outlives
+    // one declared later. engine_.Context().inputRoutingSignal (wired in the
+    // constructor, above) is a raw pointer into this object, and the engine
+    // -- including its own teardown and the App inside it -- may still read
+    // Context().inputRoutingSignal while engine_ itself is being destroyed.
+    // Declaring inputRoutingSignal_ after engine_ would destroy it first,
+    // leaving that pointer dangling for the whole remainder of engine_'s
+    // teardown. Mirrors BrowserRuntime.hpp, which declares
+    // inputRoutingSignal_ before engine_ for the same reason. See
+    // RefreshInputRoutedState for the JUCE derivation and every call site
+    // that keeps it current.
+    synth::InputRoutingSignal inputRoutingSignal_;
+
     synth::Engine<App> engine_;
     synth::RuntimeDataPaths dataPaths_;
     std::optional<synth::RuntimeDataPaths> dataPathsOverride_;
@@ -1050,11 +1066,6 @@ private:
     // ComposeAudioStatus appends to it. See PublishPendingInputStatus.
     int publishedActiveInputChannels_ = -1;
     juce::String audioStatusDetail_;
-
-    // sar-33: this Runtime's storage for AppContext::inputRoutingSignal
-    // (wired in the constructor, above). See RefreshInputRoutedState for the
-    // JUCE derivation and every call site that keeps it current.
-    synth::InputRoutingSignal inputRoutingSignal_;
 };
 
 }  // namespace synth_runtime

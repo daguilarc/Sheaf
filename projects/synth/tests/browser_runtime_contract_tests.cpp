@@ -17,6 +17,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -1614,13 +1615,19 @@ void TestBrowserRuntimeSuccessfulDeferredAttachStaysConnectedUntilClear()
 // with another callback. Identical semantic to the JUCE side
 // (RuntimeShellSessionTests.cpp's CheckInputRoutedSignal): "a user-chosen
 // input source is open and delivering." The browser host has no ThreadId
-// tagging to assert against (unlike the JUCE side), so this only checks that
-// the callback fires, not which thread it runs on.
+// tagging to assert against (unlike the JUCE side), so this instead pins the
+// weaker but still load-bearing contract directly: the callback runs
+// synchronously on the calling thread (this test's thread, standing in for
+// the browser message/main thread that SetAudioInputSource/
+// ClearAudioInputSource are always invoked from), by comparing
+// std::this_thread::get_id() captured at test start against the id observed
+// inside the callback.
 void TestBrowserRuntimeInputRoutedSignalTracksCaptureGrantAndRevoke()
 {
     using synth_browser::BrowserAudioInputStatus;
     const auto online = static_cast<std::uint32_t>(BrowserAudioInputStatus::Online);
     const auto streamEnded = static_cast<std::uint32_t>(BrowserAudioInputStatus::StreamEnded);
+    const std::thread::id callingThreadId = std::this_thread::get_id();
 
     synth_browser::Runtime<InputCountApp<4>> runtime;
     runtime.Start();
@@ -1629,17 +1636,25 @@ void TestBrowserRuntimeInputRoutedSignalTracksCaptureGrantAndRevoke()
     Require(!context.InputRouted(), "a freshly started runtime with no granted capture is not routed");
 
     std::vector<bool> notifications;
-    context.SetInputRoutedChangedCallback([&](bool routed) { notifications.push_back(routed); });
+    std::vector<std::thread::id> notificationThreadIds;
+    context.SetInputRoutedChangedCallback([&](bool routed) {
+        notifications.push_back(routed);
+        notificationThreadIds.push_back(std::this_thread::get_id());
+    });
 
     Require(runtime.SetAudioInputSource(91, 4, online), "a granted capture source publishes");
     Require(context.InputRouted(), "a granted capture routes the signal");
     Require(notifications.size() == 1 && notifications[0] == true,
             "the change callback fires exactly once on the granting edge");
+    Require(notificationThreadIds[0] == callingThreadId,
+            "the granting-edge callback runs synchronously on the calling thread");
 
     Require(runtime.ClearAudioInputSource(streamEnded), "revoking the granted capture clears it");
     Require(!context.InputRouted(), "revoking capture un-routes the signal");
     Require(notifications.size() == 2 && notifications[1] == false,
             "the change callback fires exactly once on the revoking edge");
+    Require(notificationThreadIds[1] == callingThreadId,
+            "the revoking-edge callback runs synchronously on the calling thread");
 }
 
 // The rule the runtime path depends on, asserted directly: a source that was
