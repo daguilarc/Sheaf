@@ -1207,6 +1207,47 @@ static void TestCaptionIsAnEmittedLabelNodeNotAField()
             "the author's container holds the .row, not the bare control");
 }
 
+static void TestCaptionPlacementDefaultIsBeforeAndUnchanged()
+{
+    Require(synth::ui::ControlStyle{}.captionPlacement == synth::ui::CaptionPlacement::Before,
+            "a default-constructed ControlStyle places the caption Before the control");
+
+    synth::ui::ControlStyle style;
+    style.caption = "Output device";
+
+    synth::ui::Builder builder;
+    builder.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    builder.ComboBox("device", {}, "", synth::ui::Action::Named("pick"), style);
+    const synth::ui::NodeTree tree = builder.Build({0.0f, 0.0f, 400.0f, 300.0f});
+
+    Require(FindNode(tree, "device.row").children.size() == 2 &&
+                FindNode(tree, "device.row").children[0].value == "device.caption" &&
+                FindNode(tree, "device.row").children[1].value == "device",
+            "leaving captionPlacement unset emits the caption before the control, exactly as "
+            "before this change");
+}
+
+static void TestCaptionPlacementAfterEmitsCaptionAfterControl()
+{
+    synth::ui::ControlStyle style;
+    style.caption = "Output device";
+    style.captionPlacement = synth::ui::CaptionPlacement::After;
+
+    synth::ui::Builder builder;
+    builder.Root("root", {0.0f, 0.0f, 400.0f, 300.0f});
+    builder.ComboBox("device", {}, "", synth::ui::Action::Named("pick"), style);
+    const synth::ui::NodeTree tree = builder.Build({0.0f, 0.0f, 400.0f, 300.0f});
+
+    Require(FindNode(tree, "device.row").children.size() == 2 &&
+                FindNode(tree, "device.row").children[0].value == "device" &&
+                FindNode(tree, "device.row").children[1].value == "device.caption",
+            "captionPlacement After emits the control then the caption in the same .row");
+    Require(FindNode(tree, "device.caption").kind == synth::ui::NodeKind::Label,
+            "the trailing caption is still an ordinary Label node");
+    Require(FindNode(tree, "device.caption").text == "Output device",
+            "the trailing caption's id derivation and text sync match the leading form");
+}
+
 static void TestComboBoxAcceptsRuntimeOptionVectors()
 {
     synth::ui::Builder builder;
@@ -3171,6 +3212,8 @@ int main()
     TestContainerConstructionCarriesAppearance();
     TestUnstyledNodesCarryNothing();
     TestCaptionIsAnEmittedLabelNodeNotAField();
+    TestCaptionPlacementDefaultIsBeforeAndUnchanged();
+    TestCaptionPlacementAfterEmitsCaptionAfterControl();
     TestComboBoxAcceptsRuntimeOptionVectors();
     TestSyncPageAlignsThroughTheFormGrid();
     TestSyncPageFitsWithinTheRuntimeRoot();
