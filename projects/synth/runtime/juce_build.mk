@@ -156,6 +156,11 @@ $(APP): $(APP_SOURCES) $(SYNTH_SRC) $(SYNTH_RUNTIME_SRC) $(SYNTH_HEADERS) $(SYNT
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(APP_SOURCES) $(SYNTH_SRC) $(SYNTH_RUNTIME_SRC) $(JUCE_MODULE_OBJ) $(JUCE_C_MODULE_OBJ) -o $@ $(LDFLAGS_DARWIN)
 
 $(APP_BUNDLE): $(APP) $(APP_INFO_PLIST)
+	@plist_exec="$$(plutil -extract CFBundleExecutable raw -o - "$(APP_INFO_PLIST)")"; \
+	if [ "$$plist_exec" != "$(APP_NAME)" ]; then \
+		echo "error: $(APP_INFO_PLIST) CFBundleExecutable is '$$plist_exec' but APP_NAME is '$(APP_NAME)'; bundle would fail to launch" >&2; \
+		exit 1; \
+	fi
 	mkdir -p "$(APP_BUNDLE)/Contents/MacOS"
 	cp $(APP_INFO_PLIST) "$(APP_BUNDLE)/Contents/Info.plist"
 	cp "$(APP)" "$(APP_BUNDLE_BINARY)"
