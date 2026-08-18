@@ -46,6 +46,10 @@ inline constexpr const char* kAudioForm = "runtime.audio.form";
 inline constexpr const char* kAudioStatus = "runtime.audio.status";
 inline constexpr const char* kAudioDeviceLine = "runtime.audio.device_line";
 inline constexpr const char* kAudioStatusLine = "runtime.audio.status_line";
+// sprs-16: mount point for an app-supplied section appended beneath the
+// device rows. Sheaf owns this one id so tests (and any future consumer)
+// have a stable anchor regardless of what ids the app's own tree uses.
+inline constexpr const char* kAudioAppSection = "runtime.audio.app_section";
 
 inline constexpr const char* kSyncRoot = "runtime.sync.root";
 inline constexpr const char* kSyncBack = "runtime.sync.back";
@@ -178,6 +182,12 @@ struct AudioPageSnapshot
     bool showInputRetry = false;
     std::string deviceLineText;
     std::string statusLineText;
+    // sprs-16: an app may append a section beneath the device rows, confined
+    // to the page's remaining area (BuildAudioPageTree hands it that area's
+    // resolved Bounds). Default empty -> the audio page renders exactly as
+    // before; no app registration surface populates this yet (task 9 is
+    // Sheaf-side only).
+    std::function<ui::NodeTree(ui::Bounds)> appSection;
 };
 
 struct SyncPageStatus
@@ -773,7 +783,22 @@ inline ui::NodeTree BuildSyncPageTree(const SyncPageSnapshot& snapshot, ui::Boun
     return builder.Build(area);
 }
 
-inline ui::NodeTree BuildAudioPageTree(const AudioPageSnapshot& snapshot, ui::Bounds area)
+// sprs-16: `remainingArea` is null on the first (and, when no app section is
+// supplied, only) pass -- that pass is byte-for-byte the pre-sprs-16 function
+// body, so the default page is identical by construction, not by a separate
+// code path that has to be kept in sync. When non-null, it is the resolved
+// Bounds of kAudioStatus from that first pass: the region the comment below
+// already calls "the page's slack" and that
+// TestEveryRebuiltPageAbsorbsAtTheSmallestDeclaredSurface's
+// RequireRegionAbsorbsTheDifference asserts absorbs the whole difference
+// between surface heights, i.e. the page's remaining area. The app-supplied
+// section is spliced in as one more child of that same region, after the
+// device/status lines, under Sheaf's own `NodeIds::kAudioAppSection` mount id
+// (matching the file's `runtime.audio.*` id convention) so it is beneath the
+// device rows and confined to exactly the area it was handed.
+inline ui::NodeTree BuildAudioPageTreeOnce(const AudioPageSnapshot& snapshot,
+                                           ui::Bounds area,
+                                           const ui::Bounds* remainingArea)
 {
     ui::Builder builder;
     builder.Root(NodeIds::kAudioRoot, area);
@@ -825,8 +850,33 @@ inline ui::NodeTree BuildAudioPageTree(const AudioPageSnapshot& snapshot, ui::Bo
                                   snapshot.statusLineText,
                                   PageControls::MutedText());
             }
+            if (remainingArea != nullptr)
+            {
+                status.Section(NodeIds::kAudioAppSection, ui::LayoutOptions{}, [&](ui::Builder& section) {
+                    section.Splice(snapshot.appSection(*remainingArea));
+                });
+            }
         });
     return builder.Build(area);
+}
+
+inline ui::NodeTree BuildAudioPageTree(const AudioPageSnapshot& snapshot, ui::Bounds area)
+{
+    const ui::NodeTree tree = BuildAudioPageTreeOnce(snapshot, area, nullptr);
+    if (!snapshot.appSection)
+    {
+        return tree;
+    }
+    ui::Bounds remainingArea{};
+    for (const ui::Node& node : tree.nodes)
+    {
+        if (node.id == ui::NodeId(NodeIds::kAudioStatus))
+        {
+            remainingArea = node.bounds;
+            break;
+        }
+    }
+    return BuildAudioPageTreeOnce(snapshot, area, &remainingArea);
 }
 
 inline bool FileStatusIsError(const std::string& statusText)

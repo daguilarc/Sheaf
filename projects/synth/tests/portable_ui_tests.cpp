@@ -1560,6 +1560,164 @@ static void TestLiveInputCaptureHidesTheRetryRow()
             "hiding retry does not hide the input selector");
 }
 
+// sprs-16: a verbatim copy of BuildAudioPageTree's body as it stood before the
+// app-supplied-section change -- the pre-change tree the spec requires the
+// default path to stay byte-identical to. Any drift the two-pass
+// implementation introduces (node count, ids, kinds, or resolved bounds)
+// shows up as a mismatch against this independent reference.
+synth::ui::NodeTree ReferenceAudioPageTreeBeforeAppSection(
+    const synth::runtime_ui::AudioPageSnapshot& snapshot, synth::ui::Bounds area)
+{
+    using namespace synth::runtime_ui;
+    synth::ui::Builder builder;
+    builder.Root(NodeIds::kAudioRoot, area);
+    builder.Button(NodeIds::kAudioBack, "Back", synth::ui::Action::Named(Actions::kAudioBack),
+                   PageControls::BackButton());
+    builder.Column(NodeIds::kAudioForm, PageControls::FormGridLayout(), [&](synth::ui::Builder& form) {
+        form.ComboBox(NodeIds::kAudioOutput,
+                      PageControls::ControlOptionsFor(snapshot.outputOptions),
+                      snapshot.selectedOutputId,
+                      synth::ui::Action::Named(Actions::kAudioOutputSelect),
+                      PageControls::Field("Output device"));
+        if (snapshot.showInputCombo)
+        {
+            form.ComboBox(NodeIds::kAudioInput,
+                          PageControls::ControlOptionsFor(snapshot.inputOptions),
+                          snapshot.selectedInputId,
+                          synth::ui::Action::Named(Actions::kAudioInputSelect),
+                          PageControls::Field("Input device"));
+        }
+        if (snapshot.showInputRetry)
+        {
+            form.Button(NodeIds::kAudioInputRetry,
+                        "Retry Input",
+                        synth::ui::Action::Named(Actions::kAudioInputRetry),
+                        PageControls::FormButton("Input capture"));
+        }
+    });
+    builder.ScrollArea(
+        NodeIds::kAudioStatus, PageControls::StatusStackLayout(0.0f), [&](synth::ui::Builder& status) {
+            if (!snapshot.deviceLineText.empty())
+            {
+                status.Label(NodeIds::kAudioDeviceLine, snapshot.deviceLineText, PageControls::MutedText());
+            }
+            if (!snapshot.statusLineText.empty())
+            {
+                status.StatusText(NodeIds::kAudioStatusLine,
+                                  snapshot.statusLineText,
+                                  PageControls::MutedText());
+            }
+        });
+    return builder.Build(area);
+}
+
+static void TestAudioPageWithNoAppSectionIsByteIdenticalToBeforeTheChange()
+{
+    synth::runtime_ui::AudioPageSnapshot snapshot;
+    snapshot.outputOptions = {{"system_default", "System Default"}};
+    snapshot.inputOptions = {{"Built-in Microphone", "Built-in Microphone"}};
+    snapshot.selectedOutputId = "system_default";
+    snapshot.selectedInputId = "Built-in Microphone";
+    snapshot.showInputCombo = true;
+    snapshot.showInputRetry = true;
+    snapshot.deviceLineText = "Built-in Output: 48000 Hz, 512 frames";
+    snapshot.statusLineText = "Audio running";
+    Require(!snapshot.appSection, "a default-constructed snapshot supplies no app section builder");
+    const synth::ui::Bounds area{0.0f, 0.0f, 900.0f, 560.0f};
+
+    const synth::ui::NodeTree actual = synth::runtime_ui::BuildAudioPageTree(snapshot, area);
+    const synth::ui::NodeTree expected = ReferenceAudioPageTreeBeforeAppSection(snapshot, area);
+
+    Require(actual.nodes.size() == expected.nodes.size(),
+            "an unset app section builder adds no nodes to the pre-change tree");
+    for (std::size_t ix = 0; ix < expected.nodes.size(); ++ix)
+    {
+        const synth::ui::Node& a = actual.nodes[ix];
+        const synth::ui::Node& e = expected.nodes[ix];
+        Require(a.id == e.id, "node id order matches the pre-change tree exactly");
+        Require(a.kind == e.kind, "node kind matches the pre-change tree exactly");
+        RequireNear(a.bounds.x, e.bounds.x, 0.0001f, "node x matches the pre-change tree exactly");
+        RequireNear(a.bounds.y, e.bounds.y, 0.0001f, "node y matches the pre-change tree exactly");
+        RequireNear(a.bounds.width, e.bounds.width, 0.0001f, "node width matches the pre-change tree exactly");
+        RequireNear(a.bounds.height, e.bounds.height, 0.0001f, "node height matches the pre-change tree exactly");
+    }
+    Require(!HasNode(actual, synth::runtime_ui::NodeIds::kAudioAppSection),
+            "no app section mount node exists when no builder is supplied");
+}
+
+static void TestAudioPageAppendsSuppliedSectionBeneathDeviceRowsWithinRemainingArea()
+{
+    synth::runtime_ui::AudioPageSnapshot snapshot;
+    snapshot.outputOptions = {{"system_default", "System Default"}};
+    snapshot.inputOptions = {{"Built-in Microphone", "Built-in Microphone"}};
+    snapshot.selectedOutputId = "system_default";
+    snapshot.selectedInputId = "Built-in Microphone";
+    snapshot.showInputCombo = true;
+    snapshot.deviceLineText = "Built-in Output: 48000 Hz, 512 frames";
+    snapshot.statusLineText = "Audio running";
+    const synth::ui::Bounds area{0.0f, 0.0f, 900.0f, 560.0f};
+
+    std::optional<synth::ui::Bounds> handedBounds;
+    snapshot.appSection = [&handedBounds](synth::ui::Bounds bounds) {
+        handedBounds = bounds;
+        synth::ui::Builder appBuilder;
+        appBuilder.Root("app.audio.section.root", bounds);
+        appBuilder.Label("app.audio.section.label", "App section", {});
+        return appBuilder.Build(bounds);
+    };
+
+    const synth::ui::NodeTree tree = synth::runtime_ui::BuildAudioPageTree(snapshot, area);
+
+    // The remaining area independently: the default-path tree's kAudioStatus
+    // region, which TestEveryRebuiltPageAbsorbsAtTheSmallestDeclaredSurface's
+    // RequireRegionAbsorbsTheDifference already establishes as the page's
+    // remaining area (it absorbs the whole difference between surface
+    // heights).
+    synth::runtime_ui::AudioPageSnapshot withoutBuilder = snapshot;
+    withoutBuilder.appSection = {};
+    const synth::ui::NodeTree defaultTree = synth::runtime_ui::BuildAudioPageTree(withoutBuilder, area);
+    const synth::ui::Node& statusWithoutBuilder =
+        FindNode(defaultTree, synth::runtime_ui::NodeIds::kAudioStatus);
+
+    Require(handedBounds.has_value(), "the supplied builder is invoked while resolving the page");
+    RequireNear(handedBounds->x, statusWithoutBuilder.bounds.x, 0.0001f,
+                "the handed bounds match the page's remaining area (x)");
+    RequireNear(handedBounds->y, statusWithoutBuilder.bounds.y, 0.0001f,
+                "the handed bounds match the page's remaining area (y)");
+    RequireNear(handedBounds->width, statusWithoutBuilder.bounds.width, 0.0001f,
+                "the handed bounds match the page's remaining area (width)");
+    RequireNear(handedBounds->height, statusWithoutBuilder.bounds.height, 0.0001f,
+                "the handed bounds match the page's remaining area (height)");
+
+    const synth::ui::Node& appSection =
+        FindNode(tree, synth::runtime_ui::NodeIds::kAudioAppSection);
+    Require(!appSection.children.empty(), "the app-supplied nodes attach beneath the audio page");
+    const synth::ui::Node& appLabel = FindNode(tree, "app.audio.section.label");
+    Require(appLabel.text == "App section", "the app-built node survives the splice");
+
+    const synth::ui::Node& statusWithSection =
+        FindNode(tree, synth::runtime_ui::NodeIds::kAudioStatus);
+    Require(!statusWithSection.children.empty() &&
+                statusWithSection.children.back().value == synth::runtime_ui::NodeIds::kAudioAppSection,
+            "the app section is appended after the existing device/status lines");
+
+    Require(appSection.bounds.x >= 0.0f && appSection.bounds.y >= 0.0f,
+            "the app section stays within the handed area's top-left corner");
+    RequireNear(appSection.bounds.width, handedBounds->width, 0.0001f,
+                "the app section is confined to the width of the area handed to the builder");
+    Require(appSection.bounds.height <= handedBounds->height + 0.0001f,
+            "the app section does not exceed the height of the area handed to the builder");
+    Require(appSection.bounds.y + appSection.bounds.height <= handedBounds->height + 0.0001f,
+            "the app section's whole extent, not just its top-left corner, is confined to the handed area");
+
+    // Not "device rows": the form's ComboBox rows are untouched by the append.
+    Require(HasNode(tree, synth::runtime_ui::NodeIds::kAudioOutput),
+            "device rows are unaffected by an appended section");
+    Require(FindNode(tree, synth::runtime_ui::NodeIds::kAudioForm).bounds.height ==
+                FindNode(defaultTree, synth::runtime_ui::NodeIds::kAudioForm).bounds.height,
+            "the form's layout is unchanged by an appended section");
+}
+
 // A patch root with more directories than the panel can show at the smallest
 // reachable extent. 60 is past the point where the share-and-cap shape this
 // replaced stopped producing a usable row at all: it gave every row 0.0392px at
@@ -3344,6 +3502,8 @@ int main()
     TestHiddenInputSelectorLeavesNoOrphanedCaption();
     TestOfflineInputCaptureOffersACaptionedRetryRow();
     TestLiveInputCaptureHidesTheRetryRow();
+    TestAudioPageWithNoAppSectionIsByteIdenticalToBeforeTheChange();
+    TestAudioPageAppendsSuppliedSectionBeneathDeviceRowsWithinRemainingArea();
     TestPatchBrowserSplicesAsARootlessSubtree();
     TestPatchVersionsSplicesAsARootlessSubtree();
     TestSplicedListsKeepEveryEntryAtEveryExtent();
