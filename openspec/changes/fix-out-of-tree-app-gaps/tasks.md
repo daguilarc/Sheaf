@@ -113,11 +113,11 @@ omni-rule: implementation/review on the lightest capable model.
 
 ## 11. Consumer verification and PR (user-gated)
 
-- [ ] 11.1 Push branch; rebuild `daguilarc/frogg3rs` against branch tip; full
+- [x] 11.1 Push branch; rebuild `daguilarc/frogg3rs` against branch tip; full
       app suite green.
-- [ ] 11.2 Operator acceptance test of the running app (owner decides which
+- [x] 11.2 Operator acceptance test of the running app (owner decides which
       opt-in toggles to exercise: `spv-9` one-liner, `sar-33` re-enable).
-- [ ] 11.3 On approval: PR `daguilarc/Sheaf:fix-out-of-tree-app-gaps` →
+- [x] 11.3 On approval: PR `daguilarc/Sheaf:fix-out-of-tree-app-gaps` →
       `jvictor0/Sheaf:main`, an initial commit per requirement plus the
       review-driven fix commits task-scoped review produced along the way,
       body mapping every commit → the issue(s) it addresses, closing #1–#6
