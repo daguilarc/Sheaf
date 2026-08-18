@@ -757,6 +757,72 @@ void TestGangedRandomLfoVisualizer()
     Require(visualizer.Draw().size() == 2, "unstable retained state fails closed");
 }
 
+void TestGangedRandomLfoBackgroundOptOut()
+{
+    // Create a valid snapshot for testing
+    synth::GangedRandomLfoSnapshot<2> snapshot;
+    snapshot.sampleRate = 48000.0;
+    snapshot.roundElapsedSamples = 3.0;
+    snapshot.voices[0] = {
+        .source = 0.0f,
+        .target = 1.0f,
+        .output = 0.91f,
+        .shape = 0.0f,
+        .waitingIncrement = 0.25,
+        .movingIncrement = 0.5,
+        .color = synth::Color::Cyan,
+    };
+    snapshot.voices[1] = {
+        .source = 1.0f,
+        .target = 0.25f,
+        .output = 0.02f,
+        .shape = 1.0f,
+        .waitingIncrement = 0.125,
+        .movingIncrement = 0.25,
+        .color = synth::Color::Orange,
+    };
+
+    const synth::ui::Bounds bounds{10.0f, 20.0f, 180.0f, 90.0f};
+
+    // Build default (with background)
+    std::vector<synth::ui::DrawCommand> defaultCommands;
+    synth::ui::BuildGangedRandomLfoCommands(snapshot, bounds, defaultCommands);
+
+    // Build with background opted out
+    std::vector<synth::ui::DrawCommand> optedOutCommands;
+    synth::ui::BuildGangedRandomLfoCommands(snapshot, bounds, optedOutCommands, false);
+
+    // Default must have Fill and Line commands
+    Require(defaultCommands.size() >= 2, "default stream has background and axis");
+    Require(defaultCommands[0].kind == synth::ui::DrawCommand::Kind::Fill, "first command is background fill");
+    Require(defaultCommands[1].kind == synth::ui::DrawCommand::Kind::Line, "second command is axis line");
+
+    // Opted out must have exactly 2 fewer commands (no Fill, no Line)
+    Require(optedOutCommands.size() == defaultCommands.size() - 2,
+            "opted-out stream has exactly two fewer commands (no background and no axis)");
+
+    // Verify remaining commands match (skip first two from default)
+    Require(optedOutCommands.size() >= 2, "opted-out stream still has voice traces");
+    for (std::size_t i = 0; i < optedOutCommands.size(); ++i)
+    {
+        const auto& optedCmd = optedOutCommands[i];
+        const auto& defaultCmd = defaultCommands[i + 2];
+        Require(optedCmd.kind == defaultCmd.kind, "opted-out command types match default (after background)");
+        if (optedCmd.kind == synth::ui::DrawCommand::Kind::Polyline)
+        {
+            Require(optedCmd.points.size() == defaultCmd.points.size(),
+                    "opted-out polyline has same point count");
+            Require(optedCmd.color == defaultCmd.color, "opted-out polyline has same color");
+        }
+        else if (optedCmd.kind == synth::ui::DrawCommand::Kind::FillEllipse)
+        {
+            Require(std::memcmp(&optedCmd.bounds, &defaultCmd.bounds, sizeof(synth::ui::Bounds)) == 0,
+                    "opted-out dot bounds match default");
+            Require(optedCmd.color == defaultCmd.color, "opted-out dot has same color");
+        }
+    }
+}
+
 void TestScopeWaveformCommandsAreNodeLocal()
 {
     synth::ScopeWriter scope(1, 128);
@@ -3240,6 +3306,7 @@ int main()
     TestControllersChooserAndBraid4PinTheirAbsorbingRegions();
 
     TestGangedRandomLfoVisualizer();
+    TestGangedRandomLfoBackgroundOptOut();
     TestScopeWaveformCommandsAreNodeLocal();
     TestEncoderDrawIsPositionIndependent();
     TestStandardModulatorVisualizersRemainPortable();
