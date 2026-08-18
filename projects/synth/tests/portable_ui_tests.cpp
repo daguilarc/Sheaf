@@ -1660,10 +1660,14 @@ static void TestAudioPageAppendsSuppliedSectionBeneathDeviceRowsWithinRemainingA
     std::optional<synth::ui::Bounds> handedBounds;
     snapshot.appSection = [&handedBounds](synth::ui::Bounds bounds) {
         handedBounds = bounds;
+        // sprs-16: ui::Subtree, built the Rootless()/BuildSubtree() way --
+        // the same idiom BuildPatchBrowserSubtree/BuildPatchVersionsSubtree
+        // use (RuntimePages.hpp:954-1001, 1006-1019) -- not a Root+Build()
+        // NodeTree, so the app's own layout declarations reach the splice.
         synth::ui::Builder appBuilder;
-        appBuilder.Root("app.audio.section.root", bounds);
+        appBuilder.Rootless();
         appBuilder.Label("app.audio.section.label", "App section", {});
-        return appBuilder.Build(bounds);
+        return appBuilder.BuildSubtree();
     };
 
     const synth::ui::NodeTree tree = synth::runtime_ui::BuildAudioPageTree(snapshot, area);
@@ -1713,9 +1717,84 @@ static void TestAudioPageAppendsSuppliedSectionBeneathDeviceRowsWithinRemainingA
     // Not "device rows": the form's ComboBox rows are untouched by the append.
     Require(HasNode(tree, synth::runtime_ui::NodeIds::kAudioOutput),
             "device rows are unaffected by an appended section");
-    Require(FindNode(tree, synth::runtime_ui::NodeIds::kAudioForm).bounds.height ==
+    RequireNear(FindNode(tree, synth::runtime_ui::NodeIds::kAudioForm).bounds.height,
                 FindNode(defaultTree, synth::runtime_ui::NodeIds::kAudioForm).bounds.height,
-            "the form's layout is unchanged by an appended section");
+                0.0001f,
+                "the form's layout is unchanged by an appended section");
+}
+
+// sprs-16 review: the finding this test closes is that Splice(NodeTree)
+// carries no layout map (see Splice(NodeTree) in PortableUIBuilders.hpp --
+// it forwards to Splice(Subtree{tree, {}, {}})), so a nested Row/Column the
+// app declares with a weighted extent or explicit padding would silently
+// re-resolve with LayoutOptions{} defaults once the page's outer Build(area)
+// walked the spliced nodes from the root. TestAudioPageAppendsSuppliedSection...
+// above never nests a container inside the app section, so it could not have
+// caught that. This test declares a Row with non-default padding and two
+// children weighted 3:1, and asserts the RESOLVED bounds carry those
+// numbers rather than the default padding (kSpacing.padding == 12.0f) and an
+// even 1:1 split.
+static void TestAudioPageAppSectionNestedLayoutSurvivesTheSplice()
+{
+    synth::runtime_ui::AudioPageSnapshot snapshot;
+    snapshot.outputOptions = {{"system_default", "System Default"}};
+    snapshot.selectedOutputId = "system_default";
+    snapshot.deviceLineText = "Built-in Output: 48000 Hz, 512 frames";
+    snapshot.statusLineText = "Audio running";
+    const synth::ui::Bounds area{0.0f, 0.0f, 900.0f, 560.0f};
+
+    constexpr float kRowPadding = 40.0f;  // default LayoutOptions padding is kSpacing.padding == 12.0f
+    constexpr float kHeavyWeight = 3.0f;
+    constexpr float kLightWeight = 1.0f;
+
+    snapshot.appSection = [](synth::ui::Bounds) {
+        synth::ui::Builder appBuilder;
+        appBuilder.Rootless();
+        synth::ui::LayoutOptions rowLayout;
+        rowLayout.padding = kRowPadding;
+        appBuilder.Row("app.audio.section.row", rowLayout, [](synth::ui::Builder& row) {
+            synth::ui::ControlStyle heavy;
+            heavy.layout.main = synth::ui::Extent::Weight(kHeavyWeight);
+            row.Label("app.audio.section.heavy", "Heavy", heavy);
+            synth::ui::ControlStyle light;
+            light.layout.main = synth::ui::Extent::Weight(kLightWeight);
+            row.Label("app.audio.section.light", "Light", light);
+        });
+        return appBuilder.BuildSubtree();
+    };
+
+    const synth::ui::NodeTree tree = synth::runtime_ui::BuildAudioPageTree(snapshot, area);
+
+    const synth::ui::Node& row = FindNode(tree, "app.audio.section.row");
+    const synth::ui::Node& heavy = FindNode(tree, "app.audio.section.heavy");
+    const synth::ui::Node& light = FindNode(tree, "app.audio.section.light");
+
+    // Node bounds are parent-relative (a child's bounds are an offset within
+    // its own container, not a page-absolute position), so the row's declared
+    // padding shows up directly as the first child's x -- not as a difference
+    // against the row's own (differently-relative) bounds.x.
+    //
+    // The declared padding, not the default 12.0f: the first child starts
+    // kRowPadding from the row's left edge.
+    RequireNear(heavy.bounds.x, kRowPadding, 0.01f,
+                "the row's explicit padding is honored, not LayoutOptions{}'s default");
+
+    // The declared 3:1 weight split, not an even 1:1 default (a lost layout
+    // entry falls back to Extent::Intrinsic, giving both leaves their
+    // natural text width instead of a weighted share).
+    Require(heavy.bounds.width > 0.0f && light.bounds.width > 0.0f,
+            "both weighted children resolve to a positive width");
+    RequireNear(heavy.bounds.width / light.bounds.width, kHeavyWeight / kLightWeight, 0.02f,
+                "the declared 3:1 weight split is honored, not an even default split");
+
+    // The gap between them is the default 8.0f (unset in rowLayout), so this
+    // pins the light child's left edge relative to the heavy child's right
+    // edge, and the row's own resolved width is fully accounted for by
+    // padding + children + gap -- nothing left unexplained by a lost entry.
+    RequireNear(light.bounds.x, heavy.bounds.x + heavy.bounds.width + synth::ui::kSpacing.gap, 0.01f,
+                "the second child starts after the first plus the default gap");
+    RequireNear(light.bounds.x + light.bounds.width + kRowPadding, row.bounds.width, 0.01f,
+                "the row's own resolved width is fully accounted for by padding + children + gap");
 }
 
 // A patch root with more directories than the panel can show at the smallest
@@ -3504,6 +3583,7 @@ int main()
     TestLiveInputCaptureHidesTheRetryRow();
     TestAudioPageWithNoAppSectionIsByteIdenticalToBeforeTheChange();
     TestAudioPageAppendsSuppliedSectionBeneathDeviceRowsWithinRemainingArea();
+    TestAudioPageAppSectionNestedLayoutSurvivesTheSplice();
     TestPatchBrowserSplicesAsARootlessSubtree();
     TestPatchVersionsSplicesAsARootlessSubtree();
     TestSplicedListsKeepEveryEntryAtEveryExtent();

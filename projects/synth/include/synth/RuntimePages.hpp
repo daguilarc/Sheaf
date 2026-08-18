@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -187,7 +188,15 @@ struct AudioPageSnapshot
     // resolved Bounds). Default empty -> the audio page renders exactly as
     // before; no app registration surface populates this yet (task 9 is
     // Sheaf-side only).
-    std::function<ui::NodeTree(ui::Bounds)> appSection;
+    // sprs-16 (design amendment, 489a967d): a NodeTree return here would
+    // splice via Splice(NodeTree), which carries no layout map (see
+    // Splice(NodeTree) in PortableUIBuilders.hpp) -- any nested Row/Column
+    // the app declares with a weighted extent, explicit padding, or wrap
+    // would silently re-resolve with defaults once the page's outer
+    // Build(area) walks the whole tree. ui::Subtree is the idiom that
+    // carries layoutByNodeId_ through the splice, matching
+    // BuildPatchBrowserSubtree/BuildPatchVersionsSubtree below.
+    std::function<ui::Subtree(ui::Bounds)> appSection;
 };
 
 struct SyncPageStatus
@@ -868,13 +877,24 @@ inline ui::NodeTree BuildAudioPageTree(const AudioPageSnapshot& snapshot, ui::Bo
         return tree;
     }
     ui::Bounds remainingArea{};
+    bool foundStatusRegion = false;
     for (const ui::Node& node : tree.nodes)
     {
         if (node.id == ui::NodeId(NodeIds::kAudioStatus))
         {
             remainingArea = node.bounds;
+            foundStatusRegion = true;
             break;
         }
+    }
+    // An app section builder with nowhere to size against is an impossible
+    // state, not a page that quietly renders at zero size -- match
+    // ValidateApplicationTree's idiom (RuntimeMainComponent.hpp) of throwing
+    // rather than substituting a silent default Bounds{}.
+    if (!foundStatusRegion)
+    {
+        throw std::invalid_argument(
+            "audio page tree is missing the kAudioStatus node needed to size the app section");
     }
     return BuildAudioPageTreeOnce(snapshot, area, &remainingArea);
 }
