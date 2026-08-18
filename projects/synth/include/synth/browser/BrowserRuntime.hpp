@@ -367,6 +367,16 @@ public:
     {
         engine_.Clock().SetOutputSchedulingHorizonMicros(
             BrowserMidiBridge<synth::Engine<App>>::kSchedulingLeadMicros);
+        // sar-33: wires the external-input-routed signal's storage into the
+        // AppContext apps see, before engine_.Initialize() can ever run
+        // App::Init(). inputRoutingSignal_ is a member of this Runtime
+        // (constructed above, in the member-init list, before this
+        // constructor body runs), so its address is already stable here.
+        // Defaults to not-routed, which is already correct for a fresh
+        // Runtime -- no capture has been granted yet, so no explicit
+        // RefreshInputRoutedState() call is needed until SetAudioInputSource/
+        // ClearAudioInputSource run.
+        engine_.Context().inputRoutingSignal = &inputRoutingSignal_;
     }
 
     Runtime(const Runtime&) = delete;
@@ -507,12 +517,14 @@ public:
             physicalChannels > kMaxBrowserInputChannels) {
             return false;
         }
-        return audioInput_.Publish(
+        const bool published = audioInput_.Publish(
             sourceHandle,
             physicalChannels,
             statusCode,
             [this](std::uint32_t attached) { return DisconnectAudioInputSource(attached); },
             [this](std::uint32_t next) { return ConnectAudioInputSource(next); });
+        RefreshInputRoutedState();
+        return published;
     }
 
     bool ClearAudioInputSource(std::uint32_t statusCode)
@@ -520,9 +532,11 @@ public:
         if (!BrowserAudioInputStatusCodeValid(statusCode)) {
             return false;
         }
-        return audioInput_.Clear(statusCode, [this](std::uint32_t previous) {
+        const bool cleared = audioInput_.Clear(statusCode, [this](std::uint32_t previous) {
             return DisconnectAudioInputSource(previous);
         });
+        RefreshInputRoutedState();
+        return cleared;
     }
 
     // Substitutes the two Web Audio graph operations the input publication
@@ -577,6 +591,28 @@ public:
             std::min<std::size_t>(audioInput_.PhysicalChannels(), state.requestedChannels);
         state.status = static_cast<BrowserAudioInputStatus>(audioInput_.StatusCode());
         return state;
+    }
+
+    // sar-33: one derived flag over the existing capture-grant/-revoke
+    // lifecycle above. Called from SetAudioInputSource (the grant point:
+    // BrowserRuntimeAbi.cpp's synth_browser_set_audio_input_source calls
+    // through to this method) and ClearAudioInputSource (the revoke point:
+    // synth_browser_clear_audio_input_source), both invoked only from the JS
+    // bridge (browser/src/audio.ts's AudioBridge, after
+    // navigator.mediaDevices.getUserMedia settles from the user-activation-
+    // bound request) -- never from the audio worklet render thread (see
+    // Process()/ProcessAudioWorkletPlanarBlock, which only ever READ
+    // audioInput_'s published state, never call these two setters). Routed
+    // mirrors BrowserAudioInputCaptureLive (BrowserAudioDevices.hpp): only
+    // Online/ChannelCountUnreported count as a live, user-gesture-granted
+    // capture; every other status (including a zero-input application's
+    // permanent NotRequested) is not-routed, identically to the JUCE side's
+    // "not the platform default" rule.
+    void RefreshInputRoutedState()
+    {
+        const BrowserAudioInputState state = AudioInputStateSnapshot();
+        const bool routed = state.requestedChannels > 0 && BrowserAudioInputCaptureLive(state.status);
+        inputRoutingSignal_.Publish(routed);
     }
 
     // The only source of a retry is the user pressing `Retry Input` on the Audio
@@ -989,6 +1025,10 @@ private:
     std::atomic<std::uint32_t> audioWorkletBlockCount_{0};
     std::atomic<std::uint32_t> audioWorkletPeakMicrounits_{0};
     BrowserAudioInputPublication audioInput_;
+    // sar-33: this Runtime's storage for AppContext::inputRoutingSignal
+    // (wired in the constructor, above). See RefreshInputRoutedState for the
+    // browser derivation and its two call sites.
+    synth::InputRoutingSignal inputRoutingSignal_;
     // Empty in production; see SetAudioInputGraphForTesting.
     std::function<BrowserAudioInputConnectResult(std::uint32_t)> audioInputConnectOverride_;
     std::function<bool(std::uint32_t)> audioInputDisconnectOverride_;

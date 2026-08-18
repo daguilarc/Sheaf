@@ -1605,6 +1605,43 @@ void TestBrowserRuntimeSuccessfulDeferredAttachStaysConnectedUntilClear()
             "clearing disconnects the successful deferred source exactly once");
 }
 
+// External-input-routed signal (sar-33): the browser derivation. No granted
+// capture is not routed (including a fresh, just-started runtime); a granted
+// source (SetAudioInputSource, the grant point BrowserRuntimeAbi.cpp's
+// synth_browser_set_audio_input_source calls through to,
+// BrowserRuntime.hpp's SetAudioInputSource) routes it with a callback;
+// clearing that source (the revoke point, ClearAudioInputSource) un-routes it
+// with another callback. Identical semantic to the JUCE side
+// (RuntimeShellSessionTests.cpp's CheckInputRoutedSignal): "a user-chosen
+// input source is open and delivering." The browser host has no ThreadId
+// tagging to assert against (unlike the JUCE side), so this only checks that
+// the callback fires, not which thread it runs on.
+void TestBrowserRuntimeInputRoutedSignalTracksCaptureGrantAndRevoke()
+{
+    using synth_browser::BrowserAudioInputStatus;
+    const auto online = static_cast<std::uint32_t>(BrowserAudioInputStatus::Online);
+    const auto streamEnded = static_cast<std::uint32_t>(BrowserAudioInputStatus::StreamEnded);
+
+    synth_browser::Runtime<InputCountApp<4>> runtime;
+    runtime.Start();
+
+    synth::AppContext& context = runtime.Engine().Context();
+    Require(!context.InputRouted(), "a freshly started runtime with no granted capture is not routed");
+
+    std::vector<bool> notifications;
+    context.SetInputRoutedChangedCallback([&](bool routed) { notifications.push_back(routed); });
+
+    Require(runtime.SetAudioInputSource(91, 4, online), "a granted capture source publishes");
+    Require(context.InputRouted(), "a granted capture routes the signal");
+    Require(notifications.size() == 1 && notifications[0] == true,
+            "the change callback fires exactly once on the granting edge");
+
+    Require(runtime.ClearAudioInputSource(streamEnded), "revoking the granted capture clears it");
+    Require(!context.InputRouted(), "revoking capture un-routes the signal");
+    Require(notifications.size() == 2 && notifications[1] == false,
+            "the change callback fires exactly once on the revoking edge");
+}
+
 // The rule the runtime path depends on, asserted directly: a source that was
 // only ever pending is never handed to `disconnect`.
 void TestBrowserAudioInputPublicationNeverDisconnectsANeverAttachedSource()
@@ -2054,6 +2091,7 @@ int main()
     TestBrowserAudioInputPublicationBlocksNewConnectionsUntilTheOldSourceIsGone();
     TestBrowserAudioInputPublicationRollsBackAFailedConnectWithoutBlocking();
     TestBrowserAudioInputPublicationNeverDisconnectsANeverAttachedSource();
+    TestBrowserRuntimeInputRoutedSignalTracksCaptureGrantAndRevoke();
     TestBrowserRuntimeDefersPreWorkletInputConnectionAndRecoversFromItsFailure();
     TestBrowserRuntimeDeferredAttachFailureKeepsOutputUiAndMidiLive();
     TestBrowserRuntimeSuccessfulDeferredAttachStaysConnectedUntilClear();

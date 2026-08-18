@@ -104,6 +104,13 @@ public:
         , midiEpoch_(synth_juce::RuntimeMidiEpoch::Capture(startTime_))
         , engine_([this]() -> std::uint64_t { return NowMicros(); })
         , midiConnections_(std::make_unique<MidiConnectionManager<App>>(engine_, midiEpoch_)) {
+        // sar-33: wires the external-input-routed signal's storage into the
+        // AppContext apps see, before Start()/engine_.Initialize() can ever
+        // run App::Init(). inputRoutingSignal_ is a member of this Runtime
+        // (constructed above, in the member-init list, before this
+        // constructor body runs), so its address is already stable here.
+        engine_.Context().inputRoutingSignal = &inputRoutingSignal_;
+
         // The engine invokes this synchronously, on whichever thread is
         // performing a rebuild, immediately BEFORE midiProcessors_ is
         // destroyed/replaced (Initialize()'s rebuilds and
@@ -327,6 +334,12 @@ public:
         // no-op, so nothing claims an input path that was never opened.
         PublishPendingInputStatus();
 
+        // sar-33: derives the startup value of the external-input-routed
+        // signal -- false for a platform-default device, true for a
+        // successfully reapplied persisted selection. See
+        // RefreshInputRoutedState's doc comment.
+        RefreshInputRoutedState();
+
         startTimerHz(config.uiFrameHz > 0 ? config.uiFrameHz : 30);
     }
 
@@ -424,6 +437,7 @@ public:
         SwitchOutputDevice(outputName, "selection");
         SetAudioStatus(outputName.isEmpty() ? "Audio: System Default" : "Audio: " + outputName);
         SyncAudioSelection();
+        RefreshInputRoutedState();
     }
 
     // AudioConfigPage's input combo onChange target (Task 3 review, Minor,
@@ -452,6 +466,7 @@ public:
             INFO("%s", message.toRawUTF8());
             SetAudioStatus(message);
             SyncAudioSelection();
+            RefreshInputRoutedState();
             return;
         }
 
@@ -459,11 +474,13 @@ public:
         setup.inputDeviceName = ResolveInputDeviceName(inputName);
         if (!ApplyInputDeviceSetup(setup, "selection")) {
             SyncAudioSelection();
+            RefreshInputRoutedState();
             return;
         }
         ApplyPreferredRateAndBlockSize();
         SetAudioStatus(inputName.isEmpty() ? "Audio In: System Default" : "Audio In: " + inputName);
         SyncAudioSelection();
+        RefreshInputRoutedState();
     }
 
     // The current audio callback load, as a percentage (Plan 4 Task 2,
@@ -640,6 +657,40 @@ private:
             return names[defaultIx];
         }
         return inputName;
+    }
+
+    // sar-33: recomputes and publishes the external-input-routed signal from
+    // current device state. Routed iff the user-selected input device name
+    // -- engine_.AudioDeviceSnapshot().inputDeviceName, the same persisted
+    // selection Start() applies at startup (:287-290) and
+    // ApplyAudioDeviceInputSelection/OnEngineAudioDeviceChanged apply live --
+    // is non-empty AND matches deviceManager_'s CURRENTLY OPEN input device
+    // (getAudioDeviceSetup().inputDeviceName, with a device actually current).
+    //
+    // The platform-default device Start() opens via
+    // initialiseWithDefaultDevices() (:254/:260), before any selection is
+    // ever applied, leaves getAudioDeviceSetup().inputDeviceName naming a
+    // real device (e.g. "Fake In A" in the test harness) but
+    // AudioDeviceSnapshot().inputDeviceName EMPTY (:435-442's "empty means no
+    // selection" semantics) -- the two names can never match on that path, so
+    // this correctly derives false for it (sar-33's "default-opened device is
+    // not routed" scenario). A selection that fails to open (see
+    // ApplyInputDeviceSetup) leaves the setup's actual inputDeviceName
+    // pointing at whatever RecoverOutputOnlyDevice restored (never the failed
+    // name), so it also derives false, matching "open and delivering".
+    //
+    // Message-thread only: see InputRoutingSignal::Publish's doc comment
+    // (AppContext.hpp) for why -- the registered app callback runs
+    // synchronously from Publish(), on whichever thread calls this method,
+    // and every caller of this method is a message-thread path (Start(),
+    // ApplyAudioDeviceSelection, ApplyAudioDeviceInputSelection,
+    // OnEngineAudioDeviceChanged), never the audio callback.
+    void RefreshInputRoutedState() {
+        const juce::String selectedInputName = juce::String(engine_.AudioDeviceSnapshot().inputDeviceName);
+        const bool routed = selectedInputName.isNotEmpty() &&
+                            deviceManager_.getCurrentAudioDevice() != nullptr &&
+                            deviceManager_.getAudioDeviceSetup().inputDeviceName == selectedInputName;
+        inputRoutingSignal_.Publish(routed);
     }
 
     // Applies an AudioDeviceSetup that changes the input device, and owns the
@@ -905,6 +956,7 @@ private:
         }
 
         SyncAudioSelection();
+        RefreshInputRoutedState();
     }
 
     // Timer tick order (binding): engine message-thread tick -> MIDI
@@ -998,6 +1050,11 @@ private:
     // ComposeAudioStatus appends to it. See PublishPendingInputStatus.
     int publishedActiveInputChannels_ = -1;
     juce::String audioStatusDetail_;
+
+    // sar-33: this Runtime's storage for AppContext::inputRoutingSignal
+    // (wired in the constructor, above). See RefreshInputRoutedState for the
+    // JUCE derivation and every call site that keeps it current.
+    synth::InputRoutingSignal inputRoutingSignal_;
 };
 
 }  // namespace synth_runtime

@@ -537,6 +537,53 @@ void CheckMissingPersistedInputDevice(const std::filesystem::path& parent) {
             "output keeps running after a missing input device");
 }
 
+// External-input-routed signal (sar-33): the platform-default device opened
+// without a user selection is not routed even though it delivers active
+// channels; a live user selection routes it with a message-thread callback,
+// and deselecting back to System Default un-routes it with another callback
+// -- no app restart either way.
+void CheckInputRoutedSignal(const std::filesystem::path& parent) {
+    FakeDeviceRuntime<InputProbeApp<2>> host(FreshRoot(parent, "input-routed-signal"), 2, 2);
+    host.Start();
+
+    synth::AppContext& context = host.Get().GetEngine().Context();
+    Require(!context.InputRouted(),
+            "the platform-default device auto-opened at startup is not routed");
+
+    std::vector<bool> notifications;
+    std::vector<synth::ThreadId> notificationThreads;
+    context.SetInputRoutedChangedCallback([&](bool routed) {
+        notifications.push_back(routed);
+        notificationThreads.push_back(synth::GetCurrentThreadId());
+    });
+
+    host.Get().ApplyAudioDeviceInputSelection("Fake In B");
+    Require(context.InputRouted(), "selecting a named input device routes the signal");
+    Require(notifications.size() == 1 && notifications[0] == true,
+            "the change callback fires exactly once on the selecting edge");
+    Require(notificationThreads[0] == synth::ThreadId::Message,
+            "the change callback runs on the message thread");
+
+    host.Get().ApplyAudioDeviceInputSelection("");
+    Require(!context.InputRouted(), "deselecting back to System Default un-routes the signal");
+    Require(notifications.size() == 2 && notifications[1] == false,
+            "the change callback fires exactly once on the deselecting edge");
+    Require(notificationThreads[1] == synth::ThreadId::Message,
+            "the deselecting callback also runs on the message thread");
+
+    // A block delivered while routed is unaffected -- the signal augments,
+    // never replaces, the existing input negotiation path, and does not
+    // itself change on every block.
+    host.Get().ApplyAudioDeviceInputSelection("Fake In B");
+    notifications.clear();
+    DeviceBlockSpec spec;
+    spec.inputChannels = {1.0f, 2.0f};
+    DeviceBlockBuffers buffers(spec);
+    host.RunBlock(buffers);
+    Require(context.InputRouted(), "the signal stays routed across a delivered block");
+    Require(notifications.empty(), "delivering a block does not itself change the signal");
+}
+
 // A device switch stops, re-prepares, and restarts before any further callback,
 // and input and output selections round-trip independently (sar-15, sar-31).
 void CheckDeviceSwitchLifecycle(const std::filesystem::path& parent) {
@@ -704,6 +751,7 @@ void CheckJuceAudioInputNegotiation() {
     CheckCallbackShapeNegotiation(parent);
     CheckCountedNullChannel(parent);
     CheckMissingPersistedInputDevice(parent);
+    CheckInputRoutedSignal(parent);
     CheckDeviceSwitchLifecycle(parent);
     CheckSystemDefaultInputSelection(parent);
     CheckInputDeviceOpenFailure(parent);
