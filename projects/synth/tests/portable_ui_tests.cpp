@@ -3856,7 +3856,7 @@ int main()
     Require(FindNodeById(sidebarTree, synth::runtime_ui::NodeIds::kSidebarDeadline) != nullptr,
             "sidebar deadline node");
     const synth::ui::Node* deadlineNode = FindNodeById(sidebarTree, synth::runtime_ui::NodeIds::kSidebarDeadline);
-    Require(deadlineNode->text == "12.5%", "deadline readout text");
+    Require(deadlineNode->text == "CPU 12.5%", "deadline readout text");
     // Re-pinned, not loosened, when the sidebar moved onto the library (7.1):
     // the Controllers entry is now a row so its warning badge can be an
     // out-of-flow overlay in the row's own space, so the root's second child is
@@ -4066,7 +4066,7 @@ int main()
     synth::runtime_ui::SidebarSurface sidebarSurface;
     sidebarSurface.SetDeadlinePercent(3.0f);
     const synth::ui::NodeTree sidebarBuilt = sidebarSurface.BuildTree();
-    Require(FindNodeById(sidebarBuilt, synth::runtime_ui::NodeIds::kSidebarDeadline)->text == "3.0%",
+    Require(FindNodeById(sidebarBuilt, synth::runtime_ui::NodeIds::kSidebarDeadline)->text == "CPU 3.0%",
             "sidebar surface deadline refresh");
 
     synth::runtime_ui::AudioPageSurface audioSurface;
