@@ -792,16 +792,65 @@ void TestGangedRandomLfoBackgroundOptOut()
     std::vector<synth::ui::DrawCommand> optedOutCommands;
     synth::ui::BuildGangedRandomLfoCommands(snapshot, bounds, optedOutCommands, false);
 
-    // Default must have Fill and Line commands
-    Require(defaultCommands.size() >= 2, "default stream has background and axis");
+    // Default must have Fill and Line commands. Pin the full default stream
+    // by construction rather than merely bounding it (Task 5 review Finding 2):
+    // for this snapshot the present sample (3) lies strictly between 0 and the
+    // shared duration (12 samples, from voice 1's ceil(8)+ceil(4)), so every
+    // voice emits its maximal past-polyline + dashed-future-polylines + dot
+    // set. Expected background/axis field values are derived by hand from
+    // AppendBackgroundAndAxis (GangedRandomLfoVisualizer.hpp:57-71) against
+    // nodeExtent {0,0,180,90} and its PlotBounds {4,4,172,82}.
     Require(defaultCommands[0].kind == synth::ui::DrawCommand::Kind::Fill, "first command is background fill");
+    {
+        const synth::ui::Bounds expectedFillBounds{0.0f, 0.0f, bounds.width, bounds.height};
+        Require(std::memcmp(&defaultCommands[0].bounds, &expectedFillBounds, sizeof(synth::ui::Bounds)) == 0,
+                "background fill covers the full node extent");
+        Require(defaultCommands[0].color == synth::Color::Rgb(12, 14, 16),
+                "background fill uses the expected panel color");
+    }
     Require(defaultCommands[1].kind == synth::ui::DrawCommand::Kind::Line, "second command is axis line");
+    {
+        const synth::ui::Point expectedFrom{4.0f, 45.0f};
+        const synth::ui::Point expectedTo{176.0f, 45.0f};
+        Require(std::memcmp(&defaultCommands[1].from, &expectedFrom, sizeof(synth::ui::Point)) == 0,
+                "axis line starts at the plot's left inset midline");
+        Require(std::memcmp(&defaultCommands[1].to, &expectedTo, sizeof(synth::ui::Point)) == 0,
+                "axis line ends at the plot's right inset midline");
+        Require(defaultCommands[1].color == synth::Color::Rgb(42, 46, 48),
+                "axis line uses the expected axis color");
+        Require(defaultCommands[1].strokeWidth == 1.0f, "axis line uses the expected stroke width");
+    }
+
+    constexpr std::size_t kDashSegments = (synth::ui::GangedRandomLfoGeometry::kPathSegments + 1) / 2;
+    constexpr std::size_t kCommandsPerVoice = 1 + kDashSegments + 1;
+    constexpr std::size_t kVoiceCount = 2;
+    Require(defaultCommands.size() == 2 + kVoiceCount * kCommandsPerVoice,
+            "default stream command count is fully pinned by construction, not merely bounded");
+    for (std::size_t voiceIndex = 0; voiceIndex < kVoiceCount; ++voiceIndex)
+    {
+        const std::size_t voiceStart = 2 + voiceIndex * kCommandsPerVoice;
+        Require(defaultCommands[voiceStart].kind == synth::ui::DrawCommand::Kind::Polyline,
+                "each voice's first trace command is the solid past polyline");
+        for (std::size_t dashIndex = 0; dashIndex < kDashSegments; ++dashIndex)
+        {
+            Require(defaultCommands[voiceStart + 1 + dashIndex].kind == synth::ui::DrawCommand::Kind::Polyline,
+                    "each voice's dashed future segments are polylines");
+        }
+        Require(defaultCommands[voiceStart + kCommandsPerVoice - 1].kind ==
+                    synth::ui::DrawCommand::Kind::FillEllipse,
+                "each voice's last trace command is the present-position dot");
+    }
 
     // Opted out must have exactly 2 fewer commands (no Fill, no Line)
     Require(optedOutCommands.size() == defaultCommands.size() - 2,
             "opted-out stream has exactly two fewer commands (no background and no axis)");
 
-    // Verify remaining commands match (skip first two from default)
+    // Verify remaining commands match exactly (skip first two from default).
+    // drawBackground does not affect nodeExtent or voice-trace generation, so
+    // this element-wise comparison against the independently built opt-out
+    // stream fully pins every field (points, strokeWidth, color, kind) of the
+    // default stream's trace commands without duplicating the algorithm's
+    // float geometry as literals in the test.
     Require(optedOutCommands.size() >= 2, "opted-out stream still has voice traces");
     for (std::size_t i = 0; i < optedOutCommands.size(); ++i)
     {
@@ -812,6 +861,14 @@ void TestGangedRandomLfoBackgroundOptOut()
         {
             Require(optedCmd.points.size() == defaultCmd.points.size(),
                     "opted-out polyline has same point count");
+            for (std::size_t pointIx = 0; pointIx < optedCmd.points.size(); ++pointIx)
+            {
+                Require(std::memcmp(&optedCmd.points[pointIx], &defaultCmd.points[pointIx],
+                                     sizeof(synth::ui::Point)) == 0,
+                        "opted-out polyline points are byte-identical to default");
+            }
+            Require(optedCmd.strokeWidth == defaultCmd.strokeWidth,
+                    "opted-out polyline has same stroke width");
             Require(optedCmd.color == defaultCmd.color, "opted-out polyline has same color");
         }
         else if (optedCmd.kind == synth::ui::DrawCommand::Kind::FillEllipse)
