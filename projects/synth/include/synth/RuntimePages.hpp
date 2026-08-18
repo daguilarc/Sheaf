@@ -832,6 +832,25 @@ inline ui::NodeTree BuildSyncPageTree(const SyncPageSnapshot& snapshot, ui::Boun
     return builder.Build(area);
 }
 
+// The scan-and-throw shared by BuildAudioPageTree and BuildAppPageTree's
+// two-pass measure/splice idiom (comment above BuildAudioPageTreeOnce and
+// above BuildAppPageTreeOnce): find the node the second pass needs to size
+// its splice against in the tree the first pass produced, or throw the
+// caller's exact message when it is not there. Both throw sites read a miss
+// as an impossible state (comment below), so only the scan and the throw are
+// shared here -- the two builders' own page content stays separate.
+inline ui::Bounds RequireNodeBounds(const ui::NodeTree& tree, const char* nodeId, const char* missingMessage)
+{
+    for (const ui::Node& node : tree.nodes)
+    {
+        if (node.id == ui::NodeId(nodeId))
+        {
+            return node.bounds;
+        }
+    }
+    throw std::invalid_argument(missingMessage);
+}
+
 // sprs-16: `remainingArea` is null on the first (and, when no app section is
 // supplied, only) pass -- that pass is byte-for-byte the pre-sprs-16 function
 // body, so the default page is identical by construction, not by a separate
@@ -916,26 +935,14 @@ inline ui::NodeTree BuildAudioPageTree(const AudioPageSnapshot& snapshot, ui::Bo
     {
         return tree;
     }
-    ui::Bounds remainingArea{};
-    bool foundStatusRegion = false;
-    for (const ui::Node& node : tree.nodes)
-    {
-        if (node.id == ui::NodeId(NodeIds::kAudioStatus))
-        {
-            remainingArea = node.bounds;
-            foundStatusRegion = true;
-            break;
-        }
-    }
     // An app section builder with nowhere to size against is an impossible
     // state, not a page that quietly renders at zero size -- match
     // ValidateApplicationTree's idiom (RuntimeMainComponent.hpp) of throwing
     // rather than substituting a silent default Bounds{}.
-    if (!foundStatusRegion)
-    {
-        throw std::invalid_argument(
-            "audio page tree is missing the kAudioStatus node needed to size the app section");
-    }
+    const ui::Bounds remainingArea = RequireNodeBounds(
+        tree,
+        NodeIds::kAudioStatus,
+        "audio page tree is missing the kAudioStatus node needed to size the app section");
     return BuildAudioPageTreeOnce(snapshot, area, &remainingArea);
 }
 
@@ -1429,25 +1436,13 @@ inline ui::NodeTree BuildAppPageTreeOnce(const RegisteredPage& page,
 inline ui::NodeTree BuildAppPageTree(const RegisteredPage& page, ui::Bounds area)
 {
     const ui::NodeTree measured = BuildAppPageTreeOnce(page, area, nullptr);
-    ui::Bounds contentArea{};
-    bool foundContentRegion = false;
-    for (const ui::Node& node : measured.nodes)
-    {
-        if (node.id == ui::NodeId(NodeIds::kAppContent))
-        {
-            contentArea = node.bounds;
-            foundContentRegion = true;
-            break;
-        }
-    }
     // Matches BuildAudioPageTree's own idiom (comment above it): an
     // impossible state throws rather than quietly building the app's tree
     // against a substituted Bounds{}.
-    if (!foundContentRegion)
-    {
-        throw std::invalid_argument(
-            "app page tree is missing the kAppContent node needed to size the registered page");
-    }
+    const ui::Bounds contentArea = RequireNodeBounds(
+        measured,
+        NodeIds::kAppContent,
+        "app page tree is missing the kAppContent node needed to size the registered page");
     return BuildAppPageTreeOnce(page, area, &contentArea);
 }
 

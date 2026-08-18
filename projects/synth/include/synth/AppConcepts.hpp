@@ -49,6 +49,11 @@ concept HasProcessFrame = requires(T app) {
 // container's declared LayoutOptions survive the splice instead of
 // re-resolving with defaults).
 struct RegisteredPage {
+    // Currently unused by Sheaf: routing and mounting go through Sheaf's own
+    // structural NodeIds (NodeIds::kAppRoot etc., RuntimePages.hpp), never
+    // through this id. It is the app's own bookkeeping -- reserved for
+    // whatever cross-referencing the app itself wants to do with its
+    // registered page.
     std::string id;
     std::string title;
     std::function<ui::Subtree(ui::Bounds)> buildTree;
