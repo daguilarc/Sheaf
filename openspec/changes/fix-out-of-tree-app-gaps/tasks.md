@@ -81,7 +81,10 @@ omni-rule: implementation/review on the lightest capable model.
       `SetContentBounds`; shell offers live content extent before
       `BuildTree()`.
 - [ ] 8.2 Composition: sidebar x = resolved app tree root width
-      (`RuntimeMainComponent.hpp:122` today).
+      (`RuntimeMainComponent.hpp:122` today); `ValidateApplicationTree`
+      (`:369`, root-bounds equality at `:472-477`) validates against the
+      extent the surface resolved — offered extent when the hook was
+      accepted, `config.uiWidth/uiHeight` otherwise.
 - [ ] 8.3 Tests: legacy app ⇒ bit-identical composition; extent-aware test
       surface ⇒ sidebar tracks resized extents; browser parity where the
       browser shell composes.
@@ -97,7 +100,13 @@ omni-rule: implementation/review on the lightest capable model.
 ## 10. sprs-17 — app-registered sidebar page (#8)
 
 - [ ] 10.1 Registration surface (id, title, tree builder) on the app
-      registration path; nav button after File; `MainPane` routing.
+      registration path; nav button after File. Thread every page-set
+      definition site (design §sprs-17): `MainPane::Page` + both mapping
+      switches (`MainPane.hpp:20`, `:128-139`, `:145+`); `RuntimeMainPage`,
+      sidebar action handlers, `BuildRuntimePageTree`
+      (`RuntimeMainComponent.hpp:21`, `:61-101`, `:485-491`); NodeIds and
+      Actions constants plus `BuildSidebarTree` emission
+      (`RuntimePages.hpp:33-37`, `:116-119`, `:642-671`).
 - [ ] 10.2 Tests: no registration ⇒ four pages, nav unchanged; registered ⇒
       button renders, selection shows app tree, other pages unaffected.
 

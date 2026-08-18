@@ -75,7 +75,8 @@ backend changes behavior unless it opts in:
 
 - Affected specs: `synth-portable-runtime-shell`, `synth-runtime-ui`,
   `synth-app-runtime`, `synth-portable-visualizers`.
-- Affected code: `include/synth/RuntimeMainComponent.hpp`,
+- Affected code (paths relative to `projects/synth/`, per repo convention):
+  `include/synth/RuntimeMainComponent.hpp`,
   `include/synth/RuntimePages.hpp`, `include/synth/PortableUIBuilders.hpp`,
   `include/synth/GangedRandomLfoVisualizer.hpp`, `runtime/MainPane.hpp`,
   `runtime/Shell.hpp`, `runtime/Runtime.hpp`, `runtime/juce_build.mk`,

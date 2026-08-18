@@ -9,6 +9,11 @@ range, so their issue-text anchors remain literal; `RuntimePages.hpp`,
 `RuntimeMainComponent.hpp`, `Runtime.hpp`, `Main.cpp`, and `juce_build.mk`
 moved and were re-anchored fresh.
 
+All repository paths in this change's artifacts are relative to
+`projects/synth/` unless explicitly prefixed (repo convention: archived
+changes cite the full `projects/synth/...` path; the prefix is elided here
+once, globally, instead).
+
 ## sru-61 (#6) — boundary check on bash 3.2
 
 - Apply the `${arr[@]+"${arr[@]}"}` guard at every expansion of a
@@ -115,7 +120,15 @@ moved and were re-anchored fresh.
   the sidebar tracks.
 - **Extent source:** the renderer's live bounds, already propagated by
   `MainPane::resized()` → `RefreshFromSurface()` and the `uiFrameHz` timer —
-  every refresh layer exists; only the composition arithmetic changes.
+  every refresh layer exists; the composition arithmetic and the root-bounds
+  validation (next bullet) are what change.
+- **Validation (found in preflight audit, 2026-08-17):**
+  `ValidateApplicationTree` (`RuntimeMainComponent.hpp:369`, invoked from the
+  compose path at `:113`) currently throws unless the app root's bounds equal
+  `config.uiWidth/uiHeight` exactly (`:472-477`). It must validate against
+  the extent the surface actually resolved — the offered live extent when the
+  hook was accepted, `config.uiWidth/uiHeight` otherwise — so the legacy path
+  keeps today's exact check and an extent-aware tree is not rejected.
 - Browser-backend composition parity is asserted by test; where the browser
   shell composes independently, the same resolved-width rule applies.
 
@@ -126,12 +139,20 @@ moved and were re-anchored fresh.
   `BuildAudioPageTree(snapshot, area)` (`:776`) appends its tree beneath the
   device rows within the remaining area. Default empty → byte-identical page.
 - `sprs-17`: one optional app-registered page (id, title, tree builder)
-  alongside the closed `MainPane::Page` enum (`MainPane.hpp:20`); the sidebar
-  nav renders its button after File; `MainPane` routes selection to the
-  app-built tree. Registration rides the app registration surface (exact
-  idiom — `Config()` field vs surface interface — matched to existing
-  conventions at implementation time). No registration → exactly today's
-  four pages, no nav change.
+  alongside the closed page set. **The page set has multiple definition
+  sites, all of which the registered page must thread (enumerated in
+  preflight audit, 2026-08-17):** `MainPane::Page` (`MainPane.hpp:20`) and
+  its two mapping switches to/from `RuntimeMainPage` (`MainPane.hpp:128-139`,
+  `:145+`); the `RuntimeMainPage` enum itself
+  (`RuntimeMainComponent.hpp:21`), its sidebar action handlers (`:61-101`),
+  and the `BuildRuntimePageTree` switch (`:485-491`); the sidebar node
+  id/action constants (`RuntimePages.hpp:33-37` NodeIds and `:116-119`
+  Actions — parallel namespaces, both get the new entry) and the
+  `BuildSidebarTree` button emission (`:642-671`, new button after File).
+  Registration rides the app registration surface (exact idiom — `Config()`
+  field vs surface interface — matched to existing conventions at
+  implementation time). No registration → exactly today's four pages, no nav
+  change.
 - Both mechanisms are proven by Sheaf-side tests only (the consuming app
   adopts neither yet, by its owner's decision).
 
