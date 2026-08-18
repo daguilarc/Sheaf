@@ -118,5 +118,7 @@ omni-rule: implementation/review on the lightest capable model.
 - [ ] 11.2 Operator acceptance test of the running app (owner decides which
       opt-in toggles to exercise: `spv-9` one-liner, `sar-33` re-enable).
 - [ ] 11.3 On approval: PR `daguilarc/Sheaf:fix-out-of-tree-app-gaps` →
-      `jvictor0/Sheaf:main`, one commit per requirement, body mapping
-      commits → issues, closing #1–#6 and #8.
+      `jvictor0/Sheaf:main`, an initial commit per requirement plus the
+      review-driven fix commits task-scoped review produced along the way,
+      body mapping every commit → the issue(s) it addresses, closing #1–#6
+      and #8.

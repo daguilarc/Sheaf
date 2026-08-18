@@ -90,6 +90,8 @@ backend changes behavior unless it opts in:
   derived flag from the existing capture lifecycle) to avoid colliding.
 - Base: upstream `main` = `508d9d68`. The consuming app verified this base
   before any fix lands (273/273 app tests green at the bumped pin).
-- Delivery: one commit per task group on `fix-out-of-tree-app-gaps` (sprs-14
-  and sprs-15 share one commit — the sizing fix lands inside the hoist
-  rewrite), single PR closing #1–#6 and #8.
+- Delivery: an initial commit per task group on `fix-out-of-tree-app-gaps`
+  (sprs-14 and sprs-15 share one commit — the sizing fix lands inside the
+  hoist rewrite), plus review-driven fix commits landed against 5 of the 10
+  groups from task-scoped review; single PR closing #1–#6 and #8, its body
+  mapping every commit to the issue(s) it addresses.
