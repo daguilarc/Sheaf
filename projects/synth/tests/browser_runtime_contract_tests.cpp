@@ -137,6 +137,62 @@ private:
     ActionHandler handler_;
 };
 
+// Task 8.3 (sprs-13): browser-backend parity for the extent-aware hook. The
+// browser Runtime shares synth::runtime_ui::RuntimeMainComponent verbatim
+// (BrowserRuntime.hpp:1040 constructs RuntimeMainComponent<App,
+// BrowserRuntimeMainServices<App>>; BuildUiFrame() at :712 just serializes
+// its BuildTree()), so exercising the same class directly under this
+// (non-JUCE) browser translation unit proves the identical resolved-width
+// rule applies here too.
+class ExtentAwareContractSurface final : public synth::ui::Surface,
+                                         public synth::ui::ExtentAwareSurface
+{
+public:
+    synth::ui::NodeTree BuildTree() override
+    {
+        synth::ui::Node root;
+        root.id = "extent.contract.app.root";
+        root.kind = synth::ui::NodeKind::Root;
+        root.bounds = extent_;
+        return synth::ui::NodeTree{{std::move(root)}};
+    }
+
+    void SetActionHandler(ActionHandler handler) override
+    {
+        handler_ = std::move(handler);
+    }
+
+    void DispatchAction(const synth::ui::Action&) override {}
+
+    void SetContentExtent(synth::ui::Bounds extent) override
+    {
+        extent_ = extent;
+    }
+
+private:
+    synth::ui::Bounds extent_{0.0f, 0.0f, 640.0f, 480.0f};
+    ActionHandler handler_;
+};
+
+class ExtentAwareContractApp
+{
+public:
+    static synth::RuntimeConfig Config()
+    {
+        synth::RuntimeConfig config;
+        config.appName = "ExtentAwareContractApp";
+        config.uiWidth = 640;
+        config.uiHeight = 480;
+        return config;
+    }
+
+    void Init(synth::AppContext*) {}
+    void ProcessBlock(synth::AudioBlock&) {}
+    synth::ui::Surface& PortableSurface() { return surface; }
+
+    ExtentAwareContractSurface surface;
+};
+
 class ValidApp
 {
 public:
@@ -462,6 +518,44 @@ void TestBrowserRuntimeUsesSharedFrameAndActionRouting()
     Require(surface.dispatchCount == 1, "application action dispatches exactly once");
     Require(surface.lastAction == "contract.app.apply", "application receives action name");
     Require(surface.lastValue == "17", "application receives action value");
+}
+
+void TestBrowserRuntimeMainComponentSidebarTracksResolvedAppWidth()
+{
+    synth::Engine<ExtentAwareContractApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    synth_browser::BrowserMidiBridge<synth::Engine<ExtentAwareContractApp>> bridge(engine);
+    bridge.Start();
+    synth_browser::BrowserRuntimeMainServices<ExtentAwareContractApp> services(engine, bridge);
+    synth::runtime_ui::RuntimeMainComponent<ExtentAwareContractApp,
+                                            synth_browser::BrowserRuntimeMainServices<ExtentAwareContractApp>>
+        mainComponent(engine.Application(), services);
+
+    // Default (never offered anything beyond compiled-in size): the browser
+    // composition path places the sidebar at the resolved app width, same
+    // as the pinned-width legacy rule (640 == config.uiWidth). The tree is
+    // captured in a named local (not passed as a temporary) because
+    // FindPortableNode returns a pointer into it that must outlive this
+    // Require pair.
+    const synth::ui::NodeTree initial = mainComponent.BuildTree();
+    const synth::ui::Node* sidebarDefault = FindPortableNode(initial, "runtime.sidebar.root");
+    Require(sidebarDefault != nullptr, "sidebar renders through the browser composition path");
+    Require(NearlyEqual(sidebarDefault->bounds.x, 640.0f),
+            "browser composition places the sidebar at the resolved app width");
+
+    // The browser host offers a new live extent through the same
+    // RuntimeMainComponent::SetContentExtent hook the JUCE renderer would
+    // use; the resolved app width and sidebar placement track it identically
+    // (sprs-13 backend parity -- same class, same composition arithmetic).
+    mainComponent.SetContentExtent({0.0f, 0.0f, 800.0f, 480.0f});
+    const synth::ui::NodeTree resized = mainComponent.BuildTree();
+    const synth::ui::Node* appRoot = FindPortableNode(resized, "extent.contract.app.root");
+    const synth::ui::Node* sidebarResized = FindPortableNode(resized, "runtime.sidebar.root");
+    Require(appRoot != nullptr, "app root renders after the browser offers a new extent");
+    Require(NearlyEqual(appRoot->bounds.width, 800.0f), "app resolves against the offered extent");
+    Require(sidebarResized != nullptr, "sidebar renders after the browser offers a new extent");
+    Require(NearlyEqual(sidebarResized->bounds.x, 800.0f),
+            "browser composition tracks the resized extent identically to JUCE");
 }
 
 void TestBrowserControllerDiscoveryCacheUsesSignalsAndSuccessfulCommits()
@@ -2094,6 +2188,7 @@ int main()
     static_assert(synth::SynthApplication<ValidApp>);
     static_assert(synth::SynthApplication<InputCountApp<4>>);
     static_assert(synth::SynthApplication<BrowserCallbackProbeApp>);
+    static_assert(synth::SynthApplication<ExtentAwareContractApp>);
     static_assert(synth_browser::BrowserApplication<ValidApp>);
     static_assert(!synth_browser::BrowserApplication<MissingSurface>);
     static_assert(!synth::SynthApplication<MissingSurface>);
@@ -2121,6 +2216,7 @@ int main()
     TestBrowserRuntimeAdapterRejectsIncompatibleRuntimeConfigVersion();
     TestBrowserPersistenceIdentityDerivesSharedAndIsolatedRoots();
     TestBrowserRuntimeUsesSharedFrameAndActionRouting();
+    TestBrowserRuntimeMainComponentSidebarTracksResolvedAppWidth();
     TestBrowserPrepareFeedsNegotiatedAudioPageAndRejectsOversizedBlocks();
     TestNativeBuildRejectsBrowserAudioWorkletStart();
     TestSharedBrowserNavigationReplacesAndRestoresEveryRuntimePage();

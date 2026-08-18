@@ -161,6 +161,69 @@ struct FakeApp
     FakeAppSurface surface;
 };
 
+// Task 8.3 (sprs-13): a surface that additionally implements
+// ui::ExtentAwareSurface and resolves its BuildTree() root against whatever
+// extent it was last offered, instead of a compiled-in size.
+class ExtentAwareAppSurface final : public synth::ui::Surface, public synth::ui::ExtentAwareSurface
+{
+public:
+    int dispatchCount = 0;
+    int extentOffers = 0;
+    std::string lastAction;
+
+    synth::ui::NodeTree BuildTree() override
+    {
+        synth::ui::Node root;
+        root.id = "extent.app.root";
+        root.kind = synth::ui::NodeKind::Root;
+        root.bounds = extent_;
+        return synth::ui::NodeTree{{std::move(root)}};
+    }
+
+    void SetActionHandler(ActionHandler handler) override
+    {
+        observer_ = std::move(handler);
+    }
+
+    void DispatchAction(const synth::ui::Action& action) override
+    {
+        ++dispatchCount;
+        lastAction = action.name;
+        if (observer_)
+        {
+            observer_(action);
+        }
+    }
+
+    void SetContentExtent(synth::ui::Bounds extent) override
+    {
+        ++extentOffers;
+        extent_ = extent;
+    }
+
+private:
+    synth::ui::Bounds extent_{0.0f, 0.0f, 900.0f, 560.0f};
+    ActionHandler observer_;
+};
+
+struct ExtentAwareApp
+{
+    static synth::RuntimeConfig Config()
+    {
+        return synth::RuntimeConfig{.appName = "ExtentAwareAppTest", .uiWidth = 900, .uiHeight = 560};
+    }
+
+    void Init(synth::AppContext*) {}
+    void ProcessBlock(synth::AudioBlock&) {}
+
+    synth::ui::Surface& PortableSurface()
+    {
+        return surface;
+    }
+
+    ExtentAwareAppSurface surface;
+};
+
 struct FakeServices
 {
     int audioRefreshCount = 0;
@@ -377,6 +440,42 @@ void TestCompositeBoundsPreserveAppAndAddSidebar()
                   996.0f,
                   560.0f,
                   "intrinsic bounds");
+}
+
+// Task 8.3 (sprs-13): an extent-aware app surface resolves against whatever
+// live extent the shell offers, and the sidebar tracks the resolved app
+// root width rather than a compiled-in one (RuntimeMainComponent.hpp:122
+// pinned it to App::Config().uiWidth before this task).
+void TestExtentAwareAppTracksResizedContentExtent()
+{
+    ExtentAwareApp app;
+    FakeServices services;
+    synth::runtime_ui::RuntimeMainComponent<ExtentAwareApp, FakeServices> component{app, services};
+
+    // Never explicitly resized: the shell still offers the extent-aware
+    // surface its content extent (the hook is exercised every BuildTree()),
+    // and because that default equals config.uiWidth/uiHeight, the baseline
+    // composition matches the legacy, hook-free values exactly.
+    const synth::ui::NodeTree initial = component.BuildTree();
+    Require(app.surface.extentOffers >= 1,
+            "shell offers the extent-aware surface its content extent before BuildTree");
+    RequireBounds(FindNode(initial, "runtime.main.root").bounds,
+                  0.0f, 0.0f, 996.0f, 560.0f, "default composite bounds match legacy");
+    RequireBounds(FindNode(initial, synth::runtime_ui::NodeIds::kSidebarRoot).bounds,
+                  900.0f, 0.0f, 96.0f, 200.0f, "default sidebar placement matches legacy");
+
+    // The window resizes wider: the shell offers the new live extent, the
+    // app resolves its tree against it, and the sidebar tracks the resolved
+    // width -- no dead space between the app's new edge and the sidebar.
+    component.SetContentExtent({0.0f, 0.0f, 1200.0f, 560.0f});
+    const synth::ui::NodeTree resized = component.BuildTree();
+    RequireBounds(FindNode(resized, "extent.app.root").bounds,
+                  0.0f, 0.0f, 1200.0f, 560.0f, "app resolves against the newly offered extent");
+    RequireBounds(FindNode(resized, synth::runtime_ui::NodeIds::kSidebarRoot).bounds,
+                  1200.0f, 0.0f, 96.0f, 200.0f,
+                  "sidebar sits at the resolved root width, no dead space");
+    RequireBounds(FindNode(resized, "runtime.main.root").bounds,
+                  0.0f, 0.0f, 1296.0f, 560.0f, "composite root grows with the resolved app width");
 }
 
 void TestSidebarOpensEachPageAndBackRestoresApp()
@@ -851,12 +950,14 @@ void Run(const char* name, Test test)
 int main()
 {
     static_assert(synth::SynthApplication<FakeApp>);
+    static_assert(synth::SynthApplication<ExtentAwareApp>);
     static_assert(synth::runtime_ui::RuntimeMainServices<FakeServices>);
 
     Run("TestPlacingASubtreeRootPlacesEveryDescendant",
         TestPlacingASubtreeRootPlacesEveryDescendant);
     Run("TestSubtreesArriveFullyResolved", TestSubtreesArriveFullyResolved);
     Run("TestCompositeBoundsPreserveAppAndAddSidebar", TestCompositeBoundsPreserveAppAndAddSidebar);
+    Run("TestExtentAwareAppTracksResizedContentExtent", TestExtentAwareAppTracksResizedContentExtent);
     Run("TestSidebarOpensEachPageAndBackRestoresApp", TestSidebarOpensEachPageAndBackRestoresApp);
     Run("TestAppActionsRouteOnlyToAppSurface", TestAppActionsRouteOnlyToAppSurface);
     Run("TestRuntimeActionsRouteOnlyToOwningPageOrServices",

@@ -67,6 +67,10 @@ public:
         audioSurface_.SetContentBounds(contentBounds);
         fileSurface_.SetContentBounds(contentBounds);
         controllersSurface_.SetContentBounds(contentBounds);
+        // Defaults to the compiled-in size, matching what an extent-aware
+        // app would resolve to if it were never offered anything else (task
+        // 8.1/8.2, sprs-13): identical to the legacy, hook-free value.
+        liveContentExtent_ = contentBounds;
         syncSurface_.SetContentBounds(contentBounds);
 
         sidebarSurface_.SetActionHandler([this](const ui::Action& action) {
@@ -109,8 +113,38 @@ public:
 
     ui::NodeTree BuildTree() override
     {
-        ui::NodeTree appTree = app_.PortableSurface().BuildTree();
-        const std::size_t appRootIndex = ValidateApplicationTree(appTree);
+        // Task 8.1 (sprs-13): offer the app surface the live content extent
+        // immediately before BuildTree(), generalizing the SetContentBounds
+        // convention. app_.PortableSurface() is constrained by
+        // SynthApplication to return exactly `ui::Surface&`
+        // (AppConcepts.hpp), erasing the concrete surface type, so the hook
+        // is detected with a dynamic_cast against the separate
+        // ui::ExtentAwareSurface interface rather than a compile-time trait.
+        // A surface that doesn't implement it is left alone and resolves at
+        // its own compiled-in size.
+        ui::Surface& appSurface = app_.PortableSurface();
+        auto* extentAwareApp = dynamic_cast<ui::ExtentAwareSurface*>(&appSurface);
+        const ui::Bounds expectedAppBounds =
+            extentAwareApp != nullptr
+                ? liveContentExtent_
+                : ui::Bounds{0.0f,
+                            0.0f,
+                            static_cast<float>(App::Config().uiWidth),
+                            static_cast<float>(App::Config().uiHeight)};
+        if (extentAwareApp != nullptr)
+        {
+            extentAwareApp->SetContentExtent(liveContentExtent_);
+        }
+
+        ui::NodeTree appTree = appSurface.BuildTree();
+        const std::size_t appRootIndex = ValidateApplicationTree(appTree, expectedAppBounds);
+        // Task 8.2: the sidebar is placed at the resolved app tree's root
+        // width rather than a compiled-in one (this used to read
+        // `static_cast<float>(App::Config().uiWidth)` unconditionally). For
+        // a legacy app the hook is never accepted, so expectedAppBounds --
+        // and therefore this resolved width -- is exactly config.uiWidth,
+        // making this bit-identical to the prior expression.
+        const float appRootWidth = appTree.nodes[appRootIndex].bounds.width;
         ui::NodeTree contentTree = currentPage_ == RuntimeMainPage::Application
                                        ? MoveRootFirst(std::move(appTree), appRootIndex)
                                        : BuildRuntimePageTree();
@@ -119,12 +153,22 @@ public:
         {
             throw std::invalid_argument("sidebar tree must have a root");
         }
-        sidebarTree.nodes.front().bounds.x = static_cast<float>(App::Config().uiWidth);
+        sidebarTree.nodes.front().bounds.x = appRootWidth;
 
         ui::Node root;
         root.id = "runtime.main.root";
         root.kind = ui::NodeKind::Root;
-        root.bounds = IntrinsicBounds();
+        // Composite root width follows the resolved app width plus the
+        // sidebar, rather than IntrinsicBounds()'s compiled-in width, so a
+        // wider-than-config resolved app still fits the composition-holds
+        // check below. IntrinsicBounds() itself is unchanged (it remains
+        // the compiled-in preferred/startup size other callers rely on);
+        // for a legacy app appRootWidth == config.uiWidth, so this is
+        // numerically identical to `IntrinsicBounds()` as before.
+        root.bounds = {0.0f,
+                       0.0f,
+                       appRootWidth + Layout::kSidebarWidth,
+                       static_cast<float>(App::Config().uiHeight)};
         RequireCompositionHolds(root.bounds, contentTree.nodes.front(), sidebarTree.nodes.front());
         root.children = {contentTree.nodes.front().id, sidebarTree.nodes.front().id};
 
@@ -201,6 +245,19 @@ public:
     void ShowPage(RuntimeMainPage page)
     {
         currentPage_ = page;
+    }
+
+    // Task 8.1 (sprs-13): the live content extent the shell will offer the
+    // app surface immediately before its next BuildTree(), generalizing the
+    // SetContentBounds convention (RuntimePages.hpp:1379/:1426/:1491,
+    // ControllersPageUI.hpp:932) from individual runtime pages to the whole
+    // app-surface seam. Callers (the JUCE renderer via its live bounds, the
+    // browser host, or a test) call this whenever the live extent changes;
+    // BuildTree() always offers whatever is currently stored here. A surface
+    // that doesn't implement ui::ExtentAwareSurface never sees this value.
+    void SetContentExtent(ui::Bounds extent)
+    {
+        liveContentExtent_ = extent;
     }
 
     RuntimeMainPage CurrentPage() const
@@ -366,7 +423,14 @@ private:
         return reordered;
     }
 
-    static std::size_t ValidateApplicationTree(const ui::NodeTree& tree)
+    // Task 8.2 (sprs-13): `expectedBounds` is the extent the surface actually
+    // resolved against -- the offered live extent when the extent-aware hook
+    // was accepted, `config.uiWidth/uiHeight` otherwise (BuildTree() decides
+    // which). The positive-config guard below stays config-based regardless:
+    // it is a sanity check on the app's own declaration, independent of
+    // which bounds this call is validating the resolved root against.
+    static std::size_t ValidateApplicationTree(const ui::NodeTree& tree,
+                                               const ui::Bounds& expectedBounds)
     {
         const RuntimeConfig config = App::Config();
         if (config.uiWidth <= 0 || config.uiHeight <= 0 || tree.nodes.empty())
@@ -469,9 +533,8 @@ private:
         }
 
         const ui::Bounds& bounds = tree.nodes[rootIndex].bounds;
-        if (bounds.x != 0.0f || bounds.y != 0.0f ||
-            bounds.width != static_cast<float>(config.uiWidth) ||
-            bounds.height != static_cast<float>(config.uiHeight))
+        if (bounds.x != expectedBounds.x || bounds.y != expectedBounds.y ||
+            bounds.width != expectedBounds.width || bounds.height != expectedBounds.height)
         {
             throw std::invalid_argument("application root does not match configured bounds");
         }
@@ -539,6 +602,7 @@ private:
     ControllersPageSurface controllersSurface_;
     SyncPageSurface syncSurface_;
     ActionHandler actionHandler_;
+    ui::Bounds liveContentExtent_;
 };
 
 }  // namespace synth::runtime_ui
