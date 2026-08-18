@@ -1,5 +1,6 @@
 #include "FakeAudioDeviceType.hpp"
 #include "JuceRuntimeMainServices.hpp"
+#include "LauncherWindow.hpp"
 #include "MiniApp.hpp"
 #include "MiniAppUiModel.hpp"
 #include "HostDataPaths.hpp"
@@ -757,6 +758,19 @@ int main() {
             "runtime shell content width adds the shared sidebar");
     Require(session.Component().getHeight() == config.uiHeight,
             "runtime shell content height preserves the app height");
+
+    {
+        // sprs-15: MainWindow::ShowContent(component) derives the window's
+        // size from the shell component's own (already-intrinsic) bounds
+        // rather than the app's raw config.uiWidth/uiHeight, so the window
+        // is wide enough to show the sidebar without resizing.
+        synth_runtime::MainWindow window("runtime shell session sizing test");
+        window.ShowContent(session.Component());
+        Require(window.getWidth() == config.uiWidth + 96,
+                "launch window width derives from the shell's intrinsic bounds, not raw config width");
+        Require(window.getHeight() == config.uiHeight,
+                "launch window height derives from the shell's intrinsic bounds, not raw config height");
+    }
 
     std::vector<synth_juce::PortableComponent*> renderers;
     CollectPortableComponents(session.Component(), renderers);

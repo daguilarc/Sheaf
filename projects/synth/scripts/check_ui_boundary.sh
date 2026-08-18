@@ -410,6 +410,7 @@ while IFS=: read -r path line match; do
         runtime/FilePage.hpp|\
         runtime/HostDataPaths.cpp|\
         runtime/JuceRuntimeMainServices.hpp|\
+        runtime/LauncherWindow.hpp|\
         runtime/MainPane.hpp|\
         runtime/MidiConnectionManager.hpp|\
         runtime/Runtime.hpp|\

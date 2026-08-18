@@ -70,7 +70,7 @@ SYNTH_HEADERS := $(SYNTH_ROOT)/include/synth/AppConcepts.hpp $(SYNTH_ROOT)/inclu
 	$(SYNTH_ROOT)/include/synth/RuntimeFileService.hpp \
 	$(SYNTH_ROOT)/include/synth/RuntimeMainComponent.hpp \
 	$(SYNTH_ROOT)/include/synth/ControllersPageUI.hpp
-SYNTH_JUCE_HEADERS := $(wildcard $(SYNTH_ROOT)/juce/*.hpp) $(SYNTH_ROOT)/runtime/Runtime.hpp $(SYNTH_ROOT)/runtime/HostDataPaths.hpp $(SYNTH_ROOT)/runtime/MidiConnectionManager.hpp $(SYNTH_ROOT)/runtime/Shell.hpp $(SYNTH_ROOT)/runtime/MainPane.hpp $(SYNTH_ROOT)/runtime/JuceRuntimeMainServices.hpp $(SYNTH_ROOT)/runtime/AudioConfigPage.hpp $(SYNTH_ROOT)/runtime/FilePage.hpp
+SYNTH_JUCE_HEADERS := $(wildcard $(SYNTH_ROOT)/juce/*.hpp) $(SYNTH_ROOT)/runtime/Runtime.hpp $(SYNTH_ROOT)/runtime/HostDataPaths.hpp $(SYNTH_ROOT)/runtime/MidiConnectionManager.hpp $(SYNTH_ROOT)/runtime/Shell.hpp $(SYNTH_ROOT)/runtime/MainPane.hpp $(SYNTH_ROOT)/runtime/JuceRuntimeMainServices.hpp $(SYNTH_ROOT)/runtime/AudioConfigPage.hpp $(SYNTH_ROOT)/runtime/FilePage.hpp $(SYNTH_ROOT)/runtime/LauncherWindow.hpp
 
 JUCE_MODULE_SRC := \
 	$(JUCE_DIR)/modules/juce_audio_basics/juce_audio_basics.mm \
