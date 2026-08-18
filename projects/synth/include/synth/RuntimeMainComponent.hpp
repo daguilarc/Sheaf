@@ -145,6 +145,16 @@ public:
         // and therefore this resolved width -- is exactly config.uiWidth,
         // making this bit-identical to the prior expression.
         const float appRootWidth = appTree.nodes[appRootIndex].bounds.width;
+        // Mirrors appRootWidth above: the composite root's height follows
+        // the resolved app root's height rather than a compiled-in one. The
+        // validator (ValidateApplicationTree) already forced
+        // appTree.nodes[appRootIndex].bounds.height == expectedAppBounds.height,
+        // and expectedAppBounds.height is config.uiHeight for a legacy
+        // (non-adopting) app, so this is bit-identical to the prior
+        // `static_cast<float>(App::Config().uiHeight)` expression for every
+        // existing app; only an extent-aware app resolving at a live-resized
+        // height changes this value.
+        const float appRootHeight = appTree.nodes[appRootIndex].bounds.height;
         ui::NodeTree contentTree = currentPage_ == RuntimeMainPage::Application
                                        ? MoveRootFirst(std::move(appTree), appRootIndex)
                                        : BuildRuntimePageTree();
@@ -158,17 +168,19 @@ public:
         ui::Node root;
         root.id = "runtime.main.root";
         root.kind = ui::NodeKind::Root;
-        // Composite root width follows the resolved app width plus the
-        // sidebar, rather than IntrinsicBounds()'s compiled-in width, so a
-        // wider-than-config resolved app still fits the composition-holds
-        // check below. IntrinsicBounds() itself is unchanged (it remains
-        // the compiled-in preferred/startup size other callers rely on);
-        // for a legacy app appRootWidth == config.uiWidth, so this is
-        // numerically identical to `IntrinsicBounds()` as before.
-        root.bounds = {0.0f,
-                       0.0f,
-                       appRootWidth + Layout::kSidebarWidth,
-                       static_cast<float>(App::Config().uiHeight)};
+        // Composite root width and height follow the resolved app root's
+        // width and height plus the sidebar, rather than
+        // IntrinsicBounds()'s compiled-in size, so a resolved app root
+        // larger than config still fits the composition-holds check below
+        // (task 8.2, sprs-13, finding 2: height previously stayed pinned to
+        // `config.uiHeight` even on the extent-aware branch, so a live
+        // vertical resize would validate against liveContentExtent_.height
+        // but then throw here). IntrinsicBounds() itself is unchanged (it
+        // remains the compiled-in preferred/startup size other callers rely
+        // on); for a legacy app appRootWidth == config.uiWidth and
+        // appRootHeight == config.uiHeight, so this is numerically
+        // identical to `IntrinsicBounds()` as before.
+        root.bounds = {0.0f, 0.0f, appRootWidth + Layout::kSidebarWidth, appRootHeight};
         RequireCompositionHolds(root.bounds, contentTree.nodes.front(), sidebarTree.nodes.front());
         root.children = {contentTree.nodes.front().id, sidebarTree.nodes.front().id};
 

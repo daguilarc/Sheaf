@@ -476,6 +476,29 @@ void TestExtentAwareAppTracksResizedContentExtent()
                   "sidebar sits at the resolved root width, no dead space");
     RequireBounds(FindNode(resized, "runtime.main.root").bounds,
                   0.0f, 0.0f, 1296.0f, 560.0f, "composite root grows with the resolved app width");
+
+    // Fix round 1, finding 2: a vertical resize too -- the composite root's
+    // height must track the resolved app height (900x560 -> 1200x700), not
+    // stay pinned to the compiled-in config.uiHeight (560). Before the fix,
+    // root.bounds.height was hardcoded to config.uiHeight even on this
+    // extent-aware branch, so this resize would validate (the validator
+    // checks the app root, not the composite root) and then throw inside
+    // RequireCompositionHolds because the 700-tall app root no longer fit a
+    // 560-tall composite root.
+    component.SetContentExtent({0.0f, 0.0f, 1200.0f, 700.0f});
+    const synth::ui::NodeTree resizedTaller = component.BuildTree();
+    RequireBounds(FindNode(resizedTaller, "extent.app.root").bounds,
+                  0.0f, 0.0f, 1200.0f, 700.0f, "app resolves against the newly offered taller extent");
+    RequireBounds(FindNode(resizedTaller, synth::runtime_ui::NodeIds::kSidebarRoot).bounds,
+                  1200.0f, 0.0f, 96.0f, 200.0f,
+                  "sidebar x still tracks the resolved width; the fixed 200px sidebar column "
+                  "keeps fitting under a 700-tall composite root");
+    RequireBounds(FindNode(resizedTaller, "runtime.main.root").bounds,
+                  0.0f, 0.0f, 1296.0f, 700.0f,
+                  "composite root height tracks the resolved app height (700), not the "
+                  "compiled-in config.uiHeight (560) -- BuildTree() completing without throwing "
+                  "also proves the validator accepted the resized app root and "
+                  "RequireCompositionHolds held for both children");
 }
 
 void TestSidebarOpensEachPageAndBackRestoresApp()

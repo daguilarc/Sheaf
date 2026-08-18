@@ -111,6 +111,53 @@ struct WideDrawApp final {
     WideDrawSurface surface;
 };
 
+// Fix round 1, finding 1 (sprs-13, Task 8 review): a production-wiring
+// fixture. Unlike WideDrawSurface above, this surface also implements
+// ui::ExtentAwareSurface, so it observes whether MainPane::resized() ever
+// reaches RuntimeMainComponent::SetContentExtent() when a real JUCE window
+// is resized -- the exact gap the finding identified (SetContentExtent()
+// existed and was unit-tested, but nothing in the shipped app called it).
+struct WiringExtentAwareSurface final : synth::ui::Surface, synth::ui::ExtentAwareSurface {
+    synth::ui::NodeTree BuildTree() override {
+        synth::ui::Node root;
+        root.id = "wiring.extent.root";
+        root.kind = synth::ui::NodeKind::Root;
+        root.bounds = extent;
+        return synth::ui::NodeTree{{std::move(root)}};
+    }
+
+    void SetActionHandler(ActionHandler handler) override { actionHandler = std::move(handler); }
+    void DispatchAction(const synth::ui::Action&) override {}
+
+    void SetContentExtent(synth::ui::Bounds newExtent) override {
+        ++extentOffers;
+        extent = newExtent;
+    }
+
+    int extentOffers = 0;
+    synth::ui::Bounds extent{0.0f, 0.0f, 640.0f, 480.0f};
+    ActionHandler actionHandler;
+};
+
+struct WiringExtentAwareApp final {
+    static synth::RuntimeConfig Config() {
+        synth::RuntimeConfig config;
+        config.appName = "WiringExtentAwareTest";
+        config.numAudioInputs = 0;
+        config.numAudioOutputs = 0;
+        config.uiWidth = 640;
+        config.uiHeight = 480;
+        config.uiFrameHz = 30;
+        return config;
+    }
+
+    void Init(synth::AppContext*) {}
+    void ProcessBlock(synth::AudioBlock&) {}
+    synth::ui::Surface& PortableSurface() { return surface; }
+
+    WiringExtentAwareSurface surface;
+};
+
 // --- JUCE audio input negotiation (sar-31, sar-6, sru-3) -------------------
 //
 // Every scenario below drives a synth_juce::FakeAudioDeviceType instead of the
@@ -1032,6 +1079,55 @@ int main() {
     juce::Component* wideDraw = wideRenderers.front()->FindByNodeId("wide.draw");
     Require(wideDraw != nullptr && wideDraw->getBounds().getRight() == 900,
             "full-width app draw reaches x 900 without clipping");
+
+    // Fix round 1, finding 1 (sprs-13, Task 8 review): production wiring.
+    // RuntimeMainComponent::SetContentExtent() existed and was
+    // unit/parity-tested (runtime_main_component_tests,
+    // browser_runtime_contract_tests) before this fix, but nothing in the
+    // shipped JUCE app ever called it, so a real window resize never reached
+    // an ExtentAwareSurface app. This constructs a real RuntimeShellSession
+    // (the same construction path SynthMiniapp uses) around
+    // WiringExtentAwareApp and drives an actual JUCE resize through the
+    // top-level shell component, then asserts -- through the app's own
+    // surface object, reached via Runtime::AppSurface() -- that the offered
+    // extent tracks it.
+    const std::filesystem::path wiringExtentRoot = root / "wiring-extent";
+    synth_runtime::RuntimeShellSession<WiringExtentAwareApp> wiringSession(
+        synth::RuntimeDataPaths::FromRoots(wiringExtentRoot,
+                                           wiringExtentRoot / "patches",
+                                           wiringExtentRoot / "logs",
+                                           wiringExtentRoot / "config"));
+    auto* wiringSurface =
+        dynamic_cast<WiringExtentAwareSurface*>(&wiringSession.GetRuntime().AppSurface());
+    Require(wiringSurface != nullptr, "wiring test app's extent-aware surface is reachable "
+                                      "through the runtime");
+    Require(wiringSurface->extentOffers >= 1,
+            "constructing the shell already offers the extent-aware surface its initial "
+            "content extent (via MainPane's constructor-time RefreshOnTick), matching "
+            "runtime_main_component_tests' unit coverage of the same hook");
+
+    // RuntimeMainComponent::BuildTree() unconditionally re-offers whatever
+    // liveContentExtent_ it currently holds to an ExtentAwareSurface app on
+    // *every* call (RuntimeMainComponent.hpp:134-137), including the
+    // RefreshFromSurface() call resized() already made before this fix -- so
+    // extentOffers alone climbs regardless of whether MainPane wires the new
+    // JUCE bounds through. The value offered is the only thing that can
+    // distinguish "wired" from "not wired"; capture it before resizing and
+    // require it to actually change to the new size, not merely that another
+    // offer happened.
+    const synth::ui::Bounds extentBeforeResize = wiringSurface->extent;
+    wiringSession.Component().setSize(800, 600);
+    Require(wiringSurface->extent.width != extentBeforeResize.width ||
+                wiringSurface->extent.height != extentBeforeResize.height,
+            "resizing the shell's real JUCE top-level component changes the extent offered "
+            "to the app surface -- the production wiring gap finding 1 identified (before "
+            "the fix, MainPane::resized() never called RuntimeMainComponent::"
+            "SetContentExtent(), so the app kept resolving at its original extent regardless "
+            "of window size)");
+    Require(wiringSurface->extent.width == 800.0f && wiringSurface->extent.height == 600.0f,
+            "the offered extent is MainPane's own live JUCE bounds (getLocalBounds(), "
+            "converted via synth_juce::JuceToUiBounds), matching what resized() was fixed "
+            "to feed through");
 
     {
         auto owner = synth_runtime::MakeRuntimeSessionOwner<synth_miniapp::MiniApp>(paths);

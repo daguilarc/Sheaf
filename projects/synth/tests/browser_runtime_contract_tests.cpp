@@ -556,6 +556,32 @@ void TestBrowserRuntimeMainComponentSidebarTracksResolvedAppWidth()
     Require(sidebarResized != nullptr, "sidebar renders after the browser offers a new extent");
     Require(NearlyEqual(sidebarResized->bounds.x, 800.0f),
             "browser composition tracks the resized extent identically to JUCE");
+
+    // Fix round 1, finding 2: a vertical resize too -- the composite root
+    // (runtime.main.root) height must track the resolved app height rather
+    // than staying pinned to config.uiHeight (480). Before the fix, the
+    // composite root's height was hardcoded to config.uiHeight even on this
+    // extent-aware branch, so this resize would validate (the validator
+    // only checks the app root) and then throw inside
+    // RequireCompositionHolds, because the taller app root no longer fit
+    // inside a 480-tall composite root.
+    mainComponent.SetContentExtent({0.0f, 0.0f, 800.0f, 600.0f});
+    const synth::ui::NodeTree resizedTaller = mainComponent.BuildTree();
+    const synth::ui::Node* appRootTaller = FindPortableNode(resizedTaller, "extent.contract.app.root");
+    const synth::ui::Node* sidebarTaller = FindPortableNode(resizedTaller, "runtime.sidebar.root");
+    const synth::ui::Node* compositeRootTaller = FindPortableNode(resizedTaller, "runtime.main.root");
+    Require(appRootTaller != nullptr, "app root renders after the browser offers a taller extent");
+    Require(NearlyEqual(appRootTaller->bounds.height, 600.0f),
+            "app resolves against the taller offered extent");
+    Require(sidebarTaller != nullptr, "sidebar renders after the browser offers a taller extent");
+    Require(NearlyEqual(sidebarTaller->bounds.x, 800.0f),
+            "sidebar x still tracks the resolved width, unaffected by the height-only change");
+    Require(compositeRootTaller != nullptr,
+            "composite root renders after the browser offers a taller extent");
+    Require(NearlyEqual(compositeRootTaller->bounds.height, 600.0f),
+            "composite root height tracks the resolved app height (600), not config.uiHeight "
+            "(480) -- BuildTree() completing without throwing also proves the validator accepted "
+            "the taller app root and RequireCompositionHolds held for both children");
 }
 
 void TestBrowserControllerDiscoveryCacheUsesSignalsAndSuccessfulCommits()

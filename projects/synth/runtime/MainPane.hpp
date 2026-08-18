@@ -65,6 +65,14 @@ public:
 
     void resized() override
     {
+        // Task 8 fix round 1 (sprs-13 finding 1): feed the pane's live JUCE
+        // bounds to the shell before the next RefreshFromSurface() rebuilds
+        // the tree, so an ExtentAwareSurface app is offered the real window
+        // size instead of only ever resolving at its compiled-in default.
+        // mainComponent_ is held directly (not through a `ui::Surface&`), so
+        // this calls its existing public SetContentExtent() setter (task
+        // 8.1) with no dynamic_cast/interface needed at this layer.
+        mainComponent_.SetContentExtent(synth_juce::JuceToUiBounds(getLocalBounds().toFloat()));
         renderer_.setBounds(getLocalBounds());
         renderer_.RefreshFromSurface();
     }
