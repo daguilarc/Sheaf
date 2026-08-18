@@ -85,9 +85,11 @@ backend changes behavior unless it opts in:
 - Backward compatibility: every new lever defaults to current behavior —
   legacy apps compose, size, and render bit-identically (`sprs-13/15/16/17`,
   `sru-60`, `spv-9` each carry an explicit unchanged-default scenario).
-- Interaction: the active `add-browser-wasm-runtime` change touches the
-  browser host; `sar-33`'s browser-side delta is deliberately minimal (one
-  derived flag from the existing capture lifecycle) to avoid colliding.
+- Interaction: the `add-browser-wasm-runtime` change (archived 2026-08-02,
+  already merged at this branch's base) reworked the same browser host;
+  `sar-33`'s browser-side delta was kept minimal (one derived flag from the
+  existing capture lifecycle) regardless. (Corrected 2026-08-18: the
+  original text called that change "active" — stale at write time.)
 - Base: upstream `main` = `508d9d68`. The consuming app verified this base
   before any fix lands (273/273 app tests green at the bumped pin).
 - Delivery: an initial commit per task group on `fix-out-of-tree-app-gaps`
