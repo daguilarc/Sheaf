@@ -128,9 +128,18 @@ outside this change constructs that value — so leaving them as they are is
 additive-safe: `-Wall -Wextra -Wpedantic` (`projects/synth/Makefile:2`, no
 `-Werror`) will warn on the now-incomplete coverage but the build will not
 fail and no existing behavior changes for any input those functions can
-currently receive. Wiring the new type into the MIDI-mapping/persistence
-surface is a separate, out-of-scope concern (this primitive has no
-MIDI-controller mapping of its own yet) and is left as a follow-up.
+currently receive. Those surfaces were then classified rather than left warning. The message
+serialisers -- `ToJSON`, `FromJSON` and the round-trip equivalence helper --
+handle any `MessageIn`, so a type absent from them cannot round-trip at all;
+the new type joins their fall-through groups, and every field including
+`bankIx` is already written after the switch, so no new field handling is
+needed. `MessageTypeName` and its parser are a total name mapping and gain
+both directions. `SystemMessageOutputInfo::Evaluate` computes feedback for a
+mapped controller, and a bank-addressed programmatic write is not mappable to
+a controller, so it joins the group that yields no feedback -- an explicit
+exclusion rather than an omission. Two range comments naming `PrevParamBank`
+as the last enumerator are corrected; `TypeOrder` static_casts the enum and
+already ordered the new type correctly.
 
 Confirmed against the actual build: only 5 of these actually
 warned in this incremental run — the 4 in `MidiController.cpp` and the 1

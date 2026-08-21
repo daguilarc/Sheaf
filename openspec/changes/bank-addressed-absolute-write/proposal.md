@@ -56,7 +56,9 @@ nothing to do with the write itself.
 - Affected specs: `synth-parameter-modulation` (ADDED requirement; spm-77's
   existing slot-addressed requirement is unchanged).
 - Affected code: `projects/synth/include/synth/ParameterModulation.hpp`,
-  `projects/synth/src/ParameterModulation.cpp`. Purely additive — no
+  `projects/synth/src/ParameterModulation.cpp`, and the surfaces that
+  enumerate message types: `src/MidiController.cpp`,
+  `include/synth/MidiConfigBlocks.hpp`, `src/MidiConfigBlocks.cpp`. Purely additive — no
   existing signature or behavior changes; the existing slot-addressed path
   (`BankSlot::HandleSetAbsolute`, `ParameterManager::HandleSetAbsolute(slotIx,
   ...)`) is untouched.
