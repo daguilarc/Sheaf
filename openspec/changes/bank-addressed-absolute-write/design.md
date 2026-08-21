@@ -132,7 +132,7 @@ currently receive. Wiring the new type into the MIDI-mapping/persistence
 surface is a separate, out-of-scope concern (this primitive has no
 MIDI-controller mapping of its own yet) and is left as a follow-up.
 
-Confirmed against the actual build (task 1.5): only 5 of these actually
+Confirmed against the actual build: only 5 of these actually
 warned in this incremental run — the 4 in `MidiController.cpp` and the 1
 in `blocks_tests.cpp` — because `MidiController.o`'s Makefile rule lists
 `include/synth/ParameterModulation.hpp` as an explicit prerequisite
