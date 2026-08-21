@@ -5649,6 +5649,134 @@ TEST_CASE(param_set_absolute_unmapped_boundaries_are_no_ops) {
     REQUIRE_NEAR(parameter.SceneCenter(0), 0.25f, 0.00001f);
 }
 
+TEST_CASE(bank_addressed_absolute_write_reaches_a_bank_the_slot_has_not_selected) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 2});
+    auto& selectedParam = manager.CreateParameter(group, {.name = "Selected", .defaultValue = 0.2f});
+    auto& targetParam = manager.CreateParameter(group, {.name = "Target", .defaultValue = 0.3f});
+    auto& selectedBank = manager.CreateBank();
+    selectedBank.AddMapping(10, selectedParam);
+    auto& targetBank = manager.CreateBank();
+    targetBank.AddMapping(10, targetParam);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&selectedBank);
+
+    const float targetBefore = targetParam.SceneCenter(0);
+    manager.HandleSetAbsoluteOnBank(1, 0, 0, 0.9f);
+
+    REQUIRE_TRUE(targetParam.SceneCenter(0) != targetBefore);
+    REQUIRE_NEAR(targetParam.SceneCenter(0), 0.9f, 0.0001f);
+    REQUIRE_NEAR(selectedParam.SceneCenter(0), 0.2f, 0.0001f);
+}
+
+TEST_CASE(bank_addressed_absolute_write_leaves_the_slots_selected_bank_unchanged) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 2});
+    auto& selectedParam = manager.CreateParameter(group, {.name = "Selected", .defaultValue = 0.15f});
+    auto& targetParam = manager.CreateParameter(group, {.name = "Target", .defaultValue = 0.25f});
+    auto& selectedBank = manager.CreateBank();
+    selectedBank.AddMapping(10, selectedParam);
+    auto& targetBank = manager.CreateBank();
+    targetBank.AddMapping(10, targetParam);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&selectedBank);
+
+    manager.HandleSetAbsoluteOnBank(1, 0, 0, 0.6f);
+
+    REQUIRE_TRUE(slot.SelectedBank() == &selectedBank);
+    REQUIRE_NEAR(targetParam.SceneCenter(0), 0.6f, 0.0001f);
+}
+
+TEST_CASE(bank_addressed_absolute_write_to_a_different_bank_leaves_open_modulation_view_untouched) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 3,
+    });
+    MarkAllModulatorsConnectedForUi(group);
+    auto& viewedParam = manager.CreateParameter(group, {.name = "Viewed", .defaultValue = 0.2f});
+    auto& viewedDepth = manager.CreateParameter(group, {.name = "ViewedDepth", .defaultValue = 0.3f});
+    REQUIRE_TRUE(viewedParam.AssignModulationDepth(0, &viewedDepth));
+    auto& targetParam = manager.CreateParameter(group, {.name = "Target", .defaultValue = 0.4f});
+    auto& viewedBank = manager.CreateBank();
+    viewedBank.AddMapping(10, viewedParam);
+    auto& targetBank = manager.CreateBank();
+    targetBank.AddMapping(10, targetParam);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.SelectBank(&viewedBank);
+    manager.HandlePress(0, 0);
+    REQUIRE_TRUE(viewedBank.ShowingModulation());
+    REQUIRE_TRUE(viewedBank.SelectedParameter() == &viewedParam);
+
+    manager.HandleSetAbsoluteOnBank(1, 0, 0, 0.85f);
+
+    REQUIRE_NEAR(targetParam.SceneCenter(0), 0.85f, 0.0001f);
+    REQUIRE_TRUE(viewedBank.ShowingModulation());
+    REQUIRE_TRUE(viewedBank.SelectedParameter() == &viewedParam);
+    REQUIRE_TRUE(viewedBank.VisibleParameter(10) == &viewedDepth);
+}
+
+TEST_CASE(bank_addressed_absolute_write_edits_top_level_parameter_not_visible_modulation_depth) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 1,
+        .numScenes = 1,
+        .maxParameters = 2,
+    });
+    MarkAllModulatorsConnectedForUi(group);
+    auto& parent = manager.CreateParameter(group, {.name = "Parent", .defaultValue = 0.2f});
+    auto& depth = manager.CreateParameter(group, {.name = "Depth", .defaultValue = 0.3f});
+    REQUIRE_TRUE(parent.AssignModulationDepth(0, &depth));
+    auto& bank = manager.CreateBank();
+    bank.AddMapping(10, parent);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.AddPhysicalEncoder(11);
+    slot.SelectBank(&bank);
+    manager.HandlePress(0, 0);
+    REQUIRE_TRUE(bank.ShowingModulation());
+    REQUIRE_TRUE(bank.VisibleParameter(10) == &depth);
+
+    const float parentBefore = parent.SceneCenter(0);
+    const float depthBefore = depth.SceneCenter(0);
+
+    manager.HandleSetAbsoluteOnBank(0, 0, 0, 0.8f);
+
+    REQUIRE_TRUE(parent.SceneCenter(0) != parentBefore);
+    REQUIRE_NEAR(parent.SceneCenter(0), 0.8f, 0.00001f);
+    REQUIRE_NEAR(depth.SceneCenter(0), depthBefore, 0.00001f);
+    REQUIRE_TRUE(bank.ShowingModulation());
+    REQUIRE_TRUE(bank.VisibleParameter(10) == &depth);
+}
+
+TEST_CASE(bank_addressed_absolute_write_via_message_bus_matches_direct_call) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({.numVoices = 1, .numScenes = 1, .maxParameters = 2});
+    auto& selectedParam = manager.CreateParameter(group, {.name = "Selected", .defaultValue = 0.1f});
+    auto& targetParam = manager.CreateParameter(group, {.name = "Target", .defaultValue = 0.2f});
+    auto& selectedBank = manager.CreateBank();
+    selectedBank.AddMapping(10, selectedParam);
+    auto& targetBank = manager.CreateBank();
+    targetBank.AddMapping(10, targetParam);
+    auto& slot = manager.CreateBankSlot();
+    slot.AddPhysicalEncoder(10);
+    slot.SelectBank(&selectedBank);
+    synth::MessageInBus bus(&manager, 4);
+
+    manager.HandleSetAbsoluteOnBank(1, 0, 0, 0.55f);
+    REQUIRE_NEAR(targetParam.SceneCenter(0), 0.55f, 0.0001f);
+
+    bus.Apply(synth::MessageIn::ParamSetAbsoluteOnBank(0, 1, 0, 0, 0.83f));
+    REQUIRE_NEAR(targetParam.SceneCenter(0), 0.83f, 0.0001f);
+}
+
 TEST_CASE(unmapped_encoder_ignored) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
