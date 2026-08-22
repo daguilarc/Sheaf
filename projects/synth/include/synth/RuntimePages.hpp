@@ -28,6 +28,8 @@ namespace synth::runtime_ui {
 
 inline constexpr const char* kSystemDefaultOptionId = "system_default";
 inline constexpr const char* kSystemDefaultOptionLabel = "System Default";
+inline constexpr const char* kNoInputOptionId = "no_input";
+inline constexpr const char* kNoInputOptionLabel = "No Input";
 
 namespace NodeIds {
 
@@ -199,7 +201,7 @@ struct AudioPageSnapshot
     std::vector<AudioDeviceOption> outputOptions;
     std::vector<AudioDeviceOption> inputOptions;
     std::string selectedOutputId = kSystemDefaultOptionId;
-    std::string selectedInputId = kSystemDefaultOptionId;
+    std::string selectedInputId = kNoInputOptionId;
     bool showInputCombo = false;
     // sru-3: only a host whose capture is offline offers the user a way back.
     // A host that never loses input -- JUCE reopens devices itself -- leaves
@@ -346,10 +348,11 @@ inline std::string FormatDeadlineText(float percent)
     return buffer;
 }
 
-inline std::vector<AudioDeviceOption> BuildDeviceOptions(const std::vector<std::string>& deviceNames)
+inline std::vector<AudioDeviceOption> BuildDeviceOptions(const std::vector<std::string>& deviceNames,
+                                                          const AudioDeviceOption& firstOption)
 {
     std::vector<AudioDeviceOption> options;
-    options.push_back({kSystemDefaultOptionId, kSystemDefaultOptionLabel});
+    options.push_back(firstOption);
     for (const std::string& name : deviceNames)
     {
         options.push_back({name, name});
@@ -358,11 +361,12 @@ inline std::vector<AudioDeviceOption> BuildDeviceOptions(const std::vector<std::
 }
 
 inline std::string SelectedDeviceOptionId(const std::string& deviceName,
-                                          const std::vector<AudioDeviceOption>& options)
+                                          const std::vector<AudioDeviceOption>& options,
+                                          const std::string& fallbackOptionId)
 {
     if (deviceName.empty())
     {
-        return kSystemDefaultOptionId;
+        return fallbackOptionId;
     }
     for (const AudioDeviceOption& option : options)
     {
@@ -371,12 +375,12 @@ inline std::string SelectedDeviceOptionId(const std::string& deviceName,
             return deviceName;
         }
     }
-    return kSystemDefaultOptionId;
+    return fallbackOptionId;
 }
 
 inline std::string DeviceNameFromOptionId(const std::string& optionId)
 {
-    if (optionId == kSystemDefaultOptionId)
+    if (optionId == kSystemDefaultOptionId || optionId == kNoInputOptionId)
     {
         return {};
     }

@@ -46,7 +46,7 @@ void TestBrowserExposesOnlySystemDefaultOutput()
     Require(snapshot.statusLineText.empty(), "a zero-input application claims no input status");
 }
 
-void TestInputCapableBrowserExposesOneSystemDefaultInput()
+void TestInputCapableBrowserExposesOneNoInputOption()
 {
     const synth::AudioDeviceState state{.outputDeviceName = {}, .inputDeviceName = "Stale Named Input"};
     const synth::runtime_ui::AudioPageSnapshot snapshot = synth_browser::BuildBrowserAudioSnapshot(
@@ -54,19 +54,19 @@ void TestInputCapableBrowserExposesOneSystemDefaultInput()
 
     Require(snapshot.showInputCombo, "an input-capable browser application shows the input selector");
     Require(snapshot.inputOptions.size() == 1, "one browser input option");
-    Require(snapshot.inputOptions.front().id == "system_default", "system default input id");
-    Require(snapshot.inputOptions.front().label == "System Default", "system default input label");
-    Require(snapshot.selectedInputId == "system_default",
-            "a stale persisted input name still selects System Default");
+    Require(snapshot.inputOptions.front().id == "no_input", "no input id");
+    Require(snapshot.inputOptions.front().label == "No Input", "no input label");
+    Require(snapshot.selectedInputId == "no_input",
+            "a stale persisted input name still selects No Input");
     Require(snapshot.statusLineText == "Input requested 4 / active 4",
             "online capture reports the requested and active counts alone");
     Require(!snapshot.showInputRetry, "online capture hides Retry Input");
 }
 
-void TestBrowserInputDefaultSelectionPersistsAsEmptyName()
+void TestBrowserInputNoInputSelectionPersistsAsEmptyName()
 {
-    Require(synth_browser::BrowserInputDeviceName("system_default").empty(),
-            "system default persists as empty input name");
+    Require(synth_browser::BrowserInputDeviceName("no_input").empty(),
+            "no input persists as empty input name");
 }
 
 void TestBrowserRejectsNamedInputSelection()
@@ -293,9 +293,9 @@ void TestBrowserServicesPublishCaptureStatusAndUserRetry()
 
     services.DispatchAudio(synth::ui::Action::WithValue(
         synth::runtime_ui::Actions::kAudioInputSelect,
-        "system_default"));
+        "no_input"));
     Require(engine.AudioDeviceSnapshot().inputDeviceName.empty(),
-            "services persist system default as empty input name");
+            "services persist no input as empty input name");
     services.RefreshAudio(snapshot);
     Require(snapshot.statusLineText == "Input requested 4 / active 4 - Using System Default",
             "a selection acknowledgement follows the requested and active counts");
@@ -332,8 +332,8 @@ int main()
     TestBrowserExposesOnlySystemDefaultOutput();
     TestBrowserDefaultSelectionPersistsAsEmptyName();
     TestBrowserRejectsNamedOutputSelection();
-    TestInputCapableBrowserExposesOneSystemDefaultInput();
-    TestBrowserInputDefaultSelectionPersistsAsEmptyName();
+    TestInputCapableBrowserExposesOneNoInputOption();
+    TestBrowserInputNoInputSelectionPersistsAsEmptyName();
     TestBrowserRejectsNamedInputSelection();
     TestBrowserInputStatesAreDistinctAndRetryableOnlyWhileOffline();
     TestBrowserServicesExposeNegotiatedDefaultAudio();

@@ -43,6 +43,7 @@ RUNTIME_PAGE_HEADERS := include/synth/RuntimePages.hpp include/synth/RuntimePage
 APPS_DIR := apps
 MINIAPP_DIR := $(APPS_DIR)/miniapp
 SHEAF_PATCH_DIR := $(APPS_DIR)/sheaf-patch
+JUCE_DIR ?= $(HOME)/JUCE
 
 .PHONY: all build test dsp_tests master_clock_tests contract_tests audio_input_tests engine_tests controller_wizard_tests check-ui-boundary check-ui-boundary-empty-discovery check-app-bundle-plist miniapp sheaf-patch apps browser browser-apps browser-fixture-app browser-apps-run browser-apps-smoke browser-unit-test browser-command-buffer-test browser-audio-device-test browser-midi-bridge-test clean
 
@@ -260,6 +261,11 @@ test: check-ui-boundary check-ui-boundary-empty-discovery check-app-bundle-plist
 	$(BROWSER_AUDIO_DEVICE_TEST_BIN)
 	$(BROWSER_MIDI_BRIDGE_TEST_BIN)
 	$(CONTROLLER_WIZARD_TEST_BIN)
+	@if [ -d "$(JUCE_DIR)/modules" ]; then \
+		$(MAKE) -C $(MINIAPP_DIR) test; \
+	else \
+		echo "JUCE not found at $(JUCE_DIR); skipping $(MINIAPP_DIR) JUCE-backed tests."; \
+	fi
 
 miniapp:
 	$(MAKE) -C $(MINIAPP_DIR)

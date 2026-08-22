@@ -1444,10 +1444,12 @@ static void TestSyncPageFitsWithinTheRuntimeRoot()
 static void TestAudioSelectorsAreCaptionedWhileADeviceIsSelected()
 {
     synth::runtime_ui::AudioPageSnapshot snapshot;
-    snapshot.outputOptions =
-        synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Output"});
-    snapshot.inputOptions =
-        synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Microphone"});
+    snapshot.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(
+        {"Built-in Output"},
+        {synth::runtime_ui::kSystemDefaultOptionId, synth::runtime_ui::kSystemDefaultOptionLabel});
+    snapshot.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(
+        {"Built-in Microphone"},
+        {synth::runtime_ui::kNoInputOptionId, synth::runtime_ui::kNoInputOptionLabel});
     snapshot.selectedOutputId = "Built-in Output";
     snapshot.selectedInputId = "Built-in Microphone";
     snapshot.showInputCombo = true;
@@ -1488,10 +1490,12 @@ static void TestAudioSelectorsAreCaptionedWhileADeviceIsSelected()
 static void TestHiddenInputSelectorLeavesNoOrphanedCaption()
 {
     synth::runtime_ui::AudioPageSnapshot snapshot;
-    snapshot.outputOptions =
-        synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Output"});
-    snapshot.inputOptions =
-        synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Microphone"});
+    snapshot.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(
+        {"Built-in Output"},
+        {synth::runtime_ui::kSystemDefaultOptionId, synth::runtime_ui::kSystemDefaultOptionLabel});
+    snapshot.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(
+        {"Built-in Microphone"},
+        {synth::runtime_ui::kNoInputOptionId, synth::runtime_ui::kNoInputOptionLabel});
     snapshot.selectedOutputId = "Built-in Output";
     snapshot.selectedInputId = "Built-in Microphone";
     snapshot.showInputCombo = false;
@@ -2101,8 +2105,12 @@ static void TestEveryRebuiltPageAbsorbsAtTheSmallestDeclaredSurface()
         "the Sync status region absorbs the whole difference between surface heights");
 
     synth::runtime_ui::AudioPageSnapshot audio;
-    audio.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Output"});
-    audio.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Microphone"});
+    audio.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(
+        {"Built-in Output"},
+        {synth::runtime_ui::kSystemDefaultOptionId, synth::runtime_ui::kSystemDefaultOptionLabel});
+    audio.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(
+        {"Built-in Microphone"},
+        {synth::runtime_ui::kNoInputOptionId, synth::runtime_ui::kNoInputOptionLabel});
     audio.selectedOutputId = "Built-in Output";
     audio.selectedInputId = "Built-in Microphone";
     audio.showInputCombo = true;
@@ -2212,10 +2220,12 @@ static void TestEveryPageAndAppResolvesAtTheSmallestDeclaredSurface()
     sync.warningText = "96 PPQN is nonstandard";
 
     synth::runtime_ui::AudioPageSnapshot audioWithInput;
-    audioWithInput.outputOptions =
-        synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Output"});
-    audioWithInput.inputOptions =
-        synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Microphone"});
+    audioWithInput.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(
+        {"Built-in Output"},
+        {synth::runtime_ui::kSystemDefaultOptionId, synth::runtime_ui::kSystemDefaultOptionLabel});
+    audioWithInput.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(
+        {"Built-in Microphone"},
+        {synth::runtime_ui::kNoInputOptionId, synth::runtime_ui::kNoInputOptionLabel});
     audioWithInput.selectedOutputId = "Built-in Output";
     audioWithInput.selectedInputId = "Built-in Microphone";
     audioWithInput.showInputCombo = true;
@@ -2615,8 +2625,12 @@ synth::runtime_ui::SyncPageSnapshot FixtureSyncState()
 synth::runtime_ui::AudioPageSnapshot FixtureAudioState()
 {
     synth::runtime_ui::AudioPageSnapshot snapshot;
-    snapshot.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Output"});
-    snapshot.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Built-in Microphone"});
+    snapshot.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(
+        {"Built-in Output"},
+        {synth::runtime_ui::kSystemDefaultOptionId, synth::runtime_ui::kSystemDefaultOptionLabel});
+    snapshot.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(
+        {"Built-in Microphone"},
+        {synth::runtime_ui::kNoInputOptionId, synth::runtime_ui::kNoInputOptionLabel});
     snapshot.selectedOutputId = "Built-in Output";
     snapshot.selectedInputId = "Built-in Microphone";
     snapshot.showInputCombo = true;
@@ -4353,12 +4367,18 @@ int main()
     }
 
     synth::runtime_ui::AudioPageSnapshot audioSnapshot;
-    audioSnapshot.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Speakers", "Headphones"});
-    audioSnapshot.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Mic"});
-    Require(synth::runtime_ui::Layout::SelectedDeviceOptionId("Headphones", audioSnapshot.outputOptions) ==
+    audioSnapshot.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(
+        {"Speakers", "Headphones"},
+        {synth::runtime_ui::kSystemDefaultOptionId, synth::runtime_ui::kSystemDefaultOptionLabel});
+    audioSnapshot.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(
+        {"Mic"},
+        {synth::runtime_ui::kNoInputOptionId, synth::runtime_ui::kNoInputOptionLabel});
+    Require(synth::runtime_ui::Layout::SelectedDeviceOptionId(
+                "Headphones", audioSnapshot.outputOptions, synth::runtime_ui::kSystemDefaultOptionId) ==
                 "Headphones",
             "known audio device option stays selected");
-    Require(synth::runtime_ui::Layout::SelectedDeviceOptionId("Vanished Device", audioSnapshot.outputOptions) ==
+    Require(synth::runtime_ui::Layout::SelectedDeviceOptionId(
+                "Vanished Device", audioSnapshot.outputOptions, synth::runtime_ui::kSystemDefaultOptionId) ==
                 synth::runtime_ui::kSystemDefaultOptionId,
             "unknown audio device option falls back to system default");
     audioSnapshot.selectedOutputId = "Speakers";

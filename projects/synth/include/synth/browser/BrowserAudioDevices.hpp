@@ -190,13 +190,13 @@ inline synth::runtime_ui::AudioPageSnapshot BuildBrowserAudioSnapshot(
     {
         return snapshot;
     }
-    // D6: System Default only. Browser device ids are privacy-scoped, so nothing
-    // is enumerated here and a persisted name from another host still resolves to
-    // the default rather than to a device this host cannot name.
-    snapshot.inputOptions = {{synth::runtime_ui::kSystemDefaultOptionId,
-                              synth::runtime_ui::kSystemDefaultOptionLabel}};
+    // No Input only. Browser device ids are privacy-scoped, so nothing is
+    // enumerated here and a persisted name from another host still resolves to
+    // no input rather than to a device this host cannot name.
+    snapshot.inputOptions = {{synth::runtime_ui::kNoInputOptionId,
+                              synth::runtime_ui::kNoInputOptionLabel}};
     snapshot.selectedInputId = synth::runtime_ui::Layout::SelectedDeviceOptionId(
-        state.inputDeviceName, snapshot.inputOptions);
+        state.inputDeviceName, snapshot.inputOptions, synth::runtime_ui::kNoInputOptionId);
     snapshot.showInputRetry = BrowserAudioInputOffline(input.status);
     snapshot.statusLineText = ComposeBrowserAudioStatusLine(input, BrowserAudioInputDetail(input));
     return snapshot;
@@ -213,9 +213,9 @@ inline std::string BrowserOutputDeviceName(const std::string& optionId)
 
 inline std::string BrowserInputDeviceName(const std::string& optionId)
 {
-    if (optionId != synth::runtime_ui::kSystemDefaultOptionId)
+    if (optionId != synth::runtime_ui::kNoInputOptionId)
     {
-        throw std::invalid_argument("browser audio supports only system_default input");
+        throw std::invalid_argument("browser audio supports only no_input input");
     }
     return {};
 }

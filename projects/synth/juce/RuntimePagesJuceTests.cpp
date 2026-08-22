@@ -107,8 +107,12 @@ int main()
 
     synth::runtime_ui::AudioPageSurface audioSurface;
     synth::runtime_ui::AudioPageSnapshot& audioSnapshot = audioSurface.Snapshot();
-    audioSnapshot.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Speakers"});
-    audioSnapshot.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions({"Microphone"});
+    audioSnapshot.outputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(
+        {"Speakers"},
+        {synth::runtime_ui::kSystemDefaultOptionId, synth::runtime_ui::kSystemDefaultOptionLabel});
+    audioSnapshot.inputOptions = synth::runtime_ui::Layout::BuildDeviceOptions(
+        {"Microphone"},
+        {synth::runtime_ui::kNoInputOptionId, synth::runtime_ui::kNoInputOptionLabel});
     audioSnapshot.deviceLineText = "Speakers: 48000 Hz, 512 frames";
     audioSnapshot.statusLineText = "Audio: Speakers";
     audioSnapshot.selectedOutputId = "Speakers";
