@@ -14021,7 +14021,8 @@ TEST_CASE(runtime_config_v1_migrates_to_default_sync_and_v2_save_contains_exact_
         .ppqn = 960,
     };
     REQUIRE_TRUE(synth::LoadRuntimeConfigJSON(v1, loadedInstrument, loadedAudio, loadedSync));
-    REQUIRE_TRUE(loadedAudio == sourceAudio);
+    REQUIRE_TRUE(loadedAudio.outputDeviceName == sourceAudio.outputDeviceName);
+    REQUIRE_TRUE(loadedAudio.inputDeviceName.empty());
     REQUIRE_TRUE(loadedSync == synth::SyncConfig{});
 
     const synth::SyncConfig savedSync{
@@ -14034,7 +14035,7 @@ TEST_CASE(runtime_config_v1_migrates_to_default_sync_and_v2_save_contains_exact_
     synth::JsonArena v2Arena(8192);
     const synth::JSON v2 = synth::BuildRuntimeConfigJSON(
         v2Arena, sourceInstrument, sourceAudio, savedSync);
-    REQUIRE_TRUE(v2.Get("schemaVersion").IntegerValue() == 2);
+    REQUIRE_TRUE(v2.Get("schemaVersion").IntegerValue() == synth::kRuntimeConfigSchemaVersion);
     const synth::JSON sync = v2.Get("sync");
     REQUIRE_TRUE(sync.Size() == 5);
     REQUIRE_TRUE(sync.Get("sendClock").BooleanValue());
@@ -14100,6 +14101,72 @@ TEST_CASE(runtime_config_v2_rejects_every_missing_or_wrong_sync_field_atomically
         const std::string text = prefix + syncObject + "}";
         requireAtomicRejection(text);
     }
+}
+
+TEST_CASE(runtime_config_v2_audio_device_input_name_dropped_on_migration) {
+    const synth::MidiInstrumentConfig instrument;
+    const synth::AudioDeviceState sourceAudio{.outputDeviceName = "Interface Out",
+                                               .inputDeviceName = "BlackHole 2ch"};
+    const synth::SyncConfig sync{.ppqn = 24};
+
+    synth::JsonArena arena(8192);
+    synth::JSON v2 = arena.Object();
+    v2.SetNew("schema", arena.String(synth::kRuntimeConfigSchema));
+    v2.SetNew("schemaVersion", arena.Integer(2));
+    v2.SetNew("midiInstrument", synth::ToJSON(arena, instrument));
+    v2.SetNew("audioDevice", synth::ToJSON(arena, sourceAudio));
+    v2.SetNew("sync", synth::ToJSON(arena, sync));
+
+    synth::MidiInstrumentConfig loadedInstrument;
+    synth::AudioDeviceState loadedAudio;
+    synth::SyncConfig loadedSync;
+    REQUIRE_TRUE(synth::LoadRuntimeConfigJSON(v2, loadedInstrument, loadedAudio, loadedSync));
+    REQUIRE_TRUE(loadedAudio.inputDeviceName.empty());
+    REQUIRE_TRUE(loadedAudio.outputDeviceName == sourceAudio.outputDeviceName);
+}
+
+TEST_CASE(runtime_config_v3_audio_device_input_name_preserved) {
+    const synth::MidiInstrumentConfig instrument;
+    const synth::AudioDeviceState sourceAudio{.outputDeviceName = "Interface Out",
+                                               .inputDeviceName = "BlackHole 2ch"};
+    const synth::SyncConfig sync{.ppqn = 24};
+
+    synth::JsonArena arena(8192);
+    const synth::JSON v3 = synth::BuildRuntimeConfigJSON(arena, instrument, sourceAudio, sync);
+    REQUIRE_TRUE(v3.Get("schemaVersion").IntegerValue() == synth::kRuntimeConfigSchemaVersion);
+
+    synth::MidiInstrumentConfig loadedInstrument;
+    synth::AudioDeviceState loadedAudio;
+    synth::SyncConfig loadedSync;
+    REQUIRE_TRUE(synth::LoadRuntimeConfigJSON(v3, loadedInstrument, loadedAudio, loadedSync));
+    REQUIRE_TRUE(loadedAudio.inputDeviceName == sourceAudio.inputDeviceName);
+    REQUIRE_TRUE(loadedAudio.outputDeviceName == sourceAudio.outputDeviceName);
+}
+
+TEST_CASE(runtime_config_v2_sync_section_still_loads) {
+    const synth::MidiInstrumentConfig instrument;
+    const synth::AudioDeviceState sourceAudio{.outputDeviceName = "Out", .inputDeviceName = ""};
+    const synth::SyncConfig sync{
+        .sendClock = true,
+        .receiveClock = true,
+        .sendTransport = false,
+        .receiveTransport = true,
+        .ppqn = 480,
+    };
+
+    synth::JsonArena arena(8192);
+    synth::JSON v2 = arena.Object();
+    v2.SetNew("schema", arena.String(synth::kRuntimeConfigSchema));
+    v2.SetNew("schemaVersion", arena.Integer(2));
+    v2.SetNew("midiInstrument", synth::ToJSON(arena, instrument));
+    v2.SetNew("audioDevice", synth::ToJSON(arena, sourceAudio));
+    v2.SetNew("sync", synth::ToJSON(arena, sync));
+
+    synth::MidiInstrumentConfig loadedInstrument;
+    synth::AudioDeviceState loadedAudio;
+    synth::SyncConfig loadedSync;
+    REQUIRE_TRUE(synth::LoadRuntimeConfigJSON(v2, loadedInstrument, loadedAudio, loadedSync));
+    REQUIRE_TRUE(loadedSync == sync);
 }
 
 TEST_CASE(runtime_config_load_invalid_schema_preserves_targets) {
