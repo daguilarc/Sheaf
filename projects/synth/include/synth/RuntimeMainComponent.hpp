@@ -78,6 +78,10 @@ public:
         // 8.1/8.2, sprs-13): identical to the legacy, hook-free value.
         liveContentExtent_ = contentBounds;
         syncSurface_.SetContentBounds(contentBounds);
+        // An application whose own vocabulary already uses "Audio" renames the
+        // runtime's Audio page here (RuntimeConfig::audioPageTitle). Unset for
+        // every application that does not, which leaves the sidebar unchanged.
+        sidebarSurface_.SetAudioPageTitle(config.audioPageTitle);
 
         // sprs-17: an app opts in by defining App::RegisteredPage() (see
         // HasRegisteredPage, AppConcepts.hpp); App is a concrete, non-erased

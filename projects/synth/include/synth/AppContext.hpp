@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -37,6 +38,15 @@ struct RuntimeConfig {
     int uiWidth = 900;
     int uiHeight = 560;
     int uiFrameHz = 30;
+    // Renames the runtime's own Audio page in the sidebar. It exists because
+    // an application's vocabulary can already use a runtime page's name for
+    // something else -- a synth whose first parameter bank is called Audio
+    // renders two "Audio" buttons that mean different things -- and nothing
+    // else here lets the application say so. Unset means the runtime's own
+    // name, so an application that never sets it renders the sidebar exactly
+    // as before. Only the page's BUTTON is renamed; its contents are the
+    // runtime's.
+    std::optional<std::string> audioPageTitle;
 };
 
 // Shared JUCE-free validation for RuntimeConfig requests. Throws

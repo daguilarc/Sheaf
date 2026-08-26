@@ -188,6 +188,12 @@ struct SidebarSnapshot
     // its value is the button's label text, and the button is placed after
     // File (BuildSidebarTree below).
     std::optional<std::string> registeredPageTitle;
+    // RuntimeConfig::audioPageTitle, carried here the same way: unset -> the
+    // Audio page's button reads the runtime's own name and the sidebar is
+    // what it was before this field existed. Set -> its value is that
+    // button's label (BuildSidebarTree below). Renames the button only; the
+    // page it opens is unchanged.
+    std::optional<std::string> audioPageTitle;
 };
 
 struct AudioDeviceOption
@@ -692,8 +698,8 @@ inline ui::NodeTree BuildSidebarTree(const SidebarSnapshot& snapshot)
 
     ui::Builder builder;
     builder.Root(NodeIds::kSidebarRoot, rootBounds);
-    builder.Button(NodeIds::kSidebarAudio, "Audio", ui::Action::Named(Actions::kSidebarAudio),
-                   sidebarRow());
+    builder.Button(NodeIds::kSidebarAudio, snapshot.audioPageTitle.value_or("Audio"),
+                   ui::Action::Named(Actions::kSidebarAudio), sidebarRow());
     builder.Row(std::string(NodeIds::kSidebarControllers) + ".row",
                 controllersRow,
                 [&](ui::Builder& row) {
@@ -1527,6 +1533,11 @@ public:
     void SetRegisteredPageTitle(std::optional<std::string> title)
     {
         snapshot_.registeredPageTitle = std::move(title);
+    }
+
+    void SetAudioPageTitle(std::optional<std::string> title)
+    {
+        snapshot_.audioPageTitle = std::move(title);
     }
 
 private:

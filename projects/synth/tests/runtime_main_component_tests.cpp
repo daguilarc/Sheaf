@@ -161,6 +161,29 @@ struct FakeApp
     FakeAppSurface surface;
 };
 
+// An app whose own vocabulary already uses "Audio" -- a synth with an Audio
+// parameter bank -- and so renames the runtime's Audio page through
+// RuntimeConfig::audioPageTitle. Nothing else about it differs from FakeApp.
+struct RenamedAudioPageApp
+{
+    static synth::RuntimeConfig Config()
+    {
+        synth::RuntimeConfig config{.appName = "RenamedAudioPageTest", .uiWidth = 900, .uiHeight = 560};
+        config.audioPageTitle = "Audio I/O";
+        return config;
+    }
+
+    void Init(synth::AppContext*) {}
+    void ProcessBlock(synth::AudioBlock&) {}
+
+    synth::ui::Surface& PortableSurface()
+    {
+        return surface;
+    }
+
+    FakeAppSurface surface;
+};
+
 // sprs-17: an app that registers one additional sidebar page. The builder
 // declares a Row with non-default padding and a non-even weight split, the
 // same nested-layout shape Task 9's
@@ -865,6 +888,47 @@ void TestSidebarWithNoRegistrationHasNoAppButtonAndIgnoresItsAction()
             "dispatching the app-page action without registration does not navigate");
 }
 
+// An app that sets nothing gets the runtime's own name. Asserted against the
+// literal rather than against another tree built the same way, so that
+// changing the default fails here instead of moving both sides together.
+void TestAudioPageButtonKeepsItsRuntimeNameWhenTheAppSetsNothing()
+{
+    Fixture fixture;
+    const synth::ui::NodeTree tree = fixture.component.BuildTree();
+
+    Require(FindNode(tree, synth::runtime_ui::NodeIds::kSidebarAudio).label == "Audio",
+            "the Audio page button reads the runtime's own name without an override");
+}
+
+// An app that sets one gets it, and gets nothing else: the override renames
+// the BUTTON, so the page's own action, position and the rest of the sidebar
+// have to come out identical to the un-renamed case.
+void TestAudioPageButtonTakesTheAppsOwnNameWhenSet()
+{
+    RenamedAudioPageApp app;
+    FakeServices services;
+    synth::runtime_ui::RuntimeMainComponent<RenamedAudioPageApp, FakeServices> component{app, services};
+
+    const synth::ui::NodeTree tree = component.BuildTree();
+    const synth::ui::Node& audioButton = FindNode(tree, synth::runtime_ui::NodeIds::kSidebarAudio);
+    Require(audioButton.label == "Audio I/O", "the Audio page button reads the app's own name");
+    Require(audioButton.action.has_value() &&
+                audioButton.action->name == synth::runtime_ui::Actions::kSidebarAudio,
+            "renaming the button does not change what it dispatches");
+
+    const synth::ui::Node& sidebarRoot = FindNode(tree, synth::runtime_ui::NodeIds::kSidebarRoot);
+    Require(sidebarRoot.children.size() == 5,
+            "renaming a page adds no entry and removes none");
+    Require(sidebarRoot.children[0] == synth::ui::NodeId(synth::runtime_ui::NodeIds::kSidebarAudio),
+            "the renamed page stays first");
+    Require(sidebarRoot.bounds.height == 200.0f,
+            "renaming a page does not resize the sidebar");
+
+    component.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kSidebarAudio));
+    Require(component.CurrentPage() == synth::runtime_ui::RuntimeMainPage::Audio,
+            "the renamed button still opens the Audio page");
+}
+
 // sprs-17: an app that does define RegisteredPage() gets a button after
 // File, and selecting it shows the app-built tree spliced with its declared
 // nested layout preserved (Task 9's nested-layout assertion pattern, reused
@@ -1131,6 +1195,10 @@ int main()
         TestSidebarWarningReflectsControllersDiscoverySnapshot);
     Run("TestSidebarWithNoRegistrationHasNoAppButtonAndIgnoresItsAction",
         TestSidebarWithNoRegistrationHasNoAppButtonAndIgnoresItsAction);
+    Run("TestAudioPageButtonKeepsItsRuntimeNameWhenTheAppSetsNothing",
+        TestAudioPageButtonKeepsItsRuntimeNameWhenTheAppSetsNothing);
+    Run("TestAudioPageButtonTakesTheAppsOwnNameWhenSet",
+        TestAudioPageButtonTakesTheAppsOwnNameWhenSet);
     Run("TestRegisteredPageButtonRendersAfterFileAndRoutesToSplicedAppTree",
         TestRegisteredPageButtonRendersAfterFileAndRoutesToSplicedAppTree);
     Run("TestWizardDiscoveryCacheRecomputesOnlyForCachedSnapshotChanges",
