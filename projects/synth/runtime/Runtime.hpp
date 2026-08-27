@@ -471,14 +471,12 @@ public:
         RefreshInputRoutedState();
     }
 
-    // The current audio callback load, as a percentage (Plan 4 Task 2,
-    // sru-2 binding: "RollingMax256 of deviceManager_.getCpuUsage() * 100.0,
-    // written once per UI timer tick"). The shell's MainPane<App> writes
-    // this into its RollingMax256 from the timer-driven repaint hook (see
-    // ShellComponent::RepaintAll in Shell.hpp) -- Runtime itself has no
-    // MainPane reference (MainPane owns a Runtime reference, not the other
-    // way around), so it exposes the raw sample here rather than writing
-    // into the pane directly.
+    // The current audio callback load, as a percentage (sru-2). The shell's
+    // MainPane<App> writes this into its rolling deadline-max window from
+    // the timer-driven repaint hook (see ShellComponent::RepaintAll in
+    // Shell.hpp) -- Runtime itself has no MainPane reference (MainPane owns
+    // a Runtime reference, not the other way around), so it exposes the raw
+    // sample here rather than writing into the pane directly.
     float DeadlineSamplePct() const { return static_cast<float>(deviceManager_.getCpuUsage() * 100.0); }
 
     // Installs the shell's repaint hook (Task 4): invoked at the end of

@@ -63,6 +63,7 @@ public:
     RuntimeMainComponent(App& app, Services& services)
         : app_(app),
           services_(services),
+          deadlineMaximum_(DeadlineWindowCapacity(App::Config().uiFrameHz)),
           controllersSurface_(services_.MakeControllersCallbacks([this] {
               ReturnToApplication(RuntimePageKind::Controllers);
           }))
@@ -668,7 +669,7 @@ private:
     App& app_;
     Services& services_;
     RuntimeMainPage currentPage_ = RuntimeMainPage::Application;
-    RollingMax256 deadlineMaximum_;
+    RollingMax deadlineMaximum_;
     SidebarSurface sidebarSurface_;
     AudioPageSurface audioSurface_;
     FilePageSurface fileSurface_;

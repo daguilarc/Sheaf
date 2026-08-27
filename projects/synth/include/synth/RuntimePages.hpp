@@ -350,7 +350,7 @@ inline ui::Bounds SidebarRootBounds(bool hasRegisteredPage = false)
 inline std::string FormatDeadlineText(float percent)
 {
     char buffer[32];
-    std::snprintf(buffer, sizeof(buffer), "CPU %.1f%%", static_cast<double>(percent));
+    std::snprintf(buffer, sizeof(buffer), "CPU %.0f%%", static_cast<double>(percent));
     return buffer;
 }
 

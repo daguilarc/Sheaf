@@ -312,7 +312,7 @@ struct FakeServices
     std::vector<std::string> controllerPersistenceEvents;
     std::string lastAudioAction;
     std::string lastFileAction;
-    float deadlinePercent = 12.5f;
+    float deadlinePercent = 12.4f;
     bool syncCommitSucceeds = true;
     synth::SyncConfig currentSync{};
     synth::SyncConfig lastCommittedSync{};
@@ -848,7 +848,7 @@ void TestRefreshUpdatesRuntimePageModelsAndRollingDeadline()
     const synth::ui::Node* deadline = FindNodeById(
         fixture.component.BuildTree(), synth::runtime_ui::NodeIds::kSidebarDeadline);
     Require(deadline != nullptr, "deadline node exists after refresh");
-    Require(deadline->text == "CPU 12.5%", "sidebar displays rolling deadline maximum");
+    Require(deadline->text == "CPU 12%", "sidebar displays rolling deadline maximum");
 }
 
 void TestSidebarWarningReflectsControllersDiscoverySnapshot()
