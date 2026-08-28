@@ -1543,6 +1543,17 @@ static void TestOfflineInputCaptureOffersACaptionedRetryRow()
             "the retry row shares the Audio control column offset");
     Require(AllEqual(ColumnWidthsOf(tree, "runtime.audio.form", 0)),
             "the retry row shares the Audio caption column width");
+
+    // The retry button is a captioned FormButton, which declares Intrinsic
+    // controlWidth -- it must be sized to its own caption rather than
+    // stretched across the control column like the device selector next to it,
+    // while still sharing that column's left edge (already covered above by
+    // the column-1 AllEqual x-offset check).
+    const synth::ui::Node& inputSelector = FindNode(tree, synth::runtime_ui::NodeIds::kAudioInput);
+    Require(retry.bounds.width < inputSelector.bounds.width,
+            "the retry button is narrower than the full-width input device selector");
+    Require(std::fabs(retry.bounds.x - inputSelector.bounds.x) <= 0.0001f,
+            "the retry button's left edge matches the input device selector's left edge");
 }
 
 static void TestLiveInputCaptureHidesTheRetryRow()

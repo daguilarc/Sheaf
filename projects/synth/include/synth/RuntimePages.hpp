@@ -446,14 +446,18 @@ inline ui::ControlStyle FormButton(std::string caption)
     ui::ControlStyle style = ButtonAppearance();
     style.caption = std::move(caption);
     style.layout = CompactFormRowLayout();
+    style.controlWidth = ui::Extent::Intrinsic();
     return style;
 }
 
 // A toggle is drawn as a toggle but styled as the captioned form button it
-// shares a row shape with.
+// shares a row shape with -- except it keeps the full control column, unlike
+// the plain form button.
 inline ui::ControlStyle Toggle(std::string caption)
 {
-    return FormButton(std::move(caption));
+    ui::ControlStyle style = FormButton(std::move(caption));
+    style.controlWidth = ui::Extent::Weight(1.0f);
+    return style;
 }
 
 inline ui::ControlStyle Field(std::string caption)

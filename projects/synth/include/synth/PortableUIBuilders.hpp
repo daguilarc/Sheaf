@@ -36,6 +36,10 @@ struct ControlStyle {
     std::string caption;                       // emitted as a sibling Label node
     CaptionPlacement captionPlacement = CaptionPlacement::Before;
     LayoutOptions layout{};
+    // The CONTROL node's own width inside the caption row FinishControl
+    // synthesizes -- distinct from `layout`, which is spent entirely on the
+    // `.row` wrapper. Default fills the column, preserving prior behaviour.
+    Extent controlWidth = Extent::Weight(1.0f);
 };
 
 // A subtree plus the layout declarations that belong to it. This is the unit of
@@ -463,7 +467,7 @@ private:
         rowLayout.gap = kSpacing.labelGap;
         layoutByNodeId_[controlId + ".row"] = rowLayout;
         LayoutOptions controlLayout;
-        controlLayout.main = Extent::Weight(1.0f);
+        controlLayout.main = style.controlWidth;
         layoutByNodeId_[controlId] = controlLayout;
         scopeStack_.push_back(tree_.nodes.size() - 1);
         ControlStyle captionStyle;
