@@ -8,7 +8,6 @@
 
 #include <concepts>
 #include <functional>
-#include <initializer_list>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -362,8 +361,11 @@ private:
         }
     }
 
-    static bool IsOneOf(std::string_view action,
-                        std::initializer_list<std::string_view> candidates)
+    // Each router below reads the surface's own action array rather than
+    // restating it. The restatement is what let a rendered control dispatch
+    // into nothing.
+    template <std::size_t N>
+    static bool IsOneOf(std::string_view action, const std::string_view (&candidates)[N])
     {
         for (const std::string_view candidate : candidates)
         {
@@ -377,81 +379,31 @@ private:
 
     static bool IsSidebarAction(std::string_view action)
     {
-        return IsOneOf(action,
-                       {Actions::kSidebarAudio,
-                        Actions::kSidebarControllers,
-                        Actions::kSidebarSync,
-                        Actions::kSidebarFile,
-                        Actions::kSidebarApp});
+        return IsOneOf(action, Actions::kSidebarActions);
     }
 
     static bool IsAudioAction(std::string_view action)
     {
-        return IsOneOf(action,
-                       {Actions::kAudioBack,
-                        Actions::kAudioOutputSelect,
-                        Actions::kAudioInputSelect,
-                        Actions::kAudioInputRetry,
-                        Actions::kAudioOutputRouteFailed,
-                        Actions::kAudioOutputRoutingUnsupported});
+        return IsOneOf(action, Actions::kAudioActions);
     }
 
     static bool IsFileAction(std::string_view action)
     {
-        return IsOneOf(action,
-                       {Actions::kFileBack,
-                        Actions::kFileNew,
-                        Actions::kFileSave,
-                        Actions::kFileSaveAs,
-                        Actions::kFileLoad,
-                        Actions::kFileRevert,
-                        Actions::kFileBrowserSaveName,
-                        Actions::kFileBrowserSelect,
-                        Actions::kFileBrowserAccept,
-                        Actions::kFileBrowserOpen,
-                        Actions::kFileBrowserParent,
-                        Actions::kFileBrowserOverwriteSaveAs,
-                        Actions::kFileBrowserConfirm,
-                        Actions::kFileBrowserCancel,
-                        Actions::kFileConfirmedSaveAs,
-                        Actions::kFileConfirmedOverwriteSaveAs,
-                        Actions::kFileConfirmedLoad});
+        return IsOneOf(action, Actions::kFileActions);
     }
 
     static bool IsSyncAction(std::string_view action)
     {
-        return IsOneOf(action,
-                       {Actions::kSyncBack,
-                        Actions::kSyncSendClock,
-                        Actions::kSyncReceiveClock,
-                        Actions::kSyncSendTransport,
-                        Actions::kSyncReceiveTransport,
-                        Actions::kSyncPpqn});
+        return IsOneOf(action, Actions::kSyncActions);
     }
 
+    // The prefix rules are not membership: a per-controller or wizard-step
+    // action carries an index the page composes at build time, so no fixed set
+    // can hold them. The fixed half reads the page's array like every other
+    // surface.
     static bool IsControllersAction(std::string_view action)
     {
-        return IsOneOf(action,
-                       {Actions::kBack,
-                        Actions::kToggleConfig,
-                        Actions::kToggleSection,
-                        Actions::kEndpointSelect,
-                        Actions::kVariantSelect,
-                        Actions::kMappingFieldCommit,
-                        Actions::kDeleteRow,
-                        Actions::kAddSingle,
-                        Actions::kAddBlock,
-                        Actions::kAddNameDraft,
-                        Actions::kAddKindDraft,
-                        Actions::kAddController,
-                        Actions::kAvailableConfigure,
-                        Actions::kAvailableIgnore,
-                        Actions::kWizardOpen,
-                        Actions::kWizardChoose,
-                        Actions::kWizardBack,
-                        Actions::kWizardCancel,
-                        Actions::kWizardSubmit,
-                        Actions::kWizardIgnore}) ||
+        return IsOneOf(action, Actions::kControllersActions) ||
                action.starts_with("controller-wizard.") ||
                action.starts_with("runtime.controllers.controller.");
     }

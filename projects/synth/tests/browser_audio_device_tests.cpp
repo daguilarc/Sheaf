@@ -223,6 +223,59 @@ void TestBrowserSnapshotOmitsSubmittedDevicesWithEmptyLabelAndDeviceId()
             "an unpermitted page's empty-label input entry is not presented as a named device");
 }
 
+void TestUnpermittedPageIsOfferedAWayToAskForAccess()
+{
+    // The exact shape an unpermitted page enumerates: entries present, both
+    // fields empty. Nothing here can be selected and Retry re-requests the
+    // empty selection, so without this offer the page has no route to a
+    // microphone at all.
+    const std::vector<synth_browser::BrowserAudioDevice> devices{
+        {.deviceId = {}, .label = {}, .kind = synth_browser::BrowserAudioDeviceKind::Input},
+        {.deviceId = {}, .label = {}, .kind = synth_browser::BrowserAudioDeviceKind::Input},
+        {.deviceId = {}, .label = {}, .kind = synth_browser::BrowserAudioDeviceKind::Output},
+    };
+    const synth::AudioDeviceState state{};
+    const synth::runtime_ui::AudioPageSnapshot snapshot = synth_browser::BuildBrowserAudioSnapshot(
+        state, InputState(1, 0, BrowserAudioInputStatus::NotRequested), devices);
+
+    Require(snapshot.inputOptions.size() == 1,
+            "an unpermitted page still presents no unnamed entry as a device");
+    Require(snapshot.showInputPermissionRequest,
+            "a page that enumerates inputs it cannot name is offered a way to ask for access");
+}
+
+void TestAWayToAskIsNotOfferedWhereItWouldAchieveNothing()
+{
+    const synth::AudioDeviceState state{};
+
+    // Permission already held: labels populate, so there is nothing to ask for.
+    const std::vector<synth_browser::BrowserAudioDevice> named{
+        {.deviceId = "in-1", .label = "USB Mic", .kind = synth_browser::BrowserAudioDeviceKind::Input},
+    };
+    Require(!synth_browser::BuildBrowserAudioSnapshot(
+                 state, InputState(1, 0, BrowserAudioInputStatus::NotRequested), named)
+                 .showInputPermissionRequest,
+            "a page that can already name its inputs is not told to ask");
+
+    // No input devices at all: nothing to ask about.
+    const std::vector<synth_browser::BrowserAudioDevice> outputsOnly{
+        {.deviceId = {}, .label = {}, .kind = synth_browser::BrowserAudioDeviceKind::Output},
+    };
+    Require(!synth_browser::BuildBrowserAudioSnapshot(
+                 state, InputState(1, 0, BrowserAudioInputStatus::NotRequested), outputsOnly)
+                 .showInputPermissionRequest,
+            "a machine with no input device is not invited to ask for one");
+
+    // A zero-input application never reaches the offer.
+    const std::vector<synth_browser::BrowserAudioDevice> unnamedInput{
+        {.deviceId = {}, .label = {}, .kind = synth_browser::BrowserAudioDeviceKind::Input},
+    };
+    Require(!synth_browser::BuildBrowserAudioSnapshot(
+                 state, InputState(0, 0, BrowserAudioInputStatus::NotRequested), unnamedInput)
+                 .showInputPermissionRequest,
+            "an application that requests no input is not offered capture access");
+}
+
 void TestBrowserSnapshotFallsBackWhenPersistedInputSelectionIsAbsentFromSubmittedList()
 {
     const std::vector<synth_browser::BrowserAudioDevice> devices{
@@ -591,6 +644,8 @@ int main()
     TestBrowserSnapshotPresentsEveryDeviceFromAMultiDeviceSubmittedListAndDefaultsToNoInput();
     TestBrowserSnapshotWithEmptySubmittedListExposesOnlyDefaultsAndDoesNotThrow();
     TestBrowserSnapshotOmitsSubmittedDevicesWithEmptyLabelAndDeviceId();
+    TestUnpermittedPageIsOfferedAWayToAskForAccess();
+    TestAWayToAskIsNotOfferedWhereItWouldAchieveNothing();
     TestBrowserSnapshotFallsBackWhenPersistedInputSelectionIsAbsentFromSubmittedList();
     TestBrowserSnapshotResolvesPersistedInputSelectionPresentInSubmittedList();
     TestBrowserSnapshotFallsBackWhenPersistedOutputSelectionIsAbsentFromSubmittedList();

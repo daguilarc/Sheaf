@@ -49,13 +49,15 @@ export const AudioInputStatusCode = {
   audioContextUnavailable: 10,
 } as const;
 
-// Mirrors `synth_browser::kNoPendingAudioRequest` / `kReleaseAudioRequest`
-// (BrowserAudioDevices.hpp), the two sentinel values the index half of
+// Mirrors `synth_browser::kNoPendingAudioRequest` / `kReleaseAudioRequest` /
+// `kRequestPermissionAudioRequest` (BrowserAudioDevices.hpp), the three
+// sentinel values the index half of
 // `synth_browser_consume_pending_audio_request` can return alongside a
 // nonnegative device-list index.
 export const PendingAudioRequest = {
   none: -1,
   release: -2,
+  requestPermission: -3,
 } as const;
 
 // Mirrors `synth_browser::BrowserAudioDeviceKind` (BrowserAudioDevices.hpp),
@@ -139,6 +141,12 @@ export class AudioBridge {
   private started = false;
   private stopped = false;
   private requestedInputChannels = 0;
+  // Set when enumeration threw. The first submission runs BEFORE the requested
+  // channel count is known (start() fires it and only then awaits discovery),
+  // and releaseInput reports nothing while that count is still zero -- so a
+  // failure at startup, the moment it matters most, would otherwise be
+  // swallowed by the very guard that keeps a zero-input app quiet.
+  private pendingEnumerationDiagnostic = "";
   private input: RegisteredAudioInput | undefined;
   private inputStatusCode: number = AudioInputStatusCode.notRequested;
   private inputDiagnostic = "";
@@ -174,6 +182,12 @@ export class AudioBridge {
     // Discovery first: a zero-input application must reach native startup
     // without `getUserMedia` ever being touched (sbw-4).
     this.requestedInputChannels = await this.discoverRequestedInputChannels();
+    // Now that the count is known, a failure recorded by the submission above
+    // can actually be published. Nothing is retried here -- only reported.
+    if (this.pendingEnumerationDiagnostic && this.requestedInputChannels > 0) {
+      await this.releaseInput(AudioInputStatusCode.apiUnavailable, this.pendingEnumerationDiagnostic);
+      this.pendingEnumerationDiagnostic = "";
+    }
     if (this.requestedInputChannels > MAX_BROWSER_AUDIO_INPUT_CHANNELS) {
       this.inputStatusCode = AudioInputStatusCode.apiUnavailable;
       this.inputDiagnostic = browserAudioInputLimitDiagnostic(this.requestedInputChannels);
@@ -377,6 +391,21 @@ export class AudioBridge {
     try {
       infos = await mediaDevices.enumerateDevices();
     } catch {
+      // The degradation is deliberate and stays: a browser that refuses to
+      // enumerate leaves the instrument running rather than failing the page.
+      // What changes is that the reason is no longer indistinguishable from a
+      // machine with no devices -- the two look identical in the combo and
+      // call for different responses, and the silence once turned a
+      // `ReferenceError` in a fixture into a long hunt for a missing device.
+      //
+      // Reported only while nothing is captured. A live capture's own status
+      // is the more useful thing for the status line to be saying, and
+      // overwriting it here would tear down a working stream to report a
+      // failure that did not affect it.
+      if (!this.input) {
+        this.pendingEnumerationDiagnostic = "device-enumeration-failed";
+        await this.releaseInput(AudioInputStatusCode.apiUnavailable, "device-enumeration-failed");
+      }
       return;
     }
     if (this.stopped) return;
@@ -424,6 +453,49 @@ export class AudioBridge {
     const next = this.inputWork.then(work, work);
     this.inputWork = next.then(() => {}, () => {});
     return this.inputWork;
+  }
+
+  // Asks the browser for capture permission without selecting anything. A page
+  // holding no permission enumerates its inputs with empty labels, so it can
+  // offer no device to acquire and retry re-requests the empty selection; this
+  // is the only route from that state to a labelled list.
+  //
+  // `getUserMedia` is the only call that prompts, so permission cannot be
+  // earned without opening a device for the interval the browser requires.
+  // That interval ends here: the stream is never handed to `this.input`, never
+  // wired to a node, and every track is stopped before this returns. No
+  // `deviceId` is requested, so nothing is being selected -- which is what
+  // keeps this distinct from a capture nobody chose.
+  async requestInputPermission(): Promise<void> {
+    await this.serializeInputWork(() =>
+      (this.stopped ? Promise.resolve() : this.requestInputPermissionNow()));
+  }
+
+  private async requestInputPermissionNow(): Promise<void> {
+    if (this.stopped) return;
+    if (this.requestedInputChannels <= 0) return;
+    const mediaDevices = navigator.mediaDevices;
+    if (typeof mediaDevices?.getUserMedia !== "function") {
+      await this.releaseInput(AudioInputStatusCode.apiUnavailable, "media-devices-unavailable");
+      return;
+    }
+    let stream: MediaStream;
+    try {
+      stream = await mediaDevices.getUserMedia({ audio: true });
+    } catch (error) {
+      if (this.stopped) return;
+      const failure = classifyCaptureFailure(error);
+      await this.releaseInput(failure.statusCode, failure.diagnostic);
+      return;
+    }
+    // Before any awaited work below, so a grant never leaves a device open on
+    // an early return or a rejected resubmission.
+    for (const track of stream.getTracks()) track.stop();
+    if (this.stopped) return;
+    // Labels populate only once permission is held, so the list is rebuilt
+    // from a fresh enumeration. The selection is not touched: earning a label
+    // is not choosing a device, and `inputDeviceName` stays empty.
+    await this.submitAudioDevices();
   }
 
   private async acquireInput(): Promise<void> {

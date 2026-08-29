@@ -41,6 +41,11 @@ struct BrowserAudioDevice {
 // for input, setSinkId for output).
 inline constexpr std::int32_t kNoPendingAudioRequest = -1;
 inline constexpr std::int32_t kReleaseAudioRequest = -2;
+// Asks for capture permission without naming a device. An unpermitted page
+// enumerates input devices with empty labels, so there is no index to arm and
+// nothing to release; this sentinel is the only pending request that reaches a
+// permission prompt, and the stream it opens is closed before it is observed.
+inline constexpr std::int32_t kRequestPermissionAudioRequest = -3;
 
 // The browser capture states the launcher realm publishes through
 // `synth_browser_set_audio_input_source` / `synth_browser_clear_audio_input_source`.
@@ -234,10 +239,15 @@ inline synth::runtime_ui::AudioPageSnapshot BuildBrowserAudioSnapshot(
 
     std::vector<std::string> outputNames;
     std::vector<std::string> inputNames;
+    std::size_t unnamedInputCount = 0;
     for (const BrowserAudioDevice& device : devices)
     {
         if (device.label.empty())
         {
+            if (device.kind == BrowserAudioDeviceKind::Input)
+            {
+                ++unnamedInputCount;
+            }
             continue;
         }
         if (device.kind == BrowserAudioDeviceKind::Output)
@@ -271,6 +281,13 @@ inline synth::runtime_ui::AudioPageSnapshot BuildBrowserAudioSnapshot(
     snapshot.selectedInputId = synth::runtime_ui::Layout::SelectedDeviceOptionId(
         state.inputDeviceName, snapshot.inputOptions, synth::runtime_ui::kNoInputOptionId);
     snapshot.showInputRetry = BrowserAudioInputOffline(input.status);
+    // Devices are present but none can be named, which is what a page holding
+    // no capture permission enumerates. Selecting is impossible (there is no
+    // option to select) and retry re-requests the current selection, which is
+    // No Input, so asking for access is the only move that changes anything.
+    // Named devices, or no input devices at all, both leave this false: the
+    // first has nothing to ask for and the second has nothing to ask about.
+    snapshot.showInputPermissionRequest = unnamedInputCount > 0 && inputNames.empty();
     snapshot.statusLineText = ComposeBrowserAudioStatusLine(input, BrowserAudioInputDetail(input));
     return snapshot;
 }

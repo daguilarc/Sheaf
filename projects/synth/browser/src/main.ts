@@ -300,10 +300,10 @@ export class SynthBrowserApp {
     await this.consumePendingAudioRequest();
   }
 
-  // The runtime arms a pending request only from a device selection or the
-  // portable `Retry Input` action (all three resolve through the same
-  // index/control path on the C++ side), so a device is requested or routed
-  // exactly when the operator asked for it. Losing a stream never arms one,
+  // The runtime arms a pending request only from a device selection, the
+  // portable `Retry Input` action, or `Allow Microphone` (all resolve through
+  // the same index/control path on the C++ side), so a device is requested or
+  // routed exactly when the operator asked for it. Losing a stream never arms one,
   // which is what keeps a denied or ended capture from re-prompting off the
   // back of an unrelated UI action.
   private async consumePendingAudioRequest(): Promise<void> {
@@ -320,6 +320,10 @@ export class SynthBrowserApp {
     }
     if (index === PendingAudioRequest.release) {
       await this.audio.releaseSelectedInput();
+      return;
+    }
+    if (index === PendingAudioRequest.requestPermission) {
+      await this.audio.requestInputPermission();
       return;
     }
     await this.audio.acquireInputDeviceAtIndex(index);

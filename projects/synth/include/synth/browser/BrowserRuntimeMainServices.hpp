@@ -138,6 +138,19 @@ public:
             return;
         }
 
+        // Retry re-requests the current selection, so on a page holding no
+        // permission -- where the selection is No Input and the list offers
+        // nothing else -- it arms the release sentinel and prompts for
+        // nothing. This action is the way out of that state: it names no
+        // device, so it does not go through ArmPendingAudioRequest's
+        // name-to-index resolution at all.
+        if (action.name == synth::runtime_ui::Actions::kAudioInputPermission)
+        {
+            pendingAudioRequestControl_ = BrowserAudioDeviceKind::Input;
+            pendingAudioRequestIndex_ = kRequestPermissionAudioRequest;
+            return;
+        }
+
         // JS reports a rejected setSinkId here rather than leaving the failed
         // device selected with nothing routed to it: the selection reverts to
         // System Default, the one output that is always actually reachable.

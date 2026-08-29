@@ -6,6 +6,32 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+// The versions this fixture advertises are the same facts the shell compiles
+// against, not a second opinion about them.
+//
+// Imported from dist, not from "./protocol.js": this file RUNS from src/
+// (playwright.shared-config.mjs launches `node src/static-server.mjs`, and
+// static-site.spec.ts imports ../src/static-server.mjs), where protocol.js
+// does not exist -- only protocol.ts does. package-contract.mjs gets away
+// with "./protocol.js" because it is only ever loaded from dist/src/, where
+// the compiled sibling is right there. Both the stub below and the
+// synthesized catalog further down read these, so a bump moves the fixture
+// with the definition instead of leaving it a day behind -- which is exactly
+// how a stale fixture once read as a real defect. `package-contract.mjs`
+// already imports from here, so a .mjs under src/ reading the compiled
+// protocol module is the established shape.
+// The specifier is concatenated so TypeScript does not resolve it statically:
+// a literal "../dist/src/protocol.js" pulls tsc's own OUTPUT into its INPUT
+// set and fails the build with TS5055. static-site.spec.ts already uses this
+// exact trick (`import("../src/" + "static-server.mjs")`) for the mirror-image
+// reason, so this is the established shape here rather than a new one.
+const {
+  SUPPORTED_BROWSER_ABI_VERSION,
+  SUPPORTED_RUNTIME_CONFIG_VERSION,
+  SUPPORTED_UI_PROTOCOL_VERSION,
+} = await import("../dist/src/" + "protocol.js");
+import { SERVER_IDENTITY_PATH, SERVER_IDENTITY_SOURCES, STATIC_SERVER_PORT } from "./server-currency.mjs";
+
 const browserRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const staticRoots = new Map([
   ["/dist/", path.join(browserRoot, "dist")],
@@ -34,9 +60,9 @@ const packageFixtureEntry = Buffer.from(`export default async function createRem
     lengthBytesUTF8: value => new TextEncoder().encode(value).length,
     stringToUTF8: () => {},
     emscriptenRegisterAudioObject: () => 7,
-    _synth_browser_abi_version: () => 6,
-    _synth_browser_ui_protocol_version: () => 2,
-    _synth_browser_runtime_config_version: () => 1,
+    _synth_browser_abi_version: () => ${SUPPORTED_BROWSER_ABI_VERSION},
+    _synth_browser_ui_protocol_version: () => ${SUPPORTED_UI_PROTOCOL_VERSION},
+    _synth_browser_runtime_config_version: () => ${SUPPORTED_RUNTIME_CONFIG_VERSION},
     _synth_browser_create: () => 41,
     _synth_browser_set_timestamp_epoch_offset: () => 0,
     _synth_browser_audio_output_channels: () => 2,
@@ -53,6 +79,26 @@ const packageFixtureEntry = Buffer.from(`export default async function createRem
   };
 }
 `);
+
+// Stamped once, at module load, which is exactly when the synthesized
+// responses below are frozen -- so this timestamp dates the same thing a
+// reused server puts at risk.
+const startedAt = Date.now();
+
+async function serverIdentity() {
+  let newestSourceMtimeMs = 0;
+  for (const relative of SERVER_IDENTITY_SOURCES) {
+    try {
+      const info = await stat(path.join(browserRoot, relative));
+      newestSourceMtimeMs = Math.max(newestSourceMtimeMs, info.mtimeMs);
+    } catch {
+      // A source that cannot be stat'ed cannot date the server. Reporting 0
+      // for it keeps the check from failing a run over a missing build
+      // artifact, which is a different problem with its own louder symptoms.
+    }
+  }
+  return { startedAt, newestSourceMtimeMs, sources: [...SERVER_IDENTITY_SOURCES] };
+}
 
 function fixtureDigest(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -81,9 +127,9 @@ function packageFixture(request) {
     appId: "remote-fake",
     buildId: "build-1",
     browser: {
-      abiVersion: 6,
-      uiProtocolVersion: 2,
-      runtimeConfigVersion: 1,
+      abiVersion: SUPPORTED_BROWSER_ABI_VERSION,
+      uiProtocolVersion: SUPPORTED_UI_PROTOCOL_VERSION,
+      runtimeConfigVersion: SUPPORTED_RUNTIME_CONFIG_VERSION,
       entry: `${packageRoot}/remote-fake.js`,
       entryUrl: `${origin}/package-fixture/remote-fake.js`,
       files,
@@ -141,6 +187,15 @@ export function createStaticServer({ isolated = true, published = false } = {}) 
       response.writeHead(204, headers).end();
       return;
     }
+    if (new URL(request.url ?? "/", "http://localhost").pathname === SERVER_IDENTITY_PATH) {
+      const body = Buffer.from(JSON.stringify(await serverIdentity()));
+      response.writeHead(200, {
+        ...headers,
+        "Content-Type": "application/json",
+        "Content-Length": body.byteLength,
+      }).end(body);
+      return;
+    }
     const fixture = packageFixture(request);
     if (fixture) {
       response.writeHead(200, {
@@ -166,7 +221,7 @@ export function createStaticServer({ isolated = true, published = false } = {}) 
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  createStaticServer().listen(4173, "127.0.0.1");
+  createStaticServer().listen(STATIC_SERVER_PORT, "127.0.0.1");
   createStaticServer().listen(4174, "127.0.0.1");
   createStaticServer({ published: true }).listen(4175, "127.0.0.1");
 }

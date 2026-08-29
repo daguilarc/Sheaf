@@ -12,6 +12,7 @@
 #include "synth/MidiController.hpp"
 
 #include <algorithm>
+#include <string_view>
 #include <charconv>
 #include <cstdio>
 #include <cstdint>
@@ -51,6 +52,7 @@ inline constexpr const char* kAudioBack = "runtime.audio.back";
 inline constexpr const char* kAudioOutput = "runtime.audio.output";
 inline constexpr const char* kAudioInput = "runtime.audio.input";
 inline constexpr const char* kAudioInputRetry = "runtime.audio.input.retry";
+inline constexpr const char* kAudioInputPermission = "runtime.audio.input.permission";
 inline constexpr const char* kAudioForm = "runtime.audio.form";
 inline constexpr const char* kAudioStatus = "runtime.audio.status";
 inline constexpr const char* kAudioDeviceLine = "runtime.audio.device_line";
@@ -142,6 +144,19 @@ inline constexpr const char* kSidebarSync = "runtime.sidebar.sync";
 inline constexpr const char* kSidebarFile = "runtime.sidebar.file";
 inline constexpr const char* kSidebarApp = "runtime.sidebar.app";
 
+// Every action the sidebar can emit, in one place. Each surface below declares
+// the same kind of array, and the main component routes by reading it rather
+// than by keeping a second copy. Two lists expected to agree is how a control
+// ships rendered and dead at once: adding a button to the page does not force
+// anyone to touch the router, so the button clicks and nothing happens.
+inline constexpr std::string_view kSidebarActions[] = {
+    kSidebarAudio,
+    kSidebarControllers,
+    kSidebarSync,
+    kSidebarFile,
+    kSidebarApp,
+};
+
 inline constexpr const char* kAudioBack = "runtime.audio.back";
 inline constexpr const char* kAudioOutputSelect = "runtime.audio.output.select";
 inline constexpr const char* kAudioInputSelect = "runtime.audio.input.select";
@@ -149,6 +164,12 @@ inline constexpr const char* kAudioInputSelect = "runtime.audio.input.select";
 // host implements rather than the page, so it is not namespaced under the page
 // that happens to surface it.
 inline constexpr const char* kAudioInputRetry = "audio-input-retry";
+// Requests capture permission without selecting anything. A page holding no
+// permission enumerates its input devices with empty labels, so it can offer
+// no device to select and no retry to re-request; this is the only action
+// that reaches a permission prompt from that state. Host-implemented for the
+// same reason retry is: only the host can call getUserMedia.
+inline constexpr const char* kAudioInputPermission = "audio-input-permission";
 // Reported by the browser host when a rejected `setSinkId` leaves the
 // eagerly-claimed output selection unrouted, so the host can revert the
 // selection to what is actually playing instead of continuing to claim a
@@ -160,6 +181,21 @@ inline constexpr const char* kAudioOutputRouteFailed = "runtime.audio.output.rou
 // System Default reaches the operator instead of the combo silently
 // collapsing to one option. Carries no value.
 inline constexpr const char* kAudioOutputRoutingUnsupported = "runtime.audio.output.routing_unsupported";
+// Every action the Audio page can emit. This is the surface where the two-list
+// failure actually happened: `audio-input-permission` rendered a working button
+// whose action the router silently dropped. A page that emits an action its own
+// array omits is caught by portable_ui_tests rather than by an operator finding
+// a dead control.
+inline constexpr std::string_view kAudioActions[] = {
+    kAudioBack,
+    kAudioOutputSelect,
+    kAudioInputSelect,
+    kAudioInputRetry,
+    kAudioInputPermission,
+    kAudioOutputRouteFailed,
+    kAudioOutputRoutingUnsupported,
+};
+
 
 inline constexpr const char* kSyncBack = "runtime.sync.back";
 inline constexpr const char* kSyncSendClock = "runtime.sync.send_clock";
@@ -167,6 +203,16 @@ inline constexpr const char* kSyncReceiveClock = "runtime.sync.receive_clock";
 inline constexpr const char* kSyncSendTransport = "runtime.sync.send_transport";
 inline constexpr const char* kSyncReceiveTransport = "runtime.sync.receive_transport";
 inline constexpr const char* kSyncPpqn = "runtime.sync.ppqn";
+
+// Every action the Sync page can emit.
+inline constexpr std::string_view kSyncActions[] = {
+    kSyncBack,
+    kSyncSendClock,
+    kSyncReceiveClock,
+    kSyncSendTransport,
+    kSyncReceiveTransport,
+    kSyncPpqn,
+};
 
 inline constexpr const char* kFileBack = "runtime.file.back";
 inline constexpr const char* kFileNew = "runtime.file.new";
@@ -185,6 +231,28 @@ inline constexpr const char* kFileBrowserCancel = "runtime.file.browser.cancel";
 inline constexpr const char* kFileConfirmedSaveAs = "runtime.file.confirmed.save_as";
 inline constexpr const char* kFileConfirmedOverwriteSaveAs = "runtime.file.confirmed.overwrite_save_as";
 inline constexpr const char* kFileConfirmedLoad = "runtime.file.confirmed.load";
+
+// Every action the File page can emit, its browser and confirmation dialogs
+// included -- those are the same page in another state, not another surface.
+inline constexpr std::string_view kFileActions[] = {
+    kFileBack,
+    kFileNew,
+    kFileSave,
+    kFileSaveAs,
+    kFileLoad,
+    kFileRevert,
+    kFileBrowserSaveName,
+    kFileBrowserSelect,
+    kFileBrowserAccept,
+    kFileBrowserOpen,
+    kFileBrowserParent,
+    kFileBrowserOverwriteSaveAs,
+    kFileBrowserConfirm,
+    kFileBrowserCancel,
+    kFileConfirmedSaveAs,
+    kFileConfirmedOverwriteSaveAs,
+    kFileConfirmedLoad,
+};
 
 inline constexpr const char* kAppBack = "runtime.app.back";
 
@@ -224,6 +292,11 @@ struct AudioPageSnapshot
     // A host that never loses input -- JUCE reopens devices itself -- leaves
     // this false and the row is not built at all.
     bool showInputRetry = false;
+    // Set by a host that can enumerate input devices it is not yet allowed to
+    // name. Such a list offers nothing to select, so the only way forward is
+    // to ask for access; a host whose enumeration is never gated leaves this
+    // false and the row is not built at all.
+    bool showInputPermissionRequest = false;
     std::string deviceLineText;
     std::string statusLineText;
     // sprs-16: an app may append a section beneath the device rows, confined
@@ -919,6 +992,13 @@ inline ui::NodeTree BuildAudioPageTreeOnce(const AudioPageSnapshot& snapshot,
                         "Retry Input",
                         ui::Action::Named(Actions::kAudioInputRetry),
                         PageControls::FormButton("Input capture"));
+        }
+        if (snapshot.showInputPermissionRequest)
+        {
+            form.Button(NodeIds::kAudioInputPermission,
+                        "Allow Microphone",
+                        ui::Action::Named(Actions::kAudioInputPermission),
+                        PageControls::FormButton("Input access"));
         }
     });
     // The two device lines were direct children of the root, which left the page

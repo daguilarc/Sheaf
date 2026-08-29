@@ -3596,8 +3596,88 @@ static void TestSidebarDeadlineNodeTextIsWholePercent()
             "the sidebar's own tree carries the whole-percent text, not a tenth");
 }
 
+// A control a page renders whose action the main component refuses to route is
+// a dead button: it looks live, it clicks, and nothing happens. That shipped
+// once -- `audio-input-permission` rendered and dispatched into nothing because
+// the router kept its own copy of the action list. Each surface's list is one
+// list now, and this walks the built page to prove the page cannot emit an
+// action that list omits.
+template <std::size_t N>
+void RequireEveryEmittedActionIsRoutable(const synth::ui::NodeTree& tree,
+                                         const std::string_view (&routed)[N],
+                                         std::size_t leastEmitted,
+                                         const char* unroutableLabel,
+                                         const char* silentPageLabel)
+{
+    std::size_t emitted = 0;
+    for (const synth::ui::Node& node : tree.nodes)
+    {
+        if (!node.action.has_value() || node.action->name.empty())
+        {
+            continue;
+        }
+        ++emitted;
+        bool routable = false;
+        for (const std::string_view candidate : routed)
+        {
+            if (node.action->name == candidate)
+            {
+                routable = true;
+                break;
+            }
+        }
+        Require(routable, unroutableLabel);
+    }
+    // POSITIVE CONTROL: a page that emitted nothing would pass the loop above
+    // without checking anything at all.
+    Require(emitted >= leastEmitted, silentPageLabel);
+}
+
+void TestEveryRuntimePageActionIsRoutable()
+{
+    using namespace synth::runtime_ui;
+    AudioPageSnapshot audio;
+    audio.showInputCombo = true;
+    audio.showInputRetry = true;
+    audio.showInputPermissionRequest = true;
+    audio.inputOptions = {{kNoInputOptionId, kNoInputOptionLabel}};
+    audio.outputOptions = {{kSystemDefaultOptionId, kSystemDefaultOptionLabel}};
+    RequireEveryEmittedActionIsRoutable(
+        BuildAudioPageTree(audio, {0.0f, 0.0f, 900.0f, 560.0f}),
+        Actions::kAudioActions,
+        3,
+        "the Audio page emits an action the main component will not route",
+        "the Audio page under test emits its controls");
+
+    SyncPageSnapshot sync;
+    RequireEveryEmittedActionIsRoutable(
+        BuildSyncPageTree(sync, {0.0f, 0.0f, 900.0f, 560.0f}),
+        Actions::kSyncActions,
+        3,
+        "the Sync page emits an action the main component will not route",
+        "the Sync page under test emits its controls");
+
+    // Two File states, because the browser is the same page in another state
+    // and a single snapshot cannot show both sets of controls at once.
+    FilePageSnapshot file;
+    file.hasCurrentPatch = true;
+    RequireEveryEmittedActionIsRoutable(
+        BuildFilePageTree(file, {0.0f, 0.0f, 900.0f, 560.0f}),
+        Actions::kFileActions,
+        3,
+        "the File page emits an action the main component will not route",
+        "the File page under test emits its controls");
+    RequireEveryEmittedActionIsRoutable(
+        BuildFilePageTree(RepresentativeBrowserState(), {0.0f, 0.0f, 900.0f, 560.0f}),
+        Actions::kFileActions,
+        3,
+        "the File browser emits an action the main component will not route",
+        "the File browser under test emits its controls");
+}
+
 int main()
 {
+    TestEveryRuntimePageActionIsRoutable();
     TestContainersNestToArbitraryDepth();
     TestComponentsComposeComponents();
     TestSpliceGraftsWithoutNestedRoot();
