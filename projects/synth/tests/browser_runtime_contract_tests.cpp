@@ -526,7 +526,8 @@ void TestBrowserRuntimeMainComponentSidebarTracksResolvedAppWidth()
     engine.Initialize();
     synth_browser::BrowserMidiBridge<synth::Engine<ExtentAwareContractApp>> bridge(engine);
     bridge.Start();
-    synth_browser::BrowserRuntimeMainServices<ExtentAwareContractApp> services(engine, bridge);
+    std::vector<synth_browser::BrowserAudioDevice> audioDevices;
+    synth_browser::BrowserRuntimeMainServices<ExtentAwareContractApp> services(engine, bridge, audioDevices);
     synth::runtime_ui::RuntimeMainComponent<ExtentAwareContractApp,
                                             synth_browser::BrowserRuntimeMainServices<ExtentAwareContractApp>>
         mainComponent(engine.Application(), services);
@@ -590,7 +591,8 @@ void TestBrowserControllerDiscoveryCacheUsesSignalsAndSuccessfulCommits()
     engine.Initialize();
     synth_browser::BrowserMidiBridge<synth::Engine<ValidApp>> bridge(engine);
     bridge.Start();
-    synth_browser::BrowserRuntimeMainServices<ValidApp> services(engine, bridge);
+    std::vector<synth_browser::BrowserAudioDevice> audioDevices;
+    synth_browser::BrowserRuntimeMainServices<ValidApp> services(engine, bridge, audioDevices);
     synth::runtime_ui::RuntimeMainComponent<ValidApp,
                                             synth_browser::BrowserRuntimeMainServices<ValidApp>>
         mainComponent(engine.Application(), services);
@@ -1165,8 +1167,8 @@ void TestAudioWorkletDeadlineMeterAveragesQuantizedTimerSamples()
 
 void TestBrowserContractVersionsAreReadableBeforeRuntimeCreation()
 {
-    Require(synth_browser_abi_version() == 4,
-            "browser ABI v4 version is available before runtime creation");
+    Require(synth_browser_abi_version() == 6,
+            "browser ABI v6 version is available before runtime creation");
     Require(synth_browser_ui_protocol_version() == 2,
             "browser UI protocol version is available before runtime creation");
     Require(synth_browser_ui_protocol_version() == synth_browser::kCommandBufferVersion,
@@ -1261,9 +1263,12 @@ public:
         observedClears.push_back(statusCode);
         return 0;
     }
-    int ConsumeAudioInputRetry() override
+    int ConsumePendingAudioRequest(std::uint32_t* outControl) override
     {
         ++retryConsumeCount;
+        if (outControl != nullptr) {
+            *outControl = static_cast<std::uint32_t>(synth_browser::BrowserAudioDeviceKind::Input);
+        }
         return 1;
     }
     int SetTimestampEpochOffsetMicros(std::int64_t) override { return 0; }
@@ -1272,6 +1277,7 @@ public:
     int DispatchAction(const char*, const char*) override { return 0; }
     bool ConsumePersistenceDirty() override { return false; }
     int SubmitMidiEndpoints(const synth_browser::MidiEndpointDescriptor*, std::uint32_t) override { return 0; }
+    int SubmitAudioDevices(const synth_browser::AudioDeviceDescriptor*, std::uint32_t) override { return 0; }
     int DequeueMidiAction(synth_browser::MidiActionDescriptor*) override { return 0; }
     int DeliverMidi(std::uint32_t, const std::uint8_t*, std::uint32_t, std::uint64_t) override { return 0; }
     const std::uint8_t* DequeueMidiOutput(synth_browser::MidiOutputDescriptor*) override { return nullptr; }
@@ -1886,9 +1892,11 @@ void TestBrowserAbiCarriesAudioInputSourceLifecycle()
                 runtime,
                 static_cast<std::uint32_t>(synth_browser::BrowserAudioInputStatus::StreamEnded)) == 0,
             "browser ABI forwards input source clear status");
-    Require(synth_browser_consume_audio_input_retry(runtime) == 1 &&
-                capture.retryConsumeCount == 1,
-            "browser ABI forwards audio input retry consumption");
+    std::uint32_t consumedControl = 7;  // poisoned: only a real write proves the ABI touched it
+    Require(synth_browser_consume_pending_audio_request(runtime, &consumedControl) == 1 &&
+                capture.retryConsumeCount == 1 &&
+                consumedControl == static_cast<std::uint32_t>(synth_browser::BrowserAudioDeviceKind::Input),
+            "browser ABI forwards pending audio request consumption and its control");
     Require(capture.observedSources.size() == 1 &&
                 capture.observedSources[0].handle == 91 &&
                 capture.observedSources[0].physicalChannels == 4 &&

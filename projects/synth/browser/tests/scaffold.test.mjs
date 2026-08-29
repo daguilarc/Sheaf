@@ -113,13 +113,13 @@ test("emscripten exports pre-creation browser contract version functions", async
   }
 });
 
-test("emscripten exports browser ABI v4 audio input functions", async () => {
+test("emscripten exports browser ABI v6 audio input functions", async () => {
   const makefile = await readBuilder();
   for (const name of [
     "_synth_browser_audio_input_channels",
     "_synth_browser_set_audio_input_source",
     "_synth_browser_clear_audio_input_source",
-    "_synth_browser_consume_audio_input_retry",
+    "_synth_browser_consume_pending_audio_request",
   ]) {
     assert.match(makefile, new RegExp(`\\"${name}\\"`));
   }

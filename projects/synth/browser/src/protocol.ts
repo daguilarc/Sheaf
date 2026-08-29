@@ -1,5 +1,5 @@
 export const COMMAND_BUFFER_MAGIC = "SBCB";
-export const SUPPORTED_BROWSER_ABI_VERSION = 4;
+export const SUPPORTED_BROWSER_ABI_VERSION = 6;
 // Version 2 (sru-46): node bounds are parent-relative, `Draw` geometry is
 // node-local, node colour/text style and container border fields cross the
 // wire behind explicit presence bytes, and `variant` is gone. A hard break
@@ -12,6 +12,13 @@ export const SUPPORTED_RUNTIME_CONFIG_VERSION = 1;
 export const COMMAND_BUFFER_VERSION = SUPPORTED_UI_PROTOCOL_VERSION;
 
 export type MidiEndpoint = { identifier: string; name: string; kind: "input" | "output" };
+// Mirrors `synth_browser::BrowserAudioDevice` (BrowserAudioDevices.hpp), one
+// entry from `navigator.mediaDevices.enumerateDevices()` carried across
+// `synth_browser_submit_audio_devices`. `deviceId` and `label` are submitted
+// exactly as the browser reports them -- including both empty on an
+// unpermitted page -- since the native side, not JS, decides what is
+// presentable.
+export type AudioDevice = { deviceId: string; label: string; kind: "input" | "output" };
 export type MidiActionType = "open-input" | "open-output" | "close-input" | "close-output" | "update-input-ref" | "update-output-ref" | "resync";
 export type MidiAction = { type: MidiActionType; controllerIx: number; identifier?: string; name?: string };
 export type MidiOutput = {

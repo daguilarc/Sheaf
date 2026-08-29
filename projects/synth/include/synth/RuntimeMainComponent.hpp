@@ -391,7 +391,9 @@ private:
                        {Actions::kAudioBack,
                         Actions::kAudioOutputSelect,
                         Actions::kAudioInputSelect,
-                        Actions::kAudioInputRetry});
+                        Actions::kAudioInputRetry,
+                        Actions::kAudioOutputRouteFailed,
+                        Actions::kAudioOutputRoutingUnsupported});
     }
 
     static bool IsFileAction(std::string_view action)

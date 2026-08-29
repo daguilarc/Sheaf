@@ -149,6 +149,17 @@ inline constexpr const char* kAudioInputSelect = "runtime.audio.input.select";
 // host implements rather than the page, so it is not namespaced under the page
 // that happens to surface it.
 inline constexpr const char* kAudioInputRetry = "audio-input-retry";
+// Reported by the browser host when a rejected `setSinkId` leaves the
+// eagerly-claimed output selection unrouted, so the host can revert the
+// selection to what is actually playing instead of continuing to claim a
+// device with no audio going to it. The value names the device the failed
+// route was for.
+inline constexpr const char* kAudioOutputRouteFailed = "runtime.audio.output.route_failed";
+// Reported by the browser host when it has no means of routing to a specific
+// output device at all, so the reason the output combo only ever offers
+// System Default reaches the operator instead of the combo silently
+// collapsing to one option. Carries no value.
+inline constexpr const char* kAudioOutputRoutingUnsupported = "runtime.audio.output.routing_unsupported";
 
 inline constexpr const char* kSyncBack = "runtime.sync.back";
 inline constexpr const char* kSyncSendClock = "runtime.sync.send_clock";
