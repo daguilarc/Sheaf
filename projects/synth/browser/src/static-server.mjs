@@ -6,31 +6,23 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { SERVER_IDENTITY_PATH, SERVER_IDENTITY_SOURCES, STATIC_SERVER_PORT } from "./server-currency.mjs";
 // The versions this fixture advertises are the same facts the shell compiles
-// against, not a second opinion about them.
-//
-// Imported from dist, not from "./protocol.js": this file RUNS from src/
-// (playwright.shared-config.mjs launches `node src/static-server.mjs`, and
-// static-site.spec.ts imports ../src/static-server.mjs), where protocol.js
-// does not exist -- only protocol.ts does. package-contract.mjs gets away
-// with "./protocol.js" because it is only ever loaded from dist/src/, where
-// the compiled sibling is right there. Both the stub below and the
+// against, not a second opinion about them. Both the stub below and the
 // synthesized catalog further down read these, so a bump moves the fixture
 // with the definition instead of leaving it a day behind -- which is exactly
-// how a stale fixture once read as a real defect. `package-contract.mjs`
-// already imports from here, so a .mjs under src/ reading the compiled
-// protocol module is the established shape.
-// The specifier is concatenated so TypeScript does not resolve it statically:
-// a literal "../dist/src/protocol.js" pulls tsc's own OUTPUT into its INPUT
-// set and fails the build with TS5055. static-site.spec.ts already uses this
-// exact trick (`import("../src/" + "static-server.mjs")`) for the mirror-image
-// reason, so this is the established shape here rather than a new one.
-const {
+// how a stale fixture once read as a real defect.
+//
+// A sibling, deliberately. This file is copied into dist/src/ as well as
+// living in src/, and reaching for the compiled protocol.js instead made its
+// behaviour depend on which of the two it was loaded from. Siblings are
+// copied together, so this resolves the same either way and needs nothing
+// built first.
+import {
   SUPPORTED_BROWSER_ABI_VERSION,
   SUPPORTED_RUNTIME_CONFIG_VERSION,
   SUPPORTED_UI_PROTOCOL_VERSION,
-} = await import("../dist/src/" + "protocol.js");
-import { SERVER_IDENTITY_PATH, SERVER_IDENTITY_SOURCES, STATIC_SERVER_PORT } from "./server-currency.mjs";
+} from "./protocol-versions.js";
 
 const browserRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const staticRoots = new Map([
