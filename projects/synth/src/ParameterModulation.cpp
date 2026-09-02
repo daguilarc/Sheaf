@@ -3004,6 +3004,22 @@ ParameterMessageOut ParameterMessageOut::ParameterStorageBatchNeeded(ParameterGr
     return message;
 }
 
+ParameterMessageOut ParameterMessageOut::AppAction(std::size_t appActionIx, float value) {
+    ParameterMessageOut message;
+    message.type = Type::AppAction;
+    message.appActionIx = appActionIx;
+    message.value = value;
+    return message;
+}
+
+ParameterMessageOut ParameterMessageOut::AppEncoderPress(std::size_t slotIx, std::size_t position) {
+    ParameterMessageOut message;
+    message.type = Type::AppEncoderPress;
+    message.slotIx = slotIx;
+    message.position = position;
+    return message;
+}
+
 ParameterMessageOutBus::ParameterMessageOutBus(std::size_t capacity)
     : queue_(capacity == 0 ? 1 : capacity) {}
 
@@ -4005,6 +4021,24 @@ MessageIn MessageIn::SelectGrid(std::uint64_t timestamp, std::size_t gridSlotIx,
     return message;
 }
 
+MessageIn MessageIn::AppAction(std::uint64_t timestamp, std::size_t appActionIx, float value) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::AppAction;
+    message.appActionIx = appActionIx;
+    message.value = value;
+    return message;
+}
+
+MessageIn MessageIn::HoldDrill(std::uint64_t timestamp, bool held) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::HoldDrill;
+    message.boolValue = held;
+    message.hasBoolValue = true;
+    return message;
+}
+
 MessageInBus::MessageInBus(ParameterManager* manager, std::size_t capacity)
     : manager_(manager),
       queue_(capacity == 0 ? 1 : capacity) {}
@@ -4056,7 +4090,9 @@ void MessageInBus::Apply(const MessageIn& message) {
         }
         break;
     case MessageIn::Type::ParamPush:
-        if (manager_ != nullptr) {
+        if (appActionOut_ != nullptr && forwardEncoderPress_) {
+            appActionOut_->Push(ParameterMessageOut::AppEncoderPress(message.slotIx, message.position));
+        } else if (manager_ != nullptr) {
             manager_->HandlePress(message.slotIx, message.position);
         }
         break;
@@ -4156,6 +4192,14 @@ void MessageInBus::Apply(const MessageIn& message) {
         if (gridManager_ != nullptr) {
             gridManager_->SelectGridForSlot(message.gridSlotIx, message.gridIx);
         }
+        break;
+    case MessageIn::Type::AppAction:
+        if (appActionOut_ != nullptr) {
+            appActionOut_->Push(ParameterMessageOut::AppAction(message.appActionIx, message.value));
+        }
+        break;
+    case MessageIn::Type::HoldDrill:
+        // Consumed by the MIDI processors before it reaches this bus.
         break;
     }
 }

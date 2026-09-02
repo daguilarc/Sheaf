@@ -704,16 +704,24 @@ private:
 struct ParameterMessageOut {
     enum class Type {
         ParameterStorageBatchNeeded,
+        AppAction,
+        AppEncoderPress,
     };
 
     Type type = Type::ParameterStorageBatchNeeded;
     ParameterGroup* group = nullptr;
     std::size_t minimumAdditionalParameters = 0;
     std::size_t requestedParameters = 0;
+    std::size_t appActionIx = 0;
+    float value = 0.0f;
+    std::size_t slotIx = 0;
+    std::size_t position = 0;
 
     static ParameterMessageOut ParameterStorageBatchNeeded(ParameterGroup& group,
                                                            std::size_t minimumAdditionalParameters,
                                                            std::size_t requestedParameters);
+    static ParameterMessageOut AppAction(std::size_t appActionIx, float value);
+    static ParameterMessageOut AppEncoderPress(std::size_t slotIx, std::size_t position);
 };
 
 class ParameterMessageOutBus {
@@ -964,6 +972,8 @@ struct MessageIn {
         // existing enumerator keeps its ordinal (see SystemMessageSortKey's
         // declaration-order dependency in MidiConfigBlocks.hpp).
         ParamSetAbsoluteOnBank,
+        AppAction,
+        HoldDrill,
     };
 
     std::uint64_t timestamp = 0;
@@ -975,6 +985,7 @@ struct MessageIn {
     std::size_t gestureIx = 0;
     std::size_t bankIx = 0;
     std::size_t sceneIx = 0;
+    std::size_t appActionIx = 0;
     std::uint64_t absoluteEpoch = 0;
     float value = 0.0f;
     float delta = 0.0f;
@@ -1027,6 +1038,8 @@ struct MessageIn {
                                         int gridX, int gridY, std::uint8_t pressure);
     static MessageIn SelectGrid(std::uint64_t timestamp, std::size_t gridSlotIx,
                                 std::size_t gridIx);
+    static MessageIn AppAction(std::uint64_t timestamp, std::size_t appActionIx, float value);
+    static MessageIn HoldDrill(std::uint64_t timestamp, bool held);
 };
 
 class MessageInBus {
@@ -1036,6 +1049,10 @@ public:
     void SetParameterManager(ParameterManager* manager) { manager_ = manager; }
     void SetGridManager(GridManager* manager) { gridManager_ = manager; }
     void SetManager(ParameterManager* manager) { SetParameterManager(manager); }
+    void SetAppActionOut(ParameterMessageOutBus* out, bool forwardEncoderPress) {
+        appActionOut_ = out;
+        forwardEncoderPress_ = forwardEncoderPress;
+    }
     bool Push(const MessageIn& message);
     bool Pop(MessageIn& message, std::uint64_t timestamp);
     void Apply(const MessageIn& message);
@@ -1046,6 +1063,8 @@ public:
 private:
     ParameterManager* manager_ = nullptr;
     GridManager* gridManager_ = nullptr;
+    ParameterMessageOutBus* appActionOut_ = nullptr;
+    bool forwardEncoderPress_ = false;
     std::vector<MessageIn> queue_;
     std::atomic<std::size_t> head_{0};
     std::atomic<std::size_t> tail_{0};
