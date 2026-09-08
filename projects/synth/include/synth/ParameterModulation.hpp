@@ -974,6 +974,7 @@ struct MessageIn {
         ParamSetAbsoluteOnBank,
         AppAction,
         HoldDrill,
+        Shift,
     };
 
     std::uint64_t timestamp = 0;
@@ -1040,6 +1041,7 @@ struct MessageIn {
                                 std::size_t gridIx);
     static MessageIn AppAction(std::uint64_t timestamp, std::size_t appActionIx, float value);
     static MessageIn HoldDrill(std::uint64_t timestamp, bool held);
+    static MessageIn Shift(std::uint64_t timestamp, bool held);
 };
 
 class MessageInBus {

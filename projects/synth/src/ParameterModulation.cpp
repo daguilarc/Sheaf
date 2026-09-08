@@ -4039,6 +4039,15 @@ MessageIn MessageIn::HoldDrill(std::uint64_t timestamp, bool held) {
     return message;
 }
 
+MessageIn MessageIn::Shift(std::uint64_t timestamp, bool held) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::Shift;
+    message.boolValue = held;
+    message.hasBoolValue = true;
+    return message;
+}
+
 MessageInBus::MessageInBus(ParameterManager* manager, std::size_t capacity)
     : manager_(manager),
       queue_(capacity == 0 ? 1 : capacity) {}
@@ -4199,6 +4208,9 @@ void MessageInBus::Apply(const MessageIn& message) {
         }
         break;
     case MessageIn::Type::HoldDrill:
+        // Consumed by the MIDI processors before it reaches this bus.
+        break;
+    case MessageIn::Type::Shift:
         // Consumed by the MIDI processors before it reaches this bus.
         break;
     }
