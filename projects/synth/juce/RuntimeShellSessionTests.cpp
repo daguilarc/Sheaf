@@ -408,6 +408,13 @@ private:
     std::string status_;
 };
 
+// synth_juce::RegisterFakeAudioDeviceType (FakeAudioDeviceType.hpp) is the
+// `beforeStart` hook for scenarios below that need the full shell
+// (ShellComponent, MainWindow sizing) or the type-erased owner -- neither of
+// which exposes FakeDeviceRuntime's bare Runtime<App> to register a device
+// type on after construction, unlike FakeDeviceRuntime above.
+using synth_juce::RegisterFakeAudioDeviceType;
+
 std::filesystem::path FreshRoot(const std::filesystem::path& parent, const char* name) {
     const std::filesystem::path root = parent / name;
     std::filesystem::remove_all(root);
@@ -886,7 +893,22 @@ int main() {
         root / "logs",
         root / "config");
 
-    synth_runtime::RuntimeShellSession<synth_miniapp::MiniApp> session(paths);
+    synth_runtime::RuntimeShellSession<synth_miniapp::MiniApp> session(
+        paths, &RegisterFakeAudioDeviceType<synth_miniapp::MiniApp>);
+
+    // This session's Start() must never reach a real platform audio device
+    // type -- if RegisterFakeAudioDeviceType were skipped, or ran after
+    // Start() instead of before it, JUCE would populate the manager with
+    // real device types (CoreAudio/ASIO/etc.) and open the machine's actual
+    // speakers. The current device type's own name is the synthetic one
+    // FakeAudioDeviceType declares itself under, not a real platform name.
+    {
+        juce::AudioIODeviceType* currentType = session.GetRuntime().DeviceManager().getCurrentDeviceTypeObject();
+        Require(currentType != nullptr, "the runtime session has a current audio device type");
+        Require(currentType->getTypeName() == synth_juce::FakeAudioDeviceType::kTypeName,
+                "the runtime session's current audio device type is the fake one, not a real platform type");
+    }
+
     const synth::RuntimeDataPaths& runtimePaths = session.GetRuntime().DataPaths();
 
     Require(runtimePaths.dataRoot == paths.dataRoot, "runtime session receives supplied data root");
@@ -1199,7 +1221,8 @@ int main() {
             "full composite footprint");
 
     {
-        auto owner = synth_runtime::MakeRuntimeSessionOwner<synth_miniapp::MiniApp>(paths);
+        auto owner = synth_runtime::MakeRuntimeSessionOwner<synth_miniapp::MiniApp>(
+            paths, &RegisterFakeAudioDeviceType<synth_miniapp::MiniApp>);
         Require(owner != nullptr, "type-erased runtime session owner is constructed");
 
         juce::Component parent;

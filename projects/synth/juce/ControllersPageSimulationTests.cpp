@@ -1217,29 +1217,30 @@ void RunControllerWizardParitySimulation()
 }
 
 // A manually added record carries no persisted wizard id, so the
-// registry-gated lifecycle actions are not offered even though its kind is the
-// same hardware kind the wizard installs. This is the negative control for a
-// manual record's wizard id, checked directly below, with Blacklist and
-// Configure both withheld as a result.
+// registry-gated lifecycle actions are not offered. This is the negative
+// control for a manual record's wizard id, checked directly below, with
+// Blacklist and Configure both withheld as a result.
 void RunManualRecordSimulation()
 {
     namespace NodeIds = synth::runtime_ui::NodeIds;
 
     WizardParityFixture fixture;
-    // Preset options: the one registry descriptor (MIDI Fighter Twister) then
-    // the four Custom entries in kind order Generic, MF Twister, Launchpad,
-    // WRLD.Bldr -- so Custom (MF Twister) is index 2. There is no add-row name
-    // field any more; the record's name is derived from the chosen kind.
-    fixture.SelectOption(NodeIds::kAddPreset, 2, "manual add preset");
+    // Preset options: the library registry (MIDI Fighter Twister, Launchpad,
+    // WRLD.Bldr) then one plain Custom entry -- so Custom is index 3. There
+    // is one Custom choice, not one per kind: every Custom row is the
+    // Generic kind, so it cannot hold a grid mapping, a Launchpad pad
+    // position or model, or a Twister side-button system row -- those still
+    // need a row added from the matching descriptor.
+    fixture.SelectOption(NodeIds::kAddPreset, 3, "manual add preset");
     Require(RequireCombo(fixture.Renderer(), NodeIds::kAddPreset, "manual add preset")
-                    .getText() == juce::String("Custom (MF Twister)"),
-            "the add-row Preset combo offers a Custom entry for the Twister hardware kind");
+                    .getText() == juce::String("Custom"),
+            "the add-row Preset combo offers a plain Custom entry after the registry");
     fixture.Click(NodeIds::kAddButton, "manual add commit");
 
     const synth::MidiControllerSlot& manual =
         RequireController(fixture.Harness(), 0, "manual record");
-    Require(manual.name == "MF Twister" && manual.kind == synth::MidiProfileKind::MfTwister,
-            "a Custom add derives the manual record's name from its chosen kind's display name");
+    Require(manual.name == "Custom" && manual.kind == synth::MidiProfileKind::Generic,
+            "a Custom add is named Custom and is always the Generic kind");
     Require(!manual.wizardId.has_value(), "a manual record carries no wizard id");
     fixture.Click(NodeIds::ControllerDisclosure(0), "open editor for manual record checks");
     Require(fixture.Exists(NodeIds::ControllerRename(0)) &&
@@ -1308,6 +1309,37 @@ void RunControllerWizardRefusalSimulation()
             "a stale Submit retains every entered value");
 
     std::cout << "ControllerWizardRefusalSimulation passed\n";
+}
+
+// The device label (ControllerDeviceLabel) shows the descriptor's whole
+// display name at kControllerDeviceWidth. The portable layout system has no
+// text-measured extent (Extent::Intrinsic is a generic layout mode, not font
+// metrics -- it stays identical across the JUCE, browser and headless
+// backends), so the width is a fixed constant this test derives from real
+// measurement instead of a guess: every library device name
+// (MakeControllerWizardRegistry's own empty-catalog fallback, the ids every
+// app without a device of that kind gets) must fit at the exact font and
+// size PortableJuceBackend gives a Label node
+// (juce::Font(juce::FontOptions(pagestyle::kDefaultTextSize))). Only this
+// JUCE-linked suite can measure real glyph widths; the headless
+// controllers_page_ui_tests cannot.
+void RunDeviceLabelWidthCheck()
+{
+    const juce::Font font{juce::FontOptions(synth::pagestyle::kDefaultTextSize)};
+    const std::vector<synth::ControllerWizardDescriptor> libraryRegistry =
+        synth::MakeControllerWizardRegistry(synth::MidiAppCatalog{});
+    Require(!libraryRegistry.empty(), "the library registry has at least one device to measure");
+    for (const synth::ControllerWizardDescriptor& descriptor : libraryRegistry)
+    {
+        juce::GlyphArrangement glyphs;
+        glyphs.addLineOfText(font, juce::String(descriptor.displayName), 0.0f, 0.0f);
+        const float measured = glyphs.getBoundingBox(0, -1, true).getWidth();
+        Require(measured <= synth::runtime_ui::ControllersLayout::kControllerDeviceWidth,
+                "library device name \"" + descriptor.displayName + "\" (" + std::to_string(measured) +
+                    "px) must fit inside kControllerDeviceWidth (" +
+                    std::to_string(synth::runtime_ui::ControllersLayout::kControllerDeviceWidth) + "px)");
+    }
+    std::cout << "DeviceLabelWidthCheck passed\n";
 }
 
 }  // namespace
@@ -1384,6 +1416,7 @@ int main()
     RunControllerWizardParitySimulation();
     RunManualRecordSimulation();
     RunControllerWizardRefusalSimulation();
+    RunDeviceLabelWidthCheck();
 
     // The caption criterion had real subjects across the whole run, and its
     // exception list was the thing excusing them. Without these an id-convention

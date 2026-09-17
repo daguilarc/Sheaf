@@ -647,16 +647,13 @@ bool SlotMatchesWizardProfile(const MidiControllerSlot& slot,
     if (!slot.wizardId.has_value()) {
         return false;
     }
-    const auto descriptorIt = std::find_if(layouts.begin(), layouts.end(),
-                                           [&](const ControllerWizardDescriptor& descriptor) {
-                                               return descriptor.id == *slot.wizardId;
-                                           });
-    if (descriptorIt == layouts.end()) {
+    const ControllerWizardDescriptor* descriptor = FindControllerWizardDescriptor(layouts, *slot.wizardId);
+    if (descriptor == nullptr) {
         return false;
     }
 
     MidiControllerSlot generated = slot;
-    if (!runtime_ui::ControllersLayout::InstallDescriptorProfile(layouts, *descriptorIt, generated, nullptr)) {
+    if (!runtime_ui::ControllersLayout::InstallDescriptorProfile(layouts, *descriptor, generated, nullptr)) {
         return false;
     }
 
@@ -899,10 +896,7 @@ void MidiConfigViewModel::Rebuild(const MidiInstrumentConfig& instrument, const 
         row.kind = slot.kind;
         row.disposition = slot.disposition;
         row.hasResolvedWizard = slot.wizardId.has_value() &&
-            std::any_of(Layouts().begin(), Layouts().end(),
-                        [&](const ControllerWizardDescriptor& descriptor) {
-                            return descriptor.id == *slot.wizardId;
-                        });
+            FindControllerWizardDescriptor(Layouts(), *slot.wizardId) != nullptr;
         row.matchesWizardProfile = SlotMatchesWizardProfile(slot, Layouts());
         row.wizardId = slot.wizardId;
         row.hasCompleteEndpointPair = slot.input.IsConfigured() && slot.output.IsConfigured();
@@ -1368,6 +1362,41 @@ detail::SectionPresentation& MidiConfigViewModel::PresentationFor(std::size_t co
 
 void MidiConfigViewModel::DiscardPresentation(const std::string& name, MidiConfigSection section) {
     presentations_.erase(PresentationKey{name, section});
+}
+
+void MidiConfigViewModel::MirrorPressureMappingChangeIntoOpenSession(
+    std::size_t controllerIx, const std::optional<PolyphonicPressureMapping>& before,
+    const std::optional<PolyphonicPressureMapping>& after) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        return;
+    }
+    const auto it = presentations_.find(
+        PresentationKey{instrument_.controllers[controllerIx].name, MidiConfigSection::SystemMessages});
+    if (it == presentations_.end()) {
+        return;
+    }
+    std::vector<PolyphonicPressureMapping>& hidden = it->second.hiddenPressureMappings;
+    if (!before.has_value()) {
+        // A brand new mapping: AddPressureMapping only ever picks an
+        // address disjoint from every existing mapping (row-claimed or
+        // hidden), so it is always hidden by construction.
+        if (after.has_value()) {
+            hidden.push_back(*after);
+        }
+        return;
+    }
+    const auto hiddenIt = std::find(hidden.begin(), hidden.end(), *before);
+    if (hiddenIt == hidden.end()) {
+        // Not one of this open session's hidden entries -- it belongs to
+        // one of the section's own rows, whose flush already carries the
+        // edit or removal through gridExpansion.
+        return;
+    }
+    if (after.has_value()) {
+        *hiddenIt = *after;
+    } else {
+        hidden.erase(hiddenIt);
+    }
 }
 
 namespace {
@@ -2921,20 +2950,7 @@ bool MidiConfigViewModel::AddController(std::string name, MidiProfileKind kind, 
     MidiControllerSlot slot;
     slot.name = name;
     slot.kind = kind;
-    switch (kind) {
-        case MidiProfileKind::WrldBldr:
-            slot.config = WrldBldrDefaultProfileConfig();
-            break;
-        case MidiProfileKind::MfTwister:
-            slot.config = MfTwisterDefaultProfileConfig();
-            break;
-        case MidiProfileKind::Launchpad:
-            slot.config = LaunchpadDefaultProfileConfig();
-            break;
-        case MidiProfileKind::Generic:
-            slot.config = MidiControllerProfileConfig{};
-            break;
-    }
+    slot.config = DefaultProfileConfigForKind(kind);
     // Every commit path normalizes, including a freshly-seeded default
     // profile (already canonical in practice for every factory today, but
     // this keeps the guarantee independent of that incidental fact).
@@ -3021,10 +3037,7 @@ bool MidiConfigViewModel::BlacklistController(std::size_t controllerIx, MidiInst
         return false;
     }
     const bool resolved = existing.wizardId.has_value() &&
-        std::any_of(Layouts().begin(), Layouts().end(),
-                    [&](const ControllerWizardDescriptor& descriptor) {
-                        return descriptor.id == *existing.wizardId;
-                    });
+        FindControllerWizardDescriptor(Layouts(), *existing.wizardId) != nullptr;
     if (existing.disposition != MidiControllerDisposition::Active || !resolved) {
         if (reason != nullptr) {
             *reason = "only registry-supported active controllers can be released";
@@ -3077,13 +3090,10 @@ bool MidiConfigViewModel::RestoreController(std::size_t controllerIx, MidiInstru
         return false;
     }
     const MidiControllerSlot& existing = instrument_.controllers[controllerIx];
-    const auto descriptorIt = existing.wizardId.has_value()
-        ? std::find_if(Layouts().begin(), Layouts().end(),
-                       [&](const ControllerWizardDescriptor& descriptor) {
-                           return descriptor.id == *existing.wizardId;
-                       })
-        : Layouts().end();
-    if (descriptorIt == Layouts().end()) {
+    const ControllerWizardDescriptor* descriptor = existing.wizardId.has_value()
+        ? FindControllerWizardDescriptor(Layouts(), *existing.wizardId)
+        : nullptr;
+    if (descriptor == nullptr) {
         if (reason != nullptr) {
             *reason = "restoring requires a resolved preset";
         }
@@ -3092,7 +3102,7 @@ bool MidiConfigViewModel::RestoreController(std::size_t controllerIx, MidiInstru
 
     MidiInstrumentConfig scratch = instrument_;
     MidiControllerSlot restored = scratch.controllers[controllerIx];
-    if (!runtime_ui::ControllersLayout::InstallDescriptorProfile(Layouts(), *descriptorIt, restored, reason)) {
+    if (!runtime_ui::ControllersLayout::InstallDescriptorProfile(Layouts(), *descriptor, restored, reason)) {
         return false;
     }
     if (!scratch.ReplaceController(controllerIx, std::move(restored))) {
@@ -3180,6 +3190,294 @@ bool MidiConfigViewModel::SetEndpointRef(std::size_t controllerIx, bool output, 
     } else {
         slot.input = std::move(ref);
     }
+    out = std::move(scratch);
+    return true;
+}
+
+std::size_t MidiConfigViewModel::ConnectMessageCount(std::size_t controllerIx) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        return 0;
+    }
+    return instrument_.controllers[controllerIx].config.openSysEx.size();
+}
+
+std::string MidiConfigViewModel::ConnectMessageHex(std::size_t controllerIx, std::size_t messageIx) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        return {};
+    }
+    const std::vector<std::vector<std::uint8_t>>& messages =
+        instrument_.controllers[controllerIx].config.openSysEx;
+    if (messageIx >= messages.size()) {
+        return {};
+    }
+    return FormatSysExHex(messages[messageIx]);
+}
+
+bool MidiConfigViewModel::AddConnectMessage(std::size_t controllerIx, MidiInstrumentConfig& out,
+                                            std::string* reason) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        if (reason != nullptr) {
+            *reason = "controller does not exist";
+        }
+        return false;
+    }
+    MidiInstrumentConfig scratch = instrument_;
+    scratch.controllers[controllerIx].config.openSysEx.push_back({0xF0, 0xF7});
+    out = std::move(scratch);
+    return true;
+}
+
+bool MidiConfigViewModel::SetConnectMessage(std::size_t controllerIx, std::size_t messageIx,
+                                            const std::string& hexText, MidiInstrumentConfig& out,
+                                            std::string* reason) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        if (reason != nullptr) {
+            *reason = "controller does not exist";
+        }
+        return false;
+    }
+    const std::vector<std::vector<std::uint8_t>>& existing =
+        instrument_.controllers[controllerIx].config.openSysEx;
+    if (messageIx >= existing.size()) {
+        if (reason != nullptr) {
+            *reason = "connect message does not exist";
+        }
+        return false;
+    }
+    std::vector<std::uint8_t> parsed;
+    if (!ParseSysExHex(hexText, parsed)) {
+        if (reason != nullptr) {
+            *reason = "connect message must be hex byte pairs, e.g. F0 00 7F F7";
+        }
+        return false;
+    }
+    if (!IsValidSysExMessage(parsed)) {
+        if (reason != nullptr) {
+            *reason = "connect message must be one SysEx message: leading F0, trailing F7, data bytes 00-7F";
+        }
+        return false;
+    }
+    MidiInstrumentConfig scratch = instrument_;
+    scratch.controllers[controllerIx].config.openSysEx[messageIx] = std::move(parsed);
+    out = std::move(scratch);
+    return true;
+}
+
+bool MidiConfigViewModel::DeleteConnectMessage(std::size_t controllerIx, std::size_t messageIx,
+                                               MidiInstrumentConfig& out, std::string* reason) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        if (reason != nullptr) {
+            *reason = "controller does not exist";
+        }
+        return false;
+    }
+    MidiInstrumentConfig scratch = instrument_;
+    std::vector<std::vector<std::uint8_t>>& messages = scratch.controllers[controllerIx].config.openSysEx;
+    if (messageIx >= messages.size()) {
+        if (reason != nullptr) {
+            *reason = "connect message does not exist";
+        }
+        return false;
+    }
+    messages.erase(messages.begin() + static_cast<std::ptrdiff_t>(messageIx));
+    out = std::move(scratch);
+    return true;
+}
+
+std::size_t MidiConfigViewModel::PressureMappingCount(std::size_t controllerIx) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        return 0;
+    }
+    const std::optional<PolyphonicPressureMidiInConfig>& pressureInput =
+        instrument_.controllers[controllerIx].config.pressureInput;
+    return pressureInput.has_value() ? pressureInput->mappings.size() : 0;
+}
+
+bool MidiConfigViewModel::PressureMappingFieldValue(std::size_t controllerIx, std::size_t mappingIx,
+                                                    PressureMappingField field, double& out) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        return false;
+    }
+    const std::optional<PolyphonicPressureMidiInConfig>& pressureInput =
+        instrument_.controllers[controllerIx].config.pressureInput;
+    if (!pressureInput.has_value() || mappingIx >= pressureInput->mappings.size()) {
+        return false;
+    }
+    const PolyphonicPressureMapping& mapping = pressureInput->mappings[mappingIx];
+    switch (field) {
+        case PressureMappingField::Channel:
+            out = mapping.address.channel;
+            return true;
+        case PressureMappingField::Note:
+            out = mapping.address.note;
+            return true;
+        case PressureMappingField::GridSlotIx:
+            out = static_cast<double>(mapping.pressure.gridSlotIx);
+            return true;
+        case PressureMappingField::GridX:
+            out = mapping.pressure.gridX;
+            return true;
+        case PressureMappingField::GridY:
+            out = mapping.pressure.gridY;
+            return true;
+    }
+    return false;
+}
+
+bool MidiConfigViewModel::AddPressureMapping(std::size_t controllerIx, MidiInstrumentConfig& out,
+                                             std::string* reason) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        if (reason != nullptr) {
+            *reason = "controller does not exist";
+        }
+        return false;
+    }
+    MidiInstrumentConfig scratch = instrument_;
+    MidiControllerSlot& slot = scratch.controllers[controllerIx];
+    if (!slot.config.pressureInput.has_value()) {
+        slot.config.pressureInput = PolyphonicPressureMidiInConfig{};
+    }
+    std::vector<PolyphonicPressureMapping>& mappings = slot.config.pressureInput->mappings;
+    int note = 0;
+    while (std::any_of(mappings.begin(), mappings.end(), [&](const PolyphonicPressureMapping& mapping) {
+        return mapping.address.channel == 0 && mapping.address.note == static_cast<std::uint8_t>(note);
+    })) {
+        if (note >= 0x7F) {
+            if (reason != nullptr) {
+                *reason = "no free note address for a new pressure mapping";
+            }
+            return false;
+        }
+        ++note;
+    }
+    PolyphonicPressureMapping mapping;
+    mapping.address = MidiNoteAddress{.channel = 0, .note = static_cast<std::uint8_t>(note)};
+    mapping.pressure = MessageIn::GridPressureChange(0, 0, 0, 0, 0);
+    mappings.push_back(mapping);
+    if (!SlotValidForKind(slot, reason)) {
+        return false;
+    }
+    MirrorPressureMappingChangeIntoOpenSession(controllerIx, std::nullopt, mapping);
+    out = std::move(scratch);
+    return true;
+}
+
+bool MidiConfigViewModel::SetPressureMappingField(std::size_t controllerIx, std::size_t mappingIx,
+                                                  PressureMappingField field, double value,
+                                                  MidiInstrumentConfig& out, std::string* reason) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        if (reason != nullptr) {
+            *reason = "controller does not exist";
+        }
+        return false;
+    }
+    const std::optional<PolyphonicPressureMidiInConfig>& existing =
+        instrument_.controllers[controllerIx].config.pressureInput;
+    if (!existing.has_value() || mappingIx >= existing->mappings.size()) {
+        if (reason != nullptr) {
+            *reason = "pressure mapping does not exist";
+        }
+        return false;
+    }
+    if (!std::isfinite(value)) {
+        if (reason != nullptr) {
+            *reason = "value must be a finite number";
+        }
+        return false;
+    }
+    const long long rounded = std::llround(value);
+    if (static_cast<double>(rounded) != value) {
+        if (reason != nullptr) {
+            *reason = "value must be an integer";
+        }
+        return false;
+    }
+
+    const PolyphonicPressureMapping before = existing->mappings[mappingIx];
+
+    MidiInstrumentConfig scratch = instrument_;
+    MidiControllerSlot& slot = scratch.controllers[controllerIx];
+    PolyphonicPressureMapping& mapping = slot.config.pressureInput->mappings[mappingIx];
+    switch (field) {
+        case PressureMappingField::Channel:
+            if (rounded < 0 || rounded > 0x0F) {
+                if (reason != nullptr) {
+                    *reason = "channel must be an integer 0-15";
+                }
+                return false;
+            }
+            mapping.address.channel = static_cast<std::uint8_t>(rounded);
+            break;
+        case PressureMappingField::Note:
+            if (rounded < 0 || rounded > 0x7F) {
+                if (reason != nullptr) {
+                    *reason = "note must be an integer 0-127";
+                }
+                return false;
+            }
+            mapping.address.note = static_cast<std::uint8_t>(rounded);
+            break;
+        case PressureMappingField::GridSlotIx:
+            if (rounded < 0) {
+                if (reason != nullptr) {
+                    *reason = "grid slot must be a non-negative integer";
+                }
+                return false;
+            }
+            mapping.pressure.gridSlotIx = static_cast<std::size_t>(rounded);
+            break;
+        case PressureMappingField::GridX:
+            if (!IsIntegerInRange(value, static_cast<double>(std::numeric_limits<int>::min()),
+                                  static_cast<double>(std::numeric_limits<int>::max()))) {
+                if (reason != nullptr) {
+                    *reason = "grid x must be an integer";
+                }
+                return false;
+            }
+            mapping.pressure.gridX = static_cast<int>(rounded);
+            break;
+        case PressureMappingField::GridY:
+            if (!IsIntegerInRange(value, static_cast<double>(std::numeric_limits<int>::min()),
+                                  static_cast<double>(std::numeric_limits<int>::max()))) {
+                if (reason != nullptr) {
+                    *reason = "grid y must be an integer";
+                }
+                return false;
+            }
+            mapping.pressure.gridY = static_cast<int>(rounded);
+            break;
+    }
+    if (!SlotValidForKind(slot, reason)) {
+        return false;
+    }
+    MirrorPressureMappingChangeIntoOpenSession(controllerIx, before, mapping);
+    out = std::move(scratch);
+    return true;
+}
+
+bool MidiConfigViewModel::DeletePressureMapping(std::size_t controllerIx, std::size_t mappingIx,
+                                                MidiInstrumentConfig& out, std::string* reason) const {
+    if (controllerIx >= instrument_.controllers.size()) {
+        if (reason != nullptr) {
+            *reason = "controller does not exist";
+        }
+        return false;
+    }
+    MidiInstrumentConfig scratch = instrument_;
+    std::optional<PolyphonicPressureMidiInConfig>& pressureInput =
+        scratch.controllers[controllerIx].config.pressureInput;
+    if (!pressureInput.has_value() || mappingIx >= pressureInput->mappings.size()) {
+        if (reason != nullptr) {
+            *reason = "pressure mapping does not exist";
+        }
+        return false;
+    }
+    const PolyphonicPressureMapping removed = pressureInput->mappings[mappingIx];
+    pressureInput->mappings.erase(pressureInput->mappings.begin() + static_cast<std::ptrdiff_t>(mappingIx));
+    if (pressureInput->mappings.empty()) {
+        pressureInput.reset();
+    }
+    MirrorPressureMappingChangeIntoOpenSession(controllerIx, removed, std::nullopt);
     out = std::move(scratch);
     return true;
 }

@@ -65,15 +65,7 @@ inline constexpr const char* kWizardStatus = "runtime.controllers.wizard.status"
 inline std::string WizardCandidateToken(const WizardCandidate& candidate)
 {
     const auto hex = [](std::string_view value) {
-        static constexpr char kHex[] = "0123456789abcdef";
-        std::string encoded;
-        encoded.reserve(value.size() * 2);
-        for (unsigned char byte : value)
-        {
-            encoded += kHex[byte >> 4U];
-            encoded += kHex[byte & 0x0fU];
-        }
-        return encoded;
+        return HexEncodeBytes(value, /*uppercase=*/false);
     };
     return hex(candidate.wizardId) + "_" + hex(candidate.displayName) + "_" +
            std::to_string(static_cast<int>(candidate.kind)) + "_" +
@@ -101,34 +93,11 @@ inline std::optional<WizardCandidate> WizardCandidateFromToken(
         return std::nullopt;
     }
 
-    const auto unhex = [](std::string_view value)
-        -> std::optional<std::string> {
-        if (value.size() % 2 != 0)
-        {
-            return std::nullopt;
-        }
-        const auto nibble = [](char character) -> std::optional<unsigned char> {
-            if (character >= '0' && character <= '9')
-            {
-                return static_cast<unsigned char>(character - '0');
-            }
-            if (character >= 'a' && character <= 'f')
-            {
-                return static_cast<unsigned char>(character - 'a' + 10);
-            }
-            return std::nullopt;
-        };
+    const auto unhex = [](std::string_view value) -> std::optional<std::string> {
         std::string decoded;
-        decoded.reserve(value.size() / 2);
-        for (std::size_t ix = 0; ix < value.size(); ix += 2)
+        if (!HexDecodeBytes(value, decoded, /*separatedByWhitespace=*/false))
         {
-            const std::optional<unsigned char> high = nibble(value[ix]);
-            const std::optional<unsigned char> low = nibble(value[ix + 1]);
-            if (!high.has_value() || !low.has_value())
-            {
-                return std::nullopt;
-            }
-            decoded.push_back(static_cast<char>((*high << 4U) | *low));
+            return std::nullopt;
         }
         return decoded;
     };
@@ -209,17 +178,7 @@ inline std::string ControllerRow(std::size_t controllerIx)
 inline std::string ControllerActionToken(std::size_t controllerIx,
                                          std::string_view name)
 {
-    static constexpr char kHex[] = "0123456789abcdef";
-    std::string encoded;
-    encoded.reserve(name.size() * 2 + 24);
-    encoded = std::to_string(controllerIx);
-    encoded += ':';
-    for (unsigned char byte : name)
-    {
-        encoded += kHex[byte >> 4U];
-        encoded += kHex[byte & 0x0fU];
-    }
-    return encoded;
+    return std::to_string(controllerIx) + ':' + HexEncodeBytes(name, /*uppercase=*/false);
 }
 
 inline std::optional<std::pair<std::size_t, std::string>>
@@ -239,32 +198,10 @@ ControllerActionIdentityFromToken(std::string_view token)
         return std::nullopt;
     }
     const std::string_view encodedName = token.substr(delimiter + 1);
-    if (encodedName.size() % 2 != 0)
-    {
-        return std::nullopt;
-    }
-    const auto nibble = [](char character) -> std::optional<unsigned char> {
-        if (character >= '0' && character <= '9')
-        {
-            return static_cast<unsigned char>(character - '0');
-        }
-        if (character >= 'a' && character <= 'f')
-        {
-            return static_cast<unsigned char>(character - 'a' + 10);
-        }
-        return std::nullopt;
-    };
     std::string name;
-    name.reserve(encodedName.size() / 2);
-    for (std::size_t ix = 0; ix < encodedName.size(); ix += 2)
+    if (!HexDecodeBytes(encodedName, name, /*separatedByWhitespace=*/false))
     {
-        const std::optional<unsigned char> high = nibble(encodedName[ix]);
-        const std::optional<unsigned char> low = nibble(encodedName[ix + 1]);
-        if (!high.has_value() || !low.has_value())
-        {
-            return std::nullopt;
-        }
-        name.push_back(static_cast<char>((*high << 4U) | *low));
+        return std::nullopt;
     }
     return std::pair{controllerIx, std::move(name)};
 }
@@ -279,9 +216,9 @@ inline std::string ControllerName(std::size_t controllerIx)
     return ControllerRow(controllerIx) + ".name";
 }
 
-inline std::string ControllerKind(std::size_t controllerIx)
+inline std::string ControllerDevice(std::size_t controllerIx)
 {
-    return ControllerRow(controllerIx) + ".kind";
+    return ControllerRow(controllerIx) + ".device";
 }
 
 inline std::string ControllerVariant(std::size_t controllerIx)
@@ -409,6 +346,68 @@ inline std::string GroupAddBlock(std::size_t controllerIx, MidiConfigSection sec
     return GroupHeader(controllerIx, section, headerIx) + ".add_block";
 }
 
+inline std::string ConnectMessages(std::size_t controllerIx)
+{
+    return ControllerRow(controllerIx) + ".connect_messages";
+}
+
+inline std::string ConnectMessagesHeading(std::size_t controllerIx)
+{
+    return ConnectMessages(controllerIx) + ".heading";
+}
+
+inline std::string ConnectMessageRow(std::size_t controllerIx, std::size_t messageIx)
+{
+    return ConnectMessages(controllerIx) + ".row." + std::to_string(messageIx);
+}
+
+inline std::string ConnectMessageField(std::size_t controllerIx, std::size_t messageIx)
+{
+    return ConnectMessageRow(controllerIx, messageIx) + ".field";
+}
+
+inline std::string ConnectMessageDelete(std::size_t controllerIx, std::size_t messageIx)
+{
+    return ConnectMessageRow(controllerIx, messageIx) + ".delete";
+}
+
+inline std::string ConnectMessageAdd(std::size_t controllerIx)
+{
+    return ConnectMessages(controllerIx) + ".add";
+}
+
+inline std::string PressureMappings(std::size_t controllerIx)
+{
+    return ControllerRow(controllerIx) + ".pressure_mappings";
+}
+
+inline std::string PressureMappingsHeading(std::size_t controllerIx)
+{
+    return PressureMappings(controllerIx) + ".heading";
+}
+
+inline std::string PressureMappingRow(std::size_t controllerIx, std::size_t mappingIx)
+{
+    return PressureMappings(controllerIx) + ".row." + std::to_string(mappingIx);
+}
+
+inline std::string PressureMappingField(std::size_t controllerIx, std::size_t mappingIx,
+                                        MidiConfigViewModel::PressureMappingField field)
+{
+    return PressureMappingRow(controllerIx, mappingIx) + ".field." +
+           std::to_string(static_cast<int>(field));
+}
+
+inline std::string PressureMappingDelete(std::size_t controllerIx, std::size_t mappingIx)
+{
+    return PressureMappingRow(controllerIx, mappingIx) + ".delete";
+}
+
+inline std::string PressureMappingAdd(std::size_t controllerIx)
+{
+    return PressureMappings(controllerIx) + ".add";
+}
+
 }  // namespace NodeIds
 
 namespace Actions {
@@ -439,6 +438,12 @@ inline constexpr const char* kControllerBlacklist = "runtime.controllers.control
 inline constexpr const char* kControllerRemoveBlacklist = "runtime.controllers.controller.remove_blacklist";
 inline constexpr const char* kControllerConfigure = "runtime.controllers.controller.configure";
 inline constexpr const char* kControllerRestore = "runtime.controllers.controller.restore";
+inline constexpr const char* kConnectMessageCommit = "runtime.controllers.connect_message_commit";
+inline constexpr const char* kConnectMessageDelete = "runtime.controllers.connect_message_delete";
+inline constexpr const char* kConnectMessageAdd = "runtime.controllers.connect_message_add";
+inline constexpr const char* kPressureMappingFieldCommit = "runtime.controllers.pressure_mapping_field_commit";
+inline constexpr const char* kPressureMappingDelete = "runtime.controllers.pressure_mapping_delete";
+inline constexpr const char* kPressureMappingAdd = "runtime.controllers.pressure_mapping_add";
 
 // The fixed part of what the Controllers page emits. The per-controller and
 // wizard-step actions above are not listed: they are matched by prefix, because
@@ -464,6 +469,12 @@ inline constexpr std::string_view kControllersActions[] = {
     kWizardCancel,
     kWizardSubmit,
     kWizardIgnore,
+    kConnectMessageCommit,
+    kConnectMessageDelete,
+    kConnectMessageAdd,
+    kPressureMappingFieldCommit,
+    kPressureMappingDelete,
+    kPressureMappingAdd,
 };
 
 }  // namespace Actions
@@ -507,7 +518,6 @@ inline constexpr float kAvailableConfigureWidth = 92.0f;
 inline constexpr float kAvailableIgnoreWidth = 72.0f;
 inline constexpr float kAvailableControlGap = 8.0f;
 inline constexpr float kControllerNameWidth = 200.0f;
-inline constexpr float kControllerKindWidth = 100.0f;
 inline constexpr float kControllerDisclosureWidth = 24.0f;
 // Line one's model selector, on launchpad rows only: wide enough for
 // "Launchpad Mini MK3" plus its caption.
@@ -536,23 +546,43 @@ inline constexpr float kBlacklistedBadgeWidth = 84.0f;
 // draft and Rename button are simply gone here, not moved.
 inline constexpr float kBlacklistedLifecycleWidth =
     kLifecycleConfigureWidth + kLifecycleControlGap + kLifecycleRemoveWidth;
-// Line one: disclosure, name, kind, and on a launchpad row the Variant
-// selector. The status dots are on line two now, beside the ports they
-// describe. The width below is the launchpad case, the wider of the two.
-inline constexpr float kActiveHeaderLine1Width =
-    kControllerDisclosureWidth + kLifecycleControlGap + kControllerNameWidth +
-    kLifecycleControlGap + kControllerKindWidth + kLifecycleControlGap + kVariantFieldWidth;
 // Line two: a status dot immediately before each port's combo, then the
-// lifecycle controls.
+// lifecycle controls. Computed before line one below: line one's device
+// label is sized to fill exactly the width line one would otherwise fall
+// short of line two by, so the row's own footprint (already set by line
+// two, which is wider than line one) never grows to fit it.
 inline constexpr float kActiveHeaderLine2Width =
     kStatusDotWidth + kLifecycleControlGap + kEndpointFieldWidth + kEndpointBoxGap +
     kStatusDotWidth + kLifecycleControlGap + kEndpointFieldWidth + kLifecycleControlGap +
     kActiveLifecycleWidth + kLifecycleControlGap;
+// The device label takes the free width line one already has before adding
+// any: with the disclosure arrow, name and (launchpad-only) Variant selector
+// accounted for, whatever is left up to line two's own width is free, since
+// line two already sets the row wider than line one needs. That comes to
+// 308px here -- comfortably over every listed device name measured at the
+// page's default text size (RunDeviceLabelWidthCheck in the miniapp JUCE
+// suite measures the library names this way and fails if one grows past
+// this) -- so a fixed constant here costs the row nothing, and the label
+// never needs a second line or a shortened device name to fit.
+inline constexpr float kControllerDeviceWidth =
+    kActiveHeaderLine2Width - kControllerDisclosureWidth - kControllerNameWidth - kVariantFieldWidth -
+    3.0f * kLifecycleControlGap;
+// Line one: disclosure, name, device, and on a launchpad row the Variant
+// selector. The status dots are on line two now, beside the ports they
+// describe. The width below is the launchpad case, the wider of the two.
+inline constexpr float kActiveHeaderLine1Width =
+    kControllerDisclosureWidth + kLifecycleControlGap + kControllerNameWidth +
+    kLifecycleControlGap + kControllerDeviceWidth + kLifecycleControlGap + kVariantFieldWidth;
 inline constexpr float kActiveControllerHeaderWidth =
     std::max(kActiveHeaderLine1Width, kActiveHeaderLine2Width);
-// Line one: name, kind, Released badge.
+// kControllerDeviceWidth is derived to make these equal (see above); if a
+// later change to any of line one's other pieces breaks that, this catches
+// it at compile time rather than silently growing the row.
+static_assert(kActiveHeaderLine1Width <= kActiveHeaderLine2Width,
+             "the active row's device label must not grow line one past line two");
+// Line one: name, device, Released badge.
 inline constexpr float kBlacklistedHeaderLine1Width =
-    kControllerNameWidth + kLifecycleControlGap + kControllerKindWidth +
+    kControllerNameWidth + kLifecycleControlGap + kControllerDeviceWidth +
     kLifecycleControlGap + kBlacklistedBadgeWidth;
 // Line two: the two stored-endpoint labels followed by the lifecycle controls.
 inline constexpr float kBlacklistedHeaderLine2Width =
@@ -560,9 +590,17 @@ inline constexpr float kBlacklistedHeaderLine2Width =
     kLifecycleControlGap + kBlacklistedLifecycleWidth;
 inline constexpr float kBlacklistedControllerHeaderWidth =
     std::max(kBlacklistedHeaderLine1Width, kBlacklistedHeaderLine2Width);
+// The same device width, sized off the active row's slack, also fits inside
+// the blacklisted row's own (larger) slack -- this is what proves that,
+// not an assumption.
+static_assert(kBlacklistedHeaderLine1Width <= kBlacklistedHeaderLine2Width,
+             "the blacklisted row's device label must not grow line one past line two");
 inline constexpr float kControllerHeaderMinWidth =
     std::max(kActiveControllerHeaderWidth, kBlacklistedControllerHeaderWidth);
 inline constexpr float kSectionMaxHeight = 220.0f;
+// Connect messages (openSysEx): one hex-text field per stored message, wide
+// enough for a typical mode-switch SysEx string, plus its delete button.
+inline constexpr float kConnectMessageFieldWidth = 320.0f;
 
 inline int FieldEditorWidth(MidiMappingRowVM::Field field)
 {
@@ -788,6 +826,65 @@ inline std::optional<MidiMappingRowVM::Field> ParseFieldToken(const std::string&
     }
 }
 
+inline std::string PressureMappingFieldToken(MidiConfigViewModel::PressureMappingField field)
+{
+    return std::to_string(static_cast<int>(field));
+}
+
+inline std::optional<MidiConfigViewModel::PressureMappingField> ParsePressureMappingFieldToken(
+    const std::string& token)
+{
+    try
+    {
+        const int value = std::stoi(token);
+        return static_cast<MidiConfigViewModel::PressureMappingField>(value);
+    }
+    catch (...)
+    {
+        return std::nullopt;
+    }
+}
+
+// A field-commit action's value packs its raw text last, after a fixed run
+// of ':'-joined index/field tokens -- and that raw text can itself contain
+// a ':' (a connect message's hex bytes, say), so it is rejoined from every
+// remaining part rather than read as a single token like the ones before it.
+inline std::string JoinRemainingTokens(const std::vector<std::string>& parts, std::size_t fromIx)
+{
+    std::string rawValue;
+    for (std::size_t ix = fromIx; ix < parts.size(); ++ix)
+    {
+        if (ix > fromIx)
+        {
+            rawValue += ':';
+        }
+        rawValue += parts[ix];
+    }
+    return rawValue;
+}
+
+// A field-commit's raw text must be wholly a finite number -- not a prefix
+// of one (std::stod would otherwise accept "3abc" as 3) and not NaN/infinity.
+// Returns nullopt for anything else, so every caller refuses with the same
+// wording rather than each re-deriving this check.
+inline std::optional<double> ParseFiniteNumericToken(const std::string& rawValue)
+{
+    try
+    {
+        std::size_t consumed = 0;
+        const double numericValue = std::stod(rawValue, &consumed);
+        if (consumed != rawValue.size() || !std::isfinite(numericValue))
+        {
+            return std::nullopt;
+        }
+        return numericValue;
+    }
+    catch (...)
+    {
+        return std::nullopt;
+    }
+}
+
 inline Color EndpointStatusColor(MidiEndpointStatus status)
 {
     switch (status)
@@ -835,6 +932,27 @@ inline std::string StoredEndpointLabel(const MidiEndpointRef& ref)
         return ref.name;
     }
     return ref.name + " (" + ref.identifier + ")";
+}
+
+// The row's device label: the descriptor's display name when the row's
+// stored wizard id still resolves against the page's layouts (a device
+// preset, active or blacklisted), else the MIDI input device the row is
+// bound to -- the same identity StoredEndpointLabel already gives the
+// blacklisted row's "MIDI in:" line, so an unresolved or Custom row still
+// says which device it is instead of the internal profile kind.
+inline std::string ControllerDeviceLabel(const MidiControllerRowVM& rowVm,
+                                         const std::vector<ControllerWizardDescriptor>& layouts)
+{
+    if (rowVm.wizardId.has_value())
+    {
+        const ControllerWizardDescriptor* descriptor =
+            FindControllerWizardDescriptor(layouts, *rowVm.wizardId);
+        if (descriptor != nullptr)
+        {
+            return descriptor->displayName;
+        }
+    }
+    return StoredEndpointLabel(rowVm.storedInput);
 }
 
 inline std::vector<ui::ControlOption> BuildEndpointOptions(const std::vector<MidiDeviceInfoRef>& devices,
@@ -954,27 +1072,35 @@ inline std::vector<ui::ControlOption> BuildLaunchpadVariantOptions(LaunchpadCont
     return options;
 }
 
+// The plain Custom entry's option id: a preset is only a starting point, so
+// the add row offers exactly one unbound, no-mappings entry rather than one
+// per MidiProfileKind. It always installs the Generic kind (kCustomKind
+// below): encoders, system messages and analogs, the same three sections
+// WrldBldr also supports -- but not grid mappings, Launchpad pad positions,
+// the Launchpad model selector, or Twister side-button system rows, which
+// the view model gates on the row's literal kind (WrldBldr/Launchpad/
+// MfTwister), not on section support, so a Generic row cannot hold them. A
+// device that needs one of those starts from its own descriptor, or the
+// library one MakeControllerWizardRegistry appends for any kind an app's
+// catalog does not cover, and edits from there. Connect messages and
+// pressure mappings (below) are unconditional on every kind, Custom
+// included.
+inline constexpr const char* kCustomPresetOptionId = "custom";
+inline constexpr const char* kCustomPresetLabel = "Custom";
+inline constexpr MidiProfileKind kCustomKind = MidiProfileKind::Generic;
+
 // The add row's Preset combo: every registry descriptor's display name
-// (option id = descriptor id), then one "Custom (<kind>)" entry per
-// MidiProfileKind in this fixed order, option id `custom.<kind token>` using
-// the existing MidiProfileKindName (the add handler parses it back with the
-// existing MidiProfileKindFromName -- no second token switch).
+// (option id = descriptor id), then the one Custom entry.
 inline std::vector<ui::ControlOption> BuildAddPresetOptions(
     const std::vector<ControllerWizardDescriptor>& layouts)
 {
     std::vector<ui::ControlOption> options;
-    options.reserve(layouts.size() + 4);
+    options.reserve(layouts.size() + 1);
     for (const ControllerWizardDescriptor& descriptor : layouts)
     {
         options.push_back({descriptor.id, descriptor.displayName});
     }
-    constexpr MidiProfileKind kCustomKinds[] = {MidiProfileKind::Generic, MidiProfileKind::MfTwister,
-                                                MidiProfileKind::Launchpad, MidiProfileKind::WrldBldr};
-    for (MidiProfileKind kind : kCustomKinds)
-    {
-        options.push_back({std::string("custom.") + MidiProfileKindName(kind),
-                           std::string("Custom (") + MidiProfileKindDisplayName(kind) + ")"});
-    }
+    options.push_back({kCustomPresetOptionId, kCustomPresetLabel});
     return options;
 }
 
@@ -1014,7 +1140,7 @@ struct ControllersPageCallbacks
     std::vector<UISystemMessageChoice> analogActionCatalog;
     // The add row's Preset combo options, and the registry every wizard
     // lookup on this page resolves against. Empty means the library default
-    // (the Twister-only registry, MidiConfigViewModel's own default) -- a
+    // (MfTwister/Launchpad/WRLD.Bldr, MidiConfigViewModel's own default) -- a
     // host with an app catalog fills this from
     // MakeControllerWizardRegistry(engine.MidiCatalog()).
     std::vector<ControllerWizardDescriptor> layouts;
@@ -1304,7 +1430,13 @@ public:
                action.name == Actions::kControllerBlacklist ||
                action.name == Actions::kControllerRemoveBlacklist ||
                action.name == Actions::kControllerRestore ||
-               action.name == Actions::kControllerConfigure;
+               action.name == Actions::kControllerConfigure ||
+               action.name == Actions::kConnectMessageCommit ||
+               action.name == Actions::kConnectMessageDelete ||
+               action.name == Actions::kConnectMessageAdd ||
+               action.name == Actions::kPressureMappingFieldCommit ||
+               action.name == Actions::kPressureMappingDelete ||
+               action.name == Actions::kPressureMappingAdd;
     }
 
 private:
@@ -1493,6 +1625,42 @@ private:
         if (action.name == Actions::kAddBlock)
         {
             HandleAdd(action.value, /*asBlock=*/true);
+            return;
+        }
+
+        if (action.name == Actions::kConnectMessageCommit)
+        {
+            HandleConnectMessageCommit(action.value);
+            return;
+        }
+
+        if (action.name == Actions::kConnectMessageDelete)
+        {
+            HandleConnectMessageDelete(action.value);
+            return;
+        }
+
+        if (action.name == Actions::kConnectMessageAdd)
+        {
+            HandleConnectMessageAdd(action.value);
+            return;
+        }
+
+        if (action.name == Actions::kPressureMappingFieldCommit)
+        {
+            HandlePressureMappingFieldCommit(action.value);
+            return;
+        }
+
+        if (action.name == Actions::kPressureMappingDelete)
+        {
+            HandlePressureMappingDelete(action.value);
+            return;
+        }
+
+        if (action.name == Actions::kPressureMappingAdd)
+        {
+            HandlePressureMappingAdd(action.value);
             return;
         }
 
@@ -2214,32 +2382,14 @@ private:
             return;
         }
 
-        std::string rawValue;
-        for (std::size_t ix = 4; ix < parts.size(); ++ix)
-        {
-            if (ix > 4)
-            {
-                rawValue += ':';
-            }
-            rawValue += parts[ix];
-        }
-
-        double numericValue = 0.0;
-        try
-        {
-            std::size_t consumed = 0;
-            numericValue = std::stod(rawValue, &consumed);
-            if (consumed != rawValue.size() || !std::isfinite(numericValue))
-            {
-                SetStatus("Refused: value must be a finite number");
-                return;
-            }
-        }
-        catch (...)
+        const std::string rawValue = ControllersLayout::JoinRemainingTokens(parts, 4);
+        const std::optional<double> parsedValue = ControllersLayout::ParseFiniteNumericToken(rawValue);
+        if (!parsedValue.has_value())
         {
             SetStatus("Refused: value must be a finite number");
             return;
         }
+        const double numericValue = *parsedValue;
         MidiInstrumentConfig out;
         std::string reason;
         bool presentationChanged = false;
@@ -2279,6 +2429,146 @@ private:
         {
             Commit(std::move(out));
             SetStatus("Deleted");
+        }
+        else
+        {
+            SetStatus("Refused: " + reason);
+        }
+    }
+
+    // value: "<controllerIx>:<messageIx>", with the typed hex text appended
+    // by the host after one more ':' (DispatchCurrentNodeActionWithAppendedValue).
+    void HandleConnectMessageCommit(const std::string& value)
+    {
+        const auto parts = Split(value, ':');
+        if (parts.size() < 3)
+        {
+            return;
+        }
+        const std::size_t controllerIx = ParseIndex(parts[0]);
+        const std::size_t messageIx = ParseIndex(parts[1]);
+        const std::string hexText = ControllersLayout::JoinRemainingTokens(parts, 2);
+        MidiInstrumentConfig out;
+        std::string reason;
+        if (m_vm.SetConnectMessage(controllerIx, messageIx, hexText, out, &reason))
+        {
+            Commit(std::move(out));
+            SetStatus("OK");
+        }
+        else
+        {
+            SetStatus("Refused: " + reason);
+        }
+    }
+
+    void HandleConnectMessageDelete(const std::string& value)
+    {
+        const auto parts = Split(value, ':');
+        if (parts.size() != 2)
+        {
+            return;
+        }
+        const std::size_t controllerIx = ParseIndex(parts[0]);
+        const std::size_t messageIx = ParseIndex(parts[1]);
+        MidiInstrumentConfig out;
+        std::string reason;
+        if (m_vm.DeleteConnectMessage(controllerIx, messageIx, out, &reason))
+        {
+            Commit(std::move(out));
+            SetStatus("Deleted");
+        }
+        else
+        {
+            SetStatus("Refused: " + reason);
+        }
+    }
+
+    void HandleConnectMessageAdd(const std::string& value)
+    {
+        const std::size_t controllerIx = ParseIndex(value);
+        MidiInstrumentConfig out;
+        std::string reason;
+        if (m_vm.AddConnectMessage(controllerIx, out, &reason))
+        {
+            Commit(std::move(out));
+            SetStatus("Added connect message");
+        }
+        else
+        {
+            SetStatus("Refused: " + reason);
+        }
+    }
+
+    // value: "<controllerIx>:<mappingIx>:<fieldToken>", with the typed
+    // number appended by the host after one more ':'.
+    void HandlePressureMappingFieldCommit(const std::string& value)
+    {
+        const auto parts = Split(value, ':');
+        if (parts.size() < 4)
+        {
+            return;
+        }
+        const std::size_t controllerIx = ParseIndex(parts[0]);
+        const std::size_t mappingIx = ParseIndex(parts[1]);
+        const std::optional<MidiConfigViewModel::PressureMappingField> field =
+            ControllersLayout::ParsePressureMappingFieldToken(parts[2]);
+        if (!field.has_value())
+        {
+            return;
+        }
+
+        const std::string rawValue = ControllersLayout::JoinRemainingTokens(parts, 3);
+        const std::optional<double> parsedValue = ControllersLayout::ParseFiniteNumericToken(rawValue);
+        if (!parsedValue.has_value())
+        {
+            SetStatus("Refused: value must be a finite number");
+            return;
+        }
+        const double numericValue = *parsedValue;
+        MidiInstrumentConfig out;
+        std::string reason;
+        if (m_vm.SetPressureMappingField(controllerIx, mappingIx, *field, numericValue, out, &reason))
+        {
+            Commit(std::move(out));
+            SetStatus("OK");
+        }
+        else
+        {
+            SetStatus("Refused: " + reason);
+        }
+    }
+
+    void HandlePressureMappingDelete(const std::string& value)
+    {
+        const auto parts = Split(value, ':');
+        if (parts.size() != 2)
+        {
+            return;
+        }
+        const std::size_t controllerIx = ParseIndex(parts[0]);
+        const std::size_t mappingIx = ParseIndex(parts[1]);
+        MidiInstrumentConfig out;
+        std::string reason;
+        if (m_vm.DeletePressureMapping(controllerIx, mappingIx, out, &reason))
+        {
+            Commit(std::move(out));
+            SetStatus("Deleted");
+        }
+        else
+        {
+            SetStatus("Refused: " + reason);
+        }
+    }
+
+    void HandlePressureMappingAdd(const std::string& value)
+    {
+        const std::size_t controllerIx = ParseIndex(value);
+        MidiInstrumentConfig out;
+        std::string reason;
+        if (m_vm.AddPressureMapping(controllerIx, out, &reason))
+        {
+            Commit(std::move(out));
+            SetStatus("Added pressure mapping");
         }
         else
         {
@@ -2327,20 +2617,14 @@ private:
         // (e.g. Add pressed on a freshly opened page with the combo never
         // touched); this must match what the row actually displayed.
         const std::string presetId = ControllersLayout::EffectiveAddPresetId(layouts, m_addPresetId);
-        constexpr std::string_view kCustomPrefix = "custom.";
 
-        if (presetId.starts_with(kCustomPrefix))
+        if (presetId == ControllersLayout::kCustomPresetOptionId)
         {
-            // BuildAddPresetOptions is the only source of a "custom." id, and it
-            // builds the token with MidiProfileKindName over exactly the four
-            // kinds MidiProfileKindFromName parses -- the parse cannot fail, so
-            // there is no refusal branch for it.
-            MidiProfileKind kind = MidiProfileKind::Generic;
-            MidiProfileKindFromName(presetId.substr(kCustomPrefix.size()), kind);
-            const std::string name = AvailableControllerName(instrument, MidiProfileKindDisplayName(kind));
+            const std::string name =
+                AvailableControllerName(instrument, ControllersLayout::kCustomPresetLabel);
             MidiInstrumentConfig out;
             std::string reason;
-            if (m_vm.AddController(name, kind, out, &reason))
+            if (m_vm.AddController(name, ControllersLayout::kCustomKind, out, &reason))
             {
                 Commit(std::move(out));
                 SetStatus("Added " + name);
@@ -2352,15 +2636,7 @@ private:
             return;
         }
 
-        const ControllerWizardDescriptor* descriptor = nullptr;
-        for (const ControllerWizardDescriptor& candidate : layouts)
-        {
-            if (candidate.id == presetId)
-            {
-                descriptor = &candidate;
-                break;
-            }
-        }
+        const ControllerWizardDescriptor* descriptor = FindControllerWizardDescriptor(layouts, presetId);
         if (descriptor == nullptr)
         {
             SetStatus("Refused: unknown controller preset");
@@ -3130,9 +3406,9 @@ private:
                                 row.Label(NodeIds::ControllerName(controllerIx),
                                          rowVm.name,
                                          labelStyle(ControllersLayout::kControllerNameWidth));
-                                row.Label(NodeIds::ControllerKind(controllerIx),
-                                         MidiProfileKindDisplayName(rowVm.kind),
-                                         labelStyle(ControllersLayout::kControllerKindWidth));
+                                row.Label(NodeIds::ControllerDevice(controllerIx),
+                                         ControllersLayout::ControllerDeviceLabel(rowVm, vm.Layouts()),
+                                         labelStyle(ControllersLayout::kControllerDeviceWidth));
                                 row.Label(NodeIds::ControllerBadge(controllerIx),
                                          "Released",
                                          labelStyle(ControllersLayout::kBlacklistedBadgeWidth));
@@ -3186,9 +3462,9 @@ private:
                             row.Label(NodeIds::ControllerName(controllerIx),
                                      rowVm.name,
                                      labelStyle(ControllersLayout::kControllerNameWidth));
-                            row.Label(NodeIds::ControllerKind(controllerIx),
-                                     MidiProfileKindDisplayName(rowVm.kind),
-                                     labelStyle(ControllersLayout::kControllerKindWidth));
+                            row.Label(NodeIds::ControllerDevice(controllerIx),
+                                     ControllersLayout::ControllerDeviceLabel(rowVm, vm.Layouts()),
+                                     labelStyle(ControllersLayout::kControllerDeviceWidth));
                             if (rowVm.kind == MidiProfileKind::Launchpad)
                             {
                                 std::string selectedVariant;
@@ -3414,6 +3690,121 @@ private:
                                     Actions::kControllerRename,
                                     NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
                                 button(ControllersLayout::kLifecycleRenameWidth));
+                        });
+                    // Connect messages (openSysEx): not a MidiConfigSection --
+                    // always shown, on every kind, independent of the kind's
+                    // section support -- so a hand-configured row can send a
+                    // device's connect message the same as a preset row can.
+                    scroll.Column(
+                        NodeIds::ConnectMessages(controllerIx),
+                        columnLayout(ui::Extent::Intrinsic(), ControllersLayout::kRowGap),
+                        [&](ui::Builder& connect) {
+                            connect.Label(NodeIds::ConnectMessagesHeading(controllerIx),
+                                         "Connect messages",
+                                         labelStyle(ControllersLayout::kControllerNameWidth));
+                            const std::size_t messageCount = vm.ConnectMessageCount(controllerIx);
+                            for (std::size_t messageIx = 0; messageIx < messageCount; ++messageIx)
+                            {
+                                connect.Row(
+                                    NodeIds::ConnectMessageRow(controllerIx, messageIx),
+                                    rowLayout(ControllersLayout::kMappingRowHeight, scrollWidth,
+                                             ControllersLayout::kEditorColumnGap),
+                                    [&](ui::Builder& row) {
+                                        ui::ControlStyle fieldStyle = fieldControl(
+                                            ControllersLayout::kConnectMessageFieldWidth,
+                                            ControllersLayout::kMappingRowHeight);
+                                        fieldStyle.caption = "Message";
+                                        row.TextField(
+                                            NodeIds::ConnectMessageField(controllerIx, messageIx),
+                                            "Message",
+                                            vm.ConnectMessageHex(controllerIx, messageIx),
+                                            ui::Action::WithValue(
+                                                Actions::kConnectMessageCommit,
+                                                std::to_string(controllerIx) + ":" +
+                                                    std::to_string(messageIx)),
+                                            fieldStyle);
+                                        row.Button(
+                                            NodeIds::ConnectMessageDelete(controllerIx, messageIx),
+                                            "x",
+                                            ui::Action::WithValue(
+                                                Actions::kConnectMessageDelete,
+                                                std::to_string(controllerIx) + ":" +
+                                                    std::to_string(messageIx)),
+                                            button(ControllersLayout::kDeleteButtonWidth,
+                                                  ControllersLayout::kMappingRowHeight));
+                                    });
+                            }
+                            connect.Button(
+                                NodeIds::ConnectMessageAdd(controllerIx),
+                                "Add",
+                                ui::Action::WithValue(Actions::kConnectMessageAdd,
+                                                      std::to_string(controllerIx)),
+                                button(ControllersLayout::kAddButtonWidth, 28.0f));
+                        });
+                    // Pressure mappings (config.pressureInput): also not a
+                    // MidiConfigSection, and shown independent of whether
+                    // ReconstructGridMappings folds a given one into a grid
+                    // row -- every mapping the row holds is listed here,
+                    // grid-attached or orphaned.
+                    scroll.Column(
+                        NodeIds::PressureMappings(controllerIx),
+                        columnLayout(ui::Extent::Intrinsic(), ControllersLayout::kRowGap),
+                        [&](ui::Builder& pressure) {
+                            pressure.Label(NodeIds::PressureMappingsHeading(controllerIx),
+                                          "Pressure mappings",
+                                          labelStyle(ControllersLayout::kControllerNameWidth));
+                            const std::size_t mappingCount = vm.PressureMappingCount(controllerIx);
+                            for (std::size_t mappingIx = 0; mappingIx < mappingCount; ++mappingIx)
+                            {
+                                pressure.Row(
+                                    NodeIds::PressureMappingRow(controllerIx, mappingIx),
+                                    rowLayout(ControllersLayout::kMappingRowHeight, scrollWidth,
+                                             ControllersLayout::kEditorColumnGap),
+                                    [&](ui::Builder& row) {
+                                        using PressureField = MidiConfigViewModel::PressureMappingField;
+                                        const auto emitPressureField =
+                                            [&](PressureField field, const char* caption) {
+                                                double current = 0.0;
+                                                vm.PressureMappingFieldValue(controllerIx, mappingIx,
+                                                                             field, current);
+                                                ui::ControlStyle pressureFieldStyle =
+                                                    fieldControl(66.0f, ControllersLayout::kMappingRowHeight);
+                                                pressureFieldStyle.caption = caption;
+                                                row.TextField(
+                                                    NodeIds::PressureMappingField(controllerIx, mappingIx,
+                                                                                  field),
+                                                    caption,
+                                                    std::to_string(
+                                                        static_cast<long long>(std::llround(current))),
+                                                    ui::Action::WithValue(
+                                                        Actions::kPressureMappingFieldCommit,
+                                                        std::to_string(controllerIx) + ":" +
+                                                            std::to_string(mappingIx) + ":" +
+                                                            ControllersLayout::PressureMappingFieldToken(field)),
+                                                    pressureFieldStyle);
+                                            };
+                                        emitPressureField(PressureField::Channel, "Ch");
+                                        emitPressureField(PressureField::Note, "Note");
+                                        emitPressureField(PressureField::GridSlotIx, "Slot");
+                                        emitPressureField(PressureField::GridX, "X");
+                                        emitPressureField(PressureField::GridY, "Y");
+                                        row.Button(
+                                            NodeIds::PressureMappingDelete(controllerIx, mappingIx),
+                                            "x",
+                                            ui::Action::WithValue(
+                                                Actions::kPressureMappingDelete,
+                                                std::to_string(controllerIx) + ":" +
+                                                    std::to_string(mappingIx)),
+                                            button(ControllersLayout::kDeleteButtonWidth,
+                                                  ControllersLayout::kMappingRowHeight));
+                                    });
+                            }
+                            pressure.Button(
+                                NodeIds::PressureMappingAdd(controllerIx),
+                                "Add",
+                                ui::Action::WithValue(Actions::kPressureMappingAdd,
+                                                      std::to_string(controllerIx)),
+                                button(ControllersLayout::kAddButtonWidth, 28.0f));
                         });
                     for (MidiConfigSection section : rowVm.sections)
                     {

@@ -39,8 +39,12 @@ async function assertNoContentSidebarOverlap(page: Page): Promise<void> {
 }
 
 const TWISTER_DISPLAY_NAME = "MIDI Fighter Twister";
-// The row shows the persisted hardware-kind identity; "MF Twister" is the
-// add-controller dropdown's label for the same kind.
+// Stale: the row's device label now shows the resolved preset's device name
+// (TWISTER_DISPLAY_NAME for a row whose persisted wizard id resolves), or the
+// bound input device as a fallback, never this kind-identity string. Still
+// referenced by the manually-added-record test below, whose whole flow (a
+// kind-select add row, no longer part of the page) needs updating too; not
+// fixed here since this spec cannot be run in this environment.
 const TWISTER_KIND_LABEL = "twister";
 const TWISTER_WIZARD_DEFAULTS = [
   "Hold Reset",
@@ -362,7 +366,7 @@ async function expectReconciledEndpoints(page: Page, index: number, ordinal: num
 async function assertActiveTwisterRecord(page: Page, index: number, name: string, ordinal: number, slot: string): Promise<void> {
   const row = controllerRow(page, index);
   await expect(row.locator(synthNode(`runtime.controllers.row.${index}.name`))).toHaveText(name);
-  await expect(row.locator(synthNode(`runtime.controllers.row.${index}.kind`))).toHaveText(TWISTER_KIND_LABEL);
+  await expect(row.locator(synthNode(`runtime.controllers.row.${index}.device`))).toHaveText(TWISTER_DISPLAY_NAME);
   await expectReconciledEndpoints(page, index, ordinal);
   // Reconfigure and Blacklist are offered only when the record's persisted
   // wizard id resolves in the registry, so their presence is how an installed
@@ -544,7 +548,7 @@ test("controller wizard actions are absent on a manually added record", async ({
 
   const row = controllerRow(page, 0);
   await expect(row.locator(synthNode("runtime.controllers.row.0.name"))).toHaveText("Hand Wired");
-  await expect(row.locator(synthNode("runtime.controllers.row.0.kind"))).toHaveText(TWISTER_KIND_LABEL);
+  await expect(row.locator(synthNode("runtime.controllers.row.0.device"))).toHaveText(TWISTER_KIND_LABEL);
   await expect(row.locator(synthNode("runtime.controllers.row.0.rename"))).toBeVisible();
   await expect(row.locator(synthNode("runtime.controllers.row.0.delete"))).toBeVisible();
   // A manual record carries no persisted wizard id, so the registry-gated

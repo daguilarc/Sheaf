@@ -15,8 +15,9 @@ namespace synth {
 // device enumeration or reconciliation.
 class ControllerWizardDiscoveryCache final {
 public:
-    // Defaults to the Twister-only registry so a cache nobody configures
-    // behaves exactly as it did before app device defaults existed. A host
+    // Defaults to the library's own MfTwister/Launchpad/WRLD.Bldr registry
+    // so a cache nobody configures behaves exactly as it did before app
+    // device defaults existed. A host
     // with an app catalog calls this once with
     // MakeControllerWizardRegistry(engine.MidiCatalog()).
     void SetRegistry(std::vector<ControllerWizardDescriptor> registry)

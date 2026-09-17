@@ -654,12 +654,12 @@ void TestControllerDraftActionsReachControllerSurface()
 
     fixture.component.ShowPage(synth::runtime_ui::RuntimeMainPage::Controllers);
     fixture.component.DispatchAction(synth::ui::Action::WithValue(
-        synth::runtime_ui::Actions::kAddPresetDraft, "custom.generic"));
+        synth::runtime_ui::Actions::kAddPresetDraft, "custom"));
 
     const synth::ui::NodeTree tree = fixture.component.BuildTree();
     const synth::ui::Node* addPreset =
         FindNodeById(tree, synth::runtime_ui::NodeIds::kAddPreset);
-    Require(addPreset != nullptr && addPreset->selectedOption == "custom.generic",
+    Require(addPreset != nullptr && addPreset->selectedOption == "custom",
             "controller add-preset draft routes through runtime component");
 
     fixture.services.controllerDevices.inputs.push_back(
