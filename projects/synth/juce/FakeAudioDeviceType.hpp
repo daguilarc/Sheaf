@@ -37,8 +37,11 @@
 // trace across every device this type has created, so tests can assert the
 // stop/reprepare/restart ordering a device switch is required to follow.
 
+#include "Runtime.hpp"
+
 #include <juce_audio_devices/juce_audio_devices.h>
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -297,6 +300,23 @@ inline void FakeAudioDevice::RunBlock(const float* const* inputs, float* const* 
     }
     callback_->audioDeviceIOCallbackWithContext(inputs, activeInputChannels_.countNumberOfSetBits(), outputs,
                                                 activeOutputChannels_.countNumberOfSetBits(), numSamples, {});
+}
+
+// The shared beforeStart hook: registers a FakeAudioDeviceType before
+// Runtime<App>::Start() reaches real hardware. Every host that constructs a
+// RuntimeShellSession, RuntimeSessionOwnerFor or MakeRuntimeSessionOwner for
+// a real app (App::Config().numAudioOutputs > 0) without adding a device
+// type first opens the developer's actual speakers, since JUCE only creates
+// the real platform device types when its type list is still empty; use
+// this instead of adding another copy, unless the caller needs the
+// FakeAudioDeviceType pointer itself (this returns void).
+template <typename App>
+void RegisterFakeAudioDeviceType(synth_runtime::Runtime<App>& runtime) {
+    const synth::RuntimeConfig config = App::Config();
+    auto deviceType = std::make_unique<FakeAudioDeviceType>(
+        juce::StringArray{"Fake In A", "Fake In B"}, juce::StringArray{"Fake Out A", "Fake Out B"},
+        /*maxInputChannels=*/0, config.numAudioOutputs);
+    runtime.DeviceManager().addAudioDeviceType(std::move(deviceType));
 }
 
 }  // namespace synth_juce

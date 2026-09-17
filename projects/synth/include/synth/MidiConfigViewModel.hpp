@@ -410,9 +410,13 @@ struct PresentationRow {
 
 struct SectionPresentation {
     std::vector<PresentationRow> rows;
-    // Pressure entries not claimed by an exact visible grid pair. They are
-    // never rendered or edited, and every System Messages flush appends them
-    // verbatim before profile normalization/validation.
+    // Pressure entries this open section's rows never claimed. Kept current
+    // across the whole open session: refreshed at open time by
+    // BuildFreshPresentation, and mirrored by AddPressureMapping/
+    // SetPressureMappingField/DeletePressureMapping whenever one of them
+    // touches an entry here, so a System Messages or grid flush's writeback
+    // (FlushSectionPresentationToSlot) carries the current pressure list
+    // forward instead of the stale one from when the section opened.
     std::vector<PolyphonicPressureMapping> hiddenPressureMappings;
 };
 
@@ -459,8 +463,8 @@ public:
     // lookup resolves against: installing a preset, comparing a row's
     // config against the preset that created it, and restoring a diverged
     // row. Defaults to MakeControllerWizardRegistry(
-    // MidiAppCatalog{}), i.e. the library's Twister-only registry, so every
-    // existing construction path behaves as today; a host with an app
+    // MidiAppCatalog{}), i.e. the library's own MfTwister/Launchpad/WRLD.Bldr
+    // registry, so every existing construction path behaves as today; a host with an app
     // catalog calls SetLayouts(MakeControllerWizardRegistry(engine.MidiCatalog()))
     // once at construction, beside SetMessageCatalog.
     void SetLayouts(std::vector<ControllerWizardDescriptor> layouts);
@@ -556,6 +560,66 @@ public:
 
     bool SetEndpointRef(std::size_t controllerIx, bool output, MidiEndpointRef ref,
                         MidiInstrumentConfig& out) const;
+
+    // The row's connect-time messages (config.openSysEx), independent of
+    // kind and of any mapping: a preset is only a starting point, so a
+    // hand-configured row can add, edit and remove these the same as a
+    // preset row's. Each is shown as FormatSysExHex's hex text.
+    std::size_t ConnectMessageCount(std::size_t controllerIx) const;
+    std::string ConnectMessageHex(std::size_t controllerIx, std::size_t messageIx) const;
+
+    // Appends one new message, {0xF0, 0xF7} (an empty but already-valid
+    // message), so it shows and edits immediately. Refused (false, `out`
+    // untouched) for an out-of-range controllerIx.
+    bool AddConnectMessage(std::size_t controllerIx, MidiInstrumentConfig& out,
+                           std::string* reason = nullptr) const;
+
+    // Parses `hexText` with ParseSysExHex and replaces the message at
+    // messageIx only if the parsed bytes pass IsValidSysExMessage; refused
+    // (false, `out` untouched) otherwise, or for an out-of-range
+    // controllerIx/messageIx.
+    bool SetConnectMessage(std::size_t controllerIx, std::size_t messageIx, const std::string& hexText,
+                          MidiInstrumentConfig& out, std::string* reason = nullptr) const;
+
+    bool DeleteConnectMessage(std::size_t controllerIx, std::size_t messageIx, MidiInstrumentConfig& out,
+                             std::string* reason = nullptr) const;
+
+    // A row's polyphonic-pressure mappings (config.pressureInput->mappings):
+    // shown and editable regardless of whether ReconstructGridMappings folds
+    // a given one into a grid row (it still occupies that row's grid cell)
+    // or leaves it in hiddenPressureMappings (no grid row to fold into) --
+    // both are the same persisted list, read directly here, independent of
+    // any MidiConfigSection's open/closed presentation.
+    enum class PressureMappingField { Channel, Note, GridSlotIx, GridX, GridY };
+
+    std::size_t PressureMappingCount(std::size_t controllerIx) const;
+
+    // Mirrors RowFieldValue's contract: false (leaving `out` untouched) for
+    // an out-of-range controllerIx/mappingIx; otherwise writes the field's
+    // current value and returns true.
+    bool PressureMappingFieldValue(std::size_t controllerIx, std::size_t mappingIx, PressureMappingField field,
+                                   double& out) const;
+
+    // Appends one new mapping at the lowest note (channel 0) not already
+    // used by this row's pressure mappings, gridSlotIx/X/Y all 0 -- an
+    // already-valid, already-unique address, so it shows and edits
+    // immediately without a spurious refusal on the row it just joined.
+    bool AddPressureMapping(std::size_t controllerIx, MidiInstrumentConfig& out,
+                           std::string* reason = nullptr) const;
+
+    bool DeletePressureMapping(std::size_t controllerIx, std::size_t mappingIx, MidiInstrumentConfig& out,
+                              std::string* reason = nullptr) const;
+
+    // Refused (false, `out` untouched) if the value is not a whole number
+    // (2.6 refuses on every field, not just rounds), if it is out of its
+    // field's domain once it is a whole number (Channel 0-15, Note 0-127,
+    // GridSlotIx a non-negative integer; GridX/GridY accept any integer,
+    // including negative), or if editing Channel or Note would collide with
+    // another mapping's address on this row -- the last two enforced by
+    // SlotValidForKind/PolyphonicPressureConfigError, the same gate
+    // AddController/ReplaceController already run.
+    bool SetPressureMappingField(std::size_t controllerIx, std::size_t mappingIx, PressureMappingField field,
+                                 double value, MidiInstrumentConfig& out, std::string* reason = nullptr) const;
 
     // The Launchpad model a row addresses, and pointing it at another one.
     // The model is recorded on the profile, so a row with no mappings still
@@ -733,6 +797,19 @@ private:
     std::vector<MidiMappingRowVM> BuildSectionRows(std::size_t controllerIx, MidiConfigSection section) const;
     detail::SectionPresentation& PresentationFor(std::size_t controllerIx, MidiConfigSection section) const;
     void DiscardPresentation(const std::string& name, MidiConfigSection section);
+
+    // If the given controller's System Messages section is currently open,
+    // keeps that open session's hiddenPressureMappings snapshot (see
+    // SectionPresentation's comment) in step with a pressure-mapping add,
+    // edit or delete made through AddPressureMapping/SetPressureMappingField/
+    // DeletePressureMapping -- otherwise the next flush of that open section
+    // would write back the pressure list as it stood when the section
+    // opened, silently discarding the change. A no-op when the section is
+    // not open, or when `before` names an entry the section's rows already
+    // claim (edited/removed by that row's own flush instead).
+    void MirrorPressureMappingChangeIntoOpenSession(
+        std::size_t controllerIx, const std::optional<PolyphonicPressureMapping>& before,
+        const std::optional<PolyphonicPressureMapping>& after) const;
 
     MidiInstrumentConfig instrument_;
     MidiConnectionState connection_;

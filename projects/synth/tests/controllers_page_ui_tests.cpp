@@ -856,18 +856,122 @@ void TestAddCustomGenericYieldsAnEmptyGenericRecord()
     surface.RefreshOnTick();
 
     surface.DispatchAction(synth::ui::Action::WithValue(
-        synth::runtime_ui::Actions::kAddPresetDraft, "custom.generic"));
+        synth::runtime_ui::Actions::kAddPresetDraft, "custom"));
     surface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kAddController));
 
-    Require(harness.commits == 1, "add Custom (Generic) commits");
-    Require(harness.instrument.controllers.size() == 4, "add Custom (Generic) appends one controller");
+    Require(harness.commits == 1, "add Custom commits");
+    Require(harness.instrument.controllers.size() == 4, "add Custom appends one controller");
     const synth::MidiControllerSlot& added = harness.instrument.controllers[3];
-    Require(added.name == "Generic", "a Custom add derives its name from the kind's display name");
+    Require(added.name == "Custom", "a Custom add is named Custom");
     Require(added.kind == synth::MidiProfileKind::Generic && added.wizardId == std::nullopt,
-            "a Custom add carries the chosen kind and no wizard id");
+            "a Custom add is always the Generic kind and carries no wizard id");
     Require(!added.config.encoderInput.has_value() && !added.input.IsConfigured() &&
                 !added.output.IsConfigured(),
             "a Custom add seeds an empty record: no encoder block, no endpoints");
+}
+
+void TestAddPresetDropdownListsRegistryDescriptorsThenOneCustomEntry()
+{
+    // Without a catalog: the library fallback registry (Twister, Launchpad,
+    // WRLD.Bldr), then exactly one Custom entry, not one Custom(<kind>)
+    // entry per registry descriptor.
+    const std::vector<synth::ControllerWizardDescriptor> libraryRegistry =
+        synth::MakeControllerWizardRegistry(synth::MidiAppCatalog{});
+    const std::vector<synth::ui::ControlOption> libraryOptions =
+        synth::runtime_ui::ControllersLayout::BuildAddPresetOptions(libraryRegistry);
+    Require(libraryOptions.size() == libraryRegistry.size() + 1,
+            "the library-registry dropdown is the registry plus exactly one Custom entry");
+    for (std::size_t ix = 0; ix < libraryRegistry.size(); ++ix)
+    {
+        Require(libraryOptions[ix].id == libraryRegistry[ix].id &&
+                    libraryOptions[ix].label == libraryRegistry[ix].displayName,
+                "each registry descriptor keeps its own id and display name in the dropdown");
+    }
+    Require(libraryOptions.back().id == "custom" && libraryOptions.back().label == "Custom",
+            "the dropdown's last entry is the plain Custom option");
+
+    // With a catalog: an app-supplied registry of arbitrary size gets the
+    // same treatment -- its descriptors, then one Custom entry.
+    synth::MidiAppCatalog catalog;
+    catalog.deviceDefaults.push_back({.id = "app.device.one",
+                                      .displayName = "App Device One",
+                                      .kind = synth::MidiProfileKind::Generic,
+                                      .inputAliases = {"App Device One"},
+                                      .outputAliases = {"App Device One"},
+                                      .config = {}});
+    catalog.deviceDefaults.push_back({.id = "app.device.two",
+                                      .displayName = "App Device Two",
+                                      .kind = synth::MidiProfileKind::MfTwister,
+                                      .inputAliases = {"App Device Two"},
+                                      .outputAliases = {"App Device Two"},
+                                      .config = {}});
+    const std::vector<synth::ControllerWizardDescriptor> appRegistry =
+        synth::MakeControllerWizardRegistry(catalog);
+    // This catalog covers Generic and MfTwister, so a device must still stay
+    // reachable for Launchpad and WRLD.Bldr: the registry appends a library
+    // descriptor for each, before the dropdown's one Custom entry (frogg3rs'
+    // real shape: its six devices cover MfTwister/Generic/Launchpad, so only
+    // WRLD.Bldr gets appended there).
+    Require(appRegistry.size() == 4, "the app registry is its 2 catalog devices plus library Launchpad and"
+                                     " WRLD.Bldr, the 2 kinds this catalog does not cover");
+    const std::vector<synth::ui::ControlOption> appOptions =
+        synth::runtime_ui::ControllersLayout::BuildAddPresetOptions(appRegistry);
+    Require(appOptions.size() == 5, "an app catalog's dropdown is its 2 devices, the 2 appended library"
+                                    " descriptors, and one Custom entry");
+    Require(appOptions[0].id == "app.device.one" && appOptions[1].id == "app.device.two",
+            "an app catalog's descriptors keep their own order and ids first");
+    Require(appOptions[2].id == "library.launchpad" && appOptions[3].id == "library.wrldbldr",
+            "library descriptors for uncovered kinds follow the catalog's own devices");
+    Require(appOptions.back().id == "custom" && appOptions.back().label == "Custom",
+            "an app catalog's dropdown also ends in exactly one Custom entry");
+}
+
+void TestAddLibraryLaunchpadAndWrldBldrGiveDefaultConfigAndDeviceLabel()
+{
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    auto surface = harness.MakeSurface();
+    surface.SetEnumerateDevices(harness.devices);
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kAddPresetDraft, "library.launchpad"));
+    surface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kAddController));
+    Require(harness.commits == 1, "add library Launchpad commits");
+    Require(harness.instrument.controllers.size() == 1, "add library Launchpad appends one controller");
+    const synth::MidiControllerSlot& launchpad = harness.instrument.controllers[0];
+    Require(launchpad.kind == synth::MidiProfileKind::Launchpad, "the Launchpad row carries the Launchpad kind");
+    Require(launchpad.wizardId == "library.launchpad", "the Launchpad row carries the library descriptor's id");
+    const synth::MidiControllerProfileConfig expectedLaunchpad = synth::LaunchpadDefaultProfileConfig();
+    Require(launchpad.config.systemMessages.size() == expectedLaunchpad.systemMessages.size(),
+            "the Launchpad row's config matches the library default's system messages");
+
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kAddPresetDraft, "library.wrldbldr"));
+    surface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kAddController));
+    Require(harness.commits == 2, "add library WRLD.Bldr commits");
+    Require(harness.instrument.controllers.size() == 2, "add library WRLD.Bldr appends one controller");
+    const synth::MidiControllerSlot& wrldbldr = harness.instrument.controllers[1];
+    Require(wrldbldr.kind == synth::MidiProfileKind::WrldBldr, "the WRLD.Bldr row carries the WrldBldr kind");
+    Require(wrldbldr.wizardId == "library.wrldbldr", "the WRLD.Bldr row carries the library descriptor's id");
+    const synth::MidiControllerProfileConfig expectedWrldBldr = synth::WrldBldrDefaultProfileConfig();
+    Require(wrldbldr.config.systemMessages.size() == expectedWrldBldr.systemMessages.size(),
+            "the WRLD.Bldr row's config matches the library default's system messages");
+
+    harness.connection.controllers.resize(harness.instrument.controllers.size());
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    const synth::ui::NodeTree tree = surface.BuildTree();
+    const synth::ui::Node* launchpadDevice =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerDevice(0));
+    const synth::ui::Node* wrldbldrDevice =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerDevice(1));
+    Require(launchpadDevice != nullptr && launchpadDevice->text == "Launchpad",
+            "the Launchpad row's device label reads the library descriptor's display name");
+    Require(wrldbldrDevice != nullptr && wrldbldrDevice->text == "WRLD.Bldr",
+            "the WRLD.Bldr row's device label reads the library descriptor's display name");
 }
 
 void TestWizardIgnoreCommitsOneInertBlacklistedRecord()
@@ -1231,18 +1335,46 @@ void TestControllerRowsStayReadableWithLargeLists()
             "large controller list tail stays inside scroll content");
 }
 
-void TestControllerKindLabelsShowTheCombinedDisplayNames()
+void TestControllerDeviceLabelsIdentifyThePresetOrBoundInputDevice()
 {
     TestHarness harness;
     harness.instrument.controllers.clear();
     harness.connection.controllers.clear();
-    synth::MidiControllerSlot twister;
-    twister.name = "twister";
-    twister.kind = synth::MidiProfileKind::MfTwister;
-    twister.config = synth::MfTwisterDefaultProfileConfig();
-    Require(harness.instrument.AddController(std::move(twister)), "add Twister slot");
+
+    // (a) a row added from a device preset: the resolved wizard id's
+    // descriptor names the row, not its internal profile kind.
+    synth::MidiControllerSlot fromPreset;
+    fromPreset.name = "from preset";
+    fromPreset.kind = synth::MidiProfileKind::MfTwister;
+    fromPreset.config = synth::MfTwisterDefaultProfileConfig();
+    fromPreset.wizardId = "com.sheaf.midi-fighter-twister";
+    fromPreset.input = {.identifier = "twister-in", .name = "Midi Fighter Twister"};
+    fromPreset.output = {.identifier = "twister-out", .name = "Midi Fighter Twister"};
+    Require(harness.instrument.AddController(fromPreset), "add preset-created controller");
     harness.connection.controllers.push_back({});
-    Require(harness.instrument.AddController(MakeGenericSlot("blank")), "add Generic slot");
+
+    // (b) a Custom row: no wizard id resolves, so the label falls back to
+    // the MIDI input device the row is bound to, the same identity the
+    // "MIDI in:" label already shows on a blacklisted row.
+    synth::MidiControllerSlot custom = MakeGenericSlot("custom row");
+    custom.input = {.identifier = "custom-in", .name = "Custom Input"};
+    Require(harness.instrument.AddController(custom), "add Custom controller");
+    harness.connection.controllers.push_back({});
+
+    // A Custom row bound to no device: the fallback still resolves, to the
+    // same "(none)" the stored-endpoint label uses.
+    Require(harness.instrument.AddController(MakeGenericSlot("unbound custom")),
+            "add unbound Custom controller");
+    harness.connection.controllers.push_back({});
+
+    // (c) a blacklisted row from a preset: the same descriptor lookup
+    // applies once the row is Released.
+    synth::MidiControllerSlot blacklisted = fromPreset;
+    blacklisted.name = "blacklisted preset";
+    blacklisted.disposition = synth::MidiControllerDisposition::Blacklisted;
+    blacklisted.dormantConfig = blacklisted.config;
+    blacklisted.config = {};
+    Require(harness.instrument.AddController(blacklisted), "add blacklisted preset controller");
     harness.connection.controllers.push_back({});
 
     auto surface = harness.MakeSurface();
@@ -1250,14 +1382,23 @@ void TestControllerKindLabelsShowTheCombinedDisplayNames()
     surface.RefreshOnTick();
     const synth::ui::NodeTree tree = surface.BuildTree();
 
-    const synth::ui::Node* twisterKind =
-        FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerKind(0));
-    const synth::ui::Node* genericKind =
-        FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerKind(1));
-    Require(twisterKind != nullptr && twisterKind->text == "MF Twister",
-            "the Active row's kind label reads MF Twister for a Twister slot");
-    Require(genericKind != nullptr && genericKind->text == "Generic",
-            "the Active row's kind label reads Generic for a Generic slot");
+    const synth::ui::Node* presetDevice =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerDevice(0));
+    const synth::ui::Node* customDevice =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerDevice(1));
+    const synth::ui::Node* unboundCustomDevice =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerDevice(2));
+    const synth::ui::Node* blacklistedDevice =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerDevice(3));
+
+    Require(presetDevice != nullptr && presetDevice->text == "MIDI Fighter Twister",
+            "a row created from a device preset shows the preset's descriptor name");
+    Require(customDevice != nullptr && customDevice->text == "Custom Input (custom-in)",
+            "a Custom row with no resolved preset shows the MIDI input device it is bound to");
+    Require(unboundCustomDevice != nullptr && unboundCustomDevice->text == "(none)",
+            "a Custom row bound to no device shows the same (none) the MIDI in: label uses");
+    Require(blacklistedDevice != nullptr && blacklistedDevice->text == "MIDI Fighter Twister",
+            "a blacklisted row created from a device preset still shows the preset's descriptor name");
 }
 
 void TestControllerLifecycleActionsUseTheNormalCommitAndSavePath()
@@ -1972,12 +2113,786 @@ void TestLaunchpadRowOffersVariantAndRetargetsItsPads()
             "the selector shows what the row now records");
 }
 
+void TestConnectMessageShowsOnAnAbletonStyleRowsExpandedConfiguration()
+{
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    // The real Akai APC40 mkII Ableton-mode connect message
+    // (app/FroggersMidiCatalog.hpp's Apc40AbletonDeviceDefault), not a
+    // placeholder byte string.
+    synth::MidiControllerSlot ableton = MakeGenericSlot("Ableton APC40");
+    ableton.config.openSysEx.push_back({0xF0, 0x47, 0x7F, 0x29, 0x60, 0x00, 0x04, 0x41, 0x09, 0x07, 0x01, 0xF7});
+    Require(harness.instrument.AddController(ableton), "add Ableton-style controller");
+    harness.connection.controllers.push_back({});
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.ViewModel().ToggleConfig(0);
+    const synth::ui::NodeTree tree = surface.BuildTree();
+
+    const synth::ui::Node* field =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::ConnectMessageField(0, 0));
+    Require(field != nullptr && field->text == "F0 47 7F 29 60 00 04 41 09 07 01 F7",
+            "an Ableton-style row's connect message shows as hex bytes in its expanded configuration");
+    const synth::ui::Node* heading =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::ConnectMessagesHeading(0));
+    Require(heading != nullptr && heading->text == "Connect messages",
+            "the connect-messages area has a visible heading");
+    const synth::ui::Node* addButton =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::ConnectMessageAdd(0));
+    Require(addButton != nullptr, "the connect-messages area offers an Add button");
+    const synth::ui::Node* deleteButton =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::ConnectMessageDelete(0, 0));
+    Require(deleteButton != nullptr, "the stored connect message has a delete button");
+}
+
+void TestConnectMessageEditCommitsValidAndRefusesInvalidUnchanged()
+{
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    // Starts with a placeholder message; the edit below replaces it with the
+    // real Akai APC40 mkII Ableton-mode message
+    // (app/FroggersMidiCatalog.hpp's Apc40AbletonDeviceDefault).
+    synth::MidiControllerSlot ableton = MakeGenericSlot("Ableton APC40");
+    ableton.config.openSysEx.push_back({0xF0, 0x7E, 0x00, 0xF7});
+    Require(harness.instrument.AddController(ableton), "add Ableton-style controller");
+    harness.connection.controllers.push_back({});
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.ViewModel().ToggleConfig(0);
+
+    // A valid edit (F0 ... F7, data bytes in 00-7F) commits and updates the
+    // field text.
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kConnectMessageCommit,
+        "0:0:F0 47 7F 29 60 00 04 41 09 07 01 F7"));
+    Require(harness.commits == 1 && surface.StatusText() == "OK",
+            "a valid connect-message edit commits");
+    Require(harness.instrument.controllers[0].config.openSysEx[0] ==
+                (std::vector<std::uint8_t>{0xF0, 0x47, 0x7F, 0x29, 0x60, 0x00, 0x04, 0x41, 0x09, 0x07, 0x01,
+                                          0xF7}),
+            "the committed instrument carries the parsed bytes");
+    const synth::ui::NodeTree afterValid = surface.BuildTree();
+    Require(FindNodeById(afterValid, synth::runtime_ui::NodeIds::ConnectMessageField(0, 0))->text ==
+                "F0 47 7F 29 60 00 04 41 09 07 01 F7",
+            "the field shows the newly committed message");
+
+    // An edit that is not a single SysEx message refuses and changes
+    // nothing: not F0-led, not F7-tailed, and a data byte over 0x7F.
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kConnectMessageCommit, "0:0:00 F7"));
+    Require(harness.commits == 1, "a non-F0-led edit is refused, not committed");
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kConnectMessageCommit, "0:0:F0 00"));
+    Require(harness.commits == 1, "a non-F7-tailed edit is refused, not committed");
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kConnectMessageCommit, "0:0:F0 80 F7"));
+    Require(harness.commits == 1, "a data byte over 0x7F is refused, not committed");
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kConnectMessageCommit, "0:0:not hex"));
+    Require(harness.commits == 1, "malformed hex is refused, not committed");
+    Require(surface.StatusText().starts_with("Refused"), "the refusal sets a status message");
+    Require(harness.instrument.controllers[0].config.openSysEx[0] ==
+                (std::vector<std::uint8_t>{0xF0, 0x47, 0x7F, 0x29, 0x60, 0x00, 0x04, 0x41, 0x09, 0x07, 0x01,
+                                          0xF7}),
+            "every refused edit leaves the stored message exactly as the last valid commit left it");
+    const synth::ui::NodeTree afterRefusals = surface.BuildTree();
+    Require(FindNodeById(afterRefusals, synth::runtime_ui::NodeIds::ConnectMessageField(0, 0))->text ==
+                "F0 47 7F 29 60 00 04 41 09 07 01 F7",
+            "the displayed field is unchanged by every refused edit");
+}
+
+void TestConnectMessageAddAndDelete()
+{
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    Require(harness.instrument.AddController(MakeGenericSlot("Custom row")), "add a Custom row");
+    harness.connection.controllers.push_back({});
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.ViewModel().ToggleConfig(0);
+
+    Require(FindNodeById(surface.BuildTree(), synth::runtime_ui::NodeIds::ConnectMessageField(0, 0)) ==
+                nullptr,
+            "a Custom row starts with no connect messages");
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kConnectMessageAdd, "0"));
+    Require(harness.commits == 1 && harness.instrument.controllers[0].config.openSysEx.size() == 1,
+            "Add appends one connect message");
+    Require(harness.instrument.controllers[0].config.openSysEx[0] ==
+                (std::vector<std::uint8_t>{0xF0, 0xF7}),
+            "a newly added connect message starts as an already-valid empty message");
+
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kConnectMessageDelete, "0:0"));
+    Require(harness.commits == 2 && harness.instrument.controllers[0].config.openSysEx.empty(),
+            "Delete removes the connect message");
+    Require(FindNodeById(surface.BuildTree(), synth::runtime_ui::NodeIds::ConnectMessageField(0, 0)) ==
+                nullptr,
+            "the deleted connect message's field is gone from the tree");
+}
+
+void TestPressureMappingShowsGridAttachedAndOrphanedThenEditCommits()
+{
+    namespace NodeIds = synth::runtime_ui::NodeIds;
+    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
+
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    synth::MidiControllerSlot wrld = MakeWrldBldrSlot("wrld");
+    synth::GridButton button;
+    button.kind = synth::MidiProfileKind::WrldBldr;
+    button.channel = 2;
+    button.x = 3;
+    button.y = 4;
+    button.gridSlotIx = 6;
+    synth::GridMappingExpansion expansion;
+    Require(synth::ExpandGridButton(button, expansion), "expand a grid button with pressure");
+    Require(expansion.pressureMappings.size() == 1, "one pressure mapping for one grid button");
+    const std::uint8_t gridNote = expansion.pressureMappings[0].address.note;
+    wrld.config.systemMessages = expansion.systemMessages;
+    synth::PolyphonicPressureMidiInConfig pressure;
+    pressure.mappings = expansion.pressureMappings;
+    // An orphaned mapping: its address matches no system-message association,
+    // so ReconstructGridMappings cannot fold it into any grid row -- the page
+    // reads config.pressureInput->mappings directly instead, so this one
+    // shows too, with no grid row of its own to fold into.
+    const std::uint8_t orphanNoteValue = static_cast<std::uint8_t>((gridNote + 1) % 0x80);
+    synth::PolyphonicPressureMapping orphan;
+    orphan.address = synth::MidiNoteAddress{.channel = 9, .note = orphanNoteValue};
+    orphan.pressure = synth::MessageIn::GridPressureChange(0, 12, 1, 2, 0);
+    pressure.mappings.push_back(orphan);
+    wrld.config.pressureInput = pressure;
+    Require(harness.instrument.AddController(wrld), "add WRLD.Bldr controller with pressure mappings");
+    harness.connection.controllers.push_back({});
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.ViewModel().ToggleConfig(0);
+    const synth::ui::NodeTree tree = surface.BuildTree();
+
+    const synth::ui::Node* gridChannel =
+        FindNodeById(tree, NodeIds::PressureMappingField(0, 0, PressureField::Channel));
+    const synth::ui::Node* gridNoteNode =
+        FindNodeById(tree, NodeIds::PressureMappingField(0, 0, PressureField::Note));
+    Require(gridChannel != nullptr && gridChannel->text == "2",
+            "the grid-attached pressure mapping's channel shows on the page");
+    Require(gridNoteNode != nullptr && gridNoteNode->text == std::to_string(gridNote),
+            "the grid-attached pressure mapping's note shows on the page");
+    const synth::ui::Node* orphanChannel =
+        FindNodeById(tree, NodeIds::PressureMappingField(0, 1, PressureField::Channel));
+    const synth::ui::Node* orphanNote =
+        FindNodeById(tree, NodeIds::PressureMappingField(0, 1, PressureField::Note));
+    const synth::ui::Node* orphanGridX =
+        FindNodeById(tree, NodeIds::PressureMappingField(0, 1, PressureField::GridX));
+    Require(orphanChannel != nullptr && orphanChannel->text == "9",
+            "the orphaned pressure mapping (no grid row to fold into) still shows on the page");
+    Require(orphanNote != nullptr && orphanNote->text == std::to_string(orphanNoteValue),
+            "the orphaned pressure mapping's note shows on the page");
+    Require(orphanGridX != nullptr && orphanGridX->text == "1",
+            "the orphaned pressure mapping's grid X shows on the page");
+
+    // Edit the orphan's grid slot through its own field-commit path
+    // (kPressureMappingFieldCommit), built the same way as the mapping rows'
+    // own kMappingFieldCommit but a distinct action.
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kPressureMappingFieldCommit,
+        std::to_string(0) + ":" + std::to_string(1) + ":" +
+            std::to_string(static_cast<int>(PressureField::GridSlotIx)) + ":9"));
+    Require(harness.commits == 1 && surface.StatusText() == "OK", "a valid pressure-mapping edit commits");
+    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].pressure.gridSlotIx == 9,
+            "the committed instrument carries the edited grid slot");
+
+    // Moving the orphan's channel onto the grid mapping's own channel does
+    // not yet collide (their notes still differ) and commits -- to the
+    // channel field, not the note (a Note edit that writes Channel instead
+    // would also pass a same-value coincidence, so this checks the address
+    // field the Channel edit was NOT supposed to touch too).
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kPressureMappingFieldCommit,
+        std::to_string(0) + ":" + std::to_string(1) + ":" +
+            std::to_string(static_cast<int>(PressureField::Channel)) + ":2"));
+    Require(harness.commits == 2, "a non-colliding channel edit commits");
+    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].address.channel == 2,
+            "the committed instrument carries the edited channel");
+    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].address.note ==
+                orphanNoteValue,
+            "the channel edit left the note field untouched");
+
+    // A separate, non-colliding Note edit writes the note field, not the
+    // channel: the inverse direction of the same M9 check.
+    const std::uint8_t nonCollidingNote = static_cast<std::uint8_t>((gridNote + 2) % 0x80);
+    Require(nonCollidingNote != gridNote && nonCollidingNote != orphanNoteValue,
+            "the chosen note-edit target is distinct from both existing addresses");
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kPressureMappingFieldCommit,
+        std::to_string(0) + ":" + std::to_string(1) + ":" +
+            std::to_string(static_cast<int>(PressureField::Note)) + ":" +
+            std::to_string(nonCollidingNote)));
+    Require(harness.commits == 3, "a non-colliding note edit commits");
+    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].address.note ==
+                nonCollidingNote,
+            "the committed instrument carries the edited note");
+    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].address.channel == 2,
+            "the note edit left the channel field untouched");
+
+    // Moving its note onto the grid mapping's note too completes an exact
+    // address collision: refused, unchanged.
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kPressureMappingFieldCommit,
+        std::to_string(0) + ":" + std::to_string(1) + ":" +
+            std::to_string(static_cast<int>(PressureField::Note)) + ":" + std::to_string(gridNote)));
+    Require(harness.commits == 3, "an edit that would duplicate another mapping's address is refused");
+    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].address.note ==
+                nonCollidingNote,
+            "a refused edit leaves the address unchanged");
+    Require(surface.StatusText().starts_with("Refused"), "the refusal sets a status message");
+
+    // Whole-number-only fields: a fractional value refuses on every field,
+    // not just rounds, with the same wording.
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kPressureMappingFieldCommit,
+        std::to_string(0) + ":" + std::to_string(1) + ":" +
+            std::to_string(static_cast<int>(PressureField::Note)) + ":2.6"));
+    Require(harness.commits == 3, "a fractional note edit is refused, not rounded and committed");
+    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].address.note ==
+                nonCollidingNote,
+            "a refused fractional edit leaves the note unchanged");
+    Require(surface.StatusText() == "Refused: value must be an integer",
+            "a fractional edit is refused with the integer-only status");
+
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kPressureMappingFieldCommit,
+        std::to_string(0) + ":" + std::to_string(1) + ":" +
+            std::to_string(static_cast<int>(PressureField::GridX)) + ":1.5"));
+    Require(harness.commits == 3, "a fractional grid X edit is refused, not rounded and committed");
+    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].pressure.gridX == 1,
+            "a refused fractional grid X edit leaves the stored value unchanged");
+}
+
+void TestPressureMappingAddAndDelete()
+{
+    namespace NodeIds = synth::runtime_ui::NodeIds;
+    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
+
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    Require(harness.instrument.AddController(MakeWrldBldrSlot("wrld")), "add a WRLD.Bldr row");
+    harness.connection.controllers.push_back({});
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.ViewModel().ToggleConfig(0);
+
+    Require(FindNodeById(surface.BuildTree(), NodeIds::PressureMappingField(0, 0, PressureField::Channel)) ==
+                nullptr,
+            "a row starts with no pressure mappings shown");
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kPressureMappingAdd, "0"));
+    Require(harness.commits == 1 &&
+                harness.instrument.controllers[0].config.pressureInput.has_value() &&
+                harness.instrument.controllers[0].config.pressureInput->mappings.size() == 1,
+            "Add appends one pressure mapping");
+
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kPressureMappingDelete, "0:0"));
+    // DeletePressureMapping resets the optional entirely once its mappings
+    // list empties, so the config carries no pressureInput at all here --
+    // not an engaged optional over an empty vector.
+    Require(harness.commits == 2 && !harness.instrument.controllers[0].config.pressureInput.has_value(),
+            "Delete removes the pressure mapping");
+    Require(FindNodeById(surface.BuildTree(), NodeIds::PressureMappingField(0, 0, PressureField::Channel)) ==
+                nullptr,
+            "the deleted pressure mapping's fields are gone from the tree");
+}
+
+// If Add always tried note 0 regardless of what is already taken, pressing
+// Add on a row that already has a note-0 mapping would collide with it and
+// the whole add would be refused -- the player clicks Add and nothing
+// happens. Picking the lowest FREE note instead is what makes Add keep
+// working past the first mapping.
+void TestPressureMappingAddStillSucceedsWhenNoteZeroIsTakenByPickingTheLowestFreeNote()
+{
+    namespace NodeIds = synth::runtime_ui::NodeIds;
+    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
+
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    synth::MidiControllerSlot wrld = MakeWrldBldrSlot("wrld");
+    synth::PolyphonicPressureMidiInConfig pressure;
+    synth::PolyphonicPressureMapping existing;
+    existing.address = synth::MidiNoteAddress{.channel = 0, .note = 0};
+    existing.pressure = synth::MessageIn::GridPressureChange(0, 0, 0, 0, 0);
+    pressure.mappings.push_back(existing);
+    wrld.config.pressureInput = pressure;
+    Require(harness.instrument.AddController(wrld), "add a row with note 0 already taken");
+    harness.connection.controllers.push_back({});
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.ViewModel().ToggleConfig(0);
+
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kPressureMappingAdd, "0"));
+    Require(harness.commits == 1 && harness.instrument.controllers[0].config.pressureInput->mappings.size() == 2,
+            "Add appends a second mapping");
+    // Note 0 is taken, so Add picks the lowest free note (1), not always 0.
+    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].address.note == 1,
+            "Add picks the lowest free note on channel 0, not always note 0");
+    const synth::ui::Node* addedNote =
+        FindNodeById(surface.BuildTree(), NodeIds::PressureMappingField(0, 1, PressureField::Note));
+    Require(addedNote != nullptr && addedNote->text == "1", "the added mapping's note shows as 1 on the page");
+}
+
+// A pressure mapping added through the Add button while the row's System
+// Messages section stays open must still be in the saved config after a
+// later edit in that same open section (a grid add, in this case) -- not
+// silently dropped by that edit's write-back.
+void TestPressureMappingAddedWhileSystemMessagesOpenSurvivesALaterGridAdd()
+{
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    Require(harness.instrument.AddController(MakeWrldBldrSlot("wrld")), "add a WRLD.Bldr row");
+    harness.connection.controllers.push_back({});
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.ViewModel().ToggleConfig(0);
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleSection, "0:system_messages"));
+
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kPressureMappingAdd, "0"));
+    Require(harness.instrument.controllers[0].config.pressureInput.has_value() &&
+                harness.instrument.controllers[0].config.pressureInput->mappings.size() == 1,
+            "the pressure mapping is added while the section stays open");
+    const synth::MidiNoteAddress addedAddress =
+        harness.instrument.controllers[0].config.pressureInput->mappings[0].address;
+
+    surface.DispatchAction(synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAddSingle,
+                                                        "0:system_messages:grid"));
+    Require(harness.instrument.controllers[0].config.pressureInput.has_value(),
+            "a grid add in the same open section still leaves a pressure container");
+    const auto& mappingsAfterGridAdd = harness.instrument.controllers[0].config.pressureInput->mappings;
+    const bool addedMappingSurvived =
+        std::any_of(mappingsAfterGridAdd.begin(), mappingsAfterGridAdd.end(),
+                    [&](const synth::PolyphonicPressureMapping& mapping) {
+                        return mapping.address == addedAddress;
+                    });
+    Require(addedMappingSurvived,
+            "a pressure mapping added while System Messages was open survives a later grid add in the"
+            " same open section");
+    Require(mappingsAfterGridAdd.size() == 2,
+            "the grid add's own new pressure mapping is present alongside the earlier add, not in"
+            " place of it");
+}
+
+// The same loss shows up for an edit or a delete made while the section
+// stays open, not only for an add.
+void TestPressureMappingEditedWhileSystemMessagesOpenSurvivesALaterGridAdd()
+{
+    namespace NodeIds = synth::runtime_ui::NodeIds;
+    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
+
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    synth::MidiControllerSlot wrld = MakeWrldBldrSlot("wrld");
+    synth::PolyphonicPressureMidiInConfig pressure;
+    synth::PolyphonicPressureMapping existing;
+    existing.address = synth::MidiNoteAddress{.channel = 9, .note = 40};
+    existing.pressure = synth::MessageIn::GridPressureChange(0, 0, 0, 0, 0);
+    pressure.mappings.push_back(existing);
+    wrld.config.pressureInput = pressure;
+    Require(harness.instrument.AddController(wrld), "add a WRLD.Bldr row with one pressure mapping");
+    harness.connection.controllers.push_back({});
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.ViewModel().ToggleConfig(0);
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleSection, "0:system_messages"));
+
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kPressureMappingFieldCommit,
+        std::to_string(0) + ":" + std::to_string(0) + ":" +
+            std::to_string(static_cast<int>(PressureField::Note)) + ":41"));
+    Require(harness.instrument.controllers[0].config.pressureInput->mappings[0].address.note == 41,
+            "the edit commits while the section stays open");
+
+    surface.DispatchAction(synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAddSingle,
+                                                        "0:system_messages:grid"));
+    const auto& mappingsAfterGridAdd = harness.instrument.controllers[0].config.pressureInput->mappings;
+    const bool editSurvived =
+        std::any_of(mappingsAfterGridAdd.begin(), mappingsAfterGridAdd.end(),
+                    [](const synth::PolyphonicPressureMapping& mapping) {
+                        return mapping.address.channel == 9 && mapping.address.note == 41;
+                    });
+    Require(editSurvived,
+            "a pressure mapping edited while System Messages was open keeps its edit after a later grid"
+            " add in the same open section, instead of reverting to its pre-edit value");
+}
+
+// Pressure X and Y refuse a whole number that does not fit in an int, the
+// same refusal the grid block/button X and Y editors give for the same
+// out-of-range input, instead of silently truncating it into UB.
+void TestPressureMappingXRefusesAWholeNumberOutsideIntRange()
+{
+    namespace NodeIds = synth::runtime_ui::NodeIds;
+    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
+
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    synth::MidiControllerSlot wrld = MakeWrldBldrSlot("wrld");
+    synth::PolyphonicPressureMidiInConfig pressure;
+    synth::PolyphonicPressureMapping existing;
+    existing.address = synth::MidiNoteAddress{.channel = 0, .note = 0};
+    existing.pressure = synth::MessageIn::GridPressureChange(0, 3, 7, 0, 0);
+    pressure.mappings.push_back(existing);
+    wrld.config.pressureInput = pressure;
+    Require(harness.instrument.AddController(wrld), "add a row with one pressure mapping");
+    harness.connection.controllers.push_back({});
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.ViewModel().ToggleConfig(0);
+
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kPressureMappingFieldCommit,
+        std::to_string(0) + ":" + std::to_string(0) + ":" +
+            std::to_string(static_cast<int>(PressureField::GridX)) + ":2147483648"));
+    Require(harness.commits == 0, "an out-of-int-range grid X value is refused, not committed");
+    Require(harness.instrument.controllers[0].config.pressureInput->mappings[0].pressure.gridX == 7,
+            "the refused out-of-range grid X edit leaves the stored value unchanged");
+    Require(surface.StatusText().starts_with("Refused"), "the out-of-range grid X edit sets a refusal status");
+}
+
+// Slot, X and Y are distinct fields on a pressure mapping: each must be
+// shown from its own stored value, and an edit to one must write only that
+// field (not silently land in another, and not be discarded outright).
+void TestPressureMappingSlotXAndYReadAndWriteTheirOwnFieldNotAnother()
+{
+    namespace NodeIds = synth::runtime_ui::NodeIds;
+    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
+
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    synth::MidiControllerSlot wrld = MakeWrldBldrSlot("wrld");
+    synth::PolyphonicPressureMidiInConfig pressure;
+    synth::PolyphonicPressureMapping mapping;
+    mapping.address = synth::MidiNoteAddress{.channel = 0, .note = 0};
+    mapping.pressure = synth::MessageIn::GridPressureChange(0, 5, 11, -22, 0);
+    pressure.mappings.push_back(mapping);
+    wrld.config.pressureInput = pressure;
+    Require(harness.instrument.AddController(wrld), "add a row with one pressure mapping");
+    harness.connection.controllers.push_back({});
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.ViewModel().ToggleConfig(0);
+
+    const synth::ui::NodeTree tree = surface.BuildTree();
+    const synth::ui::Node* slotNode = FindNodeById(tree, NodeIds::PressureMappingField(0, 0, PressureField::GridSlotIx));
+    const synth::ui::Node* xNode = FindNodeById(tree, NodeIds::PressureMappingField(0, 0, PressureField::GridX));
+    const synth::ui::Node* yNode = FindNodeById(tree, NodeIds::PressureMappingField(0, 0, PressureField::GridY));
+    Require(slotNode != nullptr && slotNode->text == "5", "the Slot field shows the stored grid slot, not 0");
+    Require(xNode != nullptr && xNode->text == "11", "the X field shows the stored grid X, not the grid Y");
+    Require(yNode != nullptr && yNode->text == "-22", "the Y field shows the stored grid Y, not the grid X");
+
+    auto commitField = [&](PressureField field, const std::string& rawValue) {
+        surface.DispatchAction(synth::ui::Action::WithValue(
+            synth::runtime_ui::Actions::kPressureMappingFieldCommit,
+            std::to_string(0) + ":" + std::to_string(0) + ":" + std::to_string(static_cast<int>(field)) +
+                ":" + rawValue));
+    };
+    auto stored = [&]() -> const synth::MessageIn& {
+        return harness.instrument.controllers[0].config.pressureInput->mappings[0].pressure;
+    };
+
+    commitField(PressureField::GridX, "33");
+    Require(stored().gridX == 33, "an X edit writes the X field");
+    Require(stored().gridY == -22, "an X edit leaves the Y field untouched");
+    Require(stored().gridSlotIx == 5, "an X edit leaves the Slot field untouched");
+
+    commitField(PressureField::GridY, "-44");
+    Require(stored().gridY == -44, "a Y edit writes the Y field");
+    Require(stored().gridX == 33, "a Y edit leaves the X field untouched (not folded into X)");
+
+    commitField(PressureField::GridSlotIx, "9");
+    Require(stored().gridSlotIx == 9, "a Slot edit writes the Slot field");
+    Require(stored().gridX == 33 && stored().gridY == -44, "a Slot edit leaves X and Y untouched");
+}
+
+// The pressure fields must keep refusing an out-of-range channel, note or
+// slot, and text that is not wholly a number, rather than silently storing
+// or truncating it.
+void TestPressureMappingFieldsRefuseChannelNoteSlotOutOfRangeAndNonNumericText()
+{
+    namespace NodeIds = synth::runtime_ui::NodeIds;
+    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
+
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    synth::MidiControllerSlot wrld = MakeWrldBldrSlot("wrld");
+    synth::PolyphonicPressureMidiInConfig pressure;
+    synth::PolyphonicPressureMapping mapping;
+    mapping.address = synth::MidiNoteAddress{.channel = 5, .note = 60};
+    mapping.pressure = synth::MessageIn::GridPressureChange(0, 2, 0, 0, 0);
+    pressure.mappings.push_back(mapping);
+    wrld.config.pressureInput = pressure;
+    Require(harness.instrument.AddController(wrld), "add a row with one pressure mapping");
+    harness.connection.controllers.push_back({});
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.ViewModel().ToggleConfig(0);
+
+    auto commitField = [&](PressureField field, const std::string& rawValue) {
+        surface.DispatchAction(synth::ui::Action::WithValue(
+            synth::runtime_ui::Actions::kPressureMappingFieldCommit,
+            std::to_string(0) + ":" + std::to_string(0) + ":" + std::to_string(static_cast<int>(field)) +
+                ":" + rawValue));
+    };
+    const auto& address = harness.instrument.controllers[0].config.pressureInput->mappings[0].address;
+    const auto& stored = harness.instrument.controllers[0].config.pressureInput->mappings[0].pressure;
+
+    commitField(PressureField::Channel, "16");
+    Require(harness.commits == 0 && address.channel == 5, "channel 16 is refused; channel 0-15 stays 5");
+    commitField(PressureField::Channel, "-1");
+    Require(harness.commits == 0 && address.channel == 5, "a negative channel is refused; channel stays 5");
+
+    commitField(PressureField::Note, "128");
+    Require(harness.commits == 0 && address.note == 60, "note 128 is refused; note 0-127 stays 60");
+    commitField(PressureField::Note, "-1");
+    Require(harness.commits == 0 && address.note == 60, "a negative note is refused; note stays 60");
+
+    commitField(PressureField::GridSlotIx, "-1");
+    Require(harness.commits == 0 && stored.gridSlotIx == 2, "a negative grid slot is refused; slot stays 2");
+
+    commitField(PressureField::Channel, "not-a-number");
+    Require(harness.commits == 0 && address.channel == 5 &&
+                surface.StatusText() == "Refused: value must be a finite number",
+            "text with no numeric prefix is refused with the numeric-only status, unchanged");
+    commitField(PressureField::Channel, "3abc");
+    Require(harness.commits == 0 && address.channel == 5 &&
+                surface.StatusText() == "Refused: value must be a finite number",
+            "text that is not WHOLLY a number (a numeric prefix followed by letters) is refused too,"
+            " not parsed up to the first non-digit");
+}
+
+void TestPressureMappingDeleteRemovesTheGivenIndexNotAlwaysFirst()
+{
+    namespace NodeIds = synth::runtime_ui::NodeIds;
+    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
+
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    synth::MidiControllerSlot wrld = MakeWrldBldrSlot("wrld");
+    synth::PolyphonicPressureMidiInConfig pressure;
+    synth::PolyphonicPressureMapping first;
+    first.address = synth::MidiNoteAddress{.channel = 0, .note = 10};
+    first.pressure = synth::MessageIn::GridPressureChange(0, 0, 0, 0, 0);
+    synth::PolyphonicPressureMapping second;
+    second.address = synth::MidiNoteAddress{.channel = 0, .note = 20};
+    second.pressure = synth::MessageIn::GridPressureChange(0, 0, 0, 0, 0);
+    pressure.mappings = {first, second};
+    wrld.config.pressureInput = pressure;
+    Require(harness.instrument.AddController(wrld), "add a row with two pressure mappings");
+    harness.connection.controllers.push_back({});
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.ViewModel().ToggleConfig(0);
+
+    // Delete index 1 (note 20), not index 0: a "delete always removes index
+    // 0" bug would instead remove note 10 and still leave one mapping
+    // behind, so the surviving note is the only thing that tells them apart.
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kPressureMappingDelete, "0:1"));
+    Require(harness.commits == 1 && harness.instrument.controllers[0].config.pressureInput->mappings.size() == 1,
+            "Delete removes exactly one mapping");
+    Require(harness.instrument.controllers[0].config.pressureInput->mappings[0].address.note == 10,
+            "Delete removes the mapping at the given index, leaving the other one, not always index 0");
+    const synth::ui::Node* survivorNote =
+        FindNodeById(surface.BuildTree(), NodeIds::PressureMappingField(0, 0, PressureField::Note));
+    Require(survivorNote != nullptr && survivorNote->text == "10",
+            "the surviving mapping (note 10) is what the page shows at index 0");
+}
+
+void TestConnectMessageDeleteRemovesTheGivenIndexNotAlwaysFirst()
+{
+    namespace NodeIds = synth::runtime_ui::NodeIds;
+
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    synth::MidiControllerSlot slot = MakeGenericSlot("two messages");
+    slot.config.openSysEx.push_back({0xF0, 0x01, 0xF7});
+    slot.config.openSysEx.push_back({0xF0, 0x02, 0xF7});
+    Require(harness.instrument.AddController(slot), "add a row with two connect messages");
+    harness.connection.controllers.push_back({});
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.ViewModel().ToggleConfig(0);
+
+    // Delete index 1, not index 0: a "delete always removes index 0" bug
+    // would instead remove message F0 01 F7 and still leave one message
+    // behind, so the surviving message is the only thing that tells them
+    // apart.
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kConnectMessageDelete, "0:1"));
+    Require(harness.commits == 1 && harness.instrument.controllers[0].config.openSysEx.size() == 1,
+            "Delete removes exactly one connect message");
+    Require(harness.instrument.controllers[0].config.openSysEx[0] ==
+                (std::vector<std::uint8_t>{0xF0, 0x01, 0xF7}),
+            "Delete removes the message at the given index, leaving the other one, not always index 0");
+    const synth::ui::Node* survivorField =
+        FindNodeById(surface.BuildTree(), NodeIds::ConnectMessageField(0, 0));
+    Require(survivorField != nullptr && survivorField->text == "F0 01 F7",
+            "the surviving message is what the page shows at index 0");
+}
+
+void TestConnectMessageShownOnEveryKindNotJustGeneric()
+{
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    synth::MidiControllerSlot wrld = MakeWrldBldrSlot("wrld with connect message");
+    wrld.config.openSysEx.push_back({0xF0, 0x7E, 0x00, 0xF7});
+    Require(harness.instrument.AddController(wrld), "add a WRLD.Bldr row with a connect message");
+    harness.connection.controllers.push_back({});
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.ViewModel().ToggleConfig(0);
+    const synth::ui::Node* field =
+        FindNodeById(surface.BuildTree(), synth::runtime_ui::NodeIds::ConnectMessageField(0, 0));
+    Require(field != nullptr && field->text == "F0 7E 00 F7",
+            "the connect-messages list shows on a WRLD.Bldr row too, not only a Generic row");
+}
+
+void TestPressureMappingShownOnEveryKindNotJustWrldBldr()
+{
+    namespace NodeIds = synth::runtime_ui::NodeIds;
+    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
+
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    synth::MidiControllerSlot generic = MakeGenericSlot("generic with pressure");
+    synth::PolyphonicPressureMidiInConfig pressure;
+    synth::PolyphonicPressureMapping mapping;
+    mapping.address = synth::MidiNoteAddress{.channel = 3, .note = 50};
+    mapping.pressure = synth::MessageIn::GridPressureChange(0, 0, 0, 0, 0);
+    pressure.mappings.push_back(mapping);
+    generic.config.pressureInput = pressure;
+    Require(harness.instrument.AddController(generic), "add a Generic row with a pressure mapping");
+    harness.connection.controllers.push_back({});
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.ViewModel().ToggleConfig(0);
+    const synth::ui::Node* channel =
+        FindNodeById(surface.BuildTree(), NodeIds::PressureMappingField(0, 0, PressureField::Channel));
+    Require(channel != nullptr && channel->text == "3",
+            "the pressure-mappings list shows on a Generic row too, not only a WRLD.Bldr row");
+}
+
+void TestControllerDeviceLabelForUnresolvedWizardIdShowsBoundDevice()
+{
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    synth::MidiControllerSlot slot = MakeGenericSlot("stale preset");
+    slot.wizardId = "some.descriptor.no.longer.in.the.registry";
+    slot.input = {.identifier = "lp-in", .name = "LPX MIDI In"};
+    Require(harness.instrument.AddController(slot), "add a row whose wizard id resolves against nothing");
+    harness.connection.controllers.push_back({});
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    const synth::ui::Node* device =
+        FindNodeById(surface.BuildTree(), synth::runtime_ui::NodeIds::ControllerDevice(0));
+    Require(device != nullptr && device->text == "LPX MIDI In (lp-in)",
+            "a row whose wizard id no longer resolves shows its bound input device, not a resolution failure");
+}
+
+void TestControllerDeviceLabelForAppCatalogDeviceShowsItsName()
+{
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.connection.controllers.clear();
+    // A real app-catalog device (AppDefaultControllerWizard, the same
+    // construction MakeControllerWizardRegistry gives every frogg3rs
+    // device default), not a library descriptor -- the dropdown test with
+    // a catalog only ever checked option ids, never this label.
+    synth::MidiAppCatalog catalog;
+    catalog.deviceDefaults.push_back({.id = "app.device.one",
+                                      .displayName = "App Device One",
+                                      .kind = synth::MidiProfileKind::Generic,
+                                      .inputAliases = {},
+                                      .outputAliases = {},
+                                      .config = {}});
+    harness.layouts = synth::MakeControllerWizardRegistry(catalog);
+
+    auto surface = harness.MakeSurface();
+    surface.SetEnumerateDevices(harness.devices);
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kAddPresetDraft, "app.device.one"));
+    surface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kAddController));
+    Require(harness.commits == 1, "add from the app catalog device commits");
+    const std::size_t addedIx = harness.instrument.controllers.size() - 1;
+    Require(harness.instrument.controllers[addedIx].wizardId == "app.device.one",
+            "the added row carries the app catalog device's id");
+
+    harness.connection.controllers.resize(harness.instrument.controllers.size());
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    const synth::ui::Node* device = FindNodeById(
+        surface.BuildTree(), synth::runtime_ui::NodeIds::ControllerDevice(addedIx));
+    Require(device != nullptr && device->text == "App Device One",
+            "a row added from an app catalog device shows that device's own display name");
+}
+
 int main()
 {
     TestNoHandRolledControllerNodesSurvive();
     TestControllersSectionsNestThroughLibraryContainers();
     TestControllerRowsStayReadableWithLargeLists();
-    TestControllerKindLabelsShowTheCombinedDisplayNames();
+    TestControllerDeviceLabelsIdentifyThePresetOrBoundInputDevice();
     TestDiscoveryRendersPortableAvailableRowsAndDiagnostics();
     TestWizardSessionRoutesPortableChooserAndForm();
     TestWizardSubmitCommitsCompleteProfileThenSaves();
@@ -1987,6 +2902,8 @@ int main()
     TestAddFromPresetWithNoDeviceInstallsTheDefaultPresetWithNoneEndpoints();
     TestAddFromPresetWithMatchingOnlinePairBindsBothEndpoints();
     TestAddCustomGenericYieldsAnEmptyGenericRecord();
+    TestAddPresetDropdownListsRegistryDescriptorsThenOneCustomEntry();
+    TestAddLibraryLaunchpadAndWrldBldrGiveDefaultConfigAndDeviceLabel();
     TestWizardIgnoreCommitsOneInertBlacklistedRecord();
     TestEndpointSelectorsPreferTheExactStoredIdentifier();
     TestControllerLifecycleActionsUseTheNormalCommitAndSavePath();
@@ -1998,6 +2915,23 @@ int main()
     TestEncoderGroupHeaderSeparatesLastColumnFromAddButton();
     TestSystemMessageShiftFieldRendersAndCommits();
     TestLaunchpadRowOffersVariantAndRetargetsItsPads();
+    TestConnectMessageShowsOnAnAbletonStyleRowsExpandedConfiguration();
+    TestConnectMessageEditCommitsValidAndRefusesInvalidUnchanged();
+    TestConnectMessageAddAndDelete();
+    TestPressureMappingShowsGridAttachedAndOrphanedThenEditCommits();
+    TestPressureMappingAddAndDelete();
+    TestPressureMappingAddStillSucceedsWhenNoteZeroIsTakenByPickingTheLowestFreeNote();
+    TestPressureMappingAddedWhileSystemMessagesOpenSurvivesALaterGridAdd();
+    TestPressureMappingEditedWhileSystemMessagesOpenSurvivesALaterGridAdd();
+    TestPressureMappingXRefusesAWholeNumberOutsideIntRange();
+    TestPressureMappingSlotXAndYReadAndWriteTheirOwnFieldNotAnother();
+    TestPressureMappingFieldsRefuseChannelNoteSlotOutOfRangeAndNonNumericText();
+    TestPressureMappingDeleteRemovesTheGivenIndexNotAlwaysFirst();
+    TestConnectMessageDeleteRemovesTheGivenIndexNotAlwaysFirst();
+    TestConnectMessageShownOnEveryKindNotJustGeneric();
+    TestPressureMappingShownOnEveryKindNotJustWrldBldr();
+    TestControllerDeviceLabelForUnresolvedWizardIdShowsBoundDevice();
+    TestControllerDeviceLabelForAppCatalogDeviceShowsItsName();
 
     TestHarness harness;
     synth::runtime_ui::ControllersPageSurface surface = harness.MakeSurface();
@@ -2020,9 +2954,9 @@ int main()
             "add controller preset edits dispatch a portable draft action");
     Require(addPresetCaption != nullptr && addPresetCaption->text == "Preset",
             "add controller preset selector has a visible caption");
-    Require(!addPreset->options.empty() && addPreset->options.back().label == "Custom (WRLD.Bldr)" &&
+    Require(!addPreset->options.empty() && addPreset->options.back().label == "Custom" &&
                 addPreset->selectedOption == addPreset->options.front().id,
-            "the add row's Preset combo offers the registry then the Custom entries, defaulting to the"
+            "the add row's Preset combo offers the registry then one Custom entry, defaulting to the"
             " first option");
     const synth::ui::Node* wrldInput =
         FindNodeById(initialTree, synth::runtime_ui::NodeIds::ControllerInput(0));
@@ -2096,7 +3030,7 @@ int main()
             "each port's status dot precedes its own combo on line two");
 
     surface.DispatchAction(synth::ui::Action::WithValue(
-        synth::runtime_ui::Actions::kAddPresetDraft, "custom.generic"));
+        synth::runtime_ui::Actions::kAddPresetDraft, "custom"));
     surface.DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kAddController));
     Require(harness.commits == 1, "add controller commits");
     Require(harness.instrument.controllers.size() == 4, "add controller increases count");

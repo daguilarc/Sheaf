@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <cmath>
 #include <limits>
 #include <string_view>
@@ -3393,6 +3394,16 @@ MidiControllerProfileResult CreateLaunchpadDefaultProfile(
                                        std::move(timestampProvider));
 }
 
+MidiControllerProfileConfig DefaultProfileConfigForKind(MidiProfileKind kind) {
+    switch (kind) {
+        case MidiProfileKind::WrldBldr: return WrldBldrDefaultProfileConfig();
+        case MidiProfileKind::MfTwister: return MfTwisterDefaultProfileConfig();
+        case MidiProfileKind::Launchpad: return LaunchpadDefaultProfileConfig();
+        case MidiProfileKind::Generic: return MidiControllerProfileConfig{};
+    }
+    return MidiControllerProfileConfig{};
+}
+
 const char* MidiProfileKindName(MidiProfileKind kind) {
     switch (kind) {
         case MidiProfileKind::WrldBldr: return "wrldbldr";
@@ -3440,6 +3451,118 @@ bool MidiProfileKindFromName(std::string_view name, MidiProfileKind& out) {
         return true;
     }
     return false;
+}
+
+std::string HexEncodeBytes(std::string_view bytes, bool uppercase, char separator) {
+    static constexpr char kLower[] = "0123456789abcdef";
+    static constexpr char kUpper[] = "0123456789ABCDEF";
+    const char* const table = uppercase ? kUpper : kLower;
+    std::string text;
+    text.reserve(bytes.size() * (separator != '\0' ? 3 : 2));
+    for (std::size_t ix = 0; ix < bytes.size(); ++ix) {
+        if (ix != 0 && separator != '\0') {
+            text += separator;
+        }
+        const auto byte = static_cast<std::uint8_t>(bytes[ix]);
+        text += table[byte >> 4U];
+        text += table[byte & 0x0FU];
+    }
+    return text;
+}
+
+bool HexDecodeBytes(std::string_view text, std::string& out, bool separatedByWhitespace) {
+    const auto nibble = [](char character) -> int {
+        if (character >= '0' && character <= '9') {
+            return character - '0';
+        }
+        if (character >= 'a' && character <= 'f') {
+            return character - 'a' + 10;
+        }
+        if (character >= 'A' && character <= 'F') {
+            return character - 'A' + 10;
+        }
+        return -1;
+    };
+
+    if (!separatedByWhitespace) {
+        if (text.size() % 2 != 0) {
+            return false;
+        }
+        std::string decoded;
+        decoded.reserve(text.size() / 2);
+        for (std::size_t ix = 0; ix < text.size(); ix += 2) {
+            const int high = nibble(text[ix]);
+            const int low = nibble(text[ix + 1]);
+            if (high < 0 || low < 0) {
+                return false;
+            }
+            decoded.push_back(static_cast<char>((high << 4) | low));
+        }
+        out = std::move(decoded);
+        return true;
+    }
+
+    std::string decoded;
+    std::size_t ix = 0;
+    bool sawAnyToken = false;
+    while (ix < text.size()) {
+        while (ix < text.size() && std::isspace(static_cast<unsigned char>(text[ix]))) {
+            ++ix;
+        }
+        if (ix >= text.size()) {
+            break;
+        }
+        std::size_t tokenEnd = ix;
+        while (tokenEnd < text.size() && !std::isspace(static_cast<unsigned char>(text[tokenEnd]))) {
+            ++tokenEnd;
+        }
+        if (tokenEnd - ix != 2) {
+            return false;
+        }
+        const int high = nibble(text[ix]);
+        const int low = nibble(text[ix + 1]);
+        if (high < 0 || low < 0) {
+            return false;
+        }
+        decoded.push_back(static_cast<char>((high << 4) | low));
+        sawAnyToken = true;
+        ix = tokenEnd;
+    }
+    if (!sawAnyToken) {
+        return false;
+    }
+    out = std::move(decoded);
+    return true;
+}
+
+std::string FormatSysExHex(const std::vector<std::uint8_t>& message) {
+    return HexEncodeBytes(
+        std::string_view(reinterpret_cast<const char*>(message.data()), message.size()),
+        /*uppercase=*/true, /*separator=*/' ');
+}
+
+bool ParseSysExHex(std::string_view text, std::vector<std::uint8_t>& out) {
+    std::string decoded;
+    if (!HexDecodeBytes(text, decoded, /*separatedByWhitespace=*/true)) {
+        return false;
+    }
+    out.assign(decoded.begin(), decoded.end());
+    return true;
+}
+
+bool IsValidSysExMessage(const std::vector<std::uint8_t>& message) {
+    if (message.size() < 2) {
+        return false;
+    }
+    if (message.front() != 0xF0 || message.back() != 0xF7) {
+        return false;
+    }
+    for (std::size_t ix = 1; ix + 1 < message.size(); ++ix) {
+        if (message[ix] > 0x7F) {
+            return false;
+        }
+    }
+    return true;
 }
 
 MidiKindSupport KindSupport(MidiProfileKind kind) {

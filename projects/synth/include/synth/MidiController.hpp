@@ -954,6 +954,44 @@ struct MidiControllerProfileConfig {
     LaunchpadController launchpadModel = LaunchpadController::LaunchpadX;
 };
 
+// The one hex encoder/parser every caller that turns bytes into hex text (or
+// back) shares: FormatSysExHex/ParseSysExHex below, and the Controllers
+// page's opaque node-id/action tokens (WizardCandidateToken,
+// ControllerActionToken and their FromToken counterparts).
+//
+// HexEncodeBytes: two hex digits per byte, `uppercase` selecting the digit
+// case. `separator`, when non-'\0', is inserted between adjacent bytes (a
+// human-editable byte sequence, e.g. FormatSysExHex's "F0 00 ... F7");
+// '\0' (the default) packs bytes with no separator (an opaque token
+// embedded in a node id or action value, which decodes with
+// `separatedByWhitespace=false` below).
+std::string HexEncodeBytes(std::string_view bytes, bool uppercase, char separator = '\0');
+
+// The inverse of HexEncodeBytes. `separatedByWhitespace=true` requires each
+// byte's two hex digits to be its own whitespace-delimited token (refusing
+// a token that is not exactly two digits, or text with no tokens at all --
+// FormatSysExHex's form); `false` requires one contiguous run of hex digit
+// pairs with no separator (an opaque token; an even-length empty run
+// decodes to empty successfully). Accepts either digit case either way.
+// Returns false, leaving `out` unspecified, on any other malformed byte.
+bool HexDecodeBytes(std::string_view text, std::string& out, bool separatedByWhitespace);
+
+// Renders one openSysEx message as space-separated, uppercase two-digit hex
+// bytes ("F0 00 20 29 02 0D 05 F7"), for display and for round-tripping back
+// through ParseSysExHex.
+std::string FormatSysExHex(const std::vector<std::uint8_t>& message);
+
+// Parses FormatSysExHex's format (whitespace-separated hex byte pairs, case
+// insensitive) into raw bytes. Returns false, leaving `out` unspecified, on
+// any token that is not exactly two hex digits; does not itself check the
+// F0 ... F7 message shape -- see IsValidSysExMessage.
+bool ParseSysExHex(std::string_view text, std::vector<std::uint8_t>& out);
+
+// A connect-time openSysEx entry is exactly one complete SysEx message: at
+// least F0 and F7 with nothing between (2 bytes), first byte 0xF0, last byte
+// 0xF7, and every byte strictly between those two a data byte (0x00-0x7F).
+bool IsValidSysExMessage(const std::vector<std::uint8_t>& message);
+
 struct MidiControllerProfileResult {
     std::unique_ptr<MidiInProcessor> input;
     std::vector<std::unique_ptr<MidiInProcessor>> inputThru;
@@ -1086,6 +1124,14 @@ MidiControllerProfileConfig LaunchpadDefaultProfileConfig(LaunchpadDefaultProfil
 MidiControllerProfileResult CreateLaunchpadDefaultProfile(
     LaunchpadDefaultProfileOptions options, MessageInBus* bus, MidiSender* sender,
     ParameterManager::UIState* uiState, MidiInProcessor::TimestampProvider timestampProvider = {});
+
+// The one place a kind picks its own default profile with no other input --
+// each of WrldBldr/MfTwister/Launchpad's own Default profile config function
+// above, called with its default options, or an empty config for Generic.
+// Shared by MidiConfigViewModel::AddController and by
+// MakeControllerWizardRegistry's library descriptors, so a new kind's
+// default is written once.
+MidiControllerProfileConfig DefaultProfileConfigForKind(MidiProfileKind kind);
 
 JSON ToJSON(JsonArena& arena, EncoderMode value);
 bool FromJSON(JSON json, EncoderMode& value);

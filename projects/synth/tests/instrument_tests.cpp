@@ -2501,6 +2501,72 @@ TEST_CASE(InstrumentJsonUnconfiguredEndpointRoundTrips) {
     REQUIRE_TRUE(loaded.controllers[0].input.name.empty());
 }
 
+TEST_CASE(HexEncodeBytesPacksWithNoSeparatorByDefaultAndCanUseOneUppercaseOrLowercase) {
+    REQUIRE_TRUE(synth::HexEncodeBytes("hi", false) == "6869");
+    REQUIRE_TRUE(synth::HexEncodeBytes("hi", true) == "6869");
+    const std::string bytes("\xF0\x00\x7F", 3);
+    REQUIRE_TRUE(synth::HexEncodeBytes(bytes, true, ' ') == "F0 00 7F");
+    REQUIRE_TRUE(synth::HexEncodeBytes(bytes, false, ' ') == "f0 00 7f");
+    REQUIRE_TRUE(synth::HexEncodeBytes("", false).empty());
+}
+
+TEST_CASE(HexDecodeBytesRoundTripsHexEncodeBytesInBothModes) {
+    std::string decoded;
+    REQUIRE_TRUE(synth::HexDecodeBytes("6869", decoded, false));
+    REQUIRE_TRUE(decoded == "hi");
+    REQUIRE_TRUE(synth::HexDecodeBytes("", decoded, false));
+    REQUIRE_TRUE(decoded.empty());
+    REQUIRE_TRUE(!synth::HexDecodeBytes("686", decoded, false));
+    REQUIRE_TRUE(!synth::HexDecodeBytes("68 69", decoded, false));
+
+    REQUIRE_TRUE(synth::HexDecodeBytes("F0 00 7F", decoded, true));
+    REQUIRE_TRUE(decoded == std::string("\xF0\x00\x7F", 3));
+    REQUIRE_TRUE(synth::HexDecodeBytes("f0 00 7f", decoded, true));
+    REQUIRE_TRUE(decoded == std::string("\xF0\x00\x7F", 3));
+    REQUIRE_TRUE(!synth::HexDecodeBytes("", decoded, true));
+    REQUIRE_TRUE(!synth::HexDecodeBytes("F0F7", decoded, true));
+    REQUIRE_TRUE(!synth::HexDecodeBytes("F0 0 F7", decoded, true));
+}
+
+TEST_CASE(FormatSysExHexRendersUppercaseSpaceSeparatedBytes) {
+    const std::vector<std::uint8_t> message = {0xF0, 0x00, 0x20, 0x29, 0x02, 0x0D, 0x05, 0xF7};
+    REQUIRE_TRUE(synth::FormatSysExHex(message) == "F0 00 20 29 02 0D 05 F7");
+    REQUIRE_TRUE(synth::FormatSysExHex({}).empty());
+}
+
+TEST_CASE(ParseSysExHexRoundTripsFormatSysExHexAndIsCaseInsensitive) {
+    std::vector<std::uint8_t> parsed;
+    REQUIRE_TRUE(synth::ParseSysExHex("F0 00 20 29 02 0D 05 F7", parsed));
+    REQUIRE_TRUE(parsed == (std::vector<std::uint8_t>{0xF0, 0x00, 0x20, 0x29, 0x02, 0x0D, 0x05, 0xF7}));
+
+    std::vector<std::uint8_t> lowercase;
+    REQUIRE_TRUE(synth::ParseSysExHex("f0 7e 00 f7", lowercase));
+    REQUIRE_TRUE(lowercase == (std::vector<std::uint8_t>{0xF0, 0x7E, 0x00, 0xF7}));
+
+    std::vector<std::uint8_t> extraSpace;
+    REQUIRE_TRUE(synth::ParseSysExHex("  F0   F7 ", extraSpace));
+    REQUIRE_TRUE(extraSpace == (std::vector<std::uint8_t>{0xF0, 0xF7}));
+}
+
+TEST_CASE(ParseSysExHexRejectsMalformedTokens) {
+    std::vector<std::uint8_t> out;
+    REQUIRE_TRUE(!synth::ParseSysExHex("F0 GG F7", out));
+    REQUIRE_TRUE(!synth::ParseSysExHex("F0 0 F7", out));
+    REQUIRE_TRUE(!synth::ParseSysExHex("F0F7", out));
+    REQUIRE_TRUE(!synth::ParseSysExHex("", out));
+}
+
+TEST_CASE(IsValidSysExMessageRequiresF0LeadF7TailAndDataBytesBetween) {
+    REQUIRE_TRUE(synth::IsValidSysExMessage({0xF0, 0xF7}));
+    REQUIRE_TRUE(synth::IsValidSysExMessage({0xF0, 0x7E, 0x00, 0xF7}));
+    REQUIRE_TRUE(!synth::IsValidSysExMessage({}));
+    REQUIRE_TRUE(!synth::IsValidSysExMessage({0xF0}));
+    REQUIRE_TRUE(!synth::IsValidSysExMessage({0x00, 0xF7}));
+    REQUIRE_TRUE(!synth::IsValidSysExMessage({0xF0, 0x00}));
+    REQUIRE_TRUE(!synth::IsValidSysExMessage({0xF0, 0x80, 0xF7}));
+    REQUIRE_TRUE(!synth::IsValidSysExMessage({0xF0, 0xF7, 0xF7}));
+}
+
 } // namespace
 
 int main() {

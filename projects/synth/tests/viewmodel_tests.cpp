@@ -4125,14 +4125,20 @@ TEST_CASE(ViewModelOffersAppCatalogChoicesThroughMessageCatalog) {
     REQUIRE_TRUE(offered[3].appAction == "app.b");
 }
 
-TEST_CASE(ViewModelLayoutsDefaultsToTheLibraryTwisterOnlyRegistry) {
+TEST_CASE(ViewModelLayoutsDefaultsToTheLibraryRegistry) {
     MidiConfigViewModel vm;
 
     const std::vector<synth::ControllerWizardDescriptor>& defaultLayouts = vm.Layouts();
-    REQUIRE_TRUE(defaultLayouts.size() == 1);
-    REQUIRE_TRUE(defaultLayouts.front().id == "com.sheaf.midi-fighter-twister");
-    REQUIRE_TRUE(defaultLayouts.front().displayName == "MIDI Fighter Twister");
-    REQUIRE_TRUE(defaultLayouts.front().kind == synth::MidiProfileKind::MfTwister);
+    REQUIRE_TRUE(defaultLayouts.size() == 3);
+    REQUIRE_TRUE(defaultLayouts[0].id == "com.sheaf.midi-fighter-twister");
+    REQUIRE_TRUE(defaultLayouts[0].displayName == "MIDI Fighter Twister");
+    REQUIRE_TRUE(defaultLayouts[0].kind == synth::MidiProfileKind::MfTwister);
+    REQUIRE_TRUE(defaultLayouts[1].id == "library.launchpad");
+    REQUIRE_TRUE(defaultLayouts[1].displayName == "Launchpad");
+    REQUIRE_TRUE(defaultLayouts[1].kind == synth::MidiProfileKind::Launchpad);
+    REQUIRE_TRUE(defaultLayouts[2].id == "library.wrldbldr");
+    REQUIRE_TRUE(defaultLayouts[2].displayName == "WRLD.Bldr");
+    REQUIRE_TRUE(defaultLayouts[2].kind == synth::MidiProfileKind::WrldBldr);
 
     synth::MidiAppCatalog catalog;
     synth::MidiAppDeviceDefault deviceDefault;
@@ -4143,8 +4149,13 @@ TEST_CASE(ViewModelLayoutsDefaultsToTheLibraryTwisterOnlyRegistry) {
     std::vector<synth::ControllerWizardDescriptor> appLayouts =
         synth::MakeControllerWizardRegistry(catalog);
     vm.SetLayouts(appLayouts);
-    REQUIRE_TRUE(vm.Layouts().size() == 1);
-    REQUIRE_TRUE(vm.Layouts().front().id == "froggers.apc40.generic");
+    // The one catalog device, then a library descriptor for each of the
+    // three kinds this Generic-only catalog does not cover.
+    REQUIRE_TRUE(vm.Layouts().size() == 4);
+    REQUIRE_TRUE(vm.Layouts()[0].id == "froggers.apc40.generic");
+    REQUIRE_TRUE(vm.Layouts()[1].id == "com.sheaf.midi-fighter-twister");
+    REQUIRE_TRUE(vm.Layouts()[2].id == "library.launchpad");
+    REQUIRE_TRUE(vm.Layouts()[3].id == "library.wrldbldr");
 }
 
 TEST_CASE(SystemMessageRowFromAppActionChoiceRoundTripsRowIdentity) {
