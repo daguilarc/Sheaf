@@ -376,36 +376,9 @@ inline std::string ConnectMessageAdd(std::size_t controllerIx)
     return ConnectMessages(controllerIx) + ".add";
 }
 
-inline std::string PressureMappings(std::size_t controllerIx)
+inline std::string ConnectMessageAddRow(std::size_t controllerIx)
 {
-    return ControllerRow(controllerIx) + ".pressure_mappings";
-}
-
-inline std::string PressureMappingsHeading(std::size_t controllerIx)
-{
-    return PressureMappings(controllerIx) + ".heading";
-}
-
-inline std::string PressureMappingRow(std::size_t controllerIx, std::size_t mappingIx)
-{
-    return PressureMappings(controllerIx) + ".row." + std::to_string(mappingIx);
-}
-
-inline std::string PressureMappingField(std::size_t controllerIx, std::size_t mappingIx,
-                                        MidiConfigViewModel::PressureMappingField field)
-{
-    return PressureMappingRow(controllerIx, mappingIx) + ".field." +
-           std::to_string(static_cast<int>(field));
-}
-
-inline std::string PressureMappingDelete(std::size_t controllerIx, std::size_t mappingIx)
-{
-    return PressureMappingRow(controllerIx, mappingIx) + ".delete";
-}
-
-inline std::string PressureMappingAdd(std::size_t controllerIx)
-{
-    return PressureMappings(controllerIx) + ".add";
+    return ConnectMessages(controllerIx) + ".add_row";
 }
 
 }  // namespace NodeIds
@@ -441,9 +414,6 @@ inline constexpr const char* kControllerRestore = "runtime.controllers.controlle
 inline constexpr const char* kConnectMessageCommit = "runtime.controllers.connect_message_commit";
 inline constexpr const char* kConnectMessageDelete = "runtime.controllers.connect_message_delete";
 inline constexpr const char* kConnectMessageAdd = "runtime.controllers.connect_message_add";
-inline constexpr const char* kPressureMappingFieldCommit = "runtime.controllers.pressure_mapping_field_commit";
-inline constexpr const char* kPressureMappingDelete = "runtime.controllers.pressure_mapping_delete";
-inline constexpr const char* kPressureMappingAdd = "runtime.controllers.pressure_mapping_add";
 
 // The fixed part of what the Controllers page emits. The per-controller and
 // wizard-step actions above are not listed: they are matched by prefix, because
@@ -472,9 +442,6 @@ inline constexpr std::string_view kControllersActions[] = {
     kConnectMessageCommit,
     kConnectMessageDelete,
     kConnectMessageAdd,
-    kPressureMappingFieldCommit,
-    kPressureMappingDelete,
-    kPressureMappingAdd,
 };
 
 }  // namespace Actions
@@ -559,11 +526,12 @@ inline constexpr float kActiveHeaderLine2Width =
 // any: with the disclosure arrow, name and (launchpad-only) Variant selector
 // accounted for, whatever is left up to line two's own width is free, since
 // line two already sets the row wider than line one needs. That comes to
-// 308px here -- comfortably over every listed device name measured at the
-// page's default text size (RunDeviceLabelWidthCheck in the miniapp JUCE
-// suite measures the library names this way and fails if one grows past
-// this) -- so a fixed constant here costs the row nothing, and the label
-// never needs a second line or a shortened device name to fit.
+// 308px here -- comfortably over the library's own fallback device names,
+// measured at the page's default text size (RunDeviceLabelWidthCheck in the
+// miniapp JUCE suite measures those names this way and fails if one grows
+// past this; it does not measure any other app's own catalog names) -- so a
+// fixed constant here costs the row nothing for those names, and the label
+// never needs a second line or a shortened device name to fit them.
 inline constexpr float kControllerDeviceWidth =
     kActiveHeaderLine2Width - kControllerDisclosureWidth - kControllerNameWidth - kVariantFieldWidth -
     3.0f * kLifecycleControlGap;
@@ -826,25 +794,6 @@ inline std::optional<MidiMappingRowVM::Field> ParseFieldToken(const std::string&
     }
 }
 
-inline std::string PressureMappingFieldToken(MidiConfigViewModel::PressureMappingField field)
-{
-    return std::to_string(static_cast<int>(field));
-}
-
-inline std::optional<MidiConfigViewModel::PressureMappingField> ParsePressureMappingFieldToken(
-    const std::string& token)
-{
-    try
-    {
-        const int value = std::stoi(token);
-        return static_cast<MidiConfigViewModel::PressureMappingField>(value);
-    }
-    catch (...)
-    {
-        return std::nullopt;
-    }
-}
-
 // A field-commit action's value packs its raw text last, after a fixed run
 // of ':'-joined index/field tokens -- and that raw text can itself contain
 // a ':' (a connect message's hex bytes, say), so it is rejoined from every
@@ -865,8 +814,8 @@ inline std::string JoinRemainingTokens(const std::vector<std::string>& parts, st
 
 // A field-commit's raw text must be wholly a finite number -- not a prefix
 // of one (std::stod would otherwise accept "3abc" as 3) and not NaN/infinity.
-// Returns nullopt for anything else, so every caller refuses with the same
-// wording rather than each re-deriving this check.
+// Returns nullopt for anything else, which the mapping-row field commit
+// refuses on.
 inline std::optional<double> ParseFiniteNumericToken(const std::string& rawValue)
 {
     try
@@ -1082,9 +1031,8 @@ inline std::vector<ui::ControlOption> BuildLaunchpadVariantOptions(LaunchpadCont
 // MfTwister), not on section support, so a Generic row cannot hold them. A
 // device that needs one of those starts from its own descriptor, or the
 // library one MakeControllerWizardRegistry appends for any kind an app's
-// catalog does not cover, and edits from there. Connect messages and
-// pressure mappings (below) are unconditional on every kind, Custom
-// included.
+// catalog does not cover, and edits from there. Connect messages (below) are
+// unconditional on every kind, Custom included.
 inline constexpr const char* kCustomPresetOptionId = "custom";
 inline constexpr const char* kCustomPresetLabel = "Custom";
 inline constexpr MidiProfileKind kCustomKind = MidiProfileKind::Generic;
@@ -1423,13 +1371,44 @@ public:
                action.name == Actions::kControllerConfigure ||
                action.name == Actions::kConnectMessageCommit ||
                action.name == Actions::kConnectMessageDelete ||
-               action.name == Actions::kConnectMessageAdd ||
-               action.name == Actions::kPressureMappingFieldCommit ||
-               action.name == Actions::kPressureMappingDelete ||
-               action.name == Actions::kPressureMappingAdd;
+               action.name == Actions::kConnectMessageAdd;
     }
 
 private:
+    // Every handler that accepts a view-model edit and then calls Commit()
+    // needs the same refusal text for the one case the view model itself
+    // cannot detect: a host that rejects an otherwise-valid instrument.
+    static constexpr const char* kHostRejectedCommitStatus = "Refused: host rejected the instrument commit";
+    // Shared by handlers that parse an action value into a candidate or
+    // controller identity token and find it malformed; one of the four call
+    // sites (SnapshotForLifecycleIdentity) also uses this when the host's
+    // instrument-snapshot callback is unset.
+    static constexpr const char* kInvalidControllerIdentityStatus = "Refused: invalid controller identity";
+    // Shared by every handler that builds a candidate record from wizard or
+    // add-flow input and finds AddController/ReplaceController rejects it.
+    static constexpr const char* kGeneratedRecordInvalidStatus =
+        "Refused: generated controller record is invalid";
+    // Shared by handlers that re-read the committed instrument and find the
+    // row they started from no longer matches: two are the wizard's
+    // revalidation of an existing-session target
+    // (RevalidateExistingWizardTarget), one is a rename/delete action's
+    // identity lookup by name (SnapshotForLifecycleIdentity).
+    static constexpr const char* kControllerRecordChangedStatus =
+        "Refused: controller record changed; refresh and try again";
+    // Shared by every handler that needs the host's device/instrument
+    // snapshot callbacks to revalidate a candidate and finds them unset.
+    static constexpr const char* kCurrentControllerStateUnavailableStatus =
+        "Refused: current controller state is unavailable";
+    // Shared by the two commit paths (session and non-session) that commit a
+    // new controller successfully but find the host's own runtime-config
+    // save callback fails.
+    static constexpr const char* kRuntimeConfigSaveFailedStatus =
+        "The controller was committed, but runtime configuration save failed";
+    // Shared by both wizard-submit paths (a new candidate and an existing
+    // target) when GenerateProfile fails without its own error string.
+    static constexpr const char* kControllerProfileGenerationFailedStatus =
+        "controller profile generation failed";
+
     bool OpenExistingFromSnapshot(const MidiInstrumentConfig& instrument,
                                   std::size_t controllerIx)
     {
@@ -1636,24 +1615,6 @@ private:
             return;
         }
 
-        if (action.name == Actions::kPressureMappingFieldCommit)
-        {
-            HandlePressureMappingFieldCommit(action.value);
-            return;
-        }
-
-        if (action.name == Actions::kPressureMappingDelete)
-        {
-            HandlePressureMappingDelete(action.value);
-            return;
-        }
-
-        if (action.name == Actions::kPressureMappingAdd)
-        {
-            HandlePressureMappingAdd(action.value);
-            return;
-        }
-
         if (action.name == Actions::kAddPresetDraft)
         {
             SetAddPresetDraft(action.value);
@@ -1692,7 +1653,7 @@ private:
                 NodeIds::WizardCandidateFromToken(action.value);
             if (!candidate.has_value())
             {
-                SetStatus("Refused: invalid controller identity");
+                SetStatus(kInvalidControllerIdentityStatus);
                 return;
             }
             HandleIgnoreCandidate(*candidate, /*sessionStatus=*/false);
@@ -1714,7 +1675,7 @@ private:
                 NodeIds::ControllerActionIdentityFromToken(action.value.substr(0, separator));
             if (!identity.has_value())
             {
-                SetStatus("Refused: invalid controller identity");
+                SetStatus(kInvalidControllerIdentityStatus);
                 return;
             }
             m_renameDrafts[identity->second] = action.value.substr(separator + 1);
@@ -1831,7 +1792,7 @@ private:
         };
         if (!m_callbacks.instrumentSnapshot || !m_callbacks.enumerateDevices)
         {
-            report("Refused: current controller state is unavailable");
+            report(kCurrentControllerStateUnavailableStatus);
             return false;
         }
 
@@ -1879,13 +1840,11 @@ private:
         {
             if (sessionStatus)
             {
-                SetWizardStatus(
-                    "The controller was committed, but runtime configuration save failed");
+                SetWizardStatus(kRuntimeConfigSaveFailedStatus);
             }
             else
             {
-                SetStatus(
-                    "The controller was committed, but runtime configuration save failed");
+                SetStatus(kRuntimeConfigSaveFailedStatus);
             }
             return false;
         }
@@ -1900,11 +1859,11 @@ private:
         {
             if (sessionStatus)
             {
-                SetWizardStatus("Refused: generated controller record is invalid");
+                SetWizardStatus(kGeneratedRecordInvalidStatus);
             }
             else
             {
-                SetStatus("Refused: generated controller record is invalid");
+                SetStatus(kGeneratedRecordInvalidStatus);
             }
             return false;
         }
@@ -1912,11 +1871,11 @@ private:
         {
             if (sessionStatus)
             {
-                SetWizardStatus("Refused: host rejected the instrument commit");
+                SetWizardStatus(kHostRejectedCommitStatus);
             }
             else
             {
-                SetStatus("Refused: host rejected the instrument commit");
+                SetStatus(kHostRejectedCommitStatus);
             }
             return false;
         }
@@ -1931,14 +1890,14 @@ private:
     {
         if (!identity.has_value() || !m_callbacks.instrumentSnapshot)
         {
-            SetStatus("Refused: invalid controller identity");
+            SetStatus(kInvalidControllerIdentityStatus);
             return false;
         }
         instrument = m_callbacks.instrumentSnapshot();
         if (identity->first >= instrument.controllers.size() ||
             instrument.controllers[identity->first].name != identity->second)
         {
-            SetStatus("Refused: controller record changed; refresh and try again");
+            SetStatus(kControllerRecordChangedStatus);
             return false;
         }
         return true;
@@ -1967,7 +1926,7 @@ private:
         }
         if (!Commit(std::move(out)))
         {
-            SetStatus("Refused: host rejected the instrument commit");
+            SetStatus(kHostRejectedCommitStatus);
             return false;
         }
         RefreshDiscoveryFromCallbacks();
@@ -1985,7 +1944,7 @@ private:
             NodeIds::ControllerActionIdentityFromToken(token);
         if (!identity.has_value())
         {
-            SetStatus("Refused: invalid controller identity");
+            SetStatus(kInvalidControllerIdentityStatus);
             return;
         }
         const auto draft = m_renameDrafts.find(identity->second);
@@ -2082,7 +2041,7 @@ private:
             SetWizardStatus(
                 "Refused: " +
                 (generated.error.empty()
-                     ? std::string("controller profile generation failed")
+                     ? std::string(kControllerProfileGenerationFailedStatus)
                      : generated.error));
             return;
         }
@@ -2113,13 +2072,13 @@ private:
     {
         if (!m_callbacks.instrumentSnapshot)
         {
-            SetWizardStatus("Refused: current controller state is unavailable");
+            SetWizardStatus(kCurrentControllerStateUnavailableStatus);
             return false;
         }
         instrument = m_callbacks.instrumentSnapshot();
         if (expected.index >= instrument.controllers.size())
         {
-            SetWizardStatus("Refused: controller record changed; refresh and try again");
+            SetWizardStatus(kControllerRecordChangedStatus);
             return false;
         }
         const MidiControllerSlot& current = instrument.controllers[expected.index];
@@ -2130,7 +2089,7 @@ private:
             current.output.name != expected.output.name ||
             current.wizardId != expected.wizardId || current.disposition != expected.disposition)
         {
-            SetWizardStatus("Refused: controller record changed; refresh and try again");
+            SetWizardStatus(kControllerRecordChangedStatus);
             return false;
         }
         return true;
@@ -2160,7 +2119,7 @@ private:
             SetWizardStatus(
                 "Refused: " +
                 (generated.error.empty()
-                     ? std::string("controller profile generation failed")
+                     ? std::string(kControllerProfileGenerationFailedStatus)
                      : generated.error));
             return;
         }
@@ -2172,12 +2131,12 @@ private:
         replacement.disposition = MidiControllerDisposition::Active;
         if (!instrument.ReplaceController(expected.index, std::move(replacement)))
         {
-            SetWizardStatus("Refused: generated controller record is invalid");
+            SetWizardStatus(kGeneratedRecordInvalidStatus);
             return;
         }
         if (!Commit(std::move(instrument)))
         {
-            SetWizardStatus("Refused: host rejected the instrument commit");
+            SetWizardStatus(kHostRejectedCommitStatus);
             return;
         }
         RefreshDiscoveryFromCallbacks();
@@ -2431,7 +2390,12 @@ private:
     void HandleConnectMessageCommit(const std::string& value)
     {
         const auto parts = Split(value, ':');
-        if (parts.size() < 3)
+        // An entirely empty hex field ("<controllerIx>:<messageIx>:") tokenises
+        // to exactly 2 parts -- Split's std::getline loop drops the trailing
+        // empty token -- so the arity floor is 2, not 3: that shape must reach
+        // SetConnectMessage below and be refused there as an empty message,
+        // rather than being silently dropped here as too few parts.
+        if (parts.size() < 2)
         {
             return;
         }
@@ -2442,7 +2406,11 @@ private:
         std::string reason;
         if (m_vm.SetConnectMessage(controllerIx, messageIx, hexText, out, &reason))
         {
-            Commit(std::move(out));
+            if (!Commit(std::move(out)))
+            {
+                SetStatus(kHostRejectedCommitStatus);
+                return;
+            }
             SetStatus("OK");
         }
         else
@@ -2464,7 +2432,11 @@ private:
         std::string reason;
         if (m_vm.DeleteConnectMessage(controllerIx, messageIx, out, &reason))
         {
-            Commit(std::move(out));
+            if (!Commit(std::move(out)))
+            {
+                SetStatus(kHostRejectedCommitStatus);
+                return;
+            }
             SetStatus("Deleted");
         }
         else
@@ -2480,85 +2452,12 @@ private:
         std::string reason;
         if (m_vm.AddConnectMessage(controllerIx, out, &reason))
         {
-            Commit(std::move(out));
+            if (!Commit(std::move(out)))
+            {
+                SetStatus(kHostRejectedCommitStatus);
+                return;
+            }
             SetStatus("Added connect message");
-        }
-        else
-        {
-            SetStatus("Refused: " + reason);
-        }
-    }
-
-    // value: "<controllerIx>:<mappingIx>:<fieldToken>", with the typed
-    // number appended by the host after one more ':'.
-    void HandlePressureMappingFieldCommit(const std::string& value)
-    {
-        const auto parts = Split(value, ':');
-        if (parts.size() < 4)
-        {
-            return;
-        }
-        const std::size_t controllerIx = ParseIndex(parts[0]);
-        const std::size_t mappingIx = ParseIndex(parts[1]);
-        const std::optional<MidiConfigViewModel::PressureMappingField> field =
-            ControllersLayout::ParsePressureMappingFieldToken(parts[2]);
-        if (!field.has_value())
-        {
-            return;
-        }
-
-        const std::string rawValue = ControllersLayout::JoinRemainingTokens(parts, 3);
-        const std::optional<double> parsedValue = ControllersLayout::ParseFiniteNumericToken(rawValue);
-        if (!parsedValue.has_value())
-        {
-            SetStatus("Refused: value must be a finite number");
-            return;
-        }
-        const double numericValue = *parsedValue;
-        MidiInstrumentConfig out;
-        std::string reason;
-        if (m_vm.SetPressureMappingField(controllerIx, mappingIx, *field, numericValue, out, &reason))
-        {
-            Commit(std::move(out));
-            SetStatus("OK");
-        }
-        else
-        {
-            SetStatus("Refused: " + reason);
-        }
-    }
-
-    void HandlePressureMappingDelete(const std::string& value)
-    {
-        const auto parts = Split(value, ':');
-        if (parts.size() != 2)
-        {
-            return;
-        }
-        const std::size_t controllerIx = ParseIndex(parts[0]);
-        const std::size_t mappingIx = ParseIndex(parts[1]);
-        MidiInstrumentConfig out;
-        std::string reason;
-        if (m_vm.DeletePressureMapping(controllerIx, mappingIx, out, &reason))
-        {
-            Commit(std::move(out));
-            SetStatus("Deleted");
-        }
-        else
-        {
-            SetStatus("Refused: " + reason);
-        }
-    }
-
-    void HandlePressureMappingAdd(const std::string& value)
-    {
-        const std::size_t controllerIx = ParseIndex(value);
-        MidiInstrumentConfig out;
-        std::string reason;
-        if (m_vm.AddPressureMapping(controllerIx, out, &reason))
-        {
-            Commit(std::move(out));
-            SetStatus("Added pressure mapping");
         }
         else
         {
@@ -2660,12 +2559,12 @@ private:
         MidiInstrumentConfig out = instrument;
         if (!out.AddController(slot))
         {
-            SetStatus("Refused: generated controller record is invalid");
+            SetStatus(kGeneratedRecordInvalidStatus);
             return;
         }
         if (!Commit(std::move(out)))
         {
-            SetStatus("Refused: host rejected the instrument commit");
+            SetStatus(kHostRejectedCommitStatus);
             return;
         }
         SetStatus("Added " + slot.name);
@@ -3697,8 +3596,17 @@ private:
                             {
                                 connect.Row(
                                     NodeIds::ConnectMessageRow(controllerIx, messageIx),
-                                    rowLayout(ControllersLayout::kMappingRowHeight, scrollWidth,
-                                             ControllersLayout::kEditorColumnGap),
+                                    // Weight(1.0), not scrollWidth: this row is
+                                    // nested inside the connect-messages Column,
+                                    // which itself fills whatever cross space its
+                                    // own parent gives it (columnLayout's default
+                                    // Weight(1.0)), and that can resolve narrower
+                                    // than scrollWidth's horizontal-scroll floor.
+                                    // A fixed scrollWidth here overflows the
+                                    // Column's own resolved bounds.
+                                    layout(ui::Extent::Px(ControllersLayout::kMappingRowHeight),
+                                          ui::Extent::Weight(1.0f),
+                                          ControllersLayout::kEditorColumnGap),
                                     [&](ui::Builder& row) {
                                         ui::ControlStyle fieldStyle = fieldControl(
                                             ControllersLayout::kConnectMessageFieldWidth,
@@ -3724,77 +3632,24 @@ private:
                                                   ControllersLayout::kMappingRowHeight));
                                     });
                             }
-                            connect.Button(
-                                NodeIds::ConnectMessageAdd(controllerIx),
-                                "Add",
-                                ui::Action::WithValue(Actions::kConnectMessageAdd,
-                                                      std::to_string(controllerIx)),
-                                button(ControllersLayout::kAddButtonWidth, 28.0f));
-                        });
-                    // Pressure mappings (config.pressureInput): also not a
-                    // MidiConfigSection, and shown independent of whether
-                    // ReconstructGridMappings folds a given one into a grid
-                    // row -- every mapping the row holds is listed here,
-                    // grid-attached or orphaned.
-                    scroll.Column(
-                        NodeIds::PressureMappings(controllerIx),
-                        columnLayout(ui::Extent::Intrinsic(), ControllersLayout::kRowGap),
-                        [&](ui::Builder& pressure) {
-                            pressure.Label(NodeIds::PressureMappingsHeading(controllerIx),
-                                          "Pressure mappings",
-                                          labelStyle(ControllersLayout::kControllerNameWidth));
-                            const std::size_t mappingCount = vm.PressureMappingCount(controllerIx);
-                            for (std::size_t mappingIx = 0; mappingIx < mappingCount; ++mappingIx)
-                            {
-                                pressure.Row(
-                                    NodeIds::PressureMappingRow(controllerIx, mappingIx),
-                                    rowLayout(ControllersLayout::kMappingRowHeight, scrollWidth,
-                                             ControllersLayout::kEditorColumnGap),
-                                    [&](ui::Builder& row) {
-                                        using PressureField = MidiConfigViewModel::PressureMappingField;
-                                        const auto emitPressureField =
-                                            [&](PressureField field, const char* caption) {
-                                                double current = 0.0;
-                                                vm.PressureMappingFieldValue(controllerIx, mappingIx,
-                                                                             field, current);
-                                                ui::ControlStyle pressureFieldStyle =
-                                                    fieldControl(66.0f, ControllersLayout::kMappingRowHeight);
-                                                pressureFieldStyle.caption = caption;
-                                                row.TextField(
-                                                    NodeIds::PressureMappingField(controllerIx, mappingIx,
-                                                                                  field),
-                                                    caption,
-                                                    std::to_string(
-                                                        static_cast<long long>(std::llround(current))),
-                                                    ui::Action::WithValue(
-                                                        Actions::kPressureMappingFieldCommit,
-                                                        std::to_string(controllerIx) + ":" +
-                                                            std::to_string(mappingIx) + ":" +
-                                                            ControllersLayout::PressureMappingFieldToken(field)),
-                                                    pressureFieldStyle);
-                                            };
-                                        emitPressureField(PressureField::Channel, "Ch");
-                                        emitPressureField(PressureField::Note, "Note");
-                                        emitPressureField(PressureField::GridSlotIx, "Slot");
-                                        emitPressureField(PressureField::GridX, "X");
-                                        emitPressureField(PressureField::GridY, "Y");
-                                        row.Button(
-                                            NodeIds::PressureMappingDelete(controllerIx, mappingIx),
-                                            "x",
-                                            ui::Action::WithValue(
-                                                Actions::kPressureMappingDelete,
-                                                std::to_string(controllerIx) + ":" +
-                                                    std::to_string(mappingIx)),
-                                            button(ControllersLayout::kDeleteButtonWidth,
-                                                  ControllersLayout::kMappingRowHeight));
-                                    });
-                            }
-                            pressure.Button(
-                                NodeIds::PressureMappingAdd(controllerIx),
-                                "Add",
-                                ui::Action::WithValue(Actions::kPressureMappingAdd,
-                                                      std::to_string(controllerIx)),
-                                button(ControllersLayout::kAddButtonWidth, 28.0f));
+                            connect.Row(
+                                NodeIds::ConnectMessageAddRow(controllerIx),
+                                // Same Weight(1.0) reasoning as ConnectMessageRow
+                                // above: this row is nested inside the same
+                                // Weight(1.0)-sized Column, so its own cross
+                                // extent must match that, not scrollWidth's
+                                // horizontal-scroll floor.
+                                layout(ui::Extent::Px(ControllersLayout::kMappingRowHeight),
+                                      ui::Extent::Weight(1.0f),
+                                      ControllersLayout::kEditorColumnGap),
+                                [&](ui::Builder& addRow) {
+                                    addRow.Button(
+                                        NodeIds::ConnectMessageAdd(controllerIx),
+                                        "Add",
+                                        ui::Action::WithValue(Actions::kConnectMessageAdd,
+                                                              std::to_string(controllerIx)),
+                                        button(ControllersLayout::kAddButtonWidth, 28.0f));
+                                });
                         });
                     for (MidiConfigSection section : rowVm.sections)
                     {

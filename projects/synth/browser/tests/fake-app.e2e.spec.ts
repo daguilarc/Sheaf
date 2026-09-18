@@ -39,13 +39,6 @@ async function assertNoContentSidebarOverlap(page: Page): Promise<void> {
 }
 
 const TWISTER_DISPLAY_NAME = "MIDI Fighter Twister";
-// Stale: the row's device label now shows the resolved preset's device name
-// (TWISTER_DISPLAY_NAME for a row whose persisted wizard id resolves), or the
-// bound input device as a fallback, never this kind-identity string. Still
-// referenced by the manually-added-record test below, whose whole flow (a
-// kind-select add row, no longer part of the page) needs updating too; not
-// fixed here since this spec cannot be run in this environment.
-const TWISTER_KIND_LABEL = "twister";
 const TWISTER_WIZARD_DEFAULTS = [
   "Hold Reset",
   "Hold Random",
@@ -542,17 +535,23 @@ test("controller wizard actions are absent on a manually added record", async ({
   await installRealFakeApp(page);
 
   await page.locator(synthNode("runtime.sidebar.controllers")).click();
-  await page.locator(`${synthNode("runtime.controllers.add_name")} input`).fill("Hand Wired");
-  await page.locator(`${synthNode("runtime.controllers.add_kind")} select`).selectOption({ label: "MF Twister" });
+  await page.locator(`${synthNode("runtime.controllers.add_preset")} select`).selectOption({ label: "Custom" });
   await page.locator(synthNode("runtime.controllers.add_button")).click();
 
   const row = controllerRow(page, 0);
-  await expect(row.locator(synthNode("runtime.controllers.row.0.name"))).toHaveText("Hand Wired");
-  await expect(row.locator(synthNode("runtime.controllers.row.0.device"))).toHaveText(TWISTER_KIND_LABEL);
-  await expect(row.locator(synthNode("runtime.controllers.row.0.rename"))).toBeVisible();
+  await expect(row.locator(synthNode("runtime.controllers.row.0.name"))).toHaveText("Custom");
+  // A Custom row adds through no preset and binds no endpoints, so it
+  // renders neither a preset device name nor a stored endpoint label -- the
+  // page's no-input placeholder is what it actually shows.
+  await expect(row.locator(synthNode("runtime.controllers.row.0.device"))).toHaveText("(none)");
   await expect(row.locator(synthNode("runtime.controllers.row.0.delete"))).toBeVisible();
+  // Rename lives in the row's expanded editor, rendered as a tree sibling of
+  // the row's own header container rather than nested under it, so this one
+  // is queried from the page, not scoped through `row`.
+  await page.locator(synthNode("runtime.controllers.row.0.disclosure")).click();
+  await expect(page.locator(synthNode("runtime.controllers.row.0.rename"))).toBeVisible();
   // A manual record carries no persisted wizard id, so the registry-gated
-  // lifecycle actions are not offered even though its kind is MF Twister.
+  // lifecycle actions are not offered even though its kind is Generic.
   await expect(row.locator(synthNode("runtime.controllers.row.0.reconfigure"))).toHaveCount(0);
   await expect(row.locator(synthNode("runtime.controllers.row.0.blacklist"))).toHaveCount(0);
 });

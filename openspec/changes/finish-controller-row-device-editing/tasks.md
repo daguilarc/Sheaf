@@ -1,28 +1,37 @@
 ## 1. Remove the Pressure-Mapping Row Editor
 
-- [ ] 1.1 Remove `MidiConfigViewModel`'s pressure-mapping entry points
-      (`PressureMappingCount`, `PressureMappingFieldValue`,
-      `AddPressureMapping`, `SetPressureMappingField`,
-      `DeletePressureMapping`, the `PressureMappingField` enum) and
-      `MirrorPressureMappingChangeIntoOpenSession`, and restore
-      `SectionPresentation::hiddenPressureMappings`'s original comment
+- [x] 1.1 Remove the row-level pressure-mapping editor in one edit, so the
+      tree never passes through a state where a call site outlives its
+      definition: `MidiConfigViewModel`'s `PressureMappingCount`,
+      `PressureMappingFieldValue`, `AddPressureMapping`,
+      `SetPressureMappingField`, `DeletePressureMapping` and the
+      `PressureMappingField` enum; `MirrorPressureMappingChangeIntoOpenSession`;
+      the `PressureMappings`, `PressureMappingsHeading`, `PressureMappingRow`,
+      `PressureMappingField`, `PressureMappingDelete` and `PressureMappingAdd`
+      node ids; the `kPressureMappingFieldCommit`, `kPressureMappingDelete` and
+      `kPressureMappingAdd` actions and their handlers; the rendered
+      `scroll.Column` block; and `PressureMappingFieldToken` and
+      `ParsePressureMappingFieldToken`, whose only call sites are inside that
+      block and which are dead the moment it goes.
+      Restore `SectionPresentation::hiddenPressureMappings`'s original comment
       (never rendered or edited; carried verbatim through a System Messages
-      flush).
-      Check: a build with every pressure-mapping symbol above deleted still
-      links, and `SlotValidForKindValidatesPressureMappingsWithoutExposingANewKindSection`
-      (`instrument_tests.cpp`, pre-existing and untouched by this task) still
-      passes unmodified — it exercises `SlotValidForKind` directly and never
-      called the removed entry points.
-- [ ] 1.2 Remove the row's "Pressure mappings" node ids (`PressureMappings`,
-      `PressureMappingsHeading`, `PressureMappingRow`, `PressureMappingField`,
-      `PressureMappingDelete`, `PressureMappingAdd`), the
-      `kPressureMappingFieldCommit`/`kPressureMappingDelete`/
-      `kPressureMappingAdd` actions, their handlers, and the rendered
-      `scroll.Column` block from `ControllersPageUI.hpp`.
-      Check: `FindNodeById(surface.BuildTree(), NodeIds::PressureMappings(0))`
-      returns `nullptr` for a row that, before this task, rendered a
-      non-empty pressure-mapping list.
-- [ ] 1.3 Remove the ten `TestPressureMapping*` functions
+      flush), and correct the claim in `ControllersPageUI.hpp` that pressure
+      mappings render unconditionally on every kind, which this task makes
+      false.
+      Check: the library and its test binaries build and link with every symbol
+      above gone, and a case-insensitive search for `pressuremapping` across
+      `projects/synth` returns no reference to any removed row-editor symbol —
+      every remaining hit belongs to the grid-cell pressure path, to
+      `hiddenPressureMappings`, or names the row editor only to assert its
+      absence (`ControllersPageScreenshotHarness.cpp`'s
+      `RenderState6_NoPressureMappingRowEditor`, which renders and verifies
+      that no such editor exists — a hit on its own name is not a
+      reintroduction). Stated as that property rather than as a list of
+      allowed hits, which a growing grid-cell path makes stale.
+      `SlotValidForKindValidatesPressureMappingsWithoutExposingANewKindSection`
+      in `instrument_tests.cpp` exercises `SlotValidForKind` directly, never
+      called the removed entry points, and passes unmodified.
+- [x] 1.2 Remove the ten `TestPressureMapping*` functions
       (`TestPressureMappingShowsGridAttachedAndOrphanedThenEditCommits`,
       `TestPressureMappingAddAndDelete`,
       `TestPressureMappingAddStillSucceedsWhenNoteZeroIsTakenByPickingTheLowestFreeNote`,
@@ -34,100 +43,145 @@
       `TestPressureMappingDeleteRemovesTheGivenIndexNotAlwaysFirst`,
       `TestPressureMappingShownOnEveryKindNotJustWrldBldr`) and their call
       sites from `controllers_page_ui_tests.cpp`.
-      Check: the file, after this task, defines no function and contains no
-      call whose name refers to a pressure mapping, and the rest of the file's
-      tests still build and pass with those ten removed.
-- [ ] 1.4 Confirm, by hand, on the harness or a JUCE build: a WRLD.Bldr row
-      with a grid-attached pressure mapping still shows and edits that
-      mapping inside the grid row's own cell, unchanged from before this
-      change, and the row's expanded editor shows no "Pressure mappings"
-      heading anywhere.
-      Check: the six-state screenshot set in the proposal's Delivery Gate
-      (state 6) shows this directly.
+      Check: the file defines no function and contains no call whose name
+      refers to a pressure mapping, and the rest of its tests build and pass
+      with those ten removed.
+- [ ] 1.3 Confirm on the harness: a WRLD.Bldr row's expanded editor shows no
+      "Pressure mappings" heading, with a working grid mapping row present in
+      the same image.
+      Check: delivery gate state 6's image shows the absence only — a grid
+      row holding a paired pressure mapping renders pixel-identical to one
+      without, since the grid button carries no pressure-specific control or
+      label text, so no screenshot can show that half surviving. That half is
+      carried instead by the grid tests (`MidiMappingRowVM::Field`'s own
+      comment and the grid round-trip tests in `viewmodel_tests.cpp`), which
+      pass.
 
-## 2. Test and Fix the Connect-Message Editor by Index
+- [x] 1.4 Correct two comments in the directories this change touches that are
+      false independently of the removal:
+      `ControllersPageUI.hpp`'s comment on `kControllerDeviceWidth`, which says
+      the constant clears every listed device name while the check it cites
+      measures only the library's own names — say what the check actually
+      measures; and the construction-path comments in
+      `ControllerWizardDiscoveryCache.hpp` and `MidiConfigViewModel.hpp`
+      claiming a cache or registry nobody configures behaves exactly as it did
+      before, which stopped being true when the fallback registry grew from one
+      device to three.
+      Check: each edited comment states what the code does now, and names no
+      commit, task, plan or document.
 
-- [ ] 2.1 Add a test: a row holds two connect messages (`0xF0 0xF7` and a
-      second, distinct valid message); committing a valid edit to message
-      index 1 leaves message index 0's stored bytes unchanged and updates
-      message index 1 to the edited bytes; the displayed field for index 0
-      is unchanged and the field for index 1 shows the new text.
-      Check: `harness.instrument.controllers[0].config.openSysEx[0]` equals
-      its pre-edit value and `openSysEx[1]` equals the edited bytes, after
-      dispatching `kConnectMessageCommit` with value `"0:1:<new hex>"`.
-- [ ] 2.2 Add a test: committing an edit or a delete at a message index that
-      does not exist (e.g. index 1 on a row holding one message) refuses,
-      leaves every stored connect message unchanged, and sets a status
-      starting with "Refused".
-      Check: `harness.commits` is unchanged and
-      `surface.StatusText().starts_with("Refused")` after dispatching
-      `kConnectMessageCommit` or `kConnectMessageDelete` with value `"0:1"`
-      (or `"0:1:<hex>"`) against a row holding exactly one message.
-- [ ] 2.3 If either test in 2.1 or 2.2 fails against the current
-      `HandleConnectMessageCommit`/`HandleConnectMessageDelete`/
-      `SetConnectMessage`/`DeleteConnectMessage` path, fix the index handling
-      there. If both pass at that layer, additionally build a JUCE harness
-      screen with a row holding two connect messages, type into the second
-      message's field, and confirm by inspection which message's stored
-      bytes changed, before treating this task as done.
+## 2. Cover Committing to a Connect Message Other Than the First
 
-## 3. Widen the Device-Label Width Check
+- [x] 2.1 Add a test: a row holds two connect messages; committing a valid
+      edit to message index 1 updates index 1 and leaves index 0's stored
+      bytes unchanged.
+      This is the one uncovered path. `TestConnectMessageDeleteRemovesTheGivenIndexNotAlwaysFirst`
+      already deletes index 1 on a two-message row, so deletion by index is
+      covered; committing by index is not.
+      The handler path is correct: on a two-message row, committing to
+      index 1 gives `stored[0]=F0 01 F7` unchanged and `stored[1]=F0 55 F7`
+      edited. The test is therefore a regression guard over behaviour that
+      works, not a fix.
+      Check: after dispatching `kConnectMessageCommit` with value
+      `"0:1:<new hex>"`, `harness.instrument.controllers[0].config.openSysEx[0]`
+      equals its pre-edit value and `openSysEx[1]` equals the edited bytes.
+- [x] 2.2 `HandleConnectMessageCommit`'s arity guard tightened from
+      `parts.size() < 3` to `< 2`, a real behaviour change: an edit value of
+      `"<controllerIx>:<messageIx>:"` (nothing after the second colon)
+      tokenises to 2 parts (`Split`'s `std::getline` loop drops the trailing
+      empty token). Under the old `< 3` floor that shape returned before ever
+      calling `SetConnectMessage` or `SetStatus` — an edit that committed
+      nothing and showed nothing, indistinguishable from success. Under the
+      new `< 2` floor it reaches `SetConnectMessage` with an empty hex text,
+      which is refused there with a visible `Refused: ...` status, the same
+      as any other malformed edit.
+      Check: `TestConnectMessageEditCommitsValidAndRefusesInvalidUnchanged`
+      (`controllers_page_ui_tests.cpp`) dispatches `"0:0:"` after a known-good
+      commit and asserts `harness.commits` does not advance and
+      `surface.StatusText()` starts with `"Refused"` — proving the empty
+      commit is refused visibly, not dropped silently.
+- [x] 2.3 Check `Commit()`'s return value in the three connect-message
+      handlers (`HandleConnectMessageCommit`, `HandleConnectMessageDelete`,
+      `HandleConnectMessageAdd`), which previously called it unchecked --
+      a host rejection there silently reported success, unlike every other
+      commit path in this file. Introduce `kHostRejectedCommitStatus` for the
+      refusal text this shares with the wizard/add paths, then sweep the rest
+      of the header for the same shape of duplicated literal and consolidate
+      the six other families found (`Refused: invalid controller identity`,
+      `Refused: generated controller record is invalid`,
+      `Refused: controller record changed; refresh and try again`,
+      `Refused: current controller state is unavailable`, the runtime-config
+      save-failure text, and the wizard's controller-profile-generation-
+      failure text) into named constants the same way.
+      Check: `grep -c` for each of the seven literal strings above in
+      `ControllersPageUI.hpp` returns 0 outside their own constant
+      definitions, and the miniapp JUCE test binaries and the JUCE-free
+      suite build and pass with the constants in place. A behavioural test
+      (`TestConnectMessageHandlersRefuseVisiblyWhenHostRejectsCommit`,
+      `controllers_page_ui_tests.cpp`) drives each of the three handlers with
+      the harness's `commitSucceeds = false` knob and asserts the commit
+      attempt is refused visibly; reverting one handler's return-value check
+      makes that test fail (`terminating due to uncaught exception of type
+      std::runtime_error`), confirmed and restored to green.
 
-- [ ] 3.1 Add a case to `RunDeviceLabelWidthCheck` (or a neighboring test in
-      `ControllersPageSimulationTests.cpp`) measuring, against
-      `kControllerDeviceWidth` with the same `juce::GlyphArrangement`
-      technique the existing library-name cases use: (a) frogg3rs's own
-      longest real device display name, "Akai APC40 mkII (Ableton)" (from
-      `app/FroggersMidiCatalog.hpp`, hardcoded as a literal here rather than
-      imported, since Sheaf does not depend on any app), and (b)
-      `StoredEndpointLabel`'s "name (identifier)" form for a representative
-      bound, unresolved device at least as long as that name plus a typical
-      CoreMIDI identifier string. Do not add a JUCE-linked test to frogg3rs's
-      own `app/` for this: that tree's Controllers-page test binary is
-      deliberately JUCE-free (`app/Makefile`'s `check_no_juce` target), so
-      this measurement belongs in Sheaf, covering every app's names it can by
-      literal, not by a cross-repo import.
-      Check: both new cases' `Require(measured <= kControllerDeviceWidth, ...)`
-      run and each failure message reports both measured and allowed widths,
-      matching the existing cases' wording.
-- [ ] 3.2 If either case added in 3.1 measures wider than
-      `kControllerDeviceWidth`, widen the constant and re-derive the two
-      `static_assert`s (`kActiveHeaderLine1Width <= kActiveHeaderLine2Width`,
-      `kBlacklistedHeaderLine1Width <= kBlacklistedHeaderLine2Width`) that
-      depend on it so both still hold at compile time.
-- [ ] 3.3 If a future app's catalog adds a device display name longer than
-      every case in 3.1, that app's own change is responsible for adding its
-      own literal case here or widening `kControllerDeviceWidth`; this task
-      does not add a mechanism that enumerates every downstream app's catalog
-      automatically.
+## 3. Fix the Browser E2E Spec's Device Assertions
 
-## 4. Fix the Browser E2E Spec's Device-Label Assertions
+- [x] 3.1 Fix the manually-added-record test's `.device` assertion, which
+      expects the old kind-identity string. The row that test builds adds
+      through Custom and binds no endpoints, so it renders neither a preset
+      device name nor a stored endpoint label.
+      Check: the assertion names what that row actually renders for an
+      unresolved wizard id with no bound input, confirmed by running the
+      test, not by reading the renderer.
+- [x] 3.2 Update the add flow that test drives. `runtime.controllers.add_name`
+      and `runtime.controllers.add_kind` no longer exist; add through the
+      current Preset combo. `runtime.controllers.add_button` does still exist
+      and is the current add row's Add button — keep it.
+      Check: no locator in the test targets `add_name` or `add_kind`, the
+      locator for `add_button` still resolves, and every assertion downstream
+      of the add flow matches a Custom row's actual fields.
+- [x] 3.3 Run the suite and report its result against the state this change
+      inherited: ten of seventeen tests fail for a reason that predates this
+      work, where the add controls were removed without every reference to
+      them being enumerated. `npm ci` in `projects/synth/browser` is approved
+      by the operator.
+      Check: the run's own pass/fail counts are reported as measured. Tests
+      this change did not touch are not claimed as fixed, and a suite still
+      short of green is reported as still short of green.
+      Measured: `npx playwright test tests/fake-app.e2e.spec.ts --workers=1`
+      reports 8 passed, 9 failed, of 17. The one test those tasks touch,
+      "controller wizard actions are absent on a manually added record," is
+      among the 8 passing. The remaining 9 failures predate this work (the
+      removed `add_name`/`add_kind` controls, never fully enumerated when
+      they were deleted) and this change does not touch or claim to fix
+      them.
 
-- [ ] 4.1 Fix the manually-added-record test's `.device` assertion, which
-      still expects `TWISTER_KIND_LABEL`, to expect whatever
-      `ControllerDeviceLabel` actually renders for a row with no resolved
-      wizard id (the bound input's `StoredEndpointLabel`).
-      Check: the test's `await expect(row.locator(synthNode("runtime.controllers.row.0.device")))`
-      assertion names the label the row's own bound-input endpoint produces,
-      not a kind string.
-- [ ] 4.2 Update the manually-added-record test's add flow, which still uses
-      the removed `runtime.controllers.add_name`/`add_kind`/`add_button`
-      controls, to add through the current single Preset-combo add row (a
-      Custom selection), and update every assertion downstream of that flow
-      to match a Custom row's actual fields.
-      Check: the test runs against controls the current page renders (no
-      locator in it targets `add_name` or `add_kind`).
-- [ ] 4.3 Record, without fixing here, in a comment beside the assertions
-      this task touches: most of this suite's other failures predate this
-      change, tracing to "Keep a renamed controller's row open," which
-      removed `add_name`/`add_kind` and never enumerated every reference to
-      them — a pre-existing break this task's two assertion fixes do not
-      resolve and this change does not otherwise touch.
-      Check: the comment names the removing commit; no assertion this task
-      leaves untouched is claimed as fixed by this change.
+## 4. Delivery
 
-## 5. Delivery
+- [ ] 4.1 Capture the six Controllers-page states named in the proposal's
+      Delivery Gate and share them for the operator's review before this
+      merges to main.
+- [x] 4.2 Remove the uncommitted scratch measurement function from
+      `ControllersPageSimulationTests.cpp` before delivery.
+      Check: `git status` in the submodule shows no scratch artifact, and
+      `git diff` contains no function labelled scratch.
 
-- [ ] 5.1 Capture and share the six Controllers-page screenshots named in the
-      proposal's Delivery Gate for the operator's review before this merges
-      to main.
+## Cut from this change, with the evidence that cut it
+
+- **Widening the device-label width check.** The premise was that the check
+  measures only the library's own fallback names and might miss a longer real
+  one. Measured against the same glyph technique and the same allowance the
+  existing cases use: the longest real device name renders at 141.1px and the
+  bound-device fallback label at 221.6px, against an allowance of 308px. The
+  instrument was proven live first — one character measured 6.9px against 552.8px
+  for eighty. There is no defect here to catch, the proposed literal would have
+  been a third unsynchronised copy of a name owned by another repository, and
+  the widening step it carried was impossible anyway: the two header-width
+  `static_assert`s it promised to keep already hold with zero slack, so any
+  widening breaks them.
+- **A test for editing or deleting a connect message at an index that does not
+  exist.** Indices reach the handler from the rendered row, so no player can
+  produce one that is out of range. The refusal a player can actually reach —
+  text that is not a complete SysEx message — is already covered.
+- **A comment recording which commit broke the browser suite.** A comment
+  states what the code does, not what happened to it.
