@@ -412,8 +412,6 @@ while IFS=: read -r path line match; do
 
     case "$path" in
         juce/*|\
-        runtime/AudioConfigPage.hpp|\
-        runtime/FilePage.hpp|\
         runtime/HostDataPaths.cpp|\
         runtime/JuceRuntimeMainServices.hpp|\
         runtime/LauncherWindow.hpp|\

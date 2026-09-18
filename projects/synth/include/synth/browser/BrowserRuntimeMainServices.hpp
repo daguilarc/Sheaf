@@ -109,7 +109,7 @@ public:
         // A live capture diagnostic outranks the last selection acknowledgement:
         // the acknowledgement is what the user just did, the diagnostic is what
         // the host can currently deliver. Neither displaces the requested/active
-        // counts (sru-3) -- both compose after them.
+        // counts -- both compose after them.
         std::string detail = BrowserAudioInputDetail(input);
         if (detail.empty() && audioStatus_.has_value())
         {
@@ -130,7 +130,7 @@ public:
     {
         // Reacquiring is the launcher realm's work: it needs DOM/media APIs
         // this side never touches, and it must not be initiated by anything
-        // but the user (sbw-4). Retry re-requests whatever is currently
+        // but the user. Retry re-requests whatever is currently
         // selected, so it arms from the persisted input name rather than an
         // action value. There is no output equivalent of retry: an output
         // selection arms immediately below, and System Default is always

@@ -53,8 +53,8 @@ inline constexpr std::int32_t kRequestPermissionAudioRequest = -3;
 // `browser/src/audio.ts`, so entries may be appended but never reordered.
 //
 // `InsecureContext` through `AudioContextUnavailable` were appended after the
-// generic `PrerequisiteBlocked` so sbw-10's "report the missing prerequisite by
-// name" is answered on the Audio page itself rather than only in a JavaScript
+// generic `PrerequisiteBlocked` so the missing prerequisite is reported by
+// name on the Audio page itself rather than only in a JavaScript
 // diagnostic. That widened the accepted status range from 0-7 to 0-10, which a
 // module built against the narrower range rejects, so browser ABI version 3
 // became version 4 -- version equality alone would not have protected an old
@@ -116,7 +116,7 @@ inline bool BrowserAudioInputCaptureLive(BrowserAudioInputStatus status) noexcep
            status == BrowserAudioInputStatus::ChannelCountUnreported;
 }
 
-// Capture is offline and only a user gesture may re-run it (sbw-4, sbw-10):
+// Capture is offline and only a user gesture may re-run it:
 // there is no automatic or realtime retry, so `Retry Input` is the only way
 // back from any of these states. `Requesting` is deliberately excluded -- a
 // request already in flight must not offer a second prompt.
@@ -202,7 +202,7 @@ inline std::string BrowserAudioInputDetail(const BrowserAudioInputState& input)
     return detail;
 }
 
-// The same stable requested/active line the JUCE runtime publishes (sru-3): the
+// The same stable requested/active line the JUCE runtime publishes: the
 // counts always lead, and whatever diagnostic is current follows them instead of
 // displacing them. A zero-input application makes no input claim at all and gets
 // exactly the detail it was given.

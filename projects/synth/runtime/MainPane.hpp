@@ -26,7 +26,7 @@ public:
         Controllers,
         Sync,
         File,
-        // sprs-17: mirrors RuntimeMainComponent's RuntimeMainPage::AppPage
+        // Mirrors RuntimeMainComponent's RuntimeMainPage::AppPage
         // (see ToRuntimeMainPage/FromRuntimeMainPage below) the same way
         // every other page value does, regardless of whether the wrapped
         // App actually registers a page.
@@ -72,31 +72,32 @@ public:
 
     void resized() override
     {
-        // Task 8 fix round 1 (sprs-13 finding 1): feed the pane's live JUCE
+        // Feed the pane's live JUCE
         // bounds to the shell before the next RefreshFromSurface() rebuilds
         // the tree, so an ExtentAwareSurface app is offered the real window
         // size instead of only ever resolving at its compiled-in default.
         // mainComponent_ is held directly (not through a `ui::Surface&`), so
-        // this calls its existing public SetContentExtent() setter (task
-        // 8.1) with no dynamic_cast/interface needed at this layer.
+        // this calls its existing public SetContentExtent() setter with no
+        // dynamic_cast/interface needed at this layer.
         //
-        // Fix round 2 (sprs-13 Task 8 re-review): the pane's own bounds are
+        // The pane's own bounds are
         // the composite footprint (app content + the runtime sidebar strip
-        // placed beside it, RuntimeMainComponent.hpp's BuildTree()), not the
+        // placed beside it, RuntimeMainComponent::BuildTree()), not the
         // app's content area alone. Offering the full pane width let an
         // extent-aware app resolve as wide as the whole pane, which then
         // placed the sidebar at that same width -- past the pane's own
         // right edge, clipped off-screen. The offered extent is the app
         // CONTENT area: pane bounds with the sidebar's width subtracted,
         // height unchanged -- matching liveContentExtent_'s sidebar-free
-        // constructor-time default (RuntimeMainComponent.hpp:64-73) and the
-        // composition's own layout (content root sits at x 0, sidebar root
-        // at x == resolved app width, RuntimeMainComponent.hpp:156). A pane
-        // narrower than the sidebar floors at width 0 rather than going
+        // constructor-time default (RuntimeMainComponent's constructor) and
+        // the composition's own layout (content root sits at x 0, sidebar
+        // root at x == resolved app width, in RuntimeMainComponent::BuildTree()).
+        // A pane narrower than the sidebar floors at width 0 rather than going
         // negative, the same inset-then-floor idiom already used for
         // exactly this "extent minus a fixed inset" shape elsewhere in this
-        // codebase (e.g. `std::max(0.0f, containerExtent - padding * 2.0f)`,
-        // PortableUILayout.hpp:179/:325/:435) -- not a new clamping rule.
+        // codebase (e.g. `std::max(0.0f, containerExtent - padding * 2.0f)`
+        // in AllocateExtents, ResolveCrossExtent, and IntrinsicForWrappingRow
+        // in PortableUILayout.hpp) -- not a new clamping rule.
         synth::ui::Bounds contentExtent = synth_juce::JuceToUiBounds(getLocalBounds().toFloat());
         contentExtent.width =
             std::max(0.0f, contentExtent.width - synth::runtime_ui::Layout::kSidebarWidth);

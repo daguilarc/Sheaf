@@ -72,7 +72,7 @@ export type DrawCommand = {
   startRadians: number; endRadians: number; cornerRadius: number; text: string; textSize: number; textColor: Color; points: Point[];
 };
 export type TextStyle = { size: number; color: Color; align: number };
-// `bounds` are parent-relative and draw geometry is node-local (sru-46).
+// `bounds` are parent-relative and draw geometry is node-local.
 // `color`, `textStyle`, and the container border fields are absent when the
 // producer carried none, in which case the backend applies its own default
 // look; `color`'s meaning is per-kind (see the contract on `synth::ui::Node`

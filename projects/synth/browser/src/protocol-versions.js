@@ -10,7 +10,7 @@
 // too deep. A sibling .js is copied into dist/src/ beside its callers, so it
 // resolves the same from either tree and needs nothing built first.
 export const SUPPORTED_BROWSER_ABI_VERSION = 6;
-// Version 2 (sru-46): node bounds are parent-relative, `Draw` geometry is
+// Version 2: node bounds are parent-relative, `Draw` geometry is
 // node-local, node colour/text style and container border fields cross the
 // wire behind explicit presence bytes, and `variant` is gone. A hard break
 // with strict equality on both ends and no version-1 fallback. Moves in

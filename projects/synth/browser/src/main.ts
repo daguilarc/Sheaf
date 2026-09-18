@@ -121,41 +121,6 @@ export function createDirectRuntimeClient(loadModule: RuntimeModuleLoader = load
   };
 }
 
-export function createWorkerRuntimeClient(workerUrl = new URL("./worker.js", import.meta.url)): RuntimeClient {
-  const worker = new Worker(workerUrl, { type: "module" });
-  const statusHandlers = new Set<(response: RuntimeResponse) => void>();
-  let queue: Promise<void> = Promise.resolve();
-
-  worker.addEventListener("message", (event: MessageEvent<RuntimeResponse>) => {
-    if (event.data.type === "page-status" || event.data.type === "file-export")
-      statusHandlers.forEach((handler) => handler(event.data));
-  });
-
-  const request = (command: RuntimeCommand): Promise<RuntimeResponse> => {
-    const run = () => new Promise<RuntimeResponse>((resolve) => {
-      const receive = (event: MessageEvent<RuntimeResponse>) => {
-        if (event.data.type === "page-status" || event.data.type === "file-export") return;
-        worker.removeEventListener("message", receive);
-        resolve(event.data);
-      };
-      worker.addEventListener("message", receive);
-      worker.postMessage(command);
-    });
-    const response = queue.then(run, run);
-    queue = response.then(() => {}, () => {});
-    return response;
-  };
-
-  return {
-    request,
-    onStatus: (handler) => { statusHandlers.add(handler); },
-    terminate: async () => {
-      await request({ type: "destroy" });
-      worker.terminate();
-    },
-  };
-}
-
 export class SynthBrowserApp {
   private readonly ui: BrowserUiBackend;
   private audio: AudioBridge | undefined;
@@ -204,7 +169,7 @@ export class SynthBrowserApp {
     if (audioConfig.type !== "audio-config") throw new Error("runtime did not return audio configuration");
     // The application's input request is discovered here -- after the module is
     // loaded, the runtime created, and the application initialized -- so capture
-    // can never precede the application that asks for it (sbw-4).
+    // can never precede the application that asks for it.
     const audioWorker: BrowserAudioWorker = { audioInputChannels: async () => audioConfig.inputChannels };
     if (this.runtime.startAudioWorklet)
       audioWorker.startAudioWorklet = (context) => this.runtime.startAudioWorklet!(context);

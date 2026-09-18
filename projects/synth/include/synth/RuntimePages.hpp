@@ -40,7 +40,7 @@ inline constexpr const char* kSidebarControllers = "runtime.sidebar.controllers"
 inline constexpr const char* kSidebarControllersWarning = "runtime.sidebar.controllers.warning";
 inline constexpr const char* kSidebarSync = "runtime.sidebar.sync";
 inline constexpr const char* kSidebarFile = "runtime.sidebar.file";
-// sprs-17: the app-registered page's sidebar button. Sheaf owns this id (and
+// the app-registered page's sidebar button. Sheaf owns this id (and
 // the mirrored Actions::kSidebarApp below) the same way it owns every other
 // sidebar entry's id/action pair -- the app's own RegisteredPage::id is a
 // separate, app-chosen identifier that never reaches this constant.
@@ -57,7 +57,7 @@ inline constexpr const char* kAudioForm = "runtime.audio.form";
 inline constexpr const char* kAudioStatus = "runtime.audio.status";
 inline constexpr const char* kAudioDeviceLine = "runtime.audio.device_line";
 inline constexpr const char* kAudioStatusLine = "runtime.audio.status_line";
-// sprs-16: mount point for an app-supplied section appended beneath the
+// mount point for an app-supplied section appended beneath the
 // device rows. Sheaf owns this one id so tests (and any future consumer)
 // have a stable anchor regardless of what ids the app's own tree uses.
 inline constexpr const char* kAudioAppSection = "runtime.audio.app_section";
@@ -98,7 +98,6 @@ inline constexpr const char* kFilePatchName = "runtime.file.patch_name";
 inline constexpr const char* kFileStatus = "runtime.file.status";
 inline constexpr const char* kFileBrowser = "runtime.file.browser";
 inline constexpr const char* kFileBrowserTitle = "runtime.file.browser.title";
-inline constexpr const char* kFileBrowserCurrentPath = "runtime.file.browser.current_path";
 inline constexpr const char* kFileBrowserSaveName = "runtime.file.browser.save_name";
 inline constexpr const char* kFileBrowserParent = "runtime.file.browser.parent";
 inline constexpr const char* kFileBrowserList = "runtime.file.browser.list";
@@ -124,7 +123,7 @@ inline std::string FileVersionEntry(std::size_t entryIx)
     return "runtime.file.versions.entry." + std::to_string(entryIx);
 }
 
-// sprs-17: the app-registered page's own chrome. Every built-in page
+// the app-registered page's own chrome. Every built-in page
 // hand-rolls its own root/back id (kAudioRoot/kAudioBack, kFileRoot/
 // kFileBack, kSyncRoot/kSyncBack, ControllersPageUI's own kBack) rather than
 // sharing one, so this page's chrome follows the same shape: its own root
@@ -223,7 +222,6 @@ inline constexpr const char* kFileRevert = "runtime.file.revert";
 inline constexpr const char* kFileBrowserSaveName = "runtime.file.browser.save_name";
 inline constexpr const char* kFileBrowserSelect = "runtime.file.browser.select";
 inline constexpr const char* kFileBrowserAccept = "runtime.file.browser.accept";
-inline constexpr const char* kFileBrowserOpen = "runtime.file.browser.open";
 inline constexpr const char* kFileBrowserParent = "runtime.file.browser.parent";
 inline constexpr const char* kFileBrowserOverwriteSaveAs = "runtime.file.browser.overwrite_save_as";
 inline constexpr const char* kFileBrowserConfirm = "runtime.file.browser.confirm";
@@ -244,7 +242,6 @@ inline constexpr std::string_view kFileActions[] = {
     kFileBrowserSaveName,
     kFileBrowserSelect,
     kFileBrowserAccept,
-    kFileBrowserOpen,
     kFileBrowserParent,
     kFileBrowserOverwriteSaveAs,
     kFileBrowserConfirm,
@@ -262,7 +259,7 @@ struct SidebarSnapshot
 {
     float deadlinePercent = 0.0f;
     bool controllersWarning = false;
-    // sprs-17: unset (nullopt) -> no app-page button is built and the
+    // unset (nullopt) -> no app-page button is built and the
     // sidebar renders exactly as it did before this field existed. Set ->
     // its value is the button's label text, and the button is placed after
     // File (BuildSidebarTree below).
@@ -288,7 +285,7 @@ struct AudioPageSnapshot
     std::string selectedOutputId = kSystemDefaultOptionId;
     std::string selectedInputId = kNoInputOptionId;
     bool showInputCombo = false;
-    // sru-3: only a host whose capture is offline offers the user a way back.
+    // Only a host whose capture is offline offers the user a way back.
     // A host that never loses input -- JUCE reopens devices itself -- leaves
     // this false and the row is not built at all.
     bool showInputRetry = false;
@@ -299,12 +296,11 @@ struct AudioPageSnapshot
     bool showInputPermissionRequest = false;
     std::string deviceLineText;
     std::string statusLineText;
-    // sprs-16: an app may append a section beneath the device rows, confined
+    // an app may append a section beneath the device rows, confined
     // to the page's remaining area (BuildAudioPageTree hands it that area's
     // resolved Bounds). Default empty -> the audio page renders exactly as
-    // before; no app registration surface populates this yet (task 9 is
-    // Sheaf-side only).
-    // sprs-16 (design amendment, 489a967d): a NodeTree return here would
+    // before; no app registration surface populates this yet.
+    // A NodeTree return here would
     // splice via Splice(NodeTree), which carries no layout map (see
     // Splice(NodeTree) in PortableUIBuilders.hpp) -- any nested Row/Column
     // the app declares with a weighted extent, explicit padding, or wrap
@@ -382,7 +378,6 @@ struct FilePageSnapshot
     std::string patchesRoot;
     bool browserOpen = false;
     FileBrowserKind browserKind = FileBrowserKind::SaveAs;
-    std::string browserCurrentPathText = "/";
     std::string browserSaveName;
     struct BrowserEntry
     {
@@ -421,7 +416,7 @@ inline constexpr float kBrowserStatusHeight = 24.0f;
 inline constexpr float kBrowserButtonWidth = 78.0f;
 inline constexpr float kFilePanelPadding = 10.0f;
 
-// sprs-17: five fixed rows (Audio, Controllers, Sync, File, deadline) grow to
+// five fixed rows (Audio, Controllers, Sync, File, deadline) grow to
 // six when an app registers an extra page, so the extra row has its own
 // stacking space instead of overrunning the fifth row's. `hasRegisteredPage`
 // defaults false so every existing caller keeps today's exact 200px height.
@@ -577,7 +572,7 @@ inline ui::LayoutOptions FormGridLayout()
 }
 
 // The region a config page ends with, and the one that absorbs the surface it
-// is given (sru-54). Everything above it is furniture sized by its own content,
+// is given. Everything above it is furniture sized by its own content,
 // so this takes the whole difference between one surface height and another; it
 // scrolls, so a surface too short to hold the lines keeps the last of them
 // reachable instead of cutting it off. This is the File page's shape, which is
@@ -647,7 +642,7 @@ inline ui::ControlStyle PanelTextRow(ui::TextStyle textStyle, float height)
 }
 
 // A panel whose whole body is one line of text still needs something to absorb
-// the panel's extent (sru-54), and that line is the body: it takes what the
+// the panel's extent, and that line is the body: it takes what the
 // furniture leaves, exactly as the versions list does in the other branch of
 // the same region.
 inline ui::ControlStyle PanelTextBody(ui::TextStyle textStyle)
@@ -679,8 +674,8 @@ struct ListRowSpec
     std::optional<ui::Action> doubleClickAction{};
 };
 
-// The rows of a list panel, as a component (design.md D2: a component is any
-// callable taking the builder). The patch browser and the versions list differ
+// The rows of a list panel, as a component -- any callable taking the
+// builder. The patch browser and the versions list differ
 // only in their action wiring and their empty text, so the row shape itself
 // lives here once rather than once per list.
 inline ui::Builder::Children ListRows(std::vector<ListRowSpec> rows,
@@ -762,9 +757,9 @@ inline std::vector<ui::ControlOption> ControlOptionsFor(const std::vector<AudioD
 
 // The sidebar is a resolved subtree like every other producer's, not a
 // hand-assembled one. It used to set every `ui::Node` field by field and stack
-// its rows by multiplying the row height by their index, which is exactly what
-// sru-43 forbids and sru-53 calls producer-side layout arithmetic; the resolver
-// stacks five declared rows to the same geometry with neither.
+// its rows by multiplying the row height by their index -- producer-side
+// layout arithmetic; the resolver stacks five declared rows to the same
+// geometry without it.
 inline ui::NodeTree BuildSidebarTree(const SidebarSnapshot& snapshot)
 {
     const ui::Bounds rootBounds =
@@ -776,7 +771,7 @@ inline ui::NodeTree BuildSidebarTree(const SidebarSnapshot& snapshot)
         return style;
     };
     // The Controllers entry is a row rather than a bare button so its warning
-    // badge can be an sru-44 out-of-flow overlay declared in the row's own
+    // badge can be an out-of-flow overlay declared in the row's own
     // space. As a direct child of the root it would have had to restate the
     // button's stacking position, which is the arithmetic this rebuild removes.
     ui::LayoutOptions controllersRow;
@@ -812,7 +807,7 @@ inline ui::NodeTree BuildSidebarTree(const SidebarSnapshot& snapshot)
                    sidebarRow());
     builder.Button(NodeIds::kSidebarFile, "File", ui::Action::Named(Actions::kSidebarFile),
                    sidebarRow());
-    // sprs-17: the app-registered page's button, placed after File and
+    // the app-registered page's button, placed after File and
     // before the deadline readout -- a page button among page buttons,
     // ahead of the DSP status line that closes the column regardless of
     // page count. Absent when no page is registered, so the sidebar is
@@ -949,9 +944,9 @@ inline ui::Bounds RequireNodeBounds(const ui::NodeTree& tree, const char* nodeId
     throw std::invalid_argument(missingMessage);
 }
 
-// sprs-16: `remainingArea` is null on the first (and, when no app section is
-// supplied, only) pass -- that pass is byte-for-byte the pre-sprs-16 function
-// body, so the default page is identical by construction, not by a separate
+// `remainingArea` is null on the first (and, when no app section is
+// supplied, only) pass -- that pass is byte-for-byte the function
+// body that ran before app sections existed, so the default page is identical by construction, not by a separate
 // code path that has to be kept in sync. When non-null, it is the resolved
 // Bounds of kAudioStatus from that first pass: the region the comment below
 // already calls "the page's slack" and that
@@ -1010,8 +1005,8 @@ inline ui::NodeTree BuildAudioPageTreeOnce(const AudioPageSnapshot& snapshot,
             // A line with nothing to say is not emitted at all. Both were
             // unconditional, so before an audio device is negotiated the page
             // reserved two full-width bands that painted no glyphs -- furniture
-            // the user cannot read, which is sru-48's "no text conveys no
-            // information" criterion. Absence is the honest rendering; the
+            // the user cannot read: no text conveys no information. Absence
+            // is the honest rendering; the
             // region below them absorbs the freed extent either way.
             if (!snapshot.deviceLineText.empty())
             {
@@ -1113,7 +1108,7 @@ inline std::vector<PageControls::ListRowSpec> PatchVersionRows(const FilePageSna
     return rows;
 }
 
-// The whole patch-browser viewer, which is what sru-16 asks for: the flat
+// The whole patch-browser viewer: the flat
 // directory rows with their stable identities, selection and double-click
 // accept actions, the Save As name entry, the status text, the empty state, and
 // the confirm/cancel actions. The host page contributes the panel these land in
@@ -1373,13 +1368,9 @@ public:
         snapshot.browserKind = kind_;
         snapshot.browserSaveName = saveName_;
         snapshot.statusText = statusText_;
-        snapshot.browserCurrentPathText = browser_.CurrentRelativePath().empty()
-                                               ? "/"
-                                               : browser_.CurrentRelativePath().generic_string();
         snapshot.browserEntries.clear();
         if (!open_)
         {
-            snapshot.browserCurrentPathText = "/";
             return;
         }
 
@@ -1503,7 +1494,7 @@ private:
     std::string saveName_;
 };
 
-// sprs-17: the app-registered page's own tree. Its Back button matches the
+// the app-registered page's own tree. Its Back button matches the
 // style every built-in page's Back button shares (PageControls::BackButton())
 // under its own dedicated id/action, the same "each page hand-rolls its own"
 // convention BuildAudioPageTree/BuildSyncPageTree/BuildFilePageTree already
@@ -1511,8 +1502,8 @@ private:
 // region below it is measured then filled with the same two-pass idiom
 // BuildAudioPageTreeOnce/BuildAudioPageTree established for an app-supplied
 // section (comment above that function): the resolver, not the producer,
-// determines how much room is left below the Back button (sru-43/sru-53,
-// see BuildSidebarTree's own comment above), so the region is measured with
+// determines how much room is left below the Back button (see
+// BuildSidebarTree's own comment above), so the region is measured with
 // a first pass before the app's builder ever runs, and the app's Subtree is
 // spliced in on a second pass at exactly that measured area. Unlike the
 // audio section (an append beneath existing rows), this page's app content

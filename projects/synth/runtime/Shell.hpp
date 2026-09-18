@@ -1,20 +1,22 @@
 #pragma once
 
 // synth_runtime::ShellComponent / SYNTH_RUNTIME_MAIN — the generic JUCE
-// window chrome that wraps a synth_runtime::Runtime<App> (Task 2) into a
-// runnable application (Plan 3 Task 4).
+// window chrome that wraps a synth_runtime::Runtime<App> into a
+// runnable application.
 //
-// ShellComponent is a thin MainPane<App> host (Plan 4 Task 2, sru-1): it
+// ShellComponent is a thin MainPane<App> host: it
 // constructs a single MainPane<App>, `addAndMakeVisible`s it, and its
 // resized() fills the shell's full bounds with it. The former patch-command
 // row (New/Save/Save As/Load/Revert + patch name + status label), the
 // MidiPanel strip, and the AudioPanel strip are gone from this layout --
 // MainPane's sidebar (Audio/Controllers/File) and content host are the only
-// chrome now. MainPane's Audio, File, and Controllers pages
-// (AudioConfigPage.hpp / FilePage.hpp / ControllersPage.hpp) are all real as
-// of Task 4 of Plan 4, which also deleted MidiPanel.hpp outright -- Runtime
+// chrome now. MainPane's Audio, Controllers, Sync, and File pages are all
+// resolved node trees built by RuntimeMainComponent (with
+// JuceRuntimeMainServices supplying the JUCE-side data) and drawn by the
+// shared portable renderer, not standalone JUCE components constructed one
+// per page. MidiPanel.hpp is deleted outright -- Runtime
 // no longer constructs or owns any MIDI UI component (see Runtime.hpp's
-// MidiConnections() accessor, which ControllersPage reads directly).
+// MidiConnections() accessor, which the Controllers page reads directly).
 //
 // Runtime's timer-driven repaint hook (Runtime::Start() calls it at the end
 // of every tick) is wired to repaint the shell, which now just means

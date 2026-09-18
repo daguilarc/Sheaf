@@ -103,7 +103,7 @@ type RegisteredAudioInput = {
   physicalChannels: number;
 };
 
-// Pinned by sbw-4: an *ideal* channel count so a device that cannot supply the
+// An *ideal* channel count so a device that cannot supply the
 // request degrades to a shortfall instead of failing, and voice processing off
 // so the browser does not silently downmix a multichannel interface to mono.
 // `deviceId` names the operator's selection (browser's `MediaDeviceInfo`
@@ -180,7 +180,7 @@ export class AudioBridge {
     void this.submitAudioDevices();
     this.installDeviceChangeListener();
     // Discovery first: a zero-input application must reach native startup
-    // without `getUserMedia` ever being touched (sbw-4).
+    // without `getUserMedia` ever being touched.
     this.requestedInputChannels = await this.discoverRequestedInputChannels();
     // Now that the count is known, a failure recorded by the submission above
     // can actually be published. Nothing is retried here -- only reported.
@@ -221,7 +221,7 @@ export class AudioBridge {
     return result;
   }
 
-  // The user-initiated path back from an offline capture (sbw-4): it reacquires
+  // The user-initiated path back from an offline capture: it reacquires
   // into the existing AudioContext, worklet node, engine, and application, and
   // is never called from the realtime callback or on a timer.
   async retryInput(): Promise<void> {
@@ -577,7 +577,7 @@ export class AudioBridge {
       const statusCode = reported === undefined
         ? AudioInputStatusCode.channelCountUnreported
         : AudioInputStatusCode.online;
-      // D5's fallback chain: the track's own setting, else the source node's count,
+      // The fallback chain: the track's own setting, else the source node's count,
       // else one channel. The result is clamped to the request so a device with
       // more channels than the application addresses never inflates the active count.
       const derived = reported ?? positiveChannelCount(source.channelCount) ?? 1;
