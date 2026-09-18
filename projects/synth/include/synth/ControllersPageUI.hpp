@@ -958,18 +958,7 @@ public:
     explicit ControllersPageSurface(ControllersPageCallbacks callbacks)
         : m_callbacks(std::move(callbacks))
     {
-        if (!m_callbacks.messageCatalog.empty())
-        {
-            m_vm.SetMessageCatalog(m_callbacks.messageCatalog);
-        }
-        if (!m_callbacks.analogActionCatalog.empty())
-        {
-            m_vm.SetAnalogActionCatalog(m_callbacks.analogActionCatalog);
-        }
-        if (!m_callbacks.layouts.empty())
-        {
-            m_vm.SetLayouts(m_callbacks.layouts);
-        }
+        ConfigureViewModel(m_vm);
         m_dirty = true;
     }
 
@@ -1435,6 +1424,28 @@ private:
         return true;
     }
 
+    // Configures `viewModel`'s app-supplied catalogs (message kinds, analog
+    // actions, wizard layouts) from m_callbacks, exactly as the constructor
+    // configures m_vm. CommitLifecycleAction's throwaway mutation view model
+    // needs the same configuration: without it, Layouts() falls back to the
+    // library's own registry, which holds none of an app's presets, so
+    // RestoreController can never resolve an app preset's wizard id.
+    void ConfigureViewModel(MidiConfigViewModel& viewModel) const
+    {
+        if (!m_callbacks.messageCatalog.empty())
+        {
+            viewModel.SetMessageCatalog(m_callbacks.messageCatalog);
+        }
+        if (!m_callbacks.analogActionCatalog.empty())
+        {
+            viewModel.SetAnalogActionCatalog(m_callbacks.analogActionCatalog);
+        }
+        if (!m_callbacks.layouts.empty())
+        {
+            viewModel.SetLayouts(m_callbacks.layouts);
+        }
+    }
+
     bool CommitLifecycleAction(const std::string& token,
                                const std::function<bool(MidiConfigViewModel&, std::size_t,
                                                         MidiInstrumentConfig&, std::string*)>& mutate,
@@ -1448,6 +1459,7 @@ private:
             return false;
         }
         MidiConfigViewModel mutationViewModel;
+        ConfigureViewModel(mutationViewModel);
         mutationViewModel.Rebuild(instrument, MidiConnectionState{});
         MidiInstrumentConfig out;
         std::string reason;
@@ -1502,12 +1514,26 @@ private:
 
     void HandleRestoreController(const std::string& token)
     {
-        CommitLifecycleAction(
+        const std::optional<std::pair<std::size_t, std::string>> identity =
+            NodeIds::ControllerActionIdentityFromToken(token);
+        if (!identity.has_value())
+        {
+            SetStatus(kInvalidControllerIdentityStatus);
+            return;
+        }
+        if (CommitLifecycleAction(
             token, [&](MidiConfigViewModel& viewModel, std::size_t controllerIx,
                        MidiInstrumentConfig& out, std::string* reason) {
                 return viewModel.RestoreController(controllerIx, out, reason);
             },
-            "Restored controller");
+            "Restored controller"))
+        {
+            // The restored config replaces the row's mappings out from under
+            // any open section; without dropping the cached rows, the page
+            // would keep showing the pre-Restore presentation and the next
+            // encoder edit would flush it back over the restored mappings.
+            m_vm.NoteControllerConfigReplaced(identity->second);
+        }
     }
 
     static std::size_t ParseIndex(const std::string& text)
@@ -2114,6 +2140,23 @@ private:
             }
             if (field == MidiMappingRowVM::Field::ShiftAction)
             {
+                if (section == MidiConfigSection::Encoders)
+                {
+                    // An encoder turn's shifted job is its own fixed
+                    // two-entry catalog (none, Scene Blend), not a system
+                    // message target, so it neither reads ShiftCatalog() nor
+                    // selects through ShiftChoiceIndex() -- see
+                    // EncoderTurnShiftedJobIndex() and EncoderShiftedJobCatalog().
+                    std::vector<ui::ControlOption> options;
+                    const auto& shiftedJobCatalog = EncoderShiftedJobCatalog();
+                    for (int ix = 0; ix < static_cast<int>(shiftedJobCatalog.size()); ++ix)
+                    {
+                        options.push_back({std::to_string(ix), shiftedJobCatalog[static_cast<std::size_t>(ix)]});
+                    }
+                    emitIndexCombo(std::move(options),
+                                  vm.EncoderTurnShiftedJobIndex(controllerIx, section, mappingRowIx));
+                    return;
+                }
                 std::vector<ui::ControlOption> options;
                 const auto& catalog = vm.ShiftCatalog();
                 for (int ix = 0; ix < static_cast<int>(catalog.size()); ++ix)

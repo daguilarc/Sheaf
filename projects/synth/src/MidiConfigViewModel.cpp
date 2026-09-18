@@ -49,6 +49,7 @@ std::optional<std::size_t> PrimaryMessageArg(const MessageIn& message) {
         case MessageIn::Type::AppAction:
         case MessageIn::Type::HoldDrill:
         case MessageIn::Type::Shift:
+        case MessageIn::Type::SceneBlendIncDec:
             return std::nullopt;
     }
     return std::nullopt;
@@ -92,6 +93,7 @@ bool SetPrimaryMessageArg(MessageIn& message, std::size_t arg) {
         case MessageIn::Type::AppAction:
         case MessageIn::Type::HoldDrill:
         case MessageIn::Type::Shift:
+        case MessageIn::Type::SceneBlendIncDec:
             return false;
     }
     return false;
@@ -192,6 +194,8 @@ UISystemMessage UISystemMessageForAssociation(const MidiControllerSystemMessageA
             return UISystemMessage::HoldDrill;
         case MessageIn::Type::Shift:
             return UISystemMessage::Shift;
+        case MessageIn::Type::SceneBlendIncDec:
+            return UISystemMessage::Clock;
     }
     return UISystemMessage::Clock;
 }
@@ -359,6 +363,13 @@ const std::vector<std::string>& EncoderModeCatalog() {
     // All EncoderMode choices, in declaration order (MidiController.hpp):
     // 0 = Signed7Bit, 1 = DirectionOnly, 2 = Absolute.
     static const std::vector<std::string> catalog = {"Signed 7-bit", "Direction only", "Absolute"};
+    return catalog;
+}
+
+const std::vector<std::string>& EncoderShiftedJobCatalog() {
+    // All EncoderShiftedJob choices, in declaration order (MidiController.hpp):
+    // 0 = None, 1 = SceneBlend.
+    static const std::vector<std::string> catalog = {"(none)", "Scene Blend"};
     return catalog;
 }
 
@@ -573,9 +584,15 @@ std::vector<UISystemMessageChoice> DeriveShiftCatalog(const std::vector<UISystem
     return catalog;
 }
 
+bool MessageCatalogOffersShift(const std::vector<UISystemMessageChoice>& messageCatalog) {
+    return std::any_of(messageCatalog.begin(), messageCatalog.end(),
+                       [](const UISystemMessageChoice& choice) { return choice.message == UISystemMessage::Shift; });
+}
+
 void MidiConfigViewModel::SetMessageCatalog(std::vector<UISystemMessageChoice> choices) {
     messageCatalog_ = std::move(choices);
     shiftCatalog_ = DeriveShiftCatalog(messageCatalog_);
+    messageCatalogOffersShift_ = MessageCatalogOffersShift(messageCatalog_);
 }
 
 void MidiConfigViewModel::SetAnalogActionCatalog(std::vector<UISystemMessageChoice> choices) {
@@ -760,6 +777,9 @@ std::string DescribeMessage(const MessageIn& message) {
             break;
         case MessageIn::Type::Shift:
             oss << (message.boolValue ? "shift on" : "shift off");
+            break;
+        case MessageIn::Type::SceneBlendIncDec:
+            oss << "scene blend inc/dec " << message.delta;
             break;
     }
     return oss.str();
@@ -1013,6 +1033,19 @@ void MidiConfigViewModel::NoteControllerRenamed(const std::string& from, const s
     }
 }
 
+void MidiConfigViewModel::NoteControllerConfigReplaced(const std::string& name) {
+    std::vector<PresentationKey> staleKeys;
+    for (const auto& [presentationKey, presentation] : presentations_) {
+        (void)presentation;
+        if (presentationKey.first == name) {
+            staleKeys.push_back(presentationKey);
+        }
+    }
+    for (const PresentationKey& key : staleKeys) {
+        presentations_.erase(key);
+    }
+}
+
 void MidiConfigViewModel::ToggleConfig(std::size_t controllerIx) {
     if (controllerIx >= controllers_.size()) {
         return;
@@ -1062,7 +1095,8 @@ namespace {
 // factored out of the old SectionRows() SystemMessages case so
 // BuildFreshPresentation/BuildSectionRows share the exact same table.
 std::vector<Field> SystemRowEditableFields(MidiProfileKind kind,
-                                           const MidiControllerSystemMessageAssociation& association) {
+                                           const MidiControllerSystemMessageAssociation& association,
+                                           bool shiftOffered) {
     std::vector<Field> fields;
     for (SystemAddressField addressField : SystemAddressSchema(kind)) {
         switch (addressField) {
@@ -1097,7 +1131,22 @@ std::vector<Field> SystemRowEditableFields(MidiProfileKind kind,
     if (UISystemMessageHasArg(message)) {
         fields.push_back(Field::MessageArg);
     }
-    if (message != UISystemMessage::Shift && message != UISystemMessage::HoldDrill) {
+    if (shiftOffered && message != UISystemMessage::Shift && message != UISystemMessage::HoldDrill) {
+        fields.push_back(Field::ShiftAction);
+    }
+    return fields;
+}
+
+// editableFields for an Individual EncoderMidiMapping turn row (never a
+// push -- ProfileConfigValidForKind refuses a shifted job on one, so pushes
+// keep their own table in BuildSectionRows()/GroupColumnFields()). Factored
+// out of BuildSectionRows()'s own table so it and GroupColumnFields() share
+// the exact same one, the way system rows already share
+// SystemRowEditableFields above. Shift is included only when the app's
+// catalog offers it (see MessageCatalogOffersShift).
+std::vector<Field> EncoderTurnEditableFields(bool shiftOffered) {
+    std::vector<Field> fields = {Field::Channel, Field::Cc, Field::SlotIx, Field::Position};
+    if (shiftOffered) {
         fields.push_back(Field::ShiftAction);
     }
     return fields;
@@ -1454,9 +1503,11 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::BuildSectionRows(std::size_t 
             }
         } else {
             if (const auto* mapping = std::get_if<EncoderMidiMapping>(&presentationRow.data)) {
-                row.editableFields = {Field::Channel, Field::Cc, Field::SlotIx, Field::Position};
                 if (presentationRow.group == RowGroup::EncoderPush) {
-                    row.editableFields.insert(row.editableFields.begin(), Field::AddressType);
+                    row.editableFields = {Field::AddressType, Field::Channel, Field::Cc, Field::SlotIx,
+                                          Field::Position};
+                } else {
+                    row.editableFields = EncoderTurnEditableFields(messageCatalogOffersShift_);
                 }
                 row.label = presentationRow.group == RowGroup::EncoderPush ? EncoderPushLabel(*mapping)
                                                                             : EncoderTurnLabel(*mapping);
@@ -1467,7 +1518,8 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::BuildSectionRows(std::size_t 
                 row.editableFields = {Field::Channel, Field::Cc, Field::AppAction};
                 row.label = AppActionLabel(*mapping);
             } else if (const auto* association = std::get_if<MidiControllerSystemMessageAssociation>(&presentationRow.data)) {
-                row.editableFields = SystemRowEditableFields(slot.kind, *association);
+                row.editableFields =
+                    SystemRowEditableFields(slot.kind, *association, messageCatalogOffersShift_);
                 row.label = SystemMessageLabel(*association, slot.kind);
             } else if (const auto* gridButton = std::get_if<GridButton>(&presentationRow.data)) {
                 row.editableFields = GridButtonEditableFields(*gridButton);
@@ -1964,6 +2016,26 @@ int MidiConfigViewModel::ShiftChoiceIndex(std::size_t controllerIx, MidiConfigSe
         return static_cast<int>(ix);
     }
     return -1;
+}
+
+int MidiConfigViewModel::EncoderTurnShiftedJobIndex(std::size_t controllerIx, MidiConfigSection section,
+                                                    std::size_t rowIx) const {
+    if (section != MidiConfigSection::Encoders) {
+        return -1;
+    }
+    if (controllerIx >= instrument_.controllers.size()) {
+        return -1;
+    }
+    const SectionPresentation& presentation = PresentationFor(controllerIx, section);
+    if (rowIx >= presentation.rows.size() || presentation.rows[rowIx].kind != RowKind::Individual ||
+        presentation.rows[rowIx].group != RowGroup::EncoderTurn) {
+        return -1;
+    }
+    const auto* mapping = std::get_if<EncoderMidiMapping>(&presentation.rows[rowIx].data);
+    if (mapping == nullptr) {
+        return -1;
+    }
+    return static_cast<int>(mapping->shiftedJob);
 }
 
 int MidiConfigViewModel::BlockMessageTypeIndex(std::size_t controllerIx, MidiConfigSection section,
@@ -2626,6 +2698,14 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                         break;
                     }
                     mapping->position = static_cast<std::size_t>(value);
+                    fieldValid = true;
+                    break;
+                case Field::ShiftAction:
+                    if (!IsIntegerInRange(value, 0.0, static_cast<double>(EncoderShiftedJobCatalog().size() - 1))) {
+                        validationError = "shift action index out of range";
+                        break;
+                    }
+                    mapping->shiftedJob = static_cast<EncoderShiftedJob>(static_cast<int>(value));
                     fieldValid = true;
                     break;
                 default:
@@ -4016,7 +4096,7 @@ std::vector<MidiMappingRowVM::Field> MidiConfigViewModel::GroupColumnFields(std:
         if (group == RowGroup::EncoderPush) {
             return {Field::AddressType, Field::Channel, Field::Cc, Field::SlotIx, Field::Position};
         }
-        return {Field::Channel, Field::Cc, Field::SlotIx, Field::Position};
+        return EncoderTurnEditableFields(messageCatalogOffersShift_);
     }
     if (section == MidiConfigSection::Analogs && group == RowGroup::AnalogGesture) {
         return {Field::Channel, Field::Cc, Field::GestureIx};
@@ -4028,7 +4108,8 @@ std::vector<MidiMappingRowVM::Field> MidiConfigViewModel::GroupColumnFields(std:
         MidiControllerSystemMessageAssociation association;
         association.press = MessageIn::SceneSelect(0, 0);
         association.feedback = association.press;
-        return SystemRowEditableFields(instrument_.controllers[controllerIx].kind, association);
+        return SystemRowEditableFields(instrument_.controllers[controllerIx].kind, association,
+                                       messageCatalogOffersShift_);
     }
     if (section == MidiConfigSection::SystemMessages && group == RowGroup::Grid) {
         GridButton button;

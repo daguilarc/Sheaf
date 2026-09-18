@@ -831,6 +831,7 @@ public:
     bool SetSceneEndpoints(std::size_t leftScene, std::size_t rightScene);
     bool SetLessSelectedScene(std::size_t sceneIx);
     void SetSceneBlend(float blend);
+    void IncDecSceneBlend(float delta);
 
     std::size_t NumGroups() const { return groups_.size(); }
 
@@ -977,6 +978,9 @@ struct MessageIn {
         AppAction,
         HoldDrill,
         Shift,
+        // Appended after Shift rather than beside SetSceneBlend so every
+        // existing enumerator keeps its ordinal.
+        SceneBlendIncDec,
     };
 
     std::uint64_t timestamp = 0;
@@ -1044,6 +1048,7 @@ struct MessageIn {
     static MessageIn AppAction(std::uint64_t timestamp, std::size_t appActionIx, float value);
     static MessageIn HoldDrill(std::uint64_t timestamp, bool held);
     static MessageIn Shift(std::uint64_t timestamp, bool held);
+    static MessageIn SceneBlendIncDec(std::uint64_t timestamp, float delta);
 };
 
 class MessageInBus {

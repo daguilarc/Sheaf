@@ -1343,6 +1343,52 @@ void TestBlacklistedRecordPersistsAndRoundTrips()
             "the round trip preserves the released disposition and identity");
 }
 
+// CommitLifecycleAction's throwaway view model used to Rebuild() with none of
+// the surface's own catalogs, so Layouts() fell back to the library-only
+// registry, which never resolves an app-specific wizard id -- only a library
+// one (com.sheaf.midi-fighter-twister, library.launchpad, library.wrldbldr).
+// This uses a wizard id from a device default the app's own catalog adds, not
+// one of those three, so it fails exactly the way an app's own presets did.
+void TestRestoreResolvesAnAppPreset()
+{
+    synth::MidiAppCatalog catalog;
+    synth::MidiAppDeviceDefault deviceDefault;
+    deviceDefault.id = "app.custom-preset";
+    deviceDefault.displayName = "Custom Preset";
+    deviceDefault.kind = synth::MidiProfileKind::Generic;
+    synth::MidiControllerSystemMessageAssociation presetButton;
+    presetButton.control = synth::MidiControlAddress{.channel = 0, .cc = 20};
+    presetButton.press = synth::MessageIn::ParamIncDec(0, 0, 0, 1.0f);
+    deviceDefault.config.systemMessages = {presetButton};
+    catalog.deviceDefaults = {deviceDefault};
+
+    TestHarness harness;
+    harness.instrument.controllers.clear();
+    harness.layouts = synth::MakeControllerWizardRegistry(catalog);
+
+    synth::MidiControllerSlot diverged;
+    diverged.name = "diverged";
+    diverged.kind = synth::MidiProfileKind::Generic;
+    diverged.wizardId = "app.custom-preset";
+    diverged.config = deviceDefault.config;
+    diverged.config.systemMessages[0].control->cc = 99;
+
+    Require(harness.instrument.AddController(diverged), "add diverged app-preset row");
+    harness.connection.controllers.resize(harness.instrument.controllers.size());
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kControllerRestore,
+        synth::runtime_ui::NodeIds::ControllerActionToken(0, "diverged")));
+    Require(harness.instrument.controllers[0].config.systemMessages[0].control->cc == 20,
+            "Restore reinstalls the app preset's own config onto a row diverged from it -- refused"
+            " entirely with the old CommitLifecycleAction, whose throwaway view model could never"
+            " resolve an app-specific wizard id");
+}
+
 void TestRestoreReinstallsADivergedPresetAndIsGatedByDivergence()
 {
     // Seed a genuinely installed Twister row through the real add-from-preset
@@ -1522,6 +1568,18 @@ void TestEncoderGroupHeaderSeparatesLastColumnFromAddButton()
 void TestSystemMessageShiftFieldRendersAndCommits()
 {
     TestHarness harness;
+    // A catalog offering Shift -- without one, the row dropdown could never
+    // hold a Shift row, so SystemRowEditableFields() would show no Shift
+    // field at all (see NoShiftFieldWhenTheRowDropdownOffersNoShift in
+    // viewmodel_tests.cpp).
+    // Scene Select alongside Shift: AddSingle's fresh System row starts on
+    // Scene Select whenever the catalog offers it, so without it here the
+    // fresh row would start on Shift itself instead (the catalog's only
+    // other library kind), which never carries its own Shift field.
+    synth::MidiAppCatalog catalog;
+    catalog.libraryKinds = {synth::UISystemMessage::SceneSelect, synth::UISystemMessage::Shift};
+    catalog.actions.push_back(synth::MidiAppAction{.action = "app.a", .value = "", .label = "A"});
+    harness.messageCatalog = synth::MakeUISystemMessageChoices(catalog);
     auto surface = harness.MakeSurface();
     surface.SetEnumerateDevices(harness.devices);
     surface.SetContentBounds({0.0f, 0.0f, 1000.0f, 800.0f});
@@ -1582,6 +1640,77 @@ void TestSystemMessageShiftFieldRendersAndCommits()
                                  controllerIx, synth::MidiConfigSection::SystemMessages, 0,
                                  synth::MidiMappingRowVM::Field::ShiftAction));
     Require(shiftComboAfter != nullptr && shiftComboAfter->selectedOption == std::to_string(kShiftChoiceIx),
+            "Shift combo reflects the committed choice after rebuild");
+}
+
+void TestTurnRowShiftComboOffersSceneBlendAndCommits()
+{
+    TestHarness harness;
+    // A catalog offering Shift -- gates the turn row's Shift field the same
+    // way it gates a system row's, above.
+    synth::MidiAppCatalog catalog;
+    catalog.libraryKinds = {synth::UISystemMessage::Shift};
+    harness.messageCatalog = synth::MakeUISystemMessageChoices(catalog);
+    auto surface = harness.MakeSurface();
+    surface.SetEnumerateDevices(harness.devices);
+    surface.SetContentBounds({0.0f, 0.0f, 1000.0f, 800.0f});
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    // Controller 2 ("blank") is MakeGenericSlot()'s untouched default -- no
+    // encoders configured at all, so AddSingle seeds the row this test edits.
+    constexpr std::size_t controllerIx = 2;
+    surface.ViewModel().ToggleConfig(controllerIx);
+    surface.ViewModel().ToggleSection(controllerIx, synth::MidiConfigSection::Encoders);
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    surface.DispatchAction(synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAddSingle,
+                                                        "2:encoders:encoder_turn"));
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    const std::vector<synth::MidiMappingRowVM> rows =
+        surface.ViewModel().SectionRows(controllerIx, synth::MidiConfigSection::Encoders);
+    Require(!rows.empty(), "add single creates a turn row");
+    Require(std::find(rows[0].editableFields.begin(), rows[0].editableFields.end(),
+                      synth::MidiMappingRowVM::Field::ShiftAction) != rows[0].editableFields.end(),
+            "fresh turn row exposes the Shift field");
+
+    const synth::ui::NodeTree tree = surface.BuildTree();
+    const synth::ui::Node* shiftCombo = FindNodeById(
+        tree, synth::runtime_ui::NodeIds::MappingField(controllerIx, synth::MidiConfigSection::Encoders, 0,
+                                                        synth::MidiMappingRowVM::Field::ShiftAction));
+    Require(shiftCombo != nullptr, "turn row's Shift combo renders");
+    Require(shiftCombo->kind == synth::ui::NodeKind::ComboBox, "Shift field renders as a combo box");
+    Require(shiftCombo->options.size() == 2, "turn row's Shift combo offers exactly none and Scene Blend");
+    Require(shiftCombo->options[0].label == "(none)", "turn row's Shift combo's first option is none");
+    Require(shiftCombo->options[1].label == "Scene Blend",
+            "turn row's Shift combo's second option is Scene Blend");
+    Require(shiftCombo->selectedOption == "0", "a fresh turn row's Shift combo starts at none");
+
+    constexpr int kSceneBlendChoiceIx = 1;
+    const std::string commitValue =
+        std::to_string(controllerIx) + ":encoders:0:" +
+        std::to_string(static_cast<int>(synth::MidiMappingRowVM::Field::ShiftAction)) + ":" +
+        std::to_string(kSceneBlendChoiceIx);
+    const int commitsBefore = harness.commits;
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kMappingFieldCommit, commitValue));
+    Require(harness.commits == commitsBefore + 1, "Shift field commit persists through the normal commit path");
+
+    const synth::EncoderMidiMapping& committed =
+        harness.instrument.controllers[controllerIx].config.encoderInput->turns[0];
+    Require(committed.shiftedJob == synth::EncoderShiftedJob::SceneBlend,
+            "committed turn carries Scene Blend as its shifted job");
+
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    const synth::ui::Node* shiftComboAfter = FindNodeById(
+        surface.BuildTree(), synth::runtime_ui::NodeIds::MappingField(
+                                 controllerIx, synth::MidiConfigSection::Encoders, 0,
+                                 synth::MidiMappingRowVM::Field::ShiftAction));
+    Require(shiftComboAfter != nullptr && shiftComboAfter->selectedOption == std::to_string(kSceneBlendChoiceIx),
             "Shift combo reflects the committed choice after rebuild");
 }
 
@@ -2043,9 +2172,11 @@ int main()
     TestEndpointSelectorsPreferTheExactStoredIdentifier();
     TestControllerLifecycleActionsUseTheNormalCommitAndSavePath();
     TestBlacklistedRecordPersistsAndRoundTrips();
+    TestRestoreResolvesAnAppPreset();
     TestRestoreReinstallsADivergedPresetAndIsGatedByDivergence();
     TestEncoderGroupHeaderSeparatesLastColumnFromAddButton();
     TestSystemMessageShiftFieldRendersAndCommits();
+    TestTurnRowShiftComboOffersSceneBlendAndCommits();
     TestLaunchpadRowOffersVariantAndRetargetsItsPads();
     TestConnectMessageShowsOnAnAbletonStyleRowsExpandedConfiguration();
     TestConnectMessageEditCommitsValidAndRefusesInvalidUnchanged();

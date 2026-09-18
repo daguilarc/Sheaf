@@ -23,9 +23,10 @@ std::vector<SystemAddressField> SystemAddressSchema(MidiProfileKind kind) {
 
 namespace {
 
-// MessageIn::Type's declaration order (ParamIncDec .. HoldDrill, Shift, 26 kinds)
-// IS the type ordering component of SystemMessageSortKey -- static_cast the
-// enum directly rather than maintaining a parallel table that could drift.
+// MessageIn::Type's declaration order (ParamIncDec .. HoldDrill, Shift,
+// SceneBlendIncDec, 27 kinds) IS the type ordering component of
+// SystemMessageSortKey -- static_cast the enum directly rather than
+// maintaining a parallel table that could drift.
 int TypeOrder(MessageIn::Type type) {
     return static_cast<int>(type);
 }
@@ -90,6 +91,7 @@ SystemMessageSortKey ComputeSystemMessageSortKey(const MidiControllerSystemMessa
             key.arg1 = message.gestureIx;
             break;
         case MessageIn::Type::SetSceneBlend:
+        case MessageIn::Type::SceneBlendIncDec:
         case MessageIn::Type::Start:
         case MessageIn::Type::Continue:
         case MessageIn::Type::Stop:
@@ -907,19 +909,24 @@ std::vector<ReconstructedEncoderRow> ReconstructEncoderBlocks(const std::vector<
         // Extend the run while slot/channel stay constant and position/cc
         // advance by exactly +1 from the previous cell (D4: "maximal run
         // where slot is constant, positions consecutive (+1), channel
-        // constant, and cc consecutive with constant offset").
+        // constant, and cc consecutive with constant offset"). A turn that
+        // carries a shifted job never joins a run, neither as its start nor
+        // as a cell a run would otherwise extend to include.
         std::size_t runEnd = ix + 1;
-        while (runEnd < mappings.size()) {
-            const EncoderMidiMapping& prev = mappings[runEnd - 1];
-            const EncoderMidiMapping& cur = mappings[runEnd];
-            const bool continues = cur.slotIx == prev.slotIx && cur.control.channel == prev.control.channel &&
-                                   cur.control.type == prev.control.type &&
-                                   IsWrapSafeSuccessor(prev.position, cur.position) &&
-                                   static_cast<int>(cur.control.cc) == static_cast<int>(prev.control.cc) + 1;
-            if (!continues) {
-                break;
+        if (mappings[ix].shiftedJob == EncoderShiftedJob::None) {
+            while (runEnd < mappings.size()) {
+                const EncoderMidiMapping& prev = mappings[runEnd - 1];
+                const EncoderMidiMapping& cur = mappings[runEnd];
+                const bool continues = cur.shiftedJob == EncoderShiftedJob::None &&
+                                       cur.slotIx == prev.slotIx && cur.control.channel == prev.control.channel &&
+                                       cur.control.type == prev.control.type &&
+                                       IsWrapSafeSuccessor(prev.position, cur.position) &&
+                                       static_cast<int>(cur.control.cc) == static_cast<int>(prev.control.cc) + 1;
+                if (!continues) {
+                    break;
+                }
+                ++runEnd;
             }
-            ++runEnd;
         }
 
         const std::size_t runLength = runEnd - ix;

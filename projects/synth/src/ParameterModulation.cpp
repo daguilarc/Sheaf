@@ -3381,6 +3381,10 @@ void ParameterManager::SetSceneBlend(float blend) {
     scene_.blend = std::clamp(blend, 0.0f, 1.0f);
 }
 
+void ParameterManager::IncDecSceneBlend(float delta) {
+    scene_.blend = std::clamp(scene_.blend + delta, 0.0f, 1.0f);
+}
+
 Page& ParameterManager::CreatePage(std::string name) {
     auto page = std::make_unique<Page>();
     page->ordinal = static_cast<PageOrdinal>(pages_.size());
@@ -4086,6 +4090,14 @@ MessageIn MessageIn::Shift(std::uint64_t timestamp, bool held) {
     return message;
 }
 
+MessageIn MessageIn::SceneBlendIncDec(std::uint64_t timestamp, float delta) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::SceneBlendIncDec;
+    message.delta = delta;
+    return message;
+}
+
 MessageInBus::MessageInBus(ParameterManager* manager, std::size_t capacity)
     : manager_(manager),
       queue_(capacity == 0 ? 1 : capacity) {}
@@ -4212,6 +4224,11 @@ void MessageInBus::Apply(const MessageIn& message) {
     case MessageIn::Type::SetSceneBlend:
         if (manager_ != nullptr) {
             manager_->SetSceneBlend(message.value);
+        }
+        break;
+    case MessageIn::Type::SceneBlendIncDec:
+        if (manager_ != nullptr) {
+            manager_->IncDecSceneBlend(message.delta);
         }
         break;
     case MessageIn::Type::Start:
