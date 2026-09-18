@@ -117,6 +117,34 @@ test("the pending-audio-request sentinels agree across the ABI boundary", async 
   }
 });
 
+// `Actions::kSidebarControllers` (RuntimePages.hpp) is mirrored in main.ts by
+// the `SidebarControllersAction` constant that gates the browser's MIDI
+// request on the Controllers action. RuntimePages.hpp declares the same
+// literal string twice, under two different namespaces
+// (`NodeIds::kSidebarControllers` for the sidebar button's node id,
+// `Actions::kSidebarControllers` for the action it emits), so this reads only
+// the `Actions` namespace's own declaration rather than the first occurrence
+// of the name in the file -- the two happen to agree today, but only one of
+// them is the mirror's actual source of truth.
+test("the sidebar Controllers action name agrees with RuntimePages.hpp", async () => {
+  const header = await read("include/synth/RuntimePages.hpp");
+  const mainTs = await read("browser/src/main.ts");
+  const actionsStart = header.indexOf("namespace Actions {");
+  assert.ok(actionsStart !== -1, "could not find `namespace Actions` in RuntimePages.hpp");
+  const actionsEnd = header.indexOf("}  // namespace Actions", actionsStart);
+  assert.ok(actionsEnd !== -1, "could not find the end of `namespace Actions` in RuntimePages.hpp");
+  const actionsSource = header.slice(actionsStart, actionsEnd);
+  const cxxMatch = /kSidebarControllers\s*=\s*"([^"]*)"/.exec(actionsSource);
+  assert.ok(cxxMatch, "could not read Actions::kSidebarControllers's literal value");
+  const tsMatch = /SidebarControllersAction\s*=\s*"([^"]*)"/.exec(mainTs);
+  assert.ok(tsMatch, "could not read main.ts's mirror of the sidebar Controllers action");
+  assert.equal(
+    tsMatch[1],
+    cxxMatch[1],
+    "main.ts's sidebar Controllers action mirror disagrees with Actions::kSidebarControllers",
+  );
+});
+
 // A fixture that hard-codes the version is the same defect as a hand-maintained
 // mirror, and harder to notice because it is not near the definition. Every
 // `abiVersion: <literal>` in the tree is checked, so a new fixture written with

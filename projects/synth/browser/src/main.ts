@@ -1,10 +1,12 @@
 import { AudioBridge, AudioBridgeOptions, AudioOutputRouteAction, AudioRequestControl, BrowserAudioWorker, PendingAudioRequest } from "./audio.js";
+import type { AudioBridgeStart } from "./audio.js";
 import { ActivationLease } from "./activation.js";
 import { CatalogClient } from "./catalog-client.js";
 import { runtimeIdentityForCatalogApp, validateBrowserRuntimeIdentity } from "./catalog.js";
 import type { BrowserRuntimeIdentity, CatalogApp } from "./catalog.js";
 import { SheafPatchLauncher } from "./launcher.js";
 import { BrowserMidiManager, BrowserMidiWorkerRuntime } from "./midi.js";
+import type { BrowserMidiStartResult } from "./midi.js";
 import { materializePackage as materializeCatalogPackage } from "./package-loader.js";
 import type { MaterializedPackage, MaterializedRuntimeModule } from "./package-loader.js";
 import { BrowserUiBackend } from "./ui.js";
@@ -121,12 +123,21 @@ export function createDirectRuntimeClient(loadModule: RuntimeModuleLoader = load
   };
 }
 
+// Mirrors `synth::runtime_ui::Actions::kSidebarControllers` (RuntimePages.hpp):
+// the action name `startUserActivation` gates the MIDI request on. Checked
+// against the C++ literal by version-drift.test.mjs rather than kept in sync
+// by hand.
+const SidebarControllersAction = "runtime.sidebar.controllers" as const;
+
 export class SynthBrowserApp {
   private readonly ui: BrowserUiBackend;
   private audio: AudioBridge | undefined;
   private readonly midi: BrowserMidiManager;
   private frameTimer: ReturnType<typeof setInterval> | undefined;
-  private activationStarted = false;
+  // Governs only whether the audio half of startUserActivation re-runs; the
+  // MIDI half's own call is gated on the dispatched action's name instead, so
+  // it stays reachable regardless of this flag (see startUserActivation).
+  private audioActivationStarted = false;
   private frameInFlight = false;
   private frameRequested = false;
   private stopped = false;
@@ -143,7 +154,7 @@ export class SynthBrowserApp {
   ) {
     this.ui = new BrowserUiBackend(root, (action) => {
       void this.dispatchAction(action);
-      void this.startUserActivation();
+      void this.startUserActivation(action.name);
     });
     this.midi = new BrowserMidiManager(new BrowserMidiWorkerRuntime((command) => this.runtime.request(command)));
     this.runtime.onStatus?.((status) => {
@@ -200,7 +211,7 @@ export class SynthBrowserApp {
     // no explicit teardown when the app stops.
     installBrowserAudioActivation(this.root, this.audio);
     if (this.options.midiAccess) {
-      this.activationStarted = true;
+      this.audioActivationStarted = true;
       const [audio, midi] = await Promise.all([
         this.audio.startFromUserActivation(),
         this.midi.startWithAccess(this.options.midiAccess),
@@ -208,6 +219,12 @@ export class SynthBrowserApp {
       if (!audio.started) throw new Error(`audio activation failed: ${audio.diagnostic}`);
       if (midi.status !== "online") throw new Error(`MIDI activation failed: ${midi.reason ?? "unavailable"}`);
       this.renderStatus({ type: "status", status: "audio:online; midi:online" });
+    } else {
+      // No lease supplied its own MIDI access (the frogg3rs site's own boot
+      // path), so check whether the browser already holds it: fire-and-forget,
+      // never awaited here, so a slow or rejected query cannot delay or fail
+      // boot.
+      void this.startMidiIfAlreadyGranted();
     }
     this.options.claimRuntimeRoot();
     await this.renderFrame();
@@ -255,17 +272,53 @@ export class SynthBrowserApp {
     }
   }
 
-  private async startUserActivation(): Promise<void> {
-    if (this.activationStarted || !this.audio) return;
+  // At load, on the boot path with no activation lease, WHERE the Permissions
+  // API already reports Web MIDI sysex access as granted, this starts MIDI
+  // immediately through the same path the Controllers action uses, so a
+  // controller set up on an earlier visit works with no prompt. On any other
+  // reported state, a rejected query, or a browser with no Permissions API,
+  // it leaves MIDI to the Controllers action. Never awaited by its caller, so
+  // its outcome cannot delay or fail audio or boot. The manager's own status
+  // is rendered here because this path runs outside `startUserActivation`,
+  // which is the only other place that renders it.
+  private async startMidiIfAlreadyGranted(): Promise<void> {
+    const permissions = navigator.permissions;
+    if (!permissions?.query) return;
+    let status: PermissionStatus;
+    try {
+      status = await permissions.query({ name: "midi", sysex: true } as PermissionDescriptor);
+    } catch {
+      return;
+    }
+    if (status.state !== "granted") return;
+    const midi = await this.midi.startFromUserActivation();
+    this.renderStatus({ type: "status", status: `midi:${midi.status}` });
+  }
+
+  // Runs on every dispatched action. The audio half only re-runs while it has
+  // not yet started -- once it has, `this.audio.startFromUserActivation()`
+  // would short-circuit anyway, so skipping the call outright costs nothing
+  // and keeps this function's own early return scoped to audio alone. The
+  // MIDI half is gated on the action name instead of on that same flag, so a
+  // Controllers dispatch still reaches `this.midi.startFromUserActivation()`
+  // even after an earlier, non-Controllers dispatch already started audio.
+  // Audio's own guard is real: a start it already completed returns
+  // immediately. MIDI's guard covers the same case now: overlapping callers
+  // of `this.midi.startFromUserActivation()`, including this dispatch racing
+  // the load-time saved-grant start above, share the one in-flight
+  // `navigator.requestMIDIAccess` call and its outcome instead of each
+  // issuing their own.
+  private async startUserActivation(actionName: string): Promise<void> {
+    if (!this.audio) return;
     const [audio, midi] = await Promise.all([
-      this.audio.startFromUserActivation(),
-      this.midi.startFromUserActivation(),
+      this.audioActivationStarted
+        ? Promise.resolve<AudioBridgeStart>({ started: true })
+        : this.audio.startFromUserActivation(),
+      actionName === SidebarControllersAction
+        ? this.midi.startFromUserActivation()
+        : Promise.resolve<BrowserMidiStartResult>({ status: this.midi.status() }),
     ]);
-    // Latches only once both sides actually came up. A partial or total
-    // failure leaves this false so the next gesture retries; that retry costs
-    // nothing extra on a side that already succeeded, since both start calls
-    // short-circuit once already running.
-    this.activationStarted = audio.started && midi.status === "online";
+    if (audio.started) this.audioActivationStarted = true;
     this.renderStatus({ type: "status", status: `audio:${audio.started ? "online" : audio.diagnostic}; midi:${midi.status}` });
   }
 

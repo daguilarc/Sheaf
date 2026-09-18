@@ -485,7 +485,12 @@ test("main bootstrap composes runtime, UI, audio channels, and actions generical
   }, Array.from(new Uint8Array(frame)));
 
   expect(result.text).toBe("Booted");
-  expect(result.status).toMatch(/audio:online; midi:(online|offline)/);
+  // The clicked button's action ("generic.boot") is not the sidebar
+  // Controllers action, so the gated MIDI half of activation never runs: the
+  // status is deterministically "midi:offline" rather than either outcome a
+  // real permission prompt could have produced under the old unconditional
+  // request.
+  expect(result.status).toBe("audio:online; midi:offline");
   expect(result.calls).toContainEqual(["audioOutputChannels", 11]);
   expect(result.calls).toContainEqual(["startAudioWorklet", 11, "direct"]);
   expect(result.calls).not.toContainEqual(["prepare", 11, 48000, 128]);
