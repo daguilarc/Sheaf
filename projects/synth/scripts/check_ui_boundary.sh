@@ -57,9 +57,16 @@ fail() {
 # ---------------------------------------------------------------------------
 
 # Excluded from every backend scan.
-#   *Tests.cpp                 test binaries: they build trees with the builder
-#                              and name retired symbols in re-pin assertions
-#   ControllersPageHarness.hpp developer harness, not shipped
+#   *Tests.cpp                          test binaries: they build trees with
+#                                        the builder and name retired symbols
+#                                        in re-pin assertions
+#   ControllersPageHarness.hpp          developer harness, not shipped
+#   ControllersPageScreenshotHarness.cpp operator-review screenshot tool: it
+#                                        drives the real ControllersPageUI
+#                                        producer to render verification PNGs,
+#                                        the same non-shipped role as the
+#                                        harness above, just named for what it
+#                                        renders rather than what it builds.
 # Discovery takes EVERY file under the backend roots and removes named
 # non-backend files here. It is deliberately not a list of extensions to
 # include: an allowlist of extensions is the same evasion as an allowlist of
@@ -69,6 +76,7 @@ fail() {
 BACKEND_EXCLUDED_FROM_ALL=(
     '-g!*Tests.cpp'
     '-g!ControllersPageHarness.hpp'
+    '-g!ControllersPageScreenshotHarness.cpp'
     # Build and publish tooling. These are Node scripts that run at build time,
     # never shipped runtime modules, and `check:generic-runtime` is the scan
     # that holds them to sbap-4. They legitimately mention identifiers the

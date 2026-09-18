@@ -2161,6 +2161,12 @@ void TestConnectMessageShowsOnAnAbletonStyleRowsExpandedConfiguration()
     const synth::ui::Node* addButton =
         FindNodeById(tree, synth::runtime_ui::NodeIds::ConnectMessageAdd(0));
     Require(addButton != nullptr, "the connect-messages area offers an Add button");
+    // Measured bounds, not appearance: the button must be emitted inside a
+    // Row so its width/height style arguments land on the Row's horizontal
+    // and vertical axes respectively, not swapped by a Column parent.
+    Require(addButton->bounds.width == synth::runtime_ui::ControllersLayout::kAddButtonWidth &&
+                addButton->bounds.height == 28.0f,
+            "the Add button's measured width and height land on their own axes");
     const synth::ui::Node* deleteButton =
         FindNodeById(tree, synth::runtime_ui::NodeIds::ConnectMessageDelete(0, 0));
     Require(deleteButton != nullptr, "the stored connect message has a delete button");
@@ -2215,6 +2221,25 @@ void TestConnectMessageEditCommitsValidAndRefusesInvalidUnchanged()
         synth::runtime_ui::Actions::kConnectMessageCommit, "0:0:not hex"));
     Require(harness.commits == 1, "malformed hex is refused, not committed");
     Require(surface.StatusText().starts_with("Refused"), "the refusal sets a status message");
+    // Re-commit the same valid message to move the status off "Refused"
+    // before testing the empty commit below. Without this, a silently
+    // dropped empty commit (the arity guard treating "0:0" as too few parts
+    // and returning before ever touching SetStatus) would leave the prior
+    // refusal's status in place, and the starts_with("Refused") check below
+    // would pass whether or not the drop was silent.
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kConnectMessageCommit,
+        "0:0:F0 47 7F 29 60 00 04 41 09 07 01 F7"));
+    Require(harness.commits == 2 && surface.StatusText() == "OK",
+            "re-committing the same valid message resets status to OK");
+    // An empty commit tokenises to just "0:0" (the trailing empty field after
+    // the last ':' is dropped by Split's getline loop), so the arity guard
+    // must accept that shape and let SetConnectMessage's own emptiness check
+    // refuse it -- not treat it as too few parts and silently return.
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kConnectMessageCommit, "0:0:"));
+    Require(harness.commits == 2, "an empty commit is refused, not committed");
+    Require(surface.StatusText().starts_with("Refused"), "an empty commit sets a refusal status");
     Require(harness.instrument.controllers[0].config.openSysEx[0] ==
                 (std::vector<std::uint8_t>{0xF0, 0x47, 0x7F, 0x29, 0x60, 0x00, 0x04, 0x41, 0x09, 0x07, 0x01,
                                           0xF7}),
@@ -2258,515 +2283,11 @@ void TestConnectMessageAddAndDelete()
             "the deleted connect message's field is gone from the tree");
 }
 
-void TestPressureMappingShowsGridAttachedAndOrphanedThenEditCommits()
+// Shared by the two-message index tests below: a row holding messages
+// F0 01 F7 (index 0) and F0 02 F7 (index 1), so a later commit or delete at
+// index 1 has a distinct index 0 to prove untouched.
+void SetUpTwoConnectMessageRow(TestHarness& harness)
 {
-    namespace NodeIds = synth::runtime_ui::NodeIds;
-    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
-
-    TestHarness harness;
-    harness.instrument.controllers.clear();
-    harness.connection.controllers.clear();
-    synth::MidiControllerSlot wrld = MakeWrldBldrSlot("wrld");
-    synth::GridButton button;
-    button.kind = synth::MidiProfileKind::WrldBldr;
-    button.channel = 2;
-    button.x = 3;
-    button.y = 4;
-    button.gridSlotIx = 6;
-    synth::GridMappingExpansion expansion;
-    Require(synth::ExpandGridButton(button, expansion), "expand a grid button with pressure");
-    Require(expansion.pressureMappings.size() == 1, "one pressure mapping for one grid button");
-    const std::uint8_t gridNote = expansion.pressureMappings[0].address.note;
-    wrld.config.systemMessages = expansion.systemMessages;
-    synth::PolyphonicPressureMidiInConfig pressure;
-    pressure.mappings = expansion.pressureMappings;
-    // An orphaned mapping: its address matches no system-message association,
-    // so ReconstructGridMappings cannot fold it into any grid row -- the page
-    // reads config.pressureInput->mappings directly instead, so this one
-    // shows too, with no grid row of its own to fold into.
-    const std::uint8_t orphanNoteValue = static_cast<std::uint8_t>((gridNote + 1) % 0x80);
-    synth::PolyphonicPressureMapping orphan;
-    orphan.address = synth::MidiNoteAddress{.channel = 9, .note = orphanNoteValue};
-    orphan.pressure = synth::MessageIn::GridPressureChange(0, 12, 1, 2, 0);
-    pressure.mappings.push_back(orphan);
-    wrld.config.pressureInput = pressure;
-    Require(harness.instrument.AddController(wrld), "add WRLD.Bldr controller with pressure mappings");
-    harness.connection.controllers.push_back({});
-
-    auto surface = harness.MakeSurface();
-    surface.MarkDirty();
-    surface.RefreshOnTick();
-    surface.ViewModel().ToggleConfig(0);
-    const synth::ui::NodeTree tree = surface.BuildTree();
-
-    const synth::ui::Node* gridChannel =
-        FindNodeById(tree, NodeIds::PressureMappingField(0, 0, PressureField::Channel));
-    const synth::ui::Node* gridNoteNode =
-        FindNodeById(tree, NodeIds::PressureMappingField(0, 0, PressureField::Note));
-    Require(gridChannel != nullptr && gridChannel->text == "2",
-            "the grid-attached pressure mapping's channel shows on the page");
-    Require(gridNoteNode != nullptr && gridNoteNode->text == std::to_string(gridNote),
-            "the grid-attached pressure mapping's note shows on the page");
-    const synth::ui::Node* orphanChannel =
-        FindNodeById(tree, NodeIds::PressureMappingField(0, 1, PressureField::Channel));
-    const synth::ui::Node* orphanNote =
-        FindNodeById(tree, NodeIds::PressureMappingField(0, 1, PressureField::Note));
-    const synth::ui::Node* orphanGridX =
-        FindNodeById(tree, NodeIds::PressureMappingField(0, 1, PressureField::GridX));
-    Require(orphanChannel != nullptr && orphanChannel->text == "9",
-            "the orphaned pressure mapping (no grid row to fold into) still shows on the page");
-    Require(orphanNote != nullptr && orphanNote->text == std::to_string(orphanNoteValue),
-            "the orphaned pressure mapping's note shows on the page");
-    Require(orphanGridX != nullptr && orphanGridX->text == "1",
-            "the orphaned pressure mapping's grid X shows on the page");
-
-    // Edit the orphan's grid slot through its own field-commit path
-    // (kPressureMappingFieldCommit), built the same way as the mapping rows'
-    // own kMappingFieldCommit but a distinct action.
-    surface.DispatchAction(synth::ui::Action::WithValue(
-        synth::runtime_ui::Actions::kPressureMappingFieldCommit,
-        std::to_string(0) + ":" + std::to_string(1) + ":" +
-            std::to_string(static_cast<int>(PressureField::GridSlotIx)) + ":9"));
-    Require(harness.commits == 1 && surface.StatusText() == "OK", "a valid pressure-mapping edit commits");
-    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].pressure.gridSlotIx == 9,
-            "the committed instrument carries the edited grid slot");
-
-    // Moving the orphan's channel onto the grid mapping's own channel does
-    // not yet collide (their notes still differ) and commits -- to the
-    // channel field, not the note (a Note edit that writes Channel instead
-    // would also pass a same-value coincidence, so this checks the address
-    // field the Channel edit was NOT supposed to touch too).
-    surface.DispatchAction(synth::ui::Action::WithValue(
-        synth::runtime_ui::Actions::kPressureMappingFieldCommit,
-        std::to_string(0) + ":" + std::to_string(1) + ":" +
-            std::to_string(static_cast<int>(PressureField::Channel)) + ":2"));
-    Require(harness.commits == 2, "a non-colliding channel edit commits");
-    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].address.channel == 2,
-            "the committed instrument carries the edited channel");
-    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].address.note ==
-                orphanNoteValue,
-            "the channel edit left the note field untouched");
-
-    // A separate, non-colliding Note edit writes the note field, not the
-    // channel: the inverse direction of the same M9 check.
-    const std::uint8_t nonCollidingNote = static_cast<std::uint8_t>((gridNote + 2) % 0x80);
-    Require(nonCollidingNote != gridNote && nonCollidingNote != orphanNoteValue,
-            "the chosen note-edit target is distinct from both existing addresses");
-    surface.DispatchAction(synth::ui::Action::WithValue(
-        synth::runtime_ui::Actions::kPressureMappingFieldCommit,
-        std::to_string(0) + ":" + std::to_string(1) + ":" +
-            std::to_string(static_cast<int>(PressureField::Note)) + ":" +
-            std::to_string(nonCollidingNote)));
-    Require(harness.commits == 3, "a non-colliding note edit commits");
-    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].address.note ==
-                nonCollidingNote,
-            "the committed instrument carries the edited note");
-    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].address.channel == 2,
-            "the note edit left the channel field untouched");
-
-    // Moving its note onto the grid mapping's note too completes an exact
-    // address collision: refused, unchanged.
-    surface.DispatchAction(synth::ui::Action::WithValue(
-        synth::runtime_ui::Actions::kPressureMappingFieldCommit,
-        std::to_string(0) + ":" + std::to_string(1) + ":" +
-            std::to_string(static_cast<int>(PressureField::Note)) + ":" + std::to_string(gridNote)));
-    Require(harness.commits == 3, "an edit that would duplicate another mapping's address is refused");
-    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].address.note ==
-                nonCollidingNote,
-            "a refused edit leaves the address unchanged");
-    Require(surface.StatusText().starts_with("Refused"), "the refusal sets a status message");
-
-    // Whole-number-only fields: a fractional value refuses on every field,
-    // not just rounds, with the same wording.
-    surface.DispatchAction(synth::ui::Action::WithValue(
-        synth::runtime_ui::Actions::kPressureMappingFieldCommit,
-        std::to_string(0) + ":" + std::to_string(1) + ":" +
-            std::to_string(static_cast<int>(PressureField::Note)) + ":2.6"));
-    Require(harness.commits == 3, "a fractional note edit is refused, not rounded and committed");
-    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].address.note ==
-                nonCollidingNote,
-            "a refused fractional edit leaves the note unchanged");
-    Require(surface.StatusText() == "Refused: value must be an integer",
-            "a fractional edit is refused with the integer-only status");
-
-    surface.DispatchAction(synth::ui::Action::WithValue(
-        synth::runtime_ui::Actions::kPressureMappingFieldCommit,
-        std::to_string(0) + ":" + std::to_string(1) + ":" +
-            std::to_string(static_cast<int>(PressureField::GridX)) + ":1.5"));
-    Require(harness.commits == 3, "a fractional grid X edit is refused, not rounded and committed");
-    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].pressure.gridX == 1,
-            "a refused fractional grid X edit leaves the stored value unchanged");
-}
-
-void TestPressureMappingAddAndDelete()
-{
-    namespace NodeIds = synth::runtime_ui::NodeIds;
-    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
-
-    TestHarness harness;
-    harness.instrument.controllers.clear();
-    harness.connection.controllers.clear();
-    Require(harness.instrument.AddController(MakeWrldBldrSlot("wrld")), "add a WRLD.Bldr row");
-    harness.connection.controllers.push_back({});
-
-    auto surface = harness.MakeSurface();
-    surface.MarkDirty();
-    surface.RefreshOnTick();
-    surface.ViewModel().ToggleConfig(0);
-
-    Require(FindNodeById(surface.BuildTree(), NodeIds::PressureMappingField(0, 0, PressureField::Channel)) ==
-                nullptr,
-            "a row starts with no pressure mappings shown");
-    surface.DispatchAction(
-        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kPressureMappingAdd, "0"));
-    Require(harness.commits == 1 &&
-                harness.instrument.controllers[0].config.pressureInput.has_value() &&
-                harness.instrument.controllers[0].config.pressureInput->mappings.size() == 1,
-            "Add appends one pressure mapping");
-
-    surface.DispatchAction(synth::ui::Action::WithValue(
-        synth::runtime_ui::Actions::kPressureMappingDelete, "0:0"));
-    // DeletePressureMapping resets the optional entirely once its mappings
-    // list empties, so the config carries no pressureInput at all here --
-    // not an engaged optional over an empty vector.
-    Require(harness.commits == 2 && !harness.instrument.controllers[0].config.pressureInput.has_value(),
-            "Delete removes the pressure mapping");
-    Require(FindNodeById(surface.BuildTree(), NodeIds::PressureMappingField(0, 0, PressureField::Channel)) ==
-                nullptr,
-            "the deleted pressure mapping's fields are gone from the tree");
-}
-
-// If Add always tried note 0 regardless of what is already taken, pressing
-// Add on a row that already has a note-0 mapping would collide with it and
-// the whole add would be refused -- the player clicks Add and nothing
-// happens. Picking the lowest FREE note instead is what makes Add keep
-// working past the first mapping.
-void TestPressureMappingAddStillSucceedsWhenNoteZeroIsTakenByPickingTheLowestFreeNote()
-{
-    namespace NodeIds = synth::runtime_ui::NodeIds;
-    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
-
-    TestHarness harness;
-    harness.instrument.controllers.clear();
-    harness.connection.controllers.clear();
-    synth::MidiControllerSlot wrld = MakeWrldBldrSlot("wrld");
-    synth::PolyphonicPressureMidiInConfig pressure;
-    synth::PolyphonicPressureMapping existing;
-    existing.address = synth::MidiNoteAddress{.channel = 0, .note = 0};
-    existing.pressure = synth::MessageIn::GridPressureChange(0, 0, 0, 0, 0);
-    pressure.mappings.push_back(existing);
-    wrld.config.pressureInput = pressure;
-    Require(harness.instrument.AddController(wrld), "add a row with note 0 already taken");
-    harness.connection.controllers.push_back({});
-
-    auto surface = harness.MakeSurface();
-    surface.MarkDirty();
-    surface.RefreshOnTick();
-    surface.ViewModel().ToggleConfig(0);
-
-    surface.DispatchAction(
-        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kPressureMappingAdd, "0"));
-    Require(harness.commits == 1 && harness.instrument.controllers[0].config.pressureInput->mappings.size() == 2,
-            "Add appends a second mapping");
-    // Note 0 is taken, so Add picks the lowest free note (1), not always 0.
-    Require(harness.instrument.controllers[0].config.pressureInput->mappings[1].address.note == 1,
-            "Add picks the lowest free note on channel 0, not always note 0");
-    const synth::ui::Node* addedNote =
-        FindNodeById(surface.BuildTree(), NodeIds::PressureMappingField(0, 1, PressureField::Note));
-    Require(addedNote != nullptr && addedNote->text == "1", "the added mapping's note shows as 1 on the page");
-}
-
-// A pressure mapping added through the Add button while the row's System
-// Messages section stays open must still be in the saved config after a
-// later edit in that same open section (a grid add, in this case) -- not
-// silently dropped by that edit's write-back.
-void TestPressureMappingAddedWhileSystemMessagesOpenSurvivesALaterGridAdd()
-{
-    TestHarness harness;
-    harness.instrument.controllers.clear();
-    harness.connection.controllers.clear();
-    Require(harness.instrument.AddController(MakeWrldBldrSlot("wrld")), "add a WRLD.Bldr row");
-    harness.connection.controllers.push_back({});
-
-    auto surface = harness.MakeSurface();
-    surface.MarkDirty();
-    surface.RefreshOnTick();
-    surface.ViewModel().ToggleConfig(0);
-    surface.DispatchAction(
-        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleSection, "0:system_messages"));
-
-    surface.DispatchAction(
-        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kPressureMappingAdd, "0"));
-    Require(harness.instrument.controllers[0].config.pressureInput.has_value() &&
-                harness.instrument.controllers[0].config.pressureInput->mappings.size() == 1,
-            "the pressure mapping is added while the section stays open");
-    const synth::MidiNoteAddress addedAddress =
-        harness.instrument.controllers[0].config.pressureInput->mappings[0].address;
-
-    surface.DispatchAction(synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAddSingle,
-                                                        "0:system_messages:grid"));
-    Require(harness.instrument.controllers[0].config.pressureInput.has_value(),
-            "a grid add in the same open section still leaves a pressure container");
-    const auto& mappingsAfterGridAdd = harness.instrument.controllers[0].config.pressureInput->mappings;
-    const bool addedMappingSurvived =
-        std::any_of(mappingsAfterGridAdd.begin(), mappingsAfterGridAdd.end(),
-                    [&](const synth::PolyphonicPressureMapping& mapping) {
-                        return mapping.address == addedAddress;
-                    });
-    Require(addedMappingSurvived,
-            "a pressure mapping added while System Messages was open survives a later grid add in the"
-            " same open section");
-    Require(mappingsAfterGridAdd.size() == 2,
-            "the grid add's own new pressure mapping is present alongside the earlier add, not in"
-            " place of it");
-}
-
-// The same loss shows up for an edit or a delete made while the section
-// stays open, not only for an add.
-void TestPressureMappingEditedWhileSystemMessagesOpenSurvivesALaterGridAdd()
-{
-    namespace NodeIds = synth::runtime_ui::NodeIds;
-    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
-
-    TestHarness harness;
-    harness.instrument.controllers.clear();
-    harness.connection.controllers.clear();
-    synth::MidiControllerSlot wrld = MakeWrldBldrSlot("wrld");
-    synth::PolyphonicPressureMidiInConfig pressure;
-    synth::PolyphonicPressureMapping existing;
-    existing.address = synth::MidiNoteAddress{.channel = 9, .note = 40};
-    existing.pressure = synth::MessageIn::GridPressureChange(0, 0, 0, 0, 0);
-    pressure.mappings.push_back(existing);
-    wrld.config.pressureInput = pressure;
-    Require(harness.instrument.AddController(wrld), "add a WRLD.Bldr row with one pressure mapping");
-    harness.connection.controllers.push_back({});
-
-    auto surface = harness.MakeSurface();
-    surface.MarkDirty();
-    surface.RefreshOnTick();
-    surface.ViewModel().ToggleConfig(0);
-    surface.DispatchAction(
-        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleSection, "0:system_messages"));
-
-    surface.DispatchAction(synth::ui::Action::WithValue(
-        synth::runtime_ui::Actions::kPressureMappingFieldCommit,
-        std::to_string(0) + ":" + std::to_string(0) + ":" +
-            std::to_string(static_cast<int>(PressureField::Note)) + ":41"));
-    Require(harness.instrument.controllers[0].config.pressureInput->mappings[0].address.note == 41,
-            "the edit commits while the section stays open");
-
-    surface.DispatchAction(synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAddSingle,
-                                                        "0:system_messages:grid"));
-    const auto& mappingsAfterGridAdd = harness.instrument.controllers[0].config.pressureInput->mappings;
-    const bool editSurvived =
-        std::any_of(mappingsAfterGridAdd.begin(), mappingsAfterGridAdd.end(),
-                    [](const synth::PolyphonicPressureMapping& mapping) {
-                        return mapping.address.channel == 9 && mapping.address.note == 41;
-                    });
-    Require(editSurvived,
-            "a pressure mapping edited while System Messages was open keeps its edit after a later grid"
-            " add in the same open section, instead of reverting to its pre-edit value");
-}
-
-// Pressure X and Y refuse a whole number that does not fit in an int, the
-// same refusal the grid block/button X and Y editors give for the same
-// out-of-range input, instead of silently truncating it into UB.
-void TestPressureMappingXRefusesAWholeNumberOutsideIntRange()
-{
-    namespace NodeIds = synth::runtime_ui::NodeIds;
-    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
-
-    TestHarness harness;
-    harness.instrument.controllers.clear();
-    harness.connection.controllers.clear();
-    synth::MidiControllerSlot wrld = MakeWrldBldrSlot("wrld");
-    synth::PolyphonicPressureMidiInConfig pressure;
-    synth::PolyphonicPressureMapping existing;
-    existing.address = synth::MidiNoteAddress{.channel = 0, .note = 0};
-    existing.pressure = synth::MessageIn::GridPressureChange(0, 3, 7, 0, 0);
-    pressure.mappings.push_back(existing);
-    wrld.config.pressureInput = pressure;
-    Require(harness.instrument.AddController(wrld), "add a row with one pressure mapping");
-    harness.connection.controllers.push_back({});
-
-    auto surface = harness.MakeSurface();
-    surface.MarkDirty();
-    surface.RefreshOnTick();
-    surface.ViewModel().ToggleConfig(0);
-
-    surface.DispatchAction(synth::ui::Action::WithValue(
-        synth::runtime_ui::Actions::kPressureMappingFieldCommit,
-        std::to_string(0) + ":" + std::to_string(0) + ":" +
-            std::to_string(static_cast<int>(PressureField::GridX)) + ":2147483648"));
-    Require(harness.commits == 0, "an out-of-int-range grid X value is refused, not committed");
-    Require(harness.instrument.controllers[0].config.pressureInput->mappings[0].pressure.gridX == 7,
-            "the refused out-of-range grid X edit leaves the stored value unchanged");
-    Require(surface.StatusText().starts_with("Refused"), "the out-of-range grid X edit sets a refusal status");
-}
-
-// Slot, X and Y are distinct fields on a pressure mapping: each must be
-// shown from its own stored value, and an edit to one must write only that
-// field (not silently land in another, and not be discarded outright).
-void TestPressureMappingSlotXAndYReadAndWriteTheirOwnFieldNotAnother()
-{
-    namespace NodeIds = synth::runtime_ui::NodeIds;
-    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
-
-    TestHarness harness;
-    harness.instrument.controllers.clear();
-    harness.connection.controllers.clear();
-    synth::MidiControllerSlot wrld = MakeWrldBldrSlot("wrld");
-    synth::PolyphonicPressureMidiInConfig pressure;
-    synth::PolyphonicPressureMapping mapping;
-    mapping.address = synth::MidiNoteAddress{.channel = 0, .note = 0};
-    mapping.pressure = synth::MessageIn::GridPressureChange(0, 5, 11, -22, 0);
-    pressure.mappings.push_back(mapping);
-    wrld.config.pressureInput = pressure;
-    Require(harness.instrument.AddController(wrld), "add a row with one pressure mapping");
-    harness.connection.controllers.push_back({});
-
-    auto surface = harness.MakeSurface();
-    surface.MarkDirty();
-    surface.RefreshOnTick();
-    surface.ViewModel().ToggleConfig(0);
-
-    const synth::ui::NodeTree tree = surface.BuildTree();
-    const synth::ui::Node* slotNode = FindNodeById(tree, NodeIds::PressureMappingField(0, 0, PressureField::GridSlotIx));
-    const synth::ui::Node* xNode = FindNodeById(tree, NodeIds::PressureMappingField(0, 0, PressureField::GridX));
-    const synth::ui::Node* yNode = FindNodeById(tree, NodeIds::PressureMappingField(0, 0, PressureField::GridY));
-    Require(slotNode != nullptr && slotNode->text == "5", "the Slot field shows the stored grid slot, not 0");
-    Require(xNode != nullptr && xNode->text == "11", "the X field shows the stored grid X, not the grid Y");
-    Require(yNode != nullptr && yNode->text == "-22", "the Y field shows the stored grid Y, not the grid X");
-
-    auto commitField = [&](PressureField field, const std::string& rawValue) {
-        surface.DispatchAction(synth::ui::Action::WithValue(
-            synth::runtime_ui::Actions::kPressureMappingFieldCommit,
-            std::to_string(0) + ":" + std::to_string(0) + ":" + std::to_string(static_cast<int>(field)) +
-                ":" + rawValue));
-    };
-    auto stored = [&]() -> const synth::MessageIn& {
-        return harness.instrument.controllers[0].config.pressureInput->mappings[0].pressure;
-    };
-
-    commitField(PressureField::GridX, "33");
-    Require(stored().gridX == 33, "an X edit writes the X field");
-    Require(stored().gridY == -22, "an X edit leaves the Y field untouched");
-    Require(stored().gridSlotIx == 5, "an X edit leaves the Slot field untouched");
-
-    commitField(PressureField::GridY, "-44");
-    Require(stored().gridY == -44, "a Y edit writes the Y field");
-    Require(stored().gridX == 33, "a Y edit leaves the X field untouched (not folded into X)");
-
-    commitField(PressureField::GridSlotIx, "9");
-    Require(stored().gridSlotIx == 9, "a Slot edit writes the Slot field");
-    Require(stored().gridX == 33 && stored().gridY == -44, "a Slot edit leaves X and Y untouched");
-}
-
-// The pressure fields must keep refusing an out-of-range channel, note or
-// slot, and text that is not wholly a number, rather than silently storing
-// or truncating it.
-void TestPressureMappingFieldsRefuseChannelNoteSlotOutOfRangeAndNonNumericText()
-{
-    namespace NodeIds = synth::runtime_ui::NodeIds;
-    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
-
-    TestHarness harness;
-    harness.instrument.controllers.clear();
-    harness.connection.controllers.clear();
-    synth::MidiControllerSlot wrld = MakeWrldBldrSlot("wrld");
-    synth::PolyphonicPressureMidiInConfig pressure;
-    synth::PolyphonicPressureMapping mapping;
-    mapping.address = synth::MidiNoteAddress{.channel = 5, .note = 60};
-    mapping.pressure = synth::MessageIn::GridPressureChange(0, 2, 0, 0, 0);
-    pressure.mappings.push_back(mapping);
-    wrld.config.pressureInput = pressure;
-    Require(harness.instrument.AddController(wrld), "add a row with one pressure mapping");
-    harness.connection.controllers.push_back({});
-
-    auto surface = harness.MakeSurface();
-    surface.MarkDirty();
-    surface.RefreshOnTick();
-    surface.ViewModel().ToggleConfig(0);
-
-    auto commitField = [&](PressureField field, const std::string& rawValue) {
-        surface.DispatchAction(synth::ui::Action::WithValue(
-            synth::runtime_ui::Actions::kPressureMappingFieldCommit,
-            std::to_string(0) + ":" + std::to_string(0) + ":" + std::to_string(static_cast<int>(field)) +
-                ":" + rawValue));
-    };
-    const auto& address = harness.instrument.controllers[0].config.pressureInput->mappings[0].address;
-    const auto& stored = harness.instrument.controllers[0].config.pressureInput->mappings[0].pressure;
-
-    commitField(PressureField::Channel, "16");
-    Require(harness.commits == 0 && address.channel == 5, "channel 16 is refused; channel 0-15 stays 5");
-    commitField(PressureField::Channel, "-1");
-    Require(harness.commits == 0 && address.channel == 5, "a negative channel is refused; channel stays 5");
-
-    commitField(PressureField::Note, "128");
-    Require(harness.commits == 0 && address.note == 60, "note 128 is refused; note 0-127 stays 60");
-    commitField(PressureField::Note, "-1");
-    Require(harness.commits == 0 && address.note == 60, "a negative note is refused; note stays 60");
-
-    commitField(PressureField::GridSlotIx, "-1");
-    Require(harness.commits == 0 && stored.gridSlotIx == 2, "a negative grid slot is refused; slot stays 2");
-
-    commitField(PressureField::Channel, "not-a-number");
-    Require(harness.commits == 0 && address.channel == 5 &&
-                surface.StatusText() == "Refused: value must be a finite number",
-            "text with no numeric prefix is refused with the numeric-only status, unchanged");
-    commitField(PressureField::Channel, "3abc");
-    Require(harness.commits == 0 && address.channel == 5 &&
-                surface.StatusText() == "Refused: value must be a finite number",
-            "text that is not WHOLLY a number (a numeric prefix followed by letters) is refused too,"
-            " not parsed up to the first non-digit");
-}
-
-void TestPressureMappingDeleteRemovesTheGivenIndexNotAlwaysFirst()
-{
-    namespace NodeIds = synth::runtime_ui::NodeIds;
-    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
-
-    TestHarness harness;
-    harness.instrument.controllers.clear();
-    harness.connection.controllers.clear();
-    synth::MidiControllerSlot wrld = MakeWrldBldrSlot("wrld");
-    synth::PolyphonicPressureMidiInConfig pressure;
-    synth::PolyphonicPressureMapping first;
-    first.address = synth::MidiNoteAddress{.channel = 0, .note = 10};
-    first.pressure = synth::MessageIn::GridPressureChange(0, 0, 0, 0, 0);
-    synth::PolyphonicPressureMapping second;
-    second.address = synth::MidiNoteAddress{.channel = 0, .note = 20};
-    second.pressure = synth::MessageIn::GridPressureChange(0, 0, 0, 0, 0);
-    pressure.mappings = {first, second};
-    wrld.config.pressureInput = pressure;
-    Require(harness.instrument.AddController(wrld), "add a row with two pressure mappings");
-    harness.connection.controllers.push_back({});
-
-    auto surface = harness.MakeSurface();
-    surface.MarkDirty();
-    surface.RefreshOnTick();
-    surface.ViewModel().ToggleConfig(0);
-
-    // Delete index 1 (note 20), not index 0: a "delete always removes index
-    // 0" bug would instead remove note 10 and still leave one mapping
-    // behind, so the surviving note is the only thing that tells them apart.
-    surface.DispatchAction(synth::ui::Action::WithValue(
-        synth::runtime_ui::Actions::kPressureMappingDelete, "0:1"));
-    Require(harness.commits == 1 && harness.instrument.controllers[0].config.pressureInput->mappings.size() == 1,
-            "Delete removes exactly one mapping");
-    Require(harness.instrument.controllers[0].config.pressureInput->mappings[0].address.note == 10,
-            "Delete removes the mapping at the given index, leaving the other one, not always index 0");
-    const synth::ui::Node* survivorNote =
-        FindNodeById(surface.BuildTree(), NodeIds::PressureMappingField(0, 0, PressureField::Note));
-    Require(survivorNote != nullptr && survivorNote->text == "10",
-            "the surviving mapping (note 10) is what the page shows at index 0");
-}
-
-void TestConnectMessageDeleteRemovesTheGivenIndexNotAlwaysFirst()
-{
-    namespace NodeIds = synth::runtime_ui::NodeIds;
-
-    TestHarness harness;
     harness.instrument.controllers.clear();
     harness.connection.controllers.clear();
     synth::MidiControllerSlot slot = MakeGenericSlot("two messages");
@@ -2774,6 +2295,14 @@ void TestConnectMessageDeleteRemovesTheGivenIndexNotAlwaysFirst()
     slot.config.openSysEx.push_back({0xF0, 0x02, 0xF7});
     Require(harness.instrument.AddController(slot), "add a row with two connect messages");
     harness.connection.controllers.push_back({});
+}
+
+void TestConnectMessageDeleteRemovesTheGivenIndexNotAlwaysFirst()
+{
+    namespace NodeIds = synth::runtime_ui::NodeIds;
+
+    TestHarness harness;
+    SetUpTwoConnectMessageRow(harness);
 
     auto surface = harness.MakeSurface();
     surface.MarkDirty();
@@ -2797,6 +2326,110 @@ void TestConnectMessageDeleteRemovesTheGivenIndexNotAlwaysFirst()
             "the surviving message is what the page shows at index 0");
 }
 
+void TestConnectMessageCommitAtIndexOneLeavesIndexZeroUnchanged()
+{
+    namespace NodeIds = synth::runtime_ui::NodeIds;
+
+    TestHarness harness;
+    SetUpTwoConnectMessageRow(harness);
+
+    auto surface = harness.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    surface.ViewModel().ToggleConfig(0);
+
+    // Commit to index 1, not index 0: a "commit always writes index 0" bug
+    // would instead overwrite F0 01 F7 and leave message 1 untouched, so
+    // checking both indexes' final bytes is what tells the two apart.
+    surface.DispatchAction(synth::ui::Action::WithValue(
+        synth::runtime_ui::Actions::kConnectMessageCommit, "0:1:F0 55 F7"));
+    Require(harness.commits == 1 && surface.StatusText() == "OK",
+            "a valid edit at index 1 commits");
+    Require(harness.instrument.controllers[0].config.openSysEx[0] ==
+                (std::vector<std::uint8_t>{0xF0, 0x01, 0xF7}),
+            "the edit at index 1 leaves index 0's stored bytes unchanged");
+    Require(harness.instrument.controllers[0].config.openSysEx[1] ==
+                (std::vector<std::uint8_t>{0xF0, 0x55, 0xF7}),
+            "the edit at index 1 updates index 1 to the edited bytes");
+    const synth::ui::NodeTree afterCommit = surface.BuildTree();
+    Require(FindNodeById(afterCommit, NodeIds::ConnectMessageField(0, 0))->text == "F0 01 F7",
+            "the displayed field at index 0 is unchanged");
+    Require(FindNodeById(afterCommit, NodeIds::ConnectMessageField(0, 1))->text == "F0 55 F7",
+            "the displayed field at index 1 shows the newly committed message");
+}
+
+void TestConnectMessageHandlersRefuseVisiblyWhenHostRejectsCommit()
+{
+    const std::string kHostRejectedText = "Refused: host rejected the instrument commit";
+
+    // HandleConnectMessageCommit: a valid edit that the host's commit
+    // callback refuses.
+    {
+        TestHarness harness;
+        SetUpTwoConnectMessageRow(harness);
+        harness.commitSucceeds = false;
+        auto surface = harness.MakeSurface();
+        surface.MarkDirty();
+        surface.RefreshOnTick();
+        surface.ViewModel().ToggleConfig(0);
+
+        surface.DispatchAction(synth::ui::Action::WithValue(
+            synth::runtime_ui::Actions::kConnectMessageCommit, "0:1:F0 55 F7"));
+        Require(harness.commitAttempts == 1 && harness.commits == 0,
+                "a host-rejected connect-message commit attempts but does not complete a commit");
+        Require(surface.StatusText() == kHostRejectedText,
+                "a host-rejected connect-message commit reports the shared refusal status");
+        Require(harness.instrument.controllers[0].config.openSysEx[1] ==
+                    (std::vector<std::uint8_t>{0xF0, 0x02, 0xF7}),
+                "a host-rejected connect-message commit leaves the stored message unchanged");
+    }
+
+    // HandleConnectMessageDelete: a valid delete that the host's commit
+    // callback refuses.
+    {
+        TestHarness harness;
+        SetUpTwoConnectMessageRow(harness);
+        harness.commitSucceeds = false;
+        auto surface = harness.MakeSurface();
+        surface.MarkDirty();
+        surface.RefreshOnTick();
+        surface.ViewModel().ToggleConfig(0);
+
+        surface.DispatchAction(synth::ui::Action::WithValue(
+            synth::runtime_ui::Actions::kConnectMessageDelete, "0:1"));
+        Require(harness.commitAttempts == 1 && harness.commits == 0,
+                "a host-rejected connect-message delete attempts but does not complete a commit");
+        Require(surface.StatusText() == kHostRejectedText,
+                "a host-rejected connect-message delete reports the shared refusal status");
+        Require(harness.instrument.controllers[0].config.openSysEx.size() == 2,
+                "a host-rejected connect-message delete leaves both stored messages in place");
+    }
+
+    // HandleConnectMessageAdd: an add that the host's commit callback
+    // refuses.
+    {
+        TestHarness harness;
+        harness.instrument.controllers.clear();
+        harness.connection.controllers.clear();
+        Require(harness.instrument.AddController(MakeGenericSlot("Custom row")), "add a Custom row");
+        harness.connection.controllers.push_back({});
+        harness.commitSucceeds = false;
+        auto surface = harness.MakeSurface();
+        surface.MarkDirty();
+        surface.RefreshOnTick();
+        surface.ViewModel().ToggleConfig(0);
+
+        surface.DispatchAction(
+            synth::ui::Action::WithValue(synth::runtime_ui::Actions::kConnectMessageAdd, "0"));
+        Require(harness.commitAttempts == 1 && harness.commits == 0,
+                "a host-rejected connect-message add attempts but does not complete a commit");
+        Require(surface.StatusText() == kHostRejectedText,
+                "a host-rejected connect-message add reports the shared refusal status");
+        Require(harness.instrument.controllers[0].config.openSysEx.empty(),
+                "a host-rejected connect-message add leaves the row with no stored messages");
+    }
+}
+
 void TestConnectMessageShownOnEveryKindNotJustGeneric()
 {
     TestHarness harness;
@@ -2815,34 +2448,6 @@ void TestConnectMessageShownOnEveryKindNotJustGeneric()
         FindNodeById(surface.BuildTree(), synth::runtime_ui::NodeIds::ConnectMessageField(0, 0));
     Require(field != nullptr && field->text == "F0 7E 00 F7",
             "the connect-messages list shows on a WRLD.Bldr row too, not only a Generic row");
-}
-
-void TestPressureMappingShownOnEveryKindNotJustWrldBldr()
-{
-    namespace NodeIds = synth::runtime_ui::NodeIds;
-    using PressureField = synth::MidiConfigViewModel::PressureMappingField;
-
-    TestHarness harness;
-    harness.instrument.controllers.clear();
-    harness.connection.controllers.clear();
-    synth::MidiControllerSlot generic = MakeGenericSlot("generic with pressure");
-    synth::PolyphonicPressureMidiInConfig pressure;
-    synth::PolyphonicPressureMapping mapping;
-    mapping.address = synth::MidiNoteAddress{.channel = 3, .note = 50};
-    mapping.pressure = synth::MessageIn::GridPressureChange(0, 0, 0, 0, 0);
-    pressure.mappings.push_back(mapping);
-    generic.config.pressureInput = pressure;
-    Require(harness.instrument.AddController(generic), "add a Generic row with a pressure mapping");
-    harness.connection.controllers.push_back({});
-
-    auto surface = harness.MakeSurface();
-    surface.MarkDirty();
-    surface.RefreshOnTick();
-    surface.ViewModel().ToggleConfig(0);
-    const synth::ui::Node* channel =
-        FindNodeById(surface.BuildTree(), NodeIds::PressureMappingField(0, 0, PressureField::Channel));
-    Require(channel != nullptr && channel->text == "3",
-            "the pressure-mappings list shows on a Generic row too, not only a WRLD.Bldr row");
 }
 
 void TestControllerDeviceLabelForUnresolvedWizardIdShowsBoundDevice()
@@ -2937,18 +2542,10 @@ int main()
     TestConnectMessageShowsOnAnAbletonStyleRowsExpandedConfiguration();
     TestConnectMessageEditCommitsValidAndRefusesInvalidUnchanged();
     TestConnectMessageAddAndDelete();
-    TestPressureMappingShowsGridAttachedAndOrphanedThenEditCommits();
-    TestPressureMappingAddAndDelete();
-    TestPressureMappingAddStillSucceedsWhenNoteZeroIsTakenByPickingTheLowestFreeNote();
-    TestPressureMappingAddedWhileSystemMessagesOpenSurvivesALaterGridAdd();
-    TestPressureMappingEditedWhileSystemMessagesOpenSurvivesALaterGridAdd();
-    TestPressureMappingXRefusesAWholeNumberOutsideIntRange();
-    TestPressureMappingSlotXAndYReadAndWriteTheirOwnFieldNotAnother();
-    TestPressureMappingFieldsRefuseChannelNoteSlotOutOfRangeAndNonNumericText();
-    TestPressureMappingDeleteRemovesTheGivenIndexNotAlwaysFirst();
     TestConnectMessageDeleteRemovesTheGivenIndexNotAlwaysFirst();
+    TestConnectMessageCommitAtIndexOneLeavesIndexZeroUnchanged();
+    TestConnectMessageHandlersRefuseVisiblyWhenHostRejectsCommit();
     TestConnectMessageShownOnEveryKindNotJustGeneric();
-    TestPressureMappingShownOnEveryKindNotJustWrldBldr();
     TestControllerDeviceLabelForUnresolvedWizardIdShowsBoundDevice();
     TestControllerDeviceLabelForAppCatalogDeviceShowsItsName();
 
@@ -3577,6 +3174,11 @@ int main()
     Require(visible.find("aftertouch") == std::string::npos, "portable tree hides aftertouch");
     Require(visible.find("polyphonic pressure") == std::string::npos,
             "portable tree hides polyphonic pressure");
+    // The removed row editor's heading was "Pressure mappings", which neither
+    // of the two greps above matches -- so this is the only assertion that
+    // fails if a per-row pressure-mapping list is ever rendered again.
+    Require(visible.find("pressure mapping") == std::string::npos,
+            "portable tree hides the per-row pressure-mapping list");
     Require(visible.find("midi status") == std::string::npos, "portable tree hides MIDI status");
     Require(visible.find("note number") == std::string::npos, "portable tree hides standalone note field");
 

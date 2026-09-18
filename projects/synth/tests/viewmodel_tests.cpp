@@ -542,7 +542,7 @@ TEST_CASE(RowFieldValueReadsSceneBlendWhenUnassigned) {
     // advertises Field::SceneBlend as editable and ApplyMappingEdit
     // genuinely accepts assigning it (see that method's AnalogSceneBlend
     // case, which value_or(MidiControlAddress{})-defaults an absent
-    // sceneBlend rather than refusing). ControllersPage.hpp's renderer
+    // sceneBlend rather than refusing). ControllersPageUI.hpp's renderer
     // now skips building an editor entirely for any
     // field RowFieldValue can't read -- so if this case still returned
     // false, an unassigned scene blend would become permanently
@@ -3385,7 +3385,7 @@ TEST_CASE(DeleteRowCommitNormalizes) {
 // model"): GroupSupportsAdd/GroupSupportsBlocks are the single source of
 // truth for the page's "+"/"+B" gating, replacing what used to be a
 // page-local reimplementation of AddSingle/AddBlock's own dispatch rules
-// (SectionBody::AddableGroup/GroupSupportsBlocks in ControllersPage.hpp).
+// (SectionBody::AddableGroup/GroupSupportsBlocks in ControllersPageUI.hpp).
 // These JUCE-free tests cover the exact matrix:
 // wrldbldr turn/push/system/gesture true/true; twister system true/false
 // (the twister-never-blocks rule); config-level groups (encoder
@@ -3775,7 +3775,7 @@ TEST_CASE(AddableGroupsAgreesWithGroupSupportsAddForEveryGroupAndSection) {
 // through the actual VM (AddBlock twice, editing the second block's message
 // type to BankSelect via ApplyMappingEdit) and asserts SectionRows() surfaces
 // the differing editableFields the renderer must split its header run on --
-// the JUCE-free half of the fix; ControllersPage.hpp's SectionBody grouping
+// the JUCE-free half of the fix; ControllersPageUI.hpp's SectionBody grouping
 // loop (now comparing full editableFields vectors, not just RowGroup/Kind)
 // is exercised only by the launch smoke test, not by these headless tests.
 TEST_CASE(BankSelectBlockEditableFieldsDifferFromSceneSelectBlockInSameGroup) {

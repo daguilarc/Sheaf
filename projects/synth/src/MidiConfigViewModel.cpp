@@ -1364,41 +1364,6 @@ void MidiConfigViewModel::DiscardPresentation(const std::string& name, MidiConfi
     presentations_.erase(PresentationKey{name, section});
 }
 
-void MidiConfigViewModel::MirrorPressureMappingChangeIntoOpenSession(
-    std::size_t controllerIx, const std::optional<PolyphonicPressureMapping>& before,
-    const std::optional<PolyphonicPressureMapping>& after) const {
-    if (controllerIx >= instrument_.controllers.size()) {
-        return;
-    }
-    const auto it = presentations_.find(
-        PresentationKey{instrument_.controllers[controllerIx].name, MidiConfigSection::SystemMessages});
-    if (it == presentations_.end()) {
-        return;
-    }
-    std::vector<PolyphonicPressureMapping>& hidden = it->second.hiddenPressureMappings;
-    if (!before.has_value()) {
-        // A brand new mapping: AddPressureMapping only ever picks an
-        // address disjoint from every existing mapping (row-claimed or
-        // hidden), so it is always hidden by construction.
-        if (after.has_value()) {
-            hidden.push_back(*after);
-        }
-        return;
-    }
-    const auto hiddenIt = std::find(hidden.begin(), hidden.end(), *before);
-    if (hiddenIt == hidden.end()) {
-        // Not one of this open session's hidden entries -- it belongs to
-        // one of the section's own rows, whose flush already carries the
-        // edit or removal through gridExpansion.
-        return;
-    }
-    if (after.has_value()) {
-        *hiddenIt = *after;
-    } else {
-        hidden.erase(hiddenIt);
-    }
-}
-
 namespace {
 
 // Where a new row of `group` should land: immediately after the last
@@ -1706,7 +1671,7 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
             // advertises SceneBlend as editable and ApplyMappingEdit
             // genuinely accepts assigning it (defaulting the address via
             // value_or(MidiControlAddress{})). Returning false here made
-            // ControllersPage.hpp's renderer skip building an editor
+            // ControllersPageUI.hpp's renderer skip building an editor
             // entirely for this row once it started checking
             // RowFieldValue's return value, which would
             // have made an unassigned scene blend permanently unassignable
@@ -3284,204 +3249,6 @@ bool MidiConfigViewModel::DeleteConnectMessage(std::size_t controllerIx, std::si
     return true;
 }
 
-std::size_t MidiConfigViewModel::PressureMappingCount(std::size_t controllerIx) const {
-    if (controllerIx >= instrument_.controllers.size()) {
-        return 0;
-    }
-    const std::optional<PolyphonicPressureMidiInConfig>& pressureInput =
-        instrument_.controllers[controllerIx].config.pressureInput;
-    return pressureInput.has_value() ? pressureInput->mappings.size() : 0;
-}
-
-bool MidiConfigViewModel::PressureMappingFieldValue(std::size_t controllerIx, std::size_t mappingIx,
-                                                    PressureMappingField field, double& out) const {
-    if (controllerIx >= instrument_.controllers.size()) {
-        return false;
-    }
-    const std::optional<PolyphonicPressureMidiInConfig>& pressureInput =
-        instrument_.controllers[controllerIx].config.pressureInput;
-    if (!pressureInput.has_value() || mappingIx >= pressureInput->mappings.size()) {
-        return false;
-    }
-    const PolyphonicPressureMapping& mapping = pressureInput->mappings[mappingIx];
-    switch (field) {
-        case PressureMappingField::Channel:
-            out = mapping.address.channel;
-            return true;
-        case PressureMappingField::Note:
-            out = mapping.address.note;
-            return true;
-        case PressureMappingField::GridSlotIx:
-            out = static_cast<double>(mapping.pressure.gridSlotIx);
-            return true;
-        case PressureMappingField::GridX:
-            out = mapping.pressure.gridX;
-            return true;
-        case PressureMappingField::GridY:
-            out = mapping.pressure.gridY;
-            return true;
-    }
-    return false;
-}
-
-bool MidiConfigViewModel::AddPressureMapping(std::size_t controllerIx, MidiInstrumentConfig& out,
-                                             std::string* reason) const {
-    if (controllerIx >= instrument_.controllers.size()) {
-        if (reason != nullptr) {
-            *reason = "controller does not exist";
-        }
-        return false;
-    }
-    MidiInstrumentConfig scratch = instrument_;
-    MidiControllerSlot& slot = scratch.controllers[controllerIx];
-    if (!slot.config.pressureInput.has_value()) {
-        slot.config.pressureInput = PolyphonicPressureMidiInConfig{};
-    }
-    std::vector<PolyphonicPressureMapping>& mappings = slot.config.pressureInput->mappings;
-    int note = 0;
-    while (std::any_of(mappings.begin(), mappings.end(), [&](const PolyphonicPressureMapping& mapping) {
-        return mapping.address.channel == 0 && mapping.address.note == static_cast<std::uint8_t>(note);
-    })) {
-        if (note >= 0x7F) {
-            if (reason != nullptr) {
-                *reason = "no free note address for a new pressure mapping";
-            }
-            return false;
-        }
-        ++note;
-    }
-    PolyphonicPressureMapping mapping;
-    mapping.address = MidiNoteAddress{.channel = 0, .note = static_cast<std::uint8_t>(note)};
-    mapping.pressure = MessageIn::GridPressureChange(0, 0, 0, 0, 0);
-    mappings.push_back(mapping);
-    if (!SlotValidForKind(slot, reason)) {
-        return false;
-    }
-    MirrorPressureMappingChangeIntoOpenSession(controllerIx, std::nullopt, mapping);
-    out = std::move(scratch);
-    return true;
-}
-
-bool MidiConfigViewModel::SetPressureMappingField(std::size_t controllerIx, std::size_t mappingIx,
-                                                  PressureMappingField field, double value,
-                                                  MidiInstrumentConfig& out, std::string* reason) const {
-    if (controllerIx >= instrument_.controllers.size()) {
-        if (reason != nullptr) {
-            *reason = "controller does not exist";
-        }
-        return false;
-    }
-    const std::optional<PolyphonicPressureMidiInConfig>& existing =
-        instrument_.controllers[controllerIx].config.pressureInput;
-    if (!existing.has_value() || mappingIx >= existing->mappings.size()) {
-        if (reason != nullptr) {
-            *reason = "pressure mapping does not exist";
-        }
-        return false;
-    }
-    if (!std::isfinite(value)) {
-        if (reason != nullptr) {
-            *reason = "value must be a finite number";
-        }
-        return false;
-    }
-    const long long rounded = std::llround(value);
-    if (static_cast<double>(rounded) != value) {
-        if (reason != nullptr) {
-            *reason = "value must be an integer";
-        }
-        return false;
-    }
-
-    const PolyphonicPressureMapping before = existing->mappings[mappingIx];
-
-    MidiInstrumentConfig scratch = instrument_;
-    MidiControllerSlot& slot = scratch.controllers[controllerIx];
-    PolyphonicPressureMapping& mapping = slot.config.pressureInput->mappings[mappingIx];
-    switch (field) {
-        case PressureMappingField::Channel:
-            if (rounded < 0 || rounded > 0x0F) {
-                if (reason != nullptr) {
-                    *reason = "channel must be an integer 0-15";
-                }
-                return false;
-            }
-            mapping.address.channel = static_cast<std::uint8_t>(rounded);
-            break;
-        case PressureMappingField::Note:
-            if (rounded < 0 || rounded > 0x7F) {
-                if (reason != nullptr) {
-                    *reason = "note must be an integer 0-127";
-                }
-                return false;
-            }
-            mapping.address.note = static_cast<std::uint8_t>(rounded);
-            break;
-        case PressureMappingField::GridSlotIx:
-            if (rounded < 0) {
-                if (reason != nullptr) {
-                    *reason = "grid slot must be a non-negative integer";
-                }
-                return false;
-            }
-            mapping.pressure.gridSlotIx = static_cast<std::size_t>(rounded);
-            break;
-        case PressureMappingField::GridX:
-            if (!IsIntegerInRange(value, static_cast<double>(std::numeric_limits<int>::min()),
-                                  static_cast<double>(std::numeric_limits<int>::max()))) {
-                if (reason != nullptr) {
-                    *reason = "grid x must be an integer";
-                }
-                return false;
-            }
-            mapping.pressure.gridX = static_cast<int>(rounded);
-            break;
-        case PressureMappingField::GridY:
-            if (!IsIntegerInRange(value, static_cast<double>(std::numeric_limits<int>::min()),
-                                  static_cast<double>(std::numeric_limits<int>::max()))) {
-                if (reason != nullptr) {
-                    *reason = "grid y must be an integer";
-                }
-                return false;
-            }
-            mapping.pressure.gridY = static_cast<int>(rounded);
-            break;
-    }
-    if (!SlotValidForKind(slot, reason)) {
-        return false;
-    }
-    MirrorPressureMappingChangeIntoOpenSession(controllerIx, before, mapping);
-    out = std::move(scratch);
-    return true;
-}
-
-bool MidiConfigViewModel::DeletePressureMapping(std::size_t controllerIx, std::size_t mappingIx,
-                                                MidiInstrumentConfig& out, std::string* reason) const {
-    if (controllerIx >= instrument_.controllers.size()) {
-        if (reason != nullptr) {
-            *reason = "controller does not exist";
-        }
-        return false;
-    }
-    MidiInstrumentConfig scratch = instrument_;
-    std::optional<PolyphonicPressureMidiInConfig>& pressureInput =
-        scratch.controllers[controllerIx].config.pressureInput;
-    if (!pressureInput.has_value() || mappingIx >= pressureInput->mappings.size()) {
-        if (reason != nullptr) {
-            *reason = "pressure mapping does not exist";
-        }
-        return false;
-    }
-    const PolyphonicPressureMapping removed = pressureInput->mappings[mappingIx];
-    pressureInput->mappings.erase(pressureInput->mappings.begin() + static_cast<std::ptrdiff_t>(mappingIx));
-    if (pressureInput->mappings.empty()) {
-        pressureInput.reset();
-    }
-    MirrorPressureMappingChangeIntoOpenSession(controllerIx, removed, std::nullopt);
-    out = std::move(scratch);
-    return true;
-}
-
 bool MidiConfigViewModel::CanDeleteRow(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx) const {
     if (controllerIx >= instrument_.controllers.size()) {
         return false;
@@ -4239,7 +4006,7 @@ bool MidiConfigViewModel::AddBlock(std::size_t controllerIx, MidiConfigSection s
 }
 
 // The renderer's "+" gating used to reimplement
-// this dispatch itself (SectionBody::AddableGroup in ControllersPage.hpp);
+// this dispatch itself (SectionBody::AddableGroup in ControllersPageUI.hpp);
 // that page-local copy could silently drift from AddSingle's actual switch
 // above. This is the single source of truth both now share -- kept
 // literally adjacent to AddSingle/AddBlock so a future group added to one
@@ -4278,7 +4045,7 @@ bool MidiConfigViewModel::GroupSupportsAdd(std::size_t controllerIx, MidiConfigS
 
 // The renderer's "+B" gating used to reimplement
 // this dispatch itself (SectionBody::GroupSupportsBlocks in
-// ControllersPage.hpp, including the twister no-block special case); this
+// ControllersPageUI.hpp, including the twister no-block special case); this
 // is now the single source of truth, mirroring AddBlock's own dispatch
 // above (including its MfTwister refusal) so the two can never
 // drift apart.
