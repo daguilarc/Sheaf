@@ -97,7 +97,7 @@
 
 ## 4. Delivery
 
-- [ ] 4.1 Commit on branch `gate-browser-midi-on-controllers`, push it to the
+- [x] 4.1 Commit on branch `gate-browser-midi-on-controllers`, push it to the
       fork, and open the next pull request in the stack against upstream
       `main`, stating that it stacks on #17. Then add the delivery-record commit
       naming the pull request, and push it to the same branch.
