@@ -3637,26 +3637,38 @@ TEST_CASE(AddableGroupsIsDispatchLevelNotKindFiltered) {
 // is that an empty-group header renders the SAME columns a populated one
 // would, so add a row via AddSingle into an EMPTY group (post Fix A, this
 // now succeeds even from a nullopt container) and compare.
+// Runs with and without a catalog offering Shift, since EncoderTurnEditableFields()
+// gates Field::ShiftAction on that -- both GroupColumnFields() and a real
+// added row must agree either way.
 TEST_CASE(GroupColumnFieldsMatchesWhatARealAddedEncoderTurnRowGets) {
-    MidiConfigViewModel vm;
-    MidiInstrumentConfig instrument;
-    instrument.AddController(MakeGenericSlot("gen"));
-    MidiConnectionState connection = MakeSingleControllerConnection();
-    vm.Rebuild(instrument, connection);
+    MidiAppCatalog shiftCatalog;
+    shiftCatalog.libraryKinds = {UISystemMessage::Shift};
+    for (bool offerShift : {false, true}) {
+        MidiConfigViewModel vm;
+        if (offerShift) {
+            vm.SetMessageCatalog(synth::MakeUISystemMessageChoices(shiftCatalog));
+        }
+        MidiInstrumentConfig instrument;
+        instrument.AddController(MakeGenericSlot("gen"));
+        MidiConnectionState connection = MakeSingleControllerConnection();
+        vm.Rebuild(instrument, connection);
 
-    const auto columnFields =
-        vm.GroupColumnFields(0, MidiConfigSection::Encoders, MidiMappingRowVM::RowGroup::EncoderTurn);
-    REQUIRE_TRUE(!columnFields.empty());
+        const auto columnFields =
+            vm.GroupColumnFields(0, MidiConfigSection::Encoders, MidiMappingRowVM::RowGroup::EncoderTurn);
+        REQUIRE_TRUE(!columnFields.empty());
+        REQUIRE_TRUE((std::find(columnFields.begin(), columnFields.end(), MidiMappingRowVM::Field::ShiftAction) !=
+                     columnFields.end()) == offerShift);
 
-    MidiInstrumentConfig out;
-    std::string reason;
-    REQUIRE_TRUE(
-        vm.AddSingle(0, MidiConfigSection::Encoders, MidiMappingRowVM::RowGroup::EncoderTurn, out, &reason));
-    vm.Rebuild(out, connection);
-    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::Encoders);
-    REQUIRE_TRUE(!rows.empty());
-    REQUIRE_TRUE(rows.front().group == MidiMappingRowVM::RowGroup::EncoderTurn);
-    REQUIRE_TRUE(rows.front().editableFields == columnFields);
+        MidiInstrumentConfig out;
+        std::string reason;
+        REQUIRE_TRUE(
+            vm.AddSingle(0, MidiConfigSection::Encoders, MidiMappingRowVM::RowGroup::EncoderTurn, out, &reason));
+        vm.Rebuild(out, connection);
+        const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::Encoders);
+        REQUIRE_TRUE(!rows.empty());
+        REQUIRE_TRUE(rows.front().group == MidiMappingRowVM::RowGroup::EncoderTurn);
+        REQUIRE_TRUE(rows.front().editableFields == columnFields);
+    }
 }
 
 TEST_CASE(GroupColumnFieldsMatchesWhatARealAddedAnalogGestureRowGets) {
@@ -3686,6 +3698,8 @@ TEST_CASE(GroupColumnFieldsMatchesWhatARealAddedAnalogGestureRowGets) {
 // System's schema is per-kind -- check every kind's empty-section
 // GroupColumnFields matches SystemRowEditableFields(kind) (the same table
 // BuildSectionRows()' Individual system-row case uses), via a real added row.
+// Runs with and without a catalog offering Shift, since SystemRowEditableFields()
+// gates Field::ShiftAction on that.
 TEST_CASE(GroupColumnFieldsMatchesWhatARealAddedSystemRowGetsPerKind) {
     struct KindFixture {
         MidiControllerSlot (*makeSlot)(const char*);
@@ -3697,33 +3711,48 @@ TEST_CASE(GroupColumnFieldsMatchesWhatARealAddedSystemRowGetsPerKind) {
         {MakeLaunchpadSlot, "pads"},
         {MakeGenericSlot, "gen"},
     };
+    // Scene Select alongside Shift, matching every real app's catalog
+    // (UISystemMessageCatalog()'s own base entries always include Scene
+    // Select) -- AddSingle's System row always starts on Scene Select when
+    // the catalog offers it, so this keeps that fresh row's own kind (not
+    // Shift itself) the one GroupColumnFields below predicts against.
+    MidiAppCatalog shiftCatalog;
+    shiftCatalog.libraryKinds = {UISystemMessage::SceneSelect, UISystemMessage::Shift};
     for (const KindFixture& fixture : fixtures) {
-        MidiConfigViewModel vm;
-        MidiInstrumentConfig instrument;
-        instrument.AddController(fixture.makeSlot(fixture.name));
-        MidiConnectionState connection = MakeSingleControllerConnection();
-        vm.Rebuild(instrument, connection);
+        for (bool offerShift : {false, true}) {
+            MidiConfigViewModel vm;
+            if (offerShift) {
+                vm.SetMessageCatalog(synth::MakeUISystemMessageChoices(shiftCatalog));
+            }
+            MidiInstrumentConfig instrument;
+            instrument.AddController(fixture.makeSlot(fixture.name));
+            MidiConnectionState connection = MakeSingleControllerConnection();
+            vm.Rebuild(instrument, connection);
 
-        const auto columnFields =
-            vm.GroupColumnFields(0, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System);
-        REQUIRE_TRUE(!columnFields.empty());
+            const auto columnFields =
+                vm.GroupColumnFields(0, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System);
+            REQUIRE_TRUE(!columnFields.empty());
+            REQUIRE_TRUE(
+                (std::find(columnFields.begin(), columnFields.end(), MidiMappingRowVM::Field::ShiftAction) !=
+                 columnFields.end()) == offerShift);
 
-        // Clear this kind's default-profile system messages first so AddSingle
-        // is genuinely adding into an EMPTY group (matches the empty-section
-        // scenario this method exists for), then add one and compare.
-        MidiInstrumentConfig cleared = instrument;
-        cleared.controllers[0].config.systemMessages.clear();
-        vm.Rebuild(cleared, connection);
+            // Clear this kind's default-profile system messages first so AddSingle
+            // is genuinely adding into an EMPTY group (matches the empty-section
+            // scenario this method exists for), then add one and compare.
+            MidiInstrumentConfig cleared = instrument;
+            cleared.controllers[0].config.systemMessages.clear();
+            vm.Rebuild(cleared, connection);
 
-        MidiInstrumentConfig out;
-        std::string reason;
-        REQUIRE_TRUE(
-            vm.AddSingle(0, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System, out, &reason));
-        vm.Rebuild(out, connection);
-        const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
-        REQUIRE_TRUE(!rows.empty());
-        REQUIRE_TRUE(rows.front().group == MidiMappingRowVM::RowGroup::System);
-        REQUIRE_TRUE(rows.front().editableFields == columnFields);
+            MidiInstrumentConfig out;
+            std::string reason;
+            REQUIRE_TRUE(vm.AddSingle(0, MidiConfigSection::SystemMessages, MidiMappingRowVM::RowGroup::System, out,
+                                     &reason));
+            vm.Rebuild(out, connection);
+            const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+            REQUIRE_TRUE(!rows.empty());
+            REQUIRE_TRUE(rows.front().group == MidiMappingRowVM::RowGroup::System);
+            REQUIRE_TRUE(rows.front().editableFields == columnFields);
+        }
     }
 }
 
@@ -4191,6 +4220,19 @@ MidiAppCatalog MakeFakeAppCatalog() {
     return catalog;
 }
 
+// MakeFakeAppCatalog() plus Shift in libraryKinds, for tests needing the row
+// dropdown to offer it (MessageCatalogOffersShift in MidiConfigViewModel.cpp
+// gates every row's Shift field on this) -- kept separate from
+// MakeFakeAppCatalog() itself since several tests assert its exact
+// four-choice shape, and DeriveShiftCatalog excludes Shift from ShiftCatalog()
+// regardless of where it sits in the raw catalog, so adding it here changes
+// nothing those tests read off of ShiftCatalog().
+MidiAppCatalog MakeFakeAppCatalogWithShift() {
+    MidiAppCatalog catalog = MakeFakeAppCatalog();
+    catalog.libraryKinds.push_back(UISystemMessage::Shift);
+    return catalog;
+}
+
 TEST_CASE(MakeUISystemMessageChoicesOrdersLibraryKindsThenActions) {
     const MidiAppCatalog catalog = MakeFakeAppCatalog();
     const std::vector<synth::UISystemMessageChoice> choices = synth::MakeUISystemMessageChoices(catalog);
@@ -4344,6 +4386,7 @@ TEST_CASE(SystemMessageRowFromAppActionChoiceRoundTripsRowIdentity) {
 
 TEST_CASE(SystemRowsExposeShiftFieldExceptOnShiftAndHoldDrillRows) {
     MidiConfigViewModel vm;
+    vm.SetMessageCatalog(synth::MakeUISystemMessageChoices(MakeFakeAppCatalogWithShift()));
     MidiInstrumentConfig instrument;
     MidiControllerSlot slot = MakeGenericSlot("generic");
     slot.config.systemMessages.clear();
@@ -4393,7 +4436,8 @@ TEST_CASE(SystemRowsExposeShiftFieldExceptOnShiftAndHoldDrillRows) {
 
 TEST_CASE(ShiftFieldEditCommitsShiftedPressAndNoneClearsIt) {
     MidiConfigViewModel vm;
-    const std::vector<synth::UISystemMessageChoice> catalog = synth::MakeUISystemMessageChoices(MakeFakeAppCatalog());
+    const std::vector<synth::UISystemMessageChoice> catalog =
+        synth::MakeUISystemMessageChoices(MakeFakeAppCatalogWithShift());
     vm.SetMessageCatalog(catalog);
 
     MidiInstrumentConfig instrument;
@@ -4445,6 +4489,136 @@ TEST_CASE(ShiftFieldEditCommitsShiftedPressAndNoneClearsIt) {
     REQUIRE_TRUE(none.shiftedAppAction.empty());
     REQUIRE_TRUE(none.shiftedAppActionValue.empty());
     REQUIRE_TRUE(vm.ShiftChoiceIndex(0, MidiConfigSection::SystemMessages, 0) == 0);
+}
+
+TEST_CASE(TurnShiftFieldEditCommitsSceneBlendAndNoneClearsIt) {
+    using Field = MidiMappingRowVM::Field;
+
+    MidiConfigViewModel vm;
+    vm.SetMessageCatalog(synth::MakeUISystemMessageChoices(MakeFakeAppCatalogWithShift()));
+
+    MidiInstrumentConfig instrument;
+    instrument.AddController(MakeGenericSlot("gen"));
+    MidiConnectionState connection = MakeSingleControllerConnection();
+    vm.Rebuild(instrument, connection);
+    vm.ToggleConfig(0);
+    vm.ToggleSection(0, MidiConfigSection::Encoders);
+
+    MidiInstrumentConfig afterAdd;
+    std::string reason;
+    REQUIRE_TRUE(
+        vm.AddSingle(0, MidiConfigSection::Encoders, MidiMappingRowVM::RowGroup::EncoderTurn, afterAdd, &reason));
+    vm.Rebuild(afterAdd, connection);
+
+    const std::vector<MidiMappingRowVM> rows = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(!rows.empty());
+    REQUIRE_TRUE(rows.front().group == MidiMappingRowVM::RowGroup::EncoderTurn);
+    REQUIRE_TRUE(std::find(rows.front().editableFields.begin(), rows.front().editableFields.end(),
+                          Field::ShiftAction) != rows.front().editableFields.end());
+    REQUIRE_TRUE(vm.EncoderTurnShiftedJobIndex(0, MidiConfigSection::Encoders, 0) == 0);
+
+    MidiInstrumentConfig committed;
+    REQUIRE_TRUE(
+        vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, Field::ShiftAction, 1.0, committed, &reason));
+    REQUIRE_TRUE(committed.controllers[0].config.encoderInput->turns[0].shiftedJob ==
+                synth::EncoderShiftedJob::SceneBlend);
+    REQUIRE_TRUE(vm.EncoderTurnShiftedJobIndex(0, MidiConfigSection::Encoders, 0) == 1);
+
+    vm.Rebuild(committed, connection);
+
+    MidiInstrumentConfig cleared;
+    REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, Field::ShiftAction, 0.0, cleared, &reason));
+    REQUIRE_TRUE(cleared.controllers[0].config.encoderInput->turns[0].shiftedJob ==
+                synth::EncoderShiftedJob::None);
+    REQUIRE_TRUE(vm.EncoderTurnShiftedJobIndex(0, MidiConfigSection::Encoders, 0) == 0);
+}
+
+TEST_CASE(TurnRowsExposeShiftFieldOnlyWhenShiftIsOffered) {
+    using Field = MidiMappingRowVM::Field;
+    using RowGroup = MidiMappingRowVM::RowGroup;
+
+    MidiInstrumentConfig instrument;
+    instrument.AddController(MakeGenericSlot("gen"));
+    MidiConnectionState connection = MakeSingleControllerConnection();
+    std::string reason;
+
+    MidiConfigViewModel withoutShift;
+    withoutShift.Rebuild(instrument, connection);
+    MidiInstrumentConfig afterAddWithoutShift;
+    REQUIRE_TRUE(withoutShift.AddSingle(0, MidiConfigSection::Encoders, RowGroup::EncoderTurn,
+                                        afterAddWithoutShift, &reason));
+    withoutShift.Rebuild(afterAddWithoutShift, connection);
+    MidiInstrumentConfig afterPushAddWithoutShift;
+    REQUIRE_TRUE(withoutShift.AddSingle(0, MidiConfigSection::Encoders, RowGroup::EncoderPush,
+                                        afterPushAddWithoutShift, &reason));
+    withoutShift.Rebuild(afterPushAddWithoutShift, connection);
+    const std::vector<MidiMappingRowVM> rowsWithoutShift =
+        withoutShift.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(!rowsWithoutShift.empty());
+    REQUIRE_TRUE(std::find(rowsWithoutShift.front().editableFields.begin(),
+                          rowsWithoutShift.front().editableFields.end(),
+                          Field::ShiftAction) == rowsWithoutShift.front().editableFields.end());
+    const auto pushRowWithoutShift =
+        std::find_if(rowsWithoutShift.begin(), rowsWithoutShift.end(),
+                     [](const MidiMappingRowVM& row) { return row.group == RowGroup::EncoderPush; });
+    REQUIRE_TRUE(pushRowWithoutShift != rowsWithoutShift.end());
+    REQUIRE_TRUE(std::find(pushRowWithoutShift->editableFields.begin(),
+                          pushRowWithoutShift->editableFields.end(),
+                          Field::ShiftAction) == pushRowWithoutShift->editableFields.end());
+
+    MidiConfigViewModel withShift;
+    withShift.SetMessageCatalog(synth::MakeUISystemMessageChoices(MakeFakeAppCatalogWithShift()));
+    withShift.Rebuild(instrument, connection);
+    MidiInstrumentConfig afterAddWithShift;
+    REQUIRE_TRUE(
+        withShift.AddSingle(0, MidiConfigSection::Encoders, RowGroup::EncoderTurn, afterAddWithShift, &reason));
+    withShift.Rebuild(afterAddWithShift, connection);
+    MidiInstrumentConfig afterPushAddWithShift;
+    REQUIRE_TRUE(
+        withShift.AddSingle(0, MidiConfigSection::Encoders, RowGroup::EncoderPush, afterPushAddWithShift, &reason));
+    withShift.Rebuild(afterPushAddWithShift, connection);
+    const std::vector<MidiMappingRowVM> rowsWithShift = withShift.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(!rowsWithShift.empty());
+    REQUIRE_TRUE(rowsWithShift.front().editableFields.back() == Field::ShiftAction);
+    const auto pushRowWithShift =
+        std::find_if(rowsWithShift.begin(), rowsWithShift.end(),
+                     [](const MidiMappingRowVM& row) { return row.group == RowGroup::EncoderPush; });
+    REQUIRE_TRUE(pushRowWithShift != rowsWithShift.end());
+    REQUIRE_TRUE(std::find(pushRowWithShift->editableFields.begin(), pushRowWithShift->editableFields.end(),
+                          Field::ShiftAction) == pushRowWithShift->editableFields.end());
+}
+
+// A no-catalog app (braid-4, the miniapp) offers no way to ever hold Shift,
+// so neither a system row nor an encoder turn row should show a field for a
+// job that could never fire.
+TEST_CASE(NoShiftFieldWhenTheRowDropdownOffersNoShift) {
+    using Field = MidiMappingRowVM::Field;
+    using RowGroup = MidiMappingRowVM::RowGroup;
+
+    MidiConfigViewModel vm;
+    MidiInstrumentConfig instrument;
+    MidiControllerSlot slot = MakeGenericSlot("generic");
+    slot.config.systemMessages.clear();
+    REQUIRE_TRUE(instrument.AddController(slot));
+    MidiConnectionState connection = MakeSingleControllerConnection();
+    vm.Rebuild(instrument, connection);
+
+    std::string reason;
+    MidiInstrumentConfig afterSystemAdd;
+    REQUIRE_TRUE(vm.AddSingle(0, MidiConfigSection::SystemMessages, RowGroup::System, afterSystemAdd, &reason));
+    vm.Rebuild(afterSystemAdd, connection);
+    const std::vector<MidiMappingRowVM> systemRows = vm.SectionRows(0, MidiConfigSection::SystemMessages);
+    REQUIRE_TRUE(!systemRows.empty());
+    REQUIRE_TRUE(std::find(systemRows.front().editableFields.begin(), systemRows.front().editableFields.end(),
+                          Field::ShiftAction) == systemRows.front().editableFields.end());
+
+    MidiInstrumentConfig afterTurnAdd;
+    REQUIRE_TRUE(vm.AddSingle(0, MidiConfigSection::Encoders, RowGroup::EncoderTurn, afterTurnAdd, &reason));
+    vm.Rebuild(afterTurnAdd, connection);
+    const std::vector<MidiMappingRowVM> turnRows = vm.SectionRows(0, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(!turnRows.empty());
+    REQUIRE_TRUE(std::find(turnRows.front().editableFields.begin(), turnRows.front().editableFields.end(),
+                          Field::ShiftAction) == turnRows.front().editableFields.end());
 }
 
 // --- Analog app-action rows (RowGroup::AnalogAppAction) --------------------

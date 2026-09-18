@@ -224,10 +224,18 @@ struct MidiControlAddress {
     bool operator==(const MidiControlAddress& other) const = default;
 };
 
+// A turn's second job while its profile's Shift is held (smi-17). None is a
+// turn's only valid job while unshifted or on a push mapping.
+enum class EncoderShiftedJob {
+    None,
+    SceneBlend,
+};
+
 struct EncoderMidiMapping {
     MidiControlAddress control;
     std::size_t slotIx = 0;
     std::size_t position = 0;
+    EncoderShiftedJob shiftedJob = EncoderShiftedJob::None;
 };
 
 struct EncoderMidiInConfig {
@@ -252,7 +260,8 @@ struct HoldDrillState {
 };
 
 // Per-profile: set by a Shift button's press, cleared by its release, read
-// only by that profile's system-button processor.
+// by that profile's system-button processor (a shifted press in place of the
+// ordinary one) and its encoder processor (a shifted job on a held turn).
 struct ShiftState {
     bool held = false;
 };
@@ -262,7 +271,7 @@ public:
     EncoderMidiInProcessor(EncoderMidiInConfig config, MessageInBus* bus = nullptr,
                            AbsoluteFeedbackCoordinator* absoluteFeedback = nullptr,
                            std::size_t controllerSlot = 0,
-                           HoldDrillState* holdDrill = nullptr);
+                           HoldDrillState* holdDrill = nullptr, ShiftState* shift = nullptr);
 
     void SetConfig(EncoderMidiInConfig config);
     const EncoderMidiInConfig& Config() const { return config_; }
@@ -279,6 +288,7 @@ private:
     std::size_t controllerSlot_ = 0;
     std::vector<AbsoluteFeedbackCoordinator::RouteReservation> absoluteTurnRoutes_;
     HoldDrillState* holdDrill_ = nullptr;
+    ShiftState* shift_ = nullptr;
 };
 
 struct AnalogMidiMapping {

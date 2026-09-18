@@ -199,6 +199,23 @@ MidiControllerProfileConfig MakeShiftProfileConfig() {
     return config;
 }
 
+// A Shift button (cc 30) plus an encoder config: cc 1 (slot 0, position 4)
+// carries shifted job Scene blend, cc 2 (slot 0, position 5) has none.
+MidiControllerProfileConfig MakeShiftedEncoderProfileConfig(synth::EncoderMode mode) {
+    MidiControllerProfileConfig config;
+    config.systemMessages.push_back({
+        .control = MidiControlAddress{.channel = 0, .cc = 30},
+        .press = synth::MessageIn::Shift(0, true),
+        .release = synth::MessageIn::Shift(0, false),
+    });
+    config.encoderInput = synth::EncoderMidiInConfig{};
+    config.encoderInput->mode = mode;
+    config.encoderInput->turns.push_back({.control = {.channel = 0, .cc = 1}, .slotIx = 0, .position = 4,
+                                          .shiftedJob = synth::EncoderShiftedJob::SceneBlend});
+    config.encoderInput->turns.push_back({.control = {.channel = 0, .cc = 2}, .slotIx = 0, .position = 5});
+    return config;
+}
+
 TEST_CASE(KindNameRoundTrip) {
     REQUIRE_TRUE(std::string(synth::MidiProfileKindName(MidiProfileKind::WrldBldr)) == "wrldbldr");
     REQUIRE_TRUE(std::string(synth::MidiProfileKindName(MidiProfileKind::MfTwister)) == "twister");
@@ -657,6 +674,188 @@ TEST_CASE(ShiftAndHoldDrillAreIndependent) {
     REQUIRE_TRUE(bus.Size() == 0);
 }
 
+TEST_CASE(ShiftHeldTurnPushesSceneBlendIncrementAndReleaseRestoresTheParameter) {
+    synth::MessageInBus bus(nullptr, 16);
+    auto config = MakeShiftedEncoderProfileConfig(synth::EncoderMode::Signed7Bit);
+    auto chain = synth::CreateMidiControllerProfile(
+        config, &bus, nullptr, static_cast<synth::ParameterManager::UIState*>(nullptr), [] { return 507; });
+    REQUIRE_TRUE(chain.shift != nullptr);
+
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 30, 127));  // shift on: pushes nothing
+    REQUIRE_TRUE(bus.Size() == 0);
+
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 1, 70));  // shifted turn: scene blend increment
+    REQUIRE_TRUE(bus.Size() == 1);
+    synth::MessageIn increment;
+    REQUIRE_TRUE(bus.Pop(increment, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(increment.type == synth::MessageIn::Type::SceneBlendIncDec);
+    REQUIRE_TRUE(increment.delta == 6.0f / 128.0f);
+    REQUIRE_TRUE(bus.Size() == 0);
+
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 30, 0));  // shift off: pushes nothing
+    REQUIRE_TRUE(bus.Size() == 0);
+
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 1, 70));  // released: ordinary turn again
+    REQUIRE_TRUE(bus.Size() == 1);
+    synth::MessageIn ordinary;
+    REQUIRE_TRUE(bus.Pop(ordinary, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(ordinary.type == synth::MessageIn::Type::ParamIncDec);
+    REQUIRE_TRUE(ordinary.slotIx == 0);
+    REQUIRE_TRUE(ordinary.position == 4);
+    REQUIRE_TRUE(ordinary.delta == 6.0f / 128.0f);
+    REQUIRE_TRUE(bus.Size() == 0);
+}
+
+TEST_CASE(ShiftHeldAbsoluteTurnSetsTheSceneBlend) {
+    synth::MessageInBus bus(nullptr, 16);
+    auto config = MakeShiftedEncoderProfileConfig(synth::EncoderMode::Absolute);
+    auto chain = synth::CreateMidiControllerProfile(
+        config, &bus, nullptr, static_cast<synth::ParameterManager::UIState*>(nullptr), [] { return 508; });
+    REQUIRE_TRUE(chain.shift != nullptr);
+
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 30, 127));  // shift on
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 1, 127));   // shifted absolute turn: max value
+
+    REQUIRE_TRUE(bus.Size() == 1);
+    synth::MessageIn blend;
+    REQUIRE_TRUE(bus.Pop(blend, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(blend.type == synth::MessageIn::Type::SetSceneBlend);
+    REQUIRE_TRUE(blend.value == 1.0f);
+    REQUIRE_TRUE(bus.Size() == 0);
+}
+
+TEST_CASE(HoldDrillDrillsAShiftedTurnWhileBothAreHeld) {
+    synth::MessageInBus bus(nullptr, 16);
+    auto config = MakeShiftedEncoderProfileConfig(synth::EncoderMode::Signed7Bit);
+    config.systemMessages.push_back({
+        .control = MidiControlAddress{.channel = 0, .cc = 20},
+        .press = synth::MessageIn::HoldDrill(0, true),
+        .release = synth::MessageIn::HoldDrill(0, false),
+    });
+    auto chain = synth::CreateMidiControllerProfile(
+        config, &bus, nullptr, static_cast<synth::ParameterManager::UIState*>(nullptr), [] { return 509; });
+    REQUIRE_TRUE(chain.holdDrill != nullptr);
+    REQUIRE_TRUE(chain.shift != nullptr);
+
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 20, 127));  // hold drill on
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 30, 127));  // shift on
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 1, 70));    // drills the shifted knob once
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 1, 70));    // already drilled this hold: nothing
+
+    REQUIRE_TRUE(bus.Size() == 1);
+    synth::MessageIn drilled;
+    REQUIRE_TRUE(bus.Pop(drilled, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(drilled.type == synth::MessageIn::Type::ParamPush);
+    REQUIRE_TRUE(drilled.slotIx == 0);
+    REQUIRE_TRUE(drilled.position == 4);
+    REQUIRE_TRUE(bus.Size() == 0);
+}
+
+// A turn's push is a separate mapping from the turn itself; Shift and the
+// turn's own shifted job never apply to it, even for the turn whose
+// shifted job is Scene blend.
+TEST_CASE(ShiftHeldPushOfAShiftedTurnPushesParamPushNotABlendMessage) {
+    synth::MessageInBus bus(nullptr, 16);
+    auto config = MakeShiftedEncoderProfileConfig(synth::EncoderMode::Signed7Bit);
+    config.encoderInput->pushes.push_back({.control = {.channel = 0, .cc = 3}, .slotIx = 0, .position = 4});
+    auto chain = synth::CreateMidiControllerProfile(
+        config, &bus, nullptr, static_cast<synth::ParameterManager::UIState*>(nullptr), [] { return 510; });
+    REQUIRE_TRUE(chain.shift != nullptr);
+
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 30, 127));  // shift on
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 3, 127));   // press the shifted turn's own push
+
+    REQUIRE_TRUE(bus.Size() == 1);
+    synth::MessageIn pushed;
+    REQUIRE_TRUE(bus.Pop(pushed, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(pushed.type == synth::MessageIn::Type::ParamPush);
+    REQUIRE_TRUE(pushed.slotIx == 0);
+    REQUIRE_TRUE(pushed.position == 4);
+    REQUIRE_TRUE(bus.Size() == 0);
+}
+
+// DecodeDelta's sign carries through the shifted-turn path exactly as it
+// does for an ordinary turn.
+TEST_CASE(ShiftHeldCounterClockwiseTurnPushesANegativeSceneBlendIncrement) {
+    synth::MessageInBus bus(nullptr, 16);
+    auto config = MakeShiftedEncoderProfileConfig(synth::EncoderMode::Signed7Bit);
+    auto chain = synth::CreateMidiControllerProfile(
+        config, &bus, nullptr, static_cast<synth::ParameterManager::UIState*>(nullptr), [] { return 511; });
+    REQUIRE_TRUE(chain.shift != nullptr);
+
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 30, 127));  // shift on
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 1, 60));    // counter-clockwise shifted turn
+
+    REQUIRE_TRUE(bus.Size() == 1);
+    synth::MessageIn decrement;
+    REQUIRE_TRUE(bus.Pop(decrement, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(decrement.type == synth::MessageIn::Type::SceneBlendIncDec);
+    REQUIRE_TRUE(decrement.delta == -4.0f / 128.0f);
+    REQUIRE_TRUE(bus.Size() == 0);
+}
+
+// The production route: a profile built with a real AbsoluteFeedbackCoordinator
+// (as Engine builds an Absolute-mode profile), not the nullptr every other
+// test in this file passes. The Shift + shifted-job branch must still run
+// before the coordinator's own route/alert machinery, exactly as it does
+// with no coordinator at all.
+TEST_CASE(ShiftHeldAbsoluteTurnSetsTheSceneBlendThroughTheAbsoluteFeedbackCoordinator) {
+    synth::MessageInBus bus(nullptr, 16);
+    synth::AbsoluteFeedbackCoordinator coordinator;
+    auto config = MakeShiftedEncoderProfileConfig(synth::EncoderMode::Absolute);
+    auto chain = synth::CreateMidiControllerProfile(
+        config, &bus, nullptr, static_cast<synth::ParameterManager::UIState*>(nullptr), [] { return 512; },
+        /*sinkIx=*/0, &coordinator);
+    REQUIRE_TRUE(chain.shift != nullptr);
+
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 30, 127));  // shift on
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 1, 127));   // shifted absolute turn: max value
+
+    REQUIRE_TRUE(bus.Size() == 1);
+    synth::MessageIn blend;
+    REQUIRE_TRUE(bus.Pop(blend, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(blend.type == synth::MessageIn::Type::SetSceneBlend);
+    REQUIRE_TRUE(blend.value == 1.0f);
+    REQUIRE_TRUE(bus.Size() == 0);
+}
+
+// Hold Drill's win over Shift (smi-16) lasts only while Hold Drill stays
+// held; once it releases, the same mapping's next turn does its shifted
+// job again, with Shift still held (smi-17).
+TEST_CASE(ShiftedTurnDoesItsShiftedJobAfterHoldDrillReleasesWhileShiftStaysHeld) {
+    synth::MessageInBus bus(nullptr, 16);
+    auto config = MakeShiftedEncoderProfileConfig(synth::EncoderMode::Signed7Bit);
+    config.systemMessages.push_back({
+        .control = MidiControlAddress{.channel = 0, .cc = 20},
+        .press = synth::MessageIn::HoldDrill(0, true),
+        .release = synth::MessageIn::HoldDrill(0, false),
+    });
+    auto chain = synth::CreateMidiControllerProfile(
+        config, &bus, nullptr, static_cast<synth::ParameterManager::UIState*>(nullptr), [] { return 513; });
+    REQUIRE_TRUE(chain.holdDrill != nullptr);
+    REQUIRE_TRUE(chain.shift != nullptr);
+
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 20, 127));  // hold drill on
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 30, 127));  // shift on
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 1, 70));    // drills the shifted knob once
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 20, 0));    // hold drill off, shift stays held
+
+    REQUIRE_TRUE(bus.Size() == 1);
+    synth::MessageIn drilled;
+    REQUIRE_TRUE(bus.Pop(drilled, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(drilled.type == synth::MessageIn::Type::ParamPush);
+    REQUIRE_TRUE(bus.Size() == 0);
+
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 1, 70));  // next turn: hold drill released, shift still held.
+
+    REQUIRE_TRUE(bus.Size() == 1);
+    synth::MessageIn increment;
+    REQUIRE_TRUE(bus.Pop(increment, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(increment.type == synth::MessageIn::Type::SceneBlendIncDec);
+    REQUIRE_TRUE(increment.delta == 6.0f / 128.0f);
+    REQUIRE_TRUE(bus.Size() == 0);
+}
+
 TEST_CASE(GridMessageInFactoriesCarryFlatSemanticFields) {
     const synth::MessageIn press = synth::MessageIn::GridPress(11, 1, -1, 7, 100);
     REQUIRE_TRUE(press.timestamp == 11);
@@ -1056,6 +1255,18 @@ TEST_CASE(SlotValidForKindRejectsTwisterWithNoAddress) {
     MidiControllerSlot slot = MakeGenericSlot("twist");
     slot.kind = MidiProfileKind::MfTwister;
     slot.config.systemMessages.push_back(MakeNoAddressAssociation());
+
+    std::string reason;
+    REQUIRE_TRUE(!synth::SlotValidForKind(slot, &reason));
+    REQUIRE_TRUE(!reason.empty());
+}
+
+TEST_CASE(ProfileWithAShiftedEncoderPushIsInvalid) {
+    MidiControllerSlot slot = MakeGenericSlot("shifted push");
+    slot.config.encoderInput = synth::EncoderMidiInConfig{};
+    slot.config.encoderInput->pushes.push_back(
+        {.control = {.channel = 0, .cc = 0}, .slotIx = 0, .position = 0,
+         .shiftedJob = synth::EncoderShiftedJob::SceneBlend});
 
     std::string reason;
     REQUIRE_TRUE(!synth::SlotValidForKind(slot, &reason));
@@ -1757,6 +1968,40 @@ TEST_CASE(AssociationJsonRoundTripsShiftedPressAndTreatsAbsentAsNone) {
     REQUIRE_TRUE(JsonObjectHasKey(nonAppJson, "shiftedPress"));
     REQUIRE_TRUE(!JsonObjectHasKey(nonAppJson, "shiftedAppAction"));
     REQUIRE_TRUE(!JsonObjectHasKey(nonAppJson, "shiftedAppActionValue"));
+}
+
+TEST_CASE(EncoderTurnJsonRoundTripsShiftedJobAndRejectsAnUnknownOne) {
+    synth::EncoderMidiInConfig config;
+    config.turns.push_back({.control = {.channel = 0, .cc = 0}, .slotIx = 0, .position = 0,
+                            .shiftedJob = synth::EncoderShiftedJob::SceneBlend});
+    config.turns.push_back({.control = {.channel = 0, .cc = 1}, .slotIx = 0, .position = 1});
+
+    synth::JsonArena arena(1024 * 1024);
+    const synth::JSON json = synth::ToJSON(arena, config);
+    const synth::JSON turns = json.Get("turns");
+    REQUIRE_TRUE(turns.Size() == 2);
+    REQUIRE_TRUE(JsonObjectHasKey(turns.GetAt(0), "shiftedJob"));
+    REQUIRE_TRUE(!JsonObjectHasKey(turns.GetAt(1), "shiftedJob"));
+
+    synth::EncoderMidiInConfig loaded;
+    REQUIRE_TRUE(synth::FromJSON(json, loaded));
+    REQUIRE_TRUE(loaded.turns.size() == 2);
+    REQUIRE_TRUE(loaded.turns[0].shiftedJob == synth::EncoderShiftedJob::SceneBlend);
+    REQUIRE_TRUE(loaded.turns[1].shiftedJob == synth::EncoderShiftedJob::None);
+
+    // A document naming a shifted job the library does not know fails to
+    // load, and the target configuration is left exactly as it was.
+    synth::JsonArena badArena(1024 * 1024);
+    synth::JSON badTurn = badArena.Object();
+    badTurn.SetNew("control", synth::ToJSON(badArena, synth::MidiControlAddress{.channel = 0, .cc = 0}));
+    badTurn.SetNew("slotIx", badArena.Integer(0));
+    badTurn.SetNew("position", badArena.Integer(0));
+    badTurn.SetNew("shiftedJob", badArena.String("tempo"));
+
+    synth::EncoderMidiMapping target;
+    target.position = 42;
+    REQUIRE_TRUE(!synth::FromJSON(badTurn, target));
+    REQUIRE_TRUE(target.position == 42);
 }
 
 TEST_CASE(AnalogMidiInConfigJsonRoundTripsAppActions) {

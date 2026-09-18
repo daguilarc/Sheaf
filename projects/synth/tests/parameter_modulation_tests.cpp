@@ -1336,6 +1336,35 @@ TEST_CASE(validated_scene_endpoint_setter_preserves_state_on_reject) {
     REQUIRE_NEAR(manager.Scene().blend, 0.25f, 0.0001f);
 }
 
+TEST_CASE(SceneBlendIncrementAddsToTheBlendAndClamps) {
+    synth::ParameterManager manager;
+    manager.SetSceneBlend(0.95f);
+
+    manager.IncDecSceneBlend(0.1f);
+    REQUIRE_NEAR(manager.Scene().blend, 1.0f, 0.0001f);
+
+    manager.IncDecSceneBlend(-2.0f);
+    REQUIRE_NEAR(manager.Scene().blend, 0.0f, 0.0001f);
+}
+
+// The above drives ParameterManager::IncDecSceneBlend directly; this drives
+// the same increment through MessageInBus::Apply's own SceneBlendIncDec
+// case, with a real ParameterManager attached, so that switch case is
+// checked and not only the method it calls.
+TEST_CASE(SceneBlendIncrementReachesTheParameterManagerThroughTheMessageBus) {
+    synth::ParameterManager manager;
+    manager.SetSceneBlend(0.5f);
+    synth::MessageInBus bus(&manager);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SceneBlendIncDec(0, 0.2f)));
+    bus.Process(0);
+    REQUIRE_NEAR(manager.Scene().blend, 0.7f, 0.0001f);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::SceneBlendIncDec(1, 10.0f)));
+    bus.Process(1);
+    REQUIRE_NEAR(manager.Scene().blend, 1.0f, 0.0001f);
+}
+
 TEST_CASE(parameter_appearance_resolves_empty_single_and_exact_indicator_palettes) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({

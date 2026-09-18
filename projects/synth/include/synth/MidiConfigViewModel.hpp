@@ -166,8 +166,11 @@ struct MidiMappingRowVM {
         GridXMax,
         GridYMin,
         GridYMax,
-        // System row only: the row's shifted job, an index into
-        // ShiftCatalog() (0 = none).
+        // A system row's shifted job, an index into ShiftCatalog() (0 =
+        // none); or an encoder turn row's shifted job, an index into that
+        // row's own fixed two-entry catalog (0 = none, 1 = Scene Blend --
+        // see EncoderShiftedJob). Shown only when the row dropdown offers
+        // Shift.
         ShiftAction,
     };
 
@@ -297,6 +300,13 @@ std::vector<UISystemMessageChoice> MakeAnalogAppActionChoices(const MidiAppCatal
 // offers.
 std::vector<UISystemMessageChoice> DeriveShiftCatalog(const std::vector<UISystemMessageChoice>& messageCatalog);
 
+// Whether `messageCatalog` offers Shift as a selectable system-message kind.
+// An app that never lists it (UISystemMessageCatalog(), the default for an
+// app with no MidiCatalog(), such as braid-4 or the miniapp) can never hold
+// a Shift row, so no row's Shift field could ever do anything; gates
+// EncoderTurnEditableFields and SystemRowEditableFields.
+bool MessageCatalogOffersShift(const std::vector<UISystemMessageChoice>& messageCatalog);
+
 // True for every field the renderer formats as a plain integer (no decimal
 // places -- Channel, Cc, SlotIx, Position, GestureIx, LaunchpadX/Y,
 // WrldBldrX/Y). False for TurnStep (a decimal float) and for the
@@ -308,6 +318,15 @@ bool FieldIsInteger(MidiMappingRowVM::Field field);
 // Signed7Bit, index 1 == DirectionOnly, index 2 == Absolute).
 // ApplyMappingEdit and RowFieldValue use these catalog indices.
 const std::vector<std::string>& EncoderModeCatalog();
+
+// Display names for every EncoderShiftedJob, in declaration order
+// (MidiController.hpp: index 0 == None, index 1 == SceneBlend). The single
+// definition of a turn's shifted-job choice list: the Controllers page's
+// ShiftAction combo (ControllersPageUI.hpp) reads its names, and
+// ApplyMappingEdit's ShiftAction case bounds an edit by its size. Both that
+// case and EncoderTurnShiftedJobIndex map a choice index to an
+// EncoderShiftedJob by declaration order, so the list stays in that order.
+const std::vector<std::string>& EncoderShiftedJobCatalog();
 
 // Display names for MidiControlType in declaration order (0 = Cc,
 // 1 = Note). RowFieldValue()/ApplyMappingEdit use these catalog indices for
@@ -525,6 +544,16 @@ public:
     // (controllerIx, rowIx), or a row that is not a system Individual row.
     int ShiftChoiceIndex(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx) const;
 
+    // The Field::ShiftAction counterpart to ShiftChoiceIndex() above, for an
+    // encoder TURN row instead of a system row: looks up the row's current
+    // shifted job as an index into that field's own fixed two-entry catalog
+    // (0 = none, 1 = Scene Blend -- see EncoderShiftedJob), so a JUCE combo
+    // box can preselect it without going through ShiftCatalog(), which
+    // answers only for system rows. Returns -1 for a non-Encoders section,
+    // an out-of-range (controllerIx, rowIx), or a row that is not an
+    // encoder turn Individual row (a push, a block, or a config-level row).
+    int EncoderTurnShiftedJobIndex(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx) const;
+
     // Looks up a system Block row's current message type as an index into
     // BlockableMessageCatalog(), so a JUCE combo box can preselect the row's
     // current state -- the Field::BlockMessageType counterpart to
@@ -732,12 +761,18 @@ public:
     // i.e. exactly what SectionRows() would show for a first added row in
     // that (section, group), so an empty-group's header-only affordance
     // (AddableGroups above) renders the right columns even though no row
-    // exists yet to read them off of. Single source of truth shared with
-    // BuildSectionRows()'s own per-group field tables (encoders: Channel,
-    // Cc, SlotIx, Position; analog gesture: Channel, Cc, GestureIx; analog
-    // app action: Channel, Cc, AppAction; system: SystemRowEditableFields(kind),
-    // i.e. SystemAddressSchema(kind)'s fields plus MessageKind/MessageArg) so
-    // the two can never drift apart.
+    // exists yet to read them off of. Encoder turn rows and system rows each
+    // share one field-table function with BuildSectionRows()'s own per-group
+    // branches (EncoderTurnEditableFields(shiftOffered); SystemRowEditableFields(
+    // kind, association, shiftOffered), i.e. SystemAddressSchema(kind)'s fields
+    // plus MessageKind/MessageArg/ShiftAction), so those two can never drift
+    // apart. Encoder push, analog gesture and analog app action each list
+    // their own fields (Channel, Cc, SlotIx, Position with AddressType
+    // first; Channel, Cc, GestureIx; Channel, Cc, AppAction) as a separate
+    // literal table in each method, not a shared function.
+    // `GroupColumnFieldsMatchesWhatARealAddedAnalogGestureRowGets` checks
+    // analog gesture's two copies against each other; nothing checks the
+    // encoder-push or analog-app-action copies for drift.
     // `group` need not be addable (AddableGroups/GroupSupportsAdd) -- this
     // answers "what would this group's columns be," independent of whether
     // adding into it is currently legal; callers needing the addable subset
@@ -757,6 +792,17 @@ public:
     // discarded by Rebuild()'s own orphan sweeps. Calling this before the
     // next Rebuild() keeps that state attached to the renamed row instead.
     void NoteControllerRenamed(const std::string& from, const std::string& to);
+
+    // Drops every cached section presentation for `name`, so the next
+    // SectionRows() call rebuilds fresh rows from the controller's current
+    // config instead of replaying an open section's pre-replacement rows.
+    // Rebuild() alone keeps an existing presentation entry verbatim while
+    // its controller still exists, which is right for an ordinary edit but
+    // wrong after a host replaces a controller's whole config out from under
+    // it (Restore is the first caller): without this call, an open section
+    // would keep showing the superseded rows and the next edit on it would
+    // flush them back over the replacement config.
+    void NoteControllerConfigReplaced(const std::string& name);
 
 private:
     struct ExpandState {
@@ -783,6 +829,11 @@ private:
     // re-derives this whenever messageCatalog_ changes, so the two can never
     // drift apart (DeriveShiftCatalog's own doc comment has the rule).
     std::vector<UISystemMessageChoice> shiftCatalog_ = DeriveShiftCatalog(UISystemMessageCatalog());
+    // Derived from messageCatalog_ by MessageCatalogOffersShift(); SetMessageCatalog()
+    // re-derives this whenever messageCatalog_ changes, so the two can never
+    // drift apart, and every reader of "does this app offer Shift" reads
+    // this one field instead of rescanning messageCatalog_.
+    bool messageCatalogOffersShift_ = MessageCatalogOffersShift(UISystemMessageCatalog());
     std::vector<UISystemMessageChoice> analogActionCatalog_;
     std::optional<std::size_t> gestureCount_;
     // Empty means "use the default registry"; Layouts() resolves that

@@ -2921,6 +2921,13 @@ static void TestControllersRowFitsWithinFroggersNarrowestHost()
     twister.output = {"twister-out", "Midi Fighter Twister"};
     twister.config =
         synth::MfTwisterDefaultProfileConfig(synth::MfTwisterDefaultProfileOptions{.slotIx = 0});
+    // A shifted turn keeps ReconstructEncoderBlocks from folding it into the
+    // 16-turn block, so the Twister's Encoders section renders one Individual
+    // row (with the Shift field this change adds) alongside the remaining
+    // 15-turn block -- the widest Encoders layout this page produces.
+    Require(twister.config.encoderInput.has_value() && !twister.config.encoderInput->turns.empty(),
+            "fixture Twister profile has at least one turn to shift");
+    twister.config.encoderInput->turns.front().shiftedJob = synth::EncoderShiftedJob::SceneBlend;
     Require(instrument.AddController(std::move(twister)), "fixture adds the Twister row");
     connection.controllers.push_back(
         {.input = {.status = synth::MidiEndpointStatus::Offline},

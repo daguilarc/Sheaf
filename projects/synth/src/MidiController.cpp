@@ -235,6 +235,8 @@ const char* MessageTypeName(MessageIn::Type type) {
         return "holdDrill";
     case MessageIn::Type::Shift:
         return "shift";
+    case MessageIn::Type::SceneBlendIncDec:
+        return "sceneBlendIncDec";
     }
     return "clock";
 }
@@ -292,6 +294,8 @@ bool ParseMessageType(std::string_view value, MessageIn::Type& type) {
         type = MessageIn::Type::HoldDrill;
     } else if (value == "shift") {
         type = MessageIn::Type::Shift;
+    } else if (value == "sceneBlendIncDec") {
+        type = MessageIn::Type::SceneBlendIncDec;
     } else {
         return false;
     }
@@ -678,12 +682,13 @@ AbsoluteFeedbackCoordinator::Snapshot(RouteReservation route) {
 EncoderMidiInProcessor::EncoderMidiInProcessor(EncoderMidiInConfig config, MessageInBus* bus,
                                                AbsoluteFeedbackCoordinator* absoluteFeedback,
                                                std::size_t controllerSlot,
-                                               HoldDrillState* holdDrill)
+                                               HoldDrillState* holdDrill, ShiftState* shift)
     : MidiInProcessor(bus),
       config_(std::move(config)),
       absoluteFeedback_(absoluteFeedback),
       controllerSlot_(controllerSlot),
-      holdDrill_(holdDrill) {
+      holdDrill_(holdDrill),
+      shift_(shift) {
     ReserveAbsoluteRoutes();
 }
 
@@ -718,6 +723,15 @@ void EncoderMidiInProcessor::Process(const BasicMidi& midi) {
                 if (!holdDrill_->drilled[mappingIx]) {
                     holdDrill_->drilled[mappingIx] = true;
                     Push(MessageIn::ParamPush(NextTimestamp(), mapping->slotIx, mapping->position));
+                }
+                return;
+            }
+            if (shift_ != nullptr && shift_->held && mapping->shiftedJob == EncoderShiftedJob::SceneBlend) {
+                if (config_.mode == EncoderMode::Absolute) {
+                    Push(MessageIn::SetSceneBlend(NextTimestamp(),
+                                                  AbsoluteEncoderByteToNormalized(midi.GetValue())));
+                } else if (const std::optional<float> delta = DecodeDelta(midi.GetValue())) {
+                    Push(MessageIn::SceneBlendIncDec(NextTimestamp(), *delta));
                 }
                 return;
             }
@@ -1872,6 +1886,7 @@ SystemMessageOutputState SystemMessageOutputInfo::Evaluate(const MessageIn& mess
     case MessageIn::Type::AppAction:
     case MessageIn::Type::HoldDrill:
     case MessageIn::Type::Shift:
+    case MessageIn::Type::SceneBlendIncDec:
         return {};
     case MessageIn::Type::GridPress:
     case MessageIn::Type::GridRelease:
@@ -2213,6 +2228,9 @@ JSON ToJSON(JsonArena& arena, const EncoderMidiMapping& value) {
     json.SetNew("control", ToJSON(arena, value.control));
     json.SetNew("slotIx", arena.Integer(static_cast<int64_t>(value.slotIx)));
     json.SetNew("position", arena.Integer(static_cast<int64_t>(value.position)));
+    if (value.shiftedJob == EncoderShiftedJob::SceneBlend) {
+        json.SetNew("shiftedJob", arena.String("sceneBlend"));
+    }
     return json;
 }
 
@@ -2224,6 +2242,13 @@ bool FromJSON(JSON json, EncoderMidiMapping& value) {
     if (!FromJSON(json.Get("control"), parsed.control) || !ReadSize(json.Get("slotIx"), parsed.slotIx) ||
         !ReadSize(json.Get("position"), parsed.position)) {
         return false;
+    }
+    if (ObjectHasKey(json, "shiftedJob")) {
+        const JSON shiftedJob = json.Get("shiftedJob");
+        if (!IsString(shiftedJob) || std::string_view(shiftedJob.StringValue()) != "sceneBlend") {
+            return false;
+        }
+        parsed.shiftedJob = EncoderShiftedJob::SceneBlend;
     }
     value = parsed;
     return true;
@@ -2428,6 +2453,7 @@ JSON ToJSON(JsonArena& arena, const MessageIn& value) {
     case MessageIn::Type::SetSceneBlend:
     case MessageIn::Type::HoldDrill:
     case MessageIn::Type::Shift:
+    case MessageIn::Type::SceneBlendIncDec:
         break;
     }
     json.SetNew("slotIx", arena.Integer(static_cast<int64_t>(value.slotIx)));
@@ -2501,6 +2527,7 @@ bool FromJSON(JSON json, MessageIn& value) {
     case MessageIn::Type::SetSceneBlend:
     case MessageIn::Type::HoldDrill:
     case MessageIn::Type::Shift:
+    case MessageIn::Type::SceneBlendIncDec:
         break;
     }
     if (!ReadSize(json.Get("slotIx"), parsed.slotIx) || !ReadSize(json.Get("position"), parsed.position) ||
@@ -3048,7 +3075,7 @@ MidiControllerProfileResult CreateMidiControllerProfileImpl(
 
     if (config.encoderInput.has_value()) {
         appendInput(std::make_unique<EncoderMidiInProcessor>(
-            *config.encoderInput, bus, activeAbsoluteFeedback, controllerSlot, holdDrill));
+            *config.encoderInput, bus, activeAbsoluteFeedback, controllerSlot, holdDrill, shift));
     }
     if (config.analogInput.has_value()) {
         appendInput(std::make_unique<AnalogMidiInProcessor>(*config.analogInput, bus));
@@ -3611,6 +3638,11 @@ bool ProfileConfigValidForKind(MidiProfileKind kind, const MidiControllerProfile
         for (const EncoderMidiMapping& mapping : config.encoderInput->turns) {
             if (mapping.control.type != MidiControlType::Cc) {
                 return Fail(reason, "encoder turns must use CC control addresses");
+            }
+        }
+        for (const EncoderMidiMapping& mapping : config.encoderInput->pushes) {
+            if (mapping.shiftedJob != EncoderShiftedJob::None) {
+                return Fail(reason, "encoder pushes must not carry a shifted job");
             }
         }
     }
