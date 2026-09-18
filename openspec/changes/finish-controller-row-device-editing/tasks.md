@@ -46,7 +46,7 @@
       Check: the file defines no function and contains no call whose name
       refers to a pressure mapping, and the rest of its tests build and pass
       with those ten removed.
-- [ ] 1.3 Confirm on the harness: a WRLD.Bldr row's expanded editor shows no
+- [x] 1.3 Confirm on the harness: a WRLD.Bldr row's expanded editor shows no
       "Pressure mappings" heading, with a working grid mapping row present in
       the same image.
       Check: delivery gate state 6's image shows the absence only — a grid
@@ -158,7 +158,7 @@
 
 ## 4. Delivery
 
-- [ ] 4.1 Capture the six Controllers-page states named in the proposal's
+- [x] 4.1 Capture the six Controllers-page states named in the proposal's
       Delivery Gate and share them for the operator's review before this
       merges to main.
 - [x] 4.2 Remove the uncommitted scratch measurement function from
