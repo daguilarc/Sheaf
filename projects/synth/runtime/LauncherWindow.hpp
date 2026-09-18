@@ -3,7 +3,7 @@
 // synth_runtime::MainWindow / LaunchRegisteredApp<App> -- the reusable
 // top-level launch window and registered-app launch plumbing shared by any
 // host process that offers one or more synth::SynthApplication types
-// (Task 6, sprs-14/15). Hoisted out of apps/sheaf-patch/Main.cpp, where
+// Hoisted out of apps/sheaf-patch/Main.cpp, where
 // MainWindow and LaunchRegisteredApp<App> were a private nested class and a
 // private member function of SheafPatchApplication, so an out-of-tree
 // `main` can launch its registered app on the same window-and-launch code

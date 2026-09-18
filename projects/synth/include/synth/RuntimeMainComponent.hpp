@@ -24,7 +24,7 @@ enum class RuntimeMainPage
     Controllers,
     Sync,
     File,
-    // sprs-17: the app-registered page. Only ever reached through
+    // the app-registered page. Only ever reached through
     // HandleSidebarAction's registration-gated branch below, so it exists
     // as a routable page regardless of whether any app actually registers
     // one -- the same way the enum itself is unconditional while the
@@ -74,8 +74,8 @@ public:
         fileSurface_.SetContentBounds(contentBounds);
         controllersSurface_.SetContentBounds(contentBounds);
         // Defaults to the compiled-in size, matching what an extent-aware
-        // app would resolve to if it were never offered anything else (task
-        // 8.1/8.2, sprs-13): identical to the legacy, hook-free value.
+        // app would resolve to if it were never offered anything else:
+        // identical to the legacy, hook-free value.
         liveContentExtent_ = contentBounds;
         syncSurface_.SetContentBounds(contentBounds);
         // An application whose own vocabulary already uses "Audio" renames the
@@ -83,14 +83,15 @@ public:
         // every application that does not, which leaves the sidebar unchanged.
         sidebarSurface_.SetAudioPageTitle(config.audioPageTitle);
 
-        // sprs-17: an app opts in by defining App::RegisteredPage() (see
+        // an app opts in by defining App::RegisteredPage() (see
         // HasRegisteredPage, AppConcepts.hpp); App is a concrete, non-erased
         // template parameter here, so presence/absence of the method is a
         // compile-time branch, mirroring HasPrepareToPlay/HasProcessFrame's
         // if-constexpr idiom in Engine.hpp. Everything below is skipped for
         // an app that never defines the method: hasRegisteredPage_ stays
         // false, the sidebar snapshot's title stays unset, and the sidebar
-        // and routing are exactly what they were before this task.
+        // and routing are exactly what they were before app registration
+        // existed.
         if constexpr (HasRegisteredPage<App>)
         {
             RegisteredPage page = app_.RegisteredPage();
@@ -146,7 +147,7 @@ public:
 
     ui::NodeTree BuildTree() override
     {
-        // Task 8.1 (sprs-13): offer the app surface the live content extent
+        // Offer the app surface the live content extent
         // immediately before BuildTree(), generalizing the SetContentBounds
         // convention. app_.PortableSurface() is constrained by
         // SynthApplication to return exactly `ui::Surface&`
@@ -171,7 +172,7 @@ public:
 
         ui::NodeTree appTree = appSurface.BuildTree();
         const std::size_t appRootIndex = ValidateApplicationTree(appTree, expectedAppBounds);
-        // Task 8.2: the sidebar is placed at the resolved app tree's root
+        // The sidebar is placed at the resolved app tree's root
         // width rather than a compiled-in one (this used to read
         // `static_cast<float>(App::Config().uiWidth)` unconditionally). For
         // a legacy app the hook is never accepted, so expectedAppBounds --
@@ -205,7 +206,7 @@ public:
         // width and height plus the sidebar, rather than
         // IntrinsicBounds()'s compiled-in size, so a resolved app root
         // larger than config still fits the composition-holds check below
-        // (task 8.2, sprs-13, finding 2: height previously stayed pinned to
+        // (height previously stayed pinned to
         // `config.uiHeight` even on the extent-aware branch, so a live
         // vertical resize would validate against liveContentExtent_.height
         // but then throw here). IntrinsicBounds() itself is unchanged (it
@@ -296,11 +297,11 @@ public:
         currentPage_ = page;
     }
 
-    // Task 8.1 (sprs-13): the live content extent the shell will offer the
+    // The live content extent the shell will offer the
     // app surface immediately before its next BuildTree(), generalizing the
-    // SetContentBounds convention (RuntimePages.hpp:1581/:1702/:1749/:1814,
-    // ControllersPageUI.hpp:1074) from individual runtime pages to the whole
-    // app-surface seam. Callers (the JUCE renderer via its live bounds, the
+    // SetContentBounds convention already used by individual runtime pages
+    // (RuntimePages.hpp, ControllersPageUI.hpp) to the whole app-surface
+    // seam. Callers (the JUCE renderer via its live bounds, the
     // browser host, or a test) call this whenever the live extent changes;
     // BuildTree() always offers whatever is currently stored here. A surface
     // that doesn't implement ui::ExtentAwareSurface never sees this value.
@@ -324,10 +325,10 @@ public:
     }
 
 private:
-    // The composition contract (task 7.1). The shell PLACES two already-resolved
-    // subtree roots rather than resolving them, which is legitimate under
-    // design.md D6 -- but it also means sru-54's overflow gate never sees this
-    // composition, because the resolver is never invoked on it. The residual
+    // The composition contract. The shell PLACES two already-resolved
+    // subtree roots rather than resolving them itself -- but that also means
+    // the page-level overflow gate never sees this composition, because the
+    // resolver is never invoked on it. The residual
     // that leaves is concrete: the composite root's height follows the app's
     // declared `uiHeight` while the sidebar is a fixed five-row 200px column, so
     // an app declaring `uiHeight < 200` overruns the window with nothing to
@@ -408,12 +409,12 @@ private:
                action.starts_with("runtime.controllers.controller.");
     }
 
-    // sprs-17: the app-registered page's own reserved action. Actions the
+    // the app-registered page's own reserved action. Actions the
     // app's own registered-page content emits are not runtime-namespaced
     // (ValidateApplicationTree's rule applies to the app's whole tree, not
     // just its main surface) and fall through DispatchAction's final
     // `!starts_with("runtime.")` branch to app_.PortableSurface() exactly
-    // like an app-supplied audio section's actions already do (sprs-16) --
+    // like an app-supplied audio section's actions already do --
     // this predicate exists only for the one action Sheaf itself owns here.
     static bool IsAppPageAction(std::string_view action)
     {
@@ -440,7 +441,7 @@ private:
         return reordered;
     }
 
-    // Task 8.2 (sprs-13): `expectedBounds` is the extent the surface actually
+    // `expectedBounds` is the extent the surface actually
     // resolved against -- the offered live extent when the extent-aware hook
     // was accepted, `config.uiWidth/uiHeight` otherwise (BuildTree() decides
     // which). The positive-config guard below stays config-based regardless:
@@ -600,7 +601,7 @@ private:
         {
             ShowPage(RuntimeMainPage::File);
         }
-        // sprs-17: gated on hasRegisteredPage_ even though the button (and
+        // gated on hasRegisteredPage_ even though the button (and
         // therefore this action) only ever exists in the UI when a page is
         // registered -- "optional means optional, assert don't assume"
         // (design constraint) applies to a directly dispatched action too,
@@ -629,7 +630,7 @@ private:
     FilePageSurface fileSurface_;
     ControllersPageSurface controllersSurface_;
     SyncPageSurface syncSurface_;
-    // sprs-17: always present so BuildRuntimePageTree()'s switch and
+    // always present so BuildRuntimePageTree()'s switch and
     // DispatchAction()'s IsAppPageAction branch compile and behave the same
     // regardless of App -- only the constructor's if-constexpr block (and
     // hasRegisteredPage_ below) differ between a registering and a

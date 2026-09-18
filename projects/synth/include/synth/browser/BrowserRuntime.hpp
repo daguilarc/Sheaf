@@ -371,7 +371,7 @@ public:
     {
         engine_.Clock().SetOutputSchedulingHorizonMicros(
             BrowserMidiBridge<synth::Engine<App>>::kSchedulingLeadMicros);
-        // sar-33: wires the external-input-routed signal's storage into the
+        // Wires the external-input-routed signal's storage into the
         // AppContext apps see, before engine_.Initialize() can ever run
         // App::Init(). inputRoutingSignal_ is a member of this Runtime
         // (constructed above, in the member-init list, before this
@@ -611,7 +611,7 @@ public:
         return state;
     }
 
-    // sar-33: one derived flag over the existing capture-grant/-revoke
+    // One derived flag over the existing capture-grant/-revoke
     // lifecycle above. Called from SetAudioInputSource (the grant point:
     // BrowserRuntimeAbi.cpp's synth_browser_set_audio_input_source calls
     // through to this method) and ClearAudioInputSource (the revoke point:
@@ -634,8 +634,8 @@ public:
     }
 
     // The only sources of a pending request are the user pressing `Retry
-    // Input` and selecting an input or output device on the Audio page
-    // (sbw-4): capture loss alone never arms one, so a lost stream cannot
+    // Input` and selecting an input or output device on the Audio page:
+    // capture loss alone never arms one, so a lost stream cannot
     // re-prompt off the back of an unrelated UI action. See
     // BrowserAudioDevices.hpp for the sentinel values this returns; outControl
     // reports which control (input or output) the returned index applies to.
@@ -1062,7 +1062,7 @@ private:
     std::atomic<std::uint32_t> audioWorkletBlockCount_{0};
     std::atomic<std::uint32_t> audioWorkletPeakMicrounits_{0};
     BrowserAudioInputPublication audioInput_;
-    // sar-33: this Runtime's storage for AppContext::inputRoutingSignal
+    // This Runtime's storage for AppContext::inputRoutingSignal
     // (wired in the constructor, above). See RefreshInputRoutedState for the
     // browser derivation and its two call sites.
     synth::InputRoutingSignal inputRoutingSignal_;

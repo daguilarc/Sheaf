@@ -145,7 +145,7 @@ function rollbackHtml(catalog, app) {
 `;
 }
 
-// tasks.md 7.5a. A whole-catalog publication ships apps the shipped runtime has
+// A whole-catalog publication ships apps the shipped runtime has
 // to be able to decode, and the only thing that decides that is the version
 // compiled into each module -- not the catalog metadata, which is written from
 // the manifest and would happily describe a stale build as current. Version 2

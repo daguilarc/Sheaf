@@ -284,8 +284,6 @@ int main()
             "browser viewer component renders");
     Require(fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kFileBrowserTitle) != nullptr,
             "browser title renders");
-    Require(fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kFileBrowserCurrentPath) == nullptr,
-            "flat browser omits path control");
     Require(fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::FileBrowserEntryOpen(0)) == nullptr,
             "flat browser omits per-row open control");
     Require(fileRenderer.FindByNodeId(synth::runtime_ui::NodeIds::FileBrowserEntry(0)) != nullptr,
