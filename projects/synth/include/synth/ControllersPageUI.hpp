@@ -441,7 +441,17 @@ inline int FieldEditorWidth(MidiMappingRowVM::Field field)
         case Field::GridXMax:
         case Field::GridYMin:
         case Field::GridYMax:
+        case Field::BlockStartNote:
+        case Field::BlockEndNote:
             return 66;
+        // "Start Gesture" (13 characters) is measured, at Froggers' narrowest
+        // host and this page's default text size, wider than the other
+        // block-field columns' shared 66px: real glyph measurement
+        // (juce::GlyphArrangement against pagestyle::kDefaultTextStyle, the
+        // same font a Label node renders at) gives 69.705px, so 70 is the
+        // smallest whole-pixel width the header shows in full at.
+        case Field::BlockStartGesture:
+            return 70;
         case Field::GestureIx:
             return 72;
         case Field::SceneBlend:
@@ -642,12 +652,80 @@ inline std::string JoinRemainingTokens(const std::vector<std::string>& parts, st
     return rawValue;
 }
 
+inline bool IsAsciiSpace(char c)
+{
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
+}
+
 // A field-commit's raw text must be wholly a finite number -- not a prefix
 // of one (std::stod would otherwise accept "3abc" as 3) and not NaN/infinity.
-// Returns nullopt for anything else, which the mapping-row field commit
-// refuses on.
-inline std::optional<double> ParseFiniteNumericToken(const std::string& rawValue)
+// An integer field's raw text must be wholly an integer literal (an optional
+// '-' then decimal digits, nothing else) once any leading or trailing
+// whitespace is trimmed: parsing it as a double first would let its rounding
+// turn a fractional value like "15.9999999999999999" into a whole number the
+// player never typed, and trimming only the leading side refused a value
+// typed with trailing whitespace while accepting the same value with leading
+// whitespace. Returns nullopt for anything else, which the mapping-row field
+// commit refuses on. For an integer field, `outOfRange` (when given) is set
+// when the text is a well-formed integer literal that is refused only for
+// its magnitude -- too large for `long long` to hold, or larger in
+// magnitude than 2^53, past which not every integer is exactly
+// representable in a `double` -- so the caller can tell that case apart from
+// text that is not an integer at all.
+inline std::optional<double> ParseFiniteNumericToken(const std::string& rawValue, bool requireInteger,
+                                                     bool* outOfRange = nullptr)
 {
+    if (outOfRange != nullptr)
+    {
+        *outOfRange = false;
+    }
+    if (requireInteger)
+    {
+        std::size_t begin = 0;
+        std::size_t end = rawValue.size();
+        while (begin < end && IsAsciiSpace(rawValue[begin]))
+        {
+            ++begin;
+        }
+        while (end > begin && IsAsciiSpace(rawValue[end - 1]))
+        {
+            --end;
+        }
+        if (begin == end)
+        {
+            return std::nullopt;
+        }
+        long long integerValue = 0;
+        const char* first = rawValue.data() + begin;
+        const char* last = rawValue.data() + end;
+        const std::from_chars_result result = std::from_chars(first, last, integerValue);
+        if (result.ptr != last)
+        {
+            return std::nullopt;
+        }
+        if (result.ec == std::errc::result_out_of_range)
+        {
+            if (outOfRange != nullptr)
+            {
+                *outOfRange = true;
+            }
+            return std::nullopt;
+        }
+        if (result.ec != std::errc())
+        {
+            return std::nullopt;
+        }
+        constexpr long long kMaxExactIntegerInDouble = 9007199254740992LL;  // 2^53
+        if (integerValue > kMaxExactIntegerInDouble || integerValue < -kMaxExactIntegerInDouble)
+        {
+            if (outOfRange != nullptr)
+            {
+                *outOfRange = true;
+            }
+            return std::nullopt;
+        }
+        return static_cast<double>(integerValue);
+    }
     try
     {
         std::size_t consumed = 0;
@@ -1689,10 +1767,20 @@ private:
         }
 
         const std::string rawValue = ControllersLayout::JoinRemainingTokens(parts, 4);
-        const std::optional<double> parsedValue = ControllersLayout::ParseFiniteNumericToken(rawValue);
+        const bool fieldIsInteger = FieldIsInteger(*field);
+        bool valueOutOfRange = false;
+        const std::optional<double> parsedValue =
+            ControllersLayout::ParseFiniteNumericToken(rawValue, fieldIsInteger, &valueOutOfRange);
         if (!parsedValue.has_value())
         {
-            SetStatus("Refused: value must be a finite number");
+            if (fieldIsInteger && valueOutOfRange)
+            {
+                SetStatus("Refused: value is out of range");
+            }
+            else
+            {
+                SetStatus(fieldIsInteger ? "Refused: value must be an integer" : "Refused: value must be a finite number");
+            }
             return;
         }
         const double numericValue = *parsedValue;

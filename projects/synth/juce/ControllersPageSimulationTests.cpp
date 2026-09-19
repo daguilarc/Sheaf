@@ -600,18 +600,20 @@ void RunGridSimulation()
                 double xMax = 0.0;
                 Require(surface.ViewModel().RowFieldValue(1, synth::MidiConfigSection::SystemMessages, rowIx,
                                                            synth::MidiMappingRowVM::Field::GridXMin, xMin),
-                        "grid simulation reads x min");
+                        "grid simulation reads start x");
                 Require(surface.ViewModel().RowFieldValue(1, synth::MidiConfigSection::SystemMessages, rowIx,
                                                            synth::MidiMappingRowVM::Field::GridXMax, xMax),
-                        "grid simulation reads x max");
+                        "grid simulation reads last x");
                 const int beforeInvalid = fixture.state.commits;
                 const std::string prefix = "1:system_messages:" + std::to_string(rowIx) + ":" +
                                            synth::runtime_ui::ControllersLayout::FieldToken(
                                                synth::MidiMappingRowVM::Field::GridXMax) +
                                            ":";
+                // A last x one below the block's own start x is below it (a
+                // last x AT the start is now a valid one-column block).
                 surface.DispatchAction(synth::ui::Action::WithValue(
                     synth::runtime_ui::Actions::kMappingFieldCommit,
-                    prefix + std::to_string(static_cast<int>(xMin))));
+                    prefix + std::to_string(static_cast<int>(xMin) - 1)));
                 Require(fixture.state.commits == beforeInvalid, "invalid grid rectangle committed");
                 surface.DispatchAction(synth::ui::Action::WithValue(
                     synth::runtime_ui::Actions::kMappingFieldCommit,

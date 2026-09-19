@@ -148,9 +148,11 @@ fork (`fork` remote, `daguilarc:shifted-encoder-turns`). It is opened as the
 next pull request against jvictor0/Sheaf `main`, after the open ones (#14,
 #17, #18, #19); nothing in the stack is merged into either Sheaf `main` by
 this change. smi-16 and this change's sru-15 exist only in open changes, so
-this change stays active until upstream merges the stack. The pull request
-description carries step-by-step testing instructions for Shift + knob on a
-Twister.
+this change stays active until upstream merges the stack. The branch also
+carries a second openspec change, `block-end-fields-show-the-last-control`,
+which ships in the same pull request. The pull request description carries
+step-by-step testing instructions for Shift + knob on a Twister and for that
+change's block end fields.
 
 ## Evidence
 

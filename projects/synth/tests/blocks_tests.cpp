@@ -898,6 +898,32 @@ TEST_CASE(ReconstructGridMappingsDescendingExpansionRoundTripsCanonicalMeaning) 
     REQUIRE_TRUE(actual.pressureInput->mappings == expected.pressureInput->mappings);
 }
 
+// --- D3: BlockLastFromEnd / BlockEndFromLast --------------------------------
+
+TEST_CASE(BlockLastAndEndTranslateEveryRangeBothWays) {
+    // An upward range (every CC range, every x range): end is one past the
+    // last control, and translation round-trips.
+    REQUIRE_TRUE(synth::BlockLastFromEnd(0, 16, false) == 15);
+    REQUIRE_TRUE(synth::BlockEndFromLast(0, 15, false) == 16);
+
+    // A y range that runs downward: (start 3, end 1) reads last 2.
+    REQUIRE_TRUE(synth::BlockLastFromEnd(3, 1, true) == 2);
+    // Reading the other way: a last at or above the start stores last + 1,
+    // one below stores last - 1.
+    REQUIRE_TRUE(synth::BlockEndFromLast(3, 2, true) == 1);
+    REQUIRE_TRUE(synth::BlockEndFromLast(3, 3, true) == 4);
+    REQUIRE_TRUE(synth::BlockEndFromLast(3, 5, true) == 6);
+
+    // Every pair round-trips both ways.
+    const int upwardStart = 0, upwardEnd = 16;
+    REQUIRE_TRUE(synth::BlockEndFromLast(upwardStart, synth::BlockLastFromEnd(upwardStart, upwardEnd, false), false) ==
+                 upwardEnd);
+    for (int last : {2, 3, 5}) {
+        const int end = synth::BlockEndFromLast(3, last, true);
+        REQUIRE_TRUE(synth::BlockLastFromEnd(3, end, true) == last);
+    }
+}
+
 // --- D3: ExpandEncoderBlock --------------------------------------------
 
 TEST_CASE(ExpandEncoderBlockProducesConsecutiveCcToPositionMapping) {
