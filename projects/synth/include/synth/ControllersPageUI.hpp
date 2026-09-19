@@ -51,123 +51,10 @@ inline constexpr const char* kAvailableEmpty = "runtime.controllers.available.em
 inline constexpr const char* kAvailableUnmatchedInputs = "runtime.controllers.available.unmatched_inputs";
 inline constexpr const char* kAvailableUnmatchedOutputs = "runtime.controllers.available.unmatched_outputs";
 inline constexpr const char* kStatusLegend = "runtime.controllers.status_legend";
-inline constexpr const char* kWizardLaunch = "runtime.controllers.wizard.launch";
-inline constexpr const char* kWizardChooser = "runtime.controllers.wizard.chooser";
-inline constexpr const char* kWizardChooserEmpty = "runtime.controllers.wizard.chooser.empty";
-inline constexpr const char* kWizardForm = "runtime.controllers.wizard.form";
-inline constexpr const char* kWizardBack = "runtime.controllers.wizard.back";
-inline constexpr const char* kWizardCancel = "runtime.controllers.wizard.cancel";
-inline constexpr const char* kWizardSubmit = "runtime.controllers.wizard.submit";
-inline constexpr const char* kWizardIgnore = "runtime.controllers.wizard.ignore";
-inline constexpr const char* kWizardWarning = "runtime.controllers.wizard.warning";
-inline constexpr const char* kWizardStatus = "runtime.controllers.wizard.status";
-
-inline std::string WizardCandidateToken(const WizardCandidate& candidate)
-{
-    const auto hex = [](std::string_view value) {
-        return HexEncodeBytes(value, /*uppercase=*/false);
-    };
-    return hex(candidate.wizardId) + "_" + hex(candidate.displayName) + "_" +
-           std::to_string(static_cast<int>(candidate.kind)) + "_" +
-           hex(candidate.input.identifier) + "_" + hex(candidate.input.name) +
-           "_" + hex(candidate.output.identifier) + "_" +
-           hex(candidate.output.name);
-}
-
-inline std::optional<WizardCandidate> WizardCandidateFromToken(
-    std::string_view token)
-{
-    std::vector<std::string_view> parts;
-    while (true)
-    {
-        const std::size_t delimiter = token.find('_');
-        parts.push_back(token.substr(0, delimiter));
-        if (delimiter == std::string_view::npos)
-        {
-            break;
-        }
-        token.remove_prefix(delimiter + 1);
-    }
-    if (parts.size() != 7)
-    {
-        return std::nullopt;
-    }
-
-    const auto unhex = [](std::string_view value) -> std::optional<std::string> {
-        std::string decoded;
-        if (!HexDecodeBytes(value, decoded, /*separatedByWhitespace=*/false))
-        {
-            return std::nullopt;
-        }
-        return decoded;
-    };
-
-    MidiProfileKind kind;
-    if (parts[2] == "0")
-    {
-        kind = MidiProfileKind::WrldBldr;
-    }
-    else if (parts[2] == "1")
-    {
-        kind = MidiProfileKind::MfTwister;
-    }
-    else if (parts[2] == "2")
-    {
-        kind = MidiProfileKind::Launchpad;
-    }
-    else if (parts[2] == "3")
-    {
-        kind = MidiProfileKind::Generic;
-    }
-    else
-    {
-        return std::nullopt;
-    }
-
-    const std::optional<std::string> wizardId = unhex(parts[0]);
-    const std::optional<std::string> displayName = unhex(parts[1]);
-    const std::optional<std::string> inputIdentifier = unhex(parts[3]);
-    const std::optional<std::string> inputName = unhex(parts[4]);
-    const std::optional<std::string> outputIdentifier = unhex(parts[5]);
-    const std::optional<std::string> outputName = unhex(parts[6]);
-    if (!wizardId.has_value() || !displayName.has_value() ||
-        !inputIdentifier.has_value() || !inputName.has_value() ||
-        !outputIdentifier.has_value() || !outputName.has_value())
-    {
-        return std::nullopt;
-    }
-    return WizardCandidate{.wizardId = *wizardId,
-                           .displayName = *displayName,
-                           .kind = kind,
-                           .input = {.identifier = *inputIdentifier,
-                                     .name = *inputName},
-                           .output = {.identifier = *outputIdentifier,
-                                      .name = *outputName}};
-}
-
-inline std::string WizardChooserCandidate(const WizardCandidate& candidate)
-{
-    return std::string(kWizardChooser) + ".candidate." + WizardCandidateToken(candidate);
-}
 
 inline std::string AvailableRow(std::size_t candidateIx)
 {
     return "runtime.controllers.available." + std::to_string(candidateIx);
-}
-
-inline std::string AvailableName(std::size_t candidateIx)
-{
-    return AvailableRow(candidateIx) + ".name";
-}
-
-inline std::string AvailableConfigure(std::size_t candidateIx)
-{
-    return AvailableRow(candidateIx) + ".configure";
-}
-
-inline std::string AvailableIgnore(std::size_t candidateIx)
-{
-    return AvailableRow(candidateIx) + ".ignore";
 }
 
 inline std::string ControllerRow(std::size_t controllerIx)
@@ -244,21 +131,6 @@ inline std::string ControllerRenameDraft(std::size_t controllerIx)
 inline std::string ControllerDelete(std::size_t controllerIx)
 {
     return ControllerRow(controllerIx) + ".delete";
-}
-
-inline std::string ControllerBlacklist(std::size_t controllerIx)
-{
-    return ControllerRow(controllerIx) + ".blacklist";
-}
-
-inline std::string ControllerConfigure(std::size_t controllerIx)
-{
-    return ControllerRow(controllerIx) + ".configure";
-}
-
-inline std::string ControllerRemoveBlacklist(std::size_t controllerIx)
-{
-    return ControllerRow(controllerIx) + ".remove_blacklist";
 }
 
 inline std::string ControllerRestore(std::size_t controllerIx)
@@ -396,28 +268,17 @@ inline constexpr const char* kAddSingle = "runtime.controllers.add_single";
 inline constexpr const char* kAddBlock = "runtime.controllers.add_block";
 inline constexpr const char* kAddPresetDraft = "runtime.controllers.add_preset_draft";
 inline constexpr const char* kAddController = "runtime.controllers.add_controller";
-inline constexpr const char* kAvailableConfigure = "runtime.controllers.available.configure";
-inline constexpr const char* kAvailableIgnore = "runtime.controllers.available.ignore";
-inline constexpr const char* kWizardOpen = "runtime.controllers.wizard.open";
-inline constexpr const char* kWizardChoose = "runtime.controllers.wizard.choose";
-inline constexpr const char* kWizardBack = "runtime.controllers.wizard.back";
-inline constexpr const char* kWizardCancel = "runtime.controllers.wizard.cancel";
-inline constexpr const char* kWizardSubmit = "runtime.controllers.wizard.submit";
-inline constexpr const char* kWizardIgnore = "runtime.controllers.wizard.ignore";
 inline constexpr const char* kControllerRename = "runtime.controllers.controller.rename";
 inline constexpr const char* kControllerRenameDraft = "runtime.controllers.controller.rename_draft";
 inline constexpr const char* kControllerDelete = "runtime.controllers.controller.delete";
-inline constexpr const char* kControllerBlacklist = "runtime.controllers.controller.blacklist";
-inline constexpr const char* kControllerRemoveBlacklist = "runtime.controllers.controller.remove_blacklist";
-inline constexpr const char* kControllerConfigure = "runtime.controllers.controller.configure";
 inline constexpr const char* kControllerRestore = "runtime.controllers.controller.restore";
 inline constexpr const char* kConnectMessageCommit = "runtime.controllers.connect_message_commit";
 inline constexpr const char* kConnectMessageDelete = "runtime.controllers.connect_message_delete";
 inline constexpr const char* kConnectMessageAdd = "runtime.controllers.connect_message_add";
 
-// The fixed part of what the Controllers page emits. The per-controller and
-// wizard-step actions above are not listed: they are matched by prefix, because
-// their names carry a controller index the page composes at build time and no
+// The fixed part of what the Controllers page emits. The per-controller
+// actions above are not listed: they are matched by prefix, because their
+// names carry a controller index the page composes at build time and no
 // fixed set can hold them.
 inline constexpr std::string_view kControllersActions[] = {
     kBack,
@@ -431,14 +292,6 @@ inline constexpr std::string_view kControllersActions[] = {
     kAddBlock,
     kAddPresetDraft,
     kAddController,
-    kAvailableConfigure,
-    kAvailableIgnore,
-    kWizardOpen,
-    kWizardChoose,
-    kWizardBack,
-    kWizardCancel,
-    kWizardSubmit,
-    kWizardIgnore,
     kConnectMessageCommit,
     kConnectMessageDelete,
     kConnectMessageAdd,
@@ -451,7 +304,6 @@ namespace ControllersLayout {
 inline constexpr float kPageMargin = 4.0f;
 inline constexpr float kBackRowHeight = 32.0f;
 inline constexpr float kBackButtonWidth = 80.0f;
-inline constexpr float kWizardIgnoreWidth = 160.0f;
 inline constexpr float kRowGap = 6.0f;
 inline constexpr float kStatusRowHeight = 24.0f;
 inline constexpr float kControllerHeaderLineHeight = 36.0f;
@@ -477,12 +329,7 @@ inline constexpr float kStatusDotWidth = 16.0f;
 inline constexpr float kStatusLegendPairGap = 16.0f;
 inline constexpr float kEndpointFieldWidth = 220.0f;
 inline constexpr float kEndpointBoxGap = 8.0f;
-// Available-controller row columns: the recognized controller's descriptor
-// display name, then its paired endpoint names, then the two lifecycle actions.
-inline constexpr float kAvailableNameWidth = 200.0f;
-inline constexpr float kAvailableEndpointsWidth = 260.0f;
-inline constexpr float kAvailableConfigureWidth = 92.0f;
-inline constexpr float kAvailableIgnoreWidth = 72.0f;
+// The add row's own column gap.
 inline constexpr float kAvailableControlGap = 8.0f;
 inline constexpr float kControllerNameWidth = 200.0f;
 inline constexpr float kControllerDisclosureWidth = 24.0f;
@@ -494,47 +341,31 @@ inline constexpr float kVariantFieldWidth = 180.0f;
 inline constexpr float kLifecycleDraftWidth = 160.0f;
 inline constexpr float kLifecycleRenameWidth = 72.0f;
 inline constexpr float kLifecycleDeleteWidth = 66.0f;
-inline constexpr float kLifecycleBlacklistWidth = 78.0f;
 inline constexpr float kLifecycleRestoreWidth = 76.0f;
-inline constexpr float kLifecycleConfigureWidth = 86.0f;
-inline constexpr float kLifecycleRemoveWidth = 72.0f;
 inline constexpr float kLifecycleControlGap = 4.0f;
-// The name draft and Rename button live in the expanded editor, so line two's
-// lifecycle block is Delete plus Restore and Release, each shown only when its
-// own row condition holds. Restore and Release can both show at once, so the
-// width below is their worst case, not their typical case.
+// The name draft and Rename button live in the expanded editor, so line
+// two's lifecycle block is Delete plus Restore, shown only when its own row
+// condition holds.
 inline constexpr float kActiveLifecycleWidth =
-    kLifecycleDeleteWidth + kLifecycleControlGap + kLifecycleRestoreWidth +
-    kLifecycleControlGap + kLifecycleBlacklistWidth;
+    kLifecycleDeleteWidth + kLifecycleControlGap + kLifecycleRestoreWidth;
 inline constexpr float kBlacklistedEndpointLabelWidth = 240.0f;
 inline constexpr float kBlacklistedBadgeWidth = 84.0f;
 // A blacklisted record has no expanded editor to hold a moved rename field,
 // and no story for renaming a row the operator is ignoring, so the name
-// draft and Rename button are simply gone here, not moved.
-inline constexpr float kBlacklistedLifecycleWidth =
-    kLifecycleConfigureWidth + kLifecycleControlGap + kLifecycleRemoveWidth;
+// draft and Rename button are simply gone here, not moved. Its only
+// lifecycle control is the same Delete button an active row offers.
+inline constexpr float kBlacklistedLifecycleWidth = kLifecycleDeleteWidth;
 // Line two: a status dot immediately before each port's combo, then the
-// lifecycle controls. Computed before line one below: line one's device
-// label is sized to fill exactly the width line one would otherwise fall
-// short of line two by, so the row's own footprint (already set by line
-// two, which is wider than line one) never grows to fit it.
+// lifecycle controls.
 inline constexpr float kActiveHeaderLine2Width =
     kStatusDotWidth + kLifecycleControlGap + kEndpointFieldWidth + kEndpointBoxGap +
     kStatusDotWidth + kLifecycleControlGap + kEndpointFieldWidth + kLifecycleControlGap +
     kActiveLifecycleWidth + kLifecycleControlGap;
-// The device label takes the free width line one already has before adding
-// any: with the disclosure arrow, name and (launchpad-only) Variant selector
-// accounted for, whatever is left up to line two's own width is free, since
-// line two already sets the row wider than line one needs. That comes to
-// 308px here -- comfortably over the library's own fallback device names,
-// measured at the page's default text size (RunDeviceLabelWidthCheck in the
-// miniapp JUCE suite measures those names this way and fails if one grows
-// past this; it does not measure any other app's own catalog names) -- so a
-// fixed constant here costs the row nothing for those names, and the label
-// never needs a second line or a shortened device name to fit them.
-inline constexpr float kControllerDeviceWidth =
-    kActiveHeaderLine2Width - kControllerDisclosureWidth - kControllerNameWidth - kVariantFieldWidth -
-    3.0f * kLifecycleControlGap;
+// 308: every library device name (RunDeviceLabelWidthCheck in the miniapp
+// JUCE suite measures each one at the page's default text size) needs this
+// much room, whether or not line two's own lifecycle controls happen to
+// leave that much free.
+inline constexpr float kControllerDeviceWidth = 308.0f;
 // Line one: disclosure, name, device, and on a launchpad row the Variant
 // selector. The status dots are on line two now, beside the ports they
 // describe. The width below is the launchpad case, the wider of the two.
@@ -543,11 +374,11 @@ inline constexpr float kActiveHeaderLine1Width =
     kLifecycleControlGap + kControllerDeviceWidth + kLifecycleControlGap + kVariantFieldWidth;
 inline constexpr float kActiveControllerHeaderWidth =
     std::max(kActiveHeaderLine1Width, kActiveHeaderLine2Width);
-// kControllerDeviceWidth is derived to make these equal (see above); if a
-// later change to any of line one's other pieces breaks that, this catches
-// it at compile time rather than silently growing the row.
-static_assert(kActiveHeaderLine1Width <= kActiveHeaderLine2Width,
-             "the active row's device label must not grow line one past line two");
+// The device label's own floor keeps line one from shrinking along with line
+// two's now-shorter lifecycle block; this catches at compile time if line
+// two ever grows back past what line one already reserves.
+static_assert(kActiveHeaderLine2Width <= kActiveHeaderLine1Width,
+             "the active row's line two must not grow past line one's own width");
 // Line one: name, device, Released badge.
 inline constexpr float kBlacklistedHeaderLine1Width =
     kControllerNameWidth + kLifecycleControlGap + kControllerDeviceWidth +
@@ -558,11 +389,10 @@ inline constexpr float kBlacklistedHeaderLine2Width =
     kLifecycleControlGap + kBlacklistedLifecycleWidth;
 inline constexpr float kBlacklistedControllerHeaderWidth =
     std::max(kBlacklistedHeaderLine1Width, kBlacklistedHeaderLine2Width);
-// The same device width, sized off the active row's slack, also fits inside
-// the blacklisted row's own (larger) slack -- this is what proves that,
-// not an assumption.
-static_assert(kBlacklistedHeaderLine1Width <= kBlacklistedHeaderLine2Width,
-             "the blacklisted row's device label must not grow line one past line two");
+// The same device-label floor also holds line one wider than the blacklisted
+// row's own (now shorter) line two.
+static_assert(kBlacklistedHeaderLine2Width <= kBlacklistedHeaderLine1Width,
+             "the blacklisted row's line two must not grow past line one's own width");
 inline constexpr float kControllerHeaderMinWidth =
     std::max(kActiveControllerHeaderWidth, kBlacklistedControllerHeaderWidth);
 inline constexpr float kSectionMaxHeight = 220.0f;
@@ -946,7 +776,7 @@ inline std::vector<ui::ControlOption> BuildEndpointOptions(const std::vector<Mid
 }
 
 // Installs a descriptor's default profile onto `slot`: opens the descriptor's
-// wizard, opens a blank form (ConfigForm(nullopt)), generates a profile from
+// wizard, opens a blank form (ConfigForm()), generates a profile from
 // it, then copies the generated kind, config and wizardId onto `slot`. On
 // failure `reason` (when non-null) gets wording the caller can format as its
 // own "Refused: " + *reason. Three sites install a descriptor from a blank
@@ -969,7 +799,7 @@ inline bool InstallDescriptorProfile(const std::vector<ControllerWizardDescripto
         }
         return false;
     }
-    std::unique_ptr<ControllerConfigForm> form = wizard->ConfigForm(std::nullopt);
+    std::unique_ptr<ControllerConfigForm> form = wizard->ConfigForm();
     if (!form)
     {
         if (reason)
@@ -1054,15 +884,23 @@ inline std::vector<ui::ControlOption> BuildAddPresetOptions(
 }
 
 // The add row's Preset combo defaults to its first option when no draft has
-// been recorded yet. Derived from BuildAddPresetOptions itself -- not a
-// second "first option" rule -- so the row's displayed default and the id
-// HandleAddController installs from cannot drift apart.
+// been recorded yet. When a connected device is waiting to be set up, that
+// default is its own first matching preset, so pressing Add without touching
+// the combo installs the waiting device; otherwise it falls back to the
+// registry's first descriptor, derived from BuildAddPresetOptions itself --
+// not a second "first option" rule -- so the row's displayed default and the
+// id HandleAddController installs from cannot drift apart.
 inline std::string EffectiveAddPresetId(const std::vector<ControllerWizardDescriptor>& layouts,
-                                        const std::string& draft)
+                                        const std::string& draft,
+                                        const WizardDiscovery& discovery)
 {
     if (!draft.empty())
     {
         return draft;
+    }
+    if (!discovery.available.empty())
+    {
+        return discovery.available.front().wizardId;
     }
     return BuildAddPresetOptions(layouts).front().id;
 }
@@ -1102,24 +940,6 @@ struct ControllersPageCallbacks
     // Gesture Select/Set Gesture Value argument can never name a gesture the
     // app does not have.
     std::optional<std::size_t> gestureCount;
-};
-
-struct ExistingWizardTarget {
-    std::size_t index = 0;
-    std::string name;
-    MidiProfileKind kind = MidiProfileKind::Generic;
-    MidiEndpointRef input;
-    MidiEndpointRef output;
-    std::optional<std::string> wizardId;
-    MidiControllerDisposition disposition = MidiControllerDisposition::Active;
-};
-
-struct WizardSession {
-    std::variant<WizardCandidate, ExistingWizardTarget> target;
-    std::unique_ptr<ControllerWizard> wizard;
-    std::unique_ptr<ControllerConfigForm> form;
-    std::string warning;
-    std::string status;
 };
 
 inline bool WizardDiscoveryEqual(const WizardDiscovery& lhs, const WizardDiscovery& rhs)
@@ -1169,14 +989,6 @@ public:
 
     ui::NodeTree BuildTree() override
     {
-        if (m_wizardSession.has_value())
-        {
-            return BuildWizardFormTree();
-        }
-        if (m_wizardChooserOpen)
-        {
-            return BuildWizardChooserTree();
-        }
         return BuildControllersPageTree(m_vm,
                                         m_devices,
                                         m_discovery,
@@ -1236,54 +1048,6 @@ public:
     const WizardDiscovery& Discovery() const
     {
         return m_discovery;
-    }
-
-    const WizardSession* ActiveWizardSession() const
-    {
-        return m_wizardSession ? &*m_wizardSession : nullptr;
-    }
-
-    bool OpenCandidate(std::size_t candidateIx)
-    {
-        if (m_wizardSession || candidateIx >= m_discovery.available.size())
-        {
-            return false;
-        }
-
-        const WizardCandidate candidate = m_discovery.available[candidateIx];
-        std::unique_ptr<ControllerWizard> wizard = MakeControllerWizard(m_vm.Layouts(), candidate.wizardId);
-        if (!wizard)
-        {
-            SetStatus("Refused: controller wizard is unavailable");
-            return false;
-        }
-        std::unique_ptr<ControllerConfigForm> form = wizard->ConfigForm(std::nullopt);
-        if (!form)
-        {
-            SetStatus("Refused: controller wizard could not open a form");
-            return false;
-        }
-
-        m_wizardSession.emplace(WizardSession{.target = candidate,
-                                              .wizard = std::move(wizard),
-                                              .form = std::move(form)});
-        m_wizardChooserOpen = false;
-        ++m_treeRevision;
-        return true;
-    }
-
-    bool OpenExisting(std::size_t controllerIx)
-    {
-        if (m_wizardSession || !m_callbacks.instrumentSnapshot)
-        {
-            return false;
-        }
-        const MidiInstrumentConfig instrument = m_callbacks.instrumentSnapshot();
-        if (controllerIx >= instrument.controllers.size())
-        {
-            return false;
-        }
-        return OpenExistingFromSnapshot(instrument, controllerIx);
     }
 
     void MarkDirty()
@@ -1368,21 +1132,11 @@ public:
                action.name == Actions::kDeleteRow || action.name == Actions::kAddSingle ||
                action.name == Actions::kAddBlock || action.name == Actions::kEndpointSelect ||
                action.name == Actions::kMappingFieldCommit ||
-               action.name == Actions::kAddController || action.name == Actions::kWizardOpen ||
-               action.name == Actions::kAvailableConfigure ||
-               action.name == Actions::kAvailableIgnore ||
-               action.name == Actions::kWizardChoose ||
-               action.name == Actions::kWizardBack ||
-               action.name == Actions::kWizardCancel ||
-               action.name == Actions::kWizardSubmit ||
-               action.name == Actions::kWizardIgnore ||
+               action.name == Actions::kAddController ||
                action.name == Actions::kControllerRenameDraft ||
                action.name == Actions::kControllerRename ||
                action.name == Actions::kControllerDelete ||
-               action.name == Actions::kControllerBlacklist ||
-               action.name == Actions::kControllerRemoveBlacklist ||
                action.name == Actions::kControllerRestore ||
-               action.name == Actions::kControllerConfigure ||
                action.name == Actions::kConnectMessageCommit ||
                action.name == Actions::kConnectMessageDelete ||
                action.name == Actions::kConnectMessageAdd;
@@ -1393,75 +1147,24 @@ private:
     // needs the same refusal text for the one case the view model itself
     // cannot detect: a host that rejects an otherwise-valid instrument.
     static constexpr const char* kHostRejectedCommitStatus = "Refused: host rejected the instrument commit";
-    // Shared by handlers that parse an action value into a candidate or
-    // controller identity token and find it malformed; one of the four call
-    // sites (SnapshotForLifecycleIdentity) also uses this when the host's
+    // Shared by handlers that parse an action value into a controller
+    // identity token and find it malformed; one of the three call sites
+    // (SnapshotForLifecycleIdentity) also uses this when the host's
     // instrument-snapshot callback is unset.
     static constexpr const char* kInvalidControllerIdentityStatus = "Refused: invalid controller identity";
-    // Shared by every handler that builds a candidate record from wizard or
-    // add-flow input and finds AddController/ReplaceController rejects it.
+    // Set when the add-flow's candidate record is built and `AddController`
+    // rejects it.
     static constexpr const char* kGeneratedRecordInvalidStatus =
         "Refused: generated controller record is invalid";
-    // Shared by handlers that re-read the committed instrument and find the
-    // row they started from no longer matches: two are the wizard's
-    // revalidation of an existing-session target
-    // (RevalidateExistingWizardTarget), one is a rename/delete action's
-    // identity lookup by name (SnapshotForLifecycleIdentity).
+    // Set by the rename, delete, and restore actions' identity lookup by name
+    // (SnapshotForLifecycleIdentity), which re-reads the committed instrument
+    // and finds the row they started from no longer matches.
     static constexpr const char* kControllerRecordChangedStatus =
         "Refused: controller record changed; refresh and try again";
-    // Shared by every handler that needs the host's device/instrument
-    // snapshot callbacks to revalidate a candidate and finds them unset.
-    static constexpr const char* kCurrentControllerStateUnavailableStatus =
-        "Refused: current controller state is unavailable";
-    // Shared by the two commit paths (session and non-session) that commit a
-    // new controller successfully but find the host's own runtime-config
-    // save callback fails.
+    // Set by `Commit` when the host accepts an edit but the runtime
+    // configuration save that follows it fails; the edit stays committed.
     static constexpr const char* kRuntimeConfigSaveFailedStatus =
         "The controller was committed, but runtime configuration save failed";
-    // Shared by both wizard-submit paths (a new candidate and an existing
-    // target) when GenerateProfile fails without its own error string.
-    static constexpr const char* kControllerProfileGenerationFailedStatus =
-        "controller profile generation failed";
-
-    bool OpenExistingFromSnapshot(const MidiInstrumentConfig& instrument,
-                                  std::size_t controllerIx)
-    {
-        if (m_wizardSession || controllerIx >= instrument.controllers.size())
-        {
-            return false;
-        }
-        const MidiControllerSlot& controller = instrument.controllers[controllerIx];
-        if (!controller.wizardId.has_value())
-        {
-            return false;
-        }
-        std::unique_ptr<ControllerWizard> wizard = MakeControllerWizard(m_vm.Layouts(), *controller.wizardId);
-        if (!wizard)
-        {
-            return false;
-        }
-        std::unique_ptr<ControllerConfigForm> form = wizard->ConfigForm(controller);
-        if (!form)
-        {
-            return false;
-        }
-
-        const std::string warning(form->ReconfigureWarning());
-        ExistingWizardTarget target{.index = controllerIx,
-                                    .name = controller.name,
-                                    .kind = controller.kind,
-                                    .input = controller.input,
-                                    .output = controller.output,
-                                    .wizardId = controller.wizardId,
-                                    .disposition = controller.disposition};
-        m_wizardSession.emplace(WizardSession{.target = std::move(target),
-                                              .wizard = std::move(wizard),
-                                              .form = std::move(form),
-                                              .warning = warning});
-        m_wizardChooserOpen = false;
-        ++m_treeRevision;
-        return true;
-    }
 
     static std::string ConnectionFingerprint(const MidiConnectionState& state)
     {
@@ -1478,14 +1181,30 @@ private:
         return fp;
     }
 
-    bool Commit(MidiInstrumentConfig out)
+    // The one place a Controllers-page edit is persisted: commits the
+    // instrument, then saves the runtime configuration so the edit survives a
+    // reload however the player leaves the page, then sets exactly one
+    // status. A refused commit reports the shared refusal text; a commit that
+    // lands but fails to save reports the save failure without losing the
+    // edit; otherwise the caller's own success text is shown. The return
+    // value means the instrument was committed, whether or not the save that
+    // follows succeeds.
+    bool Commit(MidiInstrumentConfig out, std::string successText)
     {
         if (!m_callbacks.commitInstrument ||
             !m_callbacks.commitInstrument(std::move(out)))
         {
+            SetStatus(kHostRejectedCommitStatus);
             return false;
         }
         m_dirty = true;
+        if (!m_callbacks.saveRuntimeConfiguration ||
+            !m_callbacks.saveRuntimeConfiguration())
+        {
+            SetStatus(kRuntimeConfigSaveFailedStatus);
+            return true;
+        }
+        SetStatus(std::move(successText));
         return true;
     }
 
@@ -1505,43 +1224,6 @@ private:
 
     void HandleAction(const ui::Action& action)
     {
-        if (m_wizardSession.has_value())
-        {
-            if (action.name == Actions::kWizardBack || action.name == Actions::kWizardCancel)
-            {
-                CloseWizardSession();
-                return;
-            }
-
-            if (action.name == Actions::kWizardSubmit)
-            {
-                HandleWizardSubmit();
-                return;
-            }
-            if (action.name == Actions::kWizardIgnore)
-            {
-                HandleWizardIgnore();
-                return;
-            }
-
-            m_wizardSession->form->DispatchAction(action);
-            return;
-        }
-
-        if (m_wizardChooserOpen)
-        {
-            if (action.name == Actions::kWizardBack || action.name == Actions::kWizardCancel)
-            {
-                m_wizardChooserOpen = false;
-                ++m_treeRevision;
-            }
-            else if (action.name == Actions::kWizardChoose)
-            {
-                OpenChooserCandidate(action.value);
-            }
-            return;
-        }
-
         if (action.name == Actions::kBack)
         {
             if (m_callbacks.onBack)
@@ -1641,39 +1323,6 @@ private:
             return;
         }
 
-        if (action.name == Actions::kWizardOpen)
-        {
-            if (m_discovery.available.size() == 1)
-            {
-                OpenCandidate(0);
-            }
-            else if (m_discovery.available.size() > 1)
-            {
-                m_wizardChooserOpen = true;
-                ++m_treeRevision;
-            }
-            return;
-        }
-
-        if (action.name == Actions::kAvailableConfigure)
-        {
-            OpenCandidate(ParseIndex(action.value));
-            return;
-        }
-
-        if (action.name == Actions::kAvailableIgnore)
-        {
-            const std::optional<WizardCandidate> candidate =
-                NodeIds::WizardCandidateFromToken(action.value);
-            if (!candidate.has_value())
-            {
-                SetStatus(kInvalidControllerIdentityStatus);
-                return;
-            }
-            HandleIgnoreCandidate(*candidate, /*sessionStatus=*/false);
-            return;
-        }
-
         if (action.name == Actions::kControllerRenameDraft)
         {
             const std::size_t firstSeparator = action.value.find(':');
@@ -1709,51 +1358,11 @@ private:
             return;
         }
 
-        if (action.name == Actions::kControllerBlacklist)
-        {
-            HandleBlacklistController(action.value);
-            return;
-        }
-
-        if (action.name == Actions::kControllerRemoveBlacklist)
-        {
-            HandleRemoveFromBlacklist(action.value);
-            return;
-        }
-
         if (action.name == Actions::kControllerRestore)
         {
             HandleRestoreController(action.value);
             return;
         }
-
-        if (action.name == Actions::kControllerConfigure)
-        {
-            const std::optional<std::pair<std::size_t, std::string>> identity =
-                NodeIds::ControllerActionIdentityFromToken(action.value);
-            MidiInstrumentConfig instrument;
-            if (!SnapshotForLifecycleIdentity(identity, instrument))
-            {
-                return;
-            }
-            OpenExistingFromSnapshot(instrument, identity->first);
-        }
-    }
-
-    static bool CandidateIdentityEqual(const WizardCandidate& lhs,
-                                       const WizardCandidate& rhs)
-    {
-        return lhs.wizardId == rhs.wizardId &&
-               lhs.displayName == rhs.displayName &&
-               lhs.kind == rhs.kind &&
-               lhs.input == rhs.input &&
-               lhs.output == rhs.output;
-    }
-
-    static bool ExactEndpointPresent(const std::vector<MidiDeviceInfoRef>& devices,
-                                     const MidiDeviceInfoRef& endpoint)
-    {
-        return std::find(devices.begin(), devices.end(), endpoint) != devices.end();
     }
 
     static std::string AvailableControllerName(const MidiInstrumentConfig& instrument,
@@ -1774,66 +1383,6 @@ private:
         }
     }
 
-    void SetWizardStatus(std::string text)
-    {
-        if (!m_wizardSession.has_value() ||
-            m_wizardSession->status == text)
-        {
-            return;
-        }
-        m_wizardSession->status = std::move(text);
-        ++m_treeRevision;
-        if (m_callbacks.setStatus)
-        {
-            m_callbacks.setStatus(m_wizardSession->status);
-        }
-    }
-
-    bool RevalidateCandidate(const WizardCandidate& expected,
-                             MidiInstrumentConfig& instrument,
-                             MidiDeviceList& devices,
-                             bool sessionStatus)
-    {
-        const auto report = [&](std::string text) {
-            if (sessionStatus)
-            {
-                SetWizardStatus(std::move(text));
-            }
-            else
-            {
-                SetStatus(std::move(text));
-            }
-        };
-        if (!m_callbacks.instrumentSnapshot || !m_callbacks.enumerateDevices)
-        {
-            report(kCurrentControllerStateUnavailableStatus);
-            return false;
-        }
-
-        devices = m_callbacks.enumerateDevices();
-        instrument = m_callbacks.instrumentSnapshot();
-        const WizardDiscovery current = DiscoverControllerWizards(
-            devices, instrument, m_vm.Layouts());
-        const auto match = std::find_if(
-            current.available.begin(), current.available.end(),
-            [&](const WizardCandidate& candidate) {
-                return CandidateIdentityEqual(candidate, expected);
-            });
-        if (match != current.available.end())
-        {
-            return true;
-        }
-
-        const bool endpointsPresent =
-            ExactEndpointPresent(devices.inputs, expected.input) &&
-            ExactEndpointPresent(devices.outputs, expected.output);
-        report(
-            endpointsPresent
-                ? "Refused: this controller is no longer available or its endpoints are claimed"
-                : "Refused: reconnect both controller endpoints and try again");
-        return false;
-    }
-
     void RefreshDiscoveryFromCallbacks()
     {
         if (!m_callbacks.instrumentSnapshot || !m_callbacks.enumerateDevices)
@@ -1847,55 +1396,38 @@ private:
             devices, instrument, m_vm.Layouts()));
     }
 
-    bool SaveCommittedWizardAction(bool sessionStatus)
+    // A row Add just installed opens: its disclosure and every section it
+    // lists start expanded, through the same toggles a player's own click on
+    // them uses, so those same clicks still collapse it. The row does not
+    // exist in the view model until the committed instrument has been
+    // rebuilt, so this rebuilds first and then finds it by name.
+    void OpenAddedRow(const std::string& name)
     {
-        if (!m_callbacks.saveRuntimeConfiguration ||
-            !m_callbacks.saveRuntimeConfiguration())
+        if (!m_callbacks.instrumentSnapshot || !m_callbacks.connectionState)
         {
-            if (sessionStatus)
-            {
-                SetWizardStatus(kRuntimeConfigSaveFailedStatus);
-            }
-            else
-            {
-                SetStatus(kRuntimeConfigSaveFailedStatus);
-            }
-            return false;
+            return;
         }
-        return true;
-    }
-
-    bool CommitNewCandidate(MidiInstrumentConfig instrument,
-                            MidiControllerSlot controller,
-                            bool sessionStatus)
-    {
-        if (!instrument.AddController(std::move(controller)))
+        m_vm.Rebuild(m_callbacks.instrumentSnapshot(), m_callbacks.connectionState());
+        const std::vector<MidiControllerRowVM>& rows = m_vm.Controllers();
+        for (std::size_t ix = 0; ix < rows.size(); ++ix)
         {
-            if (sessionStatus)
+            if (rows[ix].name != name)
             {
-                SetWizardStatus(kGeneratedRecordInvalidStatus);
+                continue;
             }
-            else
+            if (!rows[ix].configExpanded)
             {
-                SetStatus(kGeneratedRecordInvalidStatus);
+                m_vm.ToggleConfig(ix);
             }
-            return false;
+            for (MidiConfigSection section : rows[ix].sections)
+            {
+                if (!m_vm.SectionExpanded(ix, section))
+                {
+                    m_vm.ToggleSection(ix, section);
+                }
+            }
+            return;
         }
-        if (!Commit(std::move(instrument)))
-        {
-            if (sessionStatus)
-            {
-                SetWizardStatus(kHostRejectedCommitStatus);
-            }
-            else
-            {
-                SetStatus(kHostRejectedCommitStatus);
-            }
-            return false;
-        }
-
-        RefreshDiscoveryFromCallbacks();
-        return SaveCommittedWizardAction(sessionStatus);
     }
 
     bool SnapshotForLifecycleIdentity(
@@ -1938,17 +1470,11 @@ private:
             SetStatus("Refused: " + reason);
             return false;
         }
-        if (!Commit(std::move(out)))
+        if (!Commit(std::move(out), std::move(success)))
         {
-            SetStatus(kHostRejectedCommitStatus);
             return false;
         }
         RefreshDiscoveryFromCallbacks();
-        if (!SaveCommittedWizardAction(/*sessionStatus=*/false))
-        {
-            return false;
-        }
-        SetStatus(std::move(success));
         return true;
     }
 
@@ -1988,26 +1514,6 @@ private:
             "Deleted controller");
     }
 
-    void HandleBlacklistController(const std::string& token)
-    {
-        CommitLifecycleAction(
-            token, [&](MidiConfigViewModel& viewModel, std::size_t controllerIx,
-                       MidiInstrumentConfig& out, std::string* reason) {
-                return viewModel.BlacklistController(controllerIx, out, reason);
-            },
-            "Released controller");
-    }
-
-    void HandleRemoveFromBlacklist(const std::string& token)
-    {
-        CommitLifecycleAction(
-            token, [&](MidiConfigViewModel& viewModel, std::size_t controllerIx,
-                       MidiInstrumentConfig& out, std::string* reason) {
-                return viewModel.RemoveFromBlacklist(controllerIx, out, reason);
-            },
-            "Reclaimed controller");
-    }
-
     void HandleRestoreController(const std::string& token)
     {
         CommitLifecycleAction(
@@ -2016,200 +1522,6 @@ private:
                 return viewModel.RestoreController(controllerIx, out, reason);
             },
             "Restored controller");
-    }
-
-    void HandleWizardSubmit()
-    {
-        if (!m_wizardSession.has_value())
-        {
-            return;
-        }
-        if (!std::holds_alternative<WizardCandidate>(m_wizardSession->target))
-        {
-            HandleExistingWizardSubmit();
-            return;
-        }
-
-        const WizardCandidate candidate =
-            std::get<WizardCandidate>(m_wizardSession->target);
-        MidiInstrumentConfig instrument;
-        MidiDeviceList devices;
-        if (!RevalidateCandidate(candidate, instrument, devices,
-                                 /*sessionStatus=*/true))
-        {
-            return;
-        }
-
-        const std::string name =
-            AvailableControllerName(instrument, candidate.displayName);
-        WizardGenerationResult generated =
-            m_wizardSession->wizard->GenerateProfile(
-                *m_wizardSession->form,
-                {.name = name,
-                 .input = {.identifier = candidate.input.identifier,
-                           .name = candidate.input.name},
-                 .output = {.identifier = candidate.output.identifier,
-                            .name = candidate.output.name}});
-        if (!generated)
-        {
-            SetWizardStatus(
-                "Refused: " +
-                (generated.error.empty()
-                     ? std::string(kControllerProfileGenerationFailedStatus)
-                     : generated.error));
-            return;
-        }
-
-        MidiControllerSlot controller = std::move(*generated.controller);
-        controller.name = name;
-        controller.kind = candidate.kind;
-        controller.disposition = MidiControllerDisposition::Active;
-        controller.wizardId = candidate.wizardId;
-        controller.input = {.identifier = candidate.input.identifier,
-                            .name = candidate.input.name};
-        controller.output = {.identifier = candidate.output.identifier,
-                             .name = candidate.output.name};
-        controller.dormantConfig.reset();
-
-        if (!CommitNewCandidate(std::move(instrument),
-                                std::move(controller),
-                                /*sessionStatus=*/true))
-        {
-            return;
-        }
-        CloseWizardSession();
-        SetStatus("Configured " + name);
-    }
-
-    bool RevalidateExistingWizardTarget(const ExistingWizardTarget& expected,
-                                        MidiInstrumentConfig& instrument)
-    {
-        if (!m_callbacks.instrumentSnapshot)
-        {
-            SetWizardStatus(kCurrentControllerStateUnavailableStatus);
-            return false;
-        }
-        instrument = m_callbacks.instrumentSnapshot();
-        if (expected.index >= instrument.controllers.size())
-        {
-            SetWizardStatus(kControllerRecordChangedStatus);
-            return false;
-        }
-        const MidiControllerSlot& current = instrument.controllers[expected.index];
-        if (current.name != expected.name || current.kind != expected.kind ||
-            current.input.identifier != expected.input.identifier ||
-            current.input.name != expected.input.name ||
-            current.output.identifier != expected.output.identifier ||
-            current.output.name != expected.output.name ||
-            current.wizardId != expected.wizardId || current.disposition != expected.disposition)
-        {
-            SetWizardStatus(kControllerRecordChangedStatus);
-            return false;
-        }
-        return true;
-    }
-
-    void HandleExistingWizardSubmit()
-    {
-        if (!m_wizardSession.has_value() ||
-            !std::holds_alternative<ExistingWizardTarget>(m_wizardSession->target))
-        {
-            return;
-        }
-        const ExistingWizardTarget expected =
-            std::get<ExistingWizardTarget>(m_wizardSession->target);
-        MidiInstrumentConfig instrument;
-        if (!RevalidateExistingWizardTarget(expected, instrument))
-        {
-            return;
-        }
-
-        const MidiControllerSlot& current = instrument.controllers[expected.index];
-        WizardGenerationResult generated = m_wizardSession->wizard->GenerateProfile(
-            *m_wizardSession->form,
-            {.name = current.name, .input = current.input, .output = current.output});
-        if (!generated)
-        {
-            SetWizardStatus(
-                "Refused: " +
-                (generated.error.empty()
-                     ? std::string(kControllerProfileGenerationFailedStatus)
-                     : generated.error));
-            return;
-        }
-
-        MidiControllerSlot replacement = current;
-        replacement.kind = generated.controller->kind;
-        replacement.config = std::move(generated.controller->config);
-        replacement.dormantConfig.reset();
-        replacement.disposition = MidiControllerDisposition::Active;
-        if (!instrument.ReplaceController(expected.index, std::move(replacement)))
-        {
-            SetWizardStatus(kGeneratedRecordInvalidStatus);
-            return;
-        }
-        if (!Commit(std::move(instrument)))
-        {
-            SetWizardStatus(kHostRejectedCommitStatus);
-            return;
-        }
-        RefreshDiscoveryFromCallbacks();
-        if (!SaveCommittedWizardAction(/*sessionStatus=*/true))
-        {
-            return;
-        }
-        const std::string name = expected.name;
-        CloseWizardSession();
-        SetStatus("Reconfigured " + name);
-    }
-
-    void HandleWizardIgnore()
-    {
-        if (!m_wizardSession.has_value() ||
-            !std::holds_alternative<WizardCandidate>(
-                m_wizardSession->target))
-        {
-            return;
-        }
-        HandleIgnoreCandidate(
-            std::get<WizardCandidate>(m_wizardSession->target),
-            /*sessionStatus=*/true);
-    }
-
-    void HandleIgnoreCandidate(const WizardCandidate& candidate,
-                               bool sessionStatus)
-    {
-        MidiInstrumentConfig instrument;
-        MidiDeviceList devices;
-        if (!RevalidateCandidate(candidate, instrument, devices,
-                                 sessionStatus))
-        {
-            return;
-        }
-
-        const std::string name =
-            AvailableControllerName(instrument, candidate.displayName);
-        MidiControllerSlot controller;
-        controller.name = name;
-        controller.kind = candidate.kind;
-        controller.disposition = MidiControllerDisposition::Blacklisted;
-        controller.wizardId = candidate.wizardId;
-        controller.input = {.identifier = candidate.input.identifier,
-                            .name = candidate.input.name};
-        controller.output = {.identifier = candidate.output.identifier,
-                             .name = candidate.output.name};
-
-        if (!CommitNewCandidate(std::move(instrument),
-                                std::move(controller),
-                                sessionStatus))
-        {
-            return;
-        }
-        if (sessionStatus)
-        {
-            CloseWizardSession();
-        }
-        SetStatus("Ignored " + name);
     }
 
     static std::size_t ParseIndex(const std::string& text)
@@ -2258,8 +1570,7 @@ private:
         std::string reason;
         if (m_vm.SetLaunchpadModel(controllerIx, model, out, &reason))
         {
-            Commit(std::move(out));
-            SetStatus(std::string("Set ") + LaunchpadControllerDisplayName(model));
+            Commit(std::move(out), std::string("Set ") + LaunchpadControllerDisplayName(model));
             return;
         }
         // A model the row is already on is not a refusal worth a status line:
@@ -2297,8 +1608,7 @@ private:
             MidiInstrumentConfig out;
             if (m_vm.SetEndpointRef(controllerIx, output, MidiEndpointRef{}, out))
             {
-                Commit(std::move(out));
-                SetStatus("Cleared device");
+                Commit(std::move(out), "Cleared device");
             }
             return;
         }
@@ -2322,8 +1632,7 @@ private:
             MidiInstrumentConfig out;
             if (m_vm.SetEndpointRef(controllerIx, output, ref, out))
             {
-                Commit(std::move(out));
-                SetStatus("Selected " + device.name);
+                Commit(std::move(out), "Selected " + device.name);
             }
             return;
         }
@@ -2359,8 +1668,7 @@ private:
         if (m_vm.ApplyMappingEdit(controllerIx, *section, rowIx, *field, numericValue, out, &reason,
                                   &presentationChanged))
         {
-            Commit(std::move(out));
-            SetStatus("OK");
+            Commit(std::move(out), "OK");
         }
         else if (presentationChanged)
         {
@@ -2390,8 +1698,7 @@ private:
         std::string reason;
         if (m_vm.DeleteRow(controllerIx, *section, rowIx, out, &reason))
         {
-            Commit(std::move(out));
-            SetStatus("Deleted");
+            Commit(std::move(out), "Deleted");
         }
         else
         {
@@ -2420,12 +1727,7 @@ private:
         std::string reason;
         if (m_vm.SetConnectMessage(controllerIx, messageIx, hexText, out, &reason))
         {
-            if (!Commit(std::move(out)))
-            {
-                SetStatus(kHostRejectedCommitStatus);
-                return;
-            }
-            SetStatus("OK");
+            Commit(std::move(out), "OK");
         }
         else
         {
@@ -2446,12 +1748,7 @@ private:
         std::string reason;
         if (m_vm.DeleteConnectMessage(controllerIx, messageIx, out, &reason))
         {
-            if (!Commit(std::move(out)))
-            {
-                SetStatus(kHostRejectedCommitStatus);
-                return;
-            }
-            SetStatus("Deleted");
+            Commit(std::move(out), "Deleted");
         }
         else
         {
@@ -2466,12 +1763,7 @@ private:
         std::string reason;
         if (m_vm.AddConnectMessage(controllerIx, out, &reason))
         {
-            if (!Commit(std::move(out)))
-            {
-                SetStatus(kHostRejectedCommitStatus);
-                return;
-            }
-            SetStatus("Added connect message");
+            Commit(std::move(out), "Added connect message");
         }
         else
         {
@@ -2499,8 +1791,7 @@ private:
                                 : m_vm.AddSingle(controllerIx, *section, *group, out, &reason);
         if (ok)
         {
-            Commit(std::move(out));
-            SetStatus(asBlock ? "Added block" : "Added");
+            Commit(std::move(out), asBlock ? "Added block" : "Added");
         }
         else
         {
@@ -2519,7 +1810,8 @@ private:
         // The combo defaults to its first option when no draft was recorded
         // (e.g. Add pressed on a freshly opened page with the combo never
         // touched); this must match what the row actually displayed.
-        const std::string presetId = ControllersLayout::EffectiveAddPresetId(layouts, m_addPresetId);
+        const std::string presetId =
+            ControllersLayout::EffectiveAddPresetId(layouts, m_addPresetId, m_discovery);
 
         if (presetId == ControllersLayout::kCustomPresetOptionId)
         {
@@ -2529,8 +1821,10 @@ private:
             std::string reason;
             if (m_vm.AddController(name, ControllersLayout::kCustomKind, out, &reason))
             {
-                Commit(std::move(out));
-                SetStatus("Added " + name);
+                if (Commit(std::move(out), "Added " + name))
+                {
+                    OpenAddedRow(name);
+                }
             }
             else
             {
@@ -2549,13 +1843,18 @@ private:
         MidiControllerSlot slot;
         slot.name = AvailableControllerName(instrument, descriptor->displayName);
 
-        // A candidate needs an unclaimed input AND output matching the preset's
-        // aliases; with only one side connected there is no candidate, and both
-        // ports are left unset so their combos read "(none)".
+        // A candidate needs an unclaimed input AND output matching the CHOSEN
+        // preset's own aliases -- not only the descriptor discovery happened to
+        // assign the pair to, since discovery binds a pair to the first
+        // matching descriptor and two presets (an APC40 mkII's Generic and
+        // Ableton entries) can share the exact same aliases. With only one
+        // side connected there is no candidate, and both ports are left unset
+        // so their combos read "(none)".
         const WizardDiscovery addDiscovery = DiscoverControllerWizards(m_devices, instrument, layouts);
         for (const WizardCandidate& candidate : addDiscovery.available)
         {
-            if (candidate.wizardId == descriptor->id)
+            if (MatchesAnyAlias(candidate.input.name, descriptor->inputAliases) &&
+                MatchesAnyAlias(candidate.output.name, descriptor->outputAliases))
             {
                 slot.input = {.identifier = candidate.input.identifier, .name = candidate.input.name};
                 slot.output = {.identifier = candidate.output.identifier, .name = candidate.output.name};
@@ -2576,203 +1875,10 @@ private:
             SetStatus(kGeneratedRecordInvalidStatus);
             return;
         }
-        if (!Commit(std::move(out)))
+        if (Commit(std::move(out), "Added " + slot.name))
         {
-            SetStatus(kHostRejectedCommitStatus);
-            return;
+            OpenAddedRow(slot.name);
         }
-        SetStatus("Added " + slot.name);
-    }
-
-    void CloseWizardSession()
-    {
-        m_wizardSession.reset();
-        ++m_treeRevision;
-    }
-
-    void OpenChooserCandidate(const std::string& token)
-    {
-        for (std::size_t candidateIx = 0; candidateIx < m_discovery.available.size(); ++candidateIx)
-        {
-            if (NodeIds::WizardCandidateToken(m_discovery.available[candidateIx]) == token)
-            {
-                m_wizardChooserStatus.clear();
-                OpenCandidate(candidateIx);
-                return;
-            }
-        }
-        m_wizardChooserStatus = "That controller is no longer available. Refresh and choose another controller.";
-        ++m_treeRevision;
-    }
-
-    // The chooser page is built on the component library: one Column stacking
-    // the Back action, the heading, an optional status line, and one button per
-    // candidate. Nothing here carries bounds — every extent is declared and the
-    // resolver derives the geometry from the page extent it is handed, so no
-    // backend has to flow or size any of it.
-    //
-    // Before this it set bounds on the root and on nothing else, and the
-    // auto-flow cursor both backends have since deleted was the only thing
-    // positioning its children. The Controllers page is built
-    // this way; the chooser is here early because the deletions landed first.
-    ui::NodeTree BuildWizardChooserTree() const
-    {
-        ui::LayoutOptions body;
-        body.main = ui::Extent::Weight(1.0f);
-        body.padding = ControllersLayout::kPageMargin;
-        body.gap = ControllersLayout::kRowGap;
-
-        // The Back action keeps its own width instead of stretching over the
-        // page, which is the one thing the chooser needs a Row for.
-        ui::LayoutOptions actionRow;
-        actionRow.main = ui::Extent::Px(ControllersLayout::kBackRowHeight);
-        actionRow.padding = 0.0f;
-        actionRow.gap = ControllersLayout::kRowGap;
-
-        ui::ControlStyle backButton;
-        backButton.layout.main = ui::Extent::Px(ControllersLayout::kBackButtonWidth);
-
-        ui::ControlStyle textRow;
-        textRow.layout.main = ui::Extent::Px(ControllersLayout::kStatusRowHeight);
-
-        // A candidate's label names two endpoints, so it takes the page width
-        // and a full row's height rather than an intrinsic button extent.
-        ui::ControlStyle candidateRow;
-        candidateRow.layout.main = ui::Extent::Px(ControllersLayout::kBackRowHeight);
-
-        ui::Builder builder;
-        builder.Root(NodeIds::kWizardChooser, m_contentBounds);
-        builder.Column(std::string(NodeIds::kWizardChooser) + ".body", body, [&](ui::Builder& page) {
-            page.Row(std::string(NodeIds::kWizardChooser) + ".actions", actionRow, [&](ui::Builder& row) {
-                row.Button(NodeIds::kWizardBack, "Back", ui::Action::Named(Actions::kWizardBack), backButton);
-            });
-            page.Label(std::string(NodeIds::kWizardChooser) + ".heading",
-                       "Choose a controller to configure",
-                       textRow);
-
-            if (m_discovery.available.empty())
-            {
-                page.StatusText(NodeIds::kWizardChooserEmpty,
-                                "No recognized unconfigured controller pair is present",
-                                textRow);
-                return;
-            }
-
-            if (!m_wizardChooserStatus.empty())
-            {
-                page.StatusText(std::string(NodeIds::kWizardChooser) + ".status",
-                                m_wizardChooserStatus,
-                                textRow);
-            }
-
-            for (const WizardCandidate& candidate : m_discovery.available)
-            {
-                page.Button(NodeIds::WizardChooserCandidate(candidate),
-                            candidate.displayName + " — " + candidate.input.name + " (" +
-                                candidate.input.identifier + ") / " + candidate.output.name + " (" +
-                                candidate.output.identifier + ")",
-                            ui::Action::WithValue(Actions::kWizardChoose,
-                                                  NodeIds::WizardCandidateToken(candidate)),
-                            candidateRow);
-            }
-        });
-        return builder.Build(m_contentBounds);
-    }
-
-    ui::NodeTree BuildWizardFormTree()
-    {
-        ui::LayoutOptions body;
-        body.main = ui::Extent::Weight(1.0f);
-        body.padding = ControllersLayout::kPageMargin;
-        body.gap = ControllersLayout::kRowGap;
-
-        ui::LayoutOptions actionsRow;
-        actionsRow.main = ui::Extent::Px(ControllersLayout::kBackRowHeight);
-        actionsRow.padding = 0.0f;
-        actionsRow.gap = ControllersLayout::kRowGap;
-
-        const auto buttonStyle = [](float width) {
-            ui::ControlStyle style;
-            style.color = pagestyle::kDefaultButton;
-            style.textStyle = pagestyle::kDefaultTextStyle;
-            style.layout.main = ui::Extent::Px(width);
-            style.layout.cross = ui::Extent::Px(ControllersLayout::kBackRowHeight);
-            return style;
-        };
-
-        ui::ControlStyle messageStyle;
-        messageStyle.textStyle = pagestyle::kMutedTextStyle;
-        messageStyle.layout.main = ui::Extent::Px(ControllersLayout::kStatusRowHeight);
-
-        // The spliced form declares its own width, and a wizard is free to
-        // declare one wider than the host surface. `TwisterFormLayout` asked
-        // for 664 against this page's 640-wide body, so before this region
-        // existed the form overhung its parent by 28px and both backends
-        // clipped the right column's argument fields away with no diagnostic.
-        // This overflow did not register because the gate only checks the
-        // stacking axis, not cross-axis overruns of fixed-extent children. (The
-        // form is 684 wide now -- widening `kMessageWidth` to stop the message
-        // selectors clipping their own text made the overhang larger, not
-        // smaller, which is exactly why the host cannot rely on a form's
-        // declared width being one it can show.)
-        //
-        // A `ScrollArea` is one of two sanctioned absorbing
-        // mechanisms, and the resolver publishes its content extent from the
-        // children it just placed -- on both axes -- so the whole form stays
-        // reachable at any surface a host declares, including one narrower than
-        // 640. This is the host's obligation and it holds for third-party
-        // wizards too, which the page cannot re-measure. Removing
-        // `TwisterFormLayout`'s arithmetic separately stops the Twister form
-        // needing to scroll at all; this region is what makes any form safe
-        // meanwhile.
-        ui::LayoutOptions formScroll;
-        formScroll.main = ui::Extent::Weight(1.0f);
-        formScroll.padding = 0.0f;
-        formScroll.gap = 0.0f;
-
-        ui::Builder builder;
-        builder.Root(NodeIds::kWizardForm, m_contentBounds);
-        builder.Column(std::string(NodeIds::kWizardForm) + ".body", body, [&](ui::Builder& page) {
-            page.ScrollArea(std::string(NodeIds::kWizardForm) + ".scroll",
-                            formScroll,
-                            [&](ui::Builder& scroll) {
-                                scroll.Splice(m_wizardSession->form->BuildSubtree());
-                            });
-            page.Row(std::string(NodeIds::kWizardForm) + ".actions", actionsRow, [&](ui::Builder& row) {
-                row.Button(NodeIds::kWizardBack,
-                           "Back",
-                           ui::Action::Named(Actions::kWizardBack),
-                           buttonStyle(ControllersLayout::kBackButtonWidth));
-                row.Button(NodeIds::kWizardCancel,
-                           "Cancel",
-                           ui::Action::Named(Actions::kWizardCancel),
-                           buttonStyle(ControllersLayout::kBackButtonWidth));
-                row.Button(NodeIds::kWizardSubmit,
-                           "Submit",
-                           ui::Action::Named(Actions::kWizardSubmit),
-                           buttonStyle(ControllersLayout::kBackButtonWidth));
-                if (std::holds_alternative<WizardCandidate>(m_wizardSession->target))
-                {
-                    row.Button(NodeIds::kWizardIgnore,
-                               "Ignore this controller",
-                               ui::Action::Named(Actions::kWizardIgnore),
-                               buttonStyle(ControllersLayout::kWizardIgnoreWidth));
-                }
-            });
-            if (!m_wizardSession->warning.empty())
-            {
-                page.StatusText(NodeIds::kWizardWarning,
-                                m_wizardSession->warning,
-                                messageStyle);
-            }
-            if (!m_wizardSession->status.empty())
-            {
-                page.StatusText(NodeIds::kWizardStatus,
-                                m_wizardSession->status,
-                                messageStyle);
-            }
-        });
-        return builder.Build(m_contentBounds);
     }
 
     static ui::NodeTree BuildControllersPageTree(const MidiConfigViewModel& vm,
@@ -2857,6 +1963,23 @@ private:
             return text;
         };
 
+        // Every registry preset whose aliases match a waiting pair's port
+        // names, in registry order -- not only the one descriptor discovery
+        // happened to assign the pair to, since two presets (an APC40 mkII's
+        // Generic and Ableton entries) can share the exact same aliases.
+        const auto matchingPresetNames = [&](const WizardCandidate& candidate) {
+            std::vector<std::string> names;
+            for (const ControllerWizardDescriptor& descriptor : vm.Layouts())
+            {
+                if (MatchesAnyAlias(candidate.input.name, descriptor.inputAliases) &&
+                    MatchesAnyAlias(candidate.output.name, descriptor.outputAliases))
+                {
+                    names.push_back(descriptor.displayName);
+                }
+            }
+            return names;
+        };
+
         const auto emitAvailable = [&](ui::Builder& scroll) {
             ui::LayoutOptions availableLayout = columnLayout(ui::Extent::Intrinsic(), 0.0f);
             availableLayout.cross = ui::Extent::Px(scrollWidth);
@@ -2870,7 +1993,7 @@ private:
                                {
                                    available.StatusText(
                                        NodeIds::kAvailableEmpty,
-                                       "No recognized unconfigured controller pair is present",
+                                       "No connected controller is waiting to be set up",
                                        statusStyle(ControllersLayout::kStatusRowHeight));
                                }
                                else
@@ -2881,46 +2004,40 @@ private:
                                    {
                                        const WizardCandidate& candidate =
                                            discovery.available[candidateIx];
-                                       available.Row(
+                                       const std::vector<std::string> presetNames =
+                                           matchingPresetNames(candidate);
+                                       std::string joinedNames;
+                                       for (std::size_t nameIx = 0; nameIx < presetNames.size();
+                                            ++nameIx)
+                                       {
+                                           if (nameIx > 0)
+                                           {
+                                               joinedNames += ", ";
+                                           }
+                                           joinedNames += presetNames[nameIx];
+                                       }
+                                       // Status only: no button dispatches an action for a
+                                       // waiting device, so one label carries its port names
+                                       // and every preset that matches them.
+                                       available.StatusText(
                                            NodeIds::AvailableRow(candidateIx),
-                                           rowLayout(ControllersLayout::kControllerHeaderLineHeight,
-                                                     scrollWidth,
-                                                     ControllersLayout::kAvailableControlGap),
-                                           [&](ui::Builder& row) {
-                                               row.Label(NodeIds::AvailableName(candidateIx),
-                                                         candidate.displayName,
-                                                         labelStyle(ControllersLayout::kAvailableNameWidth));
-                                               row.Label(NodeIds::AvailableRow(candidateIx) + ".endpoints",
-                                                         candidate.input.name + " / " +
-                                                             candidate.output.name,
-                                                         labelStyle(ControllersLayout::kAvailableEndpointsWidth));
-                                               row.Button(NodeIds::AvailableConfigure(candidateIx),
-                                                          "Configure",
-                                                          ui::Action::WithValue(
-                                                              Actions::kAvailableConfigure,
-                                                              std::to_string(candidateIx)),
-                                                          button(ControllersLayout::kAvailableConfigureWidth));
-                                               row.Button(NodeIds::AvailableIgnore(candidateIx),
-                                                          "Ignore",
-                                                          ui::Action::WithValue(
-                                                              Actions::kAvailableIgnore,
-                                                              NodeIds::WizardCandidateToken(candidate)),
-                                                          button(ControllersLayout::kAvailableIgnoreWidth));
-                                           });
+                                           candidate.input.name + " / " + candidate.output.name +
+                                               ": " + joinedNames,
+                                           statusStyle(ControllersLayout::kStatusRowHeight));
                                    }
                                }
                                if (!discovery.unmatchedInputs.empty())
                                {
                                    available.StatusText(
                                        NodeIds::kAvailableUnmatchedInputs,
-                                       diagnosticText("Unmatched input: ", discovery.unmatchedInputs),
+                                       diagnosticText("Other inputs: ", discovery.unmatchedInputs),
                                        statusStyle(ControllersLayout::kStatusRowHeight));
                                }
                                if (!discovery.unmatchedOutputs.empty())
                                {
                                    available.StatusText(
                                        NodeIds::kAvailableUnmatchedOutputs,
-                                       diagnosticText("Unmatched output: ", discovery.unmatchedOutputs),
+                                       diagnosticText("Other outputs: ", discovery.unmatchedOutputs),
                                        statusStyle(ControllersLayout::kStatusRowHeight));
                                }
                            });
@@ -2963,7 +2080,18 @@ private:
                 {
                     options.push_back({std::to_string(ix), catalog[static_cast<std::size_t>(ix)].label});
                 }
-                emitIndexCombo(std::move(options), vm.UISystemMessageIndex(controllerIx, section, mappingRowIx));
+                int selectedIndex = vm.UISystemMessageIndex(controllerIx, section, mappingRowIx);
+                if (selectedIndex < 0)
+                {
+                    const std::optional<std::string> storedKindName =
+                        vm.UncatalogedSystemMessageKindName(controllerIx, section, mappingRowIx);
+                    if (storedKindName.has_value())
+                    {
+                        selectedIndex = static_cast<int>(options.size());
+                        options.push_back({std::to_string(selectedIndex), *storedKindName});
+                    }
+                }
+                emitIndexCombo(std::move(options), selectedIndex);
                 return;
             }
             if (field == MidiMappingRowVM::Field::AppAction)
@@ -3330,23 +2458,13 @@ private:
                                          "MIDI out: " +
                                              ControllersLayout::StoredEndpointLabel(rowVm.storedOutput),
                                          labelStyle(ControllersLayout::kBlacklistedEndpointLabelWidth));
-                                if (rowVm.hasResolvedWizard)
-                                {
-                                    row.Button(
-                                        NodeIds::ControllerConfigure(controllerIx),
-                                        "Configure",
-                                        ui::Action::WithValue(
-                                            Actions::kControllerConfigure,
-                                            NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
-                                        button(ControllersLayout::kLifecycleConfigureWidth));
-                                }
                                 row.Button(
-                                    NodeIds::ControllerRemoveBlacklist(controllerIx),
-                                    "Reclaim",
+                                    NodeIds::ControllerDelete(controllerIx),
+                                    "Delete",
                                     ui::Action::WithValue(
-                                        Actions::kControllerRemoveBlacklist,
+                                        Actions::kControllerDelete,
                                         NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
-                                    button(ControllersLayout::kLifecycleRemoveWidth));
+                                    button(ControllersLayout::kLifecycleDeleteWidth));
                             });
                         return;
                     }
@@ -3472,16 +2590,6 @@ private:
                                         NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
                                     button(ControllersLayout::kLifecycleRestoreWidth));
                             }
-                            if (rowVm.hasResolvedWizard && rowVm.hasCompleteEndpointPair)
-                            {
-                                row.Button(
-                                    NodeIds::ControllerBlacklist(controllerIx),
-                                    "Release",
-                                    ui::Action::WithValue(
-                                        Actions::kControllerBlacklist,
-                                        NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
-                                    button(ControllersLayout::kLifecycleBlacklistWidth));
-                            }
                         });
                 });
         };
@@ -3510,12 +2618,6 @@ private:
                                ui::Action::Named(Actions::kBack),
                                button(ControllersLayout::kBackButtonWidth,
                                       ControllersLayout::kBackRowHeight));
-                ui::ControlStyle wizard = button(180.0f, ControllersLayout::kBackRowHeight);
-                wizard.enabled = !discovery.available.empty();
-                actions.Button(NodeIds::kWizardLaunch,
-                               "Configuration Wizard",
-                               ui::Action::Named(Actions::kWizardOpen),
-                               wizard);
             });
             page.ScrollArea(NodeIds::kScroll, scrollLayout, [&](ui::Builder& scroll) {
                 emitAvailable(scroll);
@@ -3678,7 +2780,7 @@ private:
                                std::vector<ui::ControlOption> presetOptions =
                                    ControllersLayout::BuildAddPresetOptions(vm.Layouts());
                                const std::string selectedPreset =
-                                   ControllersLayout::EffectiveAddPresetId(vm.Layouts(), addPresetId);
+                                   ControllersLayout::EffectiveAddPresetId(vm.Layouts(), addPresetId, discovery);
                                ui::ControlStyle addPresetStyle =
                                    fieldControl(260.0f, ControllersLayout::kAddRowHeight);
                                addPresetStyle.caption = "Preset";
@@ -3705,9 +2807,6 @@ private:
     MidiConfigViewModel m_vm;
     MidiDeviceList m_devices;
     WizardDiscovery m_discovery;
-    std::optional<WizardSession> m_wizardSession;
-    bool m_wizardChooserOpen = false;
-    std::string m_wizardChooserStatus;
     ui::Bounds m_contentBounds{0.0f, 0.0f, 640.0f, 480.0f};
     std::string m_statusText = "Ready";
     std::string m_addPresetId;

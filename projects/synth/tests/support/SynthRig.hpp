@@ -350,11 +350,6 @@ public:
         return PumpLoadLike(result);
     }
 
-    RigPatchStatus RevertPatch() {
-        const synth::PatchCommandResult result = engine_.Patches().RevertPatch();
-        return PumpAcceptedLike(result);
-    }
-
 private:
     class FixedScheduledMidiEventSink final : public synth::IScheduledMidiEventSink {
     public:
@@ -447,39 +442,6 @@ private:
     // bus has drained and no message is stashed behind the arena-grow
     // barrier — until the block budget is exhausted.
     RigPatchStatus PumpLoadLike(const synth::PatchCommandResult& dispatchResult) {
-        if (IsImmediateFailure(dispatchResult.status)) {
-            return RigPatchStatus::Failed;
-        }
-        if (dispatchResult.status != synth::PatchCommandStatus::Ok) {
-            return RigPatchStatus::Failed;
-        }
-        for (std::size_t i = 0; i < patchPumpBudgetBlocks_; ++i) {
-            RunBlocks(1);
-            const std::optional<synth::PatchCommandResult> tickResult = engine_.ConsumeLastTickPatchResult();
-            if (tickResult.has_value() && IsImmediateFailure(tickResult->status)) {
-                return RigPatchStatus::Failed;
-            }
-            const bool drained = engine_.Context().patchInputBus->Size() == 0 &&
-                                 !engine_.HasStashedPatchMessageForTest();
-            if (drained) {
-                return RigPatchStatus::Ok;
-            }
-        }
-        return RigPatchStatus::TimedOut;
-    }
-
-    // Revert/New-family commands (RevertPatch) also report Ok immediately
-    // once queued, but unlike a fresh LoadPatch there is no new document to
-    // wait for landing in observable state beyond the drain itself. Since
-    // RunBlocks(1) already drives MessageThreadTick()'s ProcessResponses()
-    // call, calling ProcessResponses() again here would only ever observe
-    // NoCompletion (the tick consumed the real result already), so the
-    // settle condition is expressed directly in terms of the deterministic,
-    // budget-bounded state RunBlocks(1) leaves behind: the input bus has
-    // drained and no message is stashed behind the arena-grow barrier (same
-    // terminal condition as PumpLoadLike), while any tick-observed result
-    // that is an immediate failure short-circuits the pump.
-    RigPatchStatus PumpAcceptedLike(const synth::PatchCommandResult& dispatchResult) {
         if (IsImmediateFailure(dispatchResult.status)) {
             return RigPatchStatus::Failed;
         }

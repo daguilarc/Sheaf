@@ -3,8 +3,6 @@
 #include "synth/MidiController.hpp"
 #include "synth/MidiConfigViewModel.hpp"
 #include "synth/MidiReconcile.hpp"
-#include "synth/PortableUI.hpp"
-#include "synth/PortableUIBuilders.hpp"
 
 #include <algorithm>
 #include <array>
@@ -20,25 +18,13 @@
 
 namespace synth {
 
-// Portable wizard-owned form state. Renderers only render its ui::Surface
-// tree and dispatch actions back to it; all configuration policy remains here.
-class ControllerConfigForm : public ui::Surface {
+// Portable wizard-owned form state: generation policy only, read by
+// GenerateProfile below. It carries no rendering or action-dispatch surface.
+class ControllerConfigForm {
 public:
-    ~ControllerConfigForm() override = default;
+    virtual ~ControllerConfigForm() = default;
     virtual std::string_view WizardId() const = 0;
-    virtual ui::Subtree BuildSubtree() {
-        ui::NodeTree tree = BuildTree();
-        const auto root =
-            std::find_if(tree.nodes.begin(), tree.nodes.end(), [](const ui::Node& node) {
-                return node.kind == ui::NodeKind::Root;
-            });
-        if (root != tree.nodes.end()) {
-            tree.nodes.erase(root);
-        }
-        return ui::Subtree{std::move(tree), {}, {}};
-    }
     virtual bool Validate(std::string& error) const = 0;
-    virtual std::string_view ReconfigureWarning() const { return {}; }
 };
 
 struct MfTwisterButtonConfig {
@@ -56,25 +42,8 @@ public:
     std::array<MfTwisterButtonConfig, kButtonCount> buttons;
 
     std::string_view WizardId() const override;
-    ui::Subtree BuildSubtree() override;
-    ui::NodeTree BuildTree() override;
-    void SetActionHandler(ActionHandler handler) override;
-    void DispatchAction(const ui::Action&) override;
     bool Validate(std::string& error) const override;
-    std::string_view ReconfigureWarning() const override;
-
-    // A non-empty warning is displayed only for an existing profile that
-    // cannot be losslessly represented by this form.
-    std::string reconfigureWarning;
-
-private:
-    ActionHandler actionHandler_;
 };
-
-// Returns a complete form seed only for an exactly representable Twister
-// profile. A missing result deliberately prevents partial extraction.
-std::optional<MfTwisterConfigForm>
-ExtractMfTwisterWizardSeed(const MidiControllerProfileConfig& profile);
 
 struct WizardGenerationContext {
     std::string name;
@@ -92,8 +61,7 @@ class ControllerWizard {
 public:
     virtual ~ControllerWizard() = default;
     virtual std::string_view Id() const = 0;
-    virtual std::unique_ptr<ControllerConfigForm>
-    ConfigForm(const std::optional<MidiControllerSlot>& seed) const = 0;
+    virtual std::unique_ptr<ControllerConfigForm> ConfigForm() const = 0;
     virtual WizardGenerationResult GenerateProfile(
         const ControllerConfigForm&, const WizardGenerationContext&) const = 0;
 };
@@ -129,8 +97,7 @@ protected:
 class MfTwisterControllerWizard final : public TypedControllerWizard<MfTwisterConfigForm> {
 public:
     std::string_view Id() const override;
-    std::unique_ptr<ControllerConfigForm>
-    ConfigForm(const std::optional<MidiControllerSlot>& seed) const override;
+    std::unique_ptr<ControllerConfigForm> ConfigForm() const override;
 
 protected:
     WizardGenerationResult GenerateTypedProfile(
@@ -171,11 +138,17 @@ WizardDiscovery DiscoverControllerWizards(
     const MidiDeviceList&, const MidiInstrumentConfig&,
     const std::vector<ControllerWizardDescriptor>&);
 
+// Case-insensitive membership test against a descriptor's own input or output
+// aliases: the one match rule discovery uses to bind a connected port to a
+// preset. Shared with the Controllers page so it can list every preset a
+// waiting device matches, not only the one discovery bound the pair to.
+bool MatchesAnyAlias(std::string_view name, const std::vector<std::string>& aliases);
+
 // The one lookup every caller that needs "does this stored wizard id name a
 // registry descriptor, and if so which" shares: MakeControllerWizard below,
 // MidiConfigViewModel's hasResolvedWizard/matchesWizardProfile/
-// BlacklistController/RestoreController, and the page's device label
-// (ControllerDeviceLabel). Returns nullptr for an id no descriptor carries.
+// RestoreController, and the page's device label (ControllerDeviceLabel).
+// Returns nullptr for an id no descriptor carries.
 const ControllerWizardDescriptor* FindControllerWizardDescriptor(
     const std::vector<ControllerWizardDescriptor>& registry, std::string_view id);
 

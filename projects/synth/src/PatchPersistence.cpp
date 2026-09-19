@@ -164,20 +164,25 @@ bool FromJSON(JSON json, SyncConfig& config) {
 JSON BuildRuntimeConfigJSON(JsonArena& arena,
                             const MidiInstrumentConfig& instrument,
                             const AudioDeviceState& audioDevice,
-                            const SyncConfig& sync) {
+                            const SyncConfig& sync,
+                            const std::optional<std::string>& lastPatchVersion) {
     JSON root = arena.Object();
     root.SetNew("schema", arena.String(kRuntimeConfigSchema));
     root.SetNew("schemaVersion", arena.Integer(kRuntimeConfigSchemaVersion));
     root.SetNew("midiInstrument", ToJSON(arena, instrument));
     root.SetNew("audioDevice", ToJSON(arena, audioDevice));
     root.SetNew("sync", ToJSON(arena, sync));
+    if (lastPatchVersion.has_value()) {
+        root.SetNew("lastPatchVersion", arena.String(lastPatchVersion->c_str()));
+    }
     return root;
 }
 
 bool LoadRuntimeConfigJSON(JSON root,
                            MidiInstrumentConfig& instrument,
                            AudioDeviceState& audioDevice,
-                           SyncConfig& sync) {
+                           SyncConfig& sync,
+                           std::optional<std::string>* lastPatchVersion) {
     const std::optional<int> version = RuntimeConfigVersion(root);
     if (!version.has_value()) {
         return false;
@@ -203,9 +208,21 @@ bool LoadRuntimeConfigJSON(JSON root,
         return false;
     }
 
+    std::optional<std::string> parsedLastPatchVersion;
+    const JSON lastPatchVersionJson = root.Get("lastPatchVersion");
+    if (!lastPatchVersionJson.IsNull()) {
+        if (!IsString(lastPatchVersionJson)) {
+            return false;
+        }
+        parsedLastPatchVersion = lastPatchVersionJson.StringValue();
+    }
+
     instrument = std::move(parsedInstrument);
     audioDevice = std::move(parsedAudioDevice);
     sync = parsedSync;
+    if (lastPatchVersion != nullptr) {
+        *lastPatchVersion = std::move(parsedLastPatchVersion);
+    }
     return true;
 }
 
@@ -219,7 +236,8 @@ bool ValidateRuntimeConfigJSON(JSON root) {
 RuntimeConfigFileStatus LoadRuntimeConfigFile(const std::filesystem::path& configFile,
                                               MidiInstrumentConfig& instrument,
                                               AudioDeviceState& audioDevice,
-                                              SyncConfig& sync) {
+                                              SyncConfig& sync,
+                                              std::optional<std::string>* lastPatchVersion) {
     std::error_code ec;
     if (!std::filesystem::exists(configFile, ec)) {
         return ec ? RuntimeConfigFileStatus::IOError : RuntimeConfigFileStatus::Missing;
@@ -245,7 +263,7 @@ RuntimeConfigFileStatus LoadRuntimeConfigFile(const std::filesystem::path& confi
         return RuntimeConfigFileStatus::Invalid;
     }
 
-    return LoadRuntimeConfigJSON(root, instrument, audioDevice, sync)
+    return LoadRuntimeConfigJSON(root, instrument, audioDevice, sync, lastPatchVersion)
         ? RuntimeConfigFileStatus::Ok
         : RuntimeConfigFileStatus::Invalid;
 }
@@ -253,7 +271,8 @@ RuntimeConfigFileStatus LoadRuntimeConfigFile(const std::filesystem::path& confi
 RuntimeConfigFileStatus SaveRuntimeConfigFile(const std::filesystem::path& configFile,
                                               const MidiInstrumentConfig& instrument,
                                               const AudioDeviceState& audioDevice,
-                                              const SyncConfig& sync) {
+                                              const SyncConfig& sync,
+                                              const std::optional<std::string>& lastPatchVersion) {
     std::error_code ec;
     const std::filesystem::path parent = configFile.parent_path();
     if (!parent.empty()) {
@@ -264,10 +283,10 @@ RuntimeConfigFileStatus SaveRuntimeConfigFile(const std::filesystem::path& confi
     }
 
     JsonArena arena(kRuntimeConfigInitialArenaCapacity);
-    JSON root = BuildRuntimeConfigJSON(arena, instrument, audioDevice, sync);
+    JSON root = BuildRuntimeConfigJSON(arena, instrument, audioDevice, sync, lastPatchVersion);
     while ((root.IsNull() || arena.Failed()) && arena.Capacity() < kRuntimeConfigMaxArenaCapacity) {
         arena.GrowAndReset();
-        root = BuildRuntimeConfigJSON(arena, instrument, audioDevice, sync);
+        root = BuildRuntimeConfigJSON(arena, instrument, audioDevice, sync, lastPatchVersion);
     }
     if (root.IsNull() || arena.Failed()) {
         return RuntimeConfigFileStatus::Invalid;
@@ -748,17 +767,6 @@ PatchCommandResult PatchManager::LoadPatch(const std::filesystem::path& path) {
         return {.status = ec ? PatchCommandStatus::IOError : PatchCommandStatus::NotFound, .path = path};
     }
     return LoadPatchVersion(path, path.parent_path());
-}
-
-PatchCommandResult PatchManager::RevertPatch() {
-    if (!currentPatchDirectory_.has_value()) {
-        return NewPatch();
-    }
-    const auto latest = LatestPatchVersion(*currentPatchDirectory_);
-    if (!latest.has_value()) {
-        return {.status = PatchCommandStatus::NotFound, .path = *currentPatchDirectory_};
-    }
-    return LoadPatchVersion(*latest, *currentPatchDirectory_);
 }
 
 PatchCommandResult PatchManager::ProcessResponses(std::chrono::system_clock::time_point now) {

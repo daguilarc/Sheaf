@@ -720,10 +720,7 @@ public:
         RequireStarted();
         this->timestampMicros_.store(timestampMicros, std::memory_order_relaxed);
         engine_.MessageThreadTick();
-        if (const auto patchResult = engine_.ConsumeLastTickPatchResult();
-            patchResult.has_value() && patchResult->status == synth::PatchCommandStatus::Written) {
-            persistenceDirty_ = true;
-        }
+        RefreshPersistenceDirtyFromEngine();
         mainComponent_.Refresh();
     }
 
@@ -738,6 +735,7 @@ public:
         RequireStarted();
         mainComponent_.DispatchAction(
             synth::ui::Action::WithValue(std::move(name), std::move(value)));
+        RefreshPersistenceDirtyFromEngine();
         mainComponent_.Refresh();
     }
 
@@ -782,8 +780,7 @@ public:
 
     bool ConsumePersistenceDirty()
     {
-        const bool servicesDirty = services_.ConsumePersistenceDirty();
-        const bool dirty = persistenceDirty_ || servicesDirty;
+        const bool dirty = persistenceDirty_;
         persistenceDirty_ = false;
         return dirty;
     }
@@ -821,6 +818,21 @@ private:
         }
         const auto magnitude = static_cast<std::uint64_t>(-(offsetMicros + 1)) + 1;
         return timestampMicros < magnitude ? 0 : timestampMicros - magnitude;
+    }
+
+    // Reads Engine::RuntimeConfigSaveGeneration() and marks persistence dirty
+    // when it has advanced since the last read, from either DispatchAction
+    // (a page's commit saves synchronously, inside that same call) or
+    // MessageTick (a save the engine makes on its own, such as opening a
+    // patch or starting a new one). One generation counter replaces every
+    // call site separately flagging that it wrote.
+    void RefreshPersistenceDirtyFromEngine()
+    {
+        const std::uint64_t saveGeneration = engine_.RuntimeConfigSaveGeneration();
+        if (saveGeneration != lastSeenRuntimeConfigGeneration_) {
+            lastSeenRuntimeConfigGeneration_ = saveGeneration;
+            persistenceDirty_ = true;
+        }
     }
 
     void RequireStarted() const
@@ -1083,6 +1095,9 @@ private:
     std::atomic<bool> started_{false};
     std::atomic<bool> stopped_{false};
     bool persistenceDirty_ = false;
+    // Engine::RuntimeConfigSaveGeneration() last observed by MessageTick, so
+    // it can tell a save happened since the previous tick.
+    std::uint64_t lastSeenRuntimeConfigGeneration_ = 0;
     // File exports the engine's handler has queued, oldest first; drained by
     // DequeueFileExport.
     std::deque<synth::FileExport> fileExports_;

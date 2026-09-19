@@ -1121,11 +1121,7 @@ int main() {
     auto* controllersBackButton = dynamic_cast<juce::TextButton*>(
         renderer.FindByNodeId(synth::runtime_ui::NodeIds::kBack));
     Require(controllersBackButton != nullptr, "controllers back control remains available");
-    for (const char* actionName : {synth::runtime_ui::Actions::kBack,
-                                   synth::runtime_ui::Actions::kWizardOpen,
-                                   synth::runtime_ui::Actions::kWizardChoose,
-                                   synth::runtime_ui::Actions::kWizardBack,
-                                   synth::runtime_ui::Actions::kWizardCancel}) {
+    for (const char* actionName : {synth::runtime_ui::Actions::kBack}) {
         Require(shell->GetMainPane().NeedsDeferredRendererRefresh(
                     synth::ui::Action::Named(actionName)),
                 "structural Controllers action uses the deferred renderer path");

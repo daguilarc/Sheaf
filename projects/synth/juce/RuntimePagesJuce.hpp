@@ -301,13 +301,6 @@ private:
             const std::filesystem::path path(action.value);
             m_runtime.LoadPatch(path);
             SetStatus("Load requested: " + action.value);
-            return;
-        }
-
-        if (action.name == synth::runtime_ui::Actions::kFileRevert)
-        {
-            m_runtime.RevertPatch();
-            SetStatus("Revert requested");
         }
     }
 

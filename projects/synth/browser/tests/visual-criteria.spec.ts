@@ -16,7 +16,6 @@
 // at any extent.
 import { expect, test, type Page } from "@playwright/test";
 import { FIXTURE_APPS, installRealFakeApp, stopRealFakeApp, synthNode } from "./helpers/fake-app.js";
-import { installTwisterPair } from "./helpers/fake-midi.js";
 
 // ---------------------------------------------------------------------------
 // Task 1.4: the fixed verification environment.
@@ -155,10 +154,9 @@ const OUT_OF_FLOW_SUFFIXES = [".status_dots"] as const;
 
 // Declared overlays that cannot say so through `overlayOf`, named ONE AT A TIME
 // with the one sibling each is allowed to cover. Not a suffix: a `.warning`
-// match would have swallowed `runtime.sync.warning` and
-// `runtime.controllers.wizard.warning` too, neither of which is a badge, and
-// that is the same class-based escape the caption list was just rebuilt to
-// avoid.
+// match would have swallowed `runtime.sync.warning` too, which is not a
+// badge, and that is the same class-based escape the caption list was just
+// rebuilt to avoid.
 //
 // A badge is exempt from the overlap check against its target and nothing else,
 // and `badgesSeen` below requires the pin to have had a live subject rather
@@ -437,12 +435,16 @@ async function openSurface(page: Page, surface: SurfaceName): Promise<void> {
 // The named fixture state: twelve controllers added through the page's own add
 // row, so the state is produced by the real surface rather than injected. The
 // add row offers a preset and an Add button; the preset combo already holds the
-// first entry, so a press is the whole gesture.
+// first entry, so a press is the whole gesture. A row Add installs opens with
+// every section expanded, so each one is collapsed again through its own
+// disclosure, leaving this fixture's rows the same collapsed state every
+// criterion in this file already measures.
 async function seedControllers(page: Page, count: number): Promise<void> {
   await openSurface(page, "controllers");
   for (let index = 0; index < count; index += 1) {
     await page.locator(synthNode("runtime.controllers.add_button")).click();
     await expect(page.locator(synthNode(`runtime.controllers.row.${index}`))).toHaveCount(1);
+    await page.locator(synthNode(`runtime.controllers.row.${index}.disclosure`)).click();
   }
 }
 
@@ -511,8 +513,8 @@ async function evaluateStructuralCriteria(page: Page) {
 
     // Same badge pin as the four-page overlap test: a declared badge is exempt
     // against its target and nothing else, so it must actually sit inside it.
-    // Here the subject set is live -- the wizard states install two Twisters,
-    // which is what makes the sidebar warning badge render.
+    // No caller in this file currently drives the sidebar warning badge onto
+    // screen, so this pin is a standing guard rather than exercised coverage.
     for (const el of nodes()) {
       const targetId = badgeTargetOf(nodeId(el));
       if (!targetId) continue;
@@ -710,8 +712,8 @@ test.describe("sru-48 named visual criteria", () => {
         // it is doing has to be pinned rather than assumed: it must sit inside
         // the node it annotates. The sidebar badge renders only while MIDI
         // discovery has an unconfigured candidate, which these four pages do
-        // not, so `badgesSeen` is reported here and pinned where a badge is
-        // actually on screen -- the wizard test, which installs two Twisters.
+        // not, so `badgesSeen` is reported here and pinned at the count these
+        // pages actually produce.
         let badgesSeen = 0;
         for (const el of nodes()) {
           const targetId = badgeTargetOf(nodeId(el));
@@ -746,9 +748,9 @@ test.describe("sru-48 named visual criteria", () => {
         `${surface}: a runtime page now renders an sru-25 underlay -- browser congruence coverage ` +
         `does not exist for it, so write it and replace this pin`).toBe(0);
       // Same treatment for the badge. No MIDI is installed in this test, so
-      // discovery has no candidate and the sidebar warning does not render. The
-      // live badge pin is in the wizard test, which does install one; if a badge
-      // ever appears here too, this stops being a statement of fact.
+      // discovery has no candidate and the sidebar warning does not render.
+      // No test in this file currently drives that badge into view; if one
+      // starts to, this stops being a statement of fact.
       expect(report.badgesSeen,
         `${surface}: a declared badge now renders on a plain page -- pin what it does here as well`)
         .toBe(0);
@@ -1095,71 +1097,13 @@ test.describe("sru-48 named visual criteria", () => {
     expect(warned.checked, "sync warning: examined no nodes").toBeGreaterThan(5);
   });
 
-  // The wizard chooser and the wizard form are named states in task 1.4's
-  // fixture, and they were previously evaluated only headlessly -- so a
-  // browser-only regression in their chrome, text metrics or contrast passed
-  // unseen. They are driven here through the page's own MIDI discovery rather
-  // than injected, so what is measured is the real surface.
-  test("the wizard chooser and form meet the structural criteria", async ({ page }) => {
-    await installTwisterPair(page, 1);
-    await installTwisterPair(page, 2);
-    await openSurface(page, "controllers");
-    const launch = page.locator(synthNode("runtime.controllers.wizard.launch"));
-    await expect(launch).toBeEnabled({ timeout: 10_000 });
-    await launch.click();
-
-    const chooserCandidates = page.locator(
-      '[data-synth-node-id^="runtime.controllers.wizard.chooser.candidate."]');
-    await expect(chooserCandidates).toHaveCount(2);
-    const chooser = await evaluateStructuralCriteria(page);
-    expect(chooser.overflows, `chooser: ${chooser.overflows.join("; ")}`).toEqual([]);
-    expect(chooser.overlaps, `chooser: ${chooser.overlaps.join("; ")}`).toEqual([]);
-    expect(chooser.silentText, `chooser: ${chooser.silentText.join("; ")}`).toEqual([]);
-    expect(chooser.tooTight, `chooser: ${chooser.tooTight.join("; ")}`).toEqual([]);
-    expect(chooser.lowContrast, `chooser: ${chooser.lowContrast.join("; ")}`).toEqual([]);
-    expect(chooser.checked, "chooser: examined no nodes").toBeGreaterThan(5);
-    // Two Twisters are discovered and unconfigured, so the sidebar's warning
-    // badge is on screen. This is the one state in the browser half where the
-    // badge exemption has a live subject, so the "sits inside its target" pin
-    // above is real coverage rather than an absence.
-    expect(chooser.badgesSeen,
-      "chooser: no declared badge rendered, so the badge exemption was never exercised")
-      .toBeGreaterThan(0);
-
-    await chooserCandidates.first().click();
-    await expect(page.locator(synthNode("runtime.controllers.wizard.submit"))).toBeVisible();
-    const form = await evaluateStructuralCriteria(page);
-    // The Twister form declares itself wider than the 640 page that shows it
-    // (664 when the overhang was found, 684 now that the message selectors were
-    // widened to stop clipping their own text), and it used to overhang and be
-    // clipped. The page now hosts it in a ScrollArea, and containment is against
-    // that region's scroll-content rectangle. A regression here means the form
-    // is being cut off again.
-    expect(form.overflows, `wizard form: ${form.overflows.join("; ")}`).toEqual([]);
-    expect(form.overlaps, `wizard form: ${form.overlaps.join("; ")}`).toEqual([]);
-    expect(form.silentText, `wizard form: ${form.silentText.join("; ")}`).toEqual([]);
-    expect(form.tooTight, `wizard form: ${form.tooTight.join("; ")}`).toEqual([]);
-    expect(form.lowContrast, `wizard form: ${form.lowContrast.join("; ")}`).toEqual([]);
-    expect(form.checked, "wizard form: examined no nodes").toBeGreaterThan(20);
-
-    // And the fields the old overhang cut off are reachable by scrolling
-    // rather than lost.
-    const scroll = page.locator(synthNode("runtime.controllers.wizard.form.scroll"));
-    await expect(scroll).toHaveCount(1);
-    const argument = page.locator(synthNode("controller-wizard.twister.button.5.argument"));
-    await expect(argument).toHaveCount(1);
-    await argument.scrollIntoViewIfNeeded();
-    await expect(argument).toBeInViewport();
-  });
-
   // `seedControllers` adds rows but never opens one, so no criterion in this
   // file had ever seen a controller row's own editor -- its disclosure
   // toggle, a section toggle, or the mapping-group header underneath an open
   // section. That header is exactly where a too-tight column reservation
   // (the "Start Pos" column) shipped: nothing here had ever rendered it.
-  // Driven through the row's own disclosure and section-toggle controls, the
-  // same pattern the wizard chooser/form test above uses for its own driven
-  // state.
+  // Reached through Add alone: a newly added row opens with every section it
+  // lists already expanded, so the header is already on screen.
   //
   // This state is also re-checked across CONTROLLER_WIDTH_SWEEP instead of at
   // the single fixed viewport every other structural check in this file
@@ -1172,10 +1116,8 @@ test.describe("sru-48 named visual criteria", () => {
     await page.locator(synthNode("runtime.controllers.add_button")).click();
     await expect(page.locator(synthNode("runtime.controllers.row.0"))).toHaveCount(1);
 
-    await page.locator(synthNode("runtime.controllers.row.0.disclosure")).click();
     const encodersToggle = page.locator(synthNode("runtime.controllers.row.0.section.0.toggle"));
     await expect(encodersToggle).toBeVisible({ timeout: 10_000 });
-    await encodersToggle.click();
 
     // The state actually arrived, not just that nothing threw: the Encoders
     // Turn and Push group headers each carry one "Start Pos" column -- the

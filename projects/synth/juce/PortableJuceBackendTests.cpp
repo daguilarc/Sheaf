@@ -1441,7 +1441,7 @@ void TestDisabledSemanticControlsRenderDisabledAndKeepTheirState()
 
 void TestRetainedControlsFollowThePortableTreeNotTheirOwnState()
 {
-    // sru-33: a retained control follows the portable tree, not its own
+    // A retained control follows the portable tree, not its own
     // last user input, when the surface changes a selection or value
     // out-of-band (a refused edit reverting, or reconciliation choosing a
     // different device).
@@ -1508,7 +1508,7 @@ void TestRetainedControlsFollowThePortableTreeNotTheirOwnState()
 
 void TestContainerNodesRenderAsPanelsAndPaintNoLabel()
 {
-    // sru-33 host parity: a Row's or Section's own label paints nothing in
+    // Host parity: a Row's or Section's own label paints nothing in
     // either host. The browser backend writes textContent only for
     // Button/Label/StatusText, and this pins JUCE to the same rule so the
     // two hosts cannot drift.
@@ -1572,7 +1572,7 @@ void TestContainerNodesRenderAsPanelsAndPaintNoLabel()
 
 void TestDeclaredColumnBoundsResolveWithoutReflow()
 {
-    // scw-3 / sru-33: a form that declares explicit parent-local column
+    // A form that declares explicit parent-local column
     // bounds keeps them in JUCE instead of being reflowed into the
     // renderer's own wrapping cursor.
     RecordingSurface columnSurface;

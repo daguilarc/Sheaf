@@ -68,13 +68,8 @@ public:
             return true;
         };
         callbacks.saveRuntimeConfiguration = [this] {
-            if (engine_.SaveRuntimeConfiguration() !=
-                synth::RuntimeConfigFileStatus::Ok)
-            {
-                return false;
-            }
-            persistenceDirty_ = true;
-            return true;
+            return engine_.SaveRuntimeConfiguration() ==
+                   synth::RuntimeConfigFileStatus::Ok;
         };
         callbacks.setStatus = [](std::string) {};
         callbacks.onBack = std::move(onBack);
@@ -292,17 +287,7 @@ public:
 
     void SaveRuntimeConfiguration()
     {
-        if (engine_.SaveRuntimeConfiguration() == synth::RuntimeConfigFileStatus::Ok)
-        {
-            persistenceDirty_ = true;
-        }
-    }
-
-    bool ConsumePersistenceDirty()
-    {
-        const bool dirty = persistenceDirty_;
-        persistenceDirty_ = false;
-        return dirty;
+        engine_.SaveRuntimeConfiguration();
     }
 
 private:
@@ -345,7 +330,7 @@ private:
         callbacks.patchesRoot = [this] {
             return engine_.DataPaths().patchesRoot;
         };
-        callbacks.newPatch = [this] { engine_.Patches().NewPatch(); };
+        callbacks.newPatch = [this] { engine_.NewPatch(); };
         callbacks.savePatch = [this] { engine_.Patches().SavePatch(); };
         callbacks.savePatchAs = [this](const std::filesystem::path& path) {
             engine_.Patches().SavePatchAs(path);
@@ -354,9 +339,8 @@ private:
             engine_.Patches().SavePatchAsOverwrite(path);
         };
         callbacks.loadPatch = [this](const std::filesystem::path& path) {
-            engine_.Patches().LoadPatch(path);
+            engine_.LoadPatch(path);
         };
-        callbacks.revertPatch = [this] { engine_.Patches().RevertPatch(); };
         return callbacks;
     }
 
@@ -388,7 +372,6 @@ private:
     std::uint64_t cachedDeviceListRevision_ = 0;
     bool controllersDirty_ = true;
     bool instrumentSnapshotDirty_ = true;
-    bool persistenceDirty_ = false;
 };
 
 }  // namespace synth_browser

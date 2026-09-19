@@ -2272,7 +2272,7 @@ static void TestEveryPageAndAppResolvesAtTheSmallestDeclaredSurface()
     }
 }
 
-static void TestControllersWizardAndBraid4ResolveAtTheSmallestDeclaredSurface()
+static void TestControllersAndBraid4ResolveAtTheSmallestDeclaredSurface()
 {
     synth::MidiInstrumentConfig instrument;
     synth::MidiControllerSlot wrldSlot;
@@ -2295,59 +2295,8 @@ static void TestControllersWizardAndBraid4ResolveAtTheSmallestDeclaredSurface()
         return surface;
     };
 
-    const auto candidate = [](const char* suffix) {
-        return synth::WizardCandidate{
-            .wizardId = "com.sheaf.midi-fighter-twister",
-            .displayName = "MIDI Fighter Twister",
-            .kind = synth::MidiProfileKind::MfTwister,
-            .input = {std::string("twister-in") + suffix, "Midi Fighter Twister"},
-            .output = {std::string("twister-out") + suffix, "Midi Fighter Twister"}};
-    };
-
     const auto controllers = makeSurface();
     RequireResolves("the Controllers page", [&] { controllers->BuildTree(); });
-
-    // Two candidates open the chooser; one opens the form directly. Both wizard
-    // pages are producers, so both are resolved here.
-    const auto chooser = makeSurface();
-    chooser->SetDiscovery({.available = {candidate("-a"), candidate("-b")}});
-    chooser->DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
-    RequireResolves("the wizard chooser", [&] { chooser->BuildTree(); });
-    Require(FindNodeById(chooser->BuildTree(),
-                         synth::runtime_ui::NodeIds::WizardChooserCandidate(candidate("-a"))) != nullptr,
-            "the chooser really is the page under test");
-
-    const auto form = makeSurface();
-    form->SetDiscovery({.available = {candidate("-a")}});
-    form->DispatchAction(synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
-    RequireResolves("the wizard form", [&] { form->BuildTree(); });
-    const synth::ui::NodeTree formTree = form->BuildTree();
-    Require(FindNodeById(formTree, synth::runtime_ui::NodeIds::kWizardForm) != nullptr,
-            "the wizard form really is the page under test");
-
-    // The Twister column's declared height counted two gaps for four stacked
-    // children, so the last button row's error band sat six pixels outside it.
-    // "The form resolves" is satisfied by any height at or above the content,
-    // including one that is too tall, so what is pinned here is the equality --
-    // and the gap the old constant omitted, read off the resolved children
-    // rather than restated from the producer's private constants.
-    const synth::ui::Node& column = FindNode(formTree, "controller-wizard.twister.column.0");
-    const synth::ui::Node& heading = FindNode(formTree, "controller-wizard.twister.column.0.heading");
-    const synth::ui::Node& firstButton = FindNode(formTree, "controller-wizard.twister.button.0");
-    const synth::ui::Node& secondButton = FindNode(formTree, "controller-wizard.twister.button.1");
-    const synth::ui::Node& lastButton = FindNode(formTree, "controller-wizard.twister.button.2");
-    RequireNear(lastButton.bounds.y + lastButton.bounds.height,
-                column.bounds.height,
-                0.01f,
-                "the column is exactly as tall as its heading, its three button rows and the "
-                "three gaps between them -- neither six pixels short nor any pixels spare");
-    RequireNear(firstButton.bounds.y - (heading.bounds.y + heading.bounds.height),
-                secondButton.bounds.y - (firstButton.bounds.y + firstButton.bounds.height),
-                0.01f,
-                "the heading is separated from the first button row by the same gap the rows use, "
-                "which is the gap the old column height left out");
-    Require(lastButton.bounds.height > 0.0f && heading.bounds.height > 0.0f,
-            "the pinned column really contains a heading and a last button row");
 
     synth::ParameterManager manager;
     synth::MessageInBus uiBus(&manager);
@@ -2390,7 +2339,7 @@ namespace criteria = synth::ui::criteria;
 // 12 controllers put 598 of scroll content behind a 404 viewport at the 480
 // floor; 3 would fit and prove nothing about scrolling.
 constexpr std::size_t kFixtureControllerCount = 12;
-// Two candidates open the CHOOSER; one opens the form directly.
+// Two waiting candidates so "Available controllers" lists more than one entry.
 constexpr std::size_t kFixtureCandidateCount = 2;
 // Long enough to exceed the File panel's list viewport at either surface.
 constexpr std::size_t kFixtureListEntryCount = 24;
@@ -2441,22 +2390,6 @@ const std::vector<float>& StandardAppSpacing()
     return values;
 }
 
-// The wizard form's own spacing table, `TwisterFormLayout`, is private to
-// `src/ControllerWizard.cpp` and cannot be named from a test. Its values are
-// restated here rather than reached, which is weaker than every other entry in
-// this file -- and it is the one table that carries producer-side layout
-// arithmetic, which the layout contract bans. The outer wizard page furniture
-// is the Controllers page's, so those constants ARE named.
-const std::vector<float>& WizardFormSpacing()
-{
-    static const std::vector<float> values =
-        SharedSpacing({synth::runtime_ui::ControllersLayout::kPageMargin,
-                       synth::runtime_ui::ControllersLayout::kRowGap,
-                       8.0f,     // TwisterFormLayout::kMargin / kFieldGap / kFormGridLabelGap
-                       16.0f});  // TwisterFormLayout::kColumnGap
-    return values;
-}
-
 // A surface under test, with the exemptions it needs stated one by one. Every
 // entry in an exemption list is a disclosed residual, not a class of escape:
 // adding a node to one is a deliberate edit a reviewer can see.
@@ -2478,7 +2411,7 @@ struct CriteriaSurface {
     // The exact number of form controls this fixture puts on the surface.
     //
     // This is the anti-vacuity guard, and it is deliberately a total rather
-    // than `examined > 0`. On the Controllers page and the wizard form EVERY
+    // than `examined > 0`. On the Controllers page EVERY
     // form control is a table cell, so `examined > 0` is unsatisfiable there
     // without contriving the fixture -- while the risk it stands for, a new
     // uncaptioned control slipping in under an exception, is caught here
@@ -2931,37 +2864,6 @@ static void TestNamedVisualCriteriaHoldOnEveryPageAndApp()
              .uncaptioned = ControllerCaptionExceptions(kFixtureControllerCount,
                                                         controllers.surface->BuildTree()),
              .expectedFormControls = kFixtureControllerExpectedControls});
-
-        controllers.surface->DispatchAction(
-            synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
-        const synth::ui::NodeTree chooser = controllers.surface->BuildTree();
-        for (const synth::WizardCandidate& candidate : candidates)
-        {
-            Require(FindNodeById(chooser,
-                                 synth::runtime_ui::NodeIds::WizardChooserCandidate(candidate)) != nullptr,
-                    "the chooser really is the surface under test, with every candidate on it");
-        }
-        RequireSurfaceMeetsTheNamedCriteria(
-            {.name = "wizard chooser (2 candidates)",
-             .tree = chooser,
-             .spacing = &ControllersSpacing()});
-
-        controllers.surface->DispatchAction(synth::ui::Action::WithValue(
-            synth::runtime_ui::Actions::kWizardChoose,
-            synth::runtime_ui::NodeIds::WizardCandidateToken(candidates.front())));
-        const synth::ui::NodeTree wizardForm = controllers.surface->BuildTree();
-        Require(FindNodeById(wizardForm, synth::runtime_ui::NodeIds::kWizardForm) != nullptr,
-                "the wizard form really is the surface under test");
-        RequireSurfaceMeetsTheNamedCriteria(
-            {.name = "wizard form",
-             .tree = wizardForm,
-             .spacing = &WizardFormSpacing(),
-             // No containment exemption. `TwisterFormLayout` still asks for a
-             // 684-wide body on a 640 surface, but the page now hosts the
-             // spliced form in a `ScrollArea`, so that width is absorbed as
-             // scroll content instead of overhanging the page and being clipped
-             // away. `TestTheWizardFormIsReachableRatherThanClipped` pins it.
-             .expectedFormControls = 13});
     }
 
     // Braid 4 at the floor every surface must survive, and at the extent it
@@ -3232,12 +3134,12 @@ static void TestControllersRowFitsWithinFroggersNarrowestHost()
         synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleSection, "0:encoders"));
     requireFits("Twister Encoders open");
 
-    // Restore, Release and Reclaim are new controller-row lifecycle controls;
-    // the row's Preset combo and (for Launchpad) its Variant combo are gone.
+    // Restore is a new controller-row lifecycle control; the row's Preset
+    // combo is gone. A Launchpad row still shows its own Variant combo.
     // Cover every row state each control's visibility depends on, plus the
-    // Launchpad row -- the one kind that lost two combos instead of one --
-    // collapsed and expanded. Each fixture is asserted present/absent in the
-    // tree before its requireFits() call, so a passing fits-check can't be
+    // Launchpad row -- the one kind with its own extra combo -- collapsed
+    // and expanded. Each fixture is asserted present/absent in the tree
+    // before its requireFits() call, so a passing fits-check can't be
     // trivially true for a control that was never rendered.
     synth::MidiControllerSlot restoreDivergedRow;
     restoreDivergedRow.name = "Restore Diverged Twister";
@@ -3279,56 +3181,6 @@ static void TestControllersRowFitsWithinFroggersNarrowestHost()
             "what that preset generates");
     requireFits("row NOT showing Restore: resolved preset, config pristine");
 
-    synth::MidiControllerSlot releaseReadyRow;
-    releaseReadyRow.name = "Release Ready Generic";
-    releaseReadyRow.kind = synth::MidiProfileKind::Generic;
-    releaseReadyRow.wizardId = "froggers.generic";
-    releaseReadyRow.input = {"release-ready-in", "Release Ready In"};
-    releaseReadyRow.output = {"release-ready-out", "Release Ready Out"};
-    Require(instrument.AddController(std::move(releaseReadyRow)),
-            "fixture adds the Release-ready row");
-    connection.controllers.push_back({});
-    surface.MarkDirty();
-    surface.RefreshOnTick();
-    const synth::ui::NodeTree releaseReadyTree = surface.BuildTree();
-    Require(FindNodeById(releaseReadyTree, synth::runtime_ui::NodeIds::ControllerBlacklist(6)) !=
-                nullptr,
-            "Release is present: resolved wizard id and both endpoints bound");
-    requireFits("row showing Release: resolved wizard id, both endpoints bound");
-
-    synth::MidiControllerSlot releaseNoDeviceRow;
-    releaseNoDeviceRow.name = "Release No Device Generic";
-    releaseNoDeviceRow.kind = synth::MidiProfileKind::Generic;
-    releaseNoDeviceRow.wizardId = "froggers.generic";
-    Require(instrument.AddController(std::move(releaseNoDeviceRow)),
-            "fixture adds the Release-no-device row");
-    connection.controllers.push_back({});
-    surface.MarkDirty();
-    surface.RefreshOnTick();
-    const synth::ui::NodeTree releaseNoDeviceTree = surface.BuildTree();
-    Require(FindNodeById(releaseNoDeviceTree, synth::runtime_ui::NodeIds::ControllerBlacklist(7)) ==
-                nullptr,
-            "Release is absent: resolved wizard id but neither endpoint is bound");
-    requireFits("row NOT showing Release: no device bound");
-
-    synth::MidiControllerSlot releaseUnresolvedWizardRow;
-    releaseUnresolvedWizardRow.name = "Release Unresolved Wizard";
-    releaseUnresolvedWizardRow.kind = synth::MidiProfileKind::Generic;
-    releaseUnresolvedWizardRow.wizardId = "com.example.missing-wizard";
-    releaseUnresolvedWizardRow.input = {"release-unresolved-in", "Release Unresolved In"};
-    releaseUnresolvedWizardRow.output = {"release-unresolved-out", "Release Unresolved Out"};
-    Require(instrument.AddController(std::move(releaseUnresolvedWizardRow)),
-            "fixture adds the Release-unresolved-wizard row");
-    connection.controllers.push_back({});
-    surface.MarkDirty();
-    surface.RefreshOnTick();
-    const synth::ui::NodeTree releaseUnresolvedWizardTree = surface.BuildTree();
-    Require(FindNodeById(releaseUnresolvedWizardTree,
-                        synth::runtime_ui::NodeIds::ControllerBlacklist(8)) == nullptr,
-            "Release is absent: both endpoints bound but the wizard id resolves to no known "
-            "descriptor");
-    requireFits("row NOT showing Release: wizard id does not resolve");
-
     synth::MidiControllerSlot releasedRow;
     releasedRow.name = "Released Twister";
     releasedRow.kind = synth::MidiProfileKind::MfTwister;
@@ -3342,16 +3194,12 @@ static void TestControllersRowFitsWithinFroggersNarrowestHost()
     surface.RefreshOnTick();
     const synth::ui::NodeTree releasedTree = surface.BuildTree();
     const synth::ui::Node* releasedBadge =
-        FindNodeById(releasedTree, synth::runtime_ui::NodeIds::ControllerBadge(9));
+        FindNodeById(releasedTree, synth::runtime_ui::NodeIds::ControllerBadge(6));
     Require(releasedBadge != nullptr && releasedBadge->text == "Released",
             "the released row shows its Released badge");
-    Require(FindNodeById(releasedTree, synth::runtime_ui::NodeIds::ControllerRemoveBlacklist(9)) !=
-                nullptr,
-            "the released row shows Reclaim");
-    Require(FindNodeById(releasedTree, synth::runtime_ui::NodeIds::ControllerConfigure(9)) !=
-                nullptr,
-            "the released row shows Configure because its wizard id resolves");
-    requireFits("released row: Released badge, Reclaim, Configure");
+    Require(FindNodeById(releasedTree, synth::runtime_ui::NodeIds::ControllerDelete(6)) != nullptr,
+            "the released row shows Delete");
+    requireFits("released row: Released badge, Delete");
 
     synth::MidiControllerSlot launchpadExtraRow;
     launchpadExtraRow.name = "Launchpad Extra";
@@ -3364,7 +3212,7 @@ static void TestControllersRowFitsWithinFroggersNarrowestHost()
     requireFits("Launchpad row collapsed");
 
     surface.DispatchAction(
-        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleConfig, "10"));
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleConfig, "7"));
     requireFits("Launchpad row expanded");
 
     const synth::ui::Node* messageCombo = FindNodeById(
@@ -3380,10 +3228,10 @@ static void TestControllersRowFitsWithinFroggersNarrowestHost()
 }
 
 // `TestEveryPageAndAppResolvesAtTheSmallestDeclaredSurface` and its
-// wizard/Braid 4 twin prove these three surfaces RESOLVE at the 480 floor and,
-// for the Controllers page, the chooser and Braid 4, nothing more: deleting
-// the overflow gate entirely would leave all three green, because only
-// Sync, Audio, the File page and the wizard column carry positive geometry
+// Controllers/Braid 4 twin prove these two surfaces RESOLVE at the 480 floor
+// and, for the Controllers page and Braid 4, nothing more: deleting
+// the overflow gate entirely would leave both green, because only
+// Sync, Audio, and the File page carry positive geometry
 // pins. What follows is the treatment the others already have -- what each
 // surface's absorbing region actually DOES with the difference between two
 // surface heights, and what the furniture around it keeps.
@@ -3438,66 +3286,7 @@ static void TestTheNamedCriteriaAreTheOnesThePlaywrightSuiteNames()
     }
 }
 
-// A wizard declares its own form width, and the host page cannot re-measure a
-// third-party one. `TwisterFormLayout` asked for 664 against the page's 640-wide
-// body, so before the page hosted the spliced form in a `ScrollArea` the form
-// overhung its parent by 28px and both backends clipped the right column's
-// argument fields away silently. The overflow gate is the STACKING axis, so a
-// cross-axis overrun of a fixed-extent child went straight past it; the
-// containment criterion is what found it.
-//
-// The form is 684 wide today, not 664: widening `kMessageWidth` so the message
-// selectors stopped clipping their own text made the overhang bigger. This test
-// therefore pins the mechanism rather than either number.
-//
-// This pins the repair positively rather than trusting containment's absence of
-// a violation: the scroll region publishes a content width that covers the
-// form's whole declared width, and the fields that were being cut off are
-// inside it.
-static void TestTheWizardFormIsReachableRatherThanClipped()
-{
-    ControllersFixture controllers(kSmallestDeclaredSurface, 0);
-    const synth::WizardCandidate candidate = FixtureCandidate("-0");
-    controllers.surface->SetDiscovery({.available = {candidate}});
-    controllers.surface->DispatchAction(
-        synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
-    const synth::ui::NodeTree tree = controllers.surface->BuildTree();
-
-    const std::string scrollId = std::string(synth::runtime_ui::NodeIds::kWizardForm) + ".scroll";
-    const synth::ui::Node& scroll = FindNode(tree, scrollId.c_str());
-    const synth::ui::Node& formBody = FindNode(tree, "controller-wizard.twister.body");
-
-    // The premise: the form really is wider than the region showing it, so this
-    // test is about a form that does not fit rather than one that happens to.
-    Require(formBody.bounds.width > scroll.bounds.width,
-            "the Twister form really is wider than the surface the page can give it");
-    RequireNear(scroll.scrollContentWidth,
-                formBody.bounds.x + formBody.bounds.width,
-                0.01f,
-                "the scroll region publishes a content width reaching the form's right edge, so "
-                "the whole form is reachable rather than clipped");
-    Require(scroll.bounds.x + scroll.bounds.width <=
-                FindNode(tree, std::string(synth::runtime_ui::NodeIds::kWizardForm) + ".body")
-                        .bounds.width +
-                    0.01f,
-            "and the region itself stays inside the page, so nothing overhangs the surface");
-
-    // The specific controls the old overhang cut off: the right column's
-    // argument fields sat past the page's right edge and were unreachable.
-    for (int buttonIx = 3; buttonIx < 6; ++buttonIx)
-    {
-        const synth::ui::Node& argument =
-            FindNode(tree,
-                     ("controller-wizard.twister.button." + std::to_string(buttonIx) + ".argument")
-                         .c_str());
-        const synth::ui::Node* row =
-            FindNodeById(tree, "controller-wizard.twister.button." + std::to_string(buttonIx));
-        Require(row != nullptr && argument.bounds.width > 0.0f,
-                "every right-column argument field resolves to a real extent");
-    }
-}
-
-static void TestControllersChooserAndBraid4PinTheirAbsorbingRegions()
+static void TestControllersAndBraid4PinTheirAbsorbingRegions()
 {
     // --- Controllers: a ScrollArea absorbs, and the list stays scrollable. ---
     ControllersFixture shortControllers(kSmallestDeclaredSurface, kFixtureControllerCount);
@@ -3541,60 +3330,6 @@ static void TestControllersChooserAndBraid4PinTheirAbsorbingRegions()
                 0.01f,
                 "the content extent follows the list, not the surface: a taller window scrolls less, "
                 "it does not grow the list");
-
-    // --- The wizard chooser: its body absorbs, its candidates keep their rows. ---
-    ControllersFixture shortChooser(kSmallestDeclaredSurface, 0);
-    ControllersFixture tallChooser(kTallerSurface, 0);
-    std::vector<synth::WizardCandidate> candidates;
-    for (std::size_t ix = 0; ix < kFixtureCandidateCount; ++ix)
-    {
-        candidates.push_back(FixtureCandidate(("-" + std::to_string(ix)).c_str()));
-    }
-    for (ControllersFixture* fixture : {&shortChooser, &tallChooser})
-    {
-        fixture->surface->SetDiscovery({.available = candidates});
-        fixture->surface->DispatchAction(
-            synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
-    }
-    const std::string chooserBody = std::string(synth::runtime_ui::NodeIds::kWizardChooser) + ".body";
-    const synth::ui::NodeTree chooserAtFloor = shortChooser.surface->BuildTree();
-    RequireRegionAbsorbsTheDifference(
-        chooserAtFloor,
-        tallChooser.surface->BuildTree(),
-        chooserBody,
-        {std::string(synth::runtime_ui::NodeIds::kWizardChooser) + ".actions",
-         std::string(synth::runtime_ui::NodeIds::kWizardChooser) + ".heading",
-         synth::runtime_ui::NodeIds::WizardChooserCandidate(candidates.front()),
-         synth::runtime_ui::NodeIds::WizardChooserCandidate(candidates.back())},
-        "the wizard chooser's body absorbs the whole difference between surface heights");
-
-    const synth::ui::Node& firstCandidate =
-        FindNode(chooserAtFloor,
-                 synth::runtime_ui::NodeIds::WizardChooserCandidate(candidates.front()).c_str());
-    const synth::ui::Node& lastCandidate =
-        FindNode(chooserAtFloor,
-                 synth::runtime_ui::NodeIds::WizardChooserCandidate(candidates.back()).c_str());
-    const synth::ui::Node& chooserHeading =
-        FindNode(chooserAtFloor,
-                 (std::string(synth::runtime_ui::NodeIds::kWizardChooser) + ".heading").c_str());
-    RequireNear(firstCandidate.bounds.height,
-                synth::runtime_ui::ControllersLayout::kBackRowHeight,
-                0.01f,
-                "a chooser candidate keeps a full row's height rather than an intrinsic sliver");
-    RequireNear(firstCandidate.bounds.y - (chooserHeading.bounds.y + chooserHeading.bounds.height),
-                synth::runtime_ui::ControllersLayout::kRowGap,
-                0.01f,
-                "the first candidate follows the heading by the chooser's own row gap");
-    RequireNear(lastCandidate.bounds.y,
-                firstCandidate.bounds.y +
-                    static_cast<float>(kFixtureCandidateCount - 1) *
-                        (synth::runtime_ui::ControllersLayout::kBackRowHeight +
-                         synth::runtime_ui::ControllersLayout::kRowGap),
-                0.01f,
-                "candidates stack one declared row and one row gap apart, in discovery order");
-    Require(lastCandidate.bounds.y + lastCandidate.bounds.height <=
-                FindNode(chooserAtFloor, chooserBody).bounds.height,
-            "every candidate of the named fixture is inside the body at the 480 floor");
 
     // --- Braid 4: the body absorbs, the title and bay keep their extents. ---
     Braid4Fixture shortBraid(640.0f, kSmallestDeclaredSurface.height);
@@ -3693,8 +3428,7 @@ static void TestFilePagePinsItsResolvedGeometry()
     const std::vector<const char*> commandIds{synth::runtime_ui::NodeIds::kFileNew,
                                               synth::runtime_ui::NodeIds::kFileSave,
                                               synth::runtime_ui::NodeIds::kFileSaveAs,
-                                              synth::runtime_ui::NodeIds::kFileLoad,
-                                              synth::runtime_ui::NodeIds::kFileRevert};
+                                              synth::runtime_ui::NodeIds::kFileLoad};
     float expectedX = 0.0f;
     for (const char* id : commandIds)
     {
@@ -4074,12 +3808,11 @@ int main()
     TestSidebarDeadlineNodeTextIsWholePercent();
     TestEveryRebuiltPageAbsorbsAtTheSmallestDeclaredSurface();
     TestEveryPageAndAppResolvesAtTheSmallestDeclaredSurface();
-    TestControllersWizardAndBraid4ResolveAtTheSmallestDeclaredSurface();
+    TestControllersAndBraid4ResolveAtTheSmallestDeclaredSurface();
     TestNamedVisualCriteriaHoldOnEveryPageAndApp();
     TestControllersRowFitsWithinFroggersNarrowestHost();
     TestTheNamedCriteriaAreTheOnesThePlaywrightSuiteNames();
-    TestTheWizardFormIsReachableRatherThanClipped();
-    TestControllersChooserAndBraid4PinTheirAbsorbingRegions();
+    TestControllersAndBraid4PinTheirAbsorbingRegions();
 
     TestGangedRandomLfoVisualizer();
     TestGangedRandomLfoBackgroundOptOut();
@@ -4951,7 +4684,6 @@ int main()
     Require(FindNodeById(fileTree, synth::runtime_ui::NodeIds::kFileSave) != nullptr, "file save node");
     Require(FindNodeById(fileTree, synth::runtime_ui::NodeIds::kFileSaveAs) != nullptr, "file save as node");
     Require(FindNodeById(fileTree, synth::runtime_ui::NodeIds::kFileLoad) != nullptr, "file load node");
-    Require(FindNodeById(fileTree, synth::runtime_ui::NodeIds::kFileRevert) != nullptr, "file revert node");
     Require(FindNodeById(fileTree, synth::runtime_ui::NodeIds::kFilePatchName) != nullptr, "file patch name node");
     Require(FindNodeById(fileTree, synth::runtime_ui::NodeIds::kFileStatus) != nullptr, "file status node");
 
@@ -5316,37 +5048,6 @@ int main()
                     ("controllers group header row " + id + " must not reserve an empty band").c_str());
         }
     }
-
-    synth::WizardCandidate twisterCandidate{
-        .wizardId = "com.sheaf.midi-fighter-twister",
-        .displayName = "MIDI Fighter Twister",
-        .kind = synth::MidiProfileKind::MfTwister,
-        .input = {"twister-in", "Midi Fighter Twister"},
-        .output = {"twister-out", "Midi Fighter Twister"}};
-    controllersSurface.SetDiscovery({.available = {twisterCandidate}});
-    const synth::ui::NodeTree launchTree = controllersSurface.BuildTree();
-    const synth::ui::Node* wizardLaunch = FindNodeById(
-        launchTree, synth::runtime_ui::NodeIds::kWizardLaunch);
-    Require(wizardLaunch != nullptr && wizardLaunch->enabled && wizardLaunch->action.has_value() &&
-                wizardLaunch->action->name == synth::runtime_ui::Actions::kWizardOpen,
-            "portable Controllers page exposes the enabled wizard launch action");
-    controllersSurface.DispatchAction(*wizardLaunch->action);
-    const synth::ui::NodeTree wizardTree = controllersSurface.BuildTree();
-    const synth::ui::Node* wizardRoot = FindNodeById(
-        wizardTree, synth::runtime_ui::NodeIds::kWizardForm);
-    const std::string wizardBody = std::string(synth::runtime_ui::NodeIds::kWizardForm) + ".body";
-    const std::string wizardActions =
-        std::string(synth::runtime_ui::NodeIds::kWizardForm) + ".actions";
-    Require(CountRootNodes(wizardTree) == 1 &&
-                wizardRoot != nullptr &&
-                NodeHasChild(wizardRoot, synth::ui::NodeId(wizardBody)) &&
-                IsDescendantOf(wizardTree, "controller-wizard.twister.body", wizardBody) &&
-                IsDescendantOf(wizardTree, "controller-wizard.twister.encoder-slot", wizardBody) &&
-                NodeHasChild(FindNodeById(wizardTree, wizardActions),
-                             synth::ui::NodeId(synth::runtime_ui::NodeIds::kWizardSubmit)) &&
-                NodeHasChild(FindNodeById(wizardTree, wizardActions),
-                             synth::ui::NodeId(synth::runtime_ui::NodeIds::kWizardIgnore)),
-            "portable wizard session composes the form and workflow actions into one tree");
 
     return 0;
 }

@@ -1253,7 +1253,7 @@ TEST_CASE(MfTwisterWizardGeneratesAnActiveKindValidInstrumentSlot) {
     std::unique_ptr<synth::ControllerWizard> wizard = synth::MakeControllerWizard(
         synth::MakeControllerWizardRegistry(synth::MidiAppCatalog{}), "com.sheaf.midi-fighter-twister");
     REQUIRE_TRUE(wizard != nullptr);
-    std::unique_ptr<synth::ControllerConfigForm> baseForm = wizard->ConfigForm(std::nullopt);
+    std::unique_ptr<synth::ControllerConfigForm> baseForm = wizard->ConfigForm();
     auto* form = dynamic_cast<synth::MfTwisterConfigForm*>(baseForm.get());
     REQUIRE_TRUE(form != nullptr);
     form->encoderSlotText = "4";

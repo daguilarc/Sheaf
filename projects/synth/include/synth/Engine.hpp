@@ -219,14 +219,30 @@ public:
     //      pre-startup-patch
     //      rebuild never invokes midiProcessorsRebuiltCallback_, since there
     //      is nothing new for a host to react to yet)
-    //   8. startup patch: find LatestPatchDirectory(dataPaths_.patchesRoot); if
-    //      found, patchManager_.LoadPatch(dir), then ApplyPendingPatchMessages()
-    //      (drains patchInputBus_ synchronously). Patch files contain
-    //      synthesizer parameter values only; MIDI/audio configuration is loaded
-    //      separately from runtime config, so startup patch load does not rebuild
-    //      MIDI processors or fire host reopen/audio callbacks. Finally
-    //      patchManager_.ProcessResponses(). A missing/empty patchesRoot, or a
-    //      startup patch that fails to apply, is skipped silently.
+    //   8. startup patch (sar-8): lastPatchVersionRecord_, populated by
+    //      LoadRuntimeConfiguration() above, selects what to open, then
+    //      drains via ApplyPendingPatchMessages()/patchManager_.ProcessResponses()
+    //      (patchInputBus_ synchronously). A patch file carries synthesizer
+    //      parameter values, plus a MIDI instrument section when the
+    //      application's catalog sets patchCarriesMappings; MIDI/audio
+    //      configuration is otherwise loaded separately from runtime config,
+    //      and a startup patch load never rebuilds MIDI processors or fires
+    //      host reopen/audio callbacks:
+    //        - no record (a configuration saved before this record existed,
+    //          or none at all): LatestPatchDirectory(patchesRoot) is opened,
+    //          restoring parameters and, under
+    //          patchCarriesMappings, that patch's own instrument, then the
+    //          opened version is recorded and the configuration saved;
+    //        - a recorded version that still exists: opened by its exact
+    //          file, restoring parameters only and leaving the instrument
+    //          the runtime configuration already installed;
+    //        - a recorded version that no longer exists: the same
+    //          LatestPatchDirectory fallback, parameters only, and the
+    //          opened version is recorded;
+    //        - an explicitly empty record (New was the last action before
+    //          relaunch): nothing is opened.
+    //      A missing/empty patchesRoot, or a startup patch that fails to
+    //      apply, is skipped silently.
     void Initialize() {
         RuntimeConfig config = App::Config();
         ValidateRuntimeConfig(config);
@@ -241,7 +257,7 @@ public:
         // the default BEFORE any startup patch applies. Without this,
         // defaultInstrumentConfig_/defaultAudioDeviceState_ stay
         // default-constructed (empty), so a later RevertAllToDefault (via
-        // NewPatch()/RevertPatch() with no saved patch) would reset MIDI
+        // NewPatch() with no saved patch) would reset MIDI
         // routing/audio device selection to empty instead of back to the
         // app's real default — mirroring the old miniapp's post-construction
         // `defaultMidiProfileConfig_ = midiProfileConfig_;` snapshot (the
@@ -274,12 +290,44 @@ public:
 
         RebuildMidiProcessors();
 
-        const std::optional<std::filesystem::path> patchDir = LatestPatchDirectory(dataPaths_.patchesRoot);
-        if (patchDir.has_value()) {
-            patchManager_.LoadPatch(*patchDir);
-            ApplyPendingPatchMessages();
-            patchManager_.ProcessResponses();
+        if (!lastPatchVersionRecord_.has_value()) {
+            // No record: a configuration saved before sar-8's record
+            // existed, or no configuration at all. Restore parameters and,
+            // under patchCarriesMappings, the patch's own instrument, then
+            // start recording so every later launch follows the
+            // recorded-version rules below.
+            const std::optional<std::filesystem::path> patchDir = LatestPatchDirectory(dataPaths_.patchesRoot);
+            if (patchDir.has_value()) {
+                const PatchCommandResult result = patchManager_.LoadPatch(*patchDir);
+                ApplyPendingPatchMessages(/*applyInstrument=*/true);
+                patchManager_.ProcessResponses();
+                if (result.status == PatchCommandStatus::Ok) {
+                    RecordPatchVersionAndSave(result.path);
+                }
+            }
+        } else if (!lastPatchVersionRecord_->empty()) {
+            const std::filesystem::path recordedFile = dataPaths_.patchesRoot / *lastPatchVersionRecord_;
+            std::error_code ec;
+            if (std::filesystem::exists(recordedFile, ec) && !ec) {
+                patchManager_.LoadPatch(recordedFile);
+                ApplyPendingPatchMessages(/*applyInstrument=*/false);
+                patchManager_.ProcessResponses();
+            } else {
+                // The recorded file is gone: fall back to the newest saved
+                // version, restoring its sound only, and re-record it.
+                const std::optional<std::filesystem::path> patchDir = LatestPatchDirectory(dataPaths_.patchesRoot);
+                if (patchDir.has_value()) {
+                    const PatchCommandResult result = patchManager_.LoadPatch(*patchDir);
+                    ApplyPendingPatchMessages(/*applyInstrument=*/false);
+                    patchManager_.ProcessResponses();
+                    if (result.status == PatchCommandStatus::Ok) {
+                        RecordPatchVersionAndSave(result.path);
+                    }
+                }
+            }
         }
+        // else: the record is explicitly empty -- New was the last action
+        // before this launch, so no patch opens.
     }
 
     // Stores negotiated output-audio values, prepares the MasterClock first,
@@ -550,10 +598,16 @@ public:
         if (patchResult.status != PatchCommandStatus::NoCompletion) {
             lastTickPatchResult_ = patchResult;
             // slog-7: INFO-log non-NoCompletion patch command results (status
-            // name + path) so patch save/load/revert activity is visible in
+            // name + path) so patch new/save/load activity is visible in
             // the session log.
             INFO("MessageThreadTick: patch command result status=%s path=%s",
                  PatchCommandStatusName(patchResult.status), patchResult.path.string().c_str());
+            if (patchResult.status == PatchCommandStatus::Written) {
+                // A Save/SaveAs/SaveAsOverwrite just landed on disk: record
+                // the version it wrote as the one to reopen at the next
+                // launch (sar-8).
+                RecordPatchVersionAndSave(patchResult.path);
+            }
         }
 
         // A loaded patch's midiInstrument section (staged by the patch
@@ -571,6 +625,10 @@ public:
             EditInstrument([&instrumentToApply](MidiInstrumentConfig& live) {
                 live = std::move(*instrumentToApply);
             });
+            // A patch opened from the File page still applies its instrument
+            // under patchCarriesMappings (sar-8); once applied, the runtime
+            // configuration is saved so the next launch keeps it.
+            SaveRuntimeConfiguration();
         }
 
         for (MidiControllerProfileResult& processors : midiProcessors_) {
@@ -699,9 +757,11 @@ public:
             loadedAudioDevice = audioDeviceState_;
         }
 
-        RuntimeConfigFileStatus status =
-            LoadRuntimeConfigFile(dataPaths_.configFile, loadedInstrument, loadedAudioDevice, loadedSync);
+        std::optional<std::string> loadedPatchVersion;
+        RuntimeConfigFileStatus status = LoadRuntimeConfigFile(
+            dataPaths_.configFile, loadedInstrument, loadedAudioDevice, loadedSync, &loadedPatchVersion);
         if (status == RuntimeConfigFileStatus::Ok) {
+            lastPatchVersionRecord_ = loadedPatchVersion;
             if (!masterClock_.ApplySyncConfig(loadedSync)) {
                 status = RuntimeConfigFileStatus::Invalid;
             } else {
@@ -721,6 +781,14 @@ public:
     }
 
     RuntimeConfigFileStatus SaveRuntimeConfiguration() const {
+        // No data root configured (a bare test Engine that never called
+        // SetRuntimeDataPaths): there is nowhere to write, and staying quiet
+        // here keeps such tests free of stray temp-file I/O now that saves
+        // can be triggered internally (patch open/save/new), not only by an
+        // explicit host call.
+        if (dataPaths_.configFile.empty()) {
+            return RuntimeConfigFileStatus::IOError;
+        }
         MidiInstrumentConfig instrument;
         AudioDeviceState audioDevice;
         {
@@ -731,10 +799,46 @@ public:
 
         const RuntimeConfigFileStatus status =
             SaveRuntimeConfigFile(dataPaths_.configFile, instrument, audioDevice,
-                                  SyncConfigurationSnapshot());
+                                  SyncConfigurationSnapshot(), lastPatchVersionRecord_);
+        if (status == RuntimeConfigFileStatus::Ok) {
+            runtimeConfigSaveGeneration_.fetch_add(1, std::memory_order_relaxed);
+        }
         const std::string path = dataPaths_.configFile.string();
         INFO("Runtime config save status=%s path=%s", RuntimeConfigFileStatusName(status), path.c_str());
         return status;
+    }
+
+    // Advances by one on every successful SaveRuntimeConfiguration() write,
+    // from any caller: a page's save callback, an explicit host save, or a
+    // save the engine makes on its own after opening a patch or starting a
+    // new one. The browser runtime reads this once per tick to learn its
+    // persisted state needs flushing to IndexedDB, rather than each caller
+    // separately flagging that it wrote.
+    std::uint64_t RuntimeConfigSaveGeneration() const noexcept {
+        return runtimeConfigSaveGeneration_.load(std::memory_order_relaxed);
+    }
+
+    // Opens path and records it as the version to reopen at the next
+    // launch. Hosts call this instead of Patches().LoadPatch() so every
+    // Load records and saves (sar-8); a caller that only wants the patch
+    // command itself, with no record, still has Patches().LoadPatch().
+    PatchCommandResult LoadPatch(const std::filesystem::path& path) {
+        const PatchCommandResult result = patchManager_.LoadPatch(path);
+        if (result.status == PatchCommandStatus::Ok) {
+            RecordPatchVersionAndSave(result.path);
+        }
+        return result;
+    }
+
+    // Starts a new patch and records that no patch is open. Hosts call this
+    // instead of Patches().NewPatch() for the same reason LoadPatch() above
+    // wraps Patches().LoadPatch().
+    PatchCommandResult NewPatch() {
+        const PatchCommandResult result = patchManager_.NewPatch();
+        if (result.status == PatchCommandStatus::Ok) {
+            RecordPatchVersionAndSave(std::filesystem::path{});
+        }
+        return result;
     }
 
     // Number of per-controller processor chains currently built --
@@ -890,7 +994,7 @@ public:
     // (pendingPatchMessage_/arenaGrowPending_). PatchManager::HasPendingSave()
     // is not a substitute: it reflects PatchManager's own dispatch-time
     // bookkeeping (reset as soon as a new patch command is enqueued, e.g. by
-    // RevertPatch()/NewPatch()), not whether the engine's drain has actually
+    // NewPatch()), not whether the engine's drain has actually
     // applied the queued message yet. Exposed so tests can observe the
     // barrier directly without depending on that unrelated bookkeeping.
     bool HasStashedPatchMessageForTest() const { return pendingPatchMessage_.has_value(); }
@@ -1354,7 +1458,14 @@ private:
         pendingPatchInstrument_ = std::move(loaded);
     }
 
-    void ApplyPendingPatchMessages() {
+    // applyInstrument selects which of two startup restores Initialize()
+    // wants (sar-8): true is the no-record restore (parameters and, under
+    // patchCarriesMappings, the patch's own instrument too), used only the
+    // first time a runtime configuration is missing its patch-version
+    // record. false restores parameters only, leaving the instrument the
+    // runtime configuration already installed -- every other startup case.
+    void ApplyPendingPatchMessages(bool applyInstrument) {
+        const bool wantInstrument = applyInstrument && midiCatalog_.patchCarriesMappings;
         PatchMessageIn message;
         while (patchInputBus_.Pop(message)) {
             PatchApplyStatus status;
@@ -1364,7 +1475,7 @@ private:
                 status = ApplyPatchMessageAndNotifyApp(message, manager_, instrumentConfig_, defaultInstrumentConfig_,
                                            audioDeviceState_, defaultAudioDeviceState_, patchOutputBus_,
                                            serializationContext_, midiCatalog_.patchCarriesMappings,
-                                           midiCatalog_.patchCarriesMappings ? &loadedInstrument : nullptr);
+                                           wantInstrument ? &loadedInstrument : nullptr);
                 if (status == PatchApplyStatus::ArenaExhausted) {
                     // Pre-audio only: growing here is safe because the audio
                     // thread has not started running ProcessBlock yet.
@@ -1372,11 +1483,31 @@ private:
                     status = ApplyPatchMessageAndNotifyApp(message, manager_, instrumentConfig_, defaultInstrumentConfig_,
                                                audioDeviceState_, defaultAudioDeviceState_, patchOutputBus_,
                                                serializationContext_, midiCatalog_.patchCarriesMappings,
-                                               midiCatalog_.patchCarriesMappings ? &loadedInstrument : nullptr);
+                                               wantInstrument ? &loadedInstrument : nullptr);
                 }
             }
             StashLoadedPatchInstrument(loadedInstrument);
         }
+    }
+
+    // versionFile relative to dataPaths_.patchesRoot, or its full string when
+    // it does not resolve under the patches root (should not happen in
+    // production, where every version file PatchManager reports lives under
+    // patchesRoot; kept as a fallback rather than a defensive failure).
+    std::string RelativePatchVersion(const std::filesystem::path& versionFile) const {
+        std::error_code ec;
+        const std::filesystem::path relative =
+            std::filesystem::relative(versionFile, dataPaths_.patchesRoot, ec);
+        return (ec || relative.empty()) ? versionFile.string() : relative.string();
+    }
+
+    // Sets lastPatchVersionRecord_ and saves the runtime configuration, so
+    // the record and the file agree the moment either changes (sar-8).
+    // versionFile empty records "no patch is open" (New); otherwise it is
+    // resolved relative to the patches root.
+    void RecordPatchVersionAndSave(const std::filesystem::path& versionFile) {
+        lastPatchVersionRecord_ = versionFile.empty() ? std::string() : RelativePatchVersion(versionFile);
+        SaveRuntimeConfiguration();
     }
 
     // Members are declared in dependency order: buses reference both managers,
@@ -1473,6 +1604,16 @@ private:
     PatchSerializationContext serializationContext_;
     RuntimeConfig config_;
     RuntimeDataPaths dataPaths_;
+    // See RuntimeConfigSaveGeneration()'s comment; mutable because
+    // SaveRuntimeConfiguration() is const.
+    mutable std::atomic<std::uint64_t> runtimeConfigSaveGeneration_{0};
+    // The patch version file the player last opened or saved, relative to
+    // dataPaths_.patchesRoot: nullopt before LoadRuntimeConfiguration() has
+    // run or when a loaded configuration predates this record; empty once
+    // New has recorded that no patch is open; otherwise the version to
+    // reopen at the next launch. Read by SaveRuntimeConfiguration() (message-
+    // thread/pre-audio only, like dataPaths_ itself), so no lock is needed.
+    std::optional<std::string> lastPatchVersionRecord_;
     AppContext context_;
     App app_;
     // Empty unless App declares MidiCatalog() (HasMidiCatalog<App>); read

@@ -398,14 +398,12 @@ private:
         return IsOneOf(action, Actions::kSyncActions);
     }
 
-    // The prefix rules are not membership: a per-controller or wizard-step
-    // action carries an index the page composes at build time, so no fixed set
-    // can hold them. The fixed half reads the page's array like every other
-    // surface.
+    // The prefix rule is not membership: a per-controller action carries an
+    // index the page composes at build time, so no fixed set can hold it. The
+    // fixed half reads the page's array like every other surface.
     static bool IsControllersAction(std::string_view action)
     {
         return IsOneOf(action, Actions::kControllersActions) ||
-               action.starts_with("controller-wizard.") ||
                action.starts_with("runtime.controllers.controller.");
     }
 

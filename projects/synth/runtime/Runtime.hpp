@@ -225,7 +225,7 @@ public:
         engine_.SetRuntimeDataPaths(dataPaths_);
 
         // Wired before Initialize() so future runtime-config-initiated audio
-        // changes can be applied through the same host path. Patch load/revert
+        // changes can be applied through the same host path. Patch load
         // is parameter-only and never fires this callback.
         engine_.SetAudioDeviceChangedCallback([this] { OnEngineAudioDeviceChanged(); });
 
@@ -507,7 +507,7 @@ public:
     }
 
     void NewPatch() {
-        const synth::PatchCommandResult result = engine_.Patches().NewPatch();
+        const synth::PatchCommandResult result = engine_.NewPatch();
         LogPatchCommand("NewPatch", result);
     }
 
@@ -531,16 +531,11 @@ public:
     }
 
     void LoadPatch(const std::filesystem::path& path) {
-        const synth::PatchCommandResult result = engine_.Patches().LoadPatch(path);
+        const synth::PatchCommandResult result = engine_.LoadPatch(path);
         LogPatchCommand("LoadPatch", result);
     }
 
     void LoadPatch(const juce::File& file) { LoadPatch(std::filesystem::path(file.getFullPathName().toStdString())); }
-
-    void RevertPatch() {
-        const synth::PatchCommandResult result = engine_.Patches().RevertPatch();
-        LogPatchCommand("RevertPatch", result);
-    }
 
 private:
     // The input channel count the host most recently negotiated or delivered,
@@ -865,7 +860,7 @@ private:
         }
     }
 
-    // engine_.SetAudioDeviceChangedCallback's target. Patch load/revert is
+    // engine_.SetAudioDeviceChangedCallback's target. Patch load is
     // parameter-only and never reaches this path; it is reserved for
     // runtime-config-initiated audio changes that are sourced from
     // engine.AudioDeviceSnapshot() instead of a combo pick. The callback

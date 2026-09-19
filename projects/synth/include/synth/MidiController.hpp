@@ -956,8 +956,8 @@ struct MidiControllerProfileConfig {
 
 // The one hex encoder/parser every caller that turns bytes into hex text (or
 // back) shares: FormatSysExHex/ParseSysExHex below, and the Controllers
-// page's opaque node-id/action tokens (WizardCandidateToken,
-// ControllerActionToken and their FromToken counterparts).
+// page's opaque node-id/action tokens (ControllerActionToken and its
+// FromToken counterpart).
 //
 // HexEncodeBytes: two hex digits per byte, `uppercase` selecting the digit
 // case. `separator`, when non-'\0', is inserted between adjacent bytes (a

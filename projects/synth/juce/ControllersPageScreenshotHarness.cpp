@@ -469,8 +469,9 @@ private:
 // State 4: a row's expanded editor showing its Connect messages list with an
 // existing message, an Add button, and a delete button. Reached by adding
 // the app's own Ableton APC40 default (its real device default ships one
-// connect-time SysEx message, config.openSysEx, in FroggersMidiCatalog.hpp)
-// and toggling that row's editor open through the real kToggleConfig action.
+// connect-time SysEx message, config.openSysEx, in FroggersMidiCatalog.hpp);
+// the row's editor is already open, since a row Add installs opens on its
+// own.
 // ---------------------------------------------------------------------------
 std::size_t AddAbletonApc40(AppFixture& fixture, synth::runtime_ui::ControllersPageSurface& surface)
 {
@@ -497,9 +498,6 @@ void RenderState4_ConnectMessagesList()
     fixture.AddRealisticDevices();
     synth::runtime_ui::ControllersPageSurface surface = fixture.MakeSurface();
     const std::size_t rowIx = AddAbletonApc40(fixture, surface);
-
-    surface.DispatchAction(
-        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleConfig, std::to_string(rowIx)));
 
     // Diagnostic only (not part of the delivered screenshot): read back the
     // Add button's resolved bounds from the portable tree the page itself
@@ -533,8 +531,6 @@ void RenderState5_MalformedConnectMessageRefusal(bool bust)
     fixture.AddRealisticDevices();
     synth::runtime_ui::ControllersPageSurface surface = fixture.MakeSurface();
     const std::size_t rowIx = AddAbletonApc40(fixture, surface);
-    surface.DispatchAction(
-        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleConfig, std::to_string(rowIx)));
 
     const int commitsBefore = fixture.commits;
     const std::string malformed = bust ? "F0 00 7F F7" /* WELL-FORMED: busts the claim on purpose */
@@ -580,8 +576,6 @@ void RenderExtraCheck_EmptyConnectMessageFieldRefusal()
     fixture.AddRealisticDevices();
     synth::runtime_ui::ControllersPageSurface surface = fixture.MakeSurface();
     const std::size_t rowIx = AddAbletonApc40(fixture, surface);
-    surface.DispatchAction(
-        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kToggleConfig, std::to_string(rowIx)));
 
     const int commitsBefore = fixture.commits;
     const std::string statusBefore = fixture.status;

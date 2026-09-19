@@ -87,7 +87,7 @@ int main()
     Require(FindNodeById(refreshedSidebar, synth::runtime_ui::NodeIds::kSidebarDeadline)->text == "DSP 9%",
             "sidebar deadline refresh updates semantic node");
 
-    // sru-2 / sru-33: the Controllers warning marker is a portable node the
+    // sru-2: the Controllers warning marker is a portable node the
     // JUCE backend renders and drops exactly as Chrome does. The sidebar knows
     // only the boolean the host hands it.
     Require(sidebarRenderer.FindByNodeId(synth::runtime_ui::NodeIds::kSidebarControllersWarning) == nullptr,
