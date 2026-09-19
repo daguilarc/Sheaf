@@ -1343,12 +1343,13 @@ void TestBlacklistedRecordPersistsAndRoundTrips()
             "the round trip preserves the released disposition and identity");
 }
 
-// CommitLifecycleAction's throwaway view model used to Rebuild() with none of
-// the surface's own catalogs, so Layouts() fell back to the library-only
-// registry, which never resolves an app-specific wizard id -- only a library
-// one (com.sheaf.midi-fighter-twister, library.launchpad, library.wrldbldr).
-// This uses a wizard id from a device default the app's own catalog adds, not
-// one of those three, so it fails exactly the way an app's own presets did.
+// CommitLifecycleAction configures its throwaway view model with the
+// surface's own catalogs before it Rebuild()s, so Layouts() resolves an
+// app-specific wizard id rather than falling back to the library-only
+// registry, which resolves only a library one (com.sheaf.midi-fighter-twister,
+// library.launchpad, library.wrldbldr). This uses a wizard id from a device
+// default the app's own catalog adds, not one of those three, so it exercises
+// that app-specific resolution specifically.
 void TestRestoreResolvesAnAppPreset()
 {
     synth::MidiAppCatalog catalog;
@@ -1384,9 +1385,8 @@ void TestRestoreResolvesAnAppPreset()
         synth::runtime_ui::Actions::kControllerRestore,
         synth::runtime_ui::NodeIds::ControllerActionToken(0, "diverged")));
     Require(harness.instrument.controllers[0].config.systemMessages[0].control->cc == 20,
-            "Restore reinstalls the app preset's own config onto a row diverged from it -- refused"
-            " entirely with the old CommitLifecycleAction, whose throwaway view model could never"
-            " resolve an app-specific wizard id");
+            "Restore reinstalls the app preset's own config onto a row diverged from it, resolving"
+            " the row's app-specific wizard id");
 }
 
 void TestRestoreReinstallsADivergedPresetAndIsGatedByDivergence()

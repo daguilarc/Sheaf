@@ -1514,13 +1514,19 @@ private:
 
     void HandleRestoreController(const std::string& token)
     {
+        // No separate invalid-identity check here: CommitLifecycleAction
+        // re-derives this same token's identity through
+        // SnapshotForLifecycleIdentity, which sets the same
+        // kInvalidControllerIdentityStatus on the same condition
+        // (NodeIds::ControllerActionIdentityFromToken is a pure function of
+        // `token`, so the two derivations agree). `identity` is still parsed
+        // here for the success-only NoteControllerConfigReplaced() call
+        // below, whose `identity->second` deref is safe because
+        // CommitLifecycleAction can only return true once
+        // SnapshotForLifecycleIdentity has confirmed this same token parses
+        // to a valid identity.
         const std::optional<std::pair<std::size_t, std::string>> identity =
             NodeIds::ControllerActionIdentityFromToken(token);
-        if (!identity.has_value())
-        {
-            SetStatus(kInvalidControllerIdentityStatus);
-            return;
-        }
         if (CommitLifecycleAction(
             token, [&](MidiConfigViewModel& viewModel, std::size_t controllerIx,
                        MidiInstrumentConfig& out, std::string* reason) {

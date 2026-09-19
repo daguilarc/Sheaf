@@ -750,18 +750,18 @@ public:
     // i.e. exactly what SectionRows() would show for a first added row in
     // that (section, group), so an empty-group's header-only affordance
     // (AddableGroups above) renders the right columns even though no row
-    // exists yet to read them off of. Encoder turn rows and system rows each
-    // share one field-table function with BuildSectionRows()'s own per-group
-    // branches (EncoderTurnEditableFields(shiftOffered); SystemRowEditableFields(
+    // exists yet to read them off of. Encoder turn rows, encoder push rows
+    // and system rows each share one field-table function with
+    // BuildSectionRows()'s own per-group branches (EncoderTurnEditableFields(
+    // shiftOffered); EncoderPushEditableFields(); SystemRowEditableFields(
     // kind, association, shiftOffered), i.e. SystemAddressSchema(kind)'s fields
-    // plus MessageKind/MessageArg/ShiftAction), so those two can never drift
-    // apart. Encoder push, analog gesture and analog app action each list
-    // their own fields (Channel, Cc, SlotIx, Position with AddressType
-    // first; Channel, Cc, GestureIx; Channel, Cc, AppAction) as a separate
-    // literal table in each method, not a shared function.
+    // plus MessageKind/MessageArg/ShiftAction), so those three can never drift
+    // apart. Analog gesture and analog app action each list their own fields
+    // (Channel, Cc, GestureIx; Channel, Cc, AppAction) as a separate literal
+    // table in each method, not a shared function.
     // `GroupColumnFieldsMatchesWhatARealAddedAnalogGestureRowGets` checks
     // analog gesture's two copies against each other; nothing checks the
-    // encoder-push or analog-app-action copies for drift.
+    // analog-app-action copies for drift.
     // `group` need not be addable (AddableGroups/GroupSupportsAdd) -- this
     // answers "what would this group's columns be," independent of whether
     // adding into it is currently legal; callers needing the addable subset

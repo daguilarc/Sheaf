@@ -2923,7 +2923,7 @@ static void TestControllersRowFitsWithinFroggersNarrowestHost()
         synth::MfTwisterDefaultProfileConfig(synth::MfTwisterDefaultProfileOptions{.slotIx = 0});
     // A shifted turn keeps ReconstructEncoderBlocks from folding it into the
     // 16-turn block, so the Twister's Encoders section renders one Individual
-    // row (with the Shift field this change adds) alongside the remaining
+    // row (showing that turn's Shift field) alongside the remaining
     // 15-turn block -- the widest Encoders layout this page produces.
     Require(twister.config.encoderInput.has_value() && !twister.config.encoderInput->turns.empty(),
             "fixture Twister profile has at least one turn to shift");

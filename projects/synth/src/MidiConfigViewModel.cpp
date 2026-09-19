@@ -1152,6 +1152,15 @@ std::vector<Field> EncoderTurnEditableFields(bool shiftOffered) {
     return fields;
 }
 
+// editableFields for an Individual EncoderMidiMapping push row -- never
+// includes ShiftAction (ProfileConfigValidForKind refuses a shifted job on
+// a push, EncoderTurnEditableFields's own comment above). Factored out the
+// same way, so BuildSectionRows() and GroupColumnFields() share the exact
+// same table instead of each holding their own literal.
+std::vector<Field> EncoderPushEditableFields() {
+    return {Field::AddressType, Field::Channel, Field::Cc, Field::SlotIx, Field::Position};
+}
+
 // editableFields for a Block row, per its form.
 // See MidiMappingRowVM::Field's Block* doc comment.
 std::vector<Field> EncoderBlockEditableFields() {
@@ -1504,8 +1513,7 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::BuildSectionRows(std::size_t 
         } else {
             if (const auto* mapping = std::get_if<EncoderMidiMapping>(&presentationRow.data)) {
                 if (presentationRow.group == RowGroup::EncoderPush) {
-                    row.editableFields = {Field::AddressType, Field::Channel, Field::Cc, Field::SlotIx,
-                                          Field::Position};
+                    row.editableFields = EncoderPushEditableFields();
                 } else {
                     row.editableFields = EncoderTurnEditableFields(messageCatalogOffersShift_);
                 }
@@ -4094,7 +4102,7 @@ std::vector<MidiMappingRowVM::Field> MidiConfigViewModel::GroupColumnFields(std:
     if (section == MidiConfigSection::Encoders &&
         (group == RowGroup::EncoderTurn || group == RowGroup::EncoderPush)) {
         if (group == RowGroup::EncoderPush) {
-            return {Field::AddressType, Field::Channel, Field::Cc, Field::SlotIx, Field::Position};
+            return EncoderPushEditableFields();
         }
         return EncoderTurnEditableFields(messageCatalogOffersShift_);
     }

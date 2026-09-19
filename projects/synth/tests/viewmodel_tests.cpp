@@ -3575,11 +3575,12 @@ TEST_CASE(GroupColumnFieldsMatchesWhatARealAddedSystemRowGetsPerKind) {
         {MakeLaunchpadSlot, "pads"},
         {MakeGenericSlot, "gen"},
     };
-    // Scene Select alongside Shift, matching every real app's catalog
-    // (UISystemMessageCatalog()'s own base entries always include Scene
-    // Select) -- AddSingle's System row always starts on Scene Select when
-    // the catalog offers it, so this keeps that fresh row's own kind (not
-    // Shift itself) the one GroupColumnFields below predicts against.
+    // Scene Select alongside Shift: AddSingle's System row always starts on
+    // Scene Select when the catalog offers it, and SystemRowEditableFields
+    // excludes ShiftAction only for a row whose own kind is Shift or Hold
+    // Drill, so offering Scene Select keeps the fresh row on a kind that
+    // does carry ShiftAction, the one GroupColumnFields below predicts
+    // against.
     MidiAppCatalog shiftCatalog;
     shiftCatalog.libraryKinds = {UISystemMessage::SceneSelect, UISystemMessage::Shift};
     for (const KindFixture& fixture : fixtures) {
@@ -4387,14 +4388,17 @@ TEST_CASE(TurnShiftFieldEditCommitsSceneBlendAndNoneClearsIt) {
     REQUIRE_TRUE(committed.controllers[0].config.encoderInput->turns[0].shiftedJob ==
                 synth::EncoderShiftedJob::SceneBlend);
     REQUIRE_TRUE(vm.EncoderTurnShiftedJobIndex(0, MidiConfigSection::Encoders, 0) == 1);
+    REQUIRE_TRUE(vm.SectionExpanded(0, MidiConfigSection::Encoders) == true);
 
     vm.Rebuild(committed, connection);
+    REQUIRE_TRUE(vm.SectionExpanded(0, MidiConfigSection::Encoders) == true);
 
     MidiInstrumentConfig cleared;
     REQUIRE_TRUE(vm.ApplyMappingEdit(0, MidiConfigSection::Encoders, 0, Field::ShiftAction, 0.0, cleared, &reason));
     REQUIRE_TRUE(cleared.controllers[0].config.encoderInput->turns[0].shiftedJob ==
                 synth::EncoderShiftedJob::None);
     REQUIRE_TRUE(vm.EncoderTurnShiftedJobIndex(0, MidiConfigSection::Encoders, 0) == 0);
+    REQUIRE_TRUE(vm.SectionExpanded(0, MidiConfigSection::Encoders) == true);
 }
 
 TEST_CASE(TurnRowsExposeShiftFieldOnlyWhenShiftIsOffered) {
