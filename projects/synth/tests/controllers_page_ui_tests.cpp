@@ -2806,7 +2806,7 @@ int main()
     const std::string visible = VisibleTextLower(gridTree);
     Require(visible.find("grid button") != std::string::npos, "portable tree shows Grid Button");
     Require(visible.find("grid block") != std::string::npos, "portable tree shows Grid Block");
-    for (const char* label : {"grid slot", "x min", "x max", "y min", "y max"})
+    for (const char* label : {"grid slot", "start x", "last x", "start y", "last y"})
     {
         Require(visible.find(label) != std::string::npos, "portable tree shows exact grid field label");
     }

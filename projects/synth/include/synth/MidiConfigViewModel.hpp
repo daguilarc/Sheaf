@@ -125,14 +125,22 @@ struct MidiMappingRowVM {
         // A block row's editableFields is drawn from this subset, per its
         // form (EncoderBlock/AnalogBlock/SystemBlock 1-D generic/2-D
         // wrldbldr-launchpad):
-        //   EncoderBlock:  Channel, BlockStartCc, BlockEndCc, SlotIx,
+        //   EncoderBlock (turn): Channel, BlockStartCc, BlockEndCc, SlotIx,
         //                  BlockStartPos
-        //   AnalogBlock:   Channel, BlockStartCc, BlockEndCc, BlockStartArg
-        //                  (start gesture index)
-        //   SystemBlock generic (1-D):   BlockMessageType, Channel,
-        //                  BlockStartCc, BlockEndCc, BlockStartArg,
-        //                  BlockOutputFeedback (BlockBankSlotIx too when
-        //                  BlockMessageType == BankSelect)
+        //   EncoderBlock (push, CC-addressed): AddressType, Channel,
+        //                  BlockStartCc, BlockEndCc, SlotIx, BlockStartPos
+        //   EncoderBlock (push, Note-addressed): AddressType, Channel,
+        //                  BlockStartNote, BlockEndNote, SlotIx, BlockStartPos
+        //   AnalogBlock:   Channel, BlockStartCc, BlockEndCc,
+        //                  BlockStartGesture (first gesture index)
+        //   SystemBlock generic (1-D), CC-addressed: BlockMessageType,
+        //                  AddressType, Channel, BlockStartCc, BlockEndCc,
+        //                  BlockStartArg, BlockOutputFeedback (BlockBankSlotIx
+        //                  too when BlockMessageType == BankSelect)
+        //   SystemBlock generic (1-D), Note-addressed: BlockMessageType,
+        //                  AddressType, Channel, BlockStartNote, BlockEndNote,
+        //                  BlockStartArg, BlockOutputFeedback (BlockBankSlotIx
+        //                  too when BlockMessageType == BankSelect)
         //   SystemBlock wrldbldr/launchpad (2-D): BlockMessageType,
         //                  [Channel -- wrldbldr only], BlockStartX,
         //                  BlockStartY, BlockEndX, BlockEndY,
@@ -140,12 +148,15 @@ struct MidiMappingRowVM {
         //                  BlockOutputFeedback (+ BlockBankSlotIx for
         //                  BankSelect)
         // BlockStartCc/BlockEndCc reuse none of Cc's semantics (Cc means "one
-        // mapping's raw cc"); kept distinct so a block's [start,end) pair
-        // can't be confused with an individual row's single Cc field.
+        // mapping's raw cc"); kept distinct so a block's start/last pair
+        // can't be confused with an individual row's single Cc field. The
+        // block model keeps every range's stored end exclusive; these fields
+        // show and accept the last control the range covers instead
+        // (BlockLastFromEnd/BlockEndFromLast, MidiConfigBlocks.hpp).
         BlockStartCc,
         BlockEndCc,
         BlockStartPos,     // EncoderBlock::startPosition
-        BlockStartArg,     // AnalogBlock::startGestureIx or SystemBlock::startArg
+        BlockStartArg,     // SystemBlock::startArg (system blocks only)
         BlockBankSlotIx,   // SystemBlock::bankSlotIx (BankSelect message type only)
         BlockStartX,
         BlockStartY,
@@ -158,9 +169,11 @@ struct MidiMappingRowVM {
         // controls. Distinct from both system message-kind fields above.
         AddressType,
         // Grid rows use signed physical/logical coordinates. A Grid Button
-        // exposes the minima as its one cell; Grid Block adds exclusive
-        // maxima. Grid mappings intentionally have no message/status/note,
-        // pressure, feedback, or toggle editor.
+        // exposes the minima (its one cell's start x/y) as its start; Grid
+        // Block adds the last x/y the block covers, translated from the
+        // block model's own stored exclusive maxima (BlockLastFromEnd). Grid
+        // mappings intentionally have no message/status/note, pressure,
+        // feedback, or toggle editor.
         GridSlotIx,
         GridXMin,
         GridXMax,
@@ -172,14 +185,22 @@ struct MidiMappingRowVM {
         // see EncoderShiftedJob). Shown only when the row dropdown offers
         // Shift.
         ShiftAction,
+        // AnalogBlock's first gesture, in place of BlockStartArg (analog
+        // blocks carry no AddressType field, so they are CC-only and never
+        // need the note pair below).
+        BlockStartGesture,
+        // A Note-addressed EncoderBlock (push) or SystemBlock (generic
+        // form)'s number pair, in place of BlockStartCc/BlockEndCc.
+        BlockStartNote,
+        BlockEndNote,
     };
 
     // Groups rows into contiguous runs of the same on-screen schema, so the
     // renderer can insert a column-header row (and, for the non-tabular
     // Encoder groups / the scene-blend group, a divider + short caption)
     // whenever `group` changes from the previous row in a section's row
-    // list. See ColumnHeadersForGroup()/FieldShortLabel() for the header
-    // strings and FieldIsInteger() for how individual cells format.
+    // list. See FieldShortLabel() for the header strings and FieldIsInteger()
+    // for how individual cells format.
     enum class RowGroup {
         EncoderTurn,
         EncoderPush,

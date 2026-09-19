@@ -907,7 +907,7 @@ colour table are gone, and `check-ui-boundary` fails if any of them reappears.
   and visible surfaces. Application grid creation, exposure, and rendering are
   intentionally out of scope, not deferred incomplete behavior.
 
-### `sru-26` and `sru-27` - Controllers Derived Grid Presentation
+### `sru-28` and `sru-29` - Controllers Derived Grid Presentation
 
 - [`blocks_tests.cpp`](../tests/blocks_tests.cpp)
   `ExpandGridButtonProducesAtomicMomentarySystemAndPressurePair`,

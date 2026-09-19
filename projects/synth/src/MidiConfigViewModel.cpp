@@ -346,6 +346,9 @@ bool FieldIsInteger(MidiMappingRowVM::Field field) {
         case Field::GridXMax:
         case Field::GridYMin:
         case Field::GridYMax:
+        case Field::BlockStartGesture:
+        case Field::BlockStartNote:
+        case Field::BlockEndNote:
             return true;
         case Field::TurnStep:
         case Field::EncoderMode:
@@ -420,7 +423,13 @@ const char* FieldShortLabel(MidiMappingRowVM::Field field) {
         case Field::BlockStartCc:
             return "Start CC";
         case Field::BlockEndCc:
-            return "End CC";
+            return "Last CC";
+        case Field::BlockStartNote:
+            return "Start Note";
+        case Field::BlockEndNote:
+            return "Last Note";
+        case Field::BlockStartGesture:
+            return "Start Gesture";
         case Field::BlockStartPos:
             return "Start Pos";
         case Field::BlockStartArg:
@@ -432,9 +441,9 @@ const char* FieldShortLabel(MidiMappingRowVM::Field field) {
         case Field::BlockStartY:
             return "Start Y";
         case Field::BlockEndX:
-            return "End X";
+            return "Last X";
         case Field::BlockEndY:
-            return "End Y";
+            return "Last Y";
         case Field::BlockRowMajor:
             return "Row-major";
         case Field::BlockOutputFeedback:
@@ -446,13 +455,13 @@ const char* FieldShortLabel(MidiMappingRowVM::Field field) {
         case Field::GridSlotIx:
             return "Grid Slot";
         case Field::GridXMin:
-            return "X Min";
+            return "Start X";
         case Field::GridXMax:
-            return "X Max";
+            return "Last X";
         case Field::GridYMin:
-            return "Y Min";
+            return "Start Y";
         case Field::GridYMax:
-            return "Y Max";
+            return "Last Y";
         case Field::ShiftAction:
             return "Shift";
     }
@@ -1163,11 +1172,18 @@ std::vector<Field> EncoderPushEditableFields() {
 
 // editableFields for a Block row, per its form.
 // See MidiMappingRowVM::Field's Block* doc comment.
-std::vector<Field> EncoderBlockEditableFields() {
-    return {Field::Channel, Field::BlockStartCc, Field::BlockEndCc, Field::SlotIx, Field::BlockStartPos};
+std::vector<Field> EncoderBlockEditableFields(const EncoderBlock& block) {
+    std::vector<Field> fields = {Field::Channel};
+    if (block.isPush && block.controlType == MidiControlType::Note) {
+        fields.insert(fields.end(), {Field::BlockStartNote, Field::BlockEndNote});
+    } else {
+        fields.insert(fields.end(), {Field::BlockStartCc, Field::BlockEndCc});
+    }
+    fields.insert(fields.end(), {Field::SlotIx, Field::BlockStartPos});
+    return fields;
 }
 std::vector<Field> AnalogBlockEditableFields() {
-    return {Field::Channel, Field::BlockStartCc, Field::BlockEndCc, Field::BlockStartArg};
+    return {Field::Channel, Field::BlockStartCc, Field::BlockEndCc, Field::BlockStartGesture};
 }
 std::vector<Field> SystemBlockEditableFields(const SystemBlock& block) {
     std::vector<Field> fields = {Field::BlockMessageType};
@@ -1183,7 +1199,12 @@ std::vector<Field> SystemBlockEditableFields(const SystemBlock& block) {
         fields.insert(fields.end(), {Field::BlockStartX, Field::BlockStartY, Field::BlockEndX, Field::BlockEndY,
                                      Field::BlockRowMajor});
     } else {
-        fields.insert(fields.end(), {Field::Channel, Field::BlockStartCc, Field::BlockEndCc});
+        fields.push_back(Field::Channel);
+        if (block.controlType == MidiControlType::Note) {
+            fields.insert(fields.end(), {Field::BlockStartNote, Field::BlockEndNote});
+        } else {
+            fields.insert(fields.end(), {Field::BlockStartCc, Field::BlockEndCc});
+        }
     }
     fields.push_back(Field::BlockStartArg);
     if (block.message == BlockableMessage::BankSelect) {
@@ -1495,7 +1516,7 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::BuildSectionRows(std::size_t 
             }
         } else if (presentationRow.kind == RowKind::Block) {
             if (const auto* encoderBlock = std::get_if<EncoderBlock>(&presentationRow.block)) {
-                row.editableFields = EncoderBlockEditableFields();
+                row.editableFields = EncoderBlockEditableFields(*encoderBlock);
                 if (encoderBlock->isPush) {
                     row.editableFields.insert(row.editableFields.begin(), Field::AddressType);
                 }
@@ -1549,12 +1570,12 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::SectionRows(std::size_t contr
 
 namespace {
 
-// Reads `field`'s current value off a block struct (shared by
-// RowFieldValue's Block case and, indirectly, the label builders above via
-// their own direct field access). Returns false for a field not applicable
-// to this block's variant/form (caller has already gated against
-// editableFields, so this is a belt-and-suspenders internal consistency
-// check, not a user-facing refusal path).
+// Reads `field`'s current value off a block struct, for RowFieldValue's
+// Block case. The summary builders above read their fields directly and do
+// not call this. Returns false for a field not applicable to this block's
+// variant/form (caller has already gated against editableFields, so this is
+// a belt-and-suspenders internal consistency check, not a user-facing
+// refusal path).
 bool BlockFieldValue(const std::variant<std::monostate, EncoderBlock, AnalogBlock, SystemBlock, GridBlock>& block,
                     Field field,
                     double& out) {
@@ -1567,10 +1588,12 @@ bool BlockFieldValue(const std::variant<std::monostate, EncoderBlock, AnalogBloc
                 out = static_cast<double>(encoderBlock->channel);
                 return true;
             case Field::BlockStartCc:
+            case Field::BlockStartNote:
                 out = static_cast<double>(encoderBlock->startCc);
                 return true;
             case Field::BlockEndCc:
-                out = static_cast<double>(encoderBlock->endCc);
+            case Field::BlockEndNote:
+                out = static_cast<double>(BlockLastFromEnd(encoderBlock->startCc, encoderBlock->endCc, false));
                 return true;
             case Field::SlotIx:
                 out = static_cast<double>(encoderBlock->slotIx);
@@ -1591,9 +1614,9 @@ bool BlockFieldValue(const std::variant<std::monostate, EncoderBlock, AnalogBloc
                 out = static_cast<double>(analogBlock->startCc);
                 return true;
             case Field::BlockEndCc:
-                out = static_cast<double>(analogBlock->endCc);
+                out = static_cast<double>(BlockLastFromEnd(analogBlock->startCc, analogBlock->endCc, false));
                 return true;
-            case Field::BlockStartArg:
+            case Field::BlockStartGesture:
                 out = static_cast<double>(analogBlock->startGestureIx);
                 return true;
             default:
@@ -1612,10 +1635,12 @@ bool BlockFieldValue(const std::variant<std::monostate, EncoderBlock, AnalogBloc
                 out = static_cast<double>(systemBlock->channel);
                 return true;
             case Field::BlockStartCc:
+            case Field::BlockStartNote:
                 out = static_cast<double>(systemBlock->startCc);
                 return true;
             case Field::BlockEndCc:
-                out = static_cast<double>(systemBlock->endCc);
+            case Field::BlockEndNote:
+                out = static_cast<double>(BlockLastFromEnd(systemBlock->startCc, systemBlock->endCc, false));
                 return true;
             case Field::BlockStartX:
                 out = static_cast<double>(systemBlock->startX);
@@ -1624,10 +1649,10 @@ bool BlockFieldValue(const std::variant<std::monostate, EncoderBlock, AnalogBloc
                 out = static_cast<double>(systemBlock->startY);
                 return true;
             case Field::BlockEndX:
-                out = static_cast<double>(systemBlock->endX);
+                out = static_cast<double>(BlockLastFromEnd(systemBlock->startX, systemBlock->endX, false));
                 return true;
             case Field::BlockEndY:
-                out = static_cast<double>(systemBlock->endY);
+                out = static_cast<double>(BlockLastFromEnd(systemBlock->startY, systemBlock->endY, true));
                 return true;
             case Field::BlockStartArg:
                 out = static_cast<double>(systemBlock->startArg);
@@ -1657,13 +1682,13 @@ bool BlockFieldValue(const std::variant<std::monostate, EncoderBlock, AnalogBloc
                 out = static_cast<double>(gridBlock->startX);
                 return true;
             case Field::GridXMax:
-                out = static_cast<double>(gridBlock->endX);
+                out = static_cast<double>(BlockLastFromEnd(gridBlock->startX, gridBlock->endX, false));
                 return true;
             case Field::GridYMin:
                 out = static_cast<double>(gridBlock->startY);
                 return true;
             case Field::GridYMax:
-                out = static_cast<double>(gridBlock->endY);
+                out = static_cast<double>(BlockLastFromEnd(gridBlock->startY, gridBlock->endY, true));
                 return true;
             default:
                 return false;
@@ -2067,12 +2092,13 @@ int MidiConfigViewModel::BlockMessageTypeIndex(std::size_t controllerIx, MidiCon
 
 namespace {
 
-// Applies a system Block row's field edit to a scratch copy of `block`,
-// validating domain per-field the same way the individual-row cases below
-// do (Channel 0-15, coordinates integral, message-type/bool toggle indices
-// in range). Does NOT re-validate the whole expansion (ApplyMappingEdit's
-// Block case does that separately via ExpandSystemBlock, an
-// all-or-nothing validation).
+// Applies a Block row's field edit to `block`, the open section's own row
+// (ApplyEncoderBlockField, ApplyAnalogBlockField, ApplySystemBlockField and
+// ApplyGridBlockField below all follow this shape), validating domain
+// per-field the same way the individual-row cases below do (Channel 0-15,
+// coordinates integral, message-type/bool toggle indices in range). Does
+// NOT re-validate the whole expansion (ApplyMappingEdit's Block case does
+// that separately via ExpandSystemBlock, an all-or-nothing validation).
 bool ApplyEncoderBlockField(EncoderBlock& block, Field field, double value, std::string& validationError) {
     switch (field) {
         case Field::AddressType:
@@ -2090,18 +2116,22 @@ bool ApplyEncoderBlockField(EncoderBlock& block, Field field, double value, std:
             block.channel = static_cast<std::uint8_t>(value);
             return true;
         case Field::BlockStartCc:
+        case Field::BlockStartNote:
             if (!IsIntegerInRange(value, 0.0, 127.0)) {
-                validationError = "start cc must be an integer 0-127";
+                validationError = field == Field::BlockStartNote ? "start note must be an integer 0-127"
+                                                                  : "start cc must be an integer 0-127";
                 return false;
             }
             block.startCc = static_cast<std::uint8_t>(value);
             return true;
         case Field::BlockEndCc:
-            if (!IsIntegerInRange(value, 0.0, 128.0)) {
-                validationError = "end cc must be an integer 0-128";
+        case Field::BlockEndNote:
+            if (!IsIntegerInRange(value, 0.0, 127.0)) {
+                validationError = field == Field::BlockEndNote ? "last note must be an integer 0-127"
+                                                                : "last cc must be an integer 0-127";
                 return false;
             }
-            block.endCc = static_cast<std::uint8_t>(value);
+            block.endCc = static_cast<std::uint8_t>(BlockEndFromLast(block.startCc, static_cast<int>(value), false));
             return true;
         case Field::SlotIx:
             if (!IsNonNegativeInteger(value)) {
@@ -2139,13 +2169,13 @@ bool ApplyAnalogBlockField(AnalogBlock& block, Field field, double value, std::s
             block.startCc = static_cast<std::uint8_t>(value);
             return true;
         case Field::BlockEndCc:
-            if (!IsIntegerInRange(value, 0.0, 128.0)) {
-                validationError = "end cc must be an integer 0-128";
+            if (!IsIntegerInRange(value, 0.0, 127.0)) {
+                validationError = "last cc must be an integer 0-127";
                 return false;
             }
-            block.endCc = static_cast<std::uint8_t>(value);
+            block.endCc = static_cast<std::uint8_t>(BlockEndFromLast(block.startCc, static_cast<int>(value), false));
             return true;
-        case Field::BlockStartArg:
+        case Field::BlockStartGesture:
             if (!IsNonNegativeInteger(value)) {
                 validationError = "start gesture index must be a non-negative integer";
                 return false;
@@ -2181,18 +2211,22 @@ bool ApplySystemBlockField(SystemBlock& block, Field field, double value, std::s
             block.channel = static_cast<std::uint8_t>(value);
             return true;
         case Field::BlockStartCc:
+        case Field::BlockStartNote:
             if (!IsIntegerInRange(value, 0.0, 127.0)) {
-                validationError = "start cc must be an integer 0-127";
+                validationError = field == Field::BlockStartNote ? "start note must be an integer 0-127"
+                                                                  : "start cc must be an integer 0-127";
                 return false;
             }
             block.startCc = static_cast<std::uint8_t>(value);
             return true;
         case Field::BlockEndCc:
-            if (!IsIntegerInRange(value, 0.0, 128.0)) {
-                validationError = "end cc must be an integer 0-128";
+        case Field::BlockEndNote:
+            if (!IsIntegerInRange(value, 0.0, 127.0)) {
+                validationError = field == Field::BlockEndNote ? "last note must be an integer 0-127"
+                                                                : "last cc must be an integer 0-127";
                 return false;
             }
-            block.endCc = static_cast<std::uint8_t>(value);
+            block.endCc = static_cast<std::uint8_t>(BlockEndFromLast(block.startCc, static_cast<int>(value), false));
             return true;
         case Field::BlockStartX:
             if (!IsIntegerInRange(value, static_cast<double>(std::numeric_limits<int>::min()),
@@ -2202,29 +2236,31 @@ bool ApplySystemBlockField(SystemBlock& block, Field field, double value, std::s
             }
             block.startX = static_cast<int>(value);
             return true;
-        case Field::BlockStartY:
+        case Field::BlockStartY: {
             if (!IsIntegerInRange(value, static_cast<double>(std::numeric_limits<int>::min()),
                                   static_cast<double>(std::numeric_limits<int>::max()))) {
                 validationError = "start y must be an integer";
                 return false;
             }
-            block.startY = static_cast<int>(value);
+            const int last = BlockLastFromEnd(block.startY, block.endY, true);
+            const int newStart = static_cast<int>(value);
+            block.startY = newStart;
+            block.endY = BlockEndFromLast(newStart, last, true);
             return true;
+        }
         case Field::BlockEndX:
-            if (!IsIntegerInRange(value, static_cast<double>(std::numeric_limits<int>::min()),
-                                  static_cast<double>(std::numeric_limits<int>::max()))) {
-                validationError = "end x must be an integer";
+            if (!IsIntegerInRange(value, -2147483647.0, 2147483646.0)) {
+                validationError = "last x must be an integer from -2147483647 to 2147483646";
                 return false;
             }
-            block.endX = static_cast<int>(value);
+            block.endX = BlockEndFromLast(block.startX, static_cast<int>(value), false);
             return true;
         case Field::BlockEndY:
-            if (!IsIntegerInRange(value, static_cast<double>(std::numeric_limits<int>::min()),
-                                  static_cast<double>(std::numeric_limits<int>::max()))) {
-                validationError = "end y must be an integer";
+            if (!IsIntegerInRange(value, -2147483647.0, 2147483646.0)) {
+                validationError = "last y must be an integer from -2147483647 to 2147483646";
                 return false;
             }
-            block.endY = static_cast<int>(value);
+            block.endY = BlockEndFromLast(block.startY, static_cast<int>(value), true);
             return true;
         case Field::BlockStartArg:
             if (!IsNonNegativeInteger(value)) {
@@ -2269,6 +2305,20 @@ bool ApplyGridCoordinate(int& target, double value, const char* name, std::strin
     return true;
 }
 
+// A typed last x or last y: the accepted range keeps the exclusive end an
+// `int` holds whichever direction a y range can run; an x range, which only
+// ever computes `last + 1`, shares it so there is one accepted range across
+// both axes (sru-67).
+bool ApplyGridLastCoordinate(int& endTarget, int start, double value, bool mayRunDownward, const char* name,
+                             std::string& validationError) {
+    if (!IsIntegerInRange(value, -2147483647.0, 2147483646.0)) {
+        validationError = std::string(name) + " must be an integer from -2147483647 to 2147483646";
+        return false;
+    }
+    endTarget = BlockEndFromLast(start, static_cast<int>(value), mayRunDownward);
+    return true;
+}
+
 bool ApplyGridButtonField(GridButton& button, Field field, double value, std::string& validationError) {
     switch (field) {
         case Field::Channel:
@@ -2286,9 +2336,9 @@ bool ApplyGridButtonField(GridButton& button, Field field, double value, std::st
             button.gridSlotIx = static_cast<std::size_t>(value);
             return true;
         case Field::GridXMin:
-            return ApplyGridCoordinate(button.x, value, "x min", validationError);
+            return ApplyGridCoordinate(button.x, value, "start x", validationError);
         case Field::GridYMin:
-            return ApplyGridCoordinate(button.y, value, "y min", validationError);
+            return ApplyGridCoordinate(button.y, value, "start y", validationError);
         default:
             return false;
     }
@@ -2311,13 +2361,19 @@ bool ApplyGridBlockField(GridBlock& block, Field field, double value, std::strin
             block.gridSlotIx = static_cast<std::size_t>(value);
             return true;
         case Field::GridXMin:
-            return ApplyGridCoordinate(block.startX, value, "x min", validationError);
+            return ApplyGridCoordinate(block.startX, value, "start x", validationError);
         case Field::GridXMax:
-            return ApplyGridCoordinate(block.endX, value, "x max", validationError);
-        case Field::GridYMin:
-            return ApplyGridCoordinate(block.startY, value, "y min", validationError);
+            return ApplyGridLastCoordinate(block.endX, block.startX, value, false, "last x", validationError);
+        case Field::GridYMin: {
+            const int last = BlockLastFromEnd(block.startY, block.endY, true);
+            if (!ApplyGridCoordinate(block.startY, value, "start y", validationError)) {
+                return false;
+            }
+            block.endY = BlockEndFromLast(block.startY, last, true);
+            return true;
+        }
         case Field::GridYMax:
-            return ApplyGridCoordinate(block.endY, value, "y max", validationError);
+            return ApplyGridLastCoordinate(block.endY, block.startY, value, true, "last y", validationError);
         default:
             return false;
     }
