@@ -303,6 +303,11 @@ public:
                 patchManager_.ProcessResponses();
                 if (result.status == PatchCommandStatus::Ok) {
                     RecordPatchVersionAndSave(result.path);
+                    // Only a staged instrument needs saving once it applies;
+                    // a patch saved before patches carried mappings stages
+                    // none, and must not leave this set for a later load.
+                    const std::lock_guard<std::mutex> lock(pendingPatchInstrumentMutex_);
+                    saveRuntimeConfigAfterPatchInstrument_ = pendingPatchInstrument_.has_value();
                 }
             }
         } else if (!lastPatchVersionRecord_->empty()) {
@@ -625,10 +630,15 @@ public:
             EditInstrument([&instrumentToApply](MidiInstrumentConfig& live) {
                 live = std::move(*instrumentToApply);
             });
-            // A patch opened from the File page still applies its instrument
-            // under patchCarriesMappings (sar-8); once applied, the runtime
-            // configuration is saved so the next launch keeps it.
-            SaveRuntimeConfiguration();
+            // After a patch opened from the File page, or the first launch
+            // without a record, the runtime configuration is saved once the
+            // instrument applies, so the next launch keeps it. A plugin host
+            // restoring its state never sets the flag, so its restore writes
+            // nothing here.
+            if (saveRuntimeConfigAfterPatchInstrument_) {
+                saveRuntimeConfigAfterPatchInstrument_ = false;
+                SaveRuntimeConfiguration();
+            }
         }
 
         for (MidiControllerProfileResult& processors : midiProcessors_) {
@@ -826,6 +836,7 @@ public:
         const PatchCommandResult result = patchManager_.LoadPatch(path);
         if (result.status == PatchCommandStatus::Ok) {
             RecordPatchVersionAndSave(result.path);
+            saveRuntimeConfigAfterPatchInstrument_ = midiCatalog_.patchCarriesMappings;
         }
         return result;
     }
@@ -1614,6 +1625,13 @@ private:
     // reopen at the next launch. Read by SaveRuntimeConfiguration() (message-
     // thread/pre-audio only, like dataPaths_ itself), so no lock is needed.
     std::optional<std::string> lastPatchVersionRecord_;
+    // Set by LoadPatch() when this application's patches carry mappings, and
+    // by the first launch without a record when its patch staged an
+    // instrument; cleared by the next MessageThreadTick that applies a staged
+    // instrument, which then saves the runtime configuration. A plugin host
+    // restoring its state pushes its patch onto the bus directly and never
+    // sets it. Message thread only.
+    bool saveRuntimeConfigAfterPatchInstrument_ = false;
     AppContext context_;
     App app_;
     // Empty unless App declares MidiCatalog() (HasMidiCatalog<App>); read

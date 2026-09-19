@@ -3742,6 +3742,74 @@ TEST_CASE(engine_relaunch_after_upgrading_records_the_opened_version_and_keeps_a
     std::filesystem::remove_all(dataRoot);
 }
 
+// A plugin host restores its saved state by pushing a patch straight onto the
+// patch bus. That restore must never write the runtime configuration the
+// plugin shares with the standalone app, including on the first launch after
+// an upgrade whose newest patch predates patches carrying controller setups.
+TEST_CASE(engine_host_state_restore_after_upgrading_from_a_patch_without_mappings_writes_no_runtime_configuration) {
+    MidiCatalogTestApp::catalog = synth::MidiAppCatalog{};
+    MidiCatalogTestApp::catalog.patchCarriesMappings = true;
+
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-host-restore-after-upgrade-writes-nothing";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    std::filesystem::create_directories(paths.patchesRoot);
+    WriteRuntimeConfigFile(paths.configFile, MakeRuntimeConfigInstrument("pre-upgrade"),
+                           synth::AudioDeviceState{});
+
+    // The newest patch was saved before patches carried controller setups.
+    synth::ParameterManager scratchManager;
+    auto& group = scratchManager.CreateGroup(
+        {.numVoices = 1, .numModulators = 1, .numScenes = 1, .maxParameters = 4});
+    scratchManager.RegisterParameter(group, {.name = "Carrier", .defaultValue = 0.4f});
+    scratchManager.CaptureDefaultControlState();
+    scratchManager.ComputeAllParameters();
+    {
+        synth::JsonArena arena(64 * 1024);
+        synth::JSON root = synth::BuildPatchJSON(arena, "Old Patch", scratchManager, synth::MidiInstrumentConfig{},
+                                                 /*audioDevice=*/{}, /*carryInstrument=*/false);
+        REQUIRE_TRUE(root.Get("schemaVersion").IntegerValue() == 1);
+        char* dumped = root.Dumps(JSON_ENCODE_ANY);
+        REQUIRE_TRUE(dumped != nullptr);
+        const std::string jsonText(dumped);
+        std::free(dumped);
+        synth::SavePatchVersionInDirectory(paths.patchesRoot / "Old", jsonText, std::chrono::system_clock::now());
+    }
+
+    synth::Engine<MidiCatalogTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
+    engine.Initialize();
+    engine.Prepare(48000.0, 32);
+    engine.MessageThreadTick();
+
+    const auto readConfig = [&paths] {
+        std::ifstream in(paths.configFile, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+    const std::string before = readConfig();
+    REQUIRE_TRUE(!before.empty());
+
+    auto arena = std::make_shared<synth::JsonArena>(64 * 1024);
+    synth::JSON restored = synth::BuildPatchJSON(*arena, "Host State", scratchManager,
+                                                 MakeRuntimeConfigInstrument("from-host-restore"),
+                                                 /*audioDevice=*/{}, /*carryInstrument=*/true);
+    REQUIRE_TRUE(engine.Context().patchInputBus->Push(
+        synth::PatchMessageIn::LoadFromJSON(synth::JsonDocument{.arena = arena, .root = restored})));
+    TestBlockBuffers buffers(2, 32);
+    {
+        synth::AudioBlock block = buffers.Block(32);
+        engine.ProcessBlock(block, 0);
+    }
+    engine.MessageThreadTick();
+
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.size() == 1);
+    REQUIRE_TRUE(engine.LiveInstrument().controllers.front().name == "from-host-restore");
+    REQUIRE_TRUE(readConfig() == before);
+
+    std::filesystem::remove_all(dataRoot);
+}
+
 namespace {
 
 // An app with a file-export queue: satisfies HasFileExports<App> and
