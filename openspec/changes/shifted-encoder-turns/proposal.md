@@ -3,11 +3,12 @@
 This change modifies smi-16 and sru-15 as they stand in the active change
 `shift-and-file-export` (jvictor0/Sheaf#14), and the promoted sru-10; it adds
 smi-17 and sru-66 (`fold-controller-wizard-into-add-row`, jvictor0/Sheaf#19,
-added sru-64 and sru-65). It is based on `e8894727`, the tip of
-`fold-controller-wizard-into-add-row` (#19); task 9 rebases it onto
-`f6266560`, the Sheaf commit frogg3rs `main` now pins. It is delivered as the
-next pull request from the fork against upstream `main`, after the open
-ones. Paths are
+added sru-64 and sru-65). It is based on `f6266560`, the current tip of
+`fold-controller-wizard-into-add-row` (#19) on the fork: one commit past that
+branch's "Record the delivery" commit `e8894727`, still unmerged upstream;
+task 9 carried it from the previous base `e8894727` onto `f6266560`. It is
+delivered as the next pull request from the fork against upstream `main`,
+after the open ones. Paths are
 relative to `projects/synth/`, and code is named by symbol. Its spec deltas
 are in this change's `specs/`.
 
@@ -141,7 +142,7 @@ untouched. The test for each edit here is whether an app author who has
 never heard of frogg3rs would want it. Shift on knobs passes that test, and
 so does a Restore that resolves.
 
-This work is done on the fork on a branch based on the stack tip `e8894727`
+This work is done on the fork on a branch based on the stack tip `f6266560`
 (`fold-controller-wizard-into-add-row`, jvictor0/Sheaf#19) and pushed to the
 fork (`fork` remote, `daguilarc:shifted-encoder-turns`). It is opened as the
 next pull request against jvictor0/Sheaf `main`, after the open ones (#14,

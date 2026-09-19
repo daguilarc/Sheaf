@@ -4,8 +4,7 @@ Every new test is shown to fail with its production change reverted, by the
 executor, before the task is reported done, and the report says so. Builds
 run under `nice`, `-j2`.
 
-The open tasks run in this order: 9 (the rebase onto `f6266560`) first, then
-5a, then 10.
+The open task: 10.
 
 - [x] 1. Add the scene-blend increment: NEW `MessageIn::Type::SceneBlendIncDec`
       appended after `Shift`, its factory, NEW `ParameterManager::IncDecSceneBlend`
@@ -65,7 +64,7 @@ The open tasks run in this order: 9 (the rebase onto `f6266560`) first, then
       offers Shift; the `GroupColumnFieldsMatches…` parity tests pass with and
       without a Shift-offering catalog; `TestControllersRowFitsWithinFroggersNarrowestHost`
       passes with a shifted turn row in its open states.
-- [ ] 5a. Correct the comment task 5 added above the shifted turn in
+- [x] 5a. Correct the comment task 5 added above the shifted turn in
       `TestControllersRowFitsWithinFroggersNarrowestHost`
       (`tests/portable_ui_tests.cpp`), which says "the Shift field this
       change adds": it describes the field by the change that added it
@@ -101,7 +100,7 @@ The open tasks run in this order: 9 (the rebase onto `f6266560`) first, then
       Check: `git merge-base HEAD e8894727` prints `e8894727…`;
       `TestRestoreResolvesAnAppPreset` is defined in
       `tests/controllers_page_ui_tests.cpp`.
-- [ ] 9. Rebase the branch onto `f6266560`, the Sheaf commit frogg3rs `main`
+- [x] 9. Rebase the branch onto `f6266560`, the Sheaf commit frogg3rs `main`
       pins at `37c1b9c`, and update every statement in this change that
       names the base (`e8894727`, #19 as the stack tip) to the new one; an
       Evidence block keeps the commit it ran at and says so.
