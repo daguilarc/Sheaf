@@ -272,6 +272,6 @@ schedules.
       scenario is kept only where a named test asserts it, and the CC-switch
       clause is removed from its original scenario. No "not yet delivered"
       line is left; `openspec validate --strict` passes.
-- [ ] 12. Discharged by frogg3rs `frogg3rs-transport-and-shift-ux` task
+- [x] 12. Discharged by frogg3rs `frogg3rs-transport-and-shift-ux` task
       11.8's full run (both full suites, run once, on the exact tree to be
       committed); not run separately here.

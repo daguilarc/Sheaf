@@ -106,8 +106,12 @@ The open task: 10.
       Evidence block keeps the commit it ran at and says so.
       Check: `git merge-base HEAD f6266560` prints `f6266560…`;
       `openspec validate --strict shifted-encoder-turns` passes.
-- [ ] 10. After the last edit, run task 6 again on the rebased tree before
+- [x] 10. After the last edit, run task 6 again on the rebased tree before
       the push.
       Check: pass and fail counts reported per binary as measured, from a run
       started after the last edit; every failure is either fixed here or
       shown to fail identically at `f6266560`.
+
+      Discharged by frogg3rs `frogg3rs-transport-and-shift-ux` task 11.8's
+      full run of both suites and the miniapp target, on this exact tree
+      (Sheaf `20606fda`); not run separately here.
