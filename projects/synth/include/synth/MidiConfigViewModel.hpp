@@ -344,10 +344,9 @@ struct MidiControllerRowVM {
     bool matchesWizardProfile = false;
     // The stored opaque wizard id, independent of registry resolution; which
     // preset (if any) created this row, kept through edits/deletes/adds so
-    // matchesWizardProfile above and the Restore/Release/Configure controls
-    // keep working on a row that has since diverged.
+    // matchesWizardProfile above and Restore keep working on a row that has
+    // since diverged.
     std::optional<std::string> wizardId;
-    bool hasCompleteEndpointPair = false;
     MidiEndpointStatus inputStatus = MidiEndpointStatus::Unconfigured;
     MidiEndpointStatus outputStatus = MidiEndpointStatus::Unconfigured;
     std::string inputDeviceLabel;   // present device name; stored ref + " (offline)"; or "(none)"
@@ -494,6 +493,18 @@ public:
 
     int UISystemMessageIndex(std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx) const;
 
+    // The row's own stored kind's display name, when that kind is not one of
+    // the choices MessageCatalog() (the application's own catalog) offers --
+    // UISystemMessageIndex() then finds no match and returns -1. The name
+    // comes from the library's full catalog, so an application whose own
+    // catalog omits a kind a library default still uses (WRLD.Bldr's Hold
+    // kinds, say) shows that row's real kind instead of the combo's first,
+    // unrelated option. Returns std::nullopt when the row's kind already
+    // resolves in MessageCatalog(), or the row itself does not resolve.
+    std::optional<std::string> UncatalogedSystemMessageKindName(std::size_t controllerIx,
+                                                                 MidiConfigSection section,
+                                                                 std::size_t rowIx) const;
+
     // The Field::ShiftAction counterpart to UISystemMessageIndex() above:
     // looks up a system Individual row's current shifted job as an index
     // into ShiftCatalog(), so a JUCE combo box can preselect the row's
@@ -547,10 +558,6 @@ public:
                           MidiInstrumentConfig& out, std::string* reason = nullptr) const;
     bool DeleteController(std::size_t controllerIx, MidiInstrumentConfig& out,
                           std::string* reason = nullptr) const;
-    bool BlacklistController(std::size_t controllerIx, MidiInstrumentConfig& out,
-                             std::string* reason = nullptr) const;
-    bool RemoveFromBlacklist(std::size_t controllerIx, MidiInstrumentConfig& out,
-                             std::string* reason = nullptr) const;
     bool RestoreController(std::size_t controllerIx, MidiInstrumentConfig& out,
                            std::string* reason = nullptr) const;
 

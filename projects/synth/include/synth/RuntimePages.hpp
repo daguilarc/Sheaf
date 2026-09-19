@@ -87,7 +87,6 @@ inline constexpr const char* kFileNew = "runtime.file.new";
 inline constexpr const char* kFileSave = "runtime.file.save";
 inline constexpr const char* kFileSaveAs = "runtime.file.save_as";
 inline constexpr const char* kFileLoad = "runtime.file.load";
-inline constexpr const char* kFileRevert = "runtime.file.revert";
 inline constexpr const char* kFilePage = "runtime.file.page";
 inline constexpr const char* kFileHeader = "runtime.file.header";
 inline constexpr const char* kFileHeaderText = "runtime.file.header.text";
@@ -218,7 +217,6 @@ inline constexpr const char* kFileNew = "runtime.file.new";
 inline constexpr const char* kFileSave = "runtime.file.save";
 inline constexpr const char* kFileSaveAs = "runtime.file.save_as";
 inline constexpr const char* kFileLoad = "runtime.file.load";
-inline constexpr const char* kFileRevert = "runtime.file.revert";
 inline constexpr const char* kFileBrowserSaveName = "runtime.file.browser.save_name";
 inline constexpr const char* kFileBrowserSelect = "runtime.file.browser.select";
 inline constexpr const char* kFileBrowserAccept = "runtime.file.browser.accept";
@@ -238,7 +236,6 @@ inline constexpr std::string_view kFileActions[] = {
     kFileSave,
     kFileSaveAs,
     kFileLoad,
-    kFileRevert,
     kFileBrowserSaveName,
     kFileBrowserSelect,
     kFileBrowserAccept,
@@ -1233,9 +1230,6 @@ inline ui::NodeTree BuildFilePageTree(const FilePageSnapshot& snapshot, ui::Boun
                                   PageControls::RowButton(width, height));
                      strip.Button(NodeIds::kFileLoad, "Load",
                                   ui::Action::Named(Actions::kFileLoad),
-                                  PageControls::RowButton(width, height));
-                     strip.Button(NodeIds::kFileRevert, "Revert",
-                                  ui::Action::Named(Actions::kFileRevert),
                                   PageControls::RowButton(width, height));
                  });
 

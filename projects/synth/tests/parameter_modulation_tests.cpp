@@ -11957,16 +11957,15 @@ TEST_CASE(randomized_patch_lifecycle_simulation) {
                 break;
             }
             case 20:
-                action = "patch revert";
                 if (!expectedCurrentPatchDir.has_value()) {
-                    REQUIRE_TRUE(patchManager.RevertPatch().status == synth::PatchCommandStatus::Ok);
+                    action = "patch new";
+                    REQUIRE_TRUE(patchManager.NewPatch().status == synth::PatchCommandStatus::Ok);
                     processPatchMessages();
                     SimApplyNewPatch(oracle);
                 } else {
+                    action = "patch load current directory";
                     const std::size_t latestIx = SimFindLatestPatchInDirectory(savedVersions, *expectedCurrentPatchDir);
-                    REQUIRE_TRUE(patchManager.RevertPatch().status == synth::PatchCommandStatus::Ok);
-                    processPatchMessages();
-                    SimApplyPatchSnapshot(oracle, savedVersions[latestIx].second);
+                    loadPatchPath(*expectedCurrentPatchDir, savedVersions[latestIx].second, *expectedCurrentPatchDir);
                 }
                 break;
             default:
@@ -12234,14 +12233,15 @@ TEST_CASE(randomized_patch_lifecycle_preserves_recursive_local_modulation_depths
                 continue;
             }
             case 10:
-                action = "recursive revert";
                 if (!expectedCurrentPatchDir.has_value()) {
-                    REQUIRE_TRUE(patchManager.RevertPatch().status == synth::PatchCommandStatus::Ok);
+                    action = "recursive new";
+                    REQUIRE_TRUE(patchManager.NewPatch().status == synth::PatchCommandStatus::Ok);
                     processPatchMessages();
                     expected = defaultExpected;
                 } else {
+                    action = "recursive load current directory";
                     const std::size_t latestIx = findLatestRecursive(savedVersions, *expectedCurrentPatchDir);
-                    REQUIRE_TRUE(patchManager.RevertPatch().status == synth::PatchCommandStatus::Ok);
+                    REQUIRE_TRUE(patchManager.LoadPatch(*expectedCurrentPatchDir).status == synth::PatchCommandStatus::Ok);
                     processPatchMessages();
                     expected = savedVersions[latestIx].second;
                 }
@@ -14807,7 +14807,7 @@ TEST_CASE(apply_patch_message_reports_exhaustion_without_growing_caller_arena) {
     REQUIRE_TRUE(tiny.Capacity() == 64);  // caller's arena was not grown/reallocated
 }
 
-TEST_CASE(patch_manager_save_load_revert_lifecycle_uses_messages_and_current_directory) {
+TEST_CASE(patch_manager_save_load_new_lifecycle_uses_messages_and_current_directory) {
     synth::PatchMessageInBus inputBus(8);
     synth::MessageOutBus outputBus(8);
     synth::PatchManager patchManager(&inputBus, &outputBus);
@@ -14915,7 +14915,7 @@ TEST_CASE(patch_manager_save_load_revert_lifecycle_uses_messages_and_current_dir
     REQUIRE_TRUE(*patchManager.CurrentPatchDirectory() == patchDir);
 
     cutoff.SceneCenter(0) = 0.0f;
-    REQUIRE_TRUE(patchManager.RevertPatch().status == synth::PatchCommandStatus::Ok);
+    REQUIRE_TRUE(patchManager.LoadPatch(patchDir).status == synth::PatchCommandStatus::Ok);
     REQUIRE_TRUE(inputBus.Pop(message));
     REQUIRE_TRUE(message.type == synth::PatchMessageIn::Type::LoadFromJSON);
     REQUIRE_TRUE(synth::ApplyPatchMessage(message, manager, instrument, defaultInstrument,

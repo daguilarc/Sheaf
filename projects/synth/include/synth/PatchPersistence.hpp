@@ -35,14 +35,24 @@ inline constexpr int kRuntimeConfigSchemaVersion = 3;
 JSON ToJSON(JsonArena& arena, const SyncConfig& config);
 bool FromJSON(JSON json, SyncConfig& config);
 
+// lastPatchVersion is the patch version file the player last opened or
+// saved, relative to the patches root, as a player-facing record separate
+// from the instrument/audio/sync state above: absent (nullopt) means a
+// configuration written before this record existed; present and empty means
+// New was the last action (no patch is open); present and non-empty names
+// the version file to reopen at launch. BuildRuntimeConfigJSON omits the key
+// entirely when the caller passes nullopt, so a caller that does not know
+// about this record writes exactly what it always has.
 JSON BuildRuntimeConfigJSON(JsonArena& arena,
                             const MidiInstrumentConfig& instrument,
                             const AudioDeviceState& audioDevice,
-                            const SyncConfig& sync);
+                            const SyncConfig& sync,
+                            const std::optional<std::string>& lastPatchVersion = std::nullopt);
 bool LoadRuntimeConfigJSON(JSON root,
                            MidiInstrumentConfig& instrument,
                            AudioDeviceState& audioDevice,
-                           SyncConfig& sync);
+                           SyncConfig& sync,
+                           std::optional<std::string>* lastPatchVersion = nullptr);
 bool ValidateRuntimeConfigJSON(JSON root);
 
 enum class RuntimeConfigFileStatus {
@@ -55,11 +65,13 @@ enum class RuntimeConfigFileStatus {
 RuntimeConfigFileStatus LoadRuntimeConfigFile(const std::filesystem::path& configFile,
                                               MidiInstrumentConfig& instrument,
                                               AudioDeviceState& audioDevice,
-                                              SyncConfig& sync);
+                                              SyncConfig& sync,
+                                              std::optional<std::string>* lastPatchVersion = nullptr);
 RuntimeConfigFileStatus SaveRuntimeConfigFile(const std::filesystem::path& configFile,
                                               const MidiInstrumentConfig& instrument,
                                               const AudioDeviceState& audioDevice,
-                                              const SyncConfig& sync);
+                                              const SyncConfig& sync,
+                                              const std::optional<std::string>& lastPatchVersion = std::nullopt);
 const char* RuntimeConfigFileStatusName(RuntimeConfigFileStatus status);
 
 JSON BuildPatchJSON(JsonArena& arena, std::string_view patchName,
@@ -256,7 +268,6 @@ public:
     PatchCommandResult SavePatchAs(const std::filesystem::path& patchDir);
     PatchCommandResult SavePatchAsOverwrite(const std::filesystem::path& patchDir);
     PatchCommandResult LoadPatch(const std::filesystem::path& path);
-    PatchCommandResult RevertPatch();
     PatchCommandResult ProcessResponses(std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
 
 private:

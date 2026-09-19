@@ -144,9 +144,9 @@ PAGE_PRODUCER_HEADERS=(
     include/synth/RuntimePages.hpp
     include/synth/ControllersPageUI.hpp
     include/synth/ControllerWizard.hpp
-    # The wizard's tree is built here, not in its header: this is a producer in
-    # every sense the scan cares about, and it was omitted while its header was
-    # listed.
+    # `GenerateProfile` and `Validate` live here, not in the header: this file
+    # still produces the profile the add row and Restore install, so it stays
+    # scanned as a producer even though it renders no tree of its own.
     src/ControllerWizard.cpp
     include/synth/RuntimeMainComponent.hpp
     # Producer-side scope drawing adapter: it intentionally depends on DSP

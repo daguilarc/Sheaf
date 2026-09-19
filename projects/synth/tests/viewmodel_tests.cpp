@@ -2878,7 +2878,7 @@ TEST_CASE(AddBlockRefusedForTwister) {
 // --- A row's wizardId survives edit, delete, and add (provenance) ---
 //
 // slot.wizardId is which preset (if any) created a row, kept for as long as
-// the row exists so Restore/Release/Configure stay available after the row
+// the row exists so Restore stays available after the row
 // has been hand-edited. ApplyMappingEdit, DeleteRow, AddSingle, and AddBlock
 // all mutate a row's stored mappings; none of them may clear it. The id
 // string below is opaque to every function under test here -- it is never
@@ -5658,7 +5658,7 @@ TEST_CASE(GridAddSkipsPhysicalAddressesOwnedByHiddenOrphans) {
     }
 }
 
-TEST_CASE(ControllerLifecycleMutationsPreserveIdentityAndGateRegistryActions) {
+TEST_CASE(ControllerLifecycleMutationsPreserveIdentity) {
     MidiControllerSlot known = MakeTwisterSlot("known");
     known.output = {.identifier = "twister-out-id", .name = "MF Twister Out"};
     known.wizardId = "com.sheaf.midi-fighter-twister";
@@ -5716,46 +5716,6 @@ TEST_CASE(ControllerLifecycleMutationsPreserveIdentityAndGateRegistryActions) {
                  instrument.controllers[3].name == "blacklisted" &&
                  DumpInstrument(instrument) == beforeRefusedRename);
 
-    REQUIRE_TRUE(vm.BlacklistController(1, out, &reason));
-    const MidiControllerSlot& blacklistedKnown = out.controllers[1];
-    REQUIRE_TRUE(blacklistedKnown.disposition == synth::MidiControllerDisposition::Blacklisted &&
-                 blacklistedKnown.dormantConfig.has_value() &&
-                 blacklistedKnown.dormantConfig->encoderInput.has_value() &&
-                 blacklistedKnown.dormantConfig->encoderOutput.has_value() &&
-                 blacklistedKnown.dormantConfig->encoderInput->turns.size() ==
-                     known.config.encoderInput->turns.size() &&
-                 blacklistedKnown.dormantConfig->encoderInput->pushes.size() ==
-                     known.config.encoderInput->pushes.size() &&
-                 blacklistedKnown.dormantConfig->encoderOutput->mappings.size() ==
-                     known.config.encoderOutput->mappings.size() &&
-                 blacklistedKnown.dormantConfig->systemMessages.size() ==
-                     known.config.systemMessages.size() &&
-                 !blacklistedKnown.config.encoderInput.has_value() &&
-                 blacklistedKnown.name == known.name &&
-                 blacklistedKnown.kind == known.kind &&
-                 blacklistedKnown.wizardId == known.wizardId &&
-                 blacklistedKnown.input.identifier == known.input.identifier &&
-                 blacklistedKnown.input.name == known.input.name &&
-                 blacklistedKnown.output.identifier == known.output.identifier &&
-                 blacklistedKnown.output.name == known.output.name);
-
-    out = MidiInstrumentConfig{};
-    REQUIRE_TRUE(!vm.BlacklistController(0, out, &reason));
-    REQUIRE_TRUE(!vm.BlacklistController(2, out, &reason));
-    REQUIRE_TRUE(out.controllers.empty());
-
-    MidiControllerSlot incomplete = known;
-    incomplete.name = "incomplete";
-    incomplete.output = {};
-    MidiInstrumentConfig incompleteInstrument;
-    REQUIRE_TRUE(incompleteInstrument.AddController(incomplete));
-    MidiConfigViewModel incompleteVm;
-    incompleteVm.Rebuild(incompleteInstrument, MidiConnectionState{{MidiControllerConnection{}}});
-    const std::string beforeIncompleteBlacklist = DumpInstrument(incompleteInstrument);
-    REQUIRE_TRUE(!incompleteVm.BlacklistController(0, out, &reason));
-    REQUIRE_TRUE(out.controllers.empty() && reason.find("endpoint") != std::string::npos &&
-                 DumpInstrument(incompleteInstrument) == beforeIncompleteBlacklist);
-
     REQUIRE_TRUE(vm.DeleteController(0, out, &reason));
     REQUIRE_TRUE(out.controllers.size() == 3 && out.controllers[0].name == "known");
     REQUIRE_TRUE(vm.DeleteController(2, out, &reason));
@@ -5763,7 +5723,9 @@ TEST_CASE(ControllerLifecycleMutationsPreserveIdentityAndGateRegistryActions) {
 
     REQUIRE_TRUE(vm.RenameController(3, "blacklisted renamed", out, &reason));
     REQUIRE_TRUE(out.controllers[3].name == "blacklisted renamed");
-    REQUIRE_TRUE(vm.RemoveFromBlacklist(3, out, &reason));
+    // DeleteController accepts a Blacklisted record the same way it accepts
+    // an Active one, so this is how the player gets rid of a released row.
+    REQUIRE_TRUE(vm.DeleteController(3, out, &reason));
     REQUIRE_TRUE(out.controllers.size() == 3 && out.controllers.back().name == "unknown");
     REQUIRE_TRUE(vm.RenameController(2, "unknown renamed", out, &reason));
     REQUIRE_TRUE(out.controllers[2].name == "unknown renamed");

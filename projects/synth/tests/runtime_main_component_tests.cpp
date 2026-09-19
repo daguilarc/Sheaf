@@ -661,66 +661,6 @@ void TestControllerDraftActionsReachControllerSurface()
         FindNodeById(tree, synth::runtime_ui::NodeIds::kAddPreset);
     Require(addPreset != nullptr && addPreset->selectedOption == "custom",
             "controller add-preset draft routes through runtime component");
-
-    fixture.services.controllerDevices.inputs.push_back(
-        {.identifier = "twister-in", .name = "Midi Fighter Twister"});
-    fixture.services.controllerDevices.outputs.push_back(
-        {.identifier = "twister-out", .name = "Midi Fighter Twister"});
-    fixture.component.Refresh();
-    fixture.component.DispatchAction(
-        synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
-    Require(FindNodeById(fixture.component.BuildTree(),
-                         synth::runtime_ui::NodeIds::kWizardForm) != nullptr,
-            "wizard launch routes through runtime component to the Controllers surface");
-    fixture.component.DispatchAction(
-        synth::ui::Action::WithValue("controller-wizard.twister.encoder-slot", "5"));
-    const synth::ui::Node* encoderSlot = FindNodeById(
-        fixture.component.BuildTree(), "controller-wizard.twister.encoder-slot");
-    Require(encoderSlot != nullptr && encoderSlot->text == "5",
-            "wizard form field actions route through runtime component to the session-owned form");
-}
-
-void TestThreeClickWizardSubmitCommitsThenSaves()
-{
-    Fixture fixture;
-    fixture.services.controllerDevices.inputs.push_back(
-        {.identifier = "twister-in", .name = "Midi Fighter Twister"});
-    fixture.services.controllerDevices.outputs.push_back(
-        {.identifier = "twister-out", .name = "Midi Fighter Twister"});
-    fixture.component.Refresh();
-
-    fixture.component.DispatchAction(
-        synth::ui::Action::Named(synth::runtime_ui::Actions::kSidebarControllers));
-    fixture.component.DispatchAction(
-        synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardOpen));
-    fixture.component.DispatchAction(
-        synth::ui::Action::Named(synth::runtime_ui::Actions::kWizardSubmit));
-
-    Require(fixture.services.controllerCommitCount == 1,
-            "three-click Submit performs exactly one instrument commit");
-    Require(fixture.services.saveCount == 1 &&
-                fixture.services.controllerPersistenceEvents ==
-                    std::vector<std::string>({"commit", "save"}),
-            "three-click Submit requests one runtime save after the commit");
-    Require(fixture.services.instrument.controllers.size() == 1,
-            "three-click Submit installs exactly one controller");
-    const synth::MidiControllerSlot& installed =
-        fixture.services.instrument.controllers.front();
-    Require(installed.disposition == synth::MidiControllerDisposition::Active &&
-                installed.wizardId ==
-                    std::optional<std::string>("com.sheaf.midi-fighter-twister") &&
-                installed.input.identifier == "twister-in" &&
-                installed.output.identifier == "twister-out",
-            "three-click Submit installs the generated Active record with exact identity");
-    Require(installed.config.encoderInput.has_value() &&
-                installed.config.encoderInput->turns.size() == 16 &&
-                installed.config.systemMessages.size() == 6,
-            "three-click Submit installs the complete default Twister profile");
-
-    fixture.component.Refresh();
-    Require(FindNodeById(fixture.component.BuildTree(),
-                         "runtime.sidebar.controllers.warning") == nullptr,
-            "successful Submit immediately removes the claimed candidate warning");
 }
 
 void TestBackFromConfigurationPageSavesRuntimeConfiguration()
@@ -733,11 +673,11 @@ void TestBackFromConfigurationPageSavesRuntimeConfiguration()
 
     fixture.component.ShowPage(synth::runtime_ui::RuntimeMainPage::Controllers);
     fixture.component.DispatchAction(synth::ui::Action::Named("runtime.controllers.back"));
-    Require(fixture.services.saveCount == 2, "controllers back saves runtime configuration");
+    Require(fixture.services.saveCount == 1, "controllers back adds no save");
 
     fixture.component.ShowPage(synth::runtime_ui::RuntimeMainPage::File);
     fixture.component.DispatchAction(synth::ui::Action::Named("runtime.file.back"));
-    Require(fixture.services.saveCount == 2, "file back does not save runtime configuration");
+    Require(fixture.services.saveCount == 1, "file back does not save runtime configuration");
 }
 
 void TestSyncStagesRefreshesCommitsAndReopensFromEngineSnapshot()
@@ -1175,8 +1115,6 @@ int main()
         TestRuntimeActionsRouteOnlyToOwningPageOrServices);
     Run("TestControllerDraftActionsReachControllerSurface",
         TestControllerDraftActionsReachControllerSurface);
-    Run("TestThreeClickWizardSubmitCommitsThenSaves",
-        TestThreeClickWizardSubmitCommitsThenSaves);
     Run("TestBackFromConfigurationPageSavesRuntimeConfiguration",
         TestBackFromConfigurationPageSavesRuntimeConfiguration);
     Run("TestSyncStagesRefreshesCommitsAndReopensFromEngineSnapshot",

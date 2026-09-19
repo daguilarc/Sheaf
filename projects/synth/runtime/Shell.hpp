@@ -7,7 +7,7 @@
 // ShellComponent is a thin MainPane<App> host: it
 // constructs a single MainPane<App>, `addAndMakeVisible`s it, and its
 // resized() fills the shell's full bounds with it. The former patch-command
-// row (New/Save/Save As/Load/Revert + patch name + status label), the
+// row (New/Save/Save As/Load + patch name + status label), the
 // MidiPanel strip, and the AudioPanel strip are gone from this layout --
 // MainPane's sidebar (Audio/Controllers/File) and content host are the only
 // chrome now. MainPane's Audio, Controllers, Sync, and File pages are all

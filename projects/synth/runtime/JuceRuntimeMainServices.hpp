@@ -247,7 +247,6 @@ private:
         callbacks.loadPatch = [this](const std::filesystem::path& path) {
             runtime_.LoadPatch(path);
         };
-        callbacks.revertPatch = [this] { runtime_.RevertPatch(); };
         return callbacks;
     }
 

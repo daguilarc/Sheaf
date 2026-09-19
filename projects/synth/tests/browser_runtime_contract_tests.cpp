@@ -703,42 +703,6 @@ void TestBrowserControllerDiscoveryCacheUsesSignalsAndSuccessfulCommits()
     bridge.Stop();
 }
 
-void TestWizardSubmitRefusesACandidateRemovedSinceTheLastFrame()
-{
-    RuntimeFixture fixture;
-    using Bridge = synth_browser::BrowserMidiBridge<synth::Engine<ValidApp>>;
-    const std::vector<Bridge::Endpoint> twisterPair = {
-        {.identifier = "twister-in", .name = "Midi Fighter Twister", .kind = Bridge::EndpointKind::Input},
-        {.identifier = "twister-out", .name = "Midi Fighter Twister", .kind = Bridge::EndpointKind::Output},
-    };
-    fixture.runtime.SubmitMidiEndpoints(twisterPair);
-    fixture.runtime.MessageTick(2);
-    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSidebarControllers, "");
-    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardOpen, "");
-    const synth_browser::DecodedCommandBuffer openFrame = fixture.Frame();
-    Require(FindNode(openFrame, "controller-wizard.twister.encoder-slot") != nullptr,
-            "the unique candidate opens its wizard form");
-
-    // The controller is unplugged and Submit is activated before the host
-    // builds another frame. Submit must recheck that the candidate is
-    // still present, so the cached classification follows the device-list
-    // change itself rather than the next frame build.
-    fixture.runtime.SubmitMidiEndpoints({});
-    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardSubmit, "");
-
-    const synth_browser::DecodedCommandBuffer refusedFrame = fixture.Frame();
-    const synth_browser::DecodedNode* status =
-        FindNode(refusedFrame, synth::runtime_ui::NodeIds::kWizardStatus);
-    Require(status != nullptr && status->text.find("reconnect") != std::string::npos,
-            "Submit refuses a candidate removed since the last frame with a reconnect message");
-    Require(FindNode(refusedFrame, "controller-wizard.twister.encoder-slot") != nullptr,
-            "the refused wizard session stays open");
-    Require(fixture.runtime.Engine().InstrumentSnapshot().FindController("MIDI Fighter Twister") == nullptr,
-            "a refused stale Submit commits no controller");
-    Require(!fixture.runtime.ConsumePersistenceDirty(),
-            "a refused stale Submit saves no runtime configuration");
-}
-
 void TestBrowserPrepareFeedsNegotiatedAudioPageAndRejectsOversizedBlocks()
 {
     RuntimeFixture fixture;
@@ -905,7 +869,7 @@ void TestBrowserSyncUsesSharedStagingPersistsAndResolvesSourceNames()
             "browser uses deterministic out-of-range source fallback");
 }
 
-void TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack()
+void TestControllersUseLatestBridgeSnapshotCommitEditsSaveImmediatelyBackAddsNoSave()
 {
     RuntimeFixture fixture;
     using Bridge = synth_browser::BrowserMidiBridge<synth::Engine<ValidApp>>;
@@ -954,18 +918,19 @@ void TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack()
         {.identifier = "twister-out", .name = "Midi Fighter Twister", .kind = Bridge::EndpointKind::Output},
     });
     fixture.runtime.MessageTick(4);
-    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardOpen, "");
-    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardSubmit, "");
+    fixture.runtime.DispatchAction(
+        synth::runtime_ui::Actions::kAddPresetDraft, "com.sheaf.midi-fighter-twister");
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kAddController, "");
     Require(fixture.runtime.ConsumePersistenceDirty(),
-            "successful browser wizard Submit immediately marks persisted runtime configuration dirty");
-    synth::MidiInstrumentConfig wizardSavedInstrument;
-    synth::AudioDeviceState wizardSavedAudio;
-    synth::SyncConfig wizardSavedSync;
+            "successful browser Add immediately marks persisted runtime configuration dirty");
+    synth::MidiInstrumentConfig addSavedInstrument;
+    synth::AudioDeviceState addSavedAudio;
+    synth::SyncConfig addSavedSync;
     Require(synth::LoadRuntimeConfigFile(
-                fixture.Paths().configFile, wizardSavedInstrument, wizardSavedAudio, wizardSavedSync) ==
+                fixture.Paths().configFile, addSavedInstrument, addSavedAudio, addSavedSync) ==
                 synth::RuntimeConfigFileStatus::Ok &&
-                wizardSavedInstrument.FindController("MIDI Fighter Twister") != nullptr,
-            "browser wizard Submit saves the committed Twister profile through the real runtime path");
+                addSavedInstrument.FindController("MIDI Fighter Twister") != nullptr,
+            "browser Add saves the installed Twister profile through the real runtime path");
 
     std::string lastLifecycleAction;
     const auto dispatchNode = [&](const std::string& id, std::string suffix = {}) {
@@ -989,12 +954,8 @@ void TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack()
                 label);
     };
 
-    Require(FindNode(fixture.Frame(), synth::runtime_ui::NodeIds::ControllerRenameDraft(2).c_str()) == nullptr,
-            "browser Rename draft field is absent while controller 2 is collapsed");
-    Require(FindNode(fixture.Frame(), synth::runtime_ui::NodeIds::ControllerRename(2).c_str()) == nullptr,
-            "browser Rename button is absent while controller 2 is collapsed");
-    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kToggleConfig, "2");
-
+    // The row an Add just installed opens with its editor already expanded
+    // (task 2.1), so its Rename draft is already reachable here.
     dispatchNode(synth::runtime_ui::NodeIds::ControllerRenameDraft(2), ":Browser Twister");
     const synth_browser::DecodedCommandBuffer renamedDraftFrame = fixture.Frame();
     if (FindNode(renamedDraftFrame, synth::runtime_ui::NodeIds::ControllerRenameDraft(2).c_str())->text !=
@@ -1012,53 +973,173 @@ void TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack()
             "browser Rename immediately reports a real runtime-configuration save");
     requirePersisted(3, "browser Rename persists the renamed controller record");
 
-    dispatchNode(synth::runtime_ui::NodeIds::ControllerBlacklist(2));
-    Require(fixture.runtime.ConsumePersistenceDirty(),
-            "browser Blacklist immediately reports a real runtime-configuration save");
-    requirePersisted(3, "browser Blacklist persists the inert record");
-
-    dispatchNode(synth::runtime_ui::NodeIds::ControllerConfigure(2));
-    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardSubmit, "");
-    Require(fixture.runtime.ConsumePersistenceDirty(),
-            "browser blacklisted Configure immediately reports a real runtime-configuration save");
-    requirePersisted(3, "browser blacklisted Configure persists its active replacement");
-
-    dispatchNode(synth::runtime_ui::NodeIds::ControllerBlacklist(2));
-    Require(fixture.runtime.ConsumePersistenceDirty(),
-            "second browser Blacklist saves before removal");
-    dispatchNode(synth::runtime_ui::NodeIds::ControllerRemoveBlacklist(2));
-    Require(fixture.runtime.ConsumePersistenceDirty(),
-            "browser Remove from blacklist immediately reports a real runtime-configuration save");
-    requirePersisted(2, "browser Remove from blacklist persists record deletion");
-
-    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardOpen, "");
-    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardSubmit, "");
-    Require(fixture.runtime.ConsumePersistenceDirty(), "second browser wizard Submit saves before Delete");
     dispatchNode(synth::runtime_ui::NodeIds::ControllerDelete(2));
     Require(fixture.runtime.ConsumePersistenceDirty(),
             "browser Delete immediately reports a real runtime-configuration save");
     requirePersisted(2, "browser Delete persists record deletion");
 
-    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardOpen, "");
-    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kWizardIgnore, "");
-    Require(fixture.runtime.ConsumePersistenceDirty(),
-            "browser Ignore immediately reports a real runtime-configuration save");
-    requirePersisted(3, "browser Ignore persists the blacklisted record");
-
     fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kBack, "");
-    Require(fixture.runtime.ConsumePersistenceDirty(),
-            "controllers Back marks browser persistence dirty after saving runtime configuration");
+    Require(!fixture.runtime.ConsumePersistenceDirty(),
+            "controllers Back adds no further browser persistence save; every edit already saved on commit");
     synth::MidiInstrumentConfig loadedInstrument;
     synth::AudioDeviceState loadedAudio;
     synth::SyncConfig loadedSync;
     Require(synth::LoadRuntimeConfigFile(
                 fixture.Paths().configFile, loadedInstrument, loadedAudio, loadedSync) ==
                 synth::RuntimeConfigFileStatus::Ok,
-            "controllers Back persists runtime configuration");
-    Require(loadedInstrument.controllers.size() == 3,
+            "the already-saved runtime configuration is still on disk after Back");
+    Require(loadedInstrument.controllers.size() == 2,
             "saved browser configuration retains every controller");
     Require(loadedInstrument.controllers[0].input.identifier == "in-b",
             "saved browser configuration contains the committed endpoint edit");
+}
+
+void TestControllersPageSavesEachCommittedEdit()
+{
+    RuntimeFixture fixture;
+    using Bridge = synth_browser::BrowserMidiBridge<synth::Engine<ValidApp>>;
+    fixture.runtime.SubmitMidiEndpoints({
+        {.identifier = "custom-in", .name = "Custom Input", .kind = Bridge::EndpointKind::Input},
+        {.identifier = "custom-out", .name = "Custom Output", .kind = Bridge::EndpointKind::Output},
+    });
+    fixture.runtime.MessageTick(2);
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kSidebarControllers, "");
+
+    const auto dispatchNode = [&](const std::string& id, std::string suffix = {}) {
+        const synth_browser::DecodedCommandBuffer frame = fixture.Frame();
+        const synth_browser::DecodedNode* node = FindNode(frame, id.c_str());
+        Require(node != nullptr && node->action.has_value(), "controller-save node has a portable action");
+        fixture.runtime.DispatchAction(node->action->name, node->action->value + suffix);
+    };
+    const auto loadPersisted = [&](synth::MidiInstrumentConfig& instrument) {
+        synth::AudioDeviceState audio;
+        synth::SyncConfig sync;
+        return synth::LoadRuntimeConfigFile(fixture.Paths().configFile, instrument, audio, sync) ==
+               synth::RuntimeConfigFileStatus::Ok;
+    };
+
+    const std::size_t presetIx = fixture.runtime.Engine().InstrumentSnapshot().controllers.size();
+    const std::size_t customIx = presetIx + 1;
+
+    // Add a preset (the library Twister descriptor, which every app catalog carries).
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kAddPresetDraft,
+                                   "com.sheaf.midi-fighter-twister");
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kAddController, "");
+    {
+        synth::MidiInstrumentConfig persisted;
+        Require(loadPersisted(persisted) && persisted.controllers.size() == presetIx + 1,
+                "adding a preset is saved without Back");
+    }
+
+    // Add Custom.
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kAddPresetDraft, "custom");
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kAddController, "");
+    {
+        synth::MidiInstrumentConfig persisted;
+        Require(loadPersisted(persisted) && persisted.controllers.size() == customIx + 1,
+                "adding Custom is saved without Back");
+    }
+
+    // Choose Custom's input port.
+    fixture.runtime.DispatchAction(
+        synth::runtime_ui::Actions::kEndpointSelect,
+        std::to_string(customIx) + ":input:custom-in");
+    {
+        synth::MidiInstrumentConfig persisted;
+        Require(loadPersisted(persisted) && persisted.controllers[customIx].input.identifier == "custom-in",
+                "choosing an input port is saved without Back");
+    }
+
+    // Add a mapping entry to Custom's Encoders section.
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kAddSingle,
+                                   std::to_string(customIx) + ":encoders:encoder_turn");
+    {
+        synth::MidiInstrumentConfig persisted;
+        Require(loadPersisted(persisted) &&
+                    persisted.controllers[customIx].config.encoderInput.has_value() &&
+                    !persisted.controllers[customIx].config.encoderInput->turns.empty(),
+                "adding a mapping entry is saved without Back");
+    }
+
+    // Edit that mapping entry's field.
+    dispatchNode(synth::runtime_ui::NodeIds::MappingField(customIx, synth::MidiConfigSection::Encoders, 0,
+                                                          synth::MidiMappingRowVM::Field::Channel),
+                ":3");
+    {
+        synth::MidiInstrumentConfig persisted;
+        Require(loadPersisted(persisted) &&
+                    persisted.controllers[customIx].config.encoderInput->turns.front().control.channel == 3,
+                "editing a mapping field is saved without Back");
+    }
+
+    // Add, edit, and delete a connect message on the Custom row.
+    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kConnectMessageAdd,
+                                   std::to_string(customIx));
+    {
+        synth::MidiInstrumentConfig persisted;
+        Require(loadPersisted(persisted) && persisted.controllers[customIx].config.openSysEx.size() == 1,
+                "adding a connect message is saved without Back");
+    }
+    dispatchNode(synth::runtime_ui::NodeIds::ConnectMessageField(customIx, 0), ":F0 01 F7");
+    {
+        synth::MidiInstrumentConfig persisted;
+        Require(loadPersisted(persisted) &&
+                    persisted.controllers[customIx].config.openSysEx.front() ==
+                        (std::vector<std::uint8_t>{0xF0, 0x01, 0xF7}),
+                "editing a connect message is saved without Back");
+    }
+    dispatchNode(synth::runtime_ui::NodeIds::ConnectMessageDelete(customIx, 0));
+    {
+        synth::MidiInstrumentConfig persisted;
+        Require(loadPersisted(persisted) && persisted.controllers[customIx].config.openSysEx.empty(),
+                "deleting a connect message is saved without Back");
+    }
+
+    // Rename Custom's row.
+    dispatchNode(synth::runtime_ui::NodeIds::ControllerRenameDraft(customIx), ":Renamed Custom");
+    dispatchNode(synth::runtime_ui::NodeIds::ControllerRename(customIx));
+    {
+        synth::MidiInstrumentConfig persisted;
+        Require(loadPersisted(persisted) && persisted.controllers[customIx].name == "Renamed Custom",
+                "renaming a row is saved without Back");
+    }
+
+    // Diverge the preset row from its generated profile, then restore it.
+    const synth_browser::DecodedCommandBuffer beforeDivergeFrame = fixture.Frame();
+    const synth_browser::DecodedNode* presetChannelField = FindNode(
+        beforeDivergeFrame,
+        synth::runtime_ui::NodeIds::MappingField(presetIx, synth::MidiConfigSection::Encoders, 0,
+                                                 synth::MidiMappingRowVM::Field::Channel)
+            .c_str());
+    Require(presetChannelField != nullptr, "the installed preset shows an editable encoder channel field");
+    const int currentChannel = std::atoi(presetChannelField->text.c_str());
+    const int divergedChannel = (currentChannel + 1) % 16;
+    dispatchNode(synth::runtime_ui::NodeIds::MappingField(presetIx, synth::MidiConfigSection::Encoders, 0,
+                                                          synth::MidiMappingRowVM::Field::Channel),
+                ":" + std::to_string(divergedChannel));
+    {
+        synth::MidiInstrumentConfig persisted;
+        Require(loadPersisted(persisted) &&
+                    persisted.controllers[presetIx].config.encoderInput->turns.front().control.channel ==
+                        divergedChannel,
+                "diverging the preset row's mapping field is saved without Back");
+    }
+    dispatchNode(synth::runtime_ui::NodeIds::ControllerRestore(presetIx));
+    {
+        synth::MidiInstrumentConfig persisted;
+        Require(loadPersisted(persisted) &&
+                    persisted.controllers[presetIx].config.encoderInput->turns.front().control.channel !=
+                        divergedChannel,
+                "restoring a diverged row is saved without Back");
+    }
+
+    // Delete a row.
+    dispatchNode(synth::runtime_ui::NodeIds::ControllerDelete(customIx));
+    {
+        synth::MidiInstrumentConfig persisted;
+        Require(loadPersisted(persisted) && persisted.controllers.size() == customIx,
+                "deleting a row is saved without Back");
+    }
 }
 
 void TestFilePageDispatchesPatchLifecycleThroughBrowserRuntime()
@@ -1113,11 +1194,6 @@ void TestFilePageDispatchesPatchLifecycleThroughBrowserRuntime()
             "Load selects the requested patch directory");
     Require(fixture.ProbeCenter() == 0.5f, "Load applies the latest saved patch state");
 
-    fixture.SetProbeCenter(0.8f);
-    fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kFileRevert, "");
-    fixture.PumpOnce();
-    Require(fixture.ProbeCenter() == 0.5f, "Revert restores the current patch state");
-
     fixture.SetProbeCenter(0.7f);
     fixture.runtime.DispatchAction(synth::runtime_ui::Actions::kFileNew, "");
     fixture.PumpOnce();
@@ -1133,7 +1209,7 @@ void TestFilePageDispatchesPatchLifecycleThroughBrowserRuntime()
             "file refresh reports the New patch state through the portable tree");
 }
 
-void TestPersistenceDirtyConsumesRuntimeAndServicesSourcesTogether()
+void TestPersistenceDirtyConsumesPatchAndConfigSourcesTogether()
 {
     RuntimeFixture fixture;
     fixture.Prepare();
@@ -2284,11 +2360,11 @@ int main()
     TestNativeBuildRejectsBrowserAudioWorkletStart();
     TestSharedBrowserNavigationReplacesAndRestoresEveryRuntimePage();
     TestBrowserSyncUsesSharedStagingPersistsAndResolvesSourceNames();
-    TestControllersUseLatestBridgeSnapshotCommitEditsAndSaveOnBack();
+    TestControllersUseLatestBridgeSnapshotCommitEditsSaveImmediatelyBackAddsNoSave();
+    TestControllersPageSavesEachCommittedEdit();
     TestBrowserControllerDiscoveryCacheUsesSignalsAndSuccessfulCommits();
-    TestWizardSubmitRefusesACandidateRemovedSinceTheLastFrame();
     TestFilePageDispatchesPatchLifecycleThroughBrowserRuntime();
-    TestPersistenceDirtyConsumesRuntimeAndServicesSourcesTogether();
+    TestPersistenceDirtyConsumesPatchAndConfigSourcesTogether();
     TestAudioWorkletDeadlineMeterAveragesQuantizedTimerSamples();
     TestMidiOutputDescriptorHasStableWasmLayout();
     TestMidiDiagnosticsDescriptorAndTimestampEpochOffsetContract();

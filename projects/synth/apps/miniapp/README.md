@@ -27,7 +27,7 @@ bespoke JUCE shell.
 This app does **not** provide patch load/save buttons or MIDI device
 selection UI. Those are owned by the runtime shell:
 
-- Patch commands (New/Save/Save As/Load/Revert), the current-patch-name
+- Patch commands (New/Save/Save As/Load), the current-patch-name
   label, and the patch status label live on the File page, built in
   `include/synth/RuntimePages.hpp` and hosted by the shell's
   `synth_runtime::MainPane`

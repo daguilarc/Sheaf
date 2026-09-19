@@ -899,7 +899,6 @@ void MidiConfigViewModel::Rebuild(const MidiInstrumentConfig& instrument, const 
             FindControllerWizardDescriptor(Layouts(), *slot.wizardId) != nullptr;
         row.matchesWizardProfile = SlotMatchesWizardProfile(slot, Layouts());
         row.wizardId = slot.wizardId;
-        row.hasCompleteEndpointPair = slot.input.IsConfigured() && slot.output.IsConfigured();
         row.inputStatus = inputConnection.status;
         row.outputStatus = outputConnection.status;
         row.inputDeviceLabel = DeviceLabel(slot.input, inputConnection.status);
@@ -1888,6 +1887,37 @@ int MidiConfigViewModel::UISystemMessageIndex(std::size_t controllerIx, MidiConf
         return -1;
     }
     return static_cast<int>(choice - catalog.data());
+}
+
+std::optional<std::string> MidiConfigViewModel::UncatalogedSystemMessageKindName(
+    std::size_t controllerIx, MidiConfigSection section, std::size_t rowIx) const {
+    if (section != MidiConfigSection::SystemMessages) {
+        return std::nullopt;
+    }
+    if (controllerIx >= instrument_.controllers.size()) {
+        return std::nullopt;
+    }
+    const SectionPresentation& presentation = PresentationFor(controllerIx, section);
+    if (rowIx >= presentation.rows.size() || presentation.rows[rowIx].kind != RowKind::Individual) {
+        return std::nullopt;
+    }
+    const auto* association =
+        std::get_if<MidiControllerSystemMessageAssociation>(&presentation.rows[rowIx].data);
+    if (association == nullptr) {
+        return std::nullopt;
+    }
+
+    const UISystemMessage message = UISystemMessageForAssociation(*association);
+    if (FindUISystemMessageChoice(message, MessageCatalog(), association->appAction,
+                                  association->appActionValue) != nullptr) {
+        return std::nullopt;
+    }
+    const UISystemMessageChoice* libraryChoice = FindUISystemMessageChoice(
+        message, UISystemMessageCatalog(), association->appAction, association->appActionValue);
+    if (libraryChoice == nullptr) {
+        return std::nullopt;
+    }
+    return libraryChoice->label;
 }
 
 int MidiConfigViewModel::ShiftChoiceIndex(std::size_t controllerIx, MidiConfigSection section,
@@ -2935,72 +2965,6 @@ bool MidiConfigViewModel::DeleteController(std::size_t controllerIx, MidiInstrum
         }
         return false;
     }
-    if (instrument_.controllers[controllerIx].disposition != MidiControllerDisposition::Active) {
-        if (reason != nullptr) {
-            *reason = "only active controllers can be deleted";
-        }
-        return false;
-    }
-
-    MidiInstrumentConfig scratch = instrument_;
-    scratch.RemoveController(controllerIx);
-    out = std::move(scratch);
-    return true;
-}
-
-bool MidiConfigViewModel::BlacklistController(std::size_t controllerIx, MidiInstrumentConfig& out,
-                                              std::string* reason) const {
-    if (controllerIx >= instrument_.controllers.size()) {
-        if (reason != nullptr) {
-            *reason = "controller does not exist";
-        }
-        return false;
-    }
-    const MidiControllerSlot& existing = instrument_.controllers[controllerIx];
-    if (!existing.input.IsConfigured() || !existing.output.IsConfigured()) {
-        if (reason != nullptr) {
-            *reason = "releasing requires both input and output endpoint references";
-        }
-        return false;
-    }
-    const bool resolved = existing.wizardId.has_value() &&
-        FindControllerWizardDescriptor(Layouts(), *existing.wizardId) != nullptr;
-    if (existing.disposition != MidiControllerDisposition::Active || !resolved) {
-        if (reason != nullptr) {
-            *reason = "only registry-supported active controllers can be released";
-        }
-        return false;
-    }
-
-    MidiInstrumentConfig scratch = instrument_;
-    MidiControllerSlot blacklisted = scratch.controllers[controllerIx];
-    blacklisted.disposition = MidiControllerDisposition::Blacklisted;
-    blacklisted.dormantConfig = std::move(blacklisted.config);
-    blacklisted.config = {};
-    if (!scratch.ReplaceController(controllerIx, std::move(blacklisted))) {
-        if (reason != nullptr) {
-            *reason = "controller could not be released";
-        }
-        return false;
-    }
-    out = std::move(scratch);
-    return true;
-}
-
-bool MidiConfigViewModel::RemoveFromBlacklist(std::size_t controllerIx, MidiInstrumentConfig& out,
-                                              std::string* reason) const {
-    if (controllerIx >= instrument_.controllers.size()) {
-        if (reason != nullptr) {
-            *reason = "controller does not exist";
-        }
-        return false;
-    }
-    if (instrument_.controllers[controllerIx].disposition != MidiControllerDisposition::Blacklisted) {
-        if (reason != nullptr) {
-            *reason = "only released controllers can be reclaimed";
-        }
-        return false;
-    }
 
     MidiInstrumentConfig scratch = instrument_;
     scratch.RemoveController(controllerIx);
@@ -3656,10 +3620,15 @@ bool MidiConfigViewModel::AddSingle(std::size_t controllerIx, MidiConfigSection 
         rowToAppend.group = group;
         rowToAppend.data = button;
     } else if (section == MidiConfigSection::SystemMessages && group == RowGroup::System) {
-        const std::size_t sceneIx = NextFreeSystemArg(visibleSlot.config.systemMessages, BlockableMessage::SceneSelect);
         MidiControllerSystemMessageAssociation association;
-        association.press = MessageIn::SceneSelect(0, sceneIx);
-        association.feedback = association.press;
+        if (FindUISystemMessageChoice(UISystemMessage::SceneSelect, MessageCatalog()) != nullptr) {
+            const std::size_t sceneIx =
+                NextFreeSystemArg(visibleSlot.config.systemMessages, BlockableMessage::SceneSelect);
+            association.press = MessageIn::SceneSelect(0, sceneIx);
+            association.feedback = association.press;
+        } else {
+            association = MakeUISystemMessageAssociation(MessageCatalog().front());
+        }
         association.outputFeedback = true;
 
         switch (visibleSlot.kind) {
