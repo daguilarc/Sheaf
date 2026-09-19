@@ -356,7 +356,7 @@ The operator approves this change by screenshots before anything is pushed.
       - **The two MIDI Fighter Twister diagrams** from frogg3rs's task 2.4.
 
       Send them to the operator and wait for approval.
-- [ ] 10.5 After approval, push and open the pull request:
+- [x] 10.5 After approval, push and open the pull request:
       - If the Sheaf branch of `frogg3rs-transport-and-shift-ux`
         (`shifted-encoder-turns`) is already on the fork, first rebase this
         branch onto its tip and re-run 9.1.
@@ -367,4 +367,4 @@ The operator approves this change by screenshots before anything is pushed.
         what was measured on the live site, and step-by-step testing
         instructions.
       - Add the delivery-record commit naming the pull request, and push it.
-- [ ] 10.6 Finish frogg3rs's delivery (its tasks), pinning this branch's tip.
+- [x] 10.6 Finish frogg3rs's delivery (its tasks), pinning this branch's tip.
