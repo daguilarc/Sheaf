@@ -101,12 +101,12 @@
       fork, and open the next pull request in the stack against upstream
       `main`, stating that it stacks on #17. Then add the delivery-record commit
       naming the pull request, and push it to the same branch.
-- [ ] 4.2 In frogg3rs, correct `app/browser/site/site-boot.mjs`'s header
+- [x] 4.2 In frogg3rs, correct `app/browser/site/site-boot.mjs`'s header
       comment about when MIDI is requested, against the pinned code.
       Check: every statement in it about MIDI is true of the pinned code.
-- [ ] 4.3 In frogg3rs, pin `External/Sheaf` at the branch tip from 4.1.
+- [x] 4.3 In frogg3rs, pin `External/Sheaf` at the branch tip from 4.1.
       Check: the log between the old and new pin shows source changes.
-- [ ] 4.4 In frogg3rs, rewrite `app/browser/e2e/midi-activation.spec.mjs`:
+- [x] 4.4 In frogg3rs, rewrite `app/browser/e2e/midi-activation.spec.mjs`:
       - `"reports a MIDI status after the first in-app action"`: a first
         in-app action outside the Controllers page requests no MIDI; opening
         Controllers (`runtime.sidebar.controllers`) does. Correct the file's
@@ -117,10 +117,10 @@
         sequence the test drives, not on which action started it.
       Check: both pass against the new pin; with task 1.2's gating reverted,
       the first fails.
-- [ ] 4.5 Run frogg3rs's full suite against the new pin.
+- [x] 4.5 Run frogg3rs's full suite against the new pin.
       Check: counts are reported against counts measured on the same tree
       before the pin bump.
-- [ ] 4.6 Push frogg3rs to `main`. After the site redeploys, verify in a fresh
+- [x] 4.6 Push frogg3rs to `main`. After the site redeploys, verify in a fresh
       browser with no stored permission: no MIDI request on load or on a first
       click outside the Controllers page, and one on opening Controllers.
 
