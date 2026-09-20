@@ -13,7 +13,11 @@ under `nice`, `-j2`, one at a time.
       Check: NEW `TempoMessagesAreInertWithoutAClockRangeOrInternalTempo` in
       `parameter_modulation_tests.cpp` passes: a tempo increment applied on a
       bus given no clock, on a bus given no range, and on a bus whose clock
-      is slaved to external MIDI leaves the tempo unchanged in all three.
+      is slaved to external MIDI leaves the tempo unchanged in all three. The
+      same case adds a positive control ahead of the three inert ones: a bus
+      given a clock, a range, and no external slaving moves the tempo, so the
+      three inert cases cannot be mistaken for a bus that drops every tempo
+      message regardless of its state.
 - [ ] 2. Add the two tempo message kinds: NEW
       `MessageIn::Type::TempoBpmIncDec` and NEW
       `MessageIn::Type::SetTempoBpmNormalized`, appended after
@@ -102,6 +106,9 @@ under `nice`, `-j2`, one at a time.
       `TurnShiftFieldEditCommitsSceneBlendAndNoneClearsIt`,
       `TurnRowsExposeShiftFieldOnlyWhenShiftIsOffered` and
       `ReconstructEncoderBlocksKeepsAShiftedTurnOutOfItsBlock` pass unchanged.
+      The existing `TestTurnRowShiftComboOffersSceneBlendAndCommits` is
+      updated for the combo's new third entry: its option-count assertion
+      moves from 2 to 3 and it gains an assertion that option 2 reads "BPM".
 - [ ] 7. In `instrument_tests.cpp`'s
       `EncoderTurnJsonRoundTripsShiftedJobAndRejectsAnUnknownOne`, use
       `"swing"` as the unknown shifted job in place of `"tempo"`, which is no
