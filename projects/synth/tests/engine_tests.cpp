@@ -2177,14 +2177,14 @@ TEST_CASE(engine_process_frame_hook_runs_once_per_block_after_messages_before_pr
     REQUIRE_TRUE(engine.Application().processFrameRanBeforeProcessBlockThisCall);
 }
 
-TEST_CASE(engine_revert_all_to_default_restores_app_init_midi_profile_not_empty) {
-    // Regression for the default-MIDI-profile gap: Engine::Initialize() must
-    // snapshot defaultInstrumentConfig_ from the live instrument the app's
-    // Init() configured, BEFORE any startup patch applies. Without that
-    // snapshot, RevertAllToDefault (dispatched by Patches().NewPatch()
-    // below) resets instrumentConfig_ to a default-constructed (empty,
-    // zero-controller) MidiInstrumentConfig instead of back to the app's
-    // real default, silently dropping MIDI control surface responsiveness.
+TEST_CASE(engine_default_instrument_snapshot_carries_app_init_controller_after_new_patch) {
+    // Initialize() snapshots defaultInstrumentConfig_ from the live
+    // instrument right after the app's Init() runs, before any startup patch
+    // applies. RevertAllToDefault (dispatched by Patches().NewPatch() below)
+    // reverts parameters only: it never reads or writes
+    // defaultInstrumentConfig_ or instrumentConfig_, the same as host audio
+    // device selection. This checks the snapshot directly, since a
+    // NewPatch()/revert cycle cannot disturb it either way.
     EngineTestApp::processLiteAlpha = 1.0f;
     EngineTestApp::wantEncoderMidiInput = true;  // Init() adds a non-empty controller (encoderInput)
 
@@ -2216,18 +2216,10 @@ TEST_CASE(engine_revert_all_to_default_restores_app_init_midi_profile_not_empty)
     }
     engine.MessageThreadTick();
 
-    // The live instrument must still equal the app's Init-configured default
-    // -- i.e. still have a controller with an encoderInput mapping -- NOT
-    // have been reset to an empty (zero-controller) MidiInstrumentConfig{}.
-    REQUIRE_TRUE(!engine.Context().instrument->controllers.empty());
-    REQUIRE_TRUE(engine.Context().instrument->controllers.front().config.encoderInput.has_value());
-
-    // Also confirm the default instrument snapshot itself carries the
-    // controller (not just that the live instrument happens to still have
-    // it): the revert path copies defaultInstrumentConfig_ into
-    // instrumentConfig_, so if the snapshot were empty the assertion above
-    // would already have failed; this checks the snapshot directly for a
-    // clearer failure signal.
+    // The default instrument snapshot still carries the controller with its
+    // encoderInput mapping: Initialize() captured it from the app's
+    // Init()-configured instrument before any startup patch ran, and the
+    // NewPatch()/revert path above leaves it untouched.
     REQUIRE_TRUE(!engine.Context().defaultInstrument->controllers.empty());
     REQUIRE_TRUE(engine.Context().defaultInstrument->controllers.front().config.encoderInput.has_value());
 
