@@ -443,6 +443,7 @@ inline int FieldEditorWidth(MidiMappingRowVM::Field field)
         case Field::GridYMax:
         case Field::BlockStartNote:
         case Field::BlockEndNote:
+        case Field::Note:
             return 66;
         // "Start Gesture" (13 characters) is measured, at Froggers' narrowest
         // host and this page's default text size, wider than the other

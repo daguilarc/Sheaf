@@ -349,6 +349,7 @@ bool FieldIsInteger(MidiMappingRowVM::Field field) {
         case Field::BlockStartGesture:
         case Field::BlockStartNote:
         case Field::BlockEndNote:
+        case Field::Note:
             return true;
         case Field::TurnStep:
         case Field::EncoderMode:
@@ -428,6 +429,8 @@ const char* FieldShortLabel(MidiMappingRowVM::Field field) {
             return "Start Note";
         case Field::BlockEndNote:
             return "Last Note";
+        case Field::Note:
+            return "Note";
         case Field::BlockStartGesture:
             return "Start Gesture";
         case Field::BlockStartPos:
@@ -1100,12 +1103,17 @@ bool MidiConfigViewModel::SectionExpanded(std::size_t controllerIx, MidiConfigSe
 
 namespace {
 
-// editableFields for an Individual SystemMessages row, per kind --
-// factored out of the old SectionRows() SystemMessages case so
-// BuildFreshPresentation/BuildSectionRows share the exact same table.
+// editableFields for an Individual SystemMessages row, per kind, shared by
+// BuildSectionRows and GroupColumnFields so both build the same table. A
+// Generic row's address-number field is Field::Note in place of Field::Cc
+// when the row's own control is Note-addressed, so the column header says
+// what the field holds (mirrors BlockStartNote/BlockEndNote's relation to
+// BlockStartCc/BlockEndCc).
 std::vector<Field> SystemRowEditableFields(MidiProfileKind kind,
                                            const MidiControllerSystemMessageAssociation& association,
                                            bool shiftOffered) {
+    const bool isNote =
+        association.control.has_value() && association.control->type == MidiControlType::Note;
     std::vector<Field> fields;
     for (SystemAddressField addressField : SystemAddressSchema(kind)) {
         switch (addressField) {
@@ -1131,7 +1139,7 @@ std::vector<Field> SystemRowEditableFields(MidiProfileKind kind,
                 fields.push_back(Field::Button);
                 break;
             case SystemAddressField::Cc:
-                fields.push_back(Field::Cc);
+                fields.push_back(isNote ? Field::Note : Field::Cc);
                 break;
         }
     }
@@ -1165,9 +1173,12 @@ std::vector<Field> EncoderTurnEditableFields(bool shiftOffered) {
 // includes ShiftAction (ProfileConfigValidForKind refuses a shifted job on
 // a push, EncoderTurnEditableFields's own comment above). Factored out the
 // same way, so BuildSectionRows() and GroupColumnFields() share the exact
-// same table instead of each holding their own literal.
-std::vector<Field> EncoderPushEditableFields() {
-    return {Field::AddressType, Field::Channel, Field::Cc, Field::SlotIx, Field::Position};
+// same table instead of each holding their own literal. The number field is
+// Field::Note in place of Field::Cc when the row is Note-addressed, so the
+// column header says what the field holds.
+std::vector<Field> EncoderPushEditableFields(MidiControlType controlType) {
+    const Field numberField = controlType == MidiControlType::Note ? Field::Note : Field::Cc;
+    return {Field::AddressType, Field::Channel, numberField, Field::SlotIx, Field::Position};
 }
 
 // editableFields for a Block row, per its form.
@@ -1534,7 +1545,7 @@ std::vector<MidiMappingRowVM> MidiConfigViewModel::BuildSectionRows(std::size_t 
         } else {
             if (const auto* mapping = std::get_if<EncoderMidiMapping>(&presentationRow.data)) {
                 if (presentationRow.group == RowGroup::EncoderPush) {
-                    row.editableFields = EncoderPushEditableFields();
+                    row.editableFields = EncoderPushEditableFields(mapping->control.type);
                 } else {
                     row.editableFields = EncoderTurnEditableFields(messageCatalogOffersShift_);
                 }
@@ -1781,6 +1792,7 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
                 out = static_cast<double>(mapping->control.channel);
                 return true;
             case Field::Cc:
+            case Field::Note:
                 out = static_cast<double>(mapping->control.cc);
                 return true;
             case Field::SlotIx:
@@ -1847,6 +1859,7 @@ bool MidiConfigViewModel::RowFieldValue(std::size_t controllerIx, MidiConfigSect
                 out = static_cast<double>(association->control->channel);
                 return true;
             case Field::Cc:
+            case Field::Note:
                 if (!association->control.has_value()) {
                     return false;
                 }
@@ -2768,8 +2781,10 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                     fieldValid = true;
                     break;
                 case Field::Cc:
+                case Field::Note:
                     if (!IsIntegerInRange(value, 0.0, 127.0)) {
-                        validationError = "cc must be an integer 0-127";
+                        validationError =
+                            field == Field::Note ? "note must be an integer 0-127" : "cc must be an integer 0-127";
                         break;
                     }
                     mapping->control.cc = static_cast<std::uint8_t>(value);
@@ -2899,11 +2914,13 @@ bool MidiConfigViewModel::ApplyMappingEdit(std::size_t controllerIx, MidiConfigS
                     fieldValid = true;
                     break;
                 case Field::Cc:
+                case Field::Note:
                     if (!association->control.has_value()) {
                         break;
                     }
                     if (!IsIntegerInRange(value, 0.0, 127.0)) {
-                        validationError = "cc must be an integer 0-127";
+                        validationError =
+                            field == Field::Note ? "note must be an integer 0-127" : "cc must be an integer 0-127";
                         break;
                     }
                     association->control->cc = static_cast<std::uint8_t>(value);
@@ -4222,7 +4239,9 @@ std::vector<MidiMappingRowVM::Field> MidiConfigViewModel::GroupColumnFields(std:
     if (section == MidiConfigSection::Encoders &&
         (group == RowGroup::EncoderTurn || group == RowGroup::EncoderPush)) {
         if (group == RowGroup::EncoderPush) {
-            return EncoderPushEditableFields();
+            // A fresh individual push row is CC-addressed until its
+            // AddressType is switched (MidiControlAddress's own default).
+            return EncoderPushEditableFields(MidiControlType::Cc);
         }
         return EncoderTurnEditableFields(messageCatalogOffersShift_);
     }

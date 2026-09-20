@@ -193,6 +193,12 @@ struct MidiMappingRowVM {
         // form)'s number pair, in place of BlockStartCc/BlockEndCc.
         BlockStartNote,
         BlockEndNote,
+        // An Individual row's number field on a Note-addressed encoder push
+        // or Generic system-message row, in place of Field::Cc: the same
+        // stored control number, headed "Note" instead of "CC" so the
+        // header says what the field holds (BlockStartNote/BlockEndNote's
+        // individual-row counterpart).
+        Note,
     };
 
     // Groups rows into contiguous runs of the same on-screen schema, so the
@@ -785,7 +791,7 @@ public:
     // exists yet to read them off of. Encoder turn rows, encoder push rows
     // and system rows each share one field-table function with
     // BuildSectionRows()'s own per-group branches (EncoderTurnEditableFields(
-    // shiftOffered); EncoderPushEditableFields(); SystemRowEditableFields(
+    // shiftOffered); EncoderPushEditableFields(controlType); SystemRowEditableFields(
     // kind, association, shiftOffered), i.e. SystemAddressSchema(kind)'s fields
     // plus MessageKind/MessageArg/ShiftAction), so those three can never drift
     // apart. Analog gesture and analog app action each list their own fields
