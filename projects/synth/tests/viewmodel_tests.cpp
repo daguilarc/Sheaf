@@ -1597,6 +1597,8 @@ double SafeValueFor(MidiMappingRowVM::Field field) {
             return 0.0;
         case Field::BlockEndNote:
             return 127.0;
+        case Field::Note:
+            return 10.0;
     }
     return 0.0;
 }
@@ -1665,6 +1667,7 @@ double SafeValueForRow(MidiConfigViewModel& vm, std::size_t controllerIx, MidiCo
         }
         case Field::Channel:
         case Field::Cc:
+        case Field::Note:
         case Field::LaunchpadX:
         case Field::LaunchpadY:
         case Field::WrldBldrX:
@@ -1767,6 +1770,7 @@ TEST_CASE(FieldIsIntegerTrueForIndexAndCoordinateFields) {
     REQUIRE_TRUE(FieldIsInteger(Field::WrldBldrY));
     REQUIRE_TRUE(FieldIsInteger(Field::SceneBlend));
     REQUIRE_TRUE(FieldIsInteger(Field::Button));
+    REQUIRE_TRUE(FieldIsInteger(Field::Note));
 }
 
 TEST_CASE(FieldIsIntegerFalseForTurnStepAndNonNumericEditorFields) {
@@ -1955,7 +1959,7 @@ TEST_CASE(FieldShortLabelIsNonEmptyAndDistinctPerField) {
         Field::Channel,     Field::Cc,     Field::SlotIx,      Field::Position,       Field::GestureIx,
         Field::LaunchpadX,  Field::LaunchpadY, Field::WrldBldrX, Field::WrldBldrY,     Field::TurnStep,
         Field::EncoderMode, Field::MessageKind, Field::MessageArg,
-        Field::SceneBlend, Field::Button,
+        Field::SceneBlend, Field::Button, Field::Note,
     };
     std::vector<std::string> seen;
     for (Field field : fields) {
@@ -5423,6 +5427,14 @@ TEST_CASE(AddressTypeIndividualEditRoundTripsAndRejectedIndicesPreserveSession) 
                                   MidiMappingRowVM::Field::AddressType, value));
     REQUIRE_TRUE(value == 0.0);
 
+    // A CC-addressed individual push row carries Field::Cc, headed "CC", and
+    // not Field::Note.
+    REQUIRE_TRUE(HasField(rows[pushIx], MidiMappingRowVM::Field::Cc));
+    REQUIRE_TRUE(!HasField(rows[pushIx], MidiMappingRowVM::Field::Note));
+    REQUIRE_TRUE(vm.RowFieldValue(3, MidiConfigSection::Encoders, pushIx, MidiMappingRowVM::Field::Cc, value));
+    REQUIRE_TRUE(value == 90.0);
+    REQUIRE_TRUE(std::string(FieldShortLabel(MidiMappingRowVM::Field::Cc)) == "CC");
+
     MidiInstrumentConfig noteOut;
     std::string reason;
     REQUIRE_TRUE(vm.ApplyMappingEdit(3, MidiConfigSection::Encoders, pushIx,
@@ -5433,6 +5445,51 @@ TEST_CASE(AddressTypeIndividualEditRoundTripsAndRejectedIndicesPreserveSession) 
     REQUIRE_TRUE(vm.RowFieldValue(3, MidiConfigSection::Encoders, pushIx,
                                   MidiMappingRowVM::Field::AddressType, value));
     REQUIRE_TRUE(value == 1.0);
+
+    // Switching to Note replaces Field::Cc with Field::Note, headed "Note";
+    // the number itself (90) is unchanged, and the old Field::Cc field is no
+    // longer editable on this row.
+    const std::vector<MidiMappingRowVM> notedPushRows = vm.SectionRows(3, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(HasField(notedPushRows[pushIx], MidiMappingRowVM::Field::Note));
+    REQUIRE_TRUE(!HasField(notedPushRows[pushIx], MidiMappingRowVM::Field::Cc));
+    double notedPushValue = -1.0;
+    REQUIRE_TRUE(vm.RowFieldValue(3, MidiConfigSection::Encoders, pushIx, MidiMappingRowVM::Field::Note,
+                                  notedPushValue));
+    REQUIRE_TRUE(notedPushValue == 90.0);
+    REQUIRE_TRUE(std::string(FieldShortLabel(MidiMappingRowVM::Field::Note)) == "Note");
+
+    // A separate view model instance, rebuilt from the same noteOut config,
+    // checks the Note field's write behavior without mutating vm's own open
+    // row below (ApplyMappingEdit writes straight into the open section's
+    // live row, committed edit or not -- reusing vm here would carry a
+    // written note number into the CC revert further down and collide with
+    // the fixture's own cc-61 push block).
+    {
+        MidiConfigViewModel noteFieldVm;
+        noteFieldVm.Rebuild(noteOut, MakeFourKindConnection());
+        MidiInstrumentConfig noteFieldSentinel;
+        noteFieldSentinel.controllers.push_back(MakeGenericSlot("note-field-sentinel"));
+        std::string ccRefusalReason;
+        REQUIRE_TRUE(!noteFieldVm.ApplyMappingEdit(3, MidiConfigSection::Encoders, pushIx,
+                                                    MidiMappingRowVM::Field::Cc, 60.0, noteFieldSentinel,
+                                                    &ccRefusalReason));
+        REQUIRE_TRUE(ccRefusalReason == "field not editable for this row");
+
+        std::string noteRangeReason;
+        bool noteRangePresentationChanged = true;
+        REQUIRE_TRUE(!noteFieldVm.ApplyMappingEdit(3, MidiConfigSection::Encoders, pushIx,
+                                                    MidiMappingRowVM::Field::Note, 128.0, noteFieldSentinel,
+                                                    &noteRangeReason, &noteRangePresentationChanged));
+        REQUIRE_TRUE(!noteRangePresentationChanged);
+        REQUIRE_TRUE(noteRangeReason == "note must be an integer 0-127");
+
+        MidiInstrumentConfig noteWriteOut;
+        std::string noteWriteReason;
+        REQUIRE_TRUE(noteFieldVm.ApplyMappingEdit(3, MidiConfigSection::Encoders, pushIx,
+                                                   MidiMappingRowVM::Field::Note, 100.0, noteWriteOut,
+                                                   &noteWriteReason));
+        REQUIRE_TRUE(noteWriteOut.controllers[3].config.encoderInput->pushes.back().control.cc == 100);
+    }
 
     MidiInstrumentConfig sentinel;
     sentinel.controllers.push_back(MakeGenericSlot("sentinel"));
@@ -5457,6 +5514,15 @@ TEST_CASE(AddressTypeIndividualEditRoundTripsAndRejectedIndicesPreserveSession) 
                                   MidiMappingRowVM::Field::AddressType, value));
     REQUIRE_TRUE(value == 0.0);
 
+    // Switching back to CC restores Field::Cc and drops Field::Note; the
+    // stored number (90, unaffected by the isolated Note-field write above,
+    // which was never rebuilt into vm) is unchanged.
+    const std::vector<MidiMappingRowVM> revertedPushRows = vm.SectionRows(3, MidiConfigSection::Encoders);
+    REQUIRE_TRUE(HasField(revertedPushRows[pushIx], MidiMappingRowVM::Field::Cc));
+    REQUIRE_TRUE(!HasField(revertedPushRows[pushIx], MidiMappingRowVM::Field::Note));
+    REQUIRE_TRUE(vm.RowFieldValue(3, MidiConfigSection::Encoders, pushIx, MidiMappingRowVM::Field::Cc, value));
+    REQUIRE_TRUE(value == 90.0);
+
     const std::vector<MidiMappingRowVM> systemRows = vm.SectionRows(3, MidiConfigSection::SystemMessages);
     std::size_t systemIndividualIx = SIZE_MAX;
     for (std::size_t ix = 0; ix < systemRows.size(); ++ix) {
@@ -5470,6 +5536,15 @@ TEST_CASE(AddressTypeIndividualEditRoundTripsAndRejectedIndicesPreserveSession) 
                                   MidiMappingRowVM::Field::AddressType, value));
     REQUIRE_TRUE(value == 0.0);
 
+    // A CC-addressed individual Generic system row carries Field::Cc, headed
+    // "CC", and not Field::Note -- same split as the push row above.
+    REQUIRE_TRUE(HasField(systemRows[systemIndividualIx], MidiMappingRowVM::Field::Cc));
+    REQUIRE_TRUE(!HasField(systemRows[systemIndividualIx], MidiMappingRowVM::Field::Note));
+    REQUIRE_TRUE(
+        vm.RowFieldValue(3, MidiConfigSection::SystemMessages, systemIndividualIx, MidiMappingRowVM::Field::Cc,
+                         value));
+    REQUIRE_TRUE(value == 90.0);
+
     MidiInstrumentConfig systemNoteOut;
     REQUIRE_TRUE(vm.ApplyMappingEdit(3, MidiConfigSection::SystemMessages, systemIndividualIx,
                                      MidiMappingRowVM::Field::AddressType, 1.0, systemNoteOut, &reason));
@@ -5478,6 +5553,33 @@ TEST_CASE(AddressTypeIndividualEditRoundTripsAndRejectedIndicesPreserveSession) 
                                   MidiMappingRowVM::Field::AddressType, value));
     REQUIRE_TRUE(value == 1.0);
 
+    // Switching the Generic system row to Note replaces Field::Cc with
+    // Field::Note, headed "Note"; the old Field::Cc field refuses, and an
+    // out-of-range note is refused by name.
+    const std::vector<MidiMappingRowVM> notedSystemRows = vm.SectionRows(3, MidiConfigSection::SystemMessages);
+    REQUIRE_TRUE(HasField(notedSystemRows[systemIndividualIx], MidiMappingRowVM::Field::Note));
+    REQUIRE_TRUE(!HasField(notedSystemRows[systemIndividualIx], MidiMappingRowVM::Field::Cc));
+    double notedSystemValue = -1.0;
+    REQUIRE_TRUE(vm.RowFieldValue(3, MidiConfigSection::SystemMessages, systemIndividualIx,
+                                  MidiMappingRowVM::Field::Note, notedSystemValue));
+    REQUIRE_TRUE(notedSystemValue == 90.0);
+
+    MidiInstrumentConfig systemNoteFieldSentinel;
+    systemNoteFieldSentinel.controllers.push_back(MakeGenericSlot("system-note-field-sentinel"));
+    std::string systemCcRefusalReason;
+    REQUIRE_TRUE(!vm.ApplyMappingEdit(3, MidiConfigSection::SystemMessages, systemIndividualIx,
+                                      MidiMappingRowVM::Field::Cc, 60.0, systemNoteFieldSentinel,
+                                      &systemCcRefusalReason));
+    REQUIRE_TRUE(systemCcRefusalReason == "field not editable for this row");
+
+    std::string systemNoteRangeReason;
+    bool systemNoteRangePresentationChanged = true;
+    REQUIRE_TRUE(!vm.ApplyMappingEdit(3, MidiConfigSection::SystemMessages, systemIndividualIx,
+                                      MidiMappingRowVM::Field::Note, 128.0, systemNoteFieldSentinel,
+                                      &systemNoteRangeReason, &systemNoteRangePresentationChanged));
+    REQUIRE_TRUE(!systemNoteRangePresentationChanged);
+    REQUIRE_TRUE(systemNoteRangeReason == "note must be an integer 0-127");
+
     MidiInstrumentConfig systemCcOut;
     REQUIRE_TRUE(vm.ApplyMappingEdit(3, MidiConfigSection::SystemMessages, systemIndividualIx,
                                      MidiMappingRowVM::Field::AddressType, 0.0, systemCcOut, &reason));
@@ -5485,6 +5587,12 @@ TEST_CASE(AddressTypeIndividualEditRoundTripsAndRejectedIndicesPreserveSession) 
     REQUIRE_TRUE(vm.RowFieldValue(3, MidiConfigSection::SystemMessages, systemIndividualIx,
                                   MidiMappingRowVM::Field::AddressType, value));
     REQUIRE_TRUE(value == 0.0);
+
+    // Reverting the Generic system row to CC restores Field::Cc and drops
+    // Field::Note.
+    const std::vector<MidiMappingRowVM> revertedSystemRows = vm.SectionRows(3, MidiConfigSection::SystemMessages);
+    REQUIRE_TRUE(HasField(revertedSystemRows[systemIndividualIx], MidiMappingRowVM::Field::Cc));
+    REQUIRE_TRUE(!HasField(revertedSystemRows[systemIndividualIx], MidiMappingRowVM::Field::Note));
 }
 
 TEST_CASE(AddressTypeBlockEditsExpandToNoteMappings) {
