@@ -3084,6 +3084,51 @@ TEST_CASE(engine_app_action_out_of_range_dispatches_nothing) {
     REQUIRE_TRUE(engine.Application().surface.dispatched.empty());
 }
 
+TEST_CASE(engine_tempo_action_range_reaches_the_message_bus) {
+    // A catalog naming a tempo action with an analog range: a tempo
+    // increment pushed onto the MIDI bus moves the master clock's tempo.
+    {
+        MidiCatalogTestApp::catalog = synth::MidiAppCatalog{};
+        MidiCatalogTestApp::catalog.actions.push_back({.action = "test.tempo",
+                                                        .value = "",
+                                                        .label = "Tempo",
+                                                        .analogRange = std::make_pair(30.0f, 300.0f)});
+        MidiCatalogTestApp::catalog.tempoAction = "test.tempo";
+
+        synth::Engine<MidiCatalogTestApp> engine([] { return std::uint64_t{0}; });
+        engine.Initialize();
+        engine.Prepare(48000.0, 32);
+
+        const double before = engine.Clock().TempoBpm();
+        REQUIRE_TRUE(engine.MidiBus().Push(synth::MessageIn::TempoBpmIncDec(0, 5.0f)));
+
+        TestBlockBuffers buffers(2, 32);
+        synth::AudioBlock block = buffers.Block(32);
+        engine.ProcessBlock(block, 0);
+
+        REQUIRE_NEAR(engine.Clock().TempoBpm(), before + 5.0, 0.0001);
+    }
+
+    // A catalog naming no tempo action: the same increment moves nothing.
+    {
+        MidiCatalogTestApp::catalog = synth::MidiAppCatalog{};
+        MidiCatalogTestApp::catalog.actions.push_back({.action = "test.plain", .value = "3", .label = "Plain"});
+
+        synth::Engine<MidiCatalogTestApp> engine([] { return std::uint64_t{0}; });
+        engine.Initialize();
+        engine.Prepare(48000.0, 32);
+
+        const double before = engine.Clock().TempoBpm();
+        REQUIRE_TRUE(engine.MidiBus().Push(synth::MessageIn::TempoBpmIncDec(0, 5.0f)));
+
+        TestBlockBuffers buffers(2, 32);
+        synth::AudioBlock block = buffers.Block(32);
+        engine.ProcessBlock(block, 0);
+
+        REQUIRE_NEAR(engine.Clock().TempoBpm(), before, 0.0001);
+    }
+}
+
 TEST_CASE(engine_rebuild_resolves_app_action_rows_and_drops_unknown_ones) {
     MidiCatalogTestApp::catalog = synth::MidiAppCatalog{};
     MidiCatalogTestApp::catalog.actions.push_back({.action = "test.known", .value = "1", .label = "Known"});

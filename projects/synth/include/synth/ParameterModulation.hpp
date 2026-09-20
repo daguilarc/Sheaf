@@ -28,6 +28,7 @@ class Visualizer;
 namespace synth {
 
 class GridManager;
+class MasterClock;
 
 using ParameterId = std::uint32_t;
 using PhysicalEncoderId = std::uint32_t;
@@ -981,6 +982,10 @@ struct MessageIn {
         // Appended after Shift rather than beside SetSceneBlend so every
         // existing enumerator keeps its ordinal.
         SceneBlendIncDec,
+        // Appended after SceneBlendIncDec so every existing enumerator keeps
+        // its ordinal.
+        TempoBpmIncDec,
+        SetTempoBpmNormalized,
     };
 
     std::uint64_t timestamp = 0;
@@ -1049,6 +1054,8 @@ struct MessageIn {
     static MessageIn HoldDrill(std::uint64_t timestamp, bool held);
     static MessageIn Shift(std::uint64_t timestamp, bool held);
     static MessageIn SceneBlendIncDec(std::uint64_t timestamp, float delta);
+    static MessageIn TempoBpmIncDec(std::uint64_t timestamp, float deltaBpm);
+    static MessageIn SetTempoBpmNormalized(std::uint64_t timestamp, float normalized);
 };
 
 class MessageInBus {
@@ -1062,6 +1069,11 @@ public:
         appActionOut_ = out;
         forwardEncoderPress_ = forwardEncoderPress;
     }
+    void SetTempoClock(MasterClock* clock, float minimumBpm, float maximumBpm) {
+        tempoClock_ = clock;
+        tempoMinimumBpm_ = minimumBpm;
+        tempoMaximumBpm_ = maximumBpm;
+    }
     bool Push(const MessageIn& message);
     bool Pop(MessageIn& message, std::uint64_t timestamp);
     void Apply(const MessageIn& message);
@@ -1074,6 +1086,9 @@ private:
     GridManager* gridManager_ = nullptr;
     ParameterMessageOutBus* appActionOut_ = nullptr;
     bool forwardEncoderPress_ = false;
+    MasterClock* tempoClock_ = nullptr;
+    float tempoMinimumBpm_ = 0.0f;
+    float tempoMaximumBpm_ = 0.0f;
     std::vector<MessageIn> queue_;
     std::atomic<std::size_t> head_{0};
     std::atomic<std::size_t> tail_{0};

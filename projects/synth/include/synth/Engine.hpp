@@ -166,6 +166,15 @@ public:
             const bool forwardPress = !midiCatalog_.encoderPressAction.empty();
             uiBus_.SetAppActionOut(&parameterMessageOutBus_, forwardPress);
             midiBus_.SetAppActionOut(&parameterMessageOutBus_, forwardPress);
+            if (const auto tempoActionIx = FindMidiAppAction(midiCatalog_, midiCatalog_.tempoAction, "")) {
+                const MidiAppAction& tempoAction = midiCatalog_.actions[*tempoActionIx];
+                if (tempoAction.analogRange.has_value()) {
+                    uiBus_.SetTempoClock(&masterClock_, tempoAction.analogRange->first,
+                                        tempoAction.analogRange->second);
+                    midiBus_.SetTempoClock(&masterClock_, tempoAction.analogRange->first,
+                                           tempoAction.analogRange->second);
+                }
+            }
         }
         patchManager_.SetBuses(&patchInputBus_, &patchOutputBus_);
         serializationContext_.arena = &serializationArena_;

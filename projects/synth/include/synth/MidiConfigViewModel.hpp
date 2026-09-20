@@ -181,9 +181,9 @@ struct MidiMappingRowVM {
         GridYMax,
         // A system row's shifted job, an index into ShiftCatalog() (0 =
         // none); or an encoder turn row's shifted job, an index into that
-        // row's own fixed two-entry catalog (0 = none, 1 = Scene Blend --
-        // see EncoderShiftedJob). Shown only when the row dropdown offers
-        // Shift.
+        // row's own fixed three-entry catalog (0 = none, 1 = Scene Blend,
+        // 2 = BPM -- see EncoderShiftedJob). Shown only when the row
+        // dropdown offers Shift.
         ShiftAction,
         // AnalogBlock's first gesture, in place of BlockStartArg (analog
         // blocks carry no AddressType field, so they are CC-only and never
@@ -562,8 +562,9 @@ public:
 
     // The Field::ShiftAction counterpart to ShiftChoiceIndex() above, for an
     // encoder TURN row instead of a system row: looks up the row's current
-    // shifted job as an index into that field's own fixed two-entry catalog
-    // (0 = none, 1 = Scene Blend -- see EncoderShiftedJob), so a JUCE combo
+    // shifted job as an index into that field's own fixed three-entry
+    // catalog (0 = none, 1 = Scene Blend, 2 = BPM -- see EncoderShiftedJob),
+    // so a JUCE combo
     // box can preselect it without going through ShiftCatalog(), which
     // answers only for system rows. Returns -1 for a non-Encoders section,
     // an out-of-range (controllerIx, rowIx), or a row that is not an

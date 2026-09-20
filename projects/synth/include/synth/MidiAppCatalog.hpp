@@ -43,6 +43,11 @@ struct MidiAppCatalog {
     std::string encoderPressAction;   // ui::Action a ParamPush dispatches, with the
                                       // position as its value; empty = the library's
                                       // HandlePress, as today
+    std::string tempoAction;          // the name of the catalog action that IS the
+                                      // master clock's tempo, matched with an empty
+                                      // value; empty, unresolved, or resolving to an
+                                      // action with no analog range leaves the
+                                      // message buses with no clock and no range
     bool patchCarriesMappings = false;
     std::vector<MidiAppDeviceDefault> deviceDefaults;
 };

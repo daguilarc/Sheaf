@@ -50,6 +50,8 @@ std::optional<std::size_t> PrimaryMessageArg(const MessageIn& message) {
         case MessageIn::Type::HoldDrill:
         case MessageIn::Type::Shift:
         case MessageIn::Type::SceneBlendIncDec:
+        case MessageIn::Type::TempoBpmIncDec:
+        case MessageIn::Type::SetTempoBpmNormalized:
             return std::nullopt;
     }
     return std::nullopt;
@@ -94,6 +96,8 @@ bool SetPrimaryMessageArg(MessageIn& message, std::size_t arg) {
         case MessageIn::Type::HoldDrill:
         case MessageIn::Type::Shift:
         case MessageIn::Type::SceneBlendIncDec:
+        case MessageIn::Type::TempoBpmIncDec:
+        case MessageIn::Type::SetTempoBpmNormalized:
             return false;
     }
     return false;
@@ -195,6 +199,8 @@ UISystemMessage UISystemMessageForAssociation(const MidiControllerSystemMessageA
         case MessageIn::Type::Shift:
             return UISystemMessage::Shift;
         case MessageIn::Type::SceneBlendIncDec:
+        case MessageIn::Type::TempoBpmIncDec:
+        case MessageIn::Type::SetTempoBpmNormalized:
             return UISystemMessage::Clock;
     }
     return UISystemMessage::Clock;
@@ -372,8 +378,8 @@ const std::vector<std::string>& EncoderModeCatalog() {
 
 const std::vector<std::string>& EncoderShiftedJobCatalog() {
     // All EncoderShiftedJob choices, in declaration order (MidiController.hpp):
-    // 0 = None, 1 = SceneBlend.
-    static const std::vector<std::string> catalog = {"(none)", "Scene Blend"};
+    // 0 = None, 1 = SceneBlend, 2 = TempoBpm.
+    static const std::vector<std::string> catalog = {"(none)", "Scene Blend", "BPM"};
     return catalog;
 }
 
@@ -792,6 +798,12 @@ std::string DescribeMessage(const MessageIn& message) {
             break;
         case MessageIn::Type::SceneBlendIncDec:
             oss << "scene blend inc/dec " << message.delta;
+            break;
+        case MessageIn::Type::TempoBpmIncDec:
+            oss << "tempo inc/dec " << message.delta;
+            break;
+        case MessageIn::Type::SetTempoBpmNormalized:
+            oss << "tempo set " << message.value;
             break;
     }
     return oss.str();
