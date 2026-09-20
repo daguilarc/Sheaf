@@ -4,7 +4,7 @@ Every new test is shown to fail with its production change reverted, by the
 executor, before the task is reported done, and the report says so. Builds run
 under `nice`, `-j2`, one at a time.
 
-- [ ] 1. Give the message bus the clock and the range: NEW
+- [x] 1. Give the message bus the clock and the range: NEW
       `MessageInBus::SetTempoClock(MasterClock*, float minimumBpm, float
       maximumBpm)` beside `SetGridManager` and `SetAppActionOut`, with a
       forward declaration of `MasterClock` in `ParameterModulation.hpp` and
@@ -18,7 +18,7 @@ under `nice`, `-j2`, one at a time.
       given a clock, a range, and no external slaving moves the tempo, so the
       three inert cases cannot be mistaken for a bus that drops every tempo
       message regardless of its state.
-- [ ] 2. Add the two tempo message kinds: NEW
+- [x] 2. Add the two tempo message kinds: NEW
       `MessageIn::Type::TempoBpmIncDec` and NEW
       `MessageIn::Type::SetTempoBpmNormalized`, appended after
       `SceneBlendIncDec` so no existing ordinal moves, their factories
@@ -38,7 +38,7 @@ under `nice`, `-j2`, one at a time.
       the increments +5, -5 give 300 and 295. The proposal's Evidence lists
       each family site as changed or not needed, with the reason for the one
       not needed.
-- [ ] 3. Declare NEW `kTempoBpmPerEncoderDetent`, the tempo step one encoder
+- [x] 3. Declare NEW `kTempoBpmPerEncoderDetent`, the tempo step one encoder
       detent is worth, in `include/synth/MidiController.hpp` beside
       `EncoderMidiInConfig::turnStep`, with a comment saying what it is in
       BPM: 1.0 BPM per detent, linear. Tempo is named by musicians in whole
@@ -50,7 +50,7 @@ under `nice`, `-j2`, one at a time.
       Check: `kTempoBpmPerEncoderDetent` reads `1.0` and task 4's
       `ShiftHeldTurnPushesTempoIncrementAndReleaseRestoresTheParameter`
       passes with it.
-- [ ] 4. Add the shifted job and its dispatch: NEW `EncoderShiftedJob::TempoBpm`
+- [x] 4. Add the shifted job and its dispatch: NEW `EncoderShiftedJob::TempoBpm`
       appended after `SceneBlend`, serialized as `"shiftedJob": "tempoBpm"`
       written only when set and read back by that name, with a missing key
       still read as none and any other value still failing the load; NEW
@@ -73,7 +73,7 @@ under `nice`, `-j2`, one at a time.
       The relative assertion is written against
       `kTempoBpmPerEncoderDetent` itself, not against a hardcoded figure, so
       it tracks the constant rather than duplicating its value.
-- [ ] 5. Bind the range to the app's own declaration: NEW
+- [x] 5. Bind the range to the app's own declaration: NEW
       `MidiAppCatalog::tempoAction`, a bare action name matched with an empty
       value in the shape `encoderPressAction` has; `Engine` resolves it once
       through the existing `FindMidiAppAction` where it reads the catalog and
@@ -86,7 +86,7 @@ under `nice`, `-j2`, one at a time.
       tempo action with an analog range moves its master clock's tempo when a
       tempo increment is pushed onto the MIDI bus, and an engine built from a
       catalog naming none does not.
-- [ ] 6. Controllers page: append "BPM" to `EncoderShiftedJobCatalog()` after
+- [x] 6. Controllers page: append "BPM" to `EncoderShiftedJobCatalog()` after
       "Scene Blend" and correct the comment above it and the index comment on
       `MidiConfigViewModel::EncoderTurnShiftedJobIndex`, both of which name
       the choices by number. The same count is named in two more comments
@@ -109,13 +109,13 @@ under `nice`, `-j2`, one at a time.
       The existing `TestTurnRowShiftComboOffersSceneBlendAndCommits` is
       updated for the combo's new third entry: its option-count assertion
       moves from 2 to 3 and it gains an assertion that option 2 reads "BPM".
-- [ ] 7. In `instrument_tests.cpp`'s
+- [x] 7. In `instrument_tests.cpp`'s
       `EncoderTurnJsonRoundTripsShiftedJobAndRejectsAnUnknownOne`, use
       `"swing"` as the unknown shifted job in place of `"tempo"`, which is no
       longer a plain example of one now that `"tempoBpm"` is known.
       Check: the test names `"swing"` and no longer names `"tempo"`, and
       passes; a document naming `"tempo"` still fails to load.
-- [ ] 8. Run Sheaf's full `projects/synth` suite by running every test binary
+- [x] 8. Run Sheaf's full `projects/synth` suite by running every test binary
       by path after `make test` stops, and build and run the miniapp runtime
       target, which that suite does not build.
       Check: pass and fail counts reported per binary as measured; every
