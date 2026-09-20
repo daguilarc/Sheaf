@@ -108,13 +108,19 @@ task 1.S4.4
 ## ADDED Requirements
 
 ### Requirement: sru-66 — Controllers page: an encoder turn row's Shift field
-WHEN the row dropdown offers `Shift`, every individual encoder-turn row on the Controllers page SHALL expose a Shift field after its address and target fields, headed "Shift", offering none and then Scene Blend; committing it SHALL set or clear that turn's shifted job (smi-17) through the same edit-session flush path as the row's other fields, and its current value SHALL be read back from the turn's shifted job. A turn that carries a shifted job SHALL never be folded into an encoder block row, so its Shift field is on screen whenever its section is open; a block row SHALL expand to turns with no shifted job. Encoder push rows SHALL have no Shift field. When the row dropdown does not offer `Shift`, no encoder-turn row SHALL expose a Shift field.
+WHEN the row dropdown offers `Shift`, every individual encoder-turn row on the Controllers page SHALL expose a Shift field after its address and target fields, headed "Shift", offering none and then every shifted job the library declares, in the order it declares them, which is Scene Blend and then BPM; committing it SHALL set or clear that turn's shifted job (smi-17) through the same edit-session flush path as the row's other fields, and its current value SHALL be read back from the turn's shifted job. A turn that carries a shifted job SHALL never be folded into an encoder block row, so its Shift field is on screen whenever its section is open; a block row SHALL expand to turns with no shifted job. Encoder push rows SHALL have no Shift field. When the row dropdown does not offer `Shift`, no encoder-turn row SHALL expose a Shift field.
 
 #### Scenario: The turn Shift field sets and clears a shifted job
 - **WHEN** an encoder-turn row's Shift field is set to Scene Blend and then to none
 - **THEN** the row's persisted turn mapping first carries shifted job Scene blend and then carries none
 - **AND** the section stays open across both edits
 - Check: `viewmodel_tests.cpp: TurnShiftFieldEditCommitsSceneBlendAndNoneClearsIt`
+
+#### Scenario: The turn Shift field offers BPM and commits it
+- **WHEN** an encoder-turn row's Shift field is read and then set to BPM
+- **THEN** its choices are none, Scene Blend and BPM, in that order
+- **AND** the row's persisted turn mapping carries shifted job Tempo
+- Check: `controllers_page_ui_tests.cpp: TestTurnRowShiftComboOffersBpmAndCommits`
 
 #### Scenario: A shifted turn stays out of its block
 - **WHEN** sixteen contiguous turns are reconstructed and the last one carries a shifted job
