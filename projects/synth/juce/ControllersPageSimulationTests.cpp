@@ -912,6 +912,23 @@ void RunDeviceLabelWidthCheck()
     std::cout << "DeviceLabelWidthCheck passed\n";
 }
 
+// The preset-diverged notice (ControllersLayout::kPresetNoticeText) is a
+// fixed sentence, not a per-device name, so this measures it once against
+// the box the third header line gives it: kControllerNoticeWidth.
+void RunPresetNoticeWidthCheck()
+{
+    const juce::Font font{juce::FontOptions(synth::pagestyle::kDefaultTextSize)};
+    juce::GlyphArrangement glyphs;
+    glyphs.addLineOfText(
+        font, juce::String(synth::runtime_ui::ControllersLayout::kPresetNoticeText), 0.0f, 0.0f);
+    const float measured = glyphs.getBoundingBox(0, -1, true).getWidth();
+    Require(measured <= synth::runtime_ui::ControllersLayout::kControllerNoticeWidth,
+            "preset notice sentence (" + std::to_string(measured) +
+                "px) must fit inside kControllerNoticeWidth (" +
+                std::to_string(synth::runtime_ui::ControllersLayout::kControllerNoticeWidth) + "px)");
+    std::cout << "PresetNoticeWidthCheck passed, measured=" << measured << "px\n";
+}
+
 }  // namespace
 
 int main()
@@ -985,6 +1002,7 @@ int main()
     RunGridSimulation();
     RunManualRecordSimulation();
     RunDeviceLabelWidthCheck();
+    RunPresetNoticeWidthCheck();
 
     // The caption criterion had real subjects across the whole run, and its
     // exception list was the thing excusing them. Without these an id-convention

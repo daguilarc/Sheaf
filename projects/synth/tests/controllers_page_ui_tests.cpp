@@ -1477,6 +1477,37 @@ void TestRestoreReinstallsADivergedPresetAndIsGatedByDivergence()
     Require(FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerRestore(2)) != nullptr,
             "Restore is present on a preset row whose config has diverged from its preset");
 
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerPresetNotice(0)) == nullptr,
+            "an untouched preset row shows no preset-diverged notice");
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerPresetNotice(1)) == nullptr,
+            "a row never created from a preset shows no notice");
+    const synth::ui::Node* notice =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerPresetNotice(2));
+    Require(notice != nullptr && notice->text == synth::runtime_ui::ControllersLayout::kPresetNoticeText,
+            "the diverged row shows the notice sentence");
+    const synth::ui::Node* line3 =
+        FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerRow(2) + ".line3");
+    const synth::ui::NodeId noticeId(synth::runtime_ui::NodeIds::ControllerPresetNotice(2));
+    const synth::ui::NodeId restoreId(synth::runtime_ui::NodeIds::ControllerRestore(2));
+    Require(line3 != nullptr &&
+                std::find(line3->children.begin(), line3->children.end(), noticeId) !=
+                    line3->children.end() &&
+                std::find(line3->children.begin(), line3->children.end(), restoreId) !=
+                    line3->children.end(),
+            "the notice and Restore both sit on the row's third header line");
+    const synth::ui::Node* row2 = FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerRow(2));
+    const synth::ui::Node* row0 = FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerRow(0));
+    Require(row2 != nullptr &&
+                row2->bounds.height ==
+                    synth::runtime_ui::ControllersLayout::kControllerHeaderHeightWithNotice,
+            "the diverged row's height grows to include the notice line");
+    Require(row0 != nullptr &&
+                row0->bounds.height == synth::runtime_ui::ControllersLayout::kControllerHeaderHeight,
+            "an untouched row's height stays at two lines");
+    Require(harness.instrument.controllers[2].config.encoderInput.has_value() &&
+                harness.instrument.controllers[2].config.encoderInput->turnStep == 0.25f,
+            "the edited turn step is committed but not acted on by the notice");
+
     surface.DispatchAction(synth::ui::Action::WithValue(
         synth::runtime_ui::Actions::kControllerRestore,
         synth::runtime_ui::NodeIds::ControllerActionToken(2, "edited")));
@@ -1493,6 +1524,15 @@ void TestRestoreReinstallsADivergedPresetAndIsGatedByDivergence()
     const synth::ui::NodeTree afterRestoreTree = surface.BuildTree();
     Require(FindNodeById(afterRestoreTree, synth::runtime_ui::NodeIds::ControllerRestore(2)) == nullptr,
             "Restore disappears once the row matches its preset again");
+    Require(FindNodeById(afterRestoreTree, synth::runtime_ui::NodeIds::ControllerPresetNotice(2)) ==
+                nullptr,
+            "the notice disappears once the row matches its preset again");
+    const synth::ui::Node* row2AfterRestore =
+        FindNodeById(afterRestoreTree, synth::runtime_ui::NodeIds::ControllerRow(2));
+    Require(row2AfterRestore != nullptr &&
+                row2AfterRestore->bounds.height ==
+                    synth::runtime_ui::ControllersLayout::kControllerHeaderHeight,
+            "the row's height returns to two lines once restored");
 }
 
 // The Encoders section's Turn and Push group headers lay their column labels
