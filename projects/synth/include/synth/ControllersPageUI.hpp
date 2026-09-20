@@ -391,8 +391,6 @@ inline constexpr const char* kPresetNoticeText =
 // check, not a static_assert, is what proves the sentence fits this box.
 inline constexpr float kControllerNoticeWidth =
     kActiveHeaderLine1Width - kLifecycleControlGap - kLifecycleRestoreWidth;
-inline constexpr float kActiveHeaderLine3Width =
-    kControllerNoticeWidth + kLifecycleControlGap + kLifecycleRestoreWidth;
 // A row that differs from its preset grows a third header line.
 inline constexpr float kControllerHeaderHeightWithNotice =
     3.0f * kControllerHeaderLineHeight;

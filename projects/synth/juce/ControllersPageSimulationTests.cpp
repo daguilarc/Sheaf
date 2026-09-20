@@ -913,19 +913,62 @@ void RunDeviceLabelWidthCheck()
 }
 
 // The preset-diverged notice (ControllersLayout::kPresetNoticeText) is a
-// fixed sentence, not a per-device name, so this measures it once against
-// the box the third header line gives it: kControllerNoticeWidth.
+// fixed sentence, not a per-device name, so this measures it once -- but
+// against the notice Label's own rendered width, read back off a real
+// diverged row's built tree, not the raw kControllerNoticeWidth constant. A
+// constant the check reads directly proves only that the constant fits
+// itself; it says nothing about the width the row-building call site at
+// ControllersPageUI.hpp actually hands the Label, so swapping that call
+// site's width argument for a narrower one would leave this check green
+// while the rendered sentence overflows. Installing the row through the same
+// InstallDescriptorProfile call Restore itself uses, diverging one of its
+// mappings, and reading the notice node's bounds is what ties the two
+// together.
 void RunPresetNoticeWidthCheck()
 {
+    synth_runtime::test::ControllersHarnessFixture fixture;
+    fixture.state.instrument.controllers.clear();
+    fixture.state.connection.controllers.clear();
+
+    const std::vector<synth::ControllerWizardDescriptor> registry =
+        synth::MakeControllerWizardRegistry(synth::MidiAppCatalog{});
+    const auto descriptorIt =
+        std::find_if(registry.begin(), registry.end(), [](const synth::ControllerWizardDescriptor& d) {
+            return d.kind == synth::MidiProfileKind::MfTwister;
+        });
+    Require(descriptorIt != registry.end(), "the library registry carries a Twister descriptor");
+
+    synth::MidiControllerSlot slot;
+    slot.name = "twister";
+    slot.input = {"twister-in-id", "Midi Fighter Twister"};
+    slot.output = {"twister-out-id", "Midi Fighter Twister"};
+    std::string reason;
+    Require(synth::runtime_ui::ControllersLayout::InstallDescriptorProfile(registry, *descriptorIt, slot,
+                                                                           &reason),
+            "install the Twister preset onto the notice-check row: " + reason);
+    Require(slot.config.encoderInput.has_value(), "the installed Twister preset carries encoder input");
+    slot.config.encoderInput->turnStep += 0.1f;
+
+    fixture.state.instrument.controllers.push_back(slot);
+    fixture.state.connection.controllers.resize(1);
+
+    synth::runtime_ui::ControllersPageSurface surface = fixture.MakeSurface();
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    const synth::ui::NodeTree tree = surface.BuildTree();
+    const criteria::Index index(tree);
+
+    const synth::ui::Node* notice = index.Find(synth::runtime_ui::NodeIds::ControllerPresetNotice(0));
+    Require(notice != nullptr, "the diverged row renders its preset notice");
+
     const juce::Font font{juce::FontOptions(synth::pagestyle::kDefaultTextSize)};
     juce::GlyphArrangement glyphs;
-    glyphs.addLineOfText(
-        font, juce::String(synth::runtime_ui::ControllersLayout::kPresetNoticeText), 0.0f, 0.0f);
+    glyphs.addLineOfText(font, juce::String(notice->text), 0.0f, 0.0f);
     const float measured = glyphs.getBoundingBox(0, -1, true).getWidth();
-    Require(measured <= synth::runtime_ui::ControllersLayout::kControllerNoticeWidth,
+    Require(measured <= notice->bounds.width,
             "preset notice sentence (" + std::to_string(measured) +
-                "px) must fit inside kControllerNoticeWidth (" +
-                std::to_string(synth::runtime_ui::ControllersLayout::kControllerNoticeWidth) + "px)");
+                "px) must fit inside the notice Label's own rendered width (" +
+                std::to_string(notice->bounds.width) + "px)");
     std::cout << "PresetNoticeWidthCheck passed, measured=" << measured << "px\n";
 }
 
