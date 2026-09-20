@@ -2271,8 +2271,9 @@ private:
                 if (section == MidiConfigSection::Encoders)
                 {
                     // An encoder turn's shifted job is its own fixed
-                    // two-entry catalog (none, Scene Blend), not a system
-                    // message target, so it neither reads ShiftCatalog() nor
+                    // three-entry catalog (none, Scene Blend, BPM), not a
+                    // system message target, so it neither reads
+                    // ShiftCatalog() nor
                     // selects through ShiftChoiceIndex() -- see
                     // EncoderTurnShiftedJobIndex() and EncoderShiftedJobCatalog().
                     std::vector<ui::ControlOption> options;

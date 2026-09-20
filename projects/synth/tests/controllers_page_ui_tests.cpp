@@ -1723,10 +1723,11 @@ void TestTurnRowShiftComboOffersSceneBlendAndCommits()
                                                         synth::MidiMappingRowVM::Field::ShiftAction));
     Require(shiftCombo != nullptr, "turn row's Shift combo renders");
     Require(shiftCombo->kind == synth::ui::NodeKind::ComboBox, "Shift field renders as a combo box");
-    Require(shiftCombo->options.size() == 2, "turn row's Shift combo offers exactly none and Scene Blend");
+    Require(shiftCombo->options.size() == 3, "turn row's Shift combo offers none, Scene Blend and BPM");
     Require(shiftCombo->options[0].label == "(none)", "turn row's Shift combo's first option is none");
     Require(shiftCombo->options[1].label == "Scene Blend",
             "turn row's Shift combo's second option is Scene Blend");
+    Require(shiftCombo->options[2].label == "BPM", "turn row's Shift combo's third option is BPM");
     Require(shiftCombo->selectedOption == "0", "a fresh turn row's Shift combo starts at none");
 
     constexpr int kSceneBlendChoiceIx = 1;
@@ -1751,6 +1752,69 @@ void TestTurnRowShiftComboOffersSceneBlendAndCommits()
                                  controllerIx, synth::MidiConfigSection::Encoders, 0,
                                  synth::MidiMappingRowVM::Field::ShiftAction));
     Require(shiftComboAfter != nullptr && shiftComboAfter->selectedOption == std::to_string(kSceneBlendChoiceIx),
+            "Shift combo reflects the committed choice after rebuild");
+}
+
+void TestTurnRowShiftComboOffersBpmAndCommits()
+{
+    TestHarness harness;
+    synth::MidiAppCatalog catalog;
+    catalog.libraryKinds = {synth::UISystemMessage::Shift};
+    harness.messageCatalog = synth::MakeUISystemMessageChoices(catalog);
+    auto surface = harness.MakeSurface();
+    surface.SetEnumerateDevices(harness.devices);
+    surface.SetContentBounds({0.0f, 0.0f, 1000.0f, 800.0f});
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    constexpr std::size_t controllerIx = 2;
+    surface.ViewModel().ToggleConfig(controllerIx);
+    surface.ViewModel().ToggleSection(controllerIx, synth::MidiConfigSection::Encoders);
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    surface.DispatchAction(synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAddSingle,
+                                                        "2:encoders:encoder_turn"));
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    const std::vector<synth::MidiMappingRowVM> rows =
+        surface.ViewModel().SectionRows(controllerIx, synth::MidiConfigSection::Encoders);
+    Require(!rows.empty(), "add single creates a turn row");
+
+    const synth::ui::NodeTree tree = surface.BuildTree();
+    const synth::ui::Node* shiftCombo = FindNodeById(
+        tree, synth::runtime_ui::NodeIds::MappingField(controllerIx, synth::MidiConfigSection::Encoders, 0,
+                                                        synth::MidiMappingRowVM::Field::ShiftAction));
+    Require(shiftCombo != nullptr, "turn row's Shift combo renders");
+    Require(shiftCombo->options.size() == 3, "turn row's Shift combo offers none, Scene Blend and BPM");
+    Require(shiftCombo->options[0].label == "(none)", "turn row's Shift combo's first option is none");
+    Require(shiftCombo->options[1].label == "Scene Blend",
+            "turn row's Shift combo's second option is Scene Blend");
+    Require(shiftCombo->options[2].label == "BPM", "turn row's Shift combo's third option is BPM");
+
+    constexpr int kBpmChoiceIx = 2;
+    const std::string commitValue =
+        std::to_string(controllerIx) + ":encoders:0:" +
+        std::to_string(static_cast<int>(synth::MidiMappingRowVM::Field::ShiftAction)) + ":" +
+        std::to_string(kBpmChoiceIx);
+    const int commitsBefore = harness.commits;
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kMappingFieldCommit, commitValue));
+    Require(harness.commits == commitsBefore + 1, "Shift field commit persists through the normal commit path");
+
+    const synth::EncoderMidiMapping& committed =
+        harness.instrument.controllers[controllerIx].config.encoderInput->turns[0];
+    Require(committed.shiftedJob == synth::EncoderShiftedJob::TempoBpm,
+            "committed turn carries Tempo as its shifted job");
+
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+    const synth::ui::Node* shiftComboAfter = FindNodeById(
+        surface.BuildTree(), synth::runtime_ui::NodeIds::MappingField(
+                                 controllerIx, synth::MidiConfigSection::Encoders, 0,
+                                 synth::MidiMappingRowVM::Field::ShiftAction));
+    Require(shiftComboAfter != nullptr && shiftComboAfter->selectedOption == std::to_string(kBpmChoiceIx),
             "Shift combo reflects the committed choice after rebuild");
 }
 
@@ -2235,6 +2299,7 @@ int main()
     TestEncoderGroupHeaderSeparatesLastColumnFromAddButton();
     TestSystemMessageShiftFieldRendersAndCommits();
     TestTurnRowShiftComboOffersSceneBlendAndCommits();
+    TestTurnRowShiftComboOffersBpmAndCommits();
     TestLaunchpadRowOffersVariantAndRetargetsItsPads();
     TestLaunchpadRowModelSelectorIsCaptionedModel();
     TestConnectMessageShowsOnAnAbletonStyleRowsExpandedConfiguration();

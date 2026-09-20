@@ -1,4 +1,5 @@
 #include "synth/ControllerWizard.hpp"
+#include "synth/MasterClock.hpp"
 #include "synth/MidiAppCatalog.hpp"
 #include "synth/MidiController.hpp"
 #include "synth/RuntimeUIState.hpp"
@@ -212,6 +213,21 @@ MidiControllerProfileConfig MakeShiftedEncoderProfileConfig(synth::EncoderMode m
     config.encoderInput->mode = mode;
     config.encoderInput->turns.push_back({.control = {.channel = 0, .cc = 1}, .slotIx = 0, .position = 4,
                                           .shiftedJob = synth::EncoderShiftedJob::SceneBlend});
+    config.encoderInput->turns.push_back({.control = {.channel = 0, .cc = 2}, .slotIx = 0, .position = 5});
+    return config;
+}
+
+MidiControllerProfileConfig MakeShiftedTempoEncoderProfileConfig(synth::EncoderMode mode) {
+    MidiControllerProfileConfig config;
+    config.systemMessages.push_back({
+        .control = MidiControlAddress{.channel = 0, .cc = 30},
+        .press = synth::MessageIn::Shift(0, true),
+        .release = synth::MessageIn::Shift(0, false),
+    });
+    config.encoderInput = synth::EncoderMidiInConfig{};
+    config.encoderInput->mode = mode;
+    config.encoderInput->turns.push_back({.control = {.channel = 0, .cc = 1}, .slotIx = 0, .position = 4,
+                                          .shiftedJob = synth::EncoderShiftedJob::TempoBpm});
     config.encoderInput->turns.push_back({.control = {.channel = 0, .cc = 2}, .slotIx = 0, .position = 5});
     return config;
 }
@@ -722,6 +738,61 @@ TEST_CASE(ShiftHeldAbsoluteTurnSetsTheSceneBlend) {
     REQUIRE_TRUE(blend.type == synth::MessageIn::Type::SetSceneBlend);
     REQUIRE_TRUE(blend.value == 1.0f);
     REQUIRE_TRUE(bus.Size() == 0);
+}
+
+TEST_CASE(ShiftHeldTurnPushesTempoIncrementAndReleaseRestoresTheParameter) {
+    synth::MessageInBus bus(nullptr, 16);
+    auto config = MakeShiftedTempoEncoderProfileConfig(synth::EncoderMode::Signed7Bit);
+    auto chain = synth::CreateMidiControllerProfile(
+        config, &bus, nullptr, static_cast<synth::ParameterManager::UIState*>(nullptr), [] { return 510; });
+    REQUIRE_TRUE(chain.shift != nullptr);
+
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 30, 127));  // shift on: pushes nothing
+    REQUIRE_TRUE(bus.Size() == 0);
+
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 1, 65));  // shifted turn: one detent clockwise
+    REQUIRE_TRUE(bus.Size() == 1);
+    synth::MessageIn increment;
+    REQUIRE_TRUE(bus.Pop(increment, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(increment.type == synth::MessageIn::Type::TempoBpmIncDec);
+    REQUIRE_TRUE(increment.delta == 1.0f * synth::kTempoBpmPerEncoderDetent);
+    REQUIRE_TRUE(bus.Size() == 0);
+
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 30, 0));  // shift off: pushes nothing
+    REQUIRE_TRUE(bus.Size() == 0);
+
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 1, 65));  // released: ordinary turn again
+    REQUIRE_TRUE(bus.Size() == 1);
+    synth::MessageIn ordinary;
+    REQUIRE_TRUE(bus.Pop(ordinary, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(ordinary.type == synth::MessageIn::Type::ParamIncDec);
+    REQUIRE_TRUE(ordinary.slotIx == 0);
+    REQUIRE_TRUE(ordinary.position == 4);
+    REQUIRE_TRUE(bus.Size() == 0);
+}
+
+TEST_CASE(ShiftHeldAbsoluteTurnSetsTheTempoAcrossTheRange) {
+    synth::MessageInBus bus(nullptr, 16);
+    auto config = MakeShiftedTempoEncoderProfileConfig(synth::EncoderMode::Absolute);
+    auto chain = synth::CreateMidiControllerProfile(
+        config, &bus, nullptr, static_cast<synth::ParameterManager::UIState*>(nullptr), [] { return 511; });
+    REQUIRE_TRUE(chain.shift != nullptr);
+
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 30, 127));  // shift on
+    chain.input->Process(synth::BasicMidi::CC(0, 0, 1, 127));   // shifted absolute turn: max value
+
+    REQUIRE_TRUE(bus.Size() == 1);
+    synth::MessageIn tempoSet;
+    REQUIRE_TRUE(bus.Pop(tempoSet, std::numeric_limits<std::uint64_t>::max()));
+    REQUIRE_TRUE(tempoSet.type == synth::MessageIn::Type::SetTempoBpmNormalized);
+    REQUIRE_TRUE(tempoSet.value == 1.0f);
+    REQUIRE_TRUE(bus.Size() == 0);
+
+    synth::MasterClock clock;
+    synth::MessageInBus tempoBus(nullptr, 16);
+    tempoBus.SetTempoClock(&clock, 30.0f, 300.0f);
+    tempoBus.Apply(tempoSet);
+    REQUIRE_TRUE(clock.TempoBpm() == 300.0);
 }
 
 TEST_CASE(HoldDrillDrillsAShiftedTurnWhileBothAreHeld) {
@@ -1975,19 +2046,23 @@ TEST_CASE(EncoderTurnJsonRoundTripsShiftedJobAndRejectsAnUnknownOne) {
     config.turns.push_back({.control = {.channel = 0, .cc = 0}, .slotIx = 0, .position = 0,
                             .shiftedJob = synth::EncoderShiftedJob::SceneBlend});
     config.turns.push_back({.control = {.channel = 0, .cc = 1}, .slotIx = 0, .position = 1});
+    config.turns.push_back({.control = {.channel = 0, .cc = 2}, .slotIx = 0, .position = 2,
+                            .shiftedJob = synth::EncoderShiftedJob::TempoBpm});
 
     synth::JsonArena arena(1024 * 1024);
     const synth::JSON json = synth::ToJSON(arena, config);
     const synth::JSON turns = json.Get("turns");
-    REQUIRE_TRUE(turns.Size() == 2);
+    REQUIRE_TRUE(turns.Size() == 3);
     REQUIRE_TRUE(JsonObjectHasKey(turns.GetAt(0), "shiftedJob"));
     REQUIRE_TRUE(!JsonObjectHasKey(turns.GetAt(1), "shiftedJob"));
+    REQUIRE_TRUE(JsonObjectHasKey(turns.GetAt(2), "shiftedJob"));
 
     synth::EncoderMidiInConfig loaded;
     REQUIRE_TRUE(synth::FromJSON(json, loaded));
-    REQUIRE_TRUE(loaded.turns.size() == 2);
+    REQUIRE_TRUE(loaded.turns.size() == 3);
     REQUIRE_TRUE(loaded.turns[0].shiftedJob == synth::EncoderShiftedJob::SceneBlend);
     REQUIRE_TRUE(loaded.turns[1].shiftedJob == synth::EncoderShiftedJob::None);
+    REQUIRE_TRUE(loaded.turns[2].shiftedJob == synth::EncoderShiftedJob::TempoBpm);
 
     // A document naming a shifted job the library does not know fails to
     // load, and the target configuration is left exactly as it was.
@@ -1996,7 +2071,7 @@ TEST_CASE(EncoderTurnJsonRoundTripsShiftedJobAndRejectsAnUnknownOne) {
     badTurn.SetNew("control", synth::ToJSON(badArena, synth::MidiControlAddress{.channel = 0, .cc = 0}));
     badTurn.SetNew("slotIx", badArena.Integer(0));
     badTurn.SetNew("position", badArena.Integer(0));
-    badTurn.SetNew("shiftedJob", badArena.String("tempo"));
+    badTurn.SetNew("shiftedJob", badArena.String("swing"));
 
     synth::EncoderMidiMapping target;
     target.position = 42;

@@ -229,6 +229,9 @@ struct MidiControlAddress {
 enum class EncoderShiftedJob {
     None,
     SceneBlend,
+    // Appended after SceneBlend so every existing enumerator keeps its
+    // ordinal.
+    TempoBpm,
 };
 
 struct EncoderMidiMapping {
@@ -237,6 +240,15 @@ struct EncoderMidiMapping {
     std::size_t position = 0;
     EncoderShiftedJob shiftedJob = EncoderShiftedJob::None;
 };
+
+// The tempo step one encoder detent is worth, in BPM: 1.0 BPM per detent,
+// linear. Tempo is named by musicians in whole numbers, so a linear law
+// lands a detent on an integer where a logarithmic one would land on a
+// fraction the one-decimal readout would show; 1.0 also matches the
+// on-screen BPM slider's own step, already what JUCE's setRange interval and
+// the browser input's step use, so the knob and the slider agree on the
+// finest move either can make.
+inline constexpr float kTempoBpmPerEncoderDetent = 1.0f;
 
 struct EncoderMidiInConfig {
     EncoderMode mode = EncoderMode::Signed7Bit;
@@ -281,6 +293,11 @@ private:
     const EncoderMidiMapping* FindTurn(const BasicMidi& midi) const;
     const EncoderMidiMapping* FindPush(const BasicMidi& midi) const;
     std::optional<float> DecodeDelta(std::uint8_t value) const;
+    // The signed detent count a relative mode's raw value decodes to;
+    // nothing for Absolute. DecodeDelta is that count times turnStep; the
+    // tempo branch needs detents, not a fraction of a parameter's
+    // normalized range.
+    std::optional<int> DecodeTicks(std::uint8_t value) const;
     void ReserveAbsoluteRoutes();
 
     EncoderMidiInConfig config_;

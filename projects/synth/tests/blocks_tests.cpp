@@ -154,7 +154,10 @@ bool MessageInFullyEquivalent(const MessageIn& a, const MessageIn& b) {
         case MessageIn::Type::Shift:
             return a.hasBoolValue == b.hasBoolValue && (!a.hasBoolValue || a.boolValue == b.boolValue);
         case MessageIn::Type::SceneBlendIncDec:
+        case MessageIn::Type::TempoBpmIncDec:
             return a.delta == b.delta;
+        case MessageIn::Type::SetTempoBpmNormalized:
+            return a.value == b.value;
     }
     return false;
 }

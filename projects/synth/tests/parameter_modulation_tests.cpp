@@ -1365,6 +1365,81 @@ TEST_CASE(SceneBlendIncrementReachesTheParameterManagerThroughTheMessageBus) {
     REQUIRE_NEAR(manager.Scene().blend, 1.0f, 0.0001f);
 }
 
+TEST_CASE(TempoMessagesAreInertWithoutAClockRangeOrInternalTempo) {
+    // A clock, a range, and no external slaving: the same message moves the
+    // tempo. Without this block the three inert cases below cannot be told
+    // apart from a bus that never applies a tempo message at all.
+    {
+        synth::MasterClock clock;
+        const double before = clock.TempoBpm();
+        synth::MessageInBus bus;
+        bus.SetTempoClock(&clock, 30.0f, 300.0f);
+        REQUIRE_TRUE(bus.Push(synth::MessageIn::TempoBpmIncDec(0, 5.0f)));
+        bus.Process(0);
+        REQUIRE_TRUE(std::abs(clock.TempoBpm() - before) > 0.0001);
+    }
+
+    // No clock at all.
+    {
+        synth::MessageInBus bus;
+        REQUIRE_TRUE(bus.Push(synth::MessageIn::TempoBpmIncDec(0, 5.0f)));
+        bus.Process(0);
+    }
+
+    // A clock but no range (min == max, the never-set default).
+    {
+        synth::MasterClock clock;
+        const double before = clock.TempoBpm();
+        synth::MessageInBus bus;
+        bus.SetTempoClock(&clock, 0.0f, 0.0f);
+        REQUIRE_TRUE(bus.Push(synth::MessageIn::TempoBpmIncDec(0, 5.0f)));
+        bus.Process(0);
+        REQUIRE_NEAR(clock.TempoBpm(), before, 0.0001);
+    }
+
+    // A clock slaved to external MIDI.
+    {
+        synth::MasterClock clock;
+        synth::SyncConfig config;
+        config.receiveClock = true;
+        REQUIRE_TRUE(clock.ApplySyncConfig(config));
+        const double before = clock.TempoBpm();
+        synth::MessageInBus bus;
+        bus.SetTempoClock(&clock, 30.0f, 300.0f);
+        REQUIRE_TRUE(bus.Push(synth::MessageIn::TempoBpmIncDec(0, 5.0f)));
+        bus.Process(0);
+        REQUIRE_NEAR(clock.TempoBpm(), before, 0.0001);
+    }
+}
+
+TEST_CASE(TempoIncrementClampsAtBothEndsOfTheRange) {
+    synth::MasterClock clock;
+    clock.SetTempoBpm(31.0);
+    synth::MessageInBus bus;
+    bus.SetTempoClock(&clock, 30.0f, 300.0f);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::TempoBpmIncDec(0, -5.0f)));
+    bus.Process(0);
+    REQUIRE_NEAR(clock.TempoBpm(), 30.0, 0.0001);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::TempoBpmIncDec(1, -5.0f)));
+    bus.Process(1);
+    REQUIRE_NEAR(clock.TempoBpm(), 30.0, 0.0001);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::TempoBpmIncDec(2, 5.0f)));
+    bus.Process(2);
+    REQUIRE_NEAR(clock.TempoBpm(), 35.0, 0.0001);
+
+    clock.SetTempoBpm(299.0);
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::TempoBpmIncDec(3, 5.0f)));
+    bus.Process(3);
+    REQUIRE_NEAR(clock.TempoBpm(), 300.0, 0.0001);
+
+    REQUIRE_TRUE(bus.Push(synth::MessageIn::TempoBpmIncDec(4, -5.0f)));
+    bus.Process(4);
+    REQUIRE_NEAR(clock.TempoBpm(), 295.0, 0.0001);
+}
+
 TEST_CASE(parameter_appearance_resolves_empty_single_and_exact_indicator_palettes) {
     synth::ParameterManager manager;
     auto& group = manager.CreateGroup({

@@ -131,6 +131,8 @@ SystemMessageSortKey ComputeSystemMessageSortKey(const MidiControllerSystemMessa
             break;
         case MessageIn::Type::SetSceneBlend:
         case MessageIn::Type::SceneBlendIncDec:
+        case MessageIn::Type::TempoBpmIncDec:
+        case MessageIn::Type::SetTempoBpmNormalized:
         case MessageIn::Type::Start:
         case MessageIn::Type::Continue:
         case MessageIn::Type::Stop:

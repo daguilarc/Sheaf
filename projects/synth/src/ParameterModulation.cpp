@@ -1,6 +1,7 @@
 #include "synth/ParameterModulation.hpp"
 
 #include "synth/ButtonGrid.hpp"
+#include "synth/MasterClock.hpp"
 
 #include <algorithm>
 #include <array>
@@ -4060,6 +4061,22 @@ MessageIn MessageIn::SceneBlendIncDec(std::uint64_t timestamp, float delta) {
     return message;
 }
 
+MessageIn MessageIn::TempoBpmIncDec(std::uint64_t timestamp, float deltaBpm) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::TempoBpmIncDec;
+    message.delta = deltaBpm;
+    return message;
+}
+
+MessageIn MessageIn::SetTempoBpmNormalized(std::uint64_t timestamp, float normalized) {
+    MessageIn message;
+    message.timestamp = timestamp;
+    message.type = Type::SetTempoBpmNormalized;
+    message.value = normalized;
+    return message;
+}
+
 MessageInBus::MessageInBus(ParameterManager* manager, std::size_t capacity)
     : manager_(manager),
       queue_(capacity == 0 ? 1 : capacity) {}
@@ -4191,6 +4208,22 @@ void MessageInBus::Apply(const MessageIn& message) {
     case MessageIn::Type::SceneBlendIncDec:
         if (manager_ != nullptr) {
             manager_->IncDecSceneBlend(message.delta);
+        }
+        break;
+    case MessageIn::Type::TempoBpmIncDec:
+        if (tempoClock_ != nullptr && tempoMinimumBpm_ < tempoMaximumBpm_) {
+            const double clamped = std::clamp(tempoClock_->TempoBpm() + static_cast<double>(message.delta),
+                                              static_cast<double>(tempoMinimumBpm_),
+                                              static_cast<double>(tempoMaximumBpm_));
+            tempoClock_->SetTempoBpm(clamped);
+        }
+        break;
+    case MessageIn::Type::SetTempoBpmNormalized:
+        if (tempoClock_ != nullptr && tempoMinimumBpm_ < tempoMaximumBpm_) {
+            const double placed = static_cast<double>(tempoMinimumBpm_) +
+                                  static_cast<double>(message.value) *
+                                      static_cast<double>(tempoMaximumBpm_ - tempoMinimumBpm_);
+            tempoClock_->SetTempoBpm(placed);
         }
         break;
     case MessageIn::Type::Start:

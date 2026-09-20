@@ -237,6 +237,10 @@ const char* MessageTypeName(MessageIn::Type type) {
         return "shift";
     case MessageIn::Type::SceneBlendIncDec:
         return "sceneBlendIncDec";
+    case MessageIn::Type::TempoBpmIncDec:
+        return "tempoBpmIncDec";
+    case MessageIn::Type::SetTempoBpmNormalized:
+        return "setTempoBpmNormalized";
     }
     return "clock";
 }
@@ -296,6 +300,10 @@ bool ParseMessageType(std::string_view value, MessageIn::Type& type) {
         type = MessageIn::Type::Shift;
     } else if (value == "sceneBlendIncDec") {
         type = MessageIn::Type::SceneBlendIncDec;
+    } else if (value == "tempoBpmIncDec") {
+        type = MessageIn::Type::TempoBpmIncDec;
+    } else if (value == "setTempoBpmNormalized") {
+        type = MessageIn::Type::SetTempoBpmNormalized;
     } else {
         return false;
     }
@@ -735,6 +743,16 @@ void EncoderMidiInProcessor::Process(const BasicMidi& midi) {
                 }
                 return;
             }
+            if (shift_ != nullptr && shift_->held && mapping->shiftedJob == EncoderShiftedJob::TempoBpm) {
+                if (config_.mode == EncoderMode::Absolute) {
+                    Push(MessageIn::SetTempoBpmNormalized(NextTimestamp(),
+                                                          AbsoluteEncoderByteToNormalized(midi.GetValue())));
+                } else if (const std::optional<int> ticks = DecodeTicks(midi.GetValue())) {
+                    Push(MessageIn::TempoBpmIncDec(NextTimestamp(),
+                                                   static_cast<float>(*ticks) * kTempoBpmPerEncoderDetent));
+                }
+                return;
+            }
             if (config_.mode == EncoderMode::Absolute) {
                 if (absoluteFeedback_ == nullptr) {
                     Push(MessageIn::ParamSetAbsolute(NextTimestamp(), mapping->slotIx, mapping->position,
@@ -799,7 +817,7 @@ const EncoderMidiMapping* EncoderMidiInProcessor::FindPush(const BasicMidi& midi
     return itr == config_.pushes.end() ? nullptr : &*itr;
 }
 
-std::optional<float> EncoderMidiInProcessor::DecodeDelta(std::uint8_t value) const {
+std::optional<int> EncoderMidiInProcessor::DecodeTicks(std::uint8_t value) const {
     int ticks = 0;
     switch (config_.mode) {
     case EncoderMode::Signed7Bit:
@@ -818,7 +836,15 @@ std::optional<float> EncoderMidiInProcessor::DecodeDelta(std::uint8_t value) con
     if (ticks == 0) {
         return std::nullopt;
     }
-    return static_cast<float>(ticks) * config_.turnStep;
+    return ticks;
+}
+
+std::optional<float> EncoderMidiInProcessor::DecodeDelta(std::uint8_t value) const {
+    const std::optional<int> ticks = DecodeTicks(value);
+    if (!ticks.has_value()) {
+        return std::nullopt;
+    }
+    return static_cast<float>(*ticks) * config_.turnStep;
 }
 
 namespace {
@@ -1887,6 +1913,8 @@ SystemMessageOutputState SystemMessageOutputInfo::Evaluate(const MessageIn& mess
     case MessageIn::Type::HoldDrill:
     case MessageIn::Type::Shift:
     case MessageIn::Type::SceneBlendIncDec:
+    case MessageIn::Type::TempoBpmIncDec:
+    case MessageIn::Type::SetTempoBpmNormalized:
         return {};
     case MessageIn::Type::GridPress:
     case MessageIn::Type::GridRelease:
@@ -2230,6 +2258,8 @@ JSON ToJSON(JsonArena& arena, const EncoderMidiMapping& value) {
     json.SetNew("position", arena.Integer(static_cast<int64_t>(value.position)));
     if (value.shiftedJob == EncoderShiftedJob::SceneBlend) {
         json.SetNew("shiftedJob", arena.String("sceneBlend"));
+    } else if (value.shiftedJob == EncoderShiftedJob::TempoBpm) {
+        json.SetNew("shiftedJob", arena.String("tempoBpm"));
     }
     return json;
 }
@@ -2245,10 +2275,17 @@ bool FromJSON(JSON json, EncoderMidiMapping& value) {
     }
     if (ObjectHasKey(json, "shiftedJob")) {
         const JSON shiftedJob = json.Get("shiftedJob");
-        if (!IsString(shiftedJob) || std::string_view(shiftedJob.StringValue()) != "sceneBlend") {
+        if (!IsString(shiftedJob)) {
             return false;
         }
-        parsed.shiftedJob = EncoderShiftedJob::SceneBlend;
+        const std::string_view shiftedJobValue = shiftedJob.StringValue();
+        if (shiftedJobValue == "sceneBlend") {
+            parsed.shiftedJob = EncoderShiftedJob::SceneBlend;
+        } else if (shiftedJobValue == "tempoBpm") {
+            parsed.shiftedJob = EncoderShiftedJob::TempoBpm;
+        } else {
+            return false;
+        }
     }
     value = parsed;
     return true;
@@ -2454,6 +2491,8 @@ JSON ToJSON(JsonArena& arena, const MessageIn& value) {
     case MessageIn::Type::HoldDrill:
     case MessageIn::Type::Shift:
     case MessageIn::Type::SceneBlendIncDec:
+    case MessageIn::Type::TempoBpmIncDec:
+    case MessageIn::Type::SetTempoBpmNormalized:
         break;
     }
     json.SetNew("slotIx", arena.Integer(static_cast<int64_t>(value.slotIx)));
@@ -2528,6 +2567,8 @@ bool FromJSON(JSON json, MessageIn& value) {
     case MessageIn::Type::HoldDrill:
     case MessageIn::Type::Shift:
     case MessageIn::Type::SceneBlendIncDec:
+    case MessageIn::Type::TempoBpmIncDec:
+    case MessageIn::Type::SetTempoBpmNormalized:
         break;
     }
     if (!ReadSize(json.Get("slotIx"), parsed.slotIx) || !ReadSize(json.Get("position"), parsed.position) ||
