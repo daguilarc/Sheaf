@@ -138,6 +138,11 @@ inline std::string ControllerRestore(std::size_t controllerIx)
     return ControllerRow(controllerIx) + ".restore";
 }
 
+inline std::string ControllerPresetNotice(std::size_t controllerIx)
+{
+    return ControllerRow(controllerIx) + ".preset_notice";
+}
+
 inline std::string ControllerInputLabel(std::size_t controllerIx)
 {
     return ControllerRow(controllerIx) + ".input_label";
@@ -344,10 +349,8 @@ inline constexpr float kLifecycleDeleteWidth = 66.0f;
 inline constexpr float kLifecycleRestoreWidth = 76.0f;
 inline constexpr float kLifecycleControlGap = 4.0f;
 // The name draft and Rename button live in the expanded editor, so line
-// two's lifecycle block is Delete plus Restore, shown only when its own row
-// condition holds.
-inline constexpr float kActiveLifecycleWidth =
-    kLifecycleDeleteWidth + kLifecycleControlGap + kLifecycleRestoreWidth;
+// two's lifecycle block is Delete alone; Restore moves to the third line,
+// shown only when its own row condition holds.
 inline constexpr float kBlacklistedEndpointLabelWidth = 240.0f;
 inline constexpr float kBlacklistedBadgeWidth = 84.0f;
 // A blacklisted record has no expanded editor to hold a moved rename field,
@@ -360,7 +363,7 @@ inline constexpr float kBlacklistedLifecycleWidth = kLifecycleDeleteWidth;
 inline constexpr float kActiveHeaderLine2Width =
     kStatusDotWidth + kLifecycleControlGap + kEndpointFieldWidth + kEndpointBoxGap +
     kStatusDotWidth + kLifecycleControlGap + kEndpointFieldWidth + kLifecycleControlGap +
-    kActiveLifecycleWidth + kLifecycleControlGap;
+    kLifecycleDeleteWidth + kLifecycleControlGap;
 // 308: every library device name (RunDeviceLabelWidthCheck in the miniapp
 // JUCE suite measures each one at the page's default text size) needs this
 // much room, whether or not line two's own lifecycle controls happen to
@@ -379,6 +382,20 @@ inline constexpr float kActiveControllerHeaderWidth =
 // two ever grows back past what line one already reserves.
 static_assert(kActiveHeaderLine2Width <= kActiveHeaderLine1Width,
              "the active row's line two must not grow past line one's own width");
+// The sentence a row shows while it differs from its preset. Restore moves
+// onto this same line, beside the words that describe it.
+inline constexpr const char* kPresetNoticeText =
+    "This row differs from its preset. Restore replaces its mappings and "
+    "discards any edits.";
+// Line three: the notice label, then Restore. Task 1.3's glyph-measurement
+// check, not a static_assert, is what proves the sentence fits this box.
+inline constexpr float kControllerNoticeWidth =
+    kActiveHeaderLine1Width - kLifecycleControlGap - kLifecycleRestoreWidth;
+inline constexpr float kActiveHeaderLine3Width =
+    kControllerNoticeWidth + kLifecycleControlGap + kLifecycleRestoreWidth;
+// A row that differs from its preset grows a third header line.
+inline constexpr float kControllerHeaderHeightWithNotice =
+    3.0f * kControllerHeaderLineHeight;
 // Line one: name, device, Released badge.
 inline constexpr float kBlacklistedHeaderLine1Width =
     kControllerNameWidth + kLifecycleControlGap + kControllerDeviceWidth +
@@ -2562,9 +2579,15 @@ private:
         const auto emitControllerRow = [&](ui::Builder& scroll,
                                            const MidiControllerRowVM& rowVm,
                                            std::size_t controllerIx) {
+            const bool showsPresetNotice =
+                rowVm.hasResolvedWizard && !rowVm.matchesWizardProfile;
             scroll.Column(
                 NodeIds::ControllerRow(controllerIx),
-                rowLayout(ControllersLayout::kControllerHeaderHeight, scrollWidth, 0.0f),
+                rowLayout(showsPresetNotice
+                              ? ControllersLayout::kControllerHeaderHeightWithNotice
+                              : ControllersLayout::kControllerHeaderHeight,
+                          scrollWidth,
+                          0.0f),
                 [&](ui::Builder& section) {
                     if (rowVm.disposition == MidiControllerDisposition::Blacklisted)
                     {
@@ -2720,8 +2743,19 @@ private:
                                           Actions::kControllerDelete,
                                           NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
                                       button(ControllersLayout::kLifecycleDeleteWidth));
-                            if (rowVm.hasResolvedWizard && !rowVm.matchesWizardProfile)
-                            {
+                        });
+
+                    if (showsPresetNotice)
+                    {
+                        section.Row(
+                            NodeIds::ControllerRow(controllerIx) + ".line3",
+                            rowLayout(ControllersLayout::kControllerHeaderLineHeight,
+                                     scrollWidth,
+                                     ControllersLayout::kLifecycleControlGap),
+                            [&](ui::Builder& row) {
+                                row.Label(NodeIds::ControllerPresetNotice(controllerIx),
+                                         ControllersLayout::kPresetNoticeText,
+                                         labelStyle(ControllersLayout::kControllerNoticeWidth));
                                 row.Button(
                                     NodeIds::ControllerRestore(controllerIx),
                                     "Restore",
@@ -2729,8 +2763,8 @@ private:
                                         Actions::kControllerRestore,
                                         NodeIds::ControllerActionToken(controllerIx, rowVm.name)),
                                     button(ControllersLayout::kLifecycleRestoreWidth));
-                            }
-                        });
+                            });
+                    }
                 });
         };
 

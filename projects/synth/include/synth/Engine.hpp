@@ -254,12 +254,10 @@ public:
         app_.Init(&context_);
 
         // Snapshot the app's Init-configured live instrument/audio device as
-        // the default BEFORE any startup patch applies. Without this,
-        // defaultInstrumentConfig_/defaultAudioDeviceState_ stay
-        // default-constructed (empty), so a later RevertAllToDefault (via
-        // NewPatch() with no saved patch) would reset MIDI
-        // routing/audio device selection to empty instead of back to the
-        // app's real default — mirroring the old miniapp's post-construction
+        // the default BEFORE any startup patch applies, so DefaultInstrument()
+        // and AppContext::defaultInstrument hand out the instrument the app's
+        // Init() configured, not whatever a startup patch leaves behind —
+        // mirroring the old miniapp's post-construction
         // `defaultMidiProfileConfig_ = midiProfileConfig_;` snapshot (the
         // pre-instrument-model predecessors of defaultInstrumentConfig_/
         // instrumentConfig_; see projects/synth/miniapp/Main.cpp history).
