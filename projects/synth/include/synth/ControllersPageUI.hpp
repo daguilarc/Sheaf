@@ -2402,11 +2402,11 @@ private:
                                     ui::Action::Named(Actions::kAppMidiOutSendsSelect),
                                     sendsStyle);
 
-                        if (selectedContent == nullptr)
-                        {
-                            return;
-                        }
-
+                        // sru-71: the Channel field shows for every state,
+                        // including Off (the scenario "A new configuration
+                        // shows Off and None" names channel 0 among what the
+                        // section shows then); only CC and Velocity are
+                        // conditional on a chosen content.
                         ui::ControlStyle channelStyle = fieldControl(ControllersLayout::kVariantFieldWidth);
                         channelStyle.caption = "Channel";
                         row.TextField(NodeIds::kAppMidiOutChannel,
@@ -2414,6 +2414,11 @@ private:
                                       std::to_string(static_cast<int>(appMidiOutConfig.settings.channel)),
                                       ui::Action::Named(Actions::kAppMidiOutChannelCommit),
                                       channelStyle);
+
+                        if (selectedContent == nullptr)
+                        {
+                            return;
+                        }
 
                         if (selectedContent->kind == MidiControlType::Cc)
                         {

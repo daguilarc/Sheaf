@@ -2292,8 +2292,9 @@ void TestAppMidiOutSectionShowsOffAndNoneByDefault()
     Require(sends != nullptr && sends->selectedOption == "off", "Sends defaults to Off");
     const synth::ui::Node* port = FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutPort);
     Require(port != nullptr && port->selectedOption == "none", "Port defaults to None");
-    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutChannel) == nullptr,
-            "no Channel field while Off");
+    const synth::ui::Node* channel = FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutChannel);
+    Require(channel != nullptr, "the Channel field shows even while Off");
+    Require(channel->text == "0", "the Channel field defaults to channel 0");
     Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutCc) == nullptr,
             "no CC field while Off");
     Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutVelocity) == nullptr,
