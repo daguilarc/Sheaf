@@ -252,6 +252,7 @@ public:
     //      A missing/empty patchesRoot, or a startup patch that fails to
     //      apply, is skipped silently.
     void Initialize() {
+        initializeStarted_ = true;
         RuntimeConfig config = App::Config();
         ValidateRuntimeConfig(config);
         config_ = std::move(config);
@@ -477,7 +478,31 @@ public:
             app_.ProcessFrame();
         }
         assert(block.numRequestedInputChannels == config_.numAudioInputs);
+        appMidiOutList_.Clear();
+        block.midiOut = &appMidiOutList_;
         app_.ProcessBlock(block);
+        if (appMidiOutRoutingEnabled_) {
+            for (const AppMidiOutEvent& event : appMidiOutList_) {
+                std::uint64_t dueTimeMicros = timestamp;
+                if (block.clockPlan != nullptr) {
+                    const std::optional<std::uint64_t> due = masterClock_.DueTimeAtSample(
+                        static_cast<double>(block.startSample + event.frame));
+                    dueTimeMicros = due.value_or(timestamp);
+                }
+                ScheduledMidiEvent scheduled;
+                scheduled.kind = ScheduledMidiEventKind::ChannelMessage;
+                scheduled.orderingIntent = ScheduledMidiOrderingIntent::AppMessage;
+                scheduled.broadcast = false;
+                scheduled.dueTimeMicros = dueTimeMicros;
+                scheduled.sequence = ++appMidiOutSequence_;
+                scheduled.phaseGeneration = 0;
+                scheduled.channelStatusByte = event.statusByte;
+                scheduled.channelData1 = event.data1;
+                scheduled.channelData2 = event.data2;
+                scheduled.targetSinkIx = MidiSender::kAppMidiOutSinkIx;
+                (void)midiSender_.TryEnqueue(scheduled);
+            }
+        }
 
         if (++blocksSinceUiPublish_ >= uiPublishInterval_) {
             blocksSinceUiPublish_ = 0;
@@ -722,6 +747,27 @@ public:
     PatchManager& Patches() { return patchManager_; }
     MasterClock& Clock() { return masterClock_; }
     const MasterClock& Clock() const { return masterClock_; }
+
+    // Turns on the engine's own routing of the app's per-block MIDI-out list
+    // into the sender (sar-37): each entry becomes a scheduled channel
+    // message to MidiSender::kAppMidiOutSinkIx. Must be called before
+    // Initialize() -- Runtime::Start and synth_browser::Runtime::Start do
+    // this immediately before engine_.Initialize() -- because task 5's
+    // delivery of the MIDI-out setting to the app depends on that order.
+    // Called after Initialize(), it changes nothing and logs that it was
+    // ignored. A host that never calls this (a plugin) reads
+    // AppMidiOutEvents() itself instead.
+    void EnableAppMidiOutRouting() {
+        if (initializeStarted_) {
+            INFO("EnableAppMidiOutRouting: called after Initialize(); ignored");
+            return;
+        }
+        appMidiOutRoutingEnabled_ = true;
+    }
+    // The current block's app MIDI-out list, valid for the same
+    // callback-lifetime as AudioBlock::midiOut pointed at it. A plugin host,
+    // which never enables routing, reads this after ProcessBlock returns.
+    const AppMidiOutEventList& AppMidiOutEvents() const noexcept { return appMidiOutList_; }
     bool RequestSyncConfiguration(const SyncConfig& config) noexcept {
         if (!config.IsValid()) {
             return false;
@@ -1515,6 +1561,14 @@ private:
     PatchMessageInBus patchInputBus_;
     MessageOutBus patchOutputBus_;
     MidiSender midiSender_;
+    // sar-37: the current block's app MIDI-out list, and whether
+    // ProcessBlock routes it into midiSender_. EnableAppMidiOutRouting()
+    // sets the flag before Initialize() runs; initializeStarted_ guards
+    // against enabling it any later.
+    AppMidiOutEventList appMidiOutList_;
+    bool appMidiOutRoutingEnabled_ = false;
+    bool initializeStarted_ = false;
+    std::uint64_t appMidiOutSequence_ = 0;
     // Runtime-lifetime causal state shared by rebuilt absolute input/output
     // processor chains. Route records retain keys and pending expectations;
     // processors keep only non-owning pointers back to this stable owner.

@@ -3914,6 +3914,160 @@ TEST_CASE(engine_takes_a_file_export_with_no_handler_and_logs_it) {
     REQUIRE_TRUE(FileExportTestApp::pending.empty());
 }
 
+namespace {
+
+// Minimal app for sar-37's per-block MIDI-out list tests. All state is
+// static, matching EngineTestApp's idiom: tests set onProcessBlock before
+// constructing the Engine.
+struct AppMidiOutTestApp {
+    static inline std::function<void(synth::AudioBlock&)> onProcessBlock;
+    static inline int processBlockCalls = 0;
+
+    static synth::RuntimeConfig Config() {
+        synth::RuntimeConfig config;
+        config.appName = "AppMidiOutTest";
+        config.numAudioOutputs = 2;
+        return config;
+    }
+    void Init(synth::AppContext*) {}
+    void ProcessBlock(synth::AudioBlock& block) {
+        ++processBlockCalls;
+        for (int channel = 0; channel < block.numOutputChannels; ++channel) {
+            float* out = block.outputs[channel];
+            if (out == nullptr) {
+                continue;
+            }
+            for (std::size_t frame = 0; frame < block.numFrames; ++frame) {
+                out[frame] = 0.0f;
+            }
+        }
+        if (onProcessBlock) {
+            onProcessBlock(block);
+        }
+    }
+};
+
+}  // namespace
+
+TEST_CASE(a_routed_app_message_reaches_the_midi_out_sink_at_its_frames_due_time) {
+    AppMidiOutTestApp::processBlockCalls = 0;
+    AppMidiOutTestApp::onProcessBlock = [](synth::AudioBlock& block) {
+        REQUIRE_TRUE(block.midiOut != nullptr);
+        REQUIRE_TRUE(block.midiOut->Append({.frame = 10, .statusByte = 0xB0, .data1 = 7, .data2 = 100}));
+    };
+    // MidiSender's own delivery clock (this provider) is independent of the
+    // ProcessBlock/CommitBlock timestamp below, which anchors the master
+    // clock's output-time mapping; a large constant here just keeps every
+    // computed due time already "ready" so FlushForTests does not wait on
+    // real time.
+    synth::Engine<AppMidiOutTestApp> engine([] { return std::uint64_t{10'000'000}; });
+    engine.EnableAppMidiOutRouting();
+    engine.Initialize();
+    engine.Prepare(48'000.0, 64);
+
+    EngineMidiOutputSink appSink;
+    engine.Context().midiSender->SetAppMidiOutSink(&appSink);
+    engine.Context().midiSender->Start();
+
+    TestBlockBuffers buffers(2, 64);
+    synth::AudioBlock block = buffers.Block(64);
+    engine.ProcessBlock(block, 1'000);
+    REQUIRE_TRUE(block.clockPlan != nullptr);
+
+    const std::optional<std::uint64_t> expectedDue =
+        engine.Clock().DueTimeAtSample(static_cast<double>(block.startSample + 10));
+    REQUIRE_TRUE(expectedDue.has_value());
+
+    REQUIRE_TRUE(engine.Context().midiSender->FlushForTests(std::chrono::milliseconds(500)));
+    engine.Context().midiSender->Stop();
+
+    REQUIRE_TRUE(appSink.delivered.size() == 1);
+    REQUIRE_TRUE(appSink.delivered[0].raw == (std::vector<std::uint8_t>{0xB0, 7, 100}));
+    REQUIRE_TRUE(appSink.deadlines.size() == 1);
+    REQUIRE_TRUE(appSink.deadlines[0] == *expectedDue);
+
+    AppMidiOutTestApp::onProcessBlock = nullptr;
+}
+
+TEST_CASE(an_unrouted_host_reads_the_app_midi_out_list_and_the_sender_receives_nothing) {
+    AppMidiOutTestApp::processBlockCalls = 0;
+    AppMidiOutTestApp::onProcessBlock = [](synth::AudioBlock& block) {
+        REQUIRE_TRUE(block.midiOut->Append({.frame = 0, .statusByte = 0x90, .data1 = 60, .data2 = 100}));
+    };
+    synth::Engine<AppMidiOutTestApp> engine([] { return std::uint64_t{2'000}; });
+    // Routing is not enabled: EnableAppMidiOutRouting() is never called.
+    engine.Initialize();
+    engine.Prepare(48'000.0, 64);
+
+    EngineMidiOutputSink appSink;
+    engine.Context().midiSender->SetAppMidiOutSink(&appSink);
+    engine.Context().midiSender->Start();
+
+    TestBlockBuffers buffers(2, 64);
+    synth::AudioBlock block = buffers.Block(64);
+    engine.ProcessBlock(block, 2'000);
+
+    REQUIRE_TRUE(engine.AppMidiOutEvents().Size() == 1);
+    REQUIRE_TRUE(engine.AppMidiOutEvents()[0].frame == 0);
+    REQUIRE_TRUE(engine.AppMidiOutEvents()[0].statusByte == 0x90);
+    REQUIRE_TRUE(engine.AppMidiOutEvents()[0].data1 == 60);
+    REQUIRE_TRUE(engine.AppMidiOutEvents()[0].data2 == 100);
+
+    REQUIRE_TRUE(engine.Context().midiSender->FlushForTests(std::chrono::milliseconds(200)));
+    engine.Context().midiSender->Stop();
+    REQUIRE_TRUE(appSink.delivered.empty());
+
+    AppMidiOutTestApp::onProcessBlock = nullptr;
+}
+
+TEST_CASE(each_app_midi_out_block_starts_empty) {
+    AppMidiOutTestApp::processBlockCalls = 0;
+    AppMidiOutTestApp::onProcessBlock = [](synth::AudioBlock& block) {
+        if (AppMidiOutTestApp::processBlockCalls == 1) {
+            REQUIRE_TRUE(block.midiOut->Append({.frame = 1, .statusByte = 0xB0, .data1 = 1, .data2 = 1}));
+        }
+    };
+    synth::Engine<AppMidiOutTestApp> engine([] { return std::uint64_t{3'000}; });
+    engine.Initialize();
+    engine.Prepare(48'000.0, 64);
+    TestBlockBuffers buffers(2, 64);
+
+    synth::AudioBlock first = buffers.Block(64);
+    engine.ProcessBlock(first, 3'000);
+    REQUIRE_TRUE(engine.AppMidiOutEvents().Size() == 1);
+
+    synth::AudioBlock second = buffers.Block(64);
+    engine.ProcessBlock(second, 4'000);
+    REQUIRE_TRUE(engine.AppMidiOutEvents().Size() == 0);
+
+    AppMidiOutTestApp::onProcessBlock = nullptr;
+}
+
+TEST_CASE(an_app_that_writes_nothing_sends_no_app_midi_out_traffic) {
+    AppMidiOutTestApp::processBlockCalls = 0;
+    AppMidiOutTestApp::onProcessBlock = nullptr;  // never appends
+    synth::Engine<AppMidiOutTestApp> engine([] { return std::uint64_t{5'000}; });
+    engine.EnableAppMidiOutRouting();
+    engine.Initialize();
+    engine.Prepare(48'000.0, 64);
+
+    EngineMidiOutputSink appSink;
+    engine.Context().midiSender->SetAppMidiOutSink(&appSink);
+    engine.Context().midiSender->Start();
+
+    TestBlockBuffers buffers(2, 64);
+    std::uint64_t timestamp = 5'000;
+    for (int i = 0; i < 10; ++i) {
+        synth::AudioBlock block = buffers.Block(64);
+        engine.ProcessBlock(block, timestamp);
+        timestamp += 1'334;
+    }
+
+    REQUIRE_TRUE(engine.Context().midiSender->FlushForTests(std::chrono::milliseconds(200)));
+    engine.Context().midiSender->Stop();
+    REQUIRE_TRUE(appSink.delivered.empty());
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {

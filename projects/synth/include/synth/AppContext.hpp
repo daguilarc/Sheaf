@@ -10,6 +10,7 @@
 #include "synth/PatchPersistence.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cassert>
 #include <cstddef>
@@ -180,6 +181,47 @@ private:
     std::size_t frameCount_ = 0;
 };
 
+// One channel message the app writes to its MIDI out this block, due at
+// `frame` within the block (sar-37).
+struct AppMidiOutEvent {
+    std::size_t frame = 0;
+    std::uint8_t statusByte = 0;
+    std::uint8_t data1 = 0;
+    std::uint8_t data2 = 0;
+};
+
+// Fixed-capacity, allocation-free list the app appends to during
+// ProcessBlock. Engine owns the instance and clears it every block; a full
+// list drops further appends and counts them, so an app pushed off the
+// audio thread never allocates or blocks. overflowCount() is cumulative
+// across the whole run, not reset by Clear().
+class AppMidiOutEventList {
+public:
+    static constexpr std::size_t kCapacity = 4;
+
+    bool Append(const AppMidiOutEvent& event) noexcept {
+        if (count_ >= kCapacity) {
+            ++overflowCount_;
+            return false;
+        }
+        events_[count_++] = event;
+        return true;
+    }
+
+    void Clear() noexcept { count_ = 0; }
+
+    std::size_t Size() const noexcept { return count_; }
+    std::size_t OverflowCount() const noexcept { return overflowCount_; }
+    const AppMidiOutEvent& operator[](std::size_t index) const noexcept { return events_[index]; }
+    const AppMidiOutEvent* begin() const noexcept { return events_.data(); }
+    const AppMidiOutEvent* end() const noexcept { return events_.data() + count_; }
+
+private:
+    std::array<AppMidiOutEvent, kCapacity> events_{};
+    std::size_t count_ = 0;
+    std::size_t overflowCount_ = 0;
+};
+
 struct AudioBlock {
     const float* const* inputs = nullptr;
     float* const* outputs = nullptr;
@@ -199,6 +241,10 @@ struct AudioBlock {
     // explicitly from immutable RuntimeConfig; InputView() clamps actual
     // numInputChannels defensively into [0, requested].
     int numRequestedInputChannels = 0;
+    // Engine-owned, cleared before every callback (sar-37). The app appends
+    // channel messages here; null only in a default-constructed view. Non-owning
+    // and callback-lifetime-only, like clockPlan above.
+    AppMidiOutEventList* midiOut = nullptr;
 
     AudioInputView InputView() const noexcept {
         const int requested = std::max(0, numRequestedInputChannels);
