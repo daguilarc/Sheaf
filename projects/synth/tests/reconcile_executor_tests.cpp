@@ -691,6 +691,75 @@ TEST_CASE(app_midi_out_port_survives_device_absence_and_never_contends_with_a_co
     REQUIRE_TRUE(opened.size() == 1);
 }
 
+// Composes PlanMidiReconciliation+ExecuteReconcilePlan (the controller pass)
+// and AppMidiOutPortReconciler::Reconcile (the app MIDI-out pass) in the
+// exact sequence MidiConnectionManager::Reconcile() runs them -- controller
+// pass first, app pass second, against one `present` snapshot -- the seam
+// the JUCE-dependent MidiConnectionManager itself delegates to and cannot be
+// unit-tested directly.
+struct OneRuntimeReconcilePass {
+    MidiConnectionState controllerState;
+    AppMidiOutPortReconciler appReconciler;
+
+    struct Result {
+        std::size_t controllerOpens = 0;
+        std::size_t appOpens = 0;
+    };
+
+    Result Run(const MidiInstrumentConfig& instrument, const MidiEndpointRef& appPort,
+              const MidiDeviceList& present) {
+        Result result;
+        const ReconcilePlan plan = PlanMidiReconciliation(instrument, present, controllerState);
+        MidiEndpointOps ops;
+        ops.openInput = [](std::size_t, const std::string&) { return true; };
+        ops.openOutput = [&](std::size_t, const std::string&) {
+            ++result.controllerOpens;
+            return true;
+        };
+        ops.closeInput = [](std::size_t) {};
+        ops.closeOutput = [](std::size_t) {};
+        ops.updateInputRef = [](std::size_t, const std::string&, const std::string&) {};
+        ops.updateOutputRef = [](std::size_t, const std::string&, const std::string&) {};
+        ops.resync = [](std::size_t) {};
+        controllerState = ExecuteReconcilePlan(plan, controllerState, ops);
+
+        AppMidiOutPortOps appOps;
+        appOps.open = [&](const std::string&) {
+            ++result.appOpens;
+            return true;
+        };
+        appOps.close = [] {};
+        appOps.writeBack = [](const std::string&, const std::string&) {};
+        appReconciler.Reconcile(appPort, present, appOps);
+        return result;
+    }
+};
+
+TEST_CASE(one_runtime_reconcile_pass_opens_both_a_controller_row_and_the_app_midi_out_port) {
+    MidiDeviceList present;
+    present.outputs.push_back({.identifier = "dev-1", .name = "Shared Device"});
+
+    MidiInstrumentConfig controllerInstrument;
+    controllerInstrument.controllers.push_back(
+        Slot("Row1", MidiEndpointRef{}, Ref("dev-1", "Shared Device")));
+    const MidiEndpointRef appPort = Ref("dev-1", "Shared Device");
+
+    OneRuntimeReconcilePass pass;
+    const OneRuntimeReconcilePass::Result first = pass.Run(controllerInstrument, appPort, present);
+    REQUIRE_TRUE(first.controllerOpens == 1);
+    REQUIRE_TRUE(first.appOpens == 1);
+    REQUIRE_TRUE(pass.appReconciler.OutputStatus() == MidiEndpointStatus::Online);
+
+    // A second pass against the exact same device list (a repeated poll,
+    // e.g. MidiConnectionManager::OnTimerTick's unchanged-list case) must
+    // reopen neither: the controller row is already Online on this device,
+    // and so is the MIDI-out port.
+    const OneRuntimeReconcilePass::Result second = pass.Run(controllerInstrument, appPort, present);
+    REQUIRE_TRUE(second.controllerOpens == 0);
+    REQUIRE_TRUE(second.appOpens == 0);
+    REQUIRE_TRUE(pass.appReconciler.OutputStatus() == MidiEndpointStatus::Online);
+}
+
 // A sink whose Send() blocks until the test releases a latch, used only to
 // pin down ReleaseAppMidiOutPort's clear-before-CC123 ordering below.
 class BlockingSink final : public IMidiOutputSink {

@@ -4286,6 +4286,36 @@ TEST_CASE(a_routing_host_hands_the_midi_out_setting_over_and_follows_changes) {
     std::filesystem::remove_all(dataRoot);
 }
 
+TEST_CASE(app_midi_out_port_changed_callback_fires_only_when_the_port_changes) {
+    AppMidiOutSettingsTestApp::received.clear();
+    synth::Engine<AppMidiOutSettingsTestApp> engine([] { return std::uint64_t{0}; });
+    int portChangedCount = 0;
+    engine.SetAppMidiOutPortChangedCallback([&] { ++portChangedCount; });
+    engine.Initialize();
+    REQUIRE_TRUE(portChangedCount == 0);
+
+    // The one call a real host wires this callback to (MidiConnectionManager
+    // ::OnAppMidiOutPortChanged, which reconciles the port -- A5): a port
+    // edit must fire it.
+    synth::AppMidiOutConfig portChanged = engine.AppMidiOutConfig();
+    portChanged.port = synth::MidiEndpointRef{.identifier = "dev-1", .name = "Device One"};
+    engine.SetAppMidiOutConfig(portChanged);
+    REQUIRE_TRUE(portChangedCount == 1);
+
+    // A settings-only edit (no port change) must not refire it.
+    synth::AppMidiOutConfig settingsOnly = engine.AppMidiOutConfig();
+    settingsOnly.settings.contentId = "level";
+    engine.SetAppMidiOutConfig(settingsOnly);
+    REQUIRE_TRUE(portChangedCount == 1);
+
+    // Repeating the same port (a repeated poll finding an unchanged port)
+    // must not refire it either -- the reconciler must not reopen it.
+    synth::AppMidiOutConfig sameSettings = engine.AppMidiOutConfig();
+    sameSettings.port = portChanged.port;
+    engine.SetAppMidiOutConfig(sameSettings);
+    REQUIRE_TRUE(portChangedCount == 1);
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {
