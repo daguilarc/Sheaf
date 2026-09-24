@@ -448,6 +448,65 @@ TEST_CASE(equal_deadline_orders_transport_before_clock_then_sequence) {
     REQUIRE_TRUE(deliveries[2].midi.raw == std::vector<std::uint8_t>{0xF8});
 }
 
+TEST_CASE(equal_deadline_delivers_transport_and_clock_before_an_app_message) {
+    struct TraceRecord {
+        std::string sink;
+        std::vector<std::uint8_t> raw;
+    };
+    struct SharedTrace {
+        std::mutex mutex;
+        std::vector<TraceRecord> order;
+        void Record(const std::string& label, const BasicMidi& midi) {
+            std::lock_guard<std::mutex> lock(mutex);
+            order.push_back({label, midi.raw});
+        }
+    };
+    struct TracingSink final : IMidiOutputSink {
+        TracingSink(SharedTrace& sharedTrace, std::string sinkLabel)
+            : trace(sharedTrace), label(std::move(sinkLabel)) {}
+        MidiSchedulingCapability SchedulingCapability() const noexcept override {
+            return MidiSchedulingCapability::HostTimestamped;
+        }
+        void Send(const BasicMidi& midi) override { trace.Record(label, midi); }
+        void SendScheduled(const BasicMidi& midi, std::uint64_t) override { trace.Record(label, midi); }
+        SharedTrace& trace;
+        std::string label;
+    };
+
+    std::atomic<std::uint64_t> nowMicros{30'000};
+    MidiSender sender(16, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
+    SharedTrace trace;
+    TracingSink controllerSink(trace, "controller");
+    TracingSink appSink(trace, "app");
+    sender.SetSink(0, &controllerSink);
+    sender.SetAppMidiOutSink(&appSink);
+
+    // Same due time (30,000) for all three, and the app message enqueued
+    // first: a tie-break that fell back to sequence alone (ignoring
+    // orderingIntent) would deliver it before the clock, not after -- this
+    // is the InsertPending path attacker B found untested (equal-deadline
+    // realtime-vs-realtime is covered by
+    // equal_deadline_orders_transport_before_clock_then_sequence, never an
+    // app message against either).
+    REQUIRE_TRUE(sender.TryEnqueue(AppChannelMessageEvent(30'000, 1, MidiSender::kAppMidiOutSinkIx)));
+    REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(
+        ScheduledMidiEventKind::TimingClock, 30'000, 2, 5)));
+    REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(
+        ScheduledMidiEventKind::Continue, 30'000, 3)));
+
+    sender.Start();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    sender.Stop();
+
+    REQUIRE_TRUE(trace.order.size() == 3);
+    REQUIRE_TRUE(trace.order[0].sink == "controller" &&
+                 trace.order[0].raw == std::vector<std::uint8_t>{0xFB});
+    REQUIRE_TRUE(trace.order[1].sink == "controller" &&
+                 trace.order[1].raw == std::vector<std::uint8_t>{0xF8});
+    REQUIRE_TRUE(trace.order[2].sink == "app" &&
+                 trace.order[2].raw == (std::vector<std::uint8_t>{0xB0, 1, 64}));
+}
+
 TEST_CASE(cutoff_retains_old_generation_before_cutoff_and_drops_at_cutoff) {
     std::atomic<std::uint64_t> nowMicros{40'000};
     MidiSender sender(16, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
