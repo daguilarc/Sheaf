@@ -101,7 +101,10 @@ test("drainOutputsNow delivers an app-out payload via port.send with dueTimeMicr
 test("releasing the app MIDI-out port sends All Notes Off on all sixteen channels before releasing it", async () => {
   const appOut = makePort("app-out", "App Out");
   let cleared = 0;
-  appOut.clear = () => { cleared += 1; };
+  const order = [];
+  appOut.clear = () => { cleared += 1; order.push("clear"); };
+  const originalSend = appOut.send;
+  appOut.send = (...args) => { order.push("send"); return originalSend(...args); };
   const access = { inputs: new Map(), outputs: new Map([[appOut.id, appOut]]), onstatechange: null };
   let connected = true;
   const manager = new BrowserMidiManager({
@@ -121,14 +124,22 @@ test("releasing the app MIDI-out port sends All Notes Off on all sixteen channel
     assert.deepEqual(appOut.sent[channel], [0xb0 + channel, 123, 0]);
   }
   assert.equal(cleared, 1, "the port is still cleared when no controller shares it");
+  assert.deepEqual(
+    order,
+    ["clear", ...Array(16).fill("send")],
+    "clear() must land before any All Notes Off send, so clear() cannot drop the just-sent silence",
+  );
   manager.stop();
 });
 
-test("releasing the app MIDI-out port does not clear() a port a controller key still holds", async () => {
-  const sharedPort = makePort("shared", "Shared Port");
+test("releasing the app MIDI-out port does not clear() a port a controller key still holds, and times the silence after everything already queued to it", async () => {
+  const sharedPort = makeTimestampedPort("shared", "Shared Port");
   const cleared = [];
   sharedPort.clear = () => cleared.push("shared");
   const access = { inputs: new Map(), outputs: new Map([[sharedPort.id, sharedPort]]), onstatechange: null };
+  const queue = [
+    { controllerIx: APP_MIDI_OUT_KEY, bytes: [0xb0, 7, 100], delivery: "scheduled", dueTimeMicros: 5_500_000 },
+  ];
   let connected = true;
   const manager = new BrowserMidiManager({
     submitEndpoints: async () => connected
@@ -141,14 +152,26 @@ test("releasing the app MIDI-out port does not clear() a port a controller key s
           { type: "close-output", controllerIx: APP_MIDI_OUT_KEY },
         ],
     deliverMidi: async () => {},
-    dequeueMidiOutput: async () => undefined,
-  }, intervalOptions({ requestMIDIAccess: async () => access, nowMicros: () => 100_000 }));
+    dequeueMidiOutput: async () => queue.shift(),
+  }, intervalOptions({ requestMIDIAccess: async () => access, nowMicros: () => 100_000, drainIntervalMs: 16 }));
 
   await manager.startFromUserActivation();
   connected = false;
   await manager.poll();
 
-  assert.equal(sharedPort.sent.length, 16, "All Notes Off still goes out even though the port is shared");
+  assert.equal(sharedPort.sent.length, 17, "the earlier scheduled app message plus sixteen Control Change 123 messages");
+  const allNotesOff = sharedPort.sent.slice(1);
+  assert.equal(allNotesOff.length, 16, "All Notes Off still goes out even though the port is shared");
+  for (let channel = 0; channel < 16; channel++) {
+    assert.deepEqual(allNotesOff[channel].bytes, [0xb0 + channel, 123, 0]);
+    // now (100_000us) + the 16ms drain lookahead is 116ms, earlier than the
+    // 5,500ms already queued to this port, so the later time governs.
+    assert.equal(
+      allNotesOff[channel].timestamp,
+      5_500,
+      "All Notes Off is timestamped no earlier than the latest due time already sent to this port",
+    );
+  }
   assert.deepEqual(cleared, [], "clear() is skipped: controller key 0 still holds this same port");
   manager.stop();
 });

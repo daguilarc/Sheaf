@@ -86,6 +86,11 @@ export class BrowserMidiManager {
   private drainRequested = false;
   private lateScheduledOutputCount = 0;
   private sendErrorCount = 0;
+  // Per-port high-water mark of dueTimeMicros already handed to Web MIDI,
+  // so releasing a port shared with a controller row can time All Notes Off
+  // no earlier than everything already queued to it. A WeakMap so a port's
+  // entry drops away with the port object itself.
+  private readonly lastScheduledDueMicrosByPort = new WeakMap<MidiOutputPort, number>();
   private activationInFlight: Promise<BrowserMidiStartResult> | undefined;
   private bridgeDiagnostics: MidiOutputDiagnostics = {
     droppedImmediateOutputCount: 0,
@@ -210,6 +215,8 @@ export class BrowserMidiManager {
         if (output.delivery === "scheduled") {
           const nowMicros = this.options.nowMicros?.() ?? Math.round(performance.now() * 1000);
           if (nowMicros > output.dueTimeMicros) this.lateScheduledOutputCount += 1;
+          const priorDueMicros = this.lastScheduledDueMicrosByPort.get(port) ?? -Infinity;
+          this.lastScheduledDueMicrosByPort.set(port, Math.max(priorDueMicros, output.dueTimeMicros));
           // Web MIDI DOMHighResTimeStamp is in milliseconds relative to
           // performance.timeOrigin, exactly the engine epoch divided by 1000.
           port.send(output.bytes, output.dueTimeMicros / 1000);
@@ -290,27 +297,51 @@ export class BrowserMidiManager {
   private closeOutput(controllerIx: number): void {
     const binding = this.outputs.get(controllerIx);
     if (!binding) return;
-    let skipClear = false;
     if (controllerIx === APP_MIDI_OUT_KEY) {
-      // Before releasing the app's MIDI out, silence it: Control Change 123
-      // value 0 on all sixteen channels.
-      try {
-        for (let channel = 0; channel < 16; channel++) binding.port.send([0xb0 + channel, 123, 0]);
-      } catch {
-        this.sendErrorCount += 1;
-      }
       // clear() would drop a controller row's own pending scheduled
       // messages if that row holds this same port; skip it when one does.
-      skipClear = [...this.outputs.entries()].some(
+      const shared = [...this.outputs.entries()].some(
         ([ix, other]) => ix !== controllerIx && other.port === binding.port,
       );
-    }
-    if (!skipClear) {
-      try {
-        binding.port.clear?.();
-      } catch {
-        this.sendErrorCount += 1;
+      if (shared) {
+        // Not cleared, so anything already handed to Web MIDI for this port
+        // is still queued. Time the silence no earlier than the latest due
+        // time already sent to it (or now plus the drain lookahead, when
+        // nothing is tracked yet), so All Notes Off lands after it.
+        const nowMicros = this.options.nowMicros?.() ?? Math.round(performance.now() * 1000);
+        const drainLookaheadMicros = (this.options.drainIntervalMs ?? 16) * 1000;
+        const dueTimeMicros = Math.max(
+          this.lastScheduledDueMicrosByPort.get(binding.port) ?? -Infinity,
+          nowMicros + drainLookaheadMicros,
+        );
+        try {
+          for (let channel = 0; channel < 16; channel++) {
+            binding.port.send([0xb0 + channel, 123, 0], dueTimeMicros / 1000);
+          }
+        } catch {
+          this.sendErrorCount += 1;
+        }
+      } else {
+        // clear() first, so it cannot drop the All Notes Off sent right
+        // after it; only then silence every channel and release the port.
+        try {
+          binding.port.clear?.();
+        } catch {
+          this.sendErrorCount += 1;
+        }
+        try {
+          for (let channel = 0; channel < 16; channel++) binding.port.send([0xb0 + channel, 123, 0]);
+        } catch {
+          this.sendErrorCount += 1;
+        }
       }
+      this.outputs.delete(controllerIx);
+      return;
+    }
+    try {
+      binding.port.clear?.();
+    } catch {
+      this.sendErrorCount += 1;
     }
     this.outputs.delete(controllerIx);
   }
