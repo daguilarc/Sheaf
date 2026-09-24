@@ -414,7 +414,11 @@ public:
     //      exactly once: the optional once-per-block control-rate hook. Runs
     //      after message routing and clock commit (so it observes the exact
     //      current plan) and before app_.ProcessBlock.
-    //   6. app_.ProcessBlock(block) exactly once
+    //   6. clear the engine-owned app MIDI-out list and point block.midiOut
+    //      at it, then app_.ProcessBlock(block) exactly once; after it, in a
+    //      host that called EnableAppMidiOutRouting(), route each entry the
+    //      app appended into the sender's app MIDI-out sink, due at its
+    //      frame's output time (sar-37)
     //   7. throttled PopulateUIState every uiPublishInterval_ blocks
     void ProcessBlock(AudioBlock& block, std::uint64_t timestamp) {
         const std::uint64_t requestedSyncWord =

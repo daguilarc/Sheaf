@@ -60,8 +60,8 @@ enum class ScheduledMidiEventKind : std::uint8_t {
 };
 
 // At equal deadlines a consumer applies generation invalidation first, then
-// transport, then clock. Sequence is the deterministic tie-break within one
-// ordering class.
+// transport, then clock, then an app message. Sequence is the deterministic
+// tie-break within one ordering class.
 enum class ScheduledMidiOrderingIntent : std::uint8_t {
     GenerationCutoff,
     Transport,

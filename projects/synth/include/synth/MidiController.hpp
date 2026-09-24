@@ -511,9 +511,11 @@ public:
     MidiSender(const MidiSender&) = delete;
     MidiSender& operator=(const MidiSender&) = delete;
 
-    // nullptr clears the sink at sinkIx; sinkIx >= kMaxSinks is ignored. Does
-    // NOT synchronize with an in-flight Send() on that sink -- a Send() the
-    // worker already dequeued and started before this call may still be
+    // nullptr clears the sink at sinkIx; sinkIx >= kMaxSinks is ignored, so
+    // this reaches only the controller-row slots -- the app MIDI-out sink is
+    // registered only through SetAppMidiOutSink, never through this call.
+    // Does NOT synchronize with an in-flight Send() on that sink -- a Send()
+    // the worker already dequeued and started before this call may still be
     // executing against the old pointer after SetSink returns. Callers that
     // are about to destroy the sink object MUST use ClearSinkSync instead
     // (see its doc comment); SetSink remains safe for registering a new sink,
@@ -527,9 +529,11 @@ public:
     // cleared; the worker remains free to run Send() for other sinks
     // concurrently with a ClearSinkSync call (Send() itself always executes
     // outside the lock). Safe to call from any thread; sinkIx >= kMaxSinks is
-    // a no-op. Must not be called from within the sink's own Send()
-    // implementation (the worker thread) -- that would deadlock waiting on
-    // itself.
+    // a no-op, so this reaches only the controller-row slots -- the app
+    // MIDI-out sink is cleared only through ClearAppMidiOutSinkSync, never
+    // through this call. Must not be called from within the sink's own
+    // Send() implementation (the worker thread) -- that would deadlock
+    // waiting on itself.
     void ClearSinkSync(std::size_t sinkIx);
     // Registers the app MIDI-out sink at kAppMidiOutSinkIx. The only way to
     // reach that slot; no controller ordinal can bind it (SetSink rejects
