@@ -468,6 +468,13 @@ public:
     using TimestampProvider = std::function<std::uint64_t()>;
 
     static constexpr std::size_t kMaxSinks = 8;
+    // The app MIDI-out sink's slot: one past the controller ordinals, so no
+    // controller row's ordinal (bounded by kMaxSinks in SetSink/ClearSinkSync
+    // /Enqueue, unchanged) can ever reach it.
+    static constexpr std::size_t kAppMidiOutSinkIx = kMaxSinks;
+    // The size of every per-sink table: the controller slots plus the one
+    // app MIDI-out slot.
+    static constexpr std::size_t kSinkTableSize = kMaxSinks + 1;
     static constexpr std::size_t kScheduledRealtimeCapacity = 4096;
     // Host-timestamp-capable outputs receive events only this far ahead. This
     // keeps disconnect/reconnect snapshots close to the actual deadline while
@@ -524,6 +531,15 @@ public:
     // implementation (the worker thread) -- that would deadlock waiting on
     // itself.
     void ClearSinkSync(std::size_t sinkIx);
+    // Registers the app MIDI-out sink at kAppMidiOutSinkIx. The only way to
+    // reach that slot; no controller ordinal can bind it (SetSink rejects
+    // sinkIx >= kMaxSinks unchanged). Same non-synchronizing contract as
+    // SetSink.
+    void SetAppMidiOutSink(IMidiOutputSink* sink);
+    // Clears the app MIDI-out sink at kAppMidiOutSinkIx and blocks until the
+    // worker is not, and will never again be, mid-Send() on it. Same
+    // synchronous contract as ClearSinkSync.
+    void ClearAppMidiOutSinkSync();
     void Start();
     void Stop();
     // false when the queue is full or sinkIx >= kMaxSinks. A queued message
@@ -549,9 +565,9 @@ private:
 
     struct PendingScheduledEntry {
         ScheduledMidiEvent event;
-        std::array<std::uint64_t, kMaxSinks> sinkRegistrationGenerations{};
-        std::uint8_t hostScheduledMask = 0;
-        std::uint8_t immediateFallbackMask = 0;
+        std::array<std::uint64_t, kSinkTableSize> sinkRegistrationGenerations{};
+        std::uint16_t hostScheduledMask = 0;
+        std::uint16_t immediateFallbackMask = 0;
         bool sinksCaptured = false;
         bool lateCounted = false;
     };
@@ -571,6 +587,12 @@ private:
     void EndSinkCall(std::size_t sinkIx);
     void RemovePendingFront();
     void NotifyIfDrained();
+    // Shared by SetSink and SetAppMidiOutSink: sinkIx must already be a
+    // valid slot below kSinkTableSize.
+    void SetSinkAtIndex(std::size_t sinkIx, IMidiOutputSink* sink);
+    // Shared by ClearSinkSync and ClearAppMidiOutSinkSync: sinkIx must
+    // already be a valid slot below kSinkTableSize.
+    void ClearSinkAtIndexSync(std::size_t sinkIx);
 
     mutable std::mutex mutex_;
     std::condition_variable cv_;
@@ -584,12 +606,12 @@ private:
     std::size_t inFlight_ = 0;
     bool running_ = false;
     bool stopRequested_ = false;
-    std::array<IMidiOutputSink*, kMaxSinks> sinks_{};
-    std::array<MidiSchedulingCapability, kMaxSinks> sinkCapabilities_{};
-    std::array<std::uint64_t, kMaxSinks> sinkScheduleLeadMicros_{};
-    std::array<std::uint64_t, kMaxSinks> sinkRegistrationGenerations_{};
+    std::array<IMidiOutputSink*, kSinkTableSize> sinks_{};
+    std::array<MidiSchedulingCapability, kSinkTableSize> sinkCapabilities_{};
+    std::array<std::uint64_t, kSinkTableSize> sinkScheduleLeadMicros_{};
+    std::array<std::uint64_t, kSinkTableSize> sinkRegistrationGenerations_{};
     std::uint64_t sinkWakeGeneration_ = 0;
-    std::array<std::size_t, kMaxSinks> inFlightBySink_{};
+    std::array<std::size_t, kSinkTableSize> inFlightBySink_{};
 
     // Single-producer/single-consumer lane. The producer publishes an entry
     // with release; the worker observes it with acquire. The worker publishes

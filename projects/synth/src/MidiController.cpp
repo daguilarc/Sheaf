@@ -1066,6 +1066,25 @@ void MidiSender::SetSink(std::size_t sinkIx, IMidiOutputSink* sink) {
     if (sinkIx >= kMaxSinks) {
         return;
     }
+    SetSinkAtIndex(sinkIx, sink);
+}
+
+void MidiSender::ClearSinkSync(std::size_t sinkIx) {
+    if (sinkIx >= kMaxSinks) {
+        return;
+    }
+    ClearSinkAtIndexSync(sinkIx);
+}
+
+void MidiSender::SetAppMidiOutSink(IMidiOutputSink* sink) {
+    SetSinkAtIndex(kAppMidiOutSinkIx, sink);
+}
+
+void MidiSender::ClearAppMidiOutSinkSync() {
+    ClearSinkAtIndexSync(kAppMidiOutSinkIx);
+}
+
+void MidiSender::SetSinkAtIndex(std::size_t sinkIx, IMidiOutputSink* sink) {
     const MidiSchedulingCapability capability =
         sink == nullptr ? MidiSchedulingCapability::ImmediateOnly : sink->SchedulingCapability();
     const std::uint64_t schedulingLeadMicros =
@@ -1083,10 +1102,7 @@ void MidiSender::SetSink(std::size_t sinkIx, IMidiOutputSink* sink) {
     cv_.notify_all();
 }
 
-void MidiSender::ClearSinkSync(std::size_t sinkIx) {
-    if (sinkIx >= kMaxSinks) {
-        return;
-    }
+void MidiSender::ClearSinkAtIndexSync(std::size_t sinkIx) {
     std::unique_lock lock(mutex_);
     sinks_[sinkIx] = nullptr;
     sinkCapabilities_[sinkIx] = MidiSchedulingCapability::ImmediateOnly;
@@ -1259,18 +1275,24 @@ void MidiSender::DrainRealtimeLane() {
 
 void MidiSender::CaptureScheduledSinks(PendingScheduledEntry& entry, std::uint64_t nowMicros) {
     std::lock_guard lock(mutex_);
-    const std::size_t sinkCount = entry.event.broadcast ? kMaxSinks : 1;
-    for (std::size_t sinkIx = 0; sinkIx < sinkCount; ++sinkIx) {
+    const auto captureAt = [&](std::size_t sinkIx) {
         if (sinks_[sinkIx] == nullptr) {
-            continue;
+            return;
         }
-        const std::uint8_t bit = static_cast<std::uint8_t>(1u << sinkIx);
+        const std::uint16_t bit = static_cast<std::uint16_t>(1u << sinkIx);
         entry.sinkRegistrationGenerations[sinkIx] = sinkRegistrationGenerations_[sinkIx];
         if (sinkCapabilities_[sinkIx] == MidiSchedulingCapability::HostTimestamped) {
-            entry.hostScheduledMask = static_cast<std::uint8_t>(entry.hostScheduledMask | bit);
+            entry.hostScheduledMask = static_cast<std::uint16_t>(entry.hostScheduledMask | bit);
         } else {
-            entry.immediateFallbackMask = static_cast<std::uint8_t>(entry.immediateFallbackMask | bit);
+            entry.immediateFallbackMask = static_cast<std::uint16_t>(entry.immediateFallbackMask | bit);
         }
+    };
+    if (entry.event.broadcast) {
+        for (std::size_t sinkIx = 0; sinkIx < kMaxSinks; ++sinkIx) {
+            captureAt(sinkIx);
+        }
+    } else if (entry.event.targetSinkIx < kSinkTableSize) {
+        captureAt(entry.event.targetSinkIx);
     }
     entry.sinksCaptured = true;
     if ((entry.hostScheduledMask != 0 || entry.immediateFallbackMask != 0) &&
@@ -1283,7 +1305,7 @@ void MidiSender::CaptureScheduledSinks(PendingScheduledEntry& entry, std::uint64
 bool MidiSender::BeginSinkCall(std::size_t sinkIx, std::uint64_t registrationGeneration,
                                IMidiOutputSink*& sink) {
     std::lock_guard lock(mutex_);
-    if (sinkIx >= kMaxSinks || sinks_[sinkIx] == nullptr ||
+    if (sinkIx >= kSinkTableSize || sinks_[sinkIx] == nullptr ||
         sinkRegistrationGenerations_[sinkIx] != registrationGeneration) {
         sink = nullptr;
         return false;
@@ -1317,7 +1339,7 @@ void MidiSender::RemovePendingFront() {
 std::uint64_t MidiSender::HostScheduleLeadMicros() const noexcept {
     std::lock_guard lock(mutex_);
     std::uint64_t leadMicros = 0;
-    for (std::size_t sinkIx = 0; sinkIx < kMaxSinks; ++sinkIx) {
+    for (std::size_t sinkIx = 0; sinkIx < kSinkTableSize; ++sinkIx) {
         if (sinks_[sinkIx] != nullptr &&
             sinkCapabilities_[sinkIx] == MidiSchedulingCapability::HostTimestamped) {
             leadMicros = std::max(leadMicros, sinkScheduleLeadMicros_[sinkIx]);
@@ -1353,15 +1375,17 @@ bool MidiSender::ProcessScheduledFront(
         lateEventCount_.fetch_add(1, std::memory_order_relaxed);
     }
 
-    const BasicMidi midi = BasicMidi::Realtime(entry.event.dueTimeMicros,
-                                                entry.event.MidiStatusByte());
+    const BasicMidi midi = entry.event.kind == ScheduledMidiEventKind::ChannelMessage
+        ? BasicMidi(entry.event.dueTimeMicros, entry.event.MidiStatusByte(),
+                    entry.event.channelData1, entry.event.channelData2)
+        : BasicMidi::Realtime(entry.event.dueTimeMicros, entry.event.MidiStatusByte());
     if (entry.hostScheduledMask != 0) {
-        for (std::size_t sinkIx = 0; sinkIx < kMaxSinks; ++sinkIx) {
-            const std::uint8_t bit = static_cast<std::uint8_t>(1u << sinkIx);
+        for (std::size_t sinkIx = 0; sinkIx < kSinkTableSize; ++sinkIx) {
+            const std::uint16_t bit = static_cast<std::uint16_t>(1u << sinkIx);
             if ((entry.hostScheduledMask & bit) == 0) {
                 continue;
             }
-            entry.hostScheduledMask = static_cast<std::uint8_t>(entry.hostScheduledMask & ~bit);
+            entry.hostScheduledMask = static_cast<std::uint16_t>(entry.hostScheduledMask & ~bit);
             IMidiOutputSink* sink = nullptr;
             if (BeginSinkCall(sinkIx, entry.sinkRegistrationGenerations[sinkIx], sink)) {
                 sink->SendScheduled(midi, entry.event.dueTimeMicros);
@@ -1371,12 +1395,12 @@ bool MidiSender::ProcessScheduledFront(
     }
 
     if (entry.immediateFallbackMask != 0 && nowMicros >= entry.event.dueTimeMicros) {
-        for (std::size_t sinkIx = 0; sinkIx < kMaxSinks; ++sinkIx) {
-            const std::uint8_t bit = static_cast<std::uint8_t>(1u << sinkIx);
+        for (std::size_t sinkIx = 0; sinkIx < kSinkTableSize; ++sinkIx) {
+            const std::uint16_t bit = static_cast<std::uint16_t>(1u << sinkIx);
             if ((entry.immediateFallbackMask & bit) == 0) {
                 continue;
             }
-            entry.immediateFallbackMask = static_cast<std::uint8_t>(entry.immediateFallbackMask & ~bit);
+            entry.immediateFallbackMask = static_cast<std::uint16_t>(entry.immediateFallbackMask & ~bit);
             IMidiOutputSink* sink = nullptr;
             if (BeginSinkCall(sinkIx, entry.sinkRegistrationGenerations[sinkIx], sink)) {
                 sink->Send(midi);

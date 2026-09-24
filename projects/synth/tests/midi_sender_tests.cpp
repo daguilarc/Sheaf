@@ -259,6 +259,29 @@ ScheduledMidiEvent RealtimeEvent(
     };
 }
 
+// An app-originated channel message: non-broadcast, phase generation zero
+// (a generation cutoff never invalidates it), targeting one sink.
+ScheduledMidiEvent AppChannelMessageEvent(
+    std::uint64_t dueTimeMicros,
+    std::uint64_t sequence,
+    std::size_t targetSinkIx,
+    std::uint8_t statusByte = 0xB0,
+    std::uint8_t data1 = 1,
+    std::uint8_t data2 = 64) {
+    return ScheduledMidiEvent{
+        .kind = ScheduledMidiEventKind::ChannelMessage,
+        .orderingIntent = ScheduledMidiOrderingIntent::AppMessage,
+        .broadcast = false,
+        .dueTimeMicros = dueTimeMicros,
+        .sequence = sequence,
+        .phaseGeneration = 0,
+        .channelStatusByte = statusByte,
+        .channelData1 = data1,
+        .channelData2 = data2,
+        .targetSinkIx = targetSinkIx,
+    };
+}
+
 template <typename Predicate>
 bool WaitUntil(Predicate&& predicate, std::chrono::milliseconds timeout = std::chrono::milliseconds(1000)) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -962,6 +985,174 @@ TEST_CASE(acceptance_trace_concrete_sender_broadcast_reconnect_cutoff_and_fallba
               << " stale_drops=" << diagnostics.staleGenerationDropCount
               << " reconnect_first_us=" << reconnectDeliveries[0].dueTimeMicros
               << " fallback=" << diagnostics.fallbackSendCount << "\n";
+}
+
+TEST_CASE(clock_and_transport_skip_the_app_midi_out_sink) {
+    std::atomic<std::uint64_t> nowMicros{10'000};
+    MidiSender sender(64, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
+    RecordingSink controllerSink(true);
+    RecordingSink appSink(true);
+    sender.SetSink(0, &controllerSink);
+    sender.SetAppMidiOutSink(&appSink);
+    sender.Start();
+
+    std::uint64_t sequence = 1;
+    for (const auto kind : {ScheduledMidiEventKind::TimingClock, ScheduledMidiEventKind::Start,
+                             ScheduledMidiEventKind::Continue, ScheduledMidiEventKind::Stop}) {
+        REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(kind, 10'500, sequence++, 0)));
+    }
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    sender.Stop();
+
+    REQUIRE_TRUE(controllerSink.Snapshot().size() == 4);
+    REQUIRE_TRUE(appSink.Snapshot().empty());
+}
+
+TEST_CASE(every_controller_row_keeps_its_output) {
+    MidiSender sender;
+    std::array<RecordingSink, MidiSender::kMaxSinks> controllerSinks;
+    RecordingSink appSink;
+    for (std::size_t ix = 0; ix < MidiSender::kMaxSinks; ++ix) {
+        sender.SetSink(ix, &controllerSinks[ix]);
+    }
+    sender.SetAppMidiOutSink(&appSink);
+    sender.Start();
+
+    for (std::size_t ix = 0; ix < MidiSender::kMaxSinks; ++ix) {
+        REQUIRE_TRUE(sender.Enqueue(ix, BasicMidi::Note(0, 0, static_cast<std::uint8_t>(ix), 100)));
+    }
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    sender.Stop();
+
+    for (std::size_t ix = 0; ix < MidiSender::kMaxSinks; ++ix) {
+        const auto deliveries = controllerSinks[ix].Snapshot();
+        REQUIRE_TRUE(deliveries.size() == 1);
+        REQUIRE_TRUE(deliveries[0].midi.GetNote() == ix);
+    }
+    REQUIRE_TRUE(appSink.Snapshot().empty());
+}
+
+TEST_CASE(an_app_message_reaches_only_the_midi_out_sink) {
+    std::atomic<std::uint64_t> nowMicros{10'000};
+    MidiSender sender(64, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
+    RecordingSink controllerSink0(true);
+    RecordingSink controllerSink1(true);
+    RecordingSink appSink(true);
+    sender.SetSink(0, &controllerSink0);
+    sender.SetSink(1, &controllerSink1);
+    sender.SetAppMidiOutSink(&appSink);
+    sender.Start();
+
+    const ScheduledMidiEvent appMessage =
+        AppChannelMessageEvent(10'500, 1, MidiSender::kAppMidiOutSinkIx, 0xB0, 7, 100);
+    REQUIRE_TRUE(sender.TryEnqueue(appMessage));
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    sender.Stop();
+
+    const auto appDeliveries = appSink.Snapshot();
+    REQUIRE_TRUE(appDeliveries.size() == 1);
+    REQUIRE_TRUE(appDeliveries[0].midi.raw == (std::vector<std::uint8_t>{0xB0, 7, 100}));
+    REQUIRE_TRUE(appDeliveries[0].dueTimeMicros == appMessage.dueTimeMicros);
+    REQUIRE_TRUE(controllerSink0.Snapshot().empty());
+    REQUIRE_TRUE(controllerSink1.Snapshot().empty());
+}
+
+TEST_CASE(releasing_the_midi_out_sink_waits_for_an_in_flight_send) {
+    std::atomic<std::uint64_t> nowMicros{20'000};
+    MidiSender sender(16, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
+    BlockingSink appSink;
+    sender.SetAppMidiOutSink(&appSink);
+    sender.Start();
+
+    REQUIRE_TRUE(sender.TryEnqueue(AppChannelMessageEvent(10'000, 1, MidiSender::kAppMidiOutSinkIx)));
+    appSink.WaitEntered(1);
+
+    std::atomic<bool> clearReturned{false};
+    std::thread clearer([&] {
+        sender.ClearAppMidiOutSinkSync();
+        clearReturned.store(true, std::memory_order_release);
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    REQUIRE_TRUE(clearReturned.load(std::memory_order_acquire) == false);
+    REQUIRE_TRUE(appSink.SendEnteredCount() == 1);
+
+    appSink.Release();
+    clearer.join();
+    REQUIRE_TRUE(clearReturned.load(std::memory_order_acquire) == true);
+
+    const int countAfterClear = appSink.SendEnteredCount();
+    sender.Stop();
+    REQUIRE_TRUE(appSink.SendEnteredCount() == countAfterClear);
+}
+
+TEST_CASE(a_generation_cutoff_never_drops_an_app_message) {
+    std::atomic<std::uint64_t> nowMicros{40'000};
+    MidiSender sender(16, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
+    RecordingSink controllerSink;
+    RecordingSink appSink;
+    sender.SetSink(0, &controllerSink);
+    sender.SetAppMidiOutSink(&appSink);
+
+    REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(
+        ScheduledMidiEventKind::TimingClock, 40'000, 1, 11)));
+    REQUIRE_TRUE(sender.TryEnqueue(AppChannelMessageEvent(40'000, 2, MidiSender::kAppMidiOutSinkIx)));
+    ScheduledMidiEvent cutoff = RealtimeEvent(
+        ScheduledMidiEventKind::PhaseGenerationCutoff, 40'000, 3, 12);
+    cutoff.invalidatedPhaseGeneration = 11;
+    cutoff.phaseCutoffDueTimeMicros = 40'000;
+    REQUIRE_TRUE(sender.TryEnqueue(cutoff));
+    sender.Start();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    sender.Stop();
+
+    REQUIRE_TRUE(controllerSink.Snapshot().empty());
+    REQUIRE_TRUE(appSink.Snapshot().size() == 1);
+    const auto diagnostics = sender.DiagnosticsSnapshot();
+    REQUIRE_TRUE(diagnostics.staleGenerationDropCount == 1);
+}
+
+TEST_CASE(a_delivered_app_message_does_not_hold_back_the_clock) {
+    std::atomic<std::uint64_t> nowMicros{10'000};
+    MidiSender sender(16, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
+    RecordingSink controllerSink(true);
+    RecordingSink appSink(true);
+    sender.SetSink(0, &controllerSink);
+    sender.SetAppMidiOutSink(&appSink);
+
+    REQUIRE_TRUE(sender.TryEnqueue(AppChannelMessageEvent(10'500, 1, MidiSender::kAppMidiOutSinkIx)));
+    REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(
+        ScheduledMidiEventKind::TimingClock, 11'000, 2, 7)));
+    sender.Start();
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    sender.Stop();
+
+    const auto appDeliveries = appSink.Snapshot();
+    REQUIRE_TRUE(appDeliveries.size() == 1);
+    REQUIRE_TRUE(appDeliveries[0].dueTimeMicros == 10'500);
+    const auto clockDeliveries = controllerSink.Snapshot();
+    REQUIRE_TRUE(clockDeliveries.size() == 1);
+    REQUIRE_TRUE(clockDeliveries[0].dueTimeMicros == 11'000);
+}
+
+TEST_CASE(a_ninth_controller_row_never_becomes_the_app_midi_out_sink) {
+    std::atomic<std::uint64_t> nowMicros{20'000};
+    MidiSender sender(16, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
+    RecordingSink attemptedNinthRow(true);
+    // The controller-slot call, at exactly kMaxSinks: today's bound rejects
+    // it, exactly as it rejects any other index at or past kMaxSinks.
+    sender.SetSink(MidiSender::kMaxSinks, &attemptedNinthRow);
+    sender.Start();
+
+    REQUIRE_TRUE(sender.TryEnqueue(AppChannelMessageEvent(10'000, 1, MidiSender::kAppMidiOutSinkIx)));
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+
+    // Enqueue is the controller-slot feedback call and must keep rejecting
+    // kMaxSinks too -- the ninth row has no route to that sink at all.
+    REQUIRE_TRUE(!sender.Enqueue(MidiSender::kMaxSinks, BasicMidi::CC(0, 0, 1, 64)));
+    sender.Stop();
+
+    REQUIRE_TRUE(attemptedNinthRow.Snapshot().empty());
 }
 
 int main() {
