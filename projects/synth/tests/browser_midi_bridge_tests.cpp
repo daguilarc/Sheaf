@@ -9,6 +9,7 @@
 #include <chrono>
 #include <atomic>
 #include <cstdint>
+#include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -694,6 +695,12 @@ void TestStopClearsTheAppMidiOutSinkBeforeStoppingTheSender()
 
 int main()
 {
+    // Machine-parseable: browser/tests/midi-app-out.test.mjs runs this
+    // binary and compares this printed value against protocol.ts's
+    // APP_MIDI_OUT_KEY by value, instead of pattern-matching the C++ source
+    // text for kAppMidiOutBridgeKey's declaration.
+    std::cout << "APP_MIDI_OUT_BRIDGE_KEY=" << Bridge::kAppMidiOutBridgeKey << "\n";
+
     TestReconcileBindsSlotsIndependentlyAndResyncsOutputs();
     TestIncomingAndOutgoingSysexStayOnSelectedControllerSlot();
     TestScheduledTransportRetainsDueTimeAndOutranksFeedback();

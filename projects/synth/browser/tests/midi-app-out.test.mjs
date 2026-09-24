@@ -3,6 +3,7 @@
 // BrowserMidiBridge.hpp's kAppMidiOutBridgeKey) rather than a controller
 // slot index.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
@@ -34,6 +35,12 @@ function makePort(id, name) {
   return port;
 }
 
+function makeTimestampedPort(id, name) {
+  const port = { id, name, state: "connected", sent: [] };
+  port.send = (bytes, timestamp) => port.sent.push({ bytes: Array.from(bytes), timestamp });
+  return port;
+}
+
 test("kAppMidiOutBridgeKey is declared equal to the largest uint32_t value", async () => {
   const source = await read("include/synth/browser/BrowserMidiBridge.hpp");
   assert.match(
@@ -41,6 +48,54 @@ test("kAppMidiOutBridgeKey is declared equal to the largest uint32_t value", asy
     /kAppMidiOutBridgeKey\s*=\s*std::numeric_limits<std::uint32_t>::max\(\)/,
     "kAppMidiOutBridgeKey must stay declared as the largest uint32_t value, the same value protocol.ts's APP_MIDI_OUT_KEY hard-codes",
   );
+});
+
+test("APP_MIDI_OUT_KEY matches the C++ kAppMidiOutBridgeKey by value, not just by source pattern", () => {
+  // The test above only pattern-matches the C++ declaration's source text; it
+  // would stay green even if kAppMidiOutBridgeKey's actual value drifted from
+  // the largest uint32_t (e.g. "max() - 1"). This runs the real C++ binary
+  // (built by `make test` at projects/synth's root) and compares the printed
+  // runtime value against protocol.ts's own constant.
+  const binaryPath = path.join(synthRoot, "build", "browser_midi_bridge_tests");
+  const output = execFileSync(binaryPath, { encoding: "utf8" });
+  const match = output.match(/APP_MIDI_OUT_BRIDGE_KEY=(\d+)/);
+  assert.ok(match, "the C++ test binary prints its bridge key's runtime value");
+  assert.equal(
+    Number(match[1]),
+    APP_MIDI_OUT_KEY,
+    "the browser's app MIDI-out key must equal the C++ bridge key's actual value",
+  );
+});
+
+test("drainOutputsNow delivers an app-out payload via port.send with dueTimeMicros/1000, and no controller port receives it", async () => {
+  const appOut = makeTimestampedPort("app-out", "App Out");
+  const controllerOut = makeTimestampedPort("controller-out", "Controller Out");
+  const access = {
+    inputs: new Map(),
+    outputs: new Map([[appOut.id, appOut], [controllerOut.id, controllerOut]]),
+    onstatechange: null,
+  };
+  const queue = [
+    { controllerIx: APP_MIDI_OUT_KEY, bytes: [0xb0, 7, 100], delivery: "scheduled", dueTimeMicros: 5_500_000 },
+  ];
+  const manager = new BrowserMidiManager({
+    submitEndpoints: async () => [
+      { type: "open-output", controllerIx: 0, identifier: controllerOut.id, name: controllerOut.name },
+      { type: "open-output", controllerIx: APP_MIDI_OUT_KEY, identifier: appOut.id, name: appOut.name },
+    ],
+    deliverMidi: async () => {},
+    dequeueMidiOutput: async () => queue.shift(),
+  }, intervalOptions({ requestMIDIAccess: async () => access, nowMicros: () => 100_000 }));
+
+  await manager.startFromUserActivation();
+
+  assert.deepEqual(
+    appOut.sent,
+    [{ bytes: [0xb0, 7, 100], timestamp: 5_500 }],
+    "the app port receives the payload, timestamped at dueTimeMicros/1000",
+  );
+  assert.deepEqual(controllerOut.sent, [], "a controller port never receives an app-out payload");
+  manager.stop();
 });
 
 test("releasing the app MIDI-out port sends All Notes Off on all sixteen channels before releasing it", async () => {
