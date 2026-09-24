@@ -1145,6 +1145,29 @@ TEST_CASE(releasing_the_midi_out_sink_waits_for_an_in_flight_send) {
     REQUIRE_TRUE(appSink.SendEnteredCount() == countAfterClear);
 }
 
+TEST_CASE(clearing_the_app_midi_out_sink_stops_delivery_to_it) {
+    std::atomic<std::uint64_t> nowMicros{20'000};
+    MidiSender sender(16, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
+    RecordingSink appSink(true);
+    sender.SetAppMidiOutSink(&appSink);
+    sender.Start();
+
+    REQUIRE_TRUE(sender.TryEnqueue(AppChannelMessageEvent(10'000, 1, MidiSender::kAppMidiOutSinkIx)));
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    REQUIRE_TRUE(appSink.Snapshot().size() == 1);
+
+    sender.ClearAppMidiOutSinkSync();
+
+    // "Never calls that sink again" (the doc comment's own words): an event
+    // enqueued after the clear, not merely one that was never attempted,
+    // must not be delivered.
+    REQUIRE_TRUE(sender.TryEnqueue(AppChannelMessageEvent(20'000, 2, MidiSender::kAppMidiOutSinkIx)));
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    sender.Stop();
+
+    REQUIRE_TRUE(appSink.Snapshot().size() == 1);
+}
+
 TEST_CASE(a_generation_cutoff_never_drops_an_app_message) {
     std::atomic<std::uint64_t> nowMicros{40'000};
     MidiSender sender(16, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
@@ -1212,6 +1235,26 @@ TEST_CASE(a_ninth_controller_row_never_becomes_the_app_midi_out_sink) {
     sender.Stop();
 
     REQUIRE_TRUE(attemptedNinthRow.Snapshot().empty());
+}
+
+TEST_CASE(clear_sink_sync_at_kmax_sinks_never_touches_the_app_midi_out_sink) {
+    std::atomic<std::uint64_t> nowMicros{20'000};
+    MidiSender sender(16, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
+    RecordingSink appSink(true);
+    sender.SetAppMidiOutSink(&appSink);
+    sender.Start();
+
+    // The controller-slot clear call, at exactly kMaxSinks: today's bound
+    // rejects it, exactly as SetSink and Enqueue already do for the ninth
+    // row above -- it must never reach the app MIDI-out slot that sits right
+    // past the controller ordinals.
+    sender.ClearSinkSync(MidiSender::kMaxSinks);
+
+    REQUIRE_TRUE(sender.TryEnqueue(AppChannelMessageEvent(10'000, 1, MidiSender::kAppMidiOutSinkIx)));
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(500)));
+    sender.Stop();
+
+    REQUIRE_TRUE(appSink.Snapshot().size() == 1);
 }
 
 int main() {

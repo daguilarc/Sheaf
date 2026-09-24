@@ -6,10 +6,13 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <iostream>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -686,6 +689,116 @@ TEST_CASE(app_midi_out_port_survives_device_absence_and_never_contends_with_a_co
     independentReconciler.Reconcile(port, present, ops);
     REQUIRE_TRUE(independentReconciler.OutputStatus() == MidiEndpointStatus::Online);
     REQUIRE_TRUE(opened.size() == 1);
+}
+
+// A sink whose Send() blocks until the test releases a latch, used only to
+// pin down ReleaseAppMidiOutPort's clear-before-CC123 ordering below.
+class BlockingSink final : public IMidiOutputSink {
+public:
+    void Send(const BasicMidi&) override {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++sendEnteredCount_;
+        }
+        enteredCv_.notify_all();
+
+        std::unique_lock<std::mutex> lock(mutex_);
+        releaseCv_.wait(lock, [this] { return released_; });
+    }
+
+    void WaitEntered(int count) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        enteredCv_.wait(lock, [this, count] { return sendEnteredCount_ >= count; });
+    }
+
+    void Release() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            released_ = true;
+        }
+        releaseCv_.notify_all();
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable enteredCv_;
+    std::condition_variable releaseCv_;
+    bool released_ = false;
+    int sendEnteredCount_ = 0;
+};
+
+TEST_CASE(release_app_midi_out_port_clears_the_sink_before_sending_all_notes_off) {
+    BlockingSink appSink;
+    std::atomic<std::uint64_t> nowMicros{100'000};
+    MidiSender sender(16, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
+    sender.SetAppMidiOutSink(&appSink);
+    sender.Start();
+
+    // Get the worker blocked mid-Send() on the app sink, so
+    // ClearAppMidiOutSinkSync() -- the first step of ReleaseAppMidiOutPort --
+    // is itself blocked waiting for that in-flight call to finish.
+    ScheduledMidiEvent appEvent;
+    appEvent.kind = ScheduledMidiEventKind::ChannelMessage;
+    appEvent.orderingIntent = ScheduledMidiOrderingIntent::AppMessage;
+    appEvent.broadcast = false;
+    appEvent.dueTimeMicros = 50'000;
+    appEvent.sequence = 1;
+    appEvent.channelStatusByte = 0xB0;
+    appEvent.channelData1 = 1;
+    appEvent.channelData2 = 1;
+    appEvent.targetSinkIx = MidiSender::kAppMidiOutSinkIx;
+    REQUIRE_TRUE(sender.TryEnqueue(appEvent));
+    appSink.WaitEntered(1);
+
+    std::mutex orderMutex;
+    std::vector<std::string> order;
+    std::atomic<bool> releaseReturned{false};
+    std::thread releaser([&] {
+        ReleaseAppMidiOutPort(
+            sender,
+            [&](const BasicMidi&) {
+                std::lock_guard<std::mutex> lock(orderMutex);
+                order.push_back("send");
+            },
+            [&] {
+                std::lock_guard<std::mutex> lock(orderMutex);
+                order.push_back("close");
+            });
+        releaseReturned.store(true, std::memory_order_release);
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // Snapshot state, then unconditionally release and join the background
+    // thread before any assertion below can throw -- a REQUIRE_TRUE failure
+    // here must never destroy a still-joinable std::thread, which would call
+    // std::terminate() instead of reporting a clean [FAIL].
+    const bool returnedBeforeRelease = releaseReturned.load(std::memory_order_acquire);
+    std::vector<std::string> orderBeforeRelease;
+    {
+        std::lock_guard<std::mutex> lock(orderMutex);
+        orderBeforeRelease = order;
+    }
+
+    appSink.Release();
+    releaser.join();
+    sender.Stop();
+
+    std::vector<std::string> finalOrder;
+    {
+        std::lock_guard<std::mutex> lock(orderMutex);
+        finalOrder = order;
+    }
+
+    // If the clear ran first, as the code and its own doc comment say, it
+    // was still blocked on the in-flight send above at the 200 ms mark, so
+    // nothing past it -- not one CC 123, not close -- had run yet. An
+    // evasion that moves the clear to after the CC 123 loop lets all 16
+    // sends run unblocked by the still-latched sink, well before release.
+    REQUIRE_TRUE(!returnedBeforeRelease);
+    REQUIRE_TRUE(orderBeforeRelease.empty());
+    REQUIRE_TRUE(releaseReturned.load(std::memory_order_acquire));
+    REQUIRE_TRUE(finalOrder.size() == 17);
+    REQUIRE_TRUE(finalOrder.back() == "close");
 }
 
 TEST_CASE(release_app_midi_out_port_silences_it) {
