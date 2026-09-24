@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -35,6 +36,41 @@ inline constexpr int kRuntimeConfigSchemaVersion = 3;
 JSON ToJSON(JsonArena& arena, const SyncConfig& config);
 bool FromJSON(JSON json, SyncConfig& config);
 
+// The app's one MIDI-out setting: what it sends (sar-36). Independent of the
+// output port, since this is also what the engine hands the app through its
+// MIDI-out callback -- the app has no use for the port.
+struct AppMidiOutSettings {
+    std::string contentId;             // empty = Off
+    std::uint8_t channel = 0;          // stored 0-15, the numbering every other channel field uses
+    std::uint8_t ccNumber = 16;        // General Purpose Controller 1
+    std::optional<std::uint8_t> velocity;  // nullopt = follow the output level at note-on (default)
+
+    bool operator==(const AppMidiOutSettings&) const = default;
+};
+
+// Adds the output port reference: what the runtime configuration persists
+// and the standalone/browser port reconcilers read (sar-36).
+struct AppMidiOutConfig {
+    AppMidiOutSettings settings;
+    MidiEndpointRef port;
+
+    bool operator==(const AppMidiOutConfig&) const = default;
+};
+
+JSON ToJSON(JsonArena& arena, const AppMidiOutConfig& config);
+bool FromJSON(JSON json, AppMidiOutConfig& config);
+
+// The one range rule for the MIDI-out setting's three fields: channel 0-15,
+// CC number 0-127, velocity "Level" (exact, case-sensitive; returns the
+// outer value with the inner optional empty) or a decimal integer 1-127
+// (returns the outer value with the inner optional holding it). Each
+// returns nothing (the outer optional empty) when the entered or stored
+// value is out of range. LoadRuntimeConfigJSON's midiOut read, the
+// Controllers page section and frogg3rs's plugin fields all call these.
+std::optional<std::uint8_t> ParseAppMidiOutChannel(double value);
+std::optional<std::uint8_t> ParseAppMidiOutCcNumber(double value);
+std::optional<std::optional<std::uint8_t>> ParseAppMidiOutVelocity(std::string_view value);
+
 // lastPatchVersion is the patch version file the player last opened or
 // saved, relative to the patches root, as a player-facing record separate
 // from the instrument/audio/sync state above: absent (nullopt) means a
@@ -43,16 +79,26 @@ bool FromJSON(JSON json, SyncConfig& config);
 // the version file to reopen at launch. BuildRuntimeConfigJSON omits the key
 // entirely when the caller passes nullopt, so a caller that does not know
 // about this record writes exactly what it always has.
+// midiOut (sar-36): a caller that does not pass one writes/reads the Off
+// default, so a caller that does not know about this setting behaves
+// exactly as it always has. Appended last so no existing positional call
+// site needs to change.
 JSON BuildRuntimeConfigJSON(JsonArena& arena,
                             const MidiInstrumentConfig& instrument,
                             const AudioDeviceState& audioDevice,
                             const SyncConfig& sync,
-                            const std::optional<std::string>& lastPatchVersion = std::nullopt);
+                            const std::optional<std::string>& lastPatchVersion = std::nullopt,
+                            const AppMidiOutConfig& midiOut = AppMidiOutConfig{});
+// A midiOut entry that is missing, malformed or out of range loads as the
+// Off default and never rejects the rest of the document -- the load fails
+// (returns false) only for a reason unrelated to midiOut, exactly as before
+// this field existed.
 bool LoadRuntimeConfigJSON(JSON root,
                            MidiInstrumentConfig& instrument,
                            AudioDeviceState& audioDevice,
                            SyncConfig& sync,
-                           std::optional<std::string>* lastPatchVersion = nullptr);
+                           std::optional<std::string>* lastPatchVersion = nullptr,
+                           AppMidiOutConfig* midiOut = nullptr);
 bool ValidateRuntimeConfigJSON(JSON root);
 
 enum class RuntimeConfigFileStatus {
@@ -66,12 +112,14 @@ RuntimeConfigFileStatus LoadRuntimeConfigFile(const std::filesystem::path& confi
                                               MidiInstrumentConfig& instrument,
                                               AudioDeviceState& audioDevice,
                                               SyncConfig& sync,
-                                              std::optional<std::string>* lastPatchVersion = nullptr);
+                                              std::optional<std::string>* lastPatchVersion = nullptr,
+                                              AppMidiOutConfig* midiOut = nullptr);
 RuntimeConfigFileStatus SaveRuntimeConfigFile(const std::filesystem::path& configFile,
                                               const MidiInstrumentConfig& instrument,
                                               const AudioDeviceState& audioDevice,
                                               const SyncConfig& sync,
-                                              const std::optional<std::string>& lastPatchVersion = std::nullopt);
+                                              const std::optional<std::string>& lastPatchVersion = std::nullopt,
+                                              const AppMidiOutConfig& midiOut = AppMidiOutConfig{});
 const char* RuntimeConfigFileStatusName(RuntimeConfigFileStatus status);
 
 JSON BuildPatchJSON(JsonArena& arena, std::string_view patchName,

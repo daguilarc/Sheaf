@@ -1073,6 +1073,7 @@ struct MidiEndpointRef {
     std::string identifier;   // empty = unconfigured
     std::string name;         // device display name captured at match time
     bool IsConfigured() const { return !identifier.empty() || !name.empty(); }
+    bool operator==(const MidiEndpointRef&) const = default;
 };
 
 enum class MidiControllerDisposition { Active, Blacklisted };

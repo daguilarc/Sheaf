@@ -287,6 +287,14 @@ public:
 
         LoadRuntimeConfiguration();
 
+        // sar-36: the app registered this in its Init() just above, so it is
+        // in place before this first, one-time delivery of the loaded
+        // setting; only a host that enabled routing (sar-37) ever sees this
+        // call, and SetAppMidiOutConfig delivers every later change.
+        if (appMidiOutRoutingEnabled_ && context_.appMidiOutSettingsChangedCallback) {
+            context_.appMidiOutSettingsChangedCallback(appMidiOutConfig_.settings);
+        }
+
         manager_.CaptureDefaultControlState();
         uiState_ = manager_.CreateUIState();
         gridUIState_ = gridManager_.CreateUIState();
@@ -768,6 +776,33 @@ public:
     // callback-lifetime as AudioBlock::midiOut pointed at it. A plugin host,
     // which never enables routing, reads this after ProcessBlock returns.
     const AppMidiOutEventList& AppMidiOutEvents() const noexcept { return appMidiOutList_; }
+
+    // sar-36: the stored MIDI-out setting (content, channel, CC number,
+    // velocity and port). Message-thread only.
+    const synth::AppMidiOutConfig& AppMidiOutConfig() const noexcept { return appMidiOutConfig_; }
+    // Message-thread only: stores the new value, then calls the app-context
+    // settings callback when routing is enabled and the content, channel, CC
+    // number or velocity changed, and calls the port-changed callback when
+    // the port changed. The Controllers page section and the standalone's
+    // device write-back both call this.
+    void SetAppMidiOutConfig(const synth::AppMidiOutConfig& config) {
+        const bool settingsChanged = !(config.settings == appMidiOutConfig_.settings);
+        const bool portChanged = !(config.port == appMidiOutConfig_.port);
+        appMidiOutConfig_ = config;
+        if (appMidiOutRoutingEnabled_ && settingsChanged &&
+            context_.appMidiOutSettingsChangedCallback) {
+            context_.appMidiOutSettingsChangedCallback(appMidiOutConfig_.settings);
+        }
+        if (portChanged && appMidiOutPortChangedCallback_) {
+            appMidiOutPortChangedCallback_();
+        }
+    }
+    // Host hook (task 7 registers it, the standalone's connection manager):
+    // called on the message thread from SetAppMidiOutConfig whenever the
+    // stored MIDI-out port changes, whether routing is enabled or not.
+    void SetAppMidiOutPortChangedCallback(std::function<void()> callback) {
+        appMidiOutPortChangedCallback_ = std::move(callback);
+    }
     bool RequestSyncConfiguration(const SyncConfig& config) noexcept {
         if (!config.IsValid()) {
             return false;
@@ -808,8 +843,10 @@ public:
         }
 
         std::optional<std::string> loadedPatchVersion;
+        synth::AppMidiOutConfig loadedMidiOut;
         RuntimeConfigFileStatus status = LoadRuntimeConfigFile(
-            dataPaths_.configFile, loadedInstrument, loadedAudioDevice, loadedSync, &loadedPatchVersion);
+            dataPaths_.configFile, loadedInstrument, loadedAudioDevice, loadedSync, &loadedPatchVersion,
+            &loadedMidiOut);
         if (status == RuntimeConfigFileStatus::Ok) {
             lastPatchVersionRecord_ = loadedPatchVersion;
             if (!masterClock_.ApplySyncConfig(loadedSync)) {
@@ -822,6 +859,7 @@ public:
                 instrumentConfig_ = std::move(loadedInstrument);
                 audioDeviceState_ = loadedAudioDevice;
                 lastNotifiedAudioDeviceState_ = loadedAudioDevice;
+                appMidiOutConfig_ = loadedMidiOut;
             }
         }
         const std::string path = dataPaths_.configFile.string();
@@ -849,7 +887,7 @@ public:
 
         const RuntimeConfigFileStatus status =
             SaveRuntimeConfigFile(dataPaths_.configFile, instrument, audioDevice,
-                                  SyncConfigurationSnapshot(), lastPatchVersionRecord_);
+                                  SyncConfigurationSnapshot(), lastPatchVersionRecord_, appMidiOutConfig_);
         if (status == RuntimeConfigFileStatus::Ok) {
             runtimeConfigSaveGeneration_.fetch_add(1, std::memory_order_relaxed);
         }
@@ -1569,6 +1607,12 @@ private:
     bool appMidiOutRoutingEnabled_ = false;
     bool initializeStarted_ = false;
     std::uint64_t appMidiOutSequence_ = 0;
+    // sar-36: the stored setting, message-thread-only state (like
+    // instrumentConfig_ is meant to be read/written only from the message
+    // thread; unlike it, nothing on the audio thread reads this directly --
+    // the app learns of it only through appMidiOutSettingsChangedCallback).
+    synth::AppMidiOutConfig appMidiOutConfig_;
+    std::function<void()> appMidiOutPortChangedCallback_;
     // Runtime-lifetime causal state shared by rebuilt absolute input/output
     // processor chains. Route records retain keys and pending expectations;
     // processors keep only non-owning pointers back to this stable owner.

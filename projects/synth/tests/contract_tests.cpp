@@ -383,6 +383,150 @@ TEST_CASE(midi_app_catalog_midi_out_contents_default_empty_and_keep_declaration_
     REQUIRE_TRUE(catalog.midiOutContents[1].kind == synth::MidiControlType::Note);
 }
 
+TEST_CASE(runtime_config_bad_midi_out_entry_resets_only_itself) {
+    synth::MidiInstrumentConfig instrument;
+    REQUIRE_TRUE(instrument.AddController(synth::WrldBldrDefaultControllerSlot("Row1")));
+    REQUIRE_TRUE(instrument.AddController(synth::WrldBldrDefaultControllerSlot("Row2")));
+    const synth::AudioDeviceState audio{.outputDeviceName = "Keep Out", .inputDeviceName = "Keep In"};
+    const synth::SyncConfig sync{
+        .sendClock = true, .receiveClock = false, .sendTransport = true, .receiveTransport = false, .ppqn = 48};
+
+    const auto buildAndLoad = [&](synth::JSON badMidiOut) {
+        // A full WrldBldr default controller row's JSON (16 encoders' worth
+        // of mappings) is large; two of them need well more than a few KB.
+        synth::JsonArena arena(4 * 1024 * 1024);
+        synth::JSON root = arena.Object();
+        root.SetNew("schema", arena.String(synth::kRuntimeConfigSchema));
+        root.SetNew("schemaVersion", arena.Integer(synth::kRuntimeConfigSchemaVersion));
+        root.SetNew("midiInstrument", synth::ToJSON(arena, instrument));
+        root.SetNew("audioDevice", synth::ToJSON(arena, audio));
+        root.SetNew("sync", synth::ToJSON(arena, sync));
+        root.SetNew("midiOut", badMidiOut);
+
+        synth::MidiInstrumentConfig loadedInstrument;
+        synth::AudioDeviceState loadedAudio;
+        synth::SyncConfig loadedSync;
+        synth::AppMidiOutConfig loadedMidiOut;
+        loadedMidiOut.settings.contentId = "not-the-default";  // must be overwritten by the Off default
+        REQUIRE_TRUE(synth::LoadRuntimeConfigJSON(root, loadedInstrument, loadedAudio, loadedSync, nullptr,
+                                                   &loadedMidiOut));
+        REQUIRE_TRUE(loadedMidiOut == synth::AppMidiOutConfig{});
+        REQUIRE_TRUE(loadedInstrument.controllers.size() == instrument.controllers.size());
+        REQUIRE_TRUE(loadedInstrument.controllers[0].name == instrument.controllers[0].name);
+        REQUIRE_TRUE(loadedInstrument.controllers[1].name == instrument.controllers[1].name);
+        REQUIRE_TRUE(loadedAudio == audio);
+        REQUIRE_TRUE(loadedSync == sync);
+    };
+
+    {
+        // A channel of 16 (stored numbering, out of the 0-15 range).
+        synth::JsonArena arena(4096);
+        synth::JSON badEntry = arena.Object();
+        badEntry.SetNew("port", synth::ToJSON(arena, synth::MidiEndpointRef{}));
+        badEntry.SetNew("contentId", arena.String("level"));
+        badEntry.SetNew("channel", arena.Integer(16));
+        badEntry.SetNew("ccNumber", arena.Integer(16));
+        badEntry.SetNew("velocity", arena.String("Level"));
+        buildAndLoad(badEntry);
+    }
+    {
+        // A CC number that is a string.
+        synth::JsonArena arena(4096);
+        synth::JSON badEntry = arena.Object();
+        badEntry.SetNew("port", synth::ToJSON(arena, synth::MidiEndpointRef{}));
+        badEntry.SetNew("contentId", arena.String("level"));
+        badEntry.SetNew("channel", arena.Integer(0));
+        badEntry.SetNew("ccNumber", arena.String("oops"));
+        badEntry.SetNew("velocity", arena.String("Level"));
+        buildAndLoad(badEntry);
+    }
+    {
+        // A midiOut that is an array, not an object.
+        synth::JsonArena arena(4096);
+        buildAndLoad(arena.Array());
+    }
+}
+
+TEST_CASE(a_configuration_without_the_midi_out_key_loads_off) {
+    synth::MidiInstrumentConfig instrument;
+    const synth::AudioDeviceState audio;
+    const synth::SyncConfig sync;
+    synth::JsonArena arena(8192);
+    const synth::JSON root = synth::BuildRuntimeConfigJSON(arena, instrument, audio, sync);
+    synth::JSON withoutMidiOut = arena.Object();
+    // Rebuild a document that never had a midiOut key at all (a config
+    // written before this setting existed), rather than one that has it
+    // removed, so this is a genuinely separate case from a malformed entry.
+    withoutMidiOut.SetNew("schema", root.Get("schema"));
+    withoutMidiOut.SetNew("schemaVersion", root.Get("schemaVersion"));
+    withoutMidiOut.SetNew("midiInstrument", root.Get("midiInstrument"));
+    withoutMidiOut.SetNew("audioDevice", root.Get("audioDevice"));
+    withoutMidiOut.SetNew("sync", root.Get("sync"));
+
+    synth::MidiInstrumentConfig loadedInstrument;
+    synth::AudioDeviceState loadedAudio;
+    synth::SyncConfig loadedSync;
+    synth::AppMidiOutConfig loadedMidiOut;
+    loadedMidiOut.settings.contentId = "not-the-default";
+    REQUIRE_TRUE(synth::LoadRuntimeConfigJSON(withoutMidiOut, loadedInstrument, loadedAudio, loadedSync, nullptr,
+                                               &loadedMidiOut));
+    REQUIRE_TRUE(loadedMidiOut == synth::AppMidiOutConfig{});
+    REQUIRE_TRUE(!loadedMidiOut.port.IsConfigured());
+    REQUIRE_TRUE(loadedMidiOut.settings.contentId.empty());
+    REQUIRE_TRUE(loadedMidiOut.settings.channel == 0);
+    REQUIRE_TRUE(loadedMidiOut.settings.ccNumber == 16);
+    REQUIRE_TRUE(!loadedMidiOut.settings.velocity.has_value());
+}
+
+TEST_CASE(the_midi_out_setting_round_trips) {
+    synth::AppMidiOutConfig config;
+    config.port = synth::MidiEndpointRef{.identifier = "dev-1", .name = "Test Port"};
+    config.settings.contentId = "pitch";
+    config.settings.channel = 4;
+    config.settings.ccNumber = 20;
+    config.settings.velocity = 90;
+
+    synth::JsonArena arena(8192);
+    const synth::JSON root = synth::BuildRuntimeConfigJSON(
+        arena, synth::MidiInstrumentConfig{}, synth::AudioDeviceState{}, synth::SyncConfig{}, std::nullopt, config);
+
+    synth::MidiInstrumentConfig loadedInstrument;
+    synth::AudioDeviceState loadedAudio;
+    synth::SyncConfig loadedSync;
+    synth::AppMidiOutConfig loaded;
+    REQUIRE_TRUE(synth::LoadRuntimeConfigJSON(root, loadedInstrument, loadedAudio, loadedSync, nullptr, &loaded));
+    REQUIRE_TRUE(loaded == config);
+    REQUIRE_TRUE(loaded.port.identifier == "dev-1");
+    REQUIRE_TRUE(loaded.port.name == "Test Port");
+    REQUIRE_TRUE(loaded.settings.contentId == "pitch");
+    REQUIRE_TRUE(loaded.settings.channel == 4);
+    REQUIRE_TRUE(loaded.settings.ccNumber == 20);
+    REQUIRE_TRUE(loaded.settings.velocity.has_value() && *loaded.settings.velocity == 90);
+}
+
+TEST_CASE(app_midi_out_parse_functions_accept_and_refuse_their_boundaries) {
+    REQUIRE_TRUE(synth::ParseAppMidiOutChannel(15).has_value() && *synth::ParseAppMidiOutChannel(15) == 15);
+    REQUIRE_TRUE(!synth::ParseAppMidiOutChannel(16).has_value());
+    REQUIRE_TRUE(synth::ParseAppMidiOutChannel(0).has_value() && *synth::ParseAppMidiOutChannel(0) == 0);
+    REQUIRE_TRUE(!synth::ParseAppMidiOutChannel(-1).has_value());
+
+    REQUIRE_TRUE(synth::ParseAppMidiOutCcNumber(127).has_value() && *synth::ParseAppMidiOutCcNumber(127) == 127);
+    REQUIRE_TRUE(!synth::ParseAppMidiOutCcNumber(128).has_value());
+    REQUIRE_TRUE(synth::ParseAppMidiOutCcNumber(0).has_value() && *synth::ParseAppMidiOutCcNumber(0) == 0);
+    REQUIRE_TRUE(!synth::ParseAppMidiOutCcNumber(-1).has_value());
+
+    const auto velocity1 = synth::ParseAppMidiOutVelocity("1");
+    REQUIRE_TRUE(velocity1.has_value() && velocity1->has_value() && **velocity1 == 1);
+    const auto velocity0 = synth::ParseAppMidiOutVelocity("0");
+    REQUIRE_TRUE(!velocity0.has_value());
+    const auto velocityLevel = synth::ParseAppMidiOutVelocity("Level");
+    REQUIRE_TRUE(velocityLevel.has_value() && !velocityLevel->has_value());
+    const auto velocity127 = synth::ParseAppMidiOutVelocity("127");
+    REQUIRE_TRUE(velocity127.has_value() && velocity127->has_value() && **velocity127 == 127);
+    const auto velocity128 = synth::ParseAppMidiOutVelocity("128");
+    REQUIRE_TRUE(!velocity128.has_value());
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {

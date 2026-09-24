@@ -367,6 +367,20 @@ struct AppContext {
             inputRoutingSignal->SetChangedCallback(std::move(callback));
         }
     }
+
+    // sar-36: registers (or, with an empty std::function, clears) the
+    // callback the engine invokes on the message thread with the current
+    // MIDI-out settings -- once during Initialize(), after
+    // LoadRuntimeConfiguration() and after the app's own Init() has
+    // registered this (so an app that never registers it never sees the
+    // call), and again on every Engine::SetAppMidiOutConfig() that changes
+    // the content, channel, CC number or velocity. Never invoked when the
+    // host has not called Engine::EnableAppMidiOutRouting(). In the shape of
+    // SetInputRoutedChangedCallback above.
+    std::function<void(const AppMidiOutSettings&)> appMidiOutSettingsChangedCallback;
+    void SetAppMidiOutSettingsChangedCallback(std::function<void(const AppMidiOutSettings&)> callback) {
+        appMidiOutSettingsChangedCallback = std::move(callback);
+    }
 };
 
 }  // namespace synth

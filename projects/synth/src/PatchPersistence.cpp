@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -161,11 +162,116 @@ bool FromJSON(JSON json, SyncConfig& config) {
     return true;
 }
 
+JSON ToJSON(JsonArena& arena, const AppMidiOutConfig& config) {
+    JSON json = arena.Object();
+    json.SetNew("port", ToJSON(arena, config.port));
+    json.SetNew("contentId", arena.String(config.settings.contentId.c_str()));
+    json.SetNew("channel", arena.Integer(config.settings.channel));
+    json.SetNew("ccNumber", arena.Integer(config.settings.ccNumber));
+    const std::string velocityText = config.settings.velocity.has_value()
+        ? std::to_string(*config.settings.velocity)
+        : std::string("Level");
+    json.SetNew("velocity", arena.String(velocityText.c_str()));
+    return json;
+}
+
+bool FromJSON(JSON json, AppMidiOutConfig& config) {
+    if (!IsObject(json)) {
+        return false;
+    }
+    AppMidiOutConfig parsed;
+    if (!FromJSON(json.Get("port"), parsed.port)) {
+        return false;
+    }
+    const JSON contentId = json.Get("contentId");
+    if (!IsString(contentId)) {
+        return false;
+    }
+    parsed.settings.contentId = contentId.StringValue();
+
+    const JSON channel = json.Get("channel");
+    if (!IsInteger(channel)) {
+        return false;
+    }
+    const std::optional<std::uint8_t> parsedChannel =
+        ParseAppMidiOutChannel(static_cast<double>(channel.IntegerValue()));
+    if (!parsedChannel.has_value()) {
+        return false;
+    }
+    parsed.settings.channel = *parsedChannel;
+
+    const JSON ccNumber = json.Get("ccNumber");
+    if (!IsInteger(ccNumber)) {
+        return false;
+    }
+    const std::optional<std::uint8_t> parsedCc =
+        ParseAppMidiOutCcNumber(static_cast<double>(ccNumber.IntegerValue()));
+    if (!parsedCc.has_value()) {
+        return false;
+    }
+    parsed.settings.ccNumber = *parsedCc;
+
+    const JSON velocity = json.Get("velocity");
+    if (!IsString(velocity)) {
+        return false;
+    }
+    const std::optional<std::optional<std::uint8_t>> parsedVelocity =
+        ParseAppMidiOutVelocity(velocity.StringValue());
+    if (!parsedVelocity.has_value()) {
+        return false;
+    }
+    parsed.settings.velocity = *parsedVelocity;
+
+    config = parsed;
+    return true;
+}
+
+namespace {
+
+// Same check as MidiConfigViewModel.cpp's local IsIntegerInRange (the
+// controller rows' own field validation); kept local here since the two
+// files share no validation header.
+bool IsIntegerInRange(double value, double lo, double hi) {
+    return std::isfinite(value) && value == std::floor(value) && value >= lo && value <= hi;
+}
+
+}  // namespace
+
+std::optional<std::uint8_t> ParseAppMidiOutChannel(double value) {
+    if (!IsIntegerInRange(value, 0.0, 15.0)) {
+        return std::nullopt;
+    }
+    return static_cast<std::uint8_t>(value);
+}
+
+std::optional<std::uint8_t> ParseAppMidiOutCcNumber(double value) {
+    if (!IsIntegerInRange(value, 0.0, 127.0)) {
+        return std::nullopt;
+    }
+    return static_cast<std::uint8_t>(value);
+}
+
+std::optional<std::optional<std::uint8_t>> ParseAppMidiOutVelocity(std::string_view value) {
+    if (value == "Level") {
+        return std::optional<std::uint8_t>(std::nullopt);
+    }
+    if (value.empty() || !std::all_of(value.begin(), value.end(),
+                                       [](char ch) { return std::isdigit(static_cast<unsigned char>(ch)); })) {
+        return std::nullopt;
+    }
+    const long parsed = std::strtol(std::string(value).c_str(), nullptr, 10);
+    if (parsed < 1 || parsed > 127) {
+        return std::nullopt;
+    }
+    return std::optional<std::uint8_t>(static_cast<std::uint8_t>(parsed));
+}
+
 JSON BuildRuntimeConfigJSON(JsonArena& arena,
                             const MidiInstrumentConfig& instrument,
                             const AudioDeviceState& audioDevice,
                             const SyncConfig& sync,
-                            const std::optional<std::string>& lastPatchVersion) {
+                            const std::optional<std::string>& lastPatchVersion,
+                            const AppMidiOutConfig& midiOut) {
     JSON root = arena.Object();
     root.SetNew("schema", arena.String(kRuntimeConfigSchema));
     root.SetNew("schemaVersion", arena.Integer(kRuntimeConfigSchemaVersion));
@@ -175,6 +281,7 @@ JSON BuildRuntimeConfigJSON(JsonArena& arena,
     if (lastPatchVersion.has_value()) {
         root.SetNew("lastPatchVersion", arena.String(lastPatchVersion->c_str()));
     }
+    root.SetNew("midiOut", ToJSON(arena, midiOut));
     return root;
 }
 
@@ -182,7 +289,8 @@ bool LoadRuntimeConfigJSON(JSON root,
                            MidiInstrumentConfig& instrument,
                            AudioDeviceState& audioDevice,
                            SyncConfig& sync,
-                           std::optional<std::string>* lastPatchVersion) {
+                           std::optional<std::string>* lastPatchVersion,
+                           AppMidiOutConfig* midiOut) {
     const std::optional<int> version = RuntimeConfigVersion(root);
     if (!version.has_value()) {
         return false;
@@ -217,11 +325,21 @@ bool LoadRuntimeConfigJSON(JSON root,
         parsedLastPatchVersion = lastPatchVersionJson.StringValue();
     }
 
+    // A missing, malformed or out-of-range midiOut entry loads as the Off
+    // default and never rejects the rest of the document (sar-36).
+    AppMidiOutConfig parsedMidiOut;
+    if (!FromJSON(root.Get("midiOut"), parsedMidiOut)) {
+        parsedMidiOut = AppMidiOutConfig{};
+    }
+
     instrument = std::move(parsedInstrument);
     audioDevice = std::move(parsedAudioDevice);
     sync = parsedSync;
     if (lastPatchVersion != nullptr) {
         *lastPatchVersion = std::move(parsedLastPatchVersion);
+    }
+    if (midiOut != nullptr) {
+        *midiOut = parsedMidiOut;
     }
     return true;
 }
@@ -237,7 +355,8 @@ RuntimeConfigFileStatus LoadRuntimeConfigFile(const std::filesystem::path& confi
                                               MidiInstrumentConfig& instrument,
                                               AudioDeviceState& audioDevice,
                                               SyncConfig& sync,
-                                              std::optional<std::string>* lastPatchVersion) {
+                                              std::optional<std::string>* lastPatchVersion,
+                                              AppMidiOutConfig* midiOut) {
     std::error_code ec;
     if (!std::filesystem::exists(configFile, ec)) {
         return ec ? RuntimeConfigFileStatus::IOError : RuntimeConfigFileStatus::Missing;
@@ -263,7 +382,7 @@ RuntimeConfigFileStatus LoadRuntimeConfigFile(const std::filesystem::path& confi
         return RuntimeConfigFileStatus::Invalid;
     }
 
-    return LoadRuntimeConfigJSON(root, instrument, audioDevice, sync, lastPatchVersion)
+    return LoadRuntimeConfigJSON(root, instrument, audioDevice, sync, lastPatchVersion, midiOut)
         ? RuntimeConfigFileStatus::Ok
         : RuntimeConfigFileStatus::Invalid;
 }
@@ -272,7 +391,8 @@ RuntimeConfigFileStatus SaveRuntimeConfigFile(const std::filesystem::path& confi
                                               const MidiInstrumentConfig& instrument,
                                               const AudioDeviceState& audioDevice,
                                               const SyncConfig& sync,
-                                              const std::optional<std::string>& lastPatchVersion) {
+                                              const std::optional<std::string>& lastPatchVersion,
+                                              const AppMidiOutConfig& midiOut) {
     std::error_code ec;
     const std::filesystem::path parent = configFile.parent_path();
     if (!parent.empty()) {
@@ -283,10 +403,10 @@ RuntimeConfigFileStatus SaveRuntimeConfigFile(const std::filesystem::path& confi
     }
 
     JsonArena arena(kRuntimeConfigInitialArenaCapacity);
-    JSON root = BuildRuntimeConfigJSON(arena, instrument, audioDevice, sync, lastPatchVersion);
+    JSON root = BuildRuntimeConfigJSON(arena, instrument, audioDevice, sync, lastPatchVersion, midiOut);
     while ((root.IsNull() || arena.Failed()) && arena.Capacity() < kRuntimeConfigMaxArenaCapacity) {
         arena.GrowAndReset();
-        root = BuildRuntimeConfigJSON(arena, instrument, audioDevice, sync, lastPatchVersion);
+        root = BuildRuntimeConfigJSON(arena, instrument, audioDevice, sync, lastPatchVersion, midiOut);
     }
     if (root.IsNull() || arena.Failed()) {
         return RuntimeConfigFileStatus::Invalid;

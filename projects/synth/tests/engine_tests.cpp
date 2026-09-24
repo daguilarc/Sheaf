@@ -4068,6 +4068,76 @@ TEST_CASE(an_app_that_writes_nothing_sends_no_app_midi_out_traffic) {
     REQUIRE_TRUE(appSink.delivered.empty());
 }
 
+namespace {
+
+// Minimal app for sar-36's host-routing tests: registers the MIDI-out
+// settings callback in Init() and records every call.
+struct AppMidiOutSettingsTestApp {
+    static inline std::vector<synth::AppMidiOutSettings> received;
+
+    static synth::RuntimeConfig Config() {
+        synth::RuntimeConfig config;
+        config.appName = "AppMidiOutSettingsTest";
+        config.numAudioOutputs = 2;
+        return config;
+    }
+    void Init(synth::AppContext* ctx) {
+        ctx->SetAppMidiOutSettingsChangedCallback(
+            [](const synth::AppMidiOutSettings& settings) { received.push_back(settings); });
+    }
+    void ProcessBlock(synth::AudioBlock&) {}
+};
+
+}  // namespace
+
+TEST_CASE(a_host_that_does_not_route_never_hands_the_midi_out_setting_to_the_app) {
+    AppMidiOutSettingsTestApp::received.clear();
+    synth::Engine<AppMidiOutSettingsTestApp> engine([] { return std::uint64_t{0}; });
+    // Routing is not enabled: EnableAppMidiOutRouting() is never called.
+    engine.Initialize();
+
+    REQUIRE_TRUE(AppMidiOutSettingsTestApp::received.empty());
+    REQUIRE_TRUE(engine.AppMidiOutConfig().settings.contentId.empty());
+
+    synth::AppMidiOutConfig changed;
+    changed.settings.contentId = "level";
+    engine.SetAppMidiOutConfig(changed);
+    REQUIRE_TRUE(AppMidiOutSettingsTestApp::received.empty());
+}
+
+TEST_CASE(a_routing_host_hands_the_midi_out_setting_over_and_follows_changes) {
+    AppMidiOutSettingsTestApp::received.clear();
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "engine-midi-out-routing-host-data-root";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+
+    synth::AppMidiOutConfig initial;
+    initial.settings.contentId = "level";
+    REQUIRE_TRUE(synth::SaveRuntimeConfigFile(paths.configFile, synth::MidiInstrumentConfig{},
+                                               synth::AudioDeviceState{}, synth::SyncConfig{}, std::nullopt,
+                                               initial) == synth::RuntimeConfigFileStatus::Ok);
+
+    synth::Engine<AppMidiOutSettingsTestApp> engine([] { return std::uint64_t{0}; });
+    engine.SetRuntimeDataPaths(paths);
+    engine.EnableAppMidiOutRouting();
+    engine.Initialize();
+
+    // The callback must have already fired once, with the loaded setting,
+    // before Initialize() returns -- not only "on change" later.
+    REQUIRE_TRUE(AppMidiOutSettingsTestApp::received.size() == 1);
+    REQUIRE_TRUE(AppMidiOutSettingsTestApp::received[0].contentId == "level");
+
+    synth::AppMidiOutConfig changed = engine.AppMidiOutConfig();
+    changed.settings.contentId = "pitch";
+    engine.SetAppMidiOutConfig(changed);
+
+    REQUIRE_TRUE(AppMidiOutSettingsTestApp::received.size() == 2);
+    REQUIRE_TRUE(AppMidiOutSettingsTestApp::received[1].contentId == "pitch");
+
+    std::filesystem::remove_all(dataRoot);
+}
+
 int main() {
     int failed = 0;
     for (const auto& test : Registry()) {
