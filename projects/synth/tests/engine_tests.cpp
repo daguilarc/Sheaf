@@ -3989,6 +3989,90 @@ TEST_CASE(a_routed_app_message_reaches_the_midi_out_sink_at_its_frames_due_time)
     AppMidiOutTestApp::onProcessBlock = nullptr;
 }
 
+namespace {
+
+// Minimal app for the independent-due-time test below: appends exactly one
+// app MIDI-out event on its third ProcessBlock call, so the routed event's
+// block has a nonzero startSample and two prior blocks already ran.
+struct AppMidiOutDueTimeTestApp {
+    static inline int processBlockCalls = 0;
+
+    static synth::RuntimeConfig Config() {
+        synth::RuntimeConfig config;
+        config.appName = "AppMidiOutDueTimeTest";
+        config.numAudioOutputs = 2;
+        return config;
+    }
+    void Init(synth::AppContext*) {}
+    void ProcessBlock(synth::AudioBlock& block) {
+        ++processBlockCalls;
+        if (processBlockCalls == 3) {
+            block.midiOut->Append({.frame = 200, .statusByte = 0xB0, .data1 = 7, .data2 = 100});
+        }
+    }
+};
+
+}  // namespace
+
+TEST_CASE(a_routed_app_message_due_time_matches_sample_rate_arithmetic_across_blocks_and_a_nonzero_start_sample) {
+    AppMidiOutDueTimeTestApp::processBlockCalls = 0;
+    synth::Engine<AppMidiOutDueTimeTestApp> engine([] { return std::uint64_t{10'000'000}; });
+    engine.EnableAppMidiOutRouting();
+    engine.Initialize();
+    // 50 kHz / 500-frame blocks: 1,000,000 / 50,000 = 20.0 exactly, so every
+    // hand-computed sample offset below lands on a whole microsecond with no
+    // rounding, and the master clock's own internal phase-error filter never
+    // has anything to correct (each block's callback timestamp is exactly
+    // the nominal-rate prediction for its own startSample).
+    engine.Prepare(50'000.0, 500);
+
+    EngineMidiOutputSink appSink;
+    engine.Context().midiSender->SetAppMidiOutSink(&appSink);
+    engine.Context().midiSender->Start();
+
+    TestBlockBuffers buffers(2, 500);
+    const std::uint64_t baseTimestamp = 1'000;
+    const double microsPerSample = 1'000'000.0 / 50'000.0;
+
+    synth::AudioBlock block0 = buffers.Block(500);
+    engine.ProcessBlock(block0, baseTimestamp);
+    REQUIRE_TRUE(block0.startSample == 0);
+
+    synth::AudioBlock block1 = buffers.Block(500);
+    engine.ProcessBlock(block1, baseTimestamp + static_cast<std::uint64_t>(500.0 * microsPerSample));
+    REQUIRE_TRUE(block1.startSample == 500);
+
+    synth::AudioBlock block2 = buffers.Block(500);
+    engine.ProcessBlock(block2, baseTimestamp + static_cast<std::uint64_t>(1000.0 * microsPerSample));
+    REQUIRE_TRUE(block2.startSample == 1000);
+    REQUIRE_TRUE(block2.clockPlan != nullptr);
+
+    // Computed directly from the sample rate, this block's own startSample,
+    // and the documented base output lookahead
+    // (docs/master-clock-and-midi-sync.md: "ceil(max(2 * negotiated
+    // output-block duration, 5 ms))", no host scheduling horizon configured
+    // here) -- never through MasterClock::DueTimeAtSample -- so a bug in the
+    // production routing loop's own use of that formula cannot cancel out
+    // against the same formula used to check it.
+    const double blockDurationMicros = 500.0 * microsPerSample;
+    const std::uint64_t baseLookaheadMicros =
+        static_cast<std::uint64_t>(std::ceil(std::max(2.0 * blockDurationMicros, 5000.0)));
+    const std::uint64_t expectedDue =
+        baseTimestamp +
+        static_cast<std::uint64_t>((static_cast<double>(block2.startSample) + 200.0) * microsPerSample) +
+        baseLookaheadMicros;
+
+    REQUIRE_TRUE(engine.Context().midiSender->FlushForTests(std::chrono::milliseconds(500)));
+    engine.Context().midiSender->Stop();
+
+    REQUIRE_TRUE(appSink.delivered.size() == 1);
+    REQUIRE_TRUE(appSink.delivered[0].raw == (std::vector<std::uint8_t>{0xB0, 7, 100}));
+    REQUIRE_TRUE(appSink.deadlines.size() == 1);
+    REQUIRE_TRUE(appSink.deadlines[0] == expectedDue);
+
+    AppMidiOutDueTimeTestApp::processBlockCalls = 0;
+}
+
 TEST_CASE(an_unrouted_host_reads_the_app_midi_out_list_and_the_sender_receives_nothing) {
     AppMidiOutTestApp::processBlockCalls = 0;
     AppMidiOutTestApp::onProcessBlock = [](synth::AudioBlock& block) {
