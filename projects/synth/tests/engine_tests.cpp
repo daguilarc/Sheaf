@@ -4104,6 +4104,70 @@ TEST_CASE(an_unrouted_host_reads_the_app_midi_out_list_and_the_sender_receives_n
     AppMidiOutTestApp::onProcessBlock = nullptr;
 }
 
+namespace {
+
+// Minimal app for the real-cutoff test below: appends exactly one app
+// MIDI-out event, at the block boundary (frame 0), on its second
+// ProcessBlock call -- the block in which the internal Start below activates
+// transport and so runs a real MasterClock::BeginPhaseGeneration cutoff.
+struct AppMidiOutGenerationTestApp {
+    static inline int processBlockCalls = 0;
+
+    static synth::RuntimeConfig Config() {
+        synth::RuntimeConfig config;
+        config.appName = "AppMidiOutGenerationTest";
+        config.numAudioOutputs = 2;
+        return config;
+    }
+    void Init(synth::AppContext*) {}
+    void ProcessBlock(synth::AudioBlock& block) {
+        ++processBlockCalls;
+        if (processBlockCalls == 2) {
+            block.midiOut->Append({.frame = 0, .statusByte = 0xB0, .data1 = 7, .data2 = 100});
+        }
+    }
+};
+
+}  // namespace
+
+TEST_CASE(a_generation_cutoff_from_a_real_transport_activation_never_drops_an_app_message) {
+    AppMidiOutGenerationTestApp::processBlockCalls = 0;
+    synth::Engine<AppMidiOutGenerationTestApp> engine([] { return std::uint64_t{10'000'000}; });
+    engine.EnableAppMidiOutRouting();
+    engine.Initialize();
+    engine.Prepare(48'000.0, 64);
+
+    EngineMidiOutputSink appSink;
+    engine.Context().midiSender->SetAppMidiOutSink(&appSink);
+    // The sender is started only after both the real cutoff and the app
+    // message are enqueued, so nothing is drained before the scenario is
+    // fully set up.
+
+    TestBlockBuffers buffers(2, 64);
+    synth::AudioBlock block0 = buffers.Block(64);
+    engine.ProcessBlock(block0, 1'000);
+
+    // Default sync config has receiveClock off, so an internal Start
+    // activates the grid immediately: MasterClock::BeginPhaseGeneration runs
+    // inside this block's CommitBlock (before ProcessBlock below appends the
+    // app's own message), invalidating generation 1 -- the value since
+    // Prepare() -- at this block's own boundary sample.
+    REQUIRE_TRUE(engine.UiBus().Push(synth::MessageIn::Start(2'000)));
+    synth::AudioBlock block1 = buffers.Block(64);
+    engine.ProcessBlock(block1, 2'000);
+    REQUIRE_TRUE(block1.clockPlan != nullptr);
+    REQUIRE_TRUE(block1.clockPlan->TransportState() == synth::ClockTransportState::Running);
+
+    engine.Context().midiSender->Start();
+    REQUIRE_TRUE(engine.Context().midiSender->FlushForTests(std::chrono::milliseconds(500)));
+    engine.Context().midiSender->Stop();
+
+    REQUIRE_TRUE(appSink.delivered.size() == 1);
+    REQUIRE_TRUE(appSink.delivered[0].raw == (std::vector<std::uint8_t>{0xB0, 7, 100}));
+
+    AppMidiOutGenerationTestApp::processBlockCalls = 0;
+}
+
 TEST_CASE(each_app_midi_out_block_starts_empty) {
     AppMidiOutTestApp::processBlockCalls = 0;
     AppMidiOutTestApp::onProcessBlock = [](synth::AudioBlock& block) {
