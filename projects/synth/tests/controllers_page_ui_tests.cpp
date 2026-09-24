@@ -126,6 +126,11 @@ struct TestHarness
     int saves = 0;
     std::vector<synth::ControllerWizardDescriptor> layouts;
     std::vector<synth::UISystemMessageChoice> messageCatalog;
+    synth::AppMidiOutConfig appMidiOutConfig;
+    std::vector<synth::MidiAppMidiOutContent> appMidiOutContents;
+    synth::MidiEndpointStatus appMidiOutPortStatus = synth::MidiEndpointStatus::Unconfigured;
+    int appMidiOutSnapshots = 0;
+    std::vector<synth::AppMidiOutConfig> appMidiOutCommits;
 
     TestHarness()
     {
@@ -166,6 +171,16 @@ struct TestHarness
         callbacks.setStatus = [this](std::string text) { status = std::move(text); };
         callbacks.layouts = layouts;
         callbacks.messageCatalog = messageCatalog;
+        callbacks.appMidiOutSnapshot = [this] {
+            ++appMidiOutSnapshots;
+            return appMidiOutConfig;
+        };
+        callbacks.commitAppMidiOut = [this](synth::AppMidiOutConfig config) {
+            appMidiOutCommits.push_back(config);
+            appMidiOutConfig = std::move(config);
+        };
+        callbacks.appMidiOutContents = appMidiOutContents;
+        callbacks.appMidiOutPortStatus = [this] { return appMidiOutPortStatus; };
         return synth::runtime_ui::ControllersPageSurface(std::move(callbacks));
     }
 };
@@ -2255,6 +2270,177 @@ void TestControllerDeviceLabelForAppCatalogDeviceShowsItsName()
             "a row added from an app catalog device shows that device's own display name");
 }
 
+std::vector<synth::MidiAppMidiOutContent> MakeAppMidiOutContents()
+{
+    return {
+        {.id = "level", .label = "Level", .kind = synth::MidiControlType::Cc},
+        {.id = "pitch", .label = "Pitch", .kind = synth::MidiControlType::Note},
+    };
+}
+
+void TestAppMidiOutSectionShowsOffAndNoneByDefault()
+{
+    TestHarness harness;
+    harness.appMidiOutContents = MakeAppMidiOutContents();
+    auto surface = harness.MakeSurface();
+    surface.SetEnumerateDevices(harness.devices);
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    const synth::ui::NodeTree tree = surface.BuildTree();
+    const synth::ui::Node* sends = FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutSends);
+    Require(sends != nullptr && sends->selectedOption == "off", "Sends defaults to Off");
+    const synth::ui::Node* port = FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutPort);
+    Require(port != nullptr && port->selectedOption == "none", "Port defaults to None");
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutChannel) == nullptr,
+            "no Channel field while Off");
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutCc) == nullptr,
+            "no CC field while Off");
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutVelocity) == nullptr,
+            "no Velocity field while Off");
+}
+
+void TestAppMidiOutFieldsFollowTheChosenContent()
+{
+    TestHarness harness;
+    harness.appMidiOutContents = MakeAppMidiOutContents();
+    auto surface = harness.MakeSurface();
+    surface.SetEnumerateDevices(harness.devices);
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAppMidiOutSendsSelect, "level"));
+    Require(harness.appMidiOutConfig.settings.contentId == "level", "Sends commits the chosen content id");
+    synth::ui::NodeTree tree = surface.BuildTree();
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutChannel) != nullptr,
+            "Channel appears for a CC content");
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutCc) != nullptr,
+            "CC appears for a CC content");
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutVelocity) == nullptr,
+            "no Velocity field for a CC content");
+
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAppMidiOutSendsSelect, "pitch"));
+    Require(harness.appMidiOutConfig.settings.contentId == "pitch", "Sends commits the new content id");
+    tree = surface.BuildTree();
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutChannel) != nullptr,
+            "Channel still appears for a Note content");
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutCc) == nullptr,
+            "no CC field for a Note content");
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutVelocity) != nullptr,
+            "Velocity appears for a Note content");
+}
+
+void TestAppMidiOutOutOfRangeEntryIsRefused()
+{
+    TestHarness harness;
+    harness.appMidiOutContents = MakeAppMidiOutContents();
+    harness.appMidiOutConfig.settings.contentId = "level";
+    harness.appMidiOutConfig.settings.channel = 3;
+    auto surface = harness.MakeSurface();
+    surface.SetEnumerateDevices(harness.devices);
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    const std::size_t commitsBefore = harness.appMidiOutCommits.size();
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAppMidiOutChannelCommit, "16"));
+    Require(harness.appMidiOutCommits.size() == commitsBefore, "an out-of-range channel is never committed");
+    Require(harness.appMidiOutConfig.settings.channel == 3, "the stored channel is unchanged");
+    Require(harness.status == "Refused: channel must be an integer 0-15",
+            "the controller rows' own channel refusal message is reused");
+}
+
+void TestAppMidiOutOfflinePortIsShownOfflineAndKept()
+{
+    TestHarness harness;
+    harness.appMidiOutContents = MakeAppMidiOutContents();
+    harness.appMidiOutConfig.port = {.identifier = "gone", .name = "Unplugged Interface"};
+    harness.appMidiOutPortStatus = synth::MidiEndpointStatus::Offline;
+    auto surface = harness.MakeSurface();
+    surface.SetEnumerateDevices(harness.devices);
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    const synth::ui::NodeTree tree = surface.BuildTree();
+    const synth::ui::Node* port = FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutPort);
+    Require(port != nullptr && port->selectedOption == "keep_offline",
+            "an offline port keeps its own stored-label option selected");
+    bool sawStoredLabel = false;
+    for (const synth::ui::ControlOption& option : port->options)
+    {
+        if (option.label == "Unplugged Interface (gone)")
+        {
+            sawStoredLabel = true;
+        }
+    }
+    Require(sawStoredLabel, "the offline port's stored label is offered so it is not silently dropped");
+}
+
+void TestAppMidiOutCommittedEditIsSavedAtOnce()
+{
+    TestHarness harness;
+    harness.appMidiOutContents = MakeAppMidiOutContents();
+    harness.appMidiOutConfig.settings.contentId = "level";
+    auto surface = harness.MakeSurface();
+    surface.SetEnumerateDevices(harness.devices);
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    const auto commitAndSaveCount = [&] { return std::pair{harness.appMidiOutCommits.size(), harness.saves}; };
+
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAppMidiOutPortSelect, "uid:782494201"));
+    Require(commitAndSaveCount() == (std::pair<std::size_t, int>{1, 1}), "port edit commits and saves once");
+
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAppMidiOutSendsSelect, "pitch"));
+    Require(commitAndSaveCount() == (std::pair<std::size_t, int>{2, 2}), "Sends edit commits and saves once");
+
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAppMidiOutChannelCommit, "5"));
+    Require(commitAndSaveCount() == (std::pair<std::size_t, int>{3, 3}), "Channel edit commits and saves once");
+
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAppMidiOutVelocityCommit, "90"));
+    Require(commitAndSaveCount() == (std::pair<std::size_t, int>{4, 4}), "Velocity edit commits and saves once");
+    Require(harness.appMidiOutConfig.settings.velocity.has_value() &&
+                *harness.appMidiOutConfig.settings.velocity == 90,
+            "the velocity commit lands");
+}
+
+void TestAppMidiOutDeclaredContentsAreOfferedAfterOff()
+{
+    TestHarness harness;
+    harness.appMidiOutContents = MakeAppMidiOutContents();
+    auto surface = harness.MakeSurface();
+    surface.SetEnumerateDevices(harness.devices);
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    const synth::ui::NodeTree tree = surface.BuildTree();
+    const synth::ui::Node* sends = FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutSends);
+    Require(sends != nullptr && sends->options.size() == 3, "Off plus the two declared contents");
+    Require(sends->options[0].label == "Off", "Off is offered first");
+    Require(sends->options[1].label == "Level" && sends->options[2].label == "Pitch",
+            "declared contents follow in catalog order");
+}
+
+void TestAppMidiOutCatalogWithNoContentsShowsNoSection()
+{
+    TestHarness harness;
+    Require(harness.appMidiOutContents.empty(), "an empty catalog is this test's whole premise");
+    auto surface = harness.MakeSurface();
+    surface.SetEnumerateDevices(harness.devices);
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    const synth::ui::NodeTree tree = surface.BuildTree();
+    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutSection) == nullptr,
+            "no Audio to MIDI section when the catalog lists no contents");
+}
+
 int main()
 {
     TestNoHandRolledControllerNodesSurvive();
@@ -2292,6 +2478,13 @@ int main()
     TestConnectMessageShownOnEveryKindNotJustGeneric();
     TestControllerDeviceLabelForUnresolvedWizardIdShowsBoundDevice();
     TestControllerDeviceLabelForAppCatalogDeviceShowsItsName();
+    TestAppMidiOutSectionShowsOffAndNoneByDefault();
+    TestAppMidiOutFieldsFollowTheChosenContent();
+    TestAppMidiOutOutOfRangeEntryIsRefused();
+    TestAppMidiOutOfflinePortIsShownOfflineAndKept();
+    TestAppMidiOutCommittedEditIsSavedAtOnce();
+    TestAppMidiOutDeclaredContentsAreOfferedAfterOff();
+    TestAppMidiOutCatalogWithNoContentsShowsNoSection();
 
     TestHarness harness;
     synth::runtime_ui::ControllersPageSurface surface = harness.MakeSurface();

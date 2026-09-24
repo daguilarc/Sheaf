@@ -265,6 +265,9 @@ public:
     }
 
     const synth::MidiConnectionState& ConnectionState() const { return state_; }
+    // The app MIDI-out port's own online/offline/unconfigured status, read by
+    // the Controllers page's Audio to MIDI section.
+    synth::MidiEndpointStatus AppMidiOutStatus() const { return appMidiOutReconciler_.OutputStatus(); }
     synth::MidiDeviceList LatestDeviceList() const { return latestDeviceList_; }
     std::uint64_t DeviceListRevision() const { return deviceListRevision_; }
 

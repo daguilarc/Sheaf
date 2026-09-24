@@ -8,7 +8,9 @@
 
 #include "synth/MidiConfigViewModel.hpp"
 #include "synth/ControllerWizard.hpp"
+#include "synth/MidiAppCatalog.hpp"
 #include "synth/MidiReconcile.hpp"
+#include "synth/PatchPersistence.hpp"
 #include "synth/PortableUI.hpp"
 #include "synth/PortableUIBuilders.hpp"
 #include "synth/PortableUIMetrics.hpp"
@@ -35,6 +37,11 @@ namespace synth::runtime_ui {
 
 inline constexpr const char* kEndpointNoneOptionId = "none";
 inline constexpr const char* kEndpointOfflineOptionId = "keep_offline";
+// The Audio to MIDI section's Sends choice: Off is the runtime's own entry,
+// never a catalog content id (smi-19), so it needs its own option id no
+// content can collide with.
+inline constexpr const char* kAppMidiOutSendsOffOptionId = "off";
+inline constexpr const char* kAppMidiOutSendsOffLabel = "Off";
 
 namespace NodeIds {
 
@@ -258,6 +265,17 @@ inline std::string ConnectMessageAddRow(std::size_t controllerIx)
     return ConnectMessages(controllerIx) + ".add_row";
 }
 
+// sru-71: the Audio to MIDI section. One instance on the page, so these are
+// plain constants, not per-controller functions.
+inline constexpr const char* kAppMidiOutSection = "runtime.controllers.app_midi_out";
+inline constexpr const char* kAppMidiOutHeading = "runtime.controllers.app_midi_out.heading";
+inline constexpr const char* kAppMidiOutPortStatus = "runtime.controllers.app_midi_out.port_status";
+inline constexpr const char* kAppMidiOutPort = "runtime.controllers.app_midi_out.port";
+inline constexpr const char* kAppMidiOutSends = "runtime.controllers.app_midi_out.sends";
+inline constexpr const char* kAppMidiOutChannel = "runtime.controllers.app_midi_out.channel";
+inline constexpr const char* kAppMidiOutCc = "runtime.controllers.app_midi_out.cc";
+inline constexpr const char* kAppMidiOutVelocity = "runtime.controllers.app_midi_out.velocity";
+
 }  // namespace NodeIds
 
 namespace Actions {
@@ -280,6 +298,11 @@ inline constexpr const char* kControllerRestore = "runtime.controllers.controlle
 inline constexpr const char* kConnectMessageCommit = "runtime.controllers.connect_message_commit";
 inline constexpr const char* kConnectMessageDelete = "runtime.controllers.connect_message_delete";
 inline constexpr const char* kConnectMessageAdd = "runtime.controllers.connect_message_add";
+inline constexpr const char* kAppMidiOutPortSelect = "runtime.controllers.app_midi_out.port_select";
+inline constexpr const char* kAppMidiOutSendsSelect = "runtime.controllers.app_midi_out.sends_select";
+inline constexpr const char* kAppMidiOutChannelCommit = "runtime.controllers.app_midi_out.channel_commit";
+inline constexpr const char* kAppMidiOutCcCommit = "runtime.controllers.app_midi_out.cc_commit";
+inline constexpr const char* kAppMidiOutVelocityCommit = "runtime.controllers.app_midi_out.velocity_commit";
 
 // The fixed part of what the Controllers page emits. The per-controller
 // actions above are not listed: they are matched by prefix, because their
@@ -300,6 +323,11 @@ inline constexpr std::string_view kControllersActions[] = {
     kConnectMessageCommit,
     kConnectMessageDelete,
     kConnectMessageAdd,
+    kAppMidiOutPortSelect,
+    kAppMidiOutSendsSelect,
+    kAppMidiOutChannelCommit,
+    kAppMidiOutCcCommit,
+    kAppMidiOutVelocityCommit,
 };
 
 }  // namespace Actions
@@ -869,6 +897,30 @@ inline std::vector<ui::ControlOption> BuildEndpointOptions(const std::vector<Mid
     return options;
 }
 
+// The controller rows' input-port and output-port columns and the Audio to
+// MIDI section's port choice are the same shape: a status dot, then a
+// captioned ComboBox of BuildEndpointOptions. They differ only in the
+// device list, status, stored reference, device label, control style (its
+// caption) and action, so this is the one place that shape is built.
+inline void EmitPortChoice(ui::Builder& parent,
+                           const std::string& statusDotId,
+                           const std::string& comboBoxId,
+                           const std::vector<MidiDeviceInfoRef>& devices,
+                           MidiEndpointStatus status,
+                           const MidiEndpointRef& stored,
+                           const std::string& storedLabel,
+                           ui::ControlStyle style,
+                           ui::Action action)
+{
+    EmitStatusDot(parent, statusDotId, status);
+    std::string selectedOptionId;
+    parent.ComboBox(comboBoxId,
+                    BuildEndpointOptions(devices, status, stored, storedLabel, selectedOptionId),
+                    selectedOptionId,
+                    std::move(action),
+                    std::move(style));
+}
+
 // Installs a descriptor's default profile onto `slot`: opens the descriptor's
 // wizard, opens a blank form (ConfigForm()), generates a profile from
 // it, then copies the generated kind, config and wizardId onto `slot`. On
@@ -1024,6 +1076,17 @@ struct ControllersPageCallbacks
     // host with an app catalog fills this from
     // MakeControllerWizardRegistry(engine.MidiCatalog()).
     std::vector<ControllerWizardDescriptor> layouts;
+
+    // sru-71, the Audio to MIDI section: reads Engine::AppMidiOutConfig().
+    std::function<AppMidiOutConfig()> appMidiOutSnapshot;
+    // Calls Engine::SetAppMidiOutConfig(...) with the edited value.
+    std::function<void(AppMidiOutConfig)> commitAppMidiOut;
+    // The app's declared MIDI-out contents (smi-19). Empty means the section
+    // is not shown at all.
+    std::vector<MidiAppMidiOutContent> appMidiOutContents;
+    // The app MIDI-out port's own online/offline/unconfigured status, from
+    // the standalone connection manager or the browser bridge.
+    std::function<MidiEndpointStatus()> appMidiOutPortStatus;
 };
 
 inline bool WizardDiscoveryEqual(const WizardDiscovery& lhs, const WizardDiscovery& rhs)
@@ -1064,7 +1127,11 @@ public:
                                         m_contentBounds,
                                         m_statusText,
                                         m_addPresetId,
-                                        m_renameDrafts);
+                                        m_renameDrafts,
+                                        AppMidiOutSnapshot(),
+                                        m_callbacks.appMidiOutContents,
+                                        m_callbacks.appMidiOutPortStatus ? m_callbacks.appMidiOutPortStatus()
+                                                                         : MidiEndpointStatus::Unconfigured);
     }
 
     void SetActionHandler(ActionHandler handler) override
@@ -1208,7 +1275,12 @@ public:
                action.name == Actions::kControllerRestore ||
                action.name == Actions::kConnectMessageCommit ||
                action.name == Actions::kConnectMessageDelete ||
-               action.name == Actions::kConnectMessageAdd;
+               action.name == Actions::kConnectMessageAdd ||
+               action.name == Actions::kAppMidiOutPortSelect ||
+               action.name == Actions::kAppMidiOutSendsSelect ||
+               action.name == Actions::kAppMidiOutChannelCommit ||
+               action.name == Actions::kAppMidiOutCcCommit ||
+               action.name == Actions::kAppMidiOutVelocityCommit;
     }
 
 private:
@@ -1266,15 +1338,26 @@ private:
             SetStatus(kHostRejectedCommitStatus);
             return false;
         }
+        SaveCommittedEdit(std::move(successText));
+        return true;
+    }
+
+    // The save-and-status tail every committed edit on this page takes
+    // (sru-64), after its own commit has landed: mark dirty, save runtime
+    // configuration, then set exactly one status -- the save failure text
+    // without losing the edit, or the caller's own success text.
+    // Commit() and the Audio to MIDI section's commit (sru-71) both call
+    // this after their own commit lands.
+    void SaveCommittedEdit(std::string successText)
+    {
         m_dirty = true;
         if (!m_callbacks.saveRuntimeConfiguration ||
             !m_callbacks.saveRuntimeConfiguration())
         {
             SetStatus(kRuntimeConfigSaveFailedStatus);
-            return true;
+            return;
         }
         SetStatus(std::move(successText));
-        return true;
     }
 
     void SetStatus(std::string text)
@@ -1377,6 +1460,36 @@ private:
         if (action.name == Actions::kConnectMessageAdd)
         {
             HandleConnectMessageAdd(action.value);
+            return;
+        }
+
+        if (action.name == Actions::kAppMidiOutPortSelect)
+        {
+            HandleAppMidiOutPortSelect(action.value);
+            return;
+        }
+
+        if (action.name == Actions::kAppMidiOutSendsSelect)
+        {
+            HandleAppMidiOutSendsSelect(action.value);
+            return;
+        }
+
+        if (action.name == Actions::kAppMidiOutChannelCommit)
+        {
+            HandleAppMidiOutChannelCommit(action.value);
+            return;
+        }
+
+        if (action.name == Actions::kAppMidiOutCcCommit)
+        {
+            HandleAppMidiOutCcCommit(action.value);
+            return;
+        }
+
+        if (action.name == Actions::kAppMidiOutVelocityCommit)
+        {
+            HandleAppMidiOutVelocityCommit(action.value);
             return;
         }
 
@@ -1893,6 +2006,126 @@ private:
         }
     }
 
+    // sru-71: reads the current setting, edits one field, commits it through
+    // commitAppMidiOut, then saves at once through the same tail Commit()
+    // uses (SaveCommittedEdit) -- never through commitInstrument/
+    // EditInstrument, since the MIDI-out port is not a controller row.
+    AppMidiOutConfig AppMidiOutSnapshot() const
+    {
+        return m_callbacks.appMidiOutSnapshot ? m_callbacks.appMidiOutSnapshot() : AppMidiOutConfig{};
+    }
+
+    void HandleAppMidiOutPortSelect(const std::string& optionId)
+    {
+        if (optionId == kEndpointOfflineOptionId)
+        {
+            return;
+        }
+        AppMidiOutConfig config = AppMidiOutSnapshot();
+        if (optionId == kEndpointNoneOptionId)
+        {
+            config.port = MidiEndpointRef{};
+        }
+        else
+        {
+            if (!m_callbacks.enumerateDevices)
+            {
+                return;
+            }
+            const MidiDeviceList devices = m_callbacks.enumerateDevices();
+            const MidiDeviceInfoRef* match = nullptr;
+            for (const MidiDeviceInfoRef& device : devices.outputs)
+            {
+                if (device.identifier == optionId)
+                {
+                    match = &device;
+                    break;
+                }
+            }
+            if (match == nullptr)
+            {
+                return;
+            }
+            config.port.identifier = match->identifier;
+            config.port.name = match->name;
+        }
+        if (m_callbacks.commitAppMidiOut)
+        {
+            m_callbacks.commitAppMidiOut(config);
+        }
+        SaveCommittedEdit("Set MIDI-out port");
+    }
+
+    void HandleAppMidiOutSendsSelect(const std::string& optionId)
+    {
+        AppMidiOutConfig config = AppMidiOutSnapshot();
+        config.settings.contentId = optionId == kAppMidiOutSendsOffOptionId ? std::string() : optionId;
+        if (m_callbacks.commitAppMidiOut)
+        {
+            m_callbacks.commitAppMidiOut(config);
+        }
+        SaveCommittedEdit("Set MIDI-out content");
+    }
+
+    void HandleAppMidiOutChannelCommit(const std::string& rawValue)
+    {
+        bool outOfRange = false;
+        const std::optional<double> parsed =
+            ControllersLayout::ParseFiniteNumericToken(rawValue, /*isInteger=*/true, &outOfRange);
+        const std::optional<std::uint8_t> channel =
+            parsed.has_value() ? ParseAppMidiOutChannel(*parsed) : std::nullopt;
+        if (!channel.has_value())
+        {
+            SetStatus("Refused: channel must be an integer 0-15");
+            return;
+        }
+        AppMidiOutConfig config = AppMidiOutSnapshot();
+        config.settings.channel = *channel;
+        if (m_callbacks.commitAppMidiOut)
+        {
+            m_callbacks.commitAppMidiOut(config);
+        }
+        SaveCommittedEdit("Set MIDI-out channel");
+    }
+
+    void HandleAppMidiOutCcCommit(const std::string& rawValue)
+    {
+        bool outOfRange = false;
+        const std::optional<double> parsed =
+            ControllersLayout::ParseFiniteNumericToken(rawValue, /*isInteger=*/true, &outOfRange);
+        const std::optional<std::uint8_t> ccNumber =
+            parsed.has_value() ? ParseAppMidiOutCcNumber(*parsed) : std::nullopt;
+        if (!ccNumber.has_value())
+        {
+            SetStatus("Refused: CC number must be an integer 0-127");
+            return;
+        }
+        AppMidiOutConfig config = AppMidiOutSnapshot();
+        config.settings.ccNumber = *ccNumber;
+        if (m_callbacks.commitAppMidiOut)
+        {
+            m_callbacks.commitAppMidiOut(config);
+        }
+        SaveCommittedEdit("Set MIDI-out CC number");
+    }
+
+    void HandleAppMidiOutVelocityCommit(const std::string& rawValue)
+    {
+        const std::optional<std::optional<std::uint8_t>> parsed = ParseAppMidiOutVelocity(rawValue);
+        if (!parsed.has_value())
+        {
+            SetStatus("Refused: velocity must be \"Level\" or an integer 1-127");
+            return;
+        }
+        AppMidiOutConfig config = AppMidiOutSnapshot();
+        config.settings.velocity = *parsed;
+        if (m_callbacks.commitAppMidiOut)
+        {
+            m_callbacks.commitAppMidiOut(config);
+        }
+        SaveCommittedEdit("Set MIDI-out velocity");
+    }
+
     void HandleAdd(const std::string& value, bool asBlock)
     {
         const auto parts = Split(value, ':');
@@ -2009,7 +2242,10 @@ private:
                                                   ui::Bounds area,
                                                   const std::string& statusText,
                                                   const std::string& addPresetId,
-                                                  const std::map<std::string, std::string>& renameDrafts)
+                                                  const std::map<std::string, std::string>& renameDrafts,
+                                                  const AppMidiOutConfig& appMidiOutConfig,
+                                                  const std::vector<MidiAppMidiOutContent>& appMidiOutContents,
+                                                  MidiEndpointStatus appMidiOutPortStatus)
     {
         const auto renameDraftFor = [&](const std::string& name) {
             const auto it = renameDrafts.find(name);
@@ -2100,6 +2336,111 @@ private:
                 }
             }
             return names;
+        };
+
+        // sru-71: the Audio to MIDI section. Built from the callbacks'
+        // snapshot data alone, never from MidiConfigViewModel -- the
+        // MIDI-out port is not a controller row. Off first, then the
+        // catalog's contents in declaration order (smi-19); an app whose
+        // catalog lists none gets no section at all.
+        const auto emitAppMidiOutSection = [&](ui::Builder& scroll) {
+            if (appMidiOutContents.empty())
+            {
+                return;
+            }
+            ui::LayoutOptions sectionLayout = columnLayout(ui::Extent::Intrinsic(), ControllersLayout::kRowGap);
+            sectionLayout.cross = ui::Extent::Px(scrollWidth);
+            scroll.Section(NodeIds::kAppMidiOutSection, sectionLayout, [&](ui::Builder& section) {
+                section.Label(NodeIds::kAppMidiOutHeading, "Audio to MIDI",
+                             labelStyle(ControllersLayout::kStatusRowHeight));
+
+                section.Row(
+                    std::string(NodeIds::kAppMidiOutSection) + ".port_row",
+                    rowLayout(ControllersLayout::kControllerHeaderLineHeight, scrollWidth,
+                             ControllersLayout::kLifecycleControlGap),
+                    [&](ui::Builder& row) {
+                        ui::ControlStyle portStyle = fieldControl(ControllersLayout::kEndpointFieldWidth);
+                        portStyle.caption = "Port";
+                        ControllersLayout::EmitPortChoice(
+                            row,
+                            NodeIds::kAppMidiOutPortStatus,
+                            NodeIds::kAppMidiOutPort,
+                            devices.outputs,
+                            appMidiOutPortStatus,
+                            appMidiOutConfig.port,
+                            ControllersLayout::StoredEndpointLabel(appMidiOutConfig.port),
+                            portStyle,
+                            ui::Action::Named(Actions::kAppMidiOutPortSelect));
+                    });
+
+                section.Row(
+                    std::string(NodeIds::kAppMidiOutSection) + ".sends_row",
+                    rowLayout(ControllersLayout::kControllerHeaderLineHeight, scrollWidth,
+                             ControllersLayout::kLifecycleControlGap),
+                    [&](ui::Builder& row) {
+                        std::vector<ui::ControlOption> sendsOptions;
+                        sendsOptions.reserve(appMidiOutContents.size() + 1);
+                        sendsOptions.push_back({kAppMidiOutSendsOffOptionId, kAppMidiOutSendsOffLabel});
+                        const MidiAppMidiOutContent* selectedContent = nullptr;
+                        for (const MidiAppMidiOutContent& content : appMidiOutContents)
+                        {
+                            sendsOptions.push_back({content.id, content.label});
+                            if (content.id == appMidiOutConfig.settings.contentId)
+                            {
+                                selectedContent = &content;
+                            }
+                        }
+                        const std::string selectedSends =
+                            selectedContent != nullptr ? selectedContent->id
+                                                        : std::string(kAppMidiOutSendsOffOptionId);
+                        ui::ControlStyle sendsStyle =
+                            fieldControl(ControllersLayout::kEndpointFieldWidth);
+                        sendsStyle.caption = "Sends";
+                        row.ComboBox(NodeIds::kAppMidiOutSends,
+                                    std::move(sendsOptions),
+                                    selectedSends,
+                                    ui::Action::Named(Actions::kAppMidiOutSendsSelect),
+                                    sendsStyle);
+
+                        if (selectedContent == nullptr)
+                        {
+                            return;
+                        }
+
+                        ui::ControlStyle channelStyle = fieldControl(ControllersLayout::kVariantFieldWidth);
+                        channelStyle.caption = "Channel";
+                        row.TextField(NodeIds::kAppMidiOutChannel,
+                                      "Channel",
+                                      std::to_string(static_cast<int>(appMidiOutConfig.settings.channel)),
+                                      ui::Action::Named(Actions::kAppMidiOutChannelCommit),
+                                      channelStyle);
+
+                        if (selectedContent->kind == MidiControlType::Cc)
+                        {
+                            ui::ControlStyle ccStyle = fieldControl(ControllersLayout::kVariantFieldWidth);
+                            ccStyle.caption = "CC";
+                            row.TextField(NodeIds::kAppMidiOutCc,
+                                          "CC",
+                                          std::to_string(static_cast<int>(appMidiOutConfig.settings.ccNumber)),
+                                          ui::Action::Named(Actions::kAppMidiOutCcCommit),
+                                          ccStyle);
+                        }
+                        else
+                        {
+                            ui::ControlStyle velocityStyle = fieldControl(ControllersLayout::kVariantFieldWidth);
+                            velocityStyle.caption = "Velocity";
+                            const std::string velocityText =
+                                appMidiOutConfig.settings.velocity.has_value()
+                                    ? std::to_string(static_cast<int>(*appMidiOutConfig.settings.velocity))
+                                    : "Level";
+                            row.TextField(NodeIds::kAppMidiOutVelocity,
+                                          "Velocity",
+                                          velocityText,
+                                          ui::Action::Named(Actions::kAppMidiOutVelocityCommit),
+                                          velocityStyle);
+                        }
+                    });
+            });
         };
 
         const auto emitAvailable = [&](ui::Builder& scroll) {
@@ -2673,51 +3014,41 @@ private:
                                            NodeIds::ControllerRow(controllerIx) + ".input_port",
                                            portLayout,
                                            [&](ui::Builder& inputPort) {
-                                               ControllersLayout::EmitStatusDot(inputPort,
-                                                          NodeIds::ControllerInputStatus(controllerIx),
-                                                          rowVm.inputStatus);
-                                               std::string selectedInput;
                                                ui::ControlStyle inputStyle =
                                                    fieldControl(ControllersLayout::kEndpointFieldWidth);
                                                inputStyle.caption = "MIDI in";
-                                               inputPort.ComboBox(
+                                               ControllersLayout::EmitPortChoice(
+                                                   inputPort,
+                                                   NodeIds::ControllerInputStatus(controllerIx),
                                                    NodeIds::ControllerInput(controllerIx),
-                                                   ControllersLayout::BuildEndpointOptions(
-                                                       devices.inputs,
-                                                       rowVm.inputStatus,
-                                                       rowVm.storedInput,
-                                                       rowVm.inputDeviceLabel,
-                                                       selectedInput),
-                                                   selectedInput,
+                                                   devices.inputs,
+                                                   rowVm.inputStatus,
+                                                   rowVm.storedInput,
+                                                   rowVm.inputDeviceLabel,
+                                                   inputStyle,
                                                    ui::Action::WithValue(
                                                        Actions::kEndpointSelect,
-                                                       std::to_string(controllerIx) + ":input"),
-                                                   inputStyle);
+                                                       std::to_string(controllerIx) + ":input"));
                                            });
                                        endpoints.Row(
                                            NodeIds::ControllerRow(controllerIx) + ".output_port",
                                            portLayout,
                                            [&](ui::Builder& outputPort) {
-                                               ControllersLayout::EmitStatusDot(outputPort,
-                                                          NodeIds::ControllerOutputStatus(controllerIx),
-                                                          rowVm.outputStatus);
-                                               std::string selectedOutput;
                                                ui::ControlStyle outputStyle =
                                                    fieldControl(ControllersLayout::kEndpointFieldWidth);
                                                outputStyle.caption = "MIDI out";
-                                               outputPort.ComboBox(
+                                               ControllersLayout::EmitPortChoice(
+                                                   outputPort,
+                                                   NodeIds::ControllerOutputStatus(controllerIx),
                                                    NodeIds::ControllerOutput(controllerIx),
-                                                   ControllersLayout::BuildEndpointOptions(
-                                                       devices.outputs,
-                                                       rowVm.outputStatus,
-                                                       rowVm.storedOutput,
-                                                       rowVm.outputDeviceLabel,
-                                                       selectedOutput),
-                                                   selectedOutput,
+                                                   devices.outputs,
+                                                   rowVm.outputStatus,
+                                                   rowVm.storedOutput,
+                                                   rowVm.outputDeviceLabel,
+                                                   outputStyle,
                                                    ui::Action::WithValue(
                                                        Actions::kEndpointSelect,
-                                                       std::to_string(controllerIx) + ":output"),
-                                                   outputStyle);
+                                                       std::to_string(controllerIx) + ":output"));
                                            });
                                    });
                             row.Button(NodeIds::ControllerDelete(controllerIx),
@@ -2951,6 +3282,7 @@ private:
                                           ui::Action::Named(Actions::kAddController),
                                           button(72.0f, ControllersLayout::kAddRowHeight));
                            });
+                emitAppMidiOutSection(scroll);
             });
             page.StatusText(NodeIds::kStatus,
                             statusText.empty() ? "Ready" : statusText,
