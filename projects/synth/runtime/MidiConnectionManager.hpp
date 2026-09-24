@@ -188,7 +188,7 @@ class MidiConnectionManager {
 public:
     explicit MidiConnectionManager(synth::Engine<App>& engine,
                                    synth_juce::RuntimeMidiEpoch midiEpoch = {})
-        : engine_(engine), midiEpoch_(midiEpoch) {}
+        : engine_(engine), midiEpoch_(midiEpoch), appMidiOutHandler_(midiEpoch_) {}
 
     ~MidiConnectionManager() {
         // Shutdown ordering (binding): stop/join the
@@ -214,6 +214,15 @@ public:
                 }
                 outputHandlers_[ix]->Close();
             }
+        }
+        // Releases the standalone MIDI-out port the same way an edit to
+        // None/another port would: clears the sink, sends All Notes Off on
+        // every channel, then closes the handler.
+        if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
+            synth::ReleaseAppMidiOutPort(
+                *sender,
+                [this](const synth::BasicMidi& midi) { appMidiOutHandler_.Send(midi); },
+                [this] { appMidiOutHandler_.Close(); });
         }
     }
 
@@ -355,6 +364,22 @@ public:
         Reconcile(detail::EnumerateDevices());
     }
 
+    // Wired to engine.SetAppMidiOutPortChangedCallback (task 5, forwarded by
+    // Runtime): the stored MIDI-out port changed -- a port picked or
+    // cleared on the Controllers page, or a name-fallback write-back from
+    // this manager's own reconcile pass. Reconciles the app MIDI-out slot
+    // alone, with a fresh enumeration; the reconciler's own re-entry guard
+    // makes the write-back case (which calls this from inside the
+    // Reconcile that produced it) a no-op nested call, so no second pass
+    // starts.
+    void OnAppMidiOutPortChanged() {
+        appMidiOutReconciler_.OnPortChanged(engine_.AppMidiOutConfig().port, detail::EnumerateDevices(),
+                                            AppMidiOutOps());
+    }
+
+    // The slot's output status, for the Controllers page section (task 9).
+    synth::MidiEndpointStatus AppMidiOutStatus() const { return appMidiOutReconciler_.OutputStatus(); }
+
     const synth::MidiConnectionState& State() const { return state_; }
 
     synth::MidiDeviceList EnumerateNow() const { return detail::EnumerateDevices(); }
@@ -432,6 +457,43 @@ private:
     }
 
     static juce::String ToJuceString(const std::string& text) { return juce::String(text.c_str()); }
+
+    // The three AppMidiOutPortReconciler operations, bound to this
+    // manager's own handler and engine: open opens appMidiOutHandler_ and
+    // registers it as the sender's app MIDI-out sink; close releases the
+    // port (ReleaseAppMidiOutPort, never a bare handler close, so the sink
+    // is cleared and All Notes Off goes out first); write-back stores the
+    // matched device's reference through Engine::SetAppMidiOutConfig,
+    // never EditInstrument (the MIDI-out port is not a controller row).
+    synth::AppMidiOutPortOps AppMidiOutOps() {
+        synth::AppMidiOutPortOps ops;
+        ops.open = [this](const std::string& identifier) {
+            const bool opened = appMidiOutHandler_.Open(ToJuceString(identifier));
+            if (opened) {
+                if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
+                    sender->SetAppMidiOutSink(&appMidiOutHandler_);
+                }
+            }
+            return opened;
+        };
+        ops.close = [this] {
+            if (synth::MidiSender* sender = engine_.Context().midiSender; sender != nullptr) {
+                synth::ReleaseAppMidiOutPort(
+                    *sender,
+                    [this](const synth::BasicMidi& midi) { appMidiOutHandler_.Send(midi); },
+                    [this] { appMidiOutHandler_.Close(); });
+            } else {
+                appMidiOutHandler_.Close();
+            }
+        };
+        ops.writeBack = [this](const std::string& identifier, const std::string& name) {
+            synth::AppMidiOutConfig config = engine_.AppMidiOutConfig();
+            config.port.identifier = identifier;
+            config.port.name = name;
+            engine_.SetAppMidiOutConfig(config);
+        };
+        return ops;
+    }
 
     // Builds the MidiEndpointOps binding for this manager's handlers/engine,
     // runs PlanMidiReconciliation + ExecuteReconcilePlan against `present`,
@@ -518,6 +580,12 @@ private:
         }
         lastEnumerated_ = present;
         hasLastEnumerated_ = true;
+
+        // The MIDI-out port is its own one-slot plan, run after the
+        // controller plan on every pass (startup, device-list change,
+        // instrument rebuild) so it never shares an index, a handler vector
+        // entry or a device claim with a controller row.
+        appMidiOutReconciler_.Reconcile(engine_.AppMidiOutConfig().port, present, AppMidiOutOps());
     }
 
     bool OpenInput(std::size_t ix, const std::string& identifier) {
@@ -606,6 +674,12 @@ private:
 
     synth::Engine<App>& engine_;
     synth_juce::RuntimeMidiEpoch midiEpoch_;
+    // The app MIDI-out port's own handler and reconciler, outside
+    // inputHandlers_/outputHandlers_/state_ so the slot never shares an
+    // index, a handler vector entry or a device claim with a controller
+    // row (task 7).
+    synth_juce::MidiOutputHandler appMidiOutHandler_;
+    synth::AppMidiOutPortReconciler appMidiOutReconciler_;
 
     std::vector<std::unique_ptr<synth_juce::MidiInHandler>> inputHandlers_;
     std::vector<std::unique_ptr<synth_juce::MidiOutputHandler>> outputHandlers_;

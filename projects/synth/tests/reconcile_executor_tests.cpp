@@ -4,6 +4,8 @@
 #error "synth module tests must not see JUCE headers"
 #endif
 
+#include <atomic>
+#include <chrono>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -42,14 +44,44 @@ struct Register {
         } \
     } while (false)
 
+using synth::AppMidiOutPortOps;
+using synth::AppMidiOutPortReconciler;
+using synth::BasicMidi;
 using synth::ExecuteReconcilePlan;
+using synth::IMidiOutputSink;
 using synth::MidiConnectionState;
 using synth::MidiControllerConnection;
+using synth::MidiControllerSlot;
+using synth::MidiDeviceInfoRef;
+using synth::MidiDeviceList;
 using synth::MidiEndpointConnection;
 using synth::MidiEndpointOps;
+using synth::MidiEndpointRef;
 using synth::MidiEndpointStatus;
+using synth::MidiInstrumentConfig;
+using synth::MidiSender;
+using synth::PlanMidiReconciliation;
 using synth::ReconcileAction;
 using synth::ReconcilePlan;
+using synth::ReleaseAppMidiOutPort;
+using synth::ScheduledMidiEvent;
+using synth::ScheduledMidiEventKind;
+using synth::ScheduledMidiOrderingIntent;
+
+MidiEndpointRef Ref(std::string identifier, std::string name) {
+    MidiEndpointRef ref;
+    ref.identifier = std::move(identifier);
+    ref.name = std::move(name);
+    return ref;
+}
+
+MidiControllerSlot Slot(std::string name, MidiEndpointRef input, MidiEndpointRef output) {
+    MidiControllerSlot slot;
+    slot.name = std::move(name);
+    slot.input = std::move(input);
+    slot.output = std::move(output);
+    return slot;
+}
 
 MidiEndpointConnection Conn(MidiEndpointStatus status, std::string openIdentifier = {}) {
     MidiEndpointConnection conn;
@@ -545,6 +577,161 @@ TEST_CASE(tick_response_rebuild_pending_forces_reconcile_even_if_list_unchanged)
     // list.
     const auto response = PlanMidiTickResponse(/*pollerDirty=*/true, /*listChanged=*/false, /*rebuildPending=*/true);
     REQUIRE_TRUE(response.reconcile == true);
+}
+
+TEST_CASE(app_midi_out_port_changed_opens_the_new_port_once) {
+    std::vector<std::string> opened;
+    AppMidiOutPortOps ops;
+    ops.open = [&](const std::string& identifier) {
+        opened.push_back(identifier);
+        return true;
+    };
+    ops.close = [] {};
+    ops.writeBack = [](const std::string&, const std::string&) {};
+
+    MidiDeviceList present;
+    present.outputs.push_back({.identifier = "dev-1", .name = "Device One"});
+
+    AppMidiOutPortReconciler reconciler;
+    reconciler.OnPortChanged(Ref("dev-1", "Device One"), present, ops);
+
+    REQUIRE_TRUE(opened.size() == 1);
+    REQUIRE_TRUE(opened[0] == "dev-1");
+    REQUIRE_TRUE(reconciler.OutputStatus() == MidiEndpointStatus::Online);
+}
+
+TEST_CASE(app_midi_out_port_reconciler_re_entry_guard_prevents_a_nested_pass) {
+    int openCount = 0;
+    int writeBackCount = 0;
+    AppMidiOutPortReconciler reconciler;
+    MidiDeviceList present;
+    present.outputs.push_back({.identifier = "dev-new", .name = "Device One"});
+
+    AppMidiOutPortOps ops;
+    ops.close = [] {};
+    ops.open = [&](const std::string&) {
+        ++openCount;
+        return true;
+    };
+    ops.writeBack = [&](const std::string& identifier, const std::string& name) {
+        ++writeBackCount;
+        // The engine's SetAppMidiOutConfig write-back calls
+        // MidiConnectionManager::OnAppMidiOutPortChanged, which calls the
+        // reconciler's OnPortChanged again -- from inside this very
+        // Reconcile. The re-entry guard must make this a no-op.
+        reconciler.OnPortChanged(Ref(identifier, name), present, ops);
+    };
+
+    // A stale identifier; the present output's name still matches.
+    reconciler.Reconcile(Ref("dev-old", "Device One"), present, ops);
+
+    REQUIRE_TRUE(openCount == 1);
+    REQUIRE_TRUE(writeBackCount == 1);
+    REQUIRE_TRUE(reconciler.OutputStatus() == MidiEndpointStatus::Online);
+}
+
+TEST_CASE(app_midi_out_port_survives_device_absence_and_never_contends_with_a_controller_row) {
+    AppMidiOutPortReconciler reconciler;
+    std::vector<std::string> opened;
+    AppMidiOutPortOps ops;
+    ops.open = [&](const std::string& identifier) {
+        opened.push_back(identifier);
+        return true;
+    };
+    ops.close = [] {};
+    ops.writeBack = [](const std::string&, const std::string&) {};
+
+    MidiDeviceList present;
+    present.outputs.push_back({.identifier = "dev-1", .name = "Shared Device"});
+    const MidiEndpointRef port = Ref("dev-1", "Shared Device");
+
+    reconciler.Reconcile(port, present, ops);
+    REQUIRE_TRUE(reconciler.OutputStatus() == MidiEndpointStatus::Online);
+
+    // The device leaves the list.
+    reconciler.Reconcile(port, MidiDeviceList{}, ops);
+    REQUIRE_TRUE(reconciler.OutputStatus() == MidiEndpointStatus::Offline);
+
+    // The device returns.
+    reconciler.Reconcile(port, present, ops);
+    REQUIRE_TRUE(reconciler.OutputStatus() == MidiEndpointStatus::Online);
+    REQUIRE_TRUE(opened.size() == 2);
+    REQUIRE_TRUE(opened[0] == "dev-1");
+    REQUIRE_TRUE(opened[1] == "dev-1");
+
+    // Beside it: a controller row bound to the SAME device, reconciled
+    // through the existing planner directly. The MIDI-out slot must never
+    // share this MidiInstrumentConfig or contend with this row for the
+    // device -- the row's own plan opens its output, never a close caused
+    // by the MIDI-out slot.
+    MidiInstrumentConfig controllerInstrument;
+    controllerInstrument.controllers.push_back(Slot("Row1", MidiEndpointRef{}, Ref("dev-1", "Shared Device")));
+    MidiConnectionState controllerState;
+    const ReconcilePlan controllerPlan = PlanMidiReconciliation(controllerInstrument, present, controllerState);
+    bool controllerOpened = false;
+    for (const auto& action : controllerPlan.actions) {
+        if (action.type == ReconcileAction::Type::OpenOutput) {
+            controllerOpened = true;
+        }
+        REQUIRE_TRUE(action.type != ReconcileAction::Type::CloseOutput);
+    }
+    REQUIRE_TRUE(controllerOpened);
+
+    // The reconciler's own separate pass, run fresh against the same
+    // present list, still opens the MIDI-out slot's own output -- it never
+    // lost the device to the controller row above, because the two ran as
+    // two separate one-slot/one-instrument passes.
+    AppMidiOutPortReconciler independentReconciler;
+    opened.clear();
+    independentReconciler.Reconcile(port, present, ops);
+    REQUIRE_TRUE(independentReconciler.OutputStatus() == MidiEndpointStatus::Online);
+    REQUIRE_TRUE(opened.size() == 1);
+}
+
+TEST_CASE(release_app_midi_out_port_silences_it) {
+    struct RecordingSink final : IMidiOutputSink {
+        void Send(const BasicMidi& midi) override { received.push_back(midi); }
+        std::vector<BasicMidi> received;
+    } sink;
+
+    std::atomic<std::uint64_t> nowMicros{100'000};
+    MidiSender sender(16, [&nowMicros] { return nowMicros.load(std::memory_order_relaxed); });
+    sender.SetAppMidiOutSink(&sink);
+    sender.Start();
+
+    std::vector<BasicMidi> sent;
+    std::vector<std::string> order;
+    ReleaseAppMidiOutPort(
+        sender,
+        [&](const BasicMidi& midi) {
+            sent.push_back(midi);
+            order.push_back("send");
+        },
+        [&] { order.push_back("close"); });
+
+    REQUIRE_TRUE(sent.size() == 16);
+    for (int channel = 0; channel < 16; ++channel) {
+        const std::vector<std::uint8_t> expected{static_cast<std::uint8_t>(0xB0 + channel), 123, 0};
+        REQUIRE_TRUE(sent[static_cast<std::size_t>(channel)].raw == expected);
+    }
+    REQUIRE_TRUE(order.size() == 17);
+    REQUIRE_TRUE(order.back() == "close");
+
+    // The sender delivers nothing to the (now-cleared) sink after the call.
+    ScheduledMidiEvent event;
+    event.kind = ScheduledMidiEventKind::ChannelMessage;
+    event.orderingIntent = ScheduledMidiOrderingIntent::AppMessage;
+    event.broadcast = false;
+    event.dueTimeMicros = 50'000;
+    event.sequence = 1;
+    event.channelStatusByte = 0xB0;
+    event.channelData1 = 1;
+    event.channelData2 = 1;
+    event.targetSinkIx = MidiSender::kAppMidiOutSinkIx;
+    REQUIRE_TRUE(sender.TryEnqueue(event));
+    REQUIRE_TRUE(sender.FlushForTests(std::chrono::milliseconds(200)));
+    sender.Stop();
+    REQUIRE_TRUE(sink.received.empty());
 }
 
 int main() {

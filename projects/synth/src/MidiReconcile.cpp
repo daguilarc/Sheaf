@@ -326,4 +326,71 @@ MidiTickResponse PlanMidiTickResponse(bool pollerDirty, bool listChanged, bool r
     return response;
 }
 
+MidiInstrumentConfig AppMidiOutReconcileInstrument(const MidiEndpointRef& port) {
+    MidiControllerSlot slot;
+    slot.name = "app-midi-out";
+    slot.kind = MidiProfileKind::Generic;
+    slot.disposition = MidiControllerDisposition::Active;
+    slot.output = port;
+    MidiInstrumentConfig instrument;
+    instrument.controllers.push_back(std::move(slot));
+    return instrument;
+}
+
+void AppMidiOutPortReconciler::Reconcile(const MidiEndpointRef& port, const MidiDeviceList& present,
+                                         const AppMidiOutPortOps& ops) {
+    reconciling_ = true;
+    const MidiInstrumentConfig instrument = AppMidiOutReconcileInstrument(port);
+    const ReconcilePlan plan = PlanMidiReconciliation(instrument, present, state_);
+
+    MidiEndpointOps endpointOps;
+    endpointOps.openOutput = [&ops](std::size_t, const std::string& identifier) {
+        return ops.open ? ops.open(identifier) : false;
+    };
+    endpointOps.closeOutput = [&ops](std::size_t) {
+        if (ops.close) {
+            ops.close();
+        }
+    };
+    endpointOps.updateOutputRef = [&ops](std::size_t, const std::string& identifier, const std::string& name) {
+        if (ops.writeBack) {
+            ops.writeBack(identifier, name);
+        }
+    };
+    // resync and every input operation are left unset (map to nothing): the
+    // one-slot instrument has no input to reconcile, and nothing here
+    // resyncs feedback state.
+
+    state_ = ExecuteReconcilePlan(plan, state_, endpointOps);
+    reconciling_ = false;
+}
+
+void AppMidiOutPortReconciler::OnPortChanged(const MidiEndpointRef& port, const MidiDeviceList& present,
+                                             const AppMidiOutPortOps& ops) {
+    if (reconciling_) {
+        return;
+    }
+    Reconcile(port, present, ops);
+}
+
+MidiEndpointStatus AppMidiOutPortReconciler::OutputStatus() const noexcept {
+    if (state_.controllers.empty()) {
+        return MidiEndpointStatus::Unconfigured;
+    }
+    return state_.controllers[0].output.status;
+}
+
+void ReleaseAppMidiOutPort(MidiSender& sender, const std::function<void(const BasicMidi&)>& send,
+                           const std::function<void()>& close) {
+    sender.ClearAppMidiOutSinkSync();
+    for (int channel = 0; channel < 16; ++channel) {
+        if (send) {
+            send(BasicMidi::CC(0, static_cast<std::uint8_t>(channel), 123, 0));
+        }
+    }
+    if (close) {
+        close();
+    }
+}
+
 } // namespace synth

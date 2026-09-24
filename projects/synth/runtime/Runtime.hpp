@@ -144,6 +144,15 @@ public:
                 onMidiProcessorsRebuilt_();
             }
         });
+
+        // The engine invokes this (on the message thread, from
+        // SetAppMidiOutConfig) whenever the stored MIDI-out port changes,
+        // whether routing is enabled or not: a port chosen or cleared on
+        // the Controllers page, or this manager's own name-fallback
+        // write-back. Forwarding straight to midiConnections_ is safe here
+        // for the same reason as the two callbacks above -- it is
+        // constructed earlier in this same initializer list.
+        engine_.SetAppMidiOutPortChangedCallback([this] { midiConnections_->OnAppMidiOutPortChanged(); });
     }
 
     ~Runtime() override {
@@ -229,6 +238,11 @@ public:
         // is parameter-only and never fires this callback.
         engine_.SetAudioDeviceChangedCallback([this] { OnEngineAudioDeviceChanged(); });
 
+        // Before Initialize() (sar-37/sar-36): so the loaded MIDI-out
+        // setting reaches the app's callback during Initialize() itself,
+        // and the per-block routing loop is active from the first
+        // ProcessBlock.
+        engine_.EnableAppMidiOutRouting();
         engine_.Initialize();
         INFO("Runtime started: %s", appConfig.appName.c_str());
         const synth::RuntimeConfig& config = engine_.Config();

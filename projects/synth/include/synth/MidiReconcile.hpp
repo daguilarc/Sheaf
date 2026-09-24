@@ -276,4 +276,55 @@ struct MidiTickResponse {
 
 MidiTickResponse PlanMidiTickResponse(bool pollerDirty, bool listChanged, bool rebuildPending);
 
+// Builds the one-slot instrument the app MIDI-out port reconciles as: one
+// Active slot whose output is `port` and whose input is unconfigured. The
+// slot never shares an index, a handler vector entry or a device claim with
+// a controller row -- it is reconciled through its own separate
+// PlanMidiReconciliation/ExecuteReconcilePlan pass (see
+// AppMidiOutPortReconciler below), never folded into a controller
+// instrument's own plan.
+MidiInstrumentConfig AppMidiOutReconcileInstrument(const MidiEndpointRef& port);
+
+// The three operations the MIDI-out port reconciler's owner supplies: open
+// (an identifier; returns whether it opened), close, and write-back (the
+// matched device's identifier and name, from a name-fallback match).
+struct AppMidiOutPortOps {
+    std::function<bool(const std::string& identifier)> open;
+    std::function<void()> close;
+    std::function<void(const std::string& identifier, const std::string& name)> writeBack;
+};
+
+// JUCE-free MIDI-out port reconciler: the one construct the standalone
+// MidiConnectionManager and the browser bridge (task 8) each own one of, so
+// the guard, the port-change path and the release sequence are tested
+// without JUCE. Keeps a one-entry MidiConnectionState for the slot and a
+// re-entry flag.
+class AppMidiOutPortReconciler {
+public:
+    // Sets the re-entry flag; builds the one-slot instrument from `port`;
+    // runs the existing PlanMidiReconciliation/ExecuteReconcilePlan
+    // unchanged, with MidiEndpointOps mapping the output open/close/ref
+    // update to `ops`'s open/close/writeBack and resync and every input
+    // operation to nothing; stores the returned state; clears the flag.
+    void Reconcile(const MidiEndpointRef& port, const MidiDeviceList& present, const AppMidiOutPortOps& ops);
+    // Returns at once while Reconcile is already running (the re-entry
+    // guard: a write-back's own call into this, from inside the Reconcile
+    // that produced it, starts no second pass); otherwise calls Reconcile
+    // with the same arguments.
+    void OnPortChanged(const MidiEndpointRef& port, const MidiDeviceList& present, const AppMidiOutPortOps& ops);
+    // The slot's output status, for the Controllers page section (task 9).
+    MidiEndpointStatus OutputStatus() const noexcept;
+
+private:
+    MidiConnectionState state_;
+    bool reconciling_ = false;
+};
+
+// Releases the standalone or browser MIDI-out port (sar-36): clears the
+// sender's app MIDI-out sink first (so no further app message can reach the
+// port being closed), then sends Control Change 123 value 0 on status-byte
+// channels 0 to 15, in that order, through `send`, then calls `close`.
+void ReleaseAppMidiOutPort(MidiSender& sender, const std::function<void(const BasicMidi&)>& send,
+                           const std::function<void()>& close);
+
 } // namespace synth
