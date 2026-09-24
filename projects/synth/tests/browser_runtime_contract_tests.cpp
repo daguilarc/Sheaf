@@ -2451,7 +2451,7 @@ void TestBrowserRuntimeMainServicesCommitSaveReloadRoutesAppMidiOut()
     std::filesystem::remove_all(dataRoot);
 }
 
-// sbw-13 (coordinator ruling, from task M6): MidiSender::Start() must run
+// sbw-13: MidiSender::Start() must run
 // only on the main thread, never lazily from inside the AudioWorklet
 // callback -- spawning a pthread there is not a safe call under
 // -sPTHREAD_POOL_SIZE=1 and silently stops the worklet. Reads IsRunning()

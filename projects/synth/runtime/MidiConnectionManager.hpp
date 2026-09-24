@@ -377,7 +377,7 @@ public:
                                             AppMidiOutOps());
     }
 
-    // The slot's output status, for the Controllers page section (task 9).
+    // The slot's output status, for the Controllers page section.
     synth::MidiEndpointStatus AppMidiOutStatus() const { return appMidiOutReconciler_.OutputStatus(); }
 
     const synth::MidiConnectionState& State() const { return state_; }
@@ -677,7 +677,7 @@ private:
     // The app MIDI-out port's own handler and reconciler, outside
     // inputHandlers_/outputHandlers_/state_ so the slot never shares an
     // index, a handler vector entry or a device claim with a controller
-    // row (task 7).
+    // row.
     synth_juce::MidiOutputHandler appMidiOutHandler_;
     synth::AppMidiOutPortReconciler appMidiOutReconciler_;
 

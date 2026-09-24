@@ -295,10 +295,10 @@ struct AppMidiOutPortOps {
 };
 
 // JUCE-free MIDI-out port reconciler: the one construct the standalone
-// MidiConnectionManager and the browser bridge (task 8) each own one of, so
-// the guard, the port-change path and the release sequence are tested
-// without JUCE. Keeps a one-entry MidiConnectionState for the slot and a
-// re-entry flag.
+// MidiConnectionManager and the browser bridge each own one of, so the
+// guard, the port-change path and the release sequence are tested without
+// JUCE. Keeps a one-entry MidiConnectionState for the slot and a re-entry
+// flag.
 class AppMidiOutPortReconciler {
 public:
     // Sets the re-entry flag; builds the one-slot instrument from `port`;
@@ -312,7 +312,7 @@ public:
     // that produced it, starts no second pass); otherwise calls Reconcile
     // with the same arguments.
     void OnPortChanged(const MidiEndpointRef& port, const MidiDeviceList& present, const AppMidiOutPortOps& ops);
-    // The slot's output status, for the Controllers page section (task 9).
+    // The slot's output status, for the Controllers page section.
     MidiEndpointStatus OutputStatus() const noexcept;
 
 private:

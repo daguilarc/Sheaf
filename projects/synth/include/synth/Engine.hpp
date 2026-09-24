@@ -764,8 +764,8 @@ public:
     // into the sender (sar-37): each entry becomes a scheduled channel
     // message to MidiSender::kAppMidiOutSinkIx. Must be called before
     // Initialize() -- Runtime::Start and synth_browser::Runtime::Start do
-    // this immediately before engine_.Initialize() -- because task 5's
-    // delivery of the MIDI-out setting to the app depends on that order.
+    // this immediately before engine_.Initialize() -- because delivering
+    // the MIDI-out setting to the app depends on that order.
     // Called after Initialize(), it changes nothing and logs that it was
     // ignored. A host that never calls this (a plugin) reads
     // AppMidiOutEvents() itself instead.
@@ -801,9 +801,9 @@ public:
             appMidiOutPortChangedCallback_();
         }
     }
-    // Host hook (task 7 registers it, the standalone's connection manager):
-    // called on the message thread from SetAppMidiOutConfig whenever the
-    // stored MIDI-out port changes, whether routing is enabled or not.
+    // Host hook (registered by the standalone's connection manager): called
+    // on the message thread from SetAppMidiOutConfig whenever the stored
+    // MIDI-out port changes, whether routing is enabled or not.
     void SetAppMidiOutPortChangedCallback(std::function<void()> callback) {
         appMidiOutPortChangedCallback_ = std::move(callback);
     }

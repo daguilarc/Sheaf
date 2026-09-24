@@ -394,7 +394,7 @@ private:
     EngineType& engine_;
     // The app MIDI-out port's own sink and reconciler, outside
     // outputSinks_/state_ so the slot never shares an index or a device
-    // claim with a controller row (task 7/task 8).
+    // claim with a controller row.
     std::unique_ptr<OutputSink> appMidiOutSink_;
     synth::AppMidiOutPortReconciler appMidiOutReconciler_;
     synth::MidiDeviceList latestDeviceList_;
