@@ -3,6 +3,7 @@
 #include "synth/ControllerWizard.hpp"
 #include "synth/ControllersPageUI.hpp"
 #include "synth/MidiAppCatalog.hpp"
+#include "synth/PatchPersistence.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1963,10 +1964,6 @@ bool IsNonNegativeInteger(double value) {
     const double maxSizeT = static_cast<double>(std::numeric_limits<std::size_t>::max());
     const double upperBound = std::min(kMaxSafeInteger, maxSizeT);
     return std::isfinite(value) && value >= 0.0 && value == std::floor(value) && value <= upperBound;
-}
-
-bool IsIntegerInRange(double value, double lo, double hi) {
-    return std::isfinite(value) && value == std::floor(value) && value >= lo && value <= hi;
 }
 
 }  // namespace

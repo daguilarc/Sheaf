@@ -226,16 +226,9 @@ bool FromJSON(JSON json, AppMidiOutConfig& config) {
     return true;
 }
 
-namespace {
-
-// Same check as MidiConfigViewModel.cpp's local IsIntegerInRange (the
-// controller rows' own field validation); kept local here since the two
-// files share no validation header.
 bool IsIntegerInRange(double value, double lo, double hi) {
     return std::isfinite(value) && value == std::floor(value) && value >= lo && value <= hi;
 }
-
-}  // namespace
 
 std::optional<std::uint8_t> ParseAppMidiOutChannel(double value) {
     if (!IsIntegerInRange(value, 0.0, 15.0)) {

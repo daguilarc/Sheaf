@@ -71,6 +71,11 @@ std::optional<std::uint8_t> ParseAppMidiOutChannel(double value);
 std::optional<std::uint8_t> ParseAppMidiOutCcNumber(double value);
 std::optional<std::optional<std::uint8_t>> ParseAppMidiOutVelocity(std::string_view value);
 
+// Whether `value` is a finite integer within [lo, hi] inclusive -- the one
+// definition every integer-field bound above and MidiConfigViewModel.cpp's
+// own controller-row field validation both call.
+bool IsIntegerInRange(double value, double lo, double hi);
+
 // lastPatchVersion is the patch version file the player last opened or
 // saved, relative to the patches root, as a player-facing record separate
 // from the instrument/audio/sync state above: absent (nullopt) means a
