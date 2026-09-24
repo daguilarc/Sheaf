@@ -54,6 +54,9 @@ enum class ScheduledMidiEventKind : std::uint8_t {
     Start,
     Continue,
     Stop,
+    // An app-originated channel message (status + up to two data bytes),
+    // routed to the MIDI-out sink only. Never broadcast.
+    ChannelMessage,
 };
 
 // At equal deadlines a consumer applies generation invalidation first, then
@@ -63,6 +66,9 @@ enum class ScheduledMidiOrderingIntent : std::uint8_t {
     GenerationCutoff,
     Transport,
     Clock,
+    // An app channel message never gates or is gated by clock/transport
+    // ordering; it participates in ordering only for its own tie-break.
+    AppMessage,
 };
 
 struct ScheduledMidiEvent {
@@ -77,6 +83,12 @@ struct ScheduledMidiEvent {
     // Nonzero only for PhaseGenerationCutoff.
     std::uint64_t invalidatedPhaseGeneration = 0;
     std::uint64_t phaseCutoffDueTimeMicros = 0;
+    // ChannelMessage only: the three MIDI bytes (status, data1, data2) and
+    // the sink this event targets (MidiSender::kAppMidiOutSinkIx today).
+    std::uint8_t channelStatusByte = 0;
+    std::uint8_t channelData1 = 0;
+    std::uint8_t channelData2 = 0;
+    std::size_t targetSinkIx = 0;
 
     constexpr std::uint8_t MidiStatusByte() const noexcept {
         switch (kind) {
@@ -88,6 +100,8 @@ struct ScheduledMidiEvent {
             return 0xFB;
         case ScheduledMidiEventKind::Stop:
             return 0xFC;
+        case ScheduledMidiEventKind::ChannelMessage:
+            return channelStatusByte;
         case ScheduledMidiEventKind::PhaseGenerationCutoff:
             return 0;
         }
@@ -365,6 +379,10 @@ public:
         return timeMapper_.SampleAtTimestamp(timestampMicros);
     }
     const AudioSampleTimeMapper& TimeMapper() const noexcept { return timeMapper_; }
+    // Maps an absolute output-sample position to the due time (host output
+    // microseconds) an app-originated MIDI-out event at that sample should
+    // carry. Reachable from Engine through Clock(); unchanged body.
+    std::optional<std::uint64_t> DueTimeAtSample(double sample) const noexcept;
 
 private:
     struct ExternalEstimatorState {
@@ -422,7 +440,6 @@ private:
         double phaseAtStart,
         double quarterNotesPerSample,
         std::size_t& remainingCandidateIterations) noexcept;
-    std::optional<std::uint64_t> DueTimeAtSample(double sample) const noexcept;
     std::optional<std::uint64_t> DueTimeFromTimestamp(std::uint64_t timestampMicros) const noexcept;
     bool EnqueueScheduledEvent(
         ScheduledMidiEventKind kind,
