@@ -11,6 +11,7 @@
 #endif
 
 #include <cstddef>
+#include <chrono>
 #include <cmath>
 #include <deque>
 #include <filesystem>
@@ -2320,6 +2321,136 @@ void TestBrowserRuntimeDequeuesQueuedFileExportsInOrder()
             "the queue is empty once both exports have been dequeued");
 }
 
+struct AppMidiOutEndToEndSink final : synth::IMidiOutputSink
+{
+    synth::MidiSchedulingCapability SchedulingCapability() const noexcept override
+    {
+        return synth::MidiSchedulingCapability::HostTimestamped;
+    }
+    void Send(const synth::BasicMidi& midi) override { delivered.push_back(midi); }
+    void SendScheduled(const synth::BasicMidi& midi, std::uint64_t) override { delivered.push_back(midi); }
+
+    std::vector<synth::BasicMidi> delivered;
+};
+
+// Minimal app for the sar-36/sar-37 end-to-end test below: records every
+// settings-changed notification and appends exactly one app MIDI-out event on
+// its first ProcessBlock only, so a second, timestamp-advancing block (needed
+// to make the first block's already-computed due time actually due) enqueues
+// nothing further.
+struct AppMidiOutEndToEndApp
+{
+    static inline std::vector<synth::AppMidiOutSettings> receivedSettings;
+    static inline int processBlockCalls = 0;
+
+    static synth::RuntimeConfig Config()
+    {
+        synth::RuntimeConfig config;
+        config.appName = "AppMidiOutEndToEndApp";
+        return config;
+    }
+    void Init(synth::AppContext* context)
+    {
+        context->SetAppMidiOutSettingsChangedCallback(
+            [](const synth::AppMidiOutSettings& settings) { receivedSettings.push_back(settings); });
+    }
+    void ProcessBlock(synth::AudioBlock& block)
+    {
+        ++processBlockCalls;
+        if (processBlockCalls == 1)
+        {
+            block.midiOut->Append({.frame = 0, .statusByte = 0xB0, .data1 = 7, .data2 = 100});
+        }
+    }
+    synth::ui::Surface& PortableSurface() { return surface; }
+
+    ContractSurface surface;
+};
+
+// End-to-end sar-36/sar-37/sru-71 coverage: drives the real Controllers-page
+// commit callback that BrowserRuntimeMainServices wires (not
+// Engine::SetAppMidiOutConfig() called directly) through a real browser
+// Runtime's Start(), across a save and a reload, and confirms delivery at the
+// MIDI-out sink. This is the seam a no-op commitAppMidiOut callback, an
+// appMidiOutConfig_ dropped from load or save, EnableAppMidiOutRouting()
+// removed from Start(), or a settingsChanged comparison narrowed to contentId
+// alone would each break.
+void TestBrowserRuntimeMainServicesCommitSaveReloadRoutesAppMidiOut()
+{
+    const std::filesystem::path dataRoot =
+        std::filesystem::temp_directory_path() / "browser-runtime-app-midi-out-e2e";
+    std::filesystem::remove_all(dataRoot);
+    const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
+    AppMidiOutEndToEndApp::receivedSettings.clear();
+
+    {
+        AppMidiOutEndToEndApp::processBlockCalls = 0;
+        synth_browser::Runtime<AppMidiOutEndToEndApp> runtime;
+        runtime.SetRuntimeDataPaths(paths);
+        runtime.Start();
+        Require(AppMidiOutEndToEndApp::receivedSettings.size() == 1,
+                "Start() hands the app the loaded (default) MIDI-out setting exactly once");
+
+        AppMidiOutEndToEndSink sink;
+        runtime.Engine().Context().midiSender->SetAppMidiOutSink(&sink);
+
+        // The real Controllers-page action names, dispatched through the
+        // browser Runtime's shared action routing -- the same path a player's
+        // click takes, not a direct Engine::SetAppMidiOutConfig() call.
+        runtime.DispatchAction("runtime.controllers.app_midi_out.sends_select", "level");
+        Require(AppMidiOutEndToEndApp::receivedSettings.size() == 2 &&
+                    AppMidiOutEndToEndApp::receivedSettings.back().contentId == "level",
+                "the real page commit reaches the app's settings-changed callback");
+
+        runtime.DispatchAction("runtime.controllers.app_midi_out.channel_commit", "5");
+        Require(AppMidiOutEndToEndApp::receivedSettings.size() == 3 &&
+                    AppMidiOutEndToEndApp::receivedSettings.back().channel == 5,
+                "a channel-only edit still notifies the app, not only a content-id switch");
+
+        runtime.Prepare(48000.0, 32);
+        runtime.Process(nullptr, 0, 32, 1'000);
+        // Advances the sender's own notion of "now" well past the first
+        // block's already-computed due time; the app appends nothing on this
+        // second call (processBlockCalls != 1).
+        runtime.Process(nullptr, 0, 32, 301'000);
+        Require(runtime.Engine().Context().midiSender->FlushForTests(std::chrono::milliseconds(1000)),
+                "the routed app message drains before the deadline");
+        Require(sink.delivered.size() == 1, "the app's message reaches the installed MIDI-out sink");
+        Require(sink.delivered[0].raw == (std::vector<std::uint8_t>{0xB0, 7, 100}),
+                "the delivered bytes are the ones the app appended");
+
+        runtime.Stop();
+    }
+
+    // A fresh Runtime over the same data root: the committed setting must
+    // survive through Engine::LoadRuntimeConfiguration and keep routing.
+    {
+        AppMidiOutEndToEndApp::processBlockCalls = 0;
+        synth_browser::Runtime<AppMidiOutEndToEndApp> runtime;
+        runtime.SetRuntimeDataPaths(paths);
+        runtime.Start();
+
+        Require(runtime.Engine().AppMidiOutConfig().settings.contentId == "level",
+                "the saved content id survives a reload");
+        Require(runtime.Engine().AppMidiOutConfig().settings.channel == 5,
+                "the saved channel survives a reload");
+
+        AppMidiOutEndToEndSink sink;
+        runtime.Engine().Context().midiSender->SetAppMidiOutSink(&sink);
+        runtime.Prepare(48000.0, 32);
+        runtime.Process(nullptr, 0, 32, 2'000);
+        runtime.Process(nullptr, 0, 32, 302'000);
+        Require(runtime.Engine().Context().midiSender->FlushForTests(std::chrono::milliseconds(1000)),
+                "the reloaded configuration still routes before the deadline");
+        Require(sink.delivered.size() == 1,
+                "a reloaded configuration keeps routing to the MIDI-out sink");
+
+        runtime.Stop();
+    }
+
+    std::filesystem::remove_all(dataRoot);
+}
+
 // sbw-13 (coordinator ruling, from task M6): MidiSender::Start() must run
 // only on the main thread, never lazily from inside the AudioWorklet
 // callback -- spawning a pthread there is not a safe call under
@@ -2399,6 +2530,7 @@ int main()
     TestMidiOutputDescriptorHasStableWasmLayout();
     TestMidiDiagnosticsDescriptorAndTimestampEpochOffsetContract();
     TestBrowserRuntimeDequeuesQueuedFileExportsInOrder();
+    TestBrowserRuntimeMainServicesCommitSaveReloadRoutesAppMidiOut();
     TestMidiSenderStartsOnlyOnTheMainThread();
     return 0;
 }
