@@ -2352,6 +2352,68 @@ void TestAppMidiOutOutOfRangeEntryIsRefused()
             "the controller rows' own channel refusal message is reused");
 }
 
+void TestAppMidiOutCcCommitLandsAndSavesOnce()
+{
+    TestHarness harness;
+    harness.appMidiOutContents = MakeAppMidiOutContents();
+    harness.appMidiOutConfig.settings.contentId = "level";
+    harness.appMidiOutConfig.settings.ccNumber = 3;
+    auto surface = harness.MakeSurface();
+    surface.SetEnumerateDevices(harness.devices);
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    const std::size_t commitsBefore = harness.appMidiOutCommits.size();
+    const int savesBefore = harness.saves;
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAppMidiOutCcCommit, "20"));
+    Require(harness.appMidiOutCommits.size() == commitsBefore + 1, "a CC edit commits exactly once");
+    Require(harness.saves == savesBefore + 1, "a CC edit saves exactly once");
+    Require(harness.appMidiOutConfig.settings.ccNumber == 20, "the committed CC number lands");
+}
+
+void TestAppMidiOutCcOutOfRangeEntryIsRefused()
+{
+    TestHarness harness;
+    harness.appMidiOutContents = MakeAppMidiOutContents();
+    harness.appMidiOutConfig.settings.contentId = "level";
+    harness.appMidiOutConfig.settings.ccNumber = 3;
+    auto surface = harness.MakeSurface();
+    surface.SetEnumerateDevices(harness.devices);
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    const std::size_t commitsBefore = harness.appMidiOutCommits.size();
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAppMidiOutCcCommit, "128"));
+    Require(harness.appMidiOutCommits.size() == commitsBefore, "an out-of-range CC number is never committed");
+    Require(harness.appMidiOutConfig.settings.ccNumber == 3, "the stored CC number is unchanged");
+    Require(harness.status == "Refused: CC number must be an integer 0-127",
+            "the CC field's own refusal message names its range");
+}
+
+void TestAppMidiOutVelocityOutOfRangeEntryIsRefused()
+{
+    TestHarness harness;
+    harness.appMidiOutContents = MakeAppMidiOutContents();
+    harness.appMidiOutConfig.settings.contentId = "pitch";
+    harness.appMidiOutConfig.settings.velocity = 40;
+    auto surface = harness.MakeSurface();
+    surface.SetEnumerateDevices(harness.devices);
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    const std::size_t commitsBefore = harness.appMidiOutCommits.size();
+    surface.DispatchAction(
+        synth::ui::Action::WithValue(synth::runtime_ui::Actions::kAppMidiOutVelocityCommit, "0"));
+    Require(harness.appMidiOutCommits.size() == commitsBefore, "a fixed velocity of 0 is never committed");
+    Require(harness.appMidiOutConfig.settings.velocity.has_value() &&
+                *harness.appMidiOutConfig.settings.velocity == 40,
+            "the stored velocity is unchanged");
+    Require(harness.status == "Refused: velocity must be \"Level\" or an integer 1-127",
+            "the velocity field's own refusal message names its range");
+}
+
 void TestAppMidiOutOfflinePortIsShownOfflineAndKept()
 {
     TestHarness harness;
@@ -2481,6 +2543,9 @@ int main()
     TestAppMidiOutSectionShowsOffAndNoneByDefault();
     TestAppMidiOutFieldsFollowTheChosenContent();
     TestAppMidiOutOutOfRangeEntryIsRefused();
+    TestAppMidiOutCcCommitLandsAndSavesOnce();
+    TestAppMidiOutCcOutOfRangeEntryIsRefused();
+    TestAppMidiOutVelocityOutOfRangeEntryIsRefused();
     TestAppMidiOutOfflinePortIsShownOfflineAndKept();
     TestAppMidiOutCommittedEditIsSavedAtOnce();
     TestAppMidiOutDeclaredContentsAreOfferedAfterOff();
