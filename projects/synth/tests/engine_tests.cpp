@@ -4295,8 +4295,8 @@ TEST_CASE(app_midi_out_port_changed_callback_fires_only_when_the_port_changes) {
     REQUIRE_TRUE(portChangedCount == 0);
 
     // The one call a real host wires this callback to (MidiConnectionManager
-    // ::OnAppMidiOutPortChanged, which reconciles the port -- A5): a port
-    // edit must fire it.
+    // ::OnAppMidiOutPortChanged, which reconciles the port): a port edit
+    // must fire it.
     synth::AppMidiOutConfig portChanged = engine.AppMidiOutConfig();
     portChanged.port = synth::MidiEndpointRef{.identifier = "dev-1", .name = "Device One"};
     engine.SetAppMidiOutConfig(portChanged);

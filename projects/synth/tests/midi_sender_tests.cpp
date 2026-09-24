@@ -483,11 +483,10 @@ TEST_CASE(equal_deadline_delivers_transport_and_clock_before_an_app_message) {
 
     // Same due time (30,000) for all three, and the app message enqueued
     // first: a tie-break that fell back to sequence alone (ignoring
-    // orderingIntent) would deliver it before the clock, not after -- this
-    // is the InsertPending path attacker B found untested (equal-deadline
-    // realtime-vs-realtime is covered by
-    // equal_deadline_orders_transport_before_clock_then_sequence, never an
-    // app message against either).
+    // orderingIntent) would deliver it before the clock, not after.
+    // equal_deadline_orders_transport_before_clock_then_sequence covers
+    // equal-deadline realtime-vs-realtime; this covers an app message
+    // against either.
     REQUIRE_TRUE(sender.TryEnqueue(AppChannelMessageEvent(30'000, 1, MidiSender::kAppMidiOutSinkIx)));
     REQUIRE_TRUE(sender.TryEnqueue(RealtimeEvent(
         ScheduledMidiEventKind::TimingClock, 30'000, 2, 5)));
