@@ -11,6 +11,11 @@ import { SUPPORTED_UI_PROTOCOL_VERSION } from "./protocol-versions.js";
 export const COMMAND_BUFFER_VERSION = SUPPORTED_UI_PROTOCOL_VERSION;
 
 export type MidiEndpoint = { identifier: string; name: string; kind: "input" | "output" };
+// Keys the app's one MIDI out in the same controllerIx-shaped fields actions
+// and outbound messages already carry, at a value no controller slot's
+// index can take: mirrors BrowserMidiBridge.hpp's kAppMidiOutBridgeKey
+// (std::numeric_limits<std::uint32_t>::max()).
+export const APP_MIDI_OUT_KEY = 0xFFFFFFFF;
 // Mirrors `synth_browser::BrowserAudioDevice` (BrowserAudioDevices.hpp), one
 // entry from `navigator.mediaDevices.enumerateDevices()` carried across
 // `synth_browser_submit_audio_devices`. `deviceId` and `label` are submitted

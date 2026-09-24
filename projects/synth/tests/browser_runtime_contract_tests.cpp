@@ -2320,6 +2320,36 @@ void TestBrowserRuntimeDequeuesQueuedFileExportsInOrder()
             "the queue is empty once both exports have been dequeued");
 }
 
+// sbw-13 (coordinator ruling, from task M6): MidiSender::Start() must run
+// only on the main thread, never lazily from inside the AudioWorklet
+// callback -- spawning a pthread there is not a safe call under
+// -sPTHREAD_POOL_SIZE=1 and silently stops the worklet. Reads IsRunning()
+// the moment Start() returns, before any Prepare or block: a build that
+// moved BrowserMidiBridge::Start() into the first
+// ProcessAudioWorkletPlanarBlock call would fail here, since a guard read
+// inside the callback itself cannot fail -- the callback returns before
+// processing until Start() has set started_, which it does only after the
+// bridge has started the sender.
+void TestMidiSenderStartsOnlyOnTheMainThread()
+{
+    synth_browser::Runtime<BrowserCallbackProbeApp> runtime;
+    runtime.Start();
+    Require(runtime.Engine().Context().midiSender != nullptr, "engine context exposes the sender");
+    Require(runtime.Engine().Context().midiSender->IsRunning(),
+            "the sender is running immediately after Start() returns, before any Prepare or block");
+
+    std::array<float, 8> outputs{};
+    synth_browser::BrowserAudioSampleFrameDescriptor outputDescriptor{
+        .numberOfChannels = 2,
+        .samplesPerChannel = 4,
+        .data = outputs.data(),
+    };
+    Require(runtime.ProcessAudioWorkletPlanarBlock(0, nullptr, 1, &outputDescriptor, 10),
+            "browser runtime processes one planar AudioWorklet block");
+    Require(runtime.Engine().Context().midiSender->IsRunning(),
+            "the sender is still running after a block runs");
+}
+
 }  // namespace
 
 int main()
@@ -2369,5 +2399,6 @@ int main()
     TestMidiOutputDescriptorHasStableWasmLayout();
     TestMidiDiagnosticsDescriptorAndTimestampEpochOffsetContract();
     TestBrowserRuntimeDequeuesQueuedFileExportsInOrder();
+    TestMidiSenderStartsOnlyOnTheMainThread();
     return 0;
 }

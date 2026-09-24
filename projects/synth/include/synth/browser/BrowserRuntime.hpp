@@ -399,6 +399,11 @@ public:
     void Start()
     {
         RequireNotStarted();
+        // Before Initialize() (sar-37/sar-36): so the loaded MIDI-out
+        // setting reaches the app's callback during Initialize() itself,
+        // and the per-block routing loop is active from the first
+        // ProcessAudioWorkletPlanarBlock.
+        engine_.EnableAppMidiOutRouting();
         engine_.Initialize();
         midiBridge_.Start();
         started_.store(true, std::memory_order_release);

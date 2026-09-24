@@ -61,12 +61,15 @@ public:
     }
     void ResetMidiOutputProcessors(std::size_t ix) { resetSlots.push_back(ix); }
     synth::AppContext& Context() { return context; }
+    synth::AppMidiOutConfig AppMidiOutConfig() const { return appMidiOutConfig; }
+    void SetAppMidiOutConfig(const synth::AppMidiOutConfig& config) { appMidiOutConfig = config; }
 
     synth::MidiInstrumentConfig instrument;
     std::vector<RecordingProcessor> inputs;
     std::vector<std::size_t> resetSlots;
     std::atomic<std::uint64_t> nowMicros{10'000};
     synth::MidiSender sender;
+    synth::AppMidiOutConfig appMidiOutConfig;
 
 private:
     synth::AppContext context;
@@ -567,6 +570,126 @@ void TestDeviceListRevisionChangesOnlyWhenEndpointSnapshotChanges()
             "identical endpoint submission does not signal again");
 }
 
+void TestSubmitEndpointsOpensTheAppMidiOutPortOnce()
+{
+    FakeEngine engine;
+    engine.appMidiOutConfig.port = Ref("out-a", "Output A");
+    Bridge bridge(engine);
+    bridge.Start();
+
+    bridge.SubmitEndpoints(Endpoints());
+    std::vector<Bridge::Action> actions;
+    while (const auto action = bridge.DequeueAction()) {
+        actions.push_back(*action);
+    }
+
+    std::size_t appMidiOutOpens = 0;
+    std::size_t controllerOpens = 0;
+    for (const auto& action : actions) {
+        if (action.type == Bridge::ActionType::OpenOutput) {
+            if (action.controllerIx == Bridge::kAppMidiOutBridgeKey) {
+                ++appMidiOutOpens;
+                Require(action.identifier == "out-a", "app MIDI-out open carries the matched identifier");
+            } else {
+                ++controllerOpens;
+            }
+        }
+    }
+    Require(appMidiOutOpens == 1, "exactly one open-output action for the app MIDI-out port");
+    Require(controllerOpens == 0, "no controller slot is configured, so no controller open");
+
+    bridge.Stop();
+}
+
+void TestAppMidiOutMessageComesOutUnderTheBridgeKey()
+{
+    FakeEngine engine;
+    engine.appMidiOutConfig.port = Ref("out-a", "Output A");
+    Bridge bridge(engine);
+    bridge.Start();
+    bridge.SubmitEndpoints(Endpoints());
+    while (bridge.DequeueAction()) {
+    }
+
+    engine.nowMicros.store(50'000, std::memory_order_relaxed);
+    synth::ScheduledMidiEvent event;
+    event.kind = synth::ScheduledMidiEventKind::ChannelMessage;
+    event.orderingIntent = synth::ScheduledMidiOrderingIntent::AppMessage;
+    event.broadcast = false;
+    event.dueTimeMicros = 10'000;
+    event.sequence = 1;
+    event.channelStatusByte = 0xB0;
+    event.channelData1 = 7;
+    event.channelData2 = 100;
+    event.targetSinkIx = synth::MidiSender::kAppMidiOutSinkIx;
+    Require(engine.sender.TryEnqueue(event), "app channel message enters the realtime lane");
+    Require(engine.sender.FlushForTests(std::chrono::milliseconds(500)), "sender drains the app message");
+
+    const auto output = bridge.DequeueOutput();
+    Require(output.has_value(), "app message reaches the bridge's outbound queue");
+    Require(output->controllerIx == Bridge::kAppMidiOutBridgeKey, "app message is keyed under the bridge key");
+    Require(output->bytes == (std::vector<std::uint8_t>{0xB0, 7, 100}), "app message bytes preserved");
+
+    bridge.Stop();
+}
+
+void TestAppMidiOutWriteBackNeverTouchesControllerRows()
+{
+    FakeEngine engine;
+    engine.instrument.controllers = {
+        Slot("A", Ref("in-a", "Input A"), Ref("out-a", "Output A")),
+    };
+    engine.inputs.resize(1);
+    // A stale identifier; the present output's name still matches "out-b".
+    engine.appMidiOutConfig.port = Ref("stale-id", "Output B");
+    Bridge bridge(engine);
+    bridge.Start();
+
+    bridge.SubmitEndpoints(Endpoints());
+    while (bridge.DequeueAction()) {
+    }
+
+    Require(engine.AppMidiOutConfig().port.identifier == "out-b", "write-back updates the stale identifier");
+    Require(engine.AppMidiOutConfig().port.name == "Output B", "write-back keeps the matched name");
+    Require(engine.instrument.controllers[0].output.identifier == "out-a",
+            "controller row 0's output reference is untouched");
+    Require(engine.instrument.controllers[0].output.name == "Output A",
+            "controller row 0's output reference is untouched");
+
+    bridge.Stop();
+}
+
+void TestStopClearsTheAppMidiOutSinkBeforeStoppingTheSender()
+{
+    FakeEngine engine;
+    engine.appMidiOutConfig.port = Ref("out-a", "Output A");
+    Bridge bridge(engine);
+    bridge.Start();
+    bridge.SubmitEndpoints(Endpoints());
+    while (bridge.DequeueAction()) {
+    }
+
+    bridge.Stop();
+
+    engine.sender.Start();
+    engine.nowMicros.store(50'000, std::memory_order_relaxed);
+    synth::ScheduledMidiEvent event;
+    event.kind = synth::ScheduledMidiEventKind::ChannelMessage;
+    event.orderingIntent = synth::ScheduledMidiOrderingIntent::AppMessage;
+    event.broadcast = false;
+    event.dueTimeMicros = 10'000;
+    event.sequence = 1;
+    event.channelStatusByte = 0xB0;
+    event.channelData1 = 1;
+    event.channelData2 = 1;
+    event.targetSinkIx = synth::MidiSender::kAppMidiOutSinkIx;
+    Require(engine.sender.TryEnqueue(event), "app channel message enters the realtime lane");
+    Require(engine.sender.FlushForTests(std::chrono::milliseconds(500)), "sender drains with nothing captured");
+    engine.sender.Stop();
+
+    Require(!bridge.DequeueOutput().has_value(), "nothing reaches the bridge's outbound queue after Stop");
+}
+
 }  // namespace
 
 int main()
@@ -582,5 +705,9 @@ int main()
     TestLatestDeviceListMatchesSubmittedEndpoints();
     TestActiveToBlacklistedTearsDownEndpointsAndDropsStaleBrowserCallback();
     TestDeviceListRevisionChangesOnlyWhenEndpointSnapshotChanges();
+    TestSubmitEndpointsOpensTheAppMidiOutPortOnce();
+    TestAppMidiOutMessageComesOutUnderTheBridgeKey();
+    TestAppMidiOutWriteBackNeverTouchesControllerRows();
+    TestStopClearsTheAppMidiOutSinkBeforeStoppingTheSender();
     return 0;
 }

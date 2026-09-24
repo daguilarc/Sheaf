@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -66,9 +67,16 @@ public:
     // The browser main thread drains at a 16 ms cadence. Keep a full cadence
     // plus bounded task jitter between the sender snapshot and Web MIDI send.
     static constexpr std::uint64_t kSchedulingLeadMicros = 25'000;
+    // Keys the app MIDI-out sink and its actions/outbound messages with a
+    // value no controller slot's index can take: the ABI already narrows
+    // controllerIx to std::uint32_t (worker.ts reads both actions and
+    // outbound messages with getUint32), and browser/src/protocol.ts's
+    // APP_MIDI_OUT_KEY is this same value.
+    static constexpr std::size_t kAppMidiOutBridgeKey = std::numeric_limits<std::uint32_t>::max();
 
     explicit BrowserMidiBridge(EngineType& engine)
         : engine_(engine)
+        , appMidiOutSink_(std::make_unique<OutputSink>(*this, kAppMidiOutBridgeKey))
     {
     }
 
@@ -94,6 +102,7 @@ public:
             return;
         }
         if (synth::MidiSender* sender = MidiSender()) {
+            sender->ClearAppMidiOutSinkSync();
             for (std::size_t ix = 0; ix < outputSinks_.size(); ++ix) {
                 sender->ClearSinkSync(ix);
             }
@@ -173,6 +182,37 @@ public:
             actions_.push_back({.type = ActionType::Resync, .controllerIx = ix});
         };
         state_ = synth::ExecuteReconcilePlan(plan, state_, ops);
+
+        // The app MIDI-out port is its own one-slot plan, run after the
+        // controller plan on every call -- the 500 ms midi.ts poll calls
+        // this, so a port change reaches it within one poll. These
+        // operations never write config.controllers and never call SetSink.
+        synth::AppMidiOutPortOps appMidiOutOps;
+        appMidiOutOps.open = [this](const std::string& identifier) {
+            synth::MidiSender* sender = MidiSender();
+            if (sender == nullptr) {
+                return false;
+            }
+            appMidiOutSink_->Clear();
+            sender->SetAppMidiOutSink(appMidiOutSink_.get());
+            actions_.push_back(
+                {.type = ActionType::OpenOutput, .controllerIx = kAppMidiOutBridgeKey, .identifier = identifier});
+            return true;
+        };
+        appMidiOutOps.close = [this] {
+            if (synth::MidiSender* sender = MidiSender()) {
+                sender->ClearAppMidiOutSinkSync();
+            }
+            appMidiOutSink_->Clear();
+            actions_.push_back({.type = ActionType::CloseOutput, .controllerIx = kAppMidiOutBridgeKey});
+        };
+        appMidiOutOps.writeBack = [this](const std::string& identifier, const std::string& name) {
+            synth::AppMidiOutConfig config = engine_.AppMidiOutConfig();
+            config.port.identifier = identifier;
+            config.port.name = name;
+            engine_.SetAppMidiOutConfig(config);
+        };
+        appMidiOutReconciler_.Reconcile(engine_.AppMidiOutConfig().port, present, appMidiOutOps);
     }
 
     std::optional<Action> DequeueAction()
@@ -349,6 +389,11 @@ private:
     }
 
     EngineType& engine_;
+    // The app MIDI-out port's own sink and reconciler, outside
+    // outputSinks_/state_ so the slot never shares an index or a device
+    // claim with a controller row (task 7/task 8).
+    std::unique_ptr<OutputSink> appMidiOutSink_;
+    synth::AppMidiOutPortReconciler appMidiOutReconciler_;
     synth::MidiDeviceList latestDeviceList_;
     std::uint64_t deviceListRevision_ = 0;
     synth::MidiConnectionState state_;

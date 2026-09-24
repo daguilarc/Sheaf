@@ -1,4 +1,4 @@
-import type { MidiAction, MidiEndpoint, MidiOutput, MidiOutputDiagnostics } from "./protocol.js";
+import { APP_MIDI_OUT_KEY, type MidiAction, type MidiEndpoint, type MidiOutput, type MidiOutputDiagnostics } from "./protocol.js";
 import type { RuntimeCommand, RuntimeResponse } from "./worker.js";
 
 export interface BrowserMidiRuntime {
@@ -290,10 +290,27 @@ export class BrowserMidiManager {
   private closeOutput(controllerIx: number): void {
     const binding = this.outputs.get(controllerIx);
     if (!binding) return;
-    try {
-      binding.port.clear?.();
-    } catch {
-      this.sendErrorCount += 1;
+    let skipClear = false;
+    if (controllerIx === APP_MIDI_OUT_KEY) {
+      // Before releasing the app's MIDI out, silence it: Control Change 123
+      // value 0 on all sixteen channels.
+      try {
+        for (let channel = 0; channel < 16; channel++) binding.port.send([0xb0 + channel, 123, 0]);
+      } catch {
+        this.sendErrorCount += 1;
+      }
+      // clear() would drop a controller row's own pending scheduled
+      // messages if that row holds this same port; skip it when one does.
+      skipClear = [...this.outputs.entries()].some(
+        ([ix, other]) => ix !== controllerIx && other.port === binding.port,
+      );
+    }
+    if (!skipClear) {
+      try {
+        binding.port.clear?.();
+      } catch {
+        this.sendErrorCount += 1;
+      }
     }
     this.outputs.delete(controllerIx);
   }
