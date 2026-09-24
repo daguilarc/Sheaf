@@ -1,6 +1,7 @@
 #include "synth/AppContext.hpp"
 #include "synth/AppConcepts.hpp"
 #include "synth/AppRegistry.hpp"
+#include "synth/MidiAppCatalog.hpp"
 #include "synth/PatchBrowser.hpp"
 #include "synth/RuntimePagePolicy.hpp"
 
@@ -363,6 +364,23 @@ TEST_CASE(app_registration_rejects_empty_stable_app_id) {
     }
 
     REQUIRE_TRUE(threwInvalidArgument);
+}
+
+TEST_CASE(midi_app_catalog_midi_out_contents_default_empty_and_keep_declaration_order) {
+    const synth::MidiAppCatalog defaultCatalog;
+    REQUIRE_TRUE(defaultCatalog.midiOutContents.empty());
+
+    synth::MidiAppCatalog catalog;
+    catalog.midiOutContents.push_back({.id = "level", .label = "Level", .kind = synth::MidiControlType::Cc});
+    catalog.midiOutContents.push_back({.id = "pitch", .label = "Pitch", .kind = synth::MidiControlType::Note});
+
+    REQUIRE_TRUE(catalog.midiOutContents.size() == 2);
+    REQUIRE_TRUE(catalog.midiOutContents[0].id == "level");
+    REQUIRE_TRUE(catalog.midiOutContents[0].label == "Level");
+    REQUIRE_TRUE(catalog.midiOutContents[0].kind == synth::MidiControlType::Cc);
+    REQUIRE_TRUE(catalog.midiOutContents[1].id == "pitch");
+    REQUIRE_TRUE(catalog.midiOutContents[1].label == "Pitch");
+    REQUIRE_TRUE(catalog.midiOutContents[1].kind == synth::MidiControlType::Note);
 }
 
 int main() {

@@ -37,6 +37,16 @@ struct MidiAppDeviceDefault {
     MidiControllerProfileConfig config;
 };
 
+// One thing the app can send on its MIDI out. `id` is what the runtime's
+// MIDI-out setting stores; `label` is what the Controllers page shows in the
+// Sends choice; `kind` decides whether the page shows a CC field (Cc) or
+// tracks pitch as notes (Note).
+struct MidiAppMidiOutContent {
+    std::string id;
+    std::string label;
+    MidiControlType kind = MidiControlType::Cc;
+};
+
 struct MidiAppCatalog {
     std::vector<MidiAppAction> actions;
     std::vector<UISystemMessage> libraryKinds;
@@ -50,6 +60,9 @@ struct MidiAppCatalog {
                                       // message buses with no clock and no range
     bool patchCarriesMappings = false;
     std::vector<MidiAppDeviceDefault> deviceDefaults;
+    // What the app can send on its one MIDI out. Empty by default: an app
+    // that declares none shows no MIDI-out setting anywhere in the runtime.
+    std::vector<MidiAppMidiOutContent> midiOutContents;
 };
 
 // Index of the first action in the catalog whose (action, value) pair
