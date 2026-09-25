@@ -3516,6 +3516,28 @@ struct FileExportTestApp {
     }
 };
 
+// An app with a per-tick message-thread hook: satisfies
+// HasMessageThreadTick<App> and nothing else beyond SynthApplicationCore,
+// matching FileExportTestApp's minimal shape.
+struct MessageThreadTickTestApp {
+    static inline std::size_t tickCount = 0;
+    static inline std::vector<std::thread::id> tickThreads;
+
+    static synth::RuntimeConfig Config() {
+        synth::RuntimeConfig config;
+        config.appName = "EngineMessageThreadTickTest";
+        return config;
+    }
+
+    void Init(synth::AppContext*) {}
+    void ProcessBlock(synth::AudioBlock&) {}
+
+    void MessageThreadTick() {
+        ++tickCount;
+        tickThreads.push_back(std::this_thread::get_id());
+    }
+};
+
 }  // namespace
 
 TEST_CASE(engine_delivers_a_queued_file_export_to_the_installed_handler_once) {
@@ -3554,6 +3576,25 @@ TEST_CASE(engine_takes_a_file_export_with_no_handler_and_logs_it) {
     engine.MessageThreadTick();
 
     REQUIRE_TRUE(FileExportTestApp::pending.empty());
+}
+
+TEST_CASE(engine_calls_the_app_message_thread_tick_once_per_tick) {
+    MessageThreadTickTestApp::tickCount = 0;
+    MessageThreadTickTestApp::tickThreads.clear();
+
+    synth::Engine<MessageThreadTickTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+
+    constexpr std::size_t kTicks = 5;
+    for (std::size_t ix = 0; ix < kTicks; ++ix) {
+        engine.MessageThreadTick();
+    }
+
+    REQUIRE_TRUE(MessageThreadTickTestApp::tickCount == kTicks);
+    REQUIRE_TRUE(MessageThreadTickTestApp::tickThreads.size() == kTicks);
+    for (const std::thread::id& id : MessageThreadTickTestApp::tickThreads) {
+        REQUIRE_TRUE(id == std::this_thread::get_id());
+    }
 }
 
 int main() {

@@ -103,6 +103,17 @@ concept HasFileExports = requires(T app) {
     { app.TakePendingFileExport() } -> std::same_as<std::optional<FileExport>>;
 };
 
+// Optional per-tick message-thread hook: an app that declares it gets one
+// call to MessageThreadTick() on every Engine::MessageThreadTick, after the
+// file exports are drained, on the thread that runs Engine::MessageThreadTick
+// (the JUCE runtime's and the plugin's timer, the browser runtime's
+// main-thread tick, and SynthRig after each block). Detected at compile
+// time, same as the hooks above; an app without it sees nothing.
+template <typename T>
+concept HasMessageThreadTick = requires(T app) {
+    { app.MessageThreadTick() } -> std::same_as<void>;
+};
+
 // Optional UI capability (sprs-17): an app may register exactly one
 // additional sidebar page -- id, title, and a layout-preserving tree
 // builder using the std::function<ui::Subtree(ui::Bounds)> graft idiom Task

@@ -640,6 +640,13 @@ public:
                 }
             }
         }
+
+        // An app that declares HasMessageThreadTick gets one call here,
+        // after the file exports above are drained, on the thread that runs
+        // this method; an app without it sees nothing.
+        if constexpr (HasMessageThreadTick<App>) {
+            app_.MessageThreadTick();
+        }
     }
 
     App& Application() { return app_; }
