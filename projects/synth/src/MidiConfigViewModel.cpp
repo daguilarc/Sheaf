@@ -195,6 +195,11 @@ UISystemMessage UISystemMessageForAssociation(const MidiControllerSystemMessageA
         case MessageIn::Type::ParamSetAbsoluteOnBank:
             return UISystemMessage::Clock;
         case MessageIn::Type::AppAction:
+        case MessageIn::Type::AppCommand:
+            // No controller profile can produce an AppCommand press, so
+            // this arm is unreached by any real association; it joins
+            // AppAction's mapping rather than gaining a UISystemMessage
+            // entry of its own.
             return UISystemMessage::AppAction;
         case MessageIn::Type::HoldDrill:
             return UISystemMessage::HoldDrill;
@@ -203,10 +208,6 @@ UISystemMessage UISystemMessageForAssociation(const MidiControllerSystemMessageA
         case MessageIn::Type::SceneBlendIncDec:
         case MessageIn::Type::TempoBpmIncDec:
         case MessageIn::Type::SetTempoBpmNormalized:
-        // No controller profile can name AppCommand: it joins the same
-        // fallback as the other message kinds no profile association ever
-        // carries, rather than gaining a UISystemMessage entry of its own.
-        case MessageIn::Type::AppCommand:
             return UISystemMessage::Clock;
     }
     return UISystemMessage::Clock;
