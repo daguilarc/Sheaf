@@ -66,9 +66,13 @@ reason for the same retry.
    (per group, counted by `MissingDepthsForValuesJSON`, carried from
    `app-o1-audit` without the construct or the startup branch around it)
    when the patch's depths would leave available storage below the group's
-   watermark. The arena branch stays as each site has it (`GrowAndReset`
-   inline at startup; `GrowSerializationArenaForTick` with its cap while
-   running). The storage branch is one helper, written once in `Engine`:
+   watermark. Each site keeps its own growth step for the arena branch
+   (`GrowAndReset` inline at startup; `GrowSerializationArenaForTick` with
+   its cap while running); the stash-and-raise around either branch, at the
+   two running call sites (`ProcessBlock`'s retry and its drain), is one
+   shared helper parameterized by the reason (arena or storage), so that
+   duplication is not doubled by the second reason. The storage branch is
+   one helper, written once in `Engine`:
    `AddParameterStorageBatch` of need plus watermark on each group, called
    directly so the group's pending low-water request cannot absorb it; the
    tick's existing handling of a `ParameterStorageBatchNeeded` message
