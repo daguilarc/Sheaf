@@ -80,7 +80,7 @@ row-preset half was removed deliberately and its text goes.
   refused, naming the pad — Launchpad X and Mini MK3 share a shape, and the
   Pro MK3's extra column and rows have nowhere to land on either.
 - `include/synth/ControllersPageUI.hpp`: the controller row's identity line
-  gains a "Variant" combo for launchpad rows, restoring the node id
+  gains a "Model" combo for launchpad rows, restoring the node id
   `NodeIds::ControllerVariant` and the action `Actions::kVariantSelect` the
   removed control used, so stored ids and dispatch names stay as they were.
 - `include/synth/MidiConfigViewModel.hpp`: `MidiControllerRowVM` carries the

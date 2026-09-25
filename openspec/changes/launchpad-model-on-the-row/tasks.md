@@ -45,7 +45,7 @@
 - [x] 4.3 Handle the action; render the refusal as the page's own status.
 - [x] 4.4 Correct the comment at `juce/ControllersPageSimulationTests.cpp:115`,
       which listed the selector among the page's uncaptioned controls: this one
-      carries a "Variant" caption. The simulation's own harness seeds a
+      carries a "Model" caption. The simulation's own harness seeds a
       launchpad row (`juce/ControllersPageHarness.hpp:66`), so every simulated
       step renders the selector and holds it to the page's caption and layout
       rules; the control is driven end to end by

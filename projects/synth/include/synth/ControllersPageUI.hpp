@@ -509,7 +509,7 @@ inline constexpr float kAvailableControlGap = 8.0f;
 inline constexpr float kControllerNameWidth = 200.0f;
 inline constexpr float kControllerKindWidth = 100.0f;
 inline constexpr float kControllerDisclosureWidth = 24.0f;
-// Line one's Variant selector, on launchpad rows only: wide enough for
+// Line one's model selector, on launchpad rows only: wide enough for
 // "Launchpad Mini MK3" plus its caption.
 inline constexpr float kVariantFieldWidth = 180.0f;
 // The draft column is wide enough to hold the "Name" caption plus a usable
@@ -927,7 +927,7 @@ inline bool InstallDescriptorProfile(const std::vector<ControllerWizardDescripto
     return true;
 }
 
-// The Launchpad models the Variant selector offers, in this order. The
+// The Launchpad models the model selector offers, in this order. The
 // option id is the index into this list, which is what HandleVariantSelect
 // parses back -- one list, so the offered order and the parsed meaning cannot
 // drift apart.
@@ -3194,7 +3194,7 @@ private:
                                 std::string selectedVariant;
                                 ui::ControlStyle variantStyle =
                                     fieldControl(ControllersLayout::kVariantFieldWidth);
-                                variantStyle.caption = "Variant";
+                                variantStyle.caption = "Model";
                                 row.ComboBox(
                                     NodeIds::ControllerVariant(controllerIx),
                                     ControllersLayout::BuildLaunchpadVariantOptions(

@@ -360,7 +360,7 @@ struct MidiControllerRowVM {
     MidiEndpointRef storedInput;
     MidiEndpointRef storedOutput;
     // Launchpad rows only: the model the row's profile records, which its
-    // Variant selector shows. LaunchpadX on every other kind, where the
+    // model selector shows. LaunchpadX on every other kind, where the
     // selector is not offered.
     LaunchpadController launchpadModel = LaunchpadController::LaunchpadX;
     bool configExpanded = false;    // starts false

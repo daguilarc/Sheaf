@@ -1930,7 +1930,7 @@ void TestLaunchpadRowOffersVariantAndRetargetsItsPads()
     const synth::ui::NodeTree tree = surface.BuildTree();
     const synth::ui::Node* variant =
         FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerVariant(launchpadIx));
-    Require(variant != nullptr, "the launchpad row offers a Variant selector");
+    Require(variant != nullptr, "the launchpad row offers a model selector");
     Require(variant->kind == synth::ui::NodeKind::ComboBox, "Variant is a combo box");
     Require(variant->options.size() == 3, "Variant offers every Launchpad model");
     Require(variant->options[0].label == std::string("Launchpad X"), "first option is Launchpad X");
@@ -1939,7 +1939,7 @@ void TestLaunchpadRowOffersVariantAndRetargetsItsPads()
     Require(variant->selectedOption == "0", "a default-profile row shows Launchpad X");
     Require(FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerVariant(0)) == nullptr &&
                 FindNodeById(tree, synth::runtime_ui::NodeIds::ControllerVariant(2)) == nullptr,
-            "no other kind offers a Variant selector");
+            "no other kind offers a model selector");
 
     // The backend appends the chosen option's id to the action's value.
     const int commitsBefore = harness.commits;
@@ -1972,6 +1972,24 @@ void TestLaunchpadRowOffersVariantAndRetargetsItsPads()
             "the selector shows what the row now records");
 }
 
+void TestLaunchpadRowModelSelectorIsCaptionedModel()
+{
+    TestHarness harness;
+    auto surface = harness.MakeSurface();
+    surface.SetEnumerateDevices(harness.devices);
+    surface.SetContentBounds({0.0f, 0.0f, 1000.0f, 800.0f});
+    surface.MarkDirty();
+    surface.RefreshOnTick();
+
+    // MakeInstrument()'s three rows: 0 wrldbldr, 1 launchpad, 2 generic.
+    constexpr std::size_t launchpadIx = 1;
+    const synth::ui::NodeTree tree = surface.BuildTree();
+    const synth::ui::Node* caption = FindNodeById(
+        tree, synth::runtime_ui::NodeIds::ControllerVariant(launchpadIx) + ".caption");
+    Require(caption != nullptr && caption->text == "Model",
+            "the launchpad row's model selector is captioned Model");
+}
+
 int main()
 {
     TestNoHandRolledControllerNodesSurvive();
@@ -1998,6 +2016,7 @@ int main()
     TestEncoderGroupHeaderSeparatesLastColumnFromAddButton();
     TestSystemMessageShiftFieldRendersAndCommits();
     TestLaunchpadRowOffersVariantAndRetargetsItsPads();
+    TestLaunchpadRowModelSelectorIsCaptionedModel();
 
     TestHarness harness;
     synth::runtime_ui::ControllersPageSurface surface = harness.MakeSurface();
