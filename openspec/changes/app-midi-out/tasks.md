@@ -200,7 +200,7 @@ and reports it with the run.
       (`https://github.com/jvictor0/Sheaf.git`, the upstream repo) and no
       remote named `upstream`; `git merge-base --is-ancestor origin/main
       HEAD` exits 0, run in `External/Sheaf` after `git fetch origin`.
-- [ ] 1. Grow the event: NEW `ScheduledMidiEventKind::ChannelMessage` appended
+- [x] 1. Grow the event: NEW `ScheduledMidiEventKind::ChannelMessage` appended
       after `Stop`, NEW `ScheduledMidiOrderingIntent::AppMessage` appended
       after `Clock`, and NEW `ScheduledMidiEvent` fields for the three message
       bytes and the target sink index; `MidiStatusByte()` returns the first
@@ -209,7 +209,7 @@ and reports it with the run.
       its body.
       Check: every existing test in `tests/midi_sender_tests.cpp` and
       `tests/engine_tests.cpp` passes unchanged, run by path.
-- [ ] 2. Give the sender a MIDI-out sink that no controller ordinal can
+- [x] 2. Give the sender a MIDI-out sink that no controller ordinal can
       reach. NEW `MidiSender::kAppMidiOutSinkIx` equal to `kMaxSinks`, and
       NEW `MidiSender::kSinkTableSize` equal to `kMaxSinks + 1`, the size of
       `sinks_`, `sinkCapabilities_`, `sinkScheduleLeadMicros_`,
@@ -249,8 +249,8 @@ and reports it with the run.
       host-timestamped sink), and "A ninth controller row never becomes the
       MIDI-out sink"; `scheduled_realtime_broadcast_preserves_original_deadline`
       passes unchanged.
-- [ ] 3. Merged into task 2.
-- [ ] 4. Per-block list and routing: NEW app MIDI-out event type (frame and
+- [x] 3. Merged into task 2.
+- [x] 4. Per-block list and routing: NEW app MIDI-out event type (frame and
       three bytes) and NEW fixed-capacity list type with a capacity constant of
       at least two and an overflow count, in `AppContext.hpp`; NEW
       `AudioBlock` pointer to the list; `Engine::ProcessBlock` clears the
@@ -272,7 +272,7 @@ and reports it with the run.
       app that never appends, the sender's realtime lane receives no app
       channel message over a run of blocks; it is shown red against an engine
       that enqueues one message per block whether or not the app appended.
-- [ ] 5. The setting: NEW app MIDI-out settings type (content id, channel
+- [x] 5. The setting: NEW app MIDI-out settings type (content id, channel
       stored 0 to 15 like every channel `config.json` already stores, CC
       number, velocity with a follow-level value) and NEW configuration type
       adding the `MidiEndpointRef` port; `BuildRuntimeConfigJSON` writes
@@ -321,7 +321,7 @@ and reports it with the run.
       change; `runtime_config_defaults_are_sensible` passes; a new test
       asserts each parse function's accepted and refused boundaries (channel
       15 and 16, CC 127 and 128, velocity 1, 0 and "Level").
-- [ ] 6. Catalog: NEW `MidiAppCatalog` field listing MIDI-out contents (id,
+- [x] 6. Catalog: NEW `MidiAppCatalog` field listing MIDI-out contents (id,
       label, Control Change or notes), empty by default.
       Check: a new case in `tests/contract_tests.cpp` (binary
       `contract_tests`) asserts that a default `MidiAppCatalog` lists no
@@ -329,7 +329,7 @@ and reports it with the run.
       declaration order with their ids, labels and kinds; it is shown red
       against a default that lists one content. smi-19's two scenarios are
       asserted by task 9, once the section they describe exists.
-- [ ] 7. Standalone port. The MIDI-out port is reconciled as its own
+- [x] 7. Standalone port. The MIDI-out port is reconciled as its own
       one-slot plan, apart from the controller rows, so it never shares an
       index, a handler vector entry or a device claim with a controller row.
       NEW `AppMidiOutReconcileInstrument` in `MidiReconcile.hpp` builds a
@@ -413,7 +413,7 @@ and reports it with the run.
       destructor's release) is compiled by task 12's miniapp runtime build
       and exercised end to end only by frogg3rs's operator run R9; no
       automated test here covers it.
-- [ ] 8. Browser port. The bridge and `midi.ts` key the MIDI out with a
+- [x] 8. Browser port. The bridge and `midi.ts` key the MIDI out with a
       value no controller slot can take: NEW `kAppMidiOutBridgeKey` in
       `BrowserMidiBridge.hpp`, equal to `std::numeric_limits<std::uint32_t>::max()`,
       the width the ABI already uses for `controllerIx` in actions and
@@ -479,7 +479,7 @@ and reports it with the run.
         build: the callback returns before processing until `Start()` sets
         `started_`, which it does only after the bridge has started the
         sender (`synth_browser::Runtime::Start`).
-- [ ] 9. Controllers page: the Audio to MIDI section of sru-71, built by
+- [x] 9. Controllers page: the Audio to MIDI section of sru-71, built by
       `ControllersPageSurface::BuildTree` from the four callbacks below, not
       from `MidiConfigViewModel`. The controller
       rows' input-port and output-port columns are written inline in the row
@@ -539,7 +539,7 @@ and reports it with the run.
         rows' input-port and output-port tests after they move onto
         `EmitPortChoice`; `runtime_page_back_save_policy_matches_configuration_pages`
         in `tests/contract_tests.cpp` passes unchanged.
-- [ ] 10. Comments this change makes false, in the files it touches. In
+- [x] 10. Comments this change makes false, in the files it touches. In
       `include/synth/MasterClock.hpp`, the comment above
       `ScheduledMidiOrderingIntent` ("cutoff, then transport, then clock")
       names the app-message class last. In `include/synth/Engine.hpp`, the
@@ -550,7 +550,7 @@ and reports it with the run.
       through `SetAppMidiOutSink` and `ClearAppMidiOutSinkSync`.
       Check: each rewritten comment is quoted in the report beside the code
       it describes, and says what that code does.
-- [ ] 11. Out-of-tree include directories for the launcher build. In
+- [x] 11. Out-of-tree include directories for the launcher build. In
       `apps/sheaf-patch/Makefile`, NEW `EXTRA_APP_INCLUDE_DIRS ?=` beside the
       other `EXTRA_APP_*` variables, and inside the block that runs when
       `EXTRA_APP_DIR` is set, `CPPFLAGS += $(addprefix -I,$(EXTRA_APP_INCLUDE_DIRS))`.
@@ -567,7 +567,7 @@ and reports it with the run.
       carries only `-I$(EXTRA_APP_DIR)` for the app. `make -n` with no
       `EXTRA_APP_*` variable prints the same lines before and after the
       change. frogg3rs task 12's launcher build is the end-to-end check.
-- [ ] 12. Run the full `projects/synth` suite by the commands at the top of
+- [x] 12. Run the full `projects/synth` suite by the commands at the top of
       this section: `nice make -j2 test`, then every test binary by path
       after it stops; build and run the miniapp runtime target
       (`nice make -j2 miniapp`), which that suite does not build; run
