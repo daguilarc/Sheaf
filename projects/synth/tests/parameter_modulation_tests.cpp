@@ -9103,8 +9103,10 @@ TEST_CASE(twister_output_pins_bytes_through_a_value_change_and_a_disconnect) {
     sender.Stop();
 }
 
-// The same rule, in the five processors that discard Enqueue's result:
-// WrldBldr, System CC, WrldBldr system, Launchpad grid and Open SysEx.
+// The same rule, in the five other processors that branch on Enqueue's
+// result: WrldBldr, System CC, WrldBldr system, Launchpad grid and Open
+// SysEx. Each leaves its cache unwritten when Enqueue declines, so the next
+// pass finds the cache stale and resends.
 // Each is given two messages to send against a
 // capacity-1 sender; both must arrive, each exactly once, one per pass.
 // Each capacity-1 sender below is left unstarted around a Process() call and
