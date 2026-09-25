@@ -197,8 +197,9 @@ public:
     //   4. app_.Init(&context_)                    -- context.uiState is null here
     //   4a. snapshot defaultInstrumentConfig_ = instrumentConfig_, and
     //       defaultAudioDeviceState_ = audioDeviceState_ (the app's
-    //       Init-configured live instrument/audio device becomes the
-    //       default that revert/new-patch restore to)
+    //       Init-configured live instrument/audio device; New's
+    //       RevertAllToDefault message resets parameters only and does not
+    //       read these snapshots back -- see ApplyPatchMessage)
     //   4b. load runtime config from dataPaths_.configFile when present.
     //       Valid config replaces the live MIDI instrument/audio selection
     //       and installs sync policy before MIDI processors, clock prepare,
@@ -366,14 +367,15 @@ public:
                 pendingPatchMessage_.reset();
                 PatchApplyStatus retryStatus;
                 {
-                    // Patch-message application is a rare, user-initiated
-                    // event within the sanctioned patch-boundary non-RT
-                    // exception (ApplyPatchMessage may already allocate on
-                    // this path -- see LogPatchApplyOutcome's doc comment);
-                    // locking here does not touch the steady-state pump
-                    // path, since this branch only runs while retrying a
-                    // stashed message. See audioDeviceStateMutex_'s doc
-                    // comment.
+                    // Patch-message application is within the sanctioned
+                    // patch-boundary non-RT exception (ApplyPatchMessage may
+                    // already allocate on this path -- see
+                    // LogPatchApplyOutcome's doc comment). This branch only
+                    // runs while retrying a stashed message, but the lock it
+                    // takes is not confined to that: LoadRuntimeConfiguration
+                    // and InstrumentSnapshot()/AudioDeviceSnapshot() also take
+                    // it, on ordinary ticks with no patch message pending.
+                    // See audioDeviceStateMutex_'s doc comment.
                     const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
                     retryStatus = ApplyPatchMessageAndNotifyApp(stashed, manager_, instrumentConfig_, defaultInstrumentConfig_,
                                                     audioDeviceState_, defaultAudioDeviceState_, patchOutputBus_,
@@ -701,9 +703,10 @@ public:
     // running-state counterpart of LiveInstrument() -- use this (not
     // LiveInstrument()) from any message-thread path that can run while audio
     // is live and does not already hold audioDeviceStateMutex_ (e.g.
-    // ControllersPageSurface's per-tick RefreshOnTick(), which rebuilds
-    // synth::MidiConfigViewModel from a fresh snapshot). Mirrors
-    // AudioDeviceSnapshot()'s pattern
+    // ControllersPageSurface's per-tick RefreshOnTick(), which takes a fresh
+    // snapshot every tick but rebuilds synth::MidiConfigViewModel from it
+    // only when the connection fingerprint changed or the page was already
+    // dirty). Mirrors AudioDeviceSnapshot()'s pattern
     // for audioDeviceState_.
     MidiInstrumentConfig InstrumentSnapshot() const {
         const std::lock_guard<std::mutex> lock(audioDeviceStateMutex_);
@@ -711,8 +714,9 @@ public:
     }
 
     // Post-Init() snapshot (see Initialize()'s binding-order comment, step
-    // 4a): the instrument revert/new-patch restores. Immutable after
-    // Initialize() returns.
+    // 4a). Immutable after Initialize() returns. Nothing in this class reads
+    // it back today: New's RevertAllToDefault message resets parameters only
+    // and leaves the live instrument as it is.
     const MidiInstrumentConfig& DefaultInstrument() const { return defaultInstrumentConfig_; }
 
     // Serialized edit entry point: applies `edit` to the live
@@ -1077,11 +1081,12 @@ private:
     // audioDeviceStateMutex_ is acquired ONLY inside the loop body, after a
     // message has actually been popped -- never around the
     // patchInputBus_.Pop() call/loop condition itself. In steady state (no
-    // pending patch messages) Pop() returns false immediately and the lock
-    // is never touched, so this stays lock-free on the hot per-block path;
-    // the lock is only ever taken within the rare, user-initiated
-    // patch-message-application window (see audioDeviceStateMutex_'s doc
-    // comment).
+    // pending patch messages) Pop() returns false immediately and this loop
+    // never touches the lock, so this stays lock-free on the hot per-block
+    // path when nothing is queued; the same lock is still taken elsewhere on
+    // ordinary ticks, by LoadRuntimeConfiguration and by
+    // InstrumentSnapshot()/AudioDeviceSnapshot() (see audioDeviceStateMutex_'s
+    // doc comment).
     void DrainPatchInputBus() {
         PatchMessageIn patchMessage;
         while (patchInputBus_.Pop(patchMessage)) {
@@ -1232,25 +1237,28 @@ private:
     // one once audio may be live). Patch files no longer contain active MIDI
     // configuration, so patch load/revert leaves this member untouched.
     MidiInstrumentConfig instrumentConfig_;
-    // Default = the app's Init-configured instrument; revert/new restore
-    // this. Snapshotted from instrumentConfig_ in Initialize(), immediately
-    // after app_.Init(&context_) returns and before any startup patch applies
-    // (see the Initialize() binding-order comment, step 4a). Exposed
-    // read-only via DefaultInstrument().
+    // Default = the app's Init-configured instrument. Snapshotted from
+    // instrumentConfig_ in Initialize(), immediately after app_.Init(&context_)
+    // returns and before any startup patch applies (see the Initialize()
+    // binding-order comment, step 4a). Exposed read-only via
+    // DefaultInstrument(); no revert or New path restores from it today (see
+    // DefaultInstrument()'s doc comment).
     MidiInstrumentConfig defaultInstrumentConfig_;
 
     // Guards audioDeviceState_ + lastNotifiedAudioDeviceState_ (the two members
     // below) AND instrumentConfig_ for coherent host reads/writes. AppContext no
-    // longer exposes a mutable pointer into audioDeviceState_; the only current
-    // writers are SetAudioDeviceFromHost and EditInstrument, both of which hold
-    // this lock.
+    // longer exposes a mutable pointer into audioDeviceState_; the writers are
+    // SetAudioDeviceFromHost, EditInstrument and LoadRuntimeConfiguration, all
+    // of which hold this lock.
     //
-    // Patch-message application still takes this lock while passing the
+    // Patch-message application also takes this lock while passing the
     // instrument/audio state into compatibility APIs, but parameter-only patch
-    // load/revert does not mutate either member. The lock is never touched on
-    // the steady-state pump path when there is no pending patch message to apply
-    // (patchInputBus_.Pop() returning false costs nothing extra; see
-    // DrainPatchInputBus's doc comment).
+    // load/revert does not mutate either member. This is not a rarely-touched
+    // lock: InstrumentSnapshot() and AudioDeviceSnapshot() take it too, so a
+    // caller that reads either one every tick -- the plugin serializing its
+    // state, for instance -- takes this lock that often (see
+    // DrainPatchInputBus's doc comment for the audio-thread drain's own,
+    // narrower use of it).
     mutable std::mutex audioDeviceStateMutex_;
 
     // Engine-owned audio device selection. Hosts update it through
@@ -1259,9 +1267,10 @@ private:
     // so all reads/writes must hold audioDeviceStateMutex_. See
     // SetAudioDeviceFromHost/AudioDeviceSnapshot for the public API.
     AudioDeviceState audioDeviceState_;
-    // Default = the app's Init-configured audio device selection; revert/new
-    // restore this. Snapshotted from audioDeviceState_ alongside
-    // defaultInstrumentConfig_ in Initialize().
+    // Default = the app's Init-configured audio device selection.
+    // Snapshotted from audioDeviceState_ alongside defaultInstrumentConfig_
+    // in Initialize(); no revert or New path restores from it today (see
+    // defaultInstrumentConfig_'s doc comment).
     AudioDeviceState defaultAudioDeviceState_;
     // Shadow of the last audioDeviceState_ value the host was told about.
     // Host-driven changes advance this immediately because the host already
