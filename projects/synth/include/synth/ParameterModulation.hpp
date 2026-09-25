@@ -239,6 +239,12 @@ struct ParameterStorageBatch {
     std::vector<float> sceneCenterArena;
     std::vector<float> gestureValueArena;
     std::vector<GestureMask> gestureActiveMaskArena;
+
+    // The next batch in the group's append-only chain. A reader walks this
+    // with an acquire load; the appender publishes it with a release store
+    // only after the batch pointed to is fully built, so a reader that
+    // follows the pointer sees a complete batch.
+    std::atomic<ParameterStorageBatch*> next{nullptr};
 };
 
 std::unique_ptr<ParameterStorageBatch> MakeParameterStorageBatch(const ParameterGroupConfig& config,
@@ -394,7 +400,14 @@ private:
     std::vector<Parameter*> topLevelParameters_;
     ParameterProcessingObserver* processingObserver_ = nullptr;
     std::vector<std::unique_ptr<Parameter>> parameters_;
-    std::vector<std::unique_ptr<ParameterStorageBatch>> extraStorageBatches_;
+    // The audio thread walks the batch chain through firstStorageBatch_ and
+    // each batch's next pointer, both acquire-loaded; the message thread is
+    // the only appender and is the only reader or writer of
+    // ownedStorageBatches_ and lastStorageBatch_, which exist for lifetime
+    // and O(1) append and are never walked by a reader.
+    std::atomic<ParameterStorageBatch*> firstStorageBatch_{nullptr};
+    ParameterStorageBatch* lastStorageBatch_ = nullptr;
+    std::vector<std::unique_ptr<ParameterStorageBatch>> ownedStorageBatches_;
     struct RecycledLocalSlot {
         Parameter* parameter = nullptr;
         ParameterStorageBatch* batch = nullptr;
@@ -402,7 +415,7 @@ private:
         std::size_t storageLocalIx = 0;
     };
     std::vector<RecycledLocalSlot> recycledLocalSlots_;
-    bool storageRequestPending_ = false;
+    std::atomic<bool> storageRequestPending_{false};
     std::size_t storageLowWatermark_ = 0;
     std::vector<float> currentCenterScaleArena_;
     std::vector<float> targetCenterScaleArena_;

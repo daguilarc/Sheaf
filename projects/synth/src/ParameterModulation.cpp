@@ -697,7 +697,8 @@ bool ParameterGroup::CanAllocate() const {
 std::size_t ParameterGroup::AvailableParameterSlots() const {
     const std::size_t initialAllocated = std::min(parameterCount_, config_.maxParameters);
     std::size_t available = config_.maxParameters - initialAllocated;
-    for (const auto& batch : extraStorageBatches_) {
+    for (ParameterStorageBatch* batch = firstStorageBatch_.load(std::memory_order_acquire); batch != nullptr;
+         batch = batch->next.load(std::memory_order_acquire)) {
         available += batch->Available();
     }
     return available + recycledLocalSlots_.size();
@@ -707,8 +708,15 @@ void ParameterGroup::AddParameterStorageBatch(std::unique_ptr<ParameterStorageBa
     if (batch == nullptr || !batch->Compatible(config_, gestureCount_)) {
         throw std::invalid_argument("parameter storage batch does not match group shape");
     }
-    storageRequestPending_ = false;
-    extraStorageBatches_.push_back(std::move(batch));
+    storageRequestPending_.store(false, std::memory_order_relaxed);
+    ParameterStorageBatch* raw = batch.get();
+    ownedStorageBatches_.push_back(std::move(batch));
+    if (lastStorageBatch_ == nullptr) {
+        firstStorageBatch_.store(raw, std::memory_order_release);
+    } else {
+        lastStorageBatch_->next.store(raw, std::memory_order_release);
+    }
+    lastStorageBatch_ = raw;
 }
 
 Parameter& ParameterGroup::CreateLocalParameter(ParameterConfig config, ParameterId id) {
@@ -747,7 +755,8 @@ Parameter& ParameterGroup::CreateLocalParameter(ParameterConfig config, Paramete
         return result;
     }
 
-    for (const auto& batch : extraStorageBatches_) {
+    for (ParameterStorageBatch* batch = firstStorageBatch_.load(std::memory_order_acquire); batch != nullptr;
+         batch = batch->next.load(std::memory_order_acquire)) {
         if (batch->Available() == 0) {
             continue;
         }
@@ -806,7 +815,8 @@ Parameter& ParameterGroup::ParameterByLocalIndex(std::size_t localIx) {
         return *parameters_.at(localIx);
     }
     std::size_t remaining = localIx - parameters_.size();
-    for (const auto& batch : extraStorageBatches_) {
+    for (ParameterStorageBatch* batch = firstStorageBatch_.load(std::memory_order_acquire); batch != nullptr;
+         batch = batch->next.load(std::memory_order_acquire)) {
         if (remaining < batch->parameters.size()) {
             return *batch->parameters.at(remaining);
         }
@@ -820,7 +830,8 @@ const Parameter& ParameterGroup::ParameterByLocalIndex(std::size_t localIx) cons
         return *parameters_.at(localIx);
     }
     std::size_t remaining = localIx - parameters_.size();
-    for (const auto& batch : extraStorageBatches_) {
+    for (ParameterStorageBatch* batch = firstStorageBatch_.load(std::memory_order_acquire); batch != nullptr;
+         batch = batch->next.load(std::memory_order_acquire)) {
         if (remaining < batch->parameters.size()) {
             return *batch->parameters.at(remaining);
         }
@@ -830,11 +841,18 @@ const Parameter& ParameterGroup::ParameterByLocalIndex(std::size_t localIx) cons
 }
 
 void ParameterGroup::RequestParameterStorageBatch(std::size_t minimumAdditionalParameters) {
-    if (storageRequestPending_ || manager_ == nullptr || minimumAdditionalParameters == 0) {
+    if (storageRequestPending_.load(std::memory_order_relaxed) || manager_ == nullptr ||
+        minimumAdditionalParameters == 0) {
         return;
     }
-    if (manager_->RequestParameterStorageBatch(*this, minimumAdditionalParameters)) {
-        storageRequestPending_ = true;
+    // Stored true before the call, not after it returns: a request that
+    // succeeds can be fulfilled, and its batch appended through
+    // AddParameterStorageBatch, before this function returns. Storing true
+    // afterward would overwrite that completion's false and leave the flag
+    // stuck, so the group would never ask for storage again.
+    storageRequestPending_.store(true, std::memory_order_relaxed);
+    if (!manager_->RequestParameterStorageBatch(*this, minimumAdditionalParameters)) {
+        storageRequestPending_.store(false, std::memory_order_relaxed);
     }
 }
 

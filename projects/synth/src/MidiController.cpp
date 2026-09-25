@@ -1631,7 +1631,7 @@ void MidiOutProcessor::ReserveAbsoluteRoutes() {
     }
 }
 
-void MidiOutProcessor::ProcessPosition(std::size_t mappingIx,
+bool MidiOutProcessor::ProcessPosition(std::size_t mappingIx,
                                        MidiControlAddress outputAddress,
                                        const CellSnapshot& snapshot, bool blank,
                                        bool& cacheValid, std::uint8_t& cachedValue) {
@@ -1648,34 +1648,36 @@ void MidiOutProcessor::ProcessPosition(std::size_t mappingIx,
             // tracked pending input, keep it conservatively gated: no real
             // cell can acknowledge that event, and blank is not an ack.
             if (snapshot.processedAbsoluteEpoch < expectation.epoch) {
-                return;
+                return true;
             }
             if (value != expectation.receivedValue &&
                 !Enqueue(BasicMidi::CC(0, outputAddress.channel, outputAddress.cc, value))) {
-                return;
+                return false;
             }
             if (guard.Resolve(expectation.epoch)) {
                 cachedValue = value;
                 cacheValid = true;
             }
-            return;
+            return true;
         }
         if (!cacheValid || cachedValue != value) {
-            if (Enqueue(BasicMidi::CC(0, outputAddress.channel, outputAddress.cc, value))) {
-                cachedValue = value;
-                cacheValid = true;
+            if (!Enqueue(BasicMidi::CC(0, outputAddress.channel, outputAddress.cc, value))) {
+                return false;
             }
-        }
-        return;
-    }
-
-    if (!cacheValid || cachedValue != value) {
-        const bool enqueued = Enqueue(BasicMidi::CC(0, outputAddress.channel, outputAddress.cc, value));
-        if (feedbackMode_ != EncoderMode::Absolute || enqueued) {
             cachedValue = value;
             cacheValid = true;
         }
+        return true;
     }
+
+    if (!cacheValid || cachedValue != value) {
+        if (!Enqueue(BasicMidi::CC(0, outputAddress.channel, outputAddress.cc, value))) {
+            return false;
+        }
+        cachedValue = value;
+        cacheValid = true;
+    }
+    return true;
 }
 
 bool MidiOutProcessor::Enqueue(const BasicMidi& midi) {
@@ -1738,8 +1740,10 @@ void GenericMidiOutProcessor::Process() {
         }
         const bool blank = !snapshot->connected || snapshot->voiceCount == 0;
         CacheEntry& cache = cache_[ix];
-        ProcessPosition(ix, outputAddresses_[ix], *snapshot, blank,
-                        cache.valid, cache.value);
+        if (!ProcessPosition(ix, outputAddresses_[ix], *snapshot, blank,
+                             cache.valid, cache.value)) {
+            break;
+        }
     }
 }
 
@@ -1762,21 +1766,31 @@ void TwisterMidiOutProcessor::Process() {
         const std::uint8_t rgbBrightness = TwisterRgbBrightnessValue(blank ? 0.0f : 1.0f);
         const std::uint8_t ringBrightness = TwisterRingBrightnessValue(blank ? 0.0f : 1.0f);
         CacheEntry& cache = cache_[ix];
-        if (!cache.valid || cache.rgbColor != rgbColor) {
-            Enqueue(BasicMidi::CC(0, kTwisterRgbColorChannel, mapping.cc, rgbColor));
+        if (!cache.colorValid || cache.rgbColor != rgbColor) {
+            if (!Enqueue(BasicMidi::CC(0, kTwisterRgbColorChannel, mapping.cc, rgbColor))) {
+                break;
+            }
+            cache.rgbColor = rgbColor;
+            cache.colorValid = true;
         }
-        if (!cache.valid || cache.rgbBrightness != rgbBrightness) {
-            Enqueue(BasicMidi::CC(0, kTwisterRgbBrightnessChannel, mapping.cc, rgbBrightness));
+        if (!cache.brightnessValid || cache.rgbBrightness != rgbBrightness) {
+            if (!Enqueue(BasicMidi::CC(0, kTwisterRgbBrightnessChannel, mapping.cc, rgbBrightness))) {
+                break;
+            }
+            cache.rgbBrightness = rgbBrightness;
+            cache.brightnessValid = true;
         }
-        if (!cache.valid || cache.ringBrightness != ringBrightness) {
-            Enqueue(BasicMidi::CC(0, kTwisterRingBrightnessChannel, mapping.cc, ringBrightness));
+        if (!cache.ringBrightnessValid || cache.ringBrightness != ringBrightness) {
+            if (!Enqueue(BasicMidi::CC(0, kTwisterRingBrightnessChannel, mapping.cc, ringBrightness))) {
+                break;
+            }
+            cache.ringBrightness = ringBrightness;
+            cache.ringBrightnessValid = true;
         }
-        cache.valid = true;
-        cache.rgbColor = rgbColor;
-        cache.rgbBrightness = rgbBrightness;
-        cache.ringBrightness = ringBrightness;
-        ProcessPosition(ix, {kPrimaryPositionChannel, mapping.cc}, *snapshot, blank,
-                        cache.encoderRingValueValid, cache.encoderRingValue);
+        if (!ProcessPosition(ix, {kPrimaryPositionChannel, mapping.cc}, *snapshot, blank,
+                             cache.encoderRingValueValid, cache.encoderRingValue)) {
+            break;
+        }
     }
 }
 
@@ -1802,8 +1816,10 @@ void WrldBldrMidiOutProcessor::Process() {
         const Color buttonColor = blank ? Color::Off : snapshot->baseColor;
         const Color indicatorColor = blank ? Color::Off : snapshot->indicatorColor;
         CacheEntry& cache = cache_[ix];
-        ProcessPosition(ix, {kPrimaryPositionChannel, mapping.cc}, *snapshot, blank,
-                        cache.valueValid, cache.value);
+        if (!ProcessPosition(ix, {kPrimaryPositionChannel, mapping.cc}, *snapshot, blank,
+                             cache.valueValid, cache.value)) {
+            break;
+        }
         if (!cache.valid || cache.buttonColor != buttonColor) {
             cache.buttonColor = buttonColor;
             cache.pendingButtonColor = true;
@@ -1815,12 +1831,16 @@ void WrldBldrMidiOutProcessor::Process() {
         cache.valid = true;
 
         if (colorBudget > 0 && cache.pendingButtonColor) {
-            Enqueue(WrldBldrColorSysex(0, 1, mapping.cc, cache.buttonColor));
+            if (!Enqueue(WrldBldrColorSysex(0, 1, mapping.cc, cache.buttonColor))) {
+                break;
+            }
             cache.pendingButtonColor = false;
             --colorBudget;
         }
         if (colorBudget > 0 && cache.pendingIndicatorColor) {
-            Enqueue(WrldBldrColorSysex(0, 0, mapping.cc, cache.indicatorColor));
+            if (!Enqueue(WrldBldrColorSysex(0, 0, mapping.cc, cache.indicatorColor))) {
+                break;
+            }
             cache.pendingIndicatorColor = false;
             --colorBudget;
         }
@@ -2001,8 +2021,11 @@ void SystemCcMidiOutProcessor::Process() {
         const SystemCcMidiOutAssociation& association = config_.associations[ix];
         const SystemMessageOutputState state = info_.Evaluate(association.message);
         CacheEntry& cache = cache_[ix];
-        if (!cache.valid || cache.isOn != state.isOn) {
-            Enqueue(BasicMidi::CC(0, association.control.channel, association.control.cc, state.isOn ? 127 : 0));
+        if (cache.valid && cache.isOn == state.isOn) {
+            continue;
+        }
+        if (!Enqueue(BasicMidi::CC(0, association.control.channel, association.control.cc, state.isOn ? 127 : 0))) {
+            break;
         }
         cache = {.valid = true, .isOn = state.isOn};
     }
@@ -2048,9 +2071,13 @@ void WrldBldrSystemMidiOutProcessor::Process() {
         const WrldBldrSystemMidiOutAssociation& association = config_.associations[ix];
         const Color color = info_.Evaluate(association.message).color;
         CacheEntry& cache = cache_[ix];
-        if (!cache.valid || cache.color != color) {
-            Enqueue(WrldBldrColorSysex(0, association.position.channel,
-                                       WrldBldrPositionToCC(association.position.x, association.position.y), color));
+        if (cache.valid && cache.color == color) {
+            continue;
+        }
+        if (!Enqueue(WrldBldrColorSysex(0, association.position.channel,
+                                        WrldBldrPositionToCC(association.position.x, association.position.y),
+                                        color))) {
+            break;
         }
         cache = {.valid = true, .color = color};
     }
@@ -2096,9 +2123,12 @@ void LaunchpadGridMidiOutProcessor::Process() {
         const LaunchpadGridMidiOutAssociation& association = config_.associations[ix];
         const Color color = info_.Evaluate(association.message).color;
         CacheEntry& cache = cache_[ix];
-        if (!cache.valid || cache.color != color) {
-            Enqueue(LaunchpadColorSysex(0, association.position.controller, association.position.x,
-                                        association.position.y, color));
+        if (cache.valid && cache.color == color) {
+            continue;
+        }
+        if (!Enqueue(LaunchpadColorSysex(0, association.position.controller, association.position.x,
+                                         association.position.y, color))) {
+            break;
         }
         cache = {.valid = true, .color = color};
     }
@@ -2114,16 +2144,20 @@ OpenSysExMidiOutProcessor::OpenSysExMidiOutProcessor(std::vector<std::vector<std
 
 void OpenSysExMidiOutProcessor::Reset() {
     pending_ = true;
+    nextMessageIx_ = 0;
 }
 
 void OpenSysExMidiOutProcessor::Process() {
     if (!pending_) {
         return;
     }
-    pending_ = false;
-    for (const std::vector<std::uint8_t>& message : messages_) {
-        Enqueue(BasicMidi::SysEx(0, message));
+    while (nextMessageIx_ < messages_.size()) {
+        if (!Enqueue(BasicMidi::SysEx(0, messages_[nextMessageIx_]))) {
+            return;
+        }
+        ++nextMessageIx_;
     }
+    pending_ = false;
 }
 
 bool OpenSysExMidiOutProcessor::Enqueue(const BasicMidi& midi) {

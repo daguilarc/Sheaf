@@ -4559,6 +4559,35 @@ TEST_CASE(storage_low_watermark_floors_the_request_and_defaults_to_twice_the_mod
     REQUIRE_TRUE(!outputBus.Pop(request));  // available is far above the default watermark: no request
 }
 
+TEST_CASE(a_later_storage_batch_does_not_move_parameters_allocated_from_an_earlier_one) {
+    synth::ParameterManager manager;
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 1,
+        .maxParameters = 1,
+    });
+    MarkAllModulatorsConnectedForUi(group);
+    auto& carrier = manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+
+    group.AddParameterStorageBatch(synth::MakeParameterStorageBatch(group.Config(), group.GestureCount(), 1));
+    synth::Parameter* firstDepth = carrier.EnsureModulationDepth(0);
+    REQUIRE_TRUE(firstDepth != nullptr);
+    REQUIRE_TRUE(&group.ParameterByLocalIndex(1) == firstDepth);
+
+    const std::size_t availableBeforeSecondBatch = group.AvailableParameterSlots();
+    group.AddParameterStorageBatch(synth::MakeParameterStorageBatch(group.Config(), group.GestureCount(), 3));
+
+    REQUIRE_TRUE(&group.ParameterByLocalIndex(1) == firstDepth);
+    REQUIRE_TRUE(group.AvailableParameterSlots() == availableBeforeSecondBatch + 3);
+
+    synth::Parameter* secondDepth = carrier.EnsureModulationDepth(1);
+    REQUIRE_TRUE(secondDepth != nullptr);
+    REQUIRE_TRUE(secondDepth != firstDepth);
+    REQUIRE_TRUE(&group.ParameterByLocalIndex(1) == firstDepth);
+    REQUIRE_TRUE(&group.ParameterByLocalIndex(2) == secondDepth);
+}
+
 TEST_CASE(modulation_view_materializes_all_missing_depth_parameters_when_capacity_allows) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
@@ -8948,6 +8977,470 @@ TEST_CASE(wrld_bldr_output_blanks_positions_beyond_cell_capacity) {
     REQUIRE_TRUE(blanked1);
 }
 
+// RUN-07's mechanism (BUG-07): a capacity-1 sender declines every enqueue
+// past the first in a pass. Colour, colour brightness, ring brightness and
+// ring position are four independent sends for one mapping; each must stay
+// pending until its own enqueue is accepted, and a decline must not let a
+// later value in the same pass jump the queue.
+TEST_CASE(twister_output_resends_a_declined_value_on_the_next_pass_and_nothing_jumps_it) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0, 0);
+    ui.slots[0].connected.store(true);
+    auto& cell = ui.slots[0].cells[0];
+    cell.revision.store(2);
+    cell.connected.store(true);
+    cell.voiceCount.store(1);
+    cell.values[0].store(0.25f);
+    cell.baseColor.Store(synth::Color::Red);
+    cell.indicatorColors[0].Store(synth::Color::Cyan);
+
+    FakeMidiSink sink;
+    // The sender is left unstarted around each Process() call: with a worker
+    // thread running, a drain could free the one slot mid-pass and let a
+    // second value through, defeating the capacity-1 decline this test
+    // relies on. Starting only to flush, then stopping (which empties the
+    // queue), keeps each pass's capacity constraint deterministic.
+    synth::MidiSender sender(1);
+    sender.SetSink(0, &sink);
+    auto config = synth::EncoderMidiOutConfig::TwisterDefault(0);
+    config.KeepFirstPositions(1);
+    synth::TwisterMidiOutProcessor processor(config, &sender, &ui);
+
+    processor.Process();
+    sender.Start();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+    REQUIRE_TRUE(sink.sent.size() == 1);
+    REQUIRE_TRUE(sink.sent[0].Channel() == 1);
+
+    processor.Process();
+    sender.Start();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+    REQUIRE_TRUE(sink.sent.size() == 2);
+    REQUIRE_TRUE(sink.sent[1].Channel() == 2);
+
+    processor.Process();
+    sender.Start();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+    REQUIRE_TRUE(sink.sent.size() == 3);
+    REQUIRE_TRUE(sink.sent[2].Channel() == 5);
+
+    processor.Process();
+    sender.Start();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    sender.Stop();
+    REQUIRE_TRUE(sink.sent.size() == 4);
+    REQUIRE_TRUE(sink.sent[3].Channel() == 0);
+}
+
+TEST_CASE(twister_output_pins_bytes_through_a_value_change_and_a_disconnect) {
+    synth::ParameterManager::UIState ui;
+    ui.Configure(1, 1, 1, 0, 0);
+    ui.slots[0].connected.store(true);
+    auto& cell = ui.slots[0].cells[0];
+    cell.revision.store(2);
+    cell.connected.store(true);
+    cell.voiceCount.store(1);
+    cell.values[0].store(0.25f);
+    cell.baseColor.Store(synth::Color::Red);
+    cell.indicatorColors[0].Store(synth::Color::Cyan);
+
+    FakeMidiSink sink;
+    synth::MidiSender sender;
+    sender.SetSink(0, &sink);
+    sender.Start();
+    auto config = synth::EncoderMidiOutConfig::TwisterDefault(0);
+    config.KeepFirstPositions(1);
+    synth::TwisterMidiOutProcessor processor(config, &sender, &ui);
+
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 4);
+    REQUIRE_TRUE(sink.sent[0].Channel() == 1);
+    REQUIRE_TRUE(sink.sent[0].GetValue() == synth::ColorToTwister(synth::Color::Red));
+    REQUIRE_TRUE(sink.sent[1].Channel() == 2);
+    REQUIRE_TRUE(sink.sent[1].GetValue() == synth::FullBrightnessAnimationValue());
+    REQUIRE_TRUE(sink.sent[2].Channel() == 5);
+    REQUIRE_TRUE(sink.sent[2].GetValue() == 95);
+    REQUIRE_TRUE(sink.sent[3].Channel() == 0);
+    REQUIRE_TRUE(sink.sent[3].GetValue() == 32);
+
+    // Unchanged snapshot: nothing resends.
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 4);
+
+    // A value change moves only the ring position.
+    cell.revision.store(4);
+    cell.values[0].store(0.75f);
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 5);
+    REQUIRE_TRUE(sink.sent[4].Channel() == 0);
+    REQUIRE_TRUE(sink.sent[4].GetValue() == 95);
+
+    // A disconnect blanks all four values at once.
+    cell.revision.store(6);
+    cell.connected.store(false);
+    processor.Process();
+    sender.FlushForTests(std::chrono::milliseconds(500));
+    REQUIRE_TRUE(sink.sent.size() == 9);
+    REQUIRE_TRUE(sink.sent[5].Channel() == 1);
+    REQUIRE_TRUE(sink.sent[5].GetValue() == 0);
+    REQUIRE_TRUE(sink.sent[6].Channel() == 2);
+    REQUIRE_TRUE(sink.sent[6].GetValue() == 17);
+    REQUIRE_TRUE(sink.sent[7].Channel() == 5);
+    REQUIRE_TRUE(sink.sent[7].GetValue() == 65);
+    REQUIRE_TRUE(sink.sent[8].Channel() == 0);
+    REQUIRE_TRUE(sink.sent[8].GetValue() == 0);
+    sender.Stop();
+}
+
+// The same rule as BUG-07, in the five processors that discarded Enqueue's
+// result before this change: WrldBldr, System CC, WrldBldr system, Launchpad
+// grid and Open SysEx. Each is given two messages to send against a
+// capacity-1 sender; both must arrive, each exactly once, one per pass.
+// Each capacity-1 sender below is left unstarted around a Process() call and
+// only started to flush, then stopped (which empties the queue): with a
+// worker thread running during Process() itself, a drain could free the one
+// slot mid-pass and let a second message through, defeating the decline
+// these scenarios rely on.
+TEST_CASE(the_other_five_output_processors_resend_a_declined_message_on_the_next_pass) {
+    // WrldBldrMidiOutProcessor: prime the ring-position cache on a generous
+    // sender so a later capacity-1 pass only has the button and indicator
+    // colours left to send.
+    {
+        synth::ParameterManager::UIState ui;
+        ui.Configure(1, 1, 1, 0, 0);
+        ui.slots[0].connected.store(true);
+        auto& cell = ui.slots[0].cells[0];
+        cell.revision.store(2);
+        cell.connected.store(true);
+        cell.voiceCount.store(1);
+        cell.values[0].store(0.5f);
+        cell.baseColor.Store(synth::Color::Red);
+        cell.indicatorColors[0].Store(synth::Color::Cyan);
+
+        FakeMidiSink primerSink;
+        synth::MidiSender primerSender;
+        primerSender.SetSink(0, &primerSink);
+        primerSender.Start();
+        auto config = synth::EncoderMidiOutConfig::WrldBldrDefault(0);
+        config.KeepFirstPositions(1);
+        synth::WrldBldrMidiOutProcessor processor(config, &primerSender, &ui);
+        processor.Process();
+        primerSender.FlushForTests(std::chrono::milliseconds(500));
+        primerSender.Stop();
+        REQUIRE_TRUE(primerSink.sent.size() == 3);
+
+        FakeMidiSink sink;
+        synth::MidiSender sender(1);
+        sender.SetSink(0, &sink);
+        processor.SetSender(&sender);
+
+        cell.revision.store(4);
+        cell.baseColor.Store(synth::Color::Green);
+        cell.indicatorColors[0].Store(synth::Color::Yellow);
+
+        processor.Process();
+        sender.Start();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        sender.Stop();
+        REQUIRE_TRUE(sink.sent.size() == 1);
+        REQUIRE_TRUE(sink.sent[0].raw[8] == 1);
+        REQUIRE_TRUE(sink.sent[0].raw[10] == synth::Color::Green.r / 2);
+
+        processor.Process();
+        sender.Start();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        sender.Stop();
+        REQUIRE_TRUE(sink.sent.size() == 2);
+        REQUIRE_TRUE(sink.sent[1].raw[8] == 0);
+        REQUIRE_TRUE(sink.sent[1].raw[10] == synth::Color::Yellow.r / 2);
+    }
+
+    // SystemCcMidiOutProcessor: two associations on the same message, so
+    // both need sending as soon as resetHeld goes true.
+    {
+        synth::ParameterManager::UIState ui;
+        ui.Configure(0, 0, 0, 0, 0, 0);
+        ui.resetHeld.store(true);
+
+        FakeMidiSink sink;
+        synth::MidiSender sender(1);
+        sender.SetSink(0, &sink);
+        synth::SystemCcMidiOutConfig config;
+        config.associations.push_back({.control = {.channel = 5, .cc = 32}, .message = synth::MessageIn::ToggleReset(0)});
+        config.associations.push_back({.control = {.channel = 6, .cc = 33}, .message = synth::MessageIn::ToggleReset(0)});
+        synth::SystemCcMidiOutProcessor processor(config, &sender, &ui);
+
+        processor.Process();
+        sender.Start();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        sender.Stop();
+        REQUIRE_TRUE(sink.sent.size() == 1);
+        REQUIRE_TRUE(sink.sent[0].Channel() == 5);
+
+        processor.Process();
+        sender.Start();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        sender.Stop();
+        REQUIRE_TRUE(sink.sent.size() == 2);
+        REQUIRE_TRUE(sink.sent[1].Channel() == 6);
+    }
+
+    // WrldBldrSystemMidiOutProcessor: same shape, two positions.
+    {
+        synth::ParameterManager::UIState ui;
+        ui.Configure(0, 0, 0, 0, 0, 0);
+        ui.resetHeld.store(true);
+
+        FakeMidiSink sink;
+        synth::MidiSender sender(1);
+        sender.SetSink(0, &sink);
+        synth::WrldBldrSystemMidiOutConfig config;
+        config.associations.push_back({.position = {.channel = 5, .x = 0, .y = 4}, .message = synth::MessageIn::ToggleReset(0)});
+        config.associations.push_back({.position = {.channel = 5, .x = 1, .y = 4}, .message = synth::MessageIn::ToggleReset(0)});
+        synth::WrldBldrSystemMidiOutProcessor processor(config, &sender, &ui);
+
+        processor.Process();
+        sender.Start();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        sender.Stop();
+        REQUIRE_TRUE(sink.sent.size() == 1);
+        REQUIRE_TRUE(sink.sent[0].raw[9] == synth::WrldBldrPositionToCC(0, 4));
+
+        processor.Process();
+        sender.Start();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        sender.Stop();
+        REQUIRE_TRUE(sink.sent.size() == 2);
+        REQUIRE_TRUE(sink.sent[1].raw[9] == synth::WrldBldrPositionToCC(1, 4));
+    }
+
+    // LaunchpadGridMidiOutProcessor: same shape, two grid positions.
+    {
+        synth::ParameterManager::UIState ui;
+        ui.Configure(0, 0, 0, 0, 0, 0);
+        ui.resetHeld.store(true);
+
+        FakeMidiSink sink;
+        synth::MidiSender sender(1);
+        sender.SetSink(0, &sink);
+        synth::LaunchpadGridMidiOutConfig config;
+        config.associations.push_back(
+            {.position = {.controller = synth::LaunchpadController::LaunchpadX, .x = 0, .y = 7},
+             .message = synth::MessageIn::ToggleReset(0)});
+        config.associations.push_back(
+            {.position = {.controller = synth::LaunchpadController::LaunchpadX, .x = 1, .y = 7},
+             .message = synth::MessageIn::ToggleReset(0)});
+        synth::LaunchpadGridMidiOutProcessor processor(config, &sender, &ui);
+
+        processor.Process();
+        sender.Start();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        sender.Stop();
+        REQUIRE_TRUE(sink.sent.size() == 1);
+
+        processor.Process();
+        sender.Start();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        sender.Stop();
+        REQUIRE_TRUE(sink.sent.size() == 2);
+    }
+
+    // OpenSysExMidiOutProcessor: two configured messages, no UI state at all.
+    {
+        FakeMidiSink sink;
+        synth::MidiSender sender(1);
+        sender.SetSink(0, &sink);
+        std::vector<std::vector<std::uint8_t>> messages{
+            {0xF0, 0x01, 0xF7},
+            {0xF0, 0x02, 0xF7},
+        };
+        synth::OpenSysExMidiOutProcessor processor(messages, &sender);
+
+        processor.Process();
+        sender.Start();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        sender.Stop();
+        REQUIRE_TRUE(sink.sent.size() == 1);
+        REQUIRE_TRUE(sink.sent[0].raw[1] == 0x01);
+
+        processor.Process();
+        sender.Start();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        sender.Stop();
+        REQUIRE_TRUE(sink.sent.size() == 2);
+        REQUIRE_TRUE(sink.sent[1].raw[1] == 0x02);
+    }
+}
+
+// Regression cover for the same five processors, against a default-capacity
+// sender: an unchanged snapshot resends nothing, and a real change resends
+// exactly the changed value. A future break that clears the sent/pending
+// state after an accepted enqueue instead of on decline would resend on
+// every pass, the same failure case two above proves for the Twister.
+TEST_CASE(the_other_five_output_processors_do_not_resend_an_unchanged_value) {
+    // WrldBldrMidiOutProcessor.
+    {
+        synth::ParameterManager::UIState ui;
+        ui.Configure(1, 1, 1, 0, 0);
+        ui.slots[0].connected.store(true);
+        auto& cell = ui.slots[0].cells[0];
+        cell.revision.store(2);
+        cell.connected.store(true);
+        cell.voiceCount.store(1);
+        cell.values[0].store(0.5f);
+        cell.baseColor.Store(synth::Color::Red);
+        cell.indicatorColors[0].Store(synth::Color::Cyan);
+
+        FakeMidiSink sink;
+        synth::MidiSender sender;
+        sender.SetSink(0, &sink);
+        sender.Start();
+        auto config = synth::EncoderMidiOutConfig::WrldBldrDefault(0);
+        config.KeepFirstPositions(1);
+        synth::WrldBldrMidiOutProcessor processor(config, &sender, &ui);
+
+        processor.Process();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        REQUIRE_TRUE(sink.sent.size() == 3);
+
+        processor.Process();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        REQUIRE_TRUE(sink.sent.size() == 3);
+
+        cell.revision.store(4);
+        cell.baseColor.Store(synth::Color::Green);
+        processor.Process();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        REQUIRE_TRUE(sink.sent.size() == 4);
+        REQUIRE_TRUE(sink.sent[3].raw[8] == 1);
+        REQUIRE_TRUE(sink.sent[3].raw[10] == synth::Color::Green.r / 2);
+        sender.Stop();
+    }
+
+    // SystemCcMidiOutProcessor.
+    {
+        synth::ParameterManager::UIState ui;
+        ui.Configure(0, 0, 0, 0, 0, 0);
+        ui.resetHeld.store(true);
+
+        FakeMidiSink sink;
+        synth::MidiSender sender;
+        sender.SetSink(0, &sink);
+        sender.Start();
+        synth::SystemCcMidiOutConfig config;
+        config.associations.push_back({.control = {.channel = 5, .cc = 32}, .message = synth::MessageIn::ToggleReset(0)});
+        synth::SystemCcMidiOutProcessor processor(config, &sender, &ui);
+
+        processor.Process();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        REQUIRE_TRUE(sink.sent.size() == 1);
+
+        processor.Process();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        REQUIRE_TRUE(sink.sent.size() == 1);
+
+        ui.resetHeld.store(false);
+        processor.Process();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        REQUIRE_TRUE(sink.sent.size() == 2);
+        REQUIRE_TRUE(sink.sent[1].GetValue() == 0);
+        sender.Stop();
+    }
+
+    // WrldBldrSystemMidiOutProcessor.
+    {
+        synth::ParameterManager::UIState ui;
+        ui.Configure(0, 0, 0, 0, 0, 0);
+        ui.resetHeld.store(true);
+
+        FakeMidiSink sink;
+        synth::MidiSender sender;
+        sender.SetSink(0, &sink);
+        sender.Start();
+        synth::WrldBldrSystemMidiOutConfig config;
+        config.associations.push_back({.position = {.channel = 5, .x = 0, .y = 4}, .message = synth::MessageIn::ToggleReset(0)});
+        synth::WrldBldrSystemMidiOutProcessor processor(config, &sender, &ui);
+
+        processor.Process();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        REQUIRE_TRUE(sink.sent.size() == 1);
+
+        processor.Process();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        REQUIRE_TRUE(sink.sent.size() == 1);
+
+        ui.resetHeld.store(false);
+        processor.Process();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        REQUIRE_TRUE(sink.sent.size() == 2);
+        sender.Stop();
+    }
+
+    // LaunchpadGridMidiOutProcessor.
+    {
+        synth::ParameterManager::UIState ui;
+        ui.Configure(0, 0, 0, 0, 0, 0);
+        ui.resetHeld.store(true);
+
+        FakeMidiSink sink;
+        synth::MidiSender sender;
+        sender.SetSink(0, &sink);
+        sender.Start();
+        synth::LaunchpadGridMidiOutConfig config;
+        config.associations.push_back(
+            {.position = {.controller = synth::LaunchpadController::LaunchpadX, .x = 0, .y = 7},
+             .message = synth::MessageIn::ToggleReset(0)});
+        synth::LaunchpadGridMidiOutProcessor processor(config, &sender, &ui);
+
+        processor.Process();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        REQUIRE_TRUE(sink.sent.size() == 1);
+
+        processor.Process();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        REQUIRE_TRUE(sink.sent.size() == 1);
+
+        ui.resetHeld.store(false);
+        processor.Process();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        REQUIRE_TRUE(sink.sent.size() == 2);
+        sender.Stop();
+    }
+
+    // OpenSysExMidiOutProcessor: further passes with no Reset() send nothing.
+    {
+        FakeMidiSink sink;
+        synth::MidiSender sender;
+        sender.SetSink(0, &sink);
+        sender.Start();
+        std::vector<std::vector<std::uint8_t>> messages{
+            {0xF0, 0x01, 0xF7},
+            {0xF0, 0x02, 0xF7},
+        };
+        synth::OpenSysExMidiOutProcessor processor(messages, &sender);
+
+        processor.Process();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        REQUIRE_TRUE(sink.sent.size() == 2);
+
+        processor.Process();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        REQUIRE_TRUE(sink.sent.size() == 2);
+
+        processor.Reset();
+        processor.Process();
+        sender.FlushForTests(std::chrono::milliseconds(500));
+        REQUIRE_TRUE(sink.sent.size() == 4);
+        sender.Stop();
+    }
+}
+
 TEST_CASE(absolute_encoder_output_gates_until_acknowledged_and_suppresses_exact_echo_for_both_protocols) {
     for (const synth::EncoderMidiOutProtocol protocol : {
              synth::EncoderMidiOutProtocol::Twister,
@@ -9160,9 +9653,14 @@ TEST_CASE(absolute_encoder_output_retries_failed_correction_without_resolving_or
     PublishEncoderCell(ui, 0.9f, 0.25f, alert.Epoch());
 
     FakeMidiSink sink;
-    synth::MidiSender sender(1);
+    // Capacity 3, not 1: TwisterMidiOutProcessor::Process() sends colour,
+    // colour brightness and ring brightness before the position CC this test
+    // targets, and a decline anywhere in the pass stops the rest of it (see
+    // MidiOutProcessor::ProcessPosition). Three slots let the first pass's
+    // real colour/brightness/ring-brightness sends succeed and leave the
+    // position CC as the one that finds the queue full.
+    synth::MidiSender sender(3);
     sender.SetSink(0, &sink);
-    REQUIRE_TRUE(sender.Enqueue(0, synth::BasicMidi::CC(0, 9, 9, 9)));
     auto processor = MakeEncoderOutput(synth::EncoderMidiOutProtocol::Twister, synth::EncoderMode::Absolute,
                                        &sender, &ui, &coordinator, 7);
     processor->Process();
@@ -9187,9 +9685,9 @@ TEST_CASE(absolute_encoder_output_retries_failed_ordinary_raw_center_enqueue_wit
     synth::AbsoluteFeedbackCoordinator coordinator;
     coordinator.ReserveRoute({.controllerSlot = 0, .parameterSlot = 0, .position = 0});
     FakeMidiSink sink;
-    synth::MidiSender sender(1);
+    // Capacity 3, not 1: see the sibling retry test above for why.
+    synth::MidiSender sender(3);
     sender.SetSink(0, &sink);
-    REQUIRE_TRUE(sender.Enqueue(0, synth::BasicMidi::CC(0, 9, 9, 9)));
     auto processor = MakeEncoderOutput(synth::EncoderMidiOutProtocol::Twister, synth::EncoderMode::Absolute,
                                        &sender, &ui, &coordinator, 0);
     processor->Process();

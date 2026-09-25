@@ -661,9 +661,13 @@ protected:
     };
 
     std::optional<CellSnapshot> LoadCellSnapshot(const EncoderMidiOutMapping& mapping) const;
-    void ProcessPosition(std::size_t mappingIx, MidiControlAddress outputAddress,
-                         const CellSnapshot& snapshot, bool blank,
-                         bool& cacheValid, std::uint8_t& cachedValue);
+    // Returns false only when this call attempted an Enqueue and it was
+    // declined; the cache is left unchanged in that case, so a later pass
+    // retries it. Returns true when nothing needed sending or the send
+    // succeeded.
+    bool ProcessPosition(std::size_t mappingIx, MidiControlAddress outputAddress,
+                        const CellSnapshot& snapshot, bool blank,
+                        bool& cacheValid, std::uint8_t& cachedValue);
     bool Enqueue(const BasicMidi& midi);
     static float NormalizeForDisplay(float value, bool bipolar);
     void ReserveAbsoluteRoutes();
@@ -731,8 +735,13 @@ public:
     void Process() override;
 
 private:
+    // One sent flag per value, since each is its own Enqueue and each can be
+    // accepted or declined independently; the entry is up to date only when
+    // every flag is set.
     struct CacheEntry {
-        bool valid = false;
+        bool colorValid = false;
+        bool brightnessValid = false;
+        bool ringBrightnessValid = false;
         bool encoderRingValueValid = false;
         std::uint8_t encoderRingValue = 0;
         std::uint8_t rgbColor = 0;
@@ -937,6 +946,9 @@ private:
     MidiSender* sender_ = nullptr;
     std::size_t sinkIx_ = 0;
     bool pending_ = true;
+    // The first message not yet accepted; Process() resumes here so a
+    // decline part-way through never re-sends a message already accepted.
+    std::size_t nextMessageIx_ = 0;
 };
 
 struct MidiControllerSystemMessageAssociation {
