@@ -392,11 +392,15 @@ public:
     //      arenaGrowPending_, and stops draining for this block (never grows
     //      the arena on the audio path).
     //   2. drain due UI messages, then due MIDI messages. Apply ordinary
-    //      parameter/grid messages immediately; insert clock/transport into
-    //      one fixed-capacity ordered batch. Its key is timestamp, Internal
-    //      before ExternalMidi, external slot ascending, then stable drain
-    //      order. Overflow retains the earliest messages and increments an
-    //      observable newest-drop counter.
+    //      parameter/grid messages immediately; for an app that declares
+    //      HasAppCommands, hand each AppCommand message to its
+    //      ApplyAppCommand hook immediately, in the same FIFO drain order
+    //      (an app without the hook has MessageInBus::Apply drop it
+    //      instead); insert clock/transport into one fixed-capacity ordered
+    //      batch. Its key is timestamp, Internal before ExternalMidi,
+    //      external slot ascending, then stable drain order. Overflow
+    //      retains the earliest messages and increments an observable
+    //      newest-drop counter.
     //   3. route that ordered realtime batch into MasterClock. External
     //      receive gating/source ownership stays MasterClock policy; Internal
     //      transport bypasses external receive gates.
@@ -1291,9 +1295,15 @@ private:
         while (bus.Pop(message, timestamp)) {
             if (IsRealtimeMessage(message)) {
                 InsertRealtimeMessage(message);
-            } else {
-                bus.Apply(message);
+                continue;
             }
+            if constexpr (HasAppCommands<App>) {
+                if (message.type == MessageIn::Type::AppCommand) {
+                    app_.ApplyAppCommand(message.command, message.value);
+                    continue;
+                }
+            }
+            bus.Apply(message);
         }
     }
 

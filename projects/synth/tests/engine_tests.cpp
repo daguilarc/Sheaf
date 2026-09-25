@@ -231,6 +231,46 @@ struct EngineTestApp {
     }
 };
 
+// Declares HasAppCommands: records every ApplyAppCommand call, in the order
+// the audio thread's drain applies them, plus the probe's SceneCenter at the
+// moment each one ran (so a test can tell whether it ran before or after a
+// ParamIncDec message popped from the same bus).
+struct AppCommandTestApp {
+    static inline float processLiteAlpha = 1.0f;
+    synth::AppContext* context = nullptr;
+    synth::ParameterId probeId = 0;
+    std::vector<std::pair<std::size_t, float>> appliedCommands;
+    std::vector<float> probeCenterWhenApplied;
+
+    static synth::RuntimeConfig Config() {
+        synth::RuntimeConfig config;
+        config.appName = "AppCommandTest";
+        config.numAudioOutputs = 2;
+        return config;
+    }
+    void Init(synth::AppContext* ctx) {
+        context = ctx;
+        auto& group = ctx->parameterManager->CreateGroup({.numVoices = 1,
+                                                           .numModulators = 0,
+                                                           .numScenes = 1,
+                                                           .maxParameters = 4,
+                                                           .processLiteAlpha = processLiteAlpha,
+                                                           .targetCenterAlpha = 1.0f});
+        auto& probe = ctx->parameterManager->CreateParameter(group, {.name = "Probe", .defaultValue = 0.25f});
+        probeId = probe.Id();
+        auto& bank = ctx->parameterManager->CreateBank();
+        bank.AddMapping(/*encoderId=*/0, probe);
+        auto& slot = ctx->parameterManager->CreateBankSlot();
+        slot.AddPhysicalEncoder(/*encoderId=*/0);
+        slot.SelectBank(&bank);
+    }
+    void ApplyAppCommand(std::size_t command, float value) {
+        appliedCommands.emplace_back(command, value);
+        probeCenterWhenApplied.push_back(context->parameterManager->ParameterById(probeId).SceneCenter(0));
+    }
+    void ProcessBlock(synth::AudioBlock&) {}
+};
+
 class InitTopologyCell final : public synth::Cell {
 public:
     void OnPress(std::uint8_t) override {}
@@ -1756,6 +1796,34 @@ TEST_CASE(engine_pump_stash_is_a_drain_barrier_with_retry_first_ordering) {
     REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).SceneCenter(0), initial, 1e-4f);
 
     std::filesystem::remove_all(saveDir);
+}
+
+TEST_CASE(engine_drain_applies_an_app_command_before_a_later_turn_in_the_same_block_and_starts_the_transport) {
+    AppCommandTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<AppCommandTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    // Pushed in this order: a command, then a turn, then Start. The command
+    // must apply before the turn (same drain, FIFO pop order), and Start --
+    // a realtime message -- is lifted into the batch and applied after both
+    // drains, so the transport is running once this block returns.
+    engine.UiBus().Push(synth::MessageIn::AppCommand(0, /*command=*/7, /*value=*/0.9f));
+    engine.UiBus().Push(synth::MessageIn::ParamIncDec(0, /*slotIx=*/0, /*position=*/0, /*delta=*/0.3f));
+    engine.UiBus().Push(synth::MessageIn::Start(0));
+
+    TestBlockBuffers buffers(2, 256);
+    synth::AudioBlock block = buffers.Block(256);
+    engine.ProcessBlock(block, 0);
+
+    REQUIRE_TRUE(engine.Application().appliedCommands.size() == 1);
+    REQUIRE_TRUE(engine.Application().appliedCommands[0].first == 7);
+    REQUIRE_NEAR(engine.Application().appliedCommands[0].second, 0.9f, 1e-6f);
+    // The command ran while the probe still held its default: the turn,
+    // popped after it from the same bus, had not applied yet.
+    REQUIRE_NEAR(engine.Application().probeCenterWhenApplied[0], 0.25f, 1e-6f);
+    REQUIRE_NEAR(engine.Manager().ParameterById(engine.Application().probeId).SceneCenter(0), 0.55f, 1e-4f);
+    REQUIRE_TRUE(engine.Clock().IsTransportRunning());
 }
 
 TEST_CASE(engine_initialize_without_startup_patch_never_fires_rebuilt_callback) {

@@ -45,6 +45,18 @@ concept HasProcessFrame = requires(T app) {
     { app.ProcessFrame() } -> std::same_as<void>;
 };
 
+// Optional app-command hook: an app that declares it gets every
+// MessageIn::AppCommand handed to ApplyAppCommand(command, value) on the
+// audio thread, from Engine::DrainMessageBus's own drain, in the same FIFO
+// order as the ordinary (non-realtime) messages it applies alongside --
+// before app.ProcessFrame() runs. Detected at compile time, same as the
+// hooks above; an app without it never sees one (MessageInBus::Apply drops
+// it instead).
+template <typename T>
+concept HasAppCommands = requires(T app, std::size_t command, float value) {
+    { app.ApplyAppCommand(command, value) } -> std::same_as<void>;
+};
+
 // Optional revert hook. When present, synth::Engine invokes
 // app.RestoreStartupState() immediately after a patch message reverts the
 // parameter manager to defaults, on whichever thread applied that message.
