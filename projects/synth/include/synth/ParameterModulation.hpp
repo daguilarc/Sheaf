@@ -341,6 +341,14 @@ public:
     bool CanAllocate() const;
     std::size_t AvailableParameterSlots() const;
     void AddParameterStorageBatch(std::unique_ptr<ParameterStorageBatch> batch);
+    // The free-slot floor RequestParameterStorageBatchIfLow and the
+    // request-size floor in ParameterManager::RequestParameterStorageBatch
+    // both read. Defaults to numModulators * 2 at construction, as
+    // RequestParameterStorageBatchIfLow's own floor did before this setter
+    // existed; an app sets a larger watermark to keep more than one press's
+    // worth of storage ahead of AvailableParameterSlots().
+    void SetStorageLowWatermark(std::size_t watermark) { storageLowWatermark_ = watermark; }
+    std::size_t StorageLowWatermark() const { return storageLowWatermark_; }
     std::size_t ParameterCount() const { return parameterCount_; }
     std::size_t TopLevelParameterCount() const { return topLevelParameters_.size(); }
     std::size_t LiveLocalParameterCount() const { return liveLocalParameterCount_; }
@@ -395,6 +403,7 @@ private:
     };
     std::vector<RecycledLocalSlot> recycledLocalSlots_;
     bool storageRequestPending_ = false;
+    std::size_t storageLowWatermark_ = 0;
     std::vector<float> currentCenterScaleArena_;
     std::vector<float> targetCenterScaleArena_;
     std::vector<float> currentNormalizationOffsetArena_;

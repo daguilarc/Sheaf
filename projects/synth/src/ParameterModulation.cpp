@@ -662,7 +662,8 @@ ParameterGroup::ParameterGroup(ParameterGroupConfig config, ParameterManager& ma
       manager_(&manager),
       gestureCount_(gestureCount),
       modulators_(config.numVoices, config.numModulators),
-      parameterCount_(0) {
+      parameterCount_(0),
+      storageLowWatermark_(config.numModulators * 2) {
     parameters_.reserve(config_.maxParameters);
     topLevelParameters_.reserve(config_.maxParameters);
     recycledLocalSlots_.reserve(config_.maxParameters);
@@ -838,7 +839,7 @@ void ParameterGroup::RequestParameterStorageBatch(std::size_t minimumAdditionalP
 }
 
 void ParameterGroup::RequestParameterStorageBatchIfLow() {
-    const std::size_t lowWatermark = config_.numModulators * 2;
+    const std::size_t lowWatermark = storageLowWatermark_;
     if (lowWatermark == 0) {
         return;
     }
@@ -3791,7 +3792,7 @@ bool ParameterManager::RequestParameterStorageBatch(ParameterGroup& group, std::
     if (!OwnsGroup(group) || parameterMessageOutBus_ == nullptr || minimumAdditionalParameters == 0) {
         return false;
     }
-    const std::size_t lowWatermark = group.Config().numModulators * 2;
+    const std::size_t lowWatermark = group.StorageLowWatermark();
     const std::size_t requested = std::max(minimumAdditionalParameters, lowWatermark);
     return parameterMessageOutBus_->Push(
         ParameterMessageOut::ParameterStorageBatchNeeded(group, minimumAdditionalParameters, requested));

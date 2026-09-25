@@ -4528,6 +4528,37 @@ TEST_CASE(modulation_view_requests_storage_batch_and_succeeds_after_reinforcemen
     REQUIRE_TRUE(bank.VisibleParameter(3) == &carrier);
 }
 
+TEST_CASE(storage_low_watermark_floors_the_request_and_defaults_to_twice_the_modulator_count) {
+    synth::ParameterMessageOutBus outputBus(4);
+    synth::ParameterManager manager;
+    manager.SetParameterMessageOutBus(&outputBus);
+    auto& group = manager.CreateGroup({
+        .numVoices = 1,
+        .numModulators = 2,
+        .numScenes = 1,
+        .maxParameters = 90,
+    });
+    REQUIRE_TRUE(group.StorageLowWatermark() == 4);  // numModulators * 2, unset
+
+    group.SetStorageLowWatermark(100);
+    manager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+    REQUIRE_TRUE(group.AvailableParameterSlots() == 89);
+
+    synth::ParameterMessageOut request;
+    REQUIRE_TRUE(outputBus.Pop(request));
+    REQUIRE_TRUE(request.type == synth::ParameterMessageOut::Type::ParameterStorageBatchNeeded);
+    REQUIRE_TRUE(request.group == &group);
+    REQUIRE_TRUE(request.requestedParameters == 100);  // the floor is the watermark, not the shortfall (11)
+
+    // Fulfil the pending request so the next creation's own low-water check
+    // is not gated by the still-outstanding one above.
+    group.AddParameterStorageBatch(synth::MakeParameterStorageBatch(group.Config(), group.GestureCount(), 100));
+    group.SetStorageLowWatermark(group.Config().numModulators * 2);  // back to the default
+
+    manager.CreateParameter(group, {.name = "Filler", .defaultValue = 0.5f});
+    REQUIRE_TRUE(!outputBus.Pop(request));  // available is far above the default watermark: no request
+}
+
 TEST_CASE(modulation_view_materializes_all_missing_depth_parameters_when_capacity_allows) {
     synth::ParameterManager manager;
     manager.SetGestureCount(2);
