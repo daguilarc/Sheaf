@@ -2394,6 +2394,41 @@ TEST_CASE(engine_running_load_that_fits_leaves_one_press_of_storage_behind_it) {
     synth::Parameter* pressDepth = engine.Manager().ParameterById(otherId).EnsureModulationDepth(0);
     REQUIRE_TRUE(pressDepth != nullptr);
     REQUIRE_TRUE(!engine.HasStashedPatchMessageForTest());
+
+    // The reserve is enforced, not just arithmetically present: a second,
+    // minimal Load -- naming one more depth for Other, on top of the press
+    // above -- would eat one slot into what the watermark exists to protect.
+    // available(10-2-1=7) < need(1) + watermark(8), so the shortfall check
+    // must refuse it exactly as it would refuse a larger one, leaving the
+    // reserve whole rather than let a small Load erode it.
+    synth::ParameterManager pressManager;
+    auto& pressGroup =
+        pressManager.CreateGroup({.numVoices = 1, .numModulators = 4, .numScenes = 1, .maxParameters = 8});
+    for (synth::ModulatorMetadata& metadata : pressGroup.GetModulators().Metadata()) {
+        metadata.connected = true;
+    }
+    auto& pressOther = pressManager.CreateParameter(pressGroup, {.name = "Other", .defaultValue = 0.5f});
+    synth::Parameter* pressScratchDepth = pressOther.EnsureModulationDepth(1);
+    REQUIRE_TRUE(pressScratchDepth != nullptr);
+    pressScratchDepth->SceneCenter(0) = 0.65f;  // away from the depth's own 0.5f neutral default
+    pressManager.CaptureDefaultControlState();
+    pressManager.ComputeAllParameters();
+
+    const std::size_t availableBeforeSecondLoad = group.AvailableParameterSlots();
+    auto secondArena = std::make_shared<synth::JsonArena>(64 * 1024);
+    synth::JSON secondRoot = synth::BuildPatchJSON(*secondArena, "Second Small Patch", pressManager, synth::MidiInstrumentConfig{});
+    REQUIRE_TRUE(!secondRoot.IsNull());
+    REQUIRE_TRUE(engine.Context().patchInputBus->Push(
+        synth::PatchMessageIn::LoadFromJSON(synth::JsonDocument{.arena = secondArena, .root = secondRoot})));
+
+    {
+        synth::AudioBlock b = buffers.Block(256);
+        engine.ProcessBlock(b, 0);
+    }
+    REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());  // refused, not applied: the reserve stays whole
+    REQUIRE_TRUE(engine.IsStorageGrowPendingForTest());
+    REQUIRE_TRUE(engine.Manager().ParameterById(otherId).ModulationDepthParameter(1) == nullptr);
+    REQUIRE_TRUE(group.AvailableParameterSlots() == availableBeforeSecondLoad);  // refusal touches nothing
 }
 
 TEST_CASE(engine_context_exposes_clock_diagnostics_transport_state_and_sync_configuration) {
