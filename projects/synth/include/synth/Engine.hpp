@@ -49,7 +49,8 @@ public:
         const std::uint64_t metadata =
             static_cast<std::uint64_t>(diagnostics.acquisition) |
             (static_cast<std::uint64_t>(diagnostics.source) << 8U) |
-            (static_cast<std::uint64_t>(diagnostics.hasActiveExternalSource) << 16U);
+            (static_cast<std::uint64_t>(diagnostics.hasActiveExternalSource) << 16U) |
+            (static_cast<std::uint64_t>(diagnostics.transportState) << 17U);
         metadata_.store(metadata, std::memory_order_seq_cst);
         activeExternalSourceSlot_.store(
             static_cast<std::uint64_t>(diagnostics.activeExternalSourceSlot),
@@ -76,6 +77,7 @@ public:
                 .hasActiveExternalSource = ((metadata >> 16U) & 1U) != 0U,
                 .activeExternalSourceSlot = static_cast<std::size_t>(
                     activeExternalSourceSlot_.load(std::memory_order_seq_cst)),
+                .transportState = static_cast<ClockTransportState>((metadata >> 17U) & 0x3U),
                 .currentBpm = std::bit_cast<double>(
                     currentBpmBits_.load(std::memory_order_seq_cst)),
                 .outputLatencyMicros = outputLatencyMicros_.load(std::memory_order_seq_cst),
@@ -182,6 +184,8 @@ public:
 
         context_.parameterManager = &manager_;
         context_.patchManager = &patchManager_;
+        context_.clockDiagnostics = &clockDiagnosticsPublication_;
+        context_.syncConfiguration = [this] { return SyncConfigurationSnapshot(); };
         context_.uiBus = &uiBus_;
         context_.midiBus = &midiBus_;
         context_.parameterMessageOutBus = &parameterMessageOutBus_;

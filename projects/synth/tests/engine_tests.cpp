@@ -2221,6 +2221,39 @@ TEST_CASE(engine_running_load_stashes_under_storage_shortfall_and_retries_whole_
     }
 }
 
+TEST_CASE(engine_context_exposes_clock_diagnostics_transport_state_and_sync_configuration) {
+    EngineTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<EngineTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    const synth::AppContext& context = engine.Context();
+    REQUIRE_TRUE(context.clockDiagnostics != nullptr);
+
+    TestBlockBuffers buffers(2, 256);
+    REQUIRE_TRUE(engine.UiBus().Push(synth::MessageIn::Start(0)));
+    {
+        synth::AudioBlock block = buffers.Block(256);
+        engine.ProcessBlock(block, 0);
+    }
+    REQUIRE_TRUE(context.clockDiagnostics->Snapshot().transportState == synth::ClockTransportState::Running);
+
+    REQUIRE_TRUE(engine.UiBus().Push(synth::MessageIn::Stop(1)));
+    {
+        synth::AudioBlock block = buffers.Block(256);
+        engine.ProcessBlock(block, 1);
+    }
+    REQUIRE_TRUE(context.clockDiagnostics->Snapshot().transportState == synth::ClockTransportState::Stopped);
+
+    REQUIRE_TRUE(!context.syncConfiguration().receiveClock);
+    REQUIRE_TRUE(engine.RequestSyncConfiguration({.receiveClock = true}));
+    {
+        synth::AudioBlock block = buffers.Block(256);
+        engine.ProcessBlock(block, 2);
+    }
+    REQUIRE_TRUE(context.syncConfiguration().receiveClock);
+}
+
 TEST_CASE(engine_logs_patch_apply_and_storage_batch_activity_for_slog_7) {
     // Regression for slog-7: the audio-thread patch drain (ProcessBlock) must
     // INFO-log each ApplyPatchMessage outcome, and the message-thread tick

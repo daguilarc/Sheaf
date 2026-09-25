@@ -25,6 +25,9 @@
 namespace synth {
 
 class GridManager;
+// Defined in Engine.hpp, which includes this file; forward-declared here so
+// AppContext can hold a pointer to one without a header cycle.
+class ClockDiagnosticsPublication;
 
 // Static configuration supplied by the application (sar-2). Audio fields are
 // a request: the host negotiates actual values with the device and reports
@@ -286,6 +289,20 @@ struct AppContext {
     // for application runtime mutation after Engine finalizes grid topology.
     // Message thread during Init only.
     GridManager* gridManager = nullptr;
+
+    // Read-only publication of the master clock's diagnostics (tempo,
+    // transport state, etc.), refreshed once per audio block by
+    // Engine::PublishClockDiagnostics. Any thread: Snapshot() is a wait-free
+    // seqlock read, safe everywhere including the audio thread. Null only in
+    // contexts that never construct a real Engine (there are none today).
+    const ClockDiagnosticsPublication* clockDiagnostics = nullptr;
+
+    // Returns the sync configuration currently requested through
+    // Engine::RequestSyncConfiguration (bound to the owning Engine's own
+    // Engine::SyncConfigurationSnapshot()). Any thread: the wrapped read is a
+    // wait-free atomic load. Empty only in contexts that never construct a
+    // real Engine (there are none today).
+    std::function<SyncConfig()> syncConfiguration;
 
     // Shared monotonic timestamp source, the same one passed to the owning
     // synth::Engine<App>'s constructor (Runtime.hpp's NowMicros() under the
