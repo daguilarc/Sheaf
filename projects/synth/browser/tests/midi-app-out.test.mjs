@@ -175,3 +175,86 @@ test("releasing the app MIDI-out port does not clear() a port a controller key s
   assert.deepEqual(cleared, [], "clear() is skipped: controller key 0 still holds this same port");
   manager.stop();
 });
+
+test("controller ports keep their own traffic across a MIDI-out reconnect, and a ninth controller row and the app key never cross", async () => {
+  const controllerA = makeTimestampedPort("controller-a", "Controller A");
+  const controllerB = makeTimestampedPort("controller-b", "Controller B (ninth row)");
+  const appPort1 = makeTimestampedPort("app-1", "App Out 1");
+  const appPort2 = makeTimestampedPort("app-2", "App Out 2");
+  for (const port of [controllerA, controllerB]) port.clear = () => { port.cleared = (port.cleared ?? 0) + 1; };
+  const NINTH_ROW_KEY = 8;
+
+  const access = {
+    inputs: new Map(),
+    outputs: new Map([[controllerA.id, controllerA], [controllerB.id, controllerB], [appPort1.id, appPort1], [appPort2.id, appPort2]]),
+    onstatechange: null,
+  };
+  let queue = [];
+  let reconnected = false;
+  const manager = new BrowserMidiManager({
+    submitEndpoints: async () => [
+      { type: "open-output", controllerIx: 0, identifier: controllerA.id, name: controllerA.name },
+      { type: "open-output", controllerIx: NINTH_ROW_KEY, identifier: controllerB.id, name: controllerB.name },
+      {
+        type: "open-output",
+        controllerIx: APP_MIDI_OUT_KEY,
+        identifier: reconnected ? appPort2.id : appPort1.id,
+        name: reconnected ? appPort2.name : appPort1.name,
+      },
+    ],
+    deliverMidi: async () => {},
+    dequeueMidiOutput: async () => queue.shift(),
+  }, intervalOptions({ requestMIDIAccess: async () => access, nowMicros: () => 100_000 }));
+
+  await manager.startFromUserActivation();
+
+  // Before any reconnect: a ninth-row message and an app message, queued
+  // together, each reach only their own port.
+  queue = [
+    { controllerIx: NINTH_ROW_KEY, bytes: [0x90, 60, 100], delivery: "scheduled", dueTimeMicros: 1_000_000 },
+    { controllerIx: APP_MIDI_OUT_KEY, bytes: [0xb0, 7, 50], delivery: "scheduled", dueTimeMicros: 1_000_000 },
+  ];
+  await manager.drainOutputs();
+  assert.deepEqual(controllerB.sent.map((m) => m.bytes), [[0x90, 60, 100]], "the ninth row's own message reaches it");
+  assert.deepEqual(appPort1.sent.map((m) => m.bytes), [[0xb0, 7, 50]], "the app's own message reaches it");
+  assert.deepEqual(controllerA.sent, [], "controller A, unaddressed, receives nothing");
+
+  // Reconnect the MIDI-out port to a different device (appPort2). The
+  // controller ports' own open-output actions repeat with the same
+  // identifier, so they are no-ops; only the app key's binding changes.
+  reconnected = true;
+  await manager.poll();
+
+  assert.equal(controllerA.cleared, undefined, "reconnecting the MIDI-out port never clears controller A");
+  assert.equal(controllerB.cleared, undefined, "reconnecting the MIDI-out port never clears controller B (the ninth row)");
+
+  // After the reconnect, both controller keys must still receive only their
+  // own traffic, and the app key's traffic now lands on the NEW app port,
+  // never on appPort1 (the old one) or on either controller port.
+  queue = [
+    { controllerIx: 0, bytes: [0x90, 61, 100], delivery: "scheduled", dueTimeMicros: 2_000_000 },
+    { controllerIx: NINTH_ROW_KEY, bytes: [0x90, 62, 100], delivery: "scheduled", dueTimeMicros: 2_000_000 },
+    { controllerIx: APP_MIDI_OUT_KEY, bytes: [0xb0, 7, 51], delivery: "scheduled", dueTimeMicros: 2_000_000 },
+  ];
+  await manager.drainOutputs();
+
+  assert.deepEqual(controllerA.sent.map((m) => m.bytes), [[0x90, 61, 100]], "controller A still gets only its own key's traffic");
+  assert.deepEqual(
+    controllerB.sent.map((m) => m.bytes),
+    [[0x90, 60, 100], [0x90, 62, 100]],
+    "controller B (the ninth row) still gets only its own key's traffic, before and after the reconnect",
+  );
+  assert.deepEqual(appPort2.sent.map((m) => m.bytes), [[0xb0, 7, 51]], "the reconnected app port receives the new app traffic");
+  // The old app port is released as part of the reconnect (a different
+  // identifier), so it gets its own All Notes Off before being dropped --
+  // sbw-13's own release rule -- on top of the one message already sent to
+  // it; no MORE app traffic reaches it after that.
+  const allNotesOffOnOldPort = Array.from({ length: 16 }, (_unused, channel) => [0xb0 + channel, 123, 0]);
+  assert.deepEqual(
+    appPort1.sent.map((m) => m.bytes),
+    [[0xb0, 7, 50], ...allNotesOffOnOldPort],
+    "the old app port is silenced and released, and receives no further app traffic",
+  );
+
+  manager.stop();
+});
