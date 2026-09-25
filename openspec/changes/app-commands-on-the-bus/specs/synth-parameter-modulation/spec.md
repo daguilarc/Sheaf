@@ -3,7 +3,13 @@
 The low watermark for depth storage is a fixed multiple of the modulator
 count, sized for one encoder press; an app whose one press adds many depths
 needs a larger number, not a new mechanism. The command model gains the
-app command. The modified requirement restates its promoted text whole.
+app command. The modified requirement restates its promoted text whole. A
+storage batch supplied on the message thread was appended to a vector the
+audio thread may be walking, and a thread-sanitizer run confirmed the race
+through the drill-in path; the group also marked a storage request pending
+only after pushing it, so a batch supplied between the push and the mark
+left the group marked pending for good and unable to ask again once free
+slots ran out.
 
 ## MODIFIED Requirements
 
@@ -70,3 +76,16 @@ THE parameter group SHALL let an app set the available-slot count below which an
 #### Scenario: A raised watermark requests earlier
 - **WHEN** the watermark is set to 100 and an allocation leaves 89 available slots
 - **THEN** a batch request for 100 is pushed (the floor is the watermark); at the default watermark on the same group, none is
+
+### Requirement: spm-91 — Storage: a batch supplied while the audio thread reads
+WHEN a parameter storage batch is supplied to a group on the message thread while the audio thread allocates, finds or counts that group's parameters, THE synth parameter modulation system SHALL append the batch without moving, reallocating or invalidating any storage the audio thread can reach, SHALL publish the new batch to the audio thread only once it is fully built, and SHALL track the pending-request state with an atomic, so that no data race exists between the two threads; THE group SHALL mark a request pending before it pushes the request, and clear the mark when the push fails, so that a batch supplied at once always leaves the group able to ask again.
+
+#### Scenario: Existing storage stays put
+- **WHEN** a batch is supplied after parameters have been allocated from earlier batches
+- **THEN** every earlier parameter keeps its address and local index, and the group's available slot count grows by the new batch's capacity
+- Check: `tests/parameter_modulation_tests.cpp: a_later_storage_batch_does_not_move_parameters_allocated_from_an_earlier_one`
+
+#### Scenario: A batch supplied at once leaves the group able to ask again
+- **WHEN** a group requests storage and the batch is added before the requesting call returns
+- **THEN** the group is not marked pending afterwards, and its next shortfall pushes a new request
+- Check: none automated: the interleaving cannot be driven from one thread, and a thread-sanitizer run does not see a lost update on an atomic; read `ParameterGroup::RequestParameterStorageBatch`'s store-before-call ordering directly.
