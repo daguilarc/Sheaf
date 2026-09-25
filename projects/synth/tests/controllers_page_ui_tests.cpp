@@ -2316,8 +2316,9 @@ void TestAppMidiOutFieldsFollowTheChosenContent()
     synth::ui::NodeTree tree = surface.BuildTree();
     Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutChannel) != nullptr,
             "Channel appears for a CC content");
-    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutCc) != nullptr,
-            "CC appears for a CC content");
+    const synth::ui::Node* cc = FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutCc);
+    Require(cc != nullptr, "CC appears for a CC content");
+    Require(cc->text == "16", "the CC field defaults to 16 (General Purpose Controller 1)");
     Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutVelocity) == nullptr,
             "no Velocity field for a CC content");
 
@@ -2329,8 +2330,9 @@ void TestAppMidiOutFieldsFollowTheChosenContent()
             "Channel still appears for a Note content");
     Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutCc) == nullptr,
             "no CC field for a Note content");
-    Require(FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutVelocity) != nullptr,
-            "Velocity appears for a Note content");
+    const synth::ui::Node* velocity = FindNodeById(tree, synth::runtime_ui::NodeIds::kAppMidiOutVelocity);
+    Require(velocity != nullptr, "Velocity appears for a Note content");
+    Require(velocity->text == "Level", "the Velocity field defaults to Level (follows the output level)");
 }
 
 void TestAppMidiOutOutOfRangeEntryIsRefused()
