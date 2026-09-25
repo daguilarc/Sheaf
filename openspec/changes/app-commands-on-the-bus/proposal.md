@@ -1,7 +1,7 @@
 # Proposal — `app-commands-on-the-bus`
 
 Paired with frogg3rs `frogg3rs-presses-on-the-bus`, whose task list is the
-one task list for both trees (the S tasks). Base: 62829a4a
+one task list for both trees (the S tasks). Base: b49b7720
 (`shifted-encoder-turns`, PR #20). Supersedes the unpushed `app-o1-audit`.
 
 ## Why
@@ -98,18 +98,20 @@ reason for the same retry.
    stating its thread at the field. This is an added requirement; `sar-3` is
    not modified here, because `fold-controller-wizard-into-add-row` (#19)
    already modifies it.
-5. **Carried from `app-o1-audit`** with their spec deltas: 2.1 (storage
-   batches appended while the audio thread reads), 2.2 (output processors
-   resend a declined update), 2.3 (`Engine.hpp` false comments), 3.1
-   (library devices an app offers), 3.2 (a gesture reference names a
-   gesture the app has), 3.3 (Launchpad "Model" caption), 3.4 (stale text),
-   3.5 (`HasMessageThreadTick`), 4.1 (a row field edit without the section
-   rebuild), the hygiene commit, and the `app-operator-runs` change, left
-   open.
-6. **Dropped from `app-o1-audit`**: 2.7, 2.8, 5.1 (the depth compute-skip;
-   its removal is the WIP the branch stopped in, and the audio-equality
-   check never ran), 5.8, and every 5.x task gated on a frogg3rs
-   measurement that was not a finding.
+5. **Carried from `app-o1-audit`**, with their spec deltas: storage batches
+   appended while the audio thread reads; output processors resend a
+   declined update; `Engine.hpp`'s false comments; the library devices an
+   app offers; a gesture reference naming a gesture the app has; the
+   Launchpad "Model" caption; stale text; `HasMessageThreadTick`; a row
+   field edit without the section rebuild; the hygiene commit; and the
+   `app-operator-runs` change, left open.
+6. **Dropped from `app-o1-audit`**: the construct that held a depth-creating
+   operation until storage covered it, and the ordering fix that ran every
+   patch message relative to the app's own presses -- this change's
+   `MessageIn::AppCommand` on the bus and the patch-storage retry replace
+   both; the depth compute-skip (its removal is the WIP the branch stopped
+   in, and the audio-equality check never ran); and every O(1)
+   implementation gated on a frogg3rs measurement that was not a finding.
 
 ## Structural decisions
 
