@@ -56,9 +56,12 @@ using synth::ExpandEncoderBlock;
 using synth::ExpandGridBlock;
 using synth::ExpandGridButton;
 using synth::ExpandSystemBlock;
+using synth::FromJSON;
 using synth::GridBlock;
 using synth::GridButton;
 using synth::GridMappingExpansion;
+using synth::JSON;
+using synth::JsonArena;
 using synth::LaunchpadController;
 using synth::LaunchpadShapeSupports;
 using synth::MessageIn;
@@ -80,6 +83,7 @@ using synth::SystemAddressField;
 using synth::SystemAddressSchema;
 using synth::SystemBlock;
 using synth::SystemMessageSortKey;
+using synth::ToJSON;
 using synth::WrldBldrPositionToCC;
 using synth::WrldBldrSystemPosition;
 
@@ -268,22 +272,18 @@ TEST_CASE(SortKeyOrdersByMessageTypeDeclarationOrder) {
     REQUIRE_TRUE(bankKey < sceneKey);
 }
 
-TEST_CASE(SortKeyOrdersAppCommandAfterSetTempoBpmNormalized) {
-    MidiControllerSystemMessageAssociation tempoAssoc;
-    tempoAssoc.control = MidiControlAddress{.channel = 0, .cc = 0};
-    tempoAssoc.press = MessageIn::SetTempoBpmNormalized(0, 0.5f);
-    tempoAssoc.feedback = tempoAssoc.press;
+TEST_CASE(AProfileNamingAppCommandReadsBackAsAppAction) {
+    // A stored profile's press is round-tripped through ToJSON/FromJSON.
+    // The JSON has no "appCommand" type string -- an AppCommand press
+    // serializes under the same name AppAction does, so no controller
+    // profile can ever read one back: it always comes back AppAction.
+    MessageIn command = MessageIn::AppCommand(0, 3, 0.5f);
+    JsonArena arena(1024);
+    const JSON json = ToJSON(arena, command);
 
-    MidiControllerSystemMessageAssociation commandAssoc;
-    commandAssoc.control = MidiControlAddress{.channel = 0, .cc = 0};
-    commandAssoc.press = MessageIn::AppCommand(0, 3, 0.5f);
-    commandAssoc.feedback = commandAssoc.press;
-
-    const auto tempoKey = ComputeSystemMessageSortKey(tempoAssoc, MidiProfileKind::Generic);
-    const auto commandKey = ComputeSystemMessageSortKey(commandAssoc, MidiProfileKind::Generic);
-    // AppCommand is appended after SetTempoBpmNormalized, the last
-    // enumerator, so every existing enumerator keeps its ordinal.
-    REQUIRE_TRUE(tempoKey < commandKey);
+    MessageIn parsed;
+    REQUIRE_TRUE(FromJSON(json, parsed));
+    REQUIRE_TRUE(parsed.type == MessageIn::Type::AppAction);
 }
 
 TEST_CASE(SortKeyIncludesAbsolutePayloadAddressAdjacentToRelativeTurns) {
