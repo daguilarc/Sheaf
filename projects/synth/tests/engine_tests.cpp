@@ -279,6 +279,7 @@ struct StorageShortfallTestApp {
     static inline float processLiteAlpha = 1.0f;
     synth::AppContext* context = nullptr;
     synth::ParameterId carrierId = 0;
+    synth::ParameterId carrier2Id = 0;
 
     static synth::RuntimeConfig Config() {
         synth::RuntimeConfig config;
@@ -299,6 +300,47 @@ struct StorageShortfallTestApp {
         }
         auto& carrier = ctx->parameterManager->CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
         carrierId = carrier.Id();
+        // A second carrier so a patch can name more missing depths (up to 8)
+        // than the group's free slots (6) alone hold, making the shortfall's
+        // provisioning load-bearing rather than a formality the free slots
+        // would have covered anyway.
+        auto& carrier2 = ctx->parameterManager->CreateParameter(group, {.name = "Carrier2", .defaultValue = 0.5f});
+        carrier2Id = carrier2.Id();
+    }
+    void ProcessBlock(synth::AudioBlock&) {}
+};
+
+// A group with generous headroom (unlike StorageShortfallTestApp's tiny
+// one): a small Load fits without ever reaching the shortfall gate, so the
+// watermark-after-a-fitting-Load invariant (spp-12's "one press" scenario)
+// is observable on its own, not entangled with the shortfall-and-retry path.
+struct LoadFitsWithHeadroomTestApp {
+    static inline float processLiteAlpha = 1.0f;
+    synth::AppContext* context = nullptr;
+    synth::ParameterId carrierId = 0;
+    synth::ParameterId otherId = 0;
+
+    static synth::RuntimeConfig Config() {
+        synth::RuntimeConfig config;
+        config.appName = "LoadFitsWithHeadroomTest";
+        config.numAudioOutputs = 2;
+        return config;
+    }
+    void Init(synth::AppContext* ctx) {
+        context = ctx;
+        auto& group = ctx->parameterManager->CreateGroup({.numVoices = 1,
+                                                           .numModulators = 4,
+                                                           .numScenes = 1,
+                                                           .maxParameters = 12,
+                                                           .processLiteAlpha = processLiteAlpha,
+                                                           .targetCenterAlpha = 1.0f});
+        for (synth::ModulatorMetadata& metadata : group.GetModulators().Metadata()) {
+            metadata.connected = true;
+        }
+        auto& carrier = ctx->parameterManager->CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
+        carrierId = carrier.Id();
+        auto& other = ctx->parameterManager->CreateParameter(group, {.name = "Other", .defaultValue = 0.5f});
+        otherId = other.Id();
     }
     void ProcessBlock(synth::AudioBlock&) {}
 };
@@ -387,30 +429,38 @@ void WriteProbePatchVersion(const std::filesystem::path& patchDir, float probeVa
     synth::SavePatchVersionInDirectory(patchDir, jsonText, when);
 }
 
-// Builds a patch JSON document naming every depth for a single carrier on a
+// Builds a patch JSON document naming every depth for two carriers on a
 // four-modulator group (matching StorageShortfallTestApp's topology), with
-// the carrier at carrierValue, and writes it as a version file in patchDir.
-// A group that starts this patch fresh (maxParameters big enough to hold the
-// carrier plus all four depths) supplies the JSON; a tiny group applying it
-// later is expected to fall short of its watermark.
-void WriteDeepModDepthsPatchVersion(const std::filesystem::path& patchDir, float carrierValue,
+// the carriers at carrierValue and carrier2Value, and writes it as a version
+// file in patchDir. Eight missing depths total, split across the two
+// carriers by name so a tiny target group (StorageShortfallTestApp's own,
+// with 6 free slots after both carriers register) cannot fit them from its
+// free slots alone: opening this patch whole genuinely needs the
+// shortfall's provisioning, not just headroom the group already had. The
+// scratch group here only needs room to build the JSON, so it is sized
+// generously rather than to match the tiny target.
+void WriteDeepModDepthsPatchVersion(const std::filesystem::path& patchDir, float carrierValue, float carrier2Value,
                                     std::chrono::system_clock::time_point when) {
     synth::ParameterManager scratchManager;
     auto& group = scratchManager.CreateGroup(
-        {.numVoices = 1, .numModulators = 4, .numScenes = 1, .maxParameters = 8});
+        {.numVoices = 1, .numModulators = 4, .numScenes = 1, .maxParameters = 32});
     for (synth::ModulatorMetadata& metadata : group.GetModulators().Metadata()) {
         metadata.connected = true;
     }
     auto& carrier = scratchManager.CreateParameter(group, {.name = "Carrier", .defaultValue = 0.5f});
     carrier.SceneCenter(0) = carrierValue;
-    for (std::size_t modIx = 0; modIx < 4; ++modIx) {
-        synth::Parameter* depth = carrier.EnsureModulationDepth(modIx);
-        REQUIRE_TRUE(depth != nullptr);
-        // A depth at its own default (neutral, zero) is never written to
-        // patch JSON (Parameter::ToValueJSON skips a HasNonDefaultState()
-        // depth entirely), so BuildPatchJSON would name none of the four
-        // depths below and the shortfall this test drives would never fire.
-        depth->SceneCenter(0) = 0.7f + 0.05f * static_cast<float>(modIx);  // away from the depth's own 0.5f neutral default
+    auto& carrier2 = scratchManager.CreateParameter(group, {.name = "Carrier2", .defaultValue = 0.5f});
+    carrier2.SceneCenter(0) = carrier2Value;
+    for (synth::Parameter* target : {&carrier, &carrier2}) {
+        for (std::size_t modIx = 0; modIx < 4; ++modIx) {
+            synth::Parameter* depth = target->EnsureModulationDepth(modIx);
+            REQUIRE_TRUE(depth != nullptr);
+            // A depth at its own default (neutral, zero) is never written to
+            // patch JSON (Parameter::ToValueJSON skips a HasNonDefaultState()
+            // depth entirely), so BuildPatchJSON would name none of the eight
+            // depths below and the shortfall this test drives would never fire.
+            depth->SceneCenter(0) = 0.7f + 0.05f * static_cast<float>(modIx);  // away from the depth's own 0.5f neutral default
+        }
     }
     scratchManager.CaptureDefaultControlState();
     scratchManager.ComputeAllParameters();
@@ -2134,11 +2184,14 @@ TEST_CASE(engine_initialize_opens_a_startup_patch_whole_despite_a_storage_shortf
     std::filesystem::remove_all(dataRoot);
     const synth::RuntimeDataPaths paths = synth::RuntimeDataPaths::FromDataRoot(dataRoot);
     std::filesystem::create_directories(paths.patchesRoot);
-    // The tiny group (StorageShortfallTestApp) starts with 8 - 1 = 7 slots
-    // available after the carrier registers; the patch names 4 depths, and
-    // the default watermark is 8, so 7 < 4 + 8 fires the shortfall at
-    // startup (before Initialize() has finished, so before any block).
-    WriteDeepModDepthsPatchVersion(paths.patchesRoot / "AAA", 0.9f, std::chrono::system_clock::now());
+    // The tiny group (StorageShortfallTestApp) starts with 8 - 2 = 6 slots
+    // available after both carriers register; the patch names 8 depths
+    // across them (more than the 6 free slots alone hold), and the default
+    // watermark is 8, so 6 < 8 + 8 fires the shortfall at startup (before
+    // Initialize() has finished, so before any block). Opening it whole is
+    // impossible without the shortfall's provisioning, not merely gated by
+    // the watermark's own headroom.
+    WriteDeepModDepthsPatchVersion(paths.patchesRoot / "AAA", 0.9f, 0.8f, std::chrono::system_clock::now());
 
     StorageShortfallTestApp::processLiteAlpha = 1.0f;
     synth::Engine<StorageShortfallTestApp> engine([] { return std::uint64_t{0}; });
@@ -2146,9 +2199,12 @@ TEST_CASE(engine_initialize_opens_a_startup_patch_whole_despite_a_storage_shortf
     engine.Initialize();
 
     const synth::ParameterId carrierId = engine.Application().carrierId;
+    const synth::ParameterId carrier2Id = engine.Application().carrier2Id;
     REQUIRE_NEAR(engine.Manager().ParameterById(carrierId).SceneCenter(0), 0.9f, 1e-5f);
+    REQUIRE_NEAR(engine.Manager().ParameterById(carrier2Id).SceneCenter(0), 0.8f, 1e-5f);
     for (std::size_t modIx = 0; modIx < 4; ++modIx) {
         REQUIRE_TRUE(engine.Manager().ParameterById(carrierId).ModulationDepthParameter(modIx) != nullptr);
+        REQUIRE_TRUE(engine.Manager().ParameterById(carrier2Id).ModulationDepthParameter(modIx) != nullptr);
     }
 
     std::filesystem::remove_all(dataRoot);
@@ -2161,25 +2217,33 @@ TEST_CASE(engine_running_load_stashes_under_storage_shortfall_and_retries_whole_
     engine.Prepare(48000.0, 256);
 
     const synth::ParameterId carrierId = engine.Application().carrierId;
+    const synth::ParameterId carrier2Id = engine.Application().carrier2Id;
     REQUIRE_NEAR(engine.Manager().ParameterById(carrierId).SceneCenter(0), 0.5f, 1e-5f);
+    REQUIRE_NEAR(engine.Manager().ParameterById(carrier2Id).SceneCenter(0), 0.5f, 1e-5f);
 
     // Same shape as StorageShortfallTestApp's own group, built fresh with
-    // enough room to name every depth for the carrier at a different value,
-    // so "unchanged" and "whole after the retry" are both observable.
+    // enough room to name every depth for both carriers at a different
+    // value, so "unchanged" and "whole after the retry" are both
+    // observable. Eight missing depths, matching WriteDeepModDepthsPatchVersion:
+    // more than the target group's 6 free slots alone hold.
     synth::ParameterManager scratchManager;
     auto& scratchGroup = scratchManager.CreateGroup(
-        {.numVoices = 1, .numModulators = 4, .numScenes = 1, .maxParameters = 8});
+        {.numVoices = 1, .numModulators = 4, .numScenes = 1, .maxParameters = 32});
     for (synth::ModulatorMetadata& metadata : scratchGroup.GetModulators().Metadata()) {
         metadata.connected = true;
     }
     auto& scratchCarrier = scratchManager.CreateParameter(scratchGroup, {.name = "Carrier", .defaultValue = 0.5f});
     scratchCarrier.SceneCenter(0) = 0.9f;
-    for (std::size_t modIx = 0; modIx < 4; ++modIx) {
-        synth::Parameter* depth = scratchCarrier.EnsureModulationDepth(modIx);
-        REQUIRE_TRUE(depth != nullptr);
-        // See WriteDeepModDepthsPatchVersion's matching comment: a depth
-        // left at its own default is never written to patch JSON.
-        depth->SceneCenter(0) = 0.7f + 0.05f * static_cast<float>(modIx);  // away from the depth's own 0.5f neutral default
+    auto& scratchCarrier2 = scratchManager.CreateParameter(scratchGroup, {.name = "Carrier2", .defaultValue = 0.5f});
+    scratchCarrier2.SceneCenter(0) = 0.8f;
+    for (synth::Parameter* target : {&scratchCarrier, &scratchCarrier2}) {
+        for (std::size_t modIx = 0; modIx < 4; ++modIx) {
+            synth::Parameter* depth = target->EnsureModulationDepth(modIx);
+            REQUIRE_TRUE(depth != nullptr);
+            // See WriteDeepModDepthsPatchVersion's matching comment: a depth
+            // left at its own default is never written to patch JSON.
+            depth->SceneCenter(0) = 0.7f + 0.05f * static_cast<float>(modIx);  // away from the depth's own 0.5f neutral default
+        }
     }
     scratchManager.CaptureDefaultControlState();
     scratchManager.ComputeAllParameters();
@@ -2209,16 +2273,109 @@ TEST_CASE(engine_running_load_stashes_under_storage_shortfall_and_retries_whole_
     REQUIRE_TRUE(!engine.IsStorageGrowPendingForTest());
     REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());  // tick must not touch the stash
 
+    // Between the tick provisioning the batch and ProcessBlock retrying the
+    // stash, presses land on the same group and draw the new batch back
+    // down to one slot short of what the retry's own fresh shortfall check
+    // requires (need(8) + watermark(8) = 16). This is the window the
+    // retry's re-stash exists for: without it, a Load that fits would be
+    // dropped rather than waiting for the tick to provision again. The
+    // count consumed is derived from what the tick actually provisioned
+    // (which includes any low-water top-up already queued from Init, not
+    // only the shortfall's own need) rather than assumed.
+    synth::ParameterGroup& group = engine.Manager().ParameterById(carrierId).Group();
+    const std::size_t watermark = group.StorageLowWatermark();
+    const std::size_t need = 8;  // two carriers x four depths each, matching the patch above
+    const std::size_t availableAfterTick = group.AvailableParameterSlots();
+    REQUIRE_TRUE(availableAfterTick >= need + watermark);
+    const std::size_t toConsume = availableAfterTick - (need + watermark) + 1;
+    for (std::size_t ix = 0; ix < toConsume; ++ix) {
+        engine.Manager().CreateParameter(group, {.name = "Filler" + std::to_string(ix), .defaultValue = 0.5f});
+    }
+
     {
-        // First block after the clear retries the stash.
+        // First block after the clear retries the stash and finds storage
+        // short again: it re-stashes under the storage reason rather than
+        // dropping the Load.
+        synth::AudioBlock b = buffers.Block(256);
+        engine.ProcessBlock(b, 0);
+    }
+    REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());
+    REQUIRE_TRUE(engine.IsStorageGrowPendingForTest());
+    REQUIRE_NEAR(engine.Manager().ParameterById(carrierId).SceneCenter(0), 0.5f, 1e-5f);  // still unapplied
+
+    engine.MessageThreadTick();  // provisions the re-stashed needs, clears the flag again
+    REQUIRE_TRUE(!engine.IsStorageGrowPendingForTest());
+    REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());
+
+    {
         synth::AudioBlock b = buffers.Block(256);
         engine.ProcessBlock(b, 0);
     }
     REQUIRE_TRUE(!engine.HasStashedPatchMessageForTest());
     REQUIRE_NEAR(engine.Manager().ParameterById(carrierId).SceneCenter(0), 0.9f, 1e-4f);
+    REQUIRE_NEAR(engine.Manager().ParameterById(carrier2Id).SceneCenter(0), 0.8f, 1e-4f);
     for (std::size_t modIx = 0; modIx < 4; ++modIx) {
         REQUIRE_TRUE(engine.Manager().ParameterById(carrierId).ModulationDepthParameter(modIx) != nullptr);
+        REQUIRE_TRUE(engine.Manager().ParameterById(carrier2Id).ModulationDepthParameter(modIx) != nullptr);
     }
+}
+
+TEST_CASE(engine_running_load_that_fits_leaves_one_press_of_storage_behind_it) {
+    LoadFitsWithHeadroomTestApp::processLiteAlpha = 1.0f;
+    synth::Engine<LoadFitsWithHeadroomTestApp> engine([] { return std::uint64_t{0}; });
+    engine.Initialize();
+    engine.Prepare(48000.0, 256);
+
+    const synth::ParameterId carrierId = engine.Application().carrierId;
+    const synth::ParameterId otherId = engine.Application().otherId;
+    synth::ParameterGroup& group = engine.Manager().ParameterById(carrierId).Group();
+    const std::size_t watermark = group.StorageLowWatermark();
+
+    // Two carriers already registered leave 12 - 2 = 10 free slots. The
+    // patch names 2 depths for Carrier only: available(10) == need(2) +
+    // watermark(8) exactly, the tightest case that still fits, so this Load
+    // applies without ever stashing.
+    synth::ParameterManager scratchManager;
+    auto& scratchGroup =
+        scratchManager.CreateGroup({.numVoices = 1, .numModulators = 4, .numScenes = 1, .maxParameters = 8});
+    for (synth::ModulatorMetadata& metadata : scratchGroup.GetModulators().Metadata()) {
+        metadata.connected = true;
+    }
+    auto& scratchCarrier = scratchManager.CreateParameter(scratchGroup, {.name = "Carrier", .defaultValue = 0.5f});
+    scratchCarrier.SceneCenter(0) = 0.9f;
+    for (std::size_t modIx = 0; modIx < 2; ++modIx) {
+        synth::Parameter* depth = scratchCarrier.EnsureModulationDepth(modIx);
+        REQUIRE_TRUE(depth != nullptr);
+        depth->SceneCenter(0) = 0.7f + 0.05f * static_cast<float>(modIx);  // away from the depth's own 0.5f neutral default
+    }
+    scratchManager.CaptureDefaultControlState();
+    scratchManager.ComputeAllParameters();
+
+    auto arena = std::make_shared<synth::JsonArena>(64 * 1024);
+    synth::JSON root = synth::BuildPatchJSON(*arena, "Small Patch", scratchManager, synth::MidiInstrumentConfig{});
+    REQUIRE_TRUE(!root.IsNull());
+    REQUIRE_TRUE(engine.Context().patchInputBus->Push(
+        synth::PatchMessageIn::LoadFromJSON(synth::JsonDocument{.arena = arena, .root = root})));
+
+    TestBlockBuffers buffers(2, 256);
+    {
+        synth::AudioBlock b = buffers.Block(256);
+        engine.ProcessBlock(b, 0);
+    }
+    REQUIRE_TRUE(!engine.HasStashedPatchMessageForTest());  // never shortfell; applied in this same block
+    REQUIRE_NEAR(engine.Manager().ParameterById(carrierId).SceneCenter(0), 0.9f, 1e-4f);
+    REQUIRE_TRUE(engine.Manager().ParameterById(carrierId).ModulationDepthParameter(0) != nullptr);
+    REQUIRE_TRUE(engine.Manager().ParameterById(carrierId).ModulationDepthParameter(1) != nullptr);
+
+    // The Load's own two depths are the only slots it drew: at least a full
+    // watermark's worth is still free for the next press.
+    REQUIRE_TRUE(group.AvailableParameterSlots() >= watermark);
+
+    // The press: an encoder opening a modulation view on a different
+    // parameter finds room immediately, with no shortfall and no stash.
+    synth::Parameter* pressDepth = engine.Manager().ParameterById(otherId).EnsureModulationDepth(0);
+    REQUIRE_TRUE(pressDepth != nullptr);
+    REQUIRE_TRUE(!engine.HasStashedPatchMessageForTest());
 }
 
 TEST_CASE(engine_context_exposes_clock_diagnostics_transport_state_and_sync_configuration) {
