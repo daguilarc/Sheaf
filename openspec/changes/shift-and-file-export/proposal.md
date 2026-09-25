@@ -161,7 +161,7 @@ Drill's alone; Shift is consumed where it is set. Both counts are reported.
   directory task 1.S5.1 creates (proposal, tasks, and `specs/` moved from
   this change's `sheaf-specs/`), in the shape of `app-midi-catalog/`;
   deltas to smi-1, smi-2, smi-8, sru-59, sru-15, sru-16 as they stand in
-  the two active changes, and new smi-16, sar-33, sbw-12.
+  the two active changes, and new smi-16, sar-41, sbw-12.
 
 Not touched: `include/synth/ControllersPageUI.hpp`'s width constants; the
 fits gate decides the row (below). `ProfileConfigValidForKind`

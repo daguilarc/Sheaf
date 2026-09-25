@@ -2,7 +2,7 @@
 
 ## ADDED Requirements
 
-### Requirement: sar-33 — File export: an app hands a file to its host
+### Requirement: sar-41 — File export: an app hands a file to its host
 WHEN a running app declares the optional file-export hook (`HasFileExports<App>`: `TakePendingFileExport()` returning an optional export of file name, media type, bytes and a note), THE synth system SHALL, once per message-thread tick after draining the app-action bus, take every pending export and pass it to the handler the host installed through `Engine::SetFileExportHandler`; with no handler installed it SHALL take the export and log its name rather than retain it. An app that declares no hook SHALL see this system entirely inert. The handler runs on the message thread and the audio thread SHALL never touch an export.
 
 #### Scenario: A queued export reaches the installed handler once
