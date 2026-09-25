@@ -9,6 +9,7 @@
 #include "synth/AppContext.hpp"
 #include "synth/ControllersPageUI.hpp"
 #include "synth/MidiConfigViewModel.hpp"
+#include "synth/MidiController.hpp"
 #include "synth/PortableUIBuilders.hpp"
 #include "synth/RuntimePages.hpp"
 #include "synth/ThreadId.hpp"
@@ -16,9 +17,11 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -277,6 +280,60 @@ struct InputProbeApp final {
 
     EmptySurface surface;
     ObservedInput observed;
+};
+
+// A minimal application that appends one Control Change to block.midiOut
+// every ProcessBlock call -- used only to prove the running Runtime<App>
+// actually forwards an app-produced MIDI-out event to MidiSender's app
+// sink. Engine::ProcessBlock enqueues an app event only when
+// appMidiOutRoutingEnabled_ is true, and Runtime<App>::Start() is the one
+// call site that sets it, via engine_.EnableAppMidiOutRouting().
+struct AppMidiOutRoutingProbeApp final {
+    static synth::RuntimeConfig Config() {
+        synth::RuntimeConfig config;
+        config.appName = "RuntimeAppMidiOutRoutingProbe";
+        config.numAudioInputs = 0;
+        config.numAudioOutputs = 2;
+        config.preferredSampleRate = 48000.0;
+        config.preferredBlockSize = 256;
+        config.uiWidth = 320;
+        config.uiHeight = 160;
+        config.uiFrameHz = 30;
+        return config;
+    }
+
+    void Init(synth::AppContext*) {}
+    void PrepareToPlay(double, int) {}
+
+    void ProcessBlock(synth::AudioBlock& block) {
+        if (block.midiOut != nullptr) {
+            block.midiOut->Append(
+                synth::AppMidiOutEvent{/*frame=*/0, /*statusByte=*/0xB0, /*data1=*/7, /*data2=*/100});
+        }
+        for (int channel = 0; channel < block.numOutputChannels; ++channel) {
+            for (std::size_t sample = 0; sample < block.numFrames; ++sample) {
+                block.outputs[channel][sample] = 0.0f;
+            }
+        }
+    }
+
+    synth::ui::Surface& PortableSurface() { return surface; }
+
+    EmptySurface surface;
+};
+
+// Records everything Send() delivers -- same shape as engine_tests.cpp's
+// own EngineMidiOutputSink, minus the host-timestamped half this scenario
+// does not need (the default ImmediateOnly SchedulingCapability routes
+// every delivery through Send(), never SendScheduled()).
+struct RecordingMidiOutSink final : synth::IMidiOutputSink {
+    void Send(const synth::BasicMidi& midi) override {
+        std::lock_guard<std::mutex> lock(mutex);
+        delivered.push_back(midi);
+    }
+
+    std::mutex mutex;
+    std::vector<synth::BasicMidi> delivered;
 };
 
 // One device block's planar storage. `inputChannels` carries one entry per
@@ -840,6 +897,38 @@ void CheckDeselectingInputClosesDeviceAndUnroutes(const std::filesystem::path& p
             "deselecting input returns the routed signal to not-routed");
 }
 
+// D3: engine_.EnableAppMidiOutRouting() in runtime/Runtime.hpp's Start() is
+// the only call site that turns appMidiOutRoutingEnabled_ on; without it,
+// Engine::ProcessBlock never enqueues an app-produced MIDI-out event, no
+// matter what the app appends to block.midiOut. Runs the probe app through
+// a real, started Runtime<App> (FakeDeviceRuntime), delivers one device
+// block, and requires the app's one Control Change to reach MidiSender's
+// app sink.
+void CheckAppMidiOutRoutingReachesTheSender(const std::filesystem::path& parent) {
+    FakeDeviceRuntime<AppMidiOutRoutingProbeApp> host(FreshRoot(parent, "app-midi-out-routing"), 2, 2);
+
+    RecordingMidiOutSink sink;
+    synth::MidiSender* sender = host.Get().GetEngine().Context().midiSender;
+    Require(sender != nullptr, "the engine wires a MidiSender into its AppContext before Start()");
+    sender->SetAppMidiOutSink(&sink);
+
+    host.Start();
+
+    DeviceBlockSpec spec;
+    DeviceBlockBuffers buffers(spec);
+    host.RunBlock(buffers);
+
+    Require(sender->FlushForTests(std::chrono::milliseconds(500)),
+            "the MIDI sender drains the app's Control Change");
+    sender->ClearAppMidiOutSinkSync();
+
+    Require(sink.delivered.size() == 1,
+            "the app's one Control Change reaches the sender's app sink -- only possible once "
+            "Runtime<App>::Start() has enabled app MIDI-out routing");
+    Require(sink.delivered[0].raw == (std::vector<std::uint8_t>{0xB0, 7, 100}),
+            "the delivered bytes are the app's own Control Change");
+}
+
 void CheckJuceAudioInputNegotiation() {
     const std::filesystem::path parent =
         std::filesystem::temp_directory_path() / "sheaf-runtime-audio-input-test";
@@ -1234,6 +1323,14 @@ int main() {
     }
 
     CheckJuceAudioInputNegotiation();
+
+    {
+        const std::filesystem::path appMidiOutParent =
+            std::filesystem::temp_directory_path() / "sheaf-runtime-app-midi-out-routing-test";
+        std::filesystem::remove_all(appMidiOutParent);
+        CheckAppMidiOutRoutingReachesTheSender(appMidiOutParent);
+        std::filesystem::remove_all(appMidiOutParent);
+    }
 
     return 0;
 }
