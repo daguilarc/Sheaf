@@ -655,8 +655,6 @@ const char* PatchApplyStatusName(PatchApplyStatus status) {
         return "OutputQueueFull";
     case PatchApplyStatus::ArenaExhausted:
         return "ArenaExhausted";
-    case PatchApplyStatus::StorageShortfall:
-        return "StorageShortfall";
     }
     return "Unknown";
 }
@@ -702,9 +700,10 @@ const char* PatchCommandStatusName(PatchCommandStatus status) {
 }
 
 PatchManager::PatchManager(PatchMessageInBus* inputBus, MessageOutBus* outputBus,
-                           std::size_t initialArenaCapacity)
+                           ParameterManager* parameterManager, std::size_t initialArenaCapacity)
     : inputBus_(inputBus),
       outputBus_(outputBus),
+      parameterManager_(parameterManager),
       initialArenaCapacity_(initialArenaCapacity == 0 ? 1 : initialArenaCapacity) {}
 
 void PatchManager::SetBuses(PatchMessageInBus* inputBus, MessageOutBus* outputBus) {
@@ -839,6 +838,9 @@ PatchCommandResult PatchManager::LoadPatchVersion(const std::filesystem::path& v
         JsonDocument document = ParsePatchText(LoadPatchVersionText(versionFile));
         if (document.root.IsNull() || !ValidatePatchJSON(document.root)) {
             return {.status = PatchCommandStatus::InvalidPatch, .path = versionFile};
+        }
+        if (parameterManager_ != nullptr) {
+            parameterManager_->ProvisionStorageForPatchValues(document.root.Get("parameterValues"));
         }
         if (!inputBus_->Push(PatchMessageIn::LoadFromJSON(std::move(document)))) {
             return {.status = PatchCommandStatus::QueueFull, .path = versionFile};

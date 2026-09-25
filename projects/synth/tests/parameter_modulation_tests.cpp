@@ -12335,7 +12335,7 @@ TEST_CASE(randomized_patch_lifecycle_simulation) {
         synth::AudioDeviceState audioDevice;
         synth::PatchMessageInBus inputBus(32);
         synth::MessageOutBus outputBus(32);
-        synth::PatchManager patchManager(&inputBus, &outputBus);
+        synth::PatchManager patchManager(&inputBus, &outputBus, &manager);
 
         SimOracle oracle;
         SimInitializeOracle(oracle);
@@ -12686,7 +12686,7 @@ TEST_CASE(randomized_patch_lifecycle_preserves_recursive_local_modulation_depths
         synth::AudioDeviceState audioDevice;
         synth::PatchMessageInBus inputBus(32);
         synth::MessageOutBus outputBus(32);
-        synth::PatchManager patchManager(&inputBus, &outputBus);
+        synth::PatchManager patchManager(&inputBus, &outputBus, &manager);
         std::vector<std::pair<std::filesystem::path, RecursivePatchSnapshot>> savedVersions;
         std::optional<std::filesystem::path> expectedCurrentPatchDir;
         std::mt19937 rng(seed ^ 0xD33F5u);
@@ -15385,7 +15385,6 @@ TEST_CASE(apply_patch_message_reports_exhaustion_without_growing_caller_arena) {
 TEST_CASE(patch_manager_save_load_new_lifecycle_uses_messages_and_current_directory) {
     synth::PatchMessageInBus inputBus(8);
     synth::MessageOutBus outputBus(8);
-    synth::PatchManager patchManager(&inputBus, &outputBus);
 
     synth::ParameterManager manager;
     manager.SetGestureCount(0);
@@ -15397,6 +15396,8 @@ TEST_CASE(patch_manager_save_load_new_lifecycle_uses_messages_and_current_direct
     });
     auto& cutoff = manager.CreateParameter(group, {.name = "Cutoff", .defaultValue = 0.2f});
     manager.CaptureDefaultControlState();
+
+    synth::PatchManager patchManager(&inputBus, &outputBus, &manager);
 
     const synth::MidiControllerProfileConfig defaultProfile = synth::WrldBldrDefaultProfileConfig({});
     const synth::MidiInstrumentConfig defaultInstrument = MakeInstrumentFromProfile(defaultProfile);

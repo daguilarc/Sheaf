@@ -2178,7 +2178,7 @@ TEST_CASE(engine_tick_grows_arena_and_retries_stashed_patch_message) {
     std::filesystem::remove_all(saveDir);
 }
 
-TEST_CASE(engine_initialize_opens_a_startup_patch_whole_despite_a_storage_shortfall) {
+TEST_CASE(engine_initialize_opens_a_startup_patch_whole_when_it_needs_more_storage_than_the_group_starts_with) {
     const std::filesystem::path dataRoot =
         std::filesystem::temp_directory_path() / "engine-initialize-storage-shortfall-data-root";
     std::filesystem::remove_all(dataRoot);
@@ -2186,11 +2186,12 @@ TEST_CASE(engine_initialize_opens_a_startup_patch_whole_despite_a_storage_shortf
     std::filesystem::create_directories(paths.patchesRoot);
     // The tiny group (StorageShortfallTestApp) starts with 8 - 2 = 6 slots
     // available after both carriers register; the patch names 8 depths
-    // across them (more than the 6 free slots alone hold), and the default
-    // watermark is 8, so 6 < 8 + 8 fires the shortfall at startup (before
-    // Initialize() has finished, so before any block). Opening it whole is
-    // impossible without the shortfall's provisioning, not merely gated by
-    // the watermark's own headroom.
+    // across them (more than the 6 free slots alone hold). PatchManager::
+    // LoadPatch, called from Initialize() before any block runs, provisions
+    // every group the parsed patch would leave short (8 slots plus the
+    // default watermark of 8 here) before pushing the load message, so
+    // opening it whole needs no retry -- it applies on Initialize()'s own
+    // single drain of the message.
     WriteDeepModDepthsPatchVersion(paths.patchesRoot / "AAA", 0.9f, 0.8f, std::chrono::system_clock::now());
 
     StorageShortfallTestApp::processLiteAlpha = 1.0f;
@@ -2208,134 +2209,6 @@ TEST_CASE(engine_initialize_opens_a_startup_patch_whole_despite_a_storage_shortf
     }
 
     std::filesystem::remove_all(dataRoot);
-}
-
-TEST_CASE(engine_running_load_stashes_under_storage_shortfall_and_retries_whole_after_the_tick_provisions) {
-    StorageShortfallTestApp::processLiteAlpha = 1.0f;
-    synth::Engine<StorageShortfallTestApp> engine([] { return std::uint64_t{0}; });
-    engine.Initialize();
-    engine.Prepare(48000.0, 256);
-
-    const synth::ParameterId carrierId = engine.Application().carrierId;
-    const synth::ParameterId carrier2Id = engine.Application().carrier2Id;
-    REQUIRE_NEAR(engine.Manager().ParameterById(carrierId).SceneCenter(0), 0.5f, 1e-5f);
-    REQUIRE_NEAR(engine.Manager().ParameterById(carrier2Id).SceneCenter(0), 0.5f, 1e-5f);
-
-    // Same shape as StorageShortfallTestApp's own group, built fresh with
-    // enough room to name every depth for both carriers at a different
-    // value, so "unchanged" and "whole after the retry" are both
-    // observable. Eight missing depths, matching WriteDeepModDepthsPatchVersion:
-    // more than the target group's 6 free slots alone hold.
-    synth::ParameterManager scratchManager;
-    auto& scratchGroup = scratchManager.CreateGroup(
-        {.numVoices = 1, .numModulators = 4, .numScenes = 1, .maxParameters = 32});
-    for (synth::ModulatorMetadata& metadata : scratchGroup.GetModulators().Metadata()) {
-        metadata.connected = true;
-    }
-    auto& scratchCarrier = scratchManager.CreateParameter(scratchGroup, {.name = "Carrier", .defaultValue = 0.5f});
-    scratchCarrier.SceneCenter(0) = 0.9f;
-    auto& scratchCarrier2 = scratchManager.CreateParameter(scratchGroup, {.name = "Carrier2", .defaultValue = 0.5f});
-    scratchCarrier2.SceneCenter(0) = 0.8f;
-    for (synth::Parameter* target : {&scratchCarrier, &scratchCarrier2}) {
-        for (std::size_t modIx = 0; modIx < 4; ++modIx) {
-            synth::Parameter* depth = target->EnsureModulationDepth(modIx);
-            REQUIRE_TRUE(depth != nullptr);
-            // See WriteDeepModDepthsPatchVersion's matching comment: a depth
-            // left at its own default is never written to patch JSON.
-            depth->SceneCenter(0) = 0.7f + 0.05f * static_cast<float>(modIx);  // away from the depth's own 0.5f neutral default
-        }
-    }
-    scratchManager.CaptureDefaultControlState();
-    scratchManager.ComputeAllParameters();
-
-    auto arena = std::make_shared<synth::JsonArena>(64 * 1024);
-    synth::JSON root = synth::BuildPatchJSON(*arena, "Deep Patch", scratchManager, synth::MidiInstrumentConfig{});
-    REQUIRE_TRUE(!root.IsNull());
-    REQUIRE_TRUE(engine.Context().patchInputBus->Push(
-        synth::PatchMessageIn::LoadFromJSON(synth::JsonDocument{.arena = arena, .root = root})));
-
-    // Production cadence: one message tick per six blocks, never per block,
-    // so an early retry (which would apply before the tick has provisioned
-    // anything) cannot hide behind a rig that ticks every block.
-    TestBlockBuffers buffers(2, 256);
-    for (int block = 0; block < 6; ++block) {
-        synth::AudioBlock b = buffers.Block(256);
-        engine.ProcessBlock(b, 0);
-        // The running patch is untouched across every block before the
-        // provisioning tick: still the launch value, not the loaded one.
-        REQUIRE_NEAR(engine.Manager().ParameterById(carrierId).SceneCenter(0), 0.5f, 1e-5f);
-    }
-    REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());
-    REQUIRE_TRUE(engine.IsStorageGrowPendingForTest());
-    REQUIRE_TRUE(!engine.IsArenaGrowPendingForTest());
-
-    synth::ParameterGroup& group = engine.Manager().ParameterById(carrierId).Group();
-    const std::size_t watermark = group.StorageLowWatermark();
-    const std::size_t need = 8;  // two carriers x four depths each, matching the patch above
-
-    // Satisfy the raw storage need directly -- bypassing MessageThreadTick
-    // entirely -- so the barrier's own storageGrowPending_ read is the only
-    // thing standing between the stash and an early retry. If ProcessBlock
-    // retried as soon as arenaGrowPending_ alone cleared, ignoring
-    // storageGrowPending_, this block would find the room just added and
-    // apply the stashed Load here, before the tick that is supposed to gate
-    // the retry has ever run.
-    group.AddParameterStorageBatch(
-        synth::MakeParameterStorageBatch(group.Config(), group.GestureCount(), need + watermark));
-    {
-        synth::AudioBlock b = buffers.Block(256);
-        engine.ProcessBlock(b, 0);
-    }
-    REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());
-    REQUIRE_TRUE(engine.IsStorageGrowPendingForTest());
-    REQUIRE_NEAR(engine.Manager().ParameterById(carrierId).SceneCenter(0), 0.5f, 1e-5f);  // still unapplied
-
-    engine.MessageThreadTick();  // provisions the stashed needs, clears the flag
-    REQUIRE_TRUE(!engine.IsStorageGrowPendingForTest());
-    REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());  // tick must not touch the stash
-
-    // Between the tick provisioning the batch and ProcessBlock retrying the
-    // stash, presses land on the same group and draw the new batch back
-    // down to one slot short of what the retry's own fresh shortfall check
-    // requires (need(8) + watermark(8) = 16). This is the window the
-    // retry's re-stash exists for: without it, a Load that fits would be
-    // dropped rather than waiting for the tick to provision again. The
-    // count consumed is derived from what the tick actually provisioned
-    // (which includes any low-water top-up already queued from Init, not
-    // only the shortfall's own need) rather than assumed.
-    const std::size_t availableAfterTick = group.AvailableParameterSlots();
-    REQUIRE_TRUE(availableAfterTick >= need + watermark);
-    const std::size_t toConsume = availableAfterTick - (need + watermark) + 1;
-    for (std::size_t ix = 0; ix < toConsume; ++ix) {
-        engine.Manager().CreateParameter(group, {.name = "Filler" + std::to_string(ix), .defaultValue = 0.5f});
-    }
-
-    {
-        // First block after the clear retries the stash and finds storage
-        // short again: it re-stashes under the storage reason rather than
-        // dropping the Load.
-        synth::AudioBlock b = buffers.Block(256);
-        engine.ProcessBlock(b, 0);
-    }
-    REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());
-    REQUIRE_TRUE(engine.IsStorageGrowPendingForTest());
-    REQUIRE_NEAR(engine.Manager().ParameterById(carrierId).SceneCenter(0), 0.5f, 1e-5f);  // still unapplied
-
-    engine.MessageThreadTick();  // provisions the re-stashed needs, clears the flag again
-    REQUIRE_TRUE(!engine.IsStorageGrowPendingForTest());
-    REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());
-
-    {
-        synth::AudioBlock b = buffers.Block(256);
-        engine.ProcessBlock(b, 0);
-    }
-    REQUIRE_TRUE(!engine.HasStashedPatchMessageForTest());
-    REQUIRE_NEAR(engine.Manager().ParameterById(carrierId).SceneCenter(0), 0.9f, 1e-4f);
-    REQUIRE_NEAR(engine.Manager().ParameterById(carrier2Id).SceneCenter(0), 0.8f, 1e-4f);
-    for (std::size_t modIx = 0; modIx < 4; ++modIx) {
-        REQUIRE_TRUE(engine.Manager().ParameterById(carrierId).ModulationDepthParameter(modIx) != nullptr);
-        REQUIRE_TRUE(engine.Manager().ParameterById(carrier2Id).ModulationDepthParameter(modIx) != nullptr);
-    }
 }
 
 TEST_CASE(engine_running_load_that_fits_leaves_one_press_of_storage_behind_it) {
@@ -2390,45 +2263,10 @@ TEST_CASE(engine_running_load_that_fits_leaves_one_press_of_storage_behind_it) {
     REQUIRE_TRUE(group.AvailableParameterSlots() >= watermark);
 
     // The press: an encoder opening a modulation view on a different
-    // parameter finds room immediately, with no shortfall and no stash.
+    // parameter finds room immediately, with no stash.
     synth::Parameter* pressDepth = engine.Manager().ParameterById(otherId).EnsureModulationDepth(0);
     REQUIRE_TRUE(pressDepth != nullptr);
     REQUIRE_TRUE(!engine.HasStashedPatchMessageForTest());
-
-    // The reserve is enforced, not just arithmetically present: a second,
-    // minimal Load -- naming one more depth for Other, on top of the press
-    // above -- would eat one slot into what the watermark exists to protect.
-    // available(10-2-1=7) < need(1) + watermark(8), so the shortfall check
-    // must refuse it exactly as it would refuse a larger one, leaving the
-    // reserve whole rather than let a small Load erode it.
-    synth::ParameterManager pressManager;
-    auto& pressGroup =
-        pressManager.CreateGroup({.numVoices = 1, .numModulators = 4, .numScenes = 1, .maxParameters = 8});
-    for (synth::ModulatorMetadata& metadata : pressGroup.GetModulators().Metadata()) {
-        metadata.connected = true;
-    }
-    auto& pressOther = pressManager.CreateParameter(pressGroup, {.name = "Other", .defaultValue = 0.5f});
-    synth::Parameter* pressScratchDepth = pressOther.EnsureModulationDepth(1);
-    REQUIRE_TRUE(pressScratchDepth != nullptr);
-    pressScratchDepth->SceneCenter(0) = 0.65f;  // away from the depth's own 0.5f neutral default
-    pressManager.CaptureDefaultControlState();
-    pressManager.ComputeAllParameters();
-
-    const std::size_t availableBeforeSecondLoad = group.AvailableParameterSlots();
-    auto secondArena = std::make_shared<synth::JsonArena>(64 * 1024);
-    synth::JSON secondRoot = synth::BuildPatchJSON(*secondArena, "Second Small Patch", pressManager, synth::MidiInstrumentConfig{});
-    REQUIRE_TRUE(!secondRoot.IsNull());
-    REQUIRE_TRUE(engine.Context().patchInputBus->Push(
-        synth::PatchMessageIn::LoadFromJSON(synth::JsonDocument{.arena = secondArena, .root = secondRoot})));
-
-    {
-        synth::AudioBlock b = buffers.Block(256);
-        engine.ProcessBlock(b, 0);
-    }
-    REQUIRE_TRUE(engine.HasStashedPatchMessageForTest());  // refused, not applied: the reserve stays whole
-    REQUIRE_TRUE(engine.IsStorageGrowPendingForTest());
-    REQUIRE_TRUE(engine.Manager().ParameterById(otherId).ModulationDepthParameter(1) == nullptr);
-    REQUIRE_TRUE(group.AvailableParameterSlots() == availableBeforeSecondLoad);  // refusal touches nothing
 }
 
 TEST_CASE(engine_context_exposes_clock_diagnostics_transport_state_and_sync_configuration) {

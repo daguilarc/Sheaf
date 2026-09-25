@@ -3238,6 +3238,17 @@ std::vector<DepthNeed> ParameterManager::MissingDepthsForValuesJSON(JSON paramet
     return needs;
 }
 
+void ParameterManager::ProvisionStorageForPatchValues(JSON parameterValues) {
+    for (const DepthNeed& need : MissingDepthsForValuesJSON(parameterValues)) {
+        const std::size_t amount = need.count + need.group->StorageLowWatermark();
+        if (need.group->AvailableParameterSlots() >= amount) {
+            continue;
+        }
+        need.group->AddParameterStorageBatch(
+            MakeParameterStorageBatch(need.group->Config(), need.group->GestureCount(), amount));
+    }
+}
+
 std::size_t ParameterManager::CollectNeutralLocalParameters() {
     std::size_t collected = 0;
     for (const auto& group : groups_) {

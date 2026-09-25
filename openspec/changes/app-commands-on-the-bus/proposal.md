@@ -30,9 +30,10 @@ triggers a storage request is a fixed multiple of the modulator count, sized
 for one encoder press; an app whose one press can create a depth on every
 parameter needs a larger number. And a patch whose depths exceed
 available storage applies with depths missing and reports Ok, at startup
-and while running; the engine already retries an arena-exhausted patch
-message at both of its apply sites, and a storage shortfall is the second
-reason for the same retry.
+and while running; the caller that parses a patch, on the message thread,
+already has the `ParameterManager` in hand before the load message even
+exists, so it provisions the storage the patch's own depths need there,
+before pushing.
 
 ## What changes
 
@@ -56,39 +57,28 @@ reason for the same retry.
    (every local allocation on the audio thread), compared against
    `AvailableParameterSlots()` as today. Default unchanged
    (`numModulators * 2`).
-3. **A patch never applies with a depth missing**, at startup or running,
-   and it gets its storage the way an exhausted arena already gets grown.
-   Two sites apply patch messages and both already retry the arena case:
-   `ApplyPendingPatchMessages` at `Initialize`, before audio, growing the
-   arena inline; and `ProcessBlock`, stashing the message
-   (`pendingPatchMessage_`, `arenaGrowPending_`) for `MessageThreadTick` to
-   grow it. `ApplyPatchMessageAndNotifyApp` reports a storage shortfall
-   (per group, counted by `MissingDepthsForValuesJSON`, carried from
-   `app-o1-audit` without the construct or the startup branch around it)
-   when the patch's depths would leave available storage below the group's
-   watermark. Each site keeps its own growth step for the arena branch
-   (`GrowAndReset` inline at startup; `GrowSerializationArenaForTick` with
-   its cap while running); the stash-and-raise around either branch, at the
-   two running call sites (`ProcessBlock`'s retry and its drain), is one
-   shared helper parameterized by the reason (arena or storage), so that
-   duplication is not doubled by the second reason. The storage branch is
-   one helper, written once in `Engine`:
-   `AddParameterStorageBatch` of need plus watermark on each group, called
-   directly so the group's pending low-water request cannot absorb it; the
-   tick's existing handling of a `ParameterStorageBatchNeeded` message
-   calls the same helper. At startup the helper runs inline and the message
-   retries at once. Running, the audio thread writes the per-group need
-   beside the stash, only when no storage stash is pending, and sets a
-   storage flag of its own (never the arena flag, whose cap path drops the
-   message) with release order; the barrier holds the stash while either
-   flag is set; a retry that still reports the shortfall re-stashes under
-   the storage reason; the tick provisions, clears the flag with release
-   order after its last read of the need, and the stashed message retries
-   on the first block after the clear, the running patch untouched until it
-   applies whole. Known and stated at the
-   stash: a message applied while a running Load waits is overwritten by
-   the patch when it applies, as one applied in the block before a Load is
-   today.
+3. **A patch never applies with a depth missing**, at startup or running.
+   Storage is provisioned on the message thread, before the load message is
+   pushed, rather than retried after a failed apply.
+   `ParameterManager::ProvisionStorageForPatchValues` takes the parsed
+   patch's `parameterValues` and, for every group `MissingDepthsForValuesJSON`
+   reports missing depths for, adds one storage batch sized at that group's
+   missing count plus its own watermark (`AddParameterStorageBatch`, called
+   directly so the group's own pending low-water request cannot absorb it)
+   when the group's available storage would not already cover count plus
+   watermark; a group with enough room already is left untouched. This is
+   the same call the tick's existing `ParameterStorageBatchNeeded` handling
+   uses. Every site that parses a patch document and is about to push it as
+   a `LoadFromJSON` message calls this immediately before the push:
+   `PatchManager::LoadPatchVersion` (an on-disk Load, at startup or
+   running), and a DAW host's `setStateInformation` restore. The message
+   `ApplyPatchMessage` later applies is therefore never short of the
+   storage its own depths need, and `Engine::ApplyPatchMessageAndNotifyApp`
+   does no shortfall check of its own. The engine's existing
+   arena-exhausted retry (`ApplyPendingPatchMessages` growing the arena
+   inline at startup; `ProcessBlock` stashing `pendingPatchMessage_`/
+   `arenaGrowPending_` for `MessageThreadTick` to grow while running) is
+   unchanged and independent of this provisioning.
 4. **`AppContext` exposes what the engine already publishes** for the
    runtime pages: `clockDiagnostics` (a pointer to
    `ClockDiagnosticsPublication`, whose `ClockDiagnostics` gains
@@ -139,13 +129,15 @@ requests storage when available slots fall below a watermark, at every
 audio-thread allocation. An app whose one press can add more depths than a
 Braid encoder press needs a larger number, not a new mechanism.
 
-**A patch's storage reuses the arena retry, at both sites.** Two shortfalls
-(JSON arena, depth storage) with one shape at each of the two apply sites:
-grow inline before audio; stash, provision on the message thread and retry
-while running. The second reason moves into the constructs the first
-built, under its own flag so the arena's cap path cannot drop it; the
-arena's own growth stays per site, and only the storage provisioning is
-shared, once, with the tick's existing storage-batch handling. The startup site matters most to the player: a relaunch
+**A patch's storage is provisioned before the push, not retried after.**
+Every producer of a `LoadFromJSON` message already parses the document, on
+the message thread, before that message exists to push -- the same place
+and time `MissingDepthsForValuesJSON` needs to run. Provisioning there once
+replaces detecting a shortfall after the fact and retrying around it, and
+needs no reason of its own beside the arena's: the JSON arena's own
+exhaustion keeps its existing retry shape unchanged at both apply sites
+(grow inline before audio; stash and retry while running), untouched by
+this provisioning. The startup site matters most to the player: a relaunch
 opens with the saved patch, and a launch batch that leaves less than the
 watermark free would otherwise drop every saved patch that carries a
 depth.

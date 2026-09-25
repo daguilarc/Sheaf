@@ -840,9 +840,20 @@ public:
     // How many depths parameterValues names, at every level, that do not
     // exist yet -- one DepthNeed per group that is short any, reached the
     // same way LoadParameterValuesFromJSON reaches parameters. Creates
-    // nothing; a patch-apply site provisions storage from this count before
-    // it applies the same values.
+    // nothing; ProvisionStorageForPatchValues below provisions storage from
+    // this count before a caller applies the same values.
     std::vector<DepthNeed> MissingDepthsForValuesJSON(JSON parameterValues);
+    // Provisions storage, on the message thread, for every group
+    // parameterValues would leave short: for each DepthNeed
+    // MissingDepthsForValuesJSON reports whose group's current
+    // AvailableParameterSlots() would not already cover need.count plus that
+    // group's own StorageLowWatermark(), adds one storage batch sized at
+    // count + watermark -- the same AddParameterStorageBatch call the
+    // message thread's own low-water top-up uses. A group with enough room
+    // already is left untouched. Every LoadFromJSON push site calls this
+    // immediately before pushing, so the message that reaches
+    // ApplyPatchMessage is never short of the storage its own depths need.
+    void ProvisionStorageForPatchValues(JSON parameterValues);
     std::size_t CollectNeutralLocalParameters();
     void ComputeAllParameters();
     // Control-rate target computation for the steady-state audio pump:

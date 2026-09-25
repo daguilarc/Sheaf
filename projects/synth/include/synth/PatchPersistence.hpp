@@ -214,10 +214,6 @@ enum class PatchApplyStatus {
     InvalidJSON,
     OutputQueueFull,
     ArenaExhausted,
-    // A LoadFromJSON whose depths would leave a group's available storage
-    // below that group's watermark. No value changed; the caller provisions
-    // the shortfall and retries the message.
-    StorageShortfall,
 };
 
 PatchApplyStatus ApplyPatchMessage(
@@ -260,7 +256,16 @@ const char* PatchCommandStatusName(PatchCommandStatus status);
 
 class PatchManager {
 public:
+    // parameterManager, when non-null, is the ParameterManager whose groups
+    // LoadPatchVersion provisions storage into (via
+    // ParameterManager::ProvisionStorageForPatchValues) immediately before
+    // pushing a parsed LoadFromJSON message, so a Load never reaches
+    // ApplyPatchMessage short of the storage its own depths need. Null is
+    // tolerated (no provisioning) for callers -- test fixtures that drive
+    // PatchManager directly, never through Engine -- that never exercise a
+    // patch needing more storage than they already provisioned by hand.
     explicit PatchManager(PatchMessageInBus* inputBus = nullptr, MessageOutBus* outputBus = nullptr,
+                          ParameterManager* parameterManager = nullptr,
                           std::size_t initialArenaCapacity = 256 * 1024);
 
     void SetBuses(PatchMessageInBus* inputBus, MessageOutBus* outputBus);
@@ -294,6 +299,7 @@ private:
 
     PatchMessageInBus* inputBus_ = nullptr;
     MessageOutBus* outputBus_ = nullptr;
+    ParameterManager* parameterManager_ = nullptr;
     std::optional<std::filesystem::path> currentPatchDirectory_;
     std::optional<PendingSave> pendingSave_;
     std::uint64_t nextRequestId_ = 1;
