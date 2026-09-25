@@ -158,13 +158,12 @@ SystemMessageSortKey ComputeSystemMessageSortKey(const MidiControllerSystemMessa
         case MessageIn::Type::ParamSetAbsoluteOnBank:
             break;
         case MessageIn::Type::AppAction:
-            key.arg1 = message.appActionIx;
-            break;
         case MessageIn::Type::AppCommand:
-            // Classified with AppAction: no controller profile can produce
-            // one (UISystemMessageForAssociation never maps a press to it),
-            // so this arm is unreached by any real association.
-            key.arg1 = message.command;
+            // No controller profile can produce an AppCommand press
+            // (UISystemMessageForAssociation never maps one), so this arm
+            // is unreached by any real association; it joins AppAction's
+            // key rather than reading its own field.
+            key.arg1 = message.appActionIx;
             break;
         case MessageIn::Type::HoldDrill:
             key.hasBoolValue = message.hasBoolValue;

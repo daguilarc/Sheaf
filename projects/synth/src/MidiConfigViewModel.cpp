@@ -794,10 +794,11 @@ std::string DescribeMessage(const MessageIn& message) {
         case MessageIn::Type::ParamSetAbsoluteOnBank:
             break;
         case MessageIn::Type::AppAction:
-            oss << "app action " << message.appActionIx;
-            break;
         case MessageIn::Type::AppCommand:
-            oss << "app command " << message.command << " value " << message.value;
+            // No controller profile can produce an AppCommand press, so
+            // this arm is unreached by any real association; it joins
+            // AppAction's description rather than reading its own fields.
+            oss << "app action " << message.appActionIx;
             break;
         case MessageIn::Type::HoldDrill:
             oss << (message.boolValue ? "hold drill on" : "hold drill off");
