@@ -8982,8 +8982,8 @@ TEST_CASE(wrld_bldr_output_blanks_positions_beyond_cell_capacity) {
     REQUIRE_TRUE(blanked1);
 }
 
-// RUN-07's mechanism (BUG-07): a capacity-1 sender declines every enqueue
-// past the first in a pass. Colour, colour brightness, ring brightness and
+// A capacity-1 sender declines every enqueue past the first in a pass.
+// Colour, colour brightness, ring brightness and
 // ring position are four independent sends for one mapping; each must stay
 // pending until its own enqueue is accepted, and a decline must not let a
 // later value in the same pass jump the queue.
@@ -9103,9 +9103,9 @@ TEST_CASE(twister_output_pins_bytes_through_a_value_change_and_a_disconnect) {
     sender.Stop();
 }
 
-// The same rule as BUG-07, in the five processors that discarded Enqueue's
-// result before this change: WrldBldr, System CC, WrldBldr system, Launchpad
-// grid and Open SysEx. Each is given two messages to send against a
+// The same rule, in the five processors that discard Enqueue's result:
+// WrldBldr, System CC, WrldBldr system, Launchpad grid and Open SysEx.
+// Each is given two messages to send against a
 // capacity-1 sender; both must arrive, each exactly once, one per pass.
 // Each capacity-1 sender below is left unstarted around a Process() call and
 // only started to flush, then stopped (which empties the queue): with a
