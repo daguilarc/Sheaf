@@ -293,15 +293,17 @@ struct AppContext {
     // Read-only publication of the master clock's diagnostics (tempo,
     // transport state, etc.), refreshed once per audio block by
     // Engine::PublishClockDiagnostics. Any thread: Snapshot() is a wait-free
-    // seqlock read, safe everywhere including the audio thread. Null only in
-    // contexts that never construct a real Engine (there are none today).
+    // seqlock read, safe everywhere including the audio thread. Null in a
+    // context that never constructs a real Engine, such as a test fixture's
+    // hand-built AppContext or a layout build.
     const ClockDiagnosticsPublication* clockDiagnostics = nullptr;
 
     // Returns the sync configuration currently requested through
     // Engine::RequestSyncConfiguration (bound to the owning Engine's own
     // Engine::SyncConfigurationSnapshot()). Any thread: the wrapped read is a
-    // wait-free atomic load. Empty only in contexts that never construct a
-    // real Engine (there are none today).
+    // wait-free atomic load. Empty in a context that never constructs a real
+    // Engine, such as a test fixture's hand-built AppContext or a layout
+    // build.
     std::function<SyncConfig()> syncConfiguration;
 
     // Shared monotonic timestamp source, the same one passed to the owning
