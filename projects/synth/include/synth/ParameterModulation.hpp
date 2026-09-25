@@ -387,6 +387,13 @@ private:
     void RegisterTopLevelParameter(Parameter& parameter);
     void RequestParameterStorageBatch(std::size_t minimumAdditionalParameters);
     void RequestParameterStorageBatchIfLow();
+    // The one place every batch-chain walk states its acquire order: the
+    // head read here, the next-pointer read in NextStorageBatch. Every walk
+    // (AvailableParameterSlots, CreateLocalParameter's allocation search,
+    // ParameterByLocalIndex) starts from FirstStorageBatch() and advances
+    // with NextStorageBatch, so the ordering is written once.
+    ParameterStorageBatch* FirstStorageBatch() const;
+    static ParameterStorageBatch* NextStorageBatch(const ParameterStorageBatch& batch);
 
     // Groups own parameter objects and all same-shaped per-parameter arenas.
     // Parameter instances hold spans into these arenas; callers must not move a

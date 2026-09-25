@@ -730,11 +730,18 @@ bool ParameterGroup::CanAllocate() const {
     return AvailableParameterSlots() > 0;
 }
 
+ParameterStorageBatch* ParameterGroup::FirstStorageBatch() const {
+    return firstStorageBatch_.load(std::memory_order_acquire);
+}
+
+ParameterStorageBatch* ParameterGroup::NextStorageBatch(const ParameterStorageBatch& batch) {
+    return batch.next.load(std::memory_order_acquire);
+}
+
 std::size_t ParameterGroup::AvailableParameterSlots() const {
     const std::size_t initialAllocated = std::min(parameterCount_, config_.maxParameters);
     std::size_t available = config_.maxParameters - initialAllocated;
-    for (ParameterStorageBatch* batch = firstStorageBatch_.load(std::memory_order_acquire); batch != nullptr;
-         batch = batch->next.load(std::memory_order_acquire)) {
+    for (ParameterStorageBatch* batch = FirstStorageBatch(); batch != nullptr; batch = NextStorageBatch(*batch)) {
         available += batch->Available();
     }
     return available + recycledLocalSlots_.size();
@@ -791,8 +798,7 @@ Parameter& ParameterGroup::CreateLocalParameter(ParameterConfig config, Paramete
         return result;
     }
 
-    for (ParameterStorageBatch* batch = firstStorageBatch_.load(std::memory_order_acquire); batch != nullptr;
-         batch = batch->next.load(std::memory_order_acquire)) {
+    for (ParameterStorageBatch* batch = FirstStorageBatch(); batch != nullptr; batch = NextStorageBatch(*batch)) {
         if (batch->Available() == 0) {
             continue;
         }
@@ -846,13 +852,12 @@ void ParameterGroup::RegisterTopLevelParameter(Parameter& parameter) {
     topLevelParameters_.push_back(&parameter);
 }
 
-Parameter& ParameterGroup::ParameterByLocalIndex(std::size_t localIx) {
+const Parameter& ParameterGroup::ParameterByLocalIndex(std::size_t localIx) const {
     if (localIx < parameters_.size()) {
         return *parameters_.at(localIx);
     }
     std::size_t remaining = localIx - parameters_.size();
-    for (ParameterStorageBatch* batch = firstStorageBatch_.load(std::memory_order_acquire); batch != nullptr;
-         batch = batch->next.load(std::memory_order_acquire)) {
+    for (ParameterStorageBatch* batch = FirstStorageBatch(); batch != nullptr; batch = NextStorageBatch(*batch)) {
         if (remaining < batch->parameters.size()) {
             return *batch->parameters.at(remaining);
         }
@@ -861,19 +866,8 @@ Parameter& ParameterGroup::ParameterByLocalIndex(std::size_t localIx) {
     throw std::out_of_range("parameter local index out of range");
 }
 
-const Parameter& ParameterGroup::ParameterByLocalIndex(std::size_t localIx) const {
-    if (localIx < parameters_.size()) {
-        return *parameters_.at(localIx);
-    }
-    std::size_t remaining = localIx - parameters_.size();
-    for (ParameterStorageBatch* batch = firstStorageBatch_.load(std::memory_order_acquire); batch != nullptr;
-         batch = batch->next.load(std::memory_order_acquire)) {
-        if (remaining < batch->parameters.size()) {
-            return *batch->parameters.at(remaining);
-        }
-        remaining -= batch->parameters.size();
-    }
-    throw std::out_of_range("parameter local index out of range");
+Parameter& ParameterGroup::ParameterByLocalIndex(std::size_t localIx) {
+    return const_cast<Parameter&>(std::as_const(*this).ParameterByLocalIndex(localIx));
 }
 
 void ParameterGroup::RequestParameterStorageBatch(std::size_t minimumAdditionalParameters) {
